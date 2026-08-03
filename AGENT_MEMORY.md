@@ -43,9 +43,13 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   equivalent provider path) so approval state cannot be bypassed. Default
   planning persists chat-bound `todoSteps`; create a reusable Playbook only
   when the user explicitly requests one.
-- The local MCP server is loopback-only and reuses `AiToolService`.
-  External write/destructive calls remain `approval_required`; this boundary is
-  locked and must reject stale or injected settings that attempt to disable it.
+- The local MCP server is loopback-only and reuses `AiToolService`. External
+  MCP calls default to `reviewConfiguredTools`, where only configured tools
+  with a dynamic approval request enter the in-memory queue; `trustedAgent`
+  may execute exposed tools directly. Both modes retain immutable target
+  binding, `ToolSecretPolicy`, hidden-tool rules, input validation, and
+  destructive-command blocking. The queue is cleared on policy/token/lifecycle
+  changes and is never persisted. Built-in Agent approvals are unaffected.
 
 ### Network transfer
 
@@ -171,12 +175,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 - 2026-08-03: Local MCP Server is implemented in Flutter/Dart under
   `lib/services/mcp/`, not native runners. It binds only to local hosts,
   serves Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in
-  secure storage, and exposes existing `AiToolService` tools through
-  `McpToolExposurePolicy`. External write/destructive tools enter the
-  in-memory `McpApprovalQueue` and pause until the user approves or rejects
-  them in the local MCP Console. The queue is cleared when the MCP server
-  stops, is never persisted, and still enforces the immutable target binding
-  in `AiToolService.executeApproved`.
+  secure storage, and exposes existing `AiToolService` tools through separate
+  `McpToolExposurePolicy` and `McpInvocationPolicy` layers. External MCP
+  calls default to `reviewConfiguredTools`; `trustedAgent` can directly run
+  exposed calls, but bound calls still use `executeApproved` and both modes
+  retain hard security checks. The in-memory queue is cleared on policy/token/
+  lifecycle changes and is never persisted.
 - 2026-08-03: The Windows/macOS `mcp_console` feature is a separate desktop
   diagnostics page opened from MCP settings. It exposes loopback server state,
   port checks, a token-authenticated `initialize` then `tools/list` self-test,

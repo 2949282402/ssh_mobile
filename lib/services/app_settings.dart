@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../theme/app_theme.dart';
 import '../utils/device_name_util.dart';
 import 'app_log_service.dart';
+import 'mcp/mcp_invocation_policy.dart';
 import 'mcp/mcp_server_settings.dart';
 
 part 'app_strings.dart';
@@ -61,6 +62,10 @@ class AppSettings extends ChangeNotifier {
   static const _mcpServerEnabledKey = 'mcp_server_enabled';
   static const _mcpServerHostKey = 'mcp_server_host';
   static const _mcpServerPortKey = 'mcp_server_port';
+  static const _mcpApprovalModeKey = 'mcp_approval_mode';
+  static const _mcpSecondaryReviewToolsKey = 'mcp_secondary_review_tools';
+  // Legacy keys remain readable for compatibility, but are never written or
+  // used as security decisions.
   static const _mcpAllowWriteToolsKey = 'mcp_allow_write_tools';
   static const _mcpRequireApprovalForWriteToolsKey =
       'mcp_require_approval_for_write_tools';
@@ -97,7 +102,10 @@ class AppSettings extends ChangeNotifier {
   String _mcpServerHost = McpServerSettings.defaultHost;
   int _mcpServerPort = McpServerSettings.defaultPort;
   String _mcpServerToken = '';
-  bool _mcpAllowWriteTools = false;
+  McpApprovalMode _mcpApprovalMode = McpApprovalMode.reviewConfiguredTools;
+  Set<String> _mcpSecondaryReviewTools = Set.unmodifiable(
+    McpInvocationPolicy.defaultSecondaryReviewTools,
+  );
   bool _mcpEnableSse = false;
   bool _oledDark = false;
   AppColorPalette _colorPalette = AppColorPalette.monochrome;
@@ -152,8 +160,9 @@ class AppSettings extends ChangeNotifier {
   String get mcpServerHost => _mcpServerHost;
   int get mcpServerPort => _mcpServerPort;
   String get mcpServerToken => _mcpServerToken;
-  bool get mcpAllowWriteTools => _mcpAllowWriteTools;
-  bool get mcpRequireApprovalForWriteTools => true;
+  McpApprovalMode get mcpApprovalMode => _mcpApprovalMode;
+  Set<String> get mcpSecondaryReviewTools =>
+      Set.unmodifiable(_mcpSecondaryReviewTools);
   bool get mcpEnableSse => _mcpEnableSse;
   bool get oledDark => _oledDark;
   AppColorPalette get colorPalette => _colorPalette;
@@ -167,8 +176,8 @@ class AppSettings extends ChangeNotifier {
     host: _mcpServerHost,
     port: _mcpServerPort,
     token: _mcpServerToken,
-    allowWriteTools: _mcpAllowWriteTools,
-    requireApprovalForWriteTools: true,
+    approvalMode: _mcpApprovalMode,
+    secondaryReviewTools: _mcpSecondaryReviewTools,
     enableSse: _mcpEnableSse,
   );
 
@@ -217,10 +226,27 @@ class AppSettings extends ChangeNotifier {
       _mcpServerPort = McpServerSettings.normalizePort(
         prefs.getInt(_mcpServerPortKey),
       );
-      _mcpAllowWriteTools = prefs.getBool(_mcpAllowWriteToolsKey) ?? false;
-      if (prefs.getBool(_mcpRequireApprovalForWriteToolsKey) != true) {
-        await prefs.setBool(_mcpRequireApprovalForWriteToolsKey, true);
+      // Read legacy keys only to keep migration compatibility. Their values
+      // intentionally do not influence the new invocation policy.
+      if (prefs.containsKey(_mcpAllowWriteToolsKey) ||
+          prefs.containsKey(_mcpRequireApprovalForWriteToolsKey)) {
+        AppLogService.instance.info('Legacy MCP approval settings detected');
       }
+      final approvalModeName = prefs.getString(_mcpApprovalModeKey);
+      _mcpApprovalMode = McpApprovalMode.values.firstWhere(
+        (mode) => mode.name == approvalModeName,
+        orElse: () => McpApprovalMode.reviewConfiguredTools,
+      );
+      final storedReviewTools = prefs.getStringList(
+        _mcpSecondaryReviewToolsKey,
+      );
+      _mcpSecondaryReviewTools = storedReviewTools == null
+          ? Set.unmodifiable(McpInvocationPolicy.defaultSecondaryReviewTools)
+          : Set.unmodifiable(
+              storedReviewTools
+                  .map((tool) => tool.trim())
+                  .where((tool) => tool.isNotEmpty),
+            );
       _mcpEnableSse = prefs.getBool(_mcpEnableSseKey) ?? false;
       _oledDark = prefs.getBool(_oledDarkKey) ?? false;
       final colorPaletteName = prefs.getString(_colorPaletteKey);
@@ -267,7 +293,10 @@ class AppSettings extends ChangeNotifier {
       _mcpServerEnabled = false;
       _mcpServerHost = McpServerSettings.defaultHost;
       _mcpServerPort = McpServerSettings.defaultPort;
-      _mcpAllowWriteTools = false;
+      _mcpApprovalMode = McpApprovalMode.reviewConfiguredTools;
+      _mcpSecondaryReviewTools = Set.unmodifiable(
+        McpInvocationPolicy.defaultSecondaryReviewTools,
+      );
       _mcpEnableSse = false;
       _oledDark = false;
       _colorPalette = AppColorPalette.monochrome;
@@ -508,16 +537,37 @@ class AppSettings extends ChangeNotifier {
     );
   }
 
-  Future<void> setMcpAllowWriteTools(bool value) async {
-    if (_mcpAllowWriteTools == value) return;
-    _mcpAllowWriteTools = value;
+  Future<void> setMcpApprovalMode(McpApprovalMode mode) async {
+    if (_mcpApprovalMode == mode) return;
+    _mcpApprovalMode = mode;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_mcpAllowWriteToolsKey, value);
-    AppLogService.instance.info(
-      'MCP write-tool setting updated',
-      details: 'allowWriteTools=$value',
-    );
+    await prefs.setString(_mcpApprovalModeKey, mode.name);
+    AppLogService.instance.info('MCP approval mode updated');
+  }
+
+  Future<void> setMcpSecondaryReviewTools(Set<String> tools) async {
+    final normalized = tools
+        .map((tool) => tool.trim())
+        .where((tool) => tool.isNotEmpty)
+        .toSet();
+    if (_setEquals(_mcpSecondaryReviewTools, normalized)) return;
+    _mcpSecondaryReviewTools = Set.unmodifiable(normalized);
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    final sorted = _mcpSecondaryReviewTools.toList()..sort();
+    await prefs.setStringList(_mcpSecondaryReviewToolsKey, sorted);
+    AppLogService.instance.info('MCP secondary review tools updated');
+  }
+
+  Future<void> setMcpToolSecondaryReview(String toolName, bool enabled) async {
+    final next = Set<String>.of(_mcpSecondaryReviewTools);
+    if (enabled) {
+      next.add(toolName);
+    } else {
+      next.remove(toolName);
+    }
+    await setMcpSecondaryReviewTools(next);
   }
 
   Future<void> setMcpEnableSse(bool value) async {
@@ -549,6 +599,10 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     AppLogService.instance.info('MCP server token regenerated');
     return token;
+  }
+
+  bool _setEquals(Set<String> left, Set<String> right) {
+    return left.length == right.length && left.containsAll(right);
   }
 
   void toggleTheme() {

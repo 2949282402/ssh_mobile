@@ -113,20 +113,7 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
                         ),
                       ),
                     ],
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(strings.mcpAllowWriteTools),
-                      subtitle: Text(strings.mcpAllowWriteToolsHint),
-                      value: vm.settings.allowWriteTools,
-                      onChanged: vm.setAllowWriteTools,
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(strings.mcpRequireApproval),
-                      subtitle: Text(strings.mcpRequireApprovalHint),
-                      value: vm.settings.requireApprovalForWriteTools,
-                      onChanged: null,
-                    ),
+                    _approvalModeSection(vm, strings),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -194,6 +181,119 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
         ),
       ),
     );
+  }
+
+  Widget _approvalModeSection(McpSettingsViewModel vm, AppStrings strings) {
+    final reviewMode = vm.approvalMode == McpApprovalMode.reviewConfiguredTools;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 12),
+        Text(
+          strings.mcpApprovalMode,
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        RadioGroup<McpApprovalMode>(
+          groupValue: vm.approvalMode,
+          onChanged: (mode) {
+            if (mode == null) return;
+            if (mode == McpApprovalMode.trustedAgent) {
+              unawaited(_selectApprovalMode(vm, mode, strings));
+            } else {
+              unawaited(vm.setApprovalMode(mode));
+            }
+          },
+          child: Column(
+            children: [
+              RadioListTile<McpApprovalMode>(
+                contentPadding: EdgeInsets.zero,
+                value: McpApprovalMode.reviewConfiguredTools,
+                title: Text(strings.mcpReviewConfiguredTools),
+                subtitle: Text(strings.mcpReviewConfiguredToolsHint),
+              ),
+              RadioListTile<McpApprovalMode>(
+                contentPadding: EdgeInsets.zero,
+                value: McpApprovalMode.trustedAgent,
+                title: Text(strings.mcpTrustedAgent),
+                subtitle: Text(strings.mcpTrustedAgentHint),
+              ),
+            ],
+          ),
+        ),
+        if (!reviewMode)
+          AppSectionCard(
+            title: strings.mcpTrustedAgentActive,
+            subtitle: strings.mcpTrustedAgentActiveHint,
+            child: Text(strings.mcpTrustedAgentSafetyBoundary),
+          )
+        else ...[
+          const SizedBox(height: 4),
+          Text(
+            strings.mcpSecondaryReviewTools,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          Text(strings.mcpSecondaryReviewToolsHint),
+          const SizedBox(height: 4),
+          if (vm.secondaryReviewToolOptions.isEmpty)
+            Text(strings.mcpNoReviewTools)
+          else
+            for (final tool in vm.secondaryReviewToolOptions)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: vm.secondaryReviewTools.contains(tool.name),
+                title: Text(tool.name),
+                subtitle: Text(
+                  tool.descriptionFor(
+                    vm.appSettings.language == AppLanguage.en,
+                  ),
+                ),
+                secondary: Icon(
+                  tool.destructive
+                      ? Icons.warning_amber_rounded
+                      : tool.readOnly
+                      ? Icons.visibility_outlined
+                      : Icons.build_outlined,
+                ),
+                onChanged: (enabled) {
+                  if (enabled != null) {
+                    unawaited(vm.setToolSecondaryReview(tool.name, enabled));
+                  }
+                },
+              ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _selectApprovalMode(
+    McpSettingsViewModel vm,
+    McpApprovalMode mode,
+    AppStrings strings,
+  ) async {
+    if (mode != McpApprovalMode.trustedAgent) {
+      await vm.setApprovalMode(mode);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(strings.mcpTrustedAgentWarningTitle),
+        content: Text(strings.mcpTrustedAgentWarningBody),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(strings.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(strings.mcpEnableTrustedAgent),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await vm.setApprovalMode(mode);
+    }
   }
 
   String _statusText(McpSettingsViewModel vm, AppStrings strings) {

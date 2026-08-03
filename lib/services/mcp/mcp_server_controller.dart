@@ -11,9 +11,12 @@ import 'mcp_activity.dart';
 import 'mcp_ai_tool_adapter.dart';
 import 'mcp_approval_queue.dart';
 import 'mcp_http_server.dart';
+import 'mcp_invocation_policy.dart';
 import 'mcp_json_rpc.dart';
 import 'mcp_lifecycle_handler.dart';
 import 'mcp_port_probe.dart';
+import 'mcp_server_settings.dart';
+import 'mcp_tool_description_localizer.dart';
 import 'mcp_tool_handler.dart';
 import 'mcp_tool_exposure_policy.dart';
 import 'lazy_ai_tool_executor.dart';
@@ -22,18 +25,35 @@ enum McpServerRunStatus { stopped, checkingPort, starting, running, failed }
 
 class McpToolPolicySnapshot {
   final String name;
+  final String description;
+  final String? descriptionZh;
   final bool readOnly;
   final bool destructive;
-  final McpToolPolicyResult result;
+  final McpToolPolicyResult exposureResult;
+  final McpInvocationAction invocationAction;
   final String reason;
+  final bool reviewEligible;
 
   const McpToolPolicySnapshot({
     required this.name,
+    required this.description,
+    this.descriptionZh,
     required this.readOnly,
     required this.destructive,
-    required this.result,
+    required this.exposureResult,
+    required this.invocationAction,
     required this.reason,
+    this.reviewEligible = false,
   });
+
+  String descriptionFor(bool english) {
+    if (english) return description;
+    final localized = descriptionZh?.trim();
+    return localized == null || localized.isEmpty ? description : localized;
+  }
+
+  @Deprecated('Use exposureResult instead')
+  McpToolPolicyResult get result => exposureResult;
 }
 
 class McpSelfTestResult {
@@ -108,6 +128,9 @@ class McpServerController extends ChangeNotifier {
   McpPortProbeResult? _lastPortProbeResult;
   DateTime? _startedAt;
   bool _disposed = false;
+  McpApprovalMode? _lastApprovalMode;
+  Set<String> _lastSecondaryReviewTools = const {};
+  String _lastToken = '';
 
   McpServerController({
     required this.appSettings,
@@ -115,7 +138,12 @@ class McpServerController extends ChangeNotifier {
     this.portProbe = const McpPortProbe(),
     this.activityRepository,
     McpApprovalQueue? approvalQueue,
-  }) : approvalQueue = approvalQueue ?? McpApprovalQueue();
+  }) : approvalQueue = approvalQueue ?? McpApprovalQueue() {
+    _lastApprovalMode = appSettings.mcpApprovalMode;
+    _lastSecondaryReviewTools = appSettings.mcpSecondaryReviewTools;
+    _lastToken = appSettings.mcpServerToken;
+    appSettings.addListener(_handleSettingsChanged);
+  }
 
   McpActivityRecorder? get _activityRecorder {
     final repository = activityRepository;
@@ -144,6 +172,7 @@ class McpServerController extends ChangeNotifier {
     final hasChatSession =
         service is AiToolService && service.clientWebViewSessionId != null;
     const policy = McpToolExposurePolicy();
+    const invocationPolicy = McpInvocationPolicy();
     const adapter = McpAiToolAdapter();
     final tools = await service.tools();
     return List.unmodifiable(
@@ -155,17 +184,62 @@ class McpServerController extends ChangeNotifier {
               settings: settings,
               hasChatSession: hasChatSession,
             );
+            final invocation = invocationPolicy.evaluate(
+              tool: tool,
+              settings: settings,
+            );
             final annotations = adapter.toMcpTool(tool)['annotations'] as Map;
             return McpToolPolicySnapshot(
               name: tool.name,
+              description: tool.description,
+              descriptionZh: McpToolDescriptionLocalizer.descriptionFor(
+                tool,
+                english: false,
+              ),
               readOnly: annotations['readOnlyHint'] == true,
               destructive: annotations['destructiveHint'] == true,
-              result: decision.result,
-              reason: decision.reason,
+              exposureResult: decision.result,
+              invocationAction: invocation.action,
+              reason: decision.result == McpToolPolicyResult.exposed
+                  ? invocation.reason
+                  : decision.reason,
+              reviewEligible:
+                  decision.result == McpToolPolicyResult.exposed &&
+                  _isReviewEligible(tool, annotations),
             );
           }(),
       ]..sort((a, b) => a.name.compareTo(b.name)),
     );
+  }
+
+  void rejectPendingApprovalsForPolicyChange() {
+    approvalQueue.rejectAll();
+  }
+
+  bool _isReviewEligible(AiTool tool, Map annotations) {
+    return tool.executionMode == AiToolExecutionMode.stateChanging ||
+        tool.executionMode == AiToolExecutionMode.executionOnly ||
+        annotations['destructiveHint'] == true ||
+        McpInvocationPolicy.defaultSecondaryReviewTools.contains(tool.name);
+  }
+
+  void _handleSettingsChanged() {
+    final mode = appSettings.mcpApprovalMode;
+    final tools = appSettings.mcpSecondaryReviewTools;
+    final token = appSettings.mcpServerToken;
+    final changed =
+        mode != _lastApprovalMode ||
+        !_setEquals(tools, _lastSecondaryReviewTools) ||
+        token != _lastToken;
+    _lastApprovalMode = mode;
+    _lastSecondaryReviewTools = tools;
+    _lastToken = token;
+    if (changed) rejectPendingApprovalsForPolicyChange();
+    _notify();
+  }
+
+  bool _setEquals(Set<String> left, Set<String> right) {
+    return left.length == right.length && left.containsAll(right);
   }
 
   McpServerStatusSnapshot get snapshot {
@@ -523,6 +597,7 @@ class McpServerController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    appSettings.removeListener(_handleSettingsChanged);
     approvalQueue.rejectAll();
     approvalQueue.dispose();
     unawaited(_server?.close());

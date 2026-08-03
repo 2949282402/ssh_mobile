@@ -1,4 +1,4 @@
-> 最新更新时间：2026-07-29
+> 最新更新时间：2026-08-03
 
 <p align="center">
   <img src="assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -32,7 +32,7 @@ SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 An
 - **局域网快传与网络传输**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；文件发送统一进入 Rust 网络运行时，优先使用固定身份的 Quinn 直连，无法直达时由当前 WSS Relay 路径转发 AES-GCM 密文。直连和中继的入站文件都通过全局弹窗显式审批，校验后才提交到应用沙箱，并在接收端持久化和确认后报告成功。当前开发版本不保留旧 HTTPS 文件发送降级路径。
 - **服务器监控**：查看性能、端口、应用进程、服务、用户和活动会话。
 - **AI Chat 与 Agent 执行**：支持流式输出、Plan Mode、审批式工具调用、聊天历史、消息分支、上下文压缩、RAG、Skills 和执行 Trace。
-- **本地 MCP Server**：桌面端可生成 Codex、Claude Code 和 Gemini CLI 配置；仅回环地址的安全边界始终启用，外部 MCP 客户端调用写入类工具会返回 `approval_required`。
+- **本地 MCP Server**：桌面端可生成 Codex、Claude Code 和 Gemini CLI 配置；支持默认的 `reviewConfiguredTools` 与显式启用的 `trustedAgent` 两种模式，同时始终执行回环监听和硬安全边界。
 - **开发者面板**：可选显示运行时长、内存、FPS、掉帧、构建模式、平台和 Dart 版本，并可单独控制悬浮入口。
 - **安全存储**：使用平台 Secure Storage、加密 Drift 字段、加密预览缓存、敏感信息脱敏和不可变审批目标。
 - **自适应界面**：覆盖手机、平板和桌面环境，并提供专门的 1.5K 与 2K Android 测试配置。
@@ -136,7 +136,7 @@ SSH Mobile 将应用设置、服务器凭据和 LLM 设置分开管理，便于�
 | 通知隐私 | 隐藏服务器名 | 后台通知默认不展示服务器名称。 |
 | RAG | 关闭 | 默认使用 BM25，Top-N 为 3。 |
 | MCP Server | 关闭 | 开启后只绑定本机回环地址。 |
-| MCP 写入工具 | 关闭 | 写入操作仍必须经过应用审批。 |
+| MCP 审核模式 | 危险操作二次审核 | 可切换为 `trustedAgent`；两种模式都保留参数、目标、秘密和危险命令检查。 |
 | SFTP 下载上限 | 512 MB | 可配置范围为 64 KB 至 2 GB。 |
 | 文本预览上限 | 2 MB | 超过上限时需要先下载。 |
 | 富媒体预览上限 | 20 MB | 用于受支持图片和富预览。 |
@@ -186,10 +186,12 @@ Windows 和 macOS 的 MCP 设置卡可打开独立的**本地 MCP 控制台**。
 Codex/Claude Code/Gemini CLI 配置复制以及全部工具的暴露决策。它最多保留 500 条
 本机活动元数据：时间、事件类别、方法、工具名、结果、策略原因和耗时；绝不保存
 Token、请求参数、工具输出、客户端地址、Origin、远端资源信息或异常原文，也不会
-进入备份导出。控制台不新增外部写操作审批队列：写入类 MCP 工具仍返回
-`approval_required`。
+进入备份导出。外部 MCP 支持两种调用模式：默认的
+`reviewConfiguredTools` 只让用户配置的 Tool 在动态风险判断生成审批请求时进入队列；
+`trustedAgent` 直接执行已暴露且通过硬安全检查的 Tool。模式变化、Token 重生成、停止或
+重启 Server 时会拒绝旧的待审批请求。
 
-MCP Server 使用自动生成的 Bearer Token，拒绝未认证请求和非本地请求，并确保危险工具或写入工具无法绕过应用内审批界面。
+MCP Server 使用自动生成的 Bearer Token，拒绝未认证请求和非本地请求，并确保两种模式都不能绕过目标绑定、敏感路径、秘密过滤、输入校验和危险命令限制。
 
 ## 演示运行所需的样本数据
 
@@ -297,10 +299,11 @@ flutter build windows
 3. 打开多个终端窗口，并在启用 tmux 时测试断线恢复。
 4. 通过 SFTP 浏览和编辑 `~/ssh-mobile-demo` 中的样本文件。
 5. 启动性能监控，并检查端口、进程、服务、用户和会话。
-6. 配置模型服务，创建 Plan Mode 请求，并确认写入工具必须显式审批。
-7. 在审批界面打开时修改目标服务器或模型服务设置，确认旧审批不会执行。
-8. 测试取消执行、网络中断、应用后台运行、语言切换、大字体和横屏键盘布局。
-9. 按照 [docs/MOBILE_UI_QA.md](docs/MOBILE_UI_QA.md) 完成 1.5K 与 2K Android 专项视觉测试。
+6. 配置模型服务，创建 Plan Mode 请求，并确认内置 Agent 的审批流程保持不变。
+7. 分别测试 MCP `reviewConfiguredTools` 和 `trustedAgent`：确认配置的危险调用进入队列、信任模式的目标绑定调用走绑定执行路径，隐藏或敏感操作仍被阻断。
+8. 在 MCP 审批打开时切换模式或重新生成 Token，确认旧请求被拒绝而不会自动执行。
+9. 测试取消执行、网络中断、应用后台运行、语言切换、大字体和横屏键盘布局。
+10. 按照 [docs/MOBILE_UI_QA.md](docs/MOBILE_UI_QA.md) 完成 1.5K 与 2K Android 专项视觉测试。
 
 自动化测试使用 Fake、Mock 和受控 Fixture，不需要真实 SSH 凭据或 API Key。真实凭据不得提交到源代码、测试 Fixture、截图、日志、Agent Memory 或文档中。
 
@@ -426,7 +429,7 @@ AI Agent 运行在客户端，而不是被管理服务器上。SSH Mobile 负责
 - 环境变量整体导出、云 Metadata Endpoint 和敏感文件路径受到限制。
 - `.ssh`、`.env`、私钥、Token、云凭据等内容不会进入预览缓存。
 - 工具参数、结果和 Trace 会经过 `ToolSecretPolicy` 过滤或阻断。
-- 危险 MCP 工具返回 `approval_required`，无法绕过应用审批界面。
+- 外部 MCP 调用遵循所选审核模式；两种模式都不能绕过 `ToolSecretPolicy`、不可变目标绑定、隐藏 Tool 规则或破坏性 Shell 删除限制。
 - SSH 会话变更、tmux 恢复、终端历史删除、日志清空和监控状态变更仍在同一审批边界内。
 - 如果模型服务、服务器、资源或服务器集合快照已变化，原审批操作会被拒绝。
 

@@ -29,6 +29,7 @@ class _PendingMcpApproval {
   final Future<String> Function() executeApproved;
   final Completer<String> completer = Completer<String>();
   McpApprovalState state = McpApprovalState.pending;
+  bool rejected = false;
 
   _PendingMcpApproval({
     required this.id,
@@ -93,7 +94,11 @@ class McpApprovalQueue extends ChangeNotifier {
 
   Future<void> approve(String id) async {
     final pending = _find(id);
-    if (pending == null || pending.state != McpApprovalState.pending) return;
+    if (pending == null ||
+        pending.state != McpApprovalState.pending ||
+        pending.rejected) {
+      return;
+    }
 
     pending.state = McpApprovalState.processing;
     notifyListeners();
@@ -117,7 +122,12 @@ class McpApprovalQueue extends ChangeNotifier {
 
   void reject(String id) {
     final pending = _find(id);
-    if (pending == null || pending.state != McpApprovalState.pending) return;
+    if (pending == null ||
+        pending.state != McpApprovalState.pending ||
+        pending.rejected) {
+      return;
+    }
+    pending.rejected = true;
     _complete(
       pending,
       jsonEncode({

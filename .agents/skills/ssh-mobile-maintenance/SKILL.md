@@ -140,13 +140,14 @@ and its focused extensions, `lib/features/ai_chat/services/`,
 - The local MCP Server lives in `lib/services/mcp/` and is implemented in
   Flutter/Dart, not native runners. It binds only to local hosts, serves
   Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in secure
-  storage, and reuses `AiToolService` through `McpToolExposurePolicy`; external
-  MCP clients must not silently execute write/destructive tools. They enter the
-  in-memory `McpApprovalQueue` and wait for approval from the local MCP Console;
-  the queue is cleared when the MCP server stops and is never persisted. This
-  boundary is not user-disableable: settings show it as locked, legacy false
-  preferences are migrated to true, and the policy must still reject stale or
-  injected false values.
+  storage, and reuses `AiToolService` through separate exposure and invocation
+  policies. The default `reviewConfiguredTools` mode queues only configured
+  tools when `approvalRequestFor` produces a dynamic request; `trustedAgent`
+  directly executes exposed calls. Bound direct calls still use
+  `executeApproved`, and both modes retain hidden-tool, target-binding,
+  `ToolSecretPolicy`, input-validation, sensitive-path, and destructive-command
+  safeguards. The in-memory `McpApprovalQueue` is cleared on policy, token, or
+  server lifecycle changes and is never persisted.
 - The Windows/macOS-only console is the `mcp_console` feature. Keep status, port
   checks, loopback authenticated self-tests, configuration copying, policy
   snapshots, redacted local activity, and the dedicated approval queue page

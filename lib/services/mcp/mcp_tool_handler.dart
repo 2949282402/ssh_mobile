@@ -6,6 +6,7 @@ import '../app_log_service.dart';
 import 'mcp_ai_tool_adapter.dart';
 import 'mcp_activity.dart';
 import 'mcp_approval_queue.dart';
+import 'mcp_invocation_policy.dart';
 import 'mcp_json_rpc.dart';
 import 'mcp_server_settings.dart';
 import 'mcp_tool_exposure_policy.dart';
@@ -16,6 +17,7 @@ class McpToolHandler {
   final bool Function() hasChatSession;
   final McpAiToolAdapter adapter;
   final McpToolExposurePolicy exposurePolicy;
+  final McpInvocationPolicy invocationPolicy;
   final McpActivityRecorder? activityRecorder;
   final McpApprovalQueue? approvalQueue;
 
@@ -25,6 +27,7 @@ class McpToolHandler {
     this.hasChatSession = _defaultNoChatSession,
     this.adapter = const McpAiToolAdapter(),
     this.exposurePolicy = const McpToolExposurePolicy(),
+    this.invocationPolicy = const McpInvocationPolicy(),
     this.activityRecorder,
     this.approvalQueue,
   });
@@ -150,27 +153,109 @@ class McpToolHandler {
         'reason': decision.reason,
       });
     }
-    final approvalRequest = await aiToolService.approvalRequestFor(
-      name,
-      arguments,
+    final invocation = invocationPolicy.evaluate(
+      tool: tool,
+      settings: settings,
     );
-    if (decision.result == McpToolPolicyResult.approvalRequired ||
-        approvalRequest != null) {
-      if (approvalRequest == null) {
-        AppLogService.instance.warning(
-          'MCP approval request could not be built',
-          details: 'tool=$name reason=${decision.reason}',
+    switch (invocation.action) {
+      case McpInvocationAction.execute:
+        return _executeDirectlyAuthorized(
+          name: name,
+          arguments: arguments,
+          policyReason: invocation.reason,
+          decision: decision,
+          watch: watch,
         );
+      case McpInvocationAction.secondaryApproval:
+        return _executeWithSecondaryApproval(
+          name: name,
+          arguments: arguments,
+          policyReason: invocation.reason,
+          decision: decision,
+          watch: watch,
+        );
+      case McpInvocationAction.denied:
         watch.stop();
         _record(
           kind: McpActivityKind.tool,
           outcome: McpActivityOutcome.denied,
           method: 'tools/call',
           toolName: name,
-          policyReason: decision.reason,
+          policyReason: invocation.reason,
           durationMs: watch.elapsedMilliseconds,
         );
-        return _approvalRequired(name, decision);
+        return _toolError({
+          'error': 'tool_not_available',
+          'tool': name,
+          'reason': invocation.reason,
+        });
+    }
+  }
+
+  Future<Map<String, dynamic>> _executeDirectlyAuthorized({
+    required String name,
+    required Map<String, dynamic> arguments,
+    required String policyReason,
+    required McpToolPolicyDecision decision,
+    required Stopwatch watch,
+  }) async {
+    try {
+      final approvalRequest = await aiToolService.approvalRequestFor(
+        name,
+        arguments,
+      );
+      final text = approvalRequest == null
+          ? await aiToolService.execute(name, arguments, approvedWrite: true)
+          : await _executeWithBinding(approvalRequest, arguments, name: name);
+      return _toolResult(
+        name: name,
+        text: text,
+        policyReason: policyReason,
+        watch: watch,
+      );
+    } on _ApprovalGuardUnavailableException {
+      return _finishError(
+        name: name,
+        error: 'approval_guard_unavailable',
+        policyReason: 'approval_guard_unavailable',
+        decision: decision,
+        watch: watch,
+      );
+    } catch (e, stackTrace) {
+      return _finishExecutionError(
+        name: name,
+        error: e,
+        stackTrace: stackTrace,
+        policyReason: 'tool_execution_failed',
+        watch: watch,
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _executeWithSecondaryApproval({
+    required String name,
+    required Map<String, dynamic> arguments,
+    required String policyReason,
+    required McpToolPolicyDecision decision,
+    required Stopwatch watch,
+  }) async {
+    try {
+      final approvalRequest = await aiToolService.approvalRequestFor(
+        name,
+        arguments,
+      );
+      if (approvalRequest == null) {
+        final text = await aiToolService.execute(
+          name,
+          arguments,
+          approvedWrite: true,
+        );
+        return _toolResult(
+          name: name,
+          text: text,
+          policyReason: 'configured_secondary_review_not_required',
+          watch: watch,
+        );
       }
 
       final queue = approvalQueue;
@@ -178,105 +263,125 @@ class McpToolHandler {
           ? aiToolService as AiToolApprovalTargetGuard
           : null;
       if (queue == null || approvalGuard == null) {
-        AppLogService.instance.warning(
-          'MCP approval queue unavailable',
-          details: 'tool=$name approvalType=${approvalRequest.approvalType}',
-        );
-        watch.stop();
-        _record(
-          kind: McpActivityKind.tool,
-          outcome: McpActivityOutcome.denied,
-          method: 'tools/call',
-          toolName: name,
+        return _finishError(
+          name: name,
+          error: 'approval_required',
           policyReason: 'approval_queue_unavailable',
-          durationMs: watch.elapsedMilliseconds,
+          decision: decision,
+          watch: watch,
         );
-        return _approvalRequired(name, decision);
       }
-
-      AppLogService.instance.warning(
-        'MCP tool waiting for app approval',
-        details: 'tool=$name approvalType=${approvalRequest.approvalType}',
-      );
       final text = await queue.enqueue(
         request: approvalRequest,
         executeApproved: () =>
             approvalGuard.executeApproved(approvalRequest, arguments),
       );
-      final isError = _looksLikeToolError(text);
-      watch.stop();
-      _record(
-        kind: McpActivityKind.tool,
-        outcome: isError
-            ? McpActivityOutcome.failed
-            : McpActivityOutcome.success,
-        method: 'tools/call',
-        toolName: name,
-        policyReason: isError ? 'tool_error' : null,
-        durationMs: watch.elapsedMilliseconds,
+      return _toolResult(
+        name: name,
+        text: text,
+        policyReason: _looksLikeToolError(text)
+            ? 'secondary_approval_rejected'
+            : 'secondary_approval_approved',
+        watch: watch,
       );
-      return {
-        'content': [
-          {'type': 'text', 'text': text},
-        ],
-        'isError': isError,
-      };
-    }
-
-    try {
-      final text = await aiToolService.execute(name, arguments);
-      final isError = _looksLikeToolError(text);
-      watch.stop();
-      _record(
-        kind: McpActivityKind.tool,
-        outcome: isError
-            ? McpActivityOutcome.failed
-            : McpActivityOutcome.success,
-        method: 'tools/call',
-        toolName: name,
-        policyReason: isError ? 'tool_error' : null,
-        durationMs: watch.elapsedMilliseconds,
-      );
-      return {
-        'content': [
-          {'type': 'text', 'text': text},
-        ],
-        'isError': isError,
-      };
     } catch (e, stackTrace) {
-      AppLogService.instance.error(
-        'MCP tool execution failed',
+      return _finishExecutionError(
+        name: name,
         error: e,
         stackTrace: stackTrace,
-        details: 'tool=$name',
-      );
-      watch.stop();
-      _record(
-        kind: McpActivityKind.tool,
-        outcome: McpActivityOutcome.failed,
-        method: 'tools/call',
-        toolName: name,
         policyReason: 'tool_execution_failed',
-        durationMs: watch.elapsedMilliseconds,
+        watch: watch,
       );
-      return _toolError({
-        'error': 'tool_execution_failed',
-        'tool': name,
-        'message': e.toString(),
-      });
     }
   }
 
-  Map<String, dynamic> _approvalRequired(
-    String name,
-    McpToolPolicyDecision decision,
-  ) {
+  Future<String> _executeWithBinding(
+    AiToolApprovalRequest request,
+    Map<String, dynamic> arguments, {
+    required String name,
+  }) {
+    final guard = aiToolService is AiToolApprovalTargetGuard
+        ? aiToolService as AiToolApprovalTargetGuard
+        : null;
+    if (guard == null) throw _ApprovalGuardUnavailableException(name);
+    return guard.executeApproved(request, arguments);
+  }
+
+  Map<String, dynamic> _toolResult({
+    required String name,
+    required String text,
+    required String policyReason,
+    required Stopwatch watch,
+  }) {
+    final isError = _looksLikeToolError(text);
+    watch.stop();
+    _record(
+      kind: McpActivityKind.tool,
+      outcome: isError ? McpActivityOutcome.failed : McpActivityOutcome.success,
+      method: 'tools/call',
+      toolName: name,
+      policyReason: policyReason,
+      durationMs: watch.elapsedMilliseconds,
+    );
+    return {
+      'content': [
+        {'type': 'text', 'text': text},
+      ],
+      'isError': isError,
+    };
+  }
+
+  Map<String, dynamic> _finishError({
+    required String name,
+    required String error,
+    required String policyReason,
+    required McpToolPolicyDecision decision,
+    required Stopwatch watch,
+  }) {
+    watch.stop();
+    _record(
+      kind: McpActivityKind.tool,
+      outcome: McpActivityOutcome.denied,
+      method: 'tools/call',
+      toolName: name,
+      policyReason: policyReason,
+      durationMs: watch.elapsedMilliseconds,
+    );
     return _toolError({
-      'error': 'approval_required',
+      'error': error,
       'tool': name,
-      'reason': decision.reason,
+      'reason': policyReason,
       'approvalType': decision.approvalType,
       'destructive': decision.destructive,
+    });
+  }
+
+  Map<String, dynamic> _finishExecutionError({
+    required String name,
+    required Object error,
+    required StackTrace stackTrace,
+    required String policyReason,
+    required Stopwatch watch,
+  }) {
+    AppLogService.instance.error(
+      'MCP tool execution failed',
+      error: error,
+      stackTrace: stackTrace,
+      details: 'tool=$name',
+    );
+    watch.stop();
+    _record(
+      kind: McpActivityKind.tool,
+      outcome: McpActivityOutcome.failed,
+      method: 'tools/call',
+      toolName: name,
+      policyReason: policyReason,
+      durationMs: watch.elapsedMilliseconds,
+    );
+    return _toolError({
+      'error': 'tool_execution_failed',
+      'tool': name,
+      'message': error.toString(),
     });
   }
 
@@ -319,4 +424,10 @@ class McpToolHandler {
       ),
     );
   }
+}
+
+class _ApprovalGuardUnavailableException implements Exception {
+  final String toolName;
+
+  const _ApprovalGuardUnavailableException(this.toolName);
 }

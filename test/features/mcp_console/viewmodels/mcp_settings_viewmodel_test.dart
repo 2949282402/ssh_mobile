@@ -9,6 +9,7 @@ import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/mcp/mcp_server_controller.dart';
+import 'package:ssh_mobile/services/mcp/mcp_server_settings.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -38,19 +39,17 @@ void main() {
     appSettings.dispose();
   });
 
-  test(
-    'feature settings update persisted MCP options and keep approval locked',
-    () async {
-      await viewModel.setPort(39001);
-      await viewModel.setAllowWriteTools(true);
-      await viewModel.setEnabled(false);
+  test('feature settings update persisted MCP policy options', () async {
+    await viewModel.setPort(39001);
+    await viewModel.setApprovalMode(McpApprovalMode.trustedAgent);
+    await viewModel.setToolSecondaryReview('list_servers', true);
+    await viewModel.setEnabled(false);
 
-      expect(viewModel.settings.port, 39001);
-      expect(viewModel.settings.allowWriteTools, isTrue);
-      expect(viewModel.settings.requireApprovalForWriteTools, isTrue);
-      expect(viewModel.running, isFalse);
-    },
-  );
+    expect(viewModel.settings.port, 39001);
+    expect(viewModel.settings.approvalMode, McpApprovalMode.trustedAgent);
+    expect(viewModel.settings.secondaryReviewTools, contains('list_servers'));
+    expect(viewModel.running, isFalse);
+  });
 
   test('token regeneration exposes only a masked preview', () async {
     await viewModel.regenerateToken();

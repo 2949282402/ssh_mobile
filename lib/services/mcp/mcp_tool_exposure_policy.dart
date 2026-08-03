@@ -2,7 +2,7 @@ import '../ai_tool_service.dart';
 import 'mcp_ai_tool_adapter.dart';
 import 'mcp_server_settings.dart';
 
-enum McpToolPolicyResult { exposed, hidden, approvalRequired, blocked }
+enum McpToolPolicyResult { exposed, hidden, blocked }
 
 class McpToolPolicyDecision {
   final McpToolPolicyResult result;
@@ -17,49 +17,11 @@ class McpToolPolicyDecision {
     this.destructive = false,
   });
 
-  bool get canList =>
-      result == McpToolPolicyResult.exposed ||
-      result == McpToolPolicyResult.approvalRequired;
+  bool get canList => result == McpToolPolicyResult.exposed;
   bool get canExecute => result == McpToolPolicyResult.exposed;
 }
 
 class McpToolExposurePolicy {
-  static const Set<String> defaultRequireApprovalTools = {
-    'run_command',
-    'ssh_open_session',
-    'ssh_close_session',
-    'ssh_close_server_sessions',
-    'ssh_restore_tmux_sessions',
-    'ssh_delete_terminal_history_record',
-    'sftp_read_text',
-    'sftp_download_file',
-    'sftp_write_text',
-    'sftp_upload_local_file',
-    'sftp_create_directory',
-    'sftp_rename_entry',
-    'sftp_delete_entry',
-    'update_server_metadata',
-    'delete_server',
-    'reorder_servers',
-    'create_playbook',
-    'run_playbook',
-    'app_update_operational_settings',
-    'app_clear_secret_cache',
-    'client_import_app_backup',
-    'client_clear_logs',
-    'client_delete_log_entries',
-    'client_save_experience_skill',
-    'client_update_skill',
-    'client_task_skip',
-    'monitor_start',
-    'monitor_stop',
-    'monitor_stop_for_connection',
-    'monitor_set_interval',
-    'monitor_set_history_window',
-    'monitor_set_selected_servers',
-    'monitor_clear_selection',
-  };
-
   static const Set<String> defaultHideTools = {
     'client_set_plan_mode',
     'client_task_create',
@@ -93,41 +55,12 @@ class McpToolExposurePolicy {
     }
 
     final destructive = _isDestructive(tool);
-    final writeLike =
-        _isWriteLike(tool) ||
-        destructive ||
-        defaultRequireApprovalTools.contains(tool.name);
-    if (writeLike) {
-      if (!settings.allowWriteTools) {
-        return McpToolPolicyDecision(
-          result: McpToolPolicyResult.approvalRequired,
-          reason: 'write_tools_disabled',
-          approvalType: _approvalTypeFor(tool),
-          destructive: destructive,
-        );
-      }
-      // Hard security boundary: external MCP write operations must never
-      // execute silently until an in-app approval queue exists. Ignore stale
-      // or injected settings that disable approval and require it here.
-      return McpToolPolicyDecision(
-        result: McpToolPolicyResult.approvalRequired,
-        reason: destructive
-            ? 'destructive_tool_requires_approval'
-            : 'write_tool_requires_approval',
-        approvalType: _approvalTypeFor(tool),
-        destructive: destructive,
-      );
-    }
-
-    return const McpToolPolicyDecision(
+    return McpToolPolicyDecision(
       result: McpToolPolicyResult.exposed,
-      reason: 'safe_read_only',
+      reason: 'exposed',
+      approvalType: _approvalTypeFor(tool),
+      destructive: destructive,
     );
-  }
-
-  bool _isWriteLike(AiTool tool) {
-    return tool.executionMode == AiToolExecutionMode.stateChanging ||
-        tool.executionMode == AiToolExecutionMode.executionOnly;
   }
 
   bool _isDestructive(AiTool tool) {

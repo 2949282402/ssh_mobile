@@ -2,11 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
-import '../../../services/mcp/mcp_activity.dart';
+import '../../../services/mcp/mcp_invocation_policy.dart';
 import '../../../services/mcp/mcp_server_controller.dart';
 import '../../../services/mcp/mcp_tool_exposure_policy.dart';
 import '../../../widgets/app_surface.dart';
 import 'mcp_approval_queue_screen.dart';
+import 'mcp_activity_screen.dart';
 import '../viewmodels/mcp_console_viewmodel.dart';
 
 class McpConsoleScreen extends StatelessWidget {
@@ -82,6 +83,19 @@ class _Header extends StatelessWidget {
             ),
           ),
           IconButton(
+            key: const ValueKey('mcp-open-activity'),
+            tooltip: english ? 'Recent activity' : '最近活动',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => ChangeNotifierProvider.value(
+                  value: viewModel,
+                  child: const McpActivityScreen(),
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.history_rounded),
+          ),
+          IconButton(
             tooltip: english ? 'Refresh' : '刷新',
             onPressed: viewModel.runningAction ? null : viewModel.refresh,
             icon: const Icon(Icons.refresh_rounded),
@@ -134,13 +148,15 @@ class _ConsoleBody extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
           children: [
             if (wide)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: status),
-                  const SizedBox(width: 12),
-                  Expanded(child: endpoint),
-                ],
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: status),
+                    const SizedBox(width: 12),
+                    Expanded(child: endpoint),
+                  ],
+                ),
               )
             else ...[
               status,
@@ -149,8 +165,6 @@ class _ConsoleBody extends StatelessWidget {
             ],
             const SizedBox(height: 12),
             _ToolsCard(viewModel: viewModel, english: english),
-            const SizedBox(height: 12),
-            _ActivityCard(viewModel: viewModel, english: english),
           ],
         );
       },
@@ -171,6 +185,7 @@ class _StatusCard extends StatelessWidget {
     final running = snapshot.running;
     final color = running ? Colors.green : colors.outline;
     return AppSectionCard(
+      key: const ValueKey('mcp-server-status-card'),
       title: english ? 'Server status' : '服务器状态',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -260,6 +275,7 @@ class _EndpointCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AppSectionCard(
+      key: const ValueKey('mcp-client-configuration-card'),
       title: english ? 'Client configuration' : '客户端配置',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -339,9 +355,10 @@ class _ToolsCard extends StatelessWidget {
                           : Icons.build_outlined,
                     ),
                     title: Text(tool.name),
-                    subtitle: Text(tool.reason),
+                    subtitle: Text(tool.descriptionFor(english)),
                     trailing: _PolicyChip(
-                      result: tool.result,
+                      exposureResult: tool.exposureResult,
+                      invocationAction: tool.invocationAction,
                       english: english,
                     ),
                   ),
@@ -352,110 +369,27 @@ class _ToolsCard extends StatelessWidget {
 }
 
 class _PolicyChip extends StatelessWidget {
-  final McpToolPolicyResult result;
+  final McpToolPolicyResult exposureResult;
+  final McpInvocationAction invocationAction;
   final bool english;
 
-  const _PolicyChip({required this.result, required this.english});
+  const _PolicyChip({
+    required this.exposureResult,
+    required this.invocationAction,
+    required this.english,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final label = switch (result) {
-      McpToolPolicyResult.exposed => english ? 'Executable' : '可执行',
-      McpToolPolicyResult.approvalRequired =>
-        english ? 'Approval required' : '需要审批',
+    final label = switch (exposureResult) {
+      McpToolPolicyResult.exposed =>
+        invocationAction == McpInvocationAction.secondaryApproval
+            ? (english ? 'Secondary review' : '需要二次审核')
+            : (english ? 'Executable' : '可直接执行'),
       McpToolPolicyResult.hidden => english ? 'Hidden' : '隐藏',
       McpToolPolicyResult.blocked => english ? 'Blocked' : '已阻断',
     };
     return Chip(label: Text(label, style: const TextStyle(fontSize: 11)));
-  }
-}
-
-class _ActivityCard extends StatelessWidget {
-  final McpConsoleViewModel viewModel;
-  final bool english;
-
-  const _ActivityCard({required this.viewModel, required this.english});
-
-  @override
-  Widget build(BuildContext context) {
-    return AppSectionCard(
-      title: english ? 'Recent activity' : '最近活动',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 8,
-            children: [
-              ChoiceChip(
-                label: Text(english ? 'All' : '全部'),
-                selected: viewModel.selectedOutcome == null,
-                onSelected: (_) => viewModel.setSelectedOutcome(null),
-              ),
-              for (final outcome in McpActivityOutcome.values)
-                ChoiceChip(
-                  label: Text(_outcomeLabel(outcome, english)),
-                  selected: viewModel.selectedOutcome == outcome,
-                  onSelected: (_) => viewModel.setSelectedOutcome(outcome),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: () => _confirmClear(context),
-              icon: const Icon(Icons.delete_outline_rounded),
-              label: Text(english ? 'Clear activity' : '清空活动'),
-            ),
-          ),
-          if (viewModel.activities.isEmpty)
-            Text(english ? 'No activity recorded.' : '暂无活动记录。')
-          else
-            for (final entry in viewModel.activities)
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(_activityIcon(entry.kind)),
-                title: Text(entry.toolName ?? entry.method ?? entry.kind.name),
-                subtitle: Text(
-                  [
-                    _formatDate(entry.occurredAt),
-                    _outcomeLabel(entry.outcome, english),
-                    if (entry.policyReason != null) entry.policyReason!,
-                    if (entry.durationMs != null) '${entry.durationMs} ms',
-                  ].join(' · '),
-                ),
-              ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _confirmClear(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(english ? 'Clear MCP activity?' : '清空 MCP 活动记录？'),
-        content: Text(
-          english
-              ? 'This only removes local, redacted activity metadata.'
-              : '这只会移除本机保存的脱敏活动元数据。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(english ? 'Cancel' : '取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(english ? 'Clear' : '清空'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true && context.mounted) {
-      await context.read<McpConsoleViewModel>().clearActivities();
-    }
   }
 }
 
@@ -476,20 +410,6 @@ String _selfTestLabel(McpSelfTestResult result, bool english) =>
     : (english
           ? 'Self-test failed: ${result.failureCode}'
           : '自检失败：${result.failureCode}');
-
-String _outcomeLabel(McpActivityOutcome outcome, bool english) =>
-    switch (outcome) {
-      McpActivityOutcome.success => english ? 'Success' : '成功',
-      McpActivityOutcome.denied => english ? 'Denied' : '已拒绝',
-      McpActivityOutcome.failed => english ? 'Failed' : '失败',
-    };
-
-IconData _activityIcon(McpActivityKind kind) => switch (kind) {
-  McpActivityKind.lifecycle => Icons.power_settings_new_rounded,
-  McpActivityKind.protocol => Icons.swap_horiz_rounded,
-  McpActivityKind.tool => Icons.handyman_outlined,
-  McpActivityKind.security => Icons.security_outlined,
-};
 
 String _formatDate(DateTime value) =>
     '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} '

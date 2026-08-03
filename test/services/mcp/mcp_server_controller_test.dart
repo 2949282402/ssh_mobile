@@ -8,6 +8,8 @@ import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/mcp/mcp_server_controller.dart';
+import 'package:ssh_mobile/services/mcp/mcp_approval_queue.dart';
+import 'package:ssh_mobile/services/mcp/mcp_server_settings.dart';
 
 void main() {
   setUp(() {
@@ -79,6 +81,61 @@ void main() {
     expect(result.failureCode, 'server_not_running');
     expect(controller.running, isFalse);
   });
+
+  test('policy changes reject pending external approvals', () async {
+    SharedPreferences.setMockInitialValues({
+      'lan_device_id': 'test-device',
+      'lan_device_alias': 'Test device',
+    });
+    final settings = AppSettings();
+    await settings.init();
+    final queue = McpApprovalQueue();
+    final controller = McpServerController(
+      appSettings: settings,
+      toolServiceFactory: _FakeToolExecutor.new,
+      approvalQueue: queue,
+    );
+    addTearDown(() {
+      controller.dispose();
+      settings.dispose();
+    });
+
+    var executed = false;
+    final pending = queue.enqueue(
+      request: const AiToolApprovalRequest(
+        toolName: 'run_command',
+        approvalType: 'remote_write',
+        connectionId: 'server-1',
+        connectionName: 'Test server',
+        command: 'uptime',
+        reason: 'test',
+      ),
+      executeApproved: () async {
+        executed = true;
+        return 'executed';
+      },
+    );
+    await _waitFor(() => queue.pending.isNotEmpty);
+
+    final approvalId = queue.pending.single.id;
+    final modeChange = settings.setMcpApprovalMode(
+      McpApprovalMode.trustedAgent,
+    );
+    await queue.approve(approvalId);
+    await modeChange;
+
+    expect(await pending, contains('approval_rejected'));
+    expect(executed, isFalse);
+    expect(queue.pending, isEmpty);
+  });
+}
+
+Future<void> _waitFor(bool Function() condition) async {
+  for (var attempt = 0; attempt < 100; attempt++) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+  fail('Timed out waiting for approval queue update.');
 }
 
 class _FakeToolExecutor implements AiToolExecutor {

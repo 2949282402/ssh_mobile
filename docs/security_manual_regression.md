@@ -1,6 +1,6 @@
 # SSH Security Manual Regression Checklist
 
-> 最新更新时间：2026-07-26
+> 最新更新时间：2026-08-03
 
 Use this checklist before a security-sensitive release. Record concrete device
 and server details, then mark each scenario pass/fail with notes.
@@ -55,6 +55,10 @@ and server details, then mark each scenario pass/fail with notes.
 | `run_command` reads logs such as `journalctl` | Requires user approval |  |  |
 | SFTP AI read/download ordinary path | Requires user approval |  |  |
 | SFTP AI read/download secret path | Blocked before execution |  |  |
+| External MCP in `reviewConfiguredTools` with a configured risky Tool | Enters approval queue only when dynamic approval request exists |  |  |
+| External MCP in `reviewConfiguredTools` with an unconfigured Tool | Executes only after hard checks; no queue entry |  |  |
+| External MCP in `trustedAgent` with a bound target | Executes through target-bound `executeApproved`; queue remains empty |  |  |
+| Switching MCP mode or regenerating Token with pending approvals | All pending requests rejected; none auto-execute |  |  |
 | Unknown host key from AI tool path | Not auto-trusted |  |  |
 | Fingerprint mismatch from AI tool path | Blocked |  |  |
 | WebView reads localhost/private/metadata/file/data/javascript URL | Blocked |  |  |

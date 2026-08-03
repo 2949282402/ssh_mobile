@@ -21,114 +21,36 @@ void main() {
       );
 
       expect(decision.result, McpToolPolicyResult.exposed);
-    });
-
-    test('requires approval for write tools', () {
-      final decision = policy.evaluate(
-        AiTool(
-          name: 'run_command',
-          description: 'Run command.',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: (_) async => '{}',
-        ),
-        settings: settings,
-        hasChatSession: false,
-      );
-
-      expect(decision.result, McpToolPolicyResult.approvalRequired);
-      expect(decision.reason, 'write_tools_disabled');
-    });
-
-    test('requires approval for destructive tools', () {
-      final decision = policy.evaluate(
-        AiTool(
-          name: 'sftp_delete_entry',
-          description: 'Delete.',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: (_) async => '{}',
-        ),
-        settings: const McpServerSettings(
-          token: 'token',
-          allowWriteTools: true,
-          requireApprovalForWriteTools: false,
-        ),
-        hasChatSession: false,
-      );
-
-      expect(decision.result, McpToolPolicyResult.approvalRequired);
-      expect(decision.destructive, isTrue);
+      expect(decision.canList, isTrue);
+      expect(decision.canExecute, isTrue);
     });
 
     test(
-      'non-destructive write tools always need approval regardless of toggle',
+      'write and destructive tools remain exposed for invocation policy',
       () {
-        for (final requireApproval in [true, false]) {
-          final decision = policy.evaluate(
-            AiTool(
-              name: 'ssh_rename_session',
-              description: 'Rename session.',
-              properties: const {},
-              executionMode: AiToolExecutionMode.stateChanging,
-              handler: (_) async => '{}',
-            ),
-            settings: McpServerSettings(
-              token: 'token',
-              allowWriteTools: true,
-              requireApprovalForWriteTools: requireApproval,
-            ),
-            hasChatSession: false,
-          );
+        final decision = policy.evaluate(
+          AiTool(
+            name: 'sftp_delete_entry',
+            description: 'Delete.',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: (_) async => '{}',
+          ),
+          settings: settings,
+          hasChatSession: false,
+        );
 
-          expect(decision.result, McpToolPolicyResult.approvalRequired);
-          expect(decision.reason, 'write_tool_requires_approval');
-          expect(decision.destructive, isFalse);
-          expect(decision.canExecute, isFalse);
-        }
+        expect(decision.result, McpToolPolicyResult.exposed);
+        expect(decision.destructive, isTrue);
+        expect(decision.reason, 'exposed');
       },
     );
 
-    test('state-changing monitor tools need approval when approvals off', () {
-      final decision = policy.evaluate(
-        AiTool(
-          name: 'monitor_start',
-          description: 'Start monitor.',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: (_) async => '{}',
-        ),
-        settings: const McpServerSettings(
-          token: 'token',
-          allowWriteTools: true,
-          requireApprovalForWriteTools: false,
-        ),
-        hasChatSession: false,
+    test('does not return an approvalRequired exposure result', () {
+      expect(
+        McpToolPolicyResult.values.map((item) => item.name),
+        isNot(contains('approvalRequired')),
       );
-
-      expect(decision.result, McpToolPolicyResult.approvalRequired);
-      expect(decision.destructive, isFalse);
-      expect(decision.canExecute, isFalse);
-    });
-
-    test('still exposes read-only tools when write tools are allowed', () {
-      final decision = policy.evaluate(
-        AiTool(
-          name: 'list_servers',
-          description: 'List servers.',
-          properties: const {},
-          handler: (_) async => '{}',
-        ),
-        settings: const McpServerSettings(
-          token: 'token',
-          allowWriteTools: true,
-          requireApprovalForWriteTools: false,
-        ),
-        hasChatSession: false,
-      );
-
-      expect(decision.result, McpToolPolicyResult.exposed);
-      expect(decision.canExecute, isTrue);
     });
 
     test('hides WebView tools without chat session', () {
@@ -145,6 +67,7 @@ void main() {
       );
 
       expect(decision.result, McpToolPolicyResult.hidden);
+      expect(decision.canList, isFalse);
     });
 
     test('hides internal plan-control tools', () {

@@ -32,7 +32,7 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 - **LAN Quick Share & Network Transfer** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. File sends run through the Rust network runtime: pinned-identity Quinn direct paths are selected first and the current WSS Relay path carries only AES-GCM ciphertext when direct reachability is unavailable. Incoming direct and Relay offers require a global explicit approval, verified data is committed in the app sandbox, and success is reported only after receiver persistence and acknowledgement. The active development build does not retain the old HTTPS file-send fallback.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
-- **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; its loopback-only safety boundary is always enforced and write-capable external tools return `approval_required`.
+- **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; it supports `reviewConfiguredTools` (default) and `trustedAgent` modes while always enforcing its loopback-only and hard security boundaries.
 - **Developer panel** with opt-in runtime, memory, FPS, frame-jank, build-mode, platform, and Dart-version diagnostics; its floating entry can be configured independently.
 - **Secure storage** using platform secure storage, encrypted Drift fields, encrypted preview caches, secret redaction, and immutable approval targets.
 - **Adaptive layouts** for phones, tablets, and desktop environments, including dedicated 1.5K and 2K Android QA profiles.
@@ -136,7 +136,7 @@ Important defaults:
 | Notification privacy | Hide server names | Prevents server names from appearing in background notifications by default. |
 | RAG | Disabled | Search mode defaults to BM25 with top-N set to 3. |
 | MCP server | Disabled | Configure from AI → LLM settings → Tools & Automation; binds only to loopback when enabled. |
-| MCP write tools | Approval queue | Every write operation enters the local MCP Console approval queue before execution. |
+| MCP approval mode | Dangerous operations require review | Select `trustedAgent` only when external Agent automation is explicitly trusted; hard security checks remain active in both modes. |
 | SFTP download limit | 512 MB | Configure from the SFTP page; valid range is 64 KB to 2 GB. |
 | Text preview limit | 2 MB | Files above the limit require download. |
 | Rich preview limit | 20 MB | Applies to supported images and rich previews. |
@@ -186,7 +186,7 @@ Desktop builds can expose:
 http://127.0.0.1:<port>/mcp
 ```
 
-The MCP server uses a generated Bearer token, rejects unauthenticated and non-local requests, and keeps every write-capable tool behind the application approval boundary. The local MCP Console header opens a dedicated approval queue page where users can review and approve or reject pending external MCP actions. Requests and approval callbacks remain in memory, are cleared when the MCP server stops, and are never persisted.
+The MCP server uses a generated Bearer token and rejects unauthenticated and non-local requests. External MCP calls use one of two modes: `reviewConfiguredTools` (the default) sends only configured tools into the local approval queue when the dynamic risk check produces an approval request; `trustedAgent` executes exposed tools directly. Both modes retain input validation, target binding, secret filtering, sensitive-path blocking, and destructive-command restrictions. Approval requests and callbacks remain in memory, are cleared when the MCP server stops or policy changes, and are never persisted.
 
 From AI → LLM settings → Tools & Automation, open **MCP settings**. On Windows
 and macOS, that page can open the **Local MCP Console**.
@@ -196,10 +196,13 @@ the current exposure decision for every tool. The console records at most 500
 local activity entries containing only timestamp, event type, method, tool
 name, outcome, policy reason, and duration. It never stores tokens, request
 arguments, tool output, client addresses, origins, remote-resource details, or
-raw exception text, and activity is excluded from backup export. Write-capable
-MCP tools pause the MCP request until the user resolves the corresponding
-approval queue item. If the queue is unavailable or full, the tool returns
-`approval_required` or `approval_queue_full` without executing the operation.
+raw exception text, and activity is excluded from backup export. The console
+shows the exposure state and default invocation action for each Tool. In review
+mode, configured tools pause the MCP request only when `approvalRequestFor`
+returns a request; otherwise the call executes under the existing hard checks.
+In trusted mode, a bound approval request uses `executeApproved` directly and
+never enters the queue. If review is required but the queue is unavailable or
+full, the tool returns an approval error without executing the operation.
 
 ## Sample Data for a Demo Run
 
@@ -307,10 +310,11 @@ flutter build windows
 3. Open multiple terminal windows and verify tmux reconnection when enabled.
 4. Browse and edit the `~/ssh-mobile-demo` files through SFTP.
 5. Start performance monitoring and inspect ports, processes, services, users, and sessions.
-6. Configure an AI provider, create a Plan Mode request, and verify that write tools require explicit approval.
-7. Change the selected server or provider settings while an approval is open and confirm that stale operations do not execute.
-8. Test cancellation, network interruption, app backgrounding, language switching, large text, and landscape keyboard layouts.
-9. Run the dedicated 1.5K and 2K Android visual matrix in [docs/MOBILE_UI_QA.md](docs/MOBILE_UI_QA.md).
+6. Configure an AI provider, create a Plan Mode request, and verify that built-in Agent approvals remain unchanged.
+7. Test MCP `reviewConfiguredTools` and `trustedAgent` separately; confirm configured risky calls queue, trusted bound calls use target-bound execution, and hidden or sensitive operations remain blocked.
+8. Change MCP mode or regenerate its Token while an approval is open and confirm that stale operations are rejected rather than executed.
+9. Test cancellation, network interruption, app backgrounding, language switching, large text, and landscape keyboard layouts.
+10. Run the dedicated 1.5K and 2K Android visual matrix in [docs/MOBILE_UI_QA.md](docs/MOBILE_UI_QA.md).
 
 Automated tests use fakes and controlled fixtures; they do not require real SSH credentials or API keys. Real credentials must never be committed to source control, test fixtures, screenshots, logs, agent memory, or documentation.
 
@@ -441,7 +445,7 @@ The runtime includes:
 - Environment-variable dumps, cloud metadata endpoints, and sensitive filesystem paths are restricted.
 - `.ssh`, `.env`, private keys, tokens, cloud credentials, and other sensitive content are excluded from preview caches.
 - Tool arguments, results, and traces are filtered or blocked by `ToolSecretPolicy`.
-- Dangerous MCP tools enter the local MCP Console approval queue and cannot bypass the application approval interface.
+- External MCP calls use the configured review mode or trusted-agent mode; neither mode bypasses `ToolSecretPolicy`, immutable target binding, hidden-tool rules, or destructive shell deletion blocks.
 - SSH session changes, tmux restoration, terminal-history deletion, log clearing, and monitoring state changes remain inside the same approval boundary.
 - An approved action is rejected if its provider, server, resource, or selected-server snapshot is no longer current.
 

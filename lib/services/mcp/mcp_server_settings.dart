@@ -2,6 +2,14 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'mcp_invocation_policy.dart';
+
+// The public named argument must remain public while the stored set stays
+// private behind an immutable getter.
+// ignore_for_file: prefer_initializing_formals
+
+enum McpApprovalMode { trustedAgent, reviewConfiguredTools }
+
 class McpServerSettings {
   static const String defaultHost = '127.0.0.1';
   static const int defaultPort = 38321;
@@ -12,8 +20,8 @@ class McpServerSettings {
   final String host;
   final int port;
   final String token;
-  final bool allowWriteTools;
-  final bool requireApprovalForWriteTools;
+  final McpApprovalMode approvalMode;
+  final Set<String> _secondaryReviewTools;
   final bool enableSse;
 
   const McpServerSettings({
@@ -21,33 +29,48 @@ class McpServerSettings {
     this.host = defaultHost,
     this.port = defaultPort,
     this.token = '',
-    this.allowWriteTools = false,
-    this.requireApprovalForWriteTools = true,
+    this.approvalMode = McpApprovalMode.reviewConfiguredTools,
+    Set<String> secondaryReviewTools =
+        McpInvocationPolicy.defaultSecondaryReviewTools,
     this.enableSse = false,
-  });
+    // Kept only so older callers can migrate without a breaking constructor
+    // change. These values are intentionally ignored by all new policy code.
+    @Deprecated('Use approvalMode instead') bool? allowWriteTools,
+    @Deprecated('Use approvalMode instead') bool? requireApprovalForWriteTools,
+  }) : _secondaryReviewTools = secondaryReviewTools;
 
   String get url => 'http://$host:$port/mcp';
   bool get hasToken => token.trim().isNotEmpty;
   bool get hasValidHost => isAllowedHost(host);
   bool get hasValidPort => isValidPort(port);
+  Set<String> get secondaryReviewTools =>
+      Set.unmodifiable(_secondaryReviewTools);
+
+  @Deprecated('Use approvalMode and secondaryReviewTools instead')
+  bool get allowWriteTools => true;
+
+  @Deprecated('Use approvalMode and secondaryReviewTools instead')
+  bool get requireApprovalForWriteTools =>
+      approvalMode == McpApprovalMode.reviewConfiguredTools;
 
   McpServerSettings copyWith({
     bool? enabled,
     String? host,
     int? port,
     String? token,
-    bool? allowWriteTools,
-    bool? requireApprovalForWriteTools,
+    McpApprovalMode? approvalMode,
+    Set<String>? secondaryReviewTools,
     bool? enableSse,
+    @Deprecated('Use approvalMode instead') bool? allowWriteTools,
+    @Deprecated('Use approvalMode instead') bool? requireApprovalForWriteTools,
   }) {
     return McpServerSettings(
       enabled: enabled ?? this.enabled,
       host: host == null ? this.host : normalizeHost(host),
       port: port ?? this.port,
       token: token ?? this.token,
-      allowWriteTools: allowWriteTools ?? this.allowWriteTools,
-      requireApprovalForWriteTools:
-          requireApprovalForWriteTools ?? this.requireApprovalForWriteTools,
+      approvalMode: approvalMode ?? this.approvalMode,
+      secondaryReviewTools: secondaryReviewTools ?? this.secondaryReviewTools,
       enableSse: enableSse ?? this.enableSse,
     );
   }

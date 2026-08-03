@@ -123,7 +123,7 @@ void main() {
       expect(activity.method, 'tools/call');
       expect(activity.toolName, 'list_servers');
       expect(activity.outcome, McpActivityOutcome.success);
-      expect(activity.policyReason, isNull);
+      expect(activity.policyReason, 'tool_not_configured_for_secondary_review');
     });
 
     test('POST tools/call for write tool returns approval_required', () async {
@@ -183,6 +183,132 @@ void main() {
         expect(result['isError'], isFalse);
         expect(executor.executedTools, contains('run_command'));
         queue.dispose();
+      },
+    );
+
+    test('trustedAgent executes a bound write without queueing', () async {
+      final queue = McpApprovalQueue();
+      final executor = _FakeToolExecutor();
+      final handler = McpToolHandler(
+        aiToolService: executor,
+        settingsProvider: () => const McpServerSettings(
+          token: 'secret',
+          approvalMode: McpApprovalMode.trustedAgent,
+        ),
+        approvalQueue: queue,
+      );
+
+      final response = await handler.handle(
+        const McpJsonRpcRequest(
+          id: 'trusted-test',
+          hasId: true,
+          method: 'tools/call',
+          params: {
+            'name': 'run_command',
+            'arguments': {'connectionId': 'server-1', 'command': 'uptime'},
+          },
+        ),
+      );
+
+      final result = response.result! as Map;
+      expect(result['isError'], isFalse);
+      expect(queue.pending, isEmpty);
+      expect(executor.executedTools, contains('run_command'));
+      queue.dispose();
+    });
+
+    test(
+      'review mode executes an unconfigured tool without queueing',
+      () async {
+        final queue = McpApprovalQueue();
+        final executor = _FakeToolExecutor();
+        final handler = McpToolHandler(
+          aiToolService: executor,
+          settingsProvider: () => const McpServerSettings(
+            token: 'secret',
+            secondaryReviewTools: {},
+          ),
+          approvalQueue: queue,
+        );
+
+        final response = await handler.handle(
+          const McpJsonRpcRequest(
+            id: 'unconfigured-test',
+            hasId: true,
+            method: 'tools/call',
+            params: {
+              'name': 'run_command',
+              'arguments': {'connectionId': 'server-1', 'command': 'uptime'},
+            },
+          ),
+        );
+
+        final result = response.result! as Map;
+        expect(result['isError'], isFalse);
+        expect(queue.pending, isEmpty);
+        expect(executor.executedTools, contains('run_command'));
+        queue.dispose();
+      },
+    );
+
+    test(
+      'trustedAgent rejects a bound request without a target guard',
+      () async {
+        final executor = _FakeExecutorWithoutGuard();
+        final handler = McpToolHandler(
+          aiToolService: executor,
+          settingsProvider: () => const McpServerSettings(
+            token: 'secret',
+            approvalMode: McpApprovalMode.trustedAgent,
+          ),
+        );
+
+        final response = await handler.handle(
+          const McpJsonRpcRequest(
+            id: 'missing-guard-test',
+            hasId: true,
+            method: 'tools/call',
+            params: {
+              'name': 'run_command',
+              'arguments': {'connectionId': 'server-1', 'command': 'uptime'},
+            },
+          ),
+        );
+
+        final result = response.result! as Map;
+        expect(result['isError'], isTrue);
+        expect(
+          result['content'][0]['text'],
+          contains('approval_guard_unavailable'),
+        );
+      },
+    );
+
+    test(
+      'hidden tools cannot be called even when their name is known',
+      () async {
+        final executor = _FakeToolExecutor();
+        final handler = McpToolHandler(
+          aiToolService: executor,
+          settingsProvider: () => const McpServerSettings(
+            token: 'secret',
+            approvalMode: McpApprovalMode.trustedAgent,
+          ),
+        );
+
+        final response = await handler.handle(
+          const McpJsonRpcRequest(
+            id: 'hidden-test',
+            hasId: true,
+            method: 'tools/call',
+            params: {'name': 'client_set_plan_mode', 'arguments': {}},
+          ),
+        );
+
+        final result = response.result! as Map;
+        expect(result['isError'], isTrue);
+        expect(result['content'][0]['text'], contains('tool_not_available'));
+        expect(executor.executedTools, isNot(contains('client_set_plan_mode')));
       },
     );
 
@@ -281,6 +407,13 @@ class _FakeToolExecutor implements AiToolExecutor, AiToolApprovalTargetGuard {
         executionMode: AiToolExecutionMode.stateChanging,
         handler: (_) async => jsonEncode({'ok': true}),
       ),
+      AiTool(
+        name: 'client_set_plan_mode',
+        description: 'Internal plan mode control.',
+        properties: const {},
+        executionMode: AiToolExecutionMode.planControl,
+        handler: (_) async => jsonEncode({'ok': true}),
+      ),
     ];
   }
 
@@ -332,6 +465,47 @@ class _FakeToolExecutor implements AiToolExecutor, AiToolApprovalTargetGuard {
   ) {
     return execute(request.toolName, arguments, approvedWrite: true);
   }
+}
+
+class _FakeExecutorWithoutGuard implements AiToolExecutor {
+  @override
+  Future<List<AiTool>> tools() async => [
+    AiTool(
+      name: 'run_command',
+      description: 'Run a command.',
+      properties: const {},
+      executionMode: AiToolExecutionMode.stateChanging,
+      handler: (_) async => '{}',
+    ),
+  ];
+
+  @override
+  Future<List<Map<String, dynamic>>> toolDefinitions() async =>
+      (await tools()).map((tool) => tool.definition).toList();
+
+  @override
+  Future<AiToolApprovalRequest?> approvalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  ) async => const AiToolApprovalRequest(
+    toolName: 'run_command',
+    approvalType: 'remote_write',
+    connectionId: 'server-1',
+    connectionName: 'Test server',
+    command: 'RUN uptime',
+    reason: 'The command changes remote state.',
+  );
+
+  @override
+  Future<String> execute(
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async => jsonEncode({'ok': true});
+
+  @override
+  AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) =>
+      const AiCommandReview.readOnly();
 }
 
 Future<void> _waitFor(bool Function() condition) async {
