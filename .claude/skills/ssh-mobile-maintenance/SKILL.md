@@ -1,142 +1,86 @@
 ---
 name: ssh-mobile-maintenance
-description: Maintain and debug this SSH Mobile Flutter repository across feature-first MVVM UI, SSH/SFTP, monitoring, AI chat/tools, storage, security, platform builds, tests, documentation, and shared agent guidance. Use for project code, architecture, debugging, validation, or documentation changes.
+description: Maintain and debug the SSH Mobile Flutter repository, including architecture, UI, SSH/SFTP, monitoring, AI tools, storage, security, platform builds, tests, and project documentation. Use for any non-trivial code, debugging, validation, documentation, or shared-agent-guidance change in this repository.
 ---
 
 > 最新更新时间：2026-08-03
 
 # SSH Mobile Maintenance
 
-## Quick Start
+## Workflow
 
-Before changing code, inspect the nearest feature under `lib/features/`. The project now uses a pure feature-first MVVM split: feature-owned state/actions live in `viewmodels`, feature-owned models/forms live in `models` or `views`, UI view files live in `lib/features/<feature>/views/` along with their part files or child widgets in `widgets/`, and protocol/storage infrastructure stays in `lib/services/` plus `lib/core/services/`. Keep changes narrow and run validation afterward.
-Resolve the local Flutter SDK dynamically; different machines may use different
-SDK locations:
+1. Read `AGENT_MEMORY.md` for the small set of non-obvious durable decisions.
+2. Inspect `git status`, the owning feature, its tests, and only the relevant
+   references below. Preserve unrelated user changes.
+3. Put behavior in the owning layer and reuse existing interfaces before adding
+   another abstraction or protocol path.
+4. Keep the change scoped. Update user-facing docs only when behavior,
+   configuration, navigation, dependencies, or platform support changes.
+5. Run validation proportional to the change and report what was not verified.
 
-```powershell
-$env:PUB_HOSTED_URL='https://pub.flutter-io.cn'
-$flutter = (Get-Command flutter -ErrorAction SilentlyContinue).Source
-if (-not $flutter -and $env:FLUTTER_ROOT) {
-  $candidates = @(
-    (Join-Path $env:FLUTTER_ROOT 'bin\flutter.bat'),
-    (Join-Path $env:FLUTTER_ROOT 'bin/flutter')
-  )
-  foreach ($candidate in $candidates) {
-    if (Test-Path -LiteralPath $candidate) {
-      $flutter = $candidate
-      break
-    }
-  }
-}
-if (-not $flutter) {
-  throw 'Flutter SDK not found. Add flutter to PATH or set FLUTTER_ROOT.'
-}
-& $flutter analyze
-& $flutter build apk --debug
-```
+Treat current code and tests as the behavioral source of truth. Treat
+`AGENTS.md` as the source of truth for repository layout, conventions, commands,
+Markdown update markers, and the full quality gate; do not repeat those details
+in this skill or memory.
 
-Do not hardcode local SDK, toolchain, or resource absolute paths in source,
-docs, skills, or memory. Prefer commands on `PATH`, environment variables such
-as `FLUTTER_ROOT`, `ANDROID_HOME`/`ANDROID_SDK_ROOT`, and `JAVA_HOME`,
-`xcode-select` on macOS, and repo-relative paths for repository resources.
+## Architecture Boundaries
 
-Read `AGENT_MEMORY.md` before non-trivial code, documentation, or skill changes.
-Update it with concise durable notes when a project decision, recurring pitfall,
-or maintenance lesson should be shared across Codex and Claude Code sessions.
+- Keep feature-owned UI, models, services, and state under
+  `lib/features/<feature>/`. Keep shared UI in `lib/widgets/` and `lib/theme/`;
+  keep cross-feature protocol, security, and persistence infrastructure in
+  `lib/services/`, `lib/core/services/`, and `lib/data/`.
+- Do not add new application code to legacy `lib/screens/` or `lib/models/`.
+- Keep screens focused on composition and transient presentation state. Put
+  validation, async orchestration, repositories, and reusable state in
+  ViewModels or services.
+- Keep application-lifetime dependencies in `main.dart`; prefer feature-,
+  route-, or view-scoped state for heavy or task-specific runtimes.
+- Split by responsibility before a non-generated Dart file approaches 1000
+  lines. Change generator inputs instead of editing generated files.
+- Prefer narrow Provider subscriptions, stable snapshots, background parsing
+  for large results, and existing protocol/repository interfaces.
 
-## Maintenance Rules
+## Safety Boundaries
 
-- Preserve user work in the git tree. Do not revert unrelated dirty files.
-- Keep source and docs in UTF-8 without BOM.
-- Every maintained Markdown document must carry a current `最新更新时间：YYYY-MM-DD`
-  or `Last updated: YYYY-MM-DD` marker at its beginning (after YAML front matter
-  when present); refresh it whenever the document changes.
-- Organize new code by feature and responsibility from the start. Put new
-  functionality in a dedicated file under the owning feature's `models/`,
-  `services/`, `viewmodels/`, `views/`, or `widgets/` directory, or in the
-  matching infrastructure subdirectory. Do not keep appending unrelated
-  behavior, models, helpers, or widgets to an existing file.
-- Before extending an existing file, check whether the change introduces a new
-  responsibility or would push a non-generated Dart file toward 1000 lines.
-  Extract a cohesive module first when either is true. Never hand-edit or split
-  generated files such as `*.g.dart`; change their generator inputs instead.
-- Prefer independently importable classes and services for real decoupling.
-  Use Dart `part` files only when cohesive code genuinely needs shared
-  library-private access, and keep each part focused on one functional area.
-- Prefer existing services and interfaces over duplicating protocol logic.
-- Route SSH, SFTP, LLM, AI tool, and failure logs through `AppLogService`.
-- Keep shared UI behavior aligned with `lib/theme/app_theme.dart` and
-  `AppSettings`.
-- Build primary workspaces from the shared design system in
-  `lib/theme/app_theme.dart` and `lib/widgets/app_surface.dart`. Prefer
-  `AppPageSurface`, `AppPageHeader`, `AppIconBadge`, `AppSectionCard`, and
-  `AppEmptyState` over page-local colors, shadows, icon tiles, section cards,
-  and empty-state layouts. Interactive `AppSectionCard` headers must expose the
-  localized title, expanded state, tap action, and at least a 48 dp target.
-- Validate SSH credentials before saving a server.
-- Respect `serverPlatform`: Linux can use tmux; native Windows servers use plain
-  SSH unless the user is really targeting WSL or another Linux-like shell.
-- Keep secrets out of exports, logs, AI tool results, and docs. Stored API keys
-  and credentials belong in secure storage, not plain preferences.
-- Growth-oriented structured data belongs behind repository interfaces and the
-  `StorageService` facade, with Drift implementations under `lib/data/`.
-  Small settings stay in SharedPreferences; credentials stay in secure storage.
-  Drift metadata may be plaintext for query/sort needs, but sensitive AI
-  message content, context, attachments, traces, todoSteps, and Playbook content
-  must be field-encrypted before SQLite writes. Production database open
-  failures must not silently fall back to an in-memory database. While the app
-  is still in active development, Drift uses one current schema at version 1
-  with no upgrade or legacy-import machinery; schema changes require deleting
-  the local development database and regenerating `app_database.g.dart`.
-  `StorageService.appDatabase` may be accessed before asynchronous `init()` by
-  root providers such as LAN Share. It must cache and own exactly one database
-  instance, `_initializeDriftStorage()` must reuse that instance, concurrent
-  `init()` calls must share one future, and log database binding must finish
-  before Drift initialization is reported complete.
-- Keep SSH Host Key checks centralized in `SshHostKeyPolicy`. UI-initiated
-  first use may prompt for TOFU confirmation, but AI tools and background SSH
-  service code must never auto-trust unknown or changed host keys.
-- Optimize validation time: when running validation, analyze only the modified source files (e.g. `flutter analyze lib/widgets/app_surface.dart`) and run only the test files corresponding to the modified/added source files (e.g. run `flutter test test/widgets/app_surface_test.dart` if `lib/widgets/app_surface.dart` was changed), rather than running full repository checks on every minor incremental change.
-- When features, navigation, settings, tools, or platform behavior change,
-  update this skill and `README.md` in the same task.
-- Keep `.agents/.../SKILL.md` and `.claude/.../SKILL.md` synchronized with
-  `scripts/sync_agent_skills.ps1`.
+- Store passwords, private keys, API keys, and tokens only in secure storage.
+  Keep them out of logs, exports, traces, docs, tool arguments/results, and
+  durable agent memory.
+- Route AI tool visibility, approval, execution, and redaction through the
+  existing exposure and `ToolSecretPolicy` boundaries. Remote writes and
+  sensitive reads require approval; destructive shell deletion stays blocked.
+- Run AI shell tools through one-shot SSH exec. Never reuse an interactive
+  terminal or silently trust an unknown or changed host key.
+- Keep structured growing data behind `StorageService` and Drift repositories.
+  Encrypt sensitive fields before SQLite writes; never hide a production
+  database-open failure with an in-memory fallback.
+- Treat remote files and peer input as untrusted. Bound reads before allocation,
+  keep secret-bearing paths out of caches, and preserve authentication,
+  fingerprint pinning, integrity checks, and sandboxed receive paths.
+- Respect `serverPlatform`: native Windows uses PowerShell/plain SSH behavior;
+  Linux-only tmux and `/proc` assumptions must not leak into Windows paths.
+- Route application diagnostics through `AppLogService`; do not add `print`
+  diagnostics.
 
-## Current Product Shape
+## Task Routing
 
-### Connections and Terminal
+Read only the rows relevant to the task.
 
-Primary entry points are `lib/features/connection/models/connection.dart`,
-`lib/features/connection/viewmodels/connection_viewmodel.dart`,
-`lib/features/connection/views/add_edit_screen.dart`,
-`lib/features/terminal/viewmodels/terminal_session_viewmodel.dart`,
-`lib/features/terminal/viewmodels/terminal_history_viewmodel.dart`,
-`lib/features/terminal/viewmodels/terminal_windows_viewmodel.dart`,
-`lib/features/home/views/home_screen.dart` (along with its `widgets/` part files), and `lib/features/terminal/views/terminal_screen.dart` with
-their `widgets/` part files.
+| Task | Start with | Additional reference |
+| --- | --- | --- |
+| Architecture, MVVM, storage | Owning `lib/features/` code, `lib/data/`, `lib/services/storage_service.dart` | `docs/ADR_ENGINEERING_BASELINE.md` |
+| Startup or service lifetime | `lib/features/startup/`, `lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
+| SSH, terminal, host keys | `lib/features/connection/`, `lib/features/terminal/`, SSH services | `docs/security_manual_regression.md` |
+| SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
+| AI chat, tools, plans, MCP | `lib/features/ai_chat/`, `lib/services/ai_tool*`, `lib/services/mcp/` | `docs/AGENT_RUN_TRACE.md`, `docs/security_manual_regression.md` |
+| Monitoring or system admin | `lib/features/performance/`, `lib/features/system_admin/` | `docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
+| LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |
+| Shared UI or responsiveness | `lib/theme/app_theme.dart`, `lib/widgets/app_surface.dart`, `lib/utils/responsive.dart` | `docs/MOBILE_UI_QA.md` |
+| Build, release, packaging | Platform directory and `scripts/` | `docs/RELEASE_CHECKLIST.md`, `docs/VALIDATION_REPORT.md` |
+| Matching recurring regression | Nearest code and focused tests | `.agents/skills/ssh-mobile-maintenance/references/lessons.md` |
 
-- Keep saved-connection CRUD, validation, and verify-before-save flow in
-  `ConnectionViewModel` plus repository/service seams rather than burying that
-  logic in page widgets.
-- Terminal session, history, and window orchestration belongs respectively in
-  `TerminalSessionViewModel`, `TerminalHistoryViewModel`, and
-  `TerminalWindowsViewModel` with `SshService`; keep screen state limited to
-  layout, route args, and short-lived UI affordances.
-- Windows terminal input uses one shared multiline command draft across the
-  inline composer and advanced keyboard. Preserve IME composition, local sent
-  command history, empty-draft terminal key forwarding, and xterm bracketed
-  paste submission for complex commands.
-- Keep advanced terminal keys data-driven across QWERTY, Shell-symbol,
-  navigation, and F1-F12 layers. Route Shift/Ctrl/Alt combinations through
-  xterm key input, preserve one-shot and locked modifier states, and persist
-  user-selected quick-bar keys through app backup and restore.
-- Advanced keyboard rows must fit the available width without horizontal
-  scrolling. Preserve staggered physical-QWERTY alignment, proportional
-  modifier/space keys, modern rounded keycap surface hierarchy, fitted labels,
-  and narrow-screen overflow coverage.
-- Window names stay stable because they bind tmux or plain-session restoration
-  state.
+## Validation
 
+<<<<<<< HEAD
 ### LLM Chat and Tools
 
 Primary entry points are `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart`
@@ -474,3 +418,17 @@ was already built.
   needs to change. When citing entry points, prefer the current
   `lib/features/*` ViewModel/view path plus the coordinating screen/service over
   older screen-only descriptions.
+=======
+- Format changed Dart files and run targeted `flutter analyze` plus the closest
+  tests during the edit loop.
+- Broaden to the full gate in `AGENTS.md` when changing shared infrastructure,
+  protocols, persistence, security boundaries, generated models, or platform
+  configuration.
+- Regenerate and verify committed generated output after Drift or other codegen
+  input changes.
+- Resolve SDKs and toolchains from `PATH` or standard environment variables;
+  never record machine-local absolute paths.
+- After editing this skill, run
+  `powershell -ExecutionPolicy Bypass -File .\scripts\sync_agent_skills.ps1 -Mode Check`.
+  Use a restore mode only when the check reports a missing or divergent copy.
+>>>>>>> 48c06d47d96beeaa989fc2e41c8fb085bab717c0

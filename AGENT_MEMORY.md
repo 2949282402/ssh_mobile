@@ -2,82 +2,64 @@
 
 > 最新更新时间：2026-08-03
 
-This file is shared durable project memory for Codex and Claude Code. It is a
-repository file, not live model memory: both agents must read and update it when
-project-level decisions, recurring pitfalls, or maintenance notes should survive
-across sessions.
+This is the small durable memory shared by Codex and Claude Code. It records
+current, non-obvious decisions that are expensive to rediscover from a single
+file. It is not a changelog, architecture guide, test report, or feature list.
 
-## Rules
+## Maintenance
 
-- Read this file before non-trivial code, documentation, or skill changes.
-- Add concise dated notes for durable decisions and recurring project lessons.
-- Prefer updating or replacing stale notes over appending duplicates.
-- Do not store secrets, private keys, passwords, API keys, tokens, host
-  credentials, or user-private data here.
-- Do not store machine-local absolute SDK, toolchain, or resource paths here;
-  use environment variables, discovery commands, or repo-relative paths.
-- Keep notes short enough that agents can load the whole file without wasting
-  context.
+- Read this file before non-trivial repository work.
+- Replace or merge stale decisions instead of appending chronological notes.
+- Keep implementation detail in code/tests and stable policy in `AGENTS.md`,
+  the maintenance skill, ADRs, or focused docs.
+- Never store secrets, user-private data, machine-local paths, temporary test
+  results, completed migration phases, or claims such as "100% tests pass".
 
-## Notes
-- 2026-07-29: The supported Relay production deployment is
-  `relay/compose.yaml` with Caddy. Documentation exposes one attached
-  `docker compose --env-file .env up --build` command so startup and the
-  combined `relay`/`caddy` logs share one invocation; do not restore direct Go
-  or standalone `docker run` deployment instructions.
+## Durable Decisions
 
-- 2026-07-28: The cross-platform network foundation includes the native Tokio
-  runtime, versioned Protobuf FFI, same-socket STUN discovery, authenticated
-  hole-punch packets, peer-identity-bound Quinn handshakes, verified streaming
-  file transfer, a Go enroll/WSS relay, and the Flutter transport abstraction.
-  Native command dispatch now executes configuration, peer registration,
-  PathManager selection, QUIC connect/send/cancel/approval, and current-protocol
-  Relay send/receive. `LanShareViewModel` file sends must use the injected
-  `TransferTransport`; do not restore the old HTTPS file-send fallback.
+### Runtime ownership
 
-- 2026-07-28: Native Relay configuration is a separate current-protocol command
-  sent after enrollment. The coordinator gives the Rust runtime the in-memory
-  credential and Ed25519 seed, and only one Relay socket may own a device ID.
-  Incoming QUIC and Relay offers require root-level explicit approval; Relay
-  bytes remain AES-GCM ciphertext at the Go service and completion is reported
-  only after receiver persistence plus `complete_ack`.
+- Startup is intentionally lazy. Bootstrap loads preferences and storage;
+  feature scopes own heavy ViewModels. `SshService.ensureInitialized()` gates
+  SSH runtime work, `AiChatRuntimeFactory` owns the view-scoped chat runtime,
+  and `LanReceiverCoordinator` exposes exactly one receiver-owned
+  `LanShareViewModel` to the LAN page and pairing/chat routes.
+- `StorageService.appDatabase` may be requested before async initialization.
+  It must own one cached database instance, concurrent `init()` calls must share
+  one future, Drift setup must reuse that instance, and log database binding
+  must finish before storage reports readiness.
+- During active development Drift remains one current schema at version 1.
+  Schema changes regenerate `app_database.g.dart` and may require deleting the
+  local development database; do not add compatibility migrations without an
+  explicit release requirement.
 
-- 2026-07-28: The memory-only Go relay requires explicit enrollment, credential
-  signing, and dashboard admin secrets and rejects weak/missing configuration.
-  Device credentials are accepted only while the matching enrollment exists in
-  the current process; restart requires re-enrollment. A client is connected
-  only after validating `ready` protocol v1. Forwarded transfer controls bind
-  the authenticated `sender_id`, roles are enforced per session, and success
-  requires the receiver's `complete_ack`. Re-enrollment and revocation close
-  the old socket and purge its sessions. Dashboard data must use safe DOM APIs,
-  authenticated HttpOnly-cookie sessions, and no inline script.
+### AI and security
 
-- 2026-07-28: During active development the Drift database uses one current
-  schema (`schemaVersion = 1`) with no upgrade/migration machinery. Schema
-  changes require deleting the local development database and regenerating
-  `app_database.g.dart`; do not add compatibility migrations until release
-  requirements explicitly change.
+- Tool visibility is an execution boundary, not only a model hint. Hidden tools
+  must never reach approval, execution, cache, loop-guard, or budget paths.
+  Connection requirements and execution-plan step gates are enforced again at
+  execution time.
+- Approved plan actions must flow through `AiToolService.execute` (or the
+  equivalent provider path) so approval state cannot be bypassed. Default
+  planning persists chat-bound `todoSteps`; create a reusable Playbook only
+  when the user explicitly requests one.
+- The local MCP server is loopback-only and reuses `AiToolService`.
+  External write/destructive calls remain `approval_required`; this boundary is
+  locked and must reject stale or injected settings that attempt to disable it.
 
-- 2026-07-26: The optional `relay/` Go service is a memory-only WSS router for
-  explicit SFTP public-relay transfers. It must never persist frames, file
-  names, or file metadata. Flutter encrypts offers and 512 KiB data chunks
-  end-to-end; public relay transfers require a pinned peer X25519 key from an
-  authenticated LAN pairing and must never fall back to plaintext or LAN.
+### Network transfer
 
-- 2026-07-24: Developer Mode is a persisted setting. When enabled, the
-  Developer Panel provides runtime duration, RSS memory, rolling FPS/frame
-  statistics, jank count, build mode, platform, and Dart version; its floating
-  entry is controlled by a separate persisted preference.
+- LAN file sends use the injected `TransferTransport`; do not restore the
+  legacy HTTPS file-send fallback. Native commands/events are versioned, peer
+  identity and keys are pinned before connect, and success is reported only
+  after receiver persistence and acknowledgement.
+- Public relay frames remain memory-only and end-to-end encrypted. The only
+  supported production deployment is `relay/compose.yaml` with Caddy; clients
+  enroll explicitly, connect through HTTPS/WSS, and require receiver approval.
 
-- 2026-07-24: Refactored startup and service initialization architecture for
-  on-demand loading (`AppBootstrapCoordinator`, `LazyAiToolExecutor`,
-  `ConnectionRuntimeActions`, `LanReceiverCoordinator`, feature scopes).
-  Core startup loads preferences and storage without blocking `runApp()`.
-  `LanReceiverCoordinator` owns one global receiver and lazily exposes one
-  shared `LanShareViewModel` through `LanShareFeatureScope`; all SSH session
-  entry points share `SshService.ensureInitialized()`, and storage import
-  callbacks run exactly once and are awaited.
+### UI and performance
 
+<<<<<<< HEAD
 - 2026-07-17: LAN Quick Share pairing receivers initialize outside the
   deferred LAN page. QR scans and device-list taps emit the same short-lived
   invitation; QR URLs carry the stable device ID and native transfer port.
@@ -422,3 +404,13 @@ across sessions.
   its SFTP client is closed, but refreshes the current path when the session is
   still open. Keep UI retries on this state-aware path so connection failures
   do not silently call the no-op directory refresh path.
+=======
+- Primary workspaces reuse `AppPageSurface`, `AppPageHeader`, `AppSectionCard`,
+  `AppEmptyState`, and the shared server selector. `MobileUiMetrics` and
+  `AppBreakpoints` remain the sources for adaptive density and thresholds;
+  never scale the user's system text setting.
+- Terminal input keeps one multiline draft shared by the inline composer and
+  advanced keyboard. Preserve IME composition, bracketed-paste submission,
+  local command recall, direct terminal-key forwarding for an empty draft, and
+  non-scrolling keyboard rows that fit available width.
+>>>>>>> 48c06d47d96beeaa989fc2e41c8fb085bab717c0
