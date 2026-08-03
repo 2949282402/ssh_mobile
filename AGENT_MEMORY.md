@@ -99,6 +99,10 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   server list layout, SFTP limits, LAN identity/relay/permissions, and MCP
   lifecycle settings belong to their feature pages; AI Skills and MCP are
   linked from the AI LLM settings page.
+- 2026-08-03: `SftpViewModel` is provided from the application root so the
+  SFTP page, editor/viewer routes, and feature-owned settings routes share one
+  stable instance. Do not reintroduce a page-local SFTP provider around the
+  navigation shell.
 - 2026-07-15: Developer Log uses the shared page surface and switches its
   header actions below the title on narrow or high-text layouts; keep all
   selection/copy/delete behavior in `DeveloperLogViewModel`. The AI chat shell

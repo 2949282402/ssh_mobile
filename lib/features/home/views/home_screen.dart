@@ -29,7 +29,6 @@ import 'package:ssh_mobile/features/developer_log/views/developer_log_screen.dar
 import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import 'package:ssh_mobile/features/developer_panel/views/developer_panel_screen.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
-import 'package:ssh_mobile/features/sftp/sftp_feature_scope.dart';
 import 'package:ssh_mobile/features/system_admin/system_admin_feature_scope.dart';
 import 'package:ssh_mobile/features/lan_share/lan_share_feature_scope.dart';
 import 'package:ssh_mobile/features/home/views/widgets/home_navigation_semantics.dart';
@@ -609,7 +608,7 @@ class _HomeScreenState extends State<HomeScreen> {
             case _serverPage:
               return const ServerListPane();
             case _sftpPage:
-              return const SftpFeatureScope(child: SftpScreen());
+              return const SftpScreen();
             case _adminPage:
               return const SystemAdminFeatureScope(child: SystemAdminScreen());
             case _logPage:

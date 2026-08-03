@@ -12,7 +12,7 @@ import 'features/playbook/viewmodels/playbook_viewmodel.dart';
 import 'features/rag/viewmodels/rag_knowledge_viewmodel.dart';
 import 'features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
 import 'features/startup/viewmodels/startup_viewmodel.dart';
-import 'features/sftp/sftp_feature_scope.dart';
+import 'features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'features/lan_share/services/lan_receiver_coordinator.dart';
 import 'features/lan_share/views/lan_pairing_navigation_host.dart';
 import 'features/lan_share/views/network_incoming_transfer_host.dart';
@@ -118,6 +118,10 @@ Future<void> main() async {
             ),
             ChangeNotifierProvider(
               create: (context) => SftpService(context.read<StorageService>()),
+            ),
+            ChangeNotifierProvider(
+              create: (context) =>
+                  SftpViewModel(sftpService: context.read<SftpService>()),
             ),
             ChangeNotifierProvider(
               create: (context) => PerformanceMonitorService(
@@ -403,8 +407,7 @@ class _SshMobileAppState extends State<SshMobileApp>
                         );
                       case '/sftp':
                         return MaterialPageRoute(
-                          builder: (_) =>
-                              const SftpFeatureScope(child: SftpScreen()),
+                          builder: (_) => const SftpScreen(),
                         );
                       case '/performance':
                         return MaterialPageRoute(
