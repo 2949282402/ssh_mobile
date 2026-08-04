@@ -44,12 +44,15 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   planning persists chat-bound `todoSteps`; create a reusable Playbook only
   when the user explicitly requests one.
 - The local MCP server is loopback-only and reuses `AiToolService`. External
-  MCP calls default to `reviewConfiguredTools`, where only configured tools
-  with a dynamic approval request enter the in-memory queue; `trustedAgent`
-  may execute exposed tools directly. Both modes retain immutable target
-  binding, `ToolSecretPolicy`, hidden-tool rules, input validation, and
-  destructive-command blocking. The queue is cleared on policy/token/lifecycle
-  changes and is never persisted. Built-in Agent approvals are unaffected.
+  MCP calls default to `reviewConfiguredTools`, where only exposed tools
+  selected for review enter the in-memory queue when a dynamic approval request
+  exists; `trustedAgent` may execute exposed tools directly. Exposure is one
+  shared persisted set across both modes. Missing exposure preferences preserve
+  current hard-allowed tools; after an explicit change, new Tool names stay
+  unexposed until selected. Both modes retain immutable target binding,
+  `ToolSecretPolicy`, hidden-tool rules, input validation, and destructive-command
+  blocking. The queue is cleared on exposure/mode/review/token/lifecycle changes
+  and is never persisted. Built-in Agent approvals are unaffected.
 
 ### Network transfer
 

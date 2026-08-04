@@ -136,7 +136,7 @@ Important defaults:
 | Notification privacy | Hide server names | Prevents server names from appearing in background notifications by default. |
 | RAG | Disabled | Search mode defaults to BM25 with top-N set to 3. |
 | MCP server | Disabled | Configure from AI → LLM settings → Tools & Automation; binds only to loopback when enabled. |
-| MCP approval mode | Dangerous operations require review | Select `trustedAgent` only when external Agent automation is explicitly trusted; hard security checks remain active in both modes. |
+| MCP approval mode | Dangerous operations require review | Select `trustedAgent` only when external Agent automation is explicitly trusted; configure Tool exposure and review choices in the desktop Local MCP Console. Hard security checks remain active in both modes. |
 | SFTP download limit | 512 MB | Configure from the SFTP page; valid range is 64 KB to 2 GB. |
 | Text preview limit | 2 MB | Files above the limit require download. |
 | Rich preview limit | 20 MB | Applies to supported images and rich previews. |
@@ -186,7 +186,7 @@ Desktop builds can expose:
 http://127.0.0.1:<port>/mcp
 ```
 
-The MCP server uses a generated Bearer token and rejects unauthenticated and non-local requests. External MCP calls use one of two modes: `reviewConfiguredTools` (the default) sends only configured tools into the local approval queue when the dynamic risk check produces an approval request; `trustedAgent` executes exposed tools directly. Both modes retain input validation, target binding, secret filtering, sensitive-path blocking, and destructive-command restrictions. Approval requests and callbacks remain in memory, are cleared when the MCP server stops or policy changes, and are never persisted.
+The MCP server uses a generated Bearer token and rejects unauthenticated and non-local requests. External MCP calls use one of two modes: `reviewConfiguredTools` (the default) sends exposed, configured tools into the local approval queue when the dynamic risk check produces an approval request; `trustedAgent` executes exposed tools directly. The shared exposed Tool set is configured in the Windows/macOS Local MCP Console. Missing exposure preferences preserve the current behavior for existing hard-allowed tools; after an explicit exposure change, new Tool names remain unexposed until selected. Both modes retain input validation, target binding, secret filtering, sensitive-path blocking, and destructive-command restrictions. Approval requests and callbacks remain in memory, are cleared when the MCP server stops or policy changes, and are never persisted.
 
 From AI → LLM settings → Tools & Automation, open **MCP settings**. On Windows
 and macOS, that page can open the **Local MCP Console**.
@@ -197,8 +197,8 @@ local activity entries containing only timestamp, event type, method, tool
 name, outcome, policy reason, and duration. It never stores tokens, request
 arguments, tool output, client addresses, origins, remote-resource details, or
 raw exception text, and activity is excluded from backup export. The console
-shows the exposure state and default invocation action for each Tool. In review
-mode, configured tools pause the MCP request only when `approvalRequestFor`
+shows and edits the exposure state for each Tool, and shows the default invocation action. In review
+mode, exposed tools selected for review pause the MCP request only when `approvalRequestFor`
 returns a request; otherwise the call executes under the existing hard checks.
 In trusted mode, a bound approval request uses `executeApproved` directly and
 never enters the queue. If review is required but the queue is unavailable or

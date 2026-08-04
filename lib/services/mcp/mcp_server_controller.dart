@@ -32,6 +32,8 @@ class McpToolPolicySnapshot {
   final McpToolPolicyResult exposureResult;
   final McpInvocationAction invocationAction;
   final String reason;
+  final bool exposureConfigurable;
+  final bool reviewSelected;
   final bool reviewEligible;
 
   const McpToolPolicySnapshot({
@@ -43,6 +45,8 @@ class McpToolPolicySnapshot {
     required this.exposureResult,
     required this.invocationAction,
     required this.reason,
+    this.exposureConfigurable = false,
+    this.reviewSelected = false,
     this.reviewEligible = false,
   });
 
@@ -130,6 +134,8 @@ class McpServerController extends ChangeNotifier {
   bool _disposed = false;
   McpApprovalMode? _lastApprovalMode;
   Set<String> _lastSecondaryReviewTools = const {};
+  Set<String> _lastExposedTools = const {};
+  bool _lastExposureToolsConfigured = false;
   String _lastToken = '';
 
   McpServerController({
@@ -141,6 +147,8 @@ class McpServerController extends ChangeNotifier {
   }) : approvalQueue = approvalQueue ?? McpApprovalQueue() {
     _lastApprovalMode = appSettings.mcpApprovalMode;
     _lastSecondaryReviewTools = appSettings.mcpSecondaryReviewTools;
+    _lastExposedTools = appSettings.mcpExposedTools;
+    _lastExposureToolsConfigured = appSettings.mcpExposureToolsConfigured;
     _lastToken = appSettings.mcpServerToken;
     appSettings.addListener(_handleSettingsChanged);
   }
@@ -203,9 +211,9 @@ class McpServerController extends ChangeNotifier {
               reason: decision.result == McpToolPolicyResult.exposed
                   ? invocation.reason
                   : decision.reason,
-              reviewEligible:
-                  decision.result == McpToolPolicyResult.exposed &&
-                  _isReviewEligible(tool, annotations),
+              exposureConfigurable: decision.configurable,
+              reviewSelected: settings.secondaryReviewTools.contains(tool.name),
+              reviewEligible: _isReviewEligible(tool, annotations),
             );
           }(),
       ]..sort((a, b) => a.name.compareTo(b.name)),
@@ -226,13 +234,19 @@ class McpServerController extends ChangeNotifier {
   void _handleSettingsChanged() {
     final mode = appSettings.mcpApprovalMode;
     final tools = appSettings.mcpSecondaryReviewTools;
+    final exposedTools = appSettings.mcpExposedTools;
+    final exposureToolsConfigured = appSettings.mcpExposureToolsConfigured;
     final token = appSettings.mcpServerToken;
     final changed =
         mode != _lastApprovalMode ||
         !_setEquals(tools, _lastSecondaryReviewTools) ||
+        exposureToolsConfigured != _lastExposureToolsConfigured ||
+        !_setEquals(exposedTools, _lastExposedTools) ||
         token != _lastToken;
     _lastApprovalMode = mode;
     _lastSecondaryReviewTools = tools;
+    _lastExposedTools = exposedTools;
+    _lastExposureToolsConfigured = exposureToolsConfigured;
     _lastToken = token;
     if (changed) rejectPendingApprovalsForPolicyChange();
     _notify();

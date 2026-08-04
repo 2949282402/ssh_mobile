@@ -141,17 +141,22 @@ and its focused extensions, `lib/features/ai_chat/services/`,
   Flutter/Dart, not native runners. It binds only to local hosts, serves
   Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in secure
   storage, and reuses `AiToolService` through separate exposure and invocation
-  policies. The default `reviewConfiguredTools` mode queues only configured
-  tools when `approvalRequestFor` produces a dynamic request; `trustedAgent`
-  directly executes exposed calls. Bound direct calls still use
+  policies. The default `reviewConfiguredTools` mode queues only exposed tools
+  selected for review when `approvalRequestFor` produces a dynamic request;
+  `trustedAgent` directly executes exposed calls. The shared exposed set is
+  persisted across both modes; missing preferences preserve current hard-allowed
+  tools, while new Tool names stay unexposed after an explicit exposure change.
+  Bound direct calls still use
   `executeApproved`, and both modes retain hidden-tool, target-binding,
   `ToolSecretPolicy`, input-validation, sensitive-path, and destructive-command
-  safeguards. The in-memory `McpApprovalQueue` is cleared on policy, token, or
-  server lifecycle changes and is never persisted.
+  safeguards. The in-memory `McpApprovalQueue` is cleared on exposure, policy,
+  token, or server lifecycle changes and is never persisted.
 - The Windows/macOS-only console is the `mcp_console` feature. Keep status, port
   checks, loopback authenticated self-tests, configuration copying, policy
   snapshots, redacted local activity, and the dedicated approval queue page
-  under this feature. MCP activity is capped at 500 Drift records and must
+  under this feature. The console is the only UI for per-Tool exposure and
+  review configuration; hard-hidden and blocked rows remain disabled. MCP
+  activity is capped at 500 Drift records and must
   never include tokens, request arguments, tool output, peer/origin data,
   remote-resource details, or raw exceptions; it is not a backup-export
   payload. Approval previews must use the existing `AiToolApprovalRequest`

@@ -128,6 +128,50 @@ void main() {
     expect(executed, isFalse);
     expect(queue.pending, isEmpty);
   });
+
+  test('exposure changes reject pending external approvals', () async {
+    SharedPreferences.setMockInitialValues({
+      'lan_device_id': 'test-device',
+      'lan_device_alias': 'Test device',
+    });
+    final settings = AppSettings();
+    await settings.init();
+    final queue = McpApprovalQueue();
+    final controller = McpServerController(
+      appSettings: settings,
+      toolServiceFactory: _FakeToolExecutor.new,
+      approvalQueue: queue,
+    );
+    addTearDown(() {
+      controller.dispose();
+      settings.dispose();
+    });
+
+    var executed = false;
+    final pending = queue.enqueue(
+      request: const AiToolApprovalRequest(
+        toolName: 'run_command',
+        approvalType: 'remote_write',
+        connectionId: 'server-1',
+        connectionName: 'Test server',
+        command: 'uptime',
+        reason: 'test',
+      ),
+      executeApproved: () async {
+        executed = true;
+        return 'executed';
+      },
+    );
+    await _waitFor(() => queue.pending.isNotEmpty);
+
+    final exposureChange = settings.setMcpExposedTools({'list_servers'});
+    await queue.approve(queue.pending.single.id);
+    await exposureChange;
+
+    expect(await pending, contains('approval_rejected'));
+    expect(executed, isFalse);
+    expect(queue.pending, isEmpty);
+  });
 }
 
 Future<void> _waitFor(bool Function() condition) async {

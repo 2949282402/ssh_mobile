@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../../services/app_settings.dart';
 import '../../../services/mcp/mcp_invocation_policy.dart';
 import '../../../services/mcp/mcp_server_controller.dart';
+import '../../../services/mcp/mcp_server_settings.dart';
 import '../../../services/mcp/mcp_tool_exposure_policy.dart';
 import '../../../widgets/app_surface.dart';
 import 'mcp_approval_queue_screen.dart';
@@ -337,29 +341,26 @@ class _ToolsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = AppStrings(viewModel.language);
+    final reviewMode =
+        viewModel.approvalMode == McpApprovalMode.reviewConfiguredTools;
     return AppSectionCard(
-      title: english ? 'Tool exposure' : '工具暴露策略',
+      title: strings.mcpToolPolicyTitle,
+      subtitle: strings.mcpToolPolicyHint,
       child: viewModel.tools.isEmpty
-          ? Text(english ? 'No tools available.' : '没有可用工具。')
+          ? Text(strings.mcpNoConfigurableTools)
           : Column(
               children: [
                 for (final tool in viewModel.tools)
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      tool.destructive
-                          ? Icons.warning_amber_rounded
-                          : tool.readOnly
-                          ? Icons.visibility_outlined
-                          : Icons.build_outlined,
+                  _ToolPolicyRow(
+                    tool: tool,
+                    strings: strings,
+                    reviewMode: reviewMode,
+                    onExposureChanged: (enabled) => unawaited(
+                      viewModel.setToolExposure(tool.name, enabled),
                     ),
-                    title: Text(tool.name),
-                    subtitle: Text(tool.descriptionFor(english)),
-                    trailing: _PolicyChip(
-                      exposureResult: tool.exposureResult,
-                      invocationAction: tool.invocationAction,
-                      english: english,
+                    onReviewChanged: (enabled) => unawaited(
+                      viewModel.setToolSecondaryReview(tool.name, enabled),
                     ),
                   ),
               ],
@@ -368,15 +369,172 @@ class _ToolsCard extends StatelessWidget {
   }
 }
 
+class _ToolPolicyRow extends StatelessWidget {
+  final McpToolPolicySnapshot tool;
+  final AppStrings strings;
+  final bool reviewMode;
+  final ValueChanged<bool> onExposureChanged;
+  final ValueChanged<bool> onReviewChanged;
+
+  const _ToolPolicyRow({
+    required this.tool,
+    required this.strings,
+    required this.reviewMode,
+    required this.onExposureChanged,
+    required this.onReviewChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final exposed = tool.exposureResult == McpToolPolicyResult.exposed;
+    final details = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(
+            tool.destructive
+                ? Icons.warning_amber_rounded
+                : tool.readOnly
+                ? Icons.visibility_outlined
+                : Icons.build_outlined,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                tool.name,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 3),
+              Text(tool.descriptionFor(strings.isEnglish)),
+              const SizedBox(height: 5),
+              _PolicyChip(
+                exposureResult: tool.exposureResult,
+                invocationAction: tool.invocationAction,
+                reason: tool.reason,
+                strings: strings,
+              ),
+              if (!tool.exposureConfigurable &&
+                  tool.exposureResult != McpToolPolicyResult.exposed) ...[
+                const SizedBox(height: 3),
+                Text(
+                  strings.mcpHardBoundaryHint,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+
+    final controls = Wrap(
+      spacing: 10,
+      runSpacing: 4,
+      children: [
+        _ToolCheckbox(
+          key: ValueKey('mcp-exposure-${tool.name}'),
+          label: strings.mcpExposeExternally,
+          value: exposed,
+          enabled: tool.exposureConfigurable,
+          onChanged: onExposureChanged,
+        ),
+        if (reviewMode && tool.reviewEligible)
+          _ToolCheckbox(
+            key: ValueKey('mcp-review-${tool.name}'),
+            label: strings.mcpSecondaryReview,
+            value: tool.reviewSelected,
+            enabled: exposed && tool.exposureConfigurable,
+            onChanged: onReviewChanged,
+          ),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = constraints.maxWidth >= 720;
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          child: wide
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: details),
+                    const SizedBox(width: 16),
+                    controls,
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    details,
+                    const SizedBox(height: 5),
+                    Align(alignment: Alignment.centerRight, child: controls),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+}
+
+class _ToolCheckbox extends StatelessWidget {
+  final String label;
+  final bool value;
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  const _ToolCheckbox({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: label,
+      checked: value,
+      enabled: enabled,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Checkbox(
+            value: value,
+            onChanged: enabled
+                ? (next) {
+                    if (next != null) onChanged(next);
+                  }
+                : null,
+          ),
+          Flexible(child: Text(label)),
+        ],
+      ),
+    );
+  }
+}
+
 class _PolicyChip extends StatelessWidget {
   final McpToolPolicyResult exposureResult;
   final McpInvocationAction invocationAction;
-  final bool english;
+  final String reason;
+  final AppStrings strings;
 
   const _PolicyChip({
     required this.exposureResult,
     required this.invocationAction,
-    required this.english,
+    required this.reason,
+    required this.strings,
   });
 
   @override
@@ -384,10 +542,13 @@ class _PolicyChip extends StatelessWidget {
     final label = switch (exposureResult) {
       McpToolPolicyResult.exposed =>
         invocationAction == McpInvocationAction.secondaryApproval
-            ? (english ? 'Secondary review' : '需要二次审核')
-            : (english ? 'Executable' : '可直接执行'),
-      McpToolPolicyResult.hidden => english ? 'Hidden' : '隐藏',
-      McpToolPolicyResult.blocked => english ? 'Blocked' : '已阻断',
+            ? strings.mcpSecondaryReview
+            : strings.mcpExecutable,
+      McpToolPolicyResult.hidden =>
+        reason == 'not_exposed_by_user'
+            ? strings.mcpNotExposed
+            : strings.mcpHidden,
+      McpToolPolicyResult.blocked => strings.mcpBlocked,
     };
     return Chip(label: Text(label, style: const TextStyle(fontSize: 11)));
   }

@@ -22,6 +22,8 @@ class McpServerSettings {
   final String token;
   final McpApprovalMode approvalMode;
   final Set<String> _secondaryReviewTools;
+  final Set<String> _exposedTools;
+  final bool exposureToolsConfigured;
   final bool enableSse;
 
   const McpServerSettings({
@@ -32,12 +34,15 @@ class McpServerSettings {
     this.approvalMode = McpApprovalMode.reviewConfiguredTools,
     Set<String> secondaryReviewTools =
         McpInvocationPolicy.defaultSecondaryReviewTools,
+    Set<String> exposedTools = const {},
+    this.exposureToolsConfigured = false,
     this.enableSse = false,
     // Kept only so older callers can migrate without a breaking constructor
     // change. These values are intentionally ignored by all new policy code.
     @Deprecated('Use approvalMode instead') bool? allowWriteTools,
     @Deprecated('Use approvalMode instead') bool? requireApprovalForWriteTools,
-  }) : _secondaryReviewTools = secondaryReviewTools;
+  }) : _secondaryReviewTools = secondaryReviewTools,
+       _exposedTools = exposedTools;
 
   String get url => 'http://$host:$port/mcp';
   bool get hasToken => token.trim().isNotEmpty;
@@ -45,6 +50,11 @@ class McpServerSettings {
   bool get hasValidPort => isValidPort(port);
   Set<String> get secondaryReviewTools =>
       Set.unmodifiable(_secondaryReviewTools);
+  Set<String> get exposedTools => Set.unmodifiable(_exposedTools);
+
+  bool isToolExposed(String toolName) {
+    return !exposureToolsConfigured || _exposedTools.contains(toolName);
+  }
 
   @Deprecated('Use approvalMode and secondaryReviewTools instead')
   bool get allowWriteTools => true;
@@ -60,6 +70,8 @@ class McpServerSettings {
     String? token,
     McpApprovalMode? approvalMode,
     Set<String>? secondaryReviewTools,
+    Set<String>? exposedTools,
+    bool? exposureToolsConfigured,
     bool? enableSse,
     @Deprecated('Use approvalMode instead') bool? allowWriteTools,
     @Deprecated('Use approvalMode instead') bool? requireApprovalForWriteTools,
@@ -71,6 +83,9 @@ class McpServerSettings {
       token: token ?? this.token,
       approvalMode: approvalMode ?? this.approvalMode,
       secondaryReviewTools: secondaryReviewTools ?? this.secondaryReviewTools,
+      exposedTools: exposedTools ?? this.exposedTools,
+      exposureToolsConfigured:
+          exposureToolsConfigured ?? this.exposureToolsConfigured,
       enableSse: enableSse ?? this.enableSse,
     );
   }

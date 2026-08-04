@@ -7,24 +7,18 @@ import '../../../services/mcp/mcp_config_templates.dart';
 import '../../../services/mcp/mcp_port_probe.dart';
 import '../../../services/mcp/mcp_server_controller.dart';
 import '../../../services/mcp/mcp_server_settings.dart';
-import '../../../services/mcp/mcp_tool_exposure_policy.dart';
 
 class McpSettingsViewModel extends ChangeNotifier {
   final AppSettings appSettings;
   final McpServerController controller;
-  List<McpToolPolicySnapshot> _toolPolicies = const [];
-  bool _loadingToolPolicies = false;
-  bool _disposed = false;
 
   McpSettingsViewModel({required this.appSettings, required this.controller}) {
     appSettings.addListener(_notify);
     controller.addListener(_notify);
-    unawaited(_reloadToolPolicies());
   }
 
   @override
   void dispose() {
-    _disposed = true;
     appSettings.removeListener(_notify);
     controller.removeListener(_notify);
     super.dispose();
@@ -37,14 +31,6 @@ class McpSettingsViewModel extends ChangeNotifier {
   McpPortProbeResult? get lastPortProbe => controller.lastPortProbeResult;
   McpApprovalMode get approvalMode => settings.approvalMode;
   Set<String> get secondaryReviewTools => settings.secondaryReviewTools;
-  List<McpToolPolicySnapshot> get secondaryReviewToolOptions =>
-      List.unmodifiable(
-        _toolPolicies.where(
-          (tool) =>
-              tool.exposureResult == McpToolPolicyResult.exposed &&
-              tool.reviewEligible,
-        ),
-      );
   String get maskedToken {
     final token = appSettings.mcpServerToken;
     if (token.length <= 8) return '••••••••';
@@ -88,17 +74,5 @@ class McpSettingsViewModel extends ChangeNotifier {
 
   void _notify() {
     notifyListeners();
-    unawaited(_reloadToolPolicies());
-  }
-
-  Future<void> _reloadToolPolicies() async {
-    if (_loadingToolPolicies) return;
-    _loadingToolPolicies = true;
-    try {
-      _toolPolicies = await controller.loadToolPolicySnapshot();
-    } finally {
-      _loadingToolPolicies = false;
-      if (!_disposed) notifyListeners();
-    }
   }
 }

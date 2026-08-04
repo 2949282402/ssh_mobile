@@ -312,6 +312,57 @@ void main() {
       },
     );
 
+    test(
+      'unexposed tools are omitted from list and rejected before approval',
+      () async {
+        final queue = McpApprovalQueue();
+        final executor = _FakeToolExecutor();
+        const settings = McpServerSettings(
+          token: 'secret',
+          exposedTools: {'list_servers'},
+          exposureToolsConfigured: true,
+        );
+        final handler = McpToolHandler(
+          aiToolService: executor,
+          settingsProvider: () => settings,
+          approvalQueue: queue,
+        );
+
+        final listed = await handler.handle(
+          const McpJsonRpcRequest(
+            id: 'list-unexposed',
+            hasId: true,
+            method: 'tools/list',
+          ),
+        );
+        final names = (listed.result! as Map)['tools'] as List;
+        expect(names.map((tool) => tool['name']), contains('list_servers'));
+        expect(
+          names.map((tool) => tool['name']),
+          isNot(contains('run_command')),
+        );
+
+        final called = await handler.handle(
+          const McpJsonRpcRequest(
+            id: 'call-unexposed',
+            hasId: true,
+            method: 'tools/call',
+            params: {
+              'name': 'run_command',
+              'arguments': {'connectionId': 'server-1', 'command': 'uptime'},
+            },
+          ),
+        );
+        final result = called.result! as Map;
+        expect(result['isError'], isTrue);
+        expect(result['content'][0]['text'], contains('tool_not_available'));
+        expect(result['content'][0]['text'], contains('not_exposed_by_user'));
+        expect(queue.pending, isEmpty);
+        expect(executor.executedTools, isNot(contains('run_command')));
+        queue.dispose();
+      },
+    );
+
     test('GET /mcp returns 405', () async {
       final request = await client.getUrl(
         Uri.parse('http://127.0.0.1:${server.port}/mcp'),

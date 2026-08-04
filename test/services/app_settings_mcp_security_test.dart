@@ -24,6 +24,8 @@ void main() {
         settings.mcpSecondaryReviewTools,
         McpInvocationPolicy.defaultSecondaryReviewTools,
       );
+      expect(settings.mcpExposureToolsConfigured, isFalse);
+      expect(settings.mcpExposedTools, isEmpty);
 
       final preferences = await SharedPreferences.getInstance();
       expect(
@@ -51,4 +53,55 @@ void main() {
       'z_tool',
     ]);
   });
+
+  test(
+    'exposure set persists sorted names, unknown names, and empty values',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = AppSettings();
+      addTearDown(settings.dispose);
+
+      await settings.ensureCoreLoaded();
+      await settings.setMcpExposedTools({'z_tool', 'future_tool', 'a_tool'});
+
+      expect(settings.mcpExposureToolsConfigured, isTrue);
+      expect(settings.mcpExposedTools, {'a_tool', 'future_tool', 'z_tool'});
+      final preferences = await SharedPreferences.getInstance();
+      expect(preferences.getStringList('mcp_exposed_tools'), [
+        'a_tool',
+        'future_tool',
+        'z_tool',
+      ]);
+
+      await settings.setMcpExposedTools({});
+      expect(settings.mcpExposedTools, isEmpty);
+      expect(preferences.getStringList('mcp_exposed_tools'), isEmpty);
+    },
+  );
+
+  test(
+    'first exposure toggle materializes current tools and hides future tools',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = AppSettings();
+      addTearDown(settings.dispose);
+
+      await settings.ensureCoreLoaded();
+      await settings.setMcpToolExposure(
+        'run_command',
+        false,
+        availableToolNames: {'list_servers', 'run_command'},
+      );
+
+      expect(settings.mcpExposureToolsConfigured, isTrue);
+      expect(settings.mcpExposedTools, {'list_servers'});
+      expect(settings.mcpSettings.isToolExposed('new_tool'), isFalse);
+
+      final restored = AppSettings();
+      addTearDown(restored.dispose);
+      await restored.ensureCoreLoaded();
+      expect(restored.mcpExposedTools, {'list_servers'});
+      expect(restored.mcpExposureToolsConfigured, isTrue);
+    },
+  );
 }

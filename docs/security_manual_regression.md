@@ -57,6 +57,8 @@ and server details, then mark each scenario pass/fail with notes.
 | SFTP AI read/download secret path | Blocked before execution |  |  |
 | External MCP in `reviewConfiguredTools` with a configured risky Tool | Enters approval queue only when dynamic approval request exists |  |  |
 | External MCP in `reviewConfiguredTools` with an unconfigured Tool | Executes only after hard checks; no queue entry |  |  |
+| External MCP Tool not selected for exposure | Omitted from `tools/list`; known-name `tools/call` is denied before approval or execution |  |  |
+| Local MCP Console exposure change | Takes effect without server restart and rejects pending MCP approvals |  |  |
 | External MCP in `trustedAgent` with a bound target | Executes through target-bound `executeApproved`; queue remains empty |  |  |
 | Switching MCP mode or regenerating Token with pending approvals | All pending requests rejected; none auto-execute |  |  |
 | Unknown host key from AI tool path | Not auto-trusted |  |  |

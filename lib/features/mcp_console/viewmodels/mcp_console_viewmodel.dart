@@ -7,6 +7,7 @@ import '../../../services/mcp/mcp_activity.dart';
 import '../../../services/mcp/mcp_approval_queue.dart';
 import '../../../services/mcp/mcp_config_templates.dart';
 import '../../../services/mcp/mcp_server_controller.dart';
+import '../../../services/mcp/mcp_server_settings.dart';
 
 class McpConsoleViewModel extends ChangeNotifier {
   final McpServerController _controller;
@@ -18,12 +19,14 @@ class McpConsoleViewModel extends ChangeNotifier {
   McpActivityOutcome? _selectedOutcome;
   McpSelfTestResult? _lastSelfTest;
   bool _loading = true;
+  bool _loadingPolicies = false;
   bool _runningAction = false;
   String? _errorCode;
 
   McpConsoleViewModel(this._controller, this._appSettings)
     : _approvalQueue = _controller.approvalQueue {
     _controller.addListener(_onControllerChanged);
+    _appSettings.addListener(_onSettingsChanged);
     _approvalQueue.addListener(_onApprovalQueueChanged);
     unawaited(refresh());
   }
@@ -31,6 +34,7 @@ class McpConsoleViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _controller.removeListener(_onControllerChanged);
+    _appSettings.removeListener(_onSettingsChanged);
     _approvalQueue.removeListener(_onApprovalQueueChanged);
     super.dispose();
   }
@@ -38,6 +42,8 @@ class McpConsoleViewModel extends ChangeNotifier {
   McpServerStatusSnapshot get status => _controller.snapshot;
   AppLanguage get language => _appSettings.language;
   bool get isEnglish => language == AppLanguage.en;
+  McpApprovalMode get approvalMode => _appSettings.mcpApprovalMode;
+  bool get exposureToolsConfigured => _appSettings.mcpExposureToolsConfigured;
   bool get loading => _loading;
   bool get runningAction => _runningAction;
   String? get errorCode => _errorCode;
@@ -104,6 +110,29 @@ class McpConsoleViewModel extends ChangeNotifier {
 
   void reject(String id) => _approvalQueue.reject(id);
 
+  Future<void> setToolExposure(String toolName, bool exposed) async {
+    await _appSettings.setMcpToolExposure(
+      toolName,
+      exposed,
+      availableToolNames: {
+        for (final tool in _tools)
+          if (tool.exposureConfigurable) tool.name,
+      },
+    );
+    await _reloadPolicies();
+  }
+
+  Future<void> setToolSecondaryReview(String toolName, bool enabled) async {
+    final next = Set<String>.of(_appSettings.mcpSecondaryReviewTools);
+    if (enabled) {
+      next.add(toolName);
+    } else {
+      next.remove(toolName);
+    }
+    await _appSettings.setMcpSecondaryReviewTools(next);
+    await _reloadPolicies();
+  }
+
   Future<void> _runAction(Future<dynamic> Function() action) async {
     if (_runningAction) return;
     _runningAction = true;
@@ -125,7 +154,25 @@ class McpConsoleViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _onSettingsChanged() {
+    notifyListeners();
+    unawaited(_reloadPolicies());
+  }
+
   void _onApprovalQueueChanged() {
     notifyListeners();
+  }
+
+  Future<void> _reloadPolicies() async {
+    if (_loadingPolicies) return;
+    _loadingPolicies = true;
+    try {
+      _tools = await _controller.loadToolPolicySnapshot();
+    } catch (_) {
+      _errorCode ??= 'load_failed';
+    } finally {
+      _loadingPolicies = false;
+      notifyListeners();
+    }
   }
 }

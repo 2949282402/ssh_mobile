@@ -9,12 +9,14 @@ class McpToolPolicyDecision {
   final String reason;
   final String approvalType;
   final bool destructive;
+  final bool configurable;
 
   const McpToolPolicyDecision({
     required this.result,
     required this.reason,
     this.approvalType = 'mcp_write_tool',
     this.destructive = false,
+    this.configurable = false,
   });
 
   bool get canList => result == McpToolPolicyResult.exposed;
@@ -54,12 +56,22 @@ class McpToolExposurePolicy {
       );
     }
 
+    if (settings.exposureToolsConfigured &&
+        !settings.exposedTools.contains(tool.name)) {
+      return const McpToolPolicyDecision(
+        result: McpToolPolicyResult.hidden,
+        reason: 'not_exposed_by_user',
+        configurable: true,
+      );
+    }
+
     final destructive = _isDestructive(tool);
     return McpToolPolicyDecision(
       result: McpToolPolicyResult.exposed,
       reason: 'exposed',
       approvalType: _approvalTypeFor(tool),
       destructive: destructive,
+      configurable: true,
     );
   }
 

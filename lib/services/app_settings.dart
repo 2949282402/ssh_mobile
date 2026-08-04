@@ -64,6 +64,7 @@ class AppSettings extends ChangeNotifier {
   static const _mcpServerPortKey = 'mcp_server_port';
   static const _mcpApprovalModeKey = 'mcp_approval_mode';
   static const _mcpSecondaryReviewToolsKey = 'mcp_secondary_review_tools';
+  static const _mcpExposedToolsKey = 'mcp_exposed_tools';
   // Legacy keys remain readable for compatibility, but are never written or
   // used as security decisions.
   static const _mcpAllowWriteToolsKey = 'mcp_allow_write_tools';
@@ -106,6 +107,8 @@ class AppSettings extends ChangeNotifier {
   Set<String> _mcpSecondaryReviewTools = Set.unmodifiable(
     McpInvocationPolicy.defaultSecondaryReviewTools,
   );
+  Set<String> _mcpExposedTools = const {};
+  bool _mcpExposureToolsConfigured = false;
   bool _mcpEnableSse = false;
   bool _oledDark = false;
   AppColorPalette _colorPalette = AppColorPalette.monochrome;
@@ -163,6 +166,8 @@ class AppSettings extends ChangeNotifier {
   McpApprovalMode get mcpApprovalMode => _mcpApprovalMode;
   Set<String> get mcpSecondaryReviewTools =>
       Set.unmodifiable(_mcpSecondaryReviewTools);
+  Set<String> get mcpExposedTools => Set.unmodifiable(_mcpExposedTools);
+  bool get mcpExposureToolsConfigured => _mcpExposureToolsConfigured;
   bool get mcpEnableSse => _mcpEnableSse;
   bool get oledDark => _oledDark;
   AppColorPalette get colorPalette => _colorPalette;
@@ -178,6 +183,8 @@ class AppSettings extends ChangeNotifier {
     token: _mcpServerToken,
     approvalMode: _mcpApprovalMode,
     secondaryReviewTools: _mcpSecondaryReviewTools,
+    exposedTools: _mcpExposedTools,
+    exposureToolsConfigured: _mcpExposureToolsConfigured,
     enableSse: _mcpEnableSse,
   );
 
@@ -247,6 +254,15 @@ class AppSettings extends ChangeNotifier {
                   .map((tool) => tool.trim())
                   .where((tool) => tool.isNotEmpty),
             );
+      final storedExposedTools = prefs.getStringList(_mcpExposedToolsKey);
+      _mcpExposureToolsConfigured = storedExposedTools != null;
+      _mcpExposedTools = storedExposedTools == null
+          ? const {}
+          : Set.unmodifiable(
+              storedExposedTools
+                  .map((tool) => tool.trim())
+                  .where((tool) => tool.isNotEmpty),
+            );
       _mcpEnableSse = prefs.getBool(_mcpEnableSseKey) ?? false;
       _oledDark = prefs.getBool(_oledDarkKey) ?? false;
       final colorPaletteName = prefs.getString(_colorPaletteKey);
@@ -297,6 +313,8 @@ class AppSettings extends ChangeNotifier {
       _mcpSecondaryReviewTools = Set.unmodifiable(
         McpInvocationPolicy.defaultSecondaryReviewTools,
       );
+      _mcpExposedTools = const {};
+      _mcpExposureToolsConfigured = false;
       _mcpEnableSse = false;
       _oledDark = false;
       _colorPalette = AppColorPalette.monochrome;
@@ -558,6 +576,45 @@ class AppSettings extends ChangeNotifier {
     final sorted = _mcpSecondaryReviewTools.toList()..sort();
     await prefs.setStringList(_mcpSecondaryReviewToolsKey, sorted);
     AppLogService.instance.info('MCP secondary review tools updated');
+  }
+
+  Future<void> setMcpExposedTools(Set<String> tools) async {
+    final normalized = tools
+        .map((tool) => tool.trim())
+        .where((tool) => tool.isNotEmpty)
+        .toSet();
+    if (_mcpExposureToolsConfigured &&
+        _setEquals(_mcpExposedTools, normalized)) {
+      return;
+    }
+    _mcpExposedTools = Set.unmodifiable(normalized);
+    _mcpExposureToolsConfigured = true;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    final sorted = _mcpExposedTools.toList()..sort();
+    await prefs.setStringList(_mcpExposedToolsKey, sorted);
+    AppLogService.instance.info('MCP exposed tools updated');
+  }
+
+  Future<void> setMcpToolExposure(
+    String toolName,
+    bool exposed, {
+    required Set<String> availableToolNames,
+  }) async {
+    final normalizedName = toolName.trim();
+    if (normalizedName.isEmpty) return;
+    final next = _mcpExposureToolsConfigured
+        ? Set<String>.of(_mcpExposedTools)
+        : {
+            for (final name in availableToolNames)
+              if (name.trim().isNotEmpty) name.trim(),
+          };
+    if (exposed) {
+      next.add(normalizedName);
+    } else {
+      next.remove(normalizedName);
+    }
+    await setMcpExposedTools(next);
   }
 
   Future<void> setMcpToolSecondaryReview(String toolName, bool enabled) async {

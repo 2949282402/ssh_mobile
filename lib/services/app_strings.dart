@@ -803,13 +803,13 @@ class AppStrings {
   String get mcpReviewConfiguredTools =>
       _en ? 'Dangerous operations require review' : '危险操作二次审核';
   String get mcpReviewConfiguredToolsHint => _en
-      ? 'Only selected tools enter the SSH Mobile approval queue when a call is risky.'
-      : '只有下方选中的 Tool 在本次调用确实有风险时进入 SSH Mobile 审批队列。';
+      ? 'Tools selected in the Local MCP Console enter the SSH Mobile approval queue when a call is risky.'
+      : '在本地 MCP 控制台选中的 Tool，在本次调用确实有风险时进入 SSH Mobile 审批队列。';
   String get mcpTrustedAgent =>
       _en ? 'Full access (trusted Agent)' : '完整权限（信任 Agent）';
   String get mcpTrustedAgentHint => _en
-      ? 'Exposed tools execute without interactive SSH Mobile review.'
-      : '已暴露 Tool 不再进入 SSH Mobile 的交互式二次审核。';
+      ? 'Selected exposed tools execute without interactive SSH Mobile review.'
+      : '在本地 MCP 控制台选中的对外 Tool 不再进入 SSH Mobile 的交互式二次审核。';
   String get mcpTrustedAgentActive =>
       _en ? 'Automatic execution enabled' : '已启用自动执行';
   String get mcpTrustedAgentActiveHint => _en
@@ -821,10 +821,37 @@ class AppStrings {
   String get mcpSecondaryReviewTools =>
       _en ? 'Tools requiring secondary review' : '需要二次审核的 Tools';
   String get mcpSecondaryReviewToolsHint => _en
-      ? 'The list is derived from the currently exposed tools and their risk metadata.'
-      : '列表由当前可暴露 Tool 及其风险元数据动态生成。';
+      ? 'Configure external exposure and secondary review per Tool in the Local MCP Console.'
+      : '请在本地 MCP 控制台按 Tool 配置对外暴露和二次审核。';
   String get mcpNoReviewTools =>
       _en ? 'No reviewable tools available.' : '当前没有可配置的审核 Tool。';
+  String get mcpToolPolicyConsoleTitle => _en
+      ? 'Configure Tool policy in Local MCP Console'
+      : '在本地 MCP 控制台配置 Tool 策略';
+  String get mcpToolPolicyConsoleHint => _en
+      ? 'External exposure and secondary review are configured per Tool there.'
+      : 'Tool 的对外暴露和二次审核统一在本地 MCP 控制台逐项配置。';
+  String get mcpToolPolicyConsoleDetails => _en
+      ? 'Hard hidden and blocked rules remain enforced and cannot be enabled here.'
+      : '永久隐藏和阻断规则仍然有效，不能通过控制台绕过。';
+  String get mcpToolPolicyTitle =>
+      _en ? 'Tool exposure and review' : 'Tool 暴露与二次审核';
+  String get mcpToolPolicyHint => _en
+      ? 'Exposure is shared across modes; review settings apply only in review mode.'
+      : '两种模式共用对外暴露配置；二次审核设置仅在审核模式生效。';
+  String get mcpExposeExternally => _en ? 'Expose externally' : '对外暴露';
+  String get mcpSecondaryReview => _en ? 'Secondary review' : '二次审核';
+  String get mcpExecutable => _en ? 'Executable' : '可直接执行';
+  String get mcpNoConfigurableTools =>
+      _en ? 'No configurable tools available.' : '当前没有可配置的 Tool。';
+  String get mcpNotExposed => _en ? 'Not exposed' : '未对外暴露';
+  String get mcpHidden => _en ? 'Hidden' : '隐藏';
+  String get mcpHardHidden => _en ? 'Hidden by hard rule' : '硬规则隐藏';
+  String get mcpBlocked => _en ? 'Blocked' : '已阻断';
+  String get mcpReviewNotApplicable => _en ? 'No dynamic review' : '无需动态审核';
+  String get mcpHardBoundaryHint => _en
+      ? 'This Tool is hidden or blocked by a hard security rule and cannot be enabled.'
+      : '该 Tool 由硬安全规则隐藏或阻断，不能通过配置启用。';
   String get mcpTrustedAgentWarningTitle =>
       _en ? 'Enable full access for external Agents?' : '启用外部 Agent 完整权限？';
   String get mcpTrustedAgentWarningBody => _en

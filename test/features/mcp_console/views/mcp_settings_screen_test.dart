@@ -49,16 +49,16 @@ void main() {
     );
   }
 
-  testWidgets('shows review mode and the tool checklist by default', (
+  testWidgets('shows review mode and directs Tool policy to the console', (
     tester,
   ) async {
     await tester.pumpWidget(buildSubject());
     await tester.pumpAndSettle();
 
     expect(find.text('危险操作二次审核'), findsOneWidget);
-    expect(find.text('需要二次审核的 Tools'), findsOneWidget);
-    expect(find.text('run_command'), findsOneWidget);
-    expect(find.text('在目标服务器上执行一次性 SSH 命令，并遵守命令和敏感路径限制。'), findsOneWidget);
+    expect(find.text('在本地 MCP 控制台配置 Tool 策略'), findsOneWidget);
+    expect(find.text('需要二次审核的 Tools'), findsNothing);
+    expect(find.text('run_command'), findsNothing);
   });
 
   testWidgets('canceling trusted-agent warning leaves the mode unchanged', (
@@ -75,7 +75,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(viewModel.approvalMode, McpApprovalMode.reviewConfiguredTools);
-    expect(find.text('需要二次审核的 Tools'), findsOneWidget);
+    expect(find.text('在本地 MCP 控制台配置 Tool 策略'), findsOneWidget);
   });
 
   testWidgets('confirming trusted-agent warning changes mode immediately', (
@@ -92,6 +92,7 @@ void main() {
     expect(viewModel.approvalMode, McpApprovalMode.trustedAgent);
     expect(find.text('已启用自动执行'), findsOneWidget);
     expect(find.text('需要二次审核的 Tools'), findsNothing);
+    expect(find.text('在本地 MCP 控制台配置 Tool 策略'), findsOneWidget);
   });
 
   testWidgets('Windows layout keeps fields separated and avoids overflow', (

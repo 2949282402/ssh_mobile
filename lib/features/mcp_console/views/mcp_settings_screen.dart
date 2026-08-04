@@ -249,6 +249,14 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
             ],
           ),
         ),
+        const SizedBox(height: 8),
+        AppSectionCard(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          contentGap: 4,
+          title: strings.mcpToolPolicyConsoleTitle,
+          subtitle: strings.mcpToolPolicyConsoleHint,
+          child: Text(strings.mcpToolPolicyConsoleDetails),
+        ),
         if (!reviewMode)
           AppSectionCard(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -256,49 +264,7 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
             title: strings.mcpTrustedAgentActive,
             subtitle: strings.mcpTrustedAgentActiveHint,
             child: Text(strings.mcpTrustedAgentSafetyBoundary),
-          )
-        else ...[
-          const SizedBox(height: 8),
-          Text(
-            strings.mcpSecondaryReviewTools,
-            style: const TextStyle(fontWeight: FontWeight.w600),
           ),
-          const SizedBox(height: 3),
-          Text(strings.mcpSecondaryReviewToolsHint),
-          const SizedBox(height: 8),
-          if (vm.secondaryReviewToolOptions.isEmpty)
-            Text(strings.mcpNoReviewTools)
-          else
-            for (final tool in vm.secondaryReviewToolOptions)
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                minTileHeight: 58,
-                visualDensity: const VisualDensity(
-                  horizontal: -1,
-                  vertical: -1,
-                ),
-                value: vm.secondaryReviewTools.contains(tool.name),
-                title: Text(tool.name),
-                subtitle: Text(
-                  tool.descriptionFor(
-                    vm.appSettings.language == AppLanguage.en,
-                  ),
-                ),
-                secondary: Icon(
-                  tool.destructive
-                      ? Icons.warning_amber_rounded
-                      : tool.readOnly
-                      ? Icons.visibility_outlined
-                      : Icons.build_outlined,
-                ),
-                onChanged: (enabled) {
-                  if (enabled != null) {
-                    unawaited(vm.setToolSecondaryReview(tool.name, enabled));
-                  }
-                },
-              ),
-        ],
       ],
     );
   }

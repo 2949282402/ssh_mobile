@@ -86,4 +86,18 @@ void main() {
       throwsUnsupportedError,
     );
   });
+
+  test('MCP settings expose an immutable explicit exposure set', () {
+    final settings = McpServerSettings(
+      exposedTools: {'run_command'},
+      exposureToolsConfigured: true,
+    );
+
+    expect(
+      () => settings.exposedTools.add('monitor_start'),
+      throwsUnsupportedError,
+    );
+    expect(settings.isToolExposed('run_command'), isTrue);
+    expect(settings.isToolExposed('monitor_start'), isFalse);
+  });
 }
