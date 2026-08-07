@@ -1,6 +1,10 @@
+// v1 LAN Share 配对、WebShare 与设备地址对话框。
+// WebShare 链接只接受 HTTPS，避免从界面入口引入明文降级。
+
 part of '../lan_share_screen.dart';
 
 extension _LanShareDialogActions on _LanShareScreenState {
+  /// 展示已发现设备并向用户选中的设备发送文件。
   void _showTargetDevicePickerAndSend(List<String> filePaths) {
     final vm = context.read<LanShareViewModel>();
     final strings = AppStrings(context.read<AppSettings>().language);
@@ -52,6 +56,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
     );
   }
 
+  /// 启动固定 HTTPS WebShare，并展示访问二维码和 PIN。
   void _toggleWebShareDialog(
     BuildContext context,
     AppStrings strings,
@@ -88,6 +93,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
     }
   }
 
+  /// 解析 HTTPS WebShare 链接或 IP 地址，并发起配对请求。
   void _connectToScannedOrInput(
     BuildContext context,
     String input,
@@ -99,30 +105,35 @@ extension _LanShareDialogActions on _LanShareScreenState {
     String? advertisedDeviceId;
     String? advertisedFingerprint;
 
-    // Try parsing as URL first (web share link)
-    if (input.startsWith('http://') || input.startsWith('https://')) {
-      final uri = Uri.tryParse(input);
-      if (uri != null) {
-        ip = uri.host;
-        advertisedDeviceId = uri.queryParameters['deviceId'];
-        final fingerprint = uri.queryParameters['certFingerprint']
-            ?.trim()
-            .toLowerCase();
-        if (fingerprint != null &&
-            RegExp(r'^[0-9a-f]{64}$').hasMatch(fingerprint)) {
-          advertisedFingerprint = fingerprint;
-        }
-        final advertisedPort = int.tryParse(
-          uri.queryParameters['nativePort'] ?? '',
-        );
-        port = advertisedPort ?? uri.port;
-        // Compatibility with QR links produced before nativePort was included.
-        if (advertisedPort == null && port == 53319) {
-          port = 53317;
-        }
+    // 只有 HTTPS scheme 才能作为 WebShare 链接解析。
+    final parsedUri = Uri.tryParse(input);
+    if (parsedUri != null && parsedUri.scheme.isNotEmpty) {
+      if (parsedUri.scheme != 'https') {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(strings.lanShareInvalidAddress)));
+        return;
+      }
+      final uri = parsedUri;
+      ip = uri.host;
+      advertisedDeviceId = uri.queryParameters['deviceId'];
+      final fingerprint = uri.queryParameters['certFingerprint']
+          ?.trim()
+          .toLowerCase();
+      if (fingerprint != null &&
+          RegExp(r'^[0-9a-f]{64}$').hasMatch(fingerprint)) {
+        advertisedFingerprint = fingerprint;
+      }
+      final advertisedPort = int.tryParse(
+        uri.queryParameters['nativePort'] ?? '',
+      );
+      port = advertisedPort ?? uri.port;
+      // 兼容未包含 nativePort 的旧二维码链接。
+      if (advertisedPort == null && port == 53319) {
+        port = 53317;
       }
     } else {
-      // Parse as IP:Port or just IP
+      // 解析 IP:端口或纯 IP 地址。
       final parts = input.split(':');
       ip = parts[0].trim();
       if (parts.length > 1) {
@@ -137,7 +148,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
       return;
     }
 
-    // Register manual device
+    // 注册手动输入的设备。
     final deviceId = advertisedDeviceId?.trim().isNotEmpty == true
         ? advertisedDeviceId!.trim()
         : 'manual_${ip}_$port';
@@ -155,6 +166,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
     unawaited(_requestPairingWithFeedback(context, vm, device, strings));
   }
 
+  /// 请求设备配对，并把网络失败转换成界面提示。
   Future<NetworkResult<void>> _requestPairingWithFeedback(
     BuildContext context,
     LanShareViewModel vm,
@@ -170,6 +182,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
     return result;
   }
 
+  /// 展示手动输入设备 IP、端口或 HTTPS WebShare 链接的对话框。
   Future<String?> _showManualAddDialog(
     BuildContext context,
     AppStrings strings,
@@ -223,6 +236,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
     );
   }
 
+  /// 展示本机 LAN 地址选择器并更新 WebShare 地址覆盖值。
   void _showIpSelectorDialog(
     BuildContext context,
     Map<String, String> ipMap,
@@ -284,6 +298,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
     );
   }
 
+  /// 将系统网卡名称转换为用户可读的本地化类别。
   String _getFriendlyInterfaceName(String name) {
     final lower = name.toLowerCase();
     if (lower.contains('tailscale')) return 'Tailscale';
@@ -304,6 +319,7 @@ extension _LanShareDialogActions on _LanShareScreenState {
   }
 }
 
+/// 表示对话框中最近一条 LAN 消息对应的设备会话。
 class _ChatSession {
   final String deviceId;
   final String alias;
@@ -311,6 +327,7 @@ class _ChatSession {
   final LanMessage lastMessage;
   final bool isOnline;
 
+  /// 创建一条设备会话摘要。
   _ChatSession({
     required this.deviceId,
     required this.alias,
@@ -320,30 +337,36 @@ class _ChatSession {
   });
 }
 
+/// 展示固定 HTTPS WebShare 地址、PIN 和剩余有效时间。
 class WebShareDialogContent extends StatefulWidget {
   final LanShareViewModel vm;
   final AppStrings strings;
 
+  /// 创建 WebShare 对话框内容。
   const WebShareDialogContent({
     super.key,
     required this.vm,
     required this.strings,
   });
 
+  /// 创建 WebShare 对话框的有状态实现。
   @override
   State<WebShareDialogContent> createState() => _WebShareDialogContentState();
 }
 
+/// 管理 WebShare PIN 倒计时和内容布局。
 class _WebShareDialogContentState extends State<WebShareDialogContent> {
   Timer? _timer;
   int _secondsRemaining = 60;
 
+  /// 初始化 WebShare PIN 倒计时。
   @override
   void initState() {
     super.initState();
     _startTimer();
   }
 
+  /// 启动 PIN 倒计时，并在过期后生成新 PIN。
   void _startTimer() {
     _secondsRemaining = widget.vm.securityService.pinSecondsRemaining;
     if (_secondsRemaining <= 0) {
@@ -364,12 +387,14 @@ class _WebShareDialogContentState extends State<WebShareDialogContent> {
     });
   }
 
+  /// 释放 PIN 倒计时资源。
   @override
   void dispose() {
     _timer?.cancel();
     super.dispose();
   }
 
+  /// 构建 WebShare 地址和安全状态展示内容。
   @override
   Widget build(BuildContext context) {
     final isEn = widget.vm.appSettings.isEnglish;
