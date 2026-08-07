@@ -67,11 +67,11 @@ const (
 	// relayErrorInvalidArgument 表示请求参数不符合协议边界。
 	relayErrorInvalidArgument relayErrorCode = 1
 	// relayErrorAuthenticationFailed 表示身份或管理员认证失败。
-	relayErrorAuthenticationFailed relayErrorCode = 4
-	// relayErrorProtocolError 表示协议版本或帧格式不受支持。
-	relayErrorProtocolError relayErrorCode = 9
+	relayErrorAuthenticationFailed relayErrorCode = 2
+	// relayErrorProtocolError 表示协议版本错误，使用现有参数错误码表达。
+	relayErrorProtocolError relayErrorCode = relayErrorInvalidArgument
 	// relayErrorRelayError 表示 Relay 内部服务错误。
-	relayErrorRelayError relayErrorCode = 10
+	relayErrorRelayError relayErrorCode = 8
 )
 
 // networkErrorResponse 是 Relay HTTP API 的安全错误响应结构。
