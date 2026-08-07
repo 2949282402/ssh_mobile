@@ -1,3 +1,8 @@
+//! v1 Relay WebSocket 客户端。
+//!
+//! 客户端只转发经过设备端 E2E 加密的 offer 和分块，不保存明文文件，
+//! 并严格固定设备认证、ready 帧、会话控制和二进制帧边界。
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::{Signer, SigningKey};
 use futures_util::{SinkExt, StreamExt};
@@ -23,20 +28,27 @@ const MAX_CONTROL_BYTES: usize = 64 * 1024;
 const MAX_BINARY_PAYLOAD_BYTES: usize = 512 * 1024 + 16;
 const SOCKET_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
+/// 描述 Relay v1 连接、认证和帧校验失败。
 #[derive(Debug, thiserror::Error)]
 pub enum RelayError {
+    /// Relay 配置不符合本地协议边界。
     #[error("invalid Relay configuration: {0}")]
     InvalidConfiguration(String),
+    /// Relay 设备认证失败。
     #[error("Relay authentication failed: {0}")]
     Authentication(String),
+    /// Relay v1 帧或控制字段不符合协议。
     #[error("Relay protocol error: {0}")]
     Protocol(String),
+    /// Relay 尚未建立连接。
     #[error("Relay is not connected")]
     NotConnected,
+    /// WebSocket 操作失败。
     #[error("Relay socket error: {0}")]
     Socket(String),
 }
 
+/// 表示从 Relay v1 收到的透明事件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayEvent {
     Lookup {
@@ -57,8 +69,7 @@ pub enum RelayEvent {
     },
 }
 
-/// Current-protocol client for the memory-only Go Relay. It forwards only
-/// opaque envelopes and never owns plaintext file persistence.
+/// 连接驻留内存的 Go Relay，并只转发不透明的 E2E 信封。
 pub struct RelayClient {
     relay_url: Url,
     device_id: String,
@@ -73,6 +84,7 @@ pub struct RelayClient {
 }
 
 impl Drop for RelayClient {
+    /// 中止尚未结束的读写 worker，避免运行时销毁后继续占用 socket。
     fn drop(&mut self) {
         if let Some(task) = self.writer_task.take() {
             task.abort();
@@ -84,6 +96,7 @@ impl Drop for RelayClient {
 }
 
 impl RelayClient {
+    /// 创建并校验一个 Relay v1 客户端。
     pub fn new(
         relay_url: String,
         device_id: String,
@@ -116,6 +129,7 @@ impl RelayClient {
         })
     }
 
+    /// 使用设备凭据和签名证明建立 v1 WebSocket 连接。
     pub async fn connect(&mut self) -> Result<(), RelayError> {
         if *self.is_connected.read().await {
             return Ok(());
@@ -212,12 +226,14 @@ impl RelayClient {
         Ok(())
     }
 
+    /// 取出唯一的 Relay 事件接收器。
     pub fn take_events(&mut self) -> Result<mpsc::Receiver<RelayEvent>, RelayError> {
         self.inbound
             .take()
             .ok_or_else(|| RelayError::Protocol("Relay events were already consumed".into()))
     }
 
+    /// 发送经过 E2E 加密的文件 offer。
     pub async fn send_offer(
         &self,
         session_id: &str,
@@ -239,6 +255,7 @@ impl RelayClient {
         .await
     }
 
+    /// 请求 Relay 返回目标设备当前在线状态。
     pub async fn lookup_peer(&self, target_id: &str) -> Result<(), RelayError> {
         if target_id.is_empty() || target_id.len() > 128 {
             return Err(RelayError::InvalidConfiguration(
@@ -252,6 +269,7 @@ impl RelayClient {
         .await
     }
 
+    /// 发送一个受限的 v1 会话控制帧。
     pub async fn send_session_control(
         &self,
         kind: &str,
@@ -267,6 +285,7 @@ impl RelayClient {
             .await
     }
 
+    /// 转发一个带会话和序号的 E2E 加密二进制分块。
     pub async fn forward_opaque_payload(
         &self,
         session_id: &str,
@@ -287,6 +306,7 @@ impl RelayClient {
         Ok(ciphertext.len())
     }
 
+    /// 关闭 Relay socket 和后台读写 worker。
     pub async fn disconnect(&mut self) {
         if let Some(outbound) = self.outbound.take() {
             let _ = outbound
@@ -304,6 +324,7 @@ impl RelayClient {
         info!("Relay client disconnected");
     }
 
+    /// 序列化并发送一个受大小限制的控制信封。
     async fn send_control(&self, value: Value) -> Result<(), RelayError> {
         let encoded = serde_json::to_string(&value)
             .map_err(|error| RelayError::Protocol(error.to_string()))?;
@@ -318,11 +339,13 @@ impl RelayClient {
             .map_err(|_| RelayError::NotConnected)
     }
 
+    /// 返回已建立连接的出站队列。
     fn outbound(&self) -> Result<&mpsc::Sender<Message>, RelayError> {
         self.outbound.as_ref().ok_or(RelayError::NotConnected)
     }
 }
 
+/// 返回当前 Unix 毫秒时间戳。
 fn unix_timestamp_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -330,6 +353,7 @@ fn unix_timestamp_ms() -> u128 {
         .as_millis()
 }
 
+/// 将 HTTPS/WSS 源站规范化为固定的 v1 WebSocket 路径。
 fn normalize_relay_url(value: &str) -> Result<Url, RelayError> {
     let mut url =
         Url::parse(value).map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?;
@@ -360,6 +384,7 @@ fn normalize_relay_url(value: &str) -> Result<Url, RelayError> {
     Ok(url)
 }
 
+/// 校验 Relay v1 ready 帧的设备绑定和协议版本。
 fn validate_ready(message: Message, expected_device_id: &str) -> Result<(), RelayError> {
     let Message::Text(text) = message else {
         return Err(RelayError::Authentication(
@@ -380,6 +405,7 @@ fn validate_ready(message: Message, expected_device_id: &str) -> Result<(), Rela
     Ok(())
 }
 
+/// 解码并校验 Relay 控制帧或不透明二进制分块。
 fn decode_event(message: Message) -> Result<Option<RelayEvent>, RelayError> {
     match message {
         Message::Text(text) => {
@@ -441,6 +467,7 @@ fn decode_event(message: Message) -> Result<Option<RelayEvent>, RelayError> {
     }
 }
 
+/// 编码带固定类型、会话标识和大端序号的二进制帧。
 fn encode_binary_frame(
     session_id: &str,
     sequence: u64,
@@ -461,6 +488,7 @@ fn encode_binary_frame(
     Ok(frame)
 }
 
+/// 解码并校验 Relay 二进制帧边界。
 fn decode_binary_frame(frame: &[u8]) -> Result<RelayEvent, RelayError> {
     if frame.len() <= 25 || frame.len() > 25 + MAX_BINARY_PAYLOAD_BYTES || frame[0] != 0x10 {
         return Err(RelayError::Protocol("invalid binary frame".into()));
@@ -479,6 +507,7 @@ fn decode_binary_frame(frame: &[u8]) -> Result<RelayEvent, RelayError> {
     })
 }
 
+/// 校验会话标识是 16 字节十六进制值。
 fn validate_session_id(session_id: &str) -> Result<(), RelayError> {
     if session_id.len() != 32 || !session_id.bytes().all(|value| value.is_ascii_hexdigit()) {
         return Err(RelayError::InvalidConfiguration(
@@ -493,6 +522,7 @@ mod tests {
     use super::*;
 
     #[test]
+    /// 验证 Relay 二进制帧与 Dart、Go v1 契约一致。
     fn binary_frame_matches_the_current_dart_and_go_contract() {
         let session_id = "00112233445566778899aabbccddeeff";
         let encoded = encode_binary_frame(session_id, 7, &[1, 2, 3]).expect("encode");
@@ -511,6 +541,7 @@ mod tests {
     }
 
     #[test]
+    /// 验证 lookup 响应必须携带明确的在线布尔值。
     fn lookup_response_requires_an_explicit_online_boolean() {
         assert_eq!(
             decode_event(Message::Text(
@@ -529,6 +560,7 @@ mod tests {
     }
 
     #[test]
+    /// 验证生产客户端拒绝缺失的 v1 身份材料。
     fn production_client_requires_current_protocol_identity_material() {
         assert!(RelayClient::new(
             "https://relay.example.test".into(),

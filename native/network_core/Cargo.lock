@@ -873,6 +873,7 @@ dependencies = [
  "quinn",
  "rand 0.8.7",
  "serde_json",
+ "sha2",
  "thiserror 1.0.69",
  "tokio",
  "tracing",

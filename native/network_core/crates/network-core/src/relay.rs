@@ -10,6 +10,7 @@ use network_relay::{RelayClient, RelayEvent};
 use network_transfer::build_file_manifest;
 use rand::RngCore;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::hash_map::Entry;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,6 +31,7 @@ pub(crate) struct PendingRelayIncoming {
     pub(crate) sender_id: String,
     pub(crate) file_name: String,
     pub(crate) total_bytes: u64,
+    pub(crate) content_hash: String,
     pub(crate) content_key: [u8; 32],
     pub(crate) nonce_prefix: [u8; 4],
 }
@@ -42,6 +44,7 @@ pub(crate) struct ActiveRelayIncoming {
     pub(crate) final_path: PathBuf,
     pub(crate) next_sequence: u64,
     pub(crate) received_bytes: u64,
+    pub(crate) hasher: Sha256,
 }
 
 /// 连接原生 Relay 数据面并启动事件消费者。
@@ -122,8 +125,17 @@ pub(crate) async fn handle_relay_events(
             } if kind == "offer" => {
                 if let (Some(sender_id), Some(payload)) = (peer_id, payload) {
                     if let Err(error) =
-                        receive_relay_offer(&state, session_id.clone(), sender_id, payload).await
+                        receive_relay_offer(&state, session_id.clone(), sender_id.clone(), payload)
+                            .await
                     {
+                        emit_transfer_error(
+                            &state.event_tx,
+                            &session_id,
+                            NetworkErrorCode::RelayError,
+                            "Relay incoming offer was rejected".to_string(),
+                            "receive",
+                            Some(&sender_id),
+                        );
                         if let Some(relay) = state.relay.read().await.as_ref() {
                             let _ = relay.send_session_control("cancel", &session_id).await;
                         }
@@ -140,6 +152,14 @@ pub(crate) async fn handle_relay_events(
                 if let Err(error) =
                     complete_relay_incoming(&state, &session_id, peer_id.as_deref()).await
                 {
+                    emit_transfer_error(
+                        &state.event_tx,
+                        &session_id,
+                        NetworkErrorCode::RelayError,
+                        "Relay incoming transfer failed validation".to_string(),
+                        "receive",
+                        peer_id.as_deref(),
+                    );
                     if let Some(relay) = state.relay.read().await.as_ref() {
                         let _ = relay.send_session_control("cancel", &session_id).await;
                     }
@@ -180,6 +200,14 @@ pub(crate) async fn handle_relay_events(
                 if let Err(error) =
                     receive_relay_chunk(&state, &session_id, sequence, &payload).await
                 {
+                    emit_transfer_error(
+                        &state.event_tx,
+                        &session_id,
+                        NetworkErrorCode::RelayError,
+                        "Relay incoming chunk failed validation".to_string(),
+                        "receive",
+                        None,
+                    );
                     cancel_relay_incoming(&state, &session_id).await;
                     if let Some(relay) = state.relay.read().await.as_ref() {
                         let _ = relay.send_session_control("cancel", &session_id).await;
@@ -242,12 +270,17 @@ async fn receive_relay_offer(
         .get("file_size")
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| std::io::Error::other("Relay file size is invalid"))?;
+    let content_hash = value
+        .get("content_hash")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| std::io::Error::other("Relay content hash is missing"))?;
     let offer_sender = value.get("sender_id").and_then(serde_json::Value::as_str);
     let receiver = value.get("receiver_id").and_then(serde_json::Value::as_str);
     if value.get("v").and_then(serde_json::Value::as_u64) != Some(1)
         || value.get("session_id").and_then(serde_json::Value::as_str) != Some(session_id.as_str())
         || offer_sender != Some(sender_id.as_str())
         || receiver != Some(identity.device_id.as_str())
+        || !is_sha256_hash(content_hash)
         || !is_safe_file_name(file_name)
     {
         return Err(std::io::Error::new(
@@ -278,6 +311,7 @@ async fn receive_relay_offer(
         sender_id: sender_id.clone(),
         file_name: file_name.to_string(),
         total_bytes,
+        content_hash: content_hash.to_string(),
         content_key,
         nonce_prefix,
     };
@@ -316,7 +350,7 @@ async fn receive_relay_offer(
         file_name: file_name.to_string(),
         file_size: total_bytes,
         modified_at: 0,
-        content_hash: "0".repeat(64),
+        content_hash: content_hash.to_string(),
         protocol_version: network_transfer::NETWORK_TRANSFER_PROTOCOL_VERSION,
     };
     emit_incoming_offer(&state.event_tx, &sender_id, &manifest);
@@ -425,6 +459,7 @@ pub(crate) async fn respond_to_relay_incoming(
                 final_path,
                 next_sequence: 0,
                 received_bytes: 0,
+                hasher: Sha256::new(),
             },
         );
         relay
@@ -488,6 +523,7 @@ async fn receive_relay_chunk(
         .into());
     }
     active.file.write_all(&clear).await?;
+    active.hasher.update(&clear);
     active.received_bytes += clear.len() as u64;
     active.next_sequence += 1;
     emit_transfer_progress(
@@ -522,6 +558,21 @@ async fn complete_relay_incoming(
         )
         .into());
     }
+    let relay = state
+        .relay
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| std::io::Error::other("Relay is unavailable"))?;
+    if !relay_hash_matches(active.hasher, &active.offer.content_hash) {
+        drop(active.file);
+        tokio::fs::remove_file(&active.temporary_path).await.ok();
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Relay content hash does not match the offer",
+        )
+        .into());
+    }
     if let Err(error) = active.file.flush().await {
         drop(active.file);
         tokio::fs::remove_file(&active.temporary_path).await.ok();
@@ -532,15 +583,10 @@ async fn complete_relay_incoming(
         tokio::fs::remove_file(&active.temporary_path).await.ok();
         return Err(error.into());
     }
-    let relay = state
-        .relay
-        .read()
-        .await
-        .clone()
-        .ok_or_else(|| std::io::Error::other("Relay is unavailable"))?;
-    relay
-        .send_session_control("complete_ack", session_id)
-        .await?;
+    if let Err(error) = relay.send_session_control("complete_ack", session_id).await {
+        tokio::fs::remove_file(&active.final_path).await.ok();
+        return Err(error.into());
+    }
     emit_transfer_completed(
         &state.event_tx,
         session_id,
@@ -574,6 +620,16 @@ fn is_safe_file_name(value: &str) -> bool {
         )
 }
 
+/// 返回值是否为小写或大写形式的 SHA-256 十六进制摘要。
+fn is_sha256_hash(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// 返回接收内容的 SHA-256 摘要是否与 enrollment offer 一致。
+fn relay_hash_matches(hasher: Sha256, expected: &str) -> bool {
+    hex::encode(hasher.finalize()).eq_ignore_ascii_case(expected)
+}
+
 /// 发送加密 Relay 申请、分块和完成确认。
 pub(crate) async fn send_file_over_relay(
     peer: PeerConfig,
@@ -605,6 +661,7 @@ pub(crate) async fn send_file_over_relay(
             "receiver_id": peer_id,
             "file_name": manifest.file_name,
             "file_size": manifest.file_size,
+            "content_hash": manifest.content_hash,
             "content_key": URL_SAFE_NO_PAD.encode(content_key),
             "nonce_prefix": URL_SAFE_NO_PAD.encode(nonce_prefix),
         }))?;
@@ -780,4 +837,31 @@ fn encrypt_relay_chunk(
             },
         )
         .map_err(|_| std::io::Error::other("Relay chunk encryption failed").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 验证 Relay offer 只接受完整的 SHA-256 十六进制摘要。
+    #[test]
+    fn relay_offer_requires_sha256_hash() {
+        let digest = hex::encode(Sha256::digest(b"relay-v1"));
+        assert!(is_sha256_hash(&digest));
+        assert!(!is_sha256_hash(&digest[..63]));
+        let mut invalid = digest.clone();
+        invalid.replace_range(0..1, "z");
+        assert!(!is_sha256_hash(&invalid));
+    }
+
+    /// 验证接收哈希不匹配时不会被视为完成。
+    #[test]
+    fn relay_hash_mismatch_is_rejected() {
+        let mut hasher = Sha256::new();
+        hasher.update(b"received");
+        assert!(!relay_hash_matches(
+            hasher,
+            &hex::encode(Sha256::digest(b"offered"))
+        ));
+    }
 }
