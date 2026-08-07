@@ -387,7 +387,9 @@ flowchart LR
 
 ### 项目结构
 
-- `apps/ssh_mobile_full/lib/main.dart`：应用启动和依赖装配。
+- `apps/ssh_mobile_full/lib/main.dart`：精简的应用入口；App Shell 与依赖装配位于
+  `apps/ssh_mobile_full/lib/app/`（`AppBootstrap`、`AppRuntimeFactory`、`AppRuntime`
+  和 `SshMobileApp`）。
 - `apps/ssh_mobile_full/lib/features/`：各 Feature 自有的 Model、ViewModel、Service、View 和
   Feature 内部 Widget。当前 Feature 根目录包括 `connection`、`terminal`、
   `sftp`、`ai_chat`、`ai_skills`、`client_webview`、`performance`、
@@ -410,10 +412,11 @@ flowchart LR
 - `scripts/`：仓库级构建、打包和同步脚本；`apps/ssh_mobile_full/tool/`：App 专属生成和质量检查脚本。
 - `third_party/xterm/`：仓库内维护的终端组件。
 
-`main.dart` 通过 `MultiProvider` 组合应用生命周期的服务和共享 ViewModel。
-路由或页面范围的 Feature 状态保持局部：例如 AI Chat 运行时由
-`AiChatRuntimeFactory` 创建并由聊天页提供，终端页创建聚焦的会话、历史和窗口
-ViewModel。View 只持有布局与短生命周期展示状态；校验、异步编排和 Repository
+`AppRuntimeFactory` 创建应用生命周期服务，`AppRuntime` 是这些资源的唯一生命周期
+Owner；`main.dart` 只委托给 `AppBootstrap`，`SshMobileApp` 通过 `MultiProvider`
+暴露已有 Runtime 实例。路由或页面范围的 Feature 状态保持局部：例如 AI Chat
+运行时由 `AiChatRuntimeFactory` 创建并由聊天页提供，终端页创建聚焦的会话、历史和
+窗口 ViewModel。View 只持有布局与短生命周期展示状态；校验、异步编排和 Repository
 协调由 ViewModel 与 Service 负责。
 
 LAN 文件数据路径为 `LanShareViewModel → NetworkService → Rust

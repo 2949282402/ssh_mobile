@@ -46,8 +46,11 @@ must not depend on Flutter UI, SSH, Drift, Infrastructure, or Feature code.
 - Keep screens focused on composition and transient presentation state. Put
   validation, async orchestration, repositories, and reusable state in
   ViewModels or services.
-- Keep application-lifetime dependencies in `main.dart`; prefer feature-,
-  route-, or view-scoped state for heavy or task-specific runtimes.
+- Keep application-lifetime dependencies in
+  `apps/ssh_mobile_full/lib/app/app_runtime_factory.dart` and let
+  `AppRuntime` own their lifecycle; `main.dart` should only delegate to
+  `AppBootstrap`. Prefer feature-, route-, or view-scoped state for heavy or
+  task-specific runtimes.
 - Split by responsibility before a non-generated Dart file approaches 1000
   lines. Change generator inputs instead of editing generated files.
 - Prefer narrow Provider subscriptions, stable snapshots, background parsing
@@ -82,7 +85,7 @@ Read only the rows relevant to the task.
 | --- | --- | --- |
 | Architecture, MVVM, storage | Owning `lib/features/` code, `lib/data/`, `lib/services/storage_service.dart` | `docs/ADR_ENGINEERING_BASELINE.md` |
 | Core contracts and Module lifecycle | `packages/core/app_core/lib/`, `packages/core/app_core/test/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
-| Startup or service lifetime | `lib/features/startup/`, `apps/ssh_mobile_full/lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
+| Startup or service lifetime | `lib/features/startup/`, `apps/ssh_mobile_full/lib/app/`, `apps/ssh_mobile_full/lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
 | SSH, terminal, host keys | `lib/features/connection/`, `lib/features/terminal/`, SSH services | `docs/security_manual_regression.md` |
 | SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | AI chat, tools, plans, MCP | `lib/features/ai_chat/`, `lib/services/ai_tool*`, `lib/services/mcp/` | `docs/AGENT_RUN_TRACE.md`, `docs/security_manual_regression.md` |
@@ -373,8 +376,10 @@ its child widgets.
 
 ### Navigation and Settings
 
-- `apps/ssh_mobile_full/lib/main.dart` composes infrastructure services and feature ViewModels
-  through `MultiProvider`.
+- `apps/ssh_mobile_full/lib/app/app_runtime_factory.dart` composes App Scope
+  infrastructure services; `AppRuntime` owns them and
+  `apps/ssh_mobile_full/lib/main.dart` only delegates to `AppBootstrap`.
+  `SshMobileApp` exposes existing Runtime instances through `MultiProvider`.
 - `lib/features/settings/viewmodels/settings_viewmodel.dart` bridges
   `AppSettings` plus `StorageService`, while `lib/features/home/views/home_screen.dart`
   remains the navigation shell and settings entry surface.

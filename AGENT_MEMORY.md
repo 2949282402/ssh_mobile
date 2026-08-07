@@ -19,6 +19,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 
 ### Runtime ownership
 
+- App Scope construction now lives in `apps/ssh_mobile_full/lib/app/`:
+  `AppRuntimeFactory` creates the existing application services,
+  `AppRuntime` is their single lifecycle owner, and `AppBootstrap` is the
+  Flutter/Zone startup boundary. `main.dart` is only a delegating entry point.
+  Existing service types remain temporarily inside Runtime with explicit
+  Step TODO markers; route ViewModels are not part of Runtime ownership.
 - Startup is intentionally lazy. Bootstrap loads preferences and storage;
   feature scopes own heavy ViewModels. `SshService.ensureInitialized()` gates
   SSH runtime work, `AiChatRuntimeFactory` owns the view-scoped chat runtime,

@@ -1,0 +1,396 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../features/connection/views/add_edit_screen.dart';
+import '../features/connection/viewmodels/connection_viewmodel.dart';
+import '../features/settings/viewmodels/settings_viewmodel.dart';
+import '../features/playbook/viewmodels/playbook_viewmodel.dart';
+import '../features/rag/viewmodels/rag_knowledge_viewmodel.dart';
+import '../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
+import '../features/startup/viewmodels/startup_viewmodel.dart';
+import '../features/sftp/viewmodels/sftp_viewmodel.dart';
+import '../features/lan_share/views/lan_pairing_navigation_host.dart';
+import '../features/lan_share/views/network_incoming_transfer_host.dart';
+import '../features/developer_panel/views/developer_panel_floating.dart';
+import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
+import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
+import 'package:ssh_mobile/features/home/views/home_screen.dart';
+import 'package:ssh_mobile/features/playbook/views/playbook_screen.dart';
+import 'package:ssh_mobile/features/sftp/views/sftp_screen.dart';
+import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
+import 'package:ssh_mobile/features/terminal/views/terminal_history_screen.dart';
+import 'package:ssh_mobile/features/terminal/views/terminal_screen.dart';
+import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
+import 'package:ssh_mobile/features/rag/views/rag_knowledge_screen.dart';
+import 'package:ssh_mobile/features/mcp_console/views/mcp_console_screen.dart';
+import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_console_viewmodel.dart';
+import 'package:ssh_mobile/features/mcp_console/views/mcp_settings_screen.dart';
+import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_settings_viewmodel.dart';
+import '../services/app_settings.dart';
+import '../services/playbook_service.dart';
+import '../services/rag_service.dart';
+import '../services/sftp_service.dart';
+import '../services/storage_service.dart';
+import '../services/mcp/mcp_server_controller.dart';
+import '../theme/app_theme.dart';
+import '../utils/responsive.dart';
+import 'app_runtime.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
+
+/// App Shell。它只消费由 [AppRuntime] 创建的 App Scope 实例。
+class SshMobileApp extends StatefulWidget {
+  const SshMobileApp({super.key, this.runtime});
+
+  /// 真实入口始终传入 Runtime；可空仅保留旧的构造型 smoke test 兼容面。
+  final AppRuntime? runtime;
+
+  @override
+  State<SshMobileApp> createState() => _SshMobileAppState();
+}
+
+class _SshMobileAppState extends State<SshMobileApp>
+    with WidgetsBindingObserver {
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
+  static final Map<AppColorPalette, ThemeData> _lightThemes = {
+    for (final palette in AppColorPalette.values)
+      palette: AppTheme.lightThemeFor(palette: palette),
+  };
+  static final Map<AppColorPalette, ThemeData> _darkThemes = {
+    for (final palette in AppColorPalette.values)
+      palette: AppTheme.darkThemeFor(palette: palette),
+  };
+  static final Map<AppColorPalette, ThemeData> _oledDarkThemes = {
+    for (final palette in AppColorPalette.values)
+      palette: AppTheme.darkThemeFor(oledDark: true, palette: palette),
+  };
+  static final Map<AppColorPalette, ShadThemeData> _shadLightThemes = {
+    for (final palette in AppColorPalette.values)
+      palette: _buildShadTheme(palette, Brightness.light),
+  };
+  static final Map<AppColorPalette, ShadThemeData> _shadDarkThemes = {
+    for (final palette in AppColorPalette.values)
+      palette: _buildShadTheme(palette, Brightness.dark),
+  };
+
+  static ShadThemeData _buildShadTheme(
+    AppColorPalette palette,
+    Brightness brightness,
+  ) {
+    final dark = brightness == Brightness.dark;
+    final materialTheme = dark
+        ? AppTheme.darkThemeFor(palette: palette)
+        : AppTheme.lightThemeFor(palette: palette);
+    final colors = materialTheme.colorScheme;
+    final base = dark
+        ? const ShadVioletColorScheme.dark()
+        : const ShadVioletColorScheme.light();
+    return ShadThemeData(
+      brightness: brightness,
+      radius: const BorderRadius.all(Radius.circular(AppTheme.radiusSmall)),
+      colorScheme: base.copyWith(
+        background: materialTheme.scaffoldBackgroundColor,
+        foreground: colors.onSurface,
+        card: colors.surface,
+        cardForeground: colors.onSurface,
+        popover: colors.surface,
+        popoverForeground: colors.onSurface,
+        primary: colors.primary,
+        primaryForeground: colors.onPrimary,
+        secondary: colors.surfaceContainer,
+        secondaryForeground: colors.onSurface,
+        muted: colors.surfaceContainer,
+        mutedForeground: colors.onSurfaceVariant,
+        accent: Color.alphaBlend(
+          colors.primary.withValues(alpha: 0.14),
+          colors.surfaceContainer,
+        ),
+        accentForeground: colors.onSurface,
+        border: colors.outline,
+        input: colors.outline,
+        ring: colors.primary,
+        selection: colors.primary.withValues(alpha: 0.2),
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_runtime.mcpServerController.startIfEnabled());
+    });
+  }
+
+  AppRuntime get _runtime {
+    final runtime = widget.runtime;
+    if (runtime == null) {
+      throw StateError('SshMobileApp requires an AppRuntime to build.');
+    }
+    return runtime;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_runtime.storageService.flushPendingWrites());
+    }
+    if (state == AppLifecycleState.detached) {
+      unawaited(_runtime.mcpServerController.stop());
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    final runtime = widget.runtime;
+    if (runtime != null) {
+      unawaited(runtime.dispose());
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final runtime = _runtime;
+    return MultiProvider(
+      providers: [
+        // Runtime 已经拥有这些实例，.value 防止 Provider 误替它们释放。
+        Provider<AppRuntime>.value(value: runtime),
+        ChangeNotifierProvider.value(value: runtime.appLogService),
+        ChangeNotifierProvider.value(value: runtime.storageService),
+        ChangeNotifierProvider.value(value: runtime.appSettings),
+        ChangeNotifierProvider.value(value: runtime.bootstrapCoordinator),
+        ChangeNotifierProvider.value(value: runtime.shortcutCommandService),
+        ChangeNotifierProvider.value(value: runtime.sshService),
+        ChangeNotifierProvider.value(value: runtime.sftpService),
+        ChangeNotifierProvider(
+          // SFTP ViewModel 仍由根页面 Provider 管理，后续迁移到 Route Scope。
+          create: (context) =>
+              SftpViewModel(sftpService: context.read<SftpService>()),
+        ),
+        ChangeNotifierProvider.value(value: runtime.performanceMonitorService),
+        ChangeNotifierProvider.value(value: runtime.playbookService),
+        ChangeNotifierProvider.value(value: runtime.ragService),
+        ChangeNotifierProvider.value(value: runtime.mcpServerController),
+        ChangeNotifierProvider(
+          // Connection ViewModel 暂保留根 Scope，后续随 connection feature 下沉。
+          create: (_) => ConnectionViewModel(
+            connectionRepository: runtime.storageService,
+            sshServiceFactory: () => runtime.sshService,
+            sftpServiceFactory: () => runtime.sftpService,
+            performanceServiceFactory: () => runtime.performanceMonitorService,
+          )..fetchConnections(),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => SettingsViewModel(
+            appSettings: runtime.appSettings,
+            storageService: runtime.storageService,
+          ),
+        ),
+        ChangeNotifierProvider.value(value: runtime.lanReceiverCoordinator),
+      ],
+      child: Builder(builder: (context) => _buildApp(context)),
+    );
+  }
+
+  /// 构建只依赖 AppRuntime Provider 的 Material/Shad Shell。
+  Widget _buildApp(BuildContext context) {
+    final visualSettings = context
+        .select<AppSettings, AppVisualSettingsSnapshot>(
+          (settings) => settings.visualSettings,
+        );
+    final darkMode = visualSettings.themeMode == ThemeMode.dark;
+    final palette = visualSettings.colorPalette;
+
+    return ScrollConfiguration(
+      behavior: const ShadScrollBehavior(),
+      child: ShadTheme(
+        data: darkMode ? _shadDarkThemes[palette]! : _shadLightThemes[palette]!,
+        child: ShadMouseAreaSurface(
+          child: ShadMouseCursorProvider(
+            child: Builder(
+              builder: (context) {
+                return MaterialApp(
+                  navigatorKey: _navigatorKey,
+                  title: 'SSH Mobile',
+                  debugShowCheckedModeBanner: false,
+                  theme: _lightThemes[palette],
+                  darkTheme: visualSettings.oledDark
+                      ? _oledDarkThemes[palette]
+                      : _darkThemes[palette],
+                  themeMode: visualSettings.themeMode,
+                  themeAnimationDuration: Duration.zero,
+                  builder: (context, child) {
+                    final mediaQuery = MediaQuery.of(context);
+                    final adaptedMediaQuery = adaptMobileMediaQuery(mediaQuery);
+                    final visualDensity = mobileVisualDensityFor(mediaQuery);
+                    final effectiveChild = child ?? const SizedBox.shrink();
+                    final shadChild = DeveloperPanelFloatingHost(
+                      child: NetworkIncomingTransferHost(
+                        child: LanPairingNavigationHost(
+                          navigatorKey: _navigatorKey,
+                          child: ShadAppBuilder(child: effectiveChild),
+                        ),
+                      ),
+                    );
+
+                    final currentTheme = Theme.of(context);
+                    if (identical(adaptedMediaQuery, mediaQuery) &&
+                        visualDensity == currentTheme.visualDensity) {
+                      return shadChild;
+                    }
+
+                    return MediaQuery(
+                      data: adaptedMediaQuery,
+                      child: currentTheme.visualDensity == visualDensity
+                          ? shadChild
+                          : Theme(
+                              data: currentTheme.copyWith(
+                                visualDensity: visualDensity,
+                              ),
+                              child: shadChild,
+                            ),
+                    );
+                  },
+                  initialRoute: '/',
+                  onGenerateRoute: (settings) {
+                    switch (settings.name) {
+                      case '/':
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider(
+                            create: (context) => StartupViewModel(
+                              storageService: context.read<StorageService>(),
+                              appSettings: context.read<AppSettings>(),
+                            ),
+                            child: const StartupScreen(),
+                          ),
+                        );
+                      case '/terminal':
+                        final config =
+                            settings.arguments as Map<String, dynamic>;
+                        return MaterialPageRoute(
+                          builder: (_) => TerminalScreen(
+                            connectionId: config['id'] as String,
+                            sessionId: config['sessionId'] as String,
+                          ),
+                        );
+                      case '/history':
+                        return MaterialPageRoute(
+                          builder: (_) => const TerminalHistoryScreen(),
+                        );
+                      case '/terminal-windows':
+                        final args = settings.arguments;
+                        String? connectionId;
+
+                        if (args is String) {
+                          connectionId = args;
+                        } else if (args is Map<String, dynamic>) {
+                          final value = args['connectionId'];
+                          if (value is String) {
+                            connectionId = value;
+                          }
+                        }
+
+                        return MaterialPageRoute(
+                          builder: (_) =>
+                              TerminalWindowsScreen(connectionId: connectionId),
+                        );
+                      case '/sftp':
+                        return MaterialPageRoute(
+                          builder: (_) => const SftpScreen(),
+                        );
+                      case '/performance':
+                        return MaterialPageRoute(
+                          builder: (_) => const HomeScreen(initialIndex: 3),
+                        );
+                      case '/ai-skills':
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider(
+                            create: (context) => AiSkillsViewModel(
+                              storageService: context.read<StorageService>(),
+                              appSettings: context.read<AppSettings>(),
+                            ),
+                            child: const AiSkillsScreen(),
+                          ),
+                        );
+                      case '/ai-skills/edit':
+                        final args = settings.arguments as Map<String, dynamic>;
+                        final viewModel =
+                            args['viewModel'] as AiSkillsViewModel;
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider.value(
+                            value: viewModel,
+                            child: const AiSkillEditScreen(),
+                          ),
+                        );
+                      case '/playbooks':
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider(
+                            create: (context) => PlaybookViewModel(
+                              playbookService: context.read<PlaybookService>(),
+                              storageService: context.read<StorageService>(),
+                            ),
+                            child: const PlaybookScreen(),
+                          ),
+                        );
+                      case '/add':
+                        return MaterialPageRoute(
+                          builder: (_) => const AddEditScreen(),
+                        );
+                      case '/edit':
+                        final id = settings.arguments as String;
+                        return MaterialPageRoute(
+                          builder: (_) => AddEditScreen(editId: id),
+                        );
+                      case '/rag-knowledge':
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider(
+                            create: (context) => RagKnowledgeViewModel(
+                              ragService: context.read<RagService>(),
+                              storageService: context.read<StorageService>(),
+                            ),
+                            child: const RagKnowledgeScreen(),
+                          ),
+                        );
+                      case '/mcp-console':
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider(
+                            create: (context) => McpConsoleViewModel(
+                              context.read<McpServerController>(),
+                              context.read<AppSettings>(),
+                            ),
+                            child: const McpConsoleScreen(),
+                          ),
+                        );
+                      case '/mcp-settings':
+                        return MaterialPageRoute(
+                          builder: (context) => ChangeNotifierProvider(
+                            create: (_) => McpSettingsViewModel(
+                              appSettings: context.read<AppSettings>(),
+                              controller: context.read<McpServerController>(),
+                            ),
+                            child: const McpSettingsScreen(),
+                          ),
+                        );
+                      default:
+                        return MaterialPageRoute(
+                          builder: (_) => const HomeScreen(),
+                        );
+                    }
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

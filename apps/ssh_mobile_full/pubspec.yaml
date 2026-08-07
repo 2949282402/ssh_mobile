@@ -13,6 +13,8 @@ dependencies:
   flutter:
     sdk: flutter
 
+  app_core:
+    path: ../../packages/core/app_core
   dartssh2: ^2.22.5
   xterm:
     path: ../../third_party/xterm

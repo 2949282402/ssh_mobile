@@ -398,7 +398,9 @@ flowchart LR
 
 ### Project structure
 
-- `apps/ssh_mobile_full/lib/main.dart`: application startup and dependency composition.
+- `apps/ssh_mobile_full/lib/main.dart`: thin application entry point; the App Shell and
+  dependency composition live under `apps/ssh_mobile_full/lib/app/` (`AppBootstrap`,
+  `AppRuntimeFactory`, `AppRuntime`, and `SshMobileApp`).
 - `apps/ssh_mobile_full/lib/features/`: feature-owned models, ViewModels, services, views, and
   feature-local widgets. Current feature roots are `connection`, `terminal`,
   `sftp`, `ai_chat`, `ai_skills`, `client_webview`, `performance`,
@@ -423,13 +425,14 @@ flowchart LR
 - `apps/ssh_mobile_full/tool/`: app-specific generation and quality-check scripts.
 - `third_party/xterm/`: vendored terminal package.
 
-`main.dart` owns application-lifetime services and shared ViewModels through
-`MultiProvider`. Route- or screen-scoped feature state stays local: for example,
-the AI chat runtime is created by `AiChatRuntimeFactory` and provided by the
-chat view, while terminal screens create focused session/history/window
-ViewModels. Views keep layout and transient presentation state; validation,
-async orchestration, and repository coordination belong in ViewModels and
-services.
+`AppRuntimeFactory` creates application-lifetime services, and `AppRuntime` is
+their single lifecycle owner. `main.dart` only delegates to `AppBootstrap`;
+`SshMobileApp` exposes existing Runtime instances through `MultiProvider`.
+Route- or screen-scoped feature state stays local: for example, the AI chat
+runtime is created by `AiChatRuntimeFactory` and provided by the chat view,
+while terminal screens create focused session/history/window ViewModels. Views
+keep layout and transient presentation state; validation, async orchestration,
+and repository coordination belong in ViewModels and services.
 
 LAN file transfer follows `LanShareViewModel → NetworkService → Rust
 NetworkRuntime`. Commands return typed acceptance results, while progress and

@@ -81,6 +81,29 @@
 
 ---
 
+## Step 03 执行记录（2026-08-07）
+
+- 已将 App Shell 迁移到 `apps/ssh_mobile_full/lib/app/`，新增
+  `AppBootstrap`、`AppRuntimeFactory`、`AppRuntime` 和 `SshMobileApp`；根
+  `main.dart` 只保留启动委托及旧入口导出兼容面。
+- `AppRuntimeFactory` 统一创建现有 App Scope 服务；`AppRuntime` 明确承担
+  模块、SSH、网络、数据库/Repository、Logger 的资源释放责任，并以幂等
+  Future 防止重复 dispose。现有 Service 类型保留在 Runtime 中并标记后续
+  Step TODO，没有提前迁移业务模块。
+- `SshMobileApp` 对 Runtime 已有的 ChangeNotifier 使用
+  `ChangeNotifierProvider.value`，Connection/SFTP ViewModel 仍由当前根
+  Provider 创建，避免本 Step 扩大到 Feature/Route 迁移。
+- 应用新增 `app_core` workspace 生产依赖；`dart pub get` 通过，未出现版本
+  冲突。依赖解析提示的可升级项均受当前 Flutter/Drift 约束限制，本 Step
+  不擅自升级无关依赖。
+- 新增 `test/app/app_runtime_test.dart`，验证 Runtime 单一 App Scope 和
+  幂等释放；为避免 Flutter test 默认平台误走 background-service 分支，测试
+  显式固定 Windows 目标平台，不改变生产代码行为。
+- 最终验证：App `flutter analyze --no-pub` 通过；定向 Runtime 测试通过（1
+  项）；App `flutter test --no-pub` 通过（1018 个测试进度项）。
+- 本 Step 未改变 SSH、网络协议、数据库 schema、UI、业务规则或 AI Prompt；
+  只迁移 Composition Root 和资源所有权边界。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：
