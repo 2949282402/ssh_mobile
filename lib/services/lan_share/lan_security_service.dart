@@ -716,28 +716,26 @@ class LanSecurityService {
     );
   }
 
-  /// 仅为旧兼容性测试记录未绑定证明。
-  /// 生产相互校验故意永远不接受该证明。
+  /// 报告当前绑定条件下是否存在未过期的出站配对证明。
   @visibleForTesting
-  void markFreshOutboundPinProof(String deviceId) {
-    if (deviceId.isEmpty || deviceId.length > 128) {
-      throw ArgumentError('Invalid LAN pairing device ID.');
-    }
+  bool hasFreshOutboundPairProof({
+    required String deviceId,
+    required String peerFingerprint,
+    required String localFingerprint,
+    required String accessToken,
+  }) {
     _pruneFreshOutboundPinProofs();
-    _freshOutboundPinProofExpiry['legacy\u0000$deviceId'] = DateTime.now().add(
-      _freshOutboundPinProofTtl,
+    final proofKey = _freshOutboundProofKey(
+      deviceId: deviceId,
+      peerFingerprint: peerFingerprint,
+      localFingerprint: localFingerprint,
+      accessToken: accessToken,
     );
-  }
-
-  /// 报告短期缓存中是否仍有未绑定证明。
-  @visibleForTesting
-  bool hasFreshOutboundPinProof(String deviceId) {
-    _pruneFreshOutboundPinProofs();
-    final expiresAt = _freshOutboundPinProofExpiry['legacy\u0000$deviceId'];
+    final expiresAt = _freshOutboundPinProofExpiry[proofKey];
     return expiresAt != null && DateTime.now().isBefore(expiresAt);
   }
 
-  /// 恰好消费一次已绑定的短期出站配对证明。
+  /// 恰好消费一次与远端、证书和 token 绑定的短期出站配对证明。
   Future<bool> consumeFreshOutboundPinProof({
     required String deviceId,
     required String peerFingerprint,
@@ -758,9 +756,7 @@ class LanSecurityService {
       localFingerprint: localFingerprint,
       accessToken: accessToken,
     );
-    final expiresAt =
-        _freshOutboundPinProofExpiry.remove(proofKey) ??
-        _freshOutboundPinProofExpiry.remove('legacy\u0000$deviceId');
+    final expiresAt = _freshOutboundPinProofExpiry.remove(proofKey);
     return expiresAt != null && DateTime.now().isBefore(expiresAt);
   }
 

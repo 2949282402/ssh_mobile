@@ -379,7 +379,14 @@ void main() {
           'remote_scanner_abc',
           '1' * 64,
         );
-        securityService.markFreshOutboundPinProof('remote_scanner_abc');
+        final localFingerprint = await securityService
+            .getLocalCertificateFingerprint('local_device_123');
+        securityService.markFreshOutboundPairProof(
+          deviceId: 'remote_scanner_abc',
+          peerFingerprint: '1' * 64,
+          localFingerprint: localFingerprint,
+          accessToken: 'remote-token',
+        );
 
         final successFuture = transferService.handshakeSuccessStream.first;
         final exchange = await _performServerHandshake(
@@ -441,7 +448,17 @@ void main() {
           await securityService.hasCompleteOutboundPairCredential(remoteId),
           isTrue,
         );
-        expect(securityService.hasFreshOutboundPinProof(remoteId), isFalse);
+        final localFingerprint = await securityService
+            .getLocalCertificateFingerprint('local_device_123');
+        expect(
+          securityService.hasFreshOutboundPairProof(
+            deviceId: remoteId,
+            peerFingerprint: '1' * 64,
+            localFingerprint: localFingerprint,
+            accessToken: 'old-token',
+          ),
+          isFalse,
+        );
 
         final pendingFuture = transferService.handshakePendingStream.first;
         final exchange = await _performServerHandshake(
@@ -475,7 +492,14 @@ void main() {
           'remote_responder_first',
           '1' * 64,
         );
-        securityService.markFreshOutboundPinProof('remote_responder_first');
+        final localFingerprint = await securityService
+            .getLocalCertificateFingerprint('local_device_123');
+        securityService.markFreshOutboundPairProof(
+          deviceId: 'remote_responder_first',
+          peerFingerprint: '1' * 64,
+          localFingerprint: localFingerprint,
+          accessToken: 'remote-token',
+        );
         final successFuture = transferService.handshakeSuccessStream.first;
         final exchange = await _performServerHandshake(
           transferService: transferService,

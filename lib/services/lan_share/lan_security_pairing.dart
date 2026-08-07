@@ -80,7 +80,7 @@ extension LanSecurityPairingOperations on LanSecurityService {
     ]);
   }
 
-  /// 返回本设备用于 LAN 配对的证书指纹。
+  /// 返回本设备用于 LAN v1 配对的证书指纹。
   Future<String> getLocalCertificateFingerprint(String deviceId) async {
     await getOrCreateSecurityContext(deviceId);
     final pem = _cachedCertPem;
