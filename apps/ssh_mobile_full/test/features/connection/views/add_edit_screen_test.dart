@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:feature_connection/feature_connection.dart' as feature;
 
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.dart';
@@ -78,7 +79,9 @@ void main() {
       MultiProvider(
         providers: [
           ChangeNotifierProvider.value(value: settings),
-          ChangeNotifierProvider.value(value: viewModel),
+          ChangeNotifierProvider<feature.ConnectionViewModel>.value(
+            value: viewModel,
+          ),
         ],
         child: ShadTheme(
           data: ShadThemeData(brightness: Brightness.light),

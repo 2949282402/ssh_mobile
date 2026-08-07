@@ -6,8 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:animations/animations.dart';
 
-import 'package:ssh_mobile/features/connection/models/connection.dart';
-import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.dart';
+import 'package:feature_connection/feature_connection.dart';
 import 'package:ssh_mobile/features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';

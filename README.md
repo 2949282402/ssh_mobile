@@ -406,11 +406,16 @@ flowchart LR
   `sftp`, `ai_chat`, `ai_skills`, `client_webview`, `performance`,
   `system_admin`, `lan_share`, `playbook`, `rag`, `settings`, `startup`,
   `home`, and `developer_log`.
+- `packages/features/feature_connection/`: the migrated Connection editor,
+  ViewModel, localized presentation contract, and runtime/verification ports. It
+  depends on `connection_core` and never owns the Connection database. The App
+  composition root temporarily bridges the new Core repository to legacy
+  `StorageService` consumers until the later SSH/SFTP migration Steps.
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
   LAN-share, MCP, and platform-adapter infrastructure.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
-- `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; the current Feature keeps a compatibility export until its later migration step.
+- `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; `feature_connection` consumes the public repositories and injected capabilities.
 - `packages/infrastructure/ssh_mobile_network_native/`: native network package staged under the Infrastructure boundary.
 - `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,
   including host-key policy and data protection.

@@ -1,0 +1,28 @@
+name: feature_connection
+description: Connection feature UI and application orchestration for SSH Mobile.
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
+
+resolution: workspace
+
+dependencies:
+  app_core:
+    path: ../../core/app_core
+  connection_core:
+    path: ../../core/connection_core
+  flutter:
+    sdk: flutter
+  provider: ^6.1.5+1
+  shadcn_ui: ^0.56.1
+  uuid: ^4.6.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

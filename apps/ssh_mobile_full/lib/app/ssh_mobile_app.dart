@@ -1,10 +1,10 @@
 import 'dart:async';
 
+import 'package:feature_connection/feature_connection.dart'
+    as feature_connection;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../features/connection/views/add_edit_screen.dart';
-import '../features/connection/viewmodels/connection_viewmodel.dart';
 import '../features/settings/viewmodels/settings_viewmodel.dart';
 import '../features/playbook/viewmodels/playbook_viewmodel.dart';
 import '../features/rag/viewmodels/rag_knowledge_viewmodel.dart';
@@ -37,6 +37,7 @@ import '../services/mcp/mcp_server_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/responsive.dart';
 import 'app_runtime.dart';
+import 'connection_feature_adapters.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 /// App Shell。它只消费由 [AppRuntime] 创建的 App Scope 实例。
@@ -159,6 +160,26 @@ class _SshMobileAppState extends State<SshMobileApp>
   @override
   Widget build(BuildContext context) {
     final runtime = _runtime;
+    final connectionRepository = AppConnectionRepositoryAdapter(
+      primary: runtime.connectionRepository,
+      legacy: runtime.storageService,
+    );
+    final credentialRepository = AppConnectionCredentialAdapter(
+      primary: runtime.credentialRepository,
+      legacy: runtime.storageService,
+    );
+    final hostKeyRepository = AppConnectionHostKeyAdapter(
+      primary: runtime.hostKeyRepository,
+      legacy: runtime.storageService,
+    );
+    final connectionRuntime = AppConnectionRuntimeAdapter(
+      sshServiceFactory: () => runtime.sshService,
+      sftpServiceFactory: () => runtime.sftpService,
+      performanceServiceFactory: () => runtime.performanceMonitorService,
+    );
+    final connectionVerification = AppConnectionVerificationAdapter(
+      runtime.storageService,
+    );
     return MultiProvider(
       providers: [
         // Runtime 已经拥有这些实例，.value 防止 Provider 误替它们释放。
@@ -166,6 +187,24 @@ class _SshMobileAppState extends State<SshMobileApp>
         ChangeNotifierProvider.value(value: runtime.appLogService),
         ChangeNotifierProvider.value(value: runtime.storageService),
         ChangeNotifierProvider.value(value: runtime.appSettings),
+        ChangeNotifierProxyProvider<
+          AppSettings,
+          feature_connection.ConnectionStrings
+        >(
+          create: (_) => feature_connection.ConnectionStrings(),
+          update: (_, settings, strings) {
+            final next = strings ?? feature_connection.ConnectionStrings();
+            next.setLanguage(
+              settings.language == AppLanguage.en
+                  ? feature_connection.ConnectionLanguage.english
+                  : feature_connection.ConnectionLanguage.chinese,
+            );
+            return next;
+          },
+        ),
+        Provider<feature_connection.ConnectionUiAdapter>.value(
+          value: AppConnectionUiAdapter(),
+        ),
         ChangeNotifierProvider.value(value: runtime.bootstrapCoordinator),
         ChangeNotifierProvider.value(value: runtime.shortcutCommandService),
         ChangeNotifierProvider.value(value: runtime.sshService),
@@ -179,13 +218,14 @@ class _SshMobileAppState extends State<SshMobileApp>
         ChangeNotifierProvider.value(value: runtime.playbookService),
         ChangeNotifierProvider.value(value: runtime.ragService),
         ChangeNotifierProvider.value(value: runtime.mcpServerController),
-        ChangeNotifierProvider(
-          // Connection ViewModel 暂保留根 Scope，后续随 connection feature 下沉。
-          create: (_) => ConnectionViewModel(
-            connectionRepository: runtime.storageService,
-            sshServiceFactory: () => runtime.sshService,
-            sftpServiceFactory: () => runtime.sftpService,
-            performanceServiceFactory: () => runtime.performanceMonitorService,
+        ChangeNotifierProvider<feature_connection.ConnectionViewModel>(
+          // ViewModel 仍由根页面提供，数据和运行时能力已通过公共契约注入。
+          create: (_) => feature_connection.ConnectionViewModel(
+            connectionRepository: connectionRepository,
+            credentialRepository: credentialRepository,
+            hostKeyRepository: hostKeyRepository,
+            runtimePort: connectionRuntime,
+            verificationPort: connectionVerification,
           )..fetchConnections(),
         ),
         ChangeNotifierProvider(
@@ -342,12 +382,14 @@ class _SshMobileAppState extends State<SshMobileApp>
                         );
                       case '/add':
                         return MaterialPageRoute(
-                          builder: (_) => const AddEditScreen(),
+                          builder: (_) =>
+                              const feature_connection.AddEditScreen(),
                         );
                       case '/edit':
                         final id = settings.arguments as String;
                         return MaterialPageRoute(
-                          builder: (_) => AddEditScreen(editId: id),
+                          builder: (_) =>
+                              feature_connection.AddEditScreen(editId: id),
                         );
                       case '/rag-knowledge':
                         return MaterialPageRoute(

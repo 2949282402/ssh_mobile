@@ -42,14 +42,19 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   Schema changes regenerate `app_database.g.dart` and may require deleting the
   local development database; do not add compatibility migrations without an
   explicit release requirement.
-- `packages/core/connection_core/` now owns the Connection domain model,
+- `packages/core/connection_core/` owns the Connection domain model,
   structure/credential/Host Key contracts, and a separate `connection.sqlite`
   baseline. `AppRuntimeFactory` creates one `ConnectionDatabase`, one
   `DriftConnectionRepository`, one `SecureCredentialRepository`, and exposes
   them through `AppRuntime`; `ConnectionDatabase` is closed only by Runtime.
-  The Connection table excludes passwords and private keys, and the current
-  Connection Feature still uses the old StorageService compatibility path until
-  the planned Feature migration.
+  The Connection table excludes passwords and private keys.
+- `packages/features/feature_connection/` now owns the migrated connection
+  editor and ViewModel. It consumes only the Core repositories plus injected
+  `ConnectionRuntimePort`/`ConnectionVerificationPort` contracts. Until later
+  SSH/SFTP Steps migrate their consumers, `apps/ssh_mobile_full/lib/app/
+  connection_feature_adapters.dart` performs a temporary dual-read/dual-write
+  bridge between the new Core repository and legacy `StorageService`; this is
+  an App composition-root compatibility boundary, not a Feature data API.
 
 ### Logging contract
 

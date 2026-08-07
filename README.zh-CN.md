@@ -395,11 +395,15 @@ flowchart LR
   `sftp`、`ai_chat`、`ai_skills`、`client_webview`、`performance`、
   `system_admin`、`lan_share`、`playbook`、`rag`、`settings`、`startup`、
   `home` 和 `developer_log`。
+- `packages/features/feature_connection/`：已经迁移的 Connection 编辑页、ViewModel、
+  双语展示契约以及运行时/验证 Capability Port。它依赖 `connection_core`，不拥有
+  Connection 数据库；在 SSH/SFTP 后续 Step 完成前，App 组合根会暂时桥接新 Core
+  Repository 与仍使用旧 `StorageService` 的消费者。
 - `apps/ssh_mobile_full/lib/services/`：跨 Feature 的 SSH/SFTP/LLM/AI Tool、监控、存储、局域网
   快传、MCP 和平台适配基础设施。
 - `apps/ssh_mobile_full/lib/data/`：Drift 数据库、DAO 和 Repository 实现。
 - `packages/core/app_core/`：纯 Dart 的生命周期、Module、日志和 Capability 合约；生产代码不依赖 Flutter/UI。日志部分包括作用域 `AppLogger`、有界 `LogBuffer`、`LogSink` 和可释放的 `AppLoggerImpl`。
-- `packages/core/connection_core/`：Connection 领域模型与契约、独立的非敏感 Drift 数据库、Secure Storage 凭据和 Host Key 信任元数据。`ConnectionDatabase` 由 `AppRuntime` 创建和关闭；当前 Feature 通过兼容转导出逐步迁移。
+- `packages/core/connection_core/`：Connection 领域模型与契约、独立的非敏感 Drift 数据库、Secure Storage 凭据和 Host Key 信任元数据。`ConnectionDatabase` 由 `AppRuntime` 创建和关闭；`feature_connection` 只消费其公共 Repository 与注入的 Capability。
 - `packages/infrastructure/ssh_mobile_network_native/`：位于 Infrastructure 边界下的原生网络 Package。
 - `apps/ssh_mobile_full/lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
   策略和数据保护。

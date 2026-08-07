@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:feature_connection/feature_connection.dart' as feature;
 
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.dart';
@@ -79,7 +80,9 @@ void main() {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: appSettings),
-        ChangeNotifierProvider.value(value: connectionViewModel),
+        ChangeNotifierProvider<feature.ConnectionViewModel>.value(
+          value: connectionViewModel,
+        ),
         ChangeNotifierProvider.value(value: sftpViewModel),
       ],
       child: MaterialApp(

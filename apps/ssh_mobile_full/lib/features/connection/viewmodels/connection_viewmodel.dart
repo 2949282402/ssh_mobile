@@ -1,305 +1,149 @@
-// ignore_for_file: prefer_initializing_formals
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 
-import '../../../core/services/ssh_client_factory.dart';
-import '../../../core/services/ssh_host_key_policy.dart';
-import '../../../services/ssh_service.dart';
-import '../../../services/sftp_service.dart';
+import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:feature_connection/feature_connection.dart' as feature;
+
+import '../../../app/connection_feature_adapters.dart';
 import '../../../services/performance_monitor_service.dart';
-import '../models/connection.dart';
+import '../../../services/sftp_service.dart';
+import '../../../services/ssh_service.dart';
 import '../../../services/storage_service.dart';
 
-import '../services/connection_runtime_actions.dart';
-
-class ConnectionViewModel extends ChangeNotifier {
-  final ConnectionRepository _connectionRepository;
-  final ConnectionRuntimeActions _runtimeActions;
-
-  List<ConnectionConfig> _connections = [];
-  bool _isLoading = false;
-  bool _isSaving = false;
-  bool _isVerifying = false;
-  String? _errorMessage;
-
+/// 旧 App 路径的兼容包装器。
+///
+/// ConnectionViewModel 的真实实现已经迁移到 `feature_connection`。这个
+/// 包装器只为尚未同步改造的测试和旧 Screen 保留原构造参数，并将旧
+/// StorageService/SSH Service 适配到 Feature 的公开 Contract；新的业务代码
+/// 应直接导入 `package:feature_connection/feature_connection.dart`。
+@Deprecated('Import ConnectionViewModel from package:feature_connection')
+class ConnectionViewModel extends feature.ConnectionViewModel {
   ConnectionViewModel({
-    required ConnectionRepository connectionRepository,
+    required connection_core.ConnectionRepository connectionRepository,
+    connection_core.CredentialRepository? credentialRepository,
+    connection_core.HostKeyRepository? hostKeyRepository,
+    feature.ConnectionRuntimePort? runtimePort,
+    feature.ConnectionVerificationPort? verificationPort,
+    StorageService? legacyStorage,
     SshService? sshService,
     SftpService? sftpService,
     PerformanceMonitorService? performanceService,
     SshService Function()? sshServiceFactory,
     SftpService Function()? sftpServiceFactory,
     PerformanceMonitorService Function()? performanceServiceFactory,
-    ConnectionRuntimeActions? runtimeActions,
-  }) : _connectionRepository = connectionRepository,
-       _runtimeActions =
-           runtimeActions ??
-           ConnectionRuntimeActions(
-             sshServiceFactory:
-                 sshServiceFactory ??
-                 (sshService != null ? () => sshService : null),
-             sftpServiceFactory:
-                 sftpServiceFactory ??
-                 (sftpService != null ? () => sftpService : null),
-             performanceServiceFactory:
-                 performanceServiceFactory ??
-                 (performanceService != null ? () => performanceService : null),
-           ) {
-    if (_connectionRepository is ChangeNotifier) {
-      (_connectionRepository as ChangeNotifier).addListener(
-        _onRepositoryChanged,
-      );
-    }
+  }) : super(
+         connectionRepository: connectionRepository,
+         credentialRepository:
+             credentialRepository ??
+             _legacyCredentialRepository(
+               _resolveLegacyStorage(connectionRepository, legacyStorage),
+             ),
+         hostKeyRepository:
+             hostKeyRepository ??
+             _resolveHostKeyRepository(connectionRepository),
+         runtimePort:
+             runtimePort ??
+             AppConnectionRuntimeAdapter(
+               sshServiceFactory:
+                   sshServiceFactory ??
+                   (sshService != null ? () => sshService : null),
+               sftpServiceFactory:
+                   sftpServiceFactory ??
+                   (sftpService != null ? () => sftpService : null),
+               performanceServiceFactory:
+                   performanceServiceFactory ??
+                   (performanceService != null
+                       ? () => performanceService
+                       : null),
+             ),
+         verificationPort:
+             verificationPort ??
+             AppConnectionVerificationAdapter(
+               _resolveLegacyStorage(connectionRepository, legacyStorage),
+             ),
+       ) {
+    _legacyStorage = _tryResolveLegacyStorage(
+      connectionRepository,
+      legacyStorage,
+    );
+    _legacyStorage?.addListener(_onLegacyStorageChanged);
   }
 
-  void _onRepositoryChanged() {
-    _connections = _connectionRepository.connections;
-    notifyListeners();
+  StorageService? _legacyStorage;
+
+  void _onLegacyStorageChanged() {
+    unawaited(fetchConnections());
   }
 
   @override
   void dispose() {
-    if (_connectionRepository is ChangeNotifier) {
-      (_connectionRepository as ChangeNotifier).removeListener(
-        _onRepositoryChanged,
-      );
-    }
+    _legacyStorage?.removeListener(_onLegacyStorageChanged);
     super.dispose();
   }
+}
 
-  List<ConnectionConfig> get connections => _connections;
-  bool get isLoading => _isLoading;
-  bool get isSaving => _isSaving;
-  bool get isVerifying => _isVerifying;
-  String? get errorMessage => _errorMessage;
-
-  Future<void> fetchConnections() async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      _connections = _connectionRepository.connections;
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
+StorageService _resolveLegacyStorage(
+  connection_core.ConnectionRepository repository,
+  StorageService? explicit,
+) {
+  final resolved = _tryResolveLegacyStorage(repository, explicit);
+  if (resolved == null) {
+    throw ArgumentError(
+      'A legacy StorageService is required by the compatibility constructor.',
+    );
   }
+  return resolved;
+}
 
-  Future<void> deleteConnection(String id) async {
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      await _connectionRepository.deleteConnection(id);
-      _connections = _connectionRepository.connections;
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      notifyListeners();
-    }
+StorageService? _tryResolveLegacyStorage(
+  connection_core.ConnectionRepository repository,
+  StorageService? explicit,
+) => explicit ?? (repository is StorageService ? repository : null);
+
+connection_core.HostKeyRepository _resolveHostKeyRepository(
+  connection_core.ConnectionRepository repository,
+) {
+  if (repository is connection_core.HostKeyRepository) {
+    return repository as connection_core.HostKeyRepository;
   }
+  throw ArgumentError(
+    'A HostKeyRepository is required by the compatibility constructor.',
+  );
+}
 
-  Future<void> deleteConnections(List<String> ids) async {
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      await _connectionRepository.deleteConnections(ids);
-      _connections = _connectionRepository.connections;
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      notifyListeners();
-    }
-  }
+connection_core.CredentialRepository _legacyCredentialRepository(
+  StorageService storage,
+) => _StorageCredentialRepository(storage);
 
-  Future<void> reorderConnections(int oldIndex, int newIndex) async {
-    if (oldIndex >= 0 &&
-        oldIndex < _connections.length &&
-        newIndex >= 0 &&
-        newIndex <= _connections.length) {
-      final mutable = List<ConnectionConfig>.from(_connections);
-      final item = mutable.removeAt(oldIndex);
-      mutable.insert(newIndex, item);
-      _connections = List.unmodifiable(mutable);
-      notifyListeners();
-    }
-    try {
-      await _connectionRepository.reorderConnections(oldIndex, newIndex);
-    } catch (e) {
-      _errorMessage = e.toString();
-      notifyListeners();
-    }
-  }
+/// 旧 StorageService 的凭据兼容实现。
+///
+/// 旧 ConnectionRepository 会在 add/update 时保存配置中的运行时凭据，
+/// 因此这里的写入和删除由旧结构 Repository 完成，避免在兼容层再复制一套
+/// Secure Storage Key 规则。新 App 根则使用双写的完整适配器。
+final class _StorageCredentialRepository
+    implements connection_core.CredentialRepository {
+  _StorageCredentialRepository(this._storage);
 
-  Future<bool> verifyAndSaveConnection({
-    required ConnectionConfig config,
-    required bool isEditing,
-    required String? rawPassword,
-    required String? rawPrivateKey,
-    required Future<bool> Function(int activeWindows) confirmDisconnectCallback,
-    SshHostKeyConfirmation? onUnknownHostKey,
+  final StorageService _storage;
+
+  @override
+  Future<String?> getPassword(String connectionId) =>
+      _storage.getPassword(connectionId);
+
+  @override
+  Future<String?> getPrivateKey(String connectionId) =>
+      _storage.getPrivateKey(connectionId);
+
+  @override
+  Future<void> saveCredentials({
+    required String connectionId,
+    String? password,
+    String? privateKey,
   }) async {
-    _isSaving = true;
-    _isVerifying = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      if (kIsWeb) {
-        _isVerifying = false;
-        notifyListeners();
-        if (isEditing) {
-          await _connectionRepository.updateConnection(config);
-        } else {
-          await _connectionRepository.addConnection(config);
-        }
-        _connections = _connectionRepository.connections;
-        return true;
-      }
-
-      final clientConfig = ConnectionConfig(
-        id: config.id,
-        name: config.name,
-        host: config.host,
-        port: config.port,
-        username: config.username,
-        password: rawPassword,
-        privateKey: rawPrivateKey,
-        authMethod: config.authMethod,
-        launchMode: config.launchMode,
-        serverPlatform: config.serverPlatform,
-        tmuxAutoDeleteSeconds: config.tmuxAutoDeleteSeconds,
-        keepAlive: config.keepAlive,
-        hostKeyFingerprint: config.hostKeyFingerprint,
-        hostKeyAlgorithm: config.hostKeyAlgorithm,
-        hostKeyTrustedAt: config.hostKeyTrustedAt,
-        jumpHost: config.jumpHost,
-        jumpPort: config.jumpPort,
-        jumpUsername: config.jumpUsername,
-      );
-
-      final factory = SshClientFactory(_connectionRepository as StorageService);
-      final client = await factory.connectClient(
-        clientConfig,
-        timeout: const Duration(seconds: 12),
-        credentials: SshCredentials(
-          password: rawPassword,
-          privateKey: rawPrivateKey,
-        ),
-        onUnknownHostKey: onUnknownHostKey,
-      );
-      try {
-        await client.ping().timeout(const Duration(seconds: 8));
-      } finally {
-        client.close();
-      }
-      config.hostKeyFingerprint = clientConfig.hostKeyFingerprint;
-      config.hostKeyAlgorithm = clientConfig.hostKeyAlgorithm;
-      config.hostKeyTrustedAt = clientConfig.hostKeyTrustedAt;
-
-      _isVerifying = false;
-      notifyListeners();
-
-      final activeWindowCount = isEditing
-          ? await _runtimeActions.activeWindowCount(config.id)
-          : 0;
-      if (activeWindowCount > 0) {
-        _isSaving = false;
-        notifyListeners();
-        final confirmed = await confirmDisconnectCallback(activeWindowCount);
-        if (!confirmed) {
-          return false;
-        }
-        _isSaving = true;
-        notifyListeners();
-      }
-
-      if (isEditing) {
-        await _connectionRepository.updateConnection(config);
-        if (activeWindowCount > 0) {
-          await _runtimeActions.disconnectSessionsForConnection(config.id);
-        }
-      } else {
-        await _connectionRepository.addConnection(config);
-      }
-
-      _connections = _connectionRepository.connections;
-      return true;
-    } catch (e) {
-      _errorMessage = e.toString();
-      rethrow;
-    } finally {
-      _isVerifying = false;
-      _isSaving = false;
-      notifyListeners();
-    }
+    // StorageService 已在 add/update 时由 ConnectionRepository 写入。
   }
 
-  ConnectionConfig? getConnection(String id) {
-    return _connectionRepository.getConnection(id);
-  }
-
-  Future<String?> getPassword(String id) {
-    return _connectionRepository.getPassword(id);
-  }
-
-  Future<String?> getPrivateKey(String id) {
-    return _connectionRepository.getPrivateKey(id);
-  }
-
-  Future<String?> openTerminalSession(
-    String connectionId,
-    String windowName, {
-    SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      final sessionId = await _runtimeActions.openTerminalSession(
-        connectionId,
-        windowName,
-        onUnknownHostKey: onUnknownHostKey,
-      );
-      if (sessionId == null) {
-        _errorMessage = _runtimeActions.sshErrorMessage;
-      }
-      return sessionId;
-    } catch (e) {
-      _errorMessage = e.toString();
-      return null;
-    } finally {
-      notifyListeners();
-    }
-  }
-
-  Future<void> deleteConnectionWithCleanup(String connectionId) async {
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      await _runtimeActions.cleanupConnectionResources(connectionId);
-      await _connectionRepository.deleteConnection(connectionId);
-      _connections = _connectionRepository.connections;
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      notifyListeners();
-    }
-  }
-
-  Future<void> deleteConnectionsWithCleanup(List<String> connectionIds) async {
-    _errorMessage = null;
-    notifyListeners();
-    try {
-      for (final id in connectionIds) {
-        await _runtimeActions.cleanupConnectionResources(id);
-      }
-      await _connectionRepository.deleteConnections(connectionIds);
-      _connections = _connectionRepository.connections;
-    } catch (e) {
-      _errorMessage = e.toString();
-    } finally {
-      notifyListeners();
-    }
+  @override
+  Future<void> deleteCredentials(String connectionId) async {
+    // StorageService 已在 deleteConnection(s) 时由 ConnectionRepository 清理。
   }
 }

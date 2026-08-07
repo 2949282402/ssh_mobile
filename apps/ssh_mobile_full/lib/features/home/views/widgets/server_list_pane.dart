@@ -262,7 +262,7 @@ class _ServerListPaneState extends State<ServerListPane> {
       conn.id,
       windowName,
       onUnknownHostKey: (request) =>
-          showSshHostKeyTrustDialog(context, request),
+          context.read<ConnectionUiAdapter>().confirmHostKey(context, request),
     );
     if (!context.mounted) return;
     Navigator.of(context).pop();

@@ -167,6 +167,34 @@
   14 项通过；App `flutter test --no-pub` 通过（1019 个测试进度项）；最终格式检查
   （629 个文件，0 个变更）、`git diff --check` 和维护 Skill 同步检查均通过。
 
+## Step 06 执行记录（2026-08-08）
+
+- 已创建 `packages/features/feature_connection/`，公共入口导出连接配置模型、
+  `ConnectionViewModel`、`AddEditScreen`、`ConnectionStrings` 以及运行时/验证
+  Capability Contract。原 `add_edit_screen.dart` 通过 Git 文件移动迁入
+  `src/presentation/`；原 App 路径保留兼容转导出，未删除业务实现。
+- `ConnectionViewModel` 现在只依赖 `connection_core` 的
+  `ConnectionRepository`、`CredentialRepository`、`HostKeyRepository`，以及
+  `ConnectionRuntimePort` / `ConnectionVerificationPort`；它不创建或释放
+  Connection DB、Secure Storage、SSH、SFTP、监控服务。凭据保存、删除和 Host
+  Key 信任元数据分别走对应契约。
+- 因 SSH/SFTP/监控旧实现仍直接读取 `StorageService`，在 App 组合根新增了
+  `connection_feature_adapters.dart`：负责新旧结构数据的最小缺失同步、凭据
+  双读/双写、Host Key 双写和运行时 Capability 转换。该桥不进入 Feature，待
+  后续 SSH/SFTP Steps 迁移完成后删除。此处是针对实际代码差异的最小调整，避免
+  迁移期间已有服务器和会话行为断裂。
+- `app_ui` 尚未到 Plan Step 09，因此 Feature 暂时只复制连接编辑页所需的
+  最小 UI Surface/Header/SectionCard 和响应式 Token；没有扩大为共享 UI 包，后续
+  Step 09 再归并。Connection 页面中文/英文文案集中在 `ConnectionStrings`。
+- 依赖沿用 workspace 已解析的稳定约束：`provider ^6.1.5+1`、`shadcn_ui
+  ^0.56.1`、`uuid ^4.6.0`，没有出现版本冲突；`flutter pub get` 下载完成，
+  仅报告受现有 Flutter/其他约束限制的可用更新，没有擅自升级不相关依赖。
+  - 已新增 Feature 契约测试 3 项，并更新 Connection/Home/SFTP 相关 Provider
+    测试。`feature_connection flutter analyze`、`feature_connection flutter test`
+    通过；App `flutter analyze --no-pub` 通过；连接、Home、SFTP 定向回归测试
+    通过。完整 App 测试通过（1019 个测试进度项）；最终格式检查通过（601 个
+    文件，0 个变更）、`git diff --check` 和 Skill 同步检查均通过。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

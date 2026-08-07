@@ -6,15 +6,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
-import 'package:ssh_mobile/features/connection/models/connection.dart';
-import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.dart';
+import 'package:feature_connection/feature_connection.dart';
 import 'package:ssh_mobile/features/settings/viewmodels/settings_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
 import 'package:ssh_mobile/widgets/connection_progress_dialog.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
-import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
 import 'package:ssh_mobile/widgets/tactile_feedback.dart';
 import 'package:ssh_mobile/widgets/app_surface.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';

@@ -34,6 +34,16 @@ The Connection domain package is `packages/core/connection_core/`; it owns
 Connection models, repositories, the non-sensitive Drift database, Secure
 Storage credentials, and Host Key contracts, but never Feature UI or SSH
 session implementations.
+The Connection UI/application package is
+`packages/features/feature_connection/`; it owns the migrated connection editor
+and ViewModel, consumes only Core repositories, and receives SSH/SFTP/monitoring
+behavior through injected Capability Ports. The temporary legacy Storage bridge
+lives in the App composition root, not in the Feature.
+The Connection UI/application package is
+`packages/features/feature_connection/`; it owns the migrated connection editor
+and ViewModel, consumes only Core repositories, and receives SSH/SFTP/monitoring
+behavior through injected Capability Ports. The temporary legacy Storage bridge
+lives in the App composition root, not in the Feature.
 
 ## Architecture Boundaries
 
@@ -52,6 +62,14 @@ session implementations.
   `AppRuntime` creates and closes its single `ConnectionDatabase`; the package
   must not create a global database. Passwords/private keys stay in
   `CredentialRepository` and Secure Storage, never in Connection Drift tables.
+- `feature_connection` must use only `connection_core` public contracts and its
+  own public Capability Ports. It must not import `apps/ssh_mobile_full/lib/` or
+  another Feature's `/src/`; `ConnectionViewModel` is Route/Provider scoped and
+  never disposes App Scope SSH/SFTP resources.
+- `feature_connection` must use only `connection_core` public contracts and its
+  own public Capability Ports. It must not import `apps/ssh_mobile_full/lib/` or
+  another Feature's `/src/`; `ConnectionViewModel` is Route/Provider scoped and
+  never disposes App Scope SSH/SFTP resources.
 - Do not add new application code to legacy `lib/screens/` or `lib/models/`.
 - Keep screens focused on composition and transient presentation state. Put
   validation, async orchestration, repositories, and reusable state in
@@ -97,6 +115,8 @@ Read only the rows relevant to the task.
 | Architecture, MVVM, storage | Owning `lib/features/` code, `lib/data/`, `lib/services/storage_service.dart` | `docs/ADR_ENGINEERING_BASELINE.md` |
 | Core contracts, logging, and Module lifecycle | `packages/core/app_core/lib/`, `packages/core/app_core/test/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
 | Connection domain, repositories, database, credentials, Host Key | `packages/core/connection_core/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
+| Connection Feature editor/ViewModel | `packages/features/feature_connection/`, `apps/ssh_mobile_full/lib/app/connection_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
+| Connection Feature editor/ViewModel | `packages/features/feature_connection/`, `apps/ssh_mobile_full/lib/app/connection_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Startup or service lifetime | `lib/features/startup/`, `apps/ssh_mobile_full/lib/app/`, `apps/ssh_mobile_full/lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
 | SSH, terminal, host keys | `lib/features/connection/`, `lib/features/terminal/`, SSH services | `docs/security_manual_regression.md` |
 | SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
