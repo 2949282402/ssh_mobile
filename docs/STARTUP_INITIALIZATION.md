@@ -18,7 +18,8 @@
 - `SshService` 构造函数保持轻量，不直接启动后台事件监听与 tmux 会话恢复；通过 `ensureInitialized()` 按需初始化。
 
 ### 3. Feature Scope 隔离
-- `SftpFeatureScope` 和 `SystemAdminFeatureScope` 在页面路由层级为模块提供局部 ViewModel 作用域。
+- `SystemAdminFeatureScope` 在页面路由层级为模块提供局部 ViewModel 作用域。
+- `SftpViewModel` 自 2026-08-03 起由应用根提供（SFTP 页、编辑/查看路由与设置路由共享一个稳定实例）；页面级 `SftpFeatureScope` 已移除。
 - 根级 `MultiProvider` 不再放置未访问页面的重型 ViewModel。
 - 移除了 Home 页切换时 SFTP 对 `SystemAdminViewModel` 的跨模块强行读取。
 

@@ -235,38 +235,42 @@ class _LanShareScreenState extends State<LanShareScreen>
                               onPressed: () =>
                                   _toggleWebShareDialog(context, strings, vm),
                             ),
-                            PopupMenuButton<String>(
-                              tooltip: strings.moreActions,
+                            IconButton(
                               icon: Icon(
                                 vm.isScanning
                                     ? Icons.sync_rounded
                                     : Icons.sync_disabled_rounded,
+                                color: vm.isScanning
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
                               ),
+                              tooltip: vm.isScanning
+                                  ? strings.lanShareScanning
+                                  : strings.lanShareScan,
+                              onPressed: () {
+                                if (vm.isScanning) {
+                                  vm.stopScanning();
+                                } else {
+                                  vm.startScanning();
+                                }
+                              },
+                            ),
+                            PopupMenuButton<String>(
+                              tooltip: strings.moreActions,
+                              icon: const Icon(Icons.more_vert_rounded),
                               onSelected: (value) {
-                                if (value == 'scan') {
-                                  if (vm.isScanning) {
-                                    vm.stopScanning();
-                                  } else {
-                                    vm.startScanning();
-                                  }
-                                } else if (value == 'settings') {
+                                if (value == 'settings') {
                                   Navigator.of(context).push(
                                     MaterialPageRoute(
                                       builder: (_) =>
-                                          const LanShareSettingsScreen(),
+                                          const LanShareFeatureScope(
+                                            child: LanShareSettingsScreen(),
+                                          ),
                                     ),
                                   );
                                 }
                               },
                               itemBuilder: (context) => [
-                                PopupMenuItem(
-                                  value: 'scan',
-                                  child: Text(
-                                    vm.isScanning
-                                        ? strings.lanShareRadarStoppedHint
-                                        : strings.lanShareRadarHint,
-                                  ),
-                                ),
                                 PopupMenuItem(
                                   value: 'settings',
                                   child: Text(strings.lanShareSettings),

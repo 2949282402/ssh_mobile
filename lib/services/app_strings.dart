@@ -669,9 +669,13 @@ class AppStrings {
       : '设备 $senderId 希望发送“$fileName”（$fileSize）。是否接收？';
   String get accept => _en ? 'Accept' : '接收';
   String get reject => _en ? 'Reject' : '拒绝';
+  String get clear => _en ? 'Clear' : '清空';
   String get vpnPeerNodes => _en ? 'P2P Nodes' : 'P2P 节点列表';
   String get vpnNoPeers => _en ? 'No P2P nodes enrolled' : '暂无可用的 P2P 节点';
   String get vpnHolePunchProbe => _en ? 'Probe NAT Hole Punch' : '探测 NAT 打洞';
+  String get lanShareScan => _en ? 'Scan for nearby devices' : '扫描附近设备';
+  String get lanShareScanning =>
+      _en ? 'Scanning for nearby devices' : '正在扫描附近设备';
   String get lanShareRadarHint =>
       _en ? 'Scanning nearby devices...' : '正在雷达扫描附近设备…';
   String get lanShareRadarStoppedHint => _en ? 'Scanning paused' : '扫描已暂停';
@@ -951,6 +955,7 @@ class AppStrings {
   String get openMcpConsole => _en ? 'Open console' : '打开控制台';
   String get openAiSkills => _en ? 'AI Skills' : 'AI Skills';
   String get moreActions => _en ? 'More actions' : '更多操作';
+  String get featureSettings => _en ? 'Feature settings' : '功能设置';
   String get exportAppData => _en ? 'Export app data' : '导出应用数据';
   String get importAppData => _en ? 'Import app data' : '导入应用数据';
   String get exportComplete => _en ? 'Export complete' : '导出完成';

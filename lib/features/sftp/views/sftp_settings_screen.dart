@@ -91,74 +91,15 @@ class SftpSettingsScreen extends StatelessWidget {
     required int currentBytes,
     required Future<void> Function(int) onChanged,
   }) async {
-    final settings = context.read<AppSettings>();
-    final strings = AppStrings(settings.language);
-    final controller = TextEditingController(
-      text: (currentBytes / (1024 * 1024)).toStringAsFixed(
-        currentBytes % (1024 * 1024) == 0 ? 0 : 1,
-      ),
-    );
-    String? error;
+    final strings = AppStrings(context.read<AppSettings>().language);
     final result = await showDialog<int>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(title),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: controller,
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(labelText: 'MB'),
-              ),
-              if (error != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ],
-              const SizedBox(height: 8),
-              Text(strings.sftpLimitDialogHint),
-              Text(
-                strings.sftpLimitRange(
-                  _formatBytes(AppSettings.minSftpLimitBytes),
-                  _formatBytes(AppSettings.maxSftpLimitBytes),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: Text(strings.cancel),
-            ),
-            FilledButton(
-              onPressed: () {
-                final value = double.tryParse(controller.text.trim());
-                final bytes = value == null
-                    ? null
-                    : (value * 1024 * 1024).round();
-                if (bytes == null ||
-                    bytes < AppSettings.minSftpLimitBytes ||
-                    bytes > AppSettings.maxSftpLimitBytes) {
-                  setState(() => error = strings.sftpLimitInvalid);
-                  return;
-                }
-                Navigator.pop(dialogContext, bytes);
-              },
-              child: Text(strings.save),
-            ),
-          ],
-        ),
+      builder: (dialogContext) => _LimitEditDialog(
+        title: title,
+        currentBytes: currentBytes,
+        strings: strings,
       ),
     );
-    controller.dispose();
     if (result != null && context.mounted) await onChanged(result);
   }
 
@@ -176,6 +117,100 @@ class SftpSettingsScreen extends StatelessWidget {
     }
     final value = bytes / kb;
     return '${value.toStringAsFixed(value == value.roundToDouble() ? 0 : 1)} KB';
+  }
+}
+
+/// Owns the edit dialog's text controller so it is disposed only after the
+/// dialog route is fully removed (the exit animation can otherwise rebuild the
+/// TextField after the controller is gone).
+class _LimitEditDialog extends StatefulWidget {
+  final String title;
+  final int currentBytes;
+  final AppStrings strings;
+
+  const _LimitEditDialog({
+    required this.title,
+    required this.currentBytes,
+    required this.strings,
+  });
+
+  @override
+  State<_LimitEditDialog> createState() => _LimitEditDialogState();
+}
+
+class _LimitEditDialogState extends State<_LimitEditDialog> {
+  late final TextEditingController _controller;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    final bytes = widget.currentBytes;
+    _controller = TextEditingController(
+      text: (bytes / (1024 * 1024)).toStringAsFixed(
+        bytes % (1024 * 1024) == 0 ? 0 : 1,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = widget.strings;
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'MB'),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              _error!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Text(strings.sftpLimitDialogHint),
+          Text(
+            strings.sftpLimitRange(
+              SftpSettingsScreen._formatBytes(AppSettings.minSftpLimitBytes),
+              SftpSettingsScreen._formatBytes(AppSettings.maxSftpLimitBytes),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(strings.cancel),
+        ),
+        FilledButton(onPressed: _save, child: Text(strings.save)),
+      ],
+    );
+  }
+
+  void _save() {
+    final value = double.tryParse(_controller.text.trim());
+    final bytes = value == null ? null : (value * 1024 * 1024).round();
+    if (bytes == null ||
+        bytes < AppSettings.minSftpLimitBytes ||
+        bytes > AppSettings.maxSftpLimitBytes) {
+      setState(() => _error = widget.strings.sftpLimitInvalid);
+      return;
+    }
+    Navigator.pop(context, bytes);
   }
 }
 

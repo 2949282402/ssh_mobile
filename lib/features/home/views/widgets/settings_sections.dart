@@ -327,3 +327,67 @@ class _DeveloperSettingsSection extends StatelessWidget {
     );
   }
 }
+
+/// Cross-links from the global settings page to the feature-owned settings
+/// screens (SFTP limits, terminal appearance, LAN share, MCP). These only link
+/// out; the settings themselves stay on their feature pages.
+class _FeatureSettingsSection extends StatelessWidget {
+  final AppStrings strings;
+
+  const _FeatureSettingsSection({required this.strings});
+
+  @override
+  Widget build(BuildContext context) {
+    return _SettingsSection(
+      title: strings.featureSettings,
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.folder_copy_outlined, size: 20),
+          title: Text(strings.sftpSettings),
+          trailing: const Icon(Icons.chevron_right_rounded, size: 18),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SftpSettingsScreen()),
+            );
+          },
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.terminal_outlined, size: 20),
+          title: Text(strings.terminalAppearance),
+          trailing: const Icon(Icons.chevron_right_rounded, size: 18),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const TerminalSettingsScreen()),
+            );
+          },
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.cast_outlined, size: 20),
+          title: Text(strings.lanShareSettings),
+          trailing: const Icon(Icons.chevron_right_rounded, size: 18),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    const LanShareFeatureScope(child: LanShareSettingsScreen()),
+              ),
+            );
+          },
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.hub_outlined, size: 20),
+          title: Text(strings.openMcpSettings),
+          trailing: const Icon(Icons.chevron_right_rounded, size: 18),
+          onTap: () => Navigator.pushNamed(context, '/mcp-settings'),
+        ),
+      ],
+    );
+  }
+}

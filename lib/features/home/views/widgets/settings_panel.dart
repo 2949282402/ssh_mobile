@@ -45,6 +45,8 @@ class _SettingsPanel extends StatelessWidget {
               settings: settings,
             ),
             const SizedBox(height: 12),
+            _FeatureSettingsSection(strings: strings),
+            const SizedBox(height: 12),
             _BackupSettingsSection(
               strings: strings,
               onExport: onExport,
