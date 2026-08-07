@@ -9,7 +9,9 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$releaseDir = Join-Path $repoRoot "build\windows\x64\runner\Release"
+$appDir = Join-Path $repoRoot "apps\ssh_mobile_full"
+# Full App 已迁移到 workspace member；构建与产物路径必须以 App 目录为 Owner。
+$releaseDir = Join-Path $appDir "build\windows\x64\runner\Release"
 $workDir = Join-Path $repoRoot "build\windows_msi"
 $stageDir = Join-Path $workDir "stage"
 $objDir = Join-Path $workDir "obj"
@@ -151,7 +153,7 @@ if (!$heat -or !$candle -or !$light -or !$firewallExtension) {
   throw "WiX Toolset v3 tools and WixFirewallExtension.dll were not found. Install WiX manually or check the downloaded package in $wixExtractDir."
 }
 
-Push-Location $repoRoot
+Push-Location $appDir
 try {
   & $Flutter build windows
   if ($LASTEXITCODE -ne 0) {

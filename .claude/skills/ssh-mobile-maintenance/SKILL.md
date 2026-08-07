@@ -23,12 +23,20 @@ Treat current code and tests as the behavioral source of truth. Treat
 Markdown update markers, and the full quality gate; do not repeat those details
 in this skill or memory.
 
+During the modular migration, the full Flutter application is rooted at
+`apps/ssh_mobile_full/`. Unless a path below is explicitly repository-level or
+package-level, a leading `lib/`, `test/`, or `tool/` path is relative to that
+app. The Dart native package is rooted at
+`packages/infrastructure/ssh_mobile_network_native/`.
+
 ## Architecture Boundaries
 
 - Keep feature-owned UI, models, services, and state under
-  `lib/features/<feature>/`. Keep shared UI in `lib/widgets/` and `lib/theme/`;
+  `apps/ssh_mobile_full/lib/features/<feature>/`. Keep shared UI in
+  `apps/ssh_mobile_full/lib/widgets/` and `apps/ssh_mobile_full/lib/theme/`;
   keep cross-feature protocol, security, and persistence infrastructure in
-  `lib/services/`, `lib/core/services/`, and `lib/data/`.
+  `apps/ssh_mobile_full/lib/services/`, `apps/ssh_mobile_full/lib/core/services/`,
+  and `apps/ssh_mobile_full/lib/data/`.
 - Do not add new application code to legacy `lib/screens/` or `lib/models/`.
 - Keep screens focused on composition and transient presentation state. Put
   validation, async orchestration, repositories, and reusable state in
@@ -68,12 +76,12 @@ Read only the rows relevant to the task.
 | Task | Start with | Additional reference |
 | --- | --- | --- |
 | Architecture, MVVM, storage | Owning `lib/features/` code, `lib/data/`, `lib/services/storage_service.dart` | `docs/ADR_ENGINEERING_BASELINE.md` |
-| Startup or service lifetime | `lib/features/startup/`, `lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
+| Startup or service lifetime | `lib/features/startup/`, `apps/ssh_mobile_full/lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
 | SSH, terminal, host keys | `lib/features/connection/`, `lib/features/terminal/`, SSH services | `docs/security_manual_regression.md` |
 | SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | AI chat, tools, plans, MCP | `lib/features/ai_chat/`, `lib/services/ai_tool*`, `lib/services/mcp/` | `docs/AGENT_RUN_TRACE.md`, `docs/security_manual_regression.md` |
 | Monitoring or system admin | `lib/features/performance/`, `lib/features/system_admin/` | `docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
-| LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |
+| LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `packages/infrastructure/ssh_mobile_network_native/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |
 | Shared UI or responsiveness | `lib/theme/app_theme.dart`, `lib/widgets/app_surface.dart`, `lib/utils/responsive.dart` | `docs/MOBILE_UI_QA.md` |
 | Build, release, packaging | Platform directory and `scripts/` | `docs/RELEASE_CHECKLIST.md`, `docs/VALIDATION_REPORT.md` |
 | Matching recurring regression | Nearest code and focused tests | `.agents/skills/ssh-mobile-maintenance/references/lessons.md` |
@@ -254,7 +262,7 @@ lib/services/lan_share/lan_transfer_service.dart.
 ### Network Platform and Public Relay
 
 Primary entry points are `native/network_core/`,
-`packages/ssh_mobile_network_native/`, `lib/services/network/`,
+`packages/infrastructure/ssh_mobile_network_native/`, `lib/services/network/`,
 `lib/services/relay/`, `lib/features/lan_share/views/vpn_p2p_share_view.dart`,
 and `relay/`.
 
@@ -359,7 +367,7 @@ its child widgets.
 
 ### Navigation and Settings
 
-- `lib/main.dart` composes infrastructure services and feature ViewModels
+- `apps/ssh_mobile_full/lib/main.dart` composes infrastructure services and feature ViewModels
   through `MultiProvider`.
 - `lib/features/settings/viewmodels/settings_viewmodel.dart` bridges
   `AppSettings` plus `StorageService`, while `lib/features/home/views/home_screen.dart`

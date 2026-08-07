@@ -1,0 +1,69 @@
+name: ssh_mobile
+description: Cross-platform SSH, SFTP, monitoring, and AI-assisted operations client.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  dartssh2: ^2.22.5
+  xterm:
+    path: ../../third_party/xterm
+  ssh_mobile_network_native:
+    path: ../../packages/infrastructure/ssh_mobile_network_native
+  flutter_background_service: ^5.1.0
+  flutter_local_notifications: ^22.2.0
+  flutter_secure_storage: ^10.3.1
+  provider: ^6.1.5+1
+
+  shared_preferences: ^2.5.5
+  path_provider: ^2.1.6
+  uuid: ^4.6.0
+  intl: ^0.20.2
+  path: ^1.9.1
+  permission_handler: ^13.0.0
+  cryptography: ^2.9.0
+  file_picker: ^12.0.0-beta.7
+  gpt_markdown: ^1.1.8
+  webview_flutter: ^4.14.1
+  fl_chart: ^1.2.0
+  animations: ^2.2.0
+  drift: ^2.34.3
+  drift_flutter: ^0.3.1
+  shadcn_ui: ^0.56.1
+  flutter_animate: ^4.5.2
+  http: ^1.6.0
+  archive: ^4.0.9
+  flutter_displaymode: ^0.7.0
+  gal: ^2.3.3
+  wakelock_plus: ^1.7.0
+  nsd: ^5.0.1
+  disk_space_2: ^1.0.13
+  desktop_drop: ^0.7.1
+  share_handler: ^0.0.25
+  basic_utils: ^5.8.2
+  crypto: ^3.0.7
+  pointycastle: ^4.0.0
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.4.0
+  device_info_plus: ^13.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  build_runner: ^2.15.1
+  drift_dev: ^2.34.5
+  image: ^4.9.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/

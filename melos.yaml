@@ -1,0 +1,10 @@
+name: ssh_mobile
+
+packages:
+  - apps/ssh_mobile_full
+  - packages/infrastructure/ssh_mobile_network_native
+
+scripts:
+  format: dart format --output=none --set-exit-if-changed .
+  analyze: dart analyze .
+  test: dart test

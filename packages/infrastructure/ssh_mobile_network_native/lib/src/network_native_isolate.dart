@@ -168,7 +168,9 @@ void _pollEvents(List<Object> arguments) {
           final buffer = outBuffer.ref;
           if (buffer.ptr != nullptr) {
             if (buffer.len > 0) {
-              events.send(Uint8List.fromList(buffer.ptr.asTypedList(buffer.len)));
+              events.send(
+                Uint8List.fromList(buffer.ptr.asTypedList(buffer.len)),
+              );
             }
             _sshNetBufferFreeNative(buffer);
           }

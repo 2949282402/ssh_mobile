@@ -1,7 +1,7 @@
 > Last updated: 2026-08-07
 
 <p align="center">
-  <img src="assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
+  <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
 </p>
 
 <h1 align="center">SSH Mobile</h1>
@@ -54,12 +54,13 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 ```bash
 git clone https://github.com/hejulian2004/ssh_mobile.git
 cd ssh_mobile
-flutter pub get
+dart pub get
 ```
 
 ### Run the application
 
 ```bash
+cd apps/ssh_mobile_full
 flutter devices
 flutter run -d <device-id>
 ```
@@ -96,6 +97,9 @@ In SSH Mobile, open **Network Transfer → VPN / P2P → Server Configuration** 
 ### Platform builds
 
 ```bash
+# Run these commands from apps/ssh_mobile_full.
+cd apps/ssh_mobile_full
+
 # Android
 flutter build apk --debug
 flutter build apk --release
@@ -111,8 +115,10 @@ flutter build ios --release --no-codesign
 
 ```powershell
 # Windows
+Set-Location apps/ssh_mobile_full
 flutter config --enable-windows-desktop
 flutter build windows
+Set-Location ../..
 powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_msi.ps1
 ```
 
@@ -261,8 +267,9 @@ and ask for approval before performing any write operation.
 ### Fast local verification
 
 ```bash
-flutter pub get
-dart format --output=none --set-exit-if-changed lib test tool
+dart pub get
+dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
+cd apps/ssh_mobile_full
 flutter analyze
 flutter test
 ```
@@ -270,7 +277,9 @@ flutter test
 ### Full quality gate
 
 ```bash
-flutter pub get
+dart pub get
+dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
+cd apps/ssh_mobile_full
 dart run tool/generate_app_icons.dart
 dart run build_runner build
 dart format --output=none --set-exit-if-changed lib test tool
@@ -282,8 +291,9 @@ dart run tool/check_coverage.dart --minimum=35
 Check generated files and agent skills:
 
 ```bash
-git diff --exit-code -- assets android ios macos web windows/runner/resources/app_icon.ico
-git diff --exit-code -- lib/data/database/app_database.g.dart
+cd ../..
+git diff --exit-code -- apps/ssh_mobile_full/assets apps/ssh_mobile_full/android apps/ssh_mobile_full/ios apps/ssh_mobile_full/macos apps/ssh_mobile_full/web apps/ssh_mobile_full/windows/runner/resources/app_icon.ico
+git diff --exit-code -- apps/ssh_mobile_full/lib/data/database/app_database.g.dart
 ```
 
 ```powershell
@@ -293,12 +303,14 @@ git diff --exit-code -- lib/data/database/app_database.g.dart
 ### Platform build verification
 
 ```bash
+cd apps/ssh_mobile_full
 flutter build apk --debug --no-pub
 flutter build macos
 flutter build ios --release --no-codesign --no-pub
 ```
 
 ```powershell
+Set-Location apps/ssh_mobile_full
 flutter test --reporter expanded
 flutter build windows
 ```
@@ -386,25 +398,26 @@ flowchart LR
 
 ### Project structure
 
-- `lib/main.dart`: application startup and dependency composition.
-- `lib/features/`: feature-owned models, ViewModels, services, views, and
+- `apps/ssh_mobile_full/lib/main.dart`: application startup and dependency composition.
+- `apps/ssh_mobile_full/lib/features/`: feature-owned models, ViewModels, services, views, and
   feature-local widgets. Current feature roots are `connection`, `terminal`,
   `sftp`, `ai_chat`, `ai_skills`, `client_webview`, `performance`,
   `system_admin`, `lan_share`, `playbook`, `rag`, `settings`, `startup`,
   `home`, and `developer_log`.
-- `lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
+- `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
   LAN-share, MCP, and platform-adapter infrastructure.
-- `lib/data/`: Drift database, DAOs, and repository implementations.
-- `lib/core/services/`: lower-level shared security and protocol factories,
+- `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
+- `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,
   including host-key policy and data protection.
-- `lib/theme/`, `lib/widgets/`, `lib/utils/`: design system, reusable widgets, and utilities.
-- `lib/models/`: small legacy-compatible shared model surface only; new
-  feature models belong to their owning `lib/features/<feature>/models/`.
-- `lib/screens/`: legacy compatibility surface; do not add new application UI
+- `apps/ssh_mobile_full/lib/theme/`, `apps/ssh_mobile_full/lib/widgets/`, `apps/ssh_mobile_full/lib/utils/`: design system, reusable widgets, and utilities.
+- `apps/ssh_mobile_full/lib/models/`: small legacy-compatible shared model surface only; new
+  feature models belong to their owning `apps/ssh_mobile_full/lib/features/<feature>/models/`.
+- `apps/ssh_mobile_full/lib/screens/`: legacy compatibility surface; do not add new application UI
   here.
-- `test/`: unit and widget tests.
+- `apps/ssh_mobile_full/test/`: unit and widget tests.
 - `docs/`: architecture, security, performance, validation, and release documentation.
-- `scripts/`, `tool/`: build, generation, synchronization, and quality-check scripts.
+- `scripts/`: repository-level build, packaging, and synchronization scripts.
+- `apps/ssh_mobile_full/tool/`: app-specific generation and quality-check scripts.
 - `third_party/xterm/`: vendored terminal package.
 
 `main.dart` owns application-lifetime services and shared ViewModels through

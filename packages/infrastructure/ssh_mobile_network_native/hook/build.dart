@@ -12,10 +12,14 @@ void main(List<String> args) async {
     final targetOS = input.config.code.targetOS;
     final targetArch = input.config.code.targetArchitecture;
 
-    // Resolve path to native/network_core
-    // input.packageRoot is packages/ssh_mobile_network_native/
-    final repoRoot = Directory.fromUri(input.packageRoot).parent.parent;
-    final rustWorkspaceDir = Directory('${repoRoot.path}/native/network_core');
+    // Workspace 迁移后，native package 位于 packages/infrastructure 下；
+    // 向上三级才能回到仓库根，Rust workspace 仍由根目录的 native/network_core 持有。
+    final workspaceRoot = Directory.fromUri(
+      input.packageRoot,
+    ).parent.parent.parent;
+    final rustWorkspaceDir = Directory(
+      '${workspaceRoot.path}/native/network_core',
+    );
 
     if (!rustWorkspaceDir.existsSync()) {
       throw StateError('Rust workspace not found at ${rustWorkspaceDir.path}');
@@ -92,7 +96,7 @@ void main(List<String> args) async {
     if (targetOS == OS.android) {
       final ndkRoot = _findAndroidNdk(
         buildEnvironment,
-        repoRoot: repoRoot.path,
+        workspaceRoot: workspaceRoot.path,
       );
       if (ndkRoot == null) {
         throw StateError(
@@ -282,7 +286,7 @@ Directory? _locateCargoBinDirectory() {
 
 String? _findAndroidNdk(
   Map<String, String> environment, {
-  required String repoRoot,
+  required String workspaceRoot,
 }) {
   final directCandidates = <String?>[
     environment['ANDROID_NDK_HOME'],
@@ -303,7 +307,9 @@ String? _findAndroidNdk(
   // Fall back to android/local.properties (sdk.dir / ndk.dir), which Gradle
   // reads to locate the SDK when ANDROID_HOME is not exported from the shell.
   if (sdkRoot == null || sdkRoot.isEmpty) {
-    final properties = File('$repoRoot/android/local.properties');
+    final properties = File(
+      '$workspaceRoot/apps/ssh_mobile_full/android/local.properties',
+    );
     if (properties.existsSync()) {
       for (final rawLine in properties.readAsLinesSync()) {
         final line = rawLine.trim();

@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> 最新更新时间：2026-08-05
+> 最新更新时间：2026-08-07
 
 SSH Mobile is a Flutter (Dart) cross-platform SSH / SFTP, server monitoring, and
 client-side AI-agent client for Android, iOS, macOS, Windows, and Web. The AI
@@ -24,11 +24,14 @@ quick-references.
 
 ## Quick commands
 
-- `flutter pub get` — install dependencies (after `pubspec.yaml` or Drift changes).
-- `dart format --output=none --set-exit-if-changed lib test tool` — format check.
-- `flutter analyze` — static analysis.
-- `flutter test` — all tests; `flutter test test/path/foo_test.dart` — one file.
-- `dart run build_runner build` — regenerate Drift DAOs and other codegen.
+- `dart pub get` — resolve the root workspace (after any workspace member
+  `pubspec.yaml` or Drift changes).
+- `dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool` — format check.
+- From `apps/ssh_mobile_full/`, `flutter analyze` — static analysis.
+- From `apps/ssh_mobile_full/`, `flutter test` — all tests;
+  `flutter test test/path/foo_test.dart` — one file.
+- From `apps/ssh_mobile_full/`, `dart run build_runner build` — regenerate
+  Drift DAOs and other codegen.
 
 Full quality gate (incl. coverage floor), icon/Doc codegen, and platform builds:
 see `AGENTS.md`.

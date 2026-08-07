@@ -325,16 +325,29 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   callbacks in `StorageService` (`registerOnImportCallback`) allow high-level
   ChangeNotifiers to automatically reload and refresh UI states post-import.
 - 2026-06-01: Modularized `LlmChatService` (split into `llm_chat_types.dart`, `llm_system_prompt.dart`, and `llm_context_compressor.dart`) and `LlmChatScreen` (split into `llm_settings_screen.dart`, `message_bubble.dart`, `history_panel.dart`, `chat_tools_bar.dart`, `tool_approval_panel.dart`, and `ai_strings.dart`) using Dart's native `part`/`part of` pattern. This dramatically reduced the massive single-file complexity (screen down from 5600 lines to 3000 lines; service down from 1350 lines to 800 lines) while maintaining full feature coverage, same private/package access, and passing 100% of unit tests.
+- 2026-08-07: The repository is now a Dart workspace. The current full Flutter
+  app is rooted at `apps/ssh_mobile_full/`; its existing feature-first MVVM
+  paths remain under that app until the numbered package-migration Steps move
+  them. The native Dart package is rooted at
+  `packages/infrastructure/ssh_mobile_network_native/`. Root
+  `packages/core/`, `packages/infrastructure/`, and `packages/features/` are
+  staged package boundaries, while root `pubspec.yaml` and `melos.yaml` own
+  workspace configuration. Do not start feature-package migration before its
+  Plan Step; preserve the existing runtime behavior and public contracts while
+  moving directories.
 - 2026-07-23: The current architecture is pure feature-first MVVM. New UI and
-  feature state belong under `lib/features/<feature>/` (models, services,
-  viewmodels, views, and feature-local widgets); shared UI belongs in
-  `lib/widgets/` and `lib/theme/`; cross-feature infrastructure belongs in
-  `lib/services/`, `lib/core/services/`, and `lib/data/`. `lib/screens/` is
-  legacy compatibility only. `main.dart` composes application-lifetime
-  services/shared ViewModels, while the AI-chat runtime and terminal
-  session/history/window ViewModels are view-scoped. Keep README (both
-  languages), CLAUDE.md, the shared maintenance skill, and architecture docs
-  on these paths and ownership boundaries.
+  feature state belong under `apps/ssh_mobile_full/lib/features/<feature>/`
+  (models, services, viewmodels, views, and feature-local widgets); shared UI
+  belongs in `apps/ssh_mobile_full/lib/widgets/` and
+  `apps/ssh_mobile_full/lib/theme/`; cross-feature infrastructure belongs in
+  `apps/ssh_mobile_full/lib/services/`,
+  `apps/ssh_mobile_full/lib/core/services/`, and
+  `apps/ssh_mobile_full/lib/data/`. The app's `lib/screens/` is legacy
+  compatibility only. `apps/ssh_mobile_full/lib/main.dart` composes
+  application-lifetime services/shared ViewModels, while the AI-chat runtime
+  and terminal session/history/window ViewModels are view-scoped. Keep README
+  (both languages), CLAUDE.md, the shared maintenance skill, and architecture
+  docs on these paths and ownership boundaries.
 - 2026-06-15: Keep `README.md` and the shared SSH Mobile maintenance skill concise and factual. Prefer current product shape over changelog-style "now added" notes, and keep monitor docs aligned with the four current tabs: Performance, Ports, Applications, and Services.
 - 2026-06-15: AI chat tool use now has per-run budget guardrails. Default budget is 20 tool calls, the first limit auto-extends by half, and every later extension requires an internal safety audit that may disable further tools and force a final no-tools summary. Keep this audit independent from the normal multi-agent toggle, and keep state-changing SSH session and terminal-history tools behind the generic approval UI.
 - 2026-06-16: 完成整个 SSH Mobile Flutter 客户端项目的 MVVM 架构重构，将 Connection、Settings、Performance 以及 SFTP 模块完全分离为 View-ViewModel-Repository 模式，全局通过 ChangeNotifier 和精度选择（Selector）降低 rebuild 消耗，保证了终端及采样热路径的高性能与 100% 单元测试通过率。

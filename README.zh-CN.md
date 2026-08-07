@@ -1,7 +1,7 @@
 > 最新更新时间：2026-08-07
 
 <p align="center">
-  <img src="assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
+  <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
 </p>
 
 <h1 align="center">SSH Mobile</h1>
@@ -54,12 +54,13 @@ SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 An
 ```bash
 git clone https://github.com/hejulian2004/ssh_mobile.git
 cd ssh_mobile
-flutter pub get
+dart pub get
 ```
 
 ### 运行项目
 
 ```bash
+cd apps/ssh_mobile_full
 flutter devices
 flutter run -d <device-id>
 ```
@@ -96,6 +97,9 @@ docker compose --env-file .env up --build
 ### 各平台构建
 
 ```bash
+# 以下命令从 apps/ssh_mobile_full 目录执行。
+cd apps/ssh_mobile_full
+
 # Android
 flutter build apk --debug
 flutter build apk --release
@@ -111,8 +115,10 @@ flutter build ios --release --no-codesign
 
 ```powershell
 # Windows
+Set-Location apps/ssh_mobile_full
 flutter config --enable-windows-desktop
 flutter build windows
+Set-Location ../..
 powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_msi.ps1
 ```
 
@@ -250,8 +256,9 @@ printf 'alpha\nbeta\ngamma\n' \
 ### 快速本地验证
 
 ```bash
-flutter pub get
-dart format --output=none --set-exit-if-changed lib test tool
+dart pub get
+dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
+cd apps/ssh_mobile_full
 flutter analyze
 flutter test
 ```
@@ -259,7 +266,9 @@ flutter test
 ### 完整质量门禁
 
 ```bash
-flutter pub get
+dart pub get
+dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
+cd apps/ssh_mobile_full
 dart run tool/generate_app_icons.dart
 dart run build_runner build
 dart format --output=none --set-exit-if-changed lib test tool
@@ -271,8 +280,9 @@ dart run tool/check_coverage.dart --minimum=35
 检查生成文件和 Agent Skill：
 
 ```bash
-git diff --exit-code -- assets android ios macos web windows/runner/resources/app_icon.ico
-git diff --exit-code -- lib/data/database/app_database.g.dart
+cd ../..
+git diff --exit-code -- apps/ssh_mobile_full/assets apps/ssh_mobile_full/android apps/ssh_mobile_full/ios apps/ssh_mobile_full/macos apps/ssh_mobile_full/web apps/ssh_mobile_full/windows/runner/resources/app_icon.ico
+git diff --exit-code -- apps/ssh_mobile_full/lib/data/database/app_database.g.dart
 ```
 
 ```powershell
@@ -282,12 +292,14 @@ git diff --exit-code -- lib/data/database/app_database.g.dart
 ### 平台构建验证
 
 ```bash
+cd apps/ssh_mobile_full
 flutter build apk --debug --no-pub
 flutter build macos
 flutter build ios --release --no-codesign --no-pub
 ```
 
 ```powershell
+Set-Location apps/ssh_mobile_full
 flutter test --reporter expanded
 flutter build windows
 ```
@@ -375,24 +387,24 @@ flowchart LR
 
 ### 项目结构
 
-- `lib/main.dart`：应用启动和依赖装配。
-- `lib/features/`：各 Feature 自有的 Model、ViewModel、Service、View 和
+- `apps/ssh_mobile_full/lib/main.dart`：应用启动和依赖装配。
+- `apps/ssh_mobile_full/lib/features/`：各 Feature 自有的 Model、ViewModel、Service、View 和
   Feature 内部 Widget。当前 Feature 根目录包括 `connection`、`terminal`、
   `sftp`、`ai_chat`、`ai_skills`、`client_webview`、`performance`、
   `system_admin`、`lan_share`、`playbook`、`rag`、`settings`、`startup`、
   `home` 和 `developer_log`。
-- `lib/services/`：跨 Feature 的 SSH/SFTP/LLM/AI Tool、监控、存储、局域网
+- `apps/ssh_mobile_full/lib/services/`：跨 Feature 的 SSH/SFTP/LLM/AI Tool、监控、存储、局域网
   快传、MCP 和平台适配基础设施。
-- `lib/data/`：Drift 数据库、DAO 和 Repository 实现。
-- `lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
+- `apps/ssh_mobile_full/lib/data/`：Drift 数据库、DAO 和 Repository 实现。
+- `apps/ssh_mobile_full/lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
   策略和数据保护。
-- `lib/theme/`、`lib/widgets/`、`lib/utils/`：设计系统、复用组件和工具。
-- `lib/models/`：仅保留小型的历史兼容共享模型；新增 Feature 模型放在所属的
-  `lib/features/<feature>/models/`。
-- `lib/screens/`：历史兼容目录；不要继续在此新增应用 UI。
-- `test/`：单元测试和 Widget 测试。
+- `apps/ssh_mobile_full/lib/theme/`、`apps/ssh_mobile_full/lib/widgets/`、`apps/ssh_mobile_full/lib/utils/`：设计系统、复用组件和工具。
+- `apps/ssh_mobile_full/lib/models/`：仅保留小型的历史兼容共享模型；新增 Feature 模型放在所属的
+  `apps/ssh_mobile_full/lib/features/<feature>/models/`。
+- `apps/ssh_mobile_full/lib/screens/`：历史兼容目录；不要继续在此新增应用 UI。
+- `apps/ssh_mobile_full/test/`：单元测试和 Widget 测试。
 - `docs/`：架构、安全、性能、验证和发布文档。
-- `scripts/`、`tool/`：构建、生成、同步和质量检查脚本。
+- `scripts/`：仓库级构建、打包和同步脚本；`apps/ssh_mobile_full/tool/`：App 专属生成和质量检查脚本。
 - `third_party/xterm/`：仓库内维护的终端组件。
 
 `main.dart` 通过 `MultiProvider` 组合应用生命周期的服务和共享 ViewModel。

@@ -22,6 +22,39 @@
 
 ---
 
+## Step 01 执行记录（2026-08-07）
+
+- 已创建 `apps/ssh_mobile_full/`、`packages/core/`、
+  `packages/infrastructure/`、`packages/features/`；完整 Flutter App 的代码、
+  测试、平台目录、资源和 App 专属工具已移动到
+  `apps/ssh_mobile_full/`。
+- 已将 `packages/ssh_mobile_network_native` 移动到
+  `packages/infrastructure/ssh_mobile_network_native/`，并更新 App 的 xterm、
+  native package path dependency。
+- 已创建根 `pubspec.yaml` Dart workspace 与 `melos.yaml` 的 format/analyze/test
+  脚本；workspace 成员均使用 `resolution: workspace`。
+- 计划描述与实际依赖的最小差异：原生 package 的 `test: ^1.28.0` 在 workspace
+  中会解析到与 App 的 `flutter_test` / `drift_dev` 不兼容的版本。为保持原有
+  生命周期测试覆盖且不引入运行时依赖，原生 package 改用 Flutter SDK 的
+  `flutter_test`，测试导入同步调整为 `package:flutter_test/flutter_test.dart`。
+- `dart pub get`：通过；root workspace 统一解析 `test_api 0.7.11` 与
+  `analyzer 13.0.0`，并按 Dart workspace 规则清理了成员旧 lock/config 文件。
+- 迁移后的 App 目录执行 `flutter pub get`：通过；重新生成
+  `apps/ssh_mobile_full/.flutter-plugins-dependencies`，修复了迁移后 Android
+  构建仍引用旧根目录插件元数据的问题。未手工修改 generated plugin registrant。
+- 迁移后 native asset hook 的 workspace 根目录计算由两级调整为三级，并更新
+  Android `local.properties` 查找路径；这是目录迁移所需的最小路径修正，Rust
+  workspace 仍保持在根目录 `native/network_core`。
+- 最终验证：定向 Dart format 通过（583 个文件，0 个变更）；App
+  `flutter analyze --no-pub` 通过；App `flutter test --no-pub` 通过（1017 个
+  测试进度项）；native package analyze 通过；native package test 通过（4 个
+  测试）；`flutter build apk --debug --no-pub` 通过，生成
+  `apps/ssh_mobile_full/build/app/outputs/flutter-apk/app-debug.apk`。
+- 本 Step 是目录搬迁与 workspace 接线：Git 中旧路径对应新路径，未删除业务实现；
+  未改变 SSH、网络协议、UI、业务规则或 AI Prompt。
+
+---
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

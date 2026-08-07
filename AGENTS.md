@@ -1,10 +1,10 @@
 # Repository Guidelines
 
-> 最新更新时间：2026-07-28
+> 最新更新时间：2026-08-07
 
 ## Project Structure & Module Organization
 
-This is a Flutter app for SSH, SFTP, server monitoring (including general metrics, port usage, process application performance, and service status), logs, LAN Quick Share, and OpenAI-compatible AI tools. Main Dart code uses feature-first MVVM under `lib/features/`: feature-owned models, services, ViewModels, views, and feature-local widgets live with their feature. Cross-feature SSH/SFTP/storage/LLM/MCP infrastructure lives in `lib/services/`; shared security/protocol helpers in `lib/core/services/`; Drift database and repositories in `lib/data/`; shared UI in `lib/theme/` and `lib/widgets/`; and common helpers in `lib/utils/`. `lib/models/` and `lib/screens/` are legacy compatibility surfaces, not destinations for new work. Platform projects are in `android/`, `ios/`, `macos/`, and `windows/`. Static files belong in `assets/`, tests in `test/`, packaging scripts in `scripts/`, installer files in `installer/`, and longer design docs in `docs/`. The vendored terminal package under `third_party/xterm/` is excluded from the root analyzer.
+This is a Dart workspace containing the full Flutter app for SSH, SFTP, server monitoring (including general metrics, port usage, process application performance, and service status), logs, LAN Quick Share, and OpenAI-compatible AI tools. The current full app lives in `apps/ssh_mobile_full/`: its `lib/` uses feature-first MVVM, its platform projects, assets, tests, and app-specific tools live beside it, and its `pubspec.yaml` is a workspace member. Cross-feature SSH/SFTP/storage/LLM/MCP infrastructure currently remains under `apps/ssh_mobile_full/lib/services/`; shared security/protocol helpers remain under `apps/ssh_mobile_full/lib/core/services/`; Drift database and repositories remain under `apps/ssh_mobile_full/lib/data/`; shared UI remains under `apps/ssh_mobile_full/lib/theme/` and `apps/ssh_mobile_full/lib/widgets/`; and common helpers remain under `apps/ssh_mobile_full/lib/utils/`. `lib/models/` and `lib/screens/` inside the full app are legacy compatibility surfaces, not destinations for new work. Root-level `packages/core/`, `packages/infrastructure/`, and `packages/features/` are reserved for the staged modular migration; the existing native Dart package is now `packages/infrastructure/ssh_mobile_network_native/`. Root `pubspec.yaml` and `melos.yaml` define workspace tooling, while `docs/`, `scripts/`, `installer/`, `.github/`, and `third_party/` remain repository-level directories. The vendored terminal package under `third_party/xterm/` is excluded from the full app analyzer.
 
 ## High-Level Architecture
 
@@ -22,9 +22,9 @@ flowchart LR
   AI --> Safety[Approval and Secret Policies]
 ```
 
-- `lib/main.dart` composes application-lifetime services and shared ViewModels via `MultiProvider`; `AppBootstrapCoordinator` starts preference and storage setup without blocking `runApp()`, and feature scopes initialize SSH, SFTP, LAN receiver, System Administration, and AI tools only when needed. Route/screen-scoped state stays local — e.g. the AI chat runtime is created by `AiChatRuntimeFactory` and provided by the chat view; terminal screens create focused session/history/window ViewModels. Views hold layout and transient presentation state; validation, async orchestration, and repository coordination belong in ViewModels and services.
-- Current feature roots under `lib/features/`: `connection`, `terminal`, `sftp`, `ai_chat`, `ai_skills`, `client_webview`, `performance`, `system_admin`, `lan_share`, `playbook`, `rag`, `settings`, `startup`, `home`, `developer_log`, `developer_panel`, `mcp_console`. New UI belongs in the owning feature, never in `lib/screens/` (legacy) or `lib/models/` (legacy shared surface).
-- Cross-feature infrastructure in `lib/services/`: SSH/SFTP/LLM/AI-tool, monitoring, storage, LAN-share, MCP, and platform adapters. `lib/core/services/` holds lower-level shared security/protocol factories (host-key policy, data protection). `lib/data/` holds the Drift database, DAOs, and repositories.
+- `apps/ssh_mobile_full/lib/main.dart` composes application-lifetime services and shared ViewModels via `MultiProvider`; `AppBootstrapCoordinator` starts preference and storage setup without blocking `runApp()`, and feature scopes initialize SSH, SFTP, LAN receiver, System Administration, and AI tools only when needed. Route/screen-scoped state stays local — e.g. the AI chat runtime is created by `AiChatRuntimeFactory` and provided by the chat view; terminal screens create focused session/history/window ViewModels. Views hold layout and transient presentation state; validation, async orchestration, and repository coordination belong in ViewModels and services.
+- Current feature roots under `apps/ssh_mobile_full/lib/features/`: `connection`, `terminal`, `sftp`, `ai_chat`, `ai_skills`, `client_webview`, `performance`, `system_admin`, `lan_share`, `playbook`, `rag`, `settings`, `startup`, `home`, `developer_log`, `developer_panel`, `mcp_console`. New UI belongs in the owning feature, never in `apps/ssh_mobile_full/lib/screens/` (legacy) or `apps/ssh_mobile_full/lib/models/` (legacy shared surface).
+- Cross-feature infrastructure in `apps/ssh_mobile_full/lib/services/`: SSH/SFTP/LLM/AI-tool, monitoring, storage, LAN-share, MCP, and platform adapters. `apps/ssh_mobile_full/lib/core/services/` holds lower-level shared security/protocol factories (host-key policy, data protection). `apps/ssh_mobile_full/lib/data/` holds the Drift database, DAOs, and repositories. New shared infrastructure belongs in the appropriate package under `packages/` only when its current Step permits migration.
 - Storage layering: Drift for growing structured data (AI chats, agent metrics, terminal-history metadata, playbooks, SFTP path records) with sensitive fields encrypted at rest; small preferences in SharedPreferences; passwords, private keys, API keys, and MCP tokens only in platform secure storage (`flutter_secure_storage`). A production DB failure must not silently fall back to an in-memory database.
 
 AI agent runtime (client-side, not on the managed server): model context is built on-device, the provider is called, and the tool loop reaches remote systems via SSH/SFTP. Tool safety boundaries are enforced in code, not just prompts:
@@ -39,37 +39,38 @@ AI agent runtime (client-side, not on the managed server): model context is buil
 
 Dependency and code generation (run after `pubspec.yaml` or Drift model changes):
 
-- `flutter pub get`: install dependencies from `pubspec.yaml`.
-- `dart run build_runner build`: regenerate Drift DAOs (`lib/data/database/app_database.g.dart`) and other codegen. Generated files are committed; verify with `git diff --exit-code -- lib/data/database/app_database.g.dart`.
-- `dart run tool/generate_app_icons.dart`: regenerate app icons. Verify with `git diff --exit-code -- assets android ios macos web windows/runner/resources/app_icon.ico`.
+- `dart pub get`: resolve the root Dart workspace from `pubspec.yaml`.
+- From `apps/ssh_mobile_full/`, `dart run build_runner build`: regenerate Drift DAOs (`lib/data/database/app_database.g.dart`) and other codegen. Generated files are committed; verify with `git diff --exit-code -- apps/ssh_mobile_full/lib/data/database/app_database.g.dart`.
+- From `apps/ssh_mobile_full/`, `dart run tool/generate_app_icons.dart`: regenerate app icons. Verify with `git diff --exit-code -- apps/ssh_mobile_full/assets apps/ssh_mobile_full/android apps/ssh_mobile_full/ios apps/ssh_mobile_full/macos apps/ssh_mobile_full/web apps/ssh_mobile_full/windows/runner/resources/app_icon.ico`.
 
 Static checks and formatting:
 
-- `dart format lib test tool`: format project Dart code.
-- `dart format --output=none --set-exit-if-changed lib test tool`: format check that fails on diffs (used in CI).
-- `flutter analyze`: run static analysis using `analysis_options.yaml`. `third_party/**` is excluded from the analyzer.
-- `flutter test`: run all Flutter tests under `test/`.
-- `flutter test test/path/to/file_test.dart`: run a single test file.
-- `flutter test --coverage --reporter expanded`: run tests with coverage.
-- `dart run tool/check_coverage.dart --minimum=35`: enforce the 35% non-generated line-coverage floor (CI gate).
+- `dart format apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool`: format full-app Dart code.
+- `dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool`: format check that fails on diffs (used in CI).
+- From `apps/ssh_mobile_full/`, `flutter analyze`: run static analysis using the app's `analysis_options.yaml`. `third_party/**` is excluded from the analyzer.
+- From `apps/ssh_mobile_full/`, `flutter test`: run all Flutter tests under the app's `test/`.
+- From `apps/ssh_mobile_full/`, `flutter test test/path/to/file_test.dart`: run a single test file.
+- From `apps/ssh_mobile_full/`, `flutter test --coverage --reporter expanded`: run tests with coverage.
+- From `apps/ssh_mobile_full/`, `dart run tool/check_coverage.dart --minimum=35`: enforce the 35% non-generated line-coverage floor (CI gate).
 
 Full local quality gate (fast loop):
 
 ```bash
-flutter pub get
-dart format --output=none --set-exit-if-changed lib test tool
+dart pub get
+dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
+cd apps/ssh_mobile_full
 flutter analyze
 flutter test
 ```
 
 Run and platform builds:
 
-- `flutter devices`: list available targets.
-- `flutter run -d <device-id>`: run locally on a device, emulator, or desktop target (`android`, `windows`, `macos`, `chrome`, or a device ID).
-- `flutter build apk --debug`: build an Android debug APK. Release: `flutter build apk --release` / `flutter build appbundle --release`.
-- `flutter build macos`: build the macOS desktop app (enable first with `flutter config --enable-macos-desktop`).
-- `flutter build ios --release --no-codesign`: build iOS on macOS (requires iOS 14.0+).
-- `flutter build windows`: build the Windows desktop app (enable first with `flutter config --enable-windows-desktop`).
+- From `apps/ssh_mobile_full/`, `flutter devices`: list available targets.
+- From `apps/ssh_mobile_full/`, `flutter run -d <device-id>`: run locally on a device, emulator, or desktop target (`android`, `windows`, `macos`, `chrome`, or a device ID).
+- From `apps/ssh_mobile_full/`, `flutter build apk --debug`: build an Android debug APK. Release: `flutter build apk --release` / `flutter build appbundle --release`.
+- From `apps/ssh_mobile_full/`, `flutter build macos`: build the macOS desktop app (enable first with `flutter config --enable-macos-desktop`).
+- From `apps/ssh_mobile_full/`, `flutter build ios --release --no-codesign`: build iOS on macOS (requires iOS 14.0+).
+- From `apps/ssh_mobile_full/`, `flutter build windows`: build the Windows desktop app (enable first with `flutter config --enable-windows-desktop`).
 - `powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_msi.ps1`: build the Windows MSI installer.
 
 Agent skill sync (run after editing shared skills):
