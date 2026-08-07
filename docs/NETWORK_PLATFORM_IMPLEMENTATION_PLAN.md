@@ -25,6 +25,10 @@
   enrollment、凭据安全存储和 native 配置，不再建立 Dart Relay 数据面。
 - Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；
   开发阶段不保留旧注册接口、协议降级或旧客户端兼容。
+- Flutter 公共网络层统一返回 `NetworkResult`，公开事件使用类型化事件；
+  command result 只用于 native 内部关联。LAN HTTP 错误使用稳定的
+  `code`、`message`、`operation`、`peer_id` 结构，WebShare 固定 HTTPS，
+  浏览器不满足安全上下文时禁止传输而不自动降级。
 - WireGuard、完整公网 candidate 协调、路径迁移和 Phase 11 RTC 尚未完成，不能因
   上述文件传输闭环而标记为已交付。
 

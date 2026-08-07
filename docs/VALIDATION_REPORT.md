@@ -1,8 +1,8 @@
+> 最新更新时间：2026-08-07
+
 # Validation Report
 
-> 最新更新时间：2026-07-26
-
-- Latest source validation: 2026-07-17
+- Latest source validation: 2026-08-07
 - Full build/coverage baseline: 2026-07-10
 - Host: Windows 10 x64
 - Flutter: 3.44.2 stable
@@ -10,17 +10,21 @@
 
 ## Automated Results
 
-Formatting, analysis, tests, and the source-size audit were refreshed after the
-repository-wide modular refactor. Coverage and platform-build rows retain the
-most recent full release-chain evidence from 2026-07-10 and were not re-run for
-this documentation update.
+Formatting, analysis, tests, and the network-layer source-size audit were
+refreshed after the v1 network refactor. Coverage and platform-build rows retain
+the most recent full release-chain evidence from 2026-07-10 and were not re-run
+for this documentation update.
 
 | Check | Result |
 | --- | --- |
-| Dart formatting | 459 files checked, 0 changes required |
+| Dart formatting | 577 files checked, 0 changes required |
 | Flutter analyzer | Passed with 0 issues |
-| Unit and widget tests | 829 passed |
-| Non-generated Dart file size | All below 1000 lines; generated `app_database.g.dart` excluded |
+| Unit and widget tests | 1017 passed |
+| Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
+| Native Dart package | `dart analyze` passed; 4 package tests passed |
+| Rust network workspace | `cargo fmt`, `cargo clippy`, and `cargo test --workspace --locked` passed |
+| Go Relay | `gofmt`, `go vet ./...`, and `go test ./...` passed |
+| v1 static compatibility audit | No old transport, Dart Relay data-plane, protocol fallback, or v2/v3/v4 network symbols found |
 | Non-generated line coverage | 39.3% (`12690/32302`), last verified 2026-07-10 |
 | Coverage regression floor | 35% |
 | Android debug APK | Built successfully |
@@ -40,7 +44,31 @@ Latest source validation:
 dart format --output=none --set-exit-if-changed lib test
 flutter analyze
 flutter test
+dart analyze
 git diff --check
+```
+
+Native package validation from `packages/ssh_mobile_network_native`:
+
+```powershell
+dart analyze
+dart test
+```
+
+Rust validation from `native/network_core`:
+
+```powershell
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+```
+
+Relay validation from `relay`:
+
+```powershell
+gofmt -l .
+go vet ./...
+go test ./...
 ```
 
 Full build and coverage baseline from 2026-07-10:

@@ -91,6 +91,21 @@ boundary: all clients must enroll again.
   authenticated Relay connection.
 - `GET /healthz`: health check (`204`)
 
+Device HTTP failures use the stable v1 network error shape and never expose
+raw server errors:
+
+```json
+{
+  "code": 8,
+  "message": "safe diagnostic",
+  "operation": "connect_relay",
+  "peer_id": "optional-device-id"
+}
+```
+
+The service rejects unsupported protocol versions and does not provide a v1
+compatibility fallback, a `/v1/control` route, or a Dart-side Relay data path.
+
 ## WebSocket protocol v1
 
 - The server sends `{"type":"ready","protocol_version":1,"device_id":"..."}`
@@ -113,5 +128,6 @@ boundary: all clients must enroll again.
 
 ```sh
 go fmt ./...
+go vet ./...
 go test ./...
 ```

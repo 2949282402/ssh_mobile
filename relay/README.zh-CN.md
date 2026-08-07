@@ -82,6 +82,20 @@ Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不�
 - 不提供独立 control WebSocket 路由；设备数据使用 v1 已认证中继连接。
 - `GET /healthz`：健康检查（`204`）
 
+设备 HTTP 失败统一使用稳定的 v1 网络错误结构，不暴露底层异常文本：
+
+```json
+{
+  "code": 8,
+  "message": "safe diagnostic",
+  "operation": "connect_relay",
+  "peer_id": "optional-device-id"
+}
+```
+
+服务会拒绝不支持的协议版本，不提供 v1 兼容降级、`/v1/control` 路由或
+Dart 侧 Relay 数据面。
+
 ## WebSocket 协议 v1
 
 - 鉴权并加入 Hub 后，服务端发送
@@ -103,5 +117,6 @@ Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不�
 
 ```sh
 go fmt ./...
+go vet ./...
 go test ./...
 ```
