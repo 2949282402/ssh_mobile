@@ -166,8 +166,10 @@ void _pollEvents(List<Object> arguments) {
         );
         if (result == _NativePollStatus.eventAvailable) {
           final buffer = outBuffer.ref;
-          if (buffer.ptr != nullptr && buffer.len > 0) {
-            events.send(Uint8List.fromList(buffer.ptr.asTypedList(buffer.len)));
+          if (buffer.ptr != nullptr) {
+            if (buffer.len > 0) {
+              events.send(Uint8List.fromList(buffer.ptr.asTypedList(buffer.len)));
+            }
             _sshNetBufferFreeNative(buffer);
           }
         } else if (result == _NativePollStatus.failure) {
