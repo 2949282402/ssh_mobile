@@ -373,7 +373,7 @@ class _WebShareDialogContentState extends State<WebShareDialogContent> {
   @override
   Widget build(BuildContext context) {
     final isEn = widget.vm.appSettings.isEnglish;
-    final httpsLabel = isEn ? 'Secure Connection (HTTPS)' : '启用安全连接 (HTTPS)';
+    final httpsLabel = isEn ? 'WebShare uses HTTPS' : 'WebShare 使用 HTTPS';
 
     return SizedBox(
       width: 280,
@@ -391,34 +391,11 @@ class _WebShareDialogContentState extends State<WebShareDialogContent> {
               ),
             ),
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Flexible(
-                  child: Text(
-                    httpsLabel,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                Switch(
-                  value: widget.vm.webShareUseHttps,
-                  onChanged: (val) async {
-                    await widget.vm.discoveryService.stopWebShareServer();
-                    widget.vm.setWebShareUseHttps(val);
-                    await widget.vm.discoveryService.startWebShareServer(
-                      useHttps: val,
-                      securityService: widget.vm.securityService,
-                      storageService: widget.vm.storageService,
-                      transferService: widget.vm.transferService,
-                    );
-                    if (mounted) {
-                      setState(() {});
-                    }
-                  },
-                ),
-              ],
+            Text(
+              httpsLabel,
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             if (widget.vm.webShareUrl != null) ...[

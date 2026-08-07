@@ -351,26 +351,13 @@ class LanShareViewModel extends ChangeNotifier {
     return result;
   }
 
-  bool _webShareUseHttps = false;
-
-  /// WebShare 下次启动是否使用 HTTPS。
-  bool get webShareUseHttps => _webShareUseHttps;
-
-  /// 设置 WebShare HTTPS 偏好。
-  void setWebShareUseHttps(bool value) {
-    if (_webShareUseHttps == value) return;
-    _webShareUseHttps = value;
-    if (!_disposed) notifyListeners();
-  }
-
-  /// 根据当前偏好启动或停止 WebShare。
+  /// 启动或停止固定使用 HTTPS 的 WebShare。
   Future<NetworkResult<void>> toggleWebShare() async {
     late final NetworkResult<void> result;
     if (isWebShareActive) {
       result = await discoveryService.stopWebShareServer();
     } else {
       result = await discoveryService.startWebShareServer(
-        useHttps: _webShareUseHttps,
         securityService: securityService,
         storageService: storageService,
         transferService: transferService,

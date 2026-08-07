@@ -30,8 +30,17 @@ class _HttpResult {
   });
 }
 
-class _LoopbackHttpOverrides extends HttpOverrides {}
+/// 为本地 WebShare 自签名证书配置测试客户端。
+class _LoopbackHttpOverrides extends HttpOverrides {
+  /// 创建接受本地测试证书的 HTTP 客户端。
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context)
+      ..badCertificateCallback = (cert, host, port) => true;
+  }
+}
 
+/// 管理 WebShare 安全测试所需的本地服务和临时目录。
 class _WebShareFixture {
   late final Directory sandbox;
   late final LanSecurityService securityService;
@@ -42,6 +51,7 @@ class _WebShareFixture {
   late final Uri webUrl;
   late final String token;
 
+  /// 启动安全服务、传输服务和固定 HTTPS WebShare 端点。
   Future<void> start() async {
     FlutterSecureStorage.setMockInitialValues({});
     sandbox = await Directory.systemTemp.createTemp('lan_web_share_test_');
@@ -71,6 +81,7 @@ class _WebShareFixture {
     client = _LoopbackHttpOverrides().createHttpClient(null);
   }
 
+  /// 根据当前 HTTPS 端点构造相对 WebShare 请求地址。
   Uri endpoint(String path) => Uri(
     scheme: webUrl.scheme,
     host: webUrl.host,
@@ -78,6 +89,7 @@ class _WebShareFixture {
     path: path,
   );
 
+  /// 发送 GET 请求并收集响应正文和安全响应头。
   Future<_HttpResult> get(Uri uri) async {
     final request = await client.getUrl(uri);
     final response = await request.close();
@@ -91,6 +103,7 @@ class _WebShareFixture {
     );
   }
 
+  /// 发送 WebShare POST 请求，可选地省略长度或访问令牌。
   Future<_HttpResult> post(
     String path,
     List<int> body, {
@@ -117,6 +130,7 @@ class _WebShareFixture {
     );
   }
 
+  /// 构造 WebShare 元数据端点使用的 JSON 请求体。
   List<int> metadata({
     required String id,
     required String fileName,
@@ -135,6 +149,7 @@ class _WebShareFixture {
     );
   }
 
+  /// 向 WebShare 元数据端点提交一个文件预留。
   Future<_HttpResult> postMetadata({
     required String id,
     required String fileName,
@@ -149,6 +164,7 @@ class _WebShareFixture {
     );
   }
 
+  /// 关闭测试服务并删除本次测试创建的临时目录。
   Future<void> close() async {
     client.close(force: true);
     await discoveryService.stopWebShareServer();
@@ -176,6 +192,7 @@ void main() {
   test(
     'Web page and control APIs require the ephemeral capability token',
     () async {
+      expect(fixture.webUrl.scheme, 'https');
       expect(fixture.webUrl.port, greaterThan(0));
       expect(fixture.token, hasLength(43));
       expect(
@@ -192,6 +209,8 @@ void main() {
       expect(page.corsOrigin, isNull);
       expect(page.contentSecurityPolicy, contains("default-src 'none'"));
       expect(page.body, contains(jsonEncode(fixture.token)));
+      expect(page.body, contains('安全加密 (HTTPS)'));
+      expect(page.body, isNot(contains('普通连接 (HTTP)')));
       expect(page.body, contains('&lt;script&gt;unsafe alias&lt;/script&gt;'));
       expect(page.body, isNot(contains('<script>unsafe alias</script>')));
 

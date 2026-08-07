@@ -1,4 +1,5 @@
-// v1 WebShare HTTP 请求路由与上传会话状态。
+// v1 WebShare HTTPS 请求路由与上传会话状态。
+// WebShare 固定使用 HTTPS，不保留明文 HTTP 降级路径。
 
 part of 'lan_discovery_service.dart';
 
@@ -36,7 +37,6 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
   /// 启动 WebShare，并尝试候选端口直到绑定成功。
   Future<String?> _startWebShareServer({
     int port = 53319,
-    bool useHttps = false,
     required LanSecurityService securityService,
     required LanStorageService storageService,
     required LanTransferService transferService,
@@ -50,41 +50,34 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     int boundPort = port;
     for (final candidate in candidates) {
       try {
-        if (useHttps) {
-          final securityContext = await securityService
-              .getOrCreateSecurityContext(currentDeviceId);
-          bound = await HttpServer.bindSecure(
-            InternetAddress.anyIPv4,
-            candidate,
-            securityContext,
-            requestClientCertificate: false,
-          );
-        } else {
-          bound = await HttpServer.bind(InternetAddress.anyIPv4, candidate);
-        }
+        final securityContext = await securityService
+            .getOrCreateSecurityContext(currentDeviceId);
+        bound = await HttpServer.bindSecure(
+          InternetAddress.anyIPv4,
+          candidate,
+          securityContext,
+          requestClientCertificate: false,
+        );
         boundPort = bound.port;
         break;
       } catch (e) {
         debugPrint(
-          '[LanDiscoveryService] WebShare port $candidate busy (HTTPS: $useHttps): $e — trying next',
+          '[LanDiscoveryService] WebShare HTTPS port $candidate unavailable: $e — trying next',
         );
       }
     }
 
     if (bound == null) {
-      // 最后的保底方案：使用临时端口。
-      if (useHttps) {
-        final securityContext = await securityService
-            .getOrCreateSecurityContext(currentDeviceId);
-        bound = await HttpServer.bindSecure(
-          InternetAddress.anyIPv4,
-          0,
-          securityContext,
-          requestClientCertificate: false,
-        );
-      } else {
-        bound = await HttpServer.bind(InternetAddress.anyIPv4, 0);
-      }
+      // 最后的端口策略：HTTPS 使用临时端口，不降级到明文 HTTP。
+      final securityContext = await securityService.getOrCreateSecurityContext(
+        currentDeviceId,
+      );
+      bound = await HttpServer.bindSecure(
+        InternetAddress.anyIPv4,
+        0,
+        securityContext,
+        requestClientCertificate: false,
+      );
       boundPort = bound.port;
       debugPrint(
         '[LanDiscoveryService] WebShare using ephemeral port $boundPort',
@@ -98,7 +91,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
       final webShareToken = _generateWebShareToken();
       final ips = await LanDiscoveryService.getLocalIpAddresses();
       final hostIp = _customIp ?? (ips.isNotEmpty ? ips.first : '127.0.0.1');
-      final scheme = useHttps ? 'https' : 'http';
+      const scheme = 'https';
 
       _webShareToken = webShareToken;
       _pendingWebUploads.clear();
@@ -121,7 +114,6 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
           request,
           webShareToken: webShareToken,
           pubKeyB64: pubKeyB64,
-          useHttps: useHttps,
           securityService: securityService,
           transferService: transferService,
           storageService: storageService,
@@ -158,7 +150,6 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     HttpRequest request, {
     required String webShareToken,
     required String pubKeyB64,
-    required bool useHttps,
     required LanSecurityService securityService,
     required LanTransferService transferService,
     required LanStorageService storageService,
@@ -181,7 +172,6 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
           _buildWebShareHtml(
             appPubKeyB64: pubKeyB64,
             webShareToken: webShareToken,
-            useHttps: useHttps,
           ),
         );
         await request.response.close();
@@ -312,7 +302,6 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
   String _buildWebShareHtml({
     required String appPubKeyB64,
     required String webShareToken,
-    required bool useHttps,
   }) {
     final escapedAlias = _escapeHtml(currentDeviceAlias);
     return '''
@@ -595,7 +584,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     <h1>🚀 SSH Mobile 局域网快传</h1>
     <div class="desc">
       正在与设备 <strong>$escapedAlias</strong> 进行文件传输<br>
-      <span style="font-size: 11px; opacity: 0.7;">当前连接: ${useHttps ? '🔐 安全加密 (HTTPS)' : '🔓 普通连接 (HTTP)'}</span>
+      <span style="font-size: 11px; opacity: 0.7;">当前连接: 🔐 安全加密 (HTTPS)</span>
     </div>
 
     <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
@@ -675,14 +664,13 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
       encryptTip.className = "encrypt-tip";
       encryptTip.innerHTML = "✨ 您的浏览器支持 E2E 加密。传输前将在前端使用 X25519 + AES-256-GCM 高强度加密。";
     } else {
-      encryptSwitch.checked = false;
+      // 不支持安全上下文或 WebCrypto 时禁止发送，避免静默降级为明文。
+      encryptSwitch.checked = true;
       encryptSwitch.disabled = true;
+      sendBtn.disabled = true;
+      dropZone.style.pointerEvents = 'none';
       encryptTip.className = "encrypt-tip warning";
-      if (!isSecure) {
-        encryptTip.innerHTML = "⚠️ 浏览器在非 HTTPS 连接下禁用了加密。如需启用端到端加密，请在 App 中开启 Web 共享的 HTTPS 模式。";
-      } else {
-        encryptTip.innerHTML = "⚠️ 当前浏览器版本不支持 X25519 WebCrypto。已退化为普通直接传输。";
-      }
+      encryptTip.innerHTML = "⚠️ 当前浏览器不支持 HTTPS 安全上下文或 X25519 WebCrypto，无法启动 WebShare 传输。";
     }
 
     // 拖拽文件动效
@@ -793,6 +781,12 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
 
     // 上传文件流程
     async function handleUpload(file) {
+      if (!canEncrypt) {
+        pStatus.innerText = "❌ 当前浏览器不满足 WebShare 安全要求。";
+        pStatus.style.color = '#f87171';
+        return;
+      }
+
       // 禁用控件
       dropZone.style.pointerEvents = 'none';
       sendBtn.disabled = true;
@@ -922,8 +916,8 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         pStatus.style.color = '#f87171';
       } finally {
         // 恢复控件状态
-        dropZone.style.pointerEvents = 'auto';
-        sendBtn.disabled = false;
+        dropZone.style.pointerEvents = canEncrypt ? 'auto' : 'none';
+        sendBtn.disabled = !canEncrypt;
         if (canEncrypt) {
           encryptSwitch.disabled = false;
         }

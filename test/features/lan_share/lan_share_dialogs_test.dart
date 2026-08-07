@@ -1,3 +1,5 @@
+// v1 LAN WebShare 对话框渲染测试。
+
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,12 +12,16 @@ import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
 
+/// 为 WebShare 对话框提供固定语言设置的测试对象。
 class _FakeAppSettings extends AppSettings {
+  /// 返回中文界面设置。
   @override
   bool get isEnglish => false;
 }
 
+/// 为 WebShare 对话框提供本地依赖的测试 ViewModel。
 class _FakeLanShareViewModel extends LanShareViewModel {
+  /// 创建固定 WebShare 地址的测试 ViewModel。
   _FakeLanShareViewModel({
     required super.discoveryService,
     required super.transferService,
@@ -25,13 +31,12 @@ class _FakeLanShareViewModel extends LanShareViewModel {
     required super.appSettings,
   });
 
+  /// 返回测试用的 HTTPS WebShare 地址。
   @override
-  String? get webShareUrl => 'http://192.168.1.100:53319/?pin=123456';
-
-  @override
-  bool get webShareUseHttps => false;
+  String? get webShareUrl => 'https://192.168.1.100:53319/?pin=123456';
 }
 
+/// 执行 LAN WebShare 对话框的布局回归测试。
 void main() {
   testWidgets(
     'WebShareDialogContent renders without vertical overflow on constrained screen',

@@ -821,14 +821,12 @@ class LanDiscoveryService {
   /// 启动 Web Share 模式（为无 App 浏览器传输提供简洁 Web UI）。
   Future<NetworkResult<String>> startWebShareServer({
     int port = 53319,
-    bool useHttps = false,
     required LanSecurityService securityService,
     required LanStorageService storageService,
     required LanTransferService transferService,
   }) {
     return _startWebShareServerResult(
       port: port,
-      useHttps: useHttps,
       securityService: securityService,
       storageService: storageService,
       transferService: transferService,
@@ -838,7 +836,6 @@ class LanDiscoveryService {
   /// 启动 WebShare 实现，并将失败转换为 v1 结果。
   Future<NetworkResult<String>> _startWebShareServerResult({
     required int port,
-    required bool useHttps,
     required LanSecurityService securityService,
     required LanStorageService storageService,
     required LanTransferService transferService,
@@ -846,7 +843,6 @@ class LanDiscoveryService {
     try {
       final url = await _LanWebShareServerOperations(this)._startWebShareServer(
         port: port,
-        useHttps: useHttps,
         securityService: securityService,
         storageService: storageService,
         transferService: transferService,
