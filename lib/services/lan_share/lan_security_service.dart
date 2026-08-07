@@ -15,6 +15,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 part 'lan_security_pairing.dart';
+part 'lan_security_trust.dart';
 
 /// 在工作 isolate 中生成自签名证书和私钥。
 Map<String, String> _generateSelfSignedCertIsolate(String commonName) {
@@ -571,50 +572,6 @@ class LanSecurityService {
     if (_failedPinAttempts >= 3) {
       _lockoutUntil = DateTime.now().add(const Duration(seconds: 30));
     }
-  }
-
-  /// 检查远端设备证书指纹是否可信（TOFU）。
-  Future<bool> isDeviceTrusted(String certFingerprint) async {
-    final rawList = await _secureStorage.read(key: _trustedDevicesStorageKey);
-    if (rawList == null) return false;
-    try {
-      final List<dynamic> list = jsonDecode(rawList);
-      return list.contains(certFingerprint);
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /// 信任远端设备的证书指纹。
-  Future<void> trustDevice(String certFingerprint) async {
-    final rawList = await _secureStorage.read(key: _trustedDevicesStorageKey);
-    final Set<String> trustedSet = {};
-    if (rawList != null) {
-      try {
-        final List<dynamic> list = jsonDecode(rawList);
-        trustedSet.addAll(list.cast<String>());
-      } catch (_) {}
-    }
-    trustedSet.add(certFingerprint);
-    await _secureStorage.write(
-      key: _trustedDevicesStorageKey,
-      value: jsonEncode(trustedSet.toList()),
-    );
-  }
-
-  /// 忘记一个可信设备。
-  Future<void> untrustDevice(String certFingerprint) async {
-    final rawList = await _secureStorage.read(key: _trustedDevicesStorageKey);
-    if (rawList == null) return;
-    try {
-      final List<dynamic> list = jsonDecode(rawList);
-      final Set<String> trustedSet = list.cast<String>().toSet();
-      trustedSet.remove(certFingerprint);
-      await _secureStorage.write(
-        key: _trustedDevicesStorageKey,
-        value: jsonEncode(trustedSet.toList()),
-      );
-    } catch (_) {}
   }
 
   static const String _pairedDevicesStorageKey = 'lan_share_paired_device_ids';
