@@ -405,6 +405,7 @@ flowchart LR
 - `packages/core/app_core/`：纯 Dart 的生命周期、Module、日志和 Capability 合约；生产代码不依赖 Flutter/UI。日志部分包括作用域 `AppLogger`、有界 `LogBuffer`、`LogSink` 和可释放的 `AppLoggerImpl`。
 - `packages/core/connection_core/`：Connection 领域模型与契约、独立的非敏感 Drift 数据库、Secure Storage 凭据和 Host Key 信任元数据。`ConnectionDatabase` 由 `AppRuntime` 创建和关闭；`feature_connection` 只消费其公共 Repository 与注入的 Capability。
 - `packages/infrastructure/ssh_mobile_network_native/`：位于 Infrastructure 边界下的原生网络 Package。
+- `packages/infrastructure/network_transport/`：App Scope `NetworkRuntime` Facade、lazy Capability 状态机、传输端点/连接合约、指标快照和显式 native handle adapter。实例由 `AppRuntime` 唯一创建；当前 Step 不新增第二套协议实现。
 - `apps/ssh_mobile_full/lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
   策略和数据保护。
 - `apps/ssh_mobile_full/lib/theme/`、`apps/ssh_mobile_full/lib/widgets/`、`apps/ssh_mobile_full/lib/utils/`：设计系统、复用组件和工具。
@@ -423,6 +424,9 @@ Owner；`main.dart` 只委托给 `AppBootstrap`，`SshMobileApp` 通过 `MultiPr
 运行时由 `AiChatRuntimeFactory` 创建并由聊天页提供，终端页创建聚焦的会话、历史和
 窗口 ViewModel。View 只持有布局与短生命周期展示状态；校验、异步编排和 Repository
 协调由 ViewModel 与 Service 负责。
+同一个 Runtime 还持有唯一的 lazy `NetworkRuntime`；QUIC 与 WSS Relay 能力共享
+native 初始化，失败可重试，释放时等待并关闭 native handle。旧 LAN Coordinator
+在专属迁移 Step 前仍暂时使用原有协议适配器。
 `AppRuntime.logger` 暴露 Core Logger Contract；当前 Full App 仍由 App 层的
 `AppLogService` 适配，因此数据库、磁盘、脱敏和 UI 通知行为在分阶段迁移期间保持不变。
 新增模块应从 Runtime 获取作用域 Logger，不应自行构造日志服务。

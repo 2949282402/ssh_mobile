@@ -42,6 +42,7 @@ void main() {
       expect(runtime.connectionRepository, isNotNull);
       expect(runtime.credentialRepository, isNotNull);
       expect(runtime.hostKeyRepository, same(runtime.connectionRepository));
+      expect(runtime.networkRuntime, isNotNull);
       expect(runtime.sshService, isNotNull);
       expect(runtime.lanReceiverCoordinator, isNotNull);
 

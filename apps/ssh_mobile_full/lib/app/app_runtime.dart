@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:network_transport/network_transport.dart';
 
 import '../features/lan_share/services/lan_receiver_coordinator.dart';
 import '../services/app_bootstrap_coordinator.dart';
@@ -31,6 +32,7 @@ final class AppRuntime implements Disposable {
     required this.connectionRepository,
     required this.credentialRepository,
     required this.hostKeyRepository,
+    required this.networkRuntime,
     required this.bootstrapCoordinator,
     required this.shortcutCommandService,
     required this.sshService,
@@ -66,6 +68,9 @@ final class AppRuntime implements Disposable {
 
   /// Host Key 信任 Repository 的 App Scope 唯一实例。
   final connection_core.HostKeyRepository hostKeyRepository;
+
+  /// App Scope 唯一的网络运行时；其 native handle 只按 Capability 延迟创建。
+  final NetworkRuntime networkRuntime;
 
   /// 启动协调器属于 App Shell，负责首帧前后的核心初始化状态。
   final AppBootstrapCoordinator bootstrapCoordinator;
@@ -159,6 +164,8 @@ final class AppRuntime implements Disposable {
 
     // 当前 SFTP 实现仍直接持有 SSH 客户端，这里作为网络资源组释放。
     await attempt(sftpService.dispose);
+    // SSH/SFTP 停止后再关闭网络 Runtime，避免仍有会话向 native handle 发命令。
+    await attempt(networkRuntime.dispose);
 
     // 业务服务的 Timer/监听器先释放，再关闭其共享数据库。
     await attempt(performanceMonitorService.dispose);

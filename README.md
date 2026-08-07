@@ -416,6 +416,7 @@ flowchart LR
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; `feature_connection` consumes the public repositories and injected capabilities.
+- `packages/infrastructure/network_transport/`: the App Scope `NetworkRuntime` facade, lazy Capability state machine, transport contracts, metrics snapshot, and explicit native handle adapter. `AppRuntime` creates the single instance; this Step does not add a second protocol implementation.
 - `packages/infrastructure/ssh_mobile_network_native/`: native network package staged under the Infrastructure boundary.
 - `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,
   including host-key policy and data protection.
@@ -434,6 +435,10 @@ flowchart LR
 `AppRuntimeFactory` creates application-lifetime services, and `AppRuntime` is
 their single lifecycle owner. `main.dart` only delegates to `AppBootstrap`;
 `SshMobileApp` exposes existing Runtime instances through `MultiProvider`.
+The same Runtime owns one lazy `NetworkRuntime`; QUIC and WSS Relay capabilities
+share native initialization, failed initialization can retry, and disposal waits
+for and closes the native handle. The existing LAN coordinator remains on its
+legacy protocol adapter until its dedicated migration Step.
 `AppRuntime.logger` exposes the Core logger contract; the current full-app
 implementation is an App-layer `AppLogService` adapter, so existing database,
 disk, redaction, and UI notification behavior remains unchanged during staged

@@ -55,6 +55,14 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   connection_feature_adapters.dart` performs a temporary dual-read/dual-write
   bridge between the new Core repository and legacy `StorageService`; this is
   an App composition-root compatibility boundary, not a Feature data API.
+- `packages/infrastructure/network_transport/` owns the App Scope
+  `NetworkRuntime` facade. `AppRuntimeFactory` creates exactly one lazy runtime
+  and `AppRuntime` closes it after SSH/SFTP stop. QUIC and WSS Relay share one
+  native initialization Future; failed initialization is retryable, and dispose
+  waits for a pending native handle before explicit close. The old LAN
+  coordinator remains a temporary direct native/protocol consumer until its
+  dedicated migration Step; do not add another NetworkRuntime implementation in
+  a Feature.
 
 ### Logging contract
 
@@ -103,6 +111,10 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   transport adapters or protocol fallbacks. Native commands/events are typed,
   peer identity and keys are pinned before connect, and command acceptance is
   distinct from terminal transfer completion/failure events.
+- The new `network_transport` package is currently a stable App Scope facade
+  around the existing native v1 runtime, not a replacement for the LAN protocol
+  service. Future SSH/SFTP/LAN Steps should consume its public contracts and
+  remove direct native construction from Features as each owner is migrated.
 - Public relay frames remain memory-only and end-to-end encrypted. The only
   supported production deployment is `relay/compose.yaml` with Caddy; clients
   enroll explicitly, connect through HTTPS/WSS, and require receiver approval.

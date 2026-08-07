@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:network_transport/network_transport.dart';
 
 import '../features/ai_chat/services/ai_chat_runtime_factory.dart';
 import '../features/lan_share/services/lan_receiver_coordinator.dart';
@@ -37,6 +38,7 @@ final class AppRuntimeFactory {
     connection_core.ConnectionRepository? connectionRepository,
     connection_core.CredentialRepository? credentialRepository,
     connection_core.HostKeyRepository? hostKeyRepository,
+    NetworkRuntime? networkRuntime,
   }) async {
     final logger = appLogService ?? AppLogService();
     logger.install();
@@ -55,6 +57,7 @@ final class AppRuntimeFactory {
       supplied: hostKeyRepository,
       connectionRepository: runtimeConnectionRepository,
     );
+    final runtimeNetworkRuntime = networkRuntime ?? NetworkRuntimeImpl();
     unawaited(
       runtimeConnectionRepository.initialize().catchError((error, stackTrace) {
         logger.error(
@@ -131,6 +134,7 @@ final class AppRuntimeFactory {
       connectionRepository: runtimeConnectionRepository,
       credentialRepository: runtimeCredentialRepository,
       hostKeyRepository: runtimeHostKeyRepository,
+      networkRuntime: runtimeNetworkRuntime,
       bootstrapCoordinator: bootstrapCoordinator,
       shortcutCommandService: shortcutCommandService,
       sshService: sshService,

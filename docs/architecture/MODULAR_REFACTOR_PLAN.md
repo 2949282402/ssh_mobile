@@ -195,6 +195,26 @@
     通过。完整 App 测试通过（1019 个测试进度项）；最终格式检查通过（601 个
     文件，0 个变更）、`git diff --check` 和 Skill 同步检查均通过。
 
+## Step 07 执行记录（2026-08-08）
+
+- 已创建 `packages/infrastructure/network_transport/`，公共入口导出
+  `NetworkRuntime`、Capability、NetworkConfig、TransportEndpoint/Connection、
+  metrics snapshot 和 native adapter contract。Package 只依赖 `app_core` 与
+  `ssh_mobile_network_native`，没有新增 TCP、UDP、QUIC 或 WebRTC 协议实现。
+- `NetworkRuntimeImpl` 由 `AppRuntimeFactory` 唯一创建并注入 `AppRuntime`；
+  QUIC/WSS Relay 首次使用时共享 native handle 初始化 Future，初始化失败会清除
+  in-flight 状态并允许重试，dispose 会等待未完成的创建并显式 close handle。
+- 当前旧 `LanReceiverCoordinator` 仍直接使用已有 LAN `NetworkService`/native
+  协议路径，这是为不改变 LAN 行为而保留的最小过渡；后续 LAN 专属 Step 再把它
+  收敛到本 Facade。Feature 不得据此新增第二个 NetworkRuntime 实现。
+- `flutter pub get` 通过，没有版本冲突；现有可用更新均受当前 Flutter/Workspace
+  约束限制，因此没有擅自升级不相关依赖。Rust native hook 使用仓库已安装工具链
+  的显式 PATH 运行验证。
+- 已完成 `network_transport` 4 项测试、AppRuntime 定向测试和完整 App 回归
+  （1019 个测试进度项）；`network_transport` 与 App `flutter analyze --no-pub`
+  均通过，最终 Dart 格式检查（599 个文件，0 个变更）、`git diff --check` 和
+  Skill 同步检查在 Commit 前完成。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

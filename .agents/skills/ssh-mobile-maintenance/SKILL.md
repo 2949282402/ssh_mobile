@@ -39,11 +39,11 @@ The Connection UI/application package is
 and ViewModel, consumes only Core repositories, and receives SSH/SFTP/monitoring
 behavior through injected Capability Ports. The temporary legacy Storage bridge
 lives in the App composition root, not in the Feature.
-The Connection UI/application package is
-`packages/features/feature_connection/`; it owns the migrated connection editor
-and ViewModel, consumes only Core repositories, and receives SSH/SFTP/monitoring
-behavior through injected Capability Ports. The temporary legacy Storage bridge
-lives in the App composition root, not in the Feature.
+The Network Transport infrastructure package is
+`packages/infrastructure/network_transport/`; it owns the App Scope
+`NetworkRuntime` facade, lazy Capability state, transport contracts, and the
+explicit native handle adapter. `AppRuntime` creates the sole instance; the old
+LAN coordinator remains a temporary legacy consumer until its dedicated Step.
 
 ## Architecture Boundaries
 
@@ -62,10 +62,9 @@ lives in the App composition root, not in the Feature.
   `AppRuntime` creates and closes its single `ConnectionDatabase`; the package
   must not create a global database. Passwords/private keys stay in
   `CredentialRepository` and Secure Storage, never in Connection Drift tables.
-- `feature_connection` must use only `connection_core` public contracts and its
-  own public Capability Ports. It must not import `apps/ssh_mobile_full/lib/` or
-  another Feature's `/src/`; `ConnectionViewModel` is Route/Provider scoped and
-  never disposes App Scope SSH/SFTP resources.
+- `network_transport` must keep `NetworkRuntimeImpl` under App Scope ownership.
+  Features may request public Capabilities but must not create a global network
+  implementation or import another package's `/src/`.
 - `feature_connection` must use only `connection_core` public contracts and its
   own public Capability Ports. It must not import `apps/ssh_mobile_full/lib/` or
   another Feature's `/src/`; `ConnectionViewModel` is Route/Provider scoped and
@@ -123,6 +122,7 @@ Read only the rows relevant to the task.
 | AI chat, tools, plans, MCP | `lib/features/ai_chat/`, `lib/services/ai_tool*`, `lib/services/mcp/` | `docs/AGENT_RUN_TRACE.md`, `docs/security_manual_regression.md` |
 | Monitoring or system admin | `lib/features/performance/`, `lib/features/system_admin/` | `docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `packages/infrastructure/ssh_mobile_network_native/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |
+| Network Transport facade and App Scope lifecycle | `packages/infrastructure/network_transport/`, `apps/ssh_mobile_full/lib/app/app_runtime.dart`, `apps/ssh_mobile_full/lib/app/app_runtime_factory.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
 | Shared UI or responsiveness | `lib/theme/app_theme.dart`, `lib/widgets/app_surface.dart`, `lib/utils/responsive.dart` | `docs/MOBILE_UI_QA.md` |
 | Build, release, packaging | Platform directory and `scripts/` | `docs/RELEASE_CHECKLIST.md`, `docs/VALIDATION_REPORT.md` |
 | Matching recurring regression | Nearest code and focused tests | `.agents/skills/ssh-mobile-maintenance/references/lessons.md` |
