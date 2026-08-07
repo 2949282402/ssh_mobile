@@ -11,7 +11,7 @@ dependencies:
   flutter:
     sdk: flutter
 
-  dartssh2: ^2.22.0
+  dartssh2: ^2.22.5
   xterm:
     path: third_party/xterm
   ssh_mobile_network_native:
