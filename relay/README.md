@@ -1,4 +1,4 @@
-> Last updated: 2026-07-29
+> Last updated: 2026-08-07
 
 # SSH Mobile Control and Relay Server
 
@@ -87,7 +87,8 @@ boundary: all clients must enroll again.
 - `POST /api/devices/revoke`: authenticated device revocation
 - `POST /v1/devices/enroll`: protocol-v1 device enrollment
 - `GET /v1/connect`: authenticated relay WebSocket
-- `GET /v1/control`: authenticated control WebSocket
+- No separate control WebSocket route is exposed; device traffic uses the v1
+  authenticated Relay connection.
 - `GET /healthz`: health check (`204`)
 
 ## WebSocket protocol v1

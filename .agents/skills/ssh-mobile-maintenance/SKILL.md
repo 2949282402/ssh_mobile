@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile Flutter repository, including architecture, UI, SSH/SFTP, monitoring, AI tools, storage, security, platform builds, tests, and project documentation. Use for any non-trivial code, debugging, validation, documentation, or shared-agent-guidance change in this repository.
 ---
 
-> 最新更新时间：2026-08-03
+> 最新更新时间：2026-08-07
 
 # SSH Mobile Maintenance
 
@@ -258,12 +258,17 @@ Primary entry points are `native/network_core/`,
 `lib/services/relay/`, `lib/features/lan_share/views/vpn_p2p_share_view.dart`,
 and `relay/`.
 
-- Version every Dart/Rust FFI command and event. Unsupported versions must
-  produce an explicit error; an unimplemented native route must return
-  `NoRoute` and must never be presented as transfer success.
+- Keep the Dart/Rust FFI command and event contract on the current development
+  protocol v1. Unsupported versions must produce an explicit error; an
+  unimplemented native route must return `NoRoute` and must never be presented
+  as transfer success.
 - Production LAN file sends go through the coordinator-injected
-  `TransferTransport`; do not add an HTTPS/legacy file fallback during active
-  development. Persist the actual direct/relay route and failure in LAN history.
+  `NetworkService` and return `NetworkResult`; do not add a legacy transport,
+  HTTPS file fallback, compatibility adapter, or second implementation. Persist
+  the actual direct/relay route and stable failure code in LAN history.
+- Keep command acceptance separate from final operation state. Public callers
+  consume typed `NetworkEvent` values; retry decisions use `NetworkErrorCode`,
+  never diagnostic message text.
 - Register peer endpoints and pinned Ed25519/X25519 keys before connect.
   `PathManager` selection must drive the endpoint used by Quinn.
 - Run blocking native event polling on a helper isolate. Stop the isolate and
@@ -293,6 +298,10 @@ and `relay/`.
   exist. Keep a single Relay socket per device ID, consume incoming native
   offer/chunk/control events, require explicit approval, and delete partial
   files on rejection, cancellation, expiry, or authentication failure.
+- Keep Dart Relay limited to `RelayEnrollmentService` for enrollment, secure
+  credential storage, and native configuration. The native runtime owns the
+  Relay data plane and end-to-end encryption; do not restore a Dart Relay
+  WebSocket, chunk cipher, transport adapter, or SFTP Relay path.
 - Keep relay frames and device state memory-only. Dashboard sessions use
   HttpOnly cookies, dynamic values use safe DOM APIs, and production clients
   connect through HTTPS/WSS with a valid certificate.

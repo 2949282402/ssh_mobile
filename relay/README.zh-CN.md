@@ -1,4 +1,4 @@
-> 最新更新时间：2026-07-29
+> 最新更新时间：2026-08-07
 
 # SSH Mobile 控制与中继服务器
 
@@ -79,7 +79,7 @@ Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不�
 - `POST /api/devices/revoke`：需要登录的设备撤销
 - `POST /v1/devices/enroll`：协议版本 1 的设备注册
 - `GET /v1/connect`：已认证的中继 WebSocket
-- `GET /v1/control`：已认证的控制 WebSocket
+- 不提供独立 control WebSocket 路由；设备数据使用 v1 已认证中继连接。
 - `GET /healthz`：健康检查（`204`）
 
 ## WebSocket 协议 v1

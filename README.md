@@ -1,4 +1,4 @@
-> Last updated: 2026-08-03
+> Last updated: 2026-08-07
 
 <p align="center">
   <img src="assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -415,12 +415,13 @@ ViewModels. Views keep layout and transient presentation state; validation,
 async orchestration, and repository coordination belong in ViewModels and
 services.
 
-LAN file transfer follows `LanShareViewModel → TransferTransport → Rust
-NetworkRuntime`. The runtime owns per-peer path selection, authenticated QUIC,
-streaming file verification, and native Relay send/receive; Flutter owns
-pairing, approval UI, history, and presentation state. The Go Relay remains a
-memory-only current-protocol router and never receives plaintext file metadata
-or bytes.
+LAN file transfer follows `LanShareViewModel → NetworkService → Rust
+NetworkRuntime`. Commands return typed acceptance results, while progress and
+terminal outcomes arrive as typed events. The runtime owns per-peer path
+selection, authenticated QUIC, streaming file verification, and native Relay
+send/receive; Flutter owns pairing, approval UI, history, and presentation
+state. The Go Relay remains a memory-only v1 router and never receives
+plaintext file metadata or bytes.
 
 ## AI Agent Runtime
 

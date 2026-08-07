@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-03
+> 最新更新时间：2026-08-07
 
 <p align="center">
   <img src="assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -401,10 +401,11 @@ flowchart LR
 ViewModel。View 只持有布局与短生命周期展示状态；校验、异步编排和 Repository
 协调由 ViewModel 与 Service 负责。
 
-LAN 文件数据路径为 `LanShareViewModel → TransferTransport → Rust
-NetworkRuntime`。Rust 负责每 peer 路径选择、身份认证 QUIC、流式文件校验以及
-原生 Relay 收发；Flutter 负责配对、审批 UI、历史记录和展示状态。Go Relay
-只作为当前协议的内存路由器，不接触文件明文元数据或明文字节。
+LAN 文件数据路径为 `LanShareViewModel → NetworkService → Rust
+NetworkRuntime`。命令只返回 typed accepted 结果，进度和终态通过 typed events
+返回。Rust 负责每 peer 路径选择、身份认证 QUIC、流式文件校验以及原生 Relay
+收发；Flutter 负责配对、审批 UI、历史记录和展示状态。Go Relay 只作为 v1
+内存路由器，不接触文件明文元数据或明文字节。
 
 ## AI Agent Runtime
 

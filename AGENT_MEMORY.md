@@ -1,6 +1,6 @@
-# Agent Memory
+> 最新更新时间：2026-08-07
 
-> 最新更新时间：2026-08-03
+# Agent Memory
 
 This is the small durable memory shared by Codex and Claude Code. It records
 current, non-obvious decisions that are expensive to rediscover from a single
@@ -66,10 +66,10 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 
 ### Network transfer
 
-- LAN file sends use the injected `TransferTransport`; do not restore the
-  legacy HTTPS file-send fallback. Native commands/events are versioned, peer
-  identity and keys are pinned before connect, and success is reported only
-  after receiver persistence and acknowledgement.
+- LAN file sends use the injected v1 `NetworkService`; do not restore legacy
+  transport adapters or protocol fallbacks. Native commands/events are typed,
+  peer identity and keys are pinned before connect, and command acceptance is
+  distinct from terminal transfer completion/failure events.
 - Public relay frames remain memory-only and end-to-end encrypted. The only
   supported production deployment is `relay/compose.yaml` with Caddy; clients
   enroll explicitly, connect through HTTPS/WSS, and require receiver approval.

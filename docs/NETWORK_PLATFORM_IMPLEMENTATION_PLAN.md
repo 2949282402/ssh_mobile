@@ -1,6 +1,6 @@
-# SSH Mobile 跨平台 P2P 网络平台实施计划
+> 最新更新时间：2026-08-07
 
-> 最新更新时间：2026-07-28
+# SSH Mobile 跨平台 P2P 网络平台实施计划
 
 **Status:** In progress
 **Target Repository:** `hejulian2004/ssh_mobile`
@@ -8,7 +8,7 @@
 
 ---
 
-# 当前实施状态（2026-07-28）
+# 当前实施状态（2026-08-07）
 
 本文件同时保留完整目标架构与后续阶段；以下状态只描述已经接入生产调用链的部分：
 
@@ -16,14 +16,13 @@
   helper-isolate 生命周期。
 - 已完成 Quinn 直连、固定 Ed25519 peer 身份握手、显式接收审批、512 KiB
   有界流式传输、SHA-256 校验、临时文件提交、接收端持久化完成确认、取消和进度事件。
-- `LanShareViewModel` 的文件发送只通过 `TransferTransport`；生产协调器注入
-  `AdaptiveTransferTransport`，不再保留旧 HTTPS 文件发送兼容分支。
+- `LanShareViewModel` 通过 `NetworkService` 提交 native 文件任务；命令接受与
+  `TransferCompleted`/`TransferFailed` 终态事件严格分离，历史只保存稳定错误码。
 - peer 公布的当前端点会进入每 peer `PathManager` 并由选择结果驱动 QUIC；
   多 candidate 交换、持续 RTT/loss 探测和网络切换重探仍属于 Phase 4/10 后续工作。
-- Rust Relay 已实现当前协议的 WSS 认证、opaque offer、AES-GCM chunk、
-  complete/complete_ack、取消、接收入站审批及安全落盘；Flutter 注册后把内存中的
-  credential 和 Ed25519 seed 交给同一 native runtime，直连不可用时由 runtime
-  选择 Relay。
+- Rust Relay 已实现当前 v1 协议的 WSS 认证、opaque offer、AES-GCM chunk、
+  complete/complete_ack、取消、接收入站审批及安全落盘；Flutter 只负责 v1
+  enrollment、凭据安全存储和 native 配置，不再建立 Dart Relay 数据面。
 - Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；
   开发阶段不保留旧注册接口、协议降级或旧客户端兼容。
 - WireGuard、完整公网 candidate 协调、路径迁移和 Phase 11 RTC 尚未完成，不能因
@@ -70,7 +69,7 @@
 | 异步运行时 | Tokio |
 | 文件传输 | QUIC |
 | QUIC 首选实现 | Quinn |
-| QUIC 备选实现 | MsQuic |
+| QUIC 实现 | Quinn |
 | NAT | IPv6 + STUN + UDP Hole Punching + ICE-style candidate probing |
 | VPN | WireGuard |
 | 服务端 | Go |
@@ -150,13 +149,13 @@ lib/services/lan_share/
 - Recall
 - 设备持久身份
 
-当前 `LanTransferService` 使用 HTTPS，并保留 512 KiB streaming buffer。
+当前 LAN HTTP endpoints 继续使用 HTTPS，并保留 512 KiB streaming buffer；文件数据发送统一由 `NetworkService` 提交给 native v1 runtime。
 
 因此：
 
 > QUIC 功能不能另写一套独立 UI 和文件历史系统。
 
-应当替换的是 `LanTransferService` 的 transport 能力，而不是 `LanShareViewModel` 以上的业务结构。
+本次重构只替换文件数据面的 transport 能力，不改变 `LanShareViewModel` 以上的业务结构。
 
 ---
 
@@ -256,7 +255,7 @@ packages/ssh_mobile_network_native/
 ```
 
 当前 native package 已经管理真实 `NetworkRuntime`，通过 command/event FFI
-执行 QUIC、文件传输和 Relay 数据路径；`ssh_net_sdk_version()` 仅保留为 ABI
+执行 QUIC、文件传输和 Relay 数据路径；`ssh_net_abi_version()` 仅用于 ABI
 smoke test，不能代表业务命令成功。
 
 ---
@@ -550,7 +549,7 @@ Cargo 统一
 错误处理统一
 ```
 
-现有 MsQuic 工作不要立即删除。
+当前只维护 Quinn native backend，不保留第二套 QUIC 实现。
 
 定义：
 
@@ -568,11 +567,7 @@ QuinnBackend
 
 未来可以增加：
 
-```text
-MsQuicBackend
-```
-
-Android 必须在 Phase 1 就建立实际编译和设备测试 Gate。
+当前只维护 Quinn native backend；旧 C wrapper、头文件和平台二进制已经移除。
 
 ---
 
@@ -1002,21 +997,13 @@ C ABI
 
 # 26. Flutter Native Package 重构
 
-当前：
-
-```text
-packages/ssh_mobile_quic_native/
-```
-
-未来不仅包含 QUIC，还有 NAT / Path / Peer / Transfer / Network events。
-
-建议重命名为：
+当前 native package：
 
 ```text
 packages/ssh_mobile_network_native/
 ```
 
-由于当前仍然只是 smoke test，改名成本最低。
+该 package 通过 Build Hook 管理 Rust FFI；不再保留旧 QUIC C wrapper 或代码生成配置。
 
 ---
 
@@ -1169,30 +1156,27 @@ Flutter 业务代码不得直接使用 FFI symbols。
 定义：
 
 ```dart
-abstract interface class NetworkSdk {
+abstract interface class NetworkService {
   Stream<NetworkEvent> get events;
 
-  Future<void> initialize();
-
-  Future<PeerConnection> connectPeer(
-    String peerId,
-    ConnectionIntent intent,
-  );
-
-  Future<TransferId> sendFile(
-    String peerId,
-    String path,
-  );
-
-  Future<void> cancelTransfer(
-    TransferId id,
-  );
-
-  Future<RouteSnapshot> getRoute(
-    String peerId,
-  );
-
-  Future<void> shutdown();
+  Future<NetworkResult<void>> start(NetworkRuntimeConfig config);
+  Future<NetworkResult<void>> stop();
+  Future<NetworkResult<void>> upsertPeer(PeerConfig peer);
+  Future<NetworkResult<void>> connect(String peerId);
+  Future<NetworkResult<void>> disconnect(String peerId);
+  Future<NetworkResult<void>> configureRelay(RelayConfig config);
+  Future<NetworkResult<void>> disconnectRelay();
+  Future<NetworkResult<TransferSession>> send({
+    required String transferId,
+    required String peerId,
+    required String filePath,
+  });
+  Future<NetworkResult<void>> cancel(String transferId);
+  Future<NetworkResult<void>> respondToIncoming({
+    required String transferId,
+    required bool accept,
+  });
+  Future<NetworkResult<RouteSnapshot>> state(String peerId);
 }
 ```
 
@@ -1206,10 +1190,7 @@ abstract interface class NetworkSdk {
 lib/services/network/
 ├── network_service.dart
 ├── network_models.dart
-├── network_event_mapper.dart
-├── network_route_service.dart
-├── peer_connection_service.dart
-└── transfer_adapter.dart
+└── network_protocol_codec.dart
 ```
 
 feature 不直接依赖 native package。
@@ -1223,37 +1204,23 @@ feature 不直接依赖 native package。
 ```text
 LanShareViewModel
       ↓
-LanTransferService
+NetworkService
       ↓
-HTTPS
+Rust QUIC / native Relay
+direct or selected relay route
 ```
 
-目标：
-
-```text
-LanShareViewModel
-      ↓
-TransferTransport
-      ↓
- ┌───────────────┐
- │               │
- Rust QUIC      Rust Relay
- direct         fallback
-```
+目标与当前实现一致：`NetworkService` 统一提交 native v1 命令，
+typed events 统一报告进度、完成和失败。
 
 定义：
 
 ```dart
-abstract interface class TransferTransport {
-  Future<TransferSession> send(...);
-
-  Future<void> cancel(...);
-
-  Stream<TransferEvent> get events;
-}
+Stream<NetworkEvent> get events;
+Future<NetworkResult<TransferSession>> send(...);
 ```
 
-当前开发版本不保留 Legacy 文件 Transport。无法建立当前协议的 direct/Relay
+命令返回只表示 accepted；最终结果必须由 typed transfer event 报告。
 路径时必须返回失败，不得转入旧 HTTPS 文件发送流程。
 
 ---
@@ -1320,11 +1287,11 @@ protocol_version
 Control Connection：
 
 ```http
-GET /v1/control
+GET /v1/connect
 Upgrade: websocket
 ```
 
-之后使用 binary Protobuf frame。
+设备 Relay 数据面使用 binary frame；不提供旧的 control 路由。
 
 ---
 
@@ -1420,11 +1387,11 @@ Connectivity > Throughput
 
 # 41. Server Relay
 
-现有 WSS Relay 继续作为：
+现有 v1 WSS Relay 作为 native runtime 的可达性路径：
 
 ```text
-Control fallback
-File fallback
+Native control/data path
+Opaque file path
 ```
 
 保持：
@@ -1437,7 +1404,8 @@ backpressure
 rate limit
 ```
 
-逐步把 JSON control 升级为 Protobuf control。
+设备只使用 `/v1/connect`；不提供独立 `/v1/control` 路由，也不保留 Dart
+Relay 数据面或 HTTPS 文件回退。
 
 ---
 
@@ -1654,20 +1622,14 @@ ssh_net_runtime_destroy()
 把现有 `ssh_quic_ping()` 替换为：
 
 ```text
-ssh_net_sdk_version()
+ssh_net_abi_version()
 ```
 
 作为 ABI smoke test。
 
 ## Step 1.6
 
-重命名：
-
-```text
-ssh_mobile_quic_native
-       ↓
-ssh_mobile_network_native
-```
+native package 已统一为 `ssh_mobile_network_native`，不再保留旧 package 名称。
 
 ## Step 1.7
 
@@ -1994,7 +1956,7 @@ readAsBytes(entire file)
 新增：
 
 ```text
-TransferTransport
+NetworkService
 ```
 
 ## Step 7.2
@@ -2006,12 +1968,12 @@ TransferTransport
 新增：
 
 ```text
-QuicTransferTransport
+NativeNetworkService
 ```
 
 ## Step 7.4
 
-`LanShareViewModel` 不知道 QUIC / HTTPS / Relay，只知道 `TransferTransport`。
+`LanShareViewModel` 不处理 QUIC/Relay wire 细节，只消费 `NetworkResult` 与 typed events。
 
 当前实现中 ViewModel 不再直接调用 `LanTransferService.sendFileStream()`；实际
 session 的 direct/relay 路由、总字节数和失败原因写入 LAN history。
@@ -2032,19 +1994,19 @@ failure_reason
 
 ---
 
-# 54. Phase 8：Relay Fallback
+# 54. Phase 8：Native Relay Path
 
-P2P 失败：
+直连不可用时：
 
 ```text
 PathManager
  ↓
-RelayCandidate
+RelayCandidate（由 native runtime 选择）
 ```
 
 ## Step 8.1
 
-复用现有 Go WSS Relay。
+复用现有 Go v1 WSS Relay；Dart 不建立 Relay 数据面。
 
 ## Step 8.2
 
@@ -2193,12 +2155,11 @@ UPPER_SNAKE_CASE
 公开 API：
 
 ```rust
-/// Connects to a peer using the best available network path.
+/// 使用当前可用的最佳网络路径连接对端。
 ///
 /// # Errors
 ///
-/// Returns `NetworkError::NoRoute` when no usable direct
-/// or relay route is available.
+/// 没有可用直连或 Relay 路径时返回 `NetworkError::NoRoute`。
 pub async fn connect_peer(...) -> Result<...>
 ```
 
@@ -2292,7 +2253,7 @@ go vet ./...
 Exported API：
 
 ```go
-// RegisterDevice registers a new authenticated device.
+// RegisterDevice 注册一个新的已认证设备。
 func RegisterDevice(...)
 ```
 
@@ -2392,7 +2353,7 @@ WireGuard private key
 
 # 65. Protocol Versioning
 
-所有 network message 必须存在：
+所有 network message 固定使用当前开发线 v1：
 
 ```text
 protocol_version
@@ -2401,11 +2362,11 @@ protocol_version
 规则：
 
 ```text
-Major mismatch
-→ reject
+不支持的版本
+→ 返回明确的版本错误
 
-Minor capability missing
-→ reject the unsupported operation
+不支持的能力
+→ 只拒绝该操作，不降级到旧协议或旧传输
 ```
 
 不能用客户端版本字符串猜协议兼容性。
@@ -2548,7 +2509,7 @@ Dart：
 ```text
 event mapping
 ViewModel
-transport abstraction
+NetworkService / NetworkResult / typed event mapping
 ```
 
 ## Layer 2：FFI Tests
@@ -2862,7 +2823,7 @@ Screen Share
 #17 File streaming
 #18 File resume
 #19 File checksum
-#20 LAN Share transport abstraction
+#20 LAN Share NetworkService event contract
 #21 Public relay integration
 #22 Route diagnostics UI
 #23 Windows WireGuard
