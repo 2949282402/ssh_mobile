@@ -5,8 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/app_settings.dart';
-import '../../../theme/app_theme.dart';
-import '../../../widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 import '../utils/lan_platform_capabilities.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 

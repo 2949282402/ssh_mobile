@@ -7,7 +7,7 @@ import 'package:ssh_mobile/features/terminal/viewmodels/terminal_history_viewmod
 import 'package:ssh_mobile/features/terminal/views/terminal_history_screen.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

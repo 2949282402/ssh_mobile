@@ -7,9 +7,7 @@ import 'package:provider/provider.dart';
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/storage_service.dart';
-import '../../../theme/app_theme.dart';
-import '../../../widgets/app_surface.dart';
-import '../../../widgets/overflow_scroll_text.dart';
+import 'package:app_ui/app_ui.dart';
 import '../models/agent_trace_event.dart';
 
 enum _TraceFilter { all, tools, approvals, blocked, errors }

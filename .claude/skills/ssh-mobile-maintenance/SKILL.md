@@ -30,6 +30,10 @@ app. The Dart native package is rooted at
 `packages/infrastructure/ssh_mobile_network_native/`. The first Core contract
 package is `packages/core/app_core/`; its production library is pure Dart and
 must not depend on Flutter UI, SSH, Drift, Infrastructure, or Feature code.
+The shared UI package is `packages/core/app_ui/`; it owns the public
+`package:app_ui/app_ui.dart` theme, responsive metrics, and cross-feature UI
+widgets. It must not depend on any Feature, SSH, network, database, or App
+Service implementation.
 The Connection domain package is `packages/core/connection_core/`; it owns
 Connection models, repositories, the non-sensitive Drift database, Secure
 Storage credentials, and Host Key contracts, but never Feature UI or SSH
@@ -55,7 +59,8 @@ Pilot migrates its method API.
 
 - Keep feature-owned UI, models, services, and state under
   `apps/ssh_mobile_full/lib/features/<feature>/`. Keep shared UI in
-  `apps/ssh_mobile_full/lib/widgets/` and `apps/ssh_mobile_full/lib/theme/`;
+  `packages/core/app_ui/` and import it through `package:app_ui/app_ui.dart`;
+  old app theme/responsive/migrated-widget paths are compatibility exports;
   keep cross-feature protocol, security, and persistence infrastructure in
   `apps/ssh_mobile_full/lib/services/`, `apps/ssh_mobile_full/lib/core/services/`,
   and `apps/ssh_mobile_full/lib/data/`.
@@ -122,6 +127,7 @@ Read only the rows relevant to the task.
 | --- | --- | --- |
 | Architecture, MVVM, storage | Owning `lib/features/` code, `lib/data/`, `lib/services/storage_service.dart` | `docs/ADR_ENGINEERING_BASELINE.md` |
 | Core contracts, logging, and Module lifecycle | `packages/core/app_core/lib/`, `packages/core/app_core/test/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
+| Shared UI and responsiveness | `packages/core/app_ui/lib/`, `packages/core/app_ui/test/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/MOBILE_UI_QA.md` |
 | Connection domain, repositories, database, credentials, Host Key | `packages/core/connection_core/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Connection Feature editor/ViewModel | `packages/features/feature_connection/`, `apps/ssh_mobile_full/lib/app/connection_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Connection Feature editor/ViewModel | `packages/features/feature_connection/`, `apps/ssh_mobile_full/lib/app/connection_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
@@ -133,7 +139,7 @@ Read only the rows relevant to the task.
 | LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `packages/infrastructure/ssh_mobile_network_native/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |
 | Network Transport facade and App Scope lifecycle | `packages/infrastructure/network_transport/`, `apps/ssh_mobile_full/lib/app/app_runtime.dart`, `apps/ssh_mobile_full/lib/app/app_runtime_factory.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
 | SSH Core sessions, Runtime adapters, Pool, Client, Host Key | `packages/infrastructure/ssh_core/`, `apps/ssh_mobile_full/lib/services/ssh_service.dart`, `apps/ssh_mobile_full/lib/app/app_runtime.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
-| Shared UI or responsiveness | `lib/theme/app_theme.dart`, `lib/widgets/app_surface.dart`, `lib/utils/responsive.dart` | `docs/MOBILE_UI_QA.md` |
+| Shared UI or responsiveness | `packages/core/app_ui/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/MOBILE_UI_QA.md` |
 | Build, release, packaging | Platform directory and `scripts/` | `docs/RELEASE_CHECKLIST.md`, `docs/VALIDATION_REPORT.md` |
 | Matching recurring regression | Nearest code and focused tests | `.agents/skills/ssh-mobile-maintenance/references/lessons.md` |
 
@@ -435,10 +441,13 @@ its child widgets.
 - Keep SFTP and System Administration server selector chrome shared through
   `lib/widgets/server_selector.dart`; feature bindings own single/multi-select
   state, connection actions, and status semantics.
+  It remains an app-layer compatibility widget for now because its current
+  parameter type is the legacy Connection Feature model; do not move it into
+  `app_ui` until a business-neutral public contract exists.
 - Keep the AI chat page alive across page switches.
 - Keep custom mobile navigation items exposed as a single semantic button with
   a localized label and selected state; exclude duplicate icon/text semantics.
-- Use `MobileUiMetrics` from `lib/utils/responsive.dart` as the single source
+- Use `MobileUiMetrics` from `packages/core/app_ui/` as the single source
   for mobile chrome and control density. Its 1280-1440 px physical-short-edge
   interpolation lightly tightens 1.5K layouts and reaches standard chrome at
   2K; never use it to scale the user's system text setting.

@@ -14,8 +14,7 @@ import 'package:ssh_mobile/features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
-import 'package:ssh_mobile/widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 
 part 'widgets/sftp_file_preview_chrome.dart';
 part 'widgets/sftp_file_preview_renderers.dart';

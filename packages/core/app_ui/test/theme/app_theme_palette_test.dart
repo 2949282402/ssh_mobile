@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 
 void main() {
   test('monochrome is the default app palette', () {

@@ -5,8 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/widgets/app_surface.dart';
-import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import 'package:app_ui/app_ui.dart';
 
 extension _DeveloperLogStrings on AppStrings {
   String get copySelectedLogs =>

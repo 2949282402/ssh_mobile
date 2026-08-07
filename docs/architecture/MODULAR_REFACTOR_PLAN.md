@@ -241,6 +241,24 @@
   `flutter analyze --no-pub` 和完整 App `flutter test --no-pub` 均通过（完整回归
   1019 个测试进度项）；Rust native hook 验证使用仓库已有 Rust 工具链 PATH。
 
+## Step 09 执行记录（2026-08-08）
+
+- 已创建 `packages/core/app_ui/`，公共入口为 `package:app_ui/app_ui.dart`，
+  只承载主题、响应式指标和无业务依赖的跨 Feature Widget。迁入主题、
+  `responsive.dart`、`AppSurface`、连接进度、破坏性确认、溢出文本和触感反馈；
+  原 App 路径保留为兼容导出，避免一次性删除旧入口。
+- `server_selector`、SSH Host Key 信任对话框、终端窗口对话框以及其他未被
+  多个独立 Feature 实际复用的 Widget 未强行迁入：它们仍依赖旧 Connection
+  模型、App Service 或 Feature 语义，等待后续公共 Contract/专属 Feature Step。
+- 共享 UI 测试随 Package 迁移到 `packages/core/app_ui/test/`，新增/保留主题、
+  响应式和 Widget 测试共 13 项；全 App 现有 Feature 导入切换到公开入口，
+  兼容导出继续覆盖旧调用面。app_ui 文件只创建 Widget 自己拥有的
+  Controller/AnimationController，并在 State `dispose` 中释放。
+- `flutter pub get` 通过，没有版本冲突；输出中的 20 个可升级项均受当前
+  Flutter/Workspace 约束限制，本 Step 未擅自升级无关依赖。`app_ui` 与 App
+  的 `flutter analyze --no-pub` 均通过，Package 测试 13 项、全 App 回归
+  1006 项均通过；格式检查、`git diff --check` 和 Skill 同步检查通过。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

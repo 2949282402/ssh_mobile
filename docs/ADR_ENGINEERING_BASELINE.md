@@ -1,6 +1,6 @@
 # Engineering Baseline ADR
 
-> 最新更新时间：2026-07-26
+> 最新更新时间：2026-08-08
 
 Status: Accepted
 
@@ -14,9 +14,11 @@ Updated: 2026-07-17
   migrating frameworks.
 - Keep a pure feature-first MVVM layout as the directory baseline. Put
   feature-owned models, services, ViewModels, views, and widgets under
-  `lib/features/<feature>/<layer>/`. Keep shared UI in `lib/widgets/` and
-  `lib/theme/`, and infrastructure in `lib/services/`, `lib/core/services/`,
-  and `lib/data/`.
+  `lib/features/<feature>/<layer>/`. Keep truly shared UI in
+  `packages/core/app_ui/` through `package:app_ui/app_ui.dart`; old app theme
+  and migrated widget paths are compatibility exports. Keep infrastructure in
+  `lib/services/`, `lib/core/services/`, and `lib/data/` until its numbered
+  package migration Step.
 - Split code by feature and responsibility before a non-generated Dart file
   reaches 1000 lines. Prefer independently importable collaborators; use Dart
   `part` files only for cohesive code that needs library-private access. Never

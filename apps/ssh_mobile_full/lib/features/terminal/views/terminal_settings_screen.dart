@@ -4,8 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/app_settings.dart';
-import '../../../theme/app_theme.dart';
-import '../../../widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 
 class TerminalSettingsScreen extends StatefulWidget {
   const TerminalSettingsScreen({super.key});

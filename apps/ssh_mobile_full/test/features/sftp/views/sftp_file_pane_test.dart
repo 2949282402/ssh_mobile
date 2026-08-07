@@ -15,8 +15,7 @@ import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
-import 'package:ssh_mobile/widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

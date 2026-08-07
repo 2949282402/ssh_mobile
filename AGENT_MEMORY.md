@@ -71,6 +71,11 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   so existing terminal behavior remains intact until the Terminal Pilot moves
   its method surface. A Feature may release a Lease but must not close a shared
   Session directly.
+- `packages/core/app_ui/` owns the shared theme, responsive metrics, and
+  business-agnostic cross-Feature widgets. Its public boundary is
+  `package:app_ui/app_ui.dart`; it must not depend on Feature, SSH, network,
+  database, or App Service code. The old app theme/responsive/migrated-widget
+  paths remain compatibility exports during the staged migration.
 
 ### Logging contract
 
@@ -214,7 +219,7 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   rows expose the localized label plus current value, and the Servers
   list/grid selector is full-width so Chinese, English, and larger text do not
   wrap into vertical fragments.
-- 2026-07-10: `MobileUiMetrics` in `lib/utils/responsive.dart` is the single
+- 2026-07-10: `MobileUiMetrics` in `packages/core/app_ui/` is the single
   source for mobile control, chrome, and visual-density correction. It
   interpolates physical short edges from 1280 to 1440 px: the 1.5K baseline
   uses 0.84 controls, 0.952 chrome, and -0.4 density; the 2K baseline uses 0.92
@@ -222,8 +227,8 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   user's system text scale. `AppBreakpoints` also owns the 720 dp Servers-grid,
   840 dp expanded-width, and 480 dp compact-height thresholds; short landscape
   windows use an icon-only rail so 1.5K and 2K phones cannot overflow.
-- 2026-07-10: Primary UI workspaces share the modern design system in
-  `lib/theme/app_theme.dart` and `lib/widgets/app_surface.dart`. Reuse
+- 2026-08-08: Primary UI workspaces share the modern design system in
+  `packages/core/app_ui/`. Reuse
   `AppPageSurface`, `AppPageHeader`, `AppIconBadge`, `AppSectionCard`, and
   `AppEmptyState` instead of introducing page-local palette, shadows, icon
   tiles, section cards, or empty states. Interactive section headers expose a
@@ -395,19 +400,18 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   do not add Flutter imports to `app_core/lib`. Do not start feature-package
   migration before its Plan Step; preserve the existing runtime behavior and
   public contracts while moving directories.
-- 2026-07-23: The current architecture is pure feature-first MVVM. New UI and
+- 2026-08-08: The current architecture is pure feature-first MVVM. New UI and
   feature state belong under `apps/ssh_mobile_full/lib/features/<feature>/`
-  (models, services, viewmodels, views, and feature-local widgets); shared UI
-  belongs in `apps/ssh_mobile_full/lib/widgets/` and
-  `apps/ssh_mobile_full/lib/theme/`; cross-feature infrastructure belongs in
-  `apps/ssh_mobile_full/lib/services/`,
-  `apps/ssh_mobile_full/lib/core/services/`, and
-  `apps/ssh_mobile_full/lib/data/`. The app's `lib/screens/` is legacy
-  compatibility only. `apps/ssh_mobile_full/lib/main.dart` composes
-  application-lifetime services/shared ViewModels, while the AI-chat runtime
-  and terminal session/history/window ViewModels are view-scoped. Keep README
-  (both languages), CLAUDE.md, the shared maintenance skill, and architecture
-  docs on these paths and ownership boundaries.
+  (models, services, viewmodels, views, and feature-local widgets); truly
+  shared UI belongs in `packages/core/app_ui/` through its public entry point,
+  while the old app theme/responsive/migrated-widget paths are compatibility
+  exports. Cross-feature infrastructure remains in the staged package
+  boundaries or the legacy app services until its numbered Step. The app's
+  `lib/screens/` is legacy compatibility only. `apps/ssh_mobile_full/lib/main.dart`
+  composes application-lifetime services/shared ViewModels, while the AI-chat
+  runtime and terminal session/history/window ViewModels are view-scoped. Keep
+  README (both languages), CLAUDE.md, the shared maintenance skill, and
+  architecture docs aligned with these ownership boundaries.
 - 2026-06-15: Keep `README.md` and the shared SSH Mobile maintenance skill concise and factual. Prefer current product shape over changelog-style "now added" notes, and keep monitor docs aligned with the four current tabs: Performance, Ports, Applications, and Services.
 - 2026-06-15: AI chat tool use now has per-run budget guardrails. Default budget is 20 tool calls, the first limit auto-extends by half, and every later extension requires an internal safety audit that may disable further tools and force a final no-tools summary. Keep this audit independent from the normal multi-agent toggle, and keep state-changing SSH session and terminal-history tools behind the generic approval UI.
 - 2026-06-16: 完成整个 SSH Mobile Flutter 客户端项目的 MVVM 架构重构，将 Connection、Settings、Performance 以及 SFTP 模块完全分离为 View-ViewModel-Repository 模式，全局通过 ChangeNotifier 和精度选择（Selector）降低 rebuild 消耗，保证了终端及采样热路径的高性能与 100% 单元测试通过率。

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/app_settings.dart';
-import '../../../widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 
 class LanTextSelectionScreen extends StatelessWidget {
   const LanTextSelectionScreen({super.key, required this.text});

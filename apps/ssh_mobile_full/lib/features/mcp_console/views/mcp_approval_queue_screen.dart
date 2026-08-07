@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../services/app_settings.dart';
 import '../../../services/mcp/mcp_approval_queue.dart';
-import '../../../widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 import '../viewmodels/mcp_console_viewmodel.dart';
 
 class McpApprovalQueueScreen extends StatelessWidget {

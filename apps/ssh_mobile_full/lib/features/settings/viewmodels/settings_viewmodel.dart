@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/storage_service.dart';
-import '../../../theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 
 class SettingsViewModel extends ChangeNotifier {
   final AppSettings _appSettings;

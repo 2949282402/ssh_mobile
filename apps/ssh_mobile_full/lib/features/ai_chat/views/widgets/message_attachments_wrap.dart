@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:ssh_mobile/features/ai_chat/views/widgets/attachment_image_thumbnail.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 
 class MessageAttachmentsWrap extends StatelessWidget {
   const MessageAttachmentsWrap({

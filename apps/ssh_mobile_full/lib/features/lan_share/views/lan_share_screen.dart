@@ -8,12 +8,11 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_handler/share_handler.dart';
 
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:ssh_mobile/features/lan_share/viewmodels/lan_share_viewmodel.dart';
 import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
 import 'package:ssh_mobile/services/lan_share/lan_discovery_service.dart';
 import 'package:ssh_mobile/services/network/network_models.dart';
-import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import '../lan_share_feature_scope.dart';
 import 'lan_chat_screen.dart';
 import 'lan_qr_scanner_screen.dart';

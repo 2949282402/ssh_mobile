@@ -31,11 +31,7 @@ import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/utils/responsive.dart';
-import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
-import 'package:ssh_mobile/widgets/destructive_confirm_dialog.dart';
-import 'package:ssh_mobile/widgets/app_surface.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 import 'widgets/history_action_sheet.dart';
 import 'widgets/attachment_image_thumbnail.dart';
 

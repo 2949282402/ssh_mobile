@@ -11,10 +11,7 @@ import 'package:ssh_mobile/features/terminal/viewmodels/terminal_session_viewmod
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
-import 'package:ssh_mobile/utils/responsive.dart';
-import 'package:ssh_mobile/widgets/connection_progress_dialog.dart';
-import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
 import 'terminal_app_bar.dart';
 import 'terminal_connection_overlay.dart';

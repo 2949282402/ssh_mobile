@@ -10,7 +10,7 @@ import 'package:provider/provider.dart';
 import 'package:ssh_mobile/features/sftp/views/sftp_file_viewer_screen.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 
 part 'sftp_file_viewer_screen_fakes.dart';
 

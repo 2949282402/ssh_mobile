@@ -4,8 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
-import 'package:ssh_mobile/widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 
 typedef TerminalClipboardWriter = Future<void> Function(String text);
 

@@ -5,7 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
-import '../theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 import '../utils/device_name_util.dart';
 import 'app_log_service.dart';
 import 'mcp/mcp_invocation_policy.dart';

@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_copy_screen.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

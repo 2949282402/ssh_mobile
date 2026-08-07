@@ -10,7 +10,7 @@ import 'package:ssh_mobile/features/lan_share/utils/lan_preview_safety.dart';
 import 'package:ssh_mobile/features/lan_share/views/lan_preview_viewer_screen.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 
 final Uint8List _testPng = Uint8List.fromList(
   base64Decode(

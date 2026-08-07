@@ -6,9 +6,7 @@ import 'package:ssh_mobile/features/terminal/views/widgets/terminal_custom_keybo
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/shortcut_command_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
-import 'package:ssh_mobile/utils/responsive.dart';
-import 'package:ssh_mobile/widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 
 const _builtinTerminalShortcutCommands = <ShortcutCommand>[
   ShortcutCommand(id: 'tab', label: 'TAB', code: '\t'),

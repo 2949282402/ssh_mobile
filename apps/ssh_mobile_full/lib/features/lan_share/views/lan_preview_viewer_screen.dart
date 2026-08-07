@@ -12,7 +12,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/lan_share/lan_storage_service.dart';
-import '../../../widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 import '../utils/lan_preview_safety.dart';
 
 typedef LanPreviewFileReader =

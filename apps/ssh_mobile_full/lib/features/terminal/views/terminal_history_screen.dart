@@ -7,9 +7,7 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/tool_secret_policy.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
-import 'package:ssh_mobile/widgets/app_surface.dart';
-import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import 'package:app_ui/app_ui.dart';
 
 const _historySecretPolicy = ToolSecretPolicy();
 

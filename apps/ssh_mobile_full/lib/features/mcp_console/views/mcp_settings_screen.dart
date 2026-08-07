@@ -9,8 +9,7 @@ import '../../../services/app_settings.dart';
 import '../../../services/mcp/mcp_port_probe.dart';
 import '../../../services/mcp/mcp_server_controller.dart';
 import '../../../services/mcp/mcp_server_settings.dart';
-import '../../../theme/app_theme.dart';
-import '../../../widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 import '../viewmodels/mcp_settings_viewmodel.dart';
 
 class McpSettingsScreen extends StatefulWidget {

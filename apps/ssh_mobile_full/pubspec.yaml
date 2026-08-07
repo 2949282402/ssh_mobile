@@ -15,6 +15,8 @@ dependencies:
 
   app_core:
     path: ../../packages/core/app_core
+  app_ui:
+    path: ../../packages/core/app_ui
   connection_core:
     path: ../../packages/core/connection_core
   feature_connection:

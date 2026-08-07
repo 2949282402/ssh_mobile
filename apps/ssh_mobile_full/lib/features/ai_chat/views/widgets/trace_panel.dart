@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
-import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import 'package:app_ui/app_ui.dart';
 
 class TracePanel extends StatelessWidget {
   final List<AiMessageTrace> traces;

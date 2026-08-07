@@ -5,7 +5,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:ssh_mobile/features/client_webview/viewmodels/client_webview_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import 'package:app_ui/app_ui.dart';
 
 class ClientWebViewScreen extends StatefulWidget {
   final String chatId;

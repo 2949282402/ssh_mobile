@@ -12,7 +12,7 @@ import 'package:ssh_mobile/features/startup/viewmodels/startup_viewmodel.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 
 const _powerChannel = MethodChannel('ssh_mobile/power');
 

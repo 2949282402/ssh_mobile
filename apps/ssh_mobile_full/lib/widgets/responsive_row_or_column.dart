@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../utils/responsive.dart';
+import 'package:app_ui/app_ui.dart';
 
 class ResponsiveRowOrColumn extends StatelessWidget {
   final List<Widget> children;

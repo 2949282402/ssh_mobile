@@ -12,9 +12,8 @@ import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/agent/plan_execution_controller.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:ssh_mobile/features/ai_chat/pages/agent_trace_debug_page.dart';
-import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import 'trace_panel.dart';
 import 'message_attachments_wrap.dart';
 

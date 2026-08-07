@@ -3,9 +3,8 @@ import 'package:provider/provider.dart';
 
 import 'package:ssh_mobile/features/startup/viewmodels/startup_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
-import 'package:ssh_mobile/widgets/app_surface.dart';
 
 class StartupScreen extends StatefulWidget {
   final WidgetBuilder? homeBuilder;

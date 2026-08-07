@@ -403,18 +403,20 @@ flowchart LR
   快传、MCP 和平台适配基础设施。
 - `apps/ssh_mobile_full/lib/data/`：Drift 数据库、DAO 和 Repository 实现。
 - `packages/core/app_core/`：纯 Dart 的生命周期、Module、日志和 Capability 合约；生产代码不依赖 Flutter/UI。日志部分包括作用域 `AppLogger`、有界 `LogBuffer`、`LogSink` 和可释放的 `AppLoggerImpl`。
+- `packages/core/app_ui/`：共享主题、响应式指标和跨 Feature 通用 Widget。只通过 `package:app_ui/app_ui.dart` 暴露，不依赖 Feature、SSH、网络、数据库或应用 Service；旧主题、响应式和通用 Widget 路径仅保留兼容导出。
 - `packages/core/connection_core/`：Connection 领域模型与契约、独立的非敏感 Drift 数据库、Secure Storage 凭据和 Host Key 信任元数据。`ConnectionDatabase` 由 `AppRuntime` 创建和关闭；`feature_connection` 只消费其公共 Repository 与注入的 Capability。
 - `packages/infrastructure/ssh_mobile_network_native/`：位于 Infrastructure 边界下的原生网络 Package。
 - `packages/infrastructure/network_transport/`：App Scope `NetworkRuntime` Facade、lazy Capability 状态机、传输端点/连接合约、指标快照和显式 native handle adapter。实例由 `AppRuntime` 唯一创建；当前 Step 不新增第二套协议实现。
 - `packages/infrastructure/ssh_core/`：App Scope SSH Session Manager、Lease/Pool 生命周期、桌面端与移动端 Runtime Adapter、SSH Client/Host Key/命令执行边界及非敏感目标绑定。该包不依赖 `StorageService`；`AppRuntime` 只持有一个 Manager，Terminal Pilot 完成方法级迁移前保留同一实例上的旧 `SshService` 兼容面。
 - `apps/ssh_mobile_full/lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
   策略和数据保护。
-- `apps/ssh_mobile_full/lib/theme/`、`apps/ssh_mobile_full/lib/widgets/`、`apps/ssh_mobile_full/lib/utils/`：设计系统、复用组件和工具。
+- `apps/ssh_mobile_full/lib/theme/`、已迁移的共享 Widget 路径以及 `lib/utils/responsive.dart`：`packages/core/app_ui/` 的兼容导出；Feature 专属 Widget 继续放在所属 Feature 内。
 - `apps/ssh_mobile_full/lib/models/`：仅保留小型的历史兼容共享模型；新增 Feature 模型放在所属的
   `apps/ssh_mobile_full/lib/features/<feature>/models/`。
 - `apps/ssh_mobile_full/lib/screens/`：历史兼容目录；不要继续在此新增应用 UI。
 - `apps/ssh_mobile_full/test/`：单元测试和 Widget 测试。
 - `packages/core/app_core/test/`：Core 合约测试；可在该 Package 中执行 `flutter test`，或使用 Melos scope 命令。
+- `packages/core/app_ui/test/`：共享主题、响应式工具和 Widget 测试；可在该 Package 中执行 `flutter test`。
 - `packages/infrastructure/ssh_core/test/`：SSH Core 生命周期与安全契约测试。
 - `docs/`：架构、安全、性能、验证和发布文档。
 - `scripts/`：仓库级构建、打包和同步脚本；`apps/ssh_mobile_full/tool/`：App 专属生成和质量检查脚本。

@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/features/terminal/models/terminal_keyboard_models.dart';
 import 'package:ssh_mobile/features/terminal/views/widgets/terminal_custom_keyboard.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:xterm/xterm.dart';
 
 void main() {

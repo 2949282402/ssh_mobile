@@ -9,7 +9,7 @@ import '../../../services/mcp/mcp_invocation_policy.dart';
 import '../../../services/mcp/mcp_server_controller.dart';
 import '../../../services/mcp/mcp_server_settings.dart';
 import '../../../services/mcp/mcp_tool_exposure_policy.dart';
-import '../../../widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 import 'mcp_approval_queue_screen.dart';
 import 'mcp_activity_screen.dart';
 import '../viewmodels/mcp_console_viewmodel.dart';

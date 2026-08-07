@@ -5,9 +5,7 @@ import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/features/playbook/viewmodels/playbook_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
-import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
-import 'package:ssh_mobile/widgets/destructive_confirm_dialog.dart';
+import 'package:app_ui/app_ui.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
 
 part 'widgets/playbook_strings.dart';

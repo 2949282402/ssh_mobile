@@ -12,7 +12,7 @@ import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart'
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:app_ui/app_ui.dart';
 
 SshSession _buildSession({
   required String id,

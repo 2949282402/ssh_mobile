@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ssh_mobile/utils/responsive.dart';
+import 'package:app_ui/app_ui.dart';
 
 void main() {
   test('compact keyboard layout is limited to short obscured viewports', () {

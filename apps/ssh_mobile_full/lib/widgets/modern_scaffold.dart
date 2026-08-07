@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:ssh_mobile/widgets/app_surface.dart';
+import 'package:app_ui/app_ui.dart';
 
 class ModernScaffold extends StatelessWidget {
   final String? title;
