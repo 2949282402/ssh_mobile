@@ -1,3 +1,5 @@
+// Relay v1 服务启动入口；配置和路由均由 internal/relay 统一管理。
+
 package main
 
 import (
@@ -9,6 +11,7 @@ import (
 	"github.com/ssh-mobile/relay/internal/relay"
 )
 
+// main 加载环境配置并启动 Relay HTTP/WebSocket 服务。
 func main() {
 	config, err := relay.ConfigFromEnvironment()
 	if err != nil {

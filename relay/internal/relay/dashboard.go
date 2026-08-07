@@ -1,3 +1,5 @@
+// v1 Relay 管理控制台和统计端点；设备数据面只通过 server.go 的 v1 路由处理。
+
 package relay
 
 import (
@@ -15,6 +17,7 @@ var staticFS embed.FS
 
 var serverStartTime = time.Now()
 
+// statsResponse 是管理员控制台使用的当前运行统计。
 type statsResponse struct {
 	UptimeSeconds   int64             `json:"uptime_seconds"`
 	UptimeFormatted string            `json:"uptime_formatted"`
@@ -29,11 +32,13 @@ type statsResponse struct {
 	EnrolledDevices []*EnrolledDevice `json:"enrolled_devices"`
 }
 
+// peerInfo 描述一个当前在线的 Relay 设备连接。
 type peerInfo struct {
 	DeviceID   string `json:"device_id"`
 	RemoteAddr string `json:"remote_addr"`
 }
 
+// apiStats 返回经过管理员认证的运行统计和设备列表。
 func (s *Server) apiStats(w http.ResponseWriter, _ *http.Request) {
 	s.hub.mutex.Lock()
 	activePeers := len(s.hub.peers)
@@ -92,6 +97,7 @@ func (s *Server) apiStats(w http.ResponseWriter, _ *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+// dashboard 返回内嵌的管理员控制台页面。
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -109,6 +115,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	w.Write(indexBytes)
 }
 
+// staticFileHandler 返回只读的内嵌静态资源处理器。
 func (s *Server) staticFileHandler() http.Handler {
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {

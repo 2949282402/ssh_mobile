@@ -1,3 +1,5 @@
+// v1 Relay 服务配置、环境变量解析和随机材料生成。
+
 package relay
 
 import (
@@ -10,10 +12,13 @@ import (
 )
 
 const (
+	// maxControlFrameBytes 限制单个 JSON 控制帧的大小。
 	maxControlFrameBytes = 64 * 1024
-	maxBinaryFrameBytes  = 1024*1024 + 25
+	// maxBinaryFrameBytes 限制单个不透明二进制帧的大小。
+	maxBinaryFrameBytes = 1024*1024 + 25
 )
 
+// Config 保存 Relay 服务器的监听、认证和资源边界。
 type Config struct {
 	Address         string
 	EnrollmentToken string
@@ -25,6 +30,7 @@ type Config struct {
 	AdminPassword   string
 }
 
+// ConfigFromEnvironment 从环境变量加载并校验生产 Relay 配置。
 func ConfigFromEnvironment() (Config, error) {
 	address := os.Getenv("RELAY_ADDR")
 	if address == "" {
@@ -68,12 +74,15 @@ func ConfigFromEnvironment() (Config, error) {
 	}, nil
 }
 
+// durationEnv 读取正的时间间隔，异常时返回指定默认值。
 func durationEnv(name string, fallback time.Duration) time.Duration {
 	if value, err := time.ParseDuration(os.Getenv(name)); err == nil && value > 0 {
 		return value
 	}
 	return fallback
 }
+
+// intEnv 读取正整数资源配置，异常时返回指定默认值。
 func intEnv(name string, fallback int) int {
 	if value, err := strconv.Atoi(os.Getenv(name)); err == nil && value > 0 {
 		return value
@@ -81,6 +90,7 @@ func intEnv(name string, fallback int) int {
 	return fallback
 }
 
+// randomBytes 生成指定长度的密码学随机字节。
 func randomBytes(size int) []byte {
 	b := make([]byte, size)
 	if _, err := rand.Read(b); err != nil {

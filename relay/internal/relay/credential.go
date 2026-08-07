@@ -1,3 +1,5 @@
+// v1 Relay 凭据签发、校验和设备证明验证。
+
 package relay
 
 import (
@@ -11,12 +13,14 @@ import (
 	"time"
 )
 
+// credentialClaims 是签名凭据中绑定的设备身份和过期时间。
 type credentialClaims struct {
 	DeviceID  string `json:"device_id"`
 	PublicKey string `json:"public_key"`
 	ExpiresAt int64  `json:"expires_at"`
 }
 
+// issueCredential 为指定设备签发带 HMAC 的短期 v1 凭据。
 func issueCredential(key []byte, deviceID string, publicKey []byte, ttl time.Duration) (string, error) {
 	claims, err := json.Marshal(credentialClaims{
 		DeviceID:  deviceID,
@@ -31,6 +35,7 @@ func issueCredential(key []byte, deviceID string, publicKey []byte, ttl time.Dur
 	return base64.RawURLEncoding.EncodeToString(claims) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
+// verifyCredential 校验凭据签名、设备标识、过期时间和公钥材料。
 func verifyCredential(key []byte, token string) (credentialClaims, []byte, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 2 {
@@ -60,6 +65,7 @@ func verifyCredential(key []byte, token string) (credentialClaims, []byte, error
 	return claims, publicKey, nil
 }
 
+// verifyDeviceProof 校验设备对请求 transcript 的 Ed25519 签名。
 func verifyDeviceProof(publicKey []byte, payload, encodedSignature string) error {
 	signature, err := base64.RawURLEncoding.DecodeString(encodedSignature)
 	if err != nil || payload == "" || !ed25519.Verify(ed25519.PublicKey(publicKey), []byte(payload), signature) {
