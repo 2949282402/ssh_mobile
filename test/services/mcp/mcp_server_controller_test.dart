@@ -129,6 +129,51 @@ void main() {
     expect(queue.pending, isEmpty);
   });
 
+  test('token regeneration rejects pending external approvals', () async {
+    SharedPreferences.setMockInitialValues({
+      'lan_device_id': 'test-device',
+      'lan_device_alias': 'Test device',
+    });
+    final settings = AppSettings();
+    await settings.init();
+    final queue = McpApprovalQueue();
+    final controller = McpServerController(
+      appSettings: settings,
+      toolServiceFactory: _FakeToolExecutor.new,
+      approvalQueue: queue,
+    );
+    addTearDown(() {
+      controller.dispose();
+      settings.dispose();
+    });
+
+    var executed = false;
+    final pending = queue.enqueue(
+      request: const AiToolApprovalRequest(
+        toolName: 'run_command',
+        approvalType: 'remote_write',
+        connectionId: 'server-1',
+        connectionName: 'Test server',
+        command: 'uptime',
+        reason: 'test',
+      ),
+      executeApproved: () async {
+        executed = true;
+        return 'executed';
+      },
+    );
+    await _waitFor(() => queue.pending.isNotEmpty);
+
+    // regenerateMcpServerToken notifies after the secure-storage write, so wait
+    // for it before approving; the controller must reject the stale approval.
+    await settings.regenerateMcpServerToken();
+    await queue.approve(queue.pending.single.id);
+
+    expect(await pending, contains('approval_rejected'));
+    expect(executed, isFalse);
+    expect(queue.pending, isEmpty);
+  });
+
   test('exposure changes reject pending external approvals', () async {
     SharedPreferences.setMockInitialValues({
       'lan_device_id': 'test-device',

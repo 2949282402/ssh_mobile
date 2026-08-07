@@ -66,14 +66,70 @@ void main() {
       executionMode: AiToolExecutionMode.stateChanging,
       handler: (_) async => '{}',
     );
+    // A state-changing tool outside the configured review set is denied
+    // (fail-closed) rather than executed silently.
     final settings = const McpServerSettings(secondaryReviewTools: {});
     expect(
       policy.evaluate(tool: toolValue, settings: settings).action,
-      McpInvocationAction.execute,
+      McpInvocationAction.denied,
     );
     final updated = settings.copyWith(secondaryReviewTools: {'run_command'});
     expect(
       policy.evaluate(tool: toolValue, settings: updated).action,
+      McpInvocationAction.secondaryApproval,
+    );
+  });
+
+  test('review mode denies state-changing tools outside the review set', () {
+    const settings = McpServerSettings(secondaryReviewTools: {'run_command'});
+    expect(
+      policy
+          .evaluate(
+            tool: tool(
+              'ssh_rename_session',
+              mode: AiToolExecutionMode.stateChanging,
+            ),
+            settings: settings,
+          )
+          .action,
+      McpInvocationAction.denied,
+    );
+  });
+
+  test('review mode executes read-only tools outside the review set', () {
+    const settings = McpServerSettings(secondaryReviewTools: {});
+    expect(
+      policy.evaluate(tool: tool('list_servers'), settings: settings).action,
+      McpInvocationAction.execute,
+    );
+  });
+
+  test('read-only execution mode is authoritative over MCP annotations', () {
+    const settings = McpServerSettings(secondaryReviewTools: {});
+    expect(
+      policy
+          .evaluate(tool: tool('client_clear_logs'), settings: settings)
+          .action,
+      McpInvocationAction.execute,
+    );
+  });
+
+  test('default review set includes SSH session connection tools', () {
+    expect(
+      McpInvocationPolicy.defaultSecondaryReviewTools,
+      contains('ssh_ensure_session_connected'),
+    );
+    const settings = McpServerSettings();
+    expect(
+      policy
+          .evaluate(
+            tool: tool(
+              'ssh_ensure_session_connected',
+              mode: AiToolExecutionMode.stateChanging,
+            ),
+            settings: settings,
+          )
+          .action,
       McpInvocationAction.secondaryApproval,
     );
   });

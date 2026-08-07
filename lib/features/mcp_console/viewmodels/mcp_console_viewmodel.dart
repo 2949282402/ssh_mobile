@@ -20,6 +20,7 @@ class McpConsoleViewModel extends ChangeNotifier {
   McpSelfTestResult? _lastSelfTest;
   bool _loading = true;
   bool _loadingPolicies = false;
+  bool _pendingPolicyReload = false;
   bool _runningAction = false;
   String? _errorCode;
 
@@ -164,12 +165,23 @@ class McpConsoleViewModel extends ChangeNotifier {
   }
 
   Future<void> _reloadPolicies() async {
-    if (_loadingPolicies) return;
+    if (_loadingPolicies) {
+      // A reload is already in flight; queue one more pass instead of dropping
+      // the request, so rapid consecutive exposure/review toggles converge on
+      // the latest settings instead of leaving a stale policy snapshot.
+      _pendingPolicyReload = true;
+      return;
+    }
     _loadingPolicies = true;
     try {
-      _tools = await _controller.loadToolPolicySnapshot();
-    } catch (_) {
-      _errorCode ??= 'load_failed';
+      do {
+        _pendingPolicyReload = false;
+        try {
+          _tools = await _controller.loadToolPolicySnapshot();
+        } catch (_) {
+          _errorCode ??= 'load_failed';
+        }
+      } while (_pendingPolicyReload);
     } finally {
       _loadingPolicies = false;
       notifyListeners();

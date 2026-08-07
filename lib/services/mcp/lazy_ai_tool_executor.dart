@@ -6,7 +6,11 @@ import '../../utils/startup_instrumentation.dart';
 /// MCP 延迟工具图执行器。
 /// 在 MCP HTTP Server 收到 initialize 请求时只暴露端口，
 /// 仅当收到真正的 tools/list 或 tools/call 时才懒加载构造 AiToolService 依赖图。
-class LazyAiToolExecutor implements AiToolExecutor, AiToolApprovalTargetGuard {
+class LazyAiToolExecutor
+    implements
+        AiToolExecutor,
+        AiToolApprovalTargetGuard,
+        McpApprovalRequestProvider {
   final AiToolExecutor Function() factory;
   AiToolExecutor? _delegate;
   Future<AiToolExecutor>? _initFuture;
@@ -54,6 +58,21 @@ class LazyAiToolExecutor implements AiToolExecutor, AiToolApprovalTargetGuard {
     Map<String, dynamic> arguments,
   ) async {
     final delegate = await _ensureDelegate();
+    return delegate.approvalRequestFor(name, arguments);
+  }
+
+  @override
+  Future<AiToolApprovalRequest?> mcpApprovalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  ) async {
+    final delegate = await _ensureDelegate();
+    if (delegate is McpApprovalRequestProvider) {
+      return (delegate as McpApprovalRequestProvider).mcpApprovalRequestFor(
+        name,
+        arguments,
+      );
+    }
     return delegate.approvalRequestFor(name, arguments);
   }
 

@@ -186,6 +186,41 @@ void main() {
       },
     );
 
+    test('approval timeout keeps a distinct activity reason', () async {
+      final queue = McpApprovalQueue(
+        pendingTimeout: const Duration(milliseconds: 10),
+      );
+      final activityRepository = _MemoryActivityRepository();
+      final executor = _FakeToolExecutor();
+      final handler = McpToolHandler(
+        aiToolService: executor,
+        settingsProvider: () => const McpServerSettings(token: 'secret'),
+        activityRecorder: McpActivityRecorder(activityRepository),
+        approvalQueue: queue,
+      );
+
+      final response = await handler.handle(
+        const McpJsonRpcRequest(
+          id: 'timeout-test',
+          hasId: true,
+          method: 'tools/call',
+          params: {
+            'name': 'run_command',
+            'arguments': {'connectionId': 'server-1', 'command': 'uptime'},
+          },
+        ),
+      );
+
+      final result = response.result! as Map;
+      expect(result['isError'], isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        activityRepository.records.last.policyReason,
+        'secondary_approval_timeout',
+      );
+      queue.dispose();
+    });
+
     test('trustedAgent executes a bound write without queueing', () async {
       final queue = McpApprovalQueue();
       final executor = _FakeToolExecutor();
@@ -218,7 +253,7 @@ void main() {
     });
 
     test(
-      'review mode executes an unconfigured tool without queueing',
+      'review mode denies a state-changing tool outside the review set',
       () async {
         final queue = McpApprovalQueue();
         final executor = _FakeToolExecutor();
@@ -244,9 +279,75 @@ void main() {
         );
 
         final result = response.result! as Map;
+        expect(result['isError'], isTrue);
+        expect(queue.pending, isEmpty);
+        expect(executor.executedTools, isNot(contains('run_command')));
+        queue.dispose();
+      },
+    );
+
+    test(
+      'review mode executes a read-only tool outside the review set',
+      () async {
+        final queue = McpApprovalQueue();
+        final executor = _FakeToolExecutor();
+        final handler = McpToolHandler(
+          aiToolService: executor,
+          settingsProvider: () => const McpServerSettings(
+            token: 'secret',
+            secondaryReviewTools: {},
+          ),
+          approvalQueue: queue,
+        );
+
+        final response = await handler.handle(
+          const McpJsonRpcRequest(
+            id: 'unconfigured-readonly-test',
+            hasId: true,
+            method: 'tools/call',
+            params: {'name': 'list_servers', 'arguments': <String, dynamic>{}},
+          ),
+        );
+
+        final result = response.result! as Map;
         expect(result['isError'], isFalse);
         expect(queue.pending, isEmpty);
-        expect(executor.executedTools, contains('run_command'));
+        expect(executor.executedTools, contains('list_servers'));
+        queue.dispose();
+      },
+    );
+
+    test(
+      'review mode uses the approval guard for an unqueued dynamic request',
+      () async {
+        final queue = McpApprovalQueue();
+        final executor = _FakeReadApprovalExecutor();
+        final handler = McpToolHandler(
+          aiToolService: executor,
+          settingsProvider: () => const McpServerSettings(
+            token: 'secret',
+            secondaryReviewTools: {},
+          ),
+          approvalQueue: queue,
+        );
+
+        final response = await handler.handle(
+          const McpJsonRpcRequest(
+            id: 'dynamic-read-test',
+            hasId: true,
+            method: 'tools/call',
+            params: {
+              'name': 'sftp_read_text',
+              'arguments': <String, dynamic>{'path': '/tmp/demo.txt'},
+            },
+          ),
+        );
+
+        final result = response.result! as Map;
+        expect(result['isError'], isFalse);
+        expect(executor.approvedExecutions, 1);
+        expect(executor.unapprovedExecutions, 0);
+        expect(queue.pending, isEmpty);
         queue.dispose();
       },
     );
@@ -557,6 +658,66 @@ class _FakeExecutorWithoutGuard implements AiToolExecutor {
   @override
   AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) =>
       const AiCommandReview.readOnly();
+}
+
+class _FakeReadApprovalExecutor
+    implements AiToolExecutor, AiToolApprovalTargetGuard {
+  int approvedExecutions = 0;
+  int unapprovedExecutions = 0;
+
+  @override
+  Future<List<AiTool>> tools() async => [
+    AiTool(
+      name: 'sftp_read_text',
+      description: 'Read a remote text file.',
+      properties: const {},
+      handler: (_) async => jsonEncode({'ok': true}),
+    ),
+  ];
+
+  @override
+  Future<List<Map<String, dynamic>>> toolDefinitions() async =>
+      (await tools()).map((tool) => tool.definition).toList();
+
+  @override
+  Future<AiToolApprovalRequest?> approvalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  ) async => const AiToolApprovalRequest(
+    toolName: 'sftp_read_text',
+    approvalType: 'remote_read',
+    connectionId: 'client',
+    connectionName: 'SSH Mobile client',
+    command: 'SFTP READ /tmp/demo.txt',
+    reason: 'Remote file reads require user approval.',
+  );
+
+  @override
+  Future<String> execute(
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async {
+    unapprovedExecutions += 1;
+    return jsonEncode({'ok': true});
+  }
+
+  @override
+  AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) =>
+      const AiCommandReview.readOnly();
+
+  @override
+  Future<bool> isApprovalTargetCurrent(AiToolApprovalRequest request) async =>
+      true;
+
+  @override
+  Future<String> executeApproved(
+    AiToolApprovalRequest request,
+    Map<String, dynamic> arguments,
+  ) async {
+    approvedExecutions += 1;
+    return jsonEncode({'ok': true});
+  }
 }
 
 Future<void> _waitFor(bool Function() condition) async {

@@ -200,13 +200,28 @@ class McpToolHandler {
     required Stopwatch watch,
   }) async {
     try {
-      final approvalRequest = await aiToolService.approvalRequestFor(
-        name,
-        arguments,
-      );
-      final text = approvalRequest == null
-          ? await aiToolService.execute(name, arguments, approvedWrite: true)
-          : await _executeWithBinding(approvalRequest, arguments, name: name);
+      // A dynamically bound approval request must always use the approval
+      // guard, even when the MCP invocation itself is not queued. This keeps
+      // sensitive reads and target-bound operations on the same immutable
+      // binding path as the built-in approval flow. Only an unbound call in
+      // trusted-agent mode receives approvedWrite=true.
+      final trustedAgent =
+          settingsProvider().approvalMode == McpApprovalMode.trustedAgent;
+      final approvalRequest = await _approvalRequestFor(name, arguments);
+      final String text;
+      if (approvalRequest != null) {
+        text = await _executeWithBinding(
+          approvalRequest,
+          arguments,
+          name: name,
+        );
+      } else {
+        text = await aiToolService.execute(
+          name,
+          arguments,
+          approvedWrite: trustedAgent,
+        );
+      }
       return _toolResult(
         name: name,
         text: text,
@@ -240,20 +255,17 @@ class McpToolHandler {
     required Stopwatch watch,
   }) async {
     try {
-      final approvalRequest = await aiToolService.approvalRequestFor(
-        name,
-        arguments,
-      );
+      final approvalRequest = await _approvalRequestFor(name, arguments);
       if (approvalRequest == null) {
-        final text = await aiToolService.execute(
-          name,
-          arguments,
-          approvedWrite: true,
-        );
-        return _toolResult(
+        // A tool in the configured review set must never execute silently just
+        // because its approval request could not be built. Fail closed so the
+        // external caller sees an explicit approval-required error instead of
+        // a write executing without user review.
+        return _finishError(
           name: name,
-          text: text,
-          policyReason: 'configured_secondary_review_not_required',
+          error: 'approval_required',
+          policyReason: 'approval_request_unavailable',
+          decision: decision,
           watch: watch,
         );
       }
@@ -279,9 +291,7 @@ class McpToolHandler {
       return _toolResult(
         name: name,
         text: text,
-        policyReason: _looksLikeToolError(text)
-            ? 'secondary_approval_rejected'
-            : 'secondary_approval_approved',
+        policyReason: _secondaryApprovalPolicyReason(text),
         watch: watch,
       );
     } catch (e, stackTrace) {
@@ -305,6 +315,41 @@ class McpToolHandler {
         : null;
     if (guard == null) throw _ApprovalGuardUnavailableException(name);
     return guard.executeApproved(request, arguments);
+  }
+
+  Future<AiToolApprovalRequest?> _approvalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  ) {
+    final service = aiToolService;
+    if (service is McpApprovalRequestProvider) {
+      return (service as McpApprovalRequestProvider).mcpApprovalRequestFor(
+        name,
+        arguments,
+      );
+    }
+    return service.approvalRequestFor(name, arguments);
+  }
+
+  String _secondaryApprovalPolicyReason(String text) {
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is Map) {
+        switch (decoded['error']) {
+          case 'approval_timeout':
+            return 'secondary_approval_timeout';
+          case 'approval_rejected':
+            return 'secondary_approval_rejected';
+          case 'mcp_approval_execution_failed':
+            return 'secondary_approval_execution_failed';
+        }
+      }
+    } catch (_) {
+      // Fall through to the existing redacted error classifier.
+    }
+    return _looksLikeToolError(text)
+        ? 'secondary_approval_rejected'
+        : 'secondary_approval_approved';
   }
 
   Map<String, dynamic> _toolResult({

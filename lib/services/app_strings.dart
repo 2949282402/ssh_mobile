@@ -841,6 +841,8 @@ class AppStrings {
       : '两种模式共用对外暴露配置；二次审核设置仅在审核模式生效。';
   String get mcpExposeExternally => _en ? 'Expose externally' : '对外暴露';
   String get mcpSecondaryReview => _en ? 'Secondary review' : '二次审核';
+  String get mcpReviewRequired =>
+      _en ? 'Review configuration required' : '需先配置二次审核';
   String get mcpExecutable => _en ? 'Executable' : '可直接执行';
   String get mcpNoConfigurableTools =>
       _en ? 'No configurable tools available.' : '当前没有可配置的 Tool。';
@@ -874,6 +876,37 @@ class AppStrings {
   String get mcpTokenRegenerated =>
       _en ? 'MCP token regenerated' : 'MCP Token 已重新生成';
   String get mcpCopied => _en ? 'MCP config copied' : 'MCP 配置已复制';
+  String get mcpApprovalQueueTitle => _en ? 'MCP approvals' : 'MCP 审批队列';
+  String get mcpApprovalQueueSubtitle =>
+      _en ? 'Review external MCP actions before execution' : '执行外部 MCP 操作前进行审核';
+  String get mcpNoPendingApprovals => _en ? 'No pending approvals' : '暂无待审批操作';
+  String get mcpApprovalQueueEmptyMessage => _en
+      ? 'Write-capable MCP calls will appear here before they run.'
+      : '需要写入或改变状态的 MCP 请求会在执行前显示在这里。';
+  String get mcpApprovalTarget => _en ? 'Target' : '目标';
+  String get mcpApprovalReason => _en ? 'Reason' : '原因';
+  String get mcpApprovalRequested => _en ? 'Requested' : '请求时间';
+  String get mcpApprovalPath => _en ? 'Path' : '路径';
+  String get mcpApprovalBytes => _en ? 'Bytes' : '字节';
+  String get mcpApprovalCommand => _en ? 'Command' : '命令';
+  String get mcpApprovalPreview => _en ? 'Preview' : '预览';
+  String get mcpApprovalApprove => _en ? 'Approve' : '批准';
+  String get mcpApprovalExecuting => _en ? 'Executing…' : '执行中…';
+  String get mcpApprovalWaiting => _en ? 'Waiting for review' : '等待审核';
+  String get mcpRecentActivity => _en ? 'Recent activity' : '最近活动';
+  String get mcpActivitySubtitle =>
+      _en ? 'Redacted MCP server activity' : '已脱敏的 MCP Server 活动记录';
+  String get mcpActivityAll => _en ? 'All' : '全部';
+  String get mcpActivityClear => _en ? 'Clear activity' : '清空活动';
+  String get mcpActivityEmpty => _en ? 'No activity recorded.' : '暂无活动记录。';
+  String get mcpActivityClearTitle =>
+      _en ? 'Clear MCP activity?' : '清空 MCP 活动记录？';
+  String get mcpActivityClearMessage => _en
+      ? 'This only removes local, redacted activity metadata.'
+      : '这只会移除本机保存的脱敏活动元数据。';
+  String get mcpActivitySuccess => _en ? 'Success' : '成功';
+  String get mcpActivityDenied => _en ? 'Denied' : '已拒绝';
+  String get mcpActivityFailed => _en ? 'Failed' : '失败';
   String get security => _en ? 'Security & privacy' : '安全与隐私';
   String get credentialCache => _en ? 'Cache SSH credentials' : '缓存 SSH 凭证到内存';
   String get credentialCacheHint => _en

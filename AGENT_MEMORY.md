@@ -53,6 +53,16 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `ToolSecretPolicy`, hidden-tool rules, input validation, and destructive-command
   blocking. The queue is cleared on exposure/mode/review/token/lifecycle changes
   and is never persisted. Built-in Agent approvals are unaffected.
+- 2026-08-05: MCP fail-closed boundary. In `reviewConfiguredTools` mode,
+  `McpInvocationPolicy` returns `denied` for state-changing / write-like tools
+  not in the secondary-review set (they never execute silently); read-only
+  tools still execute directly. `McpToolHandler._executeDirectlyAuthorized`
+  grants `approvedWrite: true` only in `trustedAgent` mode. A tool in the
+  review set whose approval request cannot be built fails with
+  `approval_required` instead of executing. The approval queue expires
+  un-reviewed items after 10 minutes (`approval_timeout`). `ssh_ensure_session_connected`
+  belongs in `defaultSecondaryReviewTools`. Do not re-open a fail-open
+  execution path for external MCP write operations.
 
 ### Network transfer
 

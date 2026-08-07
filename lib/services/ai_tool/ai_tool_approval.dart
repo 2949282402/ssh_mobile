@@ -565,6 +565,25 @@ extension _AiToolApprovalFlow on AiToolService {
     }
   }
 
+  Future<AiToolApprovalRequest?> _buildMcpApprovalRequest(
+    String name,
+    Map<String, dynamic> arguments,
+  ) async {
+    switch (name) {
+      case 'app_clear_secret_cache':
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'local_app_change',
+          connectionId: _clientScopeId,
+          connectionName: _clientScopeName,
+          command: 'CLEAR SECRET CACHE',
+          reason: 'Clearing the in-memory secret cache requires user approval.',
+        );
+      default:
+        return null;
+    }
+  }
+
   Future<AiToolApprovalRequest> _bindApprovalRequest(
     AiToolApprovalRequest request,
     Map<String, dynamic> arguments,

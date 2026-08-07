@@ -540,10 +540,11 @@ class _PolicyChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = switch (exposureResult) {
-      McpToolPolicyResult.exposed =>
-        invocationAction == McpInvocationAction.secondaryApproval
-            ? strings.mcpSecondaryReview
-            : strings.mcpExecutable,
+      McpToolPolicyResult.exposed => switch (invocationAction) {
+        McpInvocationAction.execute => strings.mcpExecutable,
+        McpInvocationAction.secondaryApproval => strings.mcpSecondaryReview,
+        McpInvocationAction.denied => strings.mcpReviewRequired,
+      },
       McpToolPolicyResult.hidden =>
         reason == 'not_exposed_by_user'
             ? strings.mcpNotExposed

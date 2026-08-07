@@ -53,17 +53,22 @@ void main() {
 
   test('token regeneration exposes only a masked preview', () async {
     await viewModel.regenerateToken();
+    final token = appSettings.mcpServerToken;
+    final masked = viewModel.maskedToken;
 
-    expect(viewModel.maskedToken, startsWith('••••••••'));
-    expect(viewModel.maskedToken, isNot(contains(appSettings.mcpServerToken)));
-    expect(
-      viewModel.maskedToken,
-      endsWith(
-        appSettings.mcpServerToken.substring(
-          appSettings.mcpServerToken.length - 4,
-        ),
-      ),
-    );
+    // Exactly 8 bullets followed by the final 4 characters: no prefix, no
+    // middle segment, no full-token leakage can satisfy this format.
+    expect(masked.length, 12);
+    expect(masked.substring(0, 8), '••••••••');
+    expect(masked.substring(8), token.substring(token.length - 4));
+    expect(masked, isNot(contains(token)));
+  });
+
+  test('regenerating the token produces a fresh masked preview', () async {
+    await viewModel.regenerateToken();
+    final first = viewModel.maskedToken;
+    await viewModel.regenerateToken();
+    expect(viewModel.maskedToken, isNot(equals(first)));
   });
 }
 

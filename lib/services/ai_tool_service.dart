@@ -40,7 +40,11 @@ part 'ai_tool/monitor_tools.dart';
 part 'ai_tool/playbook_tools.dart';
 part 'ai_tool/security_policy.dart';
 
-class AiToolService implements AiToolExecutor, AiToolApprovalTargetGuard {
+class AiToolService
+    implements
+        AiToolExecutor,
+        AiToolApprovalTargetGuard,
+        McpApprovalRequestProvider {
   String get _clientScopeId => 'client';
   String get _clientScopeName => 'SSH Mobile client';
   static const int _maxToolTextChars = 12000;
@@ -281,6 +285,16 @@ class AiToolService implements AiToolExecutor, AiToolApprovalTargetGuard {
     final request = await _buildApprovalRequest(name, arguments);
     if (request == null) return null;
     return _bindApprovalRequest(request, arguments);
+  }
+
+  @override
+  Future<AiToolApprovalRequest?> mcpApprovalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  ) async {
+    final request = await _buildMcpApprovalRequest(name, arguments);
+    if (request != null) return _bindApprovalRequest(request, arguments);
+    return approvalRequestFor(name, arguments);
   }
 
   @override

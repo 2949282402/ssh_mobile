@@ -28,6 +28,7 @@ class _PendingMcpApproval {
   final DateTime createdAt;
   final Future<String> Function() executeApproved;
   final Completer<String> completer = Completer<String>();
+  Timer? timeout;
   McpApprovalState state = McpApprovalState.pending;
   bool rejected = false;
 
@@ -52,13 +53,17 @@ class _PendingMcpApproval {
 /// by [AiToolService]'s secret policy.
 class McpApprovalQueue extends ChangeNotifier {
   static const int defaultMaxPending = 32;
+  static const Duration defaultPendingTimeout = Duration(minutes: 10);
 
   final int maxPending;
+  final Duration? pendingTimeout;
   final List<_PendingMcpApproval> _pending = [];
   int _nextId = 0;
 
-  McpApprovalQueue({this.maxPending = defaultMaxPending})
-    : assert(maxPending > 0);
+  McpApprovalQueue({
+    this.maxPending = defaultMaxPending,
+    this.pendingTimeout = defaultPendingTimeout,
+  }) : assert(maxPending > 0);
 
   List<McpApprovalSnapshot> get pending =>
       List.unmodifiable(_pending.map((item) => item.snapshot));
@@ -83,6 +88,14 @@ class McpApprovalQueue extends ChangeNotifier {
     _pending.add(pending);
     notifyListeners();
 
+    // Bound how long an un-reviewed request may park the caller's tools/call
+    // request. On expiry the item is rejected and the caller gets an explicit
+    // approval_timeout error instead of a permanently hanging request.
+    final timeout = pendingTimeout;
+    if (timeout != null) {
+      pending.timeout = Timer(timeout, () => _timeoutExpired(pending));
+    }
+
     try {
       return await pending.completer.future;
     } finally {
@@ -90,6 +103,22 @@ class McpApprovalQueue extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  void _timeoutExpired(_PendingMcpApproval pending) {
+    if (pending.state != McpApprovalState.pending || pending.rejected) {
+      return;
+    }
+    if (_pending.remove(pending)) {
+      notifyListeners();
+    }
+    _complete(
+      pending,
+      jsonEncode({
+        'error': 'approval_timeout',
+        'tool': pending.request.toolName,
+      }),
+    );
   }
 
   Future<void> approve(String id) async {
@@ -153,6 +182,7 @@ class McpApprovalQueue extends ChangeNotifier {
   }
 
   void _complete(_PendingMcpApproval pending, String result) {
+    pending.timeout?.cancel();
     if (pending.completer.isCompleted) return;
     pending.completer.complete(result);
   }

@@ -46,11 +46,30 @@ void main() {
       },
     );
 
-    test('does not return an approvalRequired exposure result', () {
-      expect(
-        McpToolPolicyResult.values.map((item) => item.name),
-        isNot(contains('approvalRequired')),
-      );
+    test('maps approval types for write-like tools', () {
+      const cases = <String, String>{
+        'run_command': 'remote_write',
+        'sftp_write_text': 'remote_write',
+        'ssh_open_session': 'ssh_session_change',
+        'monitor_start': 'monitor_state_change',
+        'run_playbook': 'playbook_change',
+        'app_clear_secret_cache': 'local_app_change',
+      };
+      cases.forEach((name, approvalType) {
+        final decision = policy.evaluate(
+          AiTool(
+            name: name,
+            description: name,
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: (_) async => '{}',
+          ),
+          settings: settings,
+          hasChatSession: false,
+        );
+        expect(decision.result, McpToolPolicyResult.exposed);
+        expect(decision.approvalType, approvalType);
+      });
     });
 
     test('hides WebView tools without chat session', () {

@@ -104,6 +104,7 @@ void main() {
     expect(runExposure, findsOneWidget);
     expect(runReview, findsOneWidget);
     expect(find.byKey(const ValueKey('mcp-review-list_servers')), findsNothing);
+    expect(find.text('需先配置二次审核'), findsOneWidget);
     final hiddenExposure = find.byKey(
       const ValueKey('mcp-exposure-client_set_plan_mode'),
     );
@@ -174,6 +175,13 @@ class _FakeToolExecutor implements AiToolExecutor {
     AiTool(
       name: 'run_command',
       description: 'Run a remote command.',
+      properties: const {},
+      executionMode: AiToolExecutionMode.stateChanging,
+      handler: (_) async => jsonEncode({'ok': true}),
+    ),
+    AiTool(
+      name: 'ssh_rename_session',
+      description: 'Rename an SSH session.',
       properties: const {},
       executionMode: AiToolExecutionMode.stateChanging,
       handler: (_) async => jsonEncode({'ok': true}),

@@ -37,6 +37,25 @@ void _registerAiToolCoreTests() {
     expect(await tools.isApprovalTargetCurrent(request), isFalse);
   });
 
+  test(
+    'MCP-only approval metadata does not change built-in Agent approval',
+    () async {
+      expect(
+        await tools.approvalRequestFor('app_clear_secret_cache', const {}),
+        isNull,
+      );
+
+      final mcpProvider = tools as McpApprovalRequestProvider;
+      final request = await mcpProvider.mcpApprovalRequestFor(
+        'app_clear_secret_cache',
+        const {},
+      );
+      expect(request, isNotNull);
+      expect(request!.approvalType, 'local_app_change');
+      expect(request.executionBinding, isNotNull);
+    },
+  );
+
   test('read-only remote tool cannot drift outside the turn target', () async {
     final original = storage.getConnection('server-1')!;
     tools.bindConnectionTargets({

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../services/app_settings.dart';
 import '../../../services/mcp/mcp_approval_queue.dart';
 import '../../../widgets/app_surface.dart';
 import '../viewmodels/mcp_console_viewmodel.dart';
@@ -11,7 +12,7 @@ class McpApprovalQueueScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<McpConsoleViewModel>();
-    final english = viewModel.isEnglish;
+    final strings = AppStrings(viewModel.language);
     final approvals = viewModel.approvals;
     return Scaffold(
       body: AppPageSurface(
@@ -32,10 +33,8 @@ class McpApprovalQueueScreen extends StatelessWidget {
                     ),
                     Expanded(
                       child: AppPageHeader(
-                        title: english ? 'MCP approvals' : 'MCP 审批队列',
-                        subtitle: english
-                            ? 'Review external MCP actions before execution'
-                            : '执行外部 MCP 操作前进行审核',
+                        title: strings.mcpApprovalQueueTitle,
+                        subtitle: strings.mcpApprovalQueueSubtitle,
                         icon: Icons.pending_actions_rounded,
                       ),
                     ),
@@ -48,14 +47,14 @@ class McpApprovalQueueScreen extends StatelessWidget {
               ),
               Expanded(
                 child: approvals.isEmpty
-                    ? _EmptyApprovals(english: english)
+                    ? _EmptyApprovals(strings: strings)
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                         itemCount: approvals.length,
                         separatorBuilder: (_, _) => const SizedBox(height: 12),
                         itemBuilder: (context, index) => _ApprovalCard(
                           approval: approvals[index],
-                          english: english,
+                          strings: strings,
                           onApprove: () =>
                               viewModel.approve(approvals[index].id),
                           onReject: () => viewModel.reject(approvals[index].id),
@@ -71,19 +70,17 @@ class McpApprovalQueueScreen extends StatelessWidget {
 }
 
 class _EmptyApprovals extends StatelessWidget {
-  final bool english;
+  final AppStrings strings;
 
-  const _EmptyApprovals({required this.english});
+  const _EmptyApprovals({required this.strings});
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: AppEmptyState(
         icon: Icons.verified_user_outlined,
-        title: english ? 'No pending approvals' : '暂无待审批操作',
-        message: english
-            ? 'Write-capable MCP calls will appear here before they run.'
-            : '需要写入或改变状态的 MCP 请求会在执行前显示在这里。',
+        title: strings.mcpNoPendingApprovals,
+        message: strings.mcpApprovalQueueEmptyMessage,
       ),
     );
   }
@@ -91,13 +88,13 @@ class _EmptyApprovals extends StatelessWidget {
 
 class _ApprovalCard extends StatelessWidget {
   final McpApprovalSnapshot approval;
-  final bool english;
+  final AppStrings strings;
   final VoidCallback onApprove;
   final VoidCallback onReject;
 
   const _ApprovalCard({
     required this.approval,
-    required this.english,
+    required this.strings,
     required this.onApprove,
     required this.onReject,
   });
@@ -116,27 +113,27 @@ class _ApprovalCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _Meta(
-            label: english ? 'Target' : '目标',
+            label: strings.mcpApprovalTarget,
             value: request.connectionName,
           ),
-          _Meta(label: english ? 'Reason' : '原因', value: request.reason),
+          _Meta(label: strings.mcpApprovalReason, value: request.reason),
           _Meta(
-            label: english ? 'Requested' : '请求时间',
+            label: strings.mcpApprovalRequested,
             value: _formatDate(approval.createdAt),
           ),
           if (request.targetPath != null)
-            _Meta(label: english ? 'Path' : '路径', value: request.targetPath!),
+            _Meta(label: strings.mcpApprovalPath, value: request.targetPath!),
           if (request.byteLength != null)
             _Meta(
-              label: english ? 'Bytes' : '字节',
+              label: strings.mcpApprovalBytes,
               value: '${request.byteLength}',
             ),
           const SizedBox(height: 10),
-          _CodeBlock(label: english ? 'Command' : '命令', value: request.command),
+          _CodeBlock(label: strings.mcpApprovalCommand, value: request.command),
           if (request.contentPreview?.trim().isNotEmpty == true) ...[
             const SizedBox(height: 10),
             _CodeBlock(
-              label: english ? 'Preview' : '预览',
+              label: strings.mcpApprovalPreview,
               value: request.contentPreview!.trim(),
             ),
           ],
@@ -153,7 +150,7 @@ class _ApprovalCard extends StatelessWidget {
                       minimumSize: const Size.fromHeight(48),
                     ),
                     icon: const Icon(Icons.close_rounded),
-                    label: Text(english ? 'Reject' : '拒绝'),
+                    label: Text(strings.reject),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -164,7 +161,7 @@ class _ApprovalCard extends StatelessWidget {
                       minimumSize: const Size.fromHeight(48),
                     ),
                     icon: const Icon(Icons.check_rounded),
-                    label: Text(english ? 'Approve' : '批准'),
+                    label: Text(strings.mcpApprovalApprove),
                   ),
                 ),
               ],
@@ -175,8 +172,8 @@ class _ApprovalCard extends StatelessWidget {
   }
 
   String _statusLabel(bool processing) {
-    if (processing) return english ? 'Executing…' : '执行中…';
-    return english ? 'Waiting for review' : '等待审核';
+    if (processing) return strings.mcpApprovalExecuting;
+    return strings.mcpApprovalWaiting;
   }
 }
 

@@ -41,6 +41,17 @@ abstract interface class AiToolApprovalTargetGuard {
   );
 }
 
+/// Optional provider for approval requests that are specific to the external
+/// MCP boundary.  Keeping this separate from [AiToolExecutor.approvalRequestFor]
+/// prevents MCP-only approval metadata from changing the built-in Agent's
+/// approval semantics.
+abstract interface class McpApprovalRequestProvider {
+  Future<AiToolApprovalRequest?> mcpApprovalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  );
+}
+
 /// Immutable, non-secret authorization context captured before approval UI is
 /// shown. [resourceSnapshot] is process-local only and must never be logged or
 /// persisted.

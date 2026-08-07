@@ -17,6 +17,7 @@ class McpInvocationPolicy {
   static const Set<String> defaultSecondaryReviewTools = {
     'run_command',
     'ssh_open_session',
+    'ssh_ensure_session_connected',
     'ssh_close_session',
     'ssh_close_server_sessions',
     'ssh_restore_tmux_sessions',
@@ -67,6 +68,16 @@ class McpInvocationPolicy {
           return const McpInvocationDecision(
             action: McpInvocationAction.secondaryApproval,
             reason: 'configured_secondary_review',
+          );
+        }
+        // State-changing / execution-only tools outside the configured review
+        // set must never execute silently under review mode. Deny them so
+        // callers are forced to add the tool to the review set (or switch to
+        // trustedAgent). MCP annotations remain presentation metadata only.
+        if (tool.executionMode != AiToolExecutionMode.readOnly) {
+          return const McpInvocationDecision(
+            action: McpInvocationAction.denied,
+            reason: 'state_changing_tool_not_configured_for_review',
           );
         }
         return const McpInvocationDecision(

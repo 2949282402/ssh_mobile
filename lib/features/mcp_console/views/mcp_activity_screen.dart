@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../services/app_settings.dart';
 import '../../../services/mcp/mcp_activity.dart';
 import '../../../widgets/app_surface.dart';
 import '../viewmodels/mcp_console_viewmodel.dart';
@@ -11,7 +12,7 @@ class McpActivityScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<McpConsoleViewModel>();
-    final english = viewModel.isEnglish;
+    final strings = AppStrings(viewModel.language);
     return Scaffold(
       body: AppPageSurface(
         child: SafeArea(
@@ -31,10 +32,8 @@ class McpActivityScreen extends StatelessWidget {
                     ),
                     Expanded(
                       child: AppPageHeader(
-                        title: english ? 'Recent activity' : '最近活动',
-                        subtitle: english
-                            ? 'Redacted MCP server activity'
-                            : '已脱敏的 MCP Server 活动记录',
+                        title: strings.mcpRecentActivity,
+                        subtitle: strings.mcpActivitySubtitle,
                         icon: Icons.history_rounded,
                       ),
                     ),
@@ -46,7 +45,7 @@ class McpActivityScreen extends StatelessWidget {
                   key: const ValueKey('mcp-activity-list'),
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                   children: [
-                    _ActivityCard(viewModel: viewModel, english: english),
+                    _ActivityCard(viewModel: viewModel, strings: strings),
                   ],
                 ),
               ),
@@ -60,15 +59,15 @@ class McpActivityScreen extends StatelessWidget {
 
 class _ActivityCard extends StatelessWidget {
   final McpConsoleViewModel viewModel;
-  final bool english;
+  final AppStrings strings;
 
-  const _ActivityCard({required this.viewModel, required this.english});
+  const _ActivityCard({required this.viewModel, required this.strings});
 
   @override
   Widget build(BuildContext context) {
     return AppSectionCard(
       key: const ValueKey('mcp-recent-activity-card'),
-      title: english ? 'Recent activity' : '最近活动',
+      title: strings.mcpRecentActivity,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -77,13 +76,13 @@ class _ActivityCard extends StatelessWidget {
             runSpacing: 8,
             children: [
               ChoiceChip(
-                label: Text(english ? 'All' : '全部'),
+                label: Text(strings.mcpActivityAll),
                 selected: viewModel.selectedOutcome == null,
                 onSelected: (_) => viewModel.setSelectedOutcome(null),
               ),
               for (final outcome in McpActivityOutcome.values)
                 ChoiceChip(
-                  label: Text(_activityOutcomeLabel(outcome, english)),
+                  label: Text(_activityOutcomeLabel(outcome, strings)),
                   selected: viewModel.selectedOutcome == outcome,
                   onSelected: (_) => viewModel.setSelectedOutcome(outcome),
                 ),
@@ -95,11 +94,11 @@ class _ActivityCard extends StatelessWidget {
             child: TextButton.icon(
               onPressed: () => _confirmClear(context),
               icon: const Icon(Icons.delete_outline_rounded),
-              label: Text(english ? 'Clear activity' : '清空活动'),
+              label: Text(strings.mcpActivityClear),
             ),
           ),
           if (viewModel.activities.isEmpty)
-            Text(english ? 'No activity recorded.' : '暂无活动记录。')
+            Text(strings.mcpActivityEmpty)
           else
             for (final entry in viewModel.activities)
               ListTile(
@@ -110,7 +109,7 @@ class _ActivityCard extends StatelessWidget {
                 subtitle: Text(
                   [
                     _formatActivityDate(entry.occurredAt),
-                    _activityOutcomeLabel(entry.outcome, english),
+                    _activityOutcomeLabel(entry.outcome, strings),
                     if (entry.policyReason != null) entry.policyReason!,
                     if (entry.durationMs != null) '${entry.durationMs} ms',
                   ].join(' · '),
@@ -125,20 +124,16 @@ class _ActivityCard extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(english ? 'Clear MCP activity?' : '清空 MCP 活动记录？'),
-        content: Text(
-          english
-              ? 'This only removes local, redacted activity metadata.'
-              : '这只会移除本机保存的脱敏活动元数据。',
-        ),
+        title: Text(strings.mcpActivityClearTitle),
+        content: Text(strings.mcpActivityClearMessage),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(english ? 'Cancel' : '取消'),
+            child: Text(strings.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(english ? 'Clear' : '清空'),
+            child: Text(strings.clear),
           ),
         ],
       ),
@@ -149,11 +144,11 @@ class _ActivityCard extends StatelessWidget {
   }
 }
 
-String _activityOutcomeLabel(McpActivityOutcome outcome, bool english) =>
+String _activityOutcomeLabel(McpActivityOutcome outcome, AppStrings strings) =>
     switch (outcome) {
-      McpActivityOutcome.success => english ? 'Success' : '成功',
-      McpActivityOutcome.denied => english ? 'Denied' : '已拒绝',
-      McpActivityOutcome.failed => english ? 'Failed' : '失败',
+      McpActivityOutcome.success => strings.mcpActivitySuccess,
+      McpActivityOutcome.denied => strings.mcpActivityDenied,
+      McpActivityOutcome.failed => strings.mcpActivityFailed,
     };
 
 IconData _activityIcon(McpActivityKind kind) => switch (kind) {
