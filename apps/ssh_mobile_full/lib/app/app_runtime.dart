@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
 
@@ -39,6 +40,8 @@ final class AppRuntime implements Disposable {
     required this.sshSessionManager,
     required this.sshService,
     required this.sftpService,
+    required this.monitoringModule,
+    required this.monitoringService,
     required this.performanceMonitorService,
     required this.playbookService,
     required this.ragService,
@@ -89,7 +92,13 @@ final class AppRuntime implements Disposable {
   // TODO(refactor-step-10): 替换为 sftp feature 的公共运行时契约。
   final SftpService sftpService;
 
-  // TODO(refactor-step-11): 将监控运行时迁移到 performance 模块。
+  /// Monitoring Module 的 App Scope Owner；Module 不在激活时默认轮询。
+  final monitoring.MonitoringModule monitoringModule;
+
+  /// Monitoring Module 创建的唯一监控服务实例。
+  final monitoring.MonitoringService monitoringService;
+
+  /// 旧 API 兼容外观，不拥有 [monitoringService]。
   final PerformanceMonitorService performanceMonitorService;
 
   // TODO(refactor-step-16): 将 Playbook 服务迁移到 playbook 模块。
@@ -167,7 +176,11 @@ final class AppRuntime implements Disposable {
     await attempt(networkRuntime.dispose);
 
     // 业务服务的 Timer/监听器先释放，再关闭其共享数据库。
-    await attempt(performanceMonitorService.dispose);
+    await attempt(() async {
+      // 先解除旧兼容监听，再由 Module 取消 Timer、采样和所有资源。
+      performanceMonitorService.dispose();
+      await monitoringModule.dispose();
+    });
     await attempt(playbookService.dispose);
     await attempt(ragService.dispose);
     await attempt(shortcutCommandService.dispose);

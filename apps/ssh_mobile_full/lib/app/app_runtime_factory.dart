@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:app_core/app_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:network_transport/network_transport.dart';
 
 import '../features/ai_chat/services/ai_chat_runtime_factory.dart';
@@ -19,6 +21,7 @@ import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import 'app_runtime.dart';
+import 'monitoring_feature_adapters.dart';
 import 'terminal_ssh_capability_adapter.dart';
 
 /// App Scope 的唯一组装入口，负责创建并连接应用级服务。
@@ -98,10 +101,23 @@ final class AppRuntimeFactory {
     );
 
     final sftpService = SftpService(storageService);
-    final performanceMonitorService = PerformanceMonitorService(
-      sshService,
-      storageService,
-      appSettings: appSettings,
+    final monitoringModule = monitoring.MonitoringModule();
+    await monitoringModule.register(
+      ModuleContext.fromMap({
+        monitoring.MonitoringSshPort: AppMonitoringSshAdapter(sshService),
+        monitoring.MonitoringConnectionCatalogPort:
+            AppMonitoringConnectionCatalogAdapter(runtimeConnectionRepository),
+        monitoring.MonitoringLoggerPort: AppMonitoringLoggerAdapter(logger),
+        monitoring.MonitoringBackgroundPort: AppMonitoringBackgroundAdapter(
+          appSettings,
+        ),
+      }),
+    );
+    await monitoringModule.initialize();
+    await monitoringModule.activate();
+    final monitoringService = monitoringModule.service;
+    final performanceMonitorService = PerformanceMonitorService.fromDelegate(
+      monitoringService,
     );
     final playbookService = PlaybookService(
       storageService: storageService,
@@ -142,6 +158,8 @@ final class AppRuntimeFactory {
       sshSessionManager: terminalSshManager,
       sshService: sshService,
       sftpService: sftpService,
+      monitoringModule: monitoringModule,
+      monitoringService: monitoringService,
       performanceMonitorService: performanceMonitorService,
       playbookService: playbookService,
       ragService: ragService,

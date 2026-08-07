@@ -59,6 +59,12 @@ terminal UI, route-scoped ViewModels, terminal history metadata, and
 `terminal.db`. It consumes `ssh_core.SshSessionManager` and App-defined Ports;
 it must not construct or dispose App Scope SSH, Storage, or other Feature
 implementations. The old App terminal files are compatibility exports/bridges.
+The Monitoring Feature package is `packages/features/feature_monitoring/`; it
+owns real-time monitoring models, probes/parsers, low-priority SSH Ports,
+`MonitoringModule`, and route-scoped state. It has no `monitoring.db`; bounded
+in-memory samples preserve the current behavior. `AppRuntime` owns the Module
+and service, while old Performance Monitor paths are non-owning compatibility
+bridges.
 The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
 Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
@@ -107,6 +113,11 @@ implementations. The old App terminal files are compatibility exports/bridges.
   and its repository. Route scope owns Terminal ViewModels and their
   subscriptions/controllers; disposing a route must not close the injected App
   Scope SSH Manager. Package consumers use only `package:feature_terminal/`.
+- `feature_monitoring` must send all SSH sampling through its public Ports with
+  `MonitoringRequestPriority.low`. `MonitoringModule` cancels polling on
+  deactivate/dispose and must not create a permanent App-start timer or a
+  `monitoring.db`. Package consumers use only
+  `package:feature_monitoring/` and never import its `/src/`.
 - `feature_terminal` must keep `TerminalModule` as the owner of `terminal.db`
   and its repository. Route scope owns Terminal ViewModels and their
   subscriptions/controllers; disposing a route must not close the injected App
@@ -404,9 +415,11 @@ and `relay/`.
 ### Performance Monitor & System Administration
 
 Primary entry points are
+`packages/features/feature_monitoring/` for the maintained monitoring service,
+models, probes, Ports, Module, and ViewModel; the old
 `lib/features/performance/viewmodels/performance_viewmodel.dart`,
-`lib/services/performance_monitor_service.dart`,
-`lib/services/server_status_probe.dart`, and
+`lib/services/performance_monitor_service.dart`, and
+`lib/services/server_status_probe.dart` paths are compatibility surfaces; and
 `lib/features/system_admin/views/system_admin_screen.dart` with
 its child widgets.
 
@@ -414,6 +427,13 @@ its child widgets.
   System Administration console.
 - Performance monitoring is user-started, supports multiple servers, and keeps
   at most ten minutes of in-memory samples.
+- `MonitoringModule.activate()` restores module availability but intentionally
+  does not start polling; existing user/tool start actions remain the polling
+  owner. `deactivate()` and `dispose()` cancel timers and subscriptions.
+- Monitoring SSH requests carry the low-priority marker so interactive
+  Terminal work does not share the same scheduling priority. The current legacy
+  adapter has no scheduler of its own, so it preserves the marker and delegates
+  to the existing one-shot SSH path.
 - The Monitor tab keeps its own multi-server selection; every other System
   Administration tab shares `SystemAdminViewModel.selectedConnectionId`.
 - Ports, Applications, and Services each operate on one selected server and

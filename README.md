@@ -20,10 +20,10 @@
 
 SSH Mobile is a Flutter-based cross-platform SSH and SFTP client for Android, iOS, macOS, Windows, and Web. It combines multi-window terminals, remote file management, server monitoring, secure storage, and OpenAI-compatible AI tools in a single mobile and desktop operations workspace.
 
-The codebase is being migrated incrementally as a Dart workspace. The Terminal
-and SFTP features now have package boundaries under `packages/features/`; their
-legacy App paths remain compatibility bridges while later Steps converge the
-remaining shared services.
+The codebase is being migrated incrementally as a Dart workspace. The Terminal,
+SFTP, and real-time Monitoring capabilities now have package boundaries under
+`packages/features/`; their legacy App paths remain compatibility bridges while
+later Steps converge the remaining shared services.
 
 The project began with a two-core server that had only 1 GB of memory. Running a complete AI agent directly on that machine was unreliable, so SSH Mobile moves model inference and agent orchestration to the client device. The client can inspect and manage low-resource servers through SSH and SFTP without consuming their limited memory.
 
@@ -421,6 +421,11 @@ flowchart LR
   history, and the independent `terminal.db`. It consumes only public Core
   contracts and injected Ports; old App terminal paths remain compatibility
   exports while later storage/SSH migrations are pending.
+- `packages/features/feature_monitoring/`: real-time monitoring models,
+  background parsers/probes, low-priority SSH Ports, the Monitoring Module, and
+  route-scoped monitoring state. It intentionally has no `monitoring.db`; the
+  existing product keeps only bounded in-memory samples. Old Performance Monitor
+  services and tools remain App-layer compatibility bridges.
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
   LAN-share, MCP, and platform-adapter infrastructure.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
@@ -540,6 +545,12 @@ The monitoring workspace contains four primary sections:
 - `Services`: service snapshots and management operations.
 
 Linux monitoring reads sources such as `/proc` and `df -P`. Windows monitoring uses PowerShell JSON probes. Snapshot mode does not require root; management operations request elevated access only when necessary.
+
+The Monitoring Module is App Scope-owned and lifecycle-controlled. Activating
+the module restores its availability but does not start polling automatically;
+the existing explicit user/tool start action remains the owner of sampling.
+Monitoring SSH requests are marked low priority so interactive terminal work
+keeps its scheduling boundary.
 
 ## Data and Storage
 

@@ -1,937 +1,364 @@
+// 旧 PerformanceMonitorService API 的兼容桥。
+//
+// 监控采样、Timer、健康评分和解析逻辑已经归属 feature_monitoring；本文件只
+// 把旧 App 依赖适配到 Feature Port，并保留现有调用方的类型和方法面。
+
 import 'dart:async';
-import 'dart:math';
 
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:flutter/foundation.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
+import '../core/services/ssh_host_key_policy.dart' as legacy_ssh;
 import '../features/connection/models/connection.dart';
-import 'app_log_service.dart';
 import 'app_settings.dart';
+import 'app_log_service.dart';
 import 'background_service.dart';
-import '../core/services/ssh_host_key_policy.dart';
+import 'connection_target_binding.dart';
 import 'server_status_probe.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
-import 'connection_target_binding.dart';
 
 part 'performance_monitor_models.dart';
 
-/// 服务器性能监控采样服务。
-///
-/// 可配置参数：
-/// - 采样间隔：2s / 5s / 10s / 15s / 30s / 1m / 2m / 5m
-/// - 历史窗口：30s / 1m / 2m / 3m / 5m / 10m
-///
-/// 特性：
-/// - 指数退避重试（SSH 临时失败自动重试）
-/// - 健康评分：CPU/内存/磁盘阈值打分，生成 alerts
-/// - 告警去重：同类型告警 5 分钟内不重复发出
-/// - 不可变视图：所有暴露的集合使用 List.unmodifiable 或 Set.unmodifiable
-/// - 缓存优化：采样数据按 connectionId 分组，只通知关联监听器
+/// 兼容旧调用点的监控服务外观；实际状态由 Feature 服务唯一持有。
 class PerformanceMonitorService extends ChangeNotifier {
-  static const Duration maxRetention = Duration(minutes: 10);
-  static const Duration defaultInterval = Duration(seconds: 10);
-  static const Duration defaultHistoryWindow = Duration(minutes: 5);
-  static const List<Duration> intervalOptions = [
-    Duration(seconds: 2),
-    Duration(seconds: 5),
-    Duration(seconds: 10),
-    Duration(seconds: 15),
-    Duration(seconds: 30),
-    Duration(minutes: 1),
-    Duration(minutes: 2),
-    Duration(minutes: 5),
-  ];
-  static const List<Duration> historyWindowOptions = [
-    Duration(seconds: 30),
-    Duration(minutes: 1),
-    Duration(minutes: 2),
-    Duration(minutes: 3),
-    Duration(minutes: 5),
-    Duration(minutes: 10),
-  ];
+  /// 监控服务允许保留的最大内存窗口。
+  static const Duration maxRetention =
+      monitoring.MonitoringService.maxRetention;
 
-  final SshService _sshService;
-  final StorageService _storageService;
-  final AppSettings? _appSettings;
-  Timer? _timer;
-  bool _disposed = false;
-  bool _running = false;
-  DateTime? _startedAt;
-  Duration _interval = defaultInterval;
-  Duration _historyWindow = defaultHistoryWindow;
-  final Set<String> _selectedConnectionIds = {};
-  final Set<String> _monitoringConnectionIds = {};
-  Map<String, ConnectionTargetBinding>? _monitoringTargetBindings;
-  final Set<String> _samplingConnectionIds = {};
-  final Map<String, List<PerformanceSample>> _samplesByConnection = {};
-  final Map<String, List<DiskUsageSnapshot>> _diskUsageByConnection = {};
-  final Map<String, String> _errorsByConnection = {};
-  final Map<String, int> _failureCountsByConnection = {};
-  final Map<String, RawPerformanceCounters> _previousCountersByConnection = {};
-  final Map<String, DateTime> _lastAlertAtByKey = {};
-  final List<MonitorAlert> _alerts = [];
-  Set<String>? _selectedConnectionIdsView;
-  Set<String>? _monitoringConnectionIdsView;
-  Map<String, String>? _errorsByConnectionView;
-  List<MonitorAlert>? _alertsView;
-  Map<String, ServerHealthSnapshot>? _healthByConnectionView;
-  final Map<String, ServerHealthSnapshot> _healthByConnectionEntryCache = {};
-  final Map<String, List<DiskUsageSnapshot>> _diskUsageViewsByConnection = {};
-  final Map<String, List<PerformanceSample>> _sampleViewsByConnection = {};
-  final Map<String, List<PerformanceSample>> _visibleSamplesByConnection = {};
-  DateTime? _visibleSamplesCutoff;
-  int? _visibleSamplesCutoffBucket;
-  Duration? _visibleSamplesWindow;
+  /// 默认采样间隔。
+  static const Duration defaultInterval =
+      monitoring.MonitoringService.defaultInterval;
 
-  PerformanceMonitorService(
-    this._sshService,
-    this._storageService, {
-    this._appSettings,
-  });
+  /// 默认历史窗口。
+  static const Duration defaultHistoryWindow =
+      monitoring.MonitoringService.defaultHistoryWindow;
 
-  bool get isRunning => _running;
-  bool get isSampling => _samplingConnectionIds.isNotEmpty;
+  /// UI 可选的采样间隔。
+  static const List<Duration> intervalOptions =
+      monitoring.MonitoringService.intervalOptions;
+
+  /// UI 可选的历史窗口。
+  static const List<Duration> historyWindowOptions =
+      monitoring.MonitoringService.historyWindowOptions;
+
+  /// 创建旧 App 依赖的兼容服务。
+  factory PerformanceMonitorService(
+    SshService sshService,
+    StorageService storageService, {
+    AppSettings? appSettings,
+  }) {
+    return PerformanceMonitorService._(
+      monitoring.MonitoringService(
+        sshPort: _LegacyMonitoringSshPort(sshService),
+        connectionCatalog: _LegacyMonitoringConnectionCatalog(storageService),
+        logger: const _LegacyMonitoringLogger(),
+        background: _LegacyMonitoringBackground(appSettings),
+      ),
+      ownsDelegate: true,
+    );
+  }
+
+  /// 从 AppRuntime 已创建的 Feature 服务构造非 Owner 兼容外观。
+  PerformanceMonitorService.fromDelegate(monitoring.MonitoringService delegate)
+    : this._(delegate, ownsDelegate: false);
+
+  PerformanceMonitorService._(this._delegate, {required this._ownsDelegate}) {
+    _delegate.addListener(notifyListeners);
+  }
+
+  final monitoring.MonitoringService _delegate;
+  final bool _ownsDelegate;
+
+  /// 暴露给 App Composition Root 的真实 Feature Owner。
+  monitoring.MonitoringService get delegate => _delegate;
+
+  /// 当前是否正在轮询。
+  bool get isRunning => _delegate.isRunning;
+
+  /// 当前是否有采样任务。
+  bool get isSampling => _delegate.isSampling;
+
+  /// 返回指定连接是否正在采样。
   bool isSamplingConnection(String connectionId) =>
-      _samplingConnectionIds.contains(connectionId);
-  Duration get interval => _interval;
-  Duration get effectiveInterval => _effectiveInterval;
-  Duration get historyWindow => _historyWindow;
-  DateTime? get startedAt => _startedAt;
-  Set<String> get selectedConnectionIds =>
-      _selectedConnectionIdsView ??= Set.unmodifiable(_selectedConnectionIds);
-  Set<String> get monitoringConnectionIds => _monitoringConnectionIdsView ??=
-      Set.unmodifiable(_monitoringConnectionIds);
-  Map<String, String> get errorsByConnection =>
-      _errorsByConnectionView ??= Map.unmodifiable(_errorsByConnection);
-  List<MonitorAlert> get alerts => _alertsView ??= List.unmodifiable(_alerts);
-  Map<String, ServerHealthSnapshot> get healthByConnection {
-    final cached = _healthByConnectionView;
-    if (cached != null) return cached;
-    final ids = {
-      ..._selectedConnectionIds,
-      ..._monitoringConnectionIds,
-      ..._samplesByConnection.keys,
-      ..._errorsByConnection.keys,
-    };
-    return _healthByConnectionView = Map.unmodifiable({
-      for (final id in ids) id: _buildHealthFor(id),
-    });
-  }
+      _delegate.isSamplingConnection(connectionId);
 
-  List<DiskUsageSnapshot> diskUsageFor(String connectionId) {
-    return _diskUsageViewsByConnection[connectionId] ??= List.unmodifiable(
-      _diskUsageByConnection[connectionId] ?? const <DiskUsageSnapshot>[],
-    );
-  }
+  /// 当前采样间隔。
+  Duration get interval => _delegate.interval;
 
-  List<PerformanceSample> samplesFor(String connectionId) {
-    return _sampleViewsByConnection[connectionId] ??= List.unmodifiable(
-      _samplesByConnection[connectionId] ?? const <PerformanceSample>[],
-    );
-  }
+  /// 考虑失败退避后的采样间隔。
+  Duration get effectiveInterval => _delegate.effectiveInterval;
 
-  ServerHealthSnapshot healthFor(String connectionId) {
-    final cached = _healthByConnectionView?[connectionId];
-    if (cached != null) return cached;
-    return _healthByConnectionEntryCache[connectionId] ??= _buildHealthFor(
-      connectionId,
-    );
-  }
+  /// 当前历史窗口。
+  Duration get historyWindow => _delegate.historyWindow;
 
-  ServerHealthSnapshot _buildHealthFor(String connectionId) {
-    final error = _errorsByConnection[connectionId];
-    final samples = _samplesByConnection[connectionId] ?? const [];
-    if (error != null && error.isNotEmpty) {
-      return ServerHealthSnapshot(
-        connectionId: connectionId,
-        level: ServerHealthLevel.critical,
-        score: 0,
-        summary: 'Sampling failed',
-        details: [error],
-        updatedAt: DateTime.now(),
-      );
-    }
-    if (samples.isEmpty) {
-      return ServerHealthSnapshot(
-        connectionId: connectionId,
-        level: ServerHealthLevel.unknown,
-        score: 0,
-        summary: 'No samples',
-        details: const [],
-        updatedAt: DateTime.now(),
-      );
-    }
-    final sample = samples.last;
-    final diskMax = sample.diskUsage.isEmpty
-        ? 0.0
-        : sample.diskUsage.map((disk) => disk.usedPercent).reduce(max);
-    final details = <String>[];
-    final cpuPenalty = _thresholdPenalty(sample.cpuPercent, 70, 95, 35);
-    final memoryPenalty = _thresholdPenalty(sample.memoryPercent, 70, 95, 35);
-    final diskPenalty = _thresholdPenalty(diskMax, 75, 95, 30);
-    final score = (100 - cpuPenalty - memoryPenalty - diskPenalty)
-        .clamp(0, 100)
-        .round();
-    if (sample.cpuPercent >= 85) {
-      details.add('CPU ${sample.cpuPercent.toStringAsFixed(1)}%');
-    }
-    if (sample.memoryPercent >= 85) {
-      details.add('Memory ${sample.memoryPercent.toStringAsFixed(1)}%');
-    }
-    if (diskMax >= 85) {
-      details.add('Disk ${diskMax.toStringAsFixed(1)}%');
-    }
-    final level =
-        score < 45 ||
-            sample.cpuPercent >= 95 ||
-            sample.memoryPercent >= 95 ||
-            diskMax >= 95
-        ? ServerHealthLevel.critical
-        : score < 75 ||
-              sample.cpuPercent >= 85 ||
-              sample.memoryPercent >= 85 ||
-              diskMax >= 85
-        ? ServerHealthLevel.warning
-        : ServerHealthLevel.healthy;
-    return ServerHealthSnapshot(
-      connectionId: connectionId,
-      level: level,
-      score: score,
-      summary: switch (level) {
-        ServerHealthLevel.healthy => 'Healthy',
-        ServerHealthLevel.warning => 'Warning',
-        ServerHealthLevel.critical => 'Critical',
-        ServerHealthLevel.unknown => 'No samples',
-      },
-      details: details,
-      updatedAt: sample.time,
-      latestSample: sample,
-      maxDiskUsedPercent: diskMax,
-    );
-  }
+  /// 轮询启动时间。
+  DateTime? get startedAt => _delegate.startedAt;
 
-  List<PerformanceSample> visibleSamplesFor(String connectionId) {
-    final cutoff = DateTime.now().subtract(_historyWindow);
-    final cutoffBucket = cutoff.millisecondsSinceEpoch ~/ 1000;
-    if (_visibleSamplesWindow != _historyWindow ||
-        _visibleSamplesCutoffBucket != cutoffBucket) {
-      _visibleSamplesByConnection.clear();
-      _visibleSamplesWindow = _historyWindow;
-      _visibleSamplesCutoffBucket = cutoffBucket;
-      _visibleSamplesCutoff = cutoff;
-    }
-    final activeCutoff = _visibleSamplesCutoff ?? cutoff;
-    return _visibleSamplesByConnection[connectionId] ??= List.unmodifiable(
-      (_samplesByConnection[connectionId] ?? const <PerformanceSample>[]).where(
-        (sample) => !sample.time.isBefore(activeCutoff),
-      ),
-    );
-  }
+  /// 当前选择的服务器。
+  Set<String> get selectedConnectionIds => _delegate.selectedConnectionIds;
 
-  // Sampling widgets read these snapshots several times per build. Keep stable
-  // immutable views and invalidate only the affected connection when data moves.
-  void _invalidateSelectionCache() {
-    _selectedConnectionIdsView = null;
-    _healthByConnectionView = null;
-  }
+  /// 当前正在监控的服务器。
+  Set<String> get monitoringConnectionIds => _delegate.monitoringConnectionIds;
 
-  void _invalidateMonitoringCache() {
-    _monitoringConnectionIdsView = null;
-    _healthByConnectionView = null;
-  }
+  /// 每个连接的最新错误。
+  Map<String, String> get errorsByConnection => _delegate.errorsByConnection;
 
-  void _invalidateErrorsCache([String? connectionId]) {
-    _errorsByConnectionView = null;
-    _healthByConnectionView = null;
-    if (connectionId == null) {
-      _healthByConnectionEntryCache.clear();
-    } else {
-      _healthByConnectionEntryCache.remove(connectionId);
-    }
-  }
+  /// 告警列表。
+  List<MonitorAlert> get alerts => _delegate.alerts;
 
-  void _invalidateSamplesFor(String connectionId) {
-    _sampleViewsByConnection.remove(connectionId);
-    _visibleSamplesByConnection.remove(connectionId);
-    _healthByConnectionView = null;
-    _healthByConnectionEntryCache.remove(connectionId);
-  }
+  /// 所有连接健康状态。
+  Map<String, ServerHealthSnapshot> get healthByConnection =>
+      _delegate.healthByConnection;
 
-  void _invalidateAllSamplesCache() {
-    _sampleViewsByConnection.clear();
-    _invalidateVisibleSamplesCache();
-    _healthByConnectionView = null;
-    _healthByConnectionEntryCache.clear();
-  }
+  /// 读取磁盘使用数据。
+  List<DiskUsageSnapshot> diskUsageFor(String connectionId) =>
+      _delegate.diskUsageFor(connectionId);
 
-  void _invalidateVisibleSamplesCache() {
-    _visibleSamplesByConnection.clear();
-    _visibleSamplesCutoff = null;
-    _visibleSamplesCutoffBucket = null;
-    _visibleSamplesWindow = null;
-  }
+  /// 读取完整样本窗口。
+  List<PerformanceSample> samplesFor(String connectionId) =>
+      _delegate.samplesFor(connectionId);
 
-  void _invalidateDiskUsageFor(String connectionId) {
-    _diskUsageViewsByConnection.remove(connectionId);
-  }
+  /// 读取连接健康状态。
+  ServerHealthSnapshot healthFor(String connectionId) =>
+      _delegate.healthFor(connectionId);
 
-  void toggleSelection(String connectionId) {
-    if (_running) return;
-    if (!_selectedConnectionIds.remove(connectionId)) {
-      _selectedConnectionIds.add(connectionId);
-    }
-    _invalidateSelectionCache();
-    notifyListeners();
-  }
+  /// 读取历史窗口内的样本。
+  List<PerformanceSample> visibleSamplesFor(String connectionId) =>
+      _delegate.visibleSamplesFor(connectionId);
 
-  void clearSelection() {
-    if (_running || _selectedConnectionIds.isEmpty) return;
-    _selectedConnectionIds.clear();
-    _invalidateSelectionCache();
-    notifyListeners();
-  }
+  /// 切换服务器选择。
+  void toggleSelection(String connectionId) =>
+      _delegate.toggleSelection(connectionId);
 
+  /// 清空服务器选择。
+  void clearSelection() => _delegate.clearSelection();
+
+  /// 启动轮询，并把旧 Host Key 回调转换为 Core 契约。
   Future<void> startMonitoring({
-    SshHostKeyConfirmation? onUnknownHostKey,
+    legacy_ssh.SshHostKeyConfirmation? onUnknownHostKey,
     Map<String, ConnectionTargetBinding>? targetBindings,
-  }) async {
-    if (_selectedConnectionIds.isEmpty) return;
-    if (targetBindings != null) {
-      final selected = _selectedConnectionIds.toSet();
-      if (targetBindings.keys.toSet().length != selected.length ||
-          !targetBindings.keys.toSet().containsAll(selected)) {
-        throw StateError(
-          'The performance monitor selection changed after approval.',
-        );
-      }
-      _monitoringTargetBindings =
-          Map<String, ConnectionTargetBinding>.unmodifiable({
-            for (final id in selected) id: targetBindings[id]!,
-          });
-    } else {
-      _monitoringTargetBindings = null;
-    }
-    _running = true;
-    _startedAt = DateTime.now();
-    _monitoringConnectionIds
-      ..clear()
-      ..addAll(_selectedConnectionIds);
-    _samplesByConnection
-      ..clear()
-      ..addEntries(
-        _monitoringConnectionIds.map(
-          (id) => MapEntry(id, <PerformanceSample>[]),
-        ),
-      );
-    _errorsByConnection.clear();
-    _failureCountsByConnection.clear();
-    _previousCountersByConnection.clear();
-    _invalidateMonitoringCache();
-    _invalidateErrorsCache();
-    _invalidateAllSamplesCache();
-    notifyListeners();
-
-    // Keep the app's foreground service and power locks active while monitoring.
-    // The monitor stays app-scoped, so leaving the page does not stop sampling.
-    unawaited(
-      BackgroundServiceManager.start(
-        connectionName: 'Performance monitor',
-        showConnectionName:
-            _appSettings?.showServerNamesInNotifications ?? false,
-      ),
+  }) {
+    return _delegate.startMonitoring(
+      onUnknownHostKey: _toCoreConfirmation(onUnknownHostKey),
+      targetBindings: targetBindings == null
+          ? null
+          : {
+              for (final entry in targetBindings.entries)
+                entry.key: ssh_core.SshTargetBinding.fromConfig(
+                  entry.value.config,
+                ),
+            },
     );
-    _restartTimer();
-    await sampleNow(onUnknownHostKey: onUnknownHostKey);
   }
 
-  void stopMonitoring() {
-    _timer?.cancel();
-    _timer = null;
-    _running = false;
-    _startedAt = null;
-    _samplingConnectionIds.clear();
-    _monitoringConnectionIds.clear();
-    _monitoringTargetBindings = null;
-    _errorsByConnection.clear();
-    _failureCountsByConnection.clear();
-    _previousCountersByConnection.clear();
-    _invalidateMonitoringCache();
-    _invalidateErrorsCache();
-    notifyListeners();
-  }
+  /// 停止轮询。
+  void stopMonitoring() => _delegate.stopMonitoring();
 
-  void stopForConnection(String connectionId) {
-    final changed =
-        _selectedConnectionIds.remove(connectionId) |
-        _monitoringConnectionIds.remove(connectionId);
-    _samplingConnectionIds.remove(connectionId);
-    _samplesByConnection.remove(connectionId);
-    _errorsByConnection.remove(connectionId);
-    _diskUsageByConnection.remove(connectionId);
-    _failureCountsByConnection.remove(connectionId);
-    _previousCountersByConnection.remove(connectionId);
-    _invalidateSelectionCache();
-    _invalidateMonitoringCache();
-    _invalidateErrorsCache(connectionId);
-    _invalidateSamplesFor(connectionId);
-    _invalidateDiskUsageFor(connectionId);
-    if (_monitoringConnectionIds.isEmpty) {
-      _timer?.cancel();
-      _timer = null;
-      _running = false;
-      _startedAt = null;
-    }
-    if (changed) notifyListeners();
-  }
+  /// 移除指定连接及其采样状态。
+  void stopForConnection(String connectionId) =>
+      _delegate.stopForConnection(connectionId);
 
-  void setInterval(Duration interval) {
-    if (_interval == interval) return;
-    _interval = interval;
-    if (_running) _restartTimer();
-    notifyListeners();
-  }
+  /// 修改轮询间隔。
+  void setInterval(Duration interval) => _delegate.setInterval(interval);
 
-  void setHistoryWindow(Duration window) {
-    final next = window > maxRetention ? maxRetention : window;
-    if (_historyWindow == next) return;
-    _historyWindow = next;
-    _invalidateVisibleSamplesCache();
-    notifyListeners();
-  }
+  /// 修改历史窗口。
+  void setHistoryWindow(Duration window) => _delegate.setHistoryWindow(window);
 
-  Future<void> sampleNow({SshHostKeyConfirmation? onUnknownHostKey}) async {
-    if (!_running || _monitoringConnectionIds.isEmpty) return;
-    final targets = _monitoringConnectionIds
-        .where((id) => !_samplingConnectionIds.contains(id))
-        .toList(growable: false);
-    if (targets.isEmpty) return;
-    _samplingConnectionIds.addAll(targets);
-    if (!_disposed) notifyListeners();
-
-    try {
-      for (var index = 0; index < targets.length; index += 2) {
-        final batch = targets.skip(index).take(2);
-        await Future.wait(
-          batch.map(
-            (connectionId) => _sampleConnection(
-              connectionId,
-              onUnknownHostKey: onUnknownHostKey,
-            ),
-          ),
-        );
-      }
-    } finally {
-      _samplingConnectionIds.removeAll(targets);
-      if (_running && !_disposed) _restartTimer();
-      if (!_disposed) notifyListeners();
-    }
-  }
-
-  Future<void> _sampleConnection(
-    String connectionId, {
-    SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    try {
-      if (_platformFor(connectionId) == ServerPlatform.windows) {
-        await _sampleWindowsConnection(
-          connectionId,
-          onUnknownHostKey: onUnknownHostKey,
-        );
-        return;
-      }
-      final result = await _runOneShotWithRetry(
-        connectionId: connectionId,
-        command: ServerStatusProbe.performanceCommand,
-        timeout: _commandTimeout,
-        onUnknownHostKey: onUnknownHostKey,
-      );
-      if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
-        throw StateError(
-          result.stderr.trim().isEmpty
-              ? 'Performance command exited with ${result.exitCode}'
-              : result.stderr.trim(),
-        );
-      }
-      final raw = await ServerStatusProbe.parsePerformanceOutputAsync(
-        result.stdout,
-      );
-      final sample = _sampleFromCounters(
-        connectionId,
-        raw.counters,
-        DateTime.now(),
-        raw.diskUsage,
-      );
-      if (!_running || !_monitoringConnectionIds.contains(connectionId)) {
-        return;
-      }
-      _previousCountersByConnection[connectionId] = raw.counters;
-      _diskUsageByConnection[connectionId] = raw.diskUsage;
-      (_samplesByConnection[connectionId] ??= []).add(sample);
-      _trimSamples(connectionId);
-      final hadError = _errorsByConnection.remove(connectionId) != null;
-      _failureCountsByConnection.remove(connectionId);
-      _evaluateAlerts(connectionId, sample, raw.diskUsage);
-      _invalidateSamplesFor(connectionId);
-      _invalidateDiskUsageFor(connectionId);
-      if (hadError) _invalidateErrorsCache(connectionId);
-    } catch (e, stackTrace) {
-      _errorsByConnection[connectionId] = e.toString();
-      _failureCountsByConnection[connectionId] =
-          (_failureCountsByConnection[connectionId] ?? 0) + 1;
-      _addAlert(
-        connectionId: connectionId,
-        metric: 'sampling',
-        level: ServerHealthLevel.critical,
-        message: 'Sampling failed: $e',
-      );
-      _invalidateErrorsCache(connectionId);
-      AppLogService.instance.warning(
-        'Performance sample failed',
-        details: 'connectionId=$connectionId error=$e',
-      );
-      AppLogService.instance.error(
-        'Performance sample stack trace',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'connectionId=$connectionId',
-      );
-    }
-  }
-
-  Future<void> _sampleWindowsConnection(
-    String connectionId, {
-    SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    final status = await _fetchWindowsStatus(
-      connectionId,
-      _commandTimeout,
-      onUnknownHostKey: onUnknownHostKey,
+  /// 显式采样一次。
+  Future<void> sampleNow({
+    legacy_ssh.SshHostKeyConfirmation? onUnknownHostKey,
+  }) {
+    return _delegate.sampleNow(
+      onUnknownHostKey: _toCoreConfirmation(onUnknownHostKey),
     );
-    final sample = PerformanceSample(
-      connectionId: connectionId,
-      time: DateTime.now(),
-      cpuPercent: status.cpuPercent,
-      memoryPercent: status.memoryPercent,
-      diskBytesPerSecond: status.diskBytesPerSecond,
-      networkBytesPerSecond: status.networkBytesPerSecond,
-      diskUsage: status.diskUsage,
-    );
-    if (!_running || !_monitoringConnectionIds.contains(connectionId)) {
-      return;
-    }
-    _diskUsageByConnection[connectionId] = status.diskUsage;
-    (_samplesByConnection[connectionId] ??= []).add(sample);
-    _trimSamples(connectionId);
-    final hadError = _errorsByConnection.remove(connectionId) != null;
-    _failureCountsByConnection.remove(connectionId);
-    _evaluateAlerts(connectionId, sample, status.diskUsage);
-    _invalidateSamplesFor(connectionId);
-    _invalidateDiskUsageFor(connectionId);
-    if (hadError) _invalidateErrorsCache(connectionId);
   }
 
-  void _restartTimer() {
-    _timer?.cancel();
-    _timer = Timer.periodic(_effectiveInterval, (_) => unawaited(sampleNow()));
-  }
-
-  Duration get _effectiveInterval {
-    var multiplier = 1;
-    for (final count in _failureCountsByConnection.values) {
-      multiplier = max(multiplier, 1 << min(count, 4));
-    }
-    final next = _interval * multiplier;
-    return next > const Duration(minutes: 5)
-        ? const Duration(minutes: 5)
-        : next;
-  }
-
-  Duration get _commandTimeout {
-    final seconds = max(6, min(_effectiveInterval.inSeconds - 1, 30));
-    return Duration(seconds: seconds);
-  }
-
+  /// 查询监听端口。
   Future<List<PortProcessSnapshot>> fetchPorts(
     String connectionId, {
-    SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    if (_platformFor(connectionId) == ServerPlatform.windows) {
-      return (await _fetchWindowsStatus(
-        connectionId,
-        const Duration(seconds: 20),
-        onUnknownHostKey: onUnknownHostKey,
-      )).ports;
-    }
-    final result = await _runOneShotWithRetry(
-      connectionId: connectionId,
-      command: ServerStatusProbe.portsCommand,
-      timeout: const Duration(seconds: 12),
-      onUnknownHostKey: onUnknownHostKey,
+    legacy_ssh.SshHostKeyConfirmation? onUnknownHostKey,
+  }) {
+    return _delegate.fetchPorts(
+      connectionId,
+      onUnknownHostKey: _toCoreConfirmation(onUnknownHostKey),
     );
-    if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
-      throw StateError(result.stderr.trim());
-    }
-    return ServerStatusProbe.parsePortsAsync(result.stdout);
   }
 
+  /// 查询高内存进程。
   Future<List<ApplicationMemorySnapshot>> fetchApplications(
     String connectionId, {
-    SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    if (_platformFor(connectionId) == ServerPlatform.windows) {
-      return (await _fetchWindowsStatus(
-        connectionId,
-        const Duration(seconds: 20),
-        onUnknownHostKey: onUnknownHostKey,
-      )).applications;
-    }
-    final result = await _runOneShotWithRetry(
-      connectionId: connectionId,
-      command: ServerStatusProbe.applicationsCommand,
-      timeout: const Duration(seconds: 12),
-      onUnknownHostKey: onUnknownHostKey,
+    legacy_ssh.SshHostKeyConfirmation? onUnknownHostKey,
+  }) {
+    return _delegate.fetchApplications(
+      connectionId,
+      onUnknownHostKey: _toCoreConfirmation(onUnknownHostKey),
     );
-    if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
-      throw StateError(result.stderr.trim());
-    }
-    return ServerStatusProbe.parseApplicationsAsync(result.stdout);
   }
 
+  /// 查询服务状态。
   Future<List<ServiceStatusSnapshot>> fetchServices(
     String connectionId, {
-    SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    if (_platformFor(connectionId) == ServerPlatform.windows) {
-      return (await _fetchWindowsStatus(
-        connectionId,
-        const Duration(seconds: 20),
-        onUnknownHostKey: onUnknownHostKey,
-      )).services;
-    }
-    final result = await _runOneShotWithRetry(
-      connectionId: connectionId,
-      command: ServerStatusProbe.servicesCommand,
-      timeout: const Duration(seconds: 12),
-      onUnknownHostKey: onUnknownHostKey,
-    );
-    if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
-      throw StateError(result.stderr.trim());
-    }
-    return ServerStatusProbe.parseServicesAsync(result.stdout);
-  }
-
-  Future<WindowsStatusSnapshot> _fetchWindowsStatus(
-    String connectionId,
-    Duration timeout, {
-    SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    final result = await _runOneShotWithRetry(
-      connectionId: connectionId,
-      command: ServerStatusProbe.windowsStatusCommand,
-      timeout: timeout,
-      onUnknownHostKey: onUnknownHostKey,
-    );
-    if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
-      throw StateError(
-        result.stderr.trim().isEmpty
-            ? 'Windows status command exited with ${result.exitCode}'
-            : result.stderr.trim(),
-      );
-    }
-    return ServerStatusProbe.parseWindowsStatusAsync(result.stdout);
-  }
-
-  ServerPlatform _platformFor(String connectionId) {
-    final bound = _monitoringTargetBindings?[connectionId];
-    if (bound != null) return bound.serverPlatform;
-    return _storageService.getConnection(connectionId)?.serverPlatform ??
-        ServerPlatform.linux;
-  }
-
-  Future<RemoteCommandResult> _runOneShotWithRetry({
-    required String connectionId,
-    required String command,
-    required Duration timeout,
-    SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    Future<RemoteCommandResult> run() {
-      final binding = _monitoringTargetBindings?[connectionId];
-      if (_monitoringTargetBindings != null && binding == null) {
-        throw StateError(
-          'Connection is not part of the approved monitor target set.',
-        );
-      }
-      return binding == null
-          ? _sshService.runOneShotCommand(
-              connectionId: connectionId,
-              command: command,
-              timeout: timeout,
-              onUnknownHostKey: onUnknownHostKey,
-            )
-          : _sshService.runOneShotCommandForBinding(
-              binding: binding,
-              command: command,
-              timeout: timeout,
-              onUnknownHostKey: onUnknownHostKey,
-            );
-    }
-
-    try {
-      return await run();
-    } catch (firstError, firstStackTrace) {
-      if (_disposed) {
-        Error.throwWithStackTrace(firstError, firstStackTrace);
-      }
-      AppLogService.instance.warning(
-        'Retrying one-shot SSH command after interruption',
-        details: 'connectionId=$connectionId error=$firstError',
-      );
-      await Future<void>.delayed(_retryDelayFor(connectionId));
-      if (_disposed) {
-        Error.throwWithStackTrace(firstError, firstStackTrace);
-      }
-      try {
-        return await run();
-      } catch (retryError) {
-        throw StateError(
-          'SSH reconnect failed after interruption: $retryError '
-          '(first error: $firstError)',
-        );
-      }
-    }
-  }
-
-  Duration _retryDelayFor(String connectionId) {
-    final failures = _failureCountsByConnection[connectionId] ?? 0;
-    return Duration(milliseconds: 700 + min(failures, 4) * 350);
-  }
-
-  PerformanceSample _sampleFromCounters(
-    String connectionId,
-    RawPerformanceCounters counters,
-    DateTime time,
-    List<DiskUsageSnapshot> diskUsage,
-  ) {
-    final previous = _previousCountersByConnection[connectionId];
-    final cpuPercent = previous == null
-        ? 0.0
-        : _ratePercent(
-            counters.cpuTotal - previous.cpuTotal,
-            counters.cpuBusy - previous.cpuBusy,
-          );
-    final seconds = previous == null
-        ? _interval.inMilliseconds / 1000
-        : max(0.001, time.difference(previous.time).inMilliseconds / 1000);
-    final diskBytesPerSecond = previous == null
-        ? 0.0
-        : (counters.diskBytes - previous.diskBytes) / seconds;
-    final networkBytesPerSecond = previous == null
-        ? 0.0
-        : (counters.networkBytes - previous.networkBytes) / seconds;
-
-    return PerformanceSample(
-      connectionId: connectionId,
-      time: time,
-      cpuPercent: cpuPercent.clamp(0, 100).toDouble(),
-      memoryPercent: counters.memoryPercent.clamp(0, 100).toDouble(),
-      diskBytesPerSecond: max(0, diskBytesPerSecond),
-      networkBytesPerSecond: max(0, networkBytesPerSecond),
-      diskUsage: diskUsage,
-    );
-  }
-
-  double _ratePercent(int totalDelta, int busyDelta) {
-    if (totalDelta <= 0 || busyDelta <= 0) return 0;
-    return busyDelta / totalDelta * 100;
-  }
-
-  void _trimSamples(String connectionId) {
-    final now = DateTime.now();
-    final maxRetCutoff = now.subtract(maxRetention);
-
-    final samples = _samplesByConnection[connectionId];
-    if (samples == null || samples.isEmpty) return;
-
-    // 1. 移除超过 10 分钟的最老数据
-    samples.removeWhere((sample) => sample.time.isBefore(maxRetCutoff));
-
-    // 2. 对超过 5 分钟的采样数据进行降采样（合并 10 秒间隔内的点）
-    final downsampleCutoff = now.subtract(const Duration(minutes: 5));
-
-    final olderSamples = <PerformanceSample>[];
-    final newerSamples = <PerformanceSample>[];
-
-    for (final sample in samples) {
-      if (sample.time.isBefore(downsampleCutoff)) {
-        olderSamples.add(sample);
-      } else {
-        newerSamples.add(sample);
-      }
-    }
-
-    if (olderSamples.isNotEmpty) {
-      final compactedOlder = <PerformanceSample>[];
-      var bucket = <PerformanceSample>[];
-
-      for (final sample in olderSamples) {
-        if (bucket.isEmpty) {
-          bucket.add(sample);
-        } else {
-          final firstTime = bucket.first.time;
-          if (sample.time.difference(firstTime) < const Duration(seconds: 10)) {
-            bucket.add(sample);
-          } else {
-            compactedOlder.add(_averageSamples(bucket));
-            bucket = [sample];
-          }
-        }
-      }
-
-      if (bucket.isNotEmpty) {
-        compactedOlder.add(_averageSamples(bucket));
-      }
-
-      samples.clear();
-      samples.addAll(compactedOlder);
-      samples.addAll(newerSamples);
-    }
-  }
-
-  PerformanceSample _averageSamples(List<PerformanceSample> list) {
-    if (list.length == 1) return list.first;
-
-    var totalCpu = 0.0;
-    var totalMem = 0.0;
-    var totalDisk = 0.0;
-    var totalNet = 0.0;
-    var totalMs = 0;
-
-    for (final s in list) {
-      totalCpu += s.cpuPercent;
-      totalMem += s.memoryPercent;
-      totalDisk += s.diskBytesPerSecond;
-      totalNet += s.networkBytesPerSecond;
-      totalMs += s.time.millisecondsSinceEpoch;
-    }
-
-    final count = list.length;
-    final avgTime = DateTime.fromMillisecondsSinceEpoch(totalMs ~/ count);
-    final diskUsage = list[count ~/ 2].diskUsage;
-
-    return PerformanceSample(
-      connectionId: list.first.connectionId,
-      time: avgTime,
-      cpuPercent: totalCpu / count,
-      memoryPercent: totalMem / count,
-      diskBytesPerSecond: totalDisk / count,
-      networkBytesPerSecond: totalNet / count,
-      diskUsage: diskUsage,
-    );
-  }
-
-  double _thresholdPenalty(
-    double value,
-    double warning,
-    double critical,
-    double maxPenalty,
-  ) {
-    if (value <= warning) return 0;
-    if (value >= critical) return maxPenalty;
-    return (value - warning) / (critical - warning) * maxPenalty;
-  }
-
-  void _evaluateAlerts(
-    String connectionId,
-    PerformanceSample sample,
-    List<DiskUsageSnapshot> diskUsage,
-  ) {
-    _thresholdAlert(
-      connectionId: connectionId,
-      metric: 'cpu',
-      label: 'CPU',
-      value: sample.cpuPercent,
-      warning: 85,
-      critical: 95,
-    );
-    _thresholdAlert(
-      connectionId: connectionId,
-      metric: 'memory',
-      label: 'Memory',
-      value: sample.memoryPercent,
-      warning: 85,
-      critical: 95,
-    );
-    for (final disk in diskUsage) {
-      _thresholdAlert(
-        connectionId: connectionId,
-        metric: 'disk:${disk.mount}',
-        label: 'Disk ${disk.mount}',
-        value: disk.usedPercent,
-        warning: 85,
-        critical: 95,
-      );
-    }
-  }
-
-  void _thresholdAlert({
-    required String connectionId,
-    required String metric,
-    required String label,
-    required double value,
-    required double warning,
-    required double critical,
+    legacy_ssh.SshHostKeyConfirmation? onUnknownHostKey,
   }) {
-    if (value >= critical) {
-      _addAlert(
-        connectionId: connectionId,
-        metric: metric,
-        level: ServerHealthLevel.critical,
-        message: '$label is ${value.toStringAsFixed(1)}%',
-      );
-    } else if (value >= warning) {
-      _addAlert(
-        connectionId: connectionId,
-        metric: metric,
-        level: ServerHealthLevel.warning,
-        message: '$label is ${value.toStringAsFixed(1)}%',
-      );
-    }
-  }
-
-  void _addAlert({
-    required String connectionId,
-    required String metric,
-    required ServerHealthLevel level,
-    required String message,
-  }) {
-    final now = DateTime.now();
-    final key = '$connectionId:$metric:${level.name}';
-    final lastAt = _lastAlertAtByKey[key];
-    if (lastAt != null && now.difference(lastAt) < const Duration(minutes: 5)) {
-      return;
-    }
-    _lastAlertAtByKey[key] = now;
-    _alerts.insert(
-      0,
-      MonitorAlert(
-        id: '${now.microsecondsSinceEpoch}-$key',
-        connectionId: connectionId,
-        metric: metric,
-        level: level,
-        message: message,
-        createdAt: now,
-      ),
+    return _delegate.fetchServices(
+      connectionId,
+      onUnknownHostKey: _toCoreConfirmation(onUnknownHostKey),
     );
-    if (_alerts.length > 80) {
-      _alerts.removeRange(80, _alerts.length);
-    }
-    _alertsView = null;
   }
 
   @override
   void dispose() {
-    _disposed = true;
-    _timer?.cancel();
+    _delegate.removeListener(notifyListeners);
+    if (_ownsDelegate) _delegate.dispose();
     super.dispose();
+  }
+}
+
+ssh_core.SshHostKeyConfirmation? _toCoreConfirmation(
+  legacy_ssh.SshHostKeyConfirmation? callback,
+) {
+  if (callback == null) return null;
+  return (request) => callback(
+    legacy_ssh.SshHostKeyPromptRequest(
+      connectionId: request.connectionId,
+      connectionName: request.connectionName,
+      host: request.host,
+      port: request.port,
+      username: request.username,
+      algorithm: request.algorithm,
+      fingerprint: request.fingerprint,
+    ),
+  );
+}
+
+/// 旧 SshService 到 MonitoringSshPort 的兼容适配器。
+final class _LegacyMonitoringSshPort implements monitoring.MonitoringSshPort {
+  const _LegacyMonitoringSshPort(this._sshService);
+
+  final SshService _sshService;
+
+  @override
+  Future<ssh_core.RemoteCommandResult> runOneShotCommand({
+    required String connectionId,
+    required String command,
+    required Duration timeout,
+    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+    monitoring.MonitoringRequestPriority priority =
+        monitoring.MonitoringRequestPriority.low,
+  }) async {
+    _ensureLowPriority(priority);
+    final result = await _sshService.runOneShotCommand(
+      connectionId: connectionId,
+      command: command,
+      timeout: timeout,
+      onUnknownHostKey: _toLegacyConfirmation(onUnknownHostKey),
+    );
+    return ssh_core.RemoteCommandResult(
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    );
+  }
+
+  @override
+  Future<ssh_core.RemoteCommandResult> runOneShotCommandForBinding({
+    required ssh_core.SshTargetBinding binding,
+    required String command,
+    required Duration timeout,
+    ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
+    monitoring.MonitoringRequestPriority priority =
+        monitoring.MonitoringRequestPriority.low,
+  }) async {
+    _ensureLowPriority(priority);
+    final legacyBinding = ConnectionTargetBinding.fromConfig(binding.config);
+    final result = await _sshService.runOneShotCommandForBinding(
+      binding: legacyBinding,
+      command: command,
+      timeout: timeout,
+      onUnknownHostKey: _toLegacyConfirmation(onUnknownHostKey),
+    );
+    return ssh_core.RemoteCommandResult(
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    );
+  }
+
+  void _ensureLowPriority(monitoring.MonitoringRequestPriority priority) {
+    if (priority != monitoring.MonitoringRequestPriority.low) {
+      throw StateError('Monitoring SSH requests must use low priority.');
+    }
+  }
+}
+
+legacy_ssh.SshHostKeyConfirmation? _toLegacyConfirmation(
+  ssh_core.SshHostKeyConfirmation? callback,
+) {
+  if (callback == null) return null;
+  return (request) => callback(
+    ssh_core.SshHostKeyPromptRequest(
+      connectionId: request.connectionId,
+      connectionName: request.connectionName,
+      host: request.host,
+      port: request.port,
+      username: request.username,
+      algorithm: request.algorithm,
+      fingerprint: request.fingerprint,
+    ),
+  );
+}
+
+/// 旧 StorageService 到连接平台 Port 的兼容适配器。
+final class _LegacyMonitoringConnectionCatalog
+    implements monitoring.MonitoringConnectionCatalogPort {
+  const _LegacyMonitoringConnectionCatalog(this._storageService);
+
+  final StorageService _storageService;
+
+  @override
+  ServerPlatform? serverPlatformFor(String connectionId) =>
+      _storageService.getConnection(connectionId)?.serverPlatform;
+}
+
+/// 旧 AppLogService 到 Feature Logger Port 的兼容适配器。
+final class _LegacyMonitoringLogger implements monitoring.MonitoringLoggerPort {
+  const _LegacyMonitoringLogger();
+
+  @override
+  void warning(String message, {String? details}) {
+    AppLogService.instance.warning(message, details: details);
+  }
+
+  @override
+  void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  }) {
+    AppLogService.instance.error(
+      message,
+      error: error,
+      stackTrace: stackTrace,
+      details: details,
+    );
+  }
+}
+
+/// 旧后台前台服务到 Feature Port 的兼容适配器。
+final class _LegacyMonitoringBackground
+    implements monitoring.MonitoringBackgroundPort {
+  const _LegacyMonitoringBackground(this._appSettings);
+
+  final AppSettings? _appSettings;
+
+  @override
+  Future<void> start({required String connectionName}) {
+    return BackgroundServiceManager.start(
+      connectionName: connectionName,
+      showConnectionName: _appSettings?.showServerNamesInNotifications ?? false,
+    );
   }
 }

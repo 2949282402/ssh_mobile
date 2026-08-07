@@ -1,0 +1,25 @@
+name: feature_monitoring
+description: Server monitoring feature and low-priority diagnostics contracts.
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
+
+dependencies:
+  app_core:
+    path: ../../core/app_core
+  app_ui:
+    path: ../../core/app_ui
+  connection_core:
+    path: ../../core/connection_core
+  flutter:
+    sdk: flutter
+  ssh_core:
+    path: ../../infrastructure/ssh_core
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter

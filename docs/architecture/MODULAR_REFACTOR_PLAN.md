@@ -313,6 +313,31 @@
   remove 和连接隔离；旧后端异常在 App 适配器中转换为 Feature 异常，保持预览
   和传输页面的现有错误行为。
 
+## Step 12 执行记录（2026-08-08）
+
+- 已创建 `packages/features/feature_monitoring/`，迁入实时监控模型、
+  Linux/Windows 探针与解析器、Monitoring Service、Tool Service、Module、
+  Port 和 ViewModel。原 `performance_monitor_service.dart`、
+  `performance_monitor_models.dart`、`performance_monitor_tool_service.dart`
+  及 `server_status_probe.dart` 路径保留为兼容桥接；本 Step 是迁移并收敛
+  实现归属，不是批量删除旧调用面。
+- `MonitoringModule` 的 Service 由 `AppRuntime` 持有；`initialize` 创建服务，
+  `deactivate`/`dispose` 取消 Timer 与订阅。为保持现有监控“用户或工具显式
+  startMonitoring 后才开始采样”的业务行为，`activate` 只恢复模块可用状态，
+  不在 App 启动时永久开启 polling。Package 不创建 `monitoring.db`，样本仍是
+  有界内存历史。
+- Monitoring 的 SSH Port 增加显式 `MonitoringRequestPriority.low` 合约。
+  App Shell 适配器保留该优先级标记并复用当前 one-shot SSH 执行路径；现有
+  `SshService` 尚未提供独立调度器，因此本 Step 不擅自改写交互 Terminal 的
+  调度实现。监控与 Terminal 通过不同的 Capability/Port 边界隔离。
+- `server_diagnostics_service.dart` 同时包含系统诊断、平台识别和运维报告
+  组合逻辑，不属于纯实时监控能力；本 Step 仅迁移其中可独立归属的
+  `ServerStatusProbe`，诊断组合服务保留到后续 System Admin Step。
+- 依赖解析通过；输出中的 20 个可升级项受当前 Flutter/Drift workspace
+  约束限制，没有版本冲突，因此未升级无关依赖。Package 测试 2 项、完整
+  App 回归 959 项、Package/App analyze、格式检查、`git diff --check` 和
+  Skill 同步检查均通过。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

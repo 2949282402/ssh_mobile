@@ -1,6 +1,12 @@
-import 'performance_monitor_service.dart';
-import 'connection_target_binding.dart';
+// 旧监控工具服务路径的兼容桥；工具序列化和操作路由归属 Feature Package。
 
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
+
+import 'connection_target_binding.dart';
+import 'performance_monitor_service.dart';
+
+/// 旧 AI 工具依赖的监控能力契约。
 abstract interface class PerformanceMonitorToolAdapter {
   Map<String, dynamic> getState();
 
@@ -33,175 +39,96 @@ abstract interface class PerformanceMonitorToolAdapter {
   Future<Map<String, dynamic>> getApplications(String connectionId);
 }
 
+/// 旧 AI 工具依赖的审批目标扩展契约。
 abstract interface class BoundPerformanceMonitorToolAdapter {
   Future<Map<String, dynamic>> startWithTargets(
     Map<String, ConnectionTargetBinding> targets,
   );
 }
 
+/// 旧监控工具服务外观；不拥有 AppRuntime 的监控服务。
 class PerformanceMonitorToolService
     implements
         PerformanceMonitorToolAdapter,
         BoundPerformanceMonitorToolAdapter {
+  /// 创建工具外观。
+  PerformanceMonitorToolService(PerformanceMonitorService service)
+    : service = service,
+      _delegate = monitoring.MonitoringToolService(service.delegate);
+
+  /// 兼容旧调用方读取的监控服务。
   final PerformanceMonitorService service;
-
-  const PerformanceMonitorToolService(this.service);
-
-  @override
-  Map<String, dynamic> getState() {
-    return {
-      'isRunning': service.isRunning,
-      'isSampling': service.isSampling,
-      'intervalSeconds': service.interval.inSeconds,
-      'effectiveIntervalSeconds': service.effectiveInterval.inSeconds,
-      'historyWindowSeconds': service.historyWindow.inSeconds,
-      'startedAt': service.startedAt?.toIso8601String(),
-      'selectedConnectionIds': service.selectedConnectionIds.toList(),
-      'monitoringConnectionIds': service.monitoringConnectionIds.toList(),
-      'errorsByConnection': service.errorsByConnection,
-      'health': {
-        for (final entry in service.healthByConnection.entries)
-          entry.key: entry.value.toJson(),
-      },
-      'alerts': service.alerts.map((item) => item.toJson()).toList(),
-    };
-  }
+  final monitoring.MonitoringToolService _delegate;
 
   @override
-  Map<String, dynamic> setSelectedServers(List<String> connectionIds) {
-    if (service.isRunning) {
-      throw StateError(
-        'Stop monitoring before changing the selected server set.',
-      );
-    }
-    final current = service.selectedConnectionIds.toList();
-    for (final id in current) {
-      if (!connectionIds.contains(id)) {
-        service.toggleSelection(id);
-      }
-    }
-    for (final id in connectionIds) {
-      if (!service.selectedConnectionIds.contains(id)) {
-        service.toggleSelection(id);
-      }
-    }
-    return getState();
-  }
+  Map<String, dynamic> getState() => _delegate.getState();
 
   @override
-  Map<String, dynamic> clearSelection() {
-    service.clearSelection();
-    return getState();
-  }
+  Map<String, dynamic> setSelectedServers(List<String> connectionIds) =>
+      _delegate.setSelectedServers(connectionIds);
 
   @override
-  Future<Map<String, dynamic>> start() async {
-    await service.startMonitoring();
-    return getState();
-  }
+  Map<String, dynamic> clearSelection() => _delegate.clearSelection();
+
+  @override
+  Future<Map<String, dynamic>> start() => _delegate.start();
 
   @override
   Future<Map<String, dynamic>> startWithTargets(
     Map<String, ConnectionTargetBinding> targets,
-  ) async {
-    await service.startMonitoring(targetBindings: targets);
-    return getState();
+  ) {
+    return _delegate.startWithTargets({
+      for (final entry in targets.entries)
+        entry.key: monitoringTargetFromLegacy(entry.value),
+    });
   }
 
   @override
-  Map<String, dynamic> stop() {
-    service.stopMonitoring();
-    return getState();
-  }
+  Map<String, dynamic> stop() => _delegate.stop();
 
   @override
-  Map<String, dynamic> stopForConnection(String connectionId) {
-    service.stopForConnection(connectionId);
-    return getState();
-  }
+  Map<String, dynamic> stopForConnection(String connectionId) =>
+      _delegate.stopForConnection(connectionId);
 
   @override
-  Map<String, dynamic> setInterval(Duration interval) {
-    service.setInterval(interval);
-    return getState();
-  }
+  Map<String, dynamic> setInterval(Duration interval) =>
+      _delegate.setInterval(interval);
 
   @override
-  Map<String, dynamic> setHistoryWindow(Duration window) {
-    service.setHistoryWindow(window);
-    return getState();
-  }
+  Map<String, dynamic> setHistoryWindow(Duration window) =>
+      _delegate.setHistoryWindow(window);
 
   @override
-  Map<String, dynamic> getHealth({List<String>? connectionIds}) {
-    final ids = connectionIds == null || connectionIds.isEmpty
-        ? service.healthByConnection.keys.toList()
-        : connectionIds;
-    return {
-      'health': {for (final id in ids) id: service.healthFor(id).toJson()},
-    };
-  }
+  Map<String, dynamic> getHealth({List<String>? connectionIds}) =>
+      _delegate.getHealth(connectionIds: connectionIds);
 
   @override
   Map<String, dynamic> getSamples(
     String connectionId, {
     bool visibleOnly = true,
     int limit = 100,
-  }) {
-    final samples = visibleOnly
-        ? service.visibleSamplesFor(connectionId)
-        : service.samplesFor(connectionId);
-    final capped = samples.length <= limit
-        ? samples
-        : samples.sublist(samples.length - limit);
-    return {
-      'connectionId': connectionId,
-      'visibleOnly': visibleOnly,
-      'limit': limit,
-      'samples': capped.map(_sampleToJson).toList(),
-      'returned': capped.length,
-      'truncated': capped.length != samples.length,
-    };
-  }
+  }) => _delegate.getSamples(
+    connectionId,
+    visibleOnly: visibleOnly,
+    limit: limit,
+  );
 
   @override
-  Map<String, dynamic> getAlerts({int limit = 50}) {
-    final alerts = service.alerts.reversed
-        .take(limit)
-        .map((item) {
-          return item.toJson();
-        })
-        .toList(growable: false);
-    return {'alerts': alerts, 'returned': alerts.length, 'limit': limit};
-  }
+  Map<String, dynamic> getAlerts({int limit = 50}) =>
+      _delegate.getAlerts(limit: limit);
 
   @override
-  Future<Map<String, dynamic>> getPorts(String connectionId) async {
-    final ports = await service.fetchPorts(connectionId);
-    return {
-      'connectionId': connectionId,
-      'ports': ports.map((item) => item.toJson()).toList(),
-    };
-  }
+  Future<Map<String, dynamic>> getPorts(String connectionId) =>
+      _delegate.getPorts(connectionId);
 
   @override
-  Future<Map<String, dynamic>> getApplications(String connectionId) async {
-    final applications = await service.fetchApplications(connectionId);
-    return {
-      'connectionId': connectionId,
-      'applications': applications.map((item) => item.toJson()).toList(),
-    };
-  }
+  Future<Map<String, dynamic>> getApplications(String connectionId) =>
+      _delegate.getApplications(connectionId);
+}
 
-  Map<String, dynamic> _sampleToJson(PerformanceSample sample) {
-    return {
-      'connectionId': sample.connectionId,
-      'time': sample.time.toIso8601String(),
-      'cpuPercent': sample.cpuPercent,
-      'memoryPercent': sample.memoryPercent,
-      'diskBytesPerSecond': sample.diskBytesPerSecond,
-      'networkBytesPerSecond': sample.networkBytesPerSecond,
-      'diskUsage': sample.diskUsage.map((item) => item.toJson()).toList(),
-    };
-  }
+/// 把旧目标绑定转换为 Core/Monitoring 使用的不可变快照。
+ssh_core.SshTargetBinding monitoringTargetFromLegacy(
+  ConnectionTargetBinding binding,
+) {
+  return ssh_core.SshTargetBinding.fromConfig(binding.config);
 }

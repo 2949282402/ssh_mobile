@@ -89,6 +89,13 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `SshSessionManager` and current legacy SFTP backend are injected and never
   closed by the Feature. The App adapter translates legacy SFTP models and Host
   Key callbacks so existing transfers continue during later service cleanup.
+- `packages/features/feature_monitoring/` owns the real-time monitoring models,
+  probe/parser code, low-priority SSH Ports, `MonitoringModule`, and monitoring
+  ViewModel. It has no database because the current monitoring behavior keeps a
+  bounded in-memory sample history only. `AppRuntime` owns the Module and its
+  service; activation restores availability, while explicit user/tool start
+  still owns polling. The old Performance Monitor service/tool paths are
+  non-owning compatibility bridges.
 
 ### Logging contract
 
