@@ -1,8 +1,6 @@
 // 原生网络 package 的 v1 ABI 与 helper isolate 生命周期测试。
 
-import 'dart:ffi';
 import 'dart:typed_data';
-import 'package:ffi/ffi.dart';
 import 'package:test/test.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
@@ -14,26 +12,18 @@ void main() {
     expect(native.getAbiVersion(), equals(1));
   });
 
-  test('NetworkRuntime FFI lifecycle works', () {
-    final handlePtr = calloc<Pointer<Void>>();
-    try {
-      final createRes = sshNetRuntimeCreateNative(handlePtr);
-      expect(createRes, equals(0));
-      expect(handlePtr.value, isNot(equals(nullptr)));
-
-      final startRes = sshNetRuntimeStartNative(handlePtr.value);
-      expect(startRes, equals(0));
-
-      final isolate = native.createIsolate(handlePtr.value);
-      expect(isolate, isNotNull);
-
-      final stopRes = sshNetRuntimeStopNative(handlePtr.value);
-      expect(stopRes, equals(0));
-      final destroyRes = sshNetRuntimeDestroyNative(handlePtr.value);
-      expect(destroyRes, equals(0));
-    } finally {
-      calloc.free(handlePtr);
-    }
+  test('NativeNetworkRuntime lifecycle uses typed status', () async {
+    final runtime = await native.createRuntime();
+    expect(
+      runtime.sendCommand(Uint8List(0)),
+      NativeOperationStatus.invalidArgument,
+    );
+    expect(await runtime.stop(), NativeOperationStatus.success);
+    expect(
+      runtime.sendCommand(Uint8List.fromList(<int>[0x00])),
+      NativeOperationStatus.stopped,
+    );
+    await runtime.dispose();
   });
 
   test('native runtime polls events on a helper isolate', () async {
@@ -50,15 +40,18 @@ void main() {
       0x10,
       0x01,
     ]);
-    expect(runtime.sendCommand(command), 0);
+    expect(runtime.sendCommand(command), NativeOperationStatus.success);
     expect(await eventFuture, isNotEmpty);
   });
 
   test('native runtime stops before it is destroyed', () async {
     final runtime = await native.createRuntime();
     final status = await runtime.stop();
-    expect(status, equals(0));
-    expect(runtime.sendCommand(Uint8List.fromList(<int>[0x00])), equals(-4));
+    expect(status, NativeOperationStatus.success);
+    expect(
+      runtime.sendCommand(Uint8List.fromList(<int>[0x00])),
+      NativeOperationStatus.stopped,
+    );
     await runtime.dispose();
   });
 }

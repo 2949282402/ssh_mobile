@@ -9,13 +9,14 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
+import 'native_operation_status.dart';
 import 'ssh_net_buffer.dart';
 
 /// 向原生运行时发送一个已编码命令。
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size)>(
   symbol: 'ssh_net_runtime_command',
 )
-external int sshNetRuntimeCommandNative(
+external int _sshNetRuntimeCommandNative(
   Pointer<Void> handle,
   Pointer<Uint8> commandPtr,
   int commandLen,
@@ -25,7 +26,7 @@ external int sshNetRuntimeCommandNative(
 @Native<Int32 Function(Pointer<Void>, Uint32, Pointer<SshNetBuffer>)>(
   symbol: 'ssh_net_runtime_poll_event',
 )
-external int sshNetRuntimePollEventNative(
+external int _sshNetRuntimePollEventNative(
   Pointer<Void> handle,
   int timeoutMs,
   Pointer<SshNetBuffer> outEvent,
@@ -33,7 +34,7 @@ external int sshNetRuntimePollEventNative(
 
 /// 释放轮询返回的原生事件缓冲区。
 @Native<Void Function(SshNetBuffer)>(symbol: 'ssh_net_buffer_free')
-external void sshNetBufferFreeNative(SshNetBuffer buffer);
+external void _sshNetBufferFreeNative(SshNetBuffer buffer);
 
 /// 拥有真实 Dart isolate，在 Flutter UI isolate 之外执行阻塞式原生事件轮询。
 class NetworkNativeIsolate {
@@ -99,13 +100,17 @@ class NetworkNativeIsolate {
   }
 
   /// 通过原生 FFI 缓冲区边界发送一个命令。
-  int sendCommand(Uint8List commandBytes) {
-    if (handle == nullptr || commandBytes.isEmpty) return -1;
+  NativeOperationStatus sendCommand(Uint8List commandBytes) {
+    if (handle == nullptr || commandBytes.isEmpty) {
+      return NativeOperationStatus.invalidArgument;
+    }
 
     final ptr = calloc<Uint8>(commandBytes.length);
     try {
       ptr.asTypedList(commandBytes.length).setAll(0, commandBytes);
-      return sshNetRuntimeCommandNative(handle, ptr, commandBytes.length);
+      return NativeOperationStatus.fromNativeCode(
+        _sshNetRuntimeCommandNative(handle, ptr, commandBytes.length),
+      );
     } finally {
       calloc.free(ptr);
     }
@@ -156,18 +161,16 @@ void _pollEvents(List<Object> arguments) {
     while (running) {
       final outBuffer = calloc<SshNetBuffer>();
       try {
-        final result = sshNetRuntimePollEventNative(
-          handle,
-          timeoutMs,
-          outBuffer,
+        final result = _NativePollStatus.fromNativeCode(
+          _sshNetRuntimePollEventNative(handle, timeoutMs, outBuffer),
         );
-        if (result == 1) {
+        if (result == _NativePollStatus.eventAvailable) {
           final buffer = outBuffer.ref;
           if (buffer.ptr != nullptr && buffer.len > 0) {
             events.send(Uint8List.fromList(buffer.ptr.asTypedList(buffer.len)));
-            sshNetBufferFreeNative(buffer);
+            _sshNetBufferFreeNative(buffer);
           }
-        } else if (result < 0) {
+        } else if (result == _NativePollStatus.failure) {
           running = false;
         }
       } finally {
@@ -177,4 +180,18 @@ void _pollEvents(List<Object> arguments) {
     }
     controlPort.close();
   }());
+}
+
+/// 表示原生轮询函数的私有返回状态。
+enum _NativePollStatus {
+  noEvent,
+  eventAvailable,
+  failure;
+
+  /// 将轮询函数的整数状态转换为私有类型。
+  static _NativePollStatus fromNativeCode(int value) => switch (value) {
+    1 => eventAvailable,
+    0 => noEvent,
+    _ => failure,
+  };
 }

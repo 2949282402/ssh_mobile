@@ -69,7 +69,7 @@ final class NativeNetworkService implements NetworkService {
     }
     _pendingCommands.clear();
     final status = await _runtime.stop();
-    if (status != 0) {
+    if (!status.isSuccess) {
       return _failure(
         _nativeStatusError(status, operation: NetworkOperation.stop),
       );
@@ -273,7 +273,7 @@ final class NativeNetworkService implements NetworkService {
     final completer = Completer<NetworkResult<void>>();
     _pendingCommands[commandId] = completer;
     final status = _runtime.sendCommand(command);
-    if (status != 0) {
+    if (!status.isSuccess) {
       _pendingCommands.remove(commandId);
       return _failure(_nativeStatusError(status, operation: operation));
     }
@@ -355,12 +355,12 @@ final class NativeNetworkService implements NetworkService {
 
   /// 将原生整数状态转换为安全的结构化错误。
   NetworkError _nativeStatusError(
-    int status, {
+    NativeOperationStatus status, {
     required NetworkOperation operation,
   }) {
     final code = switch (status) {
-      -1 || -2 => NetworkErrorCode.invalidArgument,
-      -4 => NetworkErrorCode.cancelled,
+      NativeOperationStatus.invalidArgument => NetworkErrorCode.invalidArgument,
+      NativeOperationStatus.stopped => NetworkErrorCode.cancelled,
       _ => NetworkErrorCode.ioError,
     };
     return NetworkError(
