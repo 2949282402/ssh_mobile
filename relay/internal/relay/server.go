@@ -1,3 +1,8 @@
+// v1 仅驻留内存的 enrollment 与 Relay WebSocket 服务。
+//
+// 设备端接口刻意限制为 enrollment 和 v1 认证 Relay 连接；
+// 已删除的 control 路由不属于当前线协议契约。
+
 package relay
 
 import (
@@ -53,6 +58,7 @@ type enrollResponse struct {
 	ProtocolVersion uint32 `json:"protocol_version"`
 }
 
+// NewServer 根据给定配置创建仅驻留内存的 Relay 服务。
 func NewServer(config Config) *Server {
 	if config.Address == "" {
 		config.Address = ":8080"
@@ -91,34 +97,37 @@ func NewServer(config Config) *Server {
 	}
 }
 
+// Close 停止 Relay hub，并释放活跃设备连接。
 func (s *Server) Close() { s.hub.close() }
 
+// RegisterRoutes 注册公开、管理端和 v1 设备端点。
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("GET /static/", s.staticFileHandler())
 	mux.HandleFunc("GET /healthz", s.health)
 
-	// Admin Auth routes
+	// 管理端认证路由。
 	mux.HandleFunc("POST /api/login", s.loginHandler)
 	mux.HandleFunc("POST /api/logout", s.logoutHandler)
 	mux.HandleFunc("GET /api/auth-status", s.authStatusHandler)
 
-	// Admin Protected routes
+	// 管理端受认证保护的路由。
 	mux.HandleFunc("GET /api/stats", s.authMiddleware(s.apiStats))
 	mux.HandleFunc("POST /api/token/rotate", s.authMiddleware(s.rotateToken))
 	mux.HandleFunc("POST /api/devices/revoke", s.authMiddleware(s.revokeDevice))
 
-	// Device protocol routes
+	// v1 设备协议路由。
 	mux.HandleFunc("POST /v1/devices/enroll", s.enroll)
 	mux.HandleFunc("GET /v1/connect", s.connect)
-	mux.HandleFunc("GET /v1/control", s.control)
 }
 
+// health 提供无需认证的存活检查端点。
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// enroll 校验设备证明并签发 v1 Relay 凭据。
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
@@ -158,6 +167,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	)
 }
 
+// replaceEnrollment 为一个设备轮换凭据和证明 nonce。
 func (s *Server) replaceEnrollment(
 	deviceID string,
 	publicKey string,
@@ -179,6 +189,7 @@ func (s *Server) replaceEnrollment(
 	s.hub.disconnectDevice(deviceID)
 }
 
+// writeEnrollmentResponse 序列化成功的 enrollment 响应。
 func writeEnrollmentResponse(
 	w http.ResponseWriter,
 	credential string,
@@ -195,6 +206,7 @@ func writeEnrollmentResponse(
 	})
 }
 
+// rotateToken 轮换控制台使用的管理员凭据。
 func (s *Server) rotateToken(w http.ResponseWriter, _ *http.Request) {
 	newToken := hex.EncodeToString(randomBytes(16))
 	s.devicesMutex.Lock()
@@ -207,6 +219,7 @@ func (s *Server) rotateToken(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// revokeDevice 撤销已 enrollment 设备，并关闭其活跃会话。
 func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
@@ -230,6 +243,7 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// authenticatedRequest 校验设备凭据并返回其 claims。
 func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte, bool) {
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	claims, publicKey, err := verifyCredential(s.config.CredentialKey, token)
@@ -266,6 +280,7 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 	return claims, publicKey, true
 }
 
+// consumeProofNonceLocked 校验并消费一次性 enrollment nonce。
 func (s *Server) consumeProofNonceLocked(deviceID, nonce string, expiresAt time.Time) bool {
 	now := time.Now()
 	deviceNonces := s.proofNonces[deviceID]
@@ -288,6 +303,7 @@ func (s *Server) consumeProofNonceLocked(deviceID, nonce string, expiresAt time.
 	return false
 }
 
+// validEnrollmentToken 报告管理员 token 是否仍然有效。
 func (s *Server) validEnrollmentToken(token string) bool {
 	s.devicesMutex.Lock()
 	expected := s.config.EnrollmentToken
@@ -295,14 +311,12 @@ func (s *Server) validEnrollmentToken(token string) bool {
 	return token != "" && hmac.Equal([]byte(token), []byte(expected))
 }
 
+// connect 将已认证设备请求升级到 v1 WebSocket 路径。
 func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	s.upgradeDevice(w, r)
 }
 
-func (s *Server) control(w http.ResponseWriter, r *http.Request) {
-	s.upgradeDevice(w, r)
-}
-
+// upgradeDevice 认证并注册一个设备 WebSocket 连接。
 func (s *Server) upgradeDevice(w http.ResponseWriter, r *http.Request) {
 	claims, _, ok := s.authenticatedRequest(r)
 	if !ok {
@@ -379,12 +393,14 @@ type hub struct {
 	stop     chan struct{}
 }
 
+// newHub 创建有界内存设备路由 hub。
 func newHub(config Config) *hub {
 	h := &hub{config: config, peers: map[string]*peer{}, sessions: map[string]session{}, stop: make(chan struct{})}
 	go h.prune()
 	return h
 }
 
+// close 停止全部 hub worker，并关闭每个已连接对端。
 func (h *hub) close() {
 	close(h.stop)
 	h.mutex.Lock()
@@ -400,6 +416,7 @@ func (h *hub) close() {
 	}
 }
 
+// add 注册对端，除非 hub 已经关闭。
 func (h *hub) add(peer *peer) bool {
 	peer.lastSeen = time.Now()
 	h.mutex.Lock()
@@ -418,6 +435,7 @@ func (h *hub) add(peer *peer) bool {
 	return true
 }
 
+// remove 从 hub 注销对端。
 func (h *hub) remove(peer *peer) {
 	h.mutex.Lock()
 	if h.peers[peer.deviceID] == peer {
@@ -427,6 +445,7 @@ func (h *hub) remove(peer *peer) {
 	closePeer(peer)
 }
 
+// closePeer 恰好关闭一个对端一次。
 func closePeer(peer *peer) {
 	peer.once.Do(func() {
 		close(peer.done)
@@ -434,6 +453,7 @@ func closePeer(peer *peer) {
 	})
 }
 
+// disconnectDevice 关闭属于指定设备标识的全部会话。
 func (h *hub) disconnectDevice(deviceID string) {
 	h.mutex.Lock()
 	peer := h.peers[deviceID]
@@ -451,6 +471,7 @@ func (h *hub) disconnectDevice(deviceID string) {
 	}
 }
 
+// write 将对端队列中的帧转发到其 WebSocket 连接。
 func (h *hub) write(peer *peer) {
 	defer h.remove(peer)
 	for {
@@ -466,6 +487,7 @@ func (h *hub) write(peer *peer) {
 	}
 }
 
+// read 校验传入帧，并将其路由到目标对端。
 func (h *hub) read(peer *peer) {
 	defer h.remove(peer)
 	peer.socket.SetReadLimit(maxBinaryFrameBytes)
@@ -487,6 +509,7 @@ func (h *hub) read(peer *peer) {
 	}
 }
 
+// enqueue 向对端队列加入一个有界出站帧。
 func (p *peer) enqueue(frame outboundFrame) bool {
 	select {
 	case <-p.done:
@@ -503,6 +526,7 @@ func (p *peer) enqueue(frame outboundFrame) bool {
 	}
 }
 
+// routeControl 校验并转发一个 JSON 控制信封。
 func (h *hub) routeControl(sender *peer, data []byte) {
 	if !sender.allowFrame() || len(data) > maxControlFrameBytes {
 		return
@@ -518,7 +542,7 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 		return
 	}
 
-	// Handle heartbeat ping
+	// 处理 heartbeat ping。
 	if frame.Type == "heartbeat" {
 		resp, _ := json.Marshal(controlFrame{
 			Type:      "heartbeat_ack",
@@ -530,7 +554,7 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 		return
 	}
 
-	// Handle peer lookup
+	// 处理对端查询。
 	if frame.Type == "lookup" {
 		h.mutex.Lock()
 		_, isOnline := h.peers[frame.TargetID]
@@ -613,7 +637,7 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 				return
 			}
 		case "cancel":
-			// Either participant may cancel.
+			// 任一参与方都可以取消会话。
 		default:
 			return
 		}
@@ -645,6 +669,7 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 	}
 }
 
+// routeBinary 校验并转发一个不透明加密载荷。
 func (h *hub) routeBinary(sender *peer, data []byte) {
 	if !sender.allowFrame() ||
 		len(data) < 25 ||
@@ -685,6 +710,7 @@ func (h *hub) routeBinary(sender *peer, data []byte) {
 	}
 }
 
+// allowFrame 执行每个对端的帧速率限制。
 func (p *peer) allowFrame() bool {
 	now := time.Now()
 	if now.Sub(p.windowStartedAt) >= time.Second {
@@ -695,6 +721,7 @@ func (p *peer) allowFrame() bool {
 	return p.framesInWindow <= 256
 }
 
+// prune 移除过期的内存会话记录。
 func (h *hub) prune() {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
@@ -714,6 +741,7 @@ func (h *hub) prune() {
 	}
 }
 
+// createSession 保存短期管理员控制台会话。
 func (s *Server) createSession() string {
 	token := hex.EncodeToString(randomBytes(32))
 	s.authMutex.Lock()
@@ -728,12 +756,14 @@ func (s *Server) createSession() string {
 	return token
 }
 
+// destroySession 移除管理员控制台会话。
 func (s *Server) destroySession(token string) {
 	s.authMutex.Lock()
 	defer s.authMutex.Unlock()
 	delete(s.sessions, token)
 }
 
+// isAuthorized 校验管理员 cookie 或 bearer token。
 func (s *Server) isAuthorized(r *http.Request) bool {
 	var token string
 	if cookie, err := r.Cookie("relay_session"); err == nil {
@@ -756,6 +786,7 @@ func (s *Server) isAuthorized(r *http.Request) bool {
 	return true
 }
 
+// authMiddleware 使用管理员认证保护 HTTP handler。
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.isAuthorized(r) {
@@ -768,6 +799,7 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// loginHandler 认证控制台管理员。
 func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
@@ -813,6 +845,7 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// logoutHandler 使控制台管理员会话 cookie 失效。
 func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
 	var token string
 	if cookie, err := r.Cookie("relay_session"); err == nil {
@@ -832,6 +865,7 @@ func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// authStatusHandler 报告当前管理员认证状态。
 func (s *Server) authStatusHandler(w http.ResponseWriter, r *http.Request) {
 	authed := s.isAuthorized(r)
 	s.authMutex.Lock()
@@ -848,6 +882,7 @@ func (s *Server) authStatusHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// passwordDigest 派生配置的管理员密码摘要。
 func passwordDigest(key []byte, password string) [sha256.Size]byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(password))
@@ -856,6 +891,7 @@ func passwordDigest(key []byte, password string) [sha256.Size]byte {
 	return digest
 }
 
+// requestUsesTLS 报告请求是否通过 TLS 到达。
 func requestUsesTLS(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
