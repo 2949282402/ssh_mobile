@@ -1,16 +1,22 @@
+// v1 LAN HTTP 边界校验、配对限流与待处理上传会话管理。
+// 本文件只负责验证不可信请求和维护内存状态；公开网络结果由上层服务统一转换。
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'lan_security_service.dart';
 
+/// LAN HTTP 边界异常，供服务端将安全诊断转换为统一 JSON 响应。
 class LanHttpException implements Exception {
+  /// 使用 HTTP 状态码和安全诊断创建异常。
+  const LanHttpException(this.statusCode, this.message);
+
   final int statusCode;
   final String message;
-
-  const LanHttpException(this.statusCode, this.message);
 }
 
+/// 记录一个已经通过元数据审批的上传会话。
 class LanPendingUpload {
   final String messageId;
   final String senderDeviceId;
@@ -19,6 +25,7 @@ class LanPendingUpload {
   final bool encrypted;
   final DateTime expiresAt;
 
+  /// 创建待处理上传记录。
   const LanPendingUpload({
     required this.messageId,
     required this.senderDeviceId,
@@ -28,10 +35,11 @@ class LanPendingUpload {
     required this.expiresAt,
   });
 
+  /// 返回上传会话是否已经过期。
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 }
 
-/// Validates bounded LAN control requests and authenticated transfer sessions.
+/// 校验有界 LAN 控制请求，并管理已认证的传输会话。
 class LanTransferProtocolGuard {
   static const int maxControlBodyBytes = 64 * 1024;
   static const int maxMetadataBodyBytes = 1024 * 1024;
@@ -50,11 +58,13 @@ class LanTransferProtocolGuard {
   final List<DateTime> _recentPairingAttempts = [];
   final Map<String, DateTime> _pairingNonces = {};
 
+  /// 创建 LAN 协议校验器。
   LanTransferProtocolGuard({
     required this.currentDeviceId,
     required this.securityService,
   });
 
+  /// 读取请求体，并在超过 [maxBytes] 时拒绝请求。
   Future<Uint8List> readBytes(
     HttpRequest request, {
     required int maxBytes,
@@ -82,6 +92,7 @@ class LanTransferProtocolGuard {
     return builder.takeBytes();
   }
 
+  /// 读取并解析有界 JSON 请求体。
   Future<Map<String, dynamic>> readJson(
     HttpRequest request, {
     int maxBytes = maxControlBodyBytes,
@@ -101,6 +112,7 @@ class LanTransferProtocolGuard {
     }
   }
 
+  /// 校验配对凭据，并返回发送方设备标识。
   Future<String> authorize(HttpRequest request) async {
     final senderDeviceId = request.headers.value('x-device-id')?.trim() ?? '';
     final authorization =
@@ -135,6 +147,7 @@ class LanTransferProtocolGuard {
     return senderDeviceId;
   }
 
+  /// 校验来自指定地址的配对邀请速率。
   void checkPairingInviteRate(String remoteAddress) {
     final now = DateTime.now();
     _lastInviteByAddress.removeWhere(
@@ -156,6 +169,7 @@ class LanTransferProtocolGuard {
     _recentInvites.add(now);
   }
 
+  /// 校验来自指定地址的配对尝试速率。
   void checkPairingAttemptRate(String remoteAddress) {
     final now = DateTime.now();
     _recentPairingAttempts.removeWhere(
@@ -181,6 +195,7 @@ class LanTransferProtocolGuard {
     _recentPairingAttempts.add(now);
   }
 
+  /// 校验配对 nonce 只被使用一次，并记录本次使用。
   void checkPairingNonce(String deviceId, String nonce) {
     final now = DateTime.now();
     _pairingNonces.removeWhere(
@@ -202,6 +217,7 @@ class LanTransferProtocolGuard {
     _pairingNonces[key] = now;
   }
 
+  /// 注册一个等待上传的元数据会话。
   void registerPendingUpload(LanPendingUpload upload) {
     _prunePendingUploads();
     if (upload.messageId.isEmpty || upload.messageId.length > 128) {
@@ -229,6 +245,7 @@ class LanTransferProtocolGuard {
     _pendingUploads[key] = upload;
   }
 
+  /// 查找并校验与上传请求完全匹配的待处理会话。
   LanPendingUpload requirePendingUpload({
     required String messageId,
     required String senderDeviceId,
@@ -250,13 +267,16 @@ class LanTransferProtocolGuard {
     return pending;
   }
 
+  /// 完成后移除一个待处理上传会话。
   void completePendingUpload(String senderDeviceId, String messageId) {
     _pendingUploads.remove(_uploadKey(senderDeviceId, messageId));
   }
 
+  /// 生成发送方与消息标识组合的内存 key。
   String _uploadKey(String senderDeviceId, String messageId) =>
       '$senderDeviceId\u0000$messageId';
 
+  /// 清理已经过期的待处理上传会话。
   void _prunePendingUploads() {
     _pendingUploads.removeWhere((_, upload) => upload.isExpired);
   }
