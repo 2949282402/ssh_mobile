@@ -104,6 +104,33 @@
 - 本 Step 未改变 SSH、网络协议、数据库 schema、UI、业务规则或 AI Prompt；
   只迁移 Composition Root 和资源所有权边界。
 
+---
+
+## Step 04 执行记录（2026-08-07）
+
+- 按职责迁移并拆分旧 `AppLogService`：主 facade 保留 Flutter 错误入口、
+  ChangeNotifier 和现有兼容 API；`app_log_store.dart` 负责 Drift 绑定、顺序
+  队列和临时 ID；`app_log_disk_sink.dart` 负责磁盘队列与轮转；
+  `app_log_models.dart` 负责日志模型和数据库变更模型。没有删除日志业务行为。
+- 扩展 `packages/core/app_core/lib/src/logging/`：新增 `AppLoggerImpl`、
+  `ScopedLogger`、`LogBuffer`、`LogSink`，并为 `AppLogger` 增加 `scope(name)`。
+  Core 生产代码仍为纯 Dart；`AppLoggerImpl` 的内存日志默认上限为 2000，
+  AppLogService 为保持现有 UI/数据库行为继续使用 1000 条上限。
+- `AppLogService` 实现 Core `AppLogger`，`AppRuntime.logger` 暴露同一个
+  App Scope Logger；作用域 Logger 不拥有根实例。AppBootstrap 和后台服务不再
+  通过 `AppLogService()` 创建生产实例；兼容构造入口仅保留在
+  `AppRuntimeFactory`、测试和 AppLogService 自身的兼容声明中。
+- 已补充 Core Logger、Ring Buffer、Sink 生命周期、作用域适配和 AppRuntime
+  断言测试；未改动现有日志脱敏、数据库绑定、磁盘轮转、通知合并、UI、SSH、
+  网络、业务规则或 AI Prompt。
+- 依赖检查：`flutter pub get` 通过；输出中的更新项均受当前 Flutter/Drift
+  约束限制，没有版本冲突，因此没有升级无关依赖或新增第三方依赖。
+- 最终验证：app_core `dart analyze .` 通过，Core Flutter 测试 13 项通过；
+  App `flutter analyze` 通过；App `flutter test` 通过（1019 个测试进度项）；
+  定向日志/数据库/Runtime 测试通过；格式检查和 `git diff --check` 通过。
+- 本 Step 完成后仍保留后续 Feature 逐步注入 scoped logger 的 TODO；不在本 Step
+  扩大范围迁移数百处旧 `AppLogService.instance` 调用。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

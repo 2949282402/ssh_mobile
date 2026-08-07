@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 
+import 'package:app_core/app_core.dart' as app_core;
 import 'package:drift/drift.dart' as drift;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -11,19 +12,36 @@ import '../data/database/app_database.dart' as db;
 import 'app_settings.dart';
 import 'tool_secret_policy.dart';
 
-/// 应用级日志服务（单例）。
+part 'app_log_models.dart';
+part 'app_log_store.dart';
+part 'app_log_disk_sink.dart';
+
+/// App Scope 的日志适配器，负责兼容现有 UI、数据库和平台错误入口。
 ///
-/// 功能：
-/// 1. 全局 debugPrint / FlutterError.onError / PlatformDispatcher.onError 拦截
-/// 2. 内存环形日志缓冲区（上限 1000 条）
-/// 3. 日志脱敏：自动检测并替换私钥 PEM、Bearer Token、密码字段
-/// 4. UI 通知合并：160ms 内多次 add() 合并为一次 notifyListeners()
-/// 5. 多级缓存：entries、levelCounts、entriesByLevel 惰性计算+缓存
-class AppLogService extends ChangeNotifier {
+/// Core 的 [app_core.AppLogger] 只规定日志契约和作用域；本类继续拥有
+/// Flutter 错误拦截、脱敏、Drift 绑定、磁盘轮转和 ChangeNotifier 通知。
+/// 旧的 [instance] 仅作为迁移期间的兼容入口，AppRuntime 是正式 Owner。
+class AppLogService extends ChangeNotifier implements app_core.AppLogger {
+  /// 迁移期间供旧调用点使用的兼容实例。
   static final AppLogService instance = AppLogService._();
+
+  /// 兼容旧代码的构造入口；新的生产代码应通过 AppRuntime 注入。
   factory AppLogService() => instance;
+
+  /// 保持现有日志页面和数据库的内存窗口大小不变。
   static const int _maxEntries = 1000;
-  final ListQueue<AppLogEntry> _entries = ListQueue<AppLogEntry>();
+
+  /// 默认磁盘日志大小上限。
+  static const int defaultLogSizeLimit = 5 * 1024 * 1024;
+
+  /// 磁盘日志文件名。
+  static const String _logFileName = 'app.log';
+
+  /// 保留的轮转文件数量。
+  static const int _logRotationCount = 3;
+
+  final app_core.LogBuffer<AppLogEntry> _entries =
+      app_core.LogBuffer<AppLogEntry>(maxEntries: _maxEntries);
   db.AppDatabase? _database;
   db.AppDatabase? _bindingDatabase;
   ListQueue<_DatabaseLogMutation>? _databaseBindingMutations;
@@ -46,11 +64,16 @@ class AppLogService extends ChangeNotifier {
   Completer<void>? _dbWriteCompleter;
   Object? _pendingDbWriteError;
   StackTrace? _pendingDbWriteStackTrace;
-  int logSizeLimit = 5 * 1024 * 1024;
+
+  /// 当前磁盘日志大小上限，可由测试或平台配置调整。
+  int logSizeLimit = defaultLogSizeLimit;
+
+  /// Release 模式是否允许写入磁盘日志。
   bool writeDiskLogsInRelease = false;
+
   final ToolSecretPolicy _secretPolicy = const ToolSecretPolicy();
 
-  /// A future that completes when all pending log writes to disk are finished.
+  /// 返回磁盘写入队列排空的 Future。
   @visibleForTesting
   Future<void> get pendingWrites {
     if (!_isWriting && _logWriteQueue.isEmpty) {
@@ -59,7 +82,7 @@ class AppLogService extends ChangeNotifier {
     return (_writeCompleter ??= Completer<void>()).future;
   }
 
-  /// A future that completes when all pending log writes to the database are finished.
+  /// 返回数据库写入队列排空的 Future。
   @visibleForTesting
   Future<void> get pendingDbWrites {
     if (_activeDbWrites == 0) {
@@ -75,11 +98,13 @@ class AppLogService extends ChangeNotifier {
     return (_dbWriteCompleter ??= Completer<void>()).future;
   }
 
+  /// 清除磁盘文件句柄，仅供测试在切换临时目录时使用。
   @visibleForTesting
   void resetLogFileForTesting() {
     _logFile = null;
   }
 
+  /// 重置数据库绑定状态，仅供数据库测试隔离场景使用。
   @visibleForTesting
   void resetDatabaseForTesting() {
     assert(_activeDbWrites == 0);
@@ -97,12 +122,12 @@ class AppLogService extends ChangeNotifier {
 
   AppLogService._();
 
+  /// 按最新到最旧的顺序返回不可变日志快照。
   List<AppLogEntry> get entries {
-    return _cachedNewestFirstEntries ??= List.unmodifiable(
-      _entries.toList().reversed,
-    );
+    return _cachedNewestFirstEntries ??= _entries.newestFirst;
   }
 
+  /// 返回各级别的条数缓存。
   Map<AppLogLevel, int> get levelCounts {
     final cached = _cachedLevelCounts;
     if (cached != null) return cached;
@@ -115,6 +140,7 @@ class AppLogService extends ChangeNotifier {
     return _cachedLevelCounts = Map.unmodifiable(counts);
   }
 
+  /// 返回指定级别的不可变日志快照。
   List<AppLogEntry> entriesForLevel(AppLogLevel level) {
     if (level == AppLogLevel.all) return entries;
     final cached = _cachedEntriesByLevel;
@@ -129,12 +155,14 @@ class AppLogService extends ChangeNotifier {
     return map[level]!;
   }
 
+  /// 返回当前内存日志的 ID 快照。
   Set<int> get entryIds {
     return _cachedEntryIds ??= Set.unmodifiable(
       entries.map((entry) => entry.id),
     );
   }
 
+  /// 安装 Flutter 错误入口和 debugPrint 桥接。
   void install() {
     if (_installed) return;
     _installed = true;
@@ -148,9 +176,7 @@ class AppLogService extends ChangeNotifier {
 
     final previousFlutterError = FlutterError.onError;
     FlutterError.onError = (details) {
-      // Keep Flutter's full diagnostic tree in the log page. RenderFlex
-      // overflows often hide the business widget in the short message, while
-      // the full details include the ownership chain and relevant widget.
+      // 保留完整诊断树，避免 RenderFlex 等错误只显示简短摘要。
       add(
         'flutter',
         details.exceptionAsString(),
@@ -168,14 +194,17 @@ class AppLogService extends ChangeNotifier {
     add('app', 'Log service started');
   }
 
+  /// 写入普通信息日志。
   void info(String message, {String? details}) {
     add('info', message, details: details);
   }
 
+  /// 写入警告日志。
   void warning(String message, {String? details}) {
     add('warning', message, details: details);
   }
 
+  /// 写入错误日志，并保留错误对象和堆栈。
   void error(
     String message, {
     Object? error,
@@ -190,375 +219,30 @@ class AppLogService extends ChangeNotifier {
     );
   }
 
-  Future<void> setDatabase(
-    db.AppDatabase database, {
-    @visibleForTesting Future<void> Function()? bindingCheckpoint,
-  }) {
-    if (identical(_database, database) && _bindingDatabase == null) {
-      return pendingDbWrites;
-    }
-
-    final activeBinding = _databaseBindingFuture;
-    if (activeBinding != null) {
-      if (identical(_bindingDatabase, database)) {
-        return activeBinding;
-      }
-      return Future<void>.error(
-        StateError('AppLogService is already binding another database'),
-      );
-    }
-
-    if (_database != null) {
-      return Future<void>.error(
-        StateError('AppLogService is already bound to another database'),
-      );
-    }
-
-    final pendingMutations = ListQueue<_DatabaseLogMutation>.from(
-      _entries.map(_AddDatabaseLogMutation.new),
-    );
-    _bindingDatabase = database;
-    _databaseBindingMutations = pendingMutations;
-
-    late final Future<void> bindingFuture;
-    bindingFuture =
-        _runDatabaseBinding(
-          database,
-          pendingMutations,
-          bindingCheckpoint: bindingCheckpoint,
-        ).whenComplete(() {
-          if (identical(_databaseBindingFuture, bindingFuture)) {
-            _databaseBindingFuture = null;
-          }
-        });
-    _databaseBindingFuture = bindingFuture;
-    return bindingFuture;
-  }
-
-  /// Stops routing new log mutations to [database] and waits for every
-  /// mutation already queued for it to finish.
-  ///
-  /// The matching database may then be closed safely. Entries that were
-  /// already persisted are removed from the in-memory startup buffer so a
-  /// later binding to the same database file does not insert them again.
-  Future<void> detachDatabase(db.AppDatabase database) async {
-    final activeBinding = _databaseBindingFuture;
-    if (activeBinding != null && identical(_bindingDatabase, database)) {
-      await activeBinding;
-    }
-
-    if (!identical(_database, database)) {
-      return;
-    }
-
-    final persistedEntries = Set<AppLogEntry>.identity()..addAll(_entries);
-
-    // Detach synchronously before yielding so logs created while the drain is
-    // in progress remain memory/disk-only and cannot extend the old DB queue.
-    _database = null;
-    await _queueDatabaseOperation(() async {}, operation: 'detach database');
-    await pendingDbWrites;
-
-    _entries.removeWhere(persistedEntries.contains);
-    _invalidateCaches();
-    _scheduleNotify();
-  }
-
-  Future<void> _runDatabaseBinding(
-    db.AppDatabase database,
-    ListQueue<_DatabaseLogMutation> pendingMutations, {
-    Future<void> Function()? bindingCheckpoint,
-  }) async {
-    try {
-      await _queueDatabaseOperation(
-        () => _completeDatabaseBinding(
-          database,
-          pendingMutations,
-          bindingCheckpoint: bindingCheckpoint,
-        ),
-        operation: 'bind database',
-      );
-    } catch (_) {
-      if (identical(_bindingDatabase, database)) {
-        _bindingDatabase = null;
-        _databaseBindingMutations = null;
-      }
-      rethrow;
-    }
-  }
-
-  Future<void> _completeDatabaseBinding(
-    db.AppDatabase database,
-    ListQueue<_DatabaseLogMutation> pendingMutations, {
-    Future<void> Function()? bindingCheckpoint,
-  }) async {
-    var records = await database.appLogDao.getAllLogs();
-    var maxId = records.isEmpty ? 0 : records.last.id;
-
-    await bindingCheckpoint?.call();
-    await database.appLogDao.pruneOldLogs();
-
-    final assignedIdsByTemporaryId = <int, List<int>>{};
-    while (true) {
-      while (pendingMutations.isNotEmpty) {
-        final mutation = pendingMutations.removeFirst();
-        switch (mutation) {
-          case _AddDatabaseLogMutation(:final entry):
-            final storedEntry = _copyEntryWithId(entry, ++maxId);
-            await database.appLogDao.insertLog(_toDatabaseRecord(storedEntry));
-            await database.appLogDao.pruneOldLogs();
-            assignedIdsByTemporaryId
-                .putIfAbsent(entry.id, () => <int>[])
-                .add(storedEntry.id);
-          case _DeleteDatabaseLogMutation(
-            :final databaseIds,
-            :final temporaryIds,
-          ):
-            final resolvedDatabaseIds = <int>{...databaseIds};
-            for (final id in temporaryIds) {
-              final assignedIds = assignedIdsByTemporaryId.remove(id);
-              if (assignedIds != null) {
-                resolvedDatabaseIds.addAll(assignedIds);
-              }
-            }
-            if (resolvedDatabaseIds.isNotEmpty) {
-              await database.appLogDao.deleteLogs(resolvedDatabaseIds);
-            }
-          case _ClearDatabaseLogMutation():
-            await database.appLogDao.clearAllLogs();
-            assignedIdsByTemporaryId.clear();
-        }
-      }
-
-      records = await database.appLogDao.getAllLogs();
-      if (pendingMutations.isNotEmpty) {
-        continue;
-      }
-
-      _entries
-        ..clear()
-        ..addAll(records.map(_fromDatabaseRecord));
-      while (_entries.length > _maxEntries) {
-        _entries.removeFirst();
-      }
-
-      _nextEntryId = records.isEmpty ? 1 : records.last.id + 1;
-      _database = database;
-      _bindingDatabase = null;
-      _databaseBindingMutations = null;
-      _invalidateCaches();
-      _scheduleNotify();
-      return;
-    }
-  }
-
-  Future<void> _writeEntryToDb(
-    db.AppDatabase database,
-    AppLogEntry entry,
-  ) async {
-    await database.appLogDao.insertLog(_toDatabaseRecord(entry));
-    await database.appLogDao.pruneOldLogs();
-  }
-
-  Future<T> _queueDatabaseOperation<T>(
-    Future<T> Function() action, {
-    required String operation,
-  }) {
-    _activeDbWrites++;
-    final result = _databaseOperationTail.then((_) => action());
-    _databaseOperationTail = result
-        .then<void>(
-          (_) {},
-          onError: (Object error, StackTrace stackTrace) {
-            _pendingDbWriteError ??= error;
-            _pendingDbWriteStackTrace ??= stackTrace;
-            _reportDatabaseFailure(operation, error, stackTrace);
-          },
-        )
-        .whenComplete(_finishDatabaseOperation);
-    return result;
-  }
-
-  void _finishDatabaseOperation() {
-    _activeDbWrites--;
-    if (_activeDbWrites != 0) {
-      return;
-    }
-
-    final completer = _dbWriteCompleter;
-    if (completer == null) {
-      return;
-    }
-    _dbWriteCompleter = null;
-
-    final error = _pendingDbWriteError;
-    if (error == null) {
-      completer.complete();
-      return;
-    }
-
-    final stackTrace = _pendingDbWriteStackTrace ?? StackTrace.current;
-    _pendingDbWriteError = null;
-    _pendingDbWriteStackTrace = null;
-    completer.completeError(error, stackTrace);
-  }
-
-  void _reportDatabaseFailure(
-    String operation,
-    Object error,
-    StackTrace stackTrace,
-  ) {
-    final safeError = _redact(error.toString());
-    final printer = _previousDebugPrint ?? debugPrint;
-    printer('App log database $operation failed: $safeError\n$stackTrace');
-  }
-
-  db.AppLogRecordsCompanion _toDatabaseRecord(AppLogEntry entry) {
-    return db.AppLogRecordsCompanion(
-      id: drift.Value(entry.id),
-      time: drift.Value(entry.time.millisecondsSinceEpoch),
-      level: drift.Value(entry.level),
-      message: drift.Value(entry.message),
-      sourceLocation: drift.Value(entry.sourceLocation),
-      stackTrace: drift.Value(entry.stackTrace),
-      details: drift.Value(entry.details),
-    );
-  }
-
-  AppLogEntry _fromDatabaseRecord(db.AppLogRecord record) {
-    return AppLogEntry(
-      id: record.id,
-      time: DateTime.fromMillisecondsSinceEpoch(
-        record.time,
-        isUtc: true,
-      ).toLocal(),
-      level: record.level,
-      message: record.message,
-      sourceLocation: record.sourceLocation,
+  /// 将 Core 日志记录适配到现有 AppLogEntry 存储模型。
+  @override
+  void log(app_core.LogRecord record) {
+    final source = record.source;
+    final hasSource = source?.isNotEmpty == true;
+    add(
+      _legacyLevelName(record.level),
+      record.error == null
+          ? record.message
+          : '${record.message}: ${record.error}',
       stackTrace: record.stackTrace,
       details: record.details,
+      captureSource: !hasSource,
+      sourceLocation: hasSource ? source : null,
     );
   }
 
-  AppLogEntry _copyEntryWithId(AppLogEntry entry, int id) {
-    return AppLogEntry(
-      id: id,
-      time: entry.time,
-      level: entry.level,
-      message: entry.message,
-      sourceLocation: entry.sourceLocation,
-      stackTrace: entry.stackTrace,
-      details: entry.details,
-    );
+  /// 创建不拥有底层 AppLogService 的作用域 Logger。
+  @override
+  app_core.AppLogger scope(String name) {
+    return app_core.ScopedLogger(this, name);
   }
 
-  void add(
-    String level,
-    String message, {
-    StackTrace? stackTrace,
-    String? details,
-    bool captureSource = true,
-  }) {
-    final safeMessage = _redact(message);
-    final safeDetails = details == null ? null : _redact(details);
-    final safeStackTrace = stackTrace == null
-        ? null
-        : _redact(stackTrace.toString());
-    final entry = AppLogEntry(
-      id: _nextEntryId++,
-      time: DateTime.now(),
-      level: level,
-      message: safeMessage,
-      sourceLocation: captureSource ? _sourceLocation(stackTrace) : null,
-      stackTrace: safeStackTrace,
-      details: safeDetails,
-    );
-    _entries.addLast(entry);
-    while (_entries.length > _maxEntries) {
-      _entries.removeFirst();
-    }
-    _invalidateCaches();
-    _scheduleNotify();
-
-    // Write log to disk asynchronously.
-    unawaited(_writeToDisk(entry.text));
-
-    // Keep entries produced while the database is being bound in the same
-    // ordered buffer as startup logs. They receive final IDs only after the
-    // database's current maximum ID is known.
-    final bindingMutations = _databaseBindingMutations;
-    if (bindingMutations != null) {
-      bindingMutations.addLast(_AddDatabaseLogMutation(entry));
-      return;
-    }
-
-    final database = _database;
-    if (database != null) {
-      unawaited(
-        _queueDatabaseOperation(
-          () => _writeEntryToDb(database, entry),
-          operation: 'write log entry',
-        ),
-      );
-    }
-  }
-
-  void deleteEntriesById(Set<int> ids) {
-    if (ids.isEmpty) return;
-    final bindingMutations = _databaseBindingMutations;
-    final temporaryIds = bindingMutations == null
-        ? const <int>{}
-        : _entries
-              .where((entry) => ids.contains(entry.id))
-              .map((entry) => entry.id)
-              .toSet();
-    _entries.removeWhere((entry) => ids.contains(entry.id));
-    _invalidateCaches();
-    _scheduleNotify();
-
-    if (bindingMutations != null) {
-      bindingMutations.addLast(
-        _DeleteDatabaseLogMutation(
-          databaseIds: ids.difference(temporaryIds),
-          temporaryIds: temporaryIds,
-        ),
-      );
-      return;
-    }
-
-    final database = _database;
-    if (database != null) {
-      unawaited(
-        _queueDatabaseOperation(
-          () => database.appLogDao.deleteLogs(ids),
-          operation: 'delete log entries',
-        ),
-      );
-    }
-  }
-
-  void clear() {
-    _entries.clear();
-    _invalidateCaches();
-    _scheduleNotify();
-
-    final bindingMutations = _databaseBindingMutations;
-    if (bindingMutations != null) {
-      bindingMutations.addLast(const _ClearDatabaseLogMutation());
-      return;
-    }
-
-    final database = _database;
-    if (database != null) {
-      unawaited(
-        _queueDatabaseOperation(
-          database.appLogDao.clearAllLogs,
-          operation: 'clear log entries',
-        ),
-      );
-    }
-  }
-
+  /// 清除惰性查询缓存。
   void _invalidateCaches() {
     _cachedNewestFirstEntries = null;
     _cachedLevelCounts = null;
@@ -566,216 +250,35 @@ class AppLogService extends ChangeNotifier {
     _cachedEntryIds = null;
   }
 
+  /// 合并 160ms 内的通知，避免高频诊断日志触发逐条重建 UI。
   void _scheduleNotify() {
     if (_notifyScheduled) return;
     _notifyScheduled = true;
-    // Logs can be produced while routes/dialogs are being torn down. Deferring
-    // and batching the UI notification keeps provider dependents from
-    // rebuilding every line during noisy SSH/LLM/server diagnostics.
     _notifyTimer = Timer(const Duration(milliseconds: 160), () {
       _notifyScheduled = false;
       notifyListeners();
     });
   }
 
-  Future<void> _writeToDisk(String logLine) async {
-    if (kReleaseMode && !writeDiskLogsInRelease) return;
-    _logWriteQueue.add(logLine);
-    if (_isWriting) return;
-    _isWriting = true;
-
-    while (_logWriteQueue.isNotEmpty) {
-      final line = _logWriteQueue.removeAt(0);
-      try {
-        if (_logFile == null) {
-          final supportDir = await getApplicationSupportDirectory();
-          _logFile = File(p.join(supportDir.path, 'app.log'));
-        }
-
-        // Check size and rotate if needed
-        if (await _logFile!.exists()) {
-          final length = await _logFile!.length();
-          if (length > logSizeLimit) {
-            await _rotateLogs();
-          }
-        }
-
-        await _logFile!.writeAsString(
-          '$line\n',
-          mode: FileMode.append,
-          flush: true,
-        );
-      } catch (e) {
-        // Ignore log file write errors to prevent infinite error logging loops
-      }
-    }
-    _isWriting = false;
-    final completer = _writeCompleter;
-    if (completer != null) {
-      _writeCompleter = null;
-      completer.complete();
+  /// 将 Core 严重级别映射到现有日志数据库支持的名称。
+  static String _legacyLevelName(app_core.LogLevel level) {
+    switch (level) {
+      case app_core.LogLevel.trace:
+      case app_core.LogLevel.debug:
+        return 'debug';
+      case app_core.LogLevel.info:
+        return 'info';
+      case app_core.LogLevel.warning:
+        return 'warning';
+      case app_core.LogLevel.error:
+        return 'error';
     }
   }
 
-  Future<void> _rotateLogs() async {
-    try {
-      final supportDir = await getApplicationSupportDirectory();
-      final path = supportDir.path;
-
-      final file3 = File(p.join(path, 'app.log.3'));
-      final file2 = File(p.join(path, 'app.log.2'));
-      final file1 = File(p.join(path, 'app.log.1'));
-      final file0 = File(p.join(path, 'app.log'));
-
-      if (await file3.exists()) await file3.delete();
-      if (await file2.exists()) await file2.rename(file3.path);
-      if (await file1.exists()) await file1.rename(file2.path);
-      if (await file0.exists()) await file0.rename(file1.path);
-    } catch (e) {
-      // Ignore rotation errors
-    }
-  }
-
-  String _redact(String value) => _secretPolicy.redactText(value);
-
-  String? _sourceLocation(StackTrace? errorStackTrace) {
-    return _sourceFromStack(errorStackTrace) ??
-        _sourceFromStack(StackTrace.current);
-  }
-
-  String? _sourceFromStack(StackTrace? stackTrace) {
-    if (stackTrace == null) return null;
-    final lines = stackTrace.toString().split('\n');
-    for (final line in lines) {
-      if (line.contains('app_log_service.dart')) continue;
-      final packageMatch = RegExp(
-        r'\((package:ssh_mobile/[^:]+\.dart):(\d+):(\d+)\)',
-      ).firstMatch(line);
-      if (packageMatch != null) {
-        return '${packageMatch.group(1)}:${packageMatch.group(2)}';
-      }
-      final fileMatch = RegExp(
-        r'\((file:///.*?/lib/[^:]+\.dart):(\d+):(\d+)\)',
-      ).firstMatch(line.replaceAll('\\', '/'));
-      if (fileMatch != null) {
-        return '${fileMatch.group(1)}:${fileMatch.group(2)}';
-      }
-    }
-    return null;
-  }
-
+  /// 取消 UI 通知 Timer；数据库和磁盘资源由其各自队列完成释放。
   @override
   void dispose() {
     _notifyTimer?.cancel();
     super.dispose();
-  }
-}
-
-sealed class _DatabaseLogMutation {
-  const _DatabaseLogMutation();
-}
-
-final class _AddDatabaseLogMutation extends _DatabaseLogMutation {
-  const _AddDatabaseLogMutation(this.entry);
-
-  final AppLogEntry entry;
-}
-
-final class _DeleteDatabaseLogMutation extends _DatabaseLogMutation {
-  _DeleteDatabaseLogMutation({
-    required Set<int> databaseIds,
-    required Set<int> temporaryIds,
-  }) : databaseIds = Set.unmodifiable(databaseIds),
-       temporaryIds = Set.unmodifiable(temporaryIds);
-
-  final Set<int> databaseIds;
-  final Set<int> temporaryIds;
-}
-
-final class _ClearDatabaseLogMutation extends _DatabaseLogMutation {
-  const _ClearDatabaseLogMutation();
-}
-
-class AppLogEntry {
-  final int id;
-  final DateTime time;
-  final String level;
-  final String message;
-  final String? sourceLocation;
-  final String? stackTrace;
-  final String? details;
-
-  const AppLogEntry({
-    required this.id,
-    required this.time,
-    required this.level,
-    required this.message,
-    required this.sourceLocation,
-    required this.stackTrace,
-    required this.details,
-  });
-
-  String get text {
-    final buffer = StringBuffer()
-      ..write(_formatTime(time))
-      ..write(' [')
-      ..write(level)
-      ..write('] ')
-      ..write(message);
-    if (sourceLocation?.isNotEmpty == true) {
-      buffer
-        ..write('\nsource: ')
-        ..write(sourceLocation);
-    }
-    if (details?.isNotEmpty == true) {
-      buffer
-        ..write('\n')
-        ..write(details);
-    }
-    if (stackTrace?.isNotEmpty == true) {
-      buffer
-        ..write('\n')
-        ..write(stackTrace);
-    }
-    return buffer.toString();
-  }
-
-  AppLogLevel get normalizedLevel => AppLogLevel.fromName(level);
-
-  static String _formatTime(DateTime time) {
-    String two(int value) => value.toString().padLeft(2, '0');
-    String three(int value) => value.toString().padLeft(3, '0');
-    return '${two(time.hour)}:${two(time.minute)}:${two(time.second)}.'
-        '${three(time.millisecond)}';
-  }
-}
-
-enum AppLogLevel {
-  all('all', 'All', '全部'),
-  error('error', 'Error', '错误'),
-  warning('warning', 'Warning', '警告'),
-  info('info', 'Info', '信息'),
-  service('service', 'Service', '后台'),
-  debug('debug', 'Debug', '调试'),
-  flutter('flutter', 'Flutter', 'Flutter'),
-  platform('platform', 'Platform', '平台'),
-  app('app', 'App', '应用');
-
-  final String name;
-  final String englishLabel;
-  final String chineseLabel;
-
-  const AppLogLevel(this.name, this.englishLabel, this.chineseLabel);
-
-  String labelFor(AppLanguage language) {
-    return language == AppLanguage.en ? englishLabel : chineseLabel;
-  }
-
-  static AppLogLevel fromName(String name) {
-    final normalized = name.toLowerCase();
-    for (final level in AppLogLevel.values) {
-      if (level.name == normalized) return level;
-    }
-    return AppLogLevel.info;
   }
 }

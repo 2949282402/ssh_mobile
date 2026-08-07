@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
-import '../services/app_log_service.dart';
 import '../utils/startup_instrumentation.dart';
+import 'app_runtime.dart';
 import 'app_runtime_factory.dart';
 import 'ssh_mobile_app.dart';
 
@@ -16,24 +16,28 @@ final class AppBootstrap {
 
   /// 启动应用并把未处理的异步异常桥接到应用日志。
   static Future<void> run() async {
-    final appLogService = AppLogService();
+    AppRuntime? runtime;
     await runZonedGuarded(
       () async {
         WidgetsFlutterBinding.ensureInitialized();
         StartupInstrumentation.instance.recordMainStart();
 
-        final runtime = await AppRuntimeFactory.create(
-          appLogService: appLogService,
-        );
+        runtime = await AppRuntimeFactory.create();
         StartupInstrumentation.instance.recordRunAppStart();
         runApp(SshMobileApp(runtime: runtime));
       },
       (error, stackTrace) {
-        appLogService.error(
-          'Uncaught zone error',
-          error: error,
-          stackTrace: stackTrace,
-        );
+        final appLogService = runtime?.appLogService;
+        if (appLogService != null) {
+          appLogService.error(
+            'Uncaught zone error',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        } else {
+          // Runtime 尚未创建时无法注入 Logger，只保留启动边界的最小兜底。
+          debugPrint('Uncaught zone error: $error\n$stackTrace');
+        }
       },
     );
   }

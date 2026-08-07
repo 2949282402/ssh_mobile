@@ -39,9 +39,11 @@ must not depend on Flutter UI, SSH, Drift, Infrastructure, or Feature code.
   keep cross-feature protocol, security, and persistence infrastructure in
   `apps/ssh_mobile_full/lib/services/`, `apps/ssh_mobile_full/lib/core/services/`,
   and `apps/ssh_mobile_full/lib/data/`.
-- Keep Core contracts under `packages/core/`. `app_core` owns only lifecycle,
-  Module, logging, and Capability contracts; it must not create global service
-  instances or retain heavy runtime objects.
+- Keep Core contracts under `packages/core/`. `app_core` owns lifecycle, Module,
+  scoped logging contracts, bounded `LogBuffer`, disposable `LogSink`, and
+  Capability contracts; it must not create global service instances or retain
+  heavy runtime objects. The full App's database/disk/redaction adapter remains
+  in `apps/ssh_mobile_full/lib/services/` until its later Plan Step.
 - Do not add new application code to legacy `lib/screens/` or `lib/models/`.
 - Keep screens focused on composition and transient presentation state. Put
   validation, async orchestration, repositories, and reusable state in
@@ -74,8 +76,9 @@ must not depend on Flutter UI, SSH, Drift, Infrastructure, or Feature code.
   fingerprint pinning, integrity checks, and sandboxed receive paths.
 - Respect `serverPlatform`: native Windows uses PowerShell/plain SSH behavior;
   Linux-only tmux and `/proc` assumptions must not leak into Windows paths.
-- Route application diagnostics through `AppLogService`; do not add `print`
-  diagnostics.
+- Route new module diagnostics through an injected `AppLogger` scope. The current
+  full App adapts that contract through `AppLogService`; do not add `print`
+  diagnostics or construct a new logging service in a Feature.
 
 ## Task Routing
 
@@ -84,7 +87,7 @@ Read only the rows relevant to the task.
 | Task | Start with | Additional reference |
 | --- | --- | --- |
 | Architecture, MVVM, storage | Owning `lib/features/` code, `lib/data/`, `lib/services/storage_service.dart` | `docs/ADR_ENGINEERING_BASELINE.md` |
-| Core contracts and Module lifecycle | `packages/core/app_core/lib/`, `packages/core/app_core/test/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
+| Core contracts, logging, and Module lifecycle | `packages/core/app_core/lib/`, `packages/core/app_core/test/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
 | Startup or service lifetime | `lib/features/startup/`, `apps/ssh_mobile_full/lib/app/`, `apps/ssh_mobile_full/lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
 | SSH, terminal, host keys | `lib/features/connection/`, `lib/features/terminal/`, SSH services | `docs/security_manual_regression.md` |
 | SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |

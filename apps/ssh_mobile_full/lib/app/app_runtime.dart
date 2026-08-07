@@ -37,8 +37,11 @@ final class AppRuntime implements Disposable {
     required this.lanReceiverCoordinator,
   });
 
-  // TODO(refactor-step-04): 替换为 app_core 的 AppLogger 实现。
+  /// App Scope 唯一的日志实现；当前由 AppLogService 适配 Core Contract。
   final AppLogService appLogService;
+
+  /// 供新模块通过 Core Contract 获取同一个日志 Owner。
+  AppLogger get logger => appLogService;
 
   // TODO(refactor-step-06): 替换为配置模块的公共设置契约。
   final AppSettings appSettings;

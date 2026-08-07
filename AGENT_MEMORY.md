@@ -23,6 +23,10 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `AppRuntimeFactory` creates the existing application services,
   `AppRuntime` is their single lifecycle owner, and `AppBootstrap` is the
   Flutter/Zone startup boundary. `main.dart` is only a delegating entry point.
+  `AppRuntime.logger` exposes the Core `AppLogger` contract; during the staged
+  migration the concrete App Scope adapter remains `AppLogService`, which owns
+  the existing Flutter hooks, redaction, database binding, disk queue, and UI
+  notifications.
   Existing service types remain temporarily inside Runtime with explicit
   Step TODO markers; route ViewModels are not part of Runtime ownership.
 - Startup is intentionally lazy. Bootstrap loads preferences and storage;
@@ -38,6 +42,16 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   Schema changes regenerate `app_database.g.dart` and may require deleting the
   local development database; do not add compatibility migrations without an
   explicit release requirement.
+
+### Logging contract
+
+- Core logging is pure Dart: `AppLogger.scope(name)` returns a non-owning
+  `ScopedLogger`, `LogBuffer` evicts the oldest records at its configured bound,
+  and `AppLoggerImpl.dispose()` closes its owned `LogSink` instances.
+- The full App did not replace the existing `AppLogService` storage behavior in
+  this step. It now implements the Core contract and is split into facade,
+  database-store, disk-sink, and model files; later Feature steps may inject
+  scoped Core loggers without creating another global service.
 
 ### AI and security
 

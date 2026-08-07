@@ -11,7 +11,8 @@
 
 - 生命周期接口和资源释放工具；
 - Module Descriptor、Registry、Context 和稳定状态；
-- 日志与 Capability 的公共 Contract；
+- 日志与 Capability 的公共 Contract 和轻量实现（`AppLogger`、作用域 Logger、
+  有界 `LogBuffer`、可释放 `LogSink`）；
 - 对应的纯合约单元测试和文档。
 
 ## 依赖与生命周期约束
@@ -20,6 +21,8 @@
 - Registry 只能长期持有静态 Descriptor，不得缓存所有 Module Runtime；
 - Context 不得通过静态单例查找服务；
 - CapabilityRegistry 不拥有 Capability 的释放责任，资源由注册方 Owner 释放；
+- `AppLoggerImpl` 持有自己的 `LogBuffer` 和 Sink 列表，必须由创建它的 App
+  Scope Owner 调用 `dispose()`；`ScopedLogger` 只转发记录，不重复释放根 Logger；
 - 新增资源必须说明 Owner 和 `dispose/close/cancel/release` 方式。
 
 ## 必须验证

@@ -29,4 +29,7 @@ final class _RecordingLogger implements AppLogger {
   void log(LogRecord record) {
     records.add(record);
   }
+
+  @override
+  AppLogger scope(String name) => this;
 }

@@ -1,4 +1,6 @@
 import 'dart:io';
+
+import 'package:app_core/app_core.dart' as app_core;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
@@ -104,6 +106,27 @@ void main() {
     expect(logs.levelCounts[AppLogLevel.all], 1);
     expect(logs.entries.single.message, 'one');
   });
+
+  test(
+    'AppLogService adapts Core Logger scopes without changing old entries',
+    () {
+      final logs = AppLogService.instance;
+      logs.clear();
+      final terminalLogger = logs.scope('terminal');
+
+      terminalLogger.log(
+        app_core.LogRecord(
+          timestamp: DateTime.utc(2026, 8, 7),
+          level: app_core.LogLevel.info,
+          message: 'scoped message',
+        ),
+      );
+
+      expect(logs.entries.single.message, 'scoped message');
+      expect(logs.entries.single.sourceLocation, 'terminal');
+      expect(logs.entries.single.normalizedLevel, AppLogLevel.info);
+    },
+  );
 
   test('rotates log files when limit is exceeded', () async {
     final logs = AppLogService.instance;

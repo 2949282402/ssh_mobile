@@ -55,7 +55,7 @@ class BackgroundServiceManager {
       return;
     }
 
-    AppLogService().info('Prewarming BackgroundServiceManager');
+    AppLogService.instance.info('Prewarming BackgroundServiceManager');
     final future = _configureService();
     _prewarmFuture = future;
     try {
@@ -63,9 +63,11 @@ class BackgroundServiceManager {
         '[BackgroundManager] Prewarming background service configuration',
       );
       await future;
-      AppLogService().info('BackgroundServiceManager prewarmed successfully');
+      AppLogService.instance.info(
+        'BackgroundServiceManager prewarmed successfully',
+      );
     } catch (e) {
-      AppLogService().error(
+      AppLogService.instance.error(
         'BackgroundServiceManager prewarm failed',
         error: e,
       );
@@ -174,7 +176,7 @@ class BackgroundServiceManager {
       AppLogService.instance.info('[BackgroundManager] Service is not running');
     }
     await _releasePowerLocks();
-    AppLogService().info('Background SSH Service stopped');
+    AppLogService.instance.info('Background SSH Service stopped');
   }
 
   static Future<bool> isIgnoringBatteryOptimizations() async {

@@ -409,7 +409,7 @@ flowchart LR
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
   LAN-share, MCP, and platform-adapter infrastructure.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
-- `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency.
+- `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/infrastructure/ssh_mobile_network_native/`: native network package staged under the Infrastructure boundary.
 - `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,
   including host-key policy and data protection.
@@ -428,6 +428,11 @@ flowchart LR
 `AppRuntimeFactory` creates application-lifetime services, and `AppRuntime` is
 their single lifecycle owner. `main.dart` only delegates to `AppBootstrap`;
 `SshMobileApp` exposes existing Runtime instances through `MultiProvider`.
+`AppRuntime.logger` exposes the Core logger contract; the current full-app
+implementation is an App-layer `AppLogService` adapter, so existing database,
+disk, redaction, and UI notification behavior remains unchanged during staged
+migration. New module code should request a scoped logger from Runtime instead
+of constructing a logging service.
 Route- or screen-scoped feature state stays local: for example, the AI chat
 runtime is created by `AiChatRuntimeFactory` and provided by the chat view,
 while terminal screens create focused session/history/window ViewModels. Views

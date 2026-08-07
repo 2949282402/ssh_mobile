@@ -23,6 +23,7 @@ void main() {
 
       expect(runtime.isDisposed, isFalse);
       expect(runtime.appLogService, isNotNull);
+      expect(runtime.logger, same(runtime.appLogService));
       expect(runtime.storageService, isNotNull);
       expect(runtime.sshService, isNotNull);
       expect(runtime.lanReceiverCoordinator, isNotNull);
