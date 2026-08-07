@@ -19,6 +19,7 @@ import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import 'app_runtime.dart';
+import 'terminal_ssh_capability_adapter.dart';
 
 /// App Scope 的唯一组装入口，负责创建并连接应用级服务。
 ///
@@ -85,6 +86,7 @@ final class AppRuntimeFactory {
     storageService.registerOnImportCallback(shortcutCommandService.init);
 
     final sshService = SshService(storageService, appSettings: appSettings);
+    final terminalSshManager = AppTerminalSshSessionManager(sshService);
     unawaited(
       sshService.ensureInitialized().catchError((error, stackTrace) {
         logger.error(
@@ -137,7 +139,7 @@ final class AppRuntimeFactory {
       networkRuntime: runtimeNetworkRuntime,
       bootstrapCoordinator: bootstrapCoordinator,
       shortcutCommandService: shortcutCommandService,
-      sshSessionManager: sshService,
+      sshSessionManager: terminalSshManager,
       sshService: sshService,
       sftpService: sftpService,
       performanceMonitorService: performanceMonitorService,

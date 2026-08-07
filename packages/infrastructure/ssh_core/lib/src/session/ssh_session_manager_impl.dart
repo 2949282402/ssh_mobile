@@ -10,6 +10,7 @@ import '../pool/ssh_session_lease.dart';
 import '../pool/ssh_session_pool.dart';
 import '../runtime/ssh_runtime_adapter.dart';
 import 'ssh_session_manager.dart';
+import '../terminal/ssh_terminal_capability.dart';
 
 /// SSH Manager 的内部生命周期状态。
 enum SshSessionManagerState { idle, starting, ready, stopping, disposed }
@@ -17,11 +18,18 @@ enum SshSessionManagerState { idle, starting, ready, stopping, disposed }
 /// 使用注入式 Runtime 的 SSH Session Manager。
 final class SshSessionManagerImpl implements SshSessionManager {
   /// 创建 SSH Manager。
-  SshSessionManagerImpl({required this.runtime, SshSessionPool? sessionPool})
-    : _sessionPool = sessionPool ?? SshSessionPool();
+  SshSessionManagerImpl({
+    required this.runtime,
+    SshSessionPool? sessionPool,
+    this.terminalCapability,
+  }) : _sessionPool = sessionPool ?? SshSessionPool();
 
   /// 注入的桌面或移动端 Runtime。
   final SshRuntimeAdapter runtime;
+
+  /// 可选的终端能力实现；基础 SSH Manager 本身不强制承担 UI 语义。
+  @override
+  final SshTerminalCapability? terminalCapability;
   final SshSessionPool _sessionPool;
   SshSessionManagerState _state = SshSessionManagerState.idle;
   Future<void>? _initialization;

@@ -1,0 +1,27 @@
+最新更新时间：2026-08-08
+
+# feature_terminal
+
+Terminal Pilot 的独立 Feature Package。
+
+## 边界
+
+- `lib/src/domain`：终端模型、Repository 和 App/Infrastructure Port；
+- `lib/src/data`：只属于 Terminal 的 Drift `terminal.db`；
+- `lib/src/application`：Module 与路由级 ViewModel；
+- `lib/src/presentation`：终端页面和专属 Widget。
+
+Terminal 不直接依赖 `StorageService`、`AppSettings`、`SshService` 或其他
+Feature；App 通过公开 Port 提供兼容适配器。旧 App 路径在迁移期间保留导出桥，
+以便外部调用方逐步切换。
+
+终端元数据由 `TerminalModule` 独占的 `terminal.db` 保存；加密的原始输出历史
+服务也已迁入本包，并由 App Shell 的 SSH Owner 注入数据保护与日志 Port。为保持
+现有行为，App 组合根暂时对旧 `StorageService` 做兼容双写/读取，后续 Storage
+收敛 Step 再移除该桥。
+
+## 生命周期
+
+`TerminalModule` 负责打开和关闭 `terminal.db`。Route Scope 负责创建页面
+ViewModel；ViewModel 只拥有页面内 Controller、Subscription 和 Timer，不能
+关闭 App Scope SSH Manager。

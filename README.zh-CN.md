@@ -399,6 +399,9 @@ flowchart LR
   双语展示契约以及运行时/验证 Capability Port。它依赖 `connection_core`，不拥有
   Connection 数据库；在 SSH/SFTP 后续 Step 完成前，App 组合根会暂时桥接新 Core
   Repository 与仍使用旧 `StorageService` 的消费者。
+- `packages/features/feature_terminal/`：已经迁移的 Terminal Pilot，包括路由作用域
+  ViewModel、终端页面、终端输出历史和独立的 `terminal.db`。它只依赖公共 Core 合约
+  与注入的 Port；后续存储/SSH Step 完成前，旧 App Terminal 路径保留为兼容导出。
 - `apps/ssh_mobile_full/lib/services/`：跨 Feature 的 SSH/SFTP/LLM/AI Tool、监控、存储、局域网
   快传、MCP 和平台适配基础设施。
 - `apps/ssh_mobile_full/lib/data/`：Drift 数据库、DAO 和 Repository 实现。
@@ -407,7 +410,7 @@ flowchart LR
 - `packages/core/connection_core/`：Connection 领域模型与契约、独立的非敏感 Drift 数据库、Secure Storage 凭据和 Host Key 信任元数据。`ConnectionDatabase` 由 `AppRuntime` 创建和关闭；`feature_connection` 只消费其公共 Repository 与注入的 Capability。
 - `packages/infrastructure/ssh_mobile_network_native/`：位于 Infrastructure 边界下的原生网络 Package。
 - `packages/infrastructure/network_transport/`：App Scope `NetworkRuntime` Facade、lazy Capability 状态机、传输端点/连接合约、指标快照和显式 native handle adapter。实例由 `AppRuntime` 唯一创建；当前 Step 不新增第二套协议实现。
-- `packages/infrastructure/ssh_core/`：App Scope SSH Session Manager、Lease/Pool 生命周期、桌面端与移动端 Runtime Adapter、SSH Client/Host Key/命令执行边界及非敏感目标绑定。该包不依赖 `StorageService`；`AppRuntime` 只持有一个 Manager，Terminal Pilot 完成方法级迁移前保留同一实例上的旧 `SshService` 兼容面。
+- `packages/infrastructure/ssh_core/`：App Scope SSH Session Manager、Lease/Pool 生命周期、桌面端与移动端 Runtime Adapter、SSH Client/Host Key/命令执行边界及非敏感目标绑定。该包不依赖 `StorageService`；`AppRuntime` 只持有一个 Manager，`feature_terminal` 通过注入使用它，旧 `SshService` 仅作为兼容实现保留。
 - `apps/ssh_mobile_full/lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
   策略和数据保护。
 - `apps/ssh_mobile_full/lib/theme/`、已迁移的共享 Widget 路径以及 `lib/utils/responsive.dart`：`packages/core/app_ui/` 的兼容导出；Feature 专属 Widget 继续放在所属 Feature 内。
@@ -428,6 +431,13 @@ Owner；`main.dart` 只委托给 `AppBootstrap`，`SshMobileApp` 通过 `MultiPr
 运行时由 `AiChatRuntimeFactory` 创建并由聊天页提供，终端页创建聚焦的会话、历史和
 窗口 ViewModel。View 只持有布局与短生命周期展示状态；校验、异步编排和 Repository
 协调由 ViewModel 与 Service 负责。
+
+Terminal Pilot 位于 `packages/features/feature_terminal/`。进入终端路由时创建
+`TerminalModule` 和 Route Scope ViewModel；Module 独占 `terminal.db` 的终端元数据，
+路由销毁时关闭 Drift 资源。SSH 只能通过注入的
+`ssh_core.SshSessionManager` 使用，不能在 Feature 内创建新的 SSH Service。App
+组合根暂时提供设置、快捷键、连接对话框和历史的兼容适配器，旧 App 路径只是兼容
+导出，不会形成第二套实现。
 同一个 Runtime 还持有唯一的 lazy `NetworkRuntime`；QUIC 与 WSS Relay 能力共享
 native 初始化，失败可重试，释放时等待并关闭 native handle。旧 LAN Coordinator
 在专属迁移 Step 前仍暂时使用原有协议适配器。

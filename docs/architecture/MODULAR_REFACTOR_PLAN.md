@@ -259,6 +259,35 @@
   的 `flutter analyze --no-pub` 均通过，Package 测试 13 项、全 App 回归
   1006 项均通过；格式检查、`git diff --check` 和 Skill 同步检查通过。
 
+## Step 10 执行记录（2026-08-08）
+
+- 已创建 `packages/features/feature_terminal/`，将 Terminal 页面、专属
+  ViewModel、Widget、键盘模型、Terminal Module 和测试迁入 Package。旧
+  `apps/ssh_mobile_full/lib/features/terminal/**` 路径保留为兼容导出，旧测试
+  迁移为 Package 测试，没有通过批量删除破坏原有调用面。
+- `TerminalModule` 是 `terminal.db` 和 Terminal Repository 的唯一 Owner，当前
+  schema 为 1，包含 `terminal_history` 元数据表。Route Scope 在 `/terminal`、
+  `/history` 和 `/terminal-windows` 路由创建 Module 与页面 ViewModel，离开路由
+  时销毁 ViewModel、关闭数据库；Module 只保存注入的
+  `ssh_core.SshSessionManager` 引用，不拥有 App Scope SSH。
+- 终端原始输出历史服务已迁入 `feature_terminal` 的 `data` 层，保留加密分片、
+  写入队列、尾部读取、旧明文迁移和显式 `dispose`。App Shell 通过
+  `AppTerminalHistoryRepository` 与兼容 facade 暂时桥接旧 `StorageService`，
+  并由 SSH Owner 负责关闭输出历史资源，等待后续 Storage 收敛 Step 删除桥接。
+- App 组合根新增 `AppTerminalSshCapability`、Terminal Settings/Shortcut/
+  Connection/Logger Port 适配器；Terminal Feature 不创建 `SshService` 或
+  `SshSessionManagerImpl`。`AppRuntime` 仍只创建一个 SSH Owner，测试改为验证
+  包装器与同一底层 Service 的关系。
+- 按 Step 10 的文件尺寸要求检查了迁移后的终端代码。Session ViewModel、
+  `terminal_view_area`、历史页和键盘面板均包含共享的 xterm/Controller/Timer
+  生命周期；拆分会破坏私有状态边界，因此保留为内聚的 Route UI 单元。生成的
+  `terminal_database.g.dart` 不作为手写文件治理对象；没有机械创建 `part1` 文件。
+- `feature_terminal` Package analyze/test 通过（51 项），App analyze 通过，
+  从 `apps/ssh_mobile_full/` 包根执行的全 App 测试通过（959 项）。`flutter pub
+  get` 没有版本冲突；20 个可升级项仍受当前 Flutter/Workspace 约束限制，未
+  越界升级无关依赖。格式检查、`git diff --check` 和 Skill 同步检查在提交前
+  复核。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

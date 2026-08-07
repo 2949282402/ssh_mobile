@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
+import 'package:feature_terminal/feature_terminal.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:ssh_core/ssh_core.dart';
 
 import '../features/settings/viewmodels/settings_viewmodel.dart';
 import '../features/playbook/viewmodels/playbook_viewmodel.dart';
@@ -20,9 +22,6 @@ import 'package:ssh_mobile/features/home/views/home_screen.dart';
 import 'package:ssh_mobile/features/playbook/views/playbook_screen.dart';
 import 'package:ssh_mobile/features/sftp/views/sftp_screen.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
-import 'package:ssh_mobile/features/terminal/views/terminal_history_screen.dart';
-import 'package:ssh_mobile/features/terminal/views/terminal_screen.dart';
-import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
 import 'package:ssh_mobile/features/rag/views/rag_knowledge_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/views/mcp_console_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_console_viewmodel.dart';
@@ -37,6 +36,7 @@ import '../services/mcp/mcp_server_controller.dart';
 import 'package:app_ui/app_ui.dart';
 import 'app_runtime.dart';
 import 'connection_feature_adapters.dart';
+import 'terminal_feature_adapters.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 /// App Shell。它只消费由 [AppRuntime] 创建的 App Scope 实例。
@@ -53,6 +53,8 @@ class SshMobileApp extends StatefulWidget {
 class _SshMobileAppState extends State<SshMobileApp>
     with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  AppTerminalSettingsAdapter? _terminalSettingsAdapter;
+  AppTerminalShortcutAdapter? _terminalShortcutAdapter;
 
   static final Map<AppColorPalette, ThemeData> _lightThemes = {
     for (final palette in AppColorPalette.values)
@@ -149,6 +151,8 @@ class _SshMobileAppState extends State<SshMobileApp>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _terminalSettingsAdapter?.dispose();
+    _terminalShortcutAdapter?.dispose();
     final runtime = widget.runtime;
     if (runtime != null) {
       unawaited(runtime.dispose());
@@ -159,6 +163,16 @@ class _SshMobileAppState extends State<SshMobileApp>
   @override
   Widget build(BuildContext context) {
     final runtime = _runtime;
+    final terminalSettings = _terminalSettingsAdapter ??=
+        AppTerminalSettingsAdapter(runtime.appSettings);
+    final terminalShortcuts = _terminalShortcutAdapter ??=
+        AppTerminalShortcutAdapter(runtime.shortcutCommandService);
+    final terminalConnections = AppTerminalConnectionAdapter(
+      navigatorKey: _navigatorKey,
+      storageService: runtime.storageService,
+      sshService: runtime.sshService,
+    );
+    final terminalLogger = AppTerminalLoggerAdapter(runtime.appLogService);
     final connectionRepository = AppConnectionRepositoryAdapter(
       primary: runtime.connectionRepository,
       legacy: runtime.storageService,
@@ -183,6 +197,13 @@ class _SshMobileAppState extends State<SshMobileApp>
       providers: [
         // Runtime 已经拥有这些实例，.value 防止 Provider 误替它们释放。
         Provider<AppRuntime>.value(value: runtime),
+        Provider<SshSessionManager>.value(value: runtime.sshSessionManager),
+        ListenableProvider<TerminalSettingsPort>.value(value: terminalSettings),
+        ListenableProvider<TerminalShortcutPort>.value(
+          value: terminalShortcuts,
+        ),
+        Provider<TerminalConnectionPort>.value(value: terminalConnections),
+        Provider<TerminalLoggerPort>.value(value: terminalLogger),
         ChangeNotifierProvider.value(value: runtime.appLogService),
         ChangeNotifierProvider.value(value: runtime.storageService),
         ChangeNotifierProvider.value(value: runtime.appSettings),
@@ -315,14 +336,18 @@ class _SshMobileAppState extends State<SshMobileApp>
                         final config =
                             settings.arguments as Map<String, dynamic>;
                         return MaterialPageRoute(
-                          builder: (_) => TerminalScreen(
-                            connectionId: config['id'] as String,
-                            sessionId: config['sessionId'] as String,
+                          builder: (_) => AppTerminalModuleScope(
+                            child: TerminalScreen(
+                              connectionId: config['id'] as String,
+                              sessionId: config['sessionId'] as String,
+                            ),
                           ),
                         );
                       case '/history':
                         return MaterialPageRoute(
-                          builder: (_) => const TerminalHistoryScreen(),
+                          builder: (_) => const AppTerminalModuleScope(
+                            child: TerminalHistoryScreen(),
+                          ),
                         );
                       case '/terminal-windows':
                         final args = settings.arguments;
@@ -338,8 +363,11 @@ class _SshMobileAppState extends State<SshMobileApp>
                         }
 
                         return MaterialPageRoute(
-                          builder: (_) =>
-                              TerminalWindowsScreen(connectionId: connectionId),
+                          builder: (_) => AppTerminalModuleScope(
+                            child: TerminalWindowsScreen(
+                              connectionId: connectionId,
+                            ),
+                          ),
                         );
                       case '/sftp':
                         return MaterialPageRoute(

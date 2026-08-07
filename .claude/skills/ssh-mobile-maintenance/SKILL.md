@@ -54,6 +54,16 @@ Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target
 bindings. It must not depend on `StorageService` or Features. The current app
 keeps `SshService` as the same-instance compatibility surface until the Terminal
 Pilot migrates its method API.
+The Terminal Feature package is `packages/features/feature_terminal/`; it owns
+terminal UI, route-scoped ViewModels, terminal history metadata, and
+`terminal.db`. It consumes `ssh_core.SshSessionManager` and App-defined Ports;
+it must not construct or dispose App Scope SSH, Storage, or other Feature
+implementations. The old App terminal files are compatibility exports/bridges.
+The Terminal Feature package is `packages/features/feature_terminal/`; it owns
+terminal UI, route-scoped ViewModels, terminal history metadata, and
+`terminal.db`. It consumes `ssh_core.SshSessionManager` and App-defined Ports;
+it must not construct or dispose App Scope SSH, Storage, or other Feature
+implementations. The old App terminal files are compatibility exports/bridges.
 
 ## Architecture Boundaries
 
@@ -83,6 +93,14 @@ Pilot migrates its method API.
   own public Capability Ports. It must not import `apps/ssh_mobile_full/lib/` or
   another Feature's `/src/`; `ConnectionViewModel` is Route/Provider scoped and
   never disposes App Scope SSH/SFTP resources.
+- `feature_terminal` must keep `TerminalModule` as the owner of `terminal.db`
+  and its repository. Route scope owns Terminal ViewModels and their
+  subscriptions/controllers; disposing a route must not close the injected App
+  Scope SSH Manager. Package consumers use only `package:feature_terminal/`.
+- `feature_terminal` must keep `TerminalModule` as the owner of `terminal.db`
+  and its repository. Route scope owns Terminal ViewModels and their
+  subscriptions/controllers; disposing a route must not close the injected App
+  Scope SSH Manager. Package consumers use only `package:feature_terminal/`.
 - Do not add new application code to legacy `lib/screens/` or `lib/models/`.
 - Keep screens focused on composition and transient presentation state. Put
   validation, async orchestration, repositories, and reusable state in
@@ -139,6 +157,8 @@ Read only the rows relevant to the task.
 | LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `packages/infrastructure/ssh_mobile_network_native/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |
 | Network Transport facade and App Scope lifecycle | `packages/infrastructure/network_transport/`, `apps/ssh_mobile_full/lib/app/app_runtime.dart`, `apps/ssh_mobile_full/lib/app/app_runtime_factory.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
 | SSH Core sessions, Runtime adapters, Pool, Client, Host Key | `packages/infrastructure/ssh_core/`, `apps/ssh_mobile_full/lib/services/ssh_service.dart`, `apps/ssh_mobile_full/lib/app/app_runtime.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
+| Terminal Feature, terminal.db, route lifecycle | `packages/features/feature_terminal/`, `apps/ssh_mobile_full/lib/app/terminal_feature_adapters.dart`, `apps/ssh_mobile_full/lib/app/terminal_ssh_capability_adapter.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_terminal/README.md` |
+| Terminal Feature, terminal.db, route lifecycle | `packages/features/feature_terminal/`, `apps/ssh_mobile_full/lib/app/terminal_feature_adapters.dart`, `apps/ssh_mobile_full/lib/app/terminal_ssh_capability_adapter.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_terminal/README.md` |
 | Shared UI or responsiveness | `packages/core/app_ui/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/MOBILE_UI_QA.md` |
 | Build, release, packaging | Platform directory and `scripts/` | `docs/RELEASE_CHECKLIST.md`, `docs/VALIDATION_REPORT.md` |
 | Matching recurring regression | Nearest code and focused tests | `.agents/skills/ssh-mobile-maintenance/references/lessons.md` |

@@ -76,6 +76,13 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `package:app_ui/app_ui.dart`; it must not depend on Feature, SSH, network,
   database, or App Service code. The old app theme/responsive/migrated-widget
   paths remain compatibility exports during the staged migration.
+- `packages/features/feature_terminal/` owns the Terminal Pilot's route-scoped
+  ViewModels, terminal presentation, terminal metadata `terminal.db`, and its
+  repository. `TerminalModule` owns and closes that database; the App Scope
+  `SshSessionManager` is injected and never created or closed by the Feature.
+  App adapters temporarily bridge legacy settings, shortcuts, connection
+  dialogs, and history behavior, while old terminal paths remain compatibility
+  exports until later storage/SSH Steps.
 
 ### Logging contract
 

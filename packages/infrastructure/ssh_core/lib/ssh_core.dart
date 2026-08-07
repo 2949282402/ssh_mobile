@@ -18,3 +18,4 @@ export 'src/runtime/mobile_background_ssh_runtime.dart';
 export 'src/runtime/ssh_runtime_adapter.dart';
 export 'src/session/ssh_session_manager.dart';
 export 'src/session/ssh_session_manager_impl.dart';
+export 'src/terminal/ssh_terminal_capability.dart';

@@ -411,6 +411,11 @@ flowchart LR
   depends on `connection_core` and never owns the Connection database. The App
   composition root temporarily bridges the new Core repository to legacy
   `StorageService` consumers until the later SSH/SFTP migration Steps.
+- `packages/features/feature_terminal/`: the migrated Terminal Pilot, including
+  route-scoped ViewModels, terminal presentation, terminal-specific output
+  history, and the independent `terminal.db`. It consumes only public Core
+  contracts and injected Ports; old App terminal paths remain compatibility
+  exports while later storage/SSH migrations are pending.
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
   LAN-share, MCP, and platform-adapter infrastructure.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
@@ -418,7 +423,7 @@ flowchart LR
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
 - `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; `feature_connection` consumes the public repositories and injected capabilities.
 - `packages/infrastructure/network_transport/`: the App Scope `NetworkRuntime` facade, lazy Capability state machine, transport contracts, metrics snapshot, and explicit native handle adapter. `AppRuntime` creates the single instance; this Step does not add a second protocol implementation.
-- `packages/infrastructure/ssh_core/`: the App Scope SSH Session Manager, lease/pool lifecycle, Desktop/Mobile Runtime Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target bindings. The package does not depend on `StorageService`; `AppRuntime` owns one Manager instance and the old `SshService` remains as a same-instance compatibility surface until the Terminal Pilot.
+- `packages/infrastructure/ssh_core/`: the App Scope SSH Session Manager, lease/pool lifecycle, Desktop/Mobile Runtime Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target bindings. The package does not depend on `StorageService`; `AppRuntime` owns one Manager instance, and `feature_terminal` receives that Manager through injection while the old `SshService` remains a compatibility implementation.
 - `packages/infrastructure/ssh_mobile_network_native/`: native network package staged under the Infrastructure boundary.
 - `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,
   including host-key policy and data protection.
@@ -500,6 +505,15 @@ The runtime includes:
 The Servers page stores connection profiles, validates authentication details, and manages terminal windows. When a host key is first observed, the user must confirm its fingerprint. A later fingerprint change blocks the connection rather than silently trusting the new key.
 
 Linux servers are designed to work well with `SSH + tmux`. Windows servers use plain SSH unless the target is WSL or another Linux-like shell. Fixed terminal window names make reconnection and tmux session restoration deterministic.
+
+The Terminal Pilot is implemented in `packages/features/feature_terminal/`.
+Entering a terminal route creates a `TerminalModule` and its Route Scope
+ViewModels; the module owns terminal metadata in `terminal.db` and closes its
+Drift resources when the route scope is disposed. SSH is obtained through the
+injected `ssh_core.SshSessionManager`, never by constructing a second SSH
+service. The App Shell adapters temporarily bridge legacy settings, shortcuts,
+connection dialogs, and history records so existing behavior remains stable;
+the old App paths are compatibility exports rather than a second implementation.
 
 On Windows, the terminal includes a multiline command composer with paste, clear, local sent-command history, `Enter` to send, and `Shift+Enter` for a new line. The advanced Windows keyboard provides QWERTY, Shell-symbol, navigation, and F1-F12 layers plus compose/direct modes. Its modern rounded keycaps scale to the available width without horizontal scrolling, with staggered QWERTY rows and physical-keyboard-style modifier and space-bar proportions. Shift, Ctrl, and Alt support one-shot and locked states, including combinations such as `Shift+Tab`; users can choose which built-in keys appear in the quick bar, and that layout is persisted and included in app backups. Submitted drafts use the terminal's bracketed-paste mode when the remote shell supports it.
 

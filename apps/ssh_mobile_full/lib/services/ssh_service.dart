@@ -75,6 +75,14 @@ class SshService extends ChangeNotifier
   @override
   bool get initialized => _initialized;
 
+  /// 终端 Capability 由 App Composition Root 的适配器提供。
+  ///
+  /// 旧 Service 继续实现基础 Manager 合约，实际 Terminal 页面使用的
+  /// Capability 会在 App 层包装同一个 Service，避免把旧 App 模型泄漏到
+  /// Infrastructure 公共接口。
+  @override
+  ssh_core.SshTerminalCapability? get terminalCapability => null;
+
   @override
   Future<void> ensureInitialized() {
     if (_initialized) return Future.value();
@@ -858,7 +866,8 @@ class SshService extends ChangeNotifier
     _outputSub?.cancel();
     _keepAliveSub?.cancel();
     _appLogSub?.cancel();
-    unawaited(_historyService.flush());
+    // Terminal 输出历史的写队列由 SSH Owner 负责在关闭时排空并释放。
+    unawaited(_historyService.dispose());
     for (final runtime in _localRuntimes.values) {
       runtime.close();
     }

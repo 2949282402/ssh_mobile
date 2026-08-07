@@ -4,6 +4,7 @@ import 'package:connection_core/connection_core.dart';
 import 'package:drift/native.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/app/app_runtime_factory.dart';
+import 'package:ssh_mobile/app/terminal_ssh_capability_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -44,7 +45,14 @@ void main() {
       expect(runtime.hostKeyRepository, same(runtime.connectionRepository));
       expect(runtime.networkRuntime, isNotNull);
       expect(runtime.sshService, isNotNull);
-      expect(runtime.sshSessionManager, same(runtime.sshService));
+      expect(runtime.sshSessionManager, isA<AppTerminalSshSessionManager>());
+      final terminalManager =
+          runtime.sshSessionManager as AppTerminalSshSessionManager;
+      expect(terminalManager.service, same(runtime.sshService));
+      expect(
+        runtime.sshSessionManager.terminalCapability,
+        same(terminalManager.terminal),
+      );
       expect(runtime.lanReceiverCoordinator, isNotNull);
 
       final firstDispose = runtime.dispose();
