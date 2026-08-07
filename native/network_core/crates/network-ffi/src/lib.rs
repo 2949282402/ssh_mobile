@@ -204,3 +204,55 @@ pub unsafe extern "C" fn ssh_net_runtime_destroy(handle: SshNetRuntimeHandle) ->
 
     result.unwrap_or(-99)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use network_protocol::NetworkCommand;
+    use prost::Message;
+    use std::ptr;
+
+    /// 验证 v1 FFI 对空句柄和空 buffer 的确定性拒绝。
+    #[test]
+    fn rejects_invalid_buffers_without_panicking() {
+        assert_eq!(unsafe { ssh_net_runtime_create(ptr::null_mut()) }, -1);
+        assert_eq!(unsafe { ssh_net_runtime_start(ptr::null_mut()) }, -1);
+        assert_eq!(unsafe { ssh_net_runtime_stop(ptr::null_mut()) }, -1);
+        assert_eq!(
+            unsafe { ssh_net_runtime_command(ptr::null_mut(), ptr::null(), 0) },
+            -1
+        );
+        assert_eq!(
+            unsafe { ssh_net_runtime_poll_event(ptr::null_mut(), 1, ptr::null_mut()) },
+            -1
+        );
+        unsafe {
+            ssh_net_buffer_free(SshNetBuffer {
+                ptr: ptr::null_mut(),
+                len: 0,
+            });
+        }
+    }
+
+    /// 验证 v1 运行时的创建、启动、重复停止、停止后命令和销毁顺序。
+    #[test]
+    fn enforces_runtime_lifecycle_order() {
+        let mut handle = ptr::null_mut();
+        assert_eq!(unsafe { ssh_net_runtime_create(&mut handle) }, 0);
+        assert!(!handle.is_null());
+        assert_eq!(unsafe { ssh_net_runtime_start(handle) }, 0);
+        assert_eq!(unsafe { ssh_net_runtime_stop(handle) }, 0);
+        assert_eq!(unsafe { ssh_net_runtime_stop(handle) }, 0);
+        let command = NetworkCommand {
+            command_id: "stopped-command".to_string(),
+            protocol_version: network_protocol::NETWORK_PROTOCOL_VERSION,
+            payload: None,
+        }
+        .encode_to_vec();
+        assert_eq!(
+            unsafe { ssh_net_runtime_command(handle, command.as_ptr(), command.len()) },
+            -4
+        );
+        assert_eq!(unsafe { ssh_net_runtime_destroy(handle) }, 0);
+    }
+}
