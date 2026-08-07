@@ -80,18 +80,18 @@ class LanReceiverCoordinator extends ChangeNotifier {
   NetworkService? get networkService => _networkService;
 
   /// 接收器初始化后发布原生传入传输申请。
-  Stream<IncomingTransferOfferEvent> get nativeIncomingTransferOffers async* {
+  Stream<IncomingTransferOffer> get nativeIncomingTransferOffers async* {
     await ensureInitialized();
     final network = _networkService;
     if (network == null) return;
     yield* network.events
-        .where((event) => event is IncomingTransferOfferEvent)
-        .cast<IncomingTransferOfferEvent>();
+        .where((event) => event is IncomingTransferOffer)
+        .cast<IncomingTransferOffer>();
   }
 
   /// 校验设备配对后接受一个原生传入传输。
   Future<NetworkResult<void>> acceptNativeIncomingTransfer(
-    IncomingTransferOfferEvent offer,
+    IncomingTransferOffer offer,
   ) async {
     await ensureInitialized();
     await ensureViewModel();
@@ -140,7 +140,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
 
   /// 拒绝一个原生传入传输申请。
   Future<NetworkResult<void>> rejectNativeIncomingTransfer(
-    IncomingTransferOfferEvent offer,
+    IncomingTransferOffer offer,
   ) async {
     await ensureInitialized();
     final network = _networkService;

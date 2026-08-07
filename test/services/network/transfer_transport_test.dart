@@ -199,25 +199,25 @@ void main() {
   });
 }
 
-Future<PeerStateChangedEvent> _firstPeerEvent(
+Future<PeerStateChanged> _firstPeerEvent(
   NetworkService service,
-  bool Function(PeerStateChangedEvent event) predicate,
+  bool Function(PeerStateChanged event) predicate,
 ) => service.events
-    .where((event) => event is PeerStateChangedEvent)
-    .cast<PeerStateChangedEvent>()
+    .where((event) => event is PeerStateChanged)
+    .cast<PeerStateChanged>()
     .firstWhere(predicate);
 
-Future<IncomingTransferOfferEvent> _firstOffer(NetworkService service) =>
-    service.events
-        .where((event) => event is IncomingTransferOfferEvent)
-        .cast<IncomingTransferOfferEvent>()
-        .first;
+Future<IncomingTransferOffer> _firstOffer(NetworkService service) => service
+    .events
+    .where((event) => event is IncomingTransferOffer)
+    .cast<IncomingTransferOffer>()
+    .first;
 
-Future<TransferCompletedEvent> _firstCompleted(NetworkService service) =>
-    service.events
-        .where((event) => event is TransferCompletedEvent)
-        .cast<TransferCompletedEvent>()
-        .first;
+Future<TransferCompleted> _firstCompleted(NetworkService service) => service
+    .events
+    .where((event) => event is TransferCompleted)
+    .cast<TransferCompleted>()
+    .first;
 
 Future<int> _availableUdpPort() async {
   final socket = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);

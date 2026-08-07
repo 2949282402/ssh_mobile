@@ -321,7 +321,7 @@ final class NativeNetworkService implements NetworkService {
       }
       final event = frame.event;
       if (event == null || _eventController.isClosed) return;
-      if (event case PeerStateChangedEvent(
+      if (event case PeerStateChanged(
         :final peerId,
         :final state,
         :final routeType,
@@ -334,17 +334,17 @@ final class NativeNetworkService implements NetworkService {
           _peerRoutes.remove(peerId);
           _routes.remove(peerId);
         }
-      } else if (event case RouteChangedEvent(:final snapshot)) {
+      } else if (event case RouteChanged(:final snapshot)) {
         _peerRoutes[snapshot.peerId] = snapshot.routeType;
         _routes[snapshot.peerId] = snapshot;
-      } else if (event case IncomingTransferOfferEvent(
+      } else if (event case IncomingTransferOffer(
         :final transferId,
         :final peerId,
       )) {
         _transferPeers[transferId] = peerId;
       } else if (event
-          case TransferCompletedEvent(:final transferId) ||
-              TransferFailedEvent(:final transferId)) {
+          case TransferCompleted(:final transferId) ||
+              TransferFailed(:final transferId)) {
         _transferPeers.remove(transferId);
       }
       _eventController.add(event);

@@ -322,9 +322,9 @@ sealed class NetworkEvent {
 }
 
 /// 报告对端连接状态的类型化变化。
-final class PeerStateChangedEvent extends NetworkEvent {
+final class PeerStateChanged extends NetworkEvent {
   /// 创建对端状态事件。
-  const PeerStateChangedEvent({
+  const PeerStateChanged({
     required super.eventId,
     required super.timestamp,
     required this.peerId,
@@ -340,9 +340,9 @@ final class PeerStateChangedEvent extends NetworkEvent {
 }
 
 /// 报告已接受传输任务的进度。
-final class TransferProgressEvent extends NetworkEvent {
+final class TransferProgress extends NetworkEvent {
   /// 创建传输进度事件。
-  const TransferProgressEvent({
+  const TransferProgress({
     required super.eventId,
     required super.timestamp,
     required this.transferId,
@@ -356,9 +356,9 @@ final class TransferProgressEvent extends NetworkEvent {
 }
 
 /// 报告传输成功完成。
-final class TransferCompletedEvent extends NetworkEvent {
+final class TransferCompleted extends NetworkEvent {
   /// 创建传输完成事件。
-  const TransferCompletedEvent({
+  const TransferCompleted({
     required super.eventId,
     required super.timestamp,
     required this.transferId,
@@ -370,9 +370,9 @@ final class TransferCompletedEvent extends NetworkEvent {
 }
 
 /// 报告传输终态失败。
-final class TransferFailedEvent extends NetworkEvent {
+final class TransferFailed extends NetworkEvent {
   /// 创建传输失败事件。
-  const TransferFailedEvent({
+  const TransferFailed({
     required super.eventId,
     required super.timestamp,
     required this.transferId,
@@ -384,9 +384,9 @@ final class TransferFailedEvent extends NetworkEvent {
 }
 
 /// 请求 Flutter 审批或拒绝传入传输。
-final class IncomingTransferOfferEvent extends NetworkEvent {
+final class IncomingTransferOffer extends NetworkEvent {
   /// 创建传入传输申请事件。
-  const IncomingTransferOfferEvent({
+  const IncomingTransferOffer({
     required super.eventId,
     required super.timestamp,
     required this.transferId,
@@ -402,9 +402,9 @@ final class IncomingTransferOfferEvent extends NetworkEvent {
 }
 
 /// 报告对端的路由选择或路由丢失。
-final class RouteChangedEvent extends NetworkEvent {
+final class RouteChanged extends NetworkEvent {
   /// 创建路由变化事件。
-  const RouteChangedEvent({
+  const RouteChanged({
     required super.eventId,
     required super.timestamp,
     required this.snapshot,
@@ -414,9 +414,9 @@ final class RouteChangedEvent extends NetworkEvent {
 }
 
 /// 报告类型化的 Relay 生命周期变化。
-final class RelayStateChangedEvent extends NetworkEvent {
+final class RelayStateChanged extends NetworkEvent {
   /// 创建 Relay 状态事件。
-  const RelayStateChangedEvent({
+  const RelayStateChanged({
     required super.eventId,
     required super.timestamp,
     required this.state,

@@ -239,7 +239,7 @@ final class NetworkProtocolCodec {
       DateTime.fromMillisecondsSinceEpoch(timestampMs);
 
   /// 解码类型化对端状态事件载荷。
-  PeerStateChangedEvent _decodePeerState(
+  PeerStateChanged _decodePeerState(
     String eventId,
     int timestampMs,
     Uint8List bytes,
@@ -264,7 +264,7 @@ final class NetworkProtocolCodec {
           reader.skip(field.wireType);
       }
     }
-    return PeerStateChangedEvent(
+    return PeerStateChanged(
       eventId: eventId,
       timestamp: _timestamp(timestampMs),
       peerId: peerId,
@@ -275,7 +275,7 @@ final class NetworkProtocolCodec {
   }
 
   /// 解码传输进度事件载荷。
-  TransferProgressEvent _decodeProgress(
+  TransferProgress _decodeProgress(
     String eventId,
     int timestampMs,
     Uint8List bytes,
@@ -297,7 +297,7 @@ final class NetworkProtocolCodec {
           reader.skip(field.wireType);
       }
     }
-    return TransferProgressEvent(
+    return TransferProgress(
       eventId: eventId,
       timestamp: _timestamp(timestampMs),
       transferId: transferId,
@@ -329,7 +329,7 @@ final class NetworkProtocolCodec {
   }
 
   /// 解码传入传输申请载荷。
-  IncomingTransferOfferEvent _decodeOffer(
+  IncomingTransferOffer _decodeOffer(
     String eventId,
     int timestampMs,
     Uint8List bytes,
@@ -354,7 +354,7 @@ final class NetworkProtocolCodec {
           reader.skip(field.wireType);
       }
     }
-    return IncomingTransferOfferEvent(
+    return IncomingTransferOffer(
       eventId: eventId,
       timestamp: _timestamp(timestampMs),
       transferId: transferId,
@@ -365,7 +365,7 @@ final class NetworkProtocolCodec {
   }
 
   /// 解码传输完成载荷。
-  TransferCompletedEvent _decodeCompleted(
+  TransferCompleted _decodeCompleted(
     String eventId,
     int timestampMs,
     Uint8List bytes,
@@ -384,7 +384,7 @@ final class NetworkProtocolCodec {
           reader.skip(field.wireType);
       }
     }
-    return TransferCompletedEvent(
+    return TransferCompleted(
       eventId: eventId,
       timestamp: _timestamp(timestampMs),
       transferId: transferId,
@@ -393,7 +393,7 @@ final class NetworkProtocolCodec {
   }
 
   /// 解码传输失败载荷。
-  TransferFailedEvent _decodeFailed(
+  TransferFailed _decodeFailed(
     String eventId,
     int timestampMs,
     Uint8List bytes,
@@ -412,7 +412,7 @@ final class NetworkProtocolCodec {
           reader.skip(field.wireType);
       }
     }
-    return TransferFailedEvent(
+    return TransferFailed(
       eventId: eventId,
       timestamp: _timestamp(timestampMs),
       transferId: transferId,
@@ -426,7 +426,7 @@ final class NetworkProtocolCodec {
   }
 
   /// 解码路由变化载荷。
-  RouteChangedEvent _decodeRouteChanged(
+  RouteChanged _decodeRouteChanged(
     String eventId,
     int timestampMs,
     Uint8List bytes,
@@ -454,7 +454,7 @@ final class NetworkProtocolCodec {
           reader.skip(field.wireType);
       }
     }
-    return RouteChangedEvent(
+    return RouteChanged(
       eventId: eventId,
       timestamp: _timestamp(timestampMs),
       snapshot: RouteSnapshot(
@@ -468,7 +468,7 @@ final class NetworkProtocolCodec {
   }
 
   /// 解码 Relay 状态载荷。
-  RelayStateChangedEvent _decodeRelayStateChanged(
+  RelayStateChanged _decodeRelayStateChanged(
     String eventId,
     int timestampMs,
     Uint8List bytes,
@@ -487,7 +487,7 @@ final class NetworkProtocolCodec {
           reader.skip(field.wireType);
       }
     }
-    return RelayStateChangedEvent(
+    return RelayStateChanged(
       eventId: eventId,
       timestamp: _timestamp(timestampMs),
       state: RelayConnectionState.fromWire(state),

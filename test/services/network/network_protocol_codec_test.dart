@@ -68,8 +68,8 @@ void main() {
       ]),
     );
     final event = frame.event;
-    expect(event, isA<TransferFailedEvent>());
-    final failure = event! as TransferFailedEvent;
+    expect(event, isA<TransferFailed>());
+    final failure = event! as TransferFailed;
     expect(failure.transferId, 't');
     expect(failure.error.code, NetworkErrorCode.noRoute);
     expect(failure.error.operation, NetworkOperation.send);

@@ -8,7 +8,7 @@ extension LanShareViewModelNetworkEvents on LanShareViewModel {
   /// 将类型化原生传输事件应用到持久化 LAN 历史记录。
   void _handleNetworkEvent(NetworkEvent event) {
     switch (event) {
-      case TransferProgressEvent(
+      case TransferProgress(
         :final transferId,
         :final bytesTransferred,
         :final totalBytes,
@@ -24,7 +24,7 @@ extension LanShareViewModelNetworkEvents on LanShareViewModel {
             ),
           ),
         );
-      case TransferCompletedEvent(:final transferId, :final localPath):
+      case TransferCompleted(:final transferId, :final localPath):
         unawaited(
           _enqueueMessagePersistence(
             transferId,
@@ -35,7 +35,7 @@ extension LanShareViewModelNetworkEvents on LanShareViewModel {
             ),
           ),
         );
-      case TransferFailedEvent(:final transferId, :final error):
+      case TransferFailed(:final transferId, :final error):
         unawaited(
           _enqueueMessagePersistence(
             transferId,

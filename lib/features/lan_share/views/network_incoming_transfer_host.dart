@@ -27,7 +27,7 @@ class NetworkIncomingTransferHost extends StatefulWidget {
 class _NetworkIncomingTransferHostState
     extends State<NetworkIncomingTransferHost> {
   final List<_IncomingApproval> _pending = [];
-  StreamSubscription<IncomingTransferOfferEvent>? _nativeSubscription;
+  StreamSubscription<IncomingTransferOffer>? _nativeSubscription;
   LanReceiverCoordinator? _coordinator;
   bool _showingDialog = false;
 
