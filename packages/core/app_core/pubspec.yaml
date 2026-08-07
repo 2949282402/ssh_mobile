@@ -1,0 +1,12 @@
+name: app_core
+description: Shared application lifecycle, module, logging, and capability contracts.
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lints: ^6.0.0

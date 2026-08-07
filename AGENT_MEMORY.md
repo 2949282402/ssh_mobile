@@ -332,9 +332,16 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `packages/infrastructure/ssh_mobile_network_native/`. Root
   `packages/core/`, `packages/infrastructure/`, and `packages/features/` are
   staged package boundaries, while root `pubspec.yaml` and `melos.yaml` own
-  workspace configuration. Do not start feature-package migration before its
-  Plan Step; preserve the existing runtime behavior and public contracts while
-  moving directories.
+  workspace configuration. The first Core package is
+  `packages/core/app_core/`; its production library is pure Dart and exposes
+  only lifecycle, Module, logging, and Capability contracts. Root Melos is
+  pinned to the latest stable version selected during the migration. Because
+  the current Flutter SDK pins `flutter_test` to `test_api 0.7.11` while the
+  latest compatible `package:test` versions conflict with the workspace's
+  analyzer constraints, Core tests use `flutter_test` only as a dev dependency;
+  do not add Flutter imports to `app_core/lib`. Do not start feature-package
+  migration before its Plan Step; preserve the existing runtime behavior and
+  public contracts while moving directories.
 - 2026-07-23: The current architecture is pure feature-first MVVM. New UI and
   feature state belong under `apps/ssh_mobile_full/lib/features/<feature>/`
   (models, services, viewmodels, views, and feature-local widgets); shared UI

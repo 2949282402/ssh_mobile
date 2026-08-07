@@ -55,6 +55,32 @@
 
 ---
 
+## Step 02 执行记录（2026-08-07）
+
+- 已创建 `packages/core/app_core/`，生产代码仅依赖 Dart SDK；公共入口导出
+  lifecycle、Module、logging 和 Capability 合约。
+- 已创建 `Disposable`、`Activatable`、`DisposableBag`、`AppModule`、
+  `ModuleContext`、`ModuleDescriptor`、`ModuleRegistry`、`ModuleState`、
+  `AppLogger`、`LogLevel`、`LogRecord` 和 `CapabilityRegistry`。Registry 只持有
+  Descriptor，不缓存运行时 Module；CapabilityRegistry 不接管 Capability 的
+  资源释放责任。
+- 已补充 `app_core` 的 README、AGENTS 和 7 个合约测试，并同步根 AGENTS、
+  README、维护 Skill、Agent memory 和本执行记录。
+- 依赖处理：按官方稳定版本将根 Melos 开发依赖设置为 `^8.2.2`，用于实际执行
+  workspace scope 验证。当前 Flutter SDK 将 `flutter_test` 固定到
+  `test_api 0.7.11`，而最新 `package:test` 稳定版本与 workspace 的
+  `drift_dev` analyzer 约束不能同时满足；因此只在测试侧使用 Flutter SDK 的
+  `flutter_test`，`app_core/lib` 仍保持纯 Dart，不引入旧版本或不兼容 override。
+- `dart pub get`：通过；workspace 解析包含 Melos 8.2.2。
+- `dart run melos exec --scope=app_core -- dart analyze .`：通过（使用仓库内置
+  Dart SDK 可执行文件，绕过本机 WindowsApps `dart` wrapper）。
+- `dart run melos exec --scope=app_core -- flutter test --no-pub`：通过，7 个测试
+  全部通过；定向 format check：通过，17 个文件无变更。
+- 本 Step 只建立 Core Contract 和包级工具接线，未迁移 AppLogService、AppRuntime、
+  Feature、SSH、网络、数据库或 UI 行为。
+
+---
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

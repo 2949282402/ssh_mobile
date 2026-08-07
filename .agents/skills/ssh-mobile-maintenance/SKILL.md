@@ -27,7 +27,9 @@ During the modular migration, the full Flutter application is rooted at
 `apps/ssh_mobile_full/`. Unless a path below is explicitly repository-level or
 package-level, a leading `lib/`, `test/`, or `tool/` path is relative to that
 app. The Dart native package is rooted at
-`packages/infrastructure/ssh_mobile_network_native/`.
+`packages/infrastructure/ssh_mobile_network_native/`. The first Core contract
+package is `packages/core/app_core/`; its production library is pure Dart and
+must not depend on Flutter UI, SSH, Drift, Infrastructure, or Feature code.
 
 ## Architecture Boundaries
 
@@ -37,6 +39,9 @@ app. The Dart native package is rooted at
   keep cross-feature protocol, security, and persistence infrastructure in
   `apps/ssh_mobile_full/lib/services/`, `apps/ssh_mobile_full/lib/core/services/`,
   and `apps/ssh_mobile_full/lib/data/`.
+- Keep Core contracts under `packages/core/`. `app_core` owns only lifecycle,
+  Module, logging, and Capability contracts; it must not create global service
+  instances or retain heavy runtime objects.
 - Do not add new application code to legacy `lib/screens/` or `lib/models/`.
 - Keep screens focused on composition and transient presentation state. Put
   validation, async orchestration, repositories, and reusable state in
@@ -76,6 +81,7 @@ Read only the rows relevant to the task.
 | Task | Start with | Additional reference |
 | --- | --- | --- |
 | Architecture, MVVM, storage | Owning `lib/features/` code, `lib/data/`, `lib/services/storage_service.dart` | `docs/ADR_ENGINEERING_BASELINE.md` |
+| Core contracts and Module lifecycle | `packages/core/app_core/lib/`, `packages/core/app_core/test/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
 | Startup or service lifetime | `lib/features/startup/`, `apps/ssh_mobile_full/lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
 | SSH, terminal, host keys | `lib/features/connection/`, `lib/features/terminal/`, SSH services | `docs/security_manual_regression.md` |
 | SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |

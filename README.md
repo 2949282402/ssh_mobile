@@ -407,6 +407,8 @@ flowchart LR
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
   LAN-share, MCP, and platform-adapter infrastructure.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
+- `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency.
+- `packages/infrastructure/ssh_mobile_network_native/`: native network package staged under the Infrastructure boundary.
 - `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,
   including host-key policy and data protection.
 - `apps/ssh_mobile_full/lib/theme/`, `apps/ssh_mobile_full/lib/widgets/`, `apps/ssh_mobile_full/lib/utils/`: design system, reusable widgets, and utilities.
@@ -415,6 +417,7 @@ flowchart LR
 - `apps/ssh_mobile_full/lib/screens/`: legacy compatibility surface; do not add new application UI
   here.
 - `apps/ssh_mobile_full/test/`: unit and widget tests.
+- `packages/core/app_core/test/`: Core contract tests; run them with `flutter test` from that package or the Melos scope command.
 - `docs/`: architecture, security, performance, validation, and release documentation.
 - `scripts/`: repository-level build, packaging, and synchronization scripts.
 - `apps/ssh_mobile_full/tool/`: app-specific generation and quality-check scripts.
