@@ -4,13 +4,15 @@
 //! 线协议事件可以独立审查。
 
 mod commands;
+mod errors;
 mod events;
 mod peer;
 mod relay;
 mod runtime;
 mod transfer;
 
-pub use runtime::{NetworkError, NetworkRuntime};
+pub use errors::NetworkError;
+pub use runtime::NetworkRuntime;
 
 #[cfg(test)]
 mod tests;

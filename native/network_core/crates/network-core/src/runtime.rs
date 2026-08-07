@@ -14,6 +14,7 @@ use tokio::sync::{
 use tracing::info;
 
 use crate::commands::run_command_worker;
+use crate::errors::NetworkError;
 use network_identity::DeviceIdentity;
 use network_nat::PathManager;
 use network_relay::RelayClient;
@@ -32,18 +33,6 @@ pub(crate) const RUNTIME_CREATED: u8 = 0;
 pub(crate) const RUNTIME_RUNNING: u8 = 1;
 pub(crate) const RUNTIME_STOPPING: u8 = 2;
 pub(crate) const RUNTIME_STOPPED: u8 = 3;
-
-#[derive(Debug, thiserror::Error)]
-pub enum NetworkError {
-    #[error("Failed to initialize async runtime: {0}")]
-    RuntimeInitFailed(String),
-    #[error("Invalid runtime handle")]
-    InvalidHandle,
-    #[error("Command queue error: {0}")]
-    CommandQueueFailed(String),
-    #[error("Network runtime is not running")]
-    RuntimeNotRunning,
-}
 
 #[derive(Clone)]
 pub(crate) struct PeerConfig {
