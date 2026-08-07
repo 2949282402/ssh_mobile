@@ -289,7 +289,7 @@ class LanDiscoveryService {
   /// 执行平台 mDNS/UDP 广播清理。
   @protected
   Future<void> performStopAdvertising() async {
-    await sendUdpDisconnect();
+    await _sendUdpDisconnect();
     if (_registration != null) {
       try {
         await nsd.unregister(_registration!);
@@ -658,7 +658,7 @@ class LanDiscoveryService {
   }
 
   /// 向已发现对端广播 v1 离线通知。
-  Future<void> sendUdpDisconnect() async {
+  Future<void> _sendUdpDisconnect() async {
     if (_udpSocket == null) return;
     try {
       final payload = jsonEncode({

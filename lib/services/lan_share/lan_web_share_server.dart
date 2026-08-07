@@ -213,7 +213,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
       await _writeWebShareJson(request.response, error.statusCode, {
         'code': lanHttpErrorCode(error.statusCode).wireValue,
         'message': error.message,
-        'operation': _webOperationForPath(path),
+        'operation': _webOperationForPath(path).wireName,
       });
     } catch (error) {
       debugPrint('[LanDiscoveryService] Web Share request failed: $error');
@@ -224,7 +224,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
           {
             'code': NetworkErrorCode.ioError.wireValue,
             'message': 'WebShare request failed.',
-            'operation': _webOperationForPath(path),
+            'operation': _webOperationForPath(path).wireName,
           },
         );
       } catch (_) {}
@@ -232,11 +232,11 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
   }
 
   /// 将 WebShare 端点路径映射为稳定操作名称。
-  String _webOperationForPath(String path) {
+  NetworkOperation _webOperationForPath(String path) {
     return switch (path) {
-      '/api/web/meta' => 'webshare_send_meta',
-      '/api/web/upload' => 'webshare_send_file',
-      _ => 'webshare_request',
+      '/api/web/meta' => NetworkOperation.webShareSendMeta,
+      '/api/web/upload' => NetworkOperation.webShareSendFile,
+      _ => NetworkOperation.webShareRequest,
     };
   }
 

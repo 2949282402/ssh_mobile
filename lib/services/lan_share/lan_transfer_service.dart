@@ -238,7 +238,7 @@ class LanTransferService {
           jsonEncode({
             'code': _httpErrorCode(error.statusCode).wireValue,
             'message': error.message,
-            'operation': _operationForPath(path),
+            'operation': _operationForPath(path).wireName,
             if (request.headers.value('x-device-id') case final peerId?
                 when peerId.isNotEmpty)
               'peer_id': peerId,
@@ -257,7 +257,7 @@ class LanTransferService {
           jsonEncode({
             'code': NetworkErrorCode.ioError.wireValue,
             'message': 'LAN request failed.',
-            'operation': _operationForPath(path),
+            'operation': _operationForPath(path).wireName,
             if (request.headers.value('x-device-id') case final peerId?
                 when peerId.isNotEmpty)
               'peer_id': peerId,
@@ -290,18 +290,18 @@ class LanTransferService {
   }
 
   /// 返回 HTTP 端点路径对应的稳定操作名称。
-  String _operationForPath(String path) {
+  NetworkOperation _operationForPath(String path) {
     return switch (path) {
-      '/api/lan/handshake' => 'send_handshake',
-      '/api/lan/ws' => 'connect_websocket',
-      '/api/lan/check_pair' => 'check_pair',
-      '/api/lan/announce' => 'send_announcement',
-      '/api/lan/pairing_invite' => 'send_pairing_invite',
-      '/api/lan/capabilities' => 'read_capabilities',
-      '/api/lan/meta' => 'send_meta',
-      '/api/lan/upload' => 'send_file',
-      '/api/lan/recall' => 'send_recall',
-      _ => 'lan_request',
+      '/api/lan/handshake' => NetworkOperation.sendHandshake,
+      '/api/lan/ws' => NetworkOperation.connectWebSocket,
+      '/api/lan/check_pair' => NetworkOperation.checkPair,
+      '/api/lan/announce' => NetworkOperation.sendAnnouncement,
+      '/api/lan/pairing_invite' => NetworkOperation.sendPairingInvite,
+      '/api/lan/capabilities' => NetworkOperation.readCapabilities,
+      '/api/lan/meta' => NetworkOperation.sendMeta,
+      '/api/lan/upload' => NetworkOperation.sendFile,
+      '/api/lan/recall' => NetworkOperation.sendRecall,
+      _ => NetworkOperation.lanRequest,
     };
   }
 
