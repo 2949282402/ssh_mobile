@@ -223,14 +223,14 @@ NetworkError _networkError(Object error) {
     return const NetworkError(
       code: NetworkErrorCode.timeout,
       message: 'Relay enrollment timed out.',
-      operation: 'enroll_relay',
+      operation: NetworkOperation.enrollRelay,
     );
   }
   if (error is ArgumentError) {
     return const NetworkError(
       code: NetworkErrorCode.invalidArgument,
       message: 'Relay enrollment arguments are invalid.',
-      operation: 'enroll_relay',
+      operation: NetworkOperation.enrollRelay,
     );
   }
   if (error is _RelayEnrollmentHttpException &&
@@ -238,13 +238,13 @@ NetworkError _networkError(Object error) {
     return const NetworkError(
       code: NetworkErrorCode.authenticationFailed,
       message: 'Relay enrollment authentication failed.',
-      operation: 'enroll_relay',
+      operation: NetworkOperation.enrollRelay,
     );
   }
   return const NetworkError(
     code: NetworkErrorCode.relayError,
     message: 'Relay enrollment failed.',
-    operation: 'enroll_relay',
+    operation: NetworkOperation.enrollRelay,
   );
 }
 
@@ -253,7 +253,11 @@ NetworkFailure<void> _failure({
   required NetworkErrorCode code,
   required String message,
 }) => NetworkFailure<void>(
-  NetworkError(code: code, message: message, operation: 'enroll_relay'),
+  NetworkError(
+    code: code,
+    message: message,
+    operation: NetworkOperation.enrollRelay,
+  ),
 );
 
 /// 记录 enrollment HTTP 状态，供错误策略转换为稳定错误码。

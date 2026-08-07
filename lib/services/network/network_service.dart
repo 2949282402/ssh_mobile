@@ -42,14 +42,14 @@ final class NativeNetworkService implements NetworkService {
   @override
   Future<NetworkResult<void>> start(NetworkRuntimeConfig config) async {
     _ensureUsable();
-    if (_stopped) return _cancelled('start');
+    if (_stopped) return _cancelled(NetworkOperation.start);
     if (_configured) return const NetworkSuccess<void>(null);
     final result = await _submit(
       _codec.configureRuntimeCommand(
         commandId: const Uuid().v4(),
         config: config,
       ),
-      operation: 'start',
+      operation: NetworkOperation.start,
       timeout: const Duration(seconds: 15),
     );
     if (result is NetworkSuccess<void>) _configured = true;
@@ -63,12 +63,16 @@ final class NativeNetworkService implements NetworkService {
     if (_stopped) return const NetworkSuccess<void>(null);
     _stopped = true;
     for (final pending in _pendingCommands.values) {
-      if (!pending.isCompleted) pending.complete(_cancelled('stop'));
+      if (!pending.isCompleted) {
+        pending.complete(_cancelled(NetworkOperation.stop));
+      }
     }
     _pendingCommands.clear();
     final status = await _runtime.stop();
     if (status != 0) {
-      return _failure(_nativeStatusError(status, operation: 'stop'));
+      return _failure(
+        _nativeStatusError(status, operation: NetworkOperation.stop),
+      );
     }
     await _nativeSubscription.cancel();
     if (!_eventController.isClosed) await _eventController.close();
@@ -80,7 +84,7 @@ final class NativeNetworkService implements NetworkService {
   Future<NetworkResult<void>> upsertPeer(PeerConfig peer) {
     return _submit(
       _codec.upsertPeerCommand(commandId: const Uuid().v4(), peer: peer),
-      operation: 'upsert_peer',
+      operation: NetworkOperation.upsertPeer,
     );
   }
 
@@ -93,14 +97,14 @@ final class NativeNetworkService implements NetworkService {
           const NetworkError(
             code: NetworkErrorCode.invalidArgument,
             message: 'peer_id is required',
-            operation: 'connect',
+            operation: NetworkOperation.connect,
           ),
         ),
       );
     }
     return _submit(
       _codec.connectPeerCommand(commandId: const Uuid().v4(), peerId: peerId),
-      operation: 'connect',
+      operation: NetworkOperation.connect,
       timeout: const Duration(seconds: 12),
     );
   }
@@ -114,7 +118,7 @@ final class NativeNetworkService implements NetworkService {
           const NetworkError(
             code: NetworkErrorCode.invalidArgument,
             message: 'peer_id is required',
-            operation: 'disconnect',
+            operation: NetworkOperation.disconnect,
           ),
         ),
       );
@@ -124,7 +128,7 @@ final class NativeNetworkService implements NetworkService {
         commandId: const Uuid().v4(),
         peerId: peerId,
       ),
-      operation: 'disconnect',
+      operation: NetworkOperation.disconnect,
     );
   }
 
@@ -136,7 +140,7 @@ final class NativeNetworkService implements NetworkService {
         commandId: const Uuid().v4(),
         config: config,
       ),
-      operation: 'configure_relay',
+      operation: NetworkOperation.configureRelay,
       timeout: const Duration(seconds: 15),
     );
   }
@@ -146,7 +150,7 @@ final class NativeNetworkService implements NetworkService {
   Future<NetworkResult<void>> disconnectRelay() {
     return _submit(
       _codec.disconnectRelayCommand(commandId: const Uuid().v4()),
-      operation: 'disconnect_relay',
+      operation: NetworkOperation.disconnectRelay,
     );
   }
 
@@ -163,7 +167,7 @@ final class NativeNetworkService implements NetworkService {
         const NetworkError(
           code: NetworkErrorCode.invalidArgument,
           message: 'transfer_id and peer_id are required',
-          operation: 'send',
+          operation: NetworkOperation.send,
         ),
       );
     }
@@ -173,7 +177,7 @@ final class NativeNetworkService implements NetworkService {
         const NetworkError(
           code: NetworkErrorCode.ioError,
           message: 'source file is unavailable',
-          operation: 'send',
+          operation: NetworkOperation.send,
         ),
       );
     }
@@ -186,7 +190,7 @@ final class NativeNetworkService implements NetworkService {
         peerId: peerId,
         filePath: absolutePath,
       ),
-      operation: 'send',
+      operation: NetworkOperation.send,
     );
     if (result is NetworkFailure<void>) _transferPeers.remove(transferId);
     if (result is NetworkFailure<void>) return _failure(result.error);
@@ -209,7 +213,7 @@ final class NativeNetworkService implements NetworkService {
           const NetworkError(
             code: NetworkErrorCode.invalidArgument,
             message: 'transfer_id is required',
-            operation: 'cancel',
+            operation: NetworkOperation.cancel,
           ),
         ),
       );
@@ -219,7 +223,7 @@ final class NativeNetworkService implements NetworkService {
         commandId: const Uuid().v4(),
         transferId: transferId,
       ),
-      operation: 'cancel',
+      operation: NetworkOperation.cancel,
     );
   }
 
@@ -235,7 +239,7 @@ final class NativeNetworkService implements NetworkService {
         transferId: transferId,
         accept: accept,
       ),
-      operation: 'respond_incoming',
+      operation: NetworkOperation.respondToIncoming,
     );
   }
 
@@ -249,7 +253,7 @@ final class NativeNetworkService implements NetworkService {
         NetworkError(
           code: NetworkErrorCode.noRoute,
           message: 'peer route is not available',
-          operation: 'state',
+          operation: NetworkOperation.state,
           peerId: peerId,
         ),
       );
@@ -260,7 +264,7 @@ final class NativeNetworkService implements NetworkService {
   /// 发送命令，并等待对应的内部命令结果事件。
   Future<NetworkResult<void>> _submit(
     Uint8List command, {
-    required String operation,
+    required NetworkOperation operation,
     Duration timeout = const Duration(seconds: 3),
   }) async {
     _ensureUsable();
@@ -350,7 +354,10 @@ final class NativeNetworkService implements NetworkService {
   }
 
   /// 将原生整数状态转换为安全的结构化错误。
-  NetworkError _nativeStatusError(int status, {required String operation}) {
+  NetworkError _nativeStatusError(
+    int status, {
+    required NetworkOperation operation,
+  }) {
     final code = switch (status) {
       -1 || -2 => NetworkErrorCode.invalidArgument,
       -4 => NetworkErrorCode.cancelled,
@@ -364,7 +371,7 @@ final class NativeNetworkService implements NetworkService {
   }
 
   /// 创建运行时停止后使用的标准结果。
-  NetworkFailure<void> _cancelled(String operation) => _failure(
+  NetworkFailure<void> _cancelled(NetworkOperation operation) => _failure(
     NetworkError(
       code: NetworkErrorCode.cancelled,
       message: 'network runtime is stopped',
@@ -387,7 +394,9 @@ final class NativeNetworkService implements NetworkService {
     if (!_stopped) {
       _stopped = true;
       for (final pending in _pendingCommands.values) {
-        if (!pending.isCompleted) pending.complete(_cancelled('dispose'));
+        if (!pending.isCompleted) {
+          pending.complete(_cancelled(NetworkOperation.stop));
+        }
       }
       _pendingCommands.clear();
       await _nativeSubscription.cancel();

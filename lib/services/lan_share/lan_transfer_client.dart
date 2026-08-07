@@ -67,7 +67,7 @@ extension LanTransferClientApi on LanTransferService {
         NetworkError(
           code: NetworkErrorCode.authenticationFailed,
           message: 'LAN pairing credentials are unavailable.',
-          operation: 'authorize_lan_request',
+          operation: NetworkOperation.authorizeLanRequest,
           peerId: peerDeviceId,
         ),
       );
@@ -186,7 +186,7 @@ extension LanTransferClientApi on LanTransferService {
       } catch (e) {
         lastError = lanNetworkError(
           e,
-          operation: 'send_handshake',
+          operation: NetworkOperation.sendHandshake,
           peerId: device.id,
         );
       }
@@ -204,7 +204,7 @@ extension LanTransferClientApi on LanTransferService {
       NetworkError(
         code: NetworkErrorCode.ioError,
         message: 'LAN handshake failed.',
-        operation: 'send_handshake',
+        operation: NetworkOperation.sendHandshake,
         peerId: device.id,
       ),
     );
@@ -222,7 +222,7 @@ extension LanTransferClientApi on LanTransferService {
         NetworkError(
           code: NetworkErrorCode.invalidArgument,
           message: 'LAN pairing PIN format is invalid.',
-          operation: 'send_handshake',
+          operation: NetworkOperation.sendHandshake,
           peerId: device.id,
         ),
       );
@@ -295,7 +295,7 @@ extension LanTransferClientApi on LanTransferService {
           NetworkError(
             code: NetworkErrorCode.authenticationFailed,
             message: 'LAN pairing authentication failed.',
-            operation: 'send_handshake',
+            operation: NetworkOperation.sendHandshake,
             peerId: device.id,
           ),
         );
@@ -305,7 +305,7 @@ extension LanTransferClientApi on LanTransferService {
         throw LanNetworkException(
           'LAN pairing challenge was rejected.',
           code: lanHttpErrorCode(response.statusCode),
-          operation: 'send_handshake',
+          operation: NetworkOperation.sendHandshake,
           peerId: device.id,
           statusCode: response.statusCode,
         );
@@ -350,7 +350,7 @@ extension LanTransferClientApi on LanTransferService {
           NetworkError(
             code: NetworkErrorCode.authenticationFailed,
             message: 'LAN pairing authentication failed.',
-            operation: 'send_handshake',
+            operation: NetworkOperation.sendHandshake,
             peerId: device.id,
           ),
         );
@@ -392,7 +392,7 @@ extension LanTransferClientApi on LanTransferService {
           NetworkError(
             code: NetworkErrorCode.authenticationFailed,
             message: 'LAN pairing authentication failed.',
-            operation: 'send_handshake',
+            operation: NetworkOperation.sendHandshake,
             peerId: device.id,
           ),
         );
@@ -401,7 +401,7 @@ extension LanTransferClientApi on LanTransferService {
         throw LanNetworkException(
           'LAN pairing confirmation was rejected.',
           code: lanHttpErrorCode(response.statusCode),
-          operation: 'send_handshake',
+          operation: NetworkOperation.sendHandshake,
           peerId: device.id,
           statusCode: response.statusCode,
         );
@@ -582,7 +582,7 @@ extension LanTransferClientApi on LanTransferService {
             throw LanNetworkException(
               'LAN metadata request was rejected.',
               code: lanHttpErrorCode(response.statusCode),
-              operation: 'send_meta',
+              operation: NetworkOperation.sendMeta,
               peerId: device.id,
               statusCode: response.statusCode,
             );
@@ -593,7 +593,7 @@ extension LanTransferClientApi on LanTransferService {
         }
       },
       peerId: device.id,
-      operation: 'send_meta',
+      operation: NetworkOperation.sendMeta,
     );
   }
 
@@ -615,7 +615,7 @@ extension LanTransferClientApi on LanTransferService {
         NetworkError(
           code: NetworkErrorCode.invalidArgument,
           message: 'LAN file size is invalid.',
-          operation: 'send_file',
+          operation: NetworkOperation.sendFile,
           peerId: device.id,
         ),
       );
@@ -656,7 +656,7 @@ extension LanTransferClientApi on LanTransferService {
                 throw LanNetworkException(
                   'Encrypted file exceeded its accepted size.',
                   code: NetworkErrorCode.invalidArgument,
-                  operation: 'send_file',
+                  operation: NetworkOperation.sendFile,
                   peerId: device.id,
                 );
               }
@@ -666,7 +666,7 @@ extension LanTransferClientApi on LanTransferService {
               throw LanNetworkException(
                 'File size changed before it could be uploaded.',
                 code: NetworkErrorCode.invalidArgument,
-                operation: 'send_file',
+                operation: NetworkOperation.sendFile,
                 peerId: device.id,
               );
             }
@@ -688,7 +688,7 @@ extension LanTransferClientApi on LanTransferService {
                 throw LanNetworkException(
                   'File size changed before it could be uploaded.',
                   code: NetworkErrorCode.invalidArgument,
-                  operation: 'send_file',
+                  operation: NetworkOperation.sendFile,
                   peerId: device.id,
                 );
               }
@@ -700,7 +700,7 @@ extension LanTransferClientApi on LanTransferService {
               throw LanNetworkException(
                 'File size changed before it could be uploaded.',
                 code: NetworkErrorCode.invalidArgument,
-                operation: 'send_file',
+                operation: NetworkOperation.sendFile,
                 peerId: device.id,
               );
             }
@@ -722,7 +722,7 @@ extension LanTransferClientApi on LanTransferService {
             throw LanNetworkException(
               'LAN file upload was rejected.',
               code: lanHttpErrorCode(response.statusCode),
-              operation: 'send_file',
+              operation: NetworkOperation.sendFile,
               peerId: device.id,
               statusCode: response.statusCode,
             );
@@ -734,7 +734,7 @@ extension LanTransferClientApi on LanTransferService {
       },
       maxAttempts: 1,
       peerId: device.id,
-      operation: 'send_file',
+      operation: NetworkOperation.sendFile,
     );
   }
 
@@ -776,7 +776,7 @@ extension LanTransferClientApi on LanTransferService {
             throw LanNetworkException(
               'LAN recall request was rejected.',
               code: lanHttpErrorCode(response.statusCode),
-              operation: 'send_recall',
+              operation: NetworkOperation.sendRecall,
               peerId: device.id,
               statusCode: response.statusCode,
             );
@@ -787,7 +787,7 @@ extension LanTransferClientApi on LanTransferService {
         }
       },
       peerId: device.id,
-      operation: 'send_recall',
+      operation: NetworkOperation.sendRecall,
     );
   }
 
@@ -832,7 +832,7 @@ extension LanTransferClientApi on LanTransferService {
             throw LanNetworkException(
               'LAN announcement was rejected.',
               code: lanHttpErrorCode(response.statusCode),
-              operation: 'send_announcement',
+              operation: NetworkOperation.sendAnnouncement,
               peerId: targetDevice.id,
               statusCode: response.statusCode,
             );
@@ -848,7 +848,7 @@ extension LanTransferClientApi on LanTransferService {
         }
       },
       peerId: targetDevice.id,
-      operation: 'send_announcement',
+      operation: NetworkOperation.sendAnnouncement,
     );
   }
 
@@ -897,7 +897,7 @@ extension LanTransferClientApi on LanTransferService {
         throw LanNetworkException(
           'LAN pairing invitation was rejected.',
           code: lanHttpErrorCode(response.statusCode),
-          operation: 'send_pairing_invite',
+          operation: NetworkOperation.sendPairingInvite,
           peerId: targetDevice.id,
           statusCode: response.statusCode,
         );
@@ -922,7 +922,7 @@ extension LanTransferClientApi on LanTransferService {
       return NetworkFailure(
         lanNetworkError(
           e,
-          operation: 'send_pairing_invite',
+          operation: NetworkOperation.sendPairingInvite,
           peerId: targetDevice.id,
         ),
       );
@@ -935,7 +935,7 @@ extension LanTransferClientApi on LanTransferService {
   Future<NetworkResult<T>> _executeWithRetry<T>(
     Future<NetworkResult<T>> Function() action, {
     int maxAttempts = 3,
-    required String operation,
+    required NetworkOperation operation,
     String? peerId,
   }) async {
     NetworkFailure<T>? lastFailure;

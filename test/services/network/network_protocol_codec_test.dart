@@ -72,7 +72,7 @@ void main() {
     final failure = event! as TransferFailedEvent;
     expect(failure.transferId, 't');
     expect(failure.error.code, NetworkErrorCode.noRoute);
-    expect(failure.error.operation, 'send');
+    expect(failure.error.operation, NetworkOperation.send);
     expect(failure.error.peerId, 'p1');
   });
 }

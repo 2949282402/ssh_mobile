@@ -120,7 +120,7 @@ class LanTransferService {
       return NetworkSuccess(await _bindListeningServer(port: port));
     } catch (error) {
       return NetworkFailure(
-        lanNetworkError(error, operation: 'start_lan_listener'),
+        lanNetworkError(error, operation: NetworkOperation.startLanListener),
       );
     }
   }
@@ -179,7 +179,7 @@ class LanTransferService {
       return const NetworkSuccess<void>(null);
     } catch (error) {
       return NetworkFailure(
-        lanNetworkError(error, operation: 'stop_lan_listener'),
+        lanNetworkError(error, operation: NetworkOperation.stopLanListener),
       );
     }
   }
@@ -196,7 +196,7 @@ class LanTransferService {
       return const NetworkSuccess<void>(null);
     } catch (error) {
       return NetworkFailure(
-        lanNetworkError(error, operation: 'close_lan_connections'),
+        lanNetworkError(error, operation: NetworkOperation.closeLanConnections),
       );
     }
   }
@@ -382,7 +382,7 @@ class LanTransferService {
         NetworkError(
           code: NetworkErrorCode.peerOffline,
           message: 'LAN peer connection is already in progress.',
-          operation: 'connect_websocket',
+          operation: NetworkOperation.connectWebSocket,
           peerId: device.id,
         ),
       );
@@ -400,7 +400,7 @@ class LanTransferService {
           NetworkError(
             code: NetworkErrorCode.authenticationFailed,
             message: 'LAN pairing credentials are unavailable.',
-            operation: 'connect_websocket',
+            operation: NetworkOperation.connectWebSocket,
             peerId: device.id,
           ),
         );
@@ -420,7 +420,7 @@ class LanTransferService {
       return NetworkFailure(
         lanNetworkError(
           error,
-          operation: 'connect_websocket',
+          operation: NetworkOperation.connectWebSocket,
           peerId: device.id,
         ),
       );

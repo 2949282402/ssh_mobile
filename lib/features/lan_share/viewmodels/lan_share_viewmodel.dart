@@ -116,6 +116,37 @@ class LanShareViewModel extends ChangeNotifier {
   /// WebShare 活动时返回当前 URL。
   String? get webShareUrl => discoveryService.webShareUrl;
 
+  /// 创建带有稳定操作上下文的网络失败结果。
+  NetworkFailure<T> _networkFailure<T>({
+    required NetworkErrorCode code,
+    required String message,
+    required NetworkOperation operation,
+    String? peerId,
+  }) => NetworkFailure<T>(
+    NetworkError(
+      code: code,
+      message: message,
+      operation: operation,
+      peerId: peerId,
+    ),
+  );
+
+  /// 将失败结果写入 LAN 历史记录，并返回相同的类型化失败。
+  Future<NetworkFailure<T>> _recordNetworkFailure<T>(
+    String messageId,
+    NetworkError error,
+  ) async {
+    await _enqueueMessagePersistence(
+      messageId,
+      () => historyDao.updateRecordStatus(
+        messageId,
+        LanTransferStatus.failed.toJson(),
+        failureReason: error.code.name,
+      ),
+    );
+    return NetworkFailure<T>(error);
+  }
+
   /// 发布 ViewModel part 文件请求的状态变化。
   void _notifyHistoryChanged() => notifyListeners();
 
@@ -300,16 +331,24 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   /// 启动 LAN 发现并刷新 UI 状态。
-  Future<void> startScanning() async {
-    if (_disposed) return;
-    await discoveryService.startDiscovery();
+  Future<NetworkResult<void>> startScanning() async {
+    if (_disposed) {
+      return _networkFailure(
+        code: NetworkErrorCode.cancelled,
+        message: 'LAN discovery is stopped.',
+        operation: NetworkOperation.startDiscovery,
+      );
+    }
+    final result = await discoveryService.startDiscovery();
     if (!_disposed) notifyListeners();
+    return result;
   }
 
   /// 停止 LAN 发现并刷新 UI 状态。
-  Future<void> stopScanning() async {
-    await discoveryService.stopDiscovery();
+  Future<NetworkResult<void>> stopScanning() async {
+    final result = await discoveryService.stopDiscovery();
     if (!_disposed) notifyListeners();
+    return result;
   }
 
   bool _webShareUseHttps = false;
@@ -325,11 +364,12 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   /// 根据当前偏好启动或停止 WebShare。
-  Future<void> toggleWebShare() async {
+  Future<NetworkResult<void>> toggleWebShare() async {
+    late final NetworkResult<void> result;
     if (isWebShareActive) {
-      await discoveryService.stopWebShareServer();
+      result = await discoveryService.stopWebShareServer();
     } else {
-      await discoveryService.startWebShareServer(
+      result = await discoveryService.startWebShareServer(
         useHttps: _webShareUseHttps,
         securityService: securityService,
         storageService: storageService,
@@ -337,10 +377,11 @@ class LanShareViewModel extends ChangeNotifier {
       );
     }
     if (!_disposed) notifyListeners();
+    return result;
   }
 
   /// 发送文本消息，并持久化稳定结果码。
-  Future<bool> sendText(
+  Future<NetworkResult<void>> sendText(
     LanDevice device,
     String text, {
     bool encrypted = false,
@@ -358,35 +399,33 @@ class LanShareViewModel extends ChangeNotifier {
     );
 
     await _saveMessageToDb(msg);
-    final pubKey = encrypted ? await _getRecipientPubKey(device) : null;
-    if (encrypted && pubKey == null) {
-      await historyDao.updateRecordStatus(
-        msg.id,
-        LanTransferStatus.failed.toJson(),
-      );
-      return false;
+    Uint8List? pubKey;
+    if (encrypted) {
+      final capabilityResult = await _getRecipientPubKey(device);
+      if (capabilityResult is NetworkFailure<Uint8List>) {
+        return _recordNetworkFailure(msg.id, capabilityResult.error);
+      }
+      pubKey = (capabilityResult as NetworkSuccess<Uint8List>).data;
     }
     final result = await transferService.sendMeta(
       device,
       msg,
       recipientPubKeyBytes: pubKey,
     );
-    final success = result is NetworkSuccess<void>;
-
     await historyDao.updateRecordStatus(
       msg.id,
-      success
+      result is NetworkSuccess<void>
           ? LanTransferStatus.completed.toJson()
           : LanTransferStatus.failed.toJson(),
       failureReason: result is NetworkFailure<void>
           ? result.error.code.name
           : null,
     );
-    return success;
+    return result;
   }
 
   /// 发送剪贴板内容，并持久化稳定结果码。
-  Future<bool> sendClipboard(
+  Future<NetworkResult<void>> sendClipboard(
     LanDevice device,
     String text, {
     bool encrypted = false,
@@ -404,41 +443,46 @@ class LanShareViewModel extends ChangeNotifier {
     );
 
     await _saveMessageToDb(msg);
-    final pubKey = encrypted ? await _getRecipientPubKey(device) : null;
-    if (encrypted && pubKey == null) {
-      await historyDao.updateRecordStatus(
-        msg.id,
-        LanTransferStatus.failed.toJson(),
-      );
-      return false;
+    Uint8List? pubKey;
+    if (encrypted) {
+      final capabilityResult = await _getRecipientPubKey(device);
+      if (capabilityResult is NetworkFailure<Uint8List>) {
+        return _recordNetworkFailure(msg.id, capabilityResult.error);
+      }
+      pubKey = (capabilityResult as NetworkSuccess<Uint8List>).data;
     }
     final result = await transferService.sendMeta(
       device,
       msg,
       recipientPubKeyBytes: pubKey,
     );
-    final success = result is NetworkSuccess<void>;
-
     await historyDao.updateRecordStatus(
       msg.id,
-      success
+      result is NetworkSuccess<void>
           ? LanTransferStatus.completed.toJson()
           : LanTransferStatus.failed.toJson(),
       failureReason: result is NetworkFailure<void>
           ? result.error.code.name
           : null,
     );
-    return success;
+    return result;
   }
 
   /// 注册原生文件传输，并在历史记录中跟踪终态事件。
-  Future<bool> sendFile(
+  Future<NetworkResult<TransferSession>> sendFile(
     LanDevice device,
     String filePath, {
     bool encrypted = false,
   }) async {
     final file = File(filePath);
-    if (!await file.exists()) return false;
+    if (!await file.exists()) {
+      return _networkFailure(
+        code: NetworkErrorCode.ioError,
+        message: 'Source file is unavailable.',
+        operation: NetworkOperation.sendFile,
+        peerId: device.id,
+      );
+    }
 
     final fileName = file.path.split(Platform.pathSeparator).last;
     final fileSize = await file.length();
@@ -459,47 +503,50 @@ class LanShareViewModel extends ChangeNotifier {
 
     await _saveMessageToDb(msg);
 
-    final pubKey = encrypted ? await _getRecipientPubKey(device) : null;
-    if (encrypted && pubKey == null) {
-      await historyDao.updateRecordStatus(
-        msg.id,
-        LanTransferStatus.failed.toJson(),
-      );
-      return false;
+    final capabilityResult = await fetchRecipientE2ECapabilities(device);
+    if (capabilityResult is NetworkFailure<Uint8List>) {
+      return _recordNetworkFailure(msg.id, capabilityResult.error);
     }
+    final pubKey = (capabilityResult as NetworkSuccess<Uint8List>).data;
     if (encrypted &&
         fileSize >
             (_recipientEncryptedFileLimit[device.id] ??
                 LanTransferProtocolGuard.maxEncryptedUploadBytes)) {
-      await historyDao.updateRecordStatus(
+      return _recordNetworkFailure(
         msg.id,
-        LanTransferStatus.failed.toJson(),
+        NetworkError(
+          code: NetworkErrorCode.invalidArgument,
+          message: 'File exceeds the encrypted transfer limit.',
+          operation: NetworkOperation.sendFile,
+          peerId: device.id,
+        ),
       );
-      return false;
     }
 
     final network = networkService;
     if (network == null) {
-      await historyDao.updateRecordStatus(
+      return _recordNetworkFailure(
         msg.id,
-        LanTransferStatus.failed.toJson(),
-        failureReason: NetworkErrorCode.noRoute.name,
-      );
-      return false;
-    }
-    final recipientE2eKey =
-        pubKey ?? await fetchRecipientE2ECapabilities(device);
-    final identityKey = _recipientNetworkIdentityKeyCache[device.id];
-    if (recipientE2eKey == null || identityKey == null) {
-      await _enqueueMessagePersistence(
-        msg.id,
-        () => historyDao.updateRecordStatus(
-          msg.id,
-          LanTransferStatus.failed.toJson(),
-          failureReason: NetworkErrorCode.authenticationFailed.name,
+        NetworkError(
+          code: NetworkErrorCode.noRoute,
+          message: 'Native network service is unavailable.',
+          operation: NetworkOperation.sendFile,
+          peerId: device.id,
         ),
       );
-      return false;
+    }
+    final recipientE2eKey = pubKey;
+    final identityKey = _recipientNetworkIdentityKeyCache[device.id];
+    if (identityKey == null) {
+      return _recordNetworkFailure(
+        msg.id,
+        NetworkError(
+          code: NetworkErrorCode.authenticationFailed,
+          message: 'Recipient network identity is unavailable.',
+          operation: NetworkOperation.sendFile,
+          peerId: device.id,
+        ),
+      );
     }
     final endpoint = device.ip.contains(':')
         ? '[${device.ip}]:${device.port}'
@@ -513,46 +560,19 @@ class LanShareViewModel extends ChangeNotifier {
       ),
     );
     if (upsertResult is NetworkFailure) {
-      await _enqueueMessagePersistence(
-        msg.id,
-        () => historyDao.updateRecordStatus(
-          msg.id,
-          LanTransferStatus.failed.toJson(),
-          failureReason: upsertResult.error.code.name,
-        ),
-      );
-      return false;
+      return _recordNetworkFailure(msg.id, upsertResult.error);
     }
     final connectResult = await network.connect(device.id);
     if (connectResult is NetworkFailure) {
-      await _enqueueMessagePersistence(
-        msg.id,
-        () => historyDao.updateRecordStatus(
-          msg.id,
-          LanTransferStatus.failed.toJson(),
-          failureReason: connectResult.error.code.name,
-        ),
-      );
-      return false;
+      return _recordNetworkFailure(msg.id, connectResult.error);
     }
     final sendResult = await network.send(
       transferId: msg.id,
       peerId: device.id,
       filePath: file.absolute.path,
     );
-    final sendFailure = sendResult is NetworkFailure<TransferSession>
-        ? sendResult
-        : null;
-    if (sendFailure != null) {
-      await _enqueueMessagePersistence(
-        msg.id,
-        () => historyDao.updateRecordStatus(
-          msg.id,
-          LanTransferStatus.failed.toJson(),
-          failureReason: sendFailure.error.code.name,
-        ),
-      );
-      return false;
+    if (sendResult is NetworkFailure<TransferSession>) {
+      return _recordNetworkFailure(msg.id, sendResult.error);
     }
     await _enqueueMessagePersistence(
       msg.id,
@@ -562,14 +582,16 @@ class LanShareViewModel extends ChangeNotifier {
         bytesTotal: fileSize,
       ),
     );
-    return true;
+    return sendResult;
   }
 
   /// 查询并缓存远端设备的 E2E 和原生身份密钥。
-  /// 返回接收方 X25519 公钥字节；不支持时返回 null。
-  Future<Uint8List?> fetchRecipientE2ECapabilities(LanDevice device) async {
+  /// 返回接收方 X25519 公钥或稳定的网络失败。
+  Future<NetworkResult<Uint8List>> fetchRecipientE2ECapabilities(
+    LanDevice device,
+  ) async {
     if (_recipientPubKeyCache.containsKey(device.id)) {
-      return _recipientPubKeyCache[device.id];
+      return NetworkSuccess(_recipientPubKeyCache[device.id]!);
     }
     final pinnedE2eKey = await securityService.getPeerX25519PublicKey(
       device.id,
@@ -579,10 +601,11 @@ class LanShareViewModel extends ChangeNotifier {
     if (pinnedE2eKey != null && pinnedIdentityKey != null) {
       _recipientPubKeyCache[device.id] = pinnedE2eKey;
       _recipientNetworkIdentityKeyCache[device.id] = pinnedIdentityKey;
-      return pinnedE2eKey;
+      return NetworkSuccess(pinnedE2eKey);
     }
-    final client = await transferService.createHttpClientForPeer(device.id);
+    HttpClient? client;
     try {
+      client = await transferService.createHttpClientForPeer(device.id);
       final url = Uri.parse(
         'https://${device.ip}:${device.port}/api/lan/capabilities',
       );
@@ -592,16 +615,44 @@ class LanShareViewModel extends ChangeNotifier {
         device.id,
       );
       if (authorization is NetworkFailure<void>) {
-        return null;
+        return NetworkFailure<Uint8List>(authorization.error);
       }
       final resp = await req.close().timeout(const Duration(seconds: 3));
-      if (resp.statusCode != HttpStatus.ok) return null;
+      if (resp.statusCode != HttpStatus.ok) {
+        return _networkFailure(
+          code: lanHttpErrorCode(resp.statusCode),
+          message: 'LAN capability query failed.',
+          operation: NetworkOperation.fetchCapabilities,
+          peerId: device.id,
+        );
+      }
       final json = await transferService.readBoundedJsonResponse(resp);
-      if (json['e2eEncryption'] != true) return null;
+      if (json['e2eEncryption'] != true) {
+        return _networkFailure(
+          code: NetworkErrorCode.authenticationFailed,
+          message: 'Recipient does not support E2E encryption.',
+          operation: NetworkOperation.fetchCapabilities,
+          peerId: device.id,
+        );
+      }
       final pubKeyB64 = json['x25519PubKey'] as String?;
-      if (pubKeyB64 == null) return null;
+      if (pubKeyB64 == null) {
+        return _networkFailure(
+          code: NetworkErrorCode.authenticationFailed,
+          message: 'Recipient E2E public key is unavailable.',
+          operation: NetworkOperation.fetchCapabilities,
+          peerId: device.id,
+        );
+      }
       final pubKeyBytes = base64.decode(pubKeyB64);
-      if (pubKeyBytes.length != 32) return null;
+      if (pubKeyBytes.length != 32) {
+        return _networkFailure(
+          code: NetworkErrorCode.invalidArgument,
+          message: 'Recipient E2E public key is invalid.',
+          operation: NetworkOperation.fetchCapabilities,
+          peerId: device.id,
+        );
+      }
       final identityKeyValue = json['networkIdentityPubKey'] as String?;
       if (identityKeyValue != null && json['quicFileTransfer'] == true) {
         final identityKey = base64.decode(identityKeyValue);
@@ -631,26 +682,40 @@ class LanShareViewModel extends ChangeNotifier {
           );
         }
       }
-      return _recipientPubKeyCache[device.id];
+      return NetworkSuccess(_recipientPubKeyCache[device.id]!);
     } catch (e) {
       debugPrint('[LanShareViewModel] E2E capabilities query failed: $e');
-      return null;
+      return NetworkFailure(
+        lanNetworkError(
+          e,
+          operation: NetworkOperation.fetchCapabilities,
+          peerId: device.id,
+        ),
+      );
     } finally {
-      client.close();
+      client?.close();
     }
   }
 
   /// 返回缓存中或刚查询得到的接收方 E2E 公钥。
-  Future<Uint8List?> _getRecipientPubKey(LanDevice device) =>
+  Future<NetworkResult<Uint8List>> _getRecipientPubKey(LanDevice device) =>
       fetchRecipientE2ECapabilities(device);
 
   /// 为原生 QUIC 文件传输准备已配对对端。
   Future<void> _prepareFileTransferPeer(LanDevice device) async {
     final network = networkService;
     if (network == null) return;
-    final e2eKey = await fetchRecipientE2ECapabilities(device);
+    final e2eResult = await fetchRecipientE2ECapabilities(device);
+    if (e2eResult is NetworkFailure<Uint8List>) {
+      AppLogService.instance.warning(
+        'Native peer capability query failed',
+        details: e2eResult.error.toString(),
+      );
+      return;
+    }
+    final e2eKey = (e2eResult as NetworkSuccess<Uint8List>).data;
     final identityKey = _recipientNetworkIdentityKeyCache[device.id];
-    if (e2eKey == null || identityKey == null) return;
+    if (identityKey == null) return;
     final endpoint = device.ip.contains(':')
         ? '[${device.ip}]:${device.port}'
         : '${device.ip}:${device.port}';
@@ -679,9 +744,14 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   /// 远端撤回消息，并将本地历史记录标记为已撤回。
-  Future<void> recallMessage(LanMessage message, LanDevice? device) async {
+  Future<NetworkResult<void>> recallMessage(
+    LanMessage message,
+    LanDevice? device,
+  ) async {
+    NetworkResult<void> result = const NetworkSuccess<void>(null);
     if (device != null) {
-      await transferService.sendRecall(device, message.id);
+      result = await transferService.sendRecall(device, message.id);
+      if (result is NetworkFailure<void>) return result;
     }
     if (message.isIncoming && message.localPath != null) {
       await storageService.deleteSandboxFile(message.localPath!);
@@ -691,6 +761,7 @@ class LanShareViewModel extends ChangeNotifier {
       LanTransferStatus.recalled.toJson(),
       isRecalled: true,
     );
+    return result;
   }
 
   /// 清除全部 LAN 历史记录。
@@ -749,22 +820,17 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   /// 请求配对，并发布生成的 UI 会话。
-  Future<bool> requestPairing(LanDevice device) async {
+  Future<NetworkResult<void>> requestPairing(LanDevice device) async {
     final sessionId = const Uuid().v4();
     final expiresAt = DateTime.now().add(const Duration(minutes: 1));
-    NetworkResult<LanPairingEndpoint> result = await transferService
-        .sendPairingInvite(
-          device,
-          appSettings.lanDeviceAlias,
-          sessionId: sessionId,
-          expiresAt: expiresAt,
-        );
+    final result = await transferService.sendPairingInvite(
+      device,
+      appSettings.lanDeviceAlias,
+      sessionId: sessionId,
+      expiresAt: expiresAt,
+    );
     if (result is NetworkFailure<LanPairingEndpoint>) {
-      result = await transferService.sendAnnouncement(
-        device,
-        appSettings.lanDeviceAlias,
-      );
-      if (result is NetworkFailure<LanPairingEndpoint>) return false;
+      return NetworkFailure<void>(result.error);
     }
     final endpoint = (result as NetworkSuccess<LanPairingEndpoint>).data;
     final remoteDeviceId = endpoint.remoteDeviceId;
@@ -790,7 +856,7 @@ class LanShareViewModel extends ChangeNotifier {
         expiresAt: expiresAt,
       ),
     );
-    return true;
+    return const NetworkSuccess<void>(null);
   }
 
   /// 为 [device] 发布传入配对请求。
@@ -806,12 +872,8 @@ class LanShareViewModel extends ChangeNotifier {
   }
 
   /// 向远端 LAN 对端广播本设备。
-  Future<bool> sendAnnouncement(LanDevice device) async {
-    final result = await transferService.sendAnnouncement(
-      device,
-      appSettings.lanDeviceAlias,
-    );
-    return result is NetworkSuccess<LanPairingEndpoint>;
+  Future<NetworkResult<LanPairingEndpoint>> sendAnnouncement(LanDevice device) {
+    return transferService.sendAnnouncement(device, appSettings.lanDeviceAlias);
   }
 
   /// 检查 [deviceId] 是否有有效的已存储配对。

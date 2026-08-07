@@ -61,7 +61,7 @@ final class LanNetworkException implements Exception {
   final NetworkErrorCode code;
 
   /// 产生错误的操作。
-  final String? operation;
+  final NetworkOperation? operation;
 
   /// 已知时表示受影响的对端。
   final String? peerId;
@@ -71,7 +71,7 @@ final class LanNetworkException implements Exception {
 
   /// 将此异常转换为公开网络错误模型。
   NetworkError toNetworkError({
-    String? fallbackOperation,
+    NetworkOperation? fallbackOperation,
     String? fallbackPeerId,
   }) => NetworkError(
     code: code,
@@ -103,7 +103,7 @@ NetworkErrorCode lanHttpErrorCode(int statusCode) {
 /// 将捕获的 LAN 失败映射为稳定公开错误，并隐藏底层细节。
 NetworkError lanNetworkError(
   Object error, {
-  required String operation,
+  required NetworkOperation operation,
   String? peerId,
 }) {
   if (error is LanNetworkException) {

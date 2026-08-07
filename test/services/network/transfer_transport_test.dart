@@ -57,7 +57,7 @@ void main() {
       expect(result, isA<NetworkFailure<TransferSession>>());
       final failure = result as NetworkFailure<TransferSession>;
       expect(failure.error.code, NetworkErrorCode.noRoute);
-      expect(failure.error.operation, 'send');
+      expect(failure.error.operation, NetworkOperation.send);
     });
 
     test('connect is accepted before the final peer state', () async {

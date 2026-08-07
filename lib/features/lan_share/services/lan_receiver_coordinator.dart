@@ -101,7 +101,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         NetworkError(
           code: NetworkErrorCode.noRoute,
           message: 'native network runtime is unavailable',
-          operation: 'respond_incoming',
+          operation: NetworkOperation.respondToIncoming,
         ),
       );
     }
@@ -114,7 +114,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         NetworkError(
           code: NetworkErrorCode.authenticationFailed,
           message: 'incoming transfer peer is no longer paired',
-          operation: 'respond_incoming',
+          operation: NetworkOperation.respondToIncoming,
         ),
       );
     }
@@ -149,7 +149,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         NetworkError(
           code: NetworkErrorCode.noRoute,
           message: 'native network runtime is unavailable',
-          operation: 'respond_incoming',
+          operation: NetworkOperation.respondToIncoming,
         ),
       );
     }
@@ -171,7 +171,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         NetworkError(
           code: NetworkErrorCode.relayError,
           message: 'Relay enrollment service is unavailable',
-          operation: 'enroll_relay',
+          operation: NetworkOperation.enrollRelay,
         ),
       );
     }
@@ -196,7 +196,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         NetworkError(
           code: NetworkErrorCode.relayError,
           message: 'Relay configuration is unavailable',
-          operation: 'connect_relay',
+          operation: NetworkOperation.connectRelay,
         ),
       );
     }
@@ -206,7 +206,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         NetworkError(
           code: NetworkErrorCode.authenticationFailed,
           message: 'Relay enrollment is required',
-          operation: 'connect_relay',
+          operation: NetworkOperation.connectRelay,
         ),
       );
     }
@@ -224,7 +224,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         NetworkError(
           code: NetworkErrorCode.noRoute,
           message: 'native network runtime is unavailable',
-          operation: 'connect_relay',
+          operation: NetworkOperation.connectRelay,
         ),
       );
     }
@@ -234,7 +234,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         NetworkError(
           code: NetworkErrorCode.authenticationFailed,
           message: 'Relay enrollment is required',
-          operation: 'connect_relay',
+          operation: NetworkOperation.connectRelay,
         ),
       );
     }

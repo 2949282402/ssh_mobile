@@ -43,6 +43,58 @@ extension NetworkErrorCodePolicy on NetworkErrorCode {
   };
 }
 
+/// v1 网络操作的稳定标识。
+///
+/// [wireName] 只用于 v1 线协议和安全日志适配，业务代码应使用枚举值。
+enum NetworkOperation {
+  start('start'),
+  stop('stop'),
+  upsertPeer('upsert_peer'),
+  connect('connect'),
+  disconnect('disconnect'),
+  configureRelay('configure_relay'),
+  disconnectRelay('disconnect_relay'),
+  send('send'),
+  cancel('cancel'),
+  respondToIncoming('respond_incoming'),
+  state('state'),
+  startLanListener('start_lan_listener'),
+  stopLanListener('stop_lan_listener'),
+  closeLanConnections('close_lan_connections'),
+  connectWebSocket('connect_websocket'),
+  authorizeLanRequest('authorize_lan_request'),
+  sendHandshake('send_handshake'),
+  sendMeta('send_meta'),
+  sendFile('send_file'),
+  sendRecall('send_recall'),
+  sendAnnouncement('send_announcement'),
+  sendPairingInvite('send_pairing_invite'),
+  fetchCapabilities('fetch_capabilities'),
+  startAdvertising('start_advertising'),
+  stopAdvertising('stop_advertising'),
+  startDiscovery('start_discovery'),
+  stopDiscovery('stop_discovery'),
+  startWebShare('start_webshare'),
+  stopWebShare('stop_webshare'),
+  enrollRelay('enroll_relay'),
+  connectRelay('connect_relay');
+
+  /// 创建带有固定 v1 线协议名称的操作值。
+  const NetworkOperation(this.wireName);
+
+  /// v1 线协议中使用的操作名称。
+  final String wireName;
+
+  /// 将 v1 线协议名称转换为已知操作，未知名称返回 null。
+  static NetworkOperation? fromWire(String? value) {
+    if (value == null || value.isEmpty) return null;
+    for (final operation in values) {
+      if (operation.wireName == value) return operation;
+    }
+    return null;
+  }
+}
+
 /// 网络操作与事件返回的安全结构化诊断信息。
 final class NetworkError {
   /// 创建结构化网络错误。
@@ -55,14 +107,14 @@ final class NetworkError {
 
   final NetworkErrorCode code;
   final String message;
-  final String? operation;
+  final NetworkOperation? operation;
   final String? peerId;
 
   /// 返回替换指定非空字段后的副本。
   NetworkError copyWith({
     NetworkErrorCode? code,
     String? message,
-    String? operation,
+    NetworkOperation? operation,
     String? peerId,
   }) => NetworkError(
     code: code ?? this.code,

@@ -500,7 +500,7 @@ final class NetworkProtocolCodec {
     final reader = _ProtoReader(bytes);
     var code = 0;
     var message = '';
-    String? operation;
+    NetworkOperation? operation;
     String? peerId;
     while (!reader.isDone) {
       final field = reader.field();
@@ -510,7 +510,9 @@ final class NetworkProtocolCodec {
         case 2:
           message = utf8.decode(reader.bytes(field.wireType));
         case 3:
-          operation = utf8.decode(reader.bytes(field.wireType));
+          operation = NetworkOperation.fromWire(
+            utf8.decode(reader.bytes(field.wireType)),
+          );
         case 4:
           peerId = utf8.decode(reader.bytes(field.wireType));
         default:
@@ -520,7 +522,7 @@ final class NetworkProtocolCodec {
     return NetworkError(
       code: NetworkErrorCode.fromWire(code),
       message: message,
-      operation: operation?.isEmpty == true ? null : operation,
+      operation: operation,
       peerId: peerId?.isEmpty == true ? null : peerId,
     );
   }

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../../../services/app_settings.dart';
 import '../../../services/lan_share/lan_share_models.dart';
+import '../../../services/network/network_models.dart';
 import '../../../widgets/app_surface.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 import 'lan_preview_viewer_screen.dart';
@@ -94,12 +95,16 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 Navigator.pop(ctx);
                 final file = await FilePicker.pickFile(type: FileType.image);
                 if (file != null && file.path != null) {
-                  final ok = await vm.sendFile(
+                  final result = await vm.sendFile(
                     device,
                     file.path!,
                     encrypted: _isEncrypted,
                   );
-                  if (!ok && _isEncrypted && context.mounted) {
+                  if (_isEncrypted &&
+                      result is NetworkFailure<TransferSession> &&
+                      result.error.code ==
+                          NetworkErrorCode.authenticationFailed &&
+                      context.mounted) {
                     _showE2ENotSupportedError(context, strings);
                   }
                 }
@@ -113,12 +118,16 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 Navigator.pop(ctx);
                 final file = await FilePicker.pickFile(type: FileType.video);
                 if (file != null && file.path != null) {
-                  final ok = await vm.sendFile(
+                  final result = await vm.sendFile(
                     device,
                     file.path!,
                     encrypted: _isEncrypted,
                   );
-                  if (!ok && _isEncrypted && context.mounted) {
+                  if (_isEncrypted &&
+                      result is NetworkFailure<TransferSession> &&
+                      result.error.code ==
+                          NetworkErrorCode.authenticationFailed &&
+                      context.mounted) {
                     _showE2ENotSupportedError(context, strings);
                   }
                 }
@@ -132,12 +141,16 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 Navigator.pop(ctx);
                 final file = await FilePicker.pickFile();
                 if (file != null && file.path != null) {
-                  final ok = await vm.sendFile(
+                  final result = await vm.sendFile(
                     device,
                     file.path!,
                     encrypted: _isEncrypted,
                   );
-                  if (!ok && _isEncrypted && context.mounted) {
+                  if (_isEncrypted &&
+                      result is NetworkFailure<TransferSession> &&
+                      result.error.code ==
+                          NetworkErrorCode.authenticationFailed &&
+                      context.mounted) {
                     _showE2ENotSupportedError(context, strings);
                   }
                 }
@@ -153,12 +166,16 @@ class _LanChatScreenState extends State<LanChatScreen> {
                 if (data != null &&
                     data.text != null &&
                     data.text!.isNotEmpty) {
-                  final ok = await vm.sendClipboard(
+                  final result = await vm.sendClipboard(
                     device,
                     data.text!,
                     encrypted: _isEncrypted,
                   );
-                  if (!ok && _isEncrypted && context.mounted) {
+                  if (_isEncrypted &&
+                      result is NetworkFailure<void> &&
+                      result.error.code ==
+                          NetworkErrorCode.authenticationFailed &&
+                      context.mounted) {
                     _showE2ENotSupportedError(context, strings);
                   }
                 }
@@ -591,13 +608,16 @@ class _LanChatScreenState extends State<LanChatScreen> {
                                   final val = _textController.text.trim();
                                   if (val.isNotEmpty) {
                                     _textController.clear();
-                                    final ok = await vm.sendText(
+                                    final result = await vm.sendText(
                                       onlineDevice!,
                                       val,
                                       encrypted: _isEncrypted,
                                     );
-                                    if (!ok &&
-                                        _isEncrypted &&
+                                    if (_isEncrypted &&
+                                        result is NetworkFailure<void> &&
+                                        result.error.code ==
+                                            NetworkErrorCode
+                                                .authenticationFailed &&
                                         context.mounted) {
                                       _showE2ENotSupportedError(
                                         context,

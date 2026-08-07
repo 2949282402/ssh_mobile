@@ -26,9 +26,9 @@ extension _LanShareDialogActions on _LanShareScreenState {
                 final paired = await vm.isDevicePaired(dev.id);
                 if (!mounted) return;
                 if (!paired) {
-                  final opened = await vm.requestPairing(dev);
+                  final pairingResult = await vm.requestPairing(dev);
                   if (!mounted) return;
-                  if (!opened) {
+                  if (pairingResult is NetworkFailure) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text(strings.lanShareOffline)),
                     );
@@ -36,8 +36,8 @@ extension _LanShareDialogActions on _LanShareScreenState {
                   return;
                 }
                 for (final path in filePaths) {
-                  final sent = await vm.sendFile(dev, path);
-                  if (!sent && mounted) {
+                  final sendResult = await vm.sendFile(dev, path);
+                  if (sendResult is NetworkFailure && mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(content: Text(strings.lanShareOffline)),
                     );
@@ -155,19 +155,19 @@ extension _LanShareDialogActions on _LanShareScreenState {
     unawaited(_requestPairingWithFeedback(context, vm, device, strings));
   }
 
-  Future<bool> _requestPairingWithFeedback(
+  Future<NetworkResult<void>> _requestPairingWithFeedback(
     BuildContext context,
     LanShareViewModel vm,
     LanDevice device,
     AppStrings strings,
   ) async {
-    final opened = await vm.requestPairing(device);
-    if (!opened && context.mounted) {
+    final result = await vm.requestPairing(device);
+    if (result is NetworkFailure && context.mounted) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(strings.lanShareOffline)));
     }
-    return opened;
+    return result;
   }
 
   Future<String?> _showManualAddDialog(

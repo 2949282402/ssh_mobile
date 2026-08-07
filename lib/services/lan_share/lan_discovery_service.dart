@@ -234,7 +234,7 @@ class LanDiscoveryService {
         NetworkError(
           code: NetworkErrorCode.ioError,
           message: 'LAN advertising failed.',
-          operation: 'start_advertising',
+          operation: NetworkOperation.startAdvertising,
         ),
       );
     }
@@ -280,7 +280,7 @@ class LanDiscoveryService {
         NetworkError(
           code: NetworkErrorCode.ioError,
           message: 'LAN advertising stop failed.',
-          operation: 'stop_advertising',
+          operation: NetworkOperation.stopAdvertising,
         ),
       );
     }
@@ -319,7 +319,7 @@ class LanDiscoveryService {
         NetworkError(
           code: NetworkErrorCode.ioError,
           message: 'LAN discovery start failed.',
-          operation: 'start_discovery',
+          operation: NetworkOperation.startDiscovery,
         ),
       );
     }
@@ -390,7 +390,7 @@ class LanDiscoveryService {
         NetworkError(
           code: NetworkErrorCode.ioError,
           message: 'LAN discovery stop failed.',
-          operation: 'stop_discovery',
+          operation: NetworkOperation.stopDiscovery,
         ),
       );
     }
@@ -856,7 +856,7 @@ class LanDiscoveryService {
           const NetworkError(
             code: NetworkErrorCode.ioError,
             message: 'WebShare did not provide an endpoint.',
-            operation: 'start_webshare',
+            operation: NetworkOperation.startWebShare,
           ),
         );
       }
@@ -866,7 +866,7 @@ class LanDiscoveryService {
         NetworkError(
           code: NetworkErrorCode.ioError,
           message: 'WebShare start failed.',
-          operation: 'start_webshare',
+          operation: NetworkOperation.startWebShare,
         ),
       );
     }
@@ -882,7 +882,7 @@ class LanDiscoveryService {
         NetworkError(
           code: NetworkErrorCode.ioError,
           message: 'WebShare stop failed.',
-          operation: 'stop_webshare',
+          operation: NetworkOperation.stopWebShare,
         ),
       );
     }
