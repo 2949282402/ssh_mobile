@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
+import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
 import 'package:feature_terminal/feature_terminal.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -12,7 +13,6 @@ import '../features/playbook/viewmodels/playbook_viewmodel.dart';
 import '../features/rag/viewmodels/rag_knowledge_viewmodel.dart';
 import '../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
 import '../features/startup/viewmodels/startup_viewmodel.dart';
-import '../features/sftp/viewmodels/sftp_viewmodel.dart';
 import '../features/lan_share/views/lan_pairing_navigation_host.dart';
 import '../features/lan_share/views/network_incoming_transfer_host.dart';
 import '../features/developer_panel/views/developer_panel_floating.dart';
@@ -20,7 +20,6 @@ import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
 import 'package:ssh_mobile/features/playbook/views/playbook_screen.dart';
-import 'package:ssh_mobile/features/sftp/views/sftp_screen.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import 'package:ssh_mobile/features/rag/views/rag_knowledge_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/views/mcp_console_screen.dart';
@@ -30,13 +29,13 @@ import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_settings_viewmode
 import '../services/app_settings.dart';
 import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
-import '../services/sftp_service.dart';
 import '../services/storage_service.dart';
 import '../services/mcp/mcp_server_controller.dart';
 import 'package:app_ui/app_ui.dart';
 import 'app_runtime.dart';
 import 'connection_feature_adapters.dart';
 import 'terminal_feature_adapters.dart';
+import 'sftp_feature_adapters.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 /// App Shell。它只消费由 [AppRuntime] 创建的 App Scope 实例。
@@ -229,11 +228,6 @@ class _SshMobileAppState extends State<SshMobileApp>
         ChangeNotifierProvider.value(value: runtime.shortcutCommandService),
         ChangeNotifierProvider.value(value: runtime.sshService),
         ChangeNotifierProvider.value(value: runtime.sftpService),
-        ChangeNotifierProvider(
-          // SFTP ViewModel 仍由根页面 Provider 管理，后续迁移到 Route Scope。
-          create: (context) =>
-              SftpViewModel(sftpService: context.read<SftpService>()),
-        ),
         ChangeNotifierProvider.value(value: runtime.performanceMonitorService),
         ChangeNotifierProvider.value(value: runtime.playbookService),
         ChangeNotifierProvider.value(value: runtime.ragService),
@@ -371,7 +365,9 @@ class _SshMobileAppState extends State<SshMobileApp>
                         );
                       case '/sftp':
                         return MaterialPageRoute(
-                          builder: (_) => const SftpScreen(),
+                          builder: (_) => const AppSftpModuleScope(
+                            child: feature_sftp.SftpScreen(),
+                          ),
                         );
                       case '/performance':
                         return MaterialPageRoute(

@@ -4,6 +4,10 @@
 
 ## Project Structure & Module Organization
 
+The staged package migration currently includes `packages/features/feature_sftp/`;
+its SFTP UI, Route state, path Repository, and `sftp.db` are the maintained
+implementation, while the old App SFTP paths remain compatibility bridges.
+
 This is a Dart workspace containing the full Flutter app for SSH, SFTP, server monitoring (including general metrics, port usage, process application performance, and service status), logs, LAN Quick Share, and OpenAI-compatible AI tools. The current full app lives in `apps/ssh_mobile_full/`: its `lib/` uses feature-first MVVM, its platform projects, assets, tests, and app-specific tools live beside it, and its `pubspec.yaml` is a workspace member. Cross-feature SSH/SFTP/storage/LLM/MCP infrastructure currently remains under `apps/ssh_mobile_full/lib/services/`; shared security/protocol helpers remain under `apps/ssh_mobile_full/lib/core/services/`; Drift database and repositories remain under `apps/ssh_mobile_full/lib/data/`; shared UI now belongs to `packages/core/app_ui/`, while `apps/ssh_mobile_full/lib/theme/`, the migrated files under `apps/ssh_mobile_full/lib/widgets/`, and `apps/ssh_mobile_full/lib/utils/responsive.dart` remain only as compatibility exports; other helpers remain under `apps/ssh_mobile_full/lib/utils/`. `lib/models/` and `lib/screens/` inside the full app are legacy compatibility surfaces, not destinations for new work. Root-level `packages/core/`, `packages/infrastructure/`, and `packages/features/` are reserved for the staged modular migration; `packages/core/app_core/` owns pure Dart lifecycle/logging contracts, `packages/core/app_ui/` owns the shared theme, responsive metrics, and UI widgets, `packages/core/connection_core/` owns Connection domain models, repositories, the non-sensitive Connection Drift database, Secure Storage credentials, and Host Key contracts, `packages/features/feature_connection/` owns the migrated connection editor and ViewModel, and `packages/features/feature_terminal/` owns the migrated terminal UI, route-scoped ViewModels, terminal output history, and `terminal.db`. The old terminal paths under `apps/ssh_mobile_full/lib/features/terminal/` and their tests remain compatibility exports/bridges during migration, not duplicate implementation destinations. `packages/infrastructure/network_transport/` owns the App Scope network facade and native handle adapter, `packages/infrastructure/ssh_core/` owns SSH session/runtime/pool/client contracts, and `packages/infrastructure/ssh_mobile_network_native/` owns the lower-level Dart/FFI binding. Root `pubspec.yaml` and `melos.yaml` define workspace tooling, with Melos pinned as a root development dependency, while `docs/`, `scripts/`, `installer/`, `.github/`, and `third_party/` remain repository-level directories. The vendored terminal package under `third_party/xterm/` is excluded from the full app analyzer.
 
 ## High-Level Architecture
@@ -43,6 +47,12 @@ flowchart LR
   repository. It receives `ssh_core.SshSessionManager` and App/connection/logging
   Ports; it must not create or dispose the App Scope SSH Manager. The App Shell
   keeps only adapters and compatibility exports until later Storage/SSH Steps.
+- `packages/features/feature_sftp/` owns the SFTP Route UI, Port contracts,
+  path-history/favorites Repository, and `sftp.db`. It receives the App Scope
+  `ssh_core.SshSessionManager` and a compatibility backend through the App Shell;
+  it never creates a global SSH manager or closes the App-owned legacy SFTP
+  backend. The old SFTP paths remain compatibility surfaces until later service
+  convergence Steps.
 - Current feature roots under `apps/ssh_mobile_full/lib/features/`: `connection`, `terminal`, `sftp`, `ai_chat`, `ai_skills`, `client_webview`, `performance`, `system_admin`, `lan_share`, `playbook`, `rag`, `settings`, `startup`, `home`, `developer_log`, `developer_panel`, `mcp_console`. New UI belongs in the owning feature, never in `apps/ssh_mobile_full/lib/screens/` (legacy) or `apps/ssh_mobile_full/lib/models/` (legacy shared surface).
 - Cross-feature infrastructure in `apps/ssh_mobile_full/lib/services/`: SSH/SFTP/LLM/AI-tool, monitoring, storage, LAN-share, MCP, and platform adapters. `apps/ssh_mobile_full/lib/core/services/` holds lower-level shared security/protocol factories (host-key policy, data protection). `apps/ssh_mobile_full/lib/data/` holds the Drift database, DAOs, and repositories. New shared infrastructure belongs in the appropriate package under `packages/` only when its current Step permits migration.
 - Storage layering: Drift for growing structured data (AI chats, agent metrics, terminal-history metadata, playbooks, SFTP path records) with sensitive fields encrypted at rest; small preferences in SharedPreferences; passwords, private keys, API keys, and MCP tokens only in platform secure storage (`flutter_secure_storage`). A production DB failure must not silently fall back to an in-memory database.
@@ -74,6 +84,7 @@ Static checks and formatting:
 - `dart format packages/infrastructure/network_transport/lib packages/infrastructure/network_transport/test`: format the Network Transport package.
 - `dart format packages/infrastructure/ssh_core/lib packages/infrastructure/ssh_core/test`: format the SSH Core package.
 - `dart format packages/features/feature_terminal/lib packages/features/feature_terminal/test`: format the Terminal Feature package.
+- `dart format packages/features/feature_sftp/lib packages/features/feature_sftp/test`: format the SFTP Feature package.
 - `dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool`: format check that fails on diffs (used in CI).
 - From `apps/ssh_mobile_full/`, `flutter analyze`: run static analysis using the app's `analysis_options.yaml`. `third_party/**` is excluded from the analyzer.
 - From `apps/ssh_mobile_full/`, `flutter test`: run all Flutter tests under the app's `test/`.
@@ -82,6 +93,7 @@ Static checks and formatting:
 - From `packages/infrastructure/network_transport/`, `flutter analyze` and `flutter test`: validate the Network Transport package. Native hook tests require the repository Rust toolchain on PATH.
 - From `packages/infrastructure/ssh_core/`, `flutter analyze` and `flutter test`: validate the SSH Core Session Pool, Runtime, Client, Host Key, and target contracts.
 - From `packages/features/feature_terminal/`, `flutter analyze` and `flutter test`: validate the Terminal Feature package. Run full App checks from `apps/ssh_mobile_full/` so Flutter hooks select the App package and Windows native assets.
+- From `packages/features/feature_sftp/`, `flutter analyze` and `flutter test`: validate the SFTP Feature package and its `sftp.db` lifecycle tests. Run full App checks from `apps/ssh_mobile_full/` so Flutter hooks select the App package and Windows native assets.
 - From `packages/core/app_ui/`, `flutter analyze` and `flutter test`: validate the shared theme, responsive helpers, and UI widgets.
 - From `apps/ssh_mobile_full/`, `flutter test --coverage --reporter expanded`: run tests with coverage.
 - From `apps/ssh_mobile_full/`, `dart run tool/check_coverage.dart --minimum=35`: enforce the 35% non-generated line-coverage floor (CI gate).

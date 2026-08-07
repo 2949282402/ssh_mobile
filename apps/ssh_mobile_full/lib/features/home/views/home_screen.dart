@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'package:feature_connection/feature_connection.dart';
+import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
 import 'package:ssh_mobile/features/settings/viewmodels/settings_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
@@ -14,8 +15,7 @@ import 'package:app_ui/app_ui.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
-import 'package:ssh_mobile/features/sftp/views/sftp_screen.dart';
-import 'package:ssh_mobile/features/sftp/views/sftp_settings_screen.dart';
+import 'package:ssh_mobile/app/sftp_feature_adapters.dart';
 import 'package:ssh_mobile/features/system_admin/views/system_admin_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_settings_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
@@ -604,7 +604,7 @@ class _HomeScreenState extends State<HomeScreen> {
             case _serverPage:
               return const ServerListPane();
             case _sftpPage:
-              return const SftpScreen();
+              return const AppSftpModuleScope(child: feature_sftp.SftpScreen());
             case _adminPage:
               return const SystemAdminFeatureScope(child: SystemAdminScreen());
             case _logPage:

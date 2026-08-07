@@ -349,7 +349,11 @@ class _FeatureSettingsSection extends StatelessWidget {
           onTap: () {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const SftpSettingsScreen()),
+              MaterialPageRoute(
+                builder: (_) => const AppSftpModuleScope(
+                  child: feature_sftp.SftpSettingsScreen(),
+                ),
+              ),
             );
           },
         ),

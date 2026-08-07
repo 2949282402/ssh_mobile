@@ -83,6 +83,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   App adapters temporarily bridge legacy settings, shortcuts, connection
   dialogs, and history behavior, while old terminal paths remain compatibility
   exports until later storage/SSH Steps.
+- `packages/features/feature_sftp/` owns the SFTP route UI, Port contracts,
+  path-history/favorites Repository, and `sftp.db`. Its `SftpModule` owns and
+  closes the database and Route Service listener; the App Scope
+  `SshSessionManager` and current legacy SFTP backend are injected and never
+  closed by the Feature. The App adapter translates legacy SFTP models and Host
+  Key callbacks so existing transfers continue during later service cleanup.
 
 ### Logging contract
 

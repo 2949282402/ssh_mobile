@@ -288,6 +288,31 @@
   越界升级无关依赖。格式检查、`git diff --check` 和 Skill 同步检查在提交前
   复核。
 
+## Step 11 执行记录（2026-08-08）
+
+- 已创建 `packages/features/feature_sftp/`，迁入 SFTP 页面、编辑器、预览器、
+  设置页、SFTP ViewModel、Service Port、`SftpModule`、路径 Repository 和
+  测试。旧 `apps/ssh_mobile_full/lib/features/sftp/`、旧 `SftpService` 及旧
+  测试路径保留为兼容表面；本 Step 采用迁移桥接，没有一次性删除原有实现。
+- `SftpModule` 独占并关闭 `sftp.db`，数据库只保存 recent paths、favorite
+  paths 及后续可扩展的传输元数据，不保存密码、私钥或 Token。SFTP 页面使用
+  Route-scoped `SftpViewModel`；页面销毁只解除 Feature 监听，当前兼容后端的
+  SSH、传输任务和连接资源仍由 AppRuntime/旧 `SftpService` Owner 管理，允许
+  未迁移的 AI/System Admin 等调用继续使用同一后端。
+- App Shell 新增 SFTP Port 适配器：连接目录、设置、Host Key 对话框、日志和
+  旧 SFTP 模型转换均在 `sftp_feature_adapters.dart` 完成。Feature 只依赖
+  `SftpBackend`、`SftpSettingsPort`、`SftpConnectionCatalogPort`、
+  `SftpHostKeyConfirmationPort` 和 `SshSessionManager`，不依赖 App Service 或
+  其他 Feature 实现。
+- `flutter pub get` 通过；输出中的 20 个可升级项均受当前 Flutter/Drift
+  workspace 约束限制，没有版本冲突，因此没有升级无关依赖。新增 `uuid` 依赖
+  用于模块内路径记录 ID。Drift `sftp_database.g.dart` 已由 build_runner
+  生成并纳入 Package。
+- 已新增 SFTP Module/Repository 测试，覆盖数据库初始化 single-flight、Module
+  activate/deactivate/dispose、recent path 30 条上限、favorite upsert/rename/
+  remove 和连接隔离；旧后端异常在 App 适配器中转换为 Feature 异常，保持预览
+  和传输页面的现有错误行为。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

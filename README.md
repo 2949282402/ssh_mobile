@@ -20,6 +20,11 @@
 
 SSH Mobile is a Flutter-based cross-platform SSH and SFTP client for Android, iOS, macOS, Windows, and Web. It combines multi-window terminals, remote file management, server monitoring, secure storage, and OpenAI-compatible AI tools in a single mobile and desktop operations workspace.
 
+The codebase is being migrated incrementally as a Dart workspace. The Terminal
+and SFTP features now have package boundaries under `packages/features/`; their
+legacy App paths remain compatibility bridges while later Steps converge the
+remaining shared services.
+
 The project began with a two-core server that had only 1 GB of memory. Running a complete AI agent directly on that machine was unreliable, so SSH Mobile moves model inference and agent orchestration to the client device. The client can inspect and manage low-resource servers through SSH and SFTP without consuming their limited memory.
 
 > Mobile operating systems may suspend background processes, switch networks, or reclaim the application process. For durable remote workspaces, use SSH Mobile together with `SSH + tmux`.

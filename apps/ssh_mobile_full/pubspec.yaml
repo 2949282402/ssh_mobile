@@ -21,6 +21,8 @@ dependencies:
     path: ../../packages/core/connection_core
   feature_connection:
     path: ../../packages/features/feature_connection
+  feature_sftp:
+    path: ../../packages/features/feature_sftp
   feature_terminal:
     path: ../../packages/features/feature_terminal
   dartssh2: ^2.22.5

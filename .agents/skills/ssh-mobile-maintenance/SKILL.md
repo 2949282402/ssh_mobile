@@ -59,6 +59,16 @@ terminal UI, route-scoped ViewModels, terminal history metadata, and
 `terminal.db`. It consumes `ssh_core.SshSessionManager` and App-defined Ports;
 it must not construct or dispose App Scope SSH, Storage, or other Feature
 implementations. The old App terminal files are compatibility exports/bridges.
+The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
+Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
+injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
+create or close App Scope SSH/SFTP resources. The old SFTP App files remain
+compatibility bridges until later service-convergence Steps.
+The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
+Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
+injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
+create or close App Scope SSH/SFTP resources. The old SFTP App files remain
+compatibility bridges until later service-convergence Steps.
 The Terminal Feature package is `packages/features/feature_terminal/`; it owns
 terminal UI, route-scoped ViewModels, terminal history metadata, and
 `terminal.db`. It consumes `ssh_core.SshSessionManager` and App-defined Ports;

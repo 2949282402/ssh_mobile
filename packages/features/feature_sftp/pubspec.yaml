@@ -1,0 +1,40 @@
+name: feature_sftp
+description: SFTP browsing and transfer feature for SSH Mobile.
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  animations: ^2.2.0
+  app_core:
+    path: ../../core/app_core
+  app_ui:
+    path: ../../core/app_ui
+  dartssh2: ^2.22.5
+  drift: ^2.34.3
+  drift_flutter: ^0.3.1
+  file_picker: ^12.0.0-beta.7
+  gpt_markdown: ^1.1.8
+  path: ^1.9.1
+  path_provider: ^2.1.6
+  provider: ^6.1.5+1
+  uuid: ^4.6.0
+  ssh_core:
+    path: ../../infrastructure/ssh_core
+  webview_flutter: ^4.14.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.15.1
+  drift_dev: ^2.34.5
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

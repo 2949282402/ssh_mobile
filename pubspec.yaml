@@ -10,6 +10,7 @@ workspace:
   - packages/core/app_ui
   - packages/core/connection_core
   - packages/features/feature_connection
+  - packages/features/feature_sftp
   - packages/features/feature_terminal
   - packages/infrastructure/network_transport
   - packages/infrastructure/ssh_core
