@@ -1,5 +1,8 @@
+// v1 Relay 管理控制台交互；本文件不承载设备数据面或协议兼容逻辑。
+
 var statsTimer = null;
 
+/** 检查管理员会话并切换控制台视图。 */
 function checkAuth() {
   fetch('/api/auth-status')
     .then(function(res) { return res.json(); })
@@ -26,6 +29,7 @@ function checkAuth() {
     });
 }
 
+/** 提交管理员登录表单并显示安全错误诊断。 */
 function handleLogin(e) {
   e.preventDefault();
   var u = document.getElementById('loginUser').value.trim();
@@ -41,7 +45,7 @@ function handleLogin(e) {
   .then(function(res) {
     return res.json().then(function(data) {
       if (!res.ok) {
-        throw new Error(data.error || '登录失败');
+        throw new Error(data.message || '登录失败');
       }
       return data;
     });
@@ -55,6 +59,7 @@ function handleLogin(e) {
   });
 }
 
+/** 请求注销当前管理员会话。 */
 function logout() {
   if (!confirm('确定要退出登录吗？')) return;
   fetch('/api/logout', { method: 'POST' })
@@ -63,6 +68,7 @@ function logout() {
     });
 }
 
+/** 拉取控制台统计和设备列表。 */
 function updateStats() {
   fetch('/api/stats')
     .then(function(res) {
@@ -131,6 +137,7 @@ function updateStats() {
     });
 }
 
+/** 创建不使用动态 HTML 的文本单元格。 */
 function textCell(value, className) {
   var cell = document.createElement('td');
   if (className) cell.className = className;
@@ -138,6 +145,7 @@ function textCell(value, className) {
   return cell;
 }
 
+/** 将当前 enrollment token 复制到系统剪贴板。 */
 function copyToken() {
   var token = document.getElementById('tokenInput').value;
   if (!token) return;
@@ -146,6 +154,7 @@ function copyToken() {
   });
 }
 
+/** 请求轮换设备 enrollment token。 */
 function rotateToken() {
   if (!confirm('确定要重置并重新生成 Enrollment Token 吗？已重置后新设备注册需要使用新 Token。')) return;
   fetch('/api/token/rotate', { method: 'POST' })
@@ -154,15 +163,22 @@ function rotateToken() {
         checkAuth();
         return null;
       }
-      return res.json();
+      return res.json().then(function(data) {
+        if (!res.ok) throw new Error(data.message || 'Token 轮换失败');
+        return data;
+      });
     })
     .then(function(data) {
       if (!data) return;
       document.getElementById('tokenInput').value = data.enrollment_token;
       alert('Token 已成功重新生成：' + data.enrollment_token);
+    })
+    .catch(function(err) {
+      alert(err.message);
     });
 }
 
+/** 请求撤销指定设备并刷新设备列表。 */
 function revokeDevice(deviceId) {
   if (!confirm('确定要撤销并解绑设备 [' + deviceId + '] 吗？撤销后该设备当前连接将被切断。')) return;
   fetch('/api/devices/revoke', {
@@ -175,11 +191,17 @@ function revokeDevice(deviceId) {
       checkAuth();
       return null;
     }
-    return res.json();
+    return res.json().then(function(data) {
+      if (!res.ok) throw new Error(data.message || '设备撤销失败');
+      return data;
+    });
   })
   .then(function(data) {
     if (!data) return;
     updateStats();
+  })
+  .catch(function(err) {
+    alert(err.message);
   });
 }
 

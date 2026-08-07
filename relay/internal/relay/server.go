@@ -58,6 +58,30 @@ type enrollResponse struct {
 	ProtocolVersion uint32 `json:"protocol_version"`
 }
 
+// relayErrorCode 使用与 Dart NetworkErrorCode 对齐的稳定错误编号。
+type relayErrorCode uint32
+
+const (
+	// relayErrorUnspecified 表示未分类的 Relay 错误。
+	relayErrorUnspecified relayErrorCode = 0
+	// relayErrorInvalidArgument 表示请求参数不符合协议边界。
+	relayErrorInvalidArgument relayErrorCode = 1
+	// relayErrorAuthenticationFailed 表示身份或管理员认证失败。
+	relayErrorAuthenticationFailed relayErrorCode = 4
+	// relayErrorProtocolError 表示协议版本或帧格式不受支持。
+	relayErrorProtocolError relayErrorCode = 9
+	// relayErrorRelayError 表示 Relay 内部服务错误。
+	relayErrorRelayError relayErrorCode = 10
+)
+
+// networkErrorResponse 是 Relay HTTP API 的安全错误响应结构。
+type networkErrorResponse struct {
+	Code      relayErrorCode `json:"code"`
+	Message   string         `json:"message"`
+	Operation string         `json:"operation"`
+	PeerID    string         `json:"peer_id,omitempty"`
+}
+
 // NewServer 根据给定配置创建仅驻留内存的 Relay 服务。
 func NewServer(config Config) *Server {
 	if config.Address == "" {
@@ -127,27 +151,107 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// writeNetworkError 写入不泄露底层异常文本的稳定 JSON 错误。
+func writeNetworkError(
+	w http.ResponseWriter,
+	status int,
+	code relayErrorCode,
+	message string,
+	operation string,
+	peerID string,
+) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(networkErrorResponse{
+		Code:      code,
+		Message:   message,
+		Operation: operation,
+		PeerID:    peerID,
+	})
+}
+
 // enroll 校验设备证明并签发 v1 Relay 凭据。
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var request enrollRequest
-	if json.NewDecoder(r.Body).Decode(&request) != nil || !s.validEnrollmentToken(request.EnrollmentToken) || request.DeviceID == "" || len(request.DeviceID) > 128 {
-		http.Error(w, "invalid enrollment request", http.StatusUnauthorized)
+	if json.NewDecoder(r.Body).Decode(&request) != nil {
+		writeNetworkError(
+			w,
+			http.StatusBadRequest,
+			relayErrorInvalidArgument,
+			"Enrollment request is invalid.",
+			"enroll_relay",
+			"",
+		)
 		return
 	}
-	if request.ProtocolVersion != 1 || len(request.Platform) > 64 {
-		http.Error(w, "unsupported protocol version or platform", http.StatusBadRequest)
+	if !s.validEnrollmentToken(request.EnrollmentToken) {
+		writeNetworkError(
+			w,
+			http.StatusUnauthorized,
+			relayErrorAuthenticationFailed,
+			"Relay enrollment authentication failed.",
+			"enroll_relay",
+			request.DeviceID,
+		)
+		return
+	}
+	if request.DeviceID == "" || len(request.DeviceID) > 128 {
+		writeNetworkError(
+			w,
+			http.StatusBadRequest,
+			relayErrorInvalidArgument,
+			"Device identity is invalid.",
+			"enroll_relay",
+			request.DeviceID,
+		)
+		return
+	}
+	if request.ProtocolVersion != 1 {
+		writeNetworkError(
+			w,
+			http.StatusBadRequest,
+			relayErrorProtocolError,
+			"Relay protocol version is unsupported.",
+			"enroll_relay",
+			request.DeviceID,
+		)
+		return
+	}
+	if len(request.Platform) > 64 {
+		writeNetworkError(
+			w,
+			http.StatusBadRequest,
+			relayErrorInvalidArgument,
+			"Device platform is invalid.",
+			"enroll_relay",
+			request.DeviceID,
+		)
 		return
 	}
 	publicKey, err := base64.RawURLEncoding.DecodeString(request.PublicKey)
 	if err != nil || len(publicKey) != ed25519.PublicKeySize {
-		http.Error(w, "invalid public key", http.StatusBadRequest)
+		writeNetworkError(
+			w,
+			http.StatusBadRequest,
+			relayErrorInvalidArgument,
+			"Device public key is invalid.",
+			"enroll_relay",
+			request.DeviceID,
+		)
 		return
 	}
 	credential, err := issueCredential(s.config.CredentialKey, request.DeviceID, publicKey, s.config.CredentialTTL)
 	if err != nil {
-		http.Error(w, "credential issuance failed", http.StatusInternalServerError)
+		writeNetworkError(
+			w,
+			http.StatusInternalServerError,
+			relayErrorRelayError,
+			"Relay credential issuance failed.",
+			"enroll_relay",
+			request.DeviceID,
+		)
 		return
 	}
 	now := time.Now()
@@ -227,7 +331,14 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 		DeviceID string `json:"device_id"`
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil || req.DeviceID == "" {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		writeNetworkError(
+			w,
+			http.StatusBadRequest,
+			relayErrorInvalidArgument,
+			"Device identity is invalid.",
+			"revoke_device",
+			req.DeviceID,
+		)
 		return
 	}
 
@@ -240,7 +351,7 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	s.hub.disconnectDevice(req.DeviceID)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	_ = json.NewEncoder(w).Encode(map[string]string{"device_id": req.DeviceID})
 }
 
 // authenticatedRequest 校验设备凭据并返回其 claims。
@@ -320,7 +431,14 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 func (s *Server) upgradeDevice(w http.ResponseWriter, r *http.Request) {
 	claims, _, ok := s.authenticatedRequest(r)
 	if !ok {
-		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		writeNetworkError(
+			w,
+			http.StatusUnauthorized,
+			relayErrorAuthenticationFailed,
+			"Relay device authentication failed.",
+			"connect_relay",
+			"",
+		)
 		return
 	}
 	connection, err := s.upgrader.Upgrade(w, r, nil)
@@ -790,9 +908,14 @@ func (s *Server) isAuthorized(r *http.Request) bool {
 func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.isAuthorized(r) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			writeNetworkError(
+				w,
+				http.StatusUnauthorized,
+				relayErrorAuthenticationFailed,
+				"Administrator authentication failed.",
+				"admin_auth",
+				"",
+			)
 			return
 		}
 		next(w, r)
@@ -808,7 +931,14 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if json.NewDecoder(r.Body).Decode(&req) != nil {
-		http.Error(w, "invalid login payload", http.StatusBadRequest)
+		writeNetworkError(
+			w,
+			http.StatusBadRequest,
+			relayErrorInvalidArgument,
+			"Login request is invalid.",
+			"login",
+			"",
+		)
 		return
 	}
 
@@ -821,9 +951,14 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	s.authMutex.Unlock()
 
 	if !valid {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "账号或密码错误"})
+		writeNetworkError(
+			w,
+			http.StatusUnauthorized,
+			relayErrorAuthenticationFailed,
+			"Administrator authentication failed.",
+			"login",
+			"",
+		)
 		return
 	}
 
@@ -839,10 +974,7 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":  true,
-		"username": username,
-	})
+	_ = json.NewEncoder(w).Encode(map[string]string{"username": username})
 }
 
 // logoutHandler 使控制台管理员会话 cookie 失效。
@@ -861,8 +993,7 @@ func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		MaxAge:   -1,
 	})
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // authStatusHandler 报告当前管理员认证状态。

@@ -1,3 +1,5 @@
+// v1 Relay 服务端契约测试，覆盖 enrollment、认证、会话路由和管理端 HTTP 响应。
+
 package relay
 
 import (
@@ -17,6 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// TestCredentialBindsDeviceAndKey 验证凭据同时绑定设备标识和设备公钥。
 func TestCredentialBindsDeviceAndKey(t *testing.T) {
 	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -35,6 +38,7 @@ func TestCredentialBindsDeviceAndKey(t *testing.T) {
 	}
 }
 
+// TestHubDoesNotPersistExpiredSession 验证过期 Relay 会话会被及时清理。
 func TestHubDoesNotPersistExpiredSession(t *testing.T) {
 	hub := newHub(Config{SessionTTL: time.Nanosecond})
 	defer hub.close()
@@ -52,6 +56,7 @@ func TestHubDoesNotPersistExpiredSession(t *testing.T) {
 	}
 }
 
+// TestEnrollDevice 验证 v1 enrollment 返回完整的原生配置材料。
 func TestEnrollDevice(t *testing.T) {
 	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -95,6 +100,49 @@ func TestEnrollDevice(t *testing.T) {
 	}
 }
 
+// TestRelayHTTPErrorUsesStableNetworkShape 验证设备 HTTP 错误不依赖自由字符串。
+func TestRelayHTTPErrorUsesStableNetworkShape(t *testing.T) {
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(Config{
+		CredentialKey:   []byte("01234567890123456789012345678901"),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+
+	mux := http.NewServeMux()
+	server.RegisterRoutes(mux)
+	body, _ := json.Marshal(enrollRequest{
+		DeviceID:        "device-a",
+		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
+		EnrollmentToken: "test-token",
+		ProtocolVersion: 2,
+		Platform:        "windows",
+	})
+	req := httptest.NewRequest("POST", "/v1/devices/enroll", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+	var response map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if response["code"] != float64(relayErrorProtocolError) ||
+		response["operation"] != "enroll_relay" ||
+		response["peer_id"] != "device-a" {
+		t.Fatalf("unexpected error response: %+v", response)
+	}
+	if _, exists := response["error"]; exists {
+		t.Fatal("error response retained the deprecated error field")
+	}
+}
+
+// TestDeviceProofRejectsReplayAndRevocation 验证证明重放和设备撤销都会被拒绝。
 func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -170,6 +218,7 @@ func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 	}
 }
 
+// TestCredentialRequiresCurrentEnrollment 验证旧进程凭据不能绕过当前 enrollment。
 func TestCredentialRequiresCurrentEnrollment(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -204,6 +253,7 @@ func TestCredentialRequiresCurrentEnrollment(t *testing.T) {
 	}
 }
 
+// TestDashboardContainsNoInlineHandlersOrDynamicInnerHTML 验证控制台不使用不安全的内联脚本。
 func TestDashboardContainsNoInlineHandlersOrDynamicInnerHTML(t *testing.T) {
 	index, err := staticFS.ReadFile("static/index.html")
 	if err != nil {
@@ -221,6 +271,7 @@ func TestDashboardContainsNoInlineHandlersOrDynamicInnerHTML(t *testing.T) {
 	}
 }
 
+// TestDashboardAndApiStats 验证控制台登录和统计 API 的基本契约。
 func TestDashboardAndApiStats(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte("01234567890123456789012345678901"),
@@ -264,6 +315,16 @@ func TestDashboardAndApiStats(t *testing.T) {
 	if recLogin.Code != http.StatusOK {
 		t.Fatalf("expected status 200 for login, got %d", recLogin.Code)
 	}
+	var loginResponse map[string]any
+	if err := json.NewDecoder(recLogin.Body).Decode(&loginResponse); err != nil {
+		t.Fatalf("failed to decode login response: %v", err)
+	}
+	if loginResponse["username"] != "test-admin" {
+		t.Fatalf("unexpected login response: %+v", loginResponse)
+	}
+	if _, exists := loginResponse["success"]; exists {
+		t.Fatal("login response retained the deprecated success field")
+	}
 	cookie := recLogin.Result().Cookies()[0]
 
 	// Test GET /api/stats JSON with auth
@@ -279,8 +340,40 @@ func TestDashboardAndApiStats(t *testing.T) {
 	if err := json.NewDecoder(recStats.Body).Decode(&stats); err != nil {
 		t.Fatalf("failed to decode stats JSON: %v", err)
 	}
+
+	revokeBody, _ := json.Marshal(map[string]string{"device_id": "device-a"})
+	revokeRequest := httptest.NewRequest(
+		"POST",
+		"/api/devices/revoke",
+		bytes.NewReader(revokeBody),
+	)
+	revokeRequest.AddCookie(cookie)
+	revokeResponse := httptest.NewRecorder()
+	mux.ServeHTTP(revokeResponse, revokeRequest)
+	if revokeResponse.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for revoke, got %d", revokeResponse.Code)
+	}
+	var revokePayload map[string]any
+	if err := json.NewDecoder(revokeResponse.Body).Decode(&revokePayload); err != nil {
+		t.Fatalf("failed to decode revoke response: %v", err)
+	}
+	if revokePayload["device_id"] != "device-a" {
+		t.Fatalf("unexpected revoke response: %+v", revokePayload)
+	}
+	if _, exists := revokePayload["success"]; exists {
+		t.Fatal("revoke response retained the deprecated success field")
+	}
+
+	logoutRequest := httptest.NewRequest("POST", "/api/logout", nil)
+	logoutRequest.AddCookie(cookie)
+	logoutResponse := httptest.NewRecorder()
+	mux.ServeHTTP(logoutResponse, logoutRequest)
+	if logoutResponse.Code != http.StatusNoContent || logoutResponse.Body.Len() != 0 {
+		t.Fatalf("expected empty 204 logout response, got %d", logoutResponse.Code)
+	}
 }
 
+// TestDartWireContractEndToEnd 验证 Dart v1 Relay 控制帧和加密二进制帧端到端一致。
 func TestDartWireContractEndToEnd(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte("01234567890123456789012345678901"),
