@@ -22,6 +22,8 @@ import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 class LanReceiverCoordinator extends ChangeNotifier {
   final StorageService storageService;
   final AppSettings appSettings;
+  @visibleForTesting
+  final bool initializeNetwork;
 
   LanDiscoveryService? _discoveryService;
   LanSecurityService? _securityService;
@@ -48,6 +50,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
   LanReceiverCoordinator({
     required this.storageService,
     required this.appSettings,
+    @visibleForTesting this.initializeNetwork = true,
   });
 
   bool get initialized => _initialized;
@@ -265,7 +268,9 @@ class LanReceiverCoordinator extends ChangeNotifier {
       );
       final security = LanSecurityService();
       final lanStorage = LanStorageService();
-      final networkIdentity = await NetworkIdentityService().loadOrCreate();
+      final networkIdentity = initializeNetwork
+          ? await NetworkIdentityService().loadOrCreate()
+          : null;
       final relayClient = RelayClient(
         currentDeviceId: deviceId,
         securityService: security,
@@ -274,7 +279,9 @@ class LanReceiverCoordinator extends ChangeNotifier {
         currentDeviceId: deviceId,
         securityService: security,
         storageService: lanStorage,
-        networkIdentityPublicKeyProvider: () async => networkIdentity.publicKey,
+        networkIdentityPublicKeyProvider: networkIdentity == null
+            ? null
+            : () async => networkIdentity.publicKey,
       );
 
       _pairingInviteSubscription = transfer.pairingInviteStream.listen(
@@ -291,53 +298,60 @@ class LanReceiverCoordinator extends ChangeNotifier {
         security.generate6DigitPin();
       }
 
-      final boundPort = await transfer.startListening();
-      await discovery.startAdvertising(port: boundPort);
+      int? boundPort;
+      if (initializeNetwork) {
+        boundPort = await transfer.startListening();
+        await discovery.startAdvertising(port: boundPort);
+      }
 
       _discoveryService = discovery;
       _securityService = security;
       _lanStorageService = lanStorage;
       _transferService = transfer;
       _relayClient = relayClient;
-      NativeNetworkRuntime? nativeRuntime;
-      QuicTransferTransport? directTransport;
-      try {
-        nativeRuntime = await const SshMobileNetworkNative().createRuntime();
-        directTransport = QuicTransferTransport(nativeRuntime);
-        await directTransport.configure(
-          deviceId: deviceId,
-          identityPrivateKey: networkIdentity.privateSeed,
-          e2ePrivateKey: await security.getStaticX25519PrivateKeyBytes(),
-          listenAddress: '0.0.0.0:$boundPort',
-          receiveDirectory: (await lanStorage.getSandboxDirectory()).path,
-        );
-        _nativeNetworkRuntime = nativeRuntime;
-        _fileTransferTransport = AdaptiveTransferTransport(
-          direct: directTransport,
-        );
-      } on Object catch (error, stackTrace) {
-        await directTransport?.dispose();
-        await nativeRuntime?.dispose();
-        _fileTransferTransport = null;
-        AppLogService.instance.warning(
-          'Native QUIC runtime initialization failed',
-          details: '$error\n$stackTrace',
-        );
+      if (initializeNetwork) {
+        NativeNetworkRuntime? nativeRuntime;
+        QuicTransferTransport? directTransport;
+        try {
+          nativeRuntime = await const SshMobileNetworkNative().createRuntime();
+          directTransport = QuicTransferTransport(nativeRuntime);
+          await directTransport.configure(
+            deviceId: deviceId,
+            identityPrivateKey: networkIdentity!.privateSeed,
+            e2ePrivateKey: await security.getStaticX25519PrivateKeyBytes(),
+            listenAddress: '0.0.0.0:$boundPort',
+            receiveDirectory: (await lanStorage.getSandboxDirectory()).path,
+          );
+          _nativeNetworkRuntime = nativeRuntime;
+          _fileTransferTransport = AdaptiveTransferTransport(
+            direct: directTransport,
+          );
+        } on Object catch (error, stackTrace) {
+          await directTransport?.dispose();
+          await nativeRuntime?.dispose();
+          _fileTransferTransport = null;
+          AppLogService.instance.warning(
+            'Native QUIC runtime initialization failed',
+            details: '$error\n$stackTrace',
+          );
+        }
       }
       _initialized = true;
       notifyListeners();
-      final relayEndpoint = Uri.tryParse(appSettings.relayEndpoint);
-      if (relayEndpoint != null && relayEndpoint.hasScheme) {
-        unawaited(
-          _connectRelay(RelaySettings(endpoint: relayEndpoint))
-              .then((_) => notifyListeners())
-              .catchError((Object error, StackTrace stackTrace) {
-                AppLogService.instance.warning(
-                  'Configured Relay connection failed',
-                  details: '$error\n$stackTrace',
-                );
-              }),
-        );
+      if (initializeNetwork) {
+        final relayEndpoint = Uri.tryParse(appSettings.relayEndpoint);
+        if (relayEndpoint != null && relayEndpoint.hasScheme) {
+          unawaited(
+            _connectRelay(RelaySettings(endpoint: relayEndpoint))
+                .then((_) => notifyListeners())
+                .catchError((Object error, StackTrace stackTrace) {
+                  AppLogService.instance.warning(
+                    'Configured Relay connection failed',
+                    details: '$error\n$stackTrace',
+                  );
+                }),
+          );
+        }
       }
     } catch (e) {
       await _cancelReceiverSubscriptions();

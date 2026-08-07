@@ -19,6 +19,24 @@ import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
+Future<void> _pumpChatUi(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 500));
+}
+
+Future<void> _waitForInitialChat(
+  WidgetTester tester,
+  AiChatViewModel viewModel,
+) async {
+  await tester.runAsync(() async {
+    for (var attempt = 0; attempt < 100; attempt++) {
+      if (!viewModel.loading && viewModel.activeChat != null) return;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+  });
+  await tester.pump();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -88,7 +106,7 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       final baselineLoads = storage.settingsLoads;
       final openSettings = find.byKey(const ValueKey('chat-open-llm-settings'));
       final openSettingsButton = find.byKey(
@@ -97,6 +115,10 @@ void main() {
       expect(openSettings, findsOneWidget);
       expect(tester.getSize(openSettings).height, greaterThanOrEqualTo(48));
       expect(tester.getSize(openSettings).width, greaterThanOrEqualTo(48));
+      final viewModel = tester
+          .element(openSettingsButton)
+          .read<AiChatViewModel>();
+      await _waitForInitialChat(tester, viewModel);
 
       final gate = storage.blockNextLoad();
       await tester.tap(openSettingsButton);
@@ -106,10 +128,10 @@ void main() {
       expect(tester.widget<IconButton>(openSettingsButton).onPressed, isNull);
 
       gate.complete();
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       expect(find.byType(LlmSettingsScreen), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('llm-settings-close')));
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       expect(find.byType(LlmSettingsScreen), findsNothing);
       expect(
         tester.widget<IconButton>(openSettingsButton).onPressed,
@@ -124,7 +146,7 @@ void main() {
       active.value = true;
       await tester.pump();
       inactiveGate.complete();
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       expect(find.byType(LlmSettingsScreen), findsNothing);
       expect(find.byType(SnackBar), findsNothing);
       expect(storage.settingsLoads, baselineLoads + 2);
@@ -142,7 +164,7 @@ void main() {
       active.value = true;
       await tester.pump();
       inactiveFailureGate.complete();
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       expect(find.byType(LlmSettingsScreen), findsNothing);
       expect(find.byType(SnackBar), findsNothing);
       expect(storage.settingsLoads, baselineLoads + 3);
@@ -154,7 +176,7 @@ void main() {
       logs.clear();
       storage.failNextLoad = true;
       await tester.tap(openSettingsButton);
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       expect(
         find.text('Unable to open LLM settings. Try again.'),
         findsOneWidget,
@@ -178,21 +200,18 @@ void main() {
       );
 
       await tester.tap(openSettingsButton);
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       expect(find.byType(LlmSettingsScreen), findsOneWidget);
       expect(storage.settingsLoads, baselineLoads + 5);
       await tester.tap(find.byKey(const ValueKey('llm-settings-close')));
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
 
       logs.clear();
-      final viewModel = tester
-          .element(openSettingsButton)
-          .read<AiChatViewModel>();
       final originalModel = viewModel.activeChat!.model;
       final baselineChatSaves = storage.chatSaveAttempts;
       storage.failNextChatSave = true;
       await tester.tap(openSettingsButton);
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       final modelField = find.byWidgetPredicate(
         (widget) =>
             widget is DropdownButtonFormField<String> &&
@@ -200,11 +219,11 @@ void main() {
       );
       expect(modelField, findsOneWidget);
       await tester.tap(modelField);
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       await tester.tap(find.text(_GuardedSettingsStorage.alternateModel).last);
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       expect(
         find.text(
           'Settings were saved, but the active chat could not update. '
@@ -231,9 +250,9 @@ void main() {
       ScaffoldMessenger.of(
         tester.element(openSettingsButton),
       ).hideCurrentSnackBar();
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       await tester.tap(openSettingsButton);
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       final baseUrlField = find.byWidgetPredicate(
         (widget) =>
             widget is TextField && widget.decoration?.labelText == 'Base URL',
@@ -242,7 +261,7 @@ void main() {
       await tester.enterText(baseUrlField, 'https://api.retry.example/v1');
       await tester.pump();
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       expect(find.byType(LlmSettingsScreen), findsNothing);
       expect(storage.chatSaveAttempts, baselineChatSaves + 2);
       expect(
@@ -252,7 +271,7 @@ void main() {
 
       logs.clear();
       await tester.tap(openSettingsButton);
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       await tester.enterText(
         baseUrlField,
         'https://private.example/v1?token=top-secret-value',
@@ -260,7 +279,7 @@ void main() {
       await tester.pump();
       storage.failNextSettingsSave = true;
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       final settingsError = find.byKey(const ValueKey('llm-settings-error'));
       expect(settingsError, findsOneWidget);
       expect(
@@ -287,7 +306,7 @@ void main() {
       await tester.enterText(baseUrlField, 'https://api.retry.example/v1');
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('llm-settings-close')));
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       expect(find.byType(LlmSettingsScreen), findsNothing);
 
       logs.clear();
@@ -370,11 +389,11 @@ void main() {
       await tester.pump();
       await tester.pumpWidget(const SizedBox.shrink());
       disposeGate.complete();
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       expect(tester.takeException(), isNull);
     } finally {
       storage.releasePendingLoads();
-      await tester.pumpAndSettle();
+      await _pumpChatUi(tester);
       await tester.pumpWidget(const SizedBox.shrink());
       debugDefaultTargetPlatformOverride = originalPlatform;
       rag.dispose();

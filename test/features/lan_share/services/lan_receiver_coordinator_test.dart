@@ -38,6 +38,7 @@ void main() {
       final coordinator = LanReceiverCoordinator(
         storageService: storageService,
         appSettings: appSettings,
+        initializeNetwork: false,
       );
 
       final future1 = coordinator.ensureInitialized();

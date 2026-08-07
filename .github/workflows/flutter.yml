@@ -63,6 +63,15 @@ jobs:
           cache: true
       - name: Install dependencies
         run: flutter pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/ssh_mobile_network_native
+        run: dart pub get
+      - name: Analyze native Dart package
+        working-directory: packages/ssh_mobile_network_native
+        run: dart analyze
+      - name: Test native Dart package
+        working-directory: packages/ssh_mobile_network_native
+        run: dart test
       - name: Check generated app icons
         run: |
           dart run tool/generate_app_icons.dart
