@@ -1404,8 +1404,8 @@ backpressure
 rate limit
 ```
 
-设备只使用 `/v1/connect`；不提供独立 `/v1/control` 路由，也不保留 Dart
-Relay 数据面或 HTTPS 文件回退。
+设备只使用 `/v1/connect`；不提供独立 control 路由，也不保留 Dart Relay
+数据面或 HTTPS 文件回退。
 
 ---
 
