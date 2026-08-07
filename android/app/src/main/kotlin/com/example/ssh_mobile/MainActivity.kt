@@ -120,17 +120,18 @@ class MainActivity : FlutterActivity() {
     private fun getNativeMemoryStats(): Map<String, Any?> {
         val memInfo = Debug.MemoryInfo()
         Debug.getMemoryInfo(memInfo)
+        // Android 23+ 通过公开的 summary.* 统计项提供细分内存数据；旧版本只返回公开 PSS 字段。
         val useStats = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
         fun kb(key: String): Long? {
             if (!useStats) return null
             val raw = memInfo.getMemoryStat(key) ?: return null
             return (raw.toLongOrNull() ?: 0L) * 1024L
         }
-        val javaHeap = kb(Debug.MEMORY_INFO_JAVA_HEAP) ?: memInfo.javaSize.toLong() * 1024L
-        val nativeHeap = kb(Debug.MEMORY_INFO_NATIVE_SIZE) ?: memInfo.nativePss.toLong() * 1024L
-        val graphics = kb(Debug.MEMORY_INFO_GRAPHICS) ?: memInfo.graphicsMemory * 1024L
-        val code = kb(Debug.MEMORY_INFO_CODE) ?: 0L
-        val totalPss = memInfo.totalPss.toLong() * 1024L
+        val javaHeap = kb("summary.java-heap") ?: memInfo.dalvikPss.toLong() * 1024L
+        val nativeHeap = kb("summary.native-heap") ?: memInfo.nativePss.toLong() * 1024L
+        val graphics = kb("summary.graphics") ?: 0L
+        val code = kb("summary.code") ?: 0L
+        val totalPss = kb("summary.total-pss") ?: memInfo.totalPss.toLong() * 1024L
         return mapOf(
             "available" to useStats,
             "javaHeap" to javaHeap,
