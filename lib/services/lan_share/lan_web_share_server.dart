@@ -1,5 +1,8 @@
+// v1 WebShare HTTP 请求路由与上传会话状态。
+
 part of 'lan_discovery_service.dart';
 
+/// 跟踪一个已通过元数据端点认证并接受的 WebShare 上传。
 class _PendingWebUpload {
   final String messageId;
   final String fileName;
@@ -7,6 +10,7 @@ class _PendingWebUpload {
   final bool encrypted;
   final DateTime expiresAt;
 
+  /// 创建上传预留。
   const _PendingWebUpload({
     required this.messageId,
     required this.fileName,
@@ -15,19 +19,21 @@ class _PendingWebUpload {
     required this.expiresAt,
   });
 
+  /// 预留是否已经超过有效期。
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 }
 
+/// WebShare 端点边界使用的安全 HTTP 失败。
 class _WebShareHttpException implements Exception {
   final int statusCode;
   final String message;
 
+  /// 创建规范化 WebShare HTTP 失败。
   const _WebShareHttpException(this.statusCode, this.message);
 }
 
 extension _LanWebShareServerOperations on LanDiscoveryService {
-  /// Start Web Share Mode (serve clean Web UI for no-app browser transfers)
-  /// Tries candidate ports in order until one binds successfully.
+  /// 启动 WebShare，并尝试候选端口直到绑定成功。
   Future<String?> _startWebShareServer({
     int port = 53319,
     bool useHttps = false,
@@ -38,7 +44,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     if (_isWebShareActive) return _webShareUrl;
 
     final candidates = [port, 53322, 53327, 53332, 53337]..remove(port);
-    candidates.insert(0, port); // ensure preferred port is first
+    candidates.insert(0, port); // 确保首选端口位于第一位。
 
     HttpServer? bound;
     int boundPort = port;
@@ -66,7 +72,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     }
 
     if (bound == null) {
-      // Last resort: ephemeral port
+      // 最后的保底方案：使用临时端口。
       if (useHttps) {
         final securityContext = await securityService
             .getOrCreateSecurityContext(currentDeviceId);
@@ -136,7 +142,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     }
   }
 
-  /// Stop Web Share server
+  /// 停止 WebShare 服务并清除所有待处理上传。
   Future<void> _stopWebShareServer() async {
     final server = _webShareServer;
     _webShareServer = null;
@@ -147,6 +153,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     if (server != null) await server.close(force: true);
   }
 
+  /// 路由一个 WebShare HTTP 请求，并写入规范化错误响应。
   Future<void> _handleWebShareRequest(
     HttpRequest request, {
     required String webShareToken,
@@ -157,8 +164,8 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     required LanStorageService storageService,
   }) async {
     _setWebShareResponseHeaders(request.response);
+    final path = request.uri.path;
     try {
-      final path = request.uri.path;
       if (request.method == 'GET' && (path == '/' || path == '/index.html')) {
         _requireWebShareToken(request, allowQueryParameter: true);
         request.response.headers.contentType = ContentType.html;
@@ -204,7 +211,9 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
       );
     } on _WebShareHttpException catch (error) {
       await _writeWebShareJson(request.response, error.statusCode, {
-        'error': error.message,
+        'code': lanHttpErrorCode(error.statusCode).wireValue,
+        'message': error.message,
+        'operation': _webOperationForPath(path),
       });
     } catch (error) {
       debugPrint('[LanDiscoveryService] Web Share request failed: $error');
@@ -212,12 +221,26 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         await _writeWebShareJson(
           request.response,
           HttpStatus.internalServerError,
-          {'error': 'Web Share request failed.'},
+          {
+            'code': NetworkErrorCode.ioError.wireValue,
+            'message': 'WebShare request failed.',
+            'operation': _webOperationForPath(path),
+          },
         );
       } catch (_) {}
     }
   }
 
+  /// 将 WebShare 端点路径映射为稳定操作名称。
+  String _webOperationForPath(String path) {
+    return switch (path) {
+      '/api/web/meta' => 'webshare_send_meta',
+      '/api/web/upload' => 'webshare_send_file',
+      _ => 'webshare_request',
+    };
+  }
+
+  /// 为 WebShare 响应添加安全和缓存响应头。
   void _setWebShareResponseHeaders(HttpResponse response) {
     response.headers.set(HttpHeaders.cacheControlHeader, 'no-store');
     response.headers.set('Pragma', 'no-cache');
@@ -225,6 +248,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     response.headers.set('Referrer-Policy', 'no-referrer');
   }
 
+  /// 使用规范化 HTTP 状态写入端点专属 JSON。
   Future<void> _writeWebShareJson(
     HttpResponse response,
     int statusCode,
@@ -236,6 +260,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     await response.close();
   }
 
+  /// 生成密码学安全的随机 WebShare bearer token。
   String _generateWebShareToken() {
     final random = Random.secure();
     final bytes = Uint8List.fromList(
@@ -244,6 +269,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     return base64Url.encode(bytes).replaceAll('=', '');
   }
 
+  /// 校验请求头或初始 URL 中的 WebShare bearer token。
   void _requireWebShareToken(
     HttpRequest request, {
     bool allowQueryParameter = false,
@@ -262,6 +288,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     }
   }
 
+  /// 比较两个 token，避免提前退出造成时序信号。
   static bool _constantTimeEquals(String expected, String provided) {
     var difference = expected.length ^ provided.length;
     for (var i = 0; i < expected.length; i++) {
@@ -271,6 +298,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
     return difference == 0;
   }
 
+  /// 将用户可控文本嵌入生成 HTML 前进行转义。
   static String _escapeHtml(String value) {
     return value
         .replaceAll('&', '&amp;')
@@ -280,6 +308,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         .replaceAll("'", '&#39;');
   }
 
+  /// 使用 v1 端点值构建静态 WebShare HTML 客户端。
   String _buildWebShareHtml({
     required String appPubKeyB64,
     required String webShareToken,
@@ -685,7 +714,7 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
       }
     });
 
-    // UUID 生成器
+    // UUID 生成器。
     function generateUUID() {
       return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
         var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
@@ -702,9 +731,9 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
       return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    // 核心加密方法：与 Dart 的 LanSecurityService 保持完全兼容的 X25519 + AES-GCM-256 加密
+    // 核心加密方法：使用与 Dart LanSecurityService 完全兼容的 X25519 + AES-GCM-256。
     async function encryptBlob(arrayBuffer, appPubKeyB64) {
-      // 1. 解码 App 的公钥
+      // 1. 解码 App 公钥。
       const appPubKeyBytes = Uint8Array.from(atob(appPubKeyB64), c => c.charCodeAt(0));
       const appKey = await window.crypto.subtle.importKey(
         "raw",
@@ -721,20 +750,20 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         ["deriveBits"]
       );
 
-      // 3. 导出临时公钥的 32 字节 raw 数据
+      // 3. 导出临时公钥的 32 字节原始数据。
       const webPubKeyBytes = await window.crypto.subtle.exportKey(
         "raw",
         webKeyPair.publicKey
       );
 
-      // 4. ECDH 计算共享密码 (Shared Secret)
+      // 4. 使用 ECDH 计算共享秘密。
       const sharedSecret = await window.crypto.subtle.deriveBits(
         { name: "X25519", public: appKey },
         webKeyPair.privateKey,
-        256 // 256 bits (32 bytes)
+        256 // 256 位（32 字节）。
       );
 
-      // 5. 将共享密码导入为 AES-GCM 密钥
+      // 5. 将共享秘密导入为 AES-GCM 密钥。
       const aesKey = await window.crypto.subtle.importKey(
         "raw",
         sharedSecret,
@@ -743,17 +772,17 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
         ["encrypt"]
       );
 
-      // 6. 生成 12 字节随机 iv (nonce)
+      // 6. 生成 12 字节随机 iv（nonce）。
       const iv = window.crypto.getRandomValues(new Uint8Array(12));
 
-      // 7. 使用 AES-GCM-256 进行数据加密 (密文最后 16 字节自动附加 auth tag)
+      // 7. 使用 AES-GCM-256 加密数据（密文末尾自动附加 16 字节认证标签）。
       const ciphertext = await window.crypto.subtle.encrypt(
         { name: "AES-GCM", iv: iv },
         aesKey,
         arrayBuffer
       );
 
-      // 8. 组合封包: [32B webPubKey] + [12B iv] + [ciphertext+tag]
+      // 8. 组合封包：[32B webPubKey] + [12B iv] + [ciphertext+tag]。
       const finalBlob = new Uint8Array(32 + 12 + ciphertext.byteLength);
       finalBlob.set(new Uint8Array(webPubKeyBytes), 0);
       finalBlob.set(iv, 32);
@@ -849,8 +878,8 @@ extension _LanWebShareServerOperations on LanDiscoveryService {
           uploadBody = new Blob([encryptedFile]);
           uploadHeaders['x-e2e-pubkey'] = '1';
         } else {
-          // Keep ordinary uploads streaming from the browser's File/Blob
-          // implementation instead of duplicating the entire file in JS RAM.
+          // 普通上传保持浏览器 File/Blob 流式实现，
+          // 不要将整个文件复制到 JavaScript 内存。
           uploadBody = file;
         }
 

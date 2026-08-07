@@ -1,3 +1,8 @@
+// v1 LAN TLS、配对 PIN、E2E 密钥与可信对端安全服务。
+//
+// 配对缓存持久化位于 lan_security_pairing.dart，使本安全边界便于审计，
+// 并保持在 1000 行限制以内。
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -9,7 +14,9 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-/// Top-level function for compute() isolate execution
+part 'lan_security_pairing.dart';
+
+/// 在工作 isolate 中生成自签名证书和私钥。
 Map<String, String> _generateSelfSignedCertIsolate(String commonName) {
   final pair = CryptoUtils.generateEcKeyPair();
   final privKey = pair.privateKey as ECPrivateKey;
@@ -23,12 +30,12 @@ Map<String, String> _generateSelfSignedCertIsolate(String commonName) {
   return {'cert': certPem, 'key': keyPem};
 }
 
+/// 为定向单元测试同步生成证书材料。
 @visibleForTesting
 Map<String, String> generateSelfSignedCertForTest(String commonName) =>
     _generateSelfSignedCertIsolate(commonName);
 
-/// Service handling TLS certificate generation, PIN verification,
-/// ECDH key agreement, and trusted device storage.
+/// 负责 TLS 证书生成、PIN 校验、ECDH 密钥协商和可信设备存储的服务。
 class LanSecurityService {
   static const String _certKeyPrefix = 'lan_share_cert_';
   static const String _privateKeyPrefix = 'lan_share_key_';
@@ -44,9 +51,9 @@ class LanSecurityService {
   static const Duration _freshOutboundPinProofTtl = Duration(seconds: 60);
   final Map<String, DateTime> _freshOutboundPinProofExpiry = {};
 
-  /// In-memory cache for paired device states.
-  /// null = not yet loaded from disk; populated on first read.
-  /// Key: deviceId, Value: timestamp (0 = permanent, >0 = temporary epoch ms)
+  /// 已配对设备状态的内存缓存。
+  /// null 表示尚未从磁盘加载，首次读取时填充。
+  /// key 为 deviceId，value 为时间戳（0 表示永久，>0 表示临时 epoch 毫秒）。
   Map<String, int>? _pairedCache;
 
   String? _cachedCertPem;
@@ -60,6 +67,7 @@ class LanSecurityService {
   int _failedPinAttempts = 0;
   DateTime? _lockoutUntil;
 
+  /// 创建使用平台安全存储的安全服务。
   LanSecurityService({FlutterSecureStorage? secureStorage})
     : _secureStorage =
           secureStorage ??
@@ -67,30 +75,27 @@ class LanSecurityService {
             mOptions: MacOsOptions(usesDataProtectionKeychain: false),
           );
 
-  // ── E2E Application-Layer Encryption ─────────────────────────────────────
+  // ── E2E 应用层加密 ─────────────────────────────────────────────────────
 
-  /// This device supports E2E application-layer encryption.
+  /// 返回本设备是否支持 E2E 应用层加密。
   static const bool supportsE2EEncryption = true;
 
-  /// Encrypt [plaintext] bytes using X25519 ECDH key agreement + AES-256-GCM.
+  /// 使用 X25519 ECDH 密钥协商与 AES-256-GCM 加密 [plaintext] 字节。
   ///
-  /// Returns a single blob:
-  ///   [32 bytes ephemeral pubkey] [12 bytes nonce] [N bytes ciphertext+tag]
+  /// 返回单个数据块：[32 字节临时公钥] [12 字节 nonce] [N 字节密文+tag]。
   ///
-  /// The recipient uses their own X25519 private key + sender's ephemeral
-  /// public key to derive the same shared secret and decrypt.
+  /// 接收方使用自己的 X25519 私钥和发送方临时公钥派生相同共享秘密并解密。
   Future<Uint8List> encryptE2E(Uint8List plaintext) async {
     final x25519 = X25519();
     final aesGcm = AesGcm.with256bits();
 
-    // Generate ephemeral sender key pair
+    // 生成发送方临时密钥对。
     final ephemeralKeyPair = await x25519.newKeyPair();
     final ephemeralPubKey = await ephemeralKeyPair.extractPublicKey();
 
-    // Get persistent receiver public key (our own for server-side decryption;
-    // for sender side we'll need the receiver's pubkey via header exchange.
-    // Since we own both sides' keys on different devices, we use this device's
-    // static X25519 key as the "recipient key" to derive sharedSecret.
+    // 获取持久接收方公钥（服务端解密时是本机公钥；发送方需要通过请求头交换
+    // 接收方公钥）。不同设备分别拥有两端密钥，因此使用本设备静态 X25519 密钥
+    // 作为“接收方密钥”派生 sharedSecret。
     final staticKeyPair = await _getOrCreateStaticX25519KeyPair();
     final staticPubKey = await staticKeyPair.extractPublicKey();
 
@@ -107,7 +112,7 @@ class LanSecurityService {
       nonce: nonce,
     );
 
-    // Compose: [32B ephemeral pub] + [12B nonce] + [ciphertext + 16B tag]
+    // 组合：[32B 临时公钥] + [12B nonce] + [密文 + 16B tag]。
     final ephemeralPubBytes = ephemeralPubKey.bytes;
     final ciphertextWithTag = secretBox.cipherText + secretBox.mac.bytes;
     final result = Uint8List(
@@ -127,10 +132,10 @@ class LanSecurityService {
     return result;
   }
 
-  /// Encrypt [plaintext] bytes addressed TO [recipientPubKeyBytes] (X25519 pub).
+  /// 使用目标 [recipientPubKeyBytes]（X25519 公钥）加密 [plaintext] 字节。
   ///
-  /// Returns same blob format as [encryptE2E]:
-  ///   [32 bytes ephemeral pubkey] [12 bytes nonce] [ciphertext+tag]
+  /// 返回与 [encryptE2E] 相同的数据块格式：[32 字节临时公钥] [12 字节 nonce]
+  /// [密文+tag]。
   Future<Uint8List> encryptE2EFor(
     Uint8List plaintext,
     Uint8List recipientPubKeyBytes,
@@ -177,8 +182,7 @@ class LanSecurityService {
     return result;
   }
 
-  /// Decrypt a blob produced by [encryptE2EFor] using this device's
-  /// static X25519 private key.
+  /// 使用本设备静态 X25519 私钥解密 [encryptE2EFor] 产生的数据块。
   Future<Uint8List> decryptE2E(Uint8List blob) async {
     const ephemeralPubLen = 32;
     const nonceLen = 12;
@@ -220,23 +224,23 @@ class LanSecurityService {
     return Uint8List.fromList(plaintext);
   }
 
-  /// Returns this device's persistent X25519 public key bytes (32 bytes).
+  /// 返回本设备持久化 X25519 公钥字节（32 字节）。
   Future<Uint8List> getStaticX25519PublicKeyBytes() async {
     final kp = await _getOrCreateStaticX25519KeyPair();
     final pub = await kp.extractPublicKey();
     return Uint8List.fromList(pub.bytes);
   }
 
-  /// Returns the persistent X25519 seed for handoff to the in-process native
-  /// network runtime. Callers must keep it memory-only.
+  /// 返回交给进程内原生网络运行时的持久化 X25519 种子。
+  /// 调用方必须仅在内存中保存它。
   Future<Uint8List> getStaticX25519PrivateKeyBytes() async {
     final keyPair = await _getOrCreateStaticX25519KeyPair();
     return Uint8List.fromList(await keyPair.extractPrivateKeyBytes());
   }
 
-  /// Stores the E2E key observed over an already authenticated pairing channel.
-  /// Public relay transfers refuse peers that do not have this pinned key, so
-  /// pairings missing the key must be refreshed instead of becoming plaintext.
+  /// 保存已认证配对通道中观察到的 E2E 密钥。
+  /// 公开 Relay 传输会拒绝没有该固定密钥的对端，因此缺少密钥的配对必须刷新，
+  /// 不能降级为明文。
   Future<void> storePeerX25519PublicKey(
     String deviceId,
     Uint8List publicKey,
@@ -263,6 +267,7 @@ class LanSecurityService {
     );
   }
 
+  /// 返回已配对设备固定的 X25519 公钥（若存在）。
   Future<Uint8List?> getPeerX25519PublicKey(String deviceId) async {
     if (!await isDevicePaired(deviceId)) return null;
     final value = (await _readPeerX25519Keys())[deviceId];
@@ -275,6 +280,7 @@ class LanSecurityService {
     }
   }
 
+  /// 从安全存储读取设备到 X25519 密钥的映射。
   Future<Map<String, String>> _readPeerX25519Keys() async {
     final raw = await _secureStorage.read(key: _peerX25519KeysStorageKey);
     if (raw == null) return <String, String>{};
@@ -287,6 +293,7 @@ class LanSecurityService {
     }
   }
 
+  /// 移除设备固定的 X25519 公钥。
   Future<void> _removePeerX25519PublicKey(String deviceId) async {
     final values = await _readPeerX25519Keys();
     if (values.remove(deviceId) != null) {
@@ -297,8 +304,8 @@ class LanSecurityService {
     }
   }
 
-  /// Stores the Ed25519 identity used by the native QUIC handshake. The key is
-  /// pinned to the pairing and cannot rotate until the peer is unpaired.
+  /// 保存原生 QUIC 握手使用的 Ed25519 身份。
+  /// 密钥固定在配对记录中，直到解除配对前不得轮换。
   Future<void> storePeerNetworkIdentityPublicKey(
     String deviceId,
     Uint8List publicKey,
@@ -325,6 +332,7 @@ class LanSecurityService {
     );
   }
 
+  /// 返回已配对设备固定的原生网络身份密钥。
   Future<Uint8List?> getPeerNetworkIdentityPublicKey(String deviceId) async {
     if (!await isDevicePaired(deviceId)) return null;
     final value = (await _readPeerNetworkIdentityKeys())[deviceId];
@@ -337,6 +345,7 @@ class LanSecurityService {
     }
   }
 
+  /// 从安全存储读取设备到网络身份密钥的映射。
   Future<Map<String, String>> _readPeerNetworkIdentityKeys() async {
     final raw = await _secureStorage.read(
       key: _peerNetworkIdentityKeysStorageKey,
@@ -351,6 +360,7 @@ class LanSecurityService {
     }
   }
 
+  /// 移除设备固定的原生网络身份密钥。
   Future<void> _removePeerNetworkIdentityPublicKey(String deviceId) async {
     final values = await _readPeerNetworkIdentityKeys();
     if (values.remove(deviceId) != null) {
@@ -364,6 +374,7 @@ class LanSecurityService {
   static const String _x25519PrivKeyStorageKey = 'lan_share_x25519_priv';
   SimpleKeyPair? _cachedX25519KeyPair;
 
+  /// 加载或创建本设备持久化 X25519 密钥对。
   Future<SimpleKeyPair> _getOrCreateStaticX25519KeyPair() async {
     if (_cachedX25519KeyPair != null) return _cachedX25519KeyPair!;
 
@@ -384,7 +395,7 @@ class LanSecurityService {
     return _cachedX25519KeyPair!;
   }
 
-  /// Generate or load persistent ECDSA self-signed TLS certificate
+  /// 生成或加载持久化 ECDSA 自签名 TLS 证书。
   Future<SecurityContext> getOrCreateSecurityContext(String deviceId) async {
     if (_cachedSecurityContext != null) {
       return _cachedSecurityContext!;
@@ -422,7 +433,7 @@ class LanSecurityService {
     return context;
   }
 
-  /// Compute SHA-256 fingerprint of a PEM certificate
+  /// 计算 PEM 证书的 SHA-256 指纹。
   Future<String> computeCertFingerprint(String certPem) async {
     final lines = certPem
         .split('\n')
@@ -435,12 +446,12 @@ class LanSecurityService {
     return digest.bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
-  /// Generate a random 6-digit PIN for device pairing
+  /// 生成设备配对使用的随机六位 PIN。
   String generate6DigitPin() {
     final random = Random.secure();
     final pin = (100000 + random.nextInt(900000)).toString();
 
-    // Preserve the old active PIN for the grace period check
+    // 保留旧的活动 PIN，用于宽限期校验。
     _previousPin = _activePin;
     _previousPinGeneratedTime = _pinGeneratedTime;
 
@@ -452,6 +463,7 @@ class LanSecurityService {
     return pin;
   }
 
+  /// 在活动配对 PIN 有效期间返回它。
   String? get activePin {
     if (_activePin == null || _pinGeneratedTime == null) return null;
     final diff = DateTime.now().difference(_pinGeneratedTime!);
@@ -463,6 +475,7 @@ class LanSecurityService {
     return _activePin;
   }
 
+  /// 返回活动配对 PIN 的剩余有效秒数。
   int get pinSecondsRemaining {
     if (_activePin == null || _pinGeneratedTime == null) return 0;
     final diff = DateTime.now().difference(_pinGeneratedTime!);
@@ -470,13 +483,14 @@ class LanSecurityService {
     return remaining > 0 ? remaining : 0;
   }
 
+  /// 复用活动 PIN，或生成新的六位配对 PIN。
   String getOrGenerate6DigitPin() {
     final current = activePin;
     if (current != null) return current;
     return generate6DigitPin();
   }
 
-  /// Verify incoming PIN code with lockout protection
+  /// 在带锁定保护的前提下校验传入 PIN。
   bool verifyPin(String candidatePin) {
     debugPrint('[LanSecurityService] Verifying pairing PIN');
     if (_lockoutUntil != null && DateTime.now().isBefore(_lockoutUntil!)) {
@@ -488,7 +502,7 @@ class LanSecurityService {
 
     final currentPin = activePin;
 
-    // 1. Verify against current active PIN
+    // 1. 与当前活动 PIN 校验。
     if (currentPin != null && candidatePin == currentPin) {
       debugPrint(
         '[LanSecurityService] PIN verified successfully (current PIN match)',
@@ -497,7 +511,7 @@ class LanSecurityService {
       return true;
     }
 
-    // 2. Verify against previous PIN with 15-second grace period (75s total from previous generation)
+    // 2. 与旧 PIN 校验，并提供 15 秒宽限期（从旧 PIN 生成起总计 75 秒）。
     if (_previousPin != null && _previousPinGeneratedTime != null) {
       final diff = DateTime.now().difference(_previousPinGeneratedTime!);
       debugPrint(
@@ -525,11 +539,12 @@ class LanSecurityService {
     return false;
   }
 
+  /// 报告配对认证当前是否被锁定。
   bool get isLockedOut =>
       _lockoutUntil != null && DateTime.now().isBefore(_lockoutUntil!);
 
-  /// Returns the current rotating PIN candidates for the SRP-6a exchange.
-  /// Each candidate receives an independent salt and exponent.
+  /// 返回 SRP-6a 交换使用的当前轮换 PIN 候选。
+  /// 每个候选拥有独立 salt 和指数。
   List<String> validPairingPinsForHandshake() {
     if (isLockedOut) return const [];
     final pins = <String>[];
@@ -544,11 +559,13 @@ class LanSecurityService {
     return List.unmodifiable(pins);
   }
 
+  /// 清除配对认证失败次数和锁定计数。
   void recordPairingAuthenticationSuccess() {
     _failedPinAttempts = 0;
     _lockoutUntil = null;
   }
 
+  /// 记录一次配对认证失败，并应用锁定策略。
   void recordPairingAuthenticationFailure() {
     _failedPinAttempts++;
     if (_failedPinAttempts >= 3) {
@@ -556,7 +573,7 @@ class LanSecurityService {
     }
   }
 
-  /// Check if a remote device certificate fingerprint is trusted (TOFU)
+  /// 检查远端设备证书指纹是否可信（TOFU）。
   Future<bool> isDeviceTrusted(String certFingerprint) async {
     final rawList = await _secureStorage.read(key: _trustedDevicesStorageKey);
     if (rawList == null) return false;
@@ -568,7 +585,7 @@ class LanSecurityService {
     }
   }
 
-  /// Trust a remote device's certificate fingerprint
+  /// 信任远端设备的证书指纹。
   Future<void> trustDevice(String certFingerprint) async {
     final rawList = await _secureStorage.read(key: _trustedDevicesStorageKey);
     final Set<String> trustedSet = {};
@@ -585,7 +602,7 @@ class LanSecurityService {
     );
   }
 
-  /// Forget a trusted device
+  /// 忘记一个可信设备。
   Future<void> untrustDevice(String certFingerprint) async {
     final rawList = await _secureStorage.read(key: _trustedDevicesStorageKey);
     if (rawList == null) return;
@@ -611,6 +628,7 @@ class LanSecurityService {
   Map<String, String>? _inboundAccessTokenCache;
   Map<String, String>? _outboundAccessTokenCache;
 
+  /// 读取安全存储映射；数据无效时返回空映射。
   Future<Map<String, String>> _readAccessTokenMap(String storageKey) async {
     final raw = await _secureStorage.read(key: storageKey);
     if (raw == null || raw.isEmpty) return {};
@@ -623,18 +641,21 @@ class LanSecurityService {
     }
   }
 
+  /// 加载并缓存本设备接受的 token。
   Future<Map<String, String>> _loadInboundAccessTokens() async {
     return _inboundAccessTokenCache ??= await _readAccessTokenMap(
       _inboundAccessTokensStorageKey,
     );
   }
 
+  /// 加载并缓存发给远端设备的 token。
   Future<Map<String, String>> _loadOutboundAccessTokens() async {
     return _outboundAccessTokenCache ??= await _readAccessTokenMap(
       _outboundAccessTokensStorageKey,
     );
   }
 
+  /// 签发或复用一个已配对设备接受的 token。
   Future<String> issueInboundAccessToken(String deviceId) async {
     if (deviceId.isEmpty || deviceId.length > 128) {
       throw ArgumentError('Invalid LAN pairing device ID.');
@@ -655,6 +676,7 @@ class LanSecurityService {
     return token;
   }
 
+  /// 保存已配对远端设备签发的 token。
   Future<void> storeOutboundAccessToken(String deviceId, String token) async {
     if (deviceId.isEmpty || token.isEmpty || token.length > 256) {
       throw ArgumentError('Invalid LAN pairing access token.');
@@ -667,15 +689,15 @@ class LanSecurityService {
     );
   }
 
+  /// 返回发给已配对远端设备的 token（若存在）。
   Future<String?> getOutboundAccessToken(String deviceId) async {
     final tokens = await _loadOutboundAccessTokens();
     return tokens[deviceId];
   }
 
-  /// Records that this process has just verified the peer's PIN and persisted
-  /// the credential returned by that peer. This proof is intentionally
-  /// memory-only and short-lived: an abandoned token from an older one-sided
-  /// attempt must never satisfy a later reciprocal pairing check by itself.
+  /// 记录本进程刚刚验证了对端 PIN，并持久化了对端返回的凭据。
+  /// 该证明特意只保存在内存且有效期很短：旧的单向尝试遗留 token 不得单独满足
+  /// 后续相互配对校验。
   void markFreshOutboundPairProof({
     required String deviceId,
     required String peerFingerprint,
@@ -694,8 +716,8 @@ class LanSecurityService {
     );
   }
 
-  /// Legacy test hook retained for source compatibility. Unbound proofs are
-  /// deliberately never accepted by the production reciprocal check.
+  /// 仅为旧兼容性测试记录未绑定证明。
+  /// 生产相互校验故意永远不接受该证明。
   @visibleForTesting
   void markFreshOutboundPinProof(String deviceId) {
     if (deviceId.isEmpty || deviceId.length > 128) {
@@ -707,6 +729,7 @@ class LanSecurityService {
     );
   }
 
+  /// 报告短期缓存中是否仍有未绑定证明。
   @visibleForTesting
   bool hasFreshOutboundPinProof(String deviceId) {
     _pruneFreshOutboundPinProofs();
@@ -714,6 +737,7 @@ class LanSecurityService {
     return expiresAt != null && DateTime.now().isBefore(expiresAt);
   }
 
+  /// 恰好消费一次已绑定的短期出站配对证明。
   Future<bool> consumeFreshOutboundPinProof({
     required String deviceId,
     required String peerFingerprint,
@@ -740,6 +764,7 @@ class LanSecurityService {
     return expiresAt != null && DateTime.now().isBefore(expiresAt);
   }
 
+  /// 构建一个新的出站配对证明绑定 key。
   String _freshOutboundProofKey({
     required String deviceId,
     required String peerFingerprint,
@@ -759,12 +784,14 @@ class LanSecurityService {
         '${localFingerprint.toLowerCase()}\u0000$tokenHash';
   }
 
+  /// 报告设备是否同时拥有出站 token 和证书数据。
   Future<bool> hasCompleteOutboundPairCredential(String deviceId) async {
     final token = await getOutboundAccessToken(deviceId);
     if (token == null || token.isEmpty) return false;
     return hasPeerCertificateFingerprint(deviceId);
   }
 
+  /// 移除过期的内存出站配对证明。
   void _pruneFreshOutboundPinProofs() {
     final now = DateTime.now();
     _freshOutboundPinProofExpiry.removeWhere(
@@ -772,6 +799,7 @@ class LanSecurityService {
     );
   }
 
+  /// 使用恒定时间逐字节校验比较传入 token。
   Future<bool> verifyInboundAccessToken(String deviceId, String token) async {
     final tokens = await _loadInboundAccessTokens();
     final expected = tokens[deviceId];
@@ -783,11 +811,13 @@ class LanSecurityService {
     return difference == 0;
   }
 
+  /// 报告 [deviceId] 是否有可用出站访问 token。
   Future<bool> hasOutboundAccessToken(String deviceId) async {
     final token = await getOutboundAccessToken(deviceId);
     return token != null && token.isNotEmpty;
   }
 
+  /// 从安全存储加载设备到证书指纹的映射。
   Future<Map<String, String>> _loadPeerCertificateFingerprints() async {
     final raw = await _secureStorage.read(
       key: _peerCertificateFingerprintsStorageKey,
@@ -802,6 +832,7 @@ class LanSecurityService {
     }
   }
 
+  /// 保存证书指纹，并拒绝静默密钥轮换。
   Future<void> storePeerCertificateFingerprint(
     String deviceId,
     String fingerprint,
@@ -825,16 +856,19 @@ class LanSecurityService {
     );
   }
 
+  /// 返回已配对设备固定的证书指纹。
   Future<String?> getPeerCertificateFingerprint(String deviceId) async {
     final fingerprints = await _loadPeerCertificateFingerprints();
     return fingerprints[deviceId];
   }
 
+  /// 报告 [deviceId] 是否已固定证书指纹。
   Future<bool> hasPeerCertificateFingerprint(String deviceId) async {
     final fingerprint = await getPeerCertificateFingerprint(deviceId);
     return fingerprint != null && fingerprint.isNotEmpty;
   }
 
+  /// 移除一个设备的访问 token、指纹和证明。
   Future<void> _removePairAccessTokens(String deviceId) async {
     final inbound = await _loadInboundAccessTokens();
     final outbound = await _loadOutboundAccessTokens();
@@ -865,14 +899,14 @@ class LanSecurityService {
     }
   }
 
-  /// Check if a remote device is paired
+  /// 检查远端设备是否已配对，并按需重新验证。
   Future<bool> isDevicePaired(
     String deviceId, {
     String? ip,
     int? port,
     String? localDeviceId,
   }) async {
-    // 1. If cache is not yet loaded, read from disk once.
+    // 1. 缓存尚未加载时只从磁盘读取一次。
     if (_pairedCache == null) {
       await _loadPairedCacheFromDisk();
     }
@@ -886,16 +920,16 @@ class LanSecurityService {
     }
 
     final timestamp = cache[deviceId]!;
-    // timestamp == 0 means permanently paired (bi-directionally confirmed)
+    // timestamp == 0 表示永久配对（双向确认）。
     if (timestamp == 0) {
       return true;
     }
 
-    // Temporary pairing: check 1-minute expiry
+    // 临时配对：检查一分钟有效期。
     final now = DateTime.now().millisecondsSinceEpoch;
     if (now - timestamp > 60000) {
       cache.remove(deviceId);
-      // Persist removal asynchronously to avoid blocking
+      // 异步持久化移除结果，避免阻塞当前调用。
       unawaited(
         _secureStorage.write(
           key: _pairedDevicesStorageKey,
@@ -905,7 +939,7 @@ class LanSecurityService {
       return false;
     }
 
-    // Kick off background remote verification to upgrade temporary -> permanent
+    // 启动后台远端验证，将临时配对升级为永久配对。
     if (ip != null && port != null && localDeviceId != null) {
       final lastCheck = _lastCheckTime[deviceId];
       if (lastCheck == null ||
@@ -947,7 +981,7 @@ class LanSecurityService {
               final body = await utf8.decoder.bind(response).join();
               final json = jsonDecode(body) as Map<String, dynamic>;
               if (json['paired'] == true) {
-                // Upgrade to permanent pair in both cache and disk
+                // 在缓存和磁盘中都升级为永久配对。
                 cache[deviceId] = 0;
                 await _secureStorage.write(
                   key: _pairedDevicesStorageKey,
@@ -966,56 +1000,7 @@ class LanSecurityService {
     return true;
   }
 
-  /// Force the in-memory paired-device cache to reload on next access.
-  /// Useful in tests that mutate FlutterSecureStorage directly.
-  void invalidatePairedCache() => _pairedCache = null;
-
-  Future<void> _loadPairedCacheFromDisk() async {
-    final rawList = await _secureStorage.read(key: _pairedDevicesStorageKey);
-    if (rawList == null) {
-      _pairedCache = {};
-      return;
-    }
-    final Map<String, int> result = {};
-    try {
-      final Map<String, dynamic> decoded = jsonDecode(rawList);
-      result.addAll(decoded.map((k, v) => MapEntry(k, v as int)));
-    } catch (_) {
-      try {
-        final List<dynamic> list = jsonDecode(rawList);
-        for (final id in list) {
-          result[id as String] = 0;
-        }
-      } catch (_) {}
-    }
-    _pairedCache = result;
-  }
-
-  /// Pair a remote device
-  Future<void> pairDevice(String deviceId) async {
-    if (_pairedCache == null) await _loadPairedCacheFromDisk();
-    final cache = _pairedCache!;
-    cache[deviceId] = DateTime.now().millisecondsSinceEpoch;
-    await _secureStorage.write(
-      key: _pairedDevicesStorageKey,
-      value: jsonEncode(cache),
-    );
-  }
-
-  /// Persist a pairing after both devices have verified each other's PIN.
-  /// A zero timestamp is permanent; temporary timestamps remain reserved for
-  /// legacy one-sided pairing records that still require a remote check.
-  Future<void> confirmDevicePairing(String deviceId) async {
-    if (_pairedCache == null) await _loadPairedCacheFromDisk();
-    final cache = _pairedCache!;
-    cache[deviceId] = 0;
-    await _secureStorage.write(
-      key: _pairedDevicesStorageKey,
-      value: jsonEncode(cache),
-    );
-  }
-
-  /// Unpair a remote device
+  /// 移除远端设备及绑定到该设备的全部凭据。
   Future<void> unpairDevice(String deviceId) async {
     if (_pairedCache == null) await _loadPairedCacheFromDisk();
     final cache = _pairedCache!;
@@ -1030,32 +1015,9 @@ class LanSecurityService {
     await _removePeerNetworkIdentityPublicKey(deviceId);
   }
 
-  /// Unpair all devices
-  Future<void> unpairAllDevices() async {
-    _pairedCache = {};
-    _inboundAccessTokenCache = {};
-    _outboundAccessTokenCache = {};
-    _freshOutboundPinProofExpiry.clear();
-    await Future.wait([
-      _secureStorage.delete(key: _pairedDevicesStorageKey),
-      _secureStorage.delete(key: _inboundAccessTokensStorageKey),
-      _secureStorage.delete(key: _outboundAccessTokensStorageKey),
-      _secureStorage.delete(key: _peerCertificateFingerprintsStorageKey),
-      _secureStorage.delete(key: _peerX25519KeysStorageKey),
-      _secureStorage.delete(key: _peerNetworkIdentityKeysStorageKey),
-    ]);
-  }
-
-  Future<String> getLocalCertificateFingerprint(String deviceId) async {
-    await getOrCreateSecurityContext(deviceId);
-    final pem = _cachedCertPem;
-    if (pem == null) throw StateError('LAN certificate is unavailable.');
-    return computeCertFingerprint(pem);
-  }
-
+  /// 计算 TLS 回调使用的同步证书指纹。
   static String _certificateFingerprintFromDer(Uint8List der) {
-    // Keep the callback synchronous; the protocol uses the same SHA-256
-    // representation as computeCertFingerprint().
+    // 保持回调同步；协议使用与 computeCertFingerprint() 相同的 SHA-256 表示。
     return crypto.sha256.convert(der).toString();
   }
 }

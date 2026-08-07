@@ -1,5 +1,4 @@
-// Coordinates the single v1 LAN receiver, native runtime, discovery service,
-// and the feature-owned ViewModel lifetime.
+// 协调唯一 v1 LAN 接收器、原生运行时、发现服务和功能 ViewModel 生命周期。
 
 import 'dart:async';
 import 'package:flutter/foundation.dart';
@@ -49,38 +48,38 @@ class LanReceiverCoordinator extends ChangeNotifier {
   LanShareViewModel? _viewModel;
   Future<LanShareViewModel>? _viewModelFuture;
 
-  /// Creates the application-scoped LAN receiver coordinator.
+  /// 创建应用范围的 LAN 接收器协调器。
   LanReceiverCoordinator({
     required this.storageService,
     required this.appSettings,
     @visibleForTesting this.initializeNetwork = true,
   });
 
-  /// Whether receiver resources have completed initialization.
+  /// 接收器资源是否已完成初始化。
   bool get initialized => _initialized;
 
-  /// Returns the shared discovery service, when initialized.
+  /// 初始化完成后返回共享发现服务。
   LanDiscoveryService? get discoveryService => _discoveryService;
 
-  /// Returns the shared LAN security service, when initialized.
+  /// 初始化完成后返回共享 LAN 安全服务。
   LanSecurityService? get securityService => _securityService;
 
-  /// Returns the shared LAN storage service, when initialized.
+  /// 初始化完成后返回共享 LAN 存储服务。
   LanStorageService? get lanStorageService => _lanStorageService;
 
-  /// Returns the single LAN transfer service, when initialized.
+  /// 初始化完成后返回唯一 LAN 传输服务。
   LanTransferService? get transferService => _transferService;
 
-  /// Returns the enrollment-only Relay service, when initialized.
+  /// 初始化完成后返回仅负责 enrollment 的 Relay 服务。
   RelayEnrollmentService? get relayEnrollmentService => _relayEnrollmentService;
 
-  /// Whether native Relay configuration is currently active.
+  /// 当前是否已启用原生 Relay 配置。
   bool get nativeRelayActive => _nativeRelayActive;
 
-  /// Returns the shared native network service, when available.
+  /// 可用时返回共享原生网络服务。
   NetworkService? get networkService => _networkService;
 
-  /// Emits native incoming-transfer offers after receiver initialization.
+  /// 接收器初始化后发布原生传入传输申请。
   Stream<IncomingTransferOfferEvent> get nativeIncomingTransferOffers async* {
     await ensureInitialized();
     final network = _networkService;
@@ -90,7 +89,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         .cast<IncomingTransferOfferEvent>();
   }
 
-  /// Approves one native incoming transfer after checking device pairing.
+  /// 校验设备配对后接受一个原生传入传输。
   Future<NetworkResult<void>> acceptNativeIncomingTransfer(
     IncomingTransferOfferEvent offer,
   ) async {
@@ -139,7 +138,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     );
   }
 
-  /// Rejects one native incoming transfer offer.
+  /// 拒绝一个原生传入传输申请。
   Future<NetworkResult<void>> rejectNativeIncomingTransfer(
     IncomingTransferOfferEvent offer,
   ) async {
@@ -160,7 +159,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     );
   }
 
-  /// Enrolls credentials and configures the native Relay data plane.
+  /// 完成凭据 enrollment，并配置原生 Relay 数据面。
   Future<NetworkResult<void>> enrollRelay({
     required Uri endpoint,
     required String enrollmentToken,
@@ -187,7 +186,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     return result;
   }
 
-  /// Loads stored enrollment and configures native Relay connectivity.
+  /// 加载已存储 enrollment，并配置原生 Relay 连接。
   Future<NetworkResult<void>> connectConfiguredRelay() async {
     await ensureInitialized();
     final endpoint = Uri.tryParse(appSettings.relayEndpoint);
@@ -216,7 +215,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     return result;
   }
 
-  /// Converts enrollment credentials into a native Relay configuration.
+  /// 将 enrollment 凭据转换为原生 Relay 配置。
   Future<NetworkResult<void>> _connectRelay(RelaySettings settings) async {
     final client = _relayEnrollmentService;
     final network = _networkService;
@@ -250,18 +249,18 @@ class LanReceiverCoordinator extends ChangeNotifier {
     return result;
   }
 
-  /// Emits pairing requests received by the single LAN receiver.
+  /// 发布唯一 LAN 接收器收到的配对请求。
   Stream<LanPairingRequest> get pairingRequestStream =>
       _pairingRequestController.stream;
 
-  /// Returns an unexpired pairing request for [sessionId].
+  /// 返回 [sessionId] 对应的未过期配对请求。
   LanPairingRequest? pairingRequestForSession(String sessionId) {
     final request = _latestPairingRequests[sessionId];
     if (request == null || request.isExpired) return null;
     return request;
   }
 
-  /// Initializes receiver resources once and shares concurrent callers.
+  /// 初始化接收器资源一次，并让并发调用方共享同一个 Future。
   Future<void> ensureInitialized() {
     if (_disposed) {
       return Future<void>.error(
@@ -272,7 +271,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     return _initFuture ??= _doInit();
   }
 
-  /// Creates or returns the feature-scoped ViewModel.
+  /// 创建或返回功能范围的 ViewModel。
   Future<LanShareViewModel> ensureViewModel() {
     if (_disposed) {
       return Future<LanShareViewModel>.error(
@@ -284,7 +283,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     return _viewModelFuture ??= _createViewModel();
   }
 
-  /// Builds the ViewModel against the shared receiver dependencies.
+  /// 使用共享接收器依赖构建 ViewModel。
   Future<LanShareViewModel> _createViewModel() async {
     LanShareViewModel? viewModel;
     try {
@@ -318,7 +317,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     }
   }
 
-  /// Publishes and retains one unexpired pairing request.
+  /// 发布并保留一个未过期配对请求。
   void publishPairingRequest(LanPairingRequest request) {
     if (_disposed || request.isExpired) return;
     _latestPairingRequests.removeWhere((_, value) => value.isExpired);
@@ -326,7 +325,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     _pairingRequestController.add(request);
   }
 
-  /// Converts a discovered incoming device into a pairing request.
+  /// 将发现到的传入设备转换为配对请求。
   void _publishIncomingDevice(LanDevice device) {
     publishPairingRequest(
       LanPairingRequest(
@@ -338,9 +337,8 @@ class LanReceiverCoordinator extends ChangeNotifier {
     );
   }
 
-  /// Creates receiver services, starts LAN listening, and optionally starts
-  /// the native runtime without converting expected network failures to
-  /// programming exceptions.
+  /// 创建接收器服务并启动 LAN 监听；按需启动原生运行时，
+  /// 不将预期网络失败转换为编程异常。
   Future<void> _doInit() async {
     LanDiscoveryService? discovery;
     LanTransferService? transfer;
@@ -477,7 +475,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     }
   }
 
-  /// Cancels receiver-owned LAN event subscriptions.
+  /// 取消接收器持有的 LAN 事件订阅。
   Future<void> _cancelReceiverSubscriptions() async {
     await _pairingInviteSubscription?.cancel();
     _pairingInviteSubscription = null;
@@ -487,7 +485,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     _handshakePendingSubscription = null;
   }
 
-  /// Disposes native network, Relay enrollment, and transfer resources.
+  /// 销毁原生网络、Relay enrollment 和传输资源。
   Future<void> _disposeTransferRuntime() async {
     await _networkService?.dispose();
     _networkService = null;
@@ -497,7 +495,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     _relayEnrollmentService = null;
   }
 
-  /// Disposes the coordinator and all application-scoped receiver resources.
+  /// 销毁协调器及全部应用范围的接收器资源。
   @override
   void dispose() {
     _disposed = true;

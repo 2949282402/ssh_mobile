@@ -1,11 +1,15 @@
+// v1 LAN 配对回环测试，覆盖类型化握手和元数据结果。
+
 import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
+import 'package:ssh_mobile/services/lan_share/lan_network_models.dart';
 import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
 import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
+import 'package:ssh_mobile/services/network/network_models.dart';
 
 import 'support/fake_secure_storage.dart';
 
@@ -44,6 +48,7 @@ class _BarrierLanSecurityService extends LanSecurityService {
   }
 }
 
+/// 执行 v1 LAN 配对回环测试。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -78,8 +83,12 @@ void main() {
             transferB.dispose();
           });
 
-          final portA = await transferA.startListening(port: 0);
-          final portB = await transferB.startListening(port: 0);
+          final portAResult = await transferA.startListening(port: 0);
+          final portBResult = await transferB.startListening(port: 0);
+          expect(portAResult, isA<NetworkSuccess<int>>());
+          expect(portBResult, isA<NetworkSuccess<int>>());
+          final portA = (portAResult as NetworkSuccess<int>).data;
+          final portB = (portBResult as NetworkSuccess<int>).data;
           final deviceA = LanDevice(
             id: 'device-a',
             alias: 'Device A',
@@ -101,8 +110,8 @@ void main() {
           final pinA = securityA.generate6DigitPin();
           final pinB = securityB.generate6DigitPin();
 
-          late final HandshakeResult first;
-          late final HandshakeResult second;
+          late final NetworkResult<LanHandshakeData> first;
+          late final NetworkResult<LanHandshakeData> second;
           if (responderSubmitsFirst) {
             first = await transferB.sendHandshake(
               deviceA,
@@ -116,7 +125,8 @@ void main() {
               'Device A',
               isInitiator: true,
             );
-            if (second.success && !second.pendingRemote) {
+            if (second is NetworkSuccess<LanHandshakeData> &&
+                !second.data.pendingRemote) {
               await securityA.confirmDevicePairing(deviceB.id);
             }
           } else {
@@ -132,15 +142,22 @@ void main() {
               'Device B',
               isInitiator: false,
             );
-            if (second.success && !second.pendingRemote) {
+            if (second is NetworkSuccess<LanHandshakeData> &&
+                !second.data.pendingRemote) {
               await securityB.confirmDevicePairing(deviceA.id);
             }
           }
 
-          expect(first.success, isTrue);
-          expect(first.pendingRemote, isTrue);
-          expect(second.success, isTrue);
-          expect(second.pendingRemote, isFalse);
+          expect(first, isA<NetworkSuccess<LanHandshakeData>>());
+          expect(
+            (first as NetworkSuccess<LanHandshakeData>).data.pendingRemote,
+            isTrue,
+          );
+          expect(second, isA<NetworkSuccess<LanHandshakeData>>());
+          expect(
+            (second as NetworkSuccess<LanHandshakeData>).data.pendingRemote,
+            isFalse,
+          );
           expect(await securityA.isDevicePaired(deviceB.id), isTrue);
           expect(await securityB.isDevicePaired(deviceA.id), isTrue);
 
@@ -160,7 +177,7 @@ void main() {
             ),
           );
 
-          expect(sent, isTrue);
+          expect(sent, isA<NetworkSuccess<void>>());
           expect(
             (await incoming.timeout(const Duration(seconds: 3))).textContent,
             'paired transport works',
@@ -203,8 +220,12 @@ void main() {
           transferB.dispose();
         });
 
-        final portA = await transferA.startListening(port: 0);
-        final portB = await transferB.startListening(port: 0);
+        final portAResult = await transferA.startListening(port: 0);
+        final portBResult = await transferB.startListening(port: 0);
+        expect(portAResult, isA<NetworkSuccess<int>>());
+        expect(portBResult, isA<NetworkSuccess<int>>());
+        final portA = (portAResult as NetworkSuccess<int>).data;
+        final portB = (portBResult as NetworkSuccess<int>).data;
         final deviceA = LanDevice(
           id: 'simultaneous-device-a',
           alias: 'Simultaneous Device A',
@@ -242,8 +263,20 @@ void main() {
         ]);
 
         expect(results, hasLength(2));
-        expect(results.every((result) => result.success), isTrue);
-        expect(results.every((result) => !result.pendingRemote), isTrue);
+        expect(
+          results.every((result) => result is NetworkSuccess<LanHandshakeData>),
+          isTrue,
+        );
+        expect(
+          results.every(
+            (result) =>
+                (result as NetworkSuccess<LanHandshakeData>)
+                    .data
+                    .pendingRemote ==
+                false,
+          ),
+          isTrue,
+        );
         expect(await securityA.isDevicePaired(deviceB.id), isTrue);
         expect(await securityB.isDevicePaired(deviceA.id), isTrue);
 
@@ -264,7 +297,7 @@ void main() {
             isIncoming: false,
           ),
         );
-        expect(sentToB, isTrue);
+        expect(sentToB, isA<NetworkSuccess<void>>());
         expect(
           (await incomingAtB.timeout(const Duration(seconds: 3))).textContent,
           'A to B authenticated',
@@ -287,7 +320,7 @@ void main() {
             isIncoming: false,
           ),
         );
-        expect(sentToA, isTrue);
+        expect(sentToA, isA<NetworkSuccess<void>>());
         expect(
           (await incomingAtA.timeout(const Duration(seconds: 3))).textContent,
           'B to A authenticated',
@@ -342,8 +375,12 @@ void main() {
           }
         });
 
-        final portA = await transferA.startListening(port: 0);
-        final portB = await transferB.startListening(port: 0);
+        final portAResult = await transferA.startListening(port: 0);
+        final portBResult = await transferB.startListening(port: 0);
+        expect(portAResult, isA<NetworkSuccess<int>>());
+        expect(portBResult, isA<NetworkSuccess<int>>());
+        final portA = (portAResult as NetworkSuccess<int>).data;
+        final portB = (portBResult as NetworkSuccess<int>).data;
         final deviceA = LanDevice(
           id: 'upload-device-a',
           alias: 'Upload Device A',
@@ -374,10 +411,16 @@ void main() {
           deviceB.alias,
           isInitiator: false,
         );
-        expect(first.success, isTrue);
-        expect(first.pendingRemote, isTrue);
-        expect(second.success, isTrue);
-        expect(second.pendingRemote, isFalse);
+        expect(first, isA<NetworkSuccess<LanHandshakeData>>());
+        expect(
+          (first as NetworkSuccess<LanHandshakeData>).data.pendingRemote,
+          isTrue,
+        );
+        expect(second, isA<NetworkSuccess<LanHandshakeData>>());
+        expect(
+          (second as NetworkSuccess<LanHandshakeData>).data.pendingRemote,
+          isFalse,
+        );
         await securityB.confirmDevicePairing(deviceA.id);
 
         const messageId = 'native-interrupted-upload';
@@ -397,7 +440,7 @@ void main() {
             isIncoming: false,
           ),
         );
-        expect(accepted, isTrue);
+        expect(accepted, isA<NetworkSuccess<void>>());
 
         final failedProgress = transferB.messageProgressStream
             .firstWhere(

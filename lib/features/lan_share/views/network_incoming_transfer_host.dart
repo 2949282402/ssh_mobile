@@ -1,3 +1,5 @@
+// 将类型化原生传入传输申请呈现给 Flutter UI 的 v1 宿主。
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -5,16 +7,18 @@ import 'package:provider/provider.dart';
 
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
+import '../../../services/network/network_models.dart';
 import '../services/lan_receiver_coordinator.dart';
-import '../../../services/network/transfer_transport.dart';
 
 /// Presents one root-level approval dialog at a time for current-protocol
 /// QUIC or Relay offers, independently of the selected application route.
 class NetworkIncomingTransferHost extends StatefulWidget {
+  /// 在 [child] 外创建根宿主。
   const NetworkIncomingTransferHost({super.key, required this.child});
 
   final Widget child;
 
+  /// 创建根级传入申请状态。
   @override
   State<NetworkIncomingTransferHost> createState() =>
       _NetworkIncomingTransferHostState();
@@ -23,10 +27,11 @@ class NetworkIncomingTransferHost extends StatefulWidget {
 class _NetworkIncomingTransferHostState
     extends State<NetworkIncomingTransferHost> {
   final List<_IncomingApproval> _pending = [];
-  StreamSubscription<NativeIncomingTransferOffer>? _nativeSubscription;
+  StreamSubscription<IncomingTransferOfferEvent>? _nativeSubscription;
   LanReceiverCoordinator? _coordinator;
   bool _showingDialog = false;
 
+  /// 订阅协调器的类型化传入申请流。
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -43,13 +48,18 @@ class _NetworkIncomingTransferHostState
           fileName: offer.fileName,
           totalBytes: offer.fileSize,
           expiresAt: DateTime.now().add(const Duration(seconds: 25)),
-          accept: () => coordinator.acceptNativeIncomingTransfer(offer),
-          reject: () => coordinator.rejectNativeIncomingTransfer(offer),
+          accept: () async {
+            await coordinator.acceptNativeIncomingTransfer(offer);
+          },
+          reject: () async {
+            await coordinator.rejectNativeIncomingTransfer(offer);
+          },
         ),
       );
     });
   }
 
+  /// 将不重复的传入审批请求加入队列。
   void _handleRequest(_IncomingApproval request) {
     if (!mounted ||
         request.isExpired ||
@@ -60,6 +70,7 @@ class _NetworkIncomingTransferHostState
     unawaited(_showNext());
   }
 
+  /// 显示下一个审批对话框并应用用户决定。
   Future<void> _showNext() async {
     if (!mounted || _showingDialog || _pending.isEmpty) return;
     _showingDialog = true;
@@ -130,6 +141,7 @@ class _NetworkIncomingTransferHostState
     if (mounted) unawaited(_showNext());
   }
 
+  /// 拒绝在对话框显示前已过期的申请。
   Future<void> _rejectExpired(_IncomingApproval request) async {
     try {
       await request.reject();
@@ -141,17 +153,21 @@ class _NetworkIncomingTransferHostState
     }
   }
 
+  /// 取消协调器申请订阅。
   @override
   void dispose() {
     _nativeSubscription?.cancel();
     super.dispose();
   }
 
+  /// 构建被包装的应用子树。
   @override
   Widget build(BuildContext context) => widget.child;
 }
 
+/// 保存一个传入申请及其审批回调。
 class _IncomingApproval {
+  /// 创建带过期时间的传入审批请求。
   const _IncomingApproval({
     required this.sessionId,
     required this.senderId,
@@ -170,9 +186,11 @@ class _IncomingApproval {
   final Future<void> Function() accept;
   final Future<void> Function() reject;
 
+  /// 此审批请求是否已过期。
   bool get isExpired => !DateTime.now().isBefore(expiresAt);
 }
 
+/// 为传入传输对话框格式化字节数量。
 String _formatByteCount(int bytes) {
   if (bytes < 1024) return '$bytes B';
   const units = ['KB', 'MB', 'GB', 'TB'];

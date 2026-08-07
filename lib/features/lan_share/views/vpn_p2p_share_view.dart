@@ -1,12 +1,18 @@
+// 使用统一网络服务的 v1 点对点分享控制界面。
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ssh_mobile/features/lan_share/services/lan_receiver_coordinator.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/services/network/network_models.dart';
 
+/// 展示由原生配置支持的 v1 Relay enrollment 控制界面。
 class VpnP2pServerConfigCard extends StatefulWidget {
+  /// 创建 Relay enrollment 卡片。
   const VpnP2pServerConfigCard({super.key});
 
+  /// 创建可变 enrollment 卡片状态。
   @override
   State<VpnP2pServerConfigCard> createState() => _VpnP2pServerConfigCardState();
 }
@@ -19,6 +25,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
   bool _isEnrolling = false;
   bool _isExpanded = false; // Collapsed by default as requested
 
+  /// 加载当前 Relay 设置并开始 enrollment 校验。
   @override
   void initState() {
     super.initState();
@@ -33,6 +40,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _refreshEnrollment());
   }
 
+  /// 将粘贴的主机 URL 规范化为主机和端口字段。
   void _onHostChanged() {
     final text = _hostController.text.trim();
     if (text.startsWith('http://') || text.startsWith('https://')) {
@@ -53,6 +61,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
     }
   }
 
+  /// 销毁文本控制器和监听器。
   @override
   void dispose() {
     _hostController.removeListener(_onHostChanged);
@@ -62,6 +71,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
     super.dispose();
   }
 
+  /// 为设备执行 enrollment，并配置原生 Relay 数据面。
   Future<void> _handleEnroll() async {
     final host = _hostController.text.trim();
     final portVal = int.tryParse(_portController.text.trim());
@@ -95,7 +105,23 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
     setState(() => _isEnrolling = true);
     try {
       await settings.ensureLanIdentity();
-      await coordinator.enrollRelay(endpoint: endpoint, enrollmentToken: token);
+      final result = await coordinator.enrollRelay(
+        endpoint: endpoint,
+        enrollmentToken: token,
+      );
+      if (result is NetworkFailure<void>) {
+        if (!mounted) return;
+        setState(() {
+          _isEnrolling = false;
+          _isEnrolled = false;
+        });
+        _showError(
+          settings.isEnglish
+              ? 'Enrollment failed (${result.error.code.name}).'
+              : '注册失败（${result.error.code.name}）。',
+        );
+        return;
+      }
       _tokenController.clear();
       if (!mounted) return;
       setState(() {
@@ -130,6 +156,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
     }
   }
 
+  /// 通过协调器检查已存储 enrollment。
   Future<void> _refreshEnrollment() async {
     final settings = context.read<AppSettings>();
     await settings.ensureLanIdentity();
@@ -141,7 +168,9 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
       final enrolled = await context
           .read<LanReceiverCoordinator>()
           .connectConfiguredRelay();
-      if (mounted) setState(() => _isEnrolled = enrolled);
+      if (mounted) {
+        setState(() => _isEnrolled = enrolled is NetworkSuccess<void>);
+      }
     } catch (error, stackTrace) {
       AppLogService.instance.warning(
         'Relay connection verification failed',
@@ -151,6 +180,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
     }
   }
 
+  /// 展示可安全本地化的 enrollment 错误信息。
   void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -160,6 +190,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
     );
   }
 
+  /// 构建 enrollment 卡片 UI。
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
@@ -326,8 +357,10 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
 }
 
 class VpnP2pShareView extends StatelessWidget {
+  /// 创建 Relay 分享设置页面。
   const VpnP2pShareView({super.key});
 
+  /// 构建 Relay 设置页面。
   @override
   Widget build(BuildContext context) {
     return const SingleChildScrollView(

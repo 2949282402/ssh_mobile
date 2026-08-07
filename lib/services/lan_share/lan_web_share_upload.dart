@@ -1,6 +1,9 @@
+// v1 WebShare 有界请求体读取与端点专属响应处理。
+
 part of 'lan_discovery_service.dart';
 
 extension _LanWebShareUploadOperations on LanDiscoveryService {
+  /// 读取有界 WebShare 请求体。
   Future<Uint8List> _readBoundedWebBody(
     HttpRequest request, {
     required int maxBytes,
@@ -51,6 +54,7 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
     );
   }
 
+  /// 解密一个 WebShare E2E 载荷，并校验其信封。
   Future<Uint8List> _decryptWebPayload(
     Uint8List encrypted,
     LanSecurityService securityService,
@@ -114,6 +118,7 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
     _pendingWebUploads.removeWhere((_, upload) => upload.isExpired);
   }
 
+  /// 校验 WebShare 元数据，并在需要时预留上传会话。
   Future<void> _handleWebMetaRequest(
     HttpRequest request,
     LanSecurityService securityService,
@@ -215,13 +220,12 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
       rethrow;
     }
 
-    await _LanWebShareServerOperations(this)._writeWebShareJson(
-      request.response,
-      HttpStatus.ok,
-      {'accepted': true, 'id': message.id},
-    );
+    await _LanWebShareServerOperations(
+      this,
+    )._writeWebShareJson(request.response, HttpStatus.ok, {'id': message.id});
   }
 
+  /// 接收一个有界 WebShare 上传，失败时清理部分文件。
   Future<void> _handleWebUploadRequest(
     HttpRequest request,
     LanSecurityService securityService,
@@ -264,8 +268,7 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
       );
     }
 
-    // Remove before the first await so concurrent requests cannot consume the
-    // same accepted metadata twice.
+    // 在第一次 await 前移除，避免并发请求重复消费同一份已接受元数据。
     _pendingWebUploads.remove(messageId);
     File? targetFile;
     var completed = false;
@@ -340,7 +343,7 @@ extension _LanWebShareUploadOperations on LanDiscoveryService {
       await _LanWebShareServerOperations(this)._writeWebShareJson(
         request.response,
         HttpStatus.ok,
-        {'success': true, 'id': messageId, 'bytesReceived': bytesReceived},
+        {'messageId': messageId, 'bytesReceived': bytesReceived},
       );
     } catch (_) {
       if (!completed) {

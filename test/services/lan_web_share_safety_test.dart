@@ -1,3 +1,5 @@
+// v1 WebShare 请求大小、路径和规范化错误安全测试。
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -10,6 +12,7 @@ import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
 import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_transfer_protocol.dart';
 import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
+import 'package:ssh_mobile/services/network/network_models.dart';
 
 class _HttpResult {
   final int statusCode;
@@ -56,13 +59,14 @@ class _WebShareFixture {
       currentDeviceId: 'local-device',
       currentDeviceAlias: '<script>unsafe alias</script>',
     )..setCustomIp('127.0.0.1');
-    final url = await discoveryService.startWebShareServer(
+    final startResult = await discoveryService.startWebShareServer(
       port: 0,
       securityService: securityService,
       storageService: storageService,
       transferService: transferService,
     );
-    webUrl = Uri.parse(url!);
+    expect(startResult, isA<NetworkSuccess<String>>());
+    webUrl = Uri.parse((startResult as NetworkSuccess<String>).data);
     token = webUrl.queryParameters['access']!;
     client = _LoopbackHttpOverrides().createHttpClient(null);
   }
@@ -154,6 +158,7 @@ class _WebShareFixture {
   }
 }
 
+/// 执行 WebShare 有界请求体和安全响应测试。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 

@@ -1,3 +1,6 @@
+// v1 LAN 配对密码学：PIN 证明、SRP 材料与凭据校验辅助逻辑。
+// 本文件不承载传输或 UI 策略。
+
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -10,7 +13,7 @@ import 'package:pointycastle/srp/srp6_server.dart' as pc;
 import 'package:pointycastle/srp/srp6_standard_groups.dart' as pc;
 import 'package:pointycastle/srp/srp6_verifier_generator.dart' as pc;
 
-/// One-use SRP-6a state. It must never be reused for another offer.
+/// 一次性 SRP-6a 状态，不得用于另一个邀请。
 class LanPairingEphemeralKeyPair {
   final Object engine;
   final Uint8List salt;
@@ -19,6 +22,7 @@ class LanPairingEphemeralKeyPair {
   final int slot;
   final BigInt? sharedSecret;
 
+  /// 为配对邀请创建一次性 SRP 状态。
   const LanPairingEphemeralKeyPair({
     required this.engine,
     required this.salt,
@@ -29,12 +33,14 @@ class LanPairingEphemeralKeyPair {
   });
 }
 
+/// 两端 SRP 派生共享秘密后生成的 transcript 绑定密钥。
 class LanPairingSessionSecrets {
   final Uint8List sessionKey;
   final Uint8List clientConfirmationKey;
   final Uint8List serverConfirmationKey;
   final Uint8List transcript;
 
+  /// 创建 transcript 绑定的会话密钥。
   const LanPairingSessionSecrets({
     required this.sessionKey,
     required this.clientConfirmationKey,
@@ -43,13 +49,13 @@ class LanPairingSessionSecrets {
   });
 }
 
-/// RFC 5054 SRP-6a plus transcript-bound mutual key confirmation.
+/// RFC 5054 SRP-6a 与 transcript 绑定的双向密钥确认。
 ///
-/// The 3072-bit group is fixed locally. Each rotating PIN slot uses a
-/// different salt and independent SRP exponent, so a captured exchange does
-/// not expose an offline PIN verifier and cannot be reflected across slots.
+/// 本地固定使用 3072 位群组。每个轮换 PIN 槽位使用不同 salt 和独立 SRP 指数，
+/// 因此捕获的交换数据不会暴露离线 PIN 校验器，也不能跨槽位反射。
 class LanPairingCrypto {
-  static const int protocolVersion = 3;
+  // 开发阶段的配对保持当前 v1 线协议契约。
+  static const int protocolVersion = 1;
   static const int publicValueBytes = 384;
   static const int maxServerOffers = 2;
   static const int credentialTtlMillis = 15000;
@@ -60,6 +66,7 @@ class LanPairingCrypto {
       pc.SRP6StandardGroups.rfc5054_3072;
   static final Random _secureRandom = Random.secure();
 
+  /// 为一个 PIN 槽位生成客户端 SRP 凭据。
   static LanPairingEphemeralKeyPair generateClientKeyPair({
     required String pin,
     required String clientContext,
@@ -89,6 +96,7 @@ class LanPairingCrypto {
     );
   }
 
+  /// 生成服务端 SRP 凭据并计算共享秘密。
   static LanPairingEphemeralKeyPair generateServerKeyPair({
     required String pin,
     required String clientContext,
@@ -131,6 +139,7 @@ class LanPairingCrypto {
     );
   }
 
+  /// 根据双方 SRP 材料派生会话密钥和确认密钥。
   static LanPairingSessionSecrets deriveSessionSecrets({
     required LanPairingEphemeralKeyPair localKeyPair,
     required Uint8List remotePublicValue,
@@ -173,22 +182,27 @@ class LanPairingCrypto {
     );
   }
 
+  /// 创建 transcript 绑定密钥确认所需的客户端证明。
   static String createClientProof(LanPairingSessionSecrets secrets) =>
       _createProof(secrets.clientConfirmationKey, secrets.transcript);
 
+  /// 创建 transcript 绑定密钥确认所需的服务端证明。
   static String createServerProof(LanPairingSessionSecrets secrets) =>
       _createProof(secrets.serverConfirmationKey, secrets.transcript);
 
+  /// 使用派生的会话密钥校验客户端证明。
   static bool verifyClientProof(
     LanPairingSessionSecrets secrets,
     String proof,
   ) => _verifyProof(secrets.clientConfirmationKey, secrets.transcript, proof);
 
+  /// 使用派生的会话密钥校验服务端证明。
   static bool verifyServerProof(
     LanPairingSessionSecrets secrets,
     String proof,
   ) => _verifyProof(secrets.serverConfirmationKey, secrets.transcript, proof);
 
+  /// 生成 URL 安全的随机配对令牌。
   static String randomToken({int byteLength = 24}) {
     final bytes = List<int>.generate(
       byteLength,
@@ -198,6 +212,7 @@ class LanPairingCrypto {
     return base64Url.encode(bytes).replaceAll('=', '');
   }
 
+  /// 使用 AES-GCM 和关联数据加密配对凭据。
   static Future<String> encryptCredential(
     Map<String, dynamic> credential,
     Uint8List sessionKey, {
@@ -214,6 +229,7 @@ class LanPairingCrypto {
     return base64.encode([...nonce, ...box.cipherText, ...box.mac.bytes]);
   }
 
+  /// 解密并校验 AES-GCM 配对凭据。
   static Future<Map<String, dynamic>> decryptCredential(
     String encoded,
     Uint8List sessionKey, {
@@ -247,6 +263,7 @@ class LanPairingCrypto {
     }
   }
 
+  /// 构建规范化客户端上下文 transcript。
   static String clientContext({
     required String senderDeviceId,
     required String targetDeviceId,
@@ -273,6 +290,7 @@ class LanPairingCrypto {
     ]);
   }
 
+  /// 构建规范化 SRP 会话关联数据 transcript。
   static String sessionAssociatedData({
     required String clientContext,
     required String handshakeId,
@@ -297,6 +315,7 @@ class LanPairingCrypto {
     ]);
   }
 
+  /// 构建规范化凭据关联数据 transcript。
   static String credentialAssociatedData({
     required String handshakeId,
     required String nonce,
@@ -314,9 +333,11 @@ class LanPairingCrypto {
     ]);
   }
 
+  /// 对客户端上下文做哈希，用于请求绑定。
   static String requestHash(String clientContext) =>
       crypto.sha256.convert(utf8.encode(clientContext)).toString();
 
+  /// 为定向测试和协议边界校验公共 SRP 值。
   static bool isValidPublicValueForTesting(Uint8List value) {
     try {
       _decodePublicValue(value);
@@ -326,6 +347,7 @@ class LanPairingCrypto {
     }
   }
 
+  /// 为一个轮换 PIN 槽位派生确定性 salt。
   static Uint8List _pairingSalt(String clientContext, int slot) {
     return Uint8List.fromList(
       crypto.sha256
@@ -338,10 +360,12 @@ class LanPairingCrypto {
     );
   }
 
+  /// 将上下文转换为固定的 SRP 身份字节。
   static Uint8List _identity(String clientContext) => Uint8List.fromList(
     utf8.encode('$_domainLabel\u0000$protocolVersion\u0000$clientContext'),
   );
 
+  /// 校验六位 PIN 与轮换槽位索引。
   static void _validatePinAndSlot(String pin, int slot) {
     if (!RegExp(r'^\d{6}$').hasMatch(pin) ||
         slot < 0 ||
@@ -350,9 +374,11 @@ class LanPairingCrypto {
     }
   }
 
+  /// 返回整数是否处于有效 SRP 群组范围。
   static bool _isValidPublicInteger(BigInt value) =>
       value > BigInt.zero && value < _group.N;
 
+  /// 解码并校验规范化定长公共 SRP 值。
   static BigInt _decodePublicValue(Uint8List value) {
     if (value.length != publicValueBytes) {
       throw const FormatException('Invalid LAN pairing public value');
@@ -370,6 +396,7 @@ class LanPairingCrypto {
     return decoded;
   }
 
+  /// 为 SRP 创建带种子的密码学安全随机源。
   static pc.SecureRandom _newSecureRandom() {
     final random = pc.FortunaRandom();
     final seed = Uint8List.fromList(
@@ -379,12 +406,14 @@ class LanPairingCrypto {
     return random;
   }
 
+  /// 对配对 transcript 创建 base64 HMAC 证明。
   static String _createProof(Uint8List key, Uint8List transcript) {
     return base64.encode(
       crypto.Hmac(crypto.sha256, key).convert(transcript).bytes,
     );
   }
 
+  /// 以恒定时间校验 base64 HMAC 证明。
   static bool _verifyProof(Uint8List key, Uint8List transcript, String proof) {
     late final Uint8List received;
     try {
@@ -396,6 +425,7 @@ class LanPairingCrypto {
     return _constantTimeEquals(expected, received);
   }
 
+  /// 使用 HKDF-SHA256 派生有界密钥流。
   static Uint8List _hkdfSha256(
     List<int> inputKeyMaterial, {
     required List<int> salt,
@@ -420,6 +450,7 @@ class LanPairingCrypto {
     return Uint8List.fromList(output.takeBytes().sublist(0, length));
   }
 
+  /// 将正整数编码为定长大端字节。
   static Uint8List _bigIntToFixedBytes(BigInt value, int length) {
     final output = Uint8List(length);
     var remaining = value;
@@ -433,6 +464,7 @@ class LanPairingCrypto {
     return output;
   }
 
+  /// 将大端字节解码为正整数。
   static BigInt _bytesToBigInt(List<int> bytes) {
     var result = BigInt.zero;
     for (final byte in bytes) {
@@ -441,6 +473,7 @@ class LanPairingCrypto {
     return result;
   }
 
+  /// 比较两个字节数组，避免提前退出。
   static bool _constantTimeEquals(List<int> left, List<int> right) {
     if (left.length != right.length) return false;
     var difference = 0;
@@ -450,5 +483,6 @@ class LanPairingCrypto {
     return difference == 0;
   }
 
+  /// 将协议 transcript 组件规范化编码为 JSON。
   static String _canonical(List<Object?> values) => jsonEncode(values);
 }

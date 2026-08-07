@@ -1,6 +1,6 @@
 import 'dart:ffi';
 
-/// FFI struct representing a byte buffer allocated by Rust FFI.
+/// 表示由 Rust FFI 分配的字节缓冲区的 FFI 结构体。
 final class SshNetBuffer extends Struct {
   external Pointer<Uint8> ptr;
 

@@ -1,3 +1,6 @@
+// v1 LAN HTTPS 客户端的配对、元数据、文件传输和撤回操作。
+// 使用 part 文件与服务端实现分离，确保源码低于仓库 1000 行维护上限。
+
 part of 'lan_transfer_service.dart';
 
 class _ValidatedPairingCredential {
@@ -25,10 +28,12 @@ class _AcceptedPairingOffer {
 }
 
 extension LanTransferClientApi on LanTransferService {
+  /// 创建配置为连接一个已配对对端的 HTTP 客户端。
   Future<HttpClient> createHttpClientForPeer(String peerDeviceId) {
     return _createHttpClient(peerDeviceId: peerDeviceId);
   }
 
+  /// 读取并限制 JSON 响应大小，不向上层暴露原始服务端细节。
   Future<Map<String, dynamic>> readBoundedJsonResponse(
     HttpClientResponse response, {
     Duration timeout = const Duration(seconds: 8),
@@ -51,16 +56,25 @@ extension LanTransferClientApi on LanTransferService {
     return decoded;
   }
 
-  /// Adds the per-pair credential required by all post-pair LAN APIs.
-  Future<bool> addPairingAuthorization(
+  /// 添加所有配对后 LAN API 必需的配对专属凭据。
+  Future<NetworkResult<void>> addPairingAuthorization(
     HttpHeaders headers,
     String peerDeviceId,
   ) async {
     final token = await securityService.getOutboundAccessToken(peerDeviceId);
-    if (token == null || token.isEmpty) return false;
+    if (token == null || token.isEmpty) {
+      return NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.authenticationFailed,
+          message: 'LAN pairing credentials are unavailable.',
+          operation: 'authorize_lan_request',
+          peerId: peerDeviceId,
+        ),
+      );
+    }
     headers.set('x-device-id', currentDeviceId);
     headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-    return true;
+    return const NetworkSuccess<void>(null);
   }
 
   _ValidatedPairingCredential _validatePairingCredential(
@@ -111,6 +125,7 @@ extension LanTransferClientApi on LanTransferService {
     );
   }
 
+  /// 为定向协议测试校验配对凭据绑定。
   @visibleForTesting
   bool isPairingCredentialBindingValidForTesting(
     Map<String, dynamic> credential, {
@@ -137,15 +152,15 @@ extension LanTransferClientApi on LanTransferService {
     }
   }
 
-  /// Send handshake (PIN validation) request to peer
-  Future<HandshakeResult> sendHandshake(
+  /// 发送 v1 握手请求，并校验配对 PIN 响应。
+  Future<NetworkResult<LanHandshakeData>> sendHandshake(
     LanDevice device,
     String pin,
     String localAlias, {
     bool isInitiator = true,
   }) async {
     Object? lastError;
-    HandshakeResult? lastPendingResult;
+    NetworkSuccess<LanHandshakeData>? lastPendingResult;
     for (int attempt = 1; attempt <= 3; attempt++) {
       try {
         final result = await _sendHandshakeAttempt(
@@ -154,26 +169,26 @@ extension LanTransferClientApi on LanTransferService {
           localAlias,
           isInitiator: isInitiator,
         );
-        if (!result.success) {
-          // A valid pending response has already proved the remote PIN. If the
-          // short confirmation retry races a PIN rotation, retain that result
-          // and wait for the peer instead of turning it into a mismatch.
+        if (result is NetworkFailure<LanHandshakeData>) {
+          // 有效的 pending 响应已经证明远端 PIN 正确。
+          // 若短确认重试恰好遇到 PIN 轮换，应保留该结果并等待对端，
+          // 不要将其误判为 PIN 不匹配。
           return lastPendingResult ?? result;
         }
-        if (!result.pendingRemote) return result;
+        final success = (result as NetworkSuccess<LanHandshakeData>);
+        if (!success.data.pendingRemote) return success;
 
-        // Both users can submit at almost exactly the same time. In that case
-        // each server may answer pending before its local client persists the
-        // reciprocal credential. Retry with a fresh SPAKE2 session after a
-        // bounded backoff so the existing server-side reciprocal check can
-        // converge without weakening post-pair authorization.
-        lastPendingResult = result;
+        // 两端可能几乎同时提交 PIN。此时双方服务端都可能在本地保存相互凭据前
+        // 返回 pending。使用有界退避和新的 SPAKE2 会话重试，让服务端相互校验
+        // 最终收敛，同时不降低配对后的授权强度。
+        lastPendingResult = success;
         lastError = null;
       } catch (e) {
-        debugPrint(
-          '[LanTransferService] Handshake attempt $attempt failed: $e',
+        lastError = lanNetworkError(
+          e,
+          operation: 'send_handshake',
+          peerId: device.id,
         );
-        lastError = e;
       }
 
       if (attempt < 3) {
@@ -182,24 +197,35 @@ extension LanTransferClientApi on LanTransferService {
     }
 
     if (lastPendingResult != null) return lastPendingResult;
-    if (lastError != null) {
-      if (lastError is Exception) {
-        throw LanNetworkException('Network error during handshake: $lastError');
-      } else {
-        throw LanNetworkException(lastError.toString());
-      }
+    if (lastError is NetworkError) {
+      return NetworkFailure(lastError);
     }
-    return HandshakeResult(success: false);
+    return NetworkFailure(
+      NetworkError(
+        code: NetworkErrorCode.ioError,
+        message: 'LAN handshake failed.',
+        operation: 'send_handshake',
+        peerId: device.id,
+      ),
+    );
   }
 
-  Future<HandshakeResult> _sendHandshakeAttempt(
+  /// 执行一次 v1 配对握手尝试。
+  Future<NetworkResult<LanHandshakeData>> _sendHandshakeAttempt(
     LanDevice device,
     String pin,
     String localAlias, {
     required bool isInitiator,
   }) async {
     if (!RegExp(r'^\d{6}$').hasMatch(pin)) {
-      return HandshakeResult(success: false);
+      return NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.invalidArgument,
+          message: 'LAN pairing PIN format is invalid.',
+          operation: 'send_handshake',
+          peerId: device.id,
+        ),
+      );
     }
     final url = Uri.parse(
       'https://${device.ip}:${device.port}/api/lan/handshake',
@@ -265,13 +291,24 @@ extension LanTransferClientApi on LanTransferService {
       final json = await readBoundedJsonResponse(response);
       if (response.statusCode == HttpStatus.unauthorized ||
           response.statusCode == HttpStatus.forbidden) {
-        debugPrint('[LanTransferService] Handshake rejected: PIN mismatch');
-        return HandshakeResult(success: false);
+        return NetworkFailure(
+          NetworkError(
+            code: NetworkErrorCode.authenticationFailed,
+            message: 'LAN pairing authentication failed.',
+            operation: 'send_handshake',
+            peerId: device.id,
+          ),
+        );
       }
       if (response.statusCode != HttpStatus.ok ||
-          json['success'] != true ||
           json['protocolVersion'] != LanPairingCrypto.protocolVersion) {
-        throw LanNetworkException('HTTP status ${response.statusCode}');
+        throw LanNetworkException(
+          'LAN pairing challenge was rejected.',
+          code: lanHttpErrorCode(response.statusCode),
+          operation: 'send_handshake',
+          peerId: device.id,
+          statusCode: response.statusCode,
+        );
       }
       final serverFingerprint = json['certFingerprint'];
       final validForMs = json['validForMs'];
@@ -308,7 +345,16 @@ extension LanTransferClientApi on LanTransferService {
           break;
         }
       }
-      if (selected == null) return HandshakeResult(success: false);
+      if (selected == null) {
+        return NetworkFailure(
+          NetworkError(
+            code: NetworkErrorCode.authenticationFailed,
+            message: 'LAN pairing authentication failed.',
+            operation: 'send_handshake',
+            peerId: device.id,
+          ),
+        );
+      }
       acceptedOffer = selected;
     } finally {
       beginClient.close();
@@ -342,10 +388,23 @@ extension LanTransferClientApi on LanTransferService {
       final json = await readBoundedJsonResponse(response);
       if (response.statusCode == HttpStatus.unauthorized ||
           response.statusCode == HttpStatus.forbidden) {
-        return HandshakeResult(success: false);
+        return NetworkFailure(
+          NetworkError(
+            code: NetworkErrorCode.authenticationFailed,
+            message: 'LAN pairing authentication failed.',
+            operation: 'send_handshake',
+            peerId: device.id,
+          ),
+        );
       }
-      if (response.statusCode != HttpStatus.ok || json['success'] != true) {
-        throw LanNetworkException('HTTP status ${response.statusCode}');
+      if (response.statusCode != HttpStatus.ok) {
+        throw LanNetworkException(
+          'LAN pairing confirmation was rejected.',
+          code: lanHttpErrorCode(response.statusCode),
+          operation: 'send_handshake',
+          peerId: device.id,
+          statusCode: response.statusCode,
+        );
       }
       final encryptedCredential = json['credential'];
       if (encryptedCredential is! String || encryptedCredential.isEmpty) {
@@ -392,15 +451,17 @@ extension LanTransferClientApi on LanTransferService {
         localFingerprint: localFingerprint,
         accessToken: validatedCredential.accessToken,
       );
-      return HandshakeResult(
-        success: true,
-        pendingRemote: validatedCredential.status == 'pending_remote',
+      return NetworkSuccess(
+        LanHandshakeData(
+          pendingRemote: validatedCredential.status == 'pending_remote',
+        ),
       );
     } finally {
       confirmClient.close();
     }
   }
 
+  /// 完成本地校验后接受远端配对邀请。
   Future<_AcceptedPairingOffer?> _acceptPairingOffer(
     Map<String, dynamic> offer, {
     required List<LanPairingEphemeralKeyPair> clientKeys,
@@ -465,236 +526,334 @@ extension LanTransferClientApi on LanTransferService {
     }
   }
 
-  /// Send metadata (text/clipboard or file transfer prompt) to peer
-  Future<bool> sendMeta(
+  /// 在已认证 LAN 通道上发送元数据消息。
+  Future<NetworkResult<void>> sendMeta(
     LanDevice device,
     LanMessage message, {
     Uint8List? recipientPubKeyBytes,
   }) async {
-    return _executeWithRetry(() async {
-      final url = Uri.parse('https://${device.ip}:${device.port}/api/lan/meta');
-      final client = await _createHttpClient(peerDeviceId: device.id);
-
-      try {
-        final request = await client
-            .postUrl(url)
-            .timeout(const Duration(seconds: 4));
-        if (!await addPairingAuthorization(request.headers, device.id)) {
-          return false;
-        }
-        final payload = <String, dynamic>{
-          ...message.toJson(),
-          'localPath': null,
-          'sftpServerId': null,
-          'sftpRemotePath': null,
-        };
-        final jsonBytes = utf8.encode(jsonEncode(payload));
-
-        if (recipientPubKeyBytes != null) {
-          // E2E: encrypt meta payload
-          final encrypted = await securityService.encryptE2EFor(
-            Uint8List.fromList(jsonBytes),
-            recipientPubKeyBytes,
-          );
-          request.headers.set('x-e2e-pubkey', '1');
-          request.headers.contentType = ContentType.binary;
-          request.headers.contentLength = encrypted.length;
-          request.add(encrypted);
-        } else {
-          request.headers.contentType = ContentType.json;
-          request.add(jsonBytes);
-        }
-
-        final response = await request.close().timeout(
-          const Duration(seconds: 8),
+    return _executeWithRetry(
+      () async {
+        final url = Uri.parse(
+          'https://${device.ip}:${device.port}/api/lan/meta',
         );
-        final json = await readBoundedJsonResponse(response);
-        return response.statusCode == HttpStatus.ok &&
-            (json['accepted'] == true);
-      } finally {
-        client.close();
-      }
-    });
+        final client = await _createHttpClient(peerDeviceId: device.id);
+
+        try {
+          final request = await client
+              .postUrl(url)
+              .timeout(const Duration(seconds: 4));
+          final authorization = await addPairingAuthorization(
+            request.headers,
+            device.id,
+          );
+          if (authorization is NetworkFailure<void>) {
+            return authorization;
+          }
+          final payload = <String, dynamic>{
+            ...message.toJson(),
+            'localPath': null,
+            'sftpServerId': null,
+            'sftpRemotePath': null,
+          };
+          final jsonBytes = utf8.encode(jsonEncode(payload));
+
+          if (recipientPubKeyBytes != null) {
+            // E2E：加密元数据载荷。
+            final encrypted = await securityService.encryptE2EFor(
+              Uint8List.fromList(jsonBytes),
+              recipientPubKeyBytes,
+            );
+            request.headers.set('x-e2e-pubkey', '1');
+            request.headers.contentType = ContentType.binary;
+            request.headers.contentLength = encrypted.length;
+            request.add(encrypted);
+          } else {
+            request.headers.contentType = ContentType.json;
+            request.add(jsonBytes);
+          }
+
+          final response = await request.close().timeout(
+            const Duration(seconds: 8),
+          );
+          final json = await readBoundedJsonResponse(response);
+          if (response.statusCode != HttpStatus.ok ||
+              json['id'] != message.id) {
+            throw LanNetworkException(
+              'LAN metadata request was rejected.',
+              code: lanHttpErrorCode(response.statusCode),
+              operation: 'send_meta',
+              peerId: device.id,
+              statusCode: response.statusCode,
+            );
+          }
+          return const NetworkSuccess<void>(null);
+        } finally {
+          client.close();
+        }
+      },
+      peerId: device.id,
+      operation: 'send_meta',
+    );
   }
 
-  /// Send file binary stream in 512KB chunks with progress callbacks.
-  /// When [recipientPubKeyBytes] is non-null, the entire file is buffered
-  /// and sent as a single E2E-encrypted blob (not a streaming upload).
-  Future<bool> sendFileStream({
+  /// 以 512KB 分块发送文件二进制流，并通过回调报告进度。
+  /// [recipientPubKeyBytes] 非空时，整个文件会先缓冲，再作为单个 E2E 加密
+  /// 载荷发送，而不是使用流式上传。
+  Future<NetworkResult<void>> sendFileStream({
     required LanDevice device,
     required LanMessage message,
     required Stream<List<int>> fileStream,
     required int totalBytes,
     Uint8List? recipientPubKeyBytes,
-    Function(int bytesSent)? onProgress,
+    void Function(int bytesSent)? onProgress,
   }) async {
     if (totalBytes < 0 ||
         (recipientPubKeyBytes != null &&
             totalBytes > LanTransferProtocolGuard.maxEncryptedUploadBytes)) {
-      return false;
-    }
-    return _executeWithRetry(() async {
-      final url = Uri.parse(
-        'https://${device.ip}:${device.port}/api/lan/upload',
+      return NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.invalidArgument,
+          message: 'LAN file size is invalid.',
+          operation: 'send_file',
+          peerId: device.id,
+        ),
       );
-      final client = await _createHttpClient(peerDeviceId: device.id);
-
-      try {
-        final request = await client
-            .postUrl(url)
-            .timeout(const Duration(seconds: 4));
-        if (!await addPairingAuthorization(request.headers, device.id)) {
-          return false;
-        }
-        request.headers.set('x-message-id', message.id);
-        request.headers.set(
-          'x-file-name',
-          Uri.encodeComponent(message.fileName ?? 'file.bin'),
+    }
+    return _executeWithRetry(
+      () async {
+        final url = Uri.parse(
+          'https://${device.ip}:${device.port}/api/lan/upload',
         );
+        final client = await _createHttpClient(peerDeviceId: device.id);
 
-        if (recipientPubKeyBytes != null) {
-          // E2E: buffer entire file then encrypt before sending
-          final rawBytes = BytesBuilder(copy: false);
-          var bytesRead = 0;
-          await for (final chunk in fileStream) {
-            bytesRead += chunk.length;
-            if (bytesRead > totalBytes ||
-                bytesRead > LanTransferProtocolGuard.maxEncryptedUploadBytes) {
-              throw LanNetworkException(
-                'Encrypted file exceeded its accepted size.',
-              );
-            }
-            rawBytes.add(chunk);
-          }
-          if (bytesRead != totalBytes) {
-            throw LanNetworkException(
-              'File size changed before it could be uploaded.',
-            );
-          }
-          onProgress?.call(bytesRead);
-          final encrypted = await securityService.encryptE2EFor(
-            rawBytes.takeBytes(),
-            recipientPubKeyBytes,
+        try {
+          final request = await client
+              .postUrl(url)
+              .timeout(const Duration(seconds: 4));
+          final authorization = await addPairingAuthorization(
+            request.headers,
+            device.id,
           );
-          request.headers.set('x-e2e-pubkey', '1');
-          request.headers.contentType = ContentType.binary;
-          request.headers.contentLength = encrypted.length;
-          request.add(encrypted);
-        } else {
-          // Plain streaming upload
-          request.headers.contentLength = totalBytes;
-          int bytesSent = 0;
-          await for (final chunk in fileStream) {
-            if (bytesSent + chunk.length > totalBytes) {
+          if (authorization is NetworkFailure<void>) {
+            return authorization;
+          }
+          request.headers.set('x-message-id', message.id);
+          request.headers.set(
+            'x-file-name',
+            Uri.encodeComponent(message.fileName ?? 'file.bin'),
+          );
+
+          if (recipientPubKeyBytes != null) {
+            // E2E：先完整缓冲文件，再加密后发送。
+            final rawBytes = BytesBuilder(copy: false);
+            var bytesRead = 0;
+            await for (final chunk in fileStream) {
+              bytesRead += chunk.length;
+              if (bytesRead > totalBytes ||
+                  bytesRead >
+                      LanTransferProtocolGuard.maxEncryptedUploadBytes) {
+                throw LanNetworkException(
+                  'Encrypted file exceeded its accepted size.',
+                  code: NetworkErrorCode.invalidArgument,
+                  operation: 'send_file',
+                  peerId: device.id,
+                );
+              }
+              rawBytes.add(chunk);
+            }
+            if (bytesRead != totalBytes) {
               throw LanNetworkException(
                 'File size changed before it could be uploaded.',
+                code: NetworkErrorCode.invalidArgument,
+                operation: 'send_file',
+                peerId: device.id,
               );
             }
-            request.add(chunk);
-            bytesSent += chunk.length;
-            onProgress?.call(bytesSent);
+            onProgress?.call(bytesRead);
+            final encrypted = await securityService.encryptE2EFor(
+              rawBytes.takeBytes(),
+              recipientPubKeyBytes,
+            );
+            request.headers.set('x-e2e-pubkey', '1');
+            request.headers.contentType = ContentType.binary;
+            request.headers.contentLength = encrypted.length;
+            request.add(encrypted);
+          } else {
+            // 普通流式上传。
+            request.headers.contentLength = totalBytes;
+            int bytesSent = 0;
+            await for (final chunk in fileStream) {
+              if (bytesSent + chunk.length > totalBytes) {
+                throw LanNetworkException(
+                  'File size changed before it could be uploaded.',
+                  code: NetworkErrorCode.invalidArgument,
+                  operation: 'send_file',
+                  peerId: device.id,
+                );
+              }
+              request.add(chunk);
+              bytesSent += chunk.length;
+              onProgress?.call(bytesSent);
+            }
+            if (bytesSent != totalBytes) {
+              throw LanNetworkException(
+                'File size changed before it could be uploaded.',
+                code: NetworkErrorCode.invalidArgument,
+                operation: 'send_file',
+                peerId: device.id,
+              );
+            }
           }
-          if (bytesSent != totalBytes) {
+
+          final uploadTimeout = Duration(
+            seconds: (60 + (totalBytes / (1024 * 1024)).ceil()).clamp(
+              60,
+              4 * 60 * 60,
+            ),
+          );
+          final response = await request.close().timeout(uploadTimeout);
+          final json = await readBoundedJsonResponse(
+            response,
+            timeout: const Duration(seconds: 8),
+          );
+          if (response.statusCode != HttpStatus.ok ||
+              json['messageId'] != message.id) {
             throw LanNetworkException(
-              'File size changed before it could be uploaded.',
+              'LAN file upload was rejected.',
+              code: lanHttpErrorCode(response.statusCode),
+              operation: 'send_file',
+              peerId: device.id,
+              statusCode: response.statusCode,
             );
           }
+          return const NetworkSuccess<void>(null);
+        } finally {
+          client.close();
         }
-
-        final uploadTimeout = Duration(
-          seconds: (60 + (totalBytes / (1024 * 1024)).ceil()).clamp(
-            60,
-            4 * 60 * 60,
-          ),
-        );
-        final response = await request.close().timeout(uploadTimeout);
-        await response.drain<void>().timeout(const Duration(seconds: 8));
-        return response.statusCode == HttpStatus.ok;
-      } finally {
-        client.close();
-      }
-    }, maxAttempts: 1);
+      },
+      maxAttempts: 1,
+      peerId: device.id,
+      operation: 'send_file',
+    );
   }
 
-  /// Send RECALL signal to target device
-  Future<bool> sendRecall(LanDevice device, String messageId) async {
-    return _executeWithRetry(() async {
-      final url = Uri.parse(
-        'https://${device.ip}:${device.port}/api/lan/recall',
-      );
-      final client = await _createHttpClient(peerDeviceId: device.id);
-
-      try {
-        final request = await client
-            .postUrl(url)
-            .timeout(const Duration(seconds: 4));
-        if (!await addPairingAuthorization(request.headers, device.id)) {
-          return false;
-        }
-        request.headers.contentType = ContentType.json;
-        request.write(jsonEncode({'messageId': messageId}));
-
-        final response = await request.close().timeout(
-          const Duration(seconds: 8),
+  /// 为之前发送的消息发送撤回信号。
+  Future<NetworkResult<void>> sendRecall(
+    LanDevice device,
+    String messageId,
+  ) async {
+    return _executeWithRetry(
+      () async {
+        final url = Uri.parse(
+          'https://${device.ip}:${device.port}/api/lan/recall',
         );
-        await response.drain<void>().timeout(const Duration(seconds: 8));
-        return response.statusCode == HttpStatus.ok;
-      } finally {
-        client.close();
-      }
-    });
+        final client = await _createHttpClient(peerDeviceId: device.id);
+
+        try {
+          final request = await client
+              .postUrl(url)
+              .timeout(const Duration(seconds: 4));
+          final authorization = await addPairingAuthorization(
+            request.headers,
+            device.id,
+          );
+          if (authorization is NetworkFailure<void>) {
+            return authorization;
+          }
+          request.headers.contentType = ContentType.json;
+          request.write(jsonEncode({'messageId': messageId}));
+
+          final response = await request.close().timeout(
+            const Duration(seconds: 8),
+          );
+          final json = await readBoundedJsonResponse(
+            response,
+            timeout: const Duration(seconds: 8),
+          );
+          if (response.statusCode != HttpStatus.ok ||
+              json['messageId'] != messageId) {
+            throw LanNetworkException(
+              'LAN recall request was rejected.',
+              code: lanHttpErrorCode(response.statusCode),
+              operation: 'send_recall',
+              peerId: device.id,
+              statusCode: response.statusCode,
+            );
+          }
+          return const NetworkSuccess<void>(null);
+        } finally {
+          client.close();
+        }
+      },
+      peerId: device.id,
+      operation: 'send_recall',
+    );
   }
 
-  /// Send an announcement of local presence to a target device
-  Future<PairingInviteResult> sendAnnouncement(
+  /// 广播本机存在，并返回对端端点。
+  Future<NetworkResult<LanPairingEndpoint>> sendAnnouncement(
     LanDevice targetDevice,
     String localAlias,
   ) async {
-    PairingInviteResult result = const PairingInviteResult(success: false);
-    final success = await _executeWithRetry(() async {
-      final url = Uri.parse(
-        'https://${targetDevice.ip}:${targetDevice.port}/api/lan/announce',
-      );
-      final client = await _createHttpClient();
-
-      try {
-        final request = await client
-            .postUrl(url)
-            .timeout(const Duration(seconds: 4));
-        request.headers.contentType = ContentType.json;
-        request.write(
-          jsonEncode({
-            'id': currentDeviceId,
-            'alias': localAlias,
-            'os': Platform.operatingSystem,
-            'port': activePort,
-          }),
+    return _executeWithRetry(
+      () async {
+        final url = Uri.parse(
+          'https://${targetDevice.ip}:${targetDevice.port}/api/lan/announce',
         );
+        final client = await _createHttpClient(peerDeviceId: targetDevice.id);
 
-        final response = await request.close().timeout(
-          const Duration(seconds: 4),
-        );
-        final json = await readBoundedJsonResponse(response);
-        final accepted =
-            response.statusCode == HttpStatus.ok && json['success'] == true;
-        if (accepted) {
-          result = PairingInviteResult(
-            success: true,
-            remoteDeviceId: json['deviceId'] as String?,
-            remotePort: (json['port'] as num?)?.toInt(),
+        try {
+          final request = await client
+              .postUrl(url)
+              .timeout(const Duration(seconds: 4));
+          request.headers.contentType = ContentType.json;
+          request.write(
+            jsonEncode({
+              'id': currentDeviceId,
+              'alias': localAlias,
+              'os': Platform.operatingSystem,
+              'port': activePort,
+            }),
           );
+
+          final response = await request.close().timeout(
+            const Duration(seconds: 4),
+          );
+          final json = await readBoundedJsonResponse(response);
+          final remoteDeviceId = json['deviceId'];
+          final remotePort = json['port'];
+          if (response.statusCode != HttpStatus.ok ||
+              remoteDeviceId is! String ||
+              remoteDeviceId.isEmpty ||
+              remotePort is! num ||
+              remotePort < 1 ||
+              remotePort > 65535) {
+            throw LanNetworkException(
+              'LAN announcement was rejected.',
+              code: lanHttpErrorCode(response.statusCode),
+              operation: 'send_announcement',
+              peerId: targetDevice.id,
+              statusCode: response.statusCode,
+            );
+          }
+          return NetworkSuccess(
+            LanPairingEndpoint(
+              remoteDeviceId: remoteDeviceId,
+              remotePort: remotePort.toInt(),
+            ),
+          );
+        } finally {
+          client.close();
         }
-        return accepted;
-      } finally {
-        client.close();
-      }
-    });
-    return success ? result : const PairingInviteResult(success: false);
+      },
+      peerId: targetDevice.id,
+      operation: 'send_announcement',
+    );
   }
 
-  /// Invite a peer to open its pairing page. The PIN handshake remains a
-  /// separate step and is the only operation that establishes trust.
-  Future<PairingInviteResult> sendPairingInvite(
+  /// 邀请对端打开配对页面。PIN 握手仍是独立步骤，只有它可以建立信任。
+  Future<NetworkResult<LanPairingEndpoint>> sendPairingInvite(
     LanDevice targetDevice,
     String localAlias, {
     required String sessionId,
@@ -731,38 +890,84 @@ extension LanTransferClientApi on LanTransferService {
         const Duration(seconds: 4),
       );
       if (response.statusCode != HttpStatus.ok) {
-        await response.drain<void>().timeout(const Duration(seconds: 4));
-        return const PairingInviteResult(success: false);
+        await readBoundedJsonResponse(
+          response,
+          timeout: const Duration(seconds: 4),
+        );
+        throw LanNetworkException(
+          'LAN pairing invitation was rejected.',
+          code: lanHttpErrorCode(response.statusCode),
+          operation: 'send_pairing_invite',
+          peerId: targetDevice.id,
+          statusCode: response.statusCode,
+        );
       }
       final json = await readBoundedJsonResponse(response);
-      return PairingInviteResult(
-        success: json['accepted'] == true,
-        remoteDeviceId: json['deviceId'] as String?,
-        remotePort: (json['port'] as num?)?.toInt(),
+      final remoteDeviceId = json['deviceId'];
+      final remotePort = json['port'];
+      if (remoteDeviceId is! String ||
+          remoteDeviceId.isEmpty ||
+          remotePort is! num ||
+          remotePort < 1 ||
+          remotePort > 65535) {
+        throw const FormatException('Invalid LAN pairing endpoint response.');
+      }
+      return NetworkSuccess(
+        LanPairingEndpoint(
+          remoteDeviceId: remoteDeviceId,
+          remotePort: remotePort.toInt(),
+        ),
       );
     } catch (e) {
-      debugPrint('[LanTransferService] Pairing invite failed: $e');
-      return const PairingInviteResult(success: false);
+      return NetworkFailure(
+        lanNetworkError(
+          e,
+          operation: 'send_pairing_invite',
+          peerId: targetDevice.id,
+        ),
+      );
     } finally {
       client.close();
     }
   }
 
-  /// Retries transient failures 3 times with exponential backoff
-  Future<bool> _executeWithRetry(
-    Future<bool> Function() action, {
+  /// 使用指数退避重试暂时性失败，最多重试 3 次。
+  Future<NetworkResult<T>> _executeWithRetry<T>(
+    Future<NetworkResult<T>> Function() action, {
     int maxAttempts = 3,
+    required String operation,
+    String? peerId,
   }) async {
+    NetworkFailure<T>? lastFailure;
     for (int attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        final success = await action();
-        if (success) return true;
+        final result = await action();
+        if (result is NetworkSuccess<T>) return result;
+        final failure = result as NetworkFailure<T>;
+        lastFailure = failure;
+        if (!failure.error.code.retryable || attempt == maxAttempts) {
+          return failure;
+        }
       } catch (e) {
-        debugPrint('[LanTransferService] Attempt $attempt failed: $e');
-        if (attempt == maxAttempts) return false;
+        lastFailure = NetworkFailure(
+          lanNetworkError(e, operation: operation, peerId: peerId),
+        );
+        if (attempt == maxAttempts || !lastFailure.error.code.retryable) {
+          return lastFailure;
+        }
+      }
+      if (attempt < maxAttempts) {
         await Future.delayed(Duration(milliseconds: 500 * attempt));
       }
     }
-    return false;
+    return lastFailure ??
+        NetworkFailure(
+          NetworkError(
+            code: NetworkErrorCode.ioError,
+            message: 'LAN operation failed.',
+            operation: operation,
+            peerId: peerId,
+          ),
+        );
   }
 }

@@ -1,5 +1,8 @@
+// 从传输服务拆出的 v1 LAN 配对 HTTP 端点处理逻辑。
+
 part of 'lan_transfer_service.dart';
 
+/// 保存一个 v1 配对挑战的服务端状态。
 class _PendingPairingHandshake {
   final String handshakeId;
   final String senderDeviceId;
@@ -15,6 +18,7 @@ class _PendingPairingHandshake {
   final String remoteAddress;
   final DateTime expiresAt;
 
+  /// 创建待处理配对挑战。
   const _PendingPairingHandshake({
     required this.handshakeId,
     required this.senderDeviceId,
@@ -31,10 +35,12 @@ class _PendingPairingHandshake {
     required this.expiresAt,
   });
 
+  /// 配对挑战是否已过期。
   bool get isExpired => !DateTime.now().isBefore(expiresAt);
 }
 
 extension _LanPairingServerOperations on LanTransferService {
+  /// 将 v1 配对请求路由到 begin 或 confirm 阶段。
   Future<void> _handleSecureHandshakeRequest(HttpRequest request) async {
     final json = await _protocolGuard.readJson(request);
     if (json['protocolVersion'] != LanPairingCrypto.protocolVersion) {
@@ -58,6 +64,7 @@ extension _LanPairingServerOperations on LanTransferService {
     );
   }
 
+  /// 校验配对 begin 请求并返回服务端挑战。
   Future<void> _handleSecureHandshakeBegin(
     HttpRequest request,
     Map<String, dynamic> json,
@@ -215,8 +222,8 @@ extension _LanPairingServerOperations on LanTransferService {
           'serverProof': LanPairingCrypto.createServerProof(sessionSecrets),
         });
       } catch (_) {
-        // Invalid candidates are indistinguishable from a PIN mismatch and
-        // must not expose which rotating PIN slot was used.
+        // 无效候选值必须与 PIN 不匹配保持相同表现，
+        // 不得暴露使用了哪一个轮换 PIN 槽位。
       }
     }
     if (offers.isEmpty) {
@@ -231,7 +238,6 @@ extension _LanPairingServerOperations on LanTransferService {
     request.response.write(
       jsonEncode({
         'protocolVersion': LanPairingCrypto.protocolVersion,
-        'success': true,
         'status': 'challenge',
         'certFingerprint': serverFingerprint,
         'validForMs': LanPairingCrypto.credentialTtlMillis,
@@ -241,6 +247,7 @@ extension _LanPairingServerOperations on LanTransferService {
     await request.response.close();
   }
 
+  /// 校验配对证明并返回加密凭据。
   Future<void> _handleSecureHandshakeConfirm(
     HttpRequest request,
     Map<String, dynamic> json,
@@ -364,7 +371,6 @@ extension _LanPairingServerOperations on LanTransferService {
     request.response.write(
       jsonEncode({
         'protocolVersion': LanPairingCrypto.protocolVersion,
-        'success': true,
         'status': status,
         'credential': encryptedCredential,
       }),
@@ -372,11 +378,13 @@ extension _LanPairingServerOperations on LanTransferService {
     await request.response.close();
   }
 
+  /// 从配对 JSON 读取并清理一个字符串字段。
   String _trimmedPairingField(Map<String, dynamic> json, String key) {
     final value = json[key];
     return value is String ? value.trim() : '';
   }
 
+  /// 返回用于绑定配对发送方的规范化远端地址。
   String _pairingRemoteAddress(HttpRequest request) {
     var address = request.connectionInfo?.remoteAddress.address ?? '';
     if (address.startsWith('::ffff:')) address = address.substring(7);
@@ -389,6 +397,7 @@ extension _LanPairingServerOperations on LanTransferService {
     return address;
   }
 
+  /// 从内存中移除过期配对挑战。
   void _prunePendingPairingHandshakes() {
     _pendingPairingHandshakes.removeWhere((_, pending) => pending.isExpired);
   }

@@ -1,21 +1,27 @@
+// 消费类型化握手与配对结果的 v1 LAN 配对页面。
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/app_settings.dart';
+import '../../../services/lan_share/lan_network_models.dart';
 import '../../../services/lan_share/lan_share_models.dart';
+import '../../../services/network/network_models.dart';
 import '../../../widgets/app_surface.dart';
 import '../lan_share_feature_scope.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 import 'lan_chat_screen.dart';
 
+/// 展示 v1 LAN 配对 PIN 流程。
 class LanPairingScreen extends StatefulWidget {
   final String targetDeviceId;
   final String initialAlias;
   final String sessionId;
   final bool isIncomingRequest;
 
+  /// 为一个目标设备和会话创建配对页面。
   const LanPairingScreen({
     super.key,
     required this.targetDeviceId,
@@ -24,6 +30,7 @@ class LanPairingScreen extends StatefulWidget {
     this.isIncomingRequest = false,
   });
 
+  /// 创建可变的配对页面状态。
   @override
   State<LanPairingScreen> createState() => _LanPairingScreenState();
 }
@@ -46,6 +53,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
   StreamSubscription? _handshakeSubscription;
   StreamSubscription<LanPairingRequest>? _pairingRequestSubscription;
 
+  /// 订阅配对更新并启动本地 PIN 倒计时。
   @override
   void initState() {
     super.initState();
@@ -78,6 +86,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
     });
   }
 
+  /// 应用变更后的目标设备或请求方向。
   @override
   void didUpdateWidget(covariant LanPairingScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -86,6 +95,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
     _isIncomingRequest = widget.isIncomingRequest;
   }
 
+  /// 将匹配的配对请求应用到当前页面状态。
   void _handlePairingRequest(LanPairingRequest request) {
     if (!mounted || request.isExpired) return;
     final matchesSession = request.sessionId == widget.sessionId;
@@ -101,6 +111,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
     });
   }
 
+  /// 只导航到已配对聊天页面一次。
   void _openChat() {
     if (!mounted || _hasOpenedChat) return;
     _hasOpenedChat = true;
@@ -117,6 +128,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
     );
   }
 
+  /// 刷新本地 PIN，并重新启动过期倒计时。
   void _refreshLocalPin() {
     final vm = context.read<LanShareViewModel>();
     final pin = vm.securityService.getOrGenerate6DigitPin();
@@ -148,6 +160,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
     });
   }
 
+  /// 取消定时器、订阅、控制器和动画。
   @override
   void dispose() {
     _countdownTimer?.cancel();
@@ -158,6 +171,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
     super.dispose();
   }
 
+  /// 通过类型化 ViewModel 结果契约提交输入的 PIN。
   Future<void> _submitPin(LanShareViewModel vm, AppStrings strings) async {
     final pin = _pinController.text.trim();
     if (pin.length != 6) {
@@ -196,9 +210,9 @@ class _LanPairingScreenState extends State<LanPairingScreen>
         isInitiator: !_isIncomingRequest,
       );
       if (!mounted) return;
-      if (result.success) {
+      if (result is NetworkSuccess<LanHandshakeData>) {
         if (mounted) {
-          if (result.pendingRemote) {
+          if (result.data.pendingRemote) {
             setState(() {
               _waitingForRemoteVerification = true;
               _isLoading = false;
@@ -222,6 +236,7 @@ class _LanPairingScreenState extends State<LanPairingScreen>
     }
   }
 
+  /// 构建配对 UI 和当前审批状态。
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<LanShareViewModel>();

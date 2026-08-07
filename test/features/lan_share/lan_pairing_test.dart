@@ -1,3 +1,5 @@
+// v1 LAN 配对和规范化 HTTP 错误响应测试。
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -6,6 +8,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/lan_share/lan_discovery_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_pairing_crypto.dart';
+import 'package:ssh_mobile/services/network/network_models.dart';
 import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
 import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
@@ -275,6 +278,7 @@ class FakeHttpConnectionInfo implements HttpConnectionInfo {
   int get remotePort => 50000;
 }
 
+/// 执行 v1 LAN 配对和规范化 HTTP 契约测试。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -331,7 +335,6 @@ void main() {
       expect(request.response.statusCode, equals(HttpStatus.ok));
       final responseBody =
           jsonDecode(request.response._body.toString()) as Map<String, dynamic>;
-      expect(responseBody['success'], isTrue);
       expect(responseBody['deviceId'], 'local_device_123');
       expect(responseBody['port'], transferService.activePort);
     });
@@ -362,7 +365,6 @@ void main() {
       expect(request.response.statusCode, HttpStatus.ok);
       final responseBody =
           jsonDecode(request.response._body.toString()) as Map<String, dynamic>;
-      expect(responseBody['accepted'], isTrue);
       expect(responseBody['deviceId'], 'local_device_123');
     });
     test(
@@ -403,7 +405,7 @@ void main() {
         final responseBody =
             jsonDecode(request.response._body.toString())
                 as Map<String, dynamic>;
-        expect(responseBody['success'], isTrue);
+        expect(responseBody['status'], 'paired');
       },
     );
 
@@ -809,8 +811,8 @@ void main() {
             lastSeen: DateTime.now(),
           );
 
-          final success = await transferService.connectWebSocket(device);
-          expect(success, isFalse);
+          final result = await transferService.connectWebSocket(device);
+          expect(result, isA<NetworkFailure<void>>());
           expect(
             transferService.isWebSocketConnected('unreachable_device'),
             isFalse,

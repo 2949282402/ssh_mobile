@@ -1,3 +1,5 @@
+// v1 LAN 设置页面 Provider 范围回归测试。
+
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +14,7 @@ import 'package:ssh_mobile/services/lan_share/lan_discovery_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
+import 'package:ssh_mobile/services/network/network_models.dart';
 
 class _FakeLanSecurityService extends Fake implements LanSecurityService {}
 
@@ -19,13 +22,15 @@ class _FakeLanTransferService extends Fake implements LanTransferService {}
 
 class _FakeLanDiscoveryService extends Fake implements LanDiscoveryService {
   @override
-  Future<void> stopDiscovery() async {}
+  Future<NetworkResult<void>> stopDiscovery() async =>
+      const NetworkSuccess<void>(null);
 }
 
 class _FakeLanHistoryDao extends Fake implements LanHistoryDao {}
 
 class _FakeLanStorageService extends Fake implements LanStorageService {}
 
+/// 执行 LAN 设置页面 Provider 范围组件测试。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 

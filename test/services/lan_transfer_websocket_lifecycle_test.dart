@@ -1,8 +1,11 @@
+// v1 LAN WebSocket 生命周期和类型化连接事件测试。
+
 import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
+import 'package:ssh_mobile/services/lan_share/lan_network_models.dart';
 import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
 
@@ -43,6 +46,7 @@ class _ControllableWebSocket extends Fake implements WebSocket {
   }
 }
 
+/// 执行类型化 LAN WebSocket 生命周期测试。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -52,7 +56,7 @@ void main() {
       securityService: LanSecurityService(),
       storageService: LanStorageService(),
     );
-    final states = <Map<String, bool>>[];
+    final states = <LanConnectionStateChanged>[];
     final subscription = service.connectionStateStream.listen(states.add);
     final oldSocket = _ControllableWebSocket();
     final currentSocket = _ControllableWebSocket();
@@ -65,13 +69,19 @@ void main() {
       expect(oldSocket.closeCalls, greaterThanOrEqualTo(1));
       expect(currentSocket.closeCalls, 0);
       expect(service.isWebSocketConnected('peer-device'), isTrue);
-      expect(states.where((state) => state['peer-device'] == false), isEmpty);
+      expect(
+        states.where(
+          (state) => state.deviceId == 'peer-device' && !state.connected,
+        ),
+        isEmpty,
+      );
 
       await currentSocket.close();
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       expect(service.isWebSocketConnected('peer-device'), isFalse);
-      expect(states.last, {'peer-device': false});
+      expect(states.last.deviceId, 'peer-device');
+      expect(states.last.connected, isFalse);
     } finally {
       await subscription.cancel();
       await service.closeConnections();
