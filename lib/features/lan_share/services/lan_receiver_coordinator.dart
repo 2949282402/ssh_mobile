@@ -1,3 +1,6 @@
+// Coordinates the single v1 LAN receiver, native runtime, discovery service,
+// and the feature-owned ViewModel lifetime.
+
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
@@ -10,9 +13,9 @@ import '../../../services/lan_share/lan_storage_service.dart';
 import '../../../services/lan_share/lan_transfer_service.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/network/network_identity_service.dart';
-import '../../../services/network/transfer_transport.dart';
-import '../../../services/relay/relay_client.dart';
-import '../../../services/relay/relay_models.dart';
+import '../../../services/network/network_models.dart';
+import '../../../services/network/network_service.dart';
+import '../../../services/relay/relay_enrollment_service.dart';
 import '../../../utils/startup_instrumentation.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
@@ -29,9 +32,8 @@ class LanReceiverCoordinator extends ChangeNotifier {
   LanSecurityService? _securityService;
   LanStorageService? _lanStorageService;
   LanTransferService? _transferService;
-  RelayClient? _relayClient;
-  NativeNetworkRuntime? _nativeNetworkRuntime;
-  TransferTransport? _fileTransferTransport;
+  RelayEnrollmentService? _relayEnrollmentService;
+  NativeNetworkService? _networkService;
   bool _nativeRelayActive = false;
 
   final StreamController<LanPairingRequest> _pairingRequestController =
@@ -47,41 +49,75 @@ class LanReceiverCoordinator extends ChangeNotifier {
   LanShareViewModel? _viewModel;
   Future<LanShareViewModel>? _viewModelFuture;
 
+  /// Creates the application-scoped LAN receiver coordinator.
   LanReceiverCoordinator({
     required this.storageService,
     required this.appSettings,
     @visibleForTesting this.initializeNetwork = true,
   });
 
+  /// Whether receiver resources have completed initialization.
   bool get initialized => _initialized;
+
+  /// Returns the shared discovery service, when initialized.
   LanDiscoveryService? get discoveryService => _discoveryService;
+
+  /// Returns the shared LAN security service, when initialized.
   LanSecurityService? get securityService => _securityService;
+
+  /// Returns the shared LAN storage service, when initialized.
   LanStorageService? get lanStorageService => _lanStorageService;
+
+  /// Returns the single LAN transfer service, when initialized.
   LanTransferService? get transferService => _transferService;
-  RelayClient? get relayClient => _relayClient;
+
+  /// Returns the enrollment-only Relay service, when initialized.
+  RelayEnrollmentService? get relayEnrollmentService => _relayEnrollmentService;
+
+  /// Whether native Relay configuration is currently active.
   bool get nativeRelayActive => _nativeRelayActive;
 
-  Stream<NativeIncomingTransferOffer> get nativeIncomingTransferOffers async* {
+  /// Returns the shared native network service, when available.
+  NetworkService? get networkService => _networkService;
+
+  /// Emits native incoming-transfer offers after receiver initialization.
+  Stream<IncomingTransferOfferEvent> get nativeIncomingTransferOffers async* {
     await ensureInitialized();
-    final transport = _fileTransferTransport;
-    if (transport is AdaptiveTransferTransport) {
-      yield* transport.incomingOffers;
-    }
+    final network = _networkService;
+    if (network == null) return;
+    yield* network.events
+        .where((event) => event is IncomingTransferOfferEvent)
+        .cast<IncomingTransferOfferEvent>();
   }
 
-  Future<void> acceptNativeIncomingTransfer(
-    NativeIncomingTransferOffer offer,
+  /// Approves one native incoming transfer after checking device pairing.
+  Future<NetworkResult<void>> acceptNativeIncomingTransfer(
+    IncomingTransferOfferEvent offer,
   ) async {
     await ensureInitialized();
     await ensureViewModel();
-    final transport = _fileTransferTransport;
-    if (transport is! AdaptiveTransferTransport) return;
+    final network = _networkService;
+    if (network == null) {
+      return const NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.noRoute,
+          message: 'native network runtime is unavailable',
+          operation: 'respond_incoming',
+        ),
+      );
+    }
     if (!await _securityService!.isDevicePaired(offer.peerId)) {
-      await transport.respondToIncoming(
+      await network.respondToIncoming(
         transferId: offer.transferId,
         accept: false,
       );
-      throw StateError('Incoming transfer peer is no longer paired.');
+      return const NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.authenticationFailed,
+          message: 'incoming transfer peer is no longer paired',
+          operation: 'respond_incoming',
+        ),
+      );
     }
     _transferService!.handleIncomingMessageFromWeb(
       LanMessage(
@@ -97,88 +133,135 @@ class LanReceiverCoordinator extends ChangeNotifier {
         isIncoming: true,
       ),
     );
-    await transport.respondToIncoming(
+    return network.respondToIncoming(
       transferId: offer.transferId,
       accept: true,
     );
   }
 
-  Future<void> rejectNativeIncomingTransfer(
-    NativeIncomingTransferOffer offer,
+  /// Rejects one native incoming transfer offer.
+  Future<NetworkResult<void>> rejectNativeIncomingTransfer(
+    IncomingTransferOfferEvent offer,
   ) async {
     await ensureInitialized();
-    final transport = _fileTransferTransport;
-    if (transport is AdaptiveTransferTransport) {
-      await transport.respondToIncoming(
-        transferId: offer.transferId,
-        accept: false,
+    final network = _networkService;
+    if (network == null) {
+      return const NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.noRoute,
+          message: 'native network runtime is unavailable',
+          operation: 'respond_incoming',
+        ),
       );
     }
+    return network.respondToIncoming(
+      transferId: offer.transferId,
+      accept: false,
+    );
   }
 
-  Future<void> enrollRelay({
+  /// Enrolls credentials and configures the native Relay data plane.
+  Future<NetworkResult<void>> enrollRelay({
     required Uri endpoint,
     required String enrollmentToken,
   }) async {
     await ensureInitialized();
-    final client = _relayClient;
+    final client = _relayEnrollmentService;
     if (client == null) {
-      throw StateError('Relay client is unavailable.');
+      return const NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.relayError,
+          message: 'Relay enrollment service is unavailable',
+          operation: 'enroll_relay',
+        ),
+      );
     }
     final relaySettings = RelaySettings(endpoint: endpoint);
-    await client.enroll(relaySettings, enrollmentToken);
+    final enrollment = await client.enroll(relaySettings, enrollmentToken);
+    if (enrollment is NetworkFailure<void>) {
+      return enrollment;
+    }
     await appSettings.setRelayEndpoint(endpoint.toString());
-    await _connectRelay(relaySettings);
-    notifyListeners();
+    final result = await _connectRelay(relaySettings);
+    if (result is NetworkSuccess<void>) notifyListeners();
+    return result;
   }
 
-  Future<bool> connectConfiguredRelay() async {
+  /// Loads stored enrollment and configures native Relay connectivity.
+  Future<NetworkResult<void>> connectConfiguredRelay() async {
     await ensureInitialized();
     final endpoint = Uri.tryParse(appSettings.relayEndpoint);
-    final client = _relayClient;
-    if (endpoint == null || client == null) return false;
+    final client = _relayEnrollmentService;
+    if (endpoint == null || client == null) {
+      return const NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.relayError,
+          message: 'Relay configuration is unavailable',
+          operation: 'connect_relay',
+        ),
+      );
+    }
     final settings = RelaySettings(endpoint: endpoint);
-    if (!await client.isEnrolled(settings)) return false;
-    await _connectRelay(settings);
-    notifyListeners();
-    return true;
+    if (!await client.isEnrolled(settings)) {
+      return const NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.authenticationFailed,
+          message: 'Relay enrollment is required',
+          operation: 'connect_relay',
+        ),
+      );
+    }
+    final result = await _connectRelay(settings);
+    if (result is NetworkSuccess<void>) notifyListeners();
+    return result;
   }
 
-  Future<void> _connectRelay(RelaySettings settings) async {
-    final client = _relayClient;
-    if (client == null) {
-      throw StateError('Relay client is unavailable.');
+  /// Converts enrollment credentials into a native Relay configuration.
+  Future<NetworkResult<void>> _connectRelay(RelaySettings settings) async {
+    final client = _relayEnrollmentService;
+    final network = _networkService;
+    if (client == null || network == null) {
+      return const NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.noRoute,
+          message: 'native network runtime is unavailable',
+          operation: 'connect_relay',
+        ),
+      );
     }
-    final transport = _fileTransferTransport;
-    if (transport is AdaptiveTransferTransport) {
-      final configuration = await client.nativeConfiguration(settings);
-      if (configuration == null) {
-        throw StateError('Relay enrollment is required.');
-      }
-      if (client.isConnected) {
-        await client.disconnect();
-      }
-      await transport.configureRelay(
+    final configuration = await client.nativeConfiguration(settings);
+    if (configuration == null) {
+      return const NetworkFailure(
+        NetworkError(
+          code: NetworkErrorCode.authenticationFailed,
+          message: 'Relay enrollment is required',
+          operation: 'connect_relay',
+        ),
+      );
+    }
+    final result = await network.configureRelay(
+      RelayConfig(
         relayUrl: configuration.endpoint.toString(),
         relayCredential: configuration.credential,
         relaySigningSeed: configuration.signingSeed,
-      );
-      _nativeRelayActive = true;
-      return;
-    }
-    _nativeRelayActive = false;
-    throw StateError('Native network runtime is unavailable.');
+      ),
+    );
+    _nativeRelayActive = result is NetworkSuccess<void>;
+    return result;
   }
 
+  /// Emits pairing requests received by the single LAN receiver.
   Stream<LanPairingRequest> get pairingRequestStream =>
       _pairingRequestController.stream;
 
+  /// Returns an unexpired pairing request for [sessionId].
   LanPairingRequest? pairingRequestForSession(String sessionId) {
     final request = _latestPairingRequests[sessionId];
     if (request == null || request.isExpired) return null;
     return request;
   }
 
+  /// Initializes receiver resources once and shares concurrent callers.
   Future<void> ensureInitialized() {
     if (_disposed) {
       return Future<void>.error(
@@ -189,6 +272,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     return _initFuture ??= _doInit();
   }
 
+  /// Creates or returns the feature-scoped ViewModel.
   Future<LanShareViewModel> ensureViewModel() {
     if (_disposed) {
       return Future<LanShareViewModel>.error(
@@ -200,6 +284,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     return _viewModelFuture ??= _createViewModel();
   }
 
+  /// Builds the ViewModel against the shared receiver dependencies.
   Future<LanShareViewModel> _createViewModel() async {
     LanShareViewModel? viewModel;
     try {
@@ -209,7 +294,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         securityService: _securityService!,
         storageService: _lanStorageService!,
         transferService: _transferService!,
-        fileTransferTransport: _fileTransferTransport,
+        networkService: _networkService,
         historyDao: storageService.appDatabase.lanHistoryDao,
         appSettings: appSettings,
         ownsRuntime: false,
@@ -233,6 +318,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     }
   }
 
+  /// Publishes and retains one unexpired pairing request.
   void publishPairingRequest(LanPairingRequest request) {
     if (_disposed || request.isExpired) return;
     _latestPairingRequests.removeWhere((_, value) => value.isExpired);
@@ -240,6 +326,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     _pairingRequestController.add(request);
   }
 
+  /// Converts a discovered incoming device into a pairing request.
   void _publishIncomingDevice(LanDevice device) {
     publishPairingRequest(
       LanPairingRequest(
@@ -251,6 +338,9 @@ class LanReceiverCoordinator extends ChangeNotifier {
     );
   }
 
+  /// Creates receiver services, starts LAN listening, and optionally starts
+  /// the native runtime without converting expected network failures to
+  /// programming exceptions.
   Future<void> _doInit() async {
     LanDiscoveryService? discovery;
     LanTransferService? transfer;
@@ -271,9 +361,8 @@ class LanReceiverCoordinator extends ChangeNotifier {
       final networkIdentity = initializeNetwork
           ? await NetworkIdentityService().loadOrCreate()
           : null;
-      final relayClient = RelayClient(
+      final relayEnrollmentService = RelayEnrollmentService(
         currentDeviceId: deviceId,
-        securityService: security,
       );
       transfer = LanTransferService(
         currentDeviceId: deviceId,
@@ -300,36 +389,61 @@ class LanReceiverCoordinator extends ChangeNotifier {
 
       int? boundPort;
       if (initializeNetwork) {
-        boundPort = await transfer.startListening();
-        await discovery.startAdvertising(port: boundPort);
+        final listenerResult = await transfer.startListening();
+        if (listenerResult is NetworkFailure<int>) {
+          AppLogService.instance.warning(
+            'LAN listener failed',
+            details: listenerResult.error.toString(),
+          );
+        } else {
+          boundPort = (listenerResult as NetworkSuccess<int>).data;
+          final advertisingResult = await discovery.startAdvertising(
+            port: boundPort,
+          );
+          if (advertisingResult is NetworkFailure<void>) {
+            AppLogService.instance.warning(
+              'LAN advertising failed',
+              details: advertisingResult.error.toString(),
+            );
+          }
+        }
       }
 
       _discoveryService = discovery;
       _securityService = security;
       _lanStorageService = lanStorage;
       _transferService = transfer;
-      _relayClient = relayClient;
-      if (initializeNetwork) {
+      _relayEnrollmentService = relayEnrollmentService;
+      if (initializeNetwork && boundPort != null) {
         NativeNetworkRuntime? nativeRuntime;
-        QuicTransferTransport? directTransport;
+        NativeNetworkService? networkService;
         try {
           nativeRuntime = await const SshMobileNetworkNative().createRuntime();
-          directTransport = QuicTransferTransport(nativeRuntime);
-          await directTransport.configure(
-            deviceId: deviceId,
-            identityPrivateKey: networkIdentity!.privateSeed,
-            e2ePrivateKey: await security.getStaticX25519PrivateKeyBytes(),
-            listenAddress: '0.0.0.0:$boundPort',
-            receiveDirectory: (await lanStorage.getSandboxDirectory()).path,
+          networkService = NativeNetworkService(nativeRuntime);
+          final startResult = await networkService.start(
+            NetworkRuntimeConfig(
+              deviceId: deviceId,
+              identityPrivateKey: networkIdentity!.privateSeed,
+              e2ePrivateKey: await security.getStaticX25519PrivateKeyBytes(),
+              listenAddress: '0.0.0.0:$boundPort',
+              receiveDirectory: (await lanStorage.getSandboxDirectory()).path,
+            ),
           );
-          _nativeNetworkRuntime = nativeRuntime;
-          _fileTransferTransport = AdaptiveTransferTransport(
-            direct: directTransport,
-          );
+          if (startResult is NetworkFailure<void>) {
+            AppLogService.instance.warning(
+              'Native network runtime configuration failed',
+              details: startResult.error.toString(),
+            );
+            await networkService.dispose();
+            networkService = null;
+            nativeRuntime = null;
+          } else {
+            _networkService = networkService;
+          }
         } on Object catch (error, stackTrace) {
-          await directTransport?.dispose();
+          await networkService?.dispose();
           await nativeRuntime?.dispose();
-          _fileTransferTransport = null;
+          _networkService = null;
           AppLogService.instance.warning(
             'Native QUIC runtime initialization failed',
             details: '$error\n$stackTrace',
@@ -363,6 +477,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     }
   }
 
+  /// Cancels receiver-owned LAN event subscriptions.
   Future<void> _cancelReceiverSubscriptions() async {
     await _pairingInviteSubscription?.cancel();
     _pairingInviteSubscription = null;
@@ -372,17 +487,17 @@ class LanReceiverCoordinator extends ChangeNotifier {
     _handshakePendingSubscription = null;
   }
 
+  /// Disposes native network, Relay enrollment, and transfer resources.
   Future<void> _disposeTransferRuntime() async {
-    final fileTransport = _fileTransferTransport;
-    if (fileTransport is AdaptiveTransferTransport) {
-      await fileTransport.dispose();
-    }
-    await _nativeNetworkRuntime?.dispose();
+    await _networkService?.dispose();
+    _networkService = null;
     _nativeRelayActive = false;
     _transferService?.dispose();
-    await _relayClient?.dispose();
+    await _relayEnrollmentService?.dispose();
+    _relayEnrollmentService = null;
   }
 
+  /// Disposes the coordinator and all application-scoped receiver resources.
   @override
   void dispose() {
     _disposed = true;

@@ -1,13 +1,11 @@
-import 'dart:async';
-import 'dart:convert';
+// v1 Relay enrollment 范围测试；Dart 不承载 Relay 数据面。
 
-import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
-import 'package:ssh_mobile/services/relay/relay_client.dart';
-import 'package:ssh_mobile/services/relay/relay_models.dart';
+import 'package:ssh_mobile/services/relay/relay_enrollment_service.dart';
+import 'package:ssh_mobile/services/network/network_models.dart';
 
+/// 执行 v1 Relay enrollment 范围测试。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -18,9 +16,8 @@ void main() {
   test('relay credential is scoped to endpoint and device identity', () async {
     late Uri requestedEndpoint;
     final endpoint = Uri.parse('https://relay.example.test:8443');
-    final client = RelayClient(
+    final service = RelayEnrollmentService(
       currentDeviceId: 'device-a',
-      securityService: LanSecurityService(),
       enrollmentRequester: (requestEndpoint, payload) async {
         requestedEndpoint = requestEndpoint;
         expect(payload['device_id'], 'device-a');
@@ -37,25 +34,35 @@ void main() {
         };
       },
     );
-    addTearDown(client.dispose);
-    await client.enroll(RelaySettings(endpoint: endpoint), '0123456789abcdef');
+    addTearDown(service.dispose);
+    final enrollment = await service.enroll(
+      RelaySettings(endpoint: endpoint),
+      '0123456789abcdef',
+    );
+    expect(enrollment, isA<NetworkSuccess<void>>());
 
     expect(requestedEndpoint.path, '/v1/devices/enroll');
-    expect(await client.isEnrolled(RelaySettings(endpoint: endpoint)), isTrue);
+    expect(await service.isEnrolled(RelaySettings(endpoint: endpoint)), isTrue);
     expect(
-      await client.isEnrolled(
+      await service.isEnrolled(
         RelaySettings(endpoint: Uri.parse('https://other.example.test')),
       ),
       isFalse,
     );
+    final native = await service.nativeConfiguration(
+      RelaySettings(endpoint: endpoint),
+    );
+    expect(native, isNotNull);
+    expect(native!.endpoint, endpoint);
+    expect(native.credential, 'signed-credential');
+    expect(native.signingSeed, hasLength(32));
   });
 
   test(
     'relay enrollment rejects HTTP and mismatched server protocol',
     () async {
-      final client = RelayClient(
+      final service = RelayEnrollmentService(
         currentDeviceId: 'device-a',
-        securityService: LanSecurityService(),
         enrollmentRequester: (_, _) async => {
           'credential': 'signed-credential',
           'expires_at':
@@ -64,114 +71,29 @@ void main() {
                   .millisecondsSinceEpoch ~/
               1000,
           'server_time': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-          'protocol_version': 2,
+          'protocol_version': RelayEnrollmentService.protocolVersion + 1,
         },
       );
-      addTearDown(client.dispose);
+      addTearDown(service.dispose);
 
-      await expectLater(
-        client.enroll(
-          RelaySettings(endpoint: Uri.parse('http://relay.example.test')),
-          '0123456789abcdef',
-        ),
-        throwsArgumentError,
+      final invalidEndpoint = await service.enroll(
+        RelaySettings(endpoint: Uri.parse('http://relay.example.test')),
+        '0123456789abcdef',
       );
-      await expectLater(
-        client.enroll(
-          RelaySettings(endpoint: Uri.parse('https://relay.example.test')),
-          '0123456789abcdef',
-        ),
-        throwsStateError,
-      );
-    },
-  );
-
-  test(
-    'Dart connect headers and ready handshake match the Go server',
-    () async {
-      late Map<String, dynamic> enrollmentPayload;
-      late Uri socketEndpoint;
-      late Map<String, String> socketHeaders;
-      final socket = _FakeRelaySocket();
-      final client = RelayClient(
-        currentDeviceId: 'device-a',
-        securityService: LanSecurityService(),
-        enrollmentRequester: (_, payload) async {
-          enrollmentPayload = payload;
-          return {
-            'credential': 'signed-credential',
-            'expires_at':
-                DateTime.now()
-                    .add(const Duration(hours: 1))
-                    .millisecondsSinceEpoch ~/
-                1000,
-            'server_time': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-            'protocol_version': 1,
-          };
-        },
-        socketConnector: (endpoint, headers) async {
-          socketEndpoint = endpoint;
-          socketHeaders = headers;
-          socket.addFromServer(
-            jsonEncode({
-              'type': 'ready',
-              'device_id': 'device-a',
-              'protocol_version': 1,
-              'timestamp': DateTime.now().millisecondsSinceEpoch,
-            }),
-          );
-          return socket;
-        },
-      );
-      addTearDown(client.dispose);
-      final settings = RelaySettings(
-        endpoint: Uri.parse('https://relay.example.test:8443'),
-      );
-
-      await client.enroll(settings, '0123456789abcdef');
-      await client.connect(settings);
-
+      expect(invalidEndpoint, isA<NetworkFailure<void>>());
       expect(
-        socketEndpoint.toString(),
-        'wss://relay.example.test:8443/v1/connect',
+        (invalidEndpoint as NetworkFailure<void>).error.code,
+        NetworkErrorCode.invalidArgument,
       );
-      expect(socketHeaders['authorization'], 'Bearer signed-credential');
-      final nonce = socketHeaders['X-Relay-Nonce']!;
-      final signatureBytes = base64Url.decode(
-        base64Url.normalize(socketHeaders['X-Relay-Signature']!),
+      final mismatchedVersion = await service.enroll(
+        RelaySettings(endpoint: Uri.parse('https://relay.example.test')),
+        '0123456789abcdef',
       );
-      final publicKeyBytes = base64Url.decode(
-        base64Url.normalize(enrollmentPayload['public_key'] as String),
+      expect(mismatchedVersion, isA<NetworkFailure<void>>());
+      expect(
+        (mismatchedVersion as NetworkFailure<void>).error.code,
+        NetworkErrorCode.relayError,
       );
-      final verified = await Ed25519().verify(
-        utf8.encode('GET\n/v1/connect\n$nonce'),
-        signature: Signature(
-          signatureBytes,
-          publicKey: SimplePublicKey(publicKeyBytes, type: KeyPairType.ed25519),
-        ),
-      );
-      expect(verified, isTrue);
-      expect(client.isConnected, isTrue);
     },
   );
-}
-
-class _FakeRelaySocket implements RelaySocket {
-  final StreamController<dynamic> _messages = StreamController<dynamic>();
-  bool closed = false;
-
-  @override
-  Stream<dynamic> get messages => _messages.stream;
-
-  void addFromServer(dynamic value) => _messages.add(value);
-
-  @override
-  void add(dynamic data) {}
-
-  @override
-  Future<void> close([int? code, String? reason]) async {
-    if (closed) return;
-    closed = true;
-    await _messages.close();
-  }
 }
