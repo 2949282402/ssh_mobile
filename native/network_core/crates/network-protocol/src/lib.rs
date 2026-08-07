@@ -1,8 +1,10 @@
-//! Network protocol messages, framing, and versioning.
+//! 网络协议消息、帧封装与版本信息。
 
 use prost::Enumeration;
 use prost::Message;
 
+/// Rust 运行时、Dart 编解码器、QUIC 与文件传输 manifest 共享的版本。
+/// 项目保持当前开发线协议版本；结构变化直接在当前版本中修改。
 pub const NETWORK_PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
@@ -22,12 +24,46 @@ pub enum NetworkErrorCode {
     Cancelled = 11,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum PeerConnectionState {
+    Unspecified = 0,
+    Connecting = 1,
+    Connected = 2,
+    Disconnected = 3,
+    Failed = 4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum RouteType {
+    Unspecified = 0,
+    QuicDirect = 1,
+    Relay = 2,
+    Wireguard = 3,
+    Lan = 4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum RelayConnectionState {
+    Unspecified = 0,
+    Connecting = 1,
+    Connected = 2,
+    Disconnected = 3,
+    Failed = 4,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct NetworkError {
     #[prost(enumeration = "NetworkErrorCode", tag = "1")]
     pub code: i32,
     #[prost(string, tag = "2")]
     pub message: String,
+    #[prost(string, tag = "3")]
+    pub operation: String,
+    #[prost(string, tag = "4")]
+    pub peer_id: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -36,6 +72,12 @@ pub struct ConnectPeerCommand {
     pub peer_id: String,
     #[prost(uint32, tag = "2")]
     pub intent: u32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct DisconnectPeerCommand {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -99,6 +141,9 @@ pub struct ConfigureRelayCommand {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct DisconnectRelayCommand {}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct NetworkCommand {
     #[prost(string, tag = "1")]
     pub command_id: String,
@@ -106,7 +151,7 @@ pub struct NetworkCommand {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_command::Payload",
-        tags = "10, 11, 12, 13, 14, 15, 16"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18"
     )]
     pub payload: Option<network_command::Payload>,
 }
@@ -130,17 +175,29 @@ pub mod network_command {
         RespondIncomingTransfer(RespondIncomingTransferCommand),
         #[prost(message, tag = "16")]
         ConfigureRelay(ConfigureRelayCommand),
+        #[prost(message, tag = "17")]
+        DisconnectPeer(DisconnectPeerCommand),
+        #[prost(message, tag = "18")]
+        DisconnectRelay(DisconnectRelayCommand),
     }
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct NetworkErrorEnvelope {
+    #[prost(message, optional, tag = "1")]
+    pub error: Option<NetworkError>,
 }
 
 #[derive(Clone, PartialEq, Message)]
 pub struct PeerStateChangedEvent {
     #[prost(string, tag = "1")]
     pub peer_id: String,
-    #[prost(string, tag = "2")]
-    pub state: String,
-    #[prost(string, tag = "3")]
-    pub active_route: String,
+    #[prost(enumeration = "PeerConnectionState", tag = "2")]
+    pub state: i32,
+    #[prost(enumeration = "RouteType", tag = "3")]
+    pub active_route: i32,
+    #[prost(message, optional, tag = "4")]
+    pub error: Option<NetworkError>,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -184,6 +241,36 @@ pub struct TransferCompletedEvent {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct TransferFailedEvent {
+    #[prost(string, tag = "1")]
+    pub transfer_id: String,
+    #[prost(message, optional, tag = "2")]
+    pub error: Option<NetworkError>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct RouteChangedEvent {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(enumeration = "RouteType", tag = "2")]
+    pub route_type: i32,
+    #[prost(string, tag = "3")]
+    pub endpoint: String,
+    #[prost(uint64, tag = "4")]
+    pub rtt_ms: u64,
+    #[prost(uint32, tag = "5")]
+    pub loss_per_mille: u32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct RelayStateChangedEvent {
+    #[prost(enumeration = "RelayConnectionState", tag = "1")]
+    pub state: i32,
+    #[prost(message, optional, tag = "2")]
+    pub error: Option<NetworkError>,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct NetworkEvent {
     #[prost(string, tag = "1")]
     pub event_id: String,
@@ -191,7 +278,10 @@ pub struct NetworkEvent {
     pub timestamp_ms: i64,
     #[prost(uint32, tag = "3")]
     pub protocol_version: u32,
-    #[prost(oneof = "network_event::Payload", tags = "10, 11, 12, 13, 14, 15")]
+    #[prost(
+        oneof = "network_event::Payload",
+        tags = "10, 11, 13, 14, 15, 16, 17, 18"
+    )]
     pub payload: Option<network_event::Payload>,
 }
 
@@ -204,13 +294,17 @@ pub mod network_event {
         PeerState(PeerStateChangedEvent),
         #[prost(message, tag = "11")]
         TransferProgress(TransferProgressEvent),
-        #[prost(message, tag = "12")]
-        Error(NetworkError),
         #[prost(message, tag = "13")]
         CommandResult(CommandResultEvent),
         #[prost(message, tag = "14")]
         IncomingTransferOffer(IncomingTransferOfferEvent),
         #[prost(message, tag = "15")]
         TransferCompleted(TransferCompletedEvent),
+        #[prost(message, tag = "16")]
+        TransferFailed(TransferFailedEvent),
+        #[prost(message, tag = "17")]
+        RouteChanged(RouteChangedEvent),
+        #[prost(message, tag = "18")]
+        RelayStateChanged(RelayStateChangedEvent),
     }
 }

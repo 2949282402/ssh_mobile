@@ -1,3 +1,6 @@
+// v1 网络线协议 schema。开发阶段的结构变化直接在当前版本修改，
+// 不做版本迁移；Dart 与 Rust 手写绑定必须保持字段 tag 一致。
+
 syntax = "proto3";
 
 package network.v1;
@@ -17,14 +20,44 @@ enum NetworkErrorCode {
   ERROR_CODE_CANCELLED = 11;
 }
 
+enum PeerConnectionState {
+  PEER_CONNECTION_STATE_UNSPECIFIED = 0;
+  PEER_CONNECTION_STATE_CONNECTING = 1;
+  PEER_CONNECTION_STATE_CONNECTED = 2;
+  PEER_CONNECTION_STATE_DISCONNECTED = 3;
+  PEER_CONNECTION_STATE_FAILED = 4;
+}
+
+enum RouteType {
+  ROUTE_TYPE_UNSPECIFIED = 0;
+  ROUTE_TYPE_QUIC_DIRECT = 1;
+  ROUTE_TYPE_RELAY = 2;
+  ROUTE_TYPE_WIREGUARD = 3;
+  ROUTE_TYPE_LAN = 4;
+}
+
+enum RelayConnectionState {
+  RELAY_CONNECTION_STATE_UNSPECIFIED = 0;
+  RELAY_CONNECTION_STATE_CONNECTING = 1;
+  RELAY_CONNECTION_STATE_CONNECTED = 2;
+  RELAY_CONNECTION_STATE_DISCONNECTED = 3;
+  RELAY_CONNECTION_STATE_FAILED = 4;
+}
+
 message NetworkError {
   NetworkErrorCode code = 1;
   string message = 2;
+  string operation = 3;
+  string peer_id = 4;
 }
 
 message ConnectPeerCommand {
   string peer_id = 1;
   uint32 intent = 2;
+}
+
+message DisconnectPeerCommand {
+  string peer_id = 1;
 }
 
 message SendFileCommand {
@@ -63,6 +96,8 @@ message ConfigureRelayCommand {
   bytes relay_signing_seed = 3;
 }
 
+message DisconnectRelayCommand {}
+
 message NetworkCommand {
   string command_id = 1;
   uint32 protocol_version = 2;
@@ -74,13 +109,16 @@ message NetworkCommand {
     UpsertPeerCommand upsert_peer = 14;
     RespondIncomingTransferCommand respond_incoming_transfer = 15;
     ConfigureRelayCommand configure_relay = 16;
+    DisconnectPeerCommand disconnect_peer = 17;
+    DisconnectRelayCommand disconnect_relay = 18;
   }
 }
 
 message PeerStateChangedEvent {
   string peer_id = 1;
-  string state = 2;
-  string active_route = 3;
+  PeerConnectionState state = 2;
+  RouteType active_route = 3;
+  NetworkError error = 4;
 }
 
 message TransferProgressEvent {
@@ -89,6 +127,7 @@ message TransferProgressEvent {
   uint64 total_bytes = 3;
 }
 
+  // 由 Dart 服务消费，用于完成待处理 NetworkResult，不作为公开 NetworkEvent 暴露。
 message CommandResultEvent {
   string command_id = 1;
   bool accepted = 2;
@@ -107,6 +146,24 @@ message TransferCompletedEvent {
   string local_path = 2;
 }
 
+message TransferFailedEvent {
+  string transfer_id = 1;
+  NetworkError error = 2;
+}
+
+message RouteChangedEvent {
+  string peer_id = 1;
+  RouteType route_type = 2;
+  string endpoint = 3;
+  uint64 rtt_ms = 4;
+  uint32 loss_per_mille = 5;
+}
+
+message RelayStateChangedEvent {
+  RelayConnectionState state = 1;
+  NetworkError error = 2;
+}
+
 message NetworkEvent {
   string event_id = 1;
   int64 timestamp_ms = 2;
@@ -114,9 +171,11 @@ message NetworkEvent {
   oneof payload {
     PeerStateChangedEvent peer_state = 10;
     TransferProgressEvent transfer_progress = 11;
-    NetworkError error = 12;
     CommandResultEvent command_result = 13;
     IncomingTransferOfferEvent incoming_transfer_offer = 14;
     TransferCompletedEvent transfer_completed = 15;
+    TransferFailedEvent transfer_failed = 16;
+    RouteChangedEvent route_changed = 17;
+    RelayStateChangedEvent relay_state_changed = 18;
   }
 }
