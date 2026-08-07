@@ -1,4 +1,4 @@
-> Last updated: 2026-07-28
+> Last updated: 2026-08-07
 
 # SSH Mobile Network Native
 
@@ -10,12 +10,12 @@ Native event polling runs on a helper isolate because the Rust poll call may
 block. Runtime disposal first asks that isolate to stop, waits for its exit,
 and only then destroys the Rust handle.
 
-The current runtime handles peer registration with pinned Ed25519/X25519 keys,
-per-peer `PathManager` selection, authenticated Quinn sessions, approved and
-verified file receive, cancellation, progress/completion events, and the
-current-protocol WSS Relay data path. Relay is configured after enrollment with
-memory-only credential/signing material; unsupported commands and routes return
-explicit errors rather than synthetic success.
+The current v1 runtime handles peer registration with pinned Ed25519/X25519
+keys, per-peer `PathManager` selection, authenticated Quinn sessions, approved
+and verified file receive, cancellation, progress/completion events, and the
+native WSS Relay data path. Dart performs enrollment and secure credential
+lookup only; Relay data frames stay in Rust. Unsupported commands and routes
+return explicit errors rather than synthetic success.
 
 ## Supported build targets
 

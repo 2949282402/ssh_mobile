@@ -1,6 +1,8 @@
-# ssh_mobile_quic_native_example
+> Last updated: 2026-08-07
 
-Demonstrates how to use the ssh_mobile_quic_native package.
+# ssh_mobile_network_native_example
+
+Demonstrates how to use the ssh_mobile_network_native package.
 
 ## Getting Started
 

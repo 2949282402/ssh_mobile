@@ -1,3 +1,5 @@
+// v1 原生网络 FFI 事件缓冲区声明。
+
 import 'dart:ffi';
 
 /// 表示由 Rust FFI 分配的字节缓冲区的 FFI 结构体。
