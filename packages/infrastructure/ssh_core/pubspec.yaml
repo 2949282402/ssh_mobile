@@ -1,0 +1,22 @@
+name: ssh_core
+description: App-scope SSH session, runtime, and protocol contracts for SSH Mobile.
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
+
+dependencies:
+  app_core:
+    path: ../../core/app_core
+  connection_core:
+    path: ../../core/connection_core
+  dartssh2: ^2.22.5
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:network_transport/network_transport.dart';
+import 'package:ssh_core/ssh_core.dart';
 
 import '../features/lan_share/services/lan_receiver_coordinator.dart';
 import '../services/app_bootstrap_coordinator.dart';
@@ -35,6 +36,7 @@ final class AppRuntime implements Disposable {
     required this.networkRuntime,
     required this.bootstrapCoordinator,
     required this.shortcutCommandService,
+    required this.sshSessionManager,
     required this.sshService,
     required this.sftpService,
     required this.performanceMonitorService,
@@ -78,8 +80,11 @@ final class AppRuntime implements Disposable {
   // TODO(refactor-step-18): 将快捷键配置迁移到 settings 模块。
   final ShortcutCommandService shortcutCommandService;
 
-  // TODO(refactor-step-08): 替换为 ssh_core 的 SshSessionManager。
+  // 旧 API 兼容视图；实际 App Scope Owner 由下方的 SshSessionManager 字段表达。
   final SshService sshService;
+
+  /// App Scope 唯一 SSH Manager；旧 [sshService] 是同一实例的兼容类型视图。
+  final SshSessionManager sshSessionManager;
 
   // TODO(refactor-step-10): 替换为 sftp feature 的公共运行时契约。
   final SftpService sftpService;
@@ -153,14 +158,8 @@ final class AppRuntime implements Disposable {
       }
     });
 
-    // SSH 会话依赖底层网络和存储，必须先于这些资源关闭。
-    await attempt(() async {
-      try {
-        await sshService.ensureInitialized();
-      } finally {
-        sshService.dispose();
-      }
-    });
+    // SSH Manager 统一关闭共享 Session Pool、Runtime 和旧 API 兼容资源。
+    await attempt(sshSessionManager.close);
 
     // 当前 SFTP 实现仍直接持有 SSH 客户端，这里作为网络资源组释放。
     await attempt(sftpService.dispose);

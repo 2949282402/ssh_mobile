@@ -406,6 +406,7 @@ flowchart LR
 - `packages/core/connection_core/`：Connection 领域模型与契约、独立的非敏感 Drift 数据库、Secure Storage 凭据和 Host Key 信任元数据。`ConnectionDatabase` 由 `AppRuntime` 创建和关闭；`feature_connection` 只消费其公共 Repository 与注入的 Capability。
 - `packages/infrastructure/ssh_mobile_network_native/`：位于 Infrastructure 边界下的原生网络 Package。
 - `packages/infrastructure/network_transport/`：App Scope `NetworkRuntime` Facade、lazy Capability 状态机、传输端点/连接合约、指标快照和显式 native handle adapter。实例由 `AppRuntime` 唯一创建；当前 Step 不新增第二套协议实现。
+- `packages/infrastructure/ssh_core/`：App Scope SSH Session Manager、Lease/Pool 生命周期、桌面端与移动端 Runtime Adapter、SSH Client/Host Key/命令执行边界及非敏感目标绑定。该包不依赖 `StorageService`；`AppRuntime` 只持有一个 Manager，Terminal Pilot 完成方法级迁移前保留同一实例上的旧 `SshService` 兼容面。
 - `apps/ssh_mobile_full/lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
   策略和数据保护。
 - `apps/ssh_mobile_full/lib/theme/`、`apps/ssh_mobile_full/lib/widgets/`、`apps/ssh_mobile_full/lib/utils/`：设计系统、复用组件和工具。
@@ -414,6 +415,7 @@ flowchart LR
 - `apps/ssh_mobile_full/lib/screens/`：历史兼容目录；不要继续在此新增应用 UI。
 - `apps/ssh_mobile_full/test/`：单元测试和 Widget 测试。
 - `packages/core/app_core/test/`：Core 合约测试；可在该 Package 中执行 `flutter test`，或使用 Melos scope 命令。
+- `packages/infrastructure/ssh_core/test/`：SSH Core 生命周期与安全契约测试。
 - `docs/`：架构、安全、性能、验证和发布文档。
 - `scripts/`：仓库级构建、打包和同步脚本；`apps/ssh_mobile_full/tool/`：App 专属生成和质量检查脚本。
 - `third_party/xterm/`：仓库内维护的终端组件。

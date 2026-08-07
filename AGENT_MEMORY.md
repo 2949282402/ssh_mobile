@@ -63,6 +63,14 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   coordinator remains a temporary direct native/protocol consumer until its
   dedicated migration Step; do not add another NetworkRuntime implementation in
   a Feature.
+- `packages/infrastructure/ssh_core/` owns the App Scope `SshSessionManager`,
+  Runtime Adapter contracts, Session Pool/Lease lifecycle, SSH Client/Host Key/
+  command boundaries, and non-secret target bindings. The package must not depend
+  on `StorageService`, Feature code, or mobile Background SDKs. The current
+  `SshService` implements the public Manager contract as a same-instance bridge
+  so existing terminal behavior remains intact until the Terminal Pilot moves
+  its method surface. A Feature may release a Lease but must not close a shared
+  Session directly.
 
 ### Logging contract
 

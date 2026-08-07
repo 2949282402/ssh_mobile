@@ -26,6 +26,8 @@ dependencies:
     path: ../../packages/infrastructure/ssh_mobile_network_native
   network_transport:
     path: ../../packages/infrastructure/network_transport
+  ssh_core:
+    path: ../../packages/infrastructure/ssh_core
   flutter_background_service: ^5.1.0
   flutter_local_notifications: ^22.2.0
   flutter_secure_storage: ^10.3.1

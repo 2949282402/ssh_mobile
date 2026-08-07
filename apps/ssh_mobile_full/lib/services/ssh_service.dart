@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
@@ -33,7 +34,8 @@ part 'ssh/ssh_session_metadata.dart';
 ///
 /// tmux 集成：连接后自动创建或 attach 到指定 tmux session，服务端持久化。
 /// App 重启后通过 RestorableTmuxSession 列表自动恢复会话。
-class SshService extends ChangeNotifier implements SshClientAdapter {
+class SshService extends ChangeNotifier
+    implements SshClientAdapter, ssh_core.SshSessionManager {
   final StorageService _storageService;
   final AppSettings? _appSettings;
   late final SshClientFactory _clientFactory = SshClientFactory(
@@ -48,6 +50,9 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   final Map<String, _LocalSshRuntime> _localRuntimes = {};
   final Map<String, Completer<void>> _connectCompleters = {};
   final Set<String> _closingSessionIds = {};
+  // Step08 的共享 Pool 先挂在现有兼容 Service 上，确保 App Scope 只有一个
+  // SSH Owner；Terminal Pilot 会逐步把旧方法面迁到 package Manager。
+  final ssh_core.SshSessionPool _coreSessionPool = ssh_core.SshSessionPool();
   final Random _random = Random();
   List<SshSession> _sessionsView = const [];
   SshServerOverviewSnapshot _serverOverviewSnapshot =
@@ -61,19 +66,49 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   bool _restoredTmuxSessions = false;
   bool _initialized = false;
   Future<void>? _initFuture;
+  Future<void>? _managerCloseFuture;
 
   SshService(this._storageService, {this._appSettings}) {
     StartupInstrumentation.instance.recordServiceConstructed('SshService');
   }
 
+  @override
   bool get initialized => _initialized;
 
+  @override
   Future<void> ensureInitialized() {
     if (_initialized) return Future.value();
     if (_initFuture != null) return _initFuture!;
 
     _initFuture = _doInit();
     return _initFuture!;
+  }
+
+  @override
+  Future<ssh_core.SshSessionLease> acquire({
+    required String sessionId,
+    required Future<ssh_core.SshSession> Function() create,
+  }) {
+    return _coreSessionPool.acquire(sessionId: sessionId, create: create);
+  }
+
+  /// 关闭 App Scope SSH Manager；旧 ChangeNotifier API 由同一实例兼容承载。
+  @override
+  Future<void> close() {
+    final existing = _managerCloseFuture;
+    if (existing != null) return existing;
+    final future = _closeManager();
+    _managerCloseFuture = future;
+    return future;
+  }
+
+  Future<void> _closeManager() async {
+    try {
+      await ensureInitialized();
+    } finally {
+      await _coreSessionPool.close();
+      dispose();
+    }
   }
 
   Future<void> _doInit() async {
@@ -818,6 +853,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
 
   @override
   void dispose() {
+    unawaited(_coreSessionPool.close());
     _stateSub?.cancel();
     _outputSub?.cancel();
     _keepAliveSub?.cancel();

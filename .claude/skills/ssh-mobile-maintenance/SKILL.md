@@ -44,6 +44,12 @@ The Network Transport infrastructure package is
 `NetworkRuntime` facade, lazy Capability state, transport contracts, and the
 explicit native handle adapter. `AppRuntime` creates the sole instance; the old
 LAN coordinator remains a temporary legacy consumer until its dedicated Step.
+The SSH infrastructure package is `packages/infrastructure/ssh_core/`; it owns
+the App Scope `SshSessionManager`, Lease/Pool lifecycle, platform-neutral Runtime
+Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target
+bindings. It must not depend on `StorageService` or Features. The current app
+keeps `SshService` as the same-instance compatibility surface until the Terminal
+Pilot migrates its method API.
 
 ## Architecture Boundaries
 
@@ -65,6 +71,9 @@ LAN coordinator remains a temporary legacy consumer until its dedicated Step.
 - `network_transport` must keep `NetworkRuntimeImpl` under App Scope ownership.
   Features may request public Capabilities but must not create a global network
   implementation or import another package's `/src/`.
+- `ssh_core` must keep `SshSessionManager` and its Session Pool under App Scope
+  ownership. A Feature may acquire/release a Lease but must not close a shared
+  Session, import `flutter_background_service`, or perform platform checks.
 - `feature_connection` must use only `connection_core` public contracts and its
   own public Capability Ports. It must not import `apps/ssh_mobile_full/lib/` or
   another Feature's `/src/`; `ConnectionViewModel` is Route/Provider scoped and
@@ -123,6 +132,7 @@ Read only the rows relevant to the task.
 | Monitoring or system admin | `lib/features/performance/`, `lib/features/system_admin/` | `docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `packages/infrastructure/ssh_mobile_network_native/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |
 | Network Transport facade and App Scope lifecycle | `packages/infrastructure/network_transport/`, `apps/ssh_mobile_full/lib/app/app_runtime.dart`, `apps/ssh_mobile_full/lib/app/app_runtime_factory.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
+| SSH Core sessions, Runtime adapters, Pool, Client, Host Key | `packages/infrastructure/ssh_core/`, `apps/ssh_mobile_full/lib/services/ssh_service.dart`, `apps/ssh_mobile_full/lib/app/app_runtime.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Shared UI or responsiveness | `lib/theme/app_theme.dart`, `lib/widgets/app_surface.dart`, `lib/utils/responsive.dart` | `docs/MOBILE_UI_QA.md` |
 | Build, release, packaging | Platform directory and `scripts/` | `docs/RELEASE_CHECKLIST.md`, `docs/VALIDATION_REPORT.md` |
 | Matching recurring regression | Nearest code and focused tests | `.agents/skills/ssh-mobile-maintenance/references/lessons.md` |

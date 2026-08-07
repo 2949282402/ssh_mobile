@@ -6,6 +6,7 @@ packages:
   - packages/core/connection_core
   - packages/features/feature_connection
   - packages/infrastructure/network_transport
+  - packages/infrastructure/ssh_core
   - packages/infrastructure/ssh_mobile_network_native
 
 scripts:

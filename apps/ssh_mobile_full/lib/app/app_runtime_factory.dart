@@ -137,6 +137,7 @@ final class AppRuntimeFactory {
       networkRuntime: runtimeNetworkRuntime,
       bootstrapCoordinator: bootstrapCoordinator,
       shortcutCommandService: shortcutCommandService,
+      sshSessionManager: sshService,
       sshService: sshService,
       sftpService: sftpService,
       performanceMonitorService: performanceMonitorService,

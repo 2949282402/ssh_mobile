@@ -44,6 +44,7 @@ void main() {
       expect(runtime.hostKeyRepository, same(runtime.connectionRepository));
       expect(runtime.networkRuntime, isNotNull);
       expect(runtime.sshService, isNotNull);
+      expect(runtime.sshSessionManager, same(runtime.sshService));
       expect(runtime.lanReceiverCoordinator, isNotNull);
 
       final firstDispose = runtime.dispose();

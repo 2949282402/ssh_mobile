@@ -215,6 +215,32 @@
   均通过，最终 Dart 格式检查（599 个文件，0 个变更）、`git diff --check` 和
   Skill 同步检查在 Commit 前完成。
 
+## Step 08 执行记录（2026-08-08）
+
+- 已创建 `packages/infrastructure/ssh_core/`，公共入口导出
+  `SshSessionManager`、`SshSessionLease`、`SshSessionPool`、Desktop/Mobile
+  `SshRuntimeAdapter`、SSH Client、Host Key Policy、一次性命令执行器和非敏感
+  `SshTargetBinding`。Package 只依赖 `app_core`、`connection_core`、Flutter SDK
+  和现有稳定约束中的 `dartssh2 ^2.22.5`，不依赖 `StorageService`、Feature 或
+  `flutter_background_service`。
+- Session Pool 合并同一 Session 的并发创建，维护引用计数和 idle timeout；引用
+  归零后 Timer 到期才关闭 Stream，`release` 重复调用幂等，Pool `close` 会取消
+  Timer、等待创建中的 Session 并关闭输出流。Manager 对 Runtime 初始化提供
+  single-flight、失败重试和幂等关闭。
+- AppRuntime 新增 `SshSessionManager` 公共视图；当前 `SshService` 实现该契约，
+  因旧 Terminal/Background 方法面仍与 `TerminalHistoryRecord` 和旧后台事件桥
+  紧密耦合，未在本 Step 删除或整文件搬迁。两者是同一个 App Scope 实例，旧
+  `SshService` 作为兼容表面由 Manager 的 `close` 统一释放；Terminal Pilot 再
+  逐个替换其方法面。这是针对实际代码差异的最小迁移，避免重复创建 SSH Owner
+  或改变现有连接行为。
+- 新增 `ssh_core` 生命周期、并发 acquire/release、multiple consumer、idle
+  cleanup、初始化失败重试、dispose 幂等和目标绑定安全测试共 5 项；AppRuntime
+  定向测试通过。`flutter pub get` 通过，没有版本冲突；输出中的可升级项均受
+  当前 Flutter/Workspace 约束限制，本 Step 未擅自升级无关依赖。
+- `ssh_core flutter analyze --no-pub`、`ssh_core flutter test --no-pub`、App
+  `flutter analyze --no-pub` 和完整 App `flutter test --no-pub` 均通过（完整回归
+  1019 个测试进度项）；Rust native hook 验证使用仓库已有 Rust 工具链 PATH。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：
