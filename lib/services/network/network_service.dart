@@ -23,8 +23,8 @@ final class NativeNetworkService implements NetworkService {
   final NetworkProtocolCodec _codec;
   final StreamController<NetworkEvent> _eventController =
       StreamController<NetworkEvent>.broadcast();
-  final Map<String, Completer<NetworkResult<void>>> _pendingCommands =
-      <String, Completer<NetworkResult<void>>>{};
+  final Map<String, _PendingNetworkCommand> _pendingCommands =
+      <String, _PendingNetworkCommand>{};
   final Map<String, String> _transferPeers = <String, String>{};
   final Map<String, NetworkRouteType> _peerRoutes =
       <String, NetworkRouteType>{};
@@ -63,8 +63,8 @@ final class NativeNetworkService implements NetworkService {
     if (_stopped) return const NetworkSuccess<void>(null);
     _stopped = true;
     for (final pending in _pendingCommands.values) {
-      if (!pending.isCompleted) {
-        pending.complete(_cancelled(NetworkOperation.stop));
+      if (!pending.completer.isCompleted) {
+        pending.completer.complete(_cancelled(NetworkOperation.stop));
       }
     }
     _pendingCommands.clear();
@@ -91,6 +91,7 @@ final class NativeNetworkService implements NetworkService {
   /// 接受对端连接任务，并等待命令确认。
   @override
   Future<NetworkResult<void>> connect(String peerId) {
+    _ensureUsable();
     if (peerId.trim().isEmpty) {
       return Future.value(
         _failure(
@@ -112,6 +113,7 @@ final class NativeNetworkService implements NetworkService {
   /// 接受对端断开任务，并等待命令确认。
   @override
   Future<NetworkResult<void>> disconnect(String peerId) {
+    _ensureUsable();
     if (peerId.trim().isEmpty) {
       return Future.value(
         _failure(
@@ -207,6 +209,7 @@ final class NativeNetworkService implements NetworkService {
   /// 请求取消已接受的传输。
   @override
   Future<NetworkResult<void>> cancel(String transferId) {
+    _ensureUsable();
     if (transferId.trim().isEmpty) {
       return Future.value(
         _failure(
@@ -233,6 +236,7 @@ final class NativeNetworkService implements NetworkService {
     required String transferId,
     required bool accept,
   }) {
+    _ensureUsable();
     return _submit(
       _codec.respondIncomingTransferCommand(
         commandId: const Uuid().v4(),
@@ -247,6 +251,15 @@ final class NativeNetworkService implements NetworkService {
   @override
   Future<NetworkResult<RouteSnapshot>> state(String peerId) async {
     _ensureUsable();
+    if (peerId.trim().isEmpty) {
+      return _failure(
+        const NetworkError(
+          code: NetworkErrorCode.invalidArgument,
+          message: 'peer_id is required',
+          operation: NetworkOperation.state,
+        ),
+      );
+    }
     final route = _routes[peerId];
     if (route == null) {
       return _failure(
@@ -270,15 +283,18 @@ final class NativeNetworkService implements NetworkService {
     _ensureUsable();
     if (_stopped) return _cancelled(operation);
     final commandId = _codec.commandId(command);
-    final completer = Completer<NetworkResult<void>>();
-    _pendingCommands[commandId] = completer;
+    final pending = _PendingNetworkCommand(
+      completer: Completer<NetworkResult<void>>(),
+      operation: operation,
+    );
+    _pendingCommands[commandId] = pending;
     final status = _runtime.sendCommand(command);
     if (!status.isSuccess) {
       _pendingCommands.remove(commandId);
       return _failure(_nativeStatusError(status, operation: operation));
     }
     try {
-      return await completer.future.timeout(
+      return await pending.completer.future.timeout(
         timeout,
         onTimeout: () => _failure(
           NetworkError(
@@ -303,17 +319,13 @@ final class NativeNetworkService implements NetworkService {
       final commandId = frame.commandId;
       if (commandId != null) {
         final pending = _pendingCommands[commandId];
-        if (pending == null || pending.isCompleted) return;
+        if (pending == null || pending.completer.isCompleted) return;
         if (frame.commandAccepted) {
-          pending.complete(const NetworkSuccess<void>(null));
+          pending.completer.complete(const NetworkSuccess<void>(null));
         } else {
-          pending.complete(
+          pending.completer.complete(
             _failure(
-              frame.commandError ??
-                  const NetworkError(
-                    code: NetworkErrorCode.unspecified,
-                    message: 'network command was rejected',
-                  ),
+              _commandErrorForOperation(frame.commandError, pending.operation),
             ),
           );
         }
@@ -382,6 +394,20 @@ final class NativeNetworkService implements NetworkService {
   /// 将错误包装为类型化失败结果。
   NetworkFailure<T> _failure<T>(NetworkError error) => NetworkFailure(error);
 
+  /// 为内部命令错误补齐稳定的操作上下文。
+  NetworkError _commandErrorForOperation(
+    NetworkError? error,
+    NetworkOperation operation,
+  ) {
+    final resolved =
+        error ??
+        const NetworkError(
+          code: NetworkErrorCode.unspecified,
+          message: 'network command was rejected',
+        );
+    return resolved.copyWith(operation: resolved.operation ?? operation);
+  }
+
   /// 抛出 API 允许的唯一服务生命周期异常。
   void _ensureUsable() {
     if (_disposed) throw const NetworkServiceDisposedException();
@@ -394,8 +420,8 @@ final class NativeNetworkService implements NetworkService {
     if (!_stopped) {
       _stopped = true;
       for (final pending in _pendingCommands.values) {
-        if (!pending.isCompleted) {
-          pending.complete(_cancelled(NetworkOperation.stop));
+        if (!pending.completer.isCompleted) {
+          pending.completer.complete(_cancelled(NetworkOperation.stop));
         }
       }
       _pendingCommands.clear();
@@ -407,4 +433,19 @@ final class NativeNetworkService implements NetworkService {
     }
     if (!_eventController.isClosed) await _eventController.close();
   }
+}
+
+/// 关联一个内部 commandId 与其公开操作结果上下文。
+/// 关联一个内部 commandId 与其公开操作结果上下文。
+final class _PendingNetworkCommand {
+  /// 创建带操作上下文的待完成命令。
+  /// 创建带操作上下文的待完成命令。
+  _PendingNetworkCommand({required this.completer, required this.operation});
+
+  /// 等待原生 CommandResultEvent 的结果。
+  final Completer<NetworkResult<void>> completer;
+
+  /// 用于补齐服务端错误的公开操作。
+  /// 用于补齐服务端错误的公开操作。
+  final NetworkOperation operation;
 }
