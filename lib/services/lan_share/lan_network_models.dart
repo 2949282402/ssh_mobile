@@ -100,6 +100,45 @@ NetworkErrorCode lanHttpErrorCode(int statusCode) {
   return NetworkErrorCode.ioError;
 }
 
+/// 将 LAN HTTP JSON 错误转换为带安全诊断的内部异常。
+LanNetworkException lanHttpException({
+  required int statusCode,
+  required Map<String, dynamic> body,
+  required NetworkOperation operation,
+  String? peerId,
+  required String fallbackMessage,
+}) {
+  final rawCode = body['code'];
+  final hasKnownCode =
+      rawCode is num &&
+      NetworkErrorCode.values.any((value) => value.wireValue == rawCode);
+  final decodedOperation = NetworkOperation.fromWire(body['operation']);
+  final decodedPeerId = body['peer_id'];
+  final safePeerId =
+      decodedPeerId is String &&
+          decodedPeerId.isNotEmpty &&
+          decodedPeerId.length <= 128
+      ? decodedPeerId
+      : peerId;
+  final decodedMessage = body['message'];
+  final safeMessage =
+      decodedMessage is String &&
+          decodedMessage.isNotEmpty &&
+          decodedMessage.length <= 512 &&
+          !decodedMessage.contains(RegExp(r'[\r\n]'))
+      ? decodedMessage
+      : fallbackMessage;
+  return LanNetworkException(
+    safeMessage,
+    code: hasKnownCode
+        ? NetworkErrorCode.fromWire(rawCode.toInt())
+        : lanHttpErrorCode(statusCode),
+    operation: decodedOperation ?? operation,
+    peerId: safePeerId,
+    statusCode: statusCode,
+  );
+}
+
 /// 将捕获的 LAN 失败映射为稳定公开错误，并隐藏底层细节。
 NetworkError lanNetworkError(
   Object error, {

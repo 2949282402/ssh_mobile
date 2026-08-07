@@ -3,6 +3,7 @@
 
 part of 'lan_transfer_service.dart';
 
+/// 保存服务端返回且已通过绑定校验的配对凭据。
 class _ValidatedPairingCredential {
   final String accessToken;
   final String certFingerprint;
@@ -15,6 +16,7 @@ class _ValidatedPairingCredential {
   });
 }
 
+/// 保存通过 SPAKE2/证书校验的临时配对 offer。
 class _AcceptedPairingOffer {
   final String handshakeId;
   final LanPairingSessionSecrets sessionSecrets;
@@ -77,6 +79,7 @@ extension LanTransferClientApi on LanTransferService {
     return const NetworkSuccess<void>(null);
   }
 
+  /// 校验配对凭据的会话、设备、请求摘要和有效期绑定。
   _ValidatedPairingCredential _validatePairingCredential(
     Map<String, dynamic> credential, {
     required String expectedNonce,
@@ -289,22 +292,19 @@ extension LanTransferClientApi on LanTransferService {
         const Duration(seconds: 4),
       );
       final json = await readBoundedJsonResponse(response);
-      if (response.statusCode == HttpStatus.unauthorized ||
-          response.statusCode == HttpStatus.forbidden) {
-        return NetworkFailure(
-          NetworkError(
-            code: NetworkErrorCode.authenticationFailed,
-            message: 'LAN pairing authentication failed.',
-            operation: NetworkOperation.sendHandshake,
-            peerId: device.id,
-          ),
+      if (response.statusCode != HttpStatus.ok) {
+        throw lanHttpException(
+          statusCode: response.statusCode,
+          body: json,
+          operation: NetworkOperation.sendHandshake,
+          peerId: device.id,
+          fallbackMessage: 'LAN pairing challenge was rejected.',
         );
       }
-      if (response.statusCode != HttpStatus.ok ||
-          json['protocolVersion'] != LanPairingCrypto.protocolVersion) {
+      if (json['protocolVersion'] != LanPairingCrypto.protocolVersion) {
         throw LanNetworkException(
-          'LAN pairing challenge was rejected.',
-          code: lanHttpErrorCode(response.statusCode),
+          'LAN pairing challenge protocol is invalid.',
+          code: NetworkErrorCode.invalidArgument,
           operation: NetworkOperation.sendHandshake,
           peerId: device.id,
           statusCode: response.statusCode,
@@ -386,24 +386,13 @@ extension LanTransferClientApi on LanTransferService {
         const Duration(seconds: 4),
       );
       final json = await readBoundedJsonResponse(response);
-      if (response.statusCode == HttpStatus.unauthorized ||
-          response.statusCode == HttpStatus.forbidden) {
-        return NetworkFailure(
-          NetworkError(
-            code: NetworkErrorCode.authenticationFailed,
-            message: 'LAN pairing authentication failed.',
-            operation: NetworkOperation.sendHandshake,
-            peerId: device.id,
-          ),
-        );
-      }
       if (response.statusCode != HttpStatus.ok) {
-        throw LanNetworkException(
-          'LAN pairing confirmation was rejected.',
-          code: lanHttpErrorCode(response.statusCode),
+        throw lanHttpException(
+          statusCode: response.statusCode,
+          body: json,
           operation: NetworkOperation.sendHandshake,
           peerId: device.id,
-          statusCode: response.statusCode,
+          fallbackMessage: 'LAN pairing confirmation was rejected.',
         );
       }
       final encryptedCredential = json['credential'];
@@ -462,6 +451,7 @@ extension LanTransferClientApi on LanTransferService {
   }
 
   /// 完成本地校验后接受远端配对邀请。
+  /// 尝试解密并验证一个服务端配对 offer。
   Future<_AcceptedPairingOffer?> _acceptPairingOffer(
     Map<String, dynamic> offer, {
     required List<LanPairingEphemeralKeyPair> clientKeys,
@@ -577,11 +567,19 @@ extension LanTransferClientApi on LanTransferService {
             const Duration(seconds: 8),
           );
           final json = await readBoundedJsonResponse(response);
-          if (response.statusCode != HttpStatus.ok ||
-              json['id'] != message.id) {
+          if (response.statusCode != HttpStatus.ok) {
+            throw lanHttpException(
+              statusCode: response.statusCode,
+              body: json,
+              operation: NetworkOperation.sendMeta,
+              peerId: device.id,
+              fallbackMessage: 'LAN metadata request was rejected.',
+            );
+          }
+          if (json['id'] != message.id) {
             throw LanNetworkException(
-              'LAN metadata request was rejected.',
-              code: lanHttpErrorCode(response.statusCode),
+              'LAN metadata response is invalid.',
+              code: NetworkErrorCode.invalidArgument,
               operation: NetworkOperation.sendMeta,
               peerId: device.id,
               statusCode: response.statusCode,
@@ -717,11 +715,19 @@ extension LanTransferClientApi on LanTransferService {
             response,
             timeout: const Duration(seconds: 8),
           );
-          if (response.statusCode != HttpStatus.ok ||
-              json['messageId'] != message.id) {
+          if (response.statusCode != HttpStatus.ok) {
+            throw lanHttpException(
+              statusCode: response.statusCode,
+              body: json,
+              operation: NetworkOperation.sendFile,
+              peerId: device.id,
+              fallbackMessage: 'LAN file upload was rejected.',
+            );
+          }
+          if (json['messageId'] != message.id) {
             throw LanNetworkException(
-              'LAN file upload was rejected.',
-              code: lanHttpErrorCode(response.statusCode),
+              'LAN file upload response is invalid.',
+              code: NetworkErrorCode.invalidArgument,
               operation: NetworkOperation.sendFile,
               peerId: device.id,
               statusCode: response.statusCode,
@@ -771,11 +777,19 @@ extension LanTransferClientApi on LanTransferService {
             response,
             timeout: const Duration(seconds: 8),
           );
-          if (response.statusCode != HttpStatus.ok ||
-              json['messageId'] != messageId) {
+          if (response.statusCode != HttpStatus.ok) {
+            throw lanHttpException(
+              statusCode: response.statusCode,
+              body: json,
+              operation: NetworkOperation.sendRecall,
+              peerId: device.id,
+              fallbackMessage: 'LAN recall request was rejected.',
+            );
+          }
+          if (json['messageId'] != messageId) {
             throw LanNetworkException(
-              'LAN recall request was rejected.',
-              code: lanHttpErrorCode(response.statusCode),
+              'LAN recall response is invalid.',
+              code: NetworkErrorCode.invalidArgument,
               operation: NetworkOperation.sendRecall,
               peerId: device.id,
               statusCode: response.statusCode,
@@ -821,17 +835,25 @@ extension LanTransferClientApi on LanTransferService {
             const Duration(seconds: 4),
           );
           final json = await readBoundedJsonResponse(response);
+          if (response.statusCode != HttpStatus.ok) {
+            throw lanHttpException(
+              statusCode: response.statusCode,
+              body: json,
+              operation: NetworkOperation.sendAnnouncement,
+              peerId: targetDevice.id,
+              fallbackMessage: 'LAN announcement was rejected.',
+            );
+          }
           final remoteDeviceId = json['deviceId'];
           final remotePort = json['port'];
-          if (response.statusCode != HttpStatus.ok ||
-              remoteDeviceId is! String ||
+          if (remoteDeviceId is! String ||
               remoteDeviceId.isEmpty ||
               remotePort is! num ||
               remotePort < 1 ||
               remotePort > 65535) {
             throw LanNetworkException(
-              'LAN announcement was rejected.',
-              code: lanHttpErrorCode(response.statusCode),
+              'LAN announcement response is invalid.',
+              code: NetworkErrorCode.invalidArgument,
               operation: NetworkOperation.sendAnnouncement,
               peerId: targetDevice.id,
               statusCode: response.statusCode,
@@ -889,20 +911,16 @@ extension LanTransferClientApi on LanTransferService {
       final response = await request.close().timeout(
         const Duration(seconds: 4),
       );
+      final json = await readBoundedJsonResponse(response);
       if (response.statusCode != HttpStatus.ok) {
-        await readBoundedJsonResponse(
-          response,
-          timeout: const Duration(seconds: 4),
-        );
-        throw LanNetworkException(
-          'LAN pairing invitation was rejected.',
-          code: lanHttpErrorCode(response.statusCode),
+        throw lanHttpException(
+          statusCode: response.statusCode,
+          body: json,
           operation: NetworkOperation.sendPairingInvite,
           peerId: targetDevice.id,
-          statusCode: response.statusCode,
+          fallbackMessage: 'LAN pairing invitation was rejected.',
         );
       }
-      final json = await readBoundedJsonResponse(response);
       final remoteDeviceId = json['deviceId'];
       final remotePort = json['port'];
       if (remoteDeviceId is! String ||
