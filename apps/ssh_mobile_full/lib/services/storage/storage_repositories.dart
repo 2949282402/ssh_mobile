@@ -14,15 +14,17 @@ const Uuid _traceUuid = Uuid();
 /// content 等敏感正文不得以明文 Drift column 保存。生产环境数据库打开失败时
 /// 不得 fallback 到内存数据库。Drift-backed 数据通过 DAO transaction
 /// 持久化；当前处于开发阶段，仅维护最新数据库基线，不执行旧库迁移。
-abstract interface class ConnectionRepository {
-  List<ConnectionConfig> get connections;
-  Future<void> addConnection(ConnectionConfig config);
-  Future<void> updateConnection(ConnectionConfig config);
-  Future<void> deleteConnection(String id);
-  Future<void> deleteConnections(List<String> ids);
-  Future<void> reorderConnections(int oldIndex, int newIndex);
-  ConnectionConfig? getConnection(String id);
+///
+/// 该兼容接口只服务于尚未迁移的旧 Connection ViewModel。新的 Feature 必须
+/// 直接依赖 `connection_core` 的 ConnectionRepository 与 CredentialRepository，
+/// 不应继续扩大这个 App 层组合接口。
+@Deprecated('Use connection_core.ConnectionRepository and CredentialRepository')
+abstract interface class ConnectionRepository
+    implements connection_core.ConnectionRepository {
+  /// 旧 ViewModel 的凭据读取兼容入口，实际实现仍由旧 StorageService 管理。
   Future<String?> getPassword(String id);
+
+  /// 旧 ViewModel 的凭据读取兼容入口，实际实现仍由旧 StorageService 管理。
   Future<String?> getPrivateKey(String id);
 }
 

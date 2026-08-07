@@ -1,4 +1,4 @@
-> Last updated: 2026-08-07
+> Last updated: 2026-08-08
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -410,6 +410,7 @@ flowchart LR
   LAN-share, MCP, and platform-adapter infrastructure.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
+- `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; the current Feature keeps a compatibility export until its later migration step.
 - `packages/infrastructure/ssh_mobile_network_native/`: native network package staged under the Infrastructure boundary.
 - `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,
   including host-key policy and data protection.
@@ -438,6 +439,12 @@ runtime is created by `AiChatRuntimeFactory` and provided by the chat view,
 while terminal screens create focused session/history/window ViewModels. Views
 keep layout and transient presentation state; validation, async orchestration,
 and repository coordination belong in ViewModels and services.
+
+The Connection module uses a new `connection.sqlite` baseline during development.
+Its Drift table deliberately excludes passwords and private keys; those values
+are handled only by `CredentialRepository` and platform Secure Storage. The
+current legacy Connection ViewModel remains on `StorageService` until the
+planned `feature_connection` migration.
 
 LAN file transfer follows `LanShareViewModel → NetworkService → Rust
 NetworkRuntime`. Commands return typed acceptance results, while progress and

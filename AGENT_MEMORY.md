@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-07
+> 最新更新时间：2026-08-08
 
 # Agent Memory
 
@@ -42,6 +42,14 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   Schema changes regenerate `app_database.g.dart` and may require deleting the
   local development database; do not add compatibility migrations without an
   explicit release requirement.
+- `packages/core/connection_core/` now owns the Connection domain model,
+  structure/credential/Host Key contracts, and a separate `connection.sqlite`
+  baseline. `AppRuntimeFactory` creates one `ConnectionDatabase`, one
+  `DriftConnectionRepository`, one `SecureCredentialRepository`, and exposes
+  them through `AppRuntime`; `ConnectionDatabase` is closed only by Runtime.
+  The Connection table excludes passwords and private keys, and the current
+  Connection Feature still uses the old StorageService compatibility path until
+  the planned Feature migration.
 
 ### Logging contract
 

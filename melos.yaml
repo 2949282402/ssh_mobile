@@ -3,6 +3,7 @@ name: ssh_mobile
 packages:
   - apps/ssh_mobile_full
   - packages/core/app_core
+  - packages/core/connection_core
   - packages/infrastructure/ssh_mobile_network_native
 
 scripts:

@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile Flutter repository, including architecture, UI, SSH/SFTP, monitoring, AI tools, storage, security, platform builds, tests, and project documentation. Use for any non-trivial code, debugging, validation, documentation, or shared-agent-guidance change in this repository.
 ---
 
-> 最新更新时间：2026-08-07
+> 最新更新时间：2026-08-08
 
 # SSH Mobile Maintenance
 
@@ -30,6 +30,10 @@ app. The Dart native package is rooted at
 `packages/infrastructure/ssh_mobile_network_native/`. The first Core contract
 package is `packages/core/app_core/`; its production library is pure Dart and
 must not depend on Flutter UI, SSH, Drift, Infrastructure, or Feature code.
+The Connection domain package is `packages/core/connection_core/`; it owns
+Connection models, repositories, the non-sensitive Drift database, Secure
+Storage credentials, and Host Key contracts, but never Feature UI or SSH
+session implementations.
 
 ## Architecture Boundaries
 
@@ -44,6 +48,10 @@ must not depend on Flutter UI, SSH, Drift, Infrastructure, or Feature code.
   Capability contracts; it must not create global service instances or retain
   heavy runtime objects. The full App's database/disk/redaction adapter remains
   in `apps/ssh_mobile_full/lib/services/` until its later Plan Step.
+- `connection_core` owns the Connection database and repository contracts.
+  `AppRuntime` creates and closes its single `ConnectionDatabase`; the package
+  must not create a global database. Passwords/private keys stay in
+  `CredentialRepository` and Secure Storage, never in Connection Drift tables.
 - Do not add new application code to legacy `lib/screens/` or `lib/models/`.
 - Keep screens focused on composition and transient presentation state. Put
   validation, async orchestration, repositories, and reusable state in
@@ -88,6 +96,7 @@ Read only the rows relevant to the task.
 | --- | --- | --- |
 | Architecture, MVVM, storage | Owning `lib/features/` code, `lib/data/`, `lib/services/storage_service.dart` | `docs/ADR_ENGINEERING_BASELINE.md` |
 | Core contracts, logging, and Module lifecycle | `packages/core/app_core/lib/`, `packages/core/app_core/test/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
+| Connection domain, repositories, database, credentials, Host Key | `packages/core/connection_core/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Startup or service lifetime | `lib/features/startup/`, `apps/ssh_mobile_full/lib/app/`, `apps/ssh_mobile_full/lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
 | SSH, terminal, host keys | `lib/features/connection/`, `lib/features/terminal/`, SSH services | `docs/security_manual_regression.md` |
 | SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |

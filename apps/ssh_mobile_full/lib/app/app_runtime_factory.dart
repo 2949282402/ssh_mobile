@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:connection_core/connection_core.dart' as connection_core;
 
 import '../features/ai_chat/services/ai_chat_runtime_factory.dart';
 import '../features/lan_share/services/lan_receiver_coordinator.dart';
@@ -27,10 +28,42 @@ final class AppRuntimeFactory {
   AppRuntimeFactory._();
 
   /// 创建应用级 Runtime，并启动原有的轻量异步初始化任务。
-  static Future<AppRuntime> create({AppLogService? appLogService}) async {
+  ///
+  /// Connection 依赖参数只用于测试注入；生产入口不传参时始终创建一组
+  /// Runtime 独占的数据库和 Repository。
+  static Future<AppRuntime> create({
+    AppLogService? appLogService,
+    connection_core.ConnectionDatabase? connectionDatabase,
+    connection_core.ConnectionRepository? connectionRepository,
+    connection_core.CredentialRepository? credentialRepository,
+    connection_core.HostKeyRepository? hostKeyRepository,
+  }) async {
     final logger = appLogService ?? AppLogService();
     logger.install();
     logger.info('Application bootstrap started');
+
+    final runtimeConnectionDatabase =
+        connectionDatabase ?? connection_core.ConnectionDatabase();
+    final runtimeConnectionRepository =
+        connectionRepository ??
+        connection_core.DriftConnectionRepository(
+          database: runtimeConnectionDatabase,
+        );
+    final runtimeCredentialRepository =
+        credentialRepository ?? connection_core.SecureCredentialRepository();
+    final runtimeHostKeyRepository = _resolveHostKeyRepository(
+      supplied: hostKeyRepository,
+      connectionRepository: runtimeConnectionRepository,
+    );
+    unawaited(
+      runtimeConnectionRepository.initialize().catchError((error, stackTrace) {
+        logger.error(
+          'Connection repository initialization failed',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }),
+    );
 
     // 这些任务原本由 main 并发发起，继续保持不阻塞 runApp 的行为。
     unawaited(SharedPreferences.getInstance());
@@ -94,6 +127,10 @@ final class AppRuntimeFactory {
       appLogService: logger,
       appSettings: appSettings,
       storageService: storageService,
+      connectionDatabase: runtimeConnectionDatabase,
+      connectionRepository: runtimeConnectionRepository,
+      credentialRepository: runtimeCredentialRepository,
+      hostKeyRepository: runtimeHostKeyRepository,
       bootstrapCoordinator: bootstrapCoordinator,
       shortcutCommandService: shortcutCommandService,
       sshService: sshService,
@@ -103,6 +140,22 @@ final class AppRuntimeFactory {
       ragService: ragService,
       mcpServerController: mcpServerController,
       lanReceiverCoordinator: lanReceiverCoordinator,
+    );
+  }
+
+  /// 从显式注入或同一 Connection Repository 派生 Host Key 契约。
+  static connection_core.HostKeyRepository _resolveHostKeyRepository({
+    required connection_core.HostKeyRepository? supplied,
+    required connection_core.ConnectionRepository connectionRepository,
+  }) {
+    final explicit = supplied;
+    if (explicit != null) return explicit;
+    final derived = connectionRepository;
+    if (derived is connection_core.HostKeyRepository) {
+      return derived as connection_core.HostKeyRepository;
+    }
+    throw ArgumentError(
+      'A HostKeyRepository is required with a custom ConnectionRepository.',
     );
   }
 }

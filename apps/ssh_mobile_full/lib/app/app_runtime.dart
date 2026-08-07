@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:app_core/app_core.dart';
+import 'package:connection_core/connection_core.dart' as connection_core;
 
 import '../features/lan_share/services/lan_receiver_coordinator.dart';
 import '../services/app_bootstrap_coordinator.dart';
@@ -26,6 +27,10 @@ final class AppRuntime implements Disposable {
     required this.appLogService,
     required this.appSettings,
     required this.storageService,
+    required this.connectionDatabase,
+    required this.connectionRepository,
+    required this.credentialRepository,
+    required this.hostKeyRepository,
     required this.bootstrapCoordinator,
     required this.shortcutCommandService,
     required this.sshService,
@@ -46,8 +51,21 @@ final class AppRuntime implements Disposable {
   // TODO(refactor-step-06): 替换为配置模块的公共设置契约。
   final AppSettings appSettings;
 
-  // TODO(refactor-step-05): 将数据库与 Repository 所有权下沉到模块。
+  // TODO(refactor-step-22): 将剩余跨 Feature 数据库逐步从旧 StorageService
+  // facade 拆到各自模块；Connection 数据库已在本 Runtime 中独立归属。
   final StorageService storageService;
+
+  /// Connection 模块独立数据库，由 Runtime 创建并在数据库阶段关闭。
+  final connection_core.ConnectionDatabase connectionDatabase;
+
+  /// Connection 结构 Repository 的 App Scope 唯一实例。
+  final connection_core.ConnectionRepository connectionRepository;
+
+  /// Connection 凭据 Repository 的 App Scope 唯一实例。
+  final connection_core.CredentialRepository credentialRepository;
+
+  /// Host Key 信任 Repository 的 App Scope 唯一实例。
+  final connection_core.HostKeyRepository hostKeyRepository;
 
   /// 启动协调器属于 App Shell，负责首帧前后的核心初始化状态。
   final AppBootstrapCoordinator bootstrapCoordinator;
@@ -153,6 +171,14 @@ final class AppRuntime implements Disposable {
         await storageService.shutdown();
       } finally {
         storageService.dispose();
+      }
+    });
+    await attempt(() async {
+      try {
+        // 等待异步首载完成，避免关闭数据库后初始化任务再次访问句柄。
+        await connectionRepository.initialize();
+      } finally {
+        await connectionDatabase.dispose();
       }
     });
 

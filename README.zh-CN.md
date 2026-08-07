@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-07
+> 最新更新时间：2026-08-08
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -399,6 +399,7 @@ flowchart LR
   快传、MCP 和平台适配基础设施。
 - `apps/ssh_mobile_full/lib/data/`：Drift 数据库、DAO 和 Repository 实现。
 - `packages/core/app_core/`：纯 Dart 的生命周期、Module、日志和 Capability 合约；生产代码不依赖 Flutter/UI。日志部分包括作用域 `AppLogger`、有界 `LogBuffer`、`LogSink` 和可释放的 `AppLoggerImpl`。
+- `packages/core/connection_core/`：Connection 领域模型与契约、独立的非敏感 Drift 数据库、Secure Storage 凭据和 Host Key 信任元数据。`ConnectionDatabase` 由 `AppRuntime` 创建和关闭；当前 Feature 通过兼容转导出逐步迁移。
 - `packages/infrastructure/ssh_mobile_network_native/`：位于 Infrastructure 边界下的原生网络 Package。
 - `apps/ssh_mobile_full/lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
   策略和数据保护。
@@ -421,6 +422,11 @@ Owner；`main.dart` 只委托给 `AppBootstrap`，`SshMobileApp` 通过 `MultiPr
 `AppRuntime.logger` 暴露 Core Logger Contract；当前 Full App 仍由 App 层的
 `AppLogService` 适配，因此数据库、磁盘、脱敏和 UI 通知行为在分阶段迁移期间保持不变。
 新增模块应从 Runtime 获取作用域 Logger，不应自行构造日志服务。
+
+Connection 模块在开发期使用全新的 `connection.sqlite` 基线；Drift 表刻意不保存
+密码和私钥，这些值只能通过 `CredentialRepository` 进入平台 Secure Storage。当前
+旧 Connection ViewModel 仍暂时使用 `StorageService`，待计划中的
+`feature_connection` Step 再切换。
 
 LAN 文件数据路径为 `LanShareViewModel → NetworkService → Rust
 NetworkRuntime`。命令只返回 typed accepted 结果，进度和终态通过 typed events

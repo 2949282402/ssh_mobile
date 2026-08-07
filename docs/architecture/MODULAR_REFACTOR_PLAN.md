@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-07
+> 最新更新时间：2026-08-08
 
 # SSH Mobile 模块化重构执行 Plan
 
@@ -130,6 +130,42 @@
   定向日志/数据库/Runtime 测试通过；格式检查和 `git diff --check` 通过。
 - 本 Step 完成后仍保留后续 Feature 逐步注入 scoped logger 的 TODO；不在本 Step
   扩大范围迁移数百处旧 `AppLogService.instance` 调用。
+
+## Step 05 执行记录（2026-08-08）
+
+- 已创建 `packages/core/connection_core/`，公共入口导出 Connection 模型、
+  `ConnectionRepository`、`CredentialRepository`、`HostKeyRepository`、独立
+  Drift 数据库和 Secure Storage 凭据实现。旧
+  `apps/ssh_mobile_full/lib/features/connection/models/connection.dart` 仅保留
+  公共 API 转导出；Screen/ViewModel 目录没有提前移动到 Feature Package。
+- `ConnectionConfig` 保留当前业务所需的运行时密码/私钥字段，但 JSON、数据库
+  Companion 和 Repository 快照都会排除这些字段；`ConnectionProfile` 明确表示
+  非敏感结构。`ConnectionTable` 只保存端点、终端配置、排序、时间和 Host Key
+  信任元数据。
+- 新增 `ConnectionDatabase`、`ConnectionDao` 和 `DriftConnectionRepository`，
+  使用全新的 `connection.sqlite` 数据库基线，schema version 为 1，不读取或迁移
+  旧 `AppDatabase` / SharedPreferences 连接数据。Repository 写操作使用串行队列，
+  排序写入使用数据库事务；`SecureCredentialRepository` 使用独立模块键名前缀，
+  空凭据走删除路径。
+- `AppRuntimeFactory` 注册并注入唯一的 ConnectionDatabase、结构 Repository、
+  CredentialRepository 和 Host Key capability；`AppRuntime` 在等待 Repository
+  首次加载后关闭 ConnectionDatabase。为避免测试依赖平台目录插件，Composition
+  Root 增加了可选的测试依赖注入参数，生产路径仍使用 `drift_flutter` 默认数据库路径。
+- 当前旧 Connection ViewModel 仍通过 StorageService 兼容接口工作，这是为严格
+  遵守 Step 顺序保留的最小过渡；Step 06 才切换 `feature_connection` 通过 Core
+  Repository/Capability 访问数据。没有改变 SSH、SFTP、Host Key 策略、UI 或业务规则。
+- 依赖查询参考了 [Drift setup](https://drift.simonbinder.eu/setup/)、
+  [`driftDatabase` API](https://pub.dev/documentation/drift_flutter/latest/drift_flutter/driftDatabase.html)
+  和 [flutter_secure_storage 文档](https://pub.dev/packages/flutter_secure_storage)。
+  当前 workspace 的稳定兼容版本为 Drift `^2.34.3`、drift_flutter `^0.3.1`、
+  flutter_secure_storage `^10.3.1`；`flutter_secure_storage 11.0.0-beta.1`
+  不是稳定版，因此未升级。`dart pub get` 通过，剩余更新提示均受当前 Flutter/Drift
+  约束限制，不存在需要处理的版本冲突。
+- 已补充模型、CRUD、排序并发、Host Key、凭据隔离和 Runtime Scope 测试。
+  `dart run build_runner build` 通过；connection_core `dart analyze` 通过、9 项
+  测试通过；App `flutter analyze --no-pub` 通过；定向 Connection/Runtime 测试
+  14 项通过；App `flutter test --no-pub` 通过（1019 个测试进度项）；最终格式检查
+  （629 个文件，0 个变更）、`git diff --check` 和维护 Skill 同步检查均通过。
 
 # 0. 重构目标
 

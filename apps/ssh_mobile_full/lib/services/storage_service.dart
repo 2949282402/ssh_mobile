@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart' as drift;
+import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -48,6 +49,7 @@ part '../data/repositories/drift_mcp_activity_repository.dart';
 class StorageService extends ChangeNotifier
     implements
         ConnectionRepository,
+        connection_core.HostKeyRepository,
         AiSettingsRepository,
         AiChatRepository,
         AiSkillRepository,
@@ -197,6 +199,7 @@ class StorageService extends ChangeNotifier
         () => ConnectionOps(this).updateConnection(config),
       );
 
+  @override
   Future<void> trustHostKey(
     String connectionId, {
     required String? algorithm,
@@ -724,6 +727,17 @@ class StorageService extends ChangeNotifier
     }
     _initCalled = true;
     return _initializationFuture ??= _initialize();
+  }
+
+  /// 为 Core ConnectionRepository 提供统一的初始化命名；旧 init 保持兼容。
+  @override
+  Future<void> initialize() => init();
+
+  /// 为旧 Connection ViewModel 提供异步读取快照的兼容方法。
+  @override
+  Future<List<ConnectionConfig>> loadConnections() async {
+    await init();
+    return connections;
   }
 
   @override
