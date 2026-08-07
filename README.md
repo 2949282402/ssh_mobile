@@ -21,9 +21,9 @@
 SSH Mobile is a Flutter-based cross-platform SSH and SFTP client for Android, iOS, macOS, Windows, and Web. It combines multi-window terminals, remote file management, server monitoring, secure storage, and OpenAI-compatible AI tools in a single mobile and desktop operations workspace.
 
 The codebase is being migrated incrementally as a Dart workspace. The Terminal,
-SFTP, and real-time Monitoring capabilities now have package boundaries under
-`packages/features/`; their legacy App paths remain compatibility bridges while
-later Steps converge the remaining shared services.
+SFTP, real-time Monitoring, and System Administration capabilities now have
+package boundaries under `packages/features/`; their legacy App paths remain
+compatibility bridges while later Steps converge the remaining shared services.
 
 The project began with a two-core server that had only 1 GB of memory. Running a complete AI agent directly on that machine was unreliable, so SSH Mobile moves model inference and agent orchestration to the client device. The client can inspect and manage low-resource servers through SSH and SFTP without consuming their limited memory.
 
@@ -426,6 +426,11 @@ flowchart LR
   route-scoped monitoring state. It intentionally has no `monitoring.db`; the
   existing product keeps only bounded in-memory samples. Old Performance Monitor
   services and tools remain App-layer compatibility bridges.
+- `packages/features/feature_system_admin/`: System Administration UI, route
+  ViewModel, management command service, lifecycle Module, and local monitoring
+  Capability contract. App Shell adapters inject legacy SSH, connection,
+  settings, SFTP, logger, Host Key, and monitoring implementations; the
+  package does not depend on another Feature implementation.
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
   LAN-share, MCP, and platform-adapter infrastructure.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.

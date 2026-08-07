@@ -96,6 +96,14 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   service; activation restores availability, while explicit user/tool start
   still owns polling. The old Performance Monitor service/tool paths are
   non-owning compatibility bridges.
+- `packages/features/feature_system_admin/` owns System Administration UI,
+  route ViewModel, management command service, lifecycle Module, and its local
+  monitoring Capability DTO/Port. The Feature never imports Monitoring
+  implementation; `apps/ssh_mobile_full/lib/app/system_admin_feature_adapters.dart`
+  translates AppRuntime-owned SSH, Storage, SFTP, settings, logging, Host Key,
+  and Monitoring resources. The Module owns only the current management
+  session and closes it on route/module disposal; old System Admin paths remain
+  compatibility surfaces during later convergence.
 
 ### Logging contract
 

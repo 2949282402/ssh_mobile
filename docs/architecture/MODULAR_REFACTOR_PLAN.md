@@ -338,6 +338,26 @@
   App 回归 959 项、Package/App analyze、格式检查、`git diff --check` 和
   Skill 同步检查均通过。
 
+## Step 13 执行记录（2026-08-08）
+
+- 已创建 `packages/features/feature_system_admin/`，迁入 System Admin 页面、
+  Route ViewModel、管理命令 Service、确认流程、解析器和 `SystemAdminModule`。
+  旧 `apps/ssh_mobile_full/lib/features/system_admin/**`、旧
+  `lib/services/system_admin_service.dart` 及相关旧 Widget 路径保留为兼容
+  表面；本 Step 采用 App Shell 适配器接线，不是一次性删除原有实现。
+- Package 只依赖 `app_core`、`app_ui`、`connection_core`、`ssh_core` 和 UI
+  需要的现有稳定依赖。System Admin 不直接依赖 `feature_monitoring`；
+  `system_admin_monitoring.dart` 定义展示所需的本地 Capability DTO/Port，
+  `system_admin_feature_adapters.dart` 在 App Shell 完成 Monitoring 到该
+  Contract 的转换。
+- `SystemAdminModule` 只拥有管理 Service、当前管理 SSH 会话和活动命令的
+  释放责任；AppRuntime 继续拥有 SSH、Storage、SFTP、Logger 和 Monitoring。
+  Route Scope 创建 ViewModel。没有新增 `system_admin.db`，也没有改变 root
+  校验、管理命令白名单、确认 Token、Host Key 确认和按 Tab 加载行为。
+- Home Shell 已切换到新 Package 的 `SystemAdminScreen`，旧入口仍可供兼容
+  测试使用。新增 Module 生命周期、管理会话释放和命令解析测试；依赖解析
+  无版本冲突，`fl_chart` 与现有 workspace 稳定约束统一为 `^1.2.0`。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

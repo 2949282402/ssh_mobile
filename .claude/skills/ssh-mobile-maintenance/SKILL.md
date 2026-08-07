@@ -65,6 +65,13 @@ owns real-time monitoring models, probes/parsers, low-priority SSH Ports,
 in-memory samples preserve the current behavior. `AppRuntime` owns the Module
 and service, while old Performance Monitor paths are non-owning compatibility
 bridges.
+The System Administration Feature package is
+`packages/features/feature_system_admin/`; it owns System Admin UI, route state,
+management commands, lifecycle Module, and a local monitoring Capability
+contract. It must not import `feature_monitoring` implementation. The App Shell
+adapters in `apps/ssh_mobile_full/lib/app/system_admin_feature_adapters.dart`
+inject AppRuntime-owned SSH, Storage, SFTP, settings, logger, Host Key, and
+Monitoring resources; the old System Admin paths remain compatibility bridges.
 The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
 Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
@@ -419,9 +426,18 @@ Primary entry points are
 models, probes, Ports, Module, and ViewModel; the old
 `lib/features/performance/viewmodels/performance_viewmodel.dart`,
 `lib/services/performance_monitor_service.dart`, and
-`lib/services/server_status_probe.dart` paths are compatibility surfaces; and
-`lib/features/system_admin/views/system_admin_screen.dart` with
-its child widgets.
+`lib/services/server_status_probe.dart` paths are compatibility surfaces.
+System Administration is maintained in
+`packages/features/feature_system_admin/`; its App Shell bridge is
+`apps/ssh_mobile_full/lib/app/system_admin_feature_adapters.dart`, while
+`lib/features/system_admin/**` and `lib/services/system_admin_service.dart`
+remain compatibility surfaces.
+
+- The System Admin Feature receives monitoring through its own small Capability
+  contract and does not import Monitoring implementation or another Feature.
+- `SystemAdminModule` owns the management SSH session and command cancellation;
+  the AppRuntime continues to own the injected SSH, Storage, SFTP, logger, and
+  Monitoring resources.
 
 - The performance monitor is integrated as the default "Monitor" tab in the
   System Administration console.

@@ -8,6 +8,8 @@ import 'package:provider/provider.dart';
 
 import 'package:feature_connection/feature_connection.dart';
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
+import 'package:feature_system_admin/feature_system_admin.dart'
+    as feature_system_admin;
 import 'package:ssh_mobile/features/settings/viewmodels/settings_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
@@ -16,7 +18,7 @@ import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
 import 'package:ssh_mobile/app/sftp_feature_adapters.dart';
-import 'package:ssh_mobile/features/system_admin/views/system_admin_screen.dart';
+import 'package:ssh_mobile/app/system_admin_feature_adapters.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_settings_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
 import 'package:ssh_mobile/features/lan_share/views/lan_share_screen.dart';
@@ -25,7 +27,6 @@ import 'package:ssh_mobile/features/developer_log/views/developer_log_screen.dar
 import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import 'package:ssh_mobile/features/developer_panel/views/developer_panel_screen.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
-import 'package:ssh_mobile/features/system_admin/system_admin_feature_scope.dart';
 import 'package:ssh_mobile/features/lan_share/lan_share_feature_scope.dart';
 import 'package:ssh_mobile/features/home/views/widgets/home_navigation_semantics.dart';
 
@@ -606,7 +607,9 @@ class _HomeScreenState extends State<HomeScreen> {
             case _sftpPage:
               return const AppSftpModuleScope(child: feature_sftp.SftpScreen());
             case _adminPage:
-              return const SystemAdminFeatureScope(child: SystemAdminScreen());
+              return const AppSystemAdminModuleScope(
+                child: feature_system_admin.SystemAdminScreen(),
+              );
             case _logPage:
             default:
               return const LanShareFeatureScope(child: LanShareScreen());

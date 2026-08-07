@@ -23,6 +23,8 @@ dependencies:
     path: ../../packages/features/feature_connection
   feature_monitoring:
     path: ../../packages/features/feature_monitoring
+  feature_system_admin:
+    path: ../../packages/features/feature_system_admin
   feature_sftp:
     path: ../../packages/features/feature_sftp
   feature_terminal:

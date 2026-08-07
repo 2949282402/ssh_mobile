@@ -11,6 +11,7 @@ workspace:
   - packages/core/connection_core
   - packages/features/feature_connection
   - packages/features/feature_monitoring
+  - packages/features/feature_system_admin
   - packages/features/feature_sftp
   - packages/features/feature_terminal
   - packages/infrastructure/network_transport
