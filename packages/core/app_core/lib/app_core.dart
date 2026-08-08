@@ -4,6 +4,8 @@
 // 具体业务实现由 App 或 Infrastructure Package 持有。
 
 export 'src/capability/capability_registry.dart';
+export 'src/capability/ai_capabilities.dart';
+export 'src/localization/app_language.dart';
 export 'src/lifecycle/activatable.dart';
 export 'src/lifecycle/disposable.dart';
 export 'src/lifecycle/disposable_bag.dart';

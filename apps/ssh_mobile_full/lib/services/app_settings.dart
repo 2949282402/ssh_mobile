@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:app_core/app_core.dart';
 import 'package:app_ui/app_ui.dart';
 import 'package:feature_mcp/feature_mcp.dart';
 import '../utils/device_name_util.dart';
@@ -12,7 +13,7 @@ import 'app_log_service.dart';
 
 part 'app_strings.dart';
 
-enum AppLanguage { zh, en }
+export 'package:app_core/app_core.dart' show AppLanguage;
 
 @immutable
 class AppVisualSettingsSnapshot {
