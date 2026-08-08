@@ -18,7 +18,7 @@
   <a href="https://github.com/hejulian2004/ssh_mobile/actions/workflows/flutter.yml"><img src="https://github.com/hejulian2004/ssh_mobile/actions/workflows/flutter.yml/badge.svg" alt="Flutter CI" /></a>
 </p>
 
-SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 Android、iOS、macOS、Windows 和 Web。它把多窗口终端、远程文件管理、服务器监控、安全存储和 OpenAI-compatible AI tools 整合为一个移动端与桌面端运维工作台。
+SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 Android、iOS、macOS、Windows 和 Web。它把多窗口终端、远程文件管理、服务器监控、安全存储和 OpenAI-compatible AI tools 整合为一个移动端与桌面端运维工作台。Terminal、SFTP、监控、系统管理、Playbook 和 RAG 已按计划建立独立 Feature Package；RAG 元数据写入 `rag.db`，正文与向量只进入有大小上限、TTL 和淘汰策略的缓存文件。
 
 项目最初源于一台只有 2 核 CPU 和 1 GB 内存的服务器。完整 AI Agent 无法在这类低配置服务器上稳定运行，因此 SSH Mobile 将模型推理和 Agent 编排放在客户端，再通过 SSH 和 SFTP 检查、维护远程服务器，从而避免占用服务器有限的内存。
 

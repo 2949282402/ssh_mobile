@@ -6,6 +6,7 @@ import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:network_transport/network_transport.dart';
 
 import '../features/ai_chat/services/ai_chat_runtime_factory.dart';
@@ -17,7 +18,6 @@ import '../services/display_mode_service.dart';
 import '../services/mcp/mcp_server_controller.dart';
 import '../services/network/network_identity_service.dart';
 import '../services/performance_monitor_service.dart';
-import '../services/rag_service.dart';
 import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
@@ -26,6 +26,7 @@ import 'app_runtime.dart';
 import 'lan_share_feature_adapters.dart';
 import 'monitoring_feature_adapters.dart';
 import 'playbook_feature_adapters.dart';
+import 'rag_feature_adapters.dart';
 import 'terminal_ssh_capability_adapter.dart';
 
 /// App Scope 的唯一组装入口，负责创建并连接应用级服务。
@@ -49,6 +50,8 @@ final class AppRuntimeFactory {
     NetworkRuntime? networkRuntime,
     feature_lan_share.LanShareDatabaseFactory? lanShareDatabaseFactory,
     feature_playbook.PlaybookModuleDatabaseFactory? playbookDatabaseFactory,
+    feature_rag.RagDatabaseFactory? ragDatabaseFactory,
+    feature_rag.RagCacheStoreFactory? ragCacheStoreFactory,
     bool? lanShareReceiverEnabled,
   }) async {
     final logger = appLogService ?? AppLogService();
@@ -128,6 +131,23 @@ final class AppRuntimeFactory {
     await playbookModule.activate();
     storageService.attachPlaybookRepository(playbookModule.repository);
 
+    final ragSettingsAdapter = AppRagSettingsAdapter(
+      appSettings,
+      storageService,
+    );
+    final ragModule = feature_rag.RagModule(
+      databaseFactory: ragDatabaseFactory,
+      cacheStoreFactory: ragCacheStoreFactory,
+    );
+    await ragModule.register(
+      ModuleContext.fromMap({
+        feature_rag.RagSettingsPort: ragSettingsAdapter,
+        feature_rag.RagLoggerPort: AppRagLoggerAdapter(logger),
+      }),
+    );
+    await ragModule.initialize();
+    await ragModule.activate();
+
     final sftpService = SftpService(storageService);
     final monitoringModule = monitoring.MonitoringModule();
     await monitoringModule.register(
@@ -147,9 +167,6 @@ final class AppRuntimeFactory {
     final performanceMonitorService = PerformanceMonitorService.fromDelegate(
       monitoringService,
     );
-    final ragService = RagService(storageService: storageService);
-    storageService.registerOnImportCallback(() => ragService.init(force: true));
-
     final mcpServerController = McpServerController(
       appSettings: appSettings,
       activityRepository: storageService,
@@ -159,7 +176,7 @@ final class AppRuntimeFactory {
         sftpService: sftpService,
         performanceMonitorService: performanceMonitorService,
         playbookService: playbookModule.service,
-        ragService: ragService,
+        ragService: ragModule.service,
         appSettings: appSettings,
       ).createToolService(),
     );
@@ -204,7 +221,8 @@ final class AppRuntimeFactory {
       playbookModule: playbookModule,
       playbookSettingsAdapter: playbookSettingsAdapter,
       playbookConnectionCatalogAdapter: playbookConnectionCatalogAdapter,
-      ragService: ragService,
+      ragModule: ragModule,
+      ragSettingsAdapter: ragSettingsAdapter,
       mcpServerController: mcpServerController,
       lanShareModule: lanShareModule,
       lanShareSettingsAdapter: lanShareSettingsAdapter,

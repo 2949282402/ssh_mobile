@@ -5,17 +5,18 @@ import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
 
 import 'lan_share_feature_adapters.dart';
 import 'playbook_feature_adapters.dart';
+import 'rag_feature_adapters.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/mcp/mcp_server_controller.dart';
 import '../services/performance_monitor_service.dart';
-import '../services/rag_service.dart';
 import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
@@ -48,7 +49,8 @@ final class AppRuntime implements Disposable {
     required this.playbookModule,
     required this.playbookSettingsAdapter,
     required this.playbookConnectionCatalogAdapter,
-    required this.ragService,
+    required this.ragModule,
+    required this.ragSettingsAdapter,
     required this.mcpServerController,
     required this.lanShareModule,
     required this.lanShareSettingsAdapter,
@@ -119,8 +121,14 @@ final class AppRuntime implements Disposable {
   feature_playbook.PlaybookService get playbookService =>
       playbookModule.service;
 
-  // TODO(refactor-step-16): 将 RAG 服务迁移到 rag 模块。
-  final RagService ragService;
+  /// RAG Module 的唯一 App Scope Owner。
+  final feature_rag.RagModule ragModule;
+
+  /// 供 RAG Route Scope 使用的设置适配器，不拥有 AppSettings/Storage。
+  final AppRagSettingsAdapter ragSettingsAdapter;
+
+  /// 旧 Runtime API 兼容视图；实际 Service Owner 是 [ragModule]。
+  feature_rag.RagService get ragService => ragModule.service;
 
   // TODO(refactor-step-20): 将 MCP Server 运行时迁移到 mcp_console 模块。
   final McpServerController mcpServerController;
@@ -207,7 +215,8 @@ final class AppRuntime implements Disposable {
       performanceMonitorService.dispose();
       await monitoringModule.dispose();
     });
-    await attempt(ragService.dispose);
+    await attempt(ragModule.dispose);
+    await attempt(ragSettingsAdapter.dispose);
     await attempt(shortcutCommandService.dispose);
     await attempt(appSettings.dispose);
     await attempt(() async {

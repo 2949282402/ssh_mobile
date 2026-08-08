@@ -1,6 +1,7 @@
 // AI Chat 运行时工厂；集中组装聊天编排器和工具服务，避免页面自行创建跨层依赖。
 
 import '../../../services/ai_tool_service.dart';
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:feature_playbook/feature_playbook.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/chat_context_assembler.dart';
@@ -9,7 +10,6 @@ import 'llm_chat_service.dart';
 import '../../../services/operational_memory_retriever.dart';
 import '../../../services/performance_monitor_service.dart';
 import '../../../services/performance_monitor_tool_service.dart';
-import '../../../services/rag_service.dart';
 import '../../../services/sftp_service.dart';
 import '../../../services/ssh_service.dart';
 import '../../../services/storage_service.dart';
@@ -21,7 +21,7 @@ class AiChatRuntimeFactory {
   final SftpService sftpService;
   final PerformanceMonitorService performanceMonitorService;
   final PlaybookAutomationPort playbookService;
-  final RagService ragService;
+  final feature_rag.RagCapability ragService;
   final AppSettings appSettings;
   final SkillIndexService _skillIndexService = SkillIndexService();
 

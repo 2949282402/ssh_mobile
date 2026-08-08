@@ -389,6 +389,27 @@
 - Step 14 按 `refactor(lan-share): step 14 migrate lan share module` 独立提交，
   Commit 记录作为本执行记录的追溯入口。
 
+## Step 16 执行记录（2026-08-08）
+
+- 已创建 `packages/features/feature_rag/`，迁入 RAG 页面、Route-scoped
+  ViewModel、文档解析、BM25/vector/Hybrid 检索、RAG Module/Service、Drift
+  Repository 和缓存 Store。旧 App RAG 路径保留为非 Owner 兼容出口，避免把迁移
+  误做成一次性删除。
+- `RagModule` 独占并释放 `rag.db`、Repository、缓存和 Service；数据库只保存
+  文档、倒排索引和缓存元数据，正文与向量进入有 entry/total/source 大小上限、
+  TTL 和最近访问淘汰策略的文件缓存。开发期不读取或迁移旧
+  `rag_database.json` / `rag_metadata.json`。
+- App Shell 通过 settings/logger/embedding Ports 注入依赖，AI 只依赖公开的
+  `RagCapability`；`AppRuntime` 持有 Module，RAG 页面通过 Feature Scope 创建
+  Route ViewModel。为验证真实检索路径，Embedding Client 也支持测试替身注入，
+  不访问真实网络。
+- 依赖解析通过且没有版本冲突；现有可升级提示受 Flutter/Dart workspace 约束，
+  未越界升级无关依赖。RAG Package 4 项测试、AppRuntime/RAG 定向回归 13 项和
+  完整 App 回归 959 个测试进度项均通过；Package/App analyze、格式检查、
+  `git diff --check` 和维护 Skill 同步检查在提交前完成。
+- Step 16 按 `refactor(rag): step 16 migrate rag module` 独立提交，Commit
+  记录作为本执行记录的追溯入口。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

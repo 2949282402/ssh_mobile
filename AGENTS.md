@@ -15,6 +15,9 @@ Module; the App Shell supplies settings, logging, data protection, identity,
 and native-network adapters. `packages/features/feature_playbook/` now owns
 the Playbook UI, approval-aware execution Service, Repository, and independent
 `playbook.db`; the App Shell injects SSH, logging, and data-protection Ports.
+`packages/features/feature_rag/` now owns the RAG UI, retrieval Service,
+metadata Repository, bounded document cache, and independent `rag.db`; the App
+Shell injects settings, API-key access, logging, and embedding Ports.
 
 This is a Dart workspace containing the full Flutter app for SSH, SFTP, server monitoring (including general metrics, port usage, process application performance, and service status), logs, LAN Quick Share, and OpenAI-compatible AI tools. The current full app lives in `apps/ssh_mobile_full/`: its `lib/` uses feature-first MVVM, its platform projects, assets, tests, and app-specific tools live beside it, and its `pubspec.yaml` is a workspace member. Cross-feature SSH/SFTP/storage/LLM/MCP infrastructure currently remains under `apps/ssh_mobile_full/lib/services/`; shared security/protocol helpers remain under `apps/ssh_mobile_full/lib/core/services/`; Drift database and repositories remain under `apps/ssh_mobile_full/lib/data/`; shared UI now belongs to `packages/core/app_ui/`, while `apps/ssh_mobile_full/lib/theme/`, the migrated files under `apps/ssh_mobile_full/lib/widgets/`, and `apps/ssh_mobile_full/lib/utils/responsive.dart` remain only as compatibility exports; other helpers remain under `apps/ssh_mobile_full/lib/utils/`. `lib/models/` and `lib/screens/` inside the full app are legacy compatibility surfaces, not destinations for new work. Root-level `packages/core/`, `packages/infrastructure/`, and `packages/features/` are reserved for the staged modular migration; `packages/core/app_core/` owns pure Dart lifecycle/logging contracts, `packages/core/app_ui/` owns the shared theme, responsive metrics, and UI widgets, `packages/core/connection_core/` owns Connection domain models, repositories, the non-sensitive Connection Drift database, Secure Storage credentials, and Host Key contracts, `packages/features/feature_connection/` owns the migrated connection editor and ViewModel, and `packages/features/feature_terminal/` owns the migrated terminal UI, route-scoped ViewModels, terminal output history, and `terminal.db`. The old terminal paths under `apps/ssh_mobile_full/lib/features/terminal/` and their tests remain compatibility exports/bridges during migration, not duplicate implementation destinations. `packages/infrastructure/network_transport/` owns the App Scope network facade and native handle adapter, `packages/infrastructure/ssh_core/` owns SSH session/runtime/pool/client contracts, and `packages/infrastructure/ssh_mobile_network_native/` owns the lower-level Dart/FFI binding. Root `pubspec.yaml` and `melos.yaml` define workspace tooling, with Melos pinned as a root development dependency, while `docs/`, `scripts/`, `installer/`, `.github/`, and `third_party/` remain repository-level directories. The vendored terminal package under `third_party/xterm/` is excluded from the full app analyzer.
 
@@ -83,6 +86,11 @@ flowchart LR
   sequential execution, encrypted run history, and `playbook.db`. It consumes
   only public Core/SSH contracts and injected App Ports; AI uses its public
   `PlaybookAutomationPort` boundary.
+- `packages/features/feature_rag/` owns RAG document parsing, BM25/vector/Hybrid
+  retrieval, metadata Repository, bounded file cache, `rag.db`, and route-scoped
+  knowledge-base state. AI consumes only `RagCapability`; the Package never
+  reads or migrates old RAG database files and never stores document正文 or
+  large vectors in Drift.
 - Current legacy feature roots under `apps/ssh_mobile_full/lib/features/`:
   `connection`, `terminal`, `sftp`, `ai_chat`, `ai_skills`, `client_webview`,
   `performance`, `system_admin`, `lan_share`, `playbook`, `rag`, `settings`,
@@ -96,7 +104,7 @@ flowchart LR
   belongs in `packages/features/feature_monitoring/`, not in a second App
   service implementation.
 - Cross-feature infrastructure in `apps/ssh_mobile_full/lib/services/`: SSH/SFTP/LLM/AI-tool, monitoring, storage, legacy LAN-share compatibility services, MCP, and platform adapters. `apps/ssh_mobile_full/lib/core/services/` holds lower-level shared security/protocol factories (host-key policy, data protection). `apps/ssh_mobile_full/lib/data/` holds the remaining App Drift database, DAOs, and repositories. New shared infrastructure belongs in the appropriate package under `packages/` only when its current Step permits migration.
-- Storage layering: Drift for growing structured data (AI chats, agent metrics, terminal-history metadata, playbooks, SFTP path records) with sensitive fields encrypted at rest; small preferences in SharedPreferences; passwords, private keys, API keys, and MCP tokens only in platform secure storage (`flutter_secure_storage`). A production DB failure must not silently fall back to an in-memory database.
+- Storage layering: Drift for growing structured data (AI chats, agent metrics, terminal-history metadata, playbooks, SFTP path records, and RAG document/index metadata) with sensitive fields encrypted at rest; RAG正文/向量只进入有大小上限、TTL 和 eviction policy 的文件缓存；small preferences in SharedPreferences; passwords, private keys, API keys, and MCP tokens only in platform secure storage (`flutter_secure_storage`). A production DB failure must not silently fall back to an in-memory database.
 
 AI agent runtime (client-side, not on the managed server): model context is built on-device, the provider is called, and the tool loop reaches remote systems via SSH/SFTP. Tool safety boundaries are enforced in code, not just prompts:
 
@@ -130,6 +138,7 @@ Static checks and formatting:
 - `dart format packages/features/feature_system_admin/lib packages/features/feature_system_admin/test`: format the System Admin Feature package.
 - `dart format packages/features/feature_lan_share/lib packages/features/feature_lan_share/test`: format the LAN Share Feature package.
 - `dart format packages/features/feature_playbook/lib packages/features/feature_playbook/test`: format the Playbook Feature package.
+- `dart format packages/features/feature_rag/lib packages/features/feature_rag/test`: format the RAG Feature package.
 - `dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool`: format check that fails on diffs (used in CI).
 - From `apps/ssh_mobile_full/`, `flutter analyze`: run static analysis using the app's `analysis_options.yaml`. `third_party/**` is excluded from the analyzer.
 - From `apps/ssh_mobile_full/`, `flutter test`: run all Flutter tests under the app's `test/`.
@@ -143,6 +152,7 @@ Static checks and formatting:
 - From `packages/features/feature_system_admin/`, `flutter analyze` and `flutter test`: validate the System Admin Module lifecycle, management command parsing, and injected Port boundaries. Activation must not connect to a server automatically; disposal must close the Module-owned management session.
 - From `packages/features/feature_lan_share/`, `flutter analyze` and `flutter test`: validate the LAN Share Module lifecycle, independent `lan_share.db`, transfer safety limits, and injected App/Network Ports. Receiver activation is controlled by Module configuration; Feature code must not construct native network or SSH implementations.
 - From `packages/features/feature_playbook/`, `flutter analyze` and `flutter test`: validate the Playbook Module lifecycle, independent `playbook.db`, encrypted run history, approval target binding, and public AI capability boundary.
+- From `packages/features/feature_rag/`, `flutter analyze` and `flutter test`: validate the RAG Module lifecycle, independent `rag.db`, metadata-only persistence, bounded cache policy, and BM25/vector/Hybrid retrieval through injected Ports.
 - From `packages/core/app_ui/`, `flutter analyze` and `flutter test`: validate the shared theme, responsive helpers, and UI widgets.
 - From `apps/ssh_mobile_full/`, `flutter test --coverage --reporter expanded`: run tests with coverage.
 - From `apps/ssh_mobile_full/`, `dart run tool/check_coverage.dart --minimum=35`: enforce the 35% non-generated line-coverage floor (CI gate).

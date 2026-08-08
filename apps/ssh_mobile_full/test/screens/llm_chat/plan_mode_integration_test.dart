@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
@@ -626,6 +627,8 @@ class _PlanScreenHarness {
           value: playbookService,
         ),
         ChangeNotifierProvider<RagService>.value(value: ragService),
+        // 旧测试保留具体实现，同时按 RAG 公共 Contract 注入能力。
+        ListenableProvider<feature_rag.RagCapability>.value(value: ragService),
         ChangeNotifierProvider<AppSettings>.value(value: appSettings),
       ],
       child: MaterialApp(

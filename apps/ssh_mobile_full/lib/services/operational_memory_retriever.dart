@@ -1,7 +1,7 @@
 import '../utils/skill_frontmatter.dart';
 import '../utils/text_chunker.dart';
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'app_log_service.dart';
-import 'rag_service.dart';
 import 'storage_service.dart';
 import 'skill/skill_index_service.dart';
 
@@ -36,7 +36,7 @@ class OperationalMemoryBundle {
 
 class OperationalMemoryRetriever {
   final StorageService storageService;
-  final RagService? ragService;
+  final feature_rag.RagCapability? ragService;
   final SkillIndexService skillIndexService;
 
   OperationalMemoryRetriever({

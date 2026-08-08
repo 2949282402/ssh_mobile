@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:feature_playbook/feature_playbook.dart';
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import '../services/ai_chat_status_translator.dart';
 import '../services/ai_chat_run_metrics_recorder.dart';
 import '../services/ai_chat_generation_runner.dart';
@@ -23,7 +24,6 @@ import '../services/llm_chat_service.dart';
 import '../../../services/llm_runtime/llm_runtime_types.dart';
 import '../../../services/llm_provider/llm_api_format.dart';
 import '../../../services/performance_monitor_service.dart';
-import '../../../services/rag_service.dart';
 import '../../../services/sftp_service.dart';
 import '../../../services/ssh_service.dart';
 import '../../../services/storage_service.dart';
@@ -291,7 +291,7 @@ class AiChatViewModel extends ChangeNotifier {
     required SftpService sftpService,
     required PerformanceMonitorService performanceMonitorService,
     required PlaybookAutomationPort playbookService,
-    required RagService ragService,
+    required feature_rag.RagCapability ragService,
     required AppSettings appSettings,
     AiChatRuntimeFactory? runtimeFactory,
     ClientHealthAdvisorAdapter? clientHealthAdvisor,

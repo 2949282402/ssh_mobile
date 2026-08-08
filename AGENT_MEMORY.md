@@ -489,6 +489,15 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   public `PlaybookAutomationPort` is the AI cross-feature boundary. Development
   refactor does not import old Playbook records; old App paths remain only as
   non-owning code/test compatibility surfaces.
+- 2026-08-08: `packages/features/feature_rag/` is the maintained RAG owner.
+  `RagModule` owns `rag.db`, its metadata Repository, bounded document/vector
+  cache, and `RagService`; AppRuntime owns the Module and the RAG page creates a
+  route-scoped ViewModel. AI uses only `RagCapability`, while settings, API-key
+  access, logging, and embeddings arrive through Ports. Drift stores only
+  document/index/cache metadata; cache files enforce source/entry/total size
+  limits, TTL, and access-order eviction. The development refactor does not
+  read or migrate old RAG database files, and old App RAG paths are non-owning
+  compatibility surfaces.
 - 2026-07-18: `StorageService.appDatabase` can be read by root providers before
   asynchronous storage initialization starts. Keep database creation cached and
   single-owner, make concurrent `init()` calls share one future, reuse the same

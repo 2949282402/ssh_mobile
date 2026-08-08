@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:drift/native.dart';
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/app/app_runtime_factory.dart';
 import 'package:ssh_mobile/app/terminal_ssh_capability_adapter.dart';
@@ -30,6 +33,9 @@ void main() {
       final connectionRepository = DriftConnectionRepository(
         database: connectionDatabase,
       );
+      final ragCacheDirectory = await Directory.systemTemp.createTemp(
+        'app-runtime-rag-',
+      );
       final runtime = await AppRuntimeFactory.create(
         connectionDatabase: connectionDatabase,
         connectionRepository: connectionRepository,
@@ -44,6 +50,11 @@ void main() {
             feature_playbook.PlaybookDatabase.forTesting(
               NativeDatabase.memory(),
             ),
+        ragDatabaseFactory: () =>
+            feature_rag.RagDatabase.forTesting(NativeDatabase.memory()),
+        ragCacheStoreFactory: () => feature_rag.RagCacheStore(
+          directoryFactory: () async => ragCacheDirectory,
+        ),
       );
 
       expect(runtime.isDisposed, isFalse);
@@ -65,6 +76,7 @@ void main() {
         same(terminalManager.terminal),
       );
       expect(runtime.lanReceiverCoordinator, isNotNull);
+      expect(runtime.ragModule.service, same(runtime.ragService));
 
       final firstDispose = runtime.dispose();
       final secondDispose = runtime.dispose();
@@ -72,6 +84,7 @@ void main() {
       expect(identical(firstDispose, secondDispose), isTrue);
       await firstDispose;
       expect(runtime.isDisposed, isTrue);
+      await ragCacheDirectory.delete(recursive: true);
     },
   );
 }

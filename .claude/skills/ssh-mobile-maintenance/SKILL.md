@@ -91,6 +91,12 @@ the Playbook UI, approval-aware sequential execution, encrypted run history,
 and `playbook.db`. SSH, logging, and data protection arrive through injected
 Ports, and AI callers use the public `PlaybookAutomationPort` contract. The
 development refactor does not import old Playbook database records.
+The RAG Feature package is `packages/features/feature_rag/`; it owns RAG
+document parsing, retrieval modes, metadata Repository, bounded document cache,
+route-scoped knowledge-base UI, and `rag.db`. AI callers use the public
+`RagCapability` contract; settings, API-key access, logging, and embedding
+clients arrive through Ports. The development refactor does not read or migrate
+old RAG database files, and Drift must not store document正文 or large vectors.
 The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
 Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
@@ -149,6 +155,10 @@ implementations. The old App terminal files are compatibility exports/bridges.
   SSH target bindings, destructive-command restrictions, and secret filtering
   stay in the Service/Port layer rather than UI widgets. AI callers depend on
   `PlaybookAutomationPort`, never on another Feature's implementation or `/src/`.
+- `feature_rag` must keep `RagModule` as the owner of `rag.db`, its Repository,
+  bounded cache, and Service. `RagCachePolicy` enforces entry/total/source size,
+  TTL, and eviction limits; AI callers depend on `RagCapability`, never on the
+  RAG Service or another Feature's `/src/`.
 - `feature_terminal` must keep `TerminalModule` as the owner of `terminal.db`
   and its repository. Route scope owns Terminal ViewModels and their
   subscriptions/controllers; disposing a route must not close the injected App
@@ -211,6 +221,7 @@ Read only the rows relevant to the task.
 | SSH Core sessions, Runtime adapters, Pool, Client, Host Key | `packages/infrastructure/ssh_core/`, `apps/ssh_mobile_full/lib/services/ssh_service.dart`, `apps/ssh_mobile_full/lib/app/app_runtime.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Terminal Feature, terminal.db, route lifecycle | `packages/features/feature_terminal/`, `apps/ssh_mobile_full/lib/app/terminal_feature_adapters.dart`, `apps/ssh_mobile_full/lib/app/terminal_ssh_capability_adapter.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_terminal/README.md` |
 | Terminal Feature, terminal.db, route lifecycle | `packages/features/feature_terminal/`, `apps/ssh_mobile_full/lib/app/terminal_feature_adapters.dart`, `apps/ssh_mobile_full/lib/app/terminal_ssh_capability_adapter.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_terminal/README.md` |
+| RAG Feature, rag.db, bounded cache, retrieval | `packages/features/feature_rag/`, `apps/ssh_mobile_full/lib/app/rag_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_rag/README.md` |
 | Shared UI or responsiveness | `packages/core/app_ui/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/MOBILE_UI_QA.md` |
 | Build, release, packaging | Platform directory and `scripts/` | `docs/RELEASE_CHECKLIST.md`, `docs/VALIDATION_REPORT.md` |
 | Matching recurring regression | Nearest code and focused tests | `.agents/skills/ssh-mobile-maintenance/references/lessons.md` |
@@ -411,6 +422,26 @@ compatibility surfaces; they are not a second production database owner.
   the in-flight command so no superseded run can write later state.
 - Keep destructive shell restrictions, approval checks, and secret filtering in
   the Service/Port layer; never recreate them in a Playbook widget or prompt.
+
+### RAG
+
+Primary maintained entry points are
+`packages/features/feature_rag/lib/feature_rag.dart`,
+`packages/features/feature_rag/lib/src/application/rag_module.dart`,
+`packages/features/feature_rag/lib/src/application/rag_service.dart`,
+`packages/features/feature_rag/lib/src/data/repositories/rag_repository.dart`,
+and `packages/features/feature_rag/lib/src/data/cache/rag_cache_store.dart`.
+The old App RAG paths remain non-owning compatibility surfaces.
+
+- Keep `RagModule` as the sole owner of `rag.db`, its Repository, cache Store,
+  and Service; AppRuntime owns the Module and routes own ViewModels.
+- Persist only document/index/cache metadata in Drift. Document正文 and vectors
+  belong in the bounded cache, protected by entry/total/source size limits,
+  TTL, and LRU-style eviction.
+- Keep AI callers on `RagCapability`; settings, API-key access, logs, and
+  embeddings enter through Ports. Never import another Feature or `/src/`.
+- Initialization/database errors must surface. Dispose the Service before the
+  Module closes its database, and never log API keys, document text, or vectors.
 
 ### Network Platform and Public Relay
 

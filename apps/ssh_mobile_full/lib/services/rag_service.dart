@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import '../utils/platform_file.dart';
@@ -14,49 +15,13 @@ import '../utils/vector_search_utils.dart';
 import 'app_log_service.dart';
 import 'storage_service.dart';
 
-class RagDocumentMetadata {
-  final String id;
-  final String name;
-  final String mimeType;
-  final int sizeBytes;
-  final DateTime uploadedAt;
-  final int chunkCount;
+/// 旧 App 调用面的 RAG 元数据类型别名。
+///
+/// 生产 Runtime 已使用 `feature_rag` Package；此实现仅保留旧测试和兼容
+/// 导入所需的出口，不负责新数据库的初始化，也不迁移旧开发数据库。
+typedef RagDocumentMetadata = feature_rag.RagDocumentMetadata;
 
-  const RagDocumentMetadata({
-    required this.id,
-    required this.name,
-    required this.mimeType,
-    required this.sizeBytes,
-    required this.uploadedAt,
-    required this.chunkCount,
-  });
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'mimeType': mimeType,
-      'sizeBytes': sizeBytes,
-      'uploadedAt': uploadedAt.toIso8601String(),
-      'chunkCount': chunkCount,
-    };
-  }
-
-  factory RagDocumentMetadata.fromJson(Map<String, dynamic> json) {
-    return RagDocumentMetadata(
-      id: json['id'] as String? ?? '',
-      name: json['name'] as String? ?? '',
-      mimeType: json['mimeType'] as String? ?? 'application/octet-stream',
-      sizeBytes: json['sizeBytes'] as int? ?? 0,
-      uploadedAt:
-          DateTime.tryParse(json['uploadedAt'] as String? ?? '') ??
-          DateTime.now(),
-      chunkCount: json['chunkCount'] as int? ?? 0,
-    );
-  }
-}
-
-class RagService extends ChangeNotifier {
+class RagService extends ChangeNotifier implements feature_rag.RagCapability {
   final StorageService storageService;
   final List<RagDocumentMetadata> _documents = [];
   final Bm25SearchEngine _searchEngine = Bm25SearchEngine();
@@ -71,7 +36,7 @@ class RagService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get isInitialized => _isInitialized;
 
-  /// 初始化 RAG 服务，支持 legacy 数据库迁移与仅加载元数据
+  /// 初始化旧调用面的元数据；生产 RAG 数据由 Package 的 rag.db 管理。
   Future<void> init({bool force = false}) {
     if (force) {
       _initFuture = null;
@@ -88,48 +53,9 @@ class RagService extends ChangeNotifier {
     try {
       await storageService.initFuture;
       final supportDir = await getApplicationSupportDirectory();
-      final legacyFile = File(p.join(supportDir.path, 'rag_database.json'));
       final metadataFile = File(p.join(supportDir.path, 'rag_metadata.json'));
 
-      if (await legacyFile.exists()) {
-        AppLogService.instance.info('RAG: Legacy database found, migrating...');
-        final content = await legacyFile.readAsString();
-        final json = jsonDecode(content) as Map<String, dynamic>;
-
-        // 1. 加载文档元数据
-        final rawDocs = json['documents'] as List? ?? [];
-        _documents.clear();
-        for (final docJson in rawDocs) {
-          if (docJson is Map<String, dynamic>) {
-            _documents.add(RagDocumentMetadata.fromJson(docJson));
-          }
-        }
-
-        // 2. 加载文档分块并将其切分为独立的文档文件
-        final rawChunks = json['documentChunks'] as Map<String, dynamic>? ?? {};
-        for (final entry in rawChunks.entries) {
-          final docId = entry.key;
-          final chunksList = entry.value as List? ?? [];
-          final docFile = File(p.join(supportDir.path, 'rag_doc_$docId.json'));
-          await docFile.writeAsString(jsonEncode(chunksList));
-        }
-
-        // 3. 加载搜索引擎索引状态
-        final searchJson = json['searchEngine'] as Map<String, dynamic>?;
-        if (searchJson != null) {
-          _searchEngine.loadFromJson(searchJson);
-          _searchEngine.chunks.clear(); // 确保不把 chunks 缓存在内存中
-        }
-
-        // 4. 保存为新的轻量级元数据
-        await _saveMetadataAndIndex(supportDir.path);
-
-        // 5. 删除 legacy 文件
-        await legacyFile.delete();
-        AppLogService.instance.info(
-          'RAG: Migration completed and legacy file deleted.',
-        );
-      } else if (await metadataFile.exists()) {
+      if (await metadataFile.exists()) {
         final content = await metadataFile.readAsString();
         final json = jsonDecode(content) as Map<String, dynamic>;
 
@@ -341,6 +267,7 @@ class RagService extends ChangeNotifier {
   }
 
   /// 根据 Query 检索最相关的文本分块。支持筛选特定的文档。
+  @override
   Future<List<RagChunk>> retrieve(
     String query, {
     int limit = 3,

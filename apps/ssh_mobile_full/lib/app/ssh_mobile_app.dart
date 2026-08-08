@@ -4,6 +4,7 @@ import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
 import 'package:feature_terminal/feature_terminal.dart';
 import 'package:flutter/material.dart';
@@ -11,7 +12,6 @@ import 'package:provider/provider.dart';
 import 'package:ssh_core/ssh_core.dart';
 
 import '../features/settings/viewmodels/settings_viewmodel.dart';
-import '../features/rag/viewmodels/rag_knowledge_viewmodel.dart';
 import '../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
 import '../features/startup/viewmodels/startup_viewmodel.dart';
 import '../features/developer_panel/views/developer_panel_floating.dart';
@@ -19,13 +19,11 @@ import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
-import 'package:ssh_mobile/features/rag/views/rag_knowledge_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/views/mcp_console_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_console_viewmodel.dart';
 import 'package:ssh_mobile/features/mcp_console/views/mcp_settings_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_settings_viewmodel.dart';
 import '../services/app_settings.dart';
-import '../services/rag_service.dart';
 import '../services/storage_service.dart';
 import '../services/mcp/mcp_server_controller.dart';
 import 'package:app_ui/app_ui.dart';
@@ -245,7 +243,15 @@ class _SshMobileAppState extends State<SshMobileApp>
         ListenableProvider<feature_playbook.PlaybookAutomationPort>.value(
           value: runtime.playbookService,
         ),
-        ChangeNotifierProvider.value(value: runtime.ragService),
+        ListenableProvider<feature_rag.RagSettingsPort>.value(
+          value: runtime.ragSettingsAdapter,
+        ),
+        ChangeNotifierProvider<feature_rag.RagService>.value(
+          value: runtime.ragService,
+        ),
+        ListenableProvider<feature_rag.RagCapability>.value(
+          value: runtime.ragService,
+        ),
         ChangeNotifierProvider.value(value: runtime.mcpServerController),
         ChangeNotifierProvider<feature_connection.ConnectionViewModel>(
           // ViewModel 仍由根页面提供，数据和运行时能力已通过公共契约注入。
@@ -439,12 +445,9 @@ class _SshMobileAppState extends State<SshMobileApp>
                         );
                       case '/rag-knowledge':
                         return MaterialPageRoute(
-                          builder: (_) => ChangeNotifierProvider(
-                            create: (context) => RagKnowledgeViewModel(
-                              ragService: context.read<RagService>(),
-                              storageService: context.read<StorageService>(),
-                            ),
-                            child: const RagKnowledgeScreen(),
+                          builder: (_) => feature_rag.RagFeatureScope(
+                            module: _runtime.ragModule,
+                            child: const feature_rag.RagKnowledgeScreen(),
                           ),
                         );
                       case '/mcp-console':

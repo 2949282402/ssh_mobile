@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:feature_playbook/feature_playbook.dart';
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -29,7 +30,6 @@ import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:app_ui/app_ui.dart';
 import 'widgets/history_action_sheet.dart';
 import 'widgets/attachment_image_thumbnail.dart';
@@ -229,7 +229,7 @@ class LlmChatScreen extends StatelessWidget {
               performanceMonitorService: context
                   .read<PerformanceMonitorService>(),
               playbookService: context.read<PlaybookAutomationPort>(),
-              ragService: context.read<RagService>(),
+              ragService: context.read<feature_rag.RagCapability>(),
               appSettings: context.read<AppSettings>(),
             );
         return viewModel..loadInitialDraft();
