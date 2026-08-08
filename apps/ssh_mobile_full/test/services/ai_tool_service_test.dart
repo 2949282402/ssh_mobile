@@ -16,7 +16,7 @@ import 'package:feature_ai/ai_tools.dart' as ai_tools;
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_system_tool_service.dart';
-import 'package:ssh_mobile/services/client_webview_service.dart';
+import 'package:feature_webview/feature_webview.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
 import 'package:ssh_mobile/services/server_catalog_service.dart';

@@ -1,14 +1,20 @@
+// WebView Feature 的会话服务。
+//
+// 本文件负责创建并维护按聊天会话隔离的 WebView Controller，同时集中执行
+// URL 安全校验、AI 浏览互斥、页面文本读取和搜索结果提取。服务由 AppRuntime
+// 持有，日志通过 AppLogger 注入，避免 Feature 创建全局 Service 单例。
+
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:app_core/app_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-
-import 'app_log_service.dart';
 
 part 'client_webview/client_webview_models.dart';
 part 'client_webview/client_webview_ops.dart';
 
+/// 提供给 AI/MCP 等调用方的最小 WebView 能力契约。
 abstract interface class ClientWebViewAdapter {
   Future<ClientWebViewSnapshot> readPlainText(
     String chatId, {
@@ -35,25 +41,37 @@ abstract interface class ClientWebViewAdapter {
   void clearSession(String chatId);
 }
 
-class ClientWebViewService extends ChangeNotifier
+/// 按聊天会话拥有 WebView Controller 和页面状态的 App Scope 服务。
+final class ClientWebViewService extends ChangeNotifier
     implements ClientWebViewAdapter {
-  static final ClientWebViewService instance = ClientWebViewService._();
-
   static const String defaultUrl = 'https://www.baidu.com';
   static const int defaultMaxChars = 40000;
 
+  ClientWebViewService({required AppLogger logger})
+    : _logger = logger.scope('client_webview');
+
+  final AppLogger _logger;
   final Map<String, ClientWebViewSession> _sessions = {};
 
-  ClientWebViewService._();
+  /// 释放所有会话状态，并停止向已销毁的页面发送通知。
+  @override
+  void dispose() {
+    _sessions.clear();
+    super.dispose();
+  }
 
+  /// 获取或创建指定聊天的会话；Controller 只在首次进入该聊天时创建。
   ClientWebViewSession sessionFor(String chatId) {
     return _sessions.putIfAbsent(chatId, () => _createSession(chatId));
   }
 
+  /// 查询已创建的聊天会话，不会因为查询而创建平台 Controller。
   ClientWebViewSession? sessionOf(String chatId) => _sessions[chatId];
 
+  /// 通知页面和 AI 适配器重新读取当前会话状态。
   void notify() => notifyListeners();
 
+  /// 将地址或搜索词加载到当前聊天的 WebView，并先执行安全策略。
   Future<void> load(String chatId, String input, {String? engine}) async {
     final session = sessionFor(chatId);
     if (session.isAiBrowsing) return;
@@ -84,6 +102,7 @@ class ClientWebViewService extends ChangeNotifier
   }
 
   @override
+  /// 读取页面可见纯文本；实时读取失败时可按调用方要求返回缓存文本。
   Future<ClientWebViewSnapshot> readPlainText(
     String chatId, {
     int maxChars = defaultMaxChars,
@@ -110,6 +129,7 @@ class ClientWebViewService extends ChangeNotifier
   }
 
   @override
+  /// 在当前聊天 WebView 中执行公开网页搜索并提取安全 URL 结果。
   Future<ClientWebViewSearchResult> searchWeb(
     String chatId,
     String query, {
@@ -240,7 +260,7 @@ class ClientWebViewService extends ChangeNotifier
           error: 'WebView session was closed before search finished.',
         );
       }
-      AppLogService.instance.error(
+      _logError(
         'Client WebView search failed',
         error: e,
         stackTrace: stackTrace,
@@ -267,6 +287,7 @@ class ClientWebViewService extends ChangeNotifier
   }
 
   @override
+  /// 中断当前聊天的 AI 浏览，释放互斥令牌但保留页面。
   void interruptAiBrowsing(String chatId) {
     final session = _sessions[chatId];
     if (session == null || !session.isAiBrowsing) return;
@@ -279,6 +300,7 @@ class ClientWebViewService extends ChangeNotifier
   }
 
   @override
+  /// 清除聊天会话状态；页面离开或聊天删除时由上层调用。
   void clearSession(String chatId) {
     if (_sessions.remove(chatId) != null) {
       notifyListeners();
@@ -286,6 +308,7 @@ class ClientWebViewService extends ChangeNotifier
   }
 
   @override
+  /// 返回当前页面状态，并查询平台提供的前进/后退能力。
   Future<ClientWebViewStateSnapshot> getState(String chatId) async {
     final session = _sessions[chatId];
     if (session == null) {
@@ -339,6 +362,7 @@ class ClientWebViewService extends ChangeNotifier
   }
 
   @override
+  /// 执行打开、后退、前进或刷新，并阻止与 AI 浏览并发的手工操作。
   Future<ClientWebViewNavigationResult> navigate(
     String chatId, {
     required String action,
@@ -477,7 +501,7 @@ class ClientWebViewService extends ChangeNotifier
         state: await getState(chatId),
       );
     } catch (e, stackTrace) {
-      AppLogService.instance.error(
+      _logError(
         'Client WebView navigation failed',
         error: e,
         stackTrace: stackTrace,
@@ -588,5 +612,24 @@ class ClientWebViewService extends ChangeNotifier
       ..loadRequest(Uri.parse(defaultUrl));
 
     return session;
+  }
+
+  /// 统一将服务错误写入 App Scope 日志，避免依赖具体日志实现。
+  void _logError(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  }) {
+    _logger.log(
+      LogRecord(
+        timestamp: DateTime.now(),
+        level: LogLevel.error,
+        message: message,
+        details: details,
+        error: error,
+        stackTrace: stackTrace,
+      ),
+    );
   }
 }

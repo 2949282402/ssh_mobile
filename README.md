@@ -411,7 +411,7 @@ flowchart LR
   `AppRuntimeFactory`, `AppRuntime`, and `SshMobileApp`).
 - `apps/ssh_mobile_full/lib/features/`: feature-owned models, ViewModels, services, views, and
   feature-local widgets. Current feature roots are `connection`, `terminal`,
-  `sftp`, `ai_chat`, `ai_skills`, `client_webview`, `performance`,
+  `sftp`, `ai_chat`, `ai_skills`, `performance`,
   `system_admin`, `lan_share`, `playbook`, `rag`, `settings`, `startup`,
   `home`, and `developer_log`.
 - `packages/features/feature_connection/`: the migrated Connection editor,
@@ -454,6 +454,12 @@ flowchart LR
   `AiModule` lazily owns the database and Repository; the App Shell injects
   `app_core` Capability contracts and App Ports through the composition root.
   The old AI App paths remain compatibility surfaces, not a second owner.
+- `packages/features/feature_webview/`: client WebView sessions, navigation UI,
+  public-page search, visible-text extraction, and URL/sensitive-form security
+  policy. `ClientWebViewService` is an AppRuntime-owned resource; the package
+  receives `AppLogger` and a settings Port, while AI uses only its own
+  `AiWebViewPort` adapter. `webview_flutter` is a direct dependency of this
+  package.
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP, monitoring,
   storage, legacy LAN-share compatibility services, and platform adapters.
   Maintained AI/MCP implementations live in their Feature packages.

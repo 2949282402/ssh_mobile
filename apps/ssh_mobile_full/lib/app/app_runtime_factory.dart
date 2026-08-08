@@ -9,6 +9,7 @@ import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
+import 'package:feature_webview/feature_webview.dart' as feature_webview;
 import 'package:network_transport/network_transport.dart';
 
 import '../core/services/data_protection_service.dart';
@@ -31,6 +32,7 @@ import 'monitoring_feature_adapters.dart';
 import 'playbook_feature_adapters.dart';
 import 'rag_feature_adapters.dart';
 import 'terminal_ssh_capability_adapter.dart';
+import 'webview_feature_adapters.dart';
 
 /// App Scope 的唯一组装入口，负责创建并连接应用级服务。
 ///
@@ -92,6 +94,8 @@ final class AppRuntimeFactory {
     unawaited(DisplayModeService.enableHighRefreshRate());
 
     final appSettings = AppSettings();
+    final webViewService = feature_webview.ClientWebViewService(logger: logger);
+    final webViewSettingsAdapter = AppWebViewSettingsAdapter(appSettings);
     final storageService = StorageService();
     final bootstrapCoordinator = AppBootstrapCoordinator(
       appSettings: appSettings,
@@ -180,7 +184,7 @@ final class AppRuntimeFactory {
     final aiMonitoringAdapter = AppAiMonitoringAdapter(monitoringService);
     final aiClientSystemAdapter = AppAiClientSystemAdapter();
     final aiHealthAdapter = AppAiHealthAdapter(aiClientSystemAdapter);
-    final aiWebViewAdapter = AppAiWebViewAdapter();
+    final aiWebViewAdapter = AppAiWebViewAdapter(delegate: webViewService);
     final aiServerCatalogAdapter = AppAiServerCatalogAdapter(
       storage: storageService,
       ssh: sshService,
@@ -287,6 +291,8 @@ final class AppRuntimeFactory {
       mcpSettingsAdapter: mcpSettingsAdapter,
       lanShareModule: lanShareModule,
       lanShareSettingsAdapter: lanShareSettingsAdapter,
+      webViewService: webViewService,
+      webViewSettingsAdapter: webViewSettingsAdapter,
       aiModule: aiModule,
       aiStorageAdapter: aiStorageAdapter,
       aiSettingsAdapter: aiSettingsAdapter,

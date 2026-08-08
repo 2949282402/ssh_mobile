@@ -8,6 +8,7 @@ import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
+import 'package:feature_webview/feature_webview.dart' as feature_webview;
 import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
 
@@ -17,6 +18,7 @@ import 'ai_feature_adapters.dart';
 import 'mcp_feature_adapters.dart';
 import 'playbook_feature_adapters.dart';
 import 'rag_feature_adapters.dart';
+import 'webview_feature_adapters.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
@@ -59,6 +61,8 @@ final class AppRuntime implements Disposable {
     required this.mcpSettingsAdapter,
     required this.lanShareModule,
     required this.lanShareSettingsAdapter,
+    required this.webViewService,
+    required this.webViewSettingsAdapter,
     required this.aiModule,
     required this.aiStorageAdapter,
     required this.aiSettingsAdapter,
@@ -162,6 +166,12 @@ final class AppRuntime implements Disposable {
   /// 由 Runtime 持有的设置适配器；Module 只消费其 Port。
   final AppLanShareSettingsAdapter lanShareSettingsAdapter;
 
+  /// WebView Feature 的 App Scope 会话服务；按聊天 ID 管理 Controller。
+  final feature_webview.ClientWebViewService webViewService;
+
+  /// WebView 页面消费的设置 Port，不拥有底层 AppSettings。
+  final AppWebViewSettingsAdapter webViewSettingsAdapter;
+
   /// AI Module 的唯一 App Scope Owner；ai.db 只在首次 AI 使用时打开。
   final feature_ai.AiModule aiModule;
 
@@ -224,6 +234,10 @@ final class AppRuntime implements Disposable {
     await attempt(lanShareModule.dispose);
     await attempt(lanShareSettingsAdapter.dispose);
     await attempt(aiModule.dispose);
+    // AI 停止后再关闭 WebView，确保运行中的客户端工具不会继续访问
+    // 已经释放的 Controller；设置适配器先解除 AppSettings 监听。
+    await attempt(webViewSettingsAdapter.dispose);
+    await attempt(webViewService.dispose);
     await attempt(aiSettingsAdapter.dispose);
     await attempt(playbookModule.dispose);
     await attempt(playbookSettingsAdapter.dispose);

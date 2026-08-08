@@ -29,6 +29,11 @@ Its `AiModule` lazily owns the database and Repository; App Shell adapters in
 `apps/ssh_mobile_full/lib/app/` inject only Core Capability contracts and App
 Ports. The old `ai_chat`, `ai_skills`, and AI service paths remain non-owning
 compatibility surfaces.
+`packages/features/feature_webview/` now owns the client WebView service,
+chat-bound sessions, navigation UI, visible-text extraction, search parsing,
+and WebView security policy. `AppRuntime` owns the service and injects the
+settings Port and logger; AI consumes it only through the existing
+`AiWebViewPort` adapter.
 `packages/features/feature_ai/` now owns AI chat, Agent, Skills, LLM provider/
 runtime, tool orchestration, AI WebView contracts, and independent `ai.db`.
 Its `AiModule` lazily owns the database and Repository; App Shell adapters in
@@ -114,7 +119,7 @@ flowchart LR
   consumes only `app_core` Capability contracts and injected App Ports; it
   never imports another Feature implementation or an App `/src/` path.
 - Current legacy feature roots under `apps/ssh_mobile_full/lib/features/`:
-  `connection`, `terminal`, `sftp`, `ai_chat`, `ai_skills`, `client_webview`,
+  `connection`, `terminal`, `sftp`, `ai_chat`, `ai_skills`,
   `performance`, `system_admin`, `lan_share`, `playbook`, `rag`, `settings`,
   `startup`, `home`, `developer_log`, `developer_panel`.
   `ai_chat`/`ai_skills` are compatibility surfaces owned by

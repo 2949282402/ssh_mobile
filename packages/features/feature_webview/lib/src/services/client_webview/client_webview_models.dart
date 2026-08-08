@@ -1,5 +1,6 @@
 part of '../client_webview_service.dart';
 
+/// 一个聊天绑定的 WebView 会话及其可观察状态。
 class ClientWebViewSession {
   final String chatId;
   final WebViewController? controller;
@@ -51,6 +52,7 @@ class ClientWebViewSession {
   }
 }
 
+/// AI 读取当前 WebView 可见纯文本后的不可变结果。
 class ClientWebViewSnapshot {
   final String chatId;
   final bool supported;
@@ -105,6 +107,7 @@ class ClientWebViewSnapshot {
   }
 }
 
+/// WebView 输入、导航和 AI 读取共用的 URL 安全策略。
 class ClientWebViewSecurityPolicy {
   static const _blockedSchemes = {'file', 'data', 'javascript', 'intent'};
 
@@ -178,6 +181,7 @@ class ClientWebViewSecurityPolicy {
   }
 }
 
+/// 当前聊天 WebView 的导航、加载和 AI 浏览状态快照。
 class ClientWebViewStateSnapshot {
   final String chatId;
   final bool supported;
@@ -247,6 +251,7 @@ class ClientWebViewStateSnapshot {
   }
 }
 
+/// 一次客户端 WebView 导航操作的结果。
 class ClientWebViewNavigationResult {
   final String chatId;
   final bool supported;
@@ -286,6 +291,7 @@ class ClientWebViewNavigationResult {
   }
 }
 
+/// 一次客户端 WebView 搜索操作及其公开结果。
 class ClientWebViewSearchResult {
   final String chatId;
   final bool supported;
@@ -330,6 +336,7 @@ class ClientWebViewSearchResult {
   }
 }
 
+/// 搜索页面中经安全过滤后可返回给 AI 的结果条目。
 class ClientWebViewSearchItem {
   final String title;
   final String url;

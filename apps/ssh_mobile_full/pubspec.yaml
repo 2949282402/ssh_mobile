@@ -39,6 +39,8 @@ dependencies:
     path: ../../packages/features/feature_mcp
   feature_ai:
     path: ../../packages/features/feature_ai
+  feature_webview:
+    path: ../../packages/features/feature_webview
   dartssh2: ^2.22.5
   xterm:
     path: ../../third_party/xterm
@@ -62,6 +64,8 @@ dependencies:
   cryptography: ^2.9.0
   file_picker: ^12.0.0-beta.7
   gpt_markdown: ^1.1.8
+  # Legacy SFTP/LAN compatibility screens still import the plugin directly;
+  # the maintained client WebView implementation lives in feature_webview.
   webview_flutter: ^4.14.1
   fl_chart: ^1.2.0
   animations: ^2.2.0

@@ -141,6 +141,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `app_core` capabilities actually used by the tool loop. The development
   refactor does not read or migrate old AI database tables; old App AI paths are
   non-owning compatibility surfaces.
+- 2026-08-08: `packages/features/feature_webview/` is the maintained client
+  WebView owner. `ClientWebViewService` is an AppRuntime-owned resource with
+  injected logging and per-chat Controller sessions; the Feature owns navigation,
+  visible-text/search extraction, and URL/sensitive-form policy. AI reaches it
+  only through the App Shell's `AiWebViewPort` adapter, so `feature_ai` must not
+  import the WebView implementation.
 - The local MCP server is loopback-only and is maintained by
   `packages/features/feature_mcp/`; its App Shell adapter reuses
   `AiToolService`. External MCP calls default to `reviewConfiguredTools`, where only exposed tools

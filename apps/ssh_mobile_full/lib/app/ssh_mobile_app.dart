@@ -10,6 +10,7 @@ import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
 import 'package:feature_terminal/feature_terminal.dart';
+import 'package:feature_webview/feature_webview.dart' as feature_webview;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ssh_core/ssh_core.dart';
@@ -199,6 +200,12 @@ class _SshMobileAppState extends State<SshMobileApp>
         ChangeNotifierProvider.value(value: runtime.appLogService),
         ChangeNotifierProvider.value(value: runtime.storageService),
         ChangeNotifierProvider.value(value: runtime.appSettings),
+        Provider<feature_webview.ClientWebViewService>.value(
+          value: runtime.webViewService,
+        ),
+        ListenableProvider<feature_webview.WebViewSettingsPort>.value(
+          value: runtime.webViewSettingsAdapter,
+        ),
         Provider<feature_ai.AiStoragePort>.value(
           value: runtime.aiStorageAdapter,
         ),

@@ -1,13 +1,21 @@
+import 'package:app_ui/app_ui.dart';
+import 'package:app_core/app_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-import 'package:ssh_mobile/features/client_webview/viewmodels/client_webview_viewmodel.dart';
-import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:app_ui/app_ui.dart';
+import '../domain/webview_ports.dart';
+import '../services/client_webview_service.dart';
+import 'client_webview_viewmodel.dart';
 
-class ClientWebViewScreen extends StatefulWidget {
+// 当前聊天的客户端 WebView 页面。
+//
+// 页面只依赖 Feature 公共服务和设置 Port；Controller 的创建与释放由
+// ClientWebViewService 负责，避免 Route 自行创建平台资源。
+
+/// 展示当前聊天绑定的客户端 WebView。
+final class ClientWebViewScreen extends StatefulWidget {
   final String chatId;
 
   const ClientWebViewScreen({super.key, required this.chatId});
@@ -20,9 +28,10 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider<ClientWebViewViewModel>(
-      create: (context) =>
-          ClientWebViewViewModel(appSettings: context.read<AppSettings>())
-            ..init(widget.chatId),
+      create: (context) => ClientWebViewViewModel(
+        webViewService: context.read<ClientWebViewService>(),
+        settings: context.read<WebViewSettingsPort>(),
+      )..init(widget.chatId),
       child: Consumer<ClientWebViewViewModel>(
         builder: (context, viewModel, child) {
           final strings = _WebViewStrings(viewModel.language);

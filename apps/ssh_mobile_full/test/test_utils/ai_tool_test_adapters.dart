@@ -15,7 +15,7 @@ import 'package:ssh_mobile/services/client_system_tool_service.dart'
     as legacy_system;
 import 'package:ssh_mobile/services/client_health_advisor.dart'
     as legacy_health;
-import 'package:ssh_mobile/services/client_webview_service.dart' as legacy_web;
+import 'package:feature_webview/feature_webview.dart' as webview;
 import 'package:ssh_mobile/services/connection_target_binding.dart'
     as legacy_binding;
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart'
@@ -114,7 +114,7 @@ ai.AiClientSystemPort _clientSystemPort(Object value) {
 
 ai.AiWebViewPort _webViewPort(Object value) {
   if (value is ai.AiWebViewPort) return value;
-  if (value is legacy_web.ClientWebViewAdapter) {
+  if (value is webview.ClientWebViewAdapter) {
     return _LegacyWebViewPort(value);
   }
   throw ArgumentError.value(value, 'clientWebViewService');
@@ -507,30 +507,29 @@ final class _LegacyClientSystemPort implements ai.AiClientSystemPort {
 final class _LegacyWebViewPort implements ai.AiWebViewPort {
   const _LegacyWebViewPort(this._delegate);
 
-  final legacy_web.ClientWebViewAdapter _delegate;
+  final webview.ClientWebViewAdapter _delegate;
 
-  ai.AiWebViewStateSnapshot _state(
-    legacy_web.ClientWebViewStateSnapshot value,
-  ) => ai.AiWebViewStateSnapshot(
-    chatId: value.chatId,
-    supported: value.supported,
-    hasPage: value.hasPage,
-    progress: value.progress,
-    isLoading: value.isLoading,
-    isAiBrowsing: value.isAiBrowsing,
-    canGoBack: value.canGoBack,
-    canGoForward: value.canGoForward,
-    lastTextLength: value.lastTextLength,
-    lastTextTruncated: value.lastTextTruncated,
-    url: value.url,
-    title: value.title,
-    aiBrowsingLabel: value.aiBrowsingLabel,
-    aiBrowsingStartedAt: value.aiBrowsingStartedAt,
-    lastError: value.lastError,
-    lastTextCapturedAt: value.lastTextCapturedAt,
-    updatedAt: value.updatedAt,
-    error: value.error,
-  );
+  ai.AiWebViewStateSnapshot _state(webview.ClientWebViewStateSnapshot value) =>
+      ai.AiWebViewStateSnapshot(
+        chatId: value.chatId,
+        supported: value.supported,
+        hasPage: value.hasPage,
+        progress: value.progress,
+        isLoading: value.isLoading,
+        isAiBrowsing: value.isAiBrowsing,
+        canGoBack: value.canGoBack,
+        canGoForward: value.canGoForward,
+        lastTextLength: value.lastTextLength,
+        lastTextTruncated: value.lastTextTruncated,
+        url: value.url,
+        title: value.title,
+        aiBrowsingLabel: value.aiBrowsingLabel,
+        aiBrowsingStartedAt: value.aiBrowsingStartedAt,
+        lastError: value.lastError,
+        lastTextCapturedAt: value.lastTextCapturedAt,
+        updatedAt: value.updatedAt,
+        error: value.error,
+      );
 
   @override
   Future<ai.AiWebViewSnapshot> readPlainText(

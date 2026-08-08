@@ -1,18 +1,18 @@
 // AI Feature 的外部能力适配器。
 //
-// 客户端系统、WebView、服务端目录、诊断和日志实现仍由 App Shell 持有。
-// 本文件只做类型转换和委托；WebView Controller 的创建、页面安全策略及
-// 生命周期不在 Step 18 重写，继续由后续 WebView Step 负责。
+// 客户端系统、WebView、服务端目录、诊断和日志实现由 App Shell 组装。
+// 本文件只做类型转换和委托；WebView Controller、页面安全策略及生命周期
+// 由 feature_webview Package 持有，AI 只看到自己的能力 Port。
 
 import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:connection_core/connection_core.dart';
+import 'package:feature_webview/feature_webview.dart' as webview;
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 import '../core/services/data_protection_service.dart';
 import '../services/app_log_service.dart';
 import '../services/client_health_advisor.dart' as legacy_health;
 import '../services/client_system_tool_service.dart' as legacy_system;
-import '../services/client_webview_service.dart' as legacy_web;
 import '../services/connection_target_binding.dart';
 import '../services/server_catalog_service.dart' as legacy_catalog;
 import '../services/server_diagnostics_service.dart' as legacy_diagnostics;
@@ -284,12 +284,11 @@ final class _LegacyClientSystemAdapter
   }
 }
 
-/// 将 Step 19 前仍由 App 持有的 WebView 服务转换为 AI Port。
+/// 将 WebView Feature 的公开服务转换为 AI Port。
 final class AppAiWebViewAdapter implements ai.AiWebViewPort {
-  AppAiWebViewAdapter({legacy_web.ClientWebViewService? delegate})
-    : _delegate = delegate ?? legacy_web.ClientWebViewService.instance;
+  AppAiWebViewAdapter({required this._delegate});
 
-  final legacy_web.ClientWebViewService _delegate;
+  final webview.ClientWebViewAdapter _delegate;
 
   @override
   Future<ai.AiWebViewSnapshot> readPlainText(
@@ -347,7 +346,7 @@ final class AppAiWebViewAdapter implements ai.AiWebViewPort {
   @override
   void clearSession(String chatId) => _delegate.clearSession(chatId);
 
-  ai.AiWebViewSnapshot _toSnapshot(legacy_web.ClientWebViewSnapshot item) =>
+  ai.AiWebViewSnapshot _toSnapshot(webview.ClientWebViewSnapshot item) =>
       ai.AiWebViewSnapshot(
         chatId: item.chatId,
         supported: item.supported,
@@ -365,7 +364,7 @@ final class AppAiWebViewAdapter implements ai.AiWebViewPort {
       );
 
   ai.AiWebViewSearchResult _toSearchResult(
-    legacy_web.ClientWebViewSearchResult item,
+    webview.ClientWebViewSearchResult item,
   ) => ai.AiWebViewSearchResult(
     chatId: item.chatId,
     supported: item.supported,
@@ -386,28 +385,27 @@ final class AppAiWebViewAdapter implements ai.AiWebViewPort {
     error: item.error,
   );
 
-  ai.AiWebViewStateSnapshot _toState(
-    legacy_web.ClientWebViewStateSnapshot item,
-  ) => ai.AiWebViewStateSnapshot(
-    chatId: item.chatId,
-    supported: item.supported,
-    hasPage: item.hasPage,
-    progress: item.progress,
-    isLoading: item.isLoading,
-    isAiBrowsing: item.isAiBrowsing,
-    canGoBack: item.canGoBack,
-    canGoForward: item.canGoForward,
-    lastTextLength: item.lastTextLength,
-    lastTextTruncated: item.lastTextTruncated,
-    url: item.url,
-    title: item.title,
-    aiBrowsingLabel: item.aiBrowsingLabel,
-    aiBrowsingStartedAt: item.aiBrowsingStartedAt,
-    lastError: item.lastError,
-    lastTextCapturedAt: item.lastTextCapturedAt,
-    updatedAt: item.updatedAt,
-    error: item.error,
-  );
+  ai.AiWebViewStateSnapshot _toState(webview.ClientWebViewStateSnapshot item) =>
+      ai.AiWebViewStateSnapshot(
+        chatId: item.chatId,
+        supported: item.supported,
+        hasPage: item.hasPage,
+        progress: item.progress,
+        isLoading: item.isLoading,
+        isAiBrowsing: item.isAiBrowsing,
+        canGoBack: item.canGoBack,
+        canGoForward: item.canGoForward,
+        lastTextLength: item.lastTextLength,
+        lastTextTruncated: item.lastTextTruncated,
+        url: item.url,
+        title: item.title,
+        aiBrowsingLabel: item.aiBrowsingLabel,
+        aiBrowsingStartedAt: item.aiBrowsingStartedAt,
+        lastError: item.lastError,
+        lastTextCapturedAt: item.lastTextCapturedAt,
+        updatedAt: item.updatedAt,
+        error: item.error,
+      );
 }
 
 /// 将服务端目录能力桥接为 AI Port，并保留原有审批快照校验。

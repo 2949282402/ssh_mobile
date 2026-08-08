@@ -19,6 +19,7 @@ workspace:
   - packages/features/feature_lan_share
   - packages/features/feature_mcp
   - packages/features/feature_ai
+  - packages/features/feature_webview
   - packages/infrastructure/network_transport
   - packages/infrastructure/ssh_core
   - packages/infrastructure/ssh_mobile_network_native

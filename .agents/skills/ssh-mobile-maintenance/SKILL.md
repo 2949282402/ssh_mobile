@@ -112,6 +112,12 @@ and tool registry. App Shell adapters provide only public Ports and the
 `app_core` Capability contracts actually used by AI; AI must not import another
 Feature implementation or an App `/src/` path. The old App AI files are
 non-owning compatibility surfaces.
+The WebView Feature package is `packages/features/feature_webview/`; it owns
+chat-bound WebView sessions, navigation UI, public-page search, visible-text
+extraction, and the URL/sensitive-form security policy. `AppRuntime` owns its
+`ClientWebViewService` and injects `AppLogger` plus the settings Port. AI must
+consume WebView only through `AiWebViewPort`, never through this package's
+`src/` implementation.
 The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
 Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
@@ -236,6 +242,7 @@ Read only the rows relevant to the task.
 | SSH, terminal, host keys | `lib/features/connection/`, `lib/features/terminal/`, SSH services | `docs/security_manual_regression.md` |
 | SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | AI chat, Agent, Skills, LLM, tools, ai.db | `packages/features/feature_ai/`, `apps/ssh_mobile_full/lib/app/ai_feature_adapters.dart` | `docs/AGENT_RUN_TRACE.md`, `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_ai/README.md` |
+| Client WebView, navigation, page text, search, security | `packages/features/feature_webview/`, `apps/ssh_mobile_full/lib/app/webview_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_webview/README.md` |
 | MCP server, console, approval, mcp.db | `packages/features/feature_mcp/`, `apps/ssh_mobile_full/lib/app/mcp_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Monitoring or system admin | `lib/features/performance/`, `lib/features/system_admin/` | `docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `packages/infrastructure/ssh_mobile_network_native/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |
@@ -298,8 +305,8 @@ App AI paths remain non-owning compatibility surfaces.
 - Approved plan execution runs a client runtime health preflight before the
   execution prompt. Blocking client issues stop execution, warning issues
   require explicit user confirmation before continuing.
-- Client-side tools stay in `ClientSystemToolService` and
-  `ClientWebViewService`, use the `client_` prefix, and return
+- Client-side tools stay in `ClientSystemToolService` and the
+  `feature_webview`-owned `ClientWebViewService`, use the `client_` prefix, and return
   `execution: client`.
 - Keep `client_check_runtime_health` as the aggregate client readiness tool for
   long-running agent execution, SSH keep-alive, SFTP transfers, and monitoring;

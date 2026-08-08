@@ -1,18 +1,30 @@
+// WebView 页面路由级状态。
+//
+// ViewModel 只拥有当前聊天页面的输入控制器和展示状态；WebView 会话服务
+// 由 AppRuntime 注入，语言由 Feature Port 提供，避免页面直接创建全局资源。
+
+import 'package:app_core/app_core.dart';
 import 'package:flutter/material.dart';
-import '../../../services/client_webview_service.dart';
-import '../../../services/app_settings.dart';
 
-class ClientWebViewViewModel extends ChangeNotifier {
-  final ClientWebViewService _webViewService = ClientWebViewService.instance;
-  final AppSettings _appSettings;
+import '../domain/webview_ports.dart';
+import '../services/client_webview_service.dart';
 
+/// 当前聊天 WebView 路由的 ViewModel。
+final class ClientWebViewViewModel extends ChangeNotifier {
+  ClientWebViewViewModel({
+    required ClientWebViewService webViewService,
+    required WebViewSettingsPort settings,
+  }) : _webViewService = webViewService,
+       _settings = settings;
+
+  final ClientWebViewService _webViewService;
+  final WebViewSettingsPort _settings;
   late final String chatId;
   late final ClientWebViewSession session;
   late final TextEditingController urlController;
   late final FocusNode urlFocusNode;
 
-  ClientWebViewViewModel({required this._appSettings});
-
+  /// 绑定聊天会话，并创建页面输入资源。
   void init(String id) {
     chatId = id;
     session = _webViewService.sessionFor(chatId);
@@ -31,7 +43,7 @@ class ClientWebViewViewModel extends ChangeNotifier {
     super.dispose();
   }
 
-  AppLanguage get language => _appSettings.language;
+  AppLanguage get language => _settings.language;
 
   // WebView state proxies
   bool get supported => session.supported;

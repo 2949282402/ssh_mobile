@@ -14,7 +14,7 @@ extension ClientWebViewServiceOps on ClientWebViewService {
       _notifyIfCurrent(session);
     } catch (e, stackTrace) {
       if (!_isCurrentSession(session)) return;
-      AppLogService.instance.error(
+      _logError(
         'Client WebView title read failed',
         error: e,
         stackTrace: stackTrace,
@@ -138,7 +138,7 @@ extension ClientWebViewServiceOps on ClientWebViewService {
       if (!_isCurrentSession(session)) {
         return _closedSnapshot(session, effectiveMaxChars);
       }
-      AppLogService.instance.error(
+      _logError(
         'Client WebView text read failed',
         error: e,
         stackTrace: stackTrace,

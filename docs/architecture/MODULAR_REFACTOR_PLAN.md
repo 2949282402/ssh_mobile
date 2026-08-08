@@ -451,6 +451,21 @@
   按官方稳定版本资料核对后再做最小升级。Package/App 格式、分析和全量测试
   通过后，Step 18 按 `refactor(ai): step 18 migrate ai module` 独立提交。
 
+## Step 19 执行记录（2026-08-08）
+
+- 已通过 Git 文件迁移创建 `packages/features/feature_webview/`，将客户端
+  WebView 服务、按聊天会话状态、导航页面、ViewModel、模型/安全策略和测试
+  迁入 Package；原有实现保持为迁移后的代码，不以删除业务能力代替迁移。
+- `ClientWebViewService` 由 `AppRuntime` 持有，使用注入的 `AppLogger`，按聊天
+  ID 管理 `WebViewController` 和 AI 浏览互斥令牌，并在 Runtime 释放时清理会话。
+  WebView 页面只消费 `WebViewSettingsPort`，不反向依赖 AppSettings 实现。
+- `webview_flutter` 由 `feature_webview` 直接依赖；App Shell 通过公共入口和
+  `AppAiWebViewAdapter` 连接 AI 的 `AiWebViewPort`，`feature_ai` 不引用 WebView
+  Feature implementation 或 `/src/`。当前稳定版本 `4.14.1` 与 Flutter 3.44.2
+  工作区解析兼容，未发生依赖版本冲突，因此没有无关升级。
+- Package 测试、App Dart 分析和迁移后的定向测试通过后，Step 19 按
+  `refactor(webview): step 19 migrate webview module` 独立提交。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

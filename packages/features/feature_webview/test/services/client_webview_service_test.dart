@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/client_webview_service.dart';
+import 'package:feature_webview/feature_webview.dart';
 
 void main() {
   test('blocks local, private, metadata, and unsafe URL inputs', () {
