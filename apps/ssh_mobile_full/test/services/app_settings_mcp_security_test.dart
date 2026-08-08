@@ -1,9 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:feature_mcp/feature_mcp.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/mcp/mcp_invocation_policy.dart';
-import 'package:ssh_mobile/services/mcp/mcp_server_settings.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

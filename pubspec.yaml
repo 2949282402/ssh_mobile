@@ -17,6 +17,7 @@ workspace:
   - packages/features/feature_sftp
   - packages/features/feature_terminal
   - packages/features/feature_lan_share
+  - packages/features/feature_mcp
   - packages/infrastructure/network_transport
   - packages/infrastructure/ssh_core
   - packages/infrastructure/ssh_mobile_network_native

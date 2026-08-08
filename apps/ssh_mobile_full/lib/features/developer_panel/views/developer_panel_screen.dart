@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 
 import '../../../services/app_log_service.dart';
-import '../../../services/mcp/mcp_server_controller.dart';
 import '../../../services/native_memory_service.dart';
 import '../../../services/performance_monitor_service.dart';
 import '../../../services/rag_service.dart';
@@ -383,7 +383,7 @@ class DeveloperPanelContent extends StatelessWidget {
   Widget _buildComponentCard(BuildContext context) {
     final ssh = _safeRead<SshService>(context);
     final rag = _safeRead<RagService>(context);
-    final mcp = _safeRead<McpServerController>(context);
+    final mcp = _safeRead<feature_mcp.McpServerController>(context);
     final perf = _safeRead<PerformanceMonitorService>(context);
     final logs = _safeRead<AppLogService>(context);
 

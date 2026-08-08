@@ -21,7 +21,6 @@ extension DriftOps on StorageService {
       _driftTerminalHistoryActive = true;
       _driftPlaybooksActive = true;
       _driftSftpHistoryActive = true;
-      _driftMcpActivityActive = true;
 
       try {
         await AppLogService.instance.setDatabase(database);
@@ -41,7 +40,6 @@ extension DriftOps on StorageService {
       _driftTerminalHistoryActive = false;
       _driftPlaybooksActive = false;
       _driftSftpHistoryActive = false;
-      _driftMcpActivityActive = false;
       AppLogService.instance.error(
         'Failed to initialize Drift storage',
         error: e,

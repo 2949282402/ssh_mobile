@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
+import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
@@ -10,12 +11,12 @@ import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
 
 import 'lan_share_feature_adapters.dart';
+import 'mcp_feature_adapters.dart';
 import 'playbook_feature_adapters.dart';
 import 'rag_feature_adapters.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
-import '../services/mcp/mcp_server_controller.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
@@ -51,7 +52,8 @@ final class AppRuntime implements Disposable {
     required this.playbookConnectionCatalogAdapter,
     required this.ragModule,
     required this.ragSettingsAdapter,
-    required this.mcpServerController,
+    required this.mcpModule,
+    required this.mcpSettingsAdapter,
     required this.lanShareModule,
     required this.lanShareSettingsAdapter,
   });
@@ -130,8 +132,14 @@ final class AppRuntime implements Disposable {
   /// 旧 Runtime API 兼容视图；实际 Service Owner 是 [ragModule]。
   feature_rag.RagService get ragService => ragModule.service;
 
-  // TODO(refactor-step-20): 将 MCP Server 运行时迁移到 mcp_console 模块。
-  final McpServerController mcpServerController;
+  /// MCP Module 的唯一 App Scope Owner；Module 独占 mcp.db 和 Server。
+  final feature_mcp.McpModule mcpModule;
+
+  /// MCP Module 使用的设置适配器，不拥有 AppSettings。
+  final AppMcpSettingsAdapter mcpSettingsAdapter;
+
+  /// 旧 Runtime API 兼容视图；实际 Owner 是 [mcpModule]。
+  feature_mcp.McpServerController get mcpServerController => mcpModule.service;
 
   /// LAN Share Module 的唯一 App Scope Owner。
   final feature_lan_share.LanShareModule lanShareModule;
@@ -179,11 +187,8 @@ final class AppRuntime implements Disposable {
 
     // App Scope 模块先停止对外提供服务，避免释放基础设施时仍有新请求进入。
     await attempt(() async {
-      try {
-        await mcpServerController.stop();
-      } finally {
-        mcpServerController.dispose();
-      }
+      await mcpModule.dispose();
+      mcpSettingsAdapter.dispose();
     });
     await attempt(lanShareModule.dispose);
     await attempt(lanShareSettingsAdapter.dispose);

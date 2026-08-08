@@ -410,6 +410,31 @@
 - Step 16 按 `refactor(rag): step 16 migrate rag module` 独立提交，Commit
   记录作为本执行记录的追溯入口。
 
+## Step 17 执行记录（2026-08-08）
+
+- 已创建 `packages/features/feature_mcp/`，通过 Git 文件迁移将 MCP Console
+  页面、ViewModel、`lib/services/mcp/**` 的业务实现及对应测试迁入 Package；
+  没有批量删除 MCP 业务实现。仅移除旧 AppDatabase 中与 MCP 重复的表、DAO、
+  Repository 和 StorageService facade 接口，使数据 Owner 收敛到新 Module。
+- `McpModule` 独占并释放 `mcp.db`、活动 Repository、MCP Server Controller 和
+  审批队列；新数据库 schema 从 1 开始，开发期不读取或迁移旧 MCP 活动表。App
+  Runtime 通过 `McpSettingsPort`、`McpLoggerPort` 和工具运行时 Port 注入 App
+  能力，App Shell 适配器负责连接 `AppSettings`、`AppLogService` 和现有
+  `AiToolService`，Feature 不反向依赖 App 或其他 Feature 实现。
+- `McpToolExecutor`、`McpApprovalRequest` 和目标校验 Contract 均位于 Feature
+  公共入口；危险 Tool 的 `approval_required` 仍在 HTTP/JSON-RPC 执行层处理，
+  审批原始绑定仅通过进程内 `opaqueHandle` 返回执行层，不写入 `mcp.db`。Server、
+  审批队列、数据库和 Route ViewModel 均有明确的生命周期 Owner 与释放路径。
+- 已更新 Package README/AGENTS、根 README/AGENTS、Agent memory、维护 Skill
+  和本执行记录；文档同步说明了 `feature_mcp` 与 `mcp.db` 的 Owner 边界。
+- 依赖解析无版本冲突；仅提示受当前 Flutter/Dart/Drift workspace 约束的可升级
+  项，未擅自升级不相关依赖。`feature_mcp` 格式检查（49 个文件）、
+  `flutter analyze --no-pub` 和全量测试 87 项通过；App 格式检查（537 个文件）、
+  `flutter analyze --no-pub` 和全量测试 872 项通过，MCP 安全设置与 AppRuntime
+  定向测试 5 项通过。`git diff --check` 和维护 Skill 同步检查在提交前完成。
+- Step 17 按 `refactor(mcp): step 17 migrate mcp module` 独立提交，Commit 记录
+  作为本执行记录的追溯入口。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

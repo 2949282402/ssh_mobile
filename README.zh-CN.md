@@ -405,8 +405,11 @@ flowchart LR
 - `packages/features/feature_playbook/`：已经迁移的 Playbook 编辑、审批绑定、串行
   执行和加密运行历史，Module 独占 `playbook.db`。AI 等跨 Feature 调用只依赖公开的
   `PlaybookAutomationPort`，SSH、日志和数据保护能力由 App Shell 注入。
+- `packages/features/feature_mcp/`：本地 MCP HTTP/JSON-RPC Server、暴露与调用策略、
+  审批队列、活动 Repository、控制台 UI 及独立的 `mcp.db`。设置、日志和 AI Tool
+  Runtime 由 App Shell Adapter 注入；危险 Tool 的审批仍保留在执行层。
 - `apps/ssh_mobile_full/lib/services/`：跨 Feature 的 SSH/SFTP/LLM/AI Tool、监控、存储、局域网
-  快传、MCP 和平台适配基础设施。
+  快传兼容服务和平台适配基础设施。
 - `apps/ssh_mobile_full/lib/data/`：Drift 数据库、DAO 和 Repository 实现。
 - `packages/core/app_core/`：纯 Dart 的生命周期、Module、日志和 Capability 合约；生产代码不依赖 Flutter/UI。日志部分包括作用域 `AppLogger`、有界 `LogBuffer`、`LogSink` 和可释放的 `AppLoggerImpl`。
 - `packages/core/app_ui/`：共享主题、响应式指标和跨 Feature 通用 Widget。只通过 `package:app_ui/app_ui.dart` 暴露，不依赖 Feature、SSH、网络、数据库或应用 Service；旧主题、响应式和通用 Widget 路径仅保留兼容导出。
@@ -513,7 +516,7 @@ Linux 监控读取 `/proc`、`df -P` 等数据；Windows 监控使用 PowerShell
 
 ## 数据与存储
 
-AI 聊天、Agent 指标、终端历史元数据、Playbook 和 SFTP 路径记录等持续增长的结构化数据存储在 Drift 中；小型偏好设置仍使用 SharedPreferences；密码、私钥、API Key 和 MCP Token 只保存在平台 Secure Storage 中。
+AI 聊天、Agent 指标、终端历史元数据、Playbook、SFTP 路径记录以及脱敏的 MCP 活动元数据等持续增长的结构化数据存储在 Drift 中；MCP 活动归属 Feature 自己的 `mcp.db`，不再写入共享 AppDatabase；小型偏好设置仍使用 SharedPreferences；密码、私钥、API Key 和 MCP Token 只保存在平台 Secure Storage 中。
 
 AI 消息正文、上下文、附件、工具 Trace、TODO Steps 和 Playbook 内容等敏感 Drift 字段会在写入 SQLite 前加密。当前开发阶段只维护一套版本号为 1 的最新 Drift Schema，不保留升级或旧数据导入逻辑；Schema 变化后应删除本地开发数据库并重新生成已提交的 Drift 代码。
 

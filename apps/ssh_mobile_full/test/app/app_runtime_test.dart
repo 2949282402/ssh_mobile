@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:drift/native.dart';
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
+import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -55,6 +56,8 @@ void main() {
         ragCacheStoreFactory: () => feature_rag.RagCacheStore(
           directoryFactory: () async => ragCacheDirectory,
         ),
+        mcpDatabaseFactory: () =>
+            feature_mcp.McpDatabase.forTesting(NativeDatabase.memory()),
       );
 
       expect(runtime.isDisposed, isFalse);

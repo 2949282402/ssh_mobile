@@ -443,8 +443,14 @@ flowchart LR
   metadata, and the `LanShareModule` with its independent `lan_share.db`.
   The package consumes only `network_transport`, `app_core`, `app_ui`, and
   injected App Ports; native v1 construction remains in the App Shell adapter.
-- `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
-  legacy LAN-share compatibility services, MCP, and platform-adapter infrastructure.
+- `packages/features/feature_mcp/`: the local MCP HTTP/JSON-RPC server,
+  exposure and invocation policy, approval queue, activity Repository, console
+  UI, and independent `mcp.db`. Its settings, logger, and AI tool runtime are
+  supplied through App Shell adapters; dangerous-tool approval remains in the
+  execution layer.
+- `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool,
+  monitoring, storage, legacy LAN-share compatibility services, and
+  platform-adapter infrastructure.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
@@ -572,7 +578,7 @@ keeps its scheduling boundary.
 
 ## Data and Storage
 
-Growing structured data such as AI chats, agent metrics, terminal-history metadata, playbooks, and SFTP path records is stored with Drift. Small preferences remain in SharedPreferences. Passwords, private keys, API keys, and MCP tokens remain in platform secure storage.
+Growing structured data such as AI chats, agent metrics, terminal-history metadata, playbooks, SFTP path records, and redacted MCP activity metadata is stored with Drift. MCP activity belongs to the feature-owned `mcp.db`, not the shared AppDatabase. Small preferences remain in SharedPreferences. Passwords, private keys, API keys, and MCP tokens remain in platform secure storage.
 
 Sensitive Drift fields—including AI message bodies, context, attachments, tool traces, TODO steps, and playbook content—are encrypted before being written to SQLite. During active development, Drift uses one current version-1 schema without upgrade or legacy-import code; after a schema change, delete the local development database and regenerate the checked-in Drift output.
 

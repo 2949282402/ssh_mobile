@@ -7,7 +7,6 @@ part 'tables/ai_chat_tables.dart';
 part 'tables/agent_metrics_tables.dart';
 part 'tables/agent_trace_tables.dart';
 part 'tables/lan_history_tables.dart';
-part 'tables/mcp_activity_tables.dart';
 part 'tables/playbook_tables.dart';
 part 'tables/sftp_history_tables.dart';
 part 'tables/terminal_history_tables.dart';
@@ -16,7 +15,6 @@ part 'daos/ai_chat_dao.dart';
 part 'daos/agent_metrics_dao.dart';
 part 'daos/agent_trace_dao.dart';
 part 'daos/lan_history_dao.dart';
-part 'daos/mcp_activity_dao.dart';
 part 'daos/playbook_dao.dart';
 part 'daos/sftp_history_dao.dart';
 part 'daos/terminal_history_dao.dart';
@@ -36,7 +34,6 @@ part 'daos/app_log_dao.dart';
     SftpFavoritePaths,
     LanTransferRecords,
     AppLogRecords,
-    McpActivityRecords,
   ],
   daos: [
     AiChatDao,
@@ -47,7 +44,6 @@ part 'daos/app_log_dao.dart';
     SftpHistoryDao,
     LanHistoryDao,
     AppLogDao,
-    McpActivityDao,
   ],
 )
 class AppDatabase extends _$AppDatabase {

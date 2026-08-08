@@ -4,6 +4,7 @@ import 'package:app_core/app_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
+import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
@@ -15,7 +16,6 @@ import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/display_mode_service.dart';
-import '../services/mcp/mcp_server_controller.dart';
 import '../services/network/network_identity_service.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/sftp_service.dart';
@@ -24,6 +24,7 @@ import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import 'app_runtime.dart';
 import 'lan_share_feature_adapters.dart';
+import 'mcp_feature_adapters.dart';
 import 'monitoring_feature_adapters.dart';
 import 'playbook_feature_adapters.dart';
 import 'rag_feature_adapters.dart';
@@ -52,6 +53,7 @@ final class AppRuntimeFactory {
     feature_playbook.PlaybookModuleDatabaseFactory? playbookDatabaseFactory,
     feature_rag.RagDatabaseFactory? ragDatabaseFactory,
     feature_rag.RagCacheStoreFactory? ragCacheStoreFactory,
+    feature_mcp.McpModuleDatabaseFactory? mcpDatabaseFactory,
     bool? lanShareReceiverEnabled,
   }) async {
     final logger = appLogService ?? AppLogService();
@@ -167,19 +169,31 @@ final class AppRuntimeFactory {
     final performanceMonitorService = PerformanceMonitorService.fromDelegate(
       monitoringService,
     );
-    final mcpServerController = McpServerController(
-      appSettings: appSettings,
-      activityRepository: storageService,
-      toolServiceFactory: () => AiChatRuntimeFactory(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookModule.service,
-        ragService: ragModule.service,
-        appSettings: appSettings,
-      ).createToolService(),
+    final mcpSettingsAdapter = AppMcpSettingsAdapter(appSettings);
+    final mcpModule = feature_mcp.McpModule(
+      databaseFactory: mcpDatabaseFactory,
     );
+    await mcpModule.register(
+      ModuleContext.fromMap({
+        feature_mcp.McpSettingsPort: mcpSettingsAdapter,
+        feature_mcp.McpLoggerPort: AppMcpLoggerAdapter(logger),
+        feature_mcp.McpToolRuntimePort: AppMcpToolRuntimeAdapter(
+          () => AppAiToolExecutorAdapter(
+            AiChatRuntimeFactory(
+              storageService: storageService,
+              sshService: sshService,
+              sftpService: sftpService,
+              performanceMonitorService: performanceMonitorService,
+              playbookService: playbookModule.service,
+              ragService: ragModule.service,
+              appSettings: appSettings,
+            ).createToolService(),
+          ),
+        ),
+      }),
+    );
+    await mcpModule.initialize();
+    await mcpModule.activate();
     final lanShareSettingsAdapter = AppLanShareSettingsAdapter(appSettings);
     final lanShareModule = feature_lan_share.LanShareModule(
       receiverEnabled: lanShareReceiverEnabled,
@@ -223,7 +237,8 @@ final class AppRuntimeFactory {
       playbookConnectionCatalogAdapter: playbookConnectionCatalogAdapter,
       ragModule: ragModule,
       ragSettingsAdapter: ragSettingsAdapter,
-      mcpServerController: mcpServerController,
+      mcpModule: mcpModule,
+      mcpSettingsAdapter: mcpSettingsAdapter,
       lanShareModule: lanShareModule,
       lanShareSettingsAdapter: lanShareSettingsAdapter,
     );

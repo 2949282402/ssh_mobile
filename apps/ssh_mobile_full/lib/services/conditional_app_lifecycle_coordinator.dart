@@ -1,14 +1,14 @@
 import 'dart:async';
+import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:flutter/widgets.dart';
 import 'app_settings.dart';
 import 'storage_service.dart';
-import 'mcp/mcp_server_controller.dart';
 
 /// 负责应用按需生命周期事件与条件性服务的协调管理。
 class ConditionalAppLifecycleCoordinator with WidgetsBindingObserver {
   final StorageService storageService;
   final AppSettings appSettings;
-  final McpServerController mcpServerController;
+  final feature_mcp.McpServerController mcpServerController;
 
   bool _initialized = false;
 

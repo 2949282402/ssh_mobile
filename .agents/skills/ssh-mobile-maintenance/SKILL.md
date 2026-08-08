@@ -97,6 +97,14 @@ route-scoped knowledge-base UI, and `rag.db`. AI callers use the public
 `RagCapability` contract; settings, API-key access, logging, and embedding
 clients arrive through Ports. The development refactor does not read or migrate
 old RAG database files, and Drift must not store document正文 or large vectors.
+The MCP Feature package is `packages/features/feature_mcp/`; it owns the local
+MCP HTTP/JSON-RPC server, exposure/invocation policies, approval queue, console
+UI, activity Repository, and `mcp.db`. App Shell adapters in
+`apps/ssh_mobile_full/lib/app/mcp_feature_adapters.dart` provide settings,
+logging, and the AI tool runtime. The package must not import AI Feature
+implementation or App `/src/`; dangerous-tool `approval_required` behavior
+must remain in its execution layer, and MCP activity must not return to the
+shared AppDatabase/StorageService.
 The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
 Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
@@ -159,6 +167,12 @@ implementations. The old App terminal files are compatibility exports/bridges.
   bounded cache, and Service. `RagCachePolicy` enforces entry/total/source size,
   TTL, and eviction limits; AI callers depend on `RagCapability`, never on the
   RAG Service or another Feature's `/src/`.
+- `feature_mcp` must keep `McpModule` as the owner of `mcp.db`, its activity
+  Repository, HTTP server, and approval queue. Settings, logger, and AI tool
+  execution arrive through public Ports from the App Shell. Keep approval
+  target binding and `approval_required` in the execution layer, keep
+  `McpApprovalRequest.opaqueHandle` in memory only, and ensure `dispose()` stops
+  the server, rejects pending requests, and closes the module database.
 - `feature_terminal` must keep `TerminalModule` as the owner of `terminal.db`
   and its repository. Route scope owns Terminal ViewModels and their
   subscriptions/controllers; disposing a route must not close the injected App
@@ -214,7 +228,8 @@ Read only the rows relevant to the task.
 | Startup or service lifetime | `lib/features/startup/`, `apps/ssh_mobile_full/lib/app/`, `apps/ssh_mobile_full/lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
 | SSH, terminal, host keys | `lib/features/connection/`, `lib/features/terminal/`, SSH services | `docs/security_manual_regression.md` |
 | SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
-| AI chat, tools, plans, MCP | `lib/features/ai_chat/`, `lib/services/ai_tool*`, `lib/services/mcp/` | `docs/AGENT_RUN_TRACE.md`, `docs/security_manual_regression.md` |
+| AI chat, tools, plans | `lib/features/ai_chat/`, `lib/services/ai_tool*` | `docs/AGENT_RUN_TRACE.md`, `docs/security_manual_regression.md` |
+| MCP server, console, approval, mcp.db | `packages/features/feature_mcp/`, `apps/ssh_mobile_full/lib/app/mcp_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Monitoring or system admin | `lib/features/performance/`, `lib/features/system_admin/` | `docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `packages/infrastructure/ssh_mobile_network_native/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |
 | Network Transport facade and App Scope lifecycle | `packages/infrastructure/network_transport/`, `apps/ssh_mobile_full/lib/app/app_runtime.dart`, `apps/ssh_mobile_full/lib/app/app_runtime_factory.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
@@ -285,11 +300,12 @@ and its focused extensions, `lib/features/ai_chat/services/`,
 - AI tools must block secret-bearing server paths, environment dumps, and cloud
   metadata endpoints. Remote log reads and ordinary SFTP file reads/downloads
   require user approval; sensitive SFTP paths are blocked.
-- The local MCP Server lives in `lib/services/mcp/` and is implemented in
-  Flutter/Dart, not native runners. It binds only to local hosts, serves
-  Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in secure
-  storage, and reuses `AiToolService` through separate exposure and invocation
-  policies. The default `reviewConfiguredTools` mode queues only exposed tools
+- The local MCP Server lives in `packages/features/feature_mcp/` and is
+  implemented in Flutter/Dart, not native runners. It binds only to local
+  hosts, serves Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token
+  in secure storage through the App Shell settings Port, and reuses
+  `AiToolService` through an injected runtime adapter and separate exposure and
+  invocation policies. The default `reviewConfiguredTools` mode queues only exposed tools
   selected for review when `approvalRequestFor` produces a dynamic request;
   `trustedAgent` directly executes exposed calls. The shared exposed set is
   persisted across both modes; missing preferences preserve current hard-allowed
@@ -299,16 +315,17 @@ and its focused extensions, `lib/features/ai_chat/services/`,
   `ToolSecretPolicy`, input-validation, sensitive-path, and destructive-command
   safeguards. The in-memory `McpApprovalQueue` is cleared on exposure, policy,
   token, or server lifecycle changes and is never persisted.
-- The Windows/macOS-only console is the `mcp_console` feature. Keep status, port
-  checks, loopback authenticated self-tests, configuration copying, policy
-  snapshots, redacted local activity, and the dedicated approval queue page
-  under this feature. The console is the only UI for per-Tool exposure and
+- The Windows/macOS-only console is owned by the `feature_mcp` package. Keep
+  status, port checks, loopback authenticated self-tests, configuration
+  copying, policy snapshots, redacted local activity, and the dedicated
+  approval queue page under this feature. The console is the only UI for per-Tool exposure and
   review configuration; hard-hidden and blocked rows remain disabled. MCP
-  activity is capped at 500 Drift records and must
+  activity is capped at 500 records in `mcp.db` and must
   never include tokens, request arguments, tool output, peer/origin data,
   remote-resource details, or raw exceptions; it is not a backup-export
-  payload. Approval previews must use the existing `AiToolApprovalRequest`
-  redaction path and must not expose raw tool arguments.
+  payload. Approval previews must use the `McpApprovalRequest` contract and
+  must not expose raw tool arguments; the App Shell may retain the original
+  binding only in its process-local opaque handle.
 
 ### SFTP
 

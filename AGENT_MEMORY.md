@@ -134,8 +134,9 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   equivalent provider path) so approval state cannot be bypassed. Default
   planning persists chat-bound `todoSteps`; create a reusable Playbook only
   when the user explicitly requests one.
-- The local MCP server is loopback-only and reuses `AiToolService`. External
-  MCP calls default to `reviewConfiguredTools`, where only exposed tools
+- The local MCP server is loopback-only and is maintained by
+  `packages/features/feature_mcp/`; its App Shell adapter reuses
+  `AiToolService`. External MCP calls default to `reviewConfiguredTools`, where only exposed tools
   selected for review enter the in-memory queue when a dynamic approval request
   exists; `trustedAgent` may execute exposed tools directly. Exposure is one
   shared persisted set across both modes. Missing exposure preferences preserve
@@ -280,8 +281,9 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   selected state; keep icon/text descendants excluded to avoid duplicate
   screen-reader announcements.
 - 2026-07-04: Fixed Windows compilation error in GitHub Actions (due to deprecation of C++ experimental coroutines in newer MSVC toolsets) by adding `_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS` to the global CMake definitions in [windows/CMakeLists.txt](file:///home/ubuntu/Documents/coding/ssh_mobile/windows/CMakeLists.txt).
-- 2026-08-03: Local MCP Server is implemented in Flutter/Dart under
-  `lib/services/mcp/`, not native runners. It binds only to local hosts,
+- 2026-08-03: Local MCP Server was implemented in Flutter/Dart, not native
+  runners. It binds only to local hosts; the 2026-08-08 modular refactor now
+  owns the implementation under `packages/features/feature_mcp/`,
   serves Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in
   secure storage, and exposes existing `AiToolService` tools through separate
   `McpToolExposurePolicy` and `McpInvocationPolicy` layers. External MCP
@@ -289,13 +291,14 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   exposed calls, but bound calls still use `executeApproved` and both modes
   retain hard security checks. The in-memory queue is cleared on policy/token/
   lifecycle changes and is never persisted.
-- 2026-08-03: The Windows/macOS `mcp_console` feature is a separate desktop
-  diagnostics page opened from MCP settings. It exposes loopback server state,
+- 2026-08-03: The Windows/macOS MCP console is a separate desktop diagnostics
+  page opened from MCP settings. It exposes loopback server state,
   port checks, a token-authenticated `initialize` then `tools/list` self-test,
   copied client templates, `McpToolExposurePolicy` snapshots, redacted local
   activity, and a dedicated approval queue navigation page. The queue page
-  must render only `AiToolApprovalRequest` previews; never expose raw MCP
-  arguments or persist approval callbacks.
+  must render only `McpApprovalRequest` previews; never expose raw MCP
+  arguments or persist approval callbacks. The App Shell keeps any original
+  AI binding only in the process-local opaque handle.
 - 2026-06-16: On keyboard-heavy mobile flows, avoid `MediaQuery.of(context)`
   in large server/file list rows when only size/density is needed. Prefer
   narrow helpers such as `MediaQuery.sizeOf` +
@@ -498,6 +501,14 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   limits, TTL, and access-order eviction. The development refactor does not
   read or migrate old RAG database files, and old App RAG paths are non-owning
   compatibility surfaces.
+- 2026-08-08: `packages/features/feature_mcp/` is the maintained MCP owner.
+  `McpModule` owns `mcp.db`, the activity Repository, HTTP/JSON-RPC server,
+  approval queue, policy execution boundary, and console route state. App Shell
+  adapters provide `McpSettingsPort`, `McpLoggerPort`, and the AI tool runtime;
+  `McpApprovalRequest.opaqueHandle` stays process-local so approved target
+  bindings return to the execution layer without serializing secrets. MCP
+  activity is not part of `AppDatabase` or `StorageService`, and development
+  refactor does not read or migrate the old MCP activity table.
 - 2026-07-18: `StorageService.appDatabase` can be read by root providers before
   asynchronous storage initialization starts. Keep database creation cached and
   single-owner, make concurrent `init()` calls share one future, reuse the same

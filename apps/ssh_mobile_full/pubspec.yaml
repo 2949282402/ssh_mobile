@@ -35,6 +35,8 @@ dependencies:
     path: ../../packages/features/feature_terminal
   feature_lan_share:
     path: ../../packages/features/feature_lan_share
+  feature_mcp:
+    path: ../../packages/features/feature_mcp
   dartssh2: ^2.22.5
   xterm:
     path: ../../third_party/xterm

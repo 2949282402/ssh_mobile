@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
+import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
@@ -19,13 +20,8 @@ import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
-import 'package:ssh_mobile/features/mcp_console/views/mcp_console_screen.dart';
-import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_console_viewmodel.dart';
-import 'package:ssh_mobile/features/mcp_console/views/mcp_settings_screen.dart';
-import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_settings_viewmodel.dart';
 import '../services/app_settings.dart';
 import '../services/storage_service.dart';
-import '../services/mcp/mcp_server_controller.dart';
 import 'package:app_ui/app_ui.dart';
 import 'app_runtime.dart';
 import 'connection_feature_adapters.dart';
@@ -252,7 +248,12 @@ class _SshMobileAppState extends State<SshMobileApp>
         ListenableProvider<feature_rag.RagCapability>.value(
           value: runtime.ragService,
         ),
-        ChangeNotifierProvider.value(value: runtime.mcpServerController),
+        ChangeNotifierProvider<feature_mcp.McpServerController>.value(
+          value: runtime.mcpModule.service,
+        ),
+        ListenableProvider<feature_mcp.McpSettingsPort>.value(
+          value: runtime.mcpSettingsAdapter,
+        ),
         ChangeNotifierProvider<feature_connection.ConnectionViewModel>(
           // ViewModel 仍由根页面提供，数据和运行时能力已通过公共契约注入。
           create: (_) => feature_connection.ConnectionViewModel(
@@ -452,22 +453,21 @@ class _SshMobileAppState extends State<SshMobileApp>
                         );
                       case '/mcp-console':
                         return MaterialPageRoute(
-                          builder: (_) => ChangeNotifierProvider(
-                            create: (context) => McpConsoleViewModel(
-                              context.read<McpServerController>(),
-                              context.read<AppSettings>(),
-                            ),
-                            child: const McpConsoleScreen(),
+                          builder: (_) => feature_mcp.McpFeatureScope(
+                            module: _runtime.mcpModule,
+                            child: const feature_mcp.McpConsoleScreen(),
                           ),
                         );
                       case '/mcp-settings':
                         return MaterialPageRoute(
                           builder: (context) => ChangeNotifierProvider(
-                            create: (_) => McpSettingsViewModel(
-                              appSettings: context.read<AppSettings>(),
-                              controller: context.read<McpServerController>(),
+                            create: (_) => feature_mcp.McpSettingsViewModel(
+                              settingsPort: context
+                                  .read<feature_mcp.McpSettingsPort>(),
+                              controller: context
+                                  .read<feature_mcp.McpServerController>(),
                             ),
-                            child: const McpSettingsScreen(),
+                            child: const feature_mcp.McpSettingsScreen(),
                           ),
                         );
                       default:
