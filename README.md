@@ -421,6 +421,11 @@ flowchart LR
   history, and the independent `terminal.db`. It consumes only public Core
   contracts and injected Ports; old App terminal paths remain compatibility
   exports while later storage/SSH migrations are pending.
+- `packages/features/feature_playbook/`: the migrated Playbook editor,
+  approval-bound sequential execution, encrypted run history, and independent
+  `playbook.db`. Cross-feature AI calls use the public
+  `PlaybookAutomationPort`; SSH, logging, and data protection arrive through
+  App Shell Ports.
 - `packages/features/feature_monitoring/`: real-time monitoring models,
   background parsers/probes, low-priority SSH Ports, the Monitoring Module, and
   route-scoped monitoring state. It intentionally has no `monitoring.db`; the

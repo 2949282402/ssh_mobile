@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -108,6 +109,10 @@ void main() {
                 value: performanceMonitorService,
               ),
               ChangeNotifierProvider<PlaybookService>.value(
+                value: playbookService,
+              ),
+              // 旧测试仍保留具体实现，同时按公开 Contract 注入 Playbook 能力。
+              ListenableProvider<feature_playbook.PlaybookAutomationPort>.value(
                 value: playbookService,
               ),
               ChangeNotifierProvider<RagService>.value(value: ragService),

@@ -86,6 +86,11 @@ Feature implementation, or App `/src/`. App settings, logging, data
 protection, identity, and native v1 creation arrive through Ports from
 `apps/ssh_mobile_full/lib/app/lan_share_feature_adapters.dart`. Old LAN paths
 remain compatibility bridges during the staged migration.
+The Playbook Feature package is `packages/features/feature_playbook/`; it owns
+the Playbook UI, approval-aware sequential execution, encrypted run history,
+and `playbook.db`. SSH, logging, and data protection arrive through injected
+Ports, and AI callers use the public `PlaybookAutomationPort` contract. The
+development refactor does not import old Playbook database records.
 The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
 Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
@@ -139,6 +144,11 @@ implementations. The old App terminal files are compatibility exports/bridges.
   exposes the Coordinator-owned ViewModel. Receiver activation is explicit and
   configuration-controlled; compiling or importing the package must not start
   listeners. The Feature must not construct native network or SSH objects.
+- `feature_playbook` must keep `PlaybookModule` as the owner of `playbook.db`,
+  its Repository, and the execution Service. Approval fingerprints, immutable
+  SSH target bindings, destructive-command restrictions, and secret filtering
+  stay in the Service/Port layer rather than UI widgets. AI callers depend on
+  `PlaybookAutomationPort`, never on another Feature's implementation or `/src/`.
 - `feature_terminal` must keep `TerminalModule` as the owner of `terminal.db`
   and its repository. Route scope owns Terminal ViewModels and their
   subscriptions/controllers; disposing a route must not close the injected App
@@ -379,6 +389,28 @@ surfaces until later cleanup.
   required. The Windows installer firewall rule is scoped to the application
   and local subnet.
 - Never log pairing PIN values.
+
+### Playbook
+
+Primary maintained entry points are
+`packages/features/feature_playbook/lib/feature_playbook.dart`,
+`packages/features/feature_playbook/lib/src/application/playbook_module.dart`,
+`packages/features/feature_playbook/lib/src/application/playbook_service.dart`,
+and `packages/features/feature_playbook/lib/src/data/repositories/
+playbook_repository.dart`. The old App Playbook paths remain non-owning
+compatibility surfaces; they are not a second production database owner.
+
+- Keep `PlaybookModule` lazy and configuration-controlled. Activating the Module
+  must not connect to SSH or start execution automatically.
+- Persist `playbooks`, `playbook_runs`, and `playbook_run_steps` only through
+  the Module-owned Repository and encrypt command/output JSON before Drift writes.
+- Use immutable `ssh_core.SshTargetBinding` snapshots and action fingerprints
+  for approved execution. Reject stale target or command snapshots before each
+  persisted state update.
+- Execute steps serially. Pause, skip, resume, and dispose must coordinate with
+  the in-flight command so no superseded run can write later state.
+- Keep destructive shell restrictions, approval checks, and secret filtering in
+  the Service/Port layer; never recreate them in a Playbook widget or prompt.
 
 ### Network Platform and Public Relay
 

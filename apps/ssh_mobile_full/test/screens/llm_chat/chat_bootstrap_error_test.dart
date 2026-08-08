@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
@@ -51,6 +52,10 @@ void main() {
               value: monitor,
             ),
             ChangeNotifierProvider<PlaybookService>.value(value: playbooks),
+            // 旧测试仍保留具体实现，同时按公开 Contract 注入 Playbook 能力。
+            ListenableProvider<feature_playbook.PlaybookAutomationPort>.value(
+              value: playbooks,
+            ),
             ChangeNotifierProvider<RagService>.value(value: rag),
             ChangeNotifierProvider<AppSettings>.value(value: settings),
           ],

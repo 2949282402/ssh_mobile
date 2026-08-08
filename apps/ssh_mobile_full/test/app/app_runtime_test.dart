@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:drift/native.dart';
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
+import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/app/app_runtime_factory.dart';
 import 'package:ssh_mobile/app/terminal_ssh_capability_adapter.dart';
@@ -39,6 +40,10 @@ void main() {
               NativeDatabase.memory(),
             ),
         lanShareReceiverEnabled: false,
+        playbookDatabaseFactory: () =>
+            feature_playbook.PlaybookDatabase.forTesting(
+              NativeDatabase.memory(),
+            ),
       );
 
       expect(runtime.isDisposed, isFalse);

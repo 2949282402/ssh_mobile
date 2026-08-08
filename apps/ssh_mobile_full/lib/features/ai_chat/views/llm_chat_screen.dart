@@ -4,6 +4,7 @@ import 'dart:convert';
 // ignore_for_file: unused_element
 
 import 'package:file_picker/file_picker.dart';
+import 'package:feature_playbook/feature_playbook.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -16,7 +17,6 @@ import 'package:ssh_mobile/features/ai_chat/services/ai_chat_message_mapper.dart
 import 'package:ssh_mobile/features/ai_chat/services/plan_command_parser.dart';
 import 'package:ssh_mobile/features/ai_chat/services/plan_approval_eligibility.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
-import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/agent_model_profile.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
@@ -29,7 +29,6 @@ import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:app_ui/app_ui.dart';
 import 'widgets/history_action_sheet.dart';
@@ -229,7 +228,7 @@ class LlmChatScreen extends StatelessWidget {
               sftpService: context.read<SftpService>(),
               performanceMonitorService: context
                   .read<PerformanceMonitorService>(),
-              playbookService: context.read<PlaybookService>(),
+              playbookService: context.read<PlaybookAutomationPort>(),
               ragService: context.read<RagService>(),
               appSettings: context.read<AppSettings>(),
             );

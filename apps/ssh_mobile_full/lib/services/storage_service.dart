@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart' as drift;
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -62,6 +63,7 @@ class StorageService extends ChangeNotifier
         AppBackupRepository {
   final db.AppDatabase? _providedDatabase;
   final db.AppDatabase Function()? _databaseFactory;
+  feature_playbook.PlaybookRepository? _playbookRepositoryOverride;
   @visibleForTesting
   final Future<void> Function()? initializationCheckpoint;
   Completer<void>? _aiSettingsOperation;
@@ -80,6 +82,20 @@ class StorageService extends ChangeNotifier
   }) : assert(database == null || databaseFactory == null),
        _providedDatabase = database,
        _databaseFactory = databaseFactory;
+
+  /// 将旧 Storage 的 Playbook 公共 API 桥接到 Feature Module Repository。
+  ///
+  /// 旧方法和旧测试继续保留；生产 Runtime 注册后，AI、备份和兼容入口都
+  /// 访问同一个 `playbook.db`，避免迁移后出现两份剧本数据。
+  void attachPlaybookRepository(
+    feature_playbook.PlaybookRepository repository,
+  ) {
+    if (_disposed) {
+      throw StateError('StorageService has been shut down');
+    }
+    _playbookRepositoryOverride = repository;
+    _playbooksCache = null;
+  }
 
   Future<T> _runExclusiveAiSettingsOperation<T>(
     Future<T> Function() operation,
@@ -827,20 +843,36 @@ class StorageService extends ChangeNotifier
       _executeDrift(() => _deleteAgentTraceEvents(runId));
 
   @override
-  Future<List<Playbook>> loadPlaybooks() => _runExclusivePlaybookOperation(
-    () => _executeDrift(() => _loadPlaybooks()),
-  );
+  Future<List<Playbook>> loadPlaybooks() =>
+      _runExclusivePlaybookOperation(() async {
+        final repository = _playbookRepositoryOverride;
+        if (repository == null) {
+          return _executeDrift(() => _loadPlaybooks());
+        }
+        return repository.loadPlaybooks();
+      });
 
   @override
   Future<void> savePlaybook(Playbook playbook) =>
-      _runExclusivePlaybookOperation(
-        () => _executeDrift(() => _savePlaybook(playbook)),
-      );
+      _runExclusivePlaybookOperation(() async {
+        final repository = _playbookRepositoryOverride;
+        if (repository != null) {
+          await repository.savePlaybook(playbook);
+          return;
+        }
+        await _executeDrift(() => _savePlaybook(playbook));
+      });
 
   @override
-  Future<void> deletePlaybook(String id) => _runExclusivePlaybookOperation(
-    () => _executeDrift(() => _deletePlaybook(id)),
-  );
+  Future<void> deletePlaybook(String id) =>
+      _runExclusivePlaybookOperation(() async {
+        final repository = _playbookRepositoryOverride;
+        if (repository != null) {
+          await repository.deletePlaybook(id);
+          return;
+        }
+        await _executeDrift(() => _deletePlaybook(id));
+      });
 
   /// Persists execution state only while the approved commands are unchanged.
   Future<bool> savePlaybookIfActionUnchanged({
@@ -855,8 +887,16 @@ class StorageService extends ChangeNotifier
         'Playbook id must match playbookId.',
       );
     }
-    return _runExclusivePlaybookOperation(
-      () => _executeDrift(() async {
+    return _runExclusivePlaybookOperation(() async {
+      final repository = _playbookRepositoryOverride;
+      if (repository != null) {
+        return repository.savePlaybookIfActionUnchanged(
+          playbookId: playbookId,
+          expectedActionFingerprint: expectedActionFingerprint,
+          playbook: playbook,
+        );
+      }
+      return _executeDrift(() async {
         final playbooks = await _loadPlaybooks();
         Playbook? current;
         for (final candidate in playbooks) {
@@ -872,8 +912,8 @@ class StorageService extends ChangeNotifier
         }
         await _savePlaybook(playbook);
         return true;
-      }),
-    );
+      });
+    });
   }
 
   @override

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
+import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
 import 'package:feature_terminal/feature_terminal.dart';
 import 'package:flutter/material.dart';
@@ -10,7 +11,6 @@ import 'package:provider/provider.dart';
 import 'package:ssh_core/ssh_core.dart';
 
 import '../features/settings/viewmodels/settings_viewmodel.dart';
-import '../features/playbook/viewmodels/playbook_viewmodel.dart';
 import '../features/rag/viewmodels/rag_knowledge_viewmodel.dart';
 import '../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
 import '../features/startup/viewmodels/startup_viewmodel.dart';
@@ -18,7 +18,6 @@ import '../features/developer_panel/views/developer_panel_floating.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
-import 'package:ssh_mobile/features/playbook/views/playbook_screen.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import 'package:ssh_mobile/features/rag/views/rag_knowledge_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/views/mcp_console_screen.dart';
@@ -26,7 +25,6 @@ import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_console_viewmodel
 import 'package:ssh_mobile/features/mcp_console/views/mcp_settings_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_settings_viewmodel.dart';
 import '../services/app_settings.dart';
-import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
 import '../services/storage_service.dart';
 import '../services/mcp/mcp_server_controller.dart';
@@ -214,6 +212,12 @@ class _SshMobileAppState extends State<SshMobileApp>
         Provider<feature_lan_share.LanShareModule>.value(
           value: runtime.lanShareModule,
         ),
+        ListenableProvider<feature_playbook.PlaybookSettingsPort>.value(
+          value: runtime.playbookSettingsAdapter,
+        ),
+        ListenableProvider<
+          feature_playbook.PlaybookConnectionCatalogPort
+        >.value(value: runtime.playbookConnectionCatalogAdapter),
         ChangeNotifierProxyProvider<
           AppSettings,
           feature_connection.ConnectionStrings
@@ -238,6 +242,9 @@ class _SshMobileAppState extends State<SshMobileApp>
         ChangeNotifierProvider.value(value: runtime.sftpService),
         ChangeNotifierProvider.value(value: runtime.performanceMonitorService),
         ChangeNotifierProvider.value(value: runtime.playbookService),
+        ListenableProvider<feature_playbook.PlaybookAutomationPort>.value(
+          value: runtime.playbookService,
+        ),
         ChangeNotifierProvider.value(value: runtime.ragService),
         ChangeNotifierProvider.value(value: runtime.mcpServerController),
         ChangeNotifierProvider<feature_connection.ConnectionViewModel>(
@@ -405,13 +412,19 @@ class _SshMobileAppState extends State<SshMobileApp>
                         );
                       case '/playbooks':
                         return MaterialPageRoute(
-                          builder: (_) => ChangeNotifierProvider(
-                            create: (context) => PlaybookViewModel(
-                              playbookService: context.read<PlaybookService>(),
-                              storageService: context.read<StorageService>(),
-                            ),
-                            child: const PlaybookScreen(),
-                          ),
+                          builder: (context) =>
+                              feature_playbook.PlaybookFeatureScope(
+                                module: _runtime.playbookModule,
+                                settings: context
+                                    .read<
+                                      feature_playbook.PlaybookSettingsPort
+                                    >(),
+                                connectionCatalog: context
+                                    .read<
+                                      feature_playbook.PlaybookConnectionCatalogPort
+                                    >(),
+                                child: const feature_playbook.PlaybookScreen(),
+                              ),
                         );
                       case '/add':
                         return MaterialPageRoute(

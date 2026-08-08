@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:flutter/foundation.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import '../features/playbook/models/playbook.dart';
 import 'connection_target_binding.dart';
 import 'storage_service.dart';
 import 'ssh_service.dart';
 import 'app_log_service.dart';
 
-class PlaybookService extends ChangeNotifier {
+class PlaybookService extends ChangeNotifier
+    implements feature_playbook.PlaybookAutomationPort {
   final StorageService _storageService;
   final SshService _sshService;
 
@@ -28,17 +31,24 @@ class PlaybookService extends ChangeNotifier {
     _loadPlaybooksFromStorage();
   }
 
+  @override
   String? get pendingDiagnosticPrompt => _pendingDiagnosticPrompt;
 
+  @override
   set pendingDiagnosticPrompt(String? value) {
     _pendingDiagnosticPrompt = value;
     _notifyListeners();
   }
 
+  @override
   List<Playbook> get playbooks => List.unmodifiable(_playbooks);
+  @override
   Playbook? get activePlaybook => _activePlaybook;
+  @override
   int get currentStepIndex => _currentStepIndex;
+  @override
   bool get isRunning => _isRunning;
+  @override
   bool get isPaused => _isPaused;
   String? get activeConnectionId => _activeConnectionId;
 
@@ -120,6 +130,7 @@ class PlaybookService extends ChangeNotifier {
     updatePlaybook(resetPlaybook);
   }
 
+  @override
   Future<void> startExecution(String playbookId, String connectionId) async {
     selectPlaybook(playbookId);
     final selectedPlaybook = _activePlaybook;
@@ -192,6 +203,22 @@ class PlaybookService extends ChangeNotifier {
     }
     unawaited(_executeLoop(run, runningPlaybook, 0));
     return true;
+  }
+
+  /// 为 AI 公共契约提供新 SSH 绑定到旧执行器的最小迁移适配。
+  @override
+  Future<bool> startApprovedExecutionForBinding({
+    required Playbook playbook,
+    required String actionFingerprint,
+    required ssh_core.SshTargetBinding connectionTarget,
+  }) {
+    return startApprovedExecution(
+      playbook: playbook,
+      actionFingerprint: actionFingerprint,
+      connectionTarget: ConnectionTargetBinding.fromConfig(
+        connectionTarget.config,
+      ),
+    );
   }
 
   Future<void> resumeExecution(String connectionId) async {

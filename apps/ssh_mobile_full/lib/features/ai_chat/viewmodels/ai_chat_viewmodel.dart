@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:feature_playbook/feature_playbook.dart';
 import '../services/ai_chat_status_translator.dart';
 import '../services/ai_chat_run_metrics_recorder.dart';
 import '../services/ai_chat_generation_runner.dart';
@@ -9,7 +10,6 @@ import '../services/ai_chat_run_state_reconciler.dart';
 
 export '../services/ai_chat_status_translator.dart' show AgentStatusString;
 import '../../../services/ai_tool_service.dart';
-import '../../playbook/models/playbook.dart';
 import '../../../services/agent_model_profile.dart';
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
@@ -23,7 +23,6 @@ import '../services/llm_chat_service.dart';
 import '../../../services/llm_runtime/llm_runtime_types.dart';
 import '../../../services/llm_provider/llm_api_format.dart';
 import '../../../services/performance_monitor_service.dart';
-import '../../../services/playbook_service.dart';
 import '../../../services/rag_service.dart';
 import '../../../services/sftp_service.dart';
 import '../../../services/ssh_service.dart';
@@ -226,7 +225,7 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   final StorageService _storageService;
-  final PlaybookService _playbookService;
+  final PlaybookAutomationPort _playbookService;
   final AppSettings _appSettings;
   final AiChatRuntimeFactory _runtimeFactory;
   final ClientHealthAdvisorAdapter _clientHealthAdvisor;
@@ -291,7 +290,7 @@ class AiChatViewModel extends ChangeNotifier {
     required SshService sshService,
     required SftpService sftpService,
     required PerformanceMonitorService performanceMonitorService,
-    required PlaybookService playbookService,
+    required PlaybookAutomationPort playbookService,
     required RagService ragService,
     required AppSettings appSettings,
     AiChatRuntimeFactory? runtimeFactory,

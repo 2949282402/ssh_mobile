@@ -3,7 +3,7 @@ part of '../ai_tool_service.dart';
 class PlaybookToolsProvider implements AiToolProvider {
   final StorageService storageService;
   final AppSettings? appSettings;
-  final PlaybookService? playbookService;
+  final PlaybookAutomationPort? playbookService;
 
   const PlaybookToolsProvider({
     required this.storageService,
@@ -151,10 +151,10 @@ class PlaybookToolsProvider implements AiToolProvider {
           'code': 'approval_target_changed',
         });
       }
-      final started = await playbookService!.startApprovedExecution(
+      final started = await playbookService!.startApprovedExecutionForBinding(
         playbook: approvalSnapshot.playbook,
         actionFingerprint: approvalSnapshot.actionFingerprint,
-        connectionTarget: target,
+        connectionTarget: ssh_core.SshTargetBinding.fromConfig(target.config),
       );
       if (!started) {
         return jsonEncode({

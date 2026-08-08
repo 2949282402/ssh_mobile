@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:network_transport/network_transport.dart';
 
 import '../features/ai_chat/services/ai_chat_runtime_factory.dart';
@@ -16,7 +17,6 @@ import '../services/display_mode_service.dart';
 import '../services/mcp/mcp_server_controller.dart';
 import '../services/network/network_identity_service.dart';
 import '../services/performance_monitor_service.dart';
-import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
 import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
@@ -25,6 +25,7 @@ import '../services/storage_service.dart';
 import 'app_runtime.dart';
 import 'lan_share_feature_adapters.dart';
 import 'monitoring_feature_adapters.dart';
+import 'playbook_feature_adapters.dart';
 import 'terminal_ssh_capability_adapter.dart';
 
 /// App Scope 的唯一组装入口，负责创建并连接应用级服务。
@@ -47,6 +48,7 @@ final class AppRuntimeFactory {
     connection_core.HostKeyRepository? hostKeyRepository,
     NetworkRuntime? networkRuntime,
     feature_lan_share.LanShareDatabaseFactory? lanShareDatabaseFactory,
+    feature_playbook.PlaybookModuleDatabaseFactory? playbookDatabaseFactory,
     bool? lanShareReceiverEnabled,
   }) async {
     final logger = appLogService ?? AppLogService();
@@ -105,6 +107,27 @@ final class AppRuntimeFactory {
       }),
     );
 
+    final playbookSettingsAdapter = AppPlaybookSettingsAdapter(appSettings);
+    final playbookConnectionCatalogAdapter =
+        AppPlaybookConnectionCatalogAdapter(storageService);
+    final playbookModule = feature_playbook.PlaybookModule(
+      databaseFactory: playbookDatabaseFactory,
+    );
+    await playbookModule.register(
+      ModuleContext.fromMap({
+        feature_playbook.PlaybookSettingsPort: playbookSettingsAdapter,
+        feature_playbook.PlaybookConnectionCatalogPort:
+            playbookConnectionCatalogAdapter,
+        feature_playbook.PlaybookSshPort: AppPlaybookSshAdapter(sshService),
+        feature_playbook.PlaybookLoggerPort: AppPlaybookLoggerAdapter(logger),
+        feature_playbook.PlaybookDataProtectionPort:
+            AppPlaybookDataProtectionAdapter(DataProtectionService.instance),
+      }),
+    );
+    await playbookModule.initialize();
+    await playbookModule.activate();
+    storageService.attachPlaybookRepository(playbookModule.repository);
+
     final sftpService = SftpService(storageService);
     final monitoringModule = monitoring.MonitoringModule();
     await monitoringModule.register(
@@ -124,10 +147,6 @@ final class AppRuntimeFactory {
     final performanceMonitorService = PerformanceMonitorService.fromDelegate(
       monitoringService,
     );
-    final playbookService = PlaybookService(
-      storageService: storageService,
-      sshService: sshService,
-    );
     final ragService = RagService(storageService: storageService);
     storageService.registerOnImportCallback(() => ragService.init(force: true));
 
@@ -139,7 +158,7 @@ final class AppRuntimeFactory {
         sshService: sshService,
         sftpService: sftpService,
         performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
+        playbookService: playbookModule.service,
         ragService: ragService,
         appSettings: appSettings,
       ).createToolService(),
@@ -182,7 +201,9 @@ final class AppRuntimeFactory {
       monitoringModule: monitoringModule,
       monitoringService: monitoringService,
       performanceMonitorService: performanceMonitorService,
-      playbookService: playbookService,
+      playbookModule: playbookModule,
+      playbookSettingsAdapter: playbookSettingsAdapter,
+      playbookConnectionCatalogAdapter: playbookConnectionCatalogAdapter,
       ragService: ragService,
       mcpServerController: mcpServerController,
       lanShareModule: lanShareModule,

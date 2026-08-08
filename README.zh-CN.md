@@ -402,6 +402,9 @@ flowchart LR
 - `packages/features/feature_terminal/`：已经迁移的 Terminal Pilot，包括路由作用域
   ViewModel、终端页面、终端输出历史和独立的 `terminal.db`。它只依赖公共 Core 合约
   与注入的 Port；后续存储/SSH Step 完成前，旧 App Terminal 路径保留为兼容导出。
+- `packages/features/feature_playbook/`：已经迁移的 Playbook 编辑、审批绑定、串行
+  执行和加密运行历史，Module 独占 `playbook.db`。AI 等跨 Feature 调用只依赖公开的
+  `PlaybookAutomationPort`，SSH、日志和数据保护能力由 App Shell 注入。
 - `apps/ssh_mobile_full/lib/services/`：跨 Feature 的 SSH/SFTP/LLM/AI Tool、监控、存储、局域网
   快传、MCP 和平台适配基础设施。
 - `apps/ssh_mobile_full/lib/data/`：Drift 数据库、DAO 和 Repository 实现。

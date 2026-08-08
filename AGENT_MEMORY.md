@@ -483,6 +483,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `StorageService`; never hide them with `NativeDatabase.memory()` or a legacy
   preference fallback. AI chat message text/context/attachments/traces/
   todoSteps and Playbook `content_json` are field-encrypted before Drift writes.
+- 2026-08-08: `packages/features/feature_playbook/` is the maintained Playbook
+  owner. `PlaybookModule` owns `playbook.db`, its Repository, and execution
+  Service; the App Shell injects SSH, logger, and data-protection Ports. The
+  public `PlaybookAutomationPort` is the AI cross-feature boundary. Development
+  refactor does not import old Playbook records; old App paths remain only as
+  non-owning code/test compatibility surfaces.
 - 2026-07-18: `StorageService.appDatabase` can be read by root providers before
   asynchronous storage initialization starts. Keep database creation cached and
   single-owner, make concurrent `init()` calls share one future, reuse the same

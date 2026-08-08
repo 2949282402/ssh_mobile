@@ -4,16 +4,17 @@ import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
 
 import 'lan_share_feature_adapters.dart';
+import 'playbook_feature_adapters.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/mcp/mcp_server_controller.dart';
 import '../services/performance_monitor_service.dart';
-import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
 import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
@@ -44,7 +45,9 @@ final class AppRuntime implements Disposable {
     required this.monitoringModule,
     required this.monitoringService,
     required this.performanceMonitorService,
-    required this.playbookService,
+    required this.playbookModule,
+    required this.playbookSettingsAdapter,
+    required this.playbookConnectionCatalogAdapter,
     required this.ragService,
     required this.mcpServerController,
     required this.lanShareModule,
@@ -103,8 +106,18 @@ final class AppRuntime implements Disposable {
   /// 旧 API 兼容外观，不拥有 [monitoringService]。
   final PerformanceMonitorService performanceMonitorService;
 
-  // TODO(refactor-step-16): 将 Playbook 服务迁移到 playbook 模块。
-  final PlaybookService playbookService;
+  /// Playbook Module 的唯一 App Scope Owner。
+  final feature_playbook.PlaybookModule playbookModule;
+
+  /// 供 Playbook Route Scope 使用的设置适配器，不拥有 AppSettings。
+  final AppPlaybookSettingsAdapter playbookSettingsAdapter;
+
+  /// 供 Playbook Route Scope 使用的连接目录适配器，不拥有 StorageService。
+  final AppPlaybookConnectionCatalogAdapter playbookConnectionCatalogAdapter;
+
+  /// 旧 Runtime API 兼容视图；实际 Service Owner 是 [playbookModule]。
+  feature_playbook.PlaybookService get playbookService =>
+      playbookModule.service;
 
   // TODO(refactor-step-16): 将 RAG 服务迁移到 rag 模块。
   final RagService ragService;
@@ -166,6 +179,9 @@ final class AppRuntime implements Disposable {
     });
     await attempt(lanShareModule.dispose);
     await attempt(lanShareSettingsAdapter.dispose);
+    await attempt(playbookModule.dispose);
+    await attempt(playbookSettingsAdapter.dispose);
+    await attempt(playbookConnectionCatalogAdapter.dispose);
 
     // 等待启动中的 Storage 初始化完成，再关闭数据库，避免异步初始化在
     // shutdown 之后重新打开数据库或继续触发通知。
@@ -191,7 +207,6 @@ final class AppRuntime implements Disposable {
       performanceMonitorService.dispose();
       await monitoringModule.dispose();
     });
-    await attempt(playbookService.dispose);
     await attempt(ragService.dispose);
     await attempt(shortcutCommandService.dispose);
     await attempt(appSettings.dispose);

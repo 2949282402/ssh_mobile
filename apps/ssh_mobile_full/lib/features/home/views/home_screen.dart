@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import 'package:feature_connection/feature_connection.dart';
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
+import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
 import 'package:feature_system_admin/feature_system_admin.dart'
     as feature_system_admin;
@@ -121,28 +122,32 @@ class _HomeScreenState extends State<HomeScreen> {
         _openSettings(context);
         return true;
       },
-      child: NotificationListener<SwitchToAiTabNotification>(
-        onNotification: (notification) {
-          _switchPage(_aiPage);
-          return true;
-        },
-        child: PageView.builder(
-          controller: _pageController,
-          itemCount: _lastPage + 1,
-          physics: const NeverScrollableScrollPhysics(),
-          allowImplicitScrolling: false,
-          onPageChanged: (index) {
-            if (_selectedIndex != index) {
-              setState(() {
-                _selectedIndex = index;
-                _settledIndex = index;
-              });
-              _onPageActive(index);
-            }
-          },
-          itemBuilder: (context, index) => _buildPage(context, index, strings),
-        ),
-      ),
+      child:
+          NotificationListener<
+            feature_playbook.PlaybookAiNavigationNotification
+          >(
+            onNotification: (notification) {
+              _switchPage(_aiPage);
+              return true;
+            },
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: _lastPage + 1,
+              physics: const NeverScrollableScrollPhysics(),
+              allowImplicitScrolling: false,
+              onPageChanged: (index) {
+                if (_selectedIndex != index) {
+                  setState(() {
+                    _selectedIndex = index;
+                    _settledIndex = index;
+                  });
+                  _onPageActive(index);
+                }
+              },
+              itemBuilder: (context, index) =>
+                  _buildPage(context, index, strings),
+            ),
+          ),
     );
 
     final isDark = Theme.of(context).brightness == Brightness.dark;

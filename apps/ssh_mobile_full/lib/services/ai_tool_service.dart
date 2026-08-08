@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:feature_playbook/feature_playbook.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
+
 import '../features/connection/models/connection.dart';
-import '../features/playbook/models/playbook.dart';
 import 'app_log_service.dart';
 import 'app_settings.dart';
 import 'client_system_tool_service.dart';
@@ -12,7 +14,6 @@ import 'client_webview_service.dart';
 import 'connection_target_binding.dart';
 import 'multi_agent_coordinator.dart';
 import 'performance_monitor_tool_service.dart';
-import 'playbook_service.dart';
 import 'server_catalog_service.dart';
 import 'server_diagnostics_service.dart';
 import 'sftp_service.dart';
@@ -60,7 +61,7 @@ class AiToolService
   final ServerDiagnosticsAdapter serverDiagnosticsService;
   final ToolSecretPolicy secretPolicy;
   final AppSettings? appSettings;
-  final PlaybookService? playbookService;
+  final PlaybookAutomationPort? playbookService;
   final String? clientWebViewSessionId;
   final SkillDomainService skillDomainService;
 
@@ -184,7 +185,7 @@ class AiToolService
     required ToolSecretPolicy secretPolicy,
     required SkillDomainService skillDomainService,
     AppSettings? appSettings,
-    PlaybookService? playbookService,
+    PlaybookAutomationPort? playbookService,
     String? clientWebViewSessionId,
   }) {
     return [
