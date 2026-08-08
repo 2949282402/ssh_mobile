@@ -10,6 +10,7 @@ packages:
   - packages/features/feature_system_admin
   - packages/features/feature_sftp
   - packages/features/feature_terminal
+  - packages/features/feature_lan_share
   - packages/infrastructure/network_transport
   - packages/infrastructure/ssh_core
   - packages/infrastructure/ssh_mobile_network_native

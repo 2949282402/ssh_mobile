@@ -59,10 +59,10 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `NetworkRuntime` facade. `AppRuntimeFactory` creates exactly one lazy runtime
   and `AppRuntime` closes it after SSH/SFTP stop. QUIC and WSS Relay share one
   native initialization Future; failed initialization is retryable, and dispose
-  waits for a pending native handle before explicit close. The old LAN
-  coordinator remains a temporary direct native/protocol consumer until its
-  dedicated migration Step; do not add another NetworkRuntime implementation in
-  a Feature.
+  waits for a pending native handle before explicit close. The LAN Feature now
+  consumes this facade and an injected `LanShareNetworkFactory`; only the App
+  Shell adapter may construct the native v1 service. Do not add another
+  NetworkRuntime or native implementation in a Feature.
 - `packages/infrastructure/ssh_core/` owns the App Scope `SshSessionManager`,
   Runtime Adapter contracts, Session Pool/Lease lifecycle, SSH Client/Host Key/
   command boundaries, and non-secret target bindings. The package must not depend
@@ -104,6 +104,15 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   and Monitoring resources. The Module owns only the current management
   session and closes it on route/module disposal; old System Admin paths remain
   compatibility surfaces during later convergence.
+- `packages/features/feature_lan_share/` owns the LAN discovery/pairing/
+  transfer implementation, `LanShareModule`, `LanShareHistoryRepository`, and
+  `lan_share.db`. The database contains transfer history plus non-secret pairing
+  metadata only. `AppRuntimeFactory` registers settings, logger, data
+  protection, QUIC identity, native-network factory, and `NetworkRuntime` Ports;
+  the Module activates the receiver only when its configuration allows it.
+  `apps/ssh_mobile_full/lib/app/lan_share_feature_adapters.dart` remains the
+  compatibility boundary, while old LAN paths stay non-owning migration
+  surfaces until later cleanup.
 
 ### Logging contract
 

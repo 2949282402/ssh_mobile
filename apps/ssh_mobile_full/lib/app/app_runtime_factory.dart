@@ -3,16 +3,18 @@ import 'dart:async';
 import 'package:app_core/app_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:network_transport/network_transport.dart';
 
 import '../features/ai_chat/services/ai_chat_runtime_factory.dart';
-import '../features/lan_share/services/lan_receiver_coordinator.dart';
+import '../core/services/data_protection_service.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/display_mode_service.dart';
 import '../services/mcp/mcp_server_controller.dart';
+import '../services/network/network_identity_service.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
@@ -21,6 +23,7 @@ import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import 'app_runtime.dart';
+import 'lan_share_feature_adapters.dart';
 import 'monitoring_feature_adapters.dart';
 import 'terminal_ssh_capability_adapter.dart';
 
@@ -43,6 +46,8 @@ final class AppRuntimeFactory {
     connection_core.CredentialRepository? credentialRepository,
     connection_core.HostKeyRepository? hostKeyRepository,
     NetworkRuntime? networkRuntime,
+    feature_lan_share.LanShareDatabaseFactory? lanShareDatabaseFactory,
+    bool? lanShareReceiverEnabled,
   }) async {
     final logger = appLogService ?? AppLogService();
     logger.install();
@@ -139,10 +144,26 @@ final class AppRuntimeFactory {
         appSettings: appSettings,
       ).createToolService(),
     );
-    final lanReceiverCoordinator = LanReceiverCoordinator(
-      storageService: storageService,
-      appSettings: appSettings,
+    final lanShareSettingsAdapter = AppLanShareSettingsAdapter(appSettings);
+    final lanShareModule = feature_lan_share.LanShareModule(
+      receiverEnabled: lanShareReceiverEnabled,
+      databaseFactory: lanShareDatabaseFactory,
     );
+    await lanShareModule.register(
+      ModuleContext.fromMap({
+        feature_lan_share.LanShareSettingsPort: lanShareSettingsAdapter,
+        feature_lan_share.LanShareLoggerPort: AppLanShareLoggerAdapter(logger),
+        feature_lan_share.LanShareDataProtectionPort:
+            AppLanShareDataProtectionAdapter(DataProtectionService.instance),
+        feature_lan_share.LanShareNetworkIdentityPort:
+            AppLanShareNetworkIdentityAdapter(NetworkIdentityService()),
+        feature_lan_share.LanShareNetworkFactory:
+            const AppLanShareNetworkFactory(),
+        NetworkRuntime: runtimeNetworkRuntime,
+      }),
+    );
+    await lanShareModule.initialize();
+    await lanShareModule.activate();
 
     return AppRuntime(
       appLogService: logger,
@@ -164,7 +185,8 @@ final class AppRuntimeFactory {
       playbookService: playbookService,
       ragService: ragService,
       mcpServerController: mcpServerController,
-      lanReceiverCoordinator: lanReceiverCoordinator,
+      lanShareModule: lanShareModule,
+      lanShareSettingsAdapter: lanShareSettingsAdapter,
     );
   }
 

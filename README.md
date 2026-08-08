@@ -431,8 +431,13 @@ flowchart LR
   Capability contract. App Shell adapters inject legacy SSH, connection,
   settings, SFTP, logger, Host Key, and monitoring implementations; the
   package does not depend on another Feature implementation.
+- `packages/features/feature_lan_share/`: LAN discovery, pairing,
+  HTTPS/WebSocket transfer, Web Share, transfer history, non-secret pairing
+  metadata, and the `LanShareModule` with its independent `lan_share.db`.
+  The package consumes only `network_transport`, `app_core`, `app_ui`, and
+  injected App Ports; native v1 construction remains in the App Shell adapter.
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
-  LAN-share, MCP, and platform-adapter infrastructure.
+  legacy LAN-share compatibility services, MCP, and platform-adapter infrastructure.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
@@ -461,8 +466,9 @@ their single lifecycle owner. `main.dart` only delegates to `AppBootstrap`;
 `SshMobileApp` exposes existing Runtime instances through `MultiProvider`.
 The same Runtime owns one lazy `NetworkRuntime`; QUIC and WSS Relay capabilities
 share native initialization, failed initialization can retry, and disposal waits
-for and closes the native handle. The existing LAN coordinator remains on its
-legacy protocol adapter until its dedicated migration Step.
+for and closes the native handle. LAN Share now has a Feature-owned Module and
+database; its App Shell adapter is the only bridge to the legacy native v1
+service, while old LAN paths remain compatibility surfaces during migration.
 `AppRuntime.logger` exposes the Core logger contract; the current full-app
 implementation is an App-layer `AppLogService` adapter, so existing database,
 disk, redaction, and UI notification behavior remains unchanged during staged

@@ -1,0 +1,50 @@
+name: feature_lan_share
+description: LAN Quick Share feature, pairing, discovery, and transfer history.
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  app_core:
+    path: ../../core/app_core
+  app_ui:
+    path: ../../core/app_ui
+  network_transport:
+    path: ../../infrastructure/network_transport
+  basic_utils: ^5.8.2
+  crypto: ^3.0.7
+  cryptography: ^2.9.0
+  desktop_drop: ^0.7.1
+  disk_space_2: ^1.0.13
+  drift: ^2.34.3
+  drift_flutter: ^0.3.1
+  file_picker: ^12.0.0-beta.7
+  flutter_secure_storage: ^10.3.1
+  gal: ^2.3.3
+  gpt_markdown: ^1.1.8
+  mobile_scanner: ^7.4.0
+  nsd: ^5.0.1
+  path: ^1.9.1
+  path_provider: ^2.1.6
+  permission_handler: ^13.0.0
+  pointycastle: ^4.0.0
+  provider: ^6.1.5+1
+  qr_flutter: ^4.1.0
+  share_handler: ^0.0.25
+  uuid: ^4.6.0
+  webview_flutter: ^4.14.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.15.1
+  drift_dev: ^2.34.5
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

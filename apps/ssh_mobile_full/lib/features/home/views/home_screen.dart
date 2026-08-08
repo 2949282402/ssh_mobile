@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'package:feature_connection/feature_connection.dart';
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
 import 'package:feature_system_admin/feature_system_admin.dart'
     as feature_system_admin;
@@ -21,13 +22,10 @@ import 'package:ssh_mobile/app/sftp_feature_adapters.dart';
 import 'package:ssh_mobile/app/system_admin_feature_adapters.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_settings_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
-import 'package:ssh_mobile/features/lan_share/views/lan_share_screen.dart';
-import 'package:ssh_mobile/features/lan_share/views/lan_share_settings_screen.dart';
 import 'package:ssh_mobile/features/developer_log/views/developer_log_screen.dart';
 import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import 'package:ssh_mobile/features/developer_panel/views/developer_panel_screen.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
-import 'package:ssh_mobile/features/lan_share/lan_share_feature_scope.dart';
 import 'package:ssh_mobile/features/home/views/widgets/home_navigation_semantics.dart';
 
 part 'widgets/settings_panel.dart';
@@ -612,7 +610,9 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             case _logPage:
             default:
-              return const LanShareFeatureScope(child: LanShareScreen());
+              return const feature_lan_share.LanShareFeatureScope(
+                child: feature_lan_share.LanShareScreen(),
+              );
           }
         },
       ),

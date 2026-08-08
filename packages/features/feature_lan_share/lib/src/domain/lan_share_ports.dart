@@ -1,0 +1,229 @@
+// LAN Share 的跨边界契约。
+//
+// 这些 Port 让 Feature 使用 App Scope 的设置、日志、数据保护和网络能力，
+// 同时避免把 App Service、SSH 或其他 Feature 的实现带入 Package。
+
+import 'package:flutter/foundation.dart';
+
+import '../services/network/network_models.dart';
+
+/// LAN Share 支持的界面语言。
+enum LanShareLanguage { zh, en }
+
+/// LAN Share 设置和身份的最小 App Scope 合约。
+abstract interface class LanShareSettingsPort implements Listenable {
+  /// 当前界面语言。
+  LanShareLanguage get language;
+
+  /// 当前是否使用英文界面。
+  bool get isEnglish;
+
+  /// 当前语言对应的 LAN 文案。
+  LanShareStrings get strings;
+
+  /// 本机稳定 LAN 设备标识。
+  String get lanDeviceId;
+
+  /// 本机广播和配对使用的显示别名。
+  String get lanDeviceAlias;
+
+  /// 已配置的 Relay origin；不包含凭据。
+  String get relayEndpoint;
+
+  /// Relay 主机名，供设置页显示。
+  String get relayHost;
+
+  /// Relay 端口，未配置时使用 HTTPS 默认端口。
+  int get relayPort;
+
+  /// App 是否要求在后台常驻激活 LAN Receiver。
+  bool get receiverEnabled;
+
+  /// 按需加载或生成本机 LAN 身份。
+  Future<void> ensureLanIdentity();
+
+  /// 保存显示别名。
+  Future<void> setLanDeviceAlias(String alias);
+
+  /// 保存 Relay origin。
+  Future<void> setRelayEndpoint(String endpoint);
+
+  /// 按主机和端口保存 Relay origin。
+  Future<void> setRelayServer({required String host, required int port});
+}
+
+/// LAN Share UI 所需的最小本地化文案集合。
+abstract interface class LanShareStrings {
+  bool get isEnglish;
+
+  String get accept;
+  String get cancel;
+  String get close;
+  String get connected;
+  String get copy;
+  String get delete;
+  String get deleteConnectionConfirm;
+  String get externalPreviewContentBlocked;
+  String get filePreviewRenderFailed;
+  String get filePreviewRenderFailedHint;
+  String get filePreviewResourceLimit;
+  String get filePreviewResourceLimitHint;
+  String get filePreviewTooLarge;
+  String filePreviewTooLargeHint(int maxBytes);
+  String get hostAddress;
+  String get htmlPreviewUnavailable;
+  String get htmlPreviewUnavailableHint;
+  String get imagePreviewLabel;
+  String get invalidPort;
+  String get loadingFilePreview;
+  String get moreActions;
+  String networkIncomingTransferDescription(
+    String senderId,
+    String fileName,
+    String fileSize,
+  );
+  String get networkIncomingTransferTitle;
+  String get networkTabLan;
+  String get networkTabVpn;
+  String get port;
+  String get reject;
+  String get retry;
+  String get save;
+  String get unknown;
+  String get unsupportedPreview;
+  String get unsupportedPreviewTitle;
+  String get vpnEnrollButton;
+  String get vpnEnrolledBadge;
+  String get vpnEnrollmentToken;
+  String get vpnNotEnrolledBadge;
+  String get vpnServerConfigTitle;
+  String get vpnServerHost;
+  String get vpnServerPort;
+  String get lanCameraPermission;
+  String get lanDeviceAlias;
+  String get lanDeviceId;
+  String get lanNotificationPermission;
+  String get lanPermissions;
+  String get lanRelayServer;
+  String get lanShare;
+  String get lanShareChatInputHint;
+  String get lanShareClearChatHistory;
+  String get lanShareClipboard;
+  String get lanShareCopyAll;
+  String get lanShareDeleteMessage;
+  String get lanShareDeviceList;
+  String get lanShareDeviceOfflineHint;
+  String get lanShareDragDropHint;
+  String get lanShareExport;
+  String get lanShareFileExpired;
+  String get lanShareForgetConfirm;
+  String get lanShareForgetConfirmMessage;
+  String get lanShareForgetDevice;
+  String get lanShareInitializationFailed;
+  String get lanShareInvalidAddress;
+  String get lanShareNoDevices;
+  String get lanShareNoDevicesRefreshHint;
+  String get lanShareNoHistory;
+  String get lanShareOffline;
+  String get lanShareOfflineReauthHint;
+  String get lanShareOnline;
+  String get lanShareOpenBrowser;
+  String get lanSharePinMismatch;
+  String get lanSharePinPairing;
+  String get lanSharePinPrompt;
+  String get lanShareRadarHint;
+  String get lanShareRadarStoppedHint;
+  String get lanShareReauthenticate;
+  String get lanShareRecall;
+  String get lanShareRecalled;
+  String get lanShareSavedToDownloads;
+  String get lanShareSavedToGallery;
+  String get lanShareSaveFailed;
+  String get lanShareScan;
+  String get lanShareScanning;
+  String get lanShareScanOrAdd;
+  String get lanShareScanQrCode;
+  String get lanShareSelectFile;
+  String get lanShareSelectImage;
+  String get lanShareSelectToCopy;
+  String get lanShareSelectVideo;
+  String get lanShareSendToNearby;
+  String get lanShareSettings;
+  String get lanShareTransferHistory;
+  String get lanShareWebShare;
+  String get lanShareWebShareHint;
+}
+
+/// App Scope 日志的最小适配接口。
+abstract interface class LanShareLoggerPort {
+  /// 记录普通信息。
+  void info(String message, {String? details});
+
+  /// 记录可恢复的降级或安全拒绝。
+  void warning(String message, {String? details});
+
+  /// 记录错误及可选堆栈。
+  void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  });
+}
+
+/// LAN 历史中敏感字段的加密适配接口。
+abstract interface class LanShareDataProtectionPort {
+  /// 加密一项待写入数据库的敏感文本。
+  Future<String> encryptString(String value);
+
+  /// 解密数据库中的敏感文本。
+  Future<String> decryptString(String value);
+
+  /// 判断字段是否已经由当前保护服务加密。
+  bool isEncrypted(String value);
+}
+
+/// QUIC 身份材料；私钥只在 App/Network 边界内短暂流转。
+final class LanShareNetworkIdentityMaterial {
+  /// 创建一份身份材料快照。
+  const LanShareNetworkIdentityMaterial({
+    required this.privateSeed,
+    required this.publicKey,
+  });
+
+  /// Ed25519 私钥种子。
+  final Uint8List privateSeed;
+
+  /// Ed25519 公钥。
+  final Uint8List publicKey;
+}
+
+/// App Scope 网络身份加载端口。
+abstract interface class LanShareNetworkIdentityPort {
+  /// 加载或生成稳定的 QUIC 身份。
+  Future<LanShareNetworkIdentityMaterial> loadOrCreate();
+}
+
+/// 创建 LAN 原生传输适配器的端口。
+///
+/// Package 只消费 `NetworkService` 合约；旧 native v1 的具体创建仍由 App
+/// Shell 注入，避免 Feature 直接依赖 FFI 或平台实现。
+abstract interface class LanShareNetworkFactory {
+  /// 按当前监听器和密钥配置创建可选的 LAN NetworkService。
+  Future<NetworkService?> create({
+    required String deviceId,
+    required Uint8List identityPrivateKey,
+    required Uint8List e2ePrivateKey,
+    required String listenAddress,
+    required String receiveDirectory,
+  });
+}
+
+/// 旧 App 设置类型的包内兼容别名；实现仍必须是 Port。
+typedef AppLanguage = LanShareLanguage;
+
+/// 旧 LAN 页面使用的设置类型兼容别名。
+typedef AppSettings = LanShareSettingsPort;
+
+/// 旧 LAN 页面使用的文案类型兼容别名。
+typedef AppStrings = LanShareStrings;

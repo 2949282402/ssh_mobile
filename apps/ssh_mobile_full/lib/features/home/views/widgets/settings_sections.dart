@@ -378,8 +378,9 @@ class _FeatureSettingsSection extends StatelessWidget {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) =>
-                    const LanShareFeatureScope(child: LanShareSettingsScreen()),
+                builder: (_) => const feature_lan_share.LanShareFeatureScope(
+                  child: feature_lan_share.LanShareSettingsScreen(),
+                ),
               ),
             );
           },

@@ -2,11 +2,12 @@ import 'dart:async';
 
 import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
 
-import '../features/lan_share/services/lan_receiver_coordinator.dart';
+import 'lan_share_feature_adapters.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
@@ -46,7 +47,8 @@ final class AppRuntime implements Disposable {
     required this.playbookService,
     required this.ragService,
     required this.mcpServerController,
-    required this.lanReceiverCoordinator,
+    required this.lanShareModule,
+    required this.lanShareSettingsAdapter,
   });
 
   /// App Scope 唯一的日志实现；当前由 AppLogService 适配 Core Contract。
@@ -110,8 +112,15 @@ final class AppRuntime implements Disposable {
   // TODO(refactor-step-20): 将 MCP Server 运行时迁移到 mcp_console 模块。
   final McpServerController mcpServerController;
 
-  // TODO(refactor-step-13): 将 LAN 接收器迁移到 lan_share 模块的 App Scope。
-  final LanReceiverCoordinator lanReceiverCoordinator;
+  /// LAN Share Module 的唯一 App Scope Owner。
+  final feature_lan_share.LanShareModule lanShareModule;
+
+  /// 由 Runtime 持有的设置适配器；Module 只消费其 Port。
+  final AppLanShareSettingsAdapter lanShareSettingsAdapter;
+
+  /// 旧 API 兼容外观；实际接收器 Owner 是 [lanShareModule]。
+  feature_lan_share.LanReceiverCoordinator get lanReceiverCoordinator =>
+      lanShareModule.coordinator;
 
   Future<void>? _disposeFuture;
   bool _disposed = false;
@@ -155,7 +164,8 @@ final class AppRuntime implements Disposable {
         mcpServerController.dispose();
       }
     });
-    await attempt(lanReceiverCoordinator.dispose);
+    await attempt(lanShareModule.dispose);
+    await attempt(lanShareSettingsAdapter.dispose);
 
     // 等待启动中的 Storage 初始化完成，再关闭数据库，避免异步初始化在
     // shutdown 之后重新打开数据库或继续触发通知。

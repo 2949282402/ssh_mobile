@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:drift/native.dart';
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/app/app_runtime_factory.dart';
 import 'package:ssh_mobile/app/terminal_ssh_capability_adapter.dart';
@@ -33,6 +34,11 @@ void main() {
         connectionRepository: connectionRepository,
         credentialRepository: SecureCredentialRepository(),
         hostKeyRepository: connectionRepository,
+        lanShareDatabaseFactory: () =>
+            feature_lan_share.LanShareDatabase.forTesting(
+              NativeDatabase.memory(),
+            ),
+        lanShareReceiverEnabled: false,
       );
 
       expect(runtime.isDisposed, isFalse);

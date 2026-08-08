@@ -29,6 +29,8 @@ dependencies:
     path: ../../packages/features/feature_sftp
   feature_terminal:
     path: ../../packages/features/feature_terminal
+  feature_lan_share:
+    path: ../../packages/features/feature_lan_share
   dartssh2: ^2.22.5
   xterm:
     path: ../../third_party/xterm

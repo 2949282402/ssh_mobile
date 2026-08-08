@@ -1,0 +1,189 @@
+// LAN Share Module 生命周期测试。
+//
+// 测试重点是配置关闭时不会启动接收器，以及 Module 会关闭自己拥有的
+// 数据库资源；网络、身份和日志均使用受控的 Port 假实现。
+
+import 'package:app_core/app_core.dart';
+import 'package:drift/native.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:network_transport/network_transport.dart';
+
+void main() {
+  test(
+    'disabled receiver initializes without starting network services',
+    () async {
+      final database = LanShareDatabase.forTesting(NativeDatabase.memory());
+      final networkFactory = _FakeNetworkFactory();
+      final networkRuntime = _FakeNetworkRuntime();
+      final module = LanShareModule(
+        receiverEnabled: false,
+        databaseFactory: () => database,
+      );
+
+      await module.register(
+        ModuleContext.fromMap({
+          LanShareSettingsPort: _FakeSettings(),
+          LanShareLoggerPort: _FakeLogger(),
+          LanShareDataProtectionPort: _FakeDataProtection(),
+          LanShareNetworkIdentityPort: _FakeIdentity(),
+          LanShareNetworkFactory: networkFactory,
+          NetworkRuntime: networkRuntime,
+        }),
+      );
+      await module.initialize();
+      expect(module.state, ModuleState.initialized);
+      expect(module.database, same(database));
+
+      await module.activate();
+      expect(module.state, ModuleState.active);
+      expect(module.receiverEnabled, isFalse);
+      expect(networkFactory.createCalls, 0);
+      expect(networkRuntime.ensureCalls, 0);
+
+      await module.deactivate();
+      expect(module.state, ModuleState.inactive);
+      await module.dispose();
+      expect(module.state, ModuleState.disposed);
+      expect(() => module.database, throwsStateError);
+    },
+  );
+
+  test('module requires registration before opening its database', () async {
+    final module = LanShareModule(databaseFactory: LanShareDatabase.new);
+
+    await expectLater(module.initialize(), throwsStateError);
+    expect(module.state, ModuleState.registered);
+  });
+}
+
+final class _FakeSettings extends ChangeNotifier
+    implements LanShareSettingsPort {
+  @override
+  LanShareLanguage get language => LanShareLanguage.zh;
+
+  @override
+  bool get isEnglish => false;
+
+  @override
+  LanShareStrings get strings => const _FakeStrings();
+
+  @override
+  String get lanDeviceId => 'test-device';
+
+  @override
+  String get lanDeviceAlias => 'Test Device';
+
+  @override
+  String get relayEndpoint => '';
+
+  @override
+  String get relayHost => '';
+
+  @override
+  int get relayPort => 443;
+
+  @override
+  bool get receiverEnabled => true;
+
+  @override
+  Future<void> ensureLanIdentity() async {}
+
+  @override
+  Future<void> setLanDeviceAlias(String alias) async {}
+
+  @override
+  Future<void> setRelayEndpoint(String endpoint) async {}
+
+  @override
+  Future<void> setRelayServer({
+    required String host,
+    required int port,
+  }) async {}
+}
+
+final class _FakeStrings implements LanShareStrings {
+  const _FakeStrings();
+
+  @override
+  bool get isEnglish => false;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => '';
+}
+
+final class _FakeLogger implements LanShareLoggerPort {
+  @override
+  void info(String message, {String? details}) {}
+
+  @override
+  void warning(String message, {String? details}) {}
+
+  @override
+  void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  }) {}
+}
+
+final class _FakeDataProtection implements LanShareDataProtectionPort {
+  @override
+  Future<String> encryptString(String value) async => 'encrypted:$value';
+
+  @override
+  Future<String> decryptString(String value) async =>
+      value.startsWith('encrypted:') ? value.substring(10) : value;
+
+  @override
+  bool isEncrypted(String value) => value.startsWith('encrypted:');
+}
+
+final class _FakeIdentity implements LanShareNetworkIdentityPort {
+  @override
+  Future<LanShareNetworkIdentityMaterial> loadOrCreate() async =>
+      LanShareNetworkIdentityMaterial(
+        privateSeed: Uint8List(32),
+        publicKey: Uint8List(32),
+      );
+}
+
+final class _FakeNetworkFactory implements LanShareNetworkFactory {
+  int createCalls = 0;
+
+  @override
+  Future<NetworkService?> create({
+    required String deviceId,
+    required Uint8List identityPrivateKey,
+    required Uint8List e2ePrivateKey,
+    required String listenAddress,
+    required String receiveDirectory,
+  }) async {
+    createCalls++;
+    return null;
+  }
+}
+
+final class _FakeNetworkRuntime implements NetworkRuntime {
+  int ensureCalls = 0;
+  bool disposed = false;
+
+  @override
+  NetworkRuntimeState get state =>
+      disposed ? NetworkRuntimeState.disposed : NetworkRuntimeState.idle;
+
+  @override
+  Future<void> ensureCapability(NetworkCapability capability) async {
+    ensureCalls++;
+  }
+
+  @override
+  bool isCapabilityReady(NetworkCapability capability) => false;
+
+  @override
+  Future<void> dispose() async {
+    disposed = true;
+  }
+}

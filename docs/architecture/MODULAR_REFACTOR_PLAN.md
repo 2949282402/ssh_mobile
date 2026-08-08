@@ -358,6 +358,37 @@
   测试使用。新增 Module 生命周期、管理会话释放和命令解析测试；依赖解析
   无版本冲突，`fl_chart` 与现有 workspace 稳定约束统一为 `^1.2.0`。
 
+## Step 14 执行记录（2026-08-08）
+
+- 已创建 `packages/features/feature_lan_share/`，迁入 LAN discovery、配对、
+  HTTPS/WebSocket/Web Share、传输协议、安全限制、Relay enrollment 和
+  LAN ViewModel/UI。旧 `apps/ssh_mobile_full/lib/features/lan_share/**`、
+  `lib/services/lan_share/**` 及旧网络服务保留为兼容表面，没有一次性删除
+  原实现。
+- `LanShareModule` 现在拥有独立 `lan_share.sqlite`、
+  `LanShareHistoryRepository` 和 `LanReceiverCoordinator`；数据库只保存
+  transfer history 与不含 secret 的 pairing metadata。Module 只有在 App
+  Shell 配置允许时才 activate Receiver，编译或导入 Feature 不会启动监听。
+- Feature 仅依赖 `app_core`、`app_ui`、`network_transport` 和本包稳定 Port，
+  不依赖 SSH、其他 Feature、App `/src/` 或 native FFI。App Shell 新增
+  `lan_share_feature_adapters.dart`，将旧设置、日志、数据保护、QUIC 身份和
+  native v1 NetworkService 转换为 Feature Contract；生产 native 创建仍只有
+  这一处。
+- App Runtime 已切换到新 Module/Package 路由和根级配对/传入传输宿主；旧
+  `lanReceiverCoordinator` API 作为 Runtime 兼容 getter 保留。AppRuntimeFactory
+  支持仅测试使用的数据库工厂和 Receiver 开关，生产不增加内存数据库回退。
+- 依赖解析无版本冲突，保持现有 Flutter/Drift 稳定约束；Feature 包新增
+  Module、独立数据库、传输安全测试，旧 LAN coordinator/pairing/safety 回归
+  测试继续保留并通过。未删除迁移过程中继承的较大旧实现文件，文件尺寸治理
+  留给计划中的 Step 31，避免扩大本 Step 范围。
+- 验证通过：`flutter pub get`；Feature 包 `dart format`、`flutter analyze`
+  和 10 项 `flutter test`；App `dart format`、`flutter analyze` 和完整
+  `flutter test`（959 项）；旧 LAN 兼容测试 26 项及 AppRuntime 定向测试 1 项；
+  `git diff --check`；`sync_agent_skills.ps1 -Mode Check`。没有依赖版本冲突，
+  仅提示 20 个受当前 Flutter/Drift workspace 约束的可升级项，未强行升级。
+- Step 14 按 `refactor(lan-share): step 14 migrate lan share module` 独立提交，
+  Commit 记录作为本执行记录的追溯入口。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

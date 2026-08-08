@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
 import 'package:feature_terminal/feature_terminal.dart';
 import 'package:flutter/material.dart';
@@ -13,8 +14,6 @@ import '../features/playbook/viewmodels/playbook_viewmodel.dart';
 import '../features/rag/viewmodels/rag_knowledge_viewmodel.dart';
 import '../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
 import '../features/startup/viewmodels/startup_viewmodel.dart';
-import '../features/lan_share/views/lan_pairing_navigation_host.dart';
-import '../features/lan_share/views/network_incoming_transfer_host.dart';
 import '../features/developer_panel/views/developer_panel_floating.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
@@ -34,6 +33,7 @@ import '../services/mcp/mcp_server_controller.dart';
 import 'package:app_ui/app_ui.dart';
 import 'app_runtime.dart';
 import 'connection_feature_adapters.dart';
+import 'lan_share_feature_adapters.dart';
 import 'terminal_feature_adapters.dart';
 import 'sftp_feature_adapters.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -172,6 +172,7 @@ class _SshMobileAppState extends State<SshMobileApp>
       sshService: runtime.sshService,
     );
     final terminalLogger = AppTerminalLoggerAdapter(runtime.appLogService);
+    final lanLogger = AppLanShareLoggerAdapter(runtime.appLogService);
     final connectionRepository = AppConnectionRepositoryAdapter(
       primary: runtime.connectionRepository,
       legacy: runtime.storageService,
@@ -206,6 +207,13 @@ class _SshMobileAppState extends State<SshMobileApp>
         ChangeNotifierProvider.value(value: runtime.appLogService),
         ChangeNotifierProvider.value(value: runtime.storageService),
         ChangeNotifierProvider.value(value: runtime.appSettings),
+        ListenableProvider<feature_lan_share.LanShareSettingsPort>.value(
+          value: runtime.lanShareSettingsAdapter,
+        ),
+        Provider<feature_lan_share.LanShareLoggerPort>.value(value: lanLogger),
+        Provider<feature_lan_share.LanShareModule>.value(
+          value: runtime.lanShareModule,
+        ),
         ChangeNotifierProxyProvider<
           AppSettings,
           feature_connection.ConnectionStrings
@@ -248,7 +256,9 @@ class _SshMobileAppState extends State<SshMobileApp>
             storageService: runtime.storageService,
           ),
         ),
-        ChangeNotifierProvider.value(value: runtime.lanReceiverCoordinator),
+        ChangeNotifierProvider<feature_lan_share.LanReceiverCoordinator>.value(
+          value: runtime.lanReceiverCoordinator,
+        ),
       ],
       child: Builder(builder: (context) => _buildApp(context)),
     );
@@ -287,8 +297,8 @@ class _SshMobileAppState extends State<SshMobileApp>
                     final visualDensity = mobileVisualDensityFor(mediaQuery);
                     final effectiveChild = child ?? const SizedBox.shrink();
                     final shadChild = DeveloperPanelFloatingHost(
-                      child: NetworkIncomingTransferHost(
-                        child: LanPairingNavigationHost(
+                      child: feature_lan_share.NetworkIncomingTransferHost(
+                        child: feature_lan_share.LanPairingNavigationHost(
                           navigatorKey: _navigatorKey,
                           child: ShadAppBuilder(child: effectiveChild),
                         ),

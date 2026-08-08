@@ -46,8 +46,9 @@ lives in the App composition root, not in the Feature.
 The Network Transport infrastructure package is
 `packages/infrastructure/network_transport/`; it owns the App Scope
 `NetworkRuntime` facade, lazy Capability state, transport contracts, and the
-explicit native handle adapter. `AppRuntime` creates the sole instance; the old
-LAN coordinator remains a temporary legacy consumer until its dedicated Step.
+explicit native handle adapter. `AppRuntime` creates the sole instance; the
+migrated LAN Feature consumes it through injected Ports, while native v1
+construction remains in the App Shell adapter.
 The SSH infrastructure package is `packages/infrastructure/ssh_core/`; it owns
 the App Scope `SshSessionManager`, Lease/Pool lifecycle, platform-neutral Runtime
 Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target
@@ -77,6 +78,14 @@ Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
 create or close App Scope SSH/SFTP resources. The old SFTP App files remain
 compatibility bridges until later service-convergence Steps.
+The LAN Share Feature package is `packages/features/feature_lan_share/`; it
+owns discovery, pairing, HTTPS/WebSocket/Web Share transfer, the
+`LanShareModule`, `LanShareHistoryRepository`, and `lan_share.db`. It may depend
+on `network_transport`, `app_core`, and `app_ui`, but never SSH, another
+Feature implementation, or App `/src/`. App settings, logging, data
+protection, identity, and native v1 creation arrive through Ports from
+`apps/ssh_mobile_full/lib/app/lan_share_feature_adapters.dart`. Old LAN paths
+remain compatibility bridges during the staged migration.
 The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
 Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
@@ -125,6 +134,11 @@ implementations. The old App terminal files are compatibility exports/bridges.
   deactivate/dispose and must not create a permanent App-start timer or a
   `monitoring.db`. Package consumers use only
   `package:feature_monitoring/` and never import its `/src/`.
+- `feature_lan_share` must keep `LanShareModule` as the owner of `lan_share.db`,
+  its history Repository, and Receiver resources. `LanShareFeatureScope` only
+  exposes the Coordinator-owned ViewModel. Receiver activation is explicit and
+  configuration-controlled; compiling or importing the package must not start
+  listeners. The Feature must not construct native network or SSH objects.
 - `feature_terminal` must keep `TerminalModule` as the owner of `terminal.db`
   and its repository. Route scope owns Terminal ViewModels and their
   subscriptions/controllers; disposing a route must not close the injected App
@@ -321,13 +335,15 @@ its `views/` parts.
 
 ### LAN Quick Share
 
-Primary entry points are
-lib/features/lan_share/lan_share_feature_scope.dart,
-lib/features/lan_share/services/lan_receiver_coordinator.dart,
-lib/features/lan_share/viewmodels/lan_share_viewmodel.dart,
-lib/features/lan_share/views/lan_pairing_navigation_host.dart,
-lib/features/lan_share/views/lan_pairing_screen.dart, and
-lib/services/lan_share/lan_transfer_service.dart.
+Primary maintained entry points are
+`packages/features/feature_lan_share/lib/feature_lan_share.dart`,
+`packages/features/feature_lan_share/lib/src/application/lan_share_module.dart`,
+`packages/features/feature_lan_share/lib/src/features/lan_share/services/lan_receiver_coordinator.dart`,
+`packages/features/feature_lan_share/lib/src/features/lan_share/viewmodels/lan_share_viewmodel.dart`,
+and `packages/features/feature_lan_share/lib/src/services/lan_share/lan_transfer_service.dart`.
+The old `apps/ssh_mobile_full/lib/features/lan_share/**` and
+`apps/ssh_mobile_full/lib/services/lan_share/**` paths are compatibility
+surfaces until later cleanup.
 
 - Initialize the LAN receiver independently from the selected home tab so a
   foreground peer invitation can open the pairing page from anywhere in the
@@ -367,9 +383,14 @@ lib/services/lan_share/lan_transfer_service.dart.
 ### Network Platform and Public Relay
 
 Primary entry points are `native/network_core/`,
-`packages/infrastructure/ssh_mobile_network_native/`, `lib/services/network/`,
-`lib/services/relay/`, `lib/features/lan_share/views/vpn_p2p_share_view.dart`,
-and `relay/`.
+`packages/infrastructure/ssh_mobile_network_native/`,
+`packages/features/feature_lan_share/lib/src/services/network/`,
+`apps/ssh_mobile_full/lib/app/lan_share_feature_adapters.dart`,
+`apps/ssh_mobile_full/lib/services/network/`,
+`apps/ssh_mobile_full/lib/services/relay/`,
+`packages/features/feature_lan_share/lib/src/features/lan_share/views/vpn_p2p_share_view.dart`,
+and `relay/`. The Feature consumes typed contracts; only the App Shell adapter
+may construct the native v1 service.
 
 - Keep the Dart/Rust FFI command and event contract on the current development
   protocol v1. Unsupported versions must produce an explicit error; an
