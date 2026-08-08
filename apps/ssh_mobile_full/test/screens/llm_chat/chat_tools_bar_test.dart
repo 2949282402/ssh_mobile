@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../test_utils/ai_port_adapters.dart';
 
 void main() {
   Widget toolsHarness(
@@ -80,16 +81,21 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider(
         create: (_) => AppSettings(),
-        child: MaterialApp(
-          home: Scaffold(
-            body: AttachmentChip(
-              attachment: const AiChatAttachment(
-                fileName: fileName,
-                mimeType: 'text/yaml',
-                sizeBytes: 2048,
-                dataBase64: '',
+        child: Builder(
+          builder: (context) => ListenableProvider<ai.AiSettingsPort>.value(
+            value: aiSettingsPort(context.read<AppSettings>()),
+            child: MaterialApp(
+              home: Scaffold(
+                body: AttachmentChip(
+                  attachment: const AiChatAttachment(
+                    fileName: fileName,
+                    mimeType: 'text/yaml',
+                    sizeBytes: 2048,
+                    dataBase64: '',
+                  ),
+                  onRemove: () => removed = true,
+                ),
               ),
-              onRemove: () => removed = true,
             ),
           ),
         ),

@@ -1,23 +1,22 @@
 import 'dart:async';
+import '../test_utils/ai_port_adapters.dart';
+import '../test_utils/ai_tool_test_adapters.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/services/ai_tool_service.dart';
+import 'package:feature_ai/ai_tools.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/services/multi_agent_coordinator.dart';
-import 'package:ssh_mobile/services/chat_orchestrator.dart';
-import 'package:ssh_mobile/services/chat_context_assembler.dart';
-import 'package:ssh_mobile/services/operational_memory_retriever.dart';
+import 'package:feature_ai/ai_agent.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 
 // --- Mocks for HttpClient for SSE ---
@@ -218,6 +217,7 @@ void main() {
 
     storageService = StorageService();
     await storageService.init();
+    attachTestAiRepository(storageService);
 
     appSettings = AppSettings();
     await appSettings.init();
@@ -239,7 +239,7 @@ void main() {
       apiKey: 'dummy-key',
     );
 
-    aiToolService = AiToolService(
+    aiToolService = createAiToolServiceFromLegacy(
       storageService: storageService,
       sshService: sshService,
       sftpService: sftpService,
@@ -252,11 +252,13 @@ void main() {
     );
 
     orchestrator = ChatOrchestrator(
-      storageService: storageService,
-      contextAssembler: ChatContextAssembler(storageService: storageService),
+      storageService: aiStoragePort(storageService),
+      contextAssembler: ChatContextAssembler(
+        storageService: aiStoragePort(storageService),
+      ),
       memoryRetriever: OperationalMemoryRetriever(
-        storageService: storageService,
-        ragService: RagService(storageService: storageService),
+        storageService: aiStoragePort(storageService),
+        ragService: aiRagCapability(RagService(storageService: storageService)),
       ),
     );
 
@@ -310,7 +312,7 @@ Verification: check port 80.
           ]);
 
           final llm = LlmChatService(
-            storageService: storageService,
+            storageService: aiStoragePort(storageService),
             toolService: aiToolService,
             language: AppLanguage.en,
             multiAgentCoordinator: FakeMultiAgentCoordinator(null),
@@ -386,7 +388,7 @@ Proposal:
           ]);
 
           final llm = LlmChatService(
-            storageService: storageService,
+            storageService: aiStoragePort(storageService),
             toolService: aiToolService,
             language: AppLanguage.en,
             multiAgentCoordinator: FakeMultiAgentCoordinator(null),
@@ -444,7 +446,7 @@ Proposal:
           ]);
 
           final llm = LlmChatService(
-            storageService: storageService,
+            storageService: aiStoragePort(storageService),
             toolService: aiToolService,
             language: AppLanguage.en,
             multiAgentCoordinator: FakeMultiAgentCoordinator(null),
@@ -476,7 +478,7 @@ Proposal:
           ]);
 
           final llm = LlmChatService(
-            storageService: storageService,
+            storageService: aiStoragePort(storageService),
             toolService: aiToolService,
             language: AppLanguage.en,
             multiAgentCoordinator: FakeMultiAgentCoordinator(null),
@@ -517,7 +519,7 @@ Proposal:
 ```
 ''';
           final llm = LlmChatService(
-            storageService: storageService,
+            storageService: aiStoragePort(storageService),
             toolService: aiToolService,
             language: AppLanguage.en,
             multiAgentCoordinator: FakeMultiAgentCoordinator(
@@ -578,7 +580,7 @@ Proposal:
           ]);
 
           final llm = LlmChatService(
-            storageService: storageService,
+            storageService: aiStoragePort(storageService),
             toolService: aiToolService,
             language: AppLanguage.en,
             multiAgentCoordinator: FakeMultiAgentCoordinator(

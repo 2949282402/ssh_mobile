@@ -1,10 +1,9 @@
 import 'package:flutter/foundation.dart';
+import '../test_utils/ai_port_adapters.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/services/chat_context_assembler.dart';
-import 'package:ssh_mobile/services/chat_orchestrator.dart';
-import 'package:ssh_mobile/services/operational_memory_retriever.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
@@ -27,12 +26,15 @@ void main() {
     () async {
       final storage = StorageService();
       await storage.init();
+      attachTestAiRepository(storage);
       final orchestrator = ChatOrchestrator(
-        storageService: storage,
-        contextAssembler: ChatContextAssembler(storageService: storage),
+        storageService: aiStoragePort(storage),
+        contextAssembler: ChatContextAssembler(
+          storageService: aiStoragePort(storage),
+        ),
         memoryRetriever: OperationalMemoryRetriever(
-          storageService: storage,
-          ragService: RagService(storageService: storage),
+          storageService: aiStoragePort(storage),
+          ragService: aiRagCapability(RagService(storageService: storage)),
         ),
       );
       final now = DateTime.now();
@@ -80,12 +82,15 @@ void main() {
     () async {
       final storage = StorageService();
       await storage.init();
+      attachTestAiRepository(storage);
       final orchestrator = ChatOrchestrator(
-        storageService: storage,
-        contextAssembler: ChatContextAssembler(storageService: storage),
+        storageService: aiStoragePort(storage),
+        contextAssembler: ChatContextAssembler(
+          storageService: aiStoragePort(storage),
+        ),
         memoryRetriever: OperationalMemoryRetriever(
-          storageService: storage,
-          ragService: RagService(storageService: storage),
+          storageService: aiStoragePort(storage),
+          ragService: aiRagCapability(RagService(storageService: storage)),
         ),
       );
       final now = DateTime.now();
@@ -130,6 +135,7 @@ void main() {
     () async {
       final storage = StorageService();
       await storage.init();
+      attachTestAiRepository(storage);
 
       // 注入启用和禁用的 Skill
       final activeSkill = AiSkillRecord(
@@ -172,9 +178,13 @@ void main() {
       await storage.saveAiSkill(disabledSkill);
 
       final orchestrator = ChatOrchestrator(
-        storageService: storage,
-        contextAssembler: ChatContextAssembler(storageService: storage),
-        memoryRetriever: OperationalMemoryRetriever(storageService: storage),
+        storageService: aiStoragePort(storage),
+        contextAssembler: ChatContextAssembler(
+          storageService: aiStoragePort(storage),
+        ),
+        memoryRetriever: OperationalMemoryRetriever(
+          storageService: aiStoragePort(storage),
+        ),
       );
 
       final now = DateTime.now();
@@ -260,12 +270,15 @@ void main() {
     () async {
       final storage = StorageService();
       await storage.init();
+      attachTestAiRepository(storage);
       final orchestrator = ChatOrchestrator(
-        storageService: storage,
-        contextAssembler: ChatContextAssembler(storageService: storage),
+        storageService: aiStoragePort(storage),
+        contextAssembler: ChatContextAssembler(
+          storageService: aiStoragePort(storage),
+        ),
         memoryRetriever: OperationalMemoryRetriever(
-          storageService: storage,
-          ragService: RagService(storageService: storage),
+          storageService: aiStoragePort(storage),
+          ragService: aiRagCapability(RagService(storageService: storage)),
         ),
       );
       final now = DateTime.now();
@@ -317,12 +330,15 @@ void main() {
     () async {
       final storage = StorageService();
       await storage.init();
+      attachTestAiRepository(storage);
       final orchestrator = ChatOrchestrator(
-        storageService: storage,
-        contextAssembler: ChatContextAssembler(storageService: storage),
+        storageService: aiStoragePort(storage),
+        contextAssembler: ChatContextAssembler(
+          storageService: aiStoragePort(storage),
+        ),
         memoryRetriever: OperationalMemoryRetriever(
-          storageService: storage,
-          ragService: RagService(storageService: storage),
+          storageService: aiStoragePort(storage),
+          ragService: aiRagCapability(RagService(storageService: storage)),
         ),
       );
       final now = DateTime.now();
@@ -372,12 +388,15 @@ Second good block:
     () async {
       final storage = StorageService();
       await storage.init();
+      attachTestAiRepository(storage);
       final orchestrator = ChatOrchestrator(
-        storageService: storage,
-        contextAssembler: ChatContextAssembler(storageService: storage),
+        storageService: aiStoragePort(storage),
+        contextAssembler: ChatContextAssembler(
+          storageService: aiStoragePort(storage),
+        ),
         memoryRetriever: OperationalMemoryRetriever(
-          storageService: storage,
-          ragService: RagService(storageService: storage),
+          storageService: aiStoragePort(storage),
+          ragService: aiRagCapability(RagService(storageService: storage)),
         ),
       );
       final now = DateTime.now();

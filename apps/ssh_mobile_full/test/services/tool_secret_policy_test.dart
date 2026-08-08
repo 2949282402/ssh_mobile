@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/tool_secret_policy.dart';
+import 'package:feature_ai/ai_tools.dart';
 
 void main() {
   const policy = ToolSecretPolicy();

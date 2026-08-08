@@ -1,10 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
+import '../../../test_utils/ai_port_adapters.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:ssh_mobile/features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
+import 'package:feature_ai/ai_skills.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/utils/skill_frontmatter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -97,7 +97,7 @@ body''';
 
   group('AiSkillsViewModel Tests', () {
     test('Initialization checks', () {
-      final viewModel = AiSkillsViewModel(
+      final viewModel = createAiSkillsViewModel(
         storageService: storageService,
         appSettings: appSettings,
       );
@@ -109,7 +109,7 @@ body''';
     });
 
     test('Creating a new custom skill template', () async {
-      final viewModel = AiSkillsViewModel(
+      final viewModel = createAiSkillsViewModel(
         storageService: storageService,
         appSettings: appSettings,
       );
@@ -127,7 +127,7 @@ body''';
     test(
       'Saving a skill updates custom skills collection and selection',
       () async {
-        final viewModel = AiSkillsViewModel(
+        final viewModel = createAiSkillsViewModel(
           storageService: storageService,
           appSettings: appSettings,
         );
@@ -146,7 +146,7 @@ body''';
     test(
       'Saving a skill synchronizes frontmatter name and description',
       () async {
-        final viewModel = AiSkillsViewModel(
+        final viewModel = createAiSkillsViewModel(
           storageService: storageService,
           appSettings: appSettings,
         );
@@ -167,7 +167,7 @@ body''';
     test(
       'Saving a skill without frontmatter does not inject frontmatter head',
       () async {
-        final viewModel = AiSkillsViewModel(
+        final viewModel = createAiSkillsViewModel(
           storageService: storageService,
           appSettings: appSettings,
         );
@@ -205,7 +205,7 @@ Some body text.''',
         );
         await storageService.saveAiSkill(skill);
 
-        final viewModel = AiSkillsViewModel(
+        final viewModel = createAiSkillsViewModel(
           storageService: storageService,
           appSettings: appSettings,
         );
@@ -222,7 +222,7 @@ Some body text.''',
     );
 
     test('Marking dirty updates states', () {
-      final viewModel = AiSkillsViewModel(
+      final viewModel = createAiSkillsViewModel(
         storageService: storageService,
         appSettings: appSettings,
       );
@@ -233,7 +233,7 @@ Some body text.''',
     });
 
     test('Adding and removing references updates ViewModel state', () {
-      final viewModel = AiSkillsViewModel(
+      final viewModel = createAiSkillsViewModel(
         storageService: storageService,
         appSettings: appSettings,
       );

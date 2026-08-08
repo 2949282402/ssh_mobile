@@ -1,2 +1,4 @@
-// 旧 App 路径兼容导出；RAG 处理实现已归属 feature_rag Package。
+// App Shell 旧路径的兼容导出；RAG 分块实现由 feature_rag Package 持有。
+library;
+
 export 'package:feature_rag/feature_rag.dart' show RagChunk, TextChunker;

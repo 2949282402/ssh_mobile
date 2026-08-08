@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
 void main() {

@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/ai_chat/services/ai_chat_context_builder.dart';
-import 'package:ssh_mobile/features/ai_chat/services/ai_chat_message_mapper.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:feature_ai/ai_chat.dart';
 
 void main() {
   group('AiChatMessageMapper Tests', () {

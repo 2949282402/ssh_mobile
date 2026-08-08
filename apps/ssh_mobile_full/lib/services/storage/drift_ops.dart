@@ -15,9 +15,6 @@ extension DriftOps on StorageService {
       if (_disposed) return;
       _driftReady = true;
 
-      _driftAiChatsActive = true;
-      _driftAgentMetricsActive = true;
-      _driftAgentTraceActive = true;
       _driftTerminalHistoryActive = true;
       _driftPlaybooksActive = true;
       _driftSftpHistoryActive = true;
@@ -34,9 +31,6 @@ extension DriftOps on StorageService {
       }
     } catch (e, stackTrace) {
       _driftReady = false;
-      _driftAiChatsActive = false;
-      _driftAgentMetricsActive = false;
-      _driftAgentTraceActive = false;
       _driftTerminalHistoryActive = false;
       _driftPlaybooksActive = false;
       _driftSftpHistoryActive = false;
@@ -56,22 +50,6 @@ extension DriftOps on StorageService {
 
   DateTime _fromDbMillis(int millis) {
     return DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true).toLocal();
-  }
-
-  String _encodeJsonList(Iterable<Map<String, dynamic>> items) {
-    return jsonEncode(items.toList(growable: false));
-  }
-
-  List<T> _decodeJsonList<T>(
-    String jsonText,
-    T Function(Map<String, dynamic>) decode,
-  ) {
-    final decoded = jsonDecode(jsonText);
-    if (decoded is! List) return <T>[];
-    return decoded
-        .whereType<Map<String, dynamic>>()
-        .map(decode)
-        .toList(growable: false);
   }
 
   Future<String> _encryptDriftText(String value) async {

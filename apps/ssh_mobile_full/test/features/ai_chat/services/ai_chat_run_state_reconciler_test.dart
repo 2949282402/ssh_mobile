@@ -1,12 +1,17 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/ai_chat/services/ai_chat_run_state_reconciler.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
   test('persisted plan state wins without discarding streamed content', () {
     final createdAt = DateTime.utc(2026, 7, 13, 10);
-    final messageCreatedAt = createdAt.add(const Duration(seconds: 1));
+    final messageCreatedAt = createdAt.add(
+      const Duration(seconds: 1, microseconds: 321),
+    );
+    final persistedMessageCreatedAt = DateTime.fromMillisecondsSinceEpoch(
+      messageCreatedAt.millisecondsSinceEpoch,
+      isUtc: true,
+    );
     final memoryChat = AiChatRecord(
       id: 'chat-1',
       title: 'Memory title',
@@ -41,7 +46,7 @@ void main() {
         AiChatMessageRecord(
           role: 'assistant',
           text: '',
-          createdAt: messageCreatedAt,
+          createdAt: persistedMessageCreatedAt,
           todoSteps: const [
             AiTodoStep(
               id: 'task-1',

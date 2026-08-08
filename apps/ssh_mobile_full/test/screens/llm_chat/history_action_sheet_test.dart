@@ -2,7 +2,7 @@ import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/ai_chat/views/widgets/history_action_sheet.dart';
+import 'package:feature_ai/ai_chat.dart';
 
 void main() {
   testWidgets('history sheet exposes selected row semantics and 48dp delete', (

@@ -19,7 +19,7 @@ void _registerAiChatViewModelGenerationTests() {
         appSettings: appSettings,
         finalOutcome: '',
       );
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -59,7 +59,7 @@ void _registerAiChatViewModelGenerationTests() {
   test(
     'approvePlanAndExecute blocks when runtime health is blocking',
     () async {
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -121,7 +121,7 @@ void _registerAiChatViewModelGenerationTests() {
         ragService: ragService,
         appSettings: appSettings,
       );
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -202,7 +202,7 @@ void _registerAiChatViewModelGenerationTests() {
       final healthAdvisor = _GatedHealthAdvisor(
         ClientRuntimeHealthStatus.warning,
       );
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -298,7 +298,7 @@ void _registerAiChatViewModelGenerationTests() {
         appSettings: appSettings,
       );
       final healthAdvisor = _GatedHealthAdvisor();
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -383,7 +383,7 @@ void _registerAiChatViewModelGenerationTests() {
         appSettings: appSettings,
       );
 
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -425,7 +425,7 @@ void _registerAiChatViewModelGenerationTests() {
   );
 
   test('Plan Mode transition is atomic and clears old approval', () async {
-    final viewModel = AiChatViewModel(
+    final viewModel = createAiChatViewModel(
       storageService: storageService,
       sshService: sshService,
       sftpService: sftpService,
@@ -465,6 +465,7 @@ void _registerAiChatViewModelGenerationTests() {
   test('failed Plan Mode transition preserves memory and storage', () async {
     final failingStorage = _FailPlanModeSaveStorage();
     await failingStorage.init();
+    attachTestAiRepository(failingStorage);
     addTearDown(failingStorage.dispose);
     final failingSsh = SshService(failingStorage);
     final failingSftp = SftpService(failingStorage);
@@ -477,7 +478,7 @@ void _registerAiChatViewModelGenerationTests() {
       sshService: failingSsh,
     );
     final failingRag = RagService(storageService: failingStorage);
-    final viewModel = AiChatViewModel(
+    final viewModel = createAiChatViewModel(
       storageService: failingStorage,
       sshService: failingSsh,
       sftpService: failingSftp,

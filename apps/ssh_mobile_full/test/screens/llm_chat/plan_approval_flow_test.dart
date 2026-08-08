@@ -1,17 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/client_health_advisor.dart';
 
 void main() {
-  const warningReport = ClientRuntimeHealthReport(
-    status: ClientRuntimeHealthStatus.warning,
+  const warningReport = ai.AiRuntimeHealthReport(
+    status: ai.AiRuntimeHealthStatus.warning,
     issues: [],
     raw: {},
   );
-  const blockedReport = ClientRuntimeHealthReport(
-    status: ClientRuntimeHealthStatus.blocking,
+  const blockedReport = ai.AiRuntimeHealthReport(
+    status: ai.AiRuntimeHealthStatus.blocking,
     issues: [],
     raw: {},
   );

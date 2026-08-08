@@ -1,11 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/llm_provider/llm_api_format.dart';
-import 'package:ssh_mobile/services/llm_provider/llm_provider_factory.dart';
-import 'package:ssh_mobile/services/llm_provider/openai_chat_provider.dart';
-import 'package:ssh_mobile/services/llm_provider/gemini_openai_compatible_provider.dart';
-import 'package:ssh_mobile/services/llm_provider/anthropic_messages_provider.dart';
-import 'package:ssh_mobile/services/llm_provider/openai_responses_provider.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:feature_ai/ai_llm.dart';
 
 AiConnectionSettings buildSettings(LlmApiFormat format) {
   return AiConnectionSettings(

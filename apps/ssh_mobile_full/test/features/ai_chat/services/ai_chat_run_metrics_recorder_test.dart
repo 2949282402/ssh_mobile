@@ -1,10 +1,10 @@
 import 'package:flutter/foundation.dart';
+import '../../../test_utils/ai_port_adapters.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:ssh_mobile/features/ai_chat/services/ai_chat_run_metrics_recorder.dart';
-import 'package:ssh_mobile/services/agent_model_profile.dart';
-import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/ai_agent.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
@@ -19,6 +19,7 @@ void main() {
 
     storageService = StorageService();
     await storageService.init();
+    attachTestAiRepository(storageService);
   });
 
   tearDown(() {
@@ -28,7 +29,7 @@ void main() {
 
   group('AiChatRunMetricsRecorder Tests', () {
     test('record saves metrics correctly on success', () async {
-      final recorder = AiChatRunMetricsRecorder(storageService);
+      final recorder = AiChatRunMetricsRecorder(aiStoragePort(storageService));
       final modelProfile = AgentModelProfile(
         mainModel: 'gpt-4o',
         helperModel: 'gpt-4o-mini',
@@ -91,7 +92,9 @@ void main() {
     test(
       'record handles success false and missing runStats gracefully',
       () async {
-        final recorder = AiChatRunMetricsRecorder(storageService);
+        final recorder = AiChatRunMetricsRecorder(
+          aiStoragePort(storageService),
+        );
         final modelProfile = AgentModelProfile(
           mainModel: 'gpt-4o',
           helperModel: 'gpt-4o',

@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'package:feature_connection/feature_connection.dart';
+import 'package:feature_ai/feature_ai.dart' as feature_ai;
+import 'package:app_core/app_core.dart' as app_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
@@ -18,9 +20,9 @@ import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:app_ui/app_ui.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
 import 'package:ssh_mobile/app/sftp_feature_adapters.dart';
 import 'package:ssh_mobile/app/system_admin_feature_adapters.dart';
+import 'package:ssh_mobile/features/client_webview/views/client_webview_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_settings_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
 import 'package:ssh_mobile/features/developer_log/views/developer_log_screen.dart';
@@ -597,9 +599,25 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (context) {
           switch (index) {
             case _aiPage:
-              return LlmChatScreen(
+              return feature_ai.LlmChatScreen(
                 key: const PageStorageKey<String>('ai-chat-page'),
                 active: _settledIndex == index,
+                viewModelFactory: (context) => feature_ai.AiChatViewModel(
+                  storageService: context.read<feature_ai.AiStoragePort>(),
+                  sshService: context.read<feature_ai.AiSshPort>(),
+                  sftpService: context.read<feature_ai.AiSftpPort>(),
+                  performanceMonitorService: context
+                      .read<feature_ai.AiMonitoringPort>(),
+                  playbookService: context
+                      .read<feature_playbook.PlaybookAutomationPort>(),
+                  ragService: context.read<app_core.RagCapability>(),
+                  appSettings: context.read<feature_ai.AiSettingsPort>(),
+                  runtimeFactory: context
+                      .read<feature_ai.AiChatRuntimeFactory>(),
+                  clientHealthAdvisor: context.read<feature_ai.AiHealthPort>(),
+                ),
+                webViewScreenBuilder: (context, chatId) =>
+                    ClientWebViewScreen(chatId: chatId),
                 onHistoryVisibilityChanged: (visible) {
                   if (_aiHistoryVisible == visible) return;
                   setState(() => _aiHistoryVisible = visible);

@@ -1,13 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:app_core/app_core.dart' as app_core;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
@@ -16,6 +17,8 @@ import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
+
+import '../../test_utils/ai_port_adapters.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -36,8 +39,10 @@ void main() {
       late final PerformanceMonitorService performanceMonitorService;
       late final PlaybookService playbookService;
       late final RagService ragService;
+      late final ai.AiDatabase aiDatabase;
       await tester.runAsync(() async {
         await storageService.init();
+        aiDatabase = attachTestAiRepository(storageService);
         await AppLogService.instance.detachDatabase(storageService.appDatabase);
         await appSettings.init();
         await appSettings.toggleLanguage();
@@ -104,10 +109,18 @@ void main() {
               ChangeNotifierProvider<StorageService>.value(
                 value: storageService,
               ),
+              Provider<ai.AiStoragePort>.value(
+                value: aiStoragePort(storageService),
+              ),
               ChangeNotifierProvider<SshService>.value(value: sshService),
+              Provider<ai.AiSshPort>.value(value: aiSshPort(sshService)),
               ChangeNotifierProvider<SftpService>.value(value: sftpService),
+              Provider<ai.AiSftpPort>.value(value: aiSftpPort(sftpService)),
               ChangeNotifierProvider<PerformanceMonitorService>.value(
                 value: performanceMonitorService,
+              ),
+              Provider<ai.AiMonitoringPort>.value(
+                value: aiMonitoringPort(performanceMonitorService),
               ),
               ChangeNotifierProvider<PlaybookService>.value(
                 value: playbookService,
@@ -121,7 +134,13 @@ void main() {
               ListenableProvider<feature_rag.RagCapability>.value(
                 value: ragService,
               ),
+              Provider<app_core.RagCapability>.value(
+                value: aiRagCapability(ragService),
+              ),
               ChangeNotifierProvider<AppSettings>.value(value: appSettings),
+              ListenableProvider<ai.AiSettingsPort>.value(
+                value: aiSettingsPort(appSettings),
+              ),
             ],
             child: const MaterialApp(home: Scaffold(body: LlmChatScreen())),
           ),
@@ -175,6 +194,7 @@ void main() {
           await storageService.shutdown();
         });
         storageService.dispose();
+        await tester.runAsync(aiDatabase.dispose);
       }
     },
   );

@@ -1,0 +1,40 @@
+name: feature_ai
+description: AI chat, agent runtime, skills, LLM providers, and tool orchestration feature.
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  app_core:
+    path: ../../core/app_core
+  app_ui:
+    path: ../../core/app_ui
+  connection_core:
+    path: ../../core/connection_core
+  feature_playbook:
+    path: ../feature_playbook
+  ssh_core:
+    path: ../../infrastructure/ssh_core
+  drift: ^2.34.3
+  drift_flutter: ^0.3.1
+  file_picker: ^12.0.0-beta.7
+  flutter_animate: ^4.5.2
+  gpt_markdown: ^1.1.8
+  http: ^1.6.0
+  provider: ^6.1.5+1
+  uuid: ^4.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.15.1
+  drift_dev: ^2.34.5
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

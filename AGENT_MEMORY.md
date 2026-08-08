@@ -134,6 +134,13 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   equivalent provider path) so approval state cannot be bypassed. Default
   planning persists chat-bound `todoSteps`; create a reusable Playbook only
   when the user explicitly requests one.
+- 2026-08-08: `packages/features/feature_ai/` is the maintained AI owner. Its
+  `AiModule` lazily owns `ai.db`, `DriftAiRepository`, provider/runtime creation,
+  and tool registration; chat, Agent metrics, and trace data must not return to
+  the shared AppDatabase. App Shell adapters inject only AI Ports and the
+  `app_core` capabilities actually used by the tool loop. The development
+  refactor does not read or migrate old AI database tables; old App AI paths are
+  non-owning compatibility surfaces.
 - The local MCP server is loopback-only and is maintained by
   `packages/features/feature_mcp/`; its App Shell adapter reuses
   `AiToolService`. External MCP calls default to `reviewConfiguredTools`, where only exposed tools

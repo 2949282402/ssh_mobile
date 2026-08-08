@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
+import 'package:feature_ai/feature_ai.dart' as feature_ai;
+import 'package:app_core/app_core.dart' as app_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
@@ -13,11 +15,8 @@ import 'package:provider/provider.dart';
 import 'package:ssh_core/ssh_core.dart';
 
 import '../features/settings/viewmodels/settings_viewmodel.dart';
-import '../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
 import '../features/startup/viewmodels/startup_viewmodel.dart';
 import '../features/developer_panel/views/developer_panel_floating.dart';
-import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
-import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import '../services/app_settings.dart';
@@ -28,6 +27,7 @@ import 'connection_feature_adapters.dart';
 import 'lan_share_feature_adapters.dart';
 import 'terminal_feature_adapters.dart';
 import 'sftp_feature_adapters.dart';
+import 'rag_feature_adapters.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
 /// App Shell。它只消费由 [AppRuntime] 创建的 App Scope 实例。
@@ -199,6 +199,36 @@ class _SshMobileAppState extends State<SshMobileApp>
         ChangeNotifierProvider.value(value: runtime.appLogService),
         ChangeNotifierProvider.value(value: runtime.storageService),
         ChangeNotifierProvider.value(value: runtime.appSettings),
+        Provider<feature_ai.AiStoragePort>.value(
+          value: runtime.aiStorageAdapter,
+        ),
+        ListenableProvider<feature_ai.AiSettingsPort>.value(
+          value: runtime.aiSettingsAdapter,
+        ),
+        Provider<feature_ai.AiSshPort>.value(value: runtime.aiSshAdapter),
+        Provider<feature_ai.AiSftpPort>.value(value: runtime.aiSftpAdapter),
+        Provider<feature_ai.AiMonitoringPort>.value(
+          value: runtime.aiMonitoringAdapter,
+        ),
+        Provider<feature_ai.AiClientSystemPort>.value(
+          value: runtime.aiClientSystemAdapter,
+        ),
+        Provider<feature_ai.AiHealthPort>.value(value: runtime.aiHealthAdapter),
+        Provider<feature_ai.AiWebViewPort>.value(
+          value: runtime.aiWebViewAdapter,
+        ),
+        Provider<feature_ai.AiServerCatalogPort>.value(
+          value: runtime.aiServerCatalogAdapter,
+        ),
+        Provider<feature_ai.AiServerDiagnosticsPort>.value(
+          value: runtime.aiServerDiagnosticsAdapter,
+        ),
+        Provider<feature_ai.AiChatRuntimeFactory>.value(
+          value: runtime.aiChatRuntimeFactory,
+        ),
+        Provider<app_core.RagCapability>.value(
+          value: AppAiRagCapabilityAdapter(runtime.ragService),
+        ),
         ListenableProvider<feature_lan_share.LanShareSettingsPort>.value(
           value: runtime.lanShareSettingsAdapter,
         ),
@@ -400,21 +430,23 @@ class _SshMobileAppState extends State<SshMobileApp>
                       case '/ai-skills':
                         return MaterialPageRoute(
                           builder: (_) => ChangeNotifierProvider(
-                            create: (context) => AiSkillsViewModel(
-                              storageService: context.read<StorageService>(),
-                              appSettings: context.read<AppSettings>(),
+                            create: (context) => feature_ai.AiSkillsViewModel(
+                              storageService: context
+                                  .read<feature_ai.AiStoragePort>(),
+                              appSettings: context
+                                  .read<feature_ai.AiSettingsPort>(),
                             ),
-                            child: const AiSkillsScreen(),
+                            child: const feature_ai.AiSkillsScreen(),
                           ),
                         );
                       case '/ai-skills/edit':
                         final args = settings.arguments as Map<String, dynamic>;
                         final viewModel =
-                            args['viewModel'] as AiSkillsViewModel;
+                            args['viewModel'] as feature_ai.AiSkillsViewModel;
                         return MaterialPageRoute(
                           builder: (_) => ChangeNotifierProvider.value(
                             value: viewModel,
-                            child: const AiSkillEditScreen(),
+                            child: const feature_ai.AiSkillEditScreen(),
                           ),
                         );
                       case '/playbooks':

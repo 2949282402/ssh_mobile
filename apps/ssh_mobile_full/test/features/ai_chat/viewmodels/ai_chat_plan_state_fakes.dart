@@ -22,6 +22,7 @@ class _PlanHarness {
   static Future<_PlanHarness> create({StorageService? storageService}) async {
     final storage = storageService ?? StorageService();
     await storage.init();
+    attachTestAiRepository(storage);
     final settings = AppSettings();
     await settings.init();
     final ssh = SshService(storage);
@@ -70,7 +71,7 @@ class _PlanHarness {
     required AiChatRuntimeFactory runtimeFactory,
     ClientHealthAdvisorAdapter healthAdvisor = const _ImmediateHealthAdvisor(),
   }) {
-    return AiChatViewModel(
+    return createAiChatViewModel(
       storageService: storageService,
       sshService: sshService,
       sftpService: sftpService,
@@ -242,7 +243,7 @@ class _GateNumberedChatSaveStorage extends StorageService {
 
 enum _StreamExit { success, cancelled, failed, waitForCancellation }
 
-class _PlanRuntimeFactory extends AiChatRuntimeFactory {
+class _PlanRuntimeFactory extends LegacyAiChatRuntimeFactory {
   final _StreamExit exit;
   final bool persistTodoDuringStream;
   int streamStarts = 0;

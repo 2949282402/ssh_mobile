@@ -23,6 +23,18 @@ router, exposure/invocation policy, approval queue, activity Repository,
 console UI, and independent `mcp.db`; App Shell adapters inject settings,
 logging, and the AI tool runtime. MCP activities must not be added back to the
 shared `AppDatabase` or `StorageService`.
+`packages/features/feature_ai/` now owns AI chat, Agent, Skills, LLM provider/
+runtime, tool orchestration, AI WebView contracts, and independent `ai.db`.
+Its `AiModule` lazily owns the database and Repository; App Shell adapters in
+`apps/ssh_mobile_full/lib/app/` inject only Core Capability contracts and App
+Ports. The old `ai_chat`, `ai_skills`, and AI service paths remain non-owning
+compatibility surfaces.
+`packages/features/feature_ai/` now owns AI chat, Agent, Skills, LLM provider/
+runtime, tool orchestration, AI WebView contracts, and independent `ai.db`.
+Its `AiModule` lazily owns the database and Repository; App Shell adapters in
+`apps/ssh_mobile_full/lib/app/` inject only Core Capability contracts and App
+Ports. The old `ai_chat`, `ai_skills`, and AI service paths remain non-owning
+compatibility surfaces.
 
 This is a Dart workspace containing the full Flutter app for SSH, SFTP, server monitoring (including general metrics, port usage, process application performance, and service status), logs, LAN Quick Share, and OpenAI-compatible AI tools. The current full app lives in `apps/ssh_mobile_full/`: its `lib/` uses feature-first MVVM, its platform projects, assets, tests, and app-specific tools live beside it, and its `pubspec.yaml` is a workspace member. Cross-feature SSH/SFTP/storage/LLM infrastructure remains under `apps/ssh_mobile_full/lib/services/`; the MCP implementation is now owned by `packages/features/feature_mcp/`, while its App Shell adapters live under `apps/ssh_mobile_full/lib/app/`; shared security/protocol helpers remain under `apps/ssh_mobile_full/lib/core/services/`; Drift database and repositories remain under `apps/ssh_mobile_full/lib/data/`; shared UI now belongs to `packages/core/app_ui/`, while `apps/ssh_mobile_full/lib/theme/`, the migrated files under `apps/ssh_mobile_full/lib/widgets/`, and `apps/ssh_mobile_full/lib/utils/responsive.dart` remain only as compatibility exports; other helpers remain under `apps/ssh_mobile_full/lib/utils/`. `lib/models/` and `lib/screens/` inside the full app are legacy compatibility surfaces, not destinations for new work. Root-level `packages/core/`, `packages/infrastructure/`, and `packages/features/` are reserved for the staged modular migration; `packages/core/app_core/` owns pure Dart lifecycle/logging contracts, `packages/core/app_ui/` owns the shared theme, responsive metrics, and UI widgets, `packages/core/connection_core/` owns Connection domain models, repositories, the non-sensitive Connection Drift database, Secure Storage credentials, and Host Key contracts, `packages/features/feature_connection/` owns the migrated connection editor and ViewModel, `packages/features/feature_terminal/` owns the migrated terminal UI, route-scoped ViewModels, terminal output history, and `terminal.db`, and `packages/features/feature_mcp/` owns MCP server state, approval policy, console state, and `mcp.db`. The old terminal paths under `apps/ssh_mobile_full/lib/features/terminal/` and their tests remain compatibility exports/bridges during migration, not duplicate implementation destinations. `packages/infrastructure/network_transport/` owns the App Scope network facade and native handle adapter, `packages/infrastructure/ssh_core/` owns SSH session/runtime/pool/client contracts, and `packages/infrastructure/ssh_mobile_network_native/` owns the lower-level Dart/FFI binding. Root `pubspec.yaml` and `melos.yaml` define workspace tooling, with Melos pinned as a root development dependency, while `docs/`, `scripts/`, `installer/`, `.github/`, and `third_party/` remain repository-level directories. The vendored terminal package under `third_party/xterm/` is excluded from the full app analyzer.
 
@@ -96,11 +108,18 @@ flowchart LR
   knowledge-base state. AI consumes only `RagCapability`; the Package never
   reads or migrates old RAG database files and never stores document正文 or
   large vectors in Drift.
+- `packages/features/feature_ai/` owns AI chat, Agent, Skills, LLM providers and
+  runtime, tool registry/orchestration, AI WebView contracts, and `ai.db`.
+  `AiModule` owns lazy database/Repository initialization and disposal. AI
+  consumes only `app_core` Capability contracts and injected App Ports; it
+  never imports another Feature implementation or an App `/src/` path.
 - Current legacy feature roots under `apps/ssh_mobile_full/lib/features/`:
   `connection`, `terminal`, `sftp`, `ai_chat`, `ai_skills`, `client_webview`,
   `performance`, `system_admin`, `lan_share`, `playbook`, `rag`, `settings`,
   `startup`, `home`, `developer_log`, `developer_panel`.
-  Migrated LAN UI belongs in `packages/features/feature_lan_share/`; migrated
+  `ai_chat`/`ai_skills` are compatibility surfaces owned by
+  `packages/features/feature_ai/`. Migrated LAN UI belongs in
+  `packages/features/feature_lan_share/`; migrated
   Playbook UI belongs in `packages/features/feature_playbook/`; new UI
   otherwise belongs in the owning feature, including `packages/features/feature_mcp/`
   for MCP UI. It never belongs in `apps/ssh_mobile_full/lib/screens/`
@@ -109,8 +128,8 @@ flowchart LR
   Administration UI during this migration; new monitoring application code
   belongs in `packages/features/feature_monitoring/`, not in a second App
   service implementation.
-- Cross-feature infrastructure in `apps/ssh_mobile_full/lib/services/`: SSH/SFTP/LLM/AI-tool, monitoring, storage, legacy LAN-share compatibility services, and platform adapters. MCP implementation belongs in `packages/features/feature_mcp/`; the App Shell only provides its adapters. `apps/ssh_mobile_full/lib/core/services/` holds lower-level shared security/protocol factories (host-key policy, data protection). `apps/ssh_mobile_full/lib/data/` holds the remaining App Drift database, DAOs, and repositories. New shared infrastructure belongs in the appropriate package under `packages/` only when its current Step permits migration.
-- Storage layering: Drift for growing structured data (AI chats, agent metrics, terminal-history metadata, playbooks, SFTP path records, and RAG document/index metadata) with sensitive fields encrypted at rest; RAG正文/向量只进入有大小上限、TTL 和 eviction policy 的文件缓存；small preferences in SharedPreferences; passwords, private keys, API keys, and MCP tokens only in platform secure storage (`flutter_secure_storage`). A production DB failure must not silently fall back to an in-memory database.
+- Cross-feature compatibility infrastructure in `apps/ssh_mobile_full/lib/services/` includes SSH/SFTP, monitoring, storage, legacy LAN-share, and App adapters. AI implementation belongs in `packages/features/feature_ai/`; MCP implementation belongs in `packages/features/feature_mcp/`; the App Shell only provides their adapters. `apps/ssh_mobile_full/lib/core/services/` holds lower-level shared security/protocol factories (host-key policy, data protection). `apps/ssh_mobile_full/lib/data/` holds the remaining App Drift database, DAOs, and repositories. New shared infrastructure belongs in the appropriate package under `packages/` only when its current Step permits migration.
+- Storage layering: Feature-owned Drift databases hold growing structured data: AI chats/agent metrics/traces in `ai.db`, terminal-history metadata in `terminal.db`, playbooks in `playbook.db`, SFTP path records in `sftp.db`, and RAG/MCP metadata in their respective databases. Sensitive fields are encrypted at rest; small preferences stay in SharedPreferences; passwords, private keys, API keys, and MCP tokens only in platform secure storage (`flutter_secure_storage`). A production DB failure must not silently fall back to an in-memory database.
 
 AI agent runtime (client-side, not on the managed server): model context is built on-device, the provider is called, and the tool loop reaches remote systems via SSH/SFTP. Tool safety boundaries are enforced in code, not just prompts:
 
@@ -145,6 +164,7 @@ Static checks and formatting:
 - `dart format packages/features/feature_lan_share/lib packages/features/feature_lan_share/test`: format the LAN Share Feature package.
 - `dart format packages/features/feature_playbook/lib packages/features/feature_playbook/test`: format the Playbook Feature package.
 - `dart format packages/features/feature_rag/lib packages/features/feature_rag/test`: format the RAG Feature package.
+- `dart format packages/features/feature_ai/lib packages/features/feature_ai/test`: format the AI Feature package.
 - `dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool`: format check that fails on diffs (used in CI).
 - From `apps/ssh_mobile_full/`, `flutter analyze`: run static analysis using the app's `analysis_options.yaml`. `third_party/**` is excluded from the analyzer.
 - From `apps/ssh_mobile_full/`, `flutter test`: run all Flutter tests under the app's `test/`.
@@ -159,6 +179,7 @@ Static checks and formatting:
 - From `packages/features/feature_lan_share/`, `flutter analyze` and `flutter test`: validate the LAN Share Module lifecycle, independent `lan_share.db`, transfer safety limits, and injected App/Network Ports. Receiver activation is controlled by Module configuration; Feature code must not construct native network or SSH implementations.
 - From `packages/features/feature_playbook/`, `flutter analyze` and `flutter test`: validate the Playbook Module lifecycle, independent `playbook.db`, encrypted run history, approval target binding, and public AI capability boundary.
 - From `packages/features/feature_rag/`, `flutter analyze` and `flutter test`: validate the RAG Module lifecycle, independent `rag.db`, metadata-only persistence, bounded cache policy, and BM25/vector/Hybrid retrieval through injected Ports.
+- From `packages/features/feature_ai/`, `flutter analyze` and `flutter test`: validate the lazy AI Module/`ai.db` lifecycle, encrypted chat/metrics/trace Repository, AI Capability contracts, LLM providers, tool safety, and route-scoped runtime.
 - From `packages/core/app_ui/`, `flutter analyze` and `flutter test`: validate the shared theme, responsive helpers, and UI widgets.
 - From `apps/ssh_mobile_full/`, `flutter test --coverage --reporter expanded`: run tests with coverage.
 - From `apps/ssh_mobile_full/`, `dart run tool/check_coverage.dart --minimum=35`: enforce the 35% non-generated line-coverage floor (CI gate).

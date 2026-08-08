@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
+import 'package:feature_ai/feature_ai.dart' as feature_ai;
 import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
@@ -11,6 +12,8 @@ import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
 
 import 'lan_share_feature_adapters.dart';
+import 'ai_external_capability_adapters.dart';
+import 'ai_feature_adapters.dart';
 import 'mcp_feature_adapters.dart';
 import 'playbook_feature_adapters.dart';
 import 'rag_feature_adapters.dart';
@@ -56,6 +59,18 @@ final class AppRuntime implements Disposable {
     required this.mcpSettingsAdapter,
     required this.lanShareModule,
     required this.lanShareSettingsAdapter,
+    required this.aiModule,
+    required this.aiStorageAdapter,
+    required this.aiSettingsAdapter,
+    required this.aiSshAdapter,
+    required this.aiSftpAdapter,
+    required this.aiMonitoringAdapter,
+    required this.aiClientSystemAdapter,
+    required this.aiHealthAdapter,
+    required this.aiWebViewAdapter,
+    required this.aiServerCatalogAdapter,
+    required this.aiServerDiagnosticsAdapter,
+    required this.aiChatRuntimeFactory,
   });
 
   /// App Scope 唯一的日志实现；当前由 AppLogService 适配 Core Contract。
@@ -147,6 +162,22 @@ final class AppRuntime implements Disposable {
   /// 由 Runtime 持有的设置适配器；Module 只消费其 Port。
   final AppLanShareSettingsAdapter lanShareSettingsAdapter;
 
+  /// AI Module 的唯一 App Scope Owner；ai.db 只在首次 AI 使用时打开。
+  final feature_ai.AiModule aiModule;
+
+  /// AI Route 使用的 App Shell Port 适配器；它们不拥有底层 App 资源。
+  final AppAiStorageAdapter aiStorageAdapter;
+  final AppAiSettingsAdapter aiSettingsAdapter;
+  final AppAiSshAdapter aiSshAdapter;
+  final AppAiSftpAdapter aiSftpAdapter;
+  final AppAiMonitoringAdapter aiMonitoringAdapter;
+  final AppAiClientSystemAdapter aiClientSystemAdapter;
+  final AppAiHealthAdapter aiHealthAdapter;
+  final AppAiWebViewAdapter aiWebViewAdapter;
+  final AppAiServerCatalogAdapter aiServerCatalogAdapter;
+  final AppAiServerDiagnosticsAdapter aiServerDiagnosticsAdapter;
+  final feature_ai.AiChatRuntimeFactory aiChatRuntimeFactory;
+
   /// 旧 API 兼容外观；实际接收器 Owner 是 [lanShareModule]。
   feature_lan_share.LanReceiverCoordinator get lanReceiverCoordinator =>
       lanShareModule.coordinator;
@@ -192,6 +223,8 @@ final class AppRuntime implements Disposable {
     });
     await attempt(lanShareModule.dispose);
     await attempt(lanShareSettingsAdapter.dispose);
+    await attempt(aiModule.dispose);
+    await attempt(aiSettingsAdapter.dispose);
     await attempt(playbookModule.dispose);
     await attempt(playbookSettingsAdapter.dispose);
     await attempt(playbookConnectionCatalogAdapter.dispose);

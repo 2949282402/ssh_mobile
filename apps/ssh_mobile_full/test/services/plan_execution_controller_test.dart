@@ -1,8 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
-import 'package:ssh_mobile/services/agent/plan_execution_controller.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/services/approved_plan_context.dart';
+import 'package:feature_ai/ai_agent.dart';
+import 'package:feature_ai/ai_approved_plan.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
 void main() {

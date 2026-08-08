@@ -1,4 +1,6 @@
 // ignore_for_file: library_private_types_in_public_api
+import '../test_utils/ai_tool_test_adapters.dart';
+import '../test_utils/ai_port_adapters.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -9,19 +11,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
-import 'package:ssh_mobile/services/ai_tool_service.dart';
+import 'package:feature_ai/ai_tools.dart';
+import 'package:feature_ai/ai_tools.dart' as ai_tools;
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_system_tool_service.dart';
 import 'package:ssh_mobile/services/client_webview_service.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
-import 'package:ssh_mobile/services/remote_target_scope.dart';
 import 'package:ssh_mobile/services/server_catalog_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 part 'ai_tool_core_tests.dart';
 part 'ai_tool_skill_tests.dart';
@@ -54,6 +57,7 @@ void main() {
 
     storage = StorageService();
     await storage.init();
+    attachTestAiRepository(storage);
     await storage.addConnection(
       ConnectionConfig(
         id: 'server-1',

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
+import 'package:feature_ai/ai_chat.dart';
 
 void main() {
   group('PlanOutputValidator Tests', () {

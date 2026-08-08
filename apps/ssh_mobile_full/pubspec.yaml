@@ -37,6 +37,8 @@ dependencies:
     path: ../../packages/features/feature_lan_share
   feature_mcp:
     path: ../../packages/features/feature_mcp
+  feature_ai:
+    path: ../../packages/features/feature_ai
   dartssh2: ^2.22.5
   xterm:
     path: ../../third_party/xterm

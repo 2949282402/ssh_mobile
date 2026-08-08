@@ -1,15 +1,17 @@
 import 'dart:async';
+import '../../test_utils/ai_port_adapters.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:app_core/app_core.dart' as app_core;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_health_advisor.dart';
@@ -580,6 +582,7 @@ class _PlanScreenHarness {
   }) async {
     final resolvedStorageService = storageService ?? StorageService();
     await resolvedStorageService.init();
+    attachTestAiRepository(resolvedStorageService);
     await AppLogService.instance.detachDatabase(
       resolvedStorageService.appDatabase,
     );
@@ -616,10 +619,16 @@ class _PlanScreenHarness {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<StorageService>.value(value: storageService),
+        Provider<ai.AiStoragePort>.value(value: aiStoragePort(storageService)),
         ChangeNotifierProvider<SshService>.value(value: sshService),
+        Provider<ai.AiSshPort>.value(value: aiSshPort(sshService)),
         ChangeNotifierProvider<SftpService>.value(value: sftpService),
+        Provider<ai.AiSftpPort>.value(value: aiSftpPort(sftpService)),
         ChangeNotifierProvider<PerformanceMonitorService>.value(
           value: performanceMonitorService,
+        ),
+        Provider<ai.AiMonitoringPort>.value(
+          value: aiMonitoringPort(performanceMonitorService),
         ),
         ChangeNotifierProvider<PlaybookService>.value(value: playbookService),
         // 旧测试仍保留具体实现，同时按公开 Contract 注入 Playbook 能力。
@@ -629,7 +638,13 @@ class _PlanScreenHarness {
         ChangeNotifierProvider<RagService>.value(value: ragService),
         // 旧测试保留具体实现，同时按 RAG 公共 Contract 注入能力。
         ListenableProvider<feature_rag.RagCapability>.value(value: ragService),
+        Provider<app_core.RagCapability>.value(
+          value: aiRagCapability(ragService),
+        ),
         ChangeNotifierProvider<AppSettings>.value(value: appSettings),
+        ListenableProvider<ai.AiSettingsPort>.value(
+          value: aiSettingsPort(appSettings),
+        ),
       ],
       child: MaterialApp(
         builder: (context, child) => MediaQuery(
@@ -643,7 +658,7 @@ class _PlanScreenHarness {
           body: LlmChatScreen(
             initialText: initialText,
             viewModelFactory: (context) {
-              return viewModel = AiChatViewModel(
+              return viewModel = createAiChatViewModel(
                 storageService: storageService,
                 sshService: sshService,
                 sftpService: sftpService,

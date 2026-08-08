@@ -9,28 +9,22 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import 'package:feature_ai/feature_ai.dart';
+import 'package:feature_ai/feature_ai.dart' as feature_ai;
 
 import '../data/database/app_database.dart' as db;
-import '../features/ai_chat/models/agent_trace_event.dart';
 import '../features/connection/models/connection.dart';
 import '../features/playbook/models/playbook.dart';
-import '../utils/skill_frontmatter.dart';
-import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import '../core/services/data_protection_service.dart';
 import 'connection_target_binding.dart';
-import 'multi_agent_coordinator.dart';
-import 'llm_provider/llm_api_format.dart';
 
-part 'storage/storage_models_ai_settings.dart';
-part 'storage/storage_models_ai_resources.dart';
-part 'storage/storage_models_ai_chat.dart';
 part 'storage/storage_repositories.dart';
+part 'storage/storage_ai_compat_ops.dart';
 part 'storage/storage_models_terminal.dart';
 part 'storage/storage_models_sftp.dart';
 part 'storage/settings_ops.dart';
 part 'storage/connection_ops.dart';
-part 'storage/ai_chat_ops.dart';
 part 'storage/ai_skill_ops.dart';
 part 'storage/terminal_ops.dart';
 part 'storage/playbook_ops.dart';
@@ -38,12 +32,18 @@ part 'storage/backup_ops.dart';
 part 'storage/buffered_write_ops.dart';
 part 'storage/drift_ops.dart';
 part 'storage/lifecycle_ops.dart';
-part '../data/repositories/drift_ai_chat_repository.dart';
-part '../data/repositories/drift_agent_metrics_repository.dart';
-part '../data/repositories/drift_agent_trace_repository.dart';
 part '../data/repositories/drift_terminal_history_repository.dart';
 part '../data/repositories/drift_playbook_repository.dart';
 part '../data/repositories/drift_sftp_history_repository.dart';
+
+/// StorageService 仍负责旧设置中的短期 secret 缓存；AI 数据模型迁移后，
+/// 这个小型生命周期对象继续由 App Shell 持有，不与 ai.db 的持久化模型混用。
+class _MemorySecret {
+  final String? value;
+  final DateTime loadedAt;
+
+  const _MemorySecret({required this.value, required this.loadedAt});
+}
 
 class StorageService extends ChangeNotifier
     implements
@@ -92,6 +92,19 @@ class StorageService extends ChangeNotifier
     }
     _playbookRepositoryOverride = repository;
     _playbooksCache = null;
+  }
+
+  /// 注册 AI Repository 的惰性加载器。
+  ///
+  /// AI 数据库由 [AiModule] 独占；StorageService 只保留旧 API 兼容外观，
+  /// 首次访问聊天、指标或 trace 时才请求 Module 打开 ai.db，避免普通启动
+  /// 路径提前创建 AI 数据库。
+  void attachAiRepositoryLoader(Future<AiRepository> Function() loader) {
+    if (_disposed) {
+      throw StateError('StorageService has been shut down');
+    }
+    _aiRepositoryLoader = loader;
+    _aiRepositoryFuture = null;
   }
 
   Future<T> _runExclusiveAiSettingsOperation<T>(
@@ -621,9 +634,6 @@ class StorageService extends ChangeNotifier
 
   bool _ownsDatabase = false;
   bool _driftReady = false;
-  bool _driftAiChatsActive = false;
-  bool _driftAgentMetricsActive = false;
-  bool _driftAgentTraceActive = false;
   bool _driftTerminalHistoryActive = false;
   bool _driftPlaybooksActive = false;
   bool _driftSftpHistoryActive = false;
@@ -675,10 +685,7 @@ class StorageService extends ChangeNotifier
 
   List<ConnectionConfig> _connections = [];
   List<ConnectionConfig> _connectionsView = const [];
-  List<AiChatRecord>? _aiChatsCache;
   List<AiSkillRecord>? _aiSkillsCache;
-  List<AgentRunMetrics>? _agentRunMetricsCache;
-  final Map<String, List<AgentTraceEvent>> _agentTraceEventsCache = {};
   List<Playbook>? _playbooksCache;
   List<RestorableTmuxSession>? _restorableTmuxSessionsCache;
   List<TerminalHistoryRecord>? _terminalHistoryRecordsCache;
@@ -686,6 +693,8 @@ class StorageService extends ChangeNotifier
   Future<void>? _initializationFuture;
   Future<void>? _driftInitializationFuture;
   Future<void>? _shutdownFuture;
+  Future<AiRepository> Function()? _aiRepositoryLoader;
+  Future<AiRepository>? _aiRepositoryFuture;
   final Completer<void> _initCompleter = Completer<void>();
   Future<void> get initFuture => _initCompleter.future;
   final Completer<void> _driftInitCompleter = Completer<void>();
@@ -698,6 +707,16 @@ class StorageService extends ChangeNotifier
       await driftInitFuture;
     }
     return action();
+  }
+
+  Future<AiRepository> _requireAiRepository() {
+    final existing = _aiRepositoryFuture;
+    if (existing != null) return existing;
+    final loader = _aiRepositoryLoader;
+    if (loader == null) {
+      throw StateError('AI repository is not registered.');
+    }
+    return _aiRepositoryFuture = loader();
   }
 
   bool _powerGuideSeen = false;
@@ -753,16 +772,26 @@ class StorageService extends ChangeNotifier
   }
 
   @override
-  Future<List<AiChatRecord>> loadAiChats() =>
-      _executeDrift(() => _loadAiChats());
+  Future<List<AiChatRecord>> loadAiChats() async =>
+      (await _requireAiRepository()).loadChats();
 
   @override
-  Future<void> saveAiChat(AiChatRecord chat) =>
-      _executeDrift(() => _saveAiChat(chat));
+  Future<void> saveAiChat(AiChatRecord chat) async {
+    await (await _requireAiRepository()).saveChat(chat);
+    notifyStorageListeners();
+  }
 
   @override
-  Future<void> deleteAiChat(String id) =>
-      _executeDrift(() => _deleteAiChat(id));
+  Future<void> deleteAiChat(String id) async {
+    await (await _requireAiRepository()).deleteChat(id);
+    notifyStorageListeners();
+  }
+
+  /// 备份导入使用的批量替换入口；实现仍由 AI Module 的 Repository 持有。
+  Future<void> replaceAiChats(List<AiChatRecord> chats) async {
+    await (await _requireAiRepository()).replaceChats(chats);
+    notifyStorageListeners();
+  }
 
   @override
   Future<List<AiSkillRecord>> loadAiSkills() =>
@@ -807,36 +836,51 @@ class StorageService extends ChangeNotifier
   }
 
   @override
-  Future<List<AgentRunMetrics>> loadAgentRunMetrics() =>
-      _executeDrift(() => _loadAgentRunMetrics());
+  Future<List<AgentRunMetrics>> loadAgentRunMetrics() async =>
+      (await _requireAiRepository()).loadRunMetrics();
 
   @override
-  Future<void> saveAgentRunMetrics(AgentRunMetrics metrics) =>
-      _executeDrift(() => _saveAgentRunMetrics(metrics));
+  Future<void> saveAgentRunMetrics(AgentRunMetrics metrics) async {
+    await (await _requireAiRepository()).saveRunMetrics(metrics);
+    notifyStorageListeners();
+  }
+
+  /// 备份导入使用的批量替换入口；实现仍由 AI Module 的 Repository 持有。
+  Future<void> replaceAgentRunMetrics(List<AgentRunMetrics> metrics) async {
+    await (await _requireAiRepository()).replaceRunMetrics(metrics);
+    notifyStorageListeners();
+  }
 
   @override
-  Future<List<AgentTraceEvent>> loadAgentTraceEvents(String runId) =>
-      _executeDrift(() => _loadAgentTraceEvents(runId));
+  Future<List<AgentTraceEvent>> loadAgentTraceEvents(String runId) async =>
+      (await _requireAiRepository()).loadTraceEvents(runId);
 
   @override
   Future<List<String>> loadRecentAgentTraceRunIdsForChat(
     String chatId, {
     int limit = 20,
-  }) => _executeDrift(
-    () => _loadRecentAgentTraceRunIdsForChat(chatId, limit: limit),
+  }) async => (await _requireAiRepository()).loadRecentTraceRunIdsForChat(
+    chatId,
+    limit: limit,
   );
 
   @override
-  Future<void> saveAgentTraceEvent(AgentTraceEvent event) =>
-      _executeDrift(() => _saveAgentTraceEvent(event));
+  Future<void> saveAgentTraceEvent(AgentTraceEvent event) async {
+    await (await _requireAiRepository()).saveTraceEvent(event);
+    notifyStorageListeners();
+  }
 
   @override
-  Future<void> saveAgentTraceEvents(List<AgentTraceEvent> events) =>
-      _executeDrift(() => _saveAgentTraceEvents(events));
+  Future<void> saveAgentTraceEvents(List<AgentTraceEvent> events) async {
+    await (await _requireAiRepository()).saveTraceEvents(events);
+    notifyStorageListeners();
+  }
 
   @override
-  Future<void> deleteAgentTraceEvents(String runId) =>
-      _executeDrift(() => _deleteAgentTraceEvents(runId));
+  Future<void> deleteAgentTraceEvents(String runId) async {
+    await (await _requireAiRepository()).deleteTraceEvents(runId);
+    notifyStorageListeners();
+  }
 
   @override
   Future<List<Playbook>> loadPlaybooks() =>

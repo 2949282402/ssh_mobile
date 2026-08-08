@@ -4,22 +4,25 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:app_core/app_core.dart' as app_core;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/data/database/app_database.dart';
-import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/llm_provider/llm_api_format.dart';
+import 'package:feature_ai/ai_llm.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+
+import '../../test_utils/ai_port_adapters.dart';
 
 Future<void> _pumpChatUi(WidgetTester tester) async {
   await tester.pump();
@@ -72,6 +75,7 @@ void main() {
       logs = AppLogService.instance;
       logs.clear();
       await storage.init();
+      attachTestAiRepository(storage);
       await logs.detachDatabase(storage.appDatabase);
       await settings.init();
       await settings.toggleLanguage();
@@ -81,6 +85,7 @@ void main() {
       playbooks = PlaybookService(storageService: storage, sshService: ssh);
       rag = RagService(storageService: storage);
     });
+    installTestAiLogger();
     addTearDown(logs.clear);
 
     try {
@@ -88,10 +93,16 @@ void main() {
         MultiProvider(
           providers: [
             ChangeNotifierProvider<StorageService>.value(value: storage),
+            Provider<ai.AiStoragePort>.value(value: aiStoragePort(storage)),
             ChangeNotifierProvider<SshService>.value(value: ssh),
+            Provider<ai.AiSshPort>.value(value: aiSshPort(ssh)),
             ChangeNotifierProvider<SftpService>.value(value: sftp),
+            Provider<ai.AiSftpPort>.value(value: aiSftpPort(sftp)),
             ChangeNotifierProvider<PerformanceMonitorService>.value(
               value: monitor,
+            ),
+            Provider<ai.AiMonitoringPort>.value(
+              value: aiMonitoringPort(monitor),
             ),
             ChangeNotifierProvider<PlaybookService>.value(value: playbooks),
             // 旧测试仍保留具体实现，同时按公开 Contract 注入 Playbook 能力。
@@ -101,7 +112,11 @@ void main() {
             ChangeNotifierProvider<RagService>.value(value: rag),
             // 旧测试保留具体实现，同时按 RAG 公共 Contract 注入能力。
             ListenableProvider<feature_rag.RagCapability>.value(value: rag),
+            Provider<app_core.RagCapability>.value(value: aiRagCapability(rag)),
             ChangeNotifierProvider<AppSettings>.value(value: settings),
+            ListenableProvider<ai.AiSettingsPort>.value(
+              value: aiSettingsPort(settings),
+            ),
           ],
           child: MaterialApp(
             home: ValueListenableBuilder<bool>(

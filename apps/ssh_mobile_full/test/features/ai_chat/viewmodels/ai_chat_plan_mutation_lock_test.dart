@@ -1,10 +1,11 @@
 import 'dart:async';
+import '../../../test_utils/ai_port_adapters.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
@@ -321,6 +322,7 @@ class _MutationHarness {
 
   static Future<_MutationHarness> create(StorageService storage) async {
     await storage.init();
+    attachTestAiRepository(storage);
     final settings = AppSettings();
     await settings.init();
     final ssh = SshService(storage);
@@ -335,7 +337,7 @@ class _MutationHarness {
     );
   }
 
-  AiChatViewModel viewModel() => AiChatViewModel(
+  AiChatViewModel viewModel() => createAiChatViewModel(
     storageService: storage,
     sshService: ssh,
     sftpService: sftp,

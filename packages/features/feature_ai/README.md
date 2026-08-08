@@ -1,0 +1,31 @@
+最新更新时间：2026-08-08
+
+# feature_ai
+
+AI chat、Agent、Skills、LLM provider/runtime 和工具编排 Feature。Package 独占
+`ai.db`，并通过 App Shell 注入远程命令、文件传输、监控、Playbook、RAG、MCP
+等 Core Capability，不直接依赖其他 Feature 的实现。
+
+## 边界
+
+- `AiModule` 是 AI 数据库、Repository、保护端口和日志端口的生命周期 Owner；
+  只有进入 AI 路由或明确发起 AI 请求时才打开 `ai.db`、创建 provider/runtime
+  和工具注册表。
+- `chat/`、`agent/`、`skills/`、`llm/`、`tools/` 和 `data/` 按业务子域拆分，
+  不重新聚合为巨型 `ai_service.dart`。
+- 聊天、Agent metrics、trace 和消息敏感字段通过 `DriftAiRepository` 写入
+  `ai.db`；加密能力由 App Shell 的 `AiTextProtectionPort` 注入，数据库异常
+  不静默回退到内存实现。
+- AI 只消费 `app_core` 的 Capability Contract 和显式 Port；RAG、Playbook、
+  MCP 的实现仍由各自 Feature Module 持有。
+- App Shell 只能依赖 `package:feature_ai/feature_ai.dart` 或分类公共出口，
+  不得引用 Package 的 `src/` 路径。旧 `ai_chat`、`ai_skills` 和 AI service
+  路径仅作为迁移期间的兼容边界。
+
+## 验证
+
+```text
+dart format --output=none --set-exit-if-changed lib test
+dart analyze
+flutter test
+```

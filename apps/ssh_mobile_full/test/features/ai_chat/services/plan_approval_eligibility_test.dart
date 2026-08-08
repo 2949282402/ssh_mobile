@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/ai_chat/services/plan_approval_eligibility.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
   final createdAt = DateTime.utc(2026, 7, 13, 12);

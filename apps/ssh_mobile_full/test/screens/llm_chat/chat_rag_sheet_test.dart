@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import '../../test_utils/ai_port_adapters.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
 void main() {
@@ -38,7 +39,7 @@ void main() {
                     showDragHandle: true,
                     builder: (sheetContext) => ChatRagSheetContent(
                       strings: AiStrings(AppLanguage.en),
-                      appSettings: settings,
+                      appSettings: aiSettingsPort(settings),
                       hasAliyunKey: false,
                       onManage: () {
                         managed = true;
@@ -101,7 +102,7 @@ void main() {
                   context: context,
                   builder: (_) => ChatRagSheetContent(
                     strings: AiStrings(AppLanguage.zh),
-                    appSettings: settings,
+                    appSettings: aiSettingsPort(settings),
                     hasAliyunKey: false,
                     onManage: () {},
                   ),

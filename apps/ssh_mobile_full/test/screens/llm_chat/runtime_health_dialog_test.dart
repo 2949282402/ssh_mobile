@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/client_health_advisor.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -17,12 +17,12 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     var settingsOpened = 0;
     bool? result;
-    final report = ClientRuntimeHealthReport(
-      status: ClientRuntimeHealthStatus.blocking,
+    final report = ai.AiRuntimeHealthReport(
+      status: ai.AiRuntimeHealthStatus.blocking,
       issues: const [
-        ClientRuntimeHealthIssue(
+        ai.AiRuntimeHealthIssue(
           code: 'network_disconnected',
-          severity: ClientRuntimeHealthStatus.blocking,
+          severity: ai.AiRuntimeHealthStatus.blocking,
           title: 'RAW ENGLISH TITLE',
           detail: 'RAW ENGLISH DETAIL',
           recommendation: 'RAW ENGLISH RECOMMENDATION',
@@ -83,40 +83,40 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetViewInsets);
     bool? result;
-    final report = ClientRuntimeHealthReport(
-      status: ClientRuntimeHealthStatus.warning,
+    final report = ai.AiRuntimeHealthReport(
+      status: ai.AiRuntimeHealthStatus.warning,
       issues: const [
-        ClientRuntimeHealthIssue(
+        ai.AiRuntimeHealthIssue(
           code: 'network_status_unavailable',
-          severity: ClientRuntimeHealthStatus.warning,
+          severity: ai.AiRuntimeHealthStatus.warning,
           title: 'raw',
           detail: 'raw',
           recommendation: 'raw',
         ),
-        ClientRuntimeHealthIssue(
+        ai.AiRuntimeHealthIssue(
           code: 'metered_network',
-          severity: ClientRuntimeHealthStatus.warning,
+          severity: ai.AiRuntimeHealthStatus.warning,
           title: 'raw',
           detail: 'raw',
           recommendation: 'raw',
         ),
-        ClientRuntimeHealthIssue(
+        ai.AiRuntimeHealthIssue(
           code: 'vpn_active',
-          severity: ClientRuntimeHealthStatus.warning,
+          severity: ai.AiRuntimeHealthStatus.warning,
           title: 'raw',
           detail: 'raw',
           recommendation: 'raw',
         ),
-        ClientRuntimeHealthIssue(
+        ai.AiRuntimeHealthIssue(
           code: 'battery_optimization_active',
-          severity: ClientRuntimeHealthStatus.warning,
+          severity: ai.AiRuntimeHealthStatus.warning,
           title: 'raw',
           detail: 'raw',
           recommendation: 'raw',
         ),
-        ClientRuntimeHealthIssue(
+        ai.AiRuntimeHealthIssue(
           code: 'power_save_mode',
-          severity: ClientRuntimeHealthStatus.warning,
+          severity: ai.AiRuntimeHealthStatus.warning,
           title: 'raw',
           detail: 'raw',
           recommendation: 'raw',
@@ -177,7 +177,7 @@ void main() {
 }
 
 Widget _runtimeHealthHost({
-  required ClientRuntimeHealthReport report,
+  required ai.AiRuntimeHealthReport report,
   required bool allowContinue,
   required AiStrings strings,
   required Future<void> Function() onOpenSettings,

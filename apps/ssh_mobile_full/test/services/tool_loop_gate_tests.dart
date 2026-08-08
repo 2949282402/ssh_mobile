@@ -9,7 +9,7 @@ void _registerToolLoopGateTests() {
       final ledger = <LlmToolLedgerEntry>[];
       final mockCoordinator = MockMultiAgentCoordinator();
       final localLlm = LlmChatService(
-        storageService: storage,
+        storageService: aiStoragePort(storage),
         toolService: tools,
         multiAgentCoordinator: mockCoordinator,
       );
@@ -89,7 +89,7 @@ void _registerToolLoopGateTests() {
         },
       );
       final localLlm = LlmChatService(
-        storageService: storage,
+        storageService: aiStoragePort(storage),
         toolService: mockTools,
       );
 
@@ -192,7 +192,7 @@ void _registerToolLoopGateTests() {
         },
       );
       final localLlm = LlmChatService(
-        storageService: storage,
+        storageService: aiStoragePort(storage),
         toolService: mockTools,
       );
 
@@ -306,7 +306,7 @@ void _registerToolLoopGateTests() {
         },
       );
       final localLlm = LlmChatService(
-        storageService: storage,
+        storageService: aiStoragePort(storage),
         toolService: mockTools,
       );
 
@@ -404,7 +404,7 @@ void _registerToolLoopGateTests() {
         },
       );
       final localLlm = LlmChatService(
-        storageService: storage,
+        storageService: aiStoragePort(storage),
         toolService: mockTools,
       );
 
@@ -510,7 +510,7 @@ void _registerToolLoopGateTests() {
         },
       );
       final localLlm = LlmChatService(
-        storageService: storage,
+        storageService: aiStoragePort(storage),
         toolService: mockTools,
       );
 
@@ -606,7 +606,7 @@ void _registerToolLoopGateTests() {
       },
     );
     final localLlm = LlmChatService(
-      storageService: storage,
+      storageService: aiStoragePort(storage),
       toolService: mockTools,
     );
 

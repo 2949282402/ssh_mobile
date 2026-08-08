@@ -6,12 +6,11 @@
 import 'dart:convert';
 
 import 'package:feature_mcp/feature_mcp.dart' as mcp;
+import 'package:feature_ai/feature_ai.dart' as feature_ai;
 import 'package:flutter/foundation.dart';
 
-import '../services/ai_tool_service.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
-import '../services/tool_exposure_router.dart';
 
 /// 将应用设置暴露为 MCP 的可监听 Settings Port。
 final class AppMcpSettingsAdapter extends ChangeNotifier
@@ -124,12 +123,13 @@ final class AppAiToolExecutorAdapter
         mcp.McpChatSessionState {
   const AppAiToolExecutorAdapter(this._delegate);
 
-  final AiToolExecutor _delegate;
+  final feature_ai.AiToolExecutor _delegate;
 
   @override
   bool get hasChatSession {
     final delegate = _delegate;
-    return delegate is AiToolService && delegate.clientWebViewSessionId != null;
+    return delegate is feature_ai.AiToolService &&
+        delegate.clientWebViewSessionId != null;
   }
 
   @override
@@ -156,11 +156,9 @@ final class AppAiToolExecutorAdapter
     String name,
     Map<String, dynamic> arguments,
   ) async {
-    final request = _delegate is McpApprovalRequestProvider
-        ? await (_delegate as McpApprovalRequestProvider).mcpApprovalRequestFor(
-            name,
-            arguments,
-          )
+    final request = _delegate is feature_ai.McpApprovalRequestProvider
+        ? await (_delegate as feature_ai.McpApprovalRequestProvider)
+              .mcpApprovalRequestFor(name, arguments)
         : await _delegate.approvalRequestFor(name, arguments);
     return request == null ? null : _toMcpApprovalRequest(request);
   }
@@ -175,10 +173,10 @@ final class AppAiToolExecutorAdapter
   @override
   Future<bool> isApprovalTargetCurrent(mcp.McpApprovalRequest request) async {
     final delegate = _delegate;
-    if (delegate is! AiToolApprovalTargetGuard) return false;
+    if (delegate is! feature_ai.AiToolApprovalTargetGuard) return false;
     final original = _originalRequest(request);
     if (original == null) return false;
-    final guard = delegate as AiToolApprovalTargetGuard;
+    final guard = delegate as feature_ai.AiToolApprovalTargetGuard;
     return guard.isApprovalTargetCurrent(original);
   }
 
@@ -188,18 +186,18 @@ final class AppAiToolExecutorAdapter
     Map<String, dynamic> arguments,
   ) async {
     final delegate = _delegate;
-    if (delegate is! AiToolApprovalTargetGuard) {
+    if (delegate is! feature_ai.AiToolApprovalTargetGuard) {
       return jsonEncode({'error': 'approval_target_guard_unavailable'});
     }
     final original = _originalRequest(request);
     if (original == null) {
       return jsonEncode({'error': 'approval_target_binding_unavailable'});
     }
-    final guard = delegate as AiToolApprovalTargetGuard;
+    final guard = delegate as feature_ai.AiToolApprovalTargetGuard;
     return guard.executeApproved(original, arguments);
   }
 
-  mcp.McpTool _toMcpTool(AiTool tool) {
+  mcp.McpTool _toMcpTool(feature_ai.AiTool tool) {
     return mcp.McpTool(
       name: tool.name,
       description: tool.description,
@@ -215,51 +213,60 @@ final class AppAiToolExecutorAdapter
     );
   }
 
-  mcp.McpToolExecutionMode _toExecutionMode(AiToolExecutionMode mode) {
+  mcp.McpToolExecutionMode _toExecutionMode(
+    feature_ai.AiToolExecutionMode mode,
+  ) {
     return switch (mode) {
-      AiToolExecutionMode.readOnly => mcp.McpToolExecutionMode.readOnly,
-      AiToolExecutionMode.planOnly => mcp.McpToolExecutionMode.planOnly,
-      AiToolExecutionMode.executionOnly =>
+      feature_ai.AiToolExecutionMode.readOnly =>
+        mcp.McpToolExecutionMode.readOnly,
+      feature_ai.AiToolExecutionMode.planOnly =>
+        mcp.McpToolExecutionMode.planOnly,
+      feature_ai.AiToolExecutionMode.executionOnly =>
         mcp.McpToolExecutionMode.executionOnly,
-      AiToolExecutionMode.stateChanging =>
+      feature_ai.AiToolExecutionMode.stateChanging =>
         mcp.McpToolExecutionMode.stateChanging,
-      AiToolExecutionMode.planControl => mcp.McpToolExecutionMode.planControl,
+      feature_ai.AiToolExecutionMode.planControl =>
+        mcp.McpToolExecutionMode.planControl,
     };
   }
 
-  mcp.McpToolCapability _toCapability(AiToolCapability capability) {
+  mcp.McpToolCapability _toCapability(feature_ai.AiToolCapability capability) {
     return switch (capability) {
-      AiToolCapability.client => mcp.McpToolCapability.client,
-      AiToolCapability.server => mcp.McpToolCapability.server,
-      AiToolCapability.ssh => mcp.McpToolCapability.ssh,
-      AiToolCapability.sftp => mcp.McpToolCapability.sftp,
-      AiToolCapability.monitor => mcp.McpToolCapability.monitor,
-      AiToolCapability.web => mcp.McpToolCapability.web,
-      AiToolCapability.logs => mcp.McpToolCapability.logs,
-      AiToolCapability.settings => mcp.McpToolCapability.settings,
-      AiToolCapability.diagnostics => mcp.McpToolCapability.diagnostics,
-      AiToolCapability.planning => mcp.McpToolCapability.planning,
-      AiToolCapability.playbook => mcp.McpToolCapability.playbook,
+      feature_ai.AiToolCapability.client => mcp.McpToolCapability.client,
+      feature_ai.AiToolCapability.server => mcp.McpToolCapability.server,
+      feature_ai.AiToolCapability.ssh => mcp.McpToolCapability.ssh,
+      feature_ai.AiToolCapability.sftp => mcp.McpToolCapability.sftp,
+      feature_ai.AiToolCapability.monitor => mcp.McpToolCapability.monitor,
+      feature_ai.AiToolCapability.web => mcp.McpToolCapability.web,
+      feature_ai.AiToolCapability.logs => mcp.McpToolCapability.logs,
+      feature_ai.AiToolCapability.settings => mcp.McpToolCapability.settings,
+      feature_ai.AiToolCapability.diagnostics =>
+        mcp.McpToolCapability.diagnostics,
+      feature_ai.AiToolCapability.planning => mcp.McpToolCapability.planning,
+      feature_ai.AiToolCapability.playbook => mcp.McpToolCapability.playbook,
     };
   }
 
-  mcp.McpApprovalRequest _toMcpApprovalRequest(AiToolApprovalRequest request) =>
-      mcp.McpApprovalRequest(
-        toolName: request.toolName,
-        approvalType: request.approvalType,
-        connectionId: request.connectionId,
-        connectionName: request.connectionName,
-        command: request.command,
-        reason: request.reason,
-        targetPath: request.targetPath,
-        byteLength: request.byteLength,
-        contentPreview: request.contentPreview,
-        destructive: request.destructive,
-        opaqueHandle: request,
-      );
+  mcp.McpApprovalRequest _toMcpApprovalRequest(
+    feature_ai.AiToolApprovalRequest request,
+  ) => mcp.McpApprovalRequest(
+    toolName: request.toolName,
+    approvalType: request.approvalType,
+    connectionId: request.connectionId,
+    connectionName: request.connectionName,
+    command: request.command,
+    reason: request.reason,
+    targetPath: request.targetPath,
+    byteLength: request.byteLength,
+    contentPreview: request.contentPreview,
+    destructive: request.destructive,
+    opaqueHandle: request,
+  );
 
-  AiToolApprovalRequest? _originalRequest(mcp.McpApprovalRequest request) {
+  feature_ai.AiToolApprovalRequest? _originalRequest(
+    mcp.McpApprovalRequest request,
+  ) {
     final original = request.opaqueHandle;
-    return original is AiToolApprovalRequest ? original : null;
+    return original is feature_ai.AiToolApprovalRequest ? original : null;
   }
 }

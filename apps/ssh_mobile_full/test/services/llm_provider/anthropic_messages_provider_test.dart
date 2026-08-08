@@ -3,9 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/llm_provider/anthropic_messages_provider.dart';
-import 'package:ssh_mobile/services/llm_provider/llm_provider_types.dart';
-import 'package:ssh_mobile/services/llm_provider/llm_url_utils.dart';
+import 'package:feature_ai/ai_llm.dart';
 
 // --- Mocks for HttpClient ---
 class MockHttpOverrides extends HttpOverrides {

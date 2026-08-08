@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/multi_agent_coordinator.dart';
+import 'package:feature_ai/ai_agent.dart';
 
 void main() {
   group('MultiAgentCoordinator policy', () {

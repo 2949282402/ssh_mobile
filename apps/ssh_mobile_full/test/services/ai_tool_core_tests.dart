@@ -59,7 +59,7 @@ void _registerAiToolCoreTests() {
   test('read-only remote tool cannot drift outside the turn target', () async {
     final original = storage.getConnection('server-1')!;
     tools.bindConnectionTargets({
-      original.id: ConnectionTargetBinding.fromConfig(original),
+      original.id: ssh_core.SshTargetBinding.fromConfig(original),
     });
     await storage.updateConnection(
       original.copyWith(host: 'replacement.example.com', port: 2222),
@@ -81,14 +81,14 @@ void _registerAiToolCoreTests() {
     'approved execution revalidates at the remote side-effect edge',
     () async {
       final provider = _GatedRemoteProvider();
-      final guardedTools = AiToolService(
+      final guardedTools = createAiToolServiceFromLegacy(
         providers: [provider],
         storageService: storage,
         sshService: ssh,
         sftpService: sftp,
       );
       final original = storage.getConnection('server-1')!;
-      final binding = ConnectionTargetBinding.fromConfig(original);
+      final binding = ssh_core.SshTargetBinding.fromConfig(original);
       guardedTools.bindConnectionTargets({original.id: binding});
       final request = AiToolApprovalRequest(
         toolName: _GatedRemoteProvider.toolName,

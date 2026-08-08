@@ -336,12 +336,11 @@ extension BackupOps on StorageService {
           .toList(),
       immediate: true,
     );
-    await _saveAiChats(
+    await replaceAiChats(
       ((decoded['aiChats'] as List<dynamic>?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(AiChatRecord.fromJson)
           .toList(),
-      immediate: true,
     );
     final importedAiSkills =
         ((decoded['aiSkills'] as List<dynamic>?) ?? const [])
@@ -356,8 +355,7 @@ extension BackupOps on StorageService {
             .whereType<Map<String, dynamic>>()
             .map(AgentRunMetrics.fromJson)
             .toList();
-    _requireDriftStorage(_driftAgentMetricsActive, 'agent metrics');
-    await _replaceDriftAgentRunMetrics(importedMetrics);
+    await replaceAgentRunMetrics(importedMetrics);
     final importedPlaybooks =
         ((decoded['playbooks'] as List<dynamic>?) ?? const [])
             .whereType<Map<String, dynamic>>()

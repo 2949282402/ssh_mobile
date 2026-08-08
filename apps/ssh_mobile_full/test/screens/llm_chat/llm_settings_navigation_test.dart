@@ -3,10 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/llm_provider/llm_api_format.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:feature_ai/ai_llm.dart';
+import '../../test_utils/ai_port_adapters.dart';
 
 void main() {
   const settings = AiConnectionSettings(
@@ -52,9 +53,14 @@ void main() {
   Widget testApp({required Widget home}) {
     return ChangeNotifierProvider(
       create: (_) => AppSettings(),
-      child: ShadTheme(
-        data: ShadThemeData(brightness: Brightness.light),
-        child: MaterialApp(home: home),
+      child: Builder(
+        builder: (context) => ListenableProvider<ai.AiSettingsPort>.value(
+          value: aiSettingsPort(context.read<AppSettings>()),
+          child: ShadTheme(
+            data: ShadThemeData(brightness: Brightness.light),
+            child: MaterialApp(home: home),
+          ),
+        ),
       ),
     );
   }

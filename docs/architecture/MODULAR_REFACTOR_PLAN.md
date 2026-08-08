@@ -435,6 +435,22 @@
 - Step 17 按 `refactor(mcp): step 17 migrate mcp module` 独立提交，Commit 记录
   作为本执行记录的追溯入口。
 
+## Step 18 执行记录（2026-08-08）
+
+- 已通过 Git 文件迁移创建 `packages/features/feature_ai/`，将 AI Chat、Agent、
+  Skills、LLM provider/runtime、工具编排、AI 数据模型和对应测试迁入 Package；
+  旧 App 文件保留为兼容出口/适配边界，没有删除业务能力来代替迁移。
+- `AiModule` 独占并懒初始化 `ai.db`、`DriftAiRepository` 和 AI 运行时；聊天、
+  Agent metrics、trace 及敏感消息字段归属 AI 数据库。原 AppDatabase 的 AI 表、
+  DAO 和重复 Repository 已移除，原有数据库测试覆盖迁移到
+  `feature_ai/test/data/ai_repository_test.dart`。
+- AI 仅通过 `app_core` 的 RemoteCommand、FileTransfer、Monitoring、Playbook、
+  RAG、MCP Capability 以及注入 Port 调用 App 能力；App Composition Root 负责
+  适配与懒加载，Feature 不引用其他 Feature implementation 或 `/src/`。
+- 依赖解析没有发生版本冲突，因此没有升级无关依赖；后续若出现真实冲突，
+  按官方稳定版本资料核对后再做最小升级。Package/App 格式、分析和全量测试
+  通过后，Step 18 按 `refactor(ai): step 18 migrate ai module` 独立提交。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

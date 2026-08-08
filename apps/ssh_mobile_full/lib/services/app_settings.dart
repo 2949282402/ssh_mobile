@@ -11,9 +11,9 @@ import 'package:feature_mcp/feature_mcp.dart';
 import '../utils/device_name_util.dart';
 import 'app_log_service.dart';
 
-part 'app_strings.dart';
-
 export 'package:app_core/app_core.dart' show AppLanguage;
+
+part 'app_strings.dart';
 
 @immutable
 class AppVisualSettingsSnapshot {

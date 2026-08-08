@@ -1,12 +1,13 @@
 import 'package:flutter/foundation.dart';
+import '../test_utils/ai_port_adapters.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/services/ai_tool_service.dart';
+import 'package:feature_ai/ai_tools.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/services/agent/plan_execution_controller.dart';
+import 'package:feature_ai/ai_agent.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 
@@ -25,6 +26,7 @@ void main() {
 
       storage = StorageService();
       await storage.init();
+      attachTestAiRepository(storage);
 
       await storage.saveAiConnectionSettings(
         baseUrl: 'https://api.example.com',
@@ -111,7 +113,10 @@ void main() {
         },
       );
 
-      llm = LlmChatService(storageService: storage, toolService: mockTools);
+      llm = LlmChatService(
+        storageService: aiStoragePort(storage),
+        toolService: mockTools,
+      );
 
       // We need to fetch visible tools
       final visibleTools = <String, AiTool>{

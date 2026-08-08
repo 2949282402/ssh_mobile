@@ -1,11 +1,12 @@
 import 'package:flutter/foundation.dart';
+import '../test_utils/ai_port_adapters.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/services/operational_memory_retriever.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/services/skill/skill_index_service.dart';
+import 'package:feature_ai/ai_skills.dart';
 import 'package:ssh_mobile/utils/text_chunker.dart';
 
 void main() {
@@ -21,7 +22,12 @@ void main() {
 
     storage = StorageService();
     await storage.init();
-    retriever = OperationalMemoryRetriever(storageService: storage);
+    // Operational memory reads AI chat history through the injected repository；
+    // 测试夹具显式安装独立内存仓库，保持模块边界和资源生命周期可验证。
+    attachTestAiRepository(storage);
+    retriever = OperationalMemoryRetriever(
+      storageService: aiStoragePort(storage),
+    );
   });
 
   tearDown(() {
@@ -165,7 +171,7 @@ body instructions here''',
     'fallbacks to legacy search when SkillIndexService throws Exception',
     () async {
       final brokenRetriever = OperationalMemoryRetriever(
-        storageService: storage,
+        storageService: aiStoragePort(storage),
         skillIndexService: _MockBrokenSkillIndexService(),
       );
 
@@ -191,8 +197,8 @@ body instructions here''',
   test('forwards the turn-scoped RAG mode, limit, and key', () async {
     final recordingRag = _RecordingRagService(storage: storage);
     final scopedRetriever = OperationalMemoryRetriever(
-      storageService: storage,
-      ragService: recordingRag,
+      storageService: aiStoragePort(storage),
+      ragService: aiRagCapability(recordingRag),
     );
 
     await scopedRetriever.retrieve(

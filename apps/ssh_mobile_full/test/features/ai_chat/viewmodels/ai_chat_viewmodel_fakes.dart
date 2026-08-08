@@ -221,7 +221,7 @@ class _GateNextChatSaveStorage extends StorageService {
   }
 }
 
-class FakeFailureRuntimeFactory extends AiChatRuntimeFactory {
+class FakeFailureRuntimeFactory extends LegacyAiChatRuntimeFactory {
   FakeFailureRuntimeFactory({
     required super.storageService,
     required super.sshService,
@@ -239,11 +239,11 @@ class FakeFailureRuntimeFactory extends AiChatRuntimeFactory {
     required String chatId,
     AppLanguage language = AppLanguage.zh,
   }) {
-    return FailureLlmChatService(storageService: storageService);
+    return FailureLlmChatService(storageService: aiStoragePort(storageService));
   }
 }
 
-class FakeSuccessRuntimeFactory extends AiChatRuntimeFactory {
+class FakeSuccessRuntimeFactory extends LegacyAiChatRuntimeFactory {
   final String finalOutcome;
   Set<String>? lastSelectedConnectionIds;
   Set<String>? lastAllowedTools;
@@ -269,7 +269,7 @@ class FakeSuccessRuntimeFactory extends AiChatRuntimeFactory {
   }) {
     lastSettings = settings;
     return FakeSuccessLlmChatService(
-      storageService: storageService,
+      storageService: aiStoragePort(storageService),
       finalOutcome: finalOutcome,
       onStreamStarted: (selectedConnectionIds, allowedTools) {
         lastSelectedConnectionIds = selectedConnectionIds;
@@ -287,7 +287,7 @@ class _RecordingTurnRagService extends RagService {
   _RecordingTurnRagService({required super.storageService});
 
   @override
-  Future<List<RagChunk>> retrieve(
+  Future<List<feature_rag.RagChunk>> retrieve(
     String query, {
     int limit = 3,
     Set<String>? filterDocumentIds,

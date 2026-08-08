@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/ai_chat/models/agent_trace_event.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+
+import '../test_utils/ai_port_adapters.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +17,7 @@ void main() {
   Future<StorageService> initializedStorage() async {
     final service = StorageService();
     await service.init();
+    attachTestAiRepository(service);
     return service;
   }
 

@@ -1,10 +1,12 @@
 import 'package:flutter/foundation.dart';
+import '../test_utils/ai_port_adapters.dart';
+import '../test_utils/ai_tool_test_adapters.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/ai_tool_service.dart';
+import 'package:feature_ai/ai_tools.dart';
 import 'package:ssh_mobile/services/client_system_tool_service.dart';
 import 'package:ssh_mobile/services/client_webview_service.dart';
-import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
-import 'package:ssh_mobile/services/multi_agent_coordinator.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/ai_agent.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
 import 'package:ssh_mobile/services/server_catalog_service.dart';
@@ -31,7 +33,7 @@ void main() {
       sshService: ssh,
     );
     monitor = PerformanceMonitorService(ssh, storage);
-    tools = AiToolService(
+    tools = createAiToolServiceFromLegacy(
       storageService: storage,
       sshService: ssh,
       sftpService: sftp,
@@ -48,7 +50,10 @@ void main() {
   });
 
   test('core services expose injectable contracts', () {
-    final llm = LlmChatService(storageService: storage, toolService: tools);
+    final llm = LlmChatService(
+      storageService: aiStoragePort(storage),
+      toolService: tools,
+    );
 
     expect(storage, isA<AiChatRepository>());
     expect(storage, isA<AiSkillRepository>());

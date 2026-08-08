@@ -12,7 +12,7 @@ AiToolService _buildTools({
   required AppSettings appSettings,
   String? chatId,
 }) {
-  return AiToolService(
+  return createAiToolServiceFromLegacy(
     storageService: storage,
     sshService: ssh,
     sftpService: sftp,
@@ -605,7 +605,7 @@ class _GatedRemoteProvider implements AiToolProvider {
     if (name != toolName) return null;
     if (!started.isCompleted) started.complete();
     await release.future;
-    await RemoteTargetScope.resolveIfBound(
+    await ai_tools.RemoteTargetScope.resolveIfBound(
       service.storageService,
       arguments['connectionId'] as String,
     );

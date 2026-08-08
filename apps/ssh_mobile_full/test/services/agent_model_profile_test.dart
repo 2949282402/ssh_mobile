@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/agent_model_profile.dart';
+import 'package:feature_ai/ai_agent.dart';
 
 void main() {
   group('AgentModelProfile', () {

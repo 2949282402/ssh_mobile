@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/ai_chat/views/widgets/message_attachments_wrap.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:feature_ai/ai_chat.dart';
 
 void main() {
   testWidgets('attachments decode safely and images open a full preview', (

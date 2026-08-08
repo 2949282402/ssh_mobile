@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:ssh_mobile/features/ai_chat/views/widgets/message_attachments_wrap.dart';
-import 'package:ssh_mobile/features/ai_chat/views/widgets/message_bubble.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../test_utils/ai_port_adapters.dart';
 
 void main() {
   testWidgets('message actions keep 48 dp targets and wrap on narrow width', (
@@ -16,18 +16,23 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider(
         create: (_) => AppSettings(),
-        child: MaterialApp(
-          home: Scaffold(
-            body: Align(
-              alignment: Alignment.topLeft,
-              child: SizedBox(
-                width: 100,
-                child: MessageActions(
-                  isUser: false,
-                  isError: false,
-                  assistantText: 'A reply that can be copied.',
-                  onRegenerate: () => regenerated = true,
-                  onBranch: () => branched = true,
+        child: Builder(
+          builder: (context) => ListenableProvider<ai.AiSettingsPort>.value(
+            value: aiSettingsPort(context.read<AppSettings>()),
+            child: MaterialApp(
+              home: Scaffold(
+                body: Align(
+                  alignment: Alignment.topLeft,
+                  child: SizedBox(
+                    width: 100,
+                    child: MessageActions(
+                      isUser: false,
+                      isError: false,
+                      assistantText: 'A reply that can be copied.',
+                      onRegenerate: () => regenerated = true,
+                      onBranch: () => branched = true,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -61,13 +66,18 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider(
         create: (_) => AppSettings(),
-        child: MaterialApp(
-          home: Scaffold(
-            body: MessageActions(
-              isUser: true,
-              isError: false,
-              onEditUser: () => edited = true,
-              onContinueTimeout: () => continued = true,
+        child: Builder(
+          builder: (context) => ListenableProvider<ai.AiSettingsPort>.value(
+            value: aiSettingsPort(context.read<AppSettings>()),
+            child: MaterialApp(
+              home: Scaffold(
+                body: MessageActions(
+                  isUser: true,
+                  isError: false,
+                  onEditUser: () => edited = true,
+                  onContinueTimeout: () => continued = true,
+                ),
+              ),
             ),
           ),
         ),
@@ -90,19 +100,27 @@ void main() {
         'production-configuration-with-an-extremely-long-name-and-no-breaks.yaml';
 
     await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 280,
-            child: MessageAttachmentsWrap(
-              attachments: [
-                AiChatAttachment(
-                  fileName: fileName,
-                  mimeType: 'text/yaml',
-                  sizeBytes: 4096,
-                  dataBase64: '',
+      ChangeNotifierProvider(
+        create: (_) => AppSettings(),
+        child: Builder(
+          builder: (context) => ListenableProvider<ai.AiSettingsPort>.value(
+            value: aiSettingsPort(context.read<AppSettings>()),
+            child: MaterialApp(
+              home: Scaffold(
+                body: SizedBox(
+                  width: 280,
+                  child: MessageAttachmentsWrap(
+                    attachments: [
+                      AiChatAttachment(
+                        fileName: fileName,
+                        mimeType: 'text/yaml',
+                        sizeBytes: 4096,
+                        dataBase64: '',
+                      ),
+                    ],
+                  ),
                 ),
-              ],
+              ),
             ),
           ),
         ),

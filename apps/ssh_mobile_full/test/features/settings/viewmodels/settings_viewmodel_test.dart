@@ -8,6 +8,8 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:app_ui/app_ui.dart';
 
+import '../../../test_utils/ai_port_adapters.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -21,6 +23,7 @@ void main() {
 
     storageService = StorageService();
     await storageService.init();
+    attachTestAiRepository(storageService);
 
     appSettings = AppSettings();
     await appSettings.init();

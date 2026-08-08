@@ -116,13 +116,15 @@ abstract interface class AgentRunMetricsRepository {
   Future<void> saveAgentRunMetrics(AgentRunMetrics metrics);
 }
 
-abstract interface class AgentTraceRepository {
+abstract interface class AgentTraceRepository
+    implements feature_ai.AgentTraceRepository {
   Future<List<AgentTraceEvent>> loadAgentTraceEvents(String runId);
   Future<List<String>> loadRecentAgentTraceRunIdsForChat(
     String chatId, {
     int limit,
   });
   Future<void> saveAgentTraceEvent(AgentTraceEvent event);
+  @override
   Future<void> saveAgentTraceEvents(List<AgentTraceEvent> events);
   Future<void> deleteAgentTraceEvents(String runId);
 }

@@ -1,12 +1,14 @@
 import 'package:flutter/foundation.dart';
+import '../test_utils/ai_port_adapters.dart';
+import '../test_utils/ai_tool_test_adapters.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
-import 'package:ssh_mobile/services/ai_tool_service.dart';
+import 'package:feature_ai/ai_tools.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
-import 'package:ssh_mobile/services/llm_runtime/llm_runtime_types.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/ai_llm.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
@@ -167,6 +169,7 @@ void main() {
       () async {
         final storage = StorageService();
         await storage.init();
+        attachTestAiRepository(storage);
 
         await storage.saveAiConnectionSettings(
           baseUrl: 'https://api.example.com',
@@ -181,7 +184,7 @@ void main() {
           sshService: ssh,
         );
         final monitor = PerformanceMonitorService(ssh, storage);
-        final tools = AiToolService(
+        final tools = createAiToolServiceFromLegacy(
           storageService: storage,
           sshService: ssh,
           sftpService: sftp,
@@ -189,7 +192,10 @@ void main() {
           performanceMonitorToolService: PerformanceMonitorToolService(monitor),
         );
 
-        final llm = LlmChatService(storageService: storage, toolService: tools);
+        final llm = LlmChatService(
+          storageService: aiStoragePort(storage),
+          toolService: tools,
+        );
 
         final token = LlmCancellationToken();
         token.cancel();
@@ -367,13 +373,14 @@ void main() {
       'systemPromptFor appends plan mode instructions when planMode is true',
       () {
         final storage = StorageService();
+        attachTestAiRepository(storage);
         final llmZh = LlmChatService(
-          storageService: storage,
+          storageService: aiStoragePort(storage),
           toolService: _MockAiToolExecutor(),
           language: AppLanguage.zh,
         );
         final llmEn = LlmChatService(
-          storageService: storage,
+          storageService: aiStoragePort(storage),
           toolService: _MockAiToolExecutor(),
           language: AppLanguage.en,
         );
@@ -494,7 +501,7 @@ void main() {
           ),
         ]);
         final llm = LlmChatService(
-          storageService: StorageService(),
+          storageService: aiStoragePort(StorageService()),
           toolService: executor,
           language: AppLanguage.en,
         );

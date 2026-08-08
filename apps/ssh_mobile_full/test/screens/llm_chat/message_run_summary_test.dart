@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:ssh_mobile/features/ai_chat/models/agent_trace_event.dart';
-import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
-import 'package:ssh_mobile/features/ai_chat/views/widgets/message_bubble.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+
+import '../../test_utils/ai_port_adapters.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -296,7 +297,11 @@ Widget _summaryHost({
   return MultiProvider(
     providers: [
       ChangeNotifierProvider<StorageService>.value(value: storage),
+      Provider<ai.AiStoragePort>.value(value: aiStoragePort(storage)),
       ChangeNotifierProvider<AppSettings>.value(value: settings),
+      ListenableProvider<ai.AiSettingsPort>.value(
+        value: aiSettingsPort(settings),
+      ),
     ],
     child: MaterialApp(
       builder: (context, child) => MediaQuery(

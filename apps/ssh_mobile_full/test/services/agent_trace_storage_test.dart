@@ -2,9 +2,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/data/database/app_database.dart' as db;
-import 'package:ssh_mobile/features/ai_chat/models/agent_trace_event.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+
+import '../test_utils/ai_port_adapters.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -18,6 +20,7 @@ void main() {
   test('saves and loads a single trace event', () async {
     final database = db.AppDatabase.forTesting();
     final storage = StorageService(database: database);
+    attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
@@ -36,6 +39,7 @@ void main() {
   test('batch save reads by run id ordered by sequence', () async {
     final database = db.AppDatabase.forTesting();
     final storage = StorageService(database: database);
+    attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
@@ -56,6 +60,7 @@ void main() {
   test('loads recent run ids for chat by latest event time', () async {
     final database = db.AppDatabase.forTesting();
     final storage = StorageService(database: database);
+    attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
@@ -89,6 +94,7 @@ void main() {
   test('trims old runs and caps events per run', () async {
     final database = db.AppDatabase.forTesting();
     final storage = StorageService(database: database);
+    attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
@@ -127,6 +133,7 @@ void main() {
   test('cache is invalidated when retention trims stale runs', () async {
     final database = db.AppDatabase.forTesting();
     final storage = StorageService(database: database);
+    attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
@@ -156,6 +163,7 @@ void main() {
   test('batch save caps events per run instead of per batch', () async {
     final database = db.AppDatabase.forTesting();
     final storage = StorageService(database: database);
+    attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
@@ -179,6 +187,7 @@ void main() {
   test('truncates long content and empty batch save is harmless', () async {
     final database = db.AppDatabase.forTesting();
     final storage = StorageService(database: database);
+    attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
@@ -204,6 +213,7 @@ void main() {
     const marker = 'TRACE_SECRET_MARKER_20260622';
     final database = db.AppDatabase.forTesting();
     final storage = StorageService(database: database);
+    final aiDatabase = attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
@@ -215,7 +225,7 @@ void main() {
       _event(runId: 'run-secret', sequence: 0, content: marker),
     );
 
-    final raw = await database
+    final raw = await aiDatabase
         .customSelect('SELECT content_json FROM agent_trace_events')
         .getSingle();
     expect(raw.read<String>('content_json'), isNot(contains(marker)));

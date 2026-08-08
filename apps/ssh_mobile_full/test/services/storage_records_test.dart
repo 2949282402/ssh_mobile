@@ -1,4 +1,17 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:feature_ai/feature_ai.dart'
+    show
+        AiApprovedPlanRef,
+        AiChatAttachment,
+        AiChatMessageRecord,
+        AiChatRecord,
+        AiMessageTrace,
+        AiTodoStep,
+        AiUploadSizeLimit,
+        PlanModeExitActor,
+        approvedPlanMessageForChat,
+        canExitPlanMode,
+        latestAssistantMessageForChat;
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 

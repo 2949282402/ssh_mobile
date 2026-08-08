@@ -3,17 +3,11 @@ import 'package:drift/drift.dart';
 import 'database_connection.dart';
 
 part 'app_database.g.dart';
-part 'tables/ai_chat_tables.dart';
-part 'tables/agent_metrics_tables.dart';
-part 'tables/agent_trace_tables.dart';
 part 'tables/lan_history_tables.dart';
 part 'tables/playbook_tables.dart';
 part 'tables/sftp_history_tables.dart';
 part 'tables/terminal_history_tables.dart';
 part 'tables/app_log_tables.dart';
-part 'daos/ai_chat_dao.dart';
-part 'daos/agent_metrics_dao.dart';
-part 'daos/agent_trace_dao.dart';
 part 'daos/lan_history_dao.dart';
 part 'daos/playbook_dao.dart';
 part 'daos/sftp_history_dao.dart';
@@ -22,10 +16,6 @@ part 'daos/app_log_dao.dart';
 
 @DriftDatabase(
   tables: [
-    AiChats,
-    AiChatMessages,
-    AgentRunMetricsTable,
-    AgentTraceEventsTable,
     TerminalHistoryRecords,
     Playbooks,
     PlaybookRuns,
@@ -36,9 +26,6 @@ part 'daos/app_log_dao.dart';
     AppLogRecords,
   ],
   daos: [
-    AiChatDao,
-    AgentMetricsDao,
-    AgentTraceDao,
     TerminalHistoryDao,
     PlaybookDao,
     SftpHistoryDao,

@@ -105,6 +105,13 @@ logging, and the AI tool runtime. The package must not import AI Feature
 implementation or App `/src/`; dangerous-tool `approval_required` behavior
 must remain in its execution layer, and MCP activity must not return to the
 shared AppDatabase/StorageService.
+The AI Feature package is `packages/features/feature_ai/`; it owns AI chat,
+Agent, Skills, LLM providers/runtime, tool orchestration, AI WebView contracts,
+and `ai.db`. `AiModule` lazily owns its database, Repository, provider/runtime,
+and tool registry. App Shell adapters provide only public Ports and the
+`app_core` Capability contracts actually used by AI; AI must not import another
+Feature implementation or an App `/src/` path. The old App AI files are
+non-owning compatibility surfaces.
 The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
 Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
@@ -228,7 +235,7 @@ Read only the rows relevant to the task.
 | Startup or service lifetime | `lib/features/startup/`, `apps/ssh_mobile_full/lib/app/`, `apps/ssh_mobile_full/lib/main.dart` | `docs/STARTUP_INITIALIZATION.md` |
 | SSH, terminal, host keys | `lib/features/connection/`, `lib/features/terminal/`, SSH services | `docs/security_manual_regression.md` |
 | SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
-| AI chat, tools, plans | `lib/features/ai_chat/`, `lib/services/ai_tool*` | `docs/AGENT_RUN_TRACE.md`, `docs/security_manual_regression.md` |
+| AI chat, Agent, Skills, LLM, tools, ai.db | `packages/features/feature_ai/`, `apps/ssh_mobile_full/lib/app/ai_feature_adapters.dart` | `docs/AGENT_RUN_TRACE.md`, `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_ai/README.md` |
 | MCP server, console, approval, mcp.db | `packages/features/feature_mcp/`, `apps/ssh_mobile_full/lib/app/mcp_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Monitoring or system admin | `lib/features/performance/`, `lib/features/system_admin/` | `docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `packages/infrastructure/ssh_mobile_network_native/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |
@@ -245,10 +252,13 @@ Read only the rows relevant to the task.
 
 ### LLM Chat and Tools
 
-Primary entry points are `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart`
-and its focused extensions, `lib/features/ai_chat/services/`,
-`lib/services/ai_tool_service.dart` and its functional modules, and
-`lib/features/ai_chat/views/llm_chat_screen.dart` with its focused widgets.
+Primary maintained entry points are
+`packages/features/feature_ai/lib/feature_ai.dart`,
+`packages/features/feature_ai/lib/src/application/ai_module.dart`,
+`packages/features/feature_ai/lib/src/data/repositories/ai_repository.dart`,
+`packages/features/feature_ai/lib/src/chat/viewmodels/ai_chat_viewmodel.dart`,
+and `packages/features/feature_ai/lib/src/tools/ai_tool_service.dart`. The old
+App AI paths remain non-owning compatibility surfaces.
 
 - Chat uses SSE streaming and must tolerate split `tool_calls` deltas.
 - The `+` toolbar below the input row is the current entry point for server

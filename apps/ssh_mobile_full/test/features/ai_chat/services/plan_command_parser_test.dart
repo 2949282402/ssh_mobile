@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/ai_chat/services/plan_command_parser.dart';
+import 'package:feature_ai/ai_chat.dart';
 
 void main() {
   test('parses only an exact case-insensitive plan command token', () {

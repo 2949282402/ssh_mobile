@@ -21,11 +21,12 @@
 SSH Mobile is a Flutter-based cross-platform SSH and SFTP client for Android, iOS, macOS, Windows, and Web. It combines multi-window terminals, remote file management, server monitoring, secure storage, and OpenAI-compatible AI tools in a single mobile and desktop operations workspace.
 
 The codebase is being migrated incrementally as a Dart workspace. The Terminal,
-SFTP, real-time Monitoring, System Administration, Playbook, and RAG
+SFTP, real-time Monitoring, System Administration, Playbook, RAG, MCP, and AI
 capabilities now have package boundaries under `packages/features/`; their
 legacy App paths remain compatibility bridges while later Steps converge the
-remaining shared services. RAG metadata lives in `rag.db`, while bounded
-document/vector cache files follow TTL and eviction limits.
+remaining shared services. AI data lives in `ai.db`; RAG metadata lives in
+`rag.db`, while bounded document/vector cache files follow TTL and eviction
+limits.
 
 The project began with a two-core server that had only 1 GB of memory. Running a complete AI agent directly on that machine was unreliable, so SSH Mobile moves model inference and agent orchestration to the client device. The client can inspect and manage low-resource servers through SSH and SFTP without consuming their limited memory.
 
@@ -448,9 +449,14 @@ flowchart LR
   UI, and independent `mcp.db`. Its settings, logger, and AI tool runtime are
   supplied through App Shell adapters; dangerous-tool approval remains in the
   execution layer.
-- `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool,
-  monitoring, storage, legacy LAN-share compatibility services, and
-  platform-adapter infrastructure.
+- `packages/features/feature_ai/`: AI chat, Agent, Skills, LLM providers/runtime,
+  tool orchestration, AI WebView contracts, and independent `ai.db`. Its
+  `AiModule` lazily owns the database and Repository; the App Shell injects
+  `app_core` Capability contracts and App Ports through the composition root.
+  The old AI App paths remain compatibility surfaces, not a second owner.
+- `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP, monitoring,
+  storage, legacy LAN-share compatibility services, and platform adapters.
+  Maintained AI/MCP implementations live in their Feature packages.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
@@ -578,7 +584,12 @@ keeps its scheduling boundary.
 
 ## Data and Storage
 
-Growing structured data such as AI chats, agent metrics, terminal-history metadata, playbooks, SFTP path records, and redacted MCP activity metadata is stored with Drift. MCP activity belongs to the feature-owned `mcp.db`, not the shared AppDatabase. Small preferences remain in SharedPreferences. Passwords, private keys, API keys, and MCP tokens remain in platform secure storage.
+Growing structured data is stored in Feature-owned Drift databases: AI chats,
+agent metrics, and traces in `ai.db`; terminal-history metadata in `terminal.db`;
+playbooks in `playbook.db`; SFTP path records in `sftp.db`; and RAG/MCP metadata
+in their respective databases. The shared AppDatabase is not an AI/MCP data
+owner. Small preferences remain in SharedPreferences. Passwords, private keys,
+API keys, and MCP tokens remain in platform secure storage.
 
 Sensitive Drift fields—including AI message bodies, context, attachments, tool traces, TODO steps, and playbook content—are encrypted before being written to SQLite. During active development, Drift uses one current version-1 schema without upgrade or legacy-import code; after a schema change, delete the local development database and regenerate the checked-in Drift output.
 

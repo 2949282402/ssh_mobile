@@ -1,12 +1,11 @@
 import 'package:flutter/foundation.dart';
+import '../../../test_utils/ai_port_adapters.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:ssh_mobile/features/ai_chat/services/ai_chat_generation_runner.dart';
-import 'package:ssh_mobile/features/ai_chat/services/ai_chat_runtime_factory.dart';
-import 'package:ssh_mobile/services/ai_tool_service.dart';
-import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
-import 'package:ssh_mobile/services/llm_runtime/llm_runtime_types.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/ai_tools.dart';
+import 'package:feature_ai/ai_llm.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
@@ -51,7 +50,7 @@ class ExceptionAiToolExecutor implements AiToolExecutor {
   }
 }
 
-class FakeTraceRuntimeFactory extends AiChatRuntimeFactory {
+class FakeTraceRuntimeFactory extends LegacyAiChatRuntimeFactory {
   FakeTraceRuntimeFactory({
     required super.storageService,
     required super.sshService,
@@ -95,6 +94,7 @@ void main() {
 
     storageService = StorageService();
     await storageService.init();
+    attachTestAiRepository(storageService);
 
     appSettings = AppSettings();
     await appSettings.init();

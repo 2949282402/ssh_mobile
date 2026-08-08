@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/ai_tool_service.dart';
-import 'package:ssh_mobile/services/tool_exposure_router.dart';
+import 'package:feature_ai/ai_tools.dart';
 
 Future<String> _noop(Map<String, dynamic> _) async => '{}';
 

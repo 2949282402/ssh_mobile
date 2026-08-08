@@ -1,12 +1,12 @@
 import 'package:flutter/foundation.dart';
+import '../../test_utils/ai_port_adapters.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
-import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
@@ -51,7 +51,7 @@ void main() {
         sshService: sshService,
       );
       final ragService = RagService(storageService: storage);
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storage,
         sshService: sshService,
         sftpService: sftpService,

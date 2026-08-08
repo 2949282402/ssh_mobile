@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/ai_chat/views/widgets/trace_panel.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+
+import '../../test_utils/ai_port_adapters.dart';
 
 void main() {
   testWidgets('trace rows stay tappable, localized, and height bounded', (
@@ -30,8 +32,8 @@ void main() {
     );
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<AppSettings>.value(
-        value: settings,
+      ListenableProvider<ai.AiSettingsPort>.value(
+        value: aiSettingsPort(settings),
         child: MaterialApp(
           home: Scaffold(
             body: Align(

@@ -2,7 +2,7 @@ part of 'ai_chat_viewmodel_test.dart';
 
 void _registerAiChatViewModelCoreTests() {
   test('loadInitialDraft loads a draft and updates state', () async {
-    final viewModel = AiChatViewModel(
+    final viewModel = createAiChatViewModel(
       storageService: storageService,
       sshService: sshService,
       sftpService: sftpService,
@@ -36,7 +36,7 @@ void _registerAiChatViewModelCoreTests() {
       sshService: retrySsh,
     );
     final retryRag = RagService(storageService: retryStorage);
-    final viewModel = AiChatViewModel(
+    final viewModel = createAiChatViewModel(
       storageService: retryStorage,
       sshService: retrySsh,
       sftpService: retrySftp,
@@ -61,7 +61,7 @@ void _registerAiChatViewModelCoreTests() {
   });
 
   test('sendText returns SendTextEmptyText for empty text', () async {
-    final viewModel = AiChatViewModel(
+    final viewModel = createAiChatViewModel(
       storageService: storageService,
       sshService: sshService,
       sftpService: sftpService,
@@ -80,7 +80,7 @@ void _registerAiChatViewModelCoreTests() {
   test(
     'sendText returns SendTextApiKeyMissing if api key is missing',
     () async {
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -98,7 +98,7 @@ void _registerAiChatViewModelCoreTests() {
   );
 
   test('addAttachment and removeAttachment works correctly', () async {
-    final viewModel = AiChatViewModel(
+    final viewModel = createAiChatViewModel(
       storageService: storageService,
       sshService: sshService,
       sftpService: sftpService,
@@ -128,7 +128,7 @@ void _registerAiChatViewModelCoreTests() {
   });
 
   test('deleteChat fallback to new draft if list is empty', () async {
-    final viewModel = AiChatViewModel(
+    final viewModel = createAiChatViewModel(
       storageService: storageService,
       sshService: sshService,
       sftpService: sftpService,
@@ -150,7 +150,7 @@ void _registerAiChatViewModelCoreTests() {
   });
 
   test('updateAllowedTools updates tools correctly', () async {
-    final viewModel = AiChatViewModel(
+    final viewModel = createAiChatViewModel(
       storageService: storageService,
       sshService: sshService,
       sftpService: sftpService,
@@ -172,7 +172,7 @@ void _registerAiChatViewModelCoreTests() {
   });
 
   test('getConnection and connections returns expected values', () async {
-    final viewModel = AiChatViewModel(
+    final viewModel = createAiChatViewModel(
       storageService: storageService,
       sshService: sshService,
       sftpService: sftpService,
@@ -189,7 +189,7 @@ void _registerAiChatViewModelCoreTests() {
   test(
     'checkPendingDiagnosticPrompt retrieves and clears pending prompt',
     () async {
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -209,7 +209,7 @@ void _registerAiChatViewModelCoreTests() {
   test(
     'loadLlmSettingsData and logLlmSettingsOpened works without errors',
     () async {
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -232,7 +232,7 @@ void _registerAiChatViewModelCoreTests() {
   test(
     '/plan alone enables Plan Mode and returns slash-command handled feedback',
     () async {
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -264,7 +264,7 @@ void _registerAiChatViewModelCoreTests() {
         appSettings: appSettings,
       );
 
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -315,7 +315,7 @@ void _registerAiChatViewModelCoreTests() {
         ragService: recordingRag,
         appSettings: appSettings,
       );
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,
@@ -425,7 +425,7 @@ void _registerAiChatViewModelCoreTests() {
         appSettings: appSettings,
         finalOutcome: 'loopGuardBlocked',
       );
-      final viewModel = AiChatViewModel(
+      final viewModel = createAiChatViewModel(
         storageService: storageService,
         sshService: sshService,
         sftpService: sftpService,

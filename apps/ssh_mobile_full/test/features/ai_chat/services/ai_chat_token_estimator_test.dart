@@ -1,9 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:ssh_mobile/features/ai_chat/services/ai_chat_context_builder.dart';
-import 'package:ssh_mobile/features/ai_chat/services/ai_chat_message_mapper.dart';
-import 'package:ssh_mobile/features/ai_chat/services/ai_chat_token_estimator.dart';
+import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {

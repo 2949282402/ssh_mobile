@@ -53,7 +53,6 @@ void _registerToolLoopCoreTests() {
       complete: (role, messages, {required thinkingSettings}) async => 'advice',
       classify: (messages) async => '{}',
     );
-
     expect(loopResult.shouldStop, isFalse);
     expect(controller.cacheHitCount, 1);
     expect(workingMessages.length, 1);
@@ -104,7 +103,6 @@ void _registerToolLoopCoreTests() {
       complete: (role, messages, {required thinkingSettings}) async => 'advice',
       classify: (messages) async => '{}',
     );
-
     expect(loopResult.shouldStop, isFalse);
     expect(budget.usedCalls, 2);
     expect(ledger.map((entry) => entry.toolName), [
@@ -413,7 +411,7 @@ void _registerToolLoopCoreTests() {
       ),
     );
     final guardedLlm = LlmChatService(
-      storageService: storage,
+      storageService: aiStoragePort(storage),
       toolService: guardedTools,
     );
     final ledger = <LlmToolLedgerEntry>[];
@@ -493,7 +491,7 @@ void _registerToolLoopCoreTests() {
     final ledger = <LlmToolLedgerEntry>[];
     final mockCoordinator = MockMultiAgentCoordinator();
     final localLlm = LlmChatService(
-      storageService: storage,
+      storageService: aiStoragePort(storage),
       toolService: tools,
       multiAgentCoordinator: mockCoordinator,
     );
@@ -586,7 +584,7 @@ void _registerToolLoopCoreTests() {
       final ledger = <LlmToolLedgerEntry>[];
       final mockCoordinator = MockMultiAgentCoordinator();
       final localLlm = LlmChatService(
-        storageService: storage,
+        storageService: aiStoragePort(storage),
         toolService: tools,
         multiAgentCoordinator: mockCoordinator,
       );
@@ -797,7 +795,7 @@ void _registerToolLoopCoreTests() {
       final ledger = <LlmToolLedgerEntry>[];
       final mockCoordinator = MockMultiAgentCoordinator();
       final localLlm = LlmChatService(
-        storageService: storage,
+        storageService: aiStoragePort(storage),
         toolService: tools,
         multiAgentCoordinator: mockCoordinator,
       );

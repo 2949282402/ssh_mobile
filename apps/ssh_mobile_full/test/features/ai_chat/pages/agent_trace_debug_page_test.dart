@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:ssh_mobile/features/ai_chat/models/agent_trace_event.dart';
-import 'package:ssh_mobile/features/ai_chat/pages/agent_trace_debug_page.dart';
+import 'package:feature_ai/ai_chat.dart';
+import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+
+import '../../../test_utils/ai_port_adapters.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -433,15 +435,18 @@ Widget _traceTestApp({
   final app = MaterialApp(
     home: AgentTraceDebugPage(chatId: 'chat-1', runId: runId),
   );
-  final withSettings = settings == null
-      ? ChangeNotifierProvider<AppSettings>(
-          create: (_) => _TestAppSettings(language),
-          child: app,
-        )
-      : ChangeNotifierProvider<AppSettings>.value(value: settings, child: app);
-  return ChangeNotifierProvider<StorageService>.value(
-    value: storage,
-    child: withSettings,
+  final appSettings = settings ?? _TestAppSettings(language);
+  if (settings == null) {
+    addTearDown(appSettings.dispose);
+  }
+  return MultiProvider(
+    providers: [
+      Provider<ai.AiStoragePort>.value(value: aiStoragePort(storage)),
+      ListenableProvider<ai.AiSettingsPort>.value(
+        value: aiSettingsPort(appSettings),
+      ),
+    ],
+    child: app,
   );
 }
 

@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/services/skill/skill_index_service.dart';
+import 'package:feature_ai/ai_skills.dart';
 
 void main() {
   group('SkillIndexService Tests', () {

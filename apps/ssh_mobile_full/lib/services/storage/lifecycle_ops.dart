@@ -108,9 +108,6 @@ extension StorageLifecycleOps on StorageService {
     } finally {
       _ownsDatabase = false;
       _driftReady = false;
-      _driftAiChatsActive = false;
-      _driftAgentMetricsActive = false;
-      _driftAgentTraceActive = false;
       _driftTerminalHistoryActive = false;
       _driftPlaybooksActive = false;
       _driftSftpHistoryActive = false;

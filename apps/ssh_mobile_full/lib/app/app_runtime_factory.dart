@@ -4,13 +4,13 @@ import 'package:app_core/app_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
+import 'package:feature_ai/feature_ai.dart' as feature_ai;
 import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:network_transport/network_transport.dart';
 
-import '../features/ai_chat/services/ai_chat_runtime_factory.dart';
 import '../core/services/data_protection_service.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
@@ -23,6 +23,8 @@ import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import 'app_runtime.dart';
+import 'ai_external_capability_adapters.dart';
+import 'ai_feature_adapters.dart';
 import 'lan_share_feature_adapters.dart';
 import 'mcp_feature_adapters.dart';
 import 'monitoring_feature_adapters.dart';
@@ -50,6 +52,7 @@ final class AppRuntimeFactory {
     connection_core.HostKeyRepository? hostKeyRepository,
     NetworkRuntime? networkRuntime,
     feature_lan_share.LanShareDatabaseFactory? lanShareDatabaseFactory,
+    feature_ai.AiModuleDatabaseFactory? aiDatabaseFactory,
     feature_playbook.PlaybookModuleDatabaseFactory? playbookDatabaseFactory,
     feature_rag.RagDatabaseFactory? ragDatabaseFactory,
     feature_rag.RagCacheStoreFactory? ragCacheStoreFactory,
@@ -169,6 +172,57 @@ final class AppRuntimeFactory {
     final performanceMonitorService = PerformanceMonitorService.fromDelegate(
       monitoringService,
     );
+    final aiModule = feature_ai.AiModule(databaseFactory: aiDatabaseFactory);
+    final aiStorageAdapter = AppAiStorageAdapter(storageService);
+    final aiSettingsAdapter = AppAiSettingsAdapter(appSettings);
+    final aiSshAdapter = AppAiSshAdapter(sshService);
+    final aiSftpAdapter = AppAiSftpAdapter(sftpService);
+    final aiMonitoringAdapter = AppAiMonitoringAdapter(monitoringService);
+    final aiClientSystemAdapter = AppAiClientSystemAdapter();
+    final aiHealthAdapter = AppAiHealthAdapter(aiClientSystemAdapter);
+    final aiWebViewAdapter = AppAiWebViewAdapter();
+    final aiServerCatalogAdapter = AppAiServerCatalogAdapter(
+      storage: storageService,
+      ssh: sshService,
+      sftp: sftpService,
+    );
+    final aiServerDiagnosticsAdapter = AppAiServerDiagnosticsAdapter(
+      storage: storageService,
+      ssh: sshService,
+    );
+    final aiRagCapability = AppAiRagCapabilityAdapter(ragModule.service);
+    final aiDataProtectionAdapter = AppAiDataProtectionAdapter(
+      DataProtectionService.instance,
+    );
+    final aiLoggerAdapter = AppAiLoggerAdapter(logger);
+    await aiModule.register(
+      ModuleContext.fromMap({
+        feature_ai.AiStoragePort: aiStorageAdapter,
+        feature_ai.AiSettingsPort: aiSettingsAdapter,
+        feature_ai.AiTextProtectionPort: aiDataProtectionAdapter,
+        feature_ai.AiLoggerPort: aiLoggerAdapter,
+      }),
+    );
+    // StorageService 的旧 AI API 只作为兼容外观，第一次调用时才触发
+    // AiModule.initialize()，因此普通启动不会创建 ai.db。
+    storageService.attachAiRepositoryLoader(() async {
+      await aiModule.initialize();
+      return aiModule.repository;
+    });
+    final aiChatRuntimeFactory = feature_ai.AiChatRuntimeFactory(
+      storageService: aiStorageAdapter,
+      sshService: aiSshAdapter,
+      sftpService: aiSftpAdapter,
+      performanceMonitorService: aiMonitoringAdapter,
+      playbookService: playbookModule.service,
+      ragService: aiRagCapability,
+      appSettings: aiSettingsAdapter,
+      clientSystemToolService: aiClientSystemAdapter,
+      clientHealthAdvisor: aiHealthAdapter,
+      clientWebViewService: aiWebViewAdapter,
+      serverCatalogService: aiServerCatalogAdapter,
+      serverDiagnosticsService: aiServerDiagnosticsAdapter,
+    );
     final mcpSettingsAdapter = AppMcpSettingsAdapter(appSettings);
     final mcpModule = feature_mcp.McpModule(
       databaseFactory: mcpDatabaseFactory,
@@ -179,15 +233,7 @@ final class AppRuntimeFactory {
         feature_mcp.McpLoggerPort: AppMcpLoggerAdapter(logger),
         feature_mcp.McpToolRuntimePort: AppMcpToolRuntimeAdapter(
           () => AppAiToolExecutorAdapter(
-            AiChatRuntimeFactory(
-              storageService: storageService,
-              sshService: sshService,
-              sftpService: sftpService,
-              performanceMonitorService: performanceMonitorService,
-              playbookService: playbookModule.service,
-              ragService: ragModule.service,
-              appSettings: appSettings,
-            ).createToolService(),
+            aiChatRuntimeFactory.createToolService(),
           ),
         ),
       }),
@@ -241,6 +287,18 @@ final class AppRuntimeFactory {
       mcpSettingsAdapter: mcpSettingsAdapter,
       lanShareModule: lanShareModule,
       lanShareSettingsAdapter: lanShareSettingsAdapter,
+      aiModule: aiModule,
+      aiStorageAdapter: aiStorageAdapter,
+      aiSettingsAdapter: aiSettingsAdapter,
+      aiSshAdapter: aiSshAdapter,
+      aiSftpAdapter: aiSftpAdapter,
+      aiMonitoringAdapter: aiMonitoringAdapter,
+      aiClientSystemAdapter: aiClientSystemAdapter,
+      aiHealthAdapter: aiHealthAdapter,
+      aiWebViewAdapter: aiWebViewAdapter,
+      aiServerCatalogAdapter: aiServerCatalogAdapter,
+      aiServerDiagnosticsAdapter: aiServerDiagnosticsAdapter,
+      aiChatRuntimeFactory: aiChatRuntimeFactory,
     );
   }
 
