@@ -44,8 +44,6 @@ dependencies:
   feature_developer:
     path: ../../packages/features/feature_developer
   dartssh2: ^2.22.5
-  xterm:
-    path: ../../third_party/xterm
   ssh_mobile_network_native:
     path: ../../packages/infrastructure/ssh_mobile_network_native
   network_transport:
@@ -60,7 +58,6 @@ dependencies:
   shared_preferences: ^2.5.5
   path_provider: ^2.1.6
   uuid: ^4.6.0
-  intl: ^0.20.2
   path: ^1.9.1
   permission_handler: ^13.0.0
   cryptography: ^2.9.0
@@ -74,12 +71,8 @@ dependencies:
   drift: ^2.34.3
   drift_flutter: ^0.3.1
   shadcn_ui: ^0.56.1
-  flutter_animate: ^4.5.2
-  http: ^1.6.0
-  archive: ^4.0.9
   flutter_displaymode: ^0.7.0
   gal: ^2.3.3
-  wakelock_plus: ^1.7.0
   nsd: ^5.0.1
   disk_space_2: ^1.0.13
   desktop_drop: ^0.7.1

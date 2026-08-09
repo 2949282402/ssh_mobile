@@ -42,6 +42,13 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 
 ### App Shell and route contributions
 
+- 2026-08-09: App Full dependency ownership follows direct source usage. Its
+  `pubspec.yaml` no longer declares Terminal `xterm`, unused `wakelock_plus`, or
+  Feature-owned `intl`, `http`, `archive`, and `flutter_animate`; those remain
+  in the Package that imports them. Keep App-level Drift for the App-owned
+  `app_logs` database and keep plugins still imported by legacy compatibility
+  surfaces until those surfaces are migrated.
+
 - 2026-08-09: `SshMobileApp` 的根 Provider 只暴露 App Scope 实例和 Port；Feature
   ViewModel 必须由 Route Scope 创建和释放。`AppConnectionRouteScope` 负责
   Connection/Settings 页面所需的路由状态，并允许 Home 将同一个 Connection

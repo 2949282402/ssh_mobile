@@ -23,6 +23,13 @@ Treat current code and tests as the behavioral source of truth. Treat
 Markdown update markers, and the full quality gate; do not repeat those details
 in this skill or memory.
 
+App dependency ownership follows the same boundary: keep a third-party package in
+`apps/ssh_mobile_full/pubspec.yaml` only when App `lib/`, `test/`, or `tool/`
+imports it directly, or when the App Shell owns its platform adapter. Feature and
+Core Packages declare their own terminal, AI, RAG, and database dependencies;
+do not restore removed transitive App declarations merely because a workspace
+lockfile still contains them for another Package.
+
 During the modular migration, the full Flutter application is rooted at
 `apps/ssh_mobile_full/`. Unless a path below is explicitly repository-level or
 package-level, a leading `lib/`, `test/`, or `tool/` path is relative to that

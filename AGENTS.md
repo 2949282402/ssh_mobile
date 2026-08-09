@@ -152,6 +152,14 @@ AI agent runtime (client-side, not on the managed server): model context is buil
 
 ## Build, Test, and Development Commands
 
+Step25 dependency boundary: `apps/ssh_mobile_full/pubspec.yaml` should declare a
+third-party package only when App `lib/`, `test/`, or `tool/` imports it directly,
+or when the App Shell owns the corresponding platform adapter. Terminal `xterm`,
+RAG/AI `intl`/`http`/`archive`/`flutter_animate`, and the unused App
+`wakelock_plus` dependency belong to their owning Packages and are not App Full
+dependencies. AppLog's `drift`/`drift_flutter` and still-used legacy compatibility
+plugin imports remain intentional until those App surfaces are migrated.
+
 Dependency and code generation (run after `pubspec.yaml` or Drift model changes):
 
 - `dart pub get`: resolve the root Dart workspace from `pubspec.yaml`.

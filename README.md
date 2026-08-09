@@ -474,6 +474,11 @@ flowchart LR
   adapters. The directory's complete Owner/compatibility classification is in
   `apps/ssh_mobile_full/lib/services/README.md`; maintained AI/MCP
   implementations live in their Feature packages.
+- App Full's `pubspec.yaml` keeps only direct App/compatibility imports and
+  App-owned platform adapters. Terminal `xterm`, RAG/AI `intl`/`http`/`archive`/
+  `flutter_animate`, and unused `wakelock_plus` are declared by their owning
+  Packages or removed from the App dependency set; AppLog's Drift dependencies
+  remain because the App Shell owns `app_logs`.
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
 - `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; `feature_connection` consumes the public repositories and injected capabilities.

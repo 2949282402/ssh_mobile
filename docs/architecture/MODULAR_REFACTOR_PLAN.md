@@ -2756,6 +2756,20 @@ fl_chart
 
 应由真正需要它们的 Package 声明，而不是 App 全局声明。
 
+## Step 25 执行记录（2026-08-09）
+
+- 已按 App `lib/`、`test/`、`tool/` 的直接 import 审计
+  `apps/ssh_mobile_full/pubspec.yaml`，而不是按 workspace lockfile 中的传递依赖
+  机械删除。
+- 移除 App Full 不再直接使用、且已由 owning Package 声明的依赖：`xterm`、
+  `intl`、`flutter_animate`、`http`、`archive` 和 `wakelock_plus`。AppLog 的
+  `drift`/`drift_flutter` 仍由 App Shell 的 `AppLogDatabase` 实际使用；旧兼容
+  页面直接导入的 `webview_flutter`、`fl_chart`、`mobile_scanner` 等暂时保留。
+- `flutter pub get` 通过，并只清理了由 `wakelock_plus` 带入的无用传递依赖及
+  macOS 生成插件注册；当前提示的可升级项不构成版本冲突，因此没有升级无关
+  依赖。App/Feature 的依赖 Owner 记录同步到 README、AGENTS、Skill 和 Agent
+  memory。
+
 ---
 
 # 32. Step 26 — 建立 Terminal-only App
