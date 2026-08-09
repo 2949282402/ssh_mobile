@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-09
+> 最新更新时间：2026-08-10
 
 # SSH Mobile 模块化重构执行 Plan
 
@@ -31,8 +31,9 @@
 - 已将 `packages/ssh_mobile_network_native` 移动到
   `packages/infrastructure/ssh_mobile_network_native/`，并更新 App 的 xterm、
   native package path dependency。
-- 已创建根 `pubspec.yaml` Dart workspace 与 `melos.yaml` 的 format/analyze/test
-  脚本；workspace 成员均使用 `resolution: workspace`。
+- 已创建根 `pubspec.yaml` Dart workspace 与初始 Melos format/analyze/test
+  脚本；workspace 成员均使用 `resolution: workspace`。初始 `melos.yaml`
+  配置已在 Step30 按 Melos 8 规则迁移到根 `pubspec.yaml`。
 - 计划描述与实际依赖的最小差异：原生 package 的 `test: ^1.28.0` 在 workspace
   中会解析到与 App 的 `flutter_test` / `drift_dev` 不兼容的版本。为保持原有
   生命周期测试覆盖且不引入运行时依赖，原生 package 改用 Flutter SDK 的
@@ -552,8 +553,7 @@ ssh_mobile/
 │
 ├── docs/
 ├── scripts/
-├── pubspec.yaml                       # Dart workspace root
-├── melos.yaml
+├── pubspec.yaml                       # Dart workspace root and Melos scripts
 ├── AGENTS.md
 └── README.md
 ```
@@ -3111,6 +3111,22 @@ melos run test
 Full App smoke build
 Terminal App smoke build
 ```
+
+---
+
+## Step 30 执行记录（2026-08-10）
+
+- 按 Melos 8 官方配置方式，将 `format`、`analyze`、`test` Workspace Script
+  迁移到根 `pubspec.yaml` 的 `melos` 节点；删除旧的重复 `melos.yaml` 配置源，
+  不涉及业务代码、Feature 实现或运行时行为。
+- PR CI 新增差异包门禁：使用 `melos exec --diff` 检查变更 Package 及其依赖方的
+  format、analyze 和 unit test，并单独运行 `tool/architecture_check.dart`。
+- main CI 新增全 Workspace 的 Melos format/analyze/test，Full App Android
+  debug APK 冒烟构建和 Terminal-only Windows debug 冒烟构建；Workspace 清单
+  包含 AI、MCP 在内的全部维护成员。
+- 新增无外部依赖的 CI 合同测试，固定 Workflow Job、Melos 脚本、diff 过滤和
+  两个冒烟构建入口。`dart pub get` 通过且锁定版本未变化；输出的可升级版本均
+  受现有约束限制，未发生需要升级的依赖冲突。
 
 ---
 

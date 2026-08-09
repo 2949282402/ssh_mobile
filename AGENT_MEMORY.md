@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-09
+> 最新更新时间：2026-08-10
 
 # Agent Memory
 
@@ -209,6 +209,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   source. The explicit allowlist currently contains only AI's public
   `feature_playbook` boundary and audited legacy singleton names; do not expand
   it without an architecture decision.
+- 2026-08-10: Step30 moved Melos 8 scripts into the root `pubspec.yaml` and removed
+  the obsolete second `melos.yaml` configuration source. Pull Requests use
+  `melos exec --diff` for changed packages and dependents, plus the architecture
+  guard; `main` runs the full Melos format/analyze/test scripts and Full App /
+  Terminal-only smoke builds. Keep the workspace list in root `pubspec.yaml`
+  synchronized with every maintained package, including AI and MCP.
 
 ### Network transfer
 
@@ -483,8 +489,8 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   them. The native Dart package is rooted at
   `packages/infrastructure/ssh_mobile_network_native/`. Root
   `packages/core/`, `packages/infrastructure/`, and `packages/features/` are
-  staged package boundaries, while root `pubspec.yaml` and `melos.yaml` own
-  workspace configuration. The first Core package is
+  staged package boundaries, while root `pubspec.yaml` owns the workspace and
+  Melos configuration. The first Core package is
   `packages/core/app_core/`; its production library is pure Dart and exposes
   only lifecycle, Module, logging, and Capability contracts. Root Melos is
   pinned to the latest stable version selected during the migration. Because

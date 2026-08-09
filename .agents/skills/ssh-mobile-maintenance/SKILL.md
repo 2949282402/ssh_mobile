@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile Flutter repository, including architecture, UI, SSH/SFTP, monitoring, AI tools, storage, security, platform builds, tests, and project documentation. Use for any non-trivial code, debugging, validation, documentation, or shared-agent-guidance change in this repository.
 ---
 
-> 最新更新时间：2026-08-09
+> 最新更新时间：2026-08-10
 
 # SSH Mobile Maintenance
 
@@ -192,6 +192,11 @@ implementations. The old App terminal files are compatibility exports/bridges.
   approved Feature-to-Feature public boundaries and known legacy singleton
   compatibility names; do not silence a violation by adding a broad path
   exception.
+- CI uses the root `pubspec.yaml` as the single Melos configuration source. Pull
+  Requests run `melos exec --diff` with dependent packages for format, analyze,
+  and tests, then run the architecture guard. Main runs the full `melos run`
+  format/analyze/test scripts and the Full App plus Terminal-only smoke builds;
+  do not reintroduce a parallel `melos.yaml` configuration file.
 - `ssh_core` must keep `SshSessionManager` and its Session Pool under App Scope
   ownership. A Feature may acquire/release a Lease but must not close a shared
   Session, import `flutter_background_service`, or perform platform checks.

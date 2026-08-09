@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-09
+> 最新更新时间：2026-08-10
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -268,6 +268,22 @@ cd apps/ssh_mobile_full
 flutter analyze
 flutter test
 ```
+
+### Workspace 模块门禁
+
+Pull Request 先通过 Melos 的 diff 过滤检查发生变更的 Package 及其依赖方，
+再执行架构守卫：
+
+```bash
+dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "dart format --output=none --set-exit-if-changed lib test"
+dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter analyze --no-pub"
+dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter test --no-pub"
+dart run tool/architecture_check.dart
+```
+
+合并到 `main` 后，CI 会运行 `dart run melos run format`、
+`dart run melos run analyze`、`dart run melos run test`，再执行 Full App Android
+和 Terminal-only Windows 冒烟构建。
 
 ### 完整质量门禁
 

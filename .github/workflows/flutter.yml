@@ -50,6 +50,131 @@ jobs:
       - name: Test relay
         run: go test ./...
 
+  architecture-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Check architecture guard
+        run: dart run tool/architecture_check.dart
+
+  package-quality:
+    if: github.event_name == 'pull_request'
+    needs: architecture-check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Select pull request diff
+        id: diff
+        shell: bash
+        run: |
+          range="${{ github.event.pull_request.base.sha }}...${{ github.sha }}"
+          echo "range=$range" >> "$GITHUB_OUTPUT"
+          if git diff --name-only "$range" | grep -Eq '^(apps|packages)/'; then
+            echo "has_package_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_package_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check changed package formatting
+        if: steps.diff.outputs.has_package_changes == 'true'
+        env:
+          MELOS_DIFF: ${{ steps.diff.outputs.range }}
+        run: >-
+          dart run melos exec --diff="$MELOS_DIFF" --include-dependents --fail-fast --
+          "dart format --output=none --set-exit-if-changed lib test"
+      - name: Analyze changed packages
+        if: steps.diff.outputs.has_package_changes == 'true'
+        env:
+          MELOS_DIFF: ${{ steps.diff.outputs.range }}
+        run: >-
+          dart run melos exec --diff="$MELOS_DIFF" --include-dependents --fail-fast --
+          "flutter analyze --no-pub"
+      - name: Test changed packages
+        if: steps.diff.outputs.has_package_changes == 'true'
+        env:
+          MELOS_DIFF: ${{ steps.diff.outputs.range }}
+        run: >-
+          dart run melos exec --diff="$MELOS_DIFF" --include-dependents --fail-fast --
+          "flutter test --no-pub"
+
+  workspace-quality:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: architecture-check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Format workspace packages
+        run: dart run melos run format
+      - name: Analyze workspace packages
+        run: dart run melos run analyze
+      - name: Test workspace packages
+        run: dart run melos run test
+      - name: Check full app format and tools
+        working-directory: apps/ssh_mobile_full
+        run: dart format --output=none --set-exit-if-changed lib test tool
+      - name: Build full app smoke APK
+        working-directory: apps/ssh_mobile_full
+        run: flutter build apk --debug --no-pub
+
+  terminal-smoke-build:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: architecture-check
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Build Terminal-only smoke app
+        working-directory: apps/ssh_mobile_terminal
+        run: flutter build windows --debug --no-pub
+
   analyze-and-test:
     runs-on: ubuntu-latest
     defaults:
@@ -67,9 +192,6 @@ jobs:
       - name: Install dependencies
         working-directory: .
         run: dart pub get
-      - name: Check architecture guard
-        working-directory: .
-        run: dart run tool/architecture_check.dart
       - name: Install native Dart package dependencies
         working-directory: packages/infrastructure/ssh_mobile_network_native
         run: flutter pub get

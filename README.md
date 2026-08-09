@@ -1,4 +1,4 @@
-> Last updated: 2026-08-09
+> Last updated: 2026-08-10
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -288,6 +288,22 @@ cd apps/ssh_mobile_full
 flutter analyze
 flutter test
 ```
+
+### Workspace module gate
+
+For a pull request, run the changed package and its dependent packages through
+Melos' diff filter, then run the architecture guard:
+
+```bash
+dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "dart format --output=none --set-exit-if-changed lib test"
+dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter analyze --no-pub"
+dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter test --no-pub"
+dart run tool/architecture_check.dart
+```
+
+On `main`, the CI workflow runs `dart run melos run format`,
+`dart run melos run analyze`, and `dart run melos run test`, followed by Full App
+Android and Terminal-only Windows smoke builds.
 
 ### Full quality gate
 
