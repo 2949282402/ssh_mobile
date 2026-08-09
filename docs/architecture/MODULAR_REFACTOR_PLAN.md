@@ -2698,6 +2698,27 @@ packages/core/common_services/
 
 把所有剩余东西重新堆进去。
 
+## Step 24 执行记录（2026-08-09）
+
+- 已逐文件审计 `apps/ssh_mobile_full/lib/services/`。App Scope 日志、设置、
+  启动、生命周期、显示模式、原生内存和快捷键服务保留在 App Shell；AI、
+  Connection、Remote Target、客户端系统工具和诊断服务只作为 App Port/Feature
+  适配器，不拥有 Feature 数据库。
+- SSH/SFTP、Monitoring、System Admin、Playbook、RAG、Terminal 和 LAN 的真实
+  实现/Module 已分别归属 `ssh_core` 或对应 Feature；仍被旧 App 页面、App
+  Runtime 或测试使用的旧入口保留为非 Owner 兼容桥。`network/**`、`relay/**`
+  和 LAN 旧协议适配同理：`network_transport` 当前只提供 native v1 Runtime/
+  Handle Facade，本 Step 不复制或重写协议实现。
+- 删除仓库生产代码和测试均无引用的三个旧 AI 导出入口：
+  `agent_model_profile.dart`、`llm_provider/llm_api_format.dart`、
+  `multi_agent_coordinator.dart`。`tool_secret_policy.dart` 虽无完整路径引用，
+  但仍被旧 App Service 通过相对路径使用，因此保留为 `feature_ai` 的兼容导出。
+  `part of`、条件
+  导出和旧调用面引用的文件没有被误判为无用而删除。完整分类见
+  `apps/ssh_mobile_full/lib/services/README.md`。
+- 本 Step 未批量删除仍在使用的业务代码；后续只有在补齐对应公共
+  Contract/Capability 并迁移调用方后，才能继续删除兼容桥。
+
 ---
 
 # 31. Step 25 — 清理依赖

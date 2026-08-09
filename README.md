@@ -471,9 +471,9 @@ flowchart LR
   shared Connection ViewModel flow.
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP, monitoring,
   App Shell adapters, legacy LAN-share compatibility services, and platform
-  adapters.
-  Maintained AI/MCP implementations live in their Feature packages.
-- `apps/ssh_mobile_full/lib/services/`: App-level adapters and the independent redacted `app_logs` diagnostic database.
+  adapters. The directory's complete Owner/compatibility classification is in
+  `apps/ssh_mobile_full/lib/services/README.md`; maintained AI/MCP
+  implementations live in their Feature packages.
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
 - `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; `feature_connection` consumes the public repositories and injected capabilities.
