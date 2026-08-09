@@ -234,11 +234,16 @@ Static checks and formatting:
 - From `packages/core/app_ui/`, `flutter analyze` and `flutter test`: validate the shared theme, responsive helpers, and UI widgets.
 - From `apps/ssh_mobile_full/`, `flutter test --coverage --reporter expanded`: run tests with coverage.
 - From `apps/ssh_mobile_full/`, `dart run tool/check_coverage.dart --minimum=35`: enforce the 35% non-generated line-coverage floor (CI gate).
+- From the repository root, `dart run tool/architecture_check.dart`: enforce
+  Feature dependency boundaries, cross-package `/src/` isolation, injected Core
+  implementation ownership, static service-locator rules, and removal of the
+  old `StorageService`/`AppDatabase` identifiers.
 
 Full local quality gate (fast loop):
 
 ```bash
 dart pub get
+dart run tool/architecture_check.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
 flutter analyze

@@ -202,6 +202,13 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   counts; it must not present uninstrumented legacy resources as exact global
   totals. AppRuntime debug assertions verify disposed Module state, released
   SSH/network resources, and the Developer adapter's own subscriptions.
+- 2026-08-09: Step28 added the root `tool/architecture_check.dart` guard and CI
+  invocation. It rejects unauthorized Feature-to-Feature imports, cross-package
+  `/src/` imports, Feature construction of Core implementations, new static
+  service locators, and reintroduction of `StorageService`/`AppDatabase` in Dart
+  source. The explicit allowlist currently contains only AI's public
+  `feature_playbook` boundary and audited legacy singleton names; do not expand
+  it without an architecture decision.
 
 ### Network transfer
 

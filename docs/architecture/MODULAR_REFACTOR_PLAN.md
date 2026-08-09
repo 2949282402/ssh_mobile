@@ -3002,6 +3002,23 @@ AppDatabase
 
 ---
 
+## Step 28 执行记录（2026-08-09）
+
+- 新增根目录 `tool/architecture_check.dart`，扫描 workspace 的 App/Package
+  Dart 源文件，守卫 Feature-to-Feature 依赖、跨 Package `/src/` 导入、Feature
+  创建 `NetworkRuntimeImpl`/`SshSessionManagerImpl`、新增静态 Service locator，
+  以及 `StorageService`/`AppDatabase` 旧标识重新出现。
+- 架构例外集中在脚本内的显式 Allowlist：当前只允许 AI 通过
+  `feature_playbook` 公共入口使用 `PlaybookAutomationPort`，以及既有兼容层的
+  已审计单例名称；禁止通过宽泛目录例外掩盖新增违规。当前 workspace 不需要
+  修改现有业务实现即可通过守卫。
+- 新增无外部依赖的架构守卫回归测试，覆盖当前 workspace 基线和四类禁止边界；
+  GitHub Actions 在根 workspace 依赖安装后执行该守卫。
+- 验证通过：架构守卫测试、`dart analyze`、架构守卫本身和格式检查均通过；
+  未发生依赖版本冲突，因此没有升级无关依赖。
+
+---
+
 # 35. Step 29 — README / AGENTS 标准化
 
 每个 Package 必须：

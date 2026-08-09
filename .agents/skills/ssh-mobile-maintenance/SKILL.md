@@ -180,6 +180,11 @@ implementations. The old App terminal files are compatibility exports/bridges.
 - `network_transport` must keep `NetworkRuntimeImpl` under App Scope ownership.
   Features may request public Capabilities but must not create a global network
   implementation or import another package's `/src/`.
+- Run `dart run tool/architecture_check.dart` from the repository root before
+  committing architecture work. Its explicit allowlist is the only place for
+  approved Feature-to-Feature public boundaries and known legacy singleton
+  compatibility names; do not silence a violation by adding a broad path
+  exception.
 - `ssh_core` must keep `SshSessionManager` and its Session Pool under App Scope
   ownership. A Feature may acquire/release a Lease but must not close a shared
   Session, import `flutter_background_service`, or perform platform checks.

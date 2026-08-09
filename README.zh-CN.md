@@ -257,6 +257,7 @@ printf 'alpha\nbeta\ngamma\n' \
 
 ```bash
 dart pub get
+dart run tool/architecture_check.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
 flutter analyze
@@ -431,7 +432,8 @@ flowchart LR
 - `packages/core/app_ui/test/`：共享主题、响应式工具和 Widget 测试；可在该 Package 中执行 `flutter test`。
 - `packages/infrastructure/ssh_core/test/`：SSH Core 生命周期与安全契约测试。
 - `docs/`：架构、安全、性能、验证和发布文档。
-- `scripts/`：仓库级构建、打包和同步脚本；`apps/ssh_mobile_full/tool/`：App 专属生成和质量检查脚本。
+- `scripts/`：仓库级构建、打包和同步脚本；`tool/architecture_check.dart`：仓库级架构守卫；
+  `apps/ssh_mobile_full/tool/`：App 专属生成和质量检查脚本。
 - `third_party/xterm/`：仓库内维护的终端组件。
 
 `AppRuntimeFactory` 创建应用生命周期服务，`AppRuntime` 是这些资源的唯一生命周期
