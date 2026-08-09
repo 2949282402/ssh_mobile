@@ -67,7 +67,7 @@ release notes.
 
 `apps/ssh_mobile_terminal/` is a separate Terminal-only compile/runtime slice.
 Its App Shell declares only `app_core`, `app_ui`, `connection_core`,
-`network_transport`, `ssh_core`, `feature_connection`, and `feature_terminal`;
+`network_transport`, `ssh_core`, and `feature_terminal`;
 it must not depend on AI, RAG, MCP, WebView, LAN Share, or SFTP. It reuses the
 public Terminal Feature Scope and owns only the resources needed by that slice.
 The live SSH compatibility implementation remains in the Full App until the
@@ -188,12 +188,14 @@ RAG/AI `intl`/`http`/`archive`/`flutter_animate`, and the unused App
 dependencies. AppLog's `drift`/`drift_flutter` and still-used legacy compatibility
 plugin imports remain intentional until those App surfaces are migrated.
 
-Step26 dependency crop: `apps/ssh_mobile_terminal/pubspec.yaml` is intentionally
-limited to `app_core`, `app_ui`, `connection_core`, `network_transport`,
-`ssh_core`, `feature_connection`, and `feature_terminal` plus the Flutter SDK.
-Do not copy `AppRuntimeFactory` or Full App business services into this App;
-compose only the selected public contracts and confirm the app node in
-`flutter pub deps` has no AI/RAG/MCP/WebView/LAN Share/SFTP dependency.
+Step26 initially included `feature_connection` in the Terminal-only dependency
+crop. Step32's manifest audit confirmed that the App imports no public API from
+that Feature, so the unused edge was removed; the current crop is
+`app_core`, `app_ui`, `connection_core`, `network_transport`, `ssh_core`, and
+`feature_terminal` plus the Flutter SDK. Do not copy `AppRuntimeFactory` or Full
+App business services into this App; compose only the selected public contracts
+and confirm the app node in `flutter pub deps` has no AI/RAG/MCP/WebView/LAN
+Share/SFTP dependency.
 
 Dependency and code generation (run after `pubspec.yaml` or Drift model changes):
 
@@ -254,6 +256,10 @@ Static checks and formatting:
 - From the repository root, `dart run tool/check_file_sizes.dart`: report all
   non-generated Dart files above the 300/400/500-line governance thresholds;
   this is a review report, not a mechanical split gate.
+- From the repository root, `dart run tool/check_module_dependencies.dart`:
+  audit all workspace Package production edges, Feature exceptions, forbidden
+  lower-layer-to-Feature edges, and dependency cycles. The detailed result is
+  documented in `docs/architecture/MODULE_DEPENDENCY.md`.
 
 Full local quality gate (fast loop):
 
@@ -261,6 +267,7 @@ Full local quality gate (fast loop):
 dart pub get
 dart run tool/architecture_check.dart
 dart run tool/check_file_sizes.dart
+dart run tool/check_module_dependencies.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
 flutter analyze --no-fatal-infos

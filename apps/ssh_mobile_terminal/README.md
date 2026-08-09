@@ -1,10 +1,10 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # ssh_mobile_terminal
 
 Terminal-only App 是模块化编译裁剪验证用的最小 Flutter App。它只声明并
 装配 `app_core`、`app_ui`、`connection_core`、`network_transport`、
-`ssh_core`、`feature_connection` 和 `feature_terminal`，不会引入 Full App
+`ssh_core` 和 `feature_terminal`，不会引入 Full App
 的 AI、RAG、MCP、WebView、LAN Share 或 SFTP 依赖。
 
 ## 生命周期
@@ -35,7 +35,8 @@ flutter test
 - 不负责：Full App 业务、真实 SSH 兼容实现或未选择 Feature 的初始化。
 - Public API：`TerminalAppRuntime`、`TerminalFeatureScope` 及 App 的启动入口。
 - 依赖：`app_core`、`app_ui`、`connection_core`、`network_transport`、`ssh_core`、
-  `feature_connection`、`feature_terminal` 和 Flutter SDK。
+  `feature_terminal` 和 Flutter SDK。Connection 编辑 Feature 不属于此编译切片，
+  连接数据通过 `connection_core` 公共契约注入。
 - 数据库：只由 `TerminalModule` 拥有 `terminal.db`。
 - 生命周期与资源 Owner：Runtime 负责 App Scope；Module 负责数据库；Route Scope
   负责 ViewModel 和页面资源。

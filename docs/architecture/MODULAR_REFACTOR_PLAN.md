@@ -2830,10 +2830,11 @@ flutter pub deps
 ## Step 26 执行记录（2026-08-09）
 
 - 已将 `apps/ssh_mobile_terminal/` 加入 Dart workspace 和 Melos，并创建最小
-  Flutter App Shell。其生产依赖严格限制为 `app_core`、`app_ui`、
-  `connection_core`、`network_transport`、`ssh_core`、`feature_connection` 和
-  `feature_terminal`；`flutter pub deps` 的 App 节点未包含 AI、RAG、MCP、
-  WebView、LAN Share 或 SFTP。
+  Flutter App Shell。当时其生产依赖包括 `feature_connection`；Step32 的最终
+  依赖审计确认该 App 没有导入该 Feature 公共 API，已移除这条无效依赖。当前
+  依赖严格限制为 `app_core`、`app_ui`、`connection_core`、`network_transport`、
+  `ssh_core` 和 `feature_terminal`；`flutter pub deps` 的 App 节点未包含 AI、
+  RAG、MCP、WebView、LAN Share 或 SFTP。
 - 为避免精简 App 反向依赖 Provider 实现，`feature_terminal` 公共入口新增
   `TerminalFeatureScope`，由 Feature 自己组合公开 Port；App 只注入
   `SshSessionManager`、Terminal Port 和 `terminal.db` 历史 Repository，不拥有
@@ -3243,6 +3244,27 @@ docs/architecture/MODULE_DEPENDENCY.md
 ```
 
 ---
+
+## Step 32 执行记录（2026-08-10）
+
+- 新增 `tool/check_module_dependencies.dart`、模型文件和
+  `test/tool/module_dependency_check_test.dart`，从根 workspace 清单读取
+  20 个成员及直接生产依赖；新增 `docs/architecture/MODULE_DEPENDENCY.md`
+  记录层级图、Package 依赖表和维护规则。
+- 审计得到 63 条内部生产依赖边；当前没有 Feature-to-Feature 违规、
+  Core/Infrastructure -> Feature 反向依赖或依赖循环。唯一显式例外是
+  `feature_ai -> feature_playbook`，调用面为公开 `PlaybookAutomationPort`。
+- 逐项核对源码使用后移除两条无效 manifest 边：
+  `feature_monitoring -> app_ui` 和
+  `ssh_mobile_terminal -> feature_connection`；未升级无关依赖版本。
+- `tool/architecture_check.dart` 继续负责跨包 `/src/` 导入检查，避免两个
+  工具重复解析源码；根 AGENTS、README、维护 Skill 和 Agent memory 已同步。
+- 验证通过：`dart pub get`；依赖审计/回归测试、架构守卫、纯 Dart
+  analyzer、格式检查、文件尺寸报告测试、`git diff --check` 和 Skill 同步检查；
+  Monitoring Package analyze/test（2 项）、Terminal-only App analyze/test（3 项）
+  通过；`ssh_mobile_terminal` 自身 `pub deps` 节点不再包含
+  `feature_connection`；Full App analyze 使用 `--no-fatal-infos` 通过（既有 41
+  条 info），完整 Flutter 测试 857 项通过。
 
 # 39. Step 33 — 最终资源 Owner 审计
 

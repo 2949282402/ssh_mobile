@@ -222,6 +222,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   API unchanged while separating composition, theme variants, and control-level
   builders; do not mechanically split cohesive parsers, tests, or compatibility
   bridges only to reduce their line count.
+- 2026-08-10: Step32 added `tool/check_module_dependencies.dart` and its pure
+  Dart regression test. The audit reads only root workspace members and direct
+  production edges, allows the reviewed `feature_ai -> feature_playbook`
+  public capability boundary, and rejects lower-layer-to-Feature edges and
+  cycles. Its maintained result is `docs/architecture/MODULE_DEPENDENCY.md`;
+  keep it synchronized when adding or moving a workspace Package.
 
 ### Network transfer
 
@@ -522,7 +528,7 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 - 2026-08-09: `apps/ssh_mobile_terminal/` is a separate Terminal-only workspace
   member used to validate the smallest App Shell dependency graph. It may depend
   only on `app_core`, `app_ui`, `connection_core`, `network_transport`, `ssh_core`,
-  `feature_connection`, and `feature_terminal` (plus Flutter SDK packages). It
+  and `feature_terminal` (plus Flutter SDK packages). It
   must not copy Full App services or initialize AI/RAG/MCP/WebView/LAN Share/SFTP;
   the Full App remains the owner of the still-in-use SSH compatibility backend
   until the planned method migration. The Feature's public Scope owns Provider

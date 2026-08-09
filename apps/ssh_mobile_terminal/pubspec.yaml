@@ -22,8 +22,6 @@ dependencies:
     path: ../../packages/infrastructure/network_transport
   ssh_core:
     path: ../../packages/infrastructure/ssh_core
-  feature_connection:
-    path: ../../packages/features/feature_connection
   feature_terminal:
     path: ../../packages/features/feature_terminal
 

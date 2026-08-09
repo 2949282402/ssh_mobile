@@ -66,7 +66,7 @@ Pilot migrates its method API.
 `apps/ssh_mobile_terminal/` is a separate minimal App Shell used for the
 Terminal-only dependency crop. Its direct package dependencies are limited to
 `app_core`, `app_ui`, `connection_core`, `network_transport`, `ssh_core`,
-`feature_connection`, and `feature_terminal`; do not copy the Full App runtime or
+and `feature_terminal`; do not copy the Full App runtime or
 add AI, RAG, MCP, WebView, LAN Share, or SFTP. Use the Feature's public
 `TerminalFeatureScope` for Provider composition and keep App/Module owners
 responsible for resource disposal. `flutter pub deps` must be checked at the app
@@ -202,6 +202,11 @@ implementations. The old App terminal files are compatibility exports/bridges.
   problems, then split only when responsibilities are independent; retain a
   cohesive parser, test fixture, or compatibility bridge when splitting would
   only add meaningless files.
+- Step32's `dart run tool/check_module_dependencies.dart` audits the root
+  workspace's direct production dependency graph. Keep Feature-to-Feature
+  exceptions explicit in `architectureAllowlist`, reject Core/Infrastructure
+  reverse edges and cycles, and update `docs/architecture/MODULE_DEPENDENCY.md`
+  when Package boundaries change.
 - `ssh_core` must keep `SshSessionManager` and its Session Pool under App Scope
   ownership. A Feature may acquire/release a Lease but must not close a shared
   Session, import `flutter_background_service`, or perform platform checks.
