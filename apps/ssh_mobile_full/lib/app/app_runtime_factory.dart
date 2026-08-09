@@ -26,6 +26,7 @@ import '../services/storage_service.dart';
 import 'app_runtime.dart';
 import 'ai_external_capability_adapters.dart';
 import 'ai_feature_adapters.dart';
+import 'developer_feature_adapters.dart';
 import 'lan_share_feature_adapters.dart';
 import 'mcp_feature_adapters.dart';
 import 'monitoring_feature_adapters.dart';
@@ -96,6 +97,8 @@ final class AppRuntimeFactory {
     final appSettings = AppSettings();
     final webViewService = feature_webview.ClientWebViewService(logger: logger);
     final webViewSettingsAdapter = AppWebViewSettingsAdapter(appSettings);
+    final developerLogAdapter = AppDeveloperLogAdapter(logger);
+    final developerSettingsAdapter = AppDeveloperSettingsAdapter(appSettings);
     final storageService = StorageService();
     final bootstrapCoordinator = AppBootstrapCoordinator(
       appSettings: appSettings,
@@ -264,6 +267,13 @@ final class AppRuntimeFactory {
     );
     await lanShareModule.initialize();
     await lanShareModule.activate();
+    final developerDiagnosticsAdapter = AppDeveloperDiagnosticsAdapter(
+      sshService: sshService,
+      ragService: ragModule.service,
+      mcpServer: mcpModule.service,
+      performanceMonitor: performanceMonitorService,
+      logService: logger,
+    );
 
     return AppRuntime(
       appLogService: logger,
@@ -293,6 +303,9 @@ final class AppRuntimeFactory {
       lanShareSettingsAdapter: lanShareSettingsAdapter,
       webViewService: webViewService,
       webViewSettingsAdapter: webViewSettingsAdapter,
+      developerLogAdapter: developerLogAdapter,
+      developerSettingsAdapter: developerSettingsAdapter,
+      developerDiagnosticsAdapter: developerDiagnosticsAdapter,
       aiModule: aiModule,
       aiStorageAdapter: aiStorageAdapter,
       aiSettingsAdapter: aiSettingsAdapter,

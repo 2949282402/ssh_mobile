@@ -1,23 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
-
-import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
-import 'package:ssh_mobile/services/app_log_service.dart';
-import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:app_ui/app_ui.dart';
 
-extension _DeveloperLogStrings on AppStrings {
-  String get copySelectedLogs =>
-      language == AppLanguage.en ? 'Copy Selected' : '复制选中日志';
-  String get deleteSelectedLogs =>
-      language == AppLanguage.en ? 'Delete Selected' : '删除选中日志';
-  String selectedLogs(int count) =>
-      language == AppLanguage.en ? '$count selected' : '已选择 $count 条日志';
-  String selectedLogsDeleted(int count) =>
-      language == AppLanguage.en ? '$count deleted' : '已删除 $count 条日志';
-}
+import '../domain/developer_ports.dart';
+import 'developer_log_strings.dart';
+import 'developer_log_viewmodel.dart';
 
+/// Developer Log 页面；ViewModel 由路由通过公共 Port 注入。
 class DeveloperLogPage extends StatefulWidget {
   const DeveloperLogPage({super.key});
 
@@ -29,7 +19,7 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<DeveloperLogViewModel>();
-    final strings = AppStrings(viewModel.language);
+    final strings = DeveloperLogStrings(viewModel.language);
 
     return Scaffold(
       body: AppPageSurface(
@@ -76,7 +66,7 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
 }
 
 class _DeveloperLogToolbar extends StatelessWidget {
-  final AppStrings strings;
+  final DeveloperLogStrings strings;
   final DeveloperLogViewModel viewModel;
   final VoidCallback onCopySuccess;
   final ValueChanged<int> onDeleteSuccess;
@@ -222,10 +212,10 @@ class _DeveloperLogToolbar extends StatelessWidget {
                     height: 36 + (textScale - 1.0) * 24,
                     child: ListView.separated(
                       scrollDirection: Axis.horizontal,
-                      itemCount: AppLogLevel.values.length,
+                      itemCount: DeveloperLogLevel.values.length,
                       separatorBuilder: (_, _) => const SizedBox(width: 8),
                       itemBuilder: (context, index) {
-                        final level = AppLogLevel.values[index];
+                        final level = DeveloperLogLevel.values[index];
                         final count = viewModel.levelCounts[level] ?? 0;
                         return FilterChip(
                           label: Text(
@@ -248,7 +238,7 @@ class _DeveloperLogToolbar extends StatelessWidget {
 }
 
 class _DeveloperLogList extends StatelessWidget {
-  final AppStrings strings;
+  final DeveloperLogStrings strings;
   final DeveloperLogViewModel viewModel;
   final VoidCallback onCopySingleSuccess;
 
@@ -301,8 +291,8 @@ class _DeveloperLogList extends StatelessWidget {
 }
 
 class _LogEntryTile extends StatefulWidget {
-  final AppLogEntry entry;
-  final AppStrings strings;
+  final DeveloperLogEntry entry;
+  final DeveloperLogStrings strings;
   final bool selected;
   final bool selectionMode;
   final VoidCallback onTap;
@@ -334,7 +324,7 @@ class _LogEntryTileState extends State<_LogEntryTile> {
     final entry = widget.entry;
     final strings = widget.strings;
     final colorScheme = Theme.of(context).colorScheme;
-    final level = entry.normalizedLevel;
+    final level = entry.level;
     final levelColor = _levelColor(context, level);
     final isLong = _isLong(entry.text);
 
@@ -476,23 +466,23 @@ class _LogEntryTileState extends State<_LogEntryTile> {
     return text.length > 360 || '\n'.allMatches(text).length >= _collapsedLines;
   }
 
-  Color _levelColor(BuildContext context, AppLogLevel level) {
+  Color _levelColor(BuildContext context, DeveloperLogLevel level) {
     final colorScheme = Theme.of(context).colorScheme;
     switch (level) {
-      case AppLogLevel.error:
-      case AppLogLevel.flutter:
-      case AppLogLevel.platform:
+      case DeveloperLogLevel.error:
+      case DeveloperLogLevel.flutter:
+      case DeveloperLogLevel.platform:
         return colorScheme.error;
-      case AppLogLevel.warning:
+      case DeveloperLogLevel.warning:
         return Colors.orange;
-      case AppLogLevel.service:
+      case DeveloperLogLevel.service:
         return colorScheme.secondary;
-      case AppLogLevel.debug:
+      case DeveloperLogLevel.debug:
         return Colors.blueGrey;
-      case AppLogLevel.app:
+      case DeveloperLogLevel.app:
         return colorScheme.primary;
-      case AppLogLevel.info:
-      case AppLogLevel.all:
+      case DeveloperLogLevel.info:
+      case DeveloperLogLevel.all:
         return Colors.blue;
     }
   }

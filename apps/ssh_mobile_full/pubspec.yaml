@@ -41,6 +41,8 @@ dependencies:
     path: ../../packages/features/feature_ai
   feature_webview:
     path: ../../packages/features/feature_webview
+  feature_developer:
+    path: ../../packages/features/feature_developer
   dartssh2: ^2.22.5
   xterm:
     path: ../../third_party/xterm

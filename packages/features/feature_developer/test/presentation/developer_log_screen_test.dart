@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
-import 'package:ssh_mobile/features/developer_log/views/developer_log_screen.dart';
-import 'package:ssh_mobile/services/app_log_service.dart';
-import 'package:ssh_mobile/services/app_settings.dart';
+
+import 'package:feature_developer/feature_developer.dart';
+import '../support/developer_fakes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -14,15 +11,13 @@ void main() {
   testWidgets('developer logs toolbar adapts to narrow large text', (
     WidgetTester tester,
   ) async {
-    SharedPreferences.setMockInitialValues({});
-    FlutterSecureStorage.setMockInitialValues({});
-    final appSettings = AppSettings();
-    await tester.runAsync(appSettings.init);
-    addTearDown(appSettings.dispose);
-    final logService = AppLogService()..clear();
+    final settings = FakeDeveloperSettings();
+    final logService = FakeDeveloperLogPort();
+    addTearDown(settings.dispose);
+    addTearDown(logService.dispose);
     final viewModel = DeveloperLogViewModel(
-      appSettings: appSettings,
       logService: logService,
+      settings: settings,
     );
     addTearDown(viewModel.dispose);
 

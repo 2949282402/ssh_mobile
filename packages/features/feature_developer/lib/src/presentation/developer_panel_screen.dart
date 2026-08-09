@@ -1,14 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 
-import '../../../services/app_log_service.dart';
-import '../../../services/native_memory_service.dart';
-import '../../../services/performance_monitor_service.dart';
-import '../../../services/rag_service.dart';
-import '../../../services/ssh_service.dart';
-import '../viewmodels/developer_panel_viewmodel.dart';
+import '../domain/developer_ports.dart';
+import 'developer_panel_viewmodel.dart';
 
+/// Developer Panel 全屏页面；路由从 Provider 注入 diagnostics contract。
 class DeveloperPanelScreen extends StatefulWidget {
   const DeveloperPanelScreen({super.key});
 
@@ -22,7 +18,9 @@ class _DeveloperPanelScreenState extends State<DeveloperPanelScreen> {
   @override
   void initState() {
     super.initState();
-    _vm = DeveloperPanelViewModel()..start();
+    _vm = DeveloperPanelViewModel(
+      diagnostics: context.read<DeveloperDiagnosticsPort>(),
+    )..start();
   }
 
   @override
@@ -76,17 +74,6 @@ class DeveloperPanelContent extends StatelessWidget {
         );
       },
     );
-  }
-
-  /// Reads a service from the widget tree without throwing if it is not
-  /// provided (e.g. in the isolated floating-panel test). Returns null so the
-  /// component card can render "n/a" gracefully.
-  T? _safeRead<T>(BuildContext context) {
-    try {
-      return Provider.of<T>(context, listen: false);
-    } on Object {
-      return null;
-    }
   }
 
   // ── FPS Card ──
@@ -247,7 +234,10 @@ class DeveloperPanelContent extends StatelessWidget {
     );
   }
 
-  Widget _buildMemoryBreakdown(BuildContext context, NativeMemorySnapshot m) {
+  Widget _buildMemoryBreakdown(
+    BuildContext context,
+    DeveloperNativeMemorySnapshot m,
+  ) {
     final scheme = Theme.of(context).colorScheme;
     Widget cell(String label, double mb) => Expanded(
       child: Column(
@@ -381,52 +371,6 @@ class DeveloperPanelContent extends StatelessWidget {
   // ── Component Activity Card ──
 
   Widget _buildComponentCard(BuildContext context) {
-    final ssh = _safeRead<SshService>(context);
-    final rag = _safeRead<RagService>(context);
-    final mcp = _safeRead<feature_mcp.McpServerController>(context);
-    final perf = _safeRead<PerformanceMonitorService>(context);
-    final logs = _safeRead<AppLogService>(context);
-
-    final List<(String, String)> rows = [
-      (
-        'SSH',
-        ssh == null
-            ? 'n/a'
-            : '${ssh.sessions.length} session'
-                  '${ssh.sessions.length == 1 ? '' : 's'}'
-                  '${ssh.isConnected ? ' · connected' : ''}',
-      ),
-      (
-        'RAG',
-        rag == null
-            ? 'n/a'
-            : rag.isLoading
-            ? 'indexing…'
-            : rag.isInitialized
-            ? 'index loaded'
-            : 'idle',
-      ),
-      (
-        'MCP Server',
-        mcp == null
-            ? 'n/a'
-            : mcp.running
-            ? 'running'
-            : 'stopped',
-      ),
-      (
-        'Perf Monitor',
-        perf == null
-            ? 'n/a'
-            : perf.isSampling
-            ? 'sampling'
-            : perf.isRunning
-            ? 'running'
-            : 'idle',
-      ),
-      ('Log Buffer', logs == null ? 'n/a' : '${logs.entries.length} entries'),
-    ];
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -453,7 +397,7 @@ class DeveloperPanelContent extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            for (final (label, value) in rows)
+            for (final status in vm.componentStatuses)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Row(
@@ -461,7 +405,7 @@ class DeveloperPanelContent extends StatelessWidget {
                     SizedBox(
                       width: 96,
                       child: Text(
-                        label,
+                        status.id.label,
                         style: TextStyle(
                           fontSize: 12,
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -470,7 +414,7 @@ class DeveloperPanelContent extends StatelessWidget {
                     ),
                     Expanded(
                       child: Text(
-                        value,
+                        status.state,
                         style: const TextStyle(
                           fontSize: 12,
                           fontFamily: 'monospace',

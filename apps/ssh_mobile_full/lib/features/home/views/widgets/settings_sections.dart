@@ -264,7 +264,6 @@ class _DeveloperSettingsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final appSettings = context.read<AppSettings>();
     return _SettingsSection(
       title: strings.developerMode,
       children: [
@@ -294,10 +293,8 @@ class _DeveloperSettingsSection extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => ChangeNotifierProvider<AppSettings>.value(
-                    value: appSettings,
-                    child: const DeveloperPanelScreen(),
-                  ),
+                  builder: (_) =>
+                      const feature_developer.DeveloperPanelScreen(),
                 ),
               );
             },
@@ -313,11 +310,13 @@ class _DeveloperSettingsSection extends StatelessWidget {
               context,
               MaterialPageRoute(
                 builder: (_) => ChangeNotifierProvider(
-                  create: (context) => DeveloperLogViewModel(
-                    logService: context.read<AppLogService>(),
-                    appSettings: context.read<AppSettings>(),
+                  create: (context) => feature_developer.DeveloperLogViewModel(
+                    logService: context
+                        .read<feature_developer.DeveloperLogPort>(),
+                    settings: context
+                        .read<feature_developer.DeveloperSettingsPort>(),
                   ),
-                  child: const DeveloperLogPage(),
+                  child: const feature_developer.DeveloperLogPage(),
                 ),
               ),
             );

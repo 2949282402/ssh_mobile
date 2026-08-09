@@ -4,6 +4,7 @@ import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_ai/feature_ai.dart' as feature_ai;
+import 'package:feature_developer/feature_developer.dart' as feature_developer;
 import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
@@ -19,6 +20,7 @@ import 'mcp_feature_adapters.dart';
 import 'playbook_feature_adapters.dart';
 import 'rag_feature_adapters.dart';
 import 'webview_feature_adapters.dart';
+import 'developer_feature_adapters.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
@@ -63,6 +65,9 @@ final class AppRuntime implements Disposable {
     required this.lanShareSettingsAdapter,
     required this.webViewService,
     required this.webViewSettingsAdapter,
+    required this.developerLogAdapter,
+    required this.developerSettingsAdapter,
+    required this.developerDiagnosticsAdapter,
     required this.aiModule,
     required this.aiStorageAdapter,
     required this.aiSettingsAdapter,
@@ -172,6 +177,23 @@ final class AppRuntime implements Disposable {
   /// WebView 页面消费的设置 Port，不拥有底层 AppSettings。
   final AppWebViewSettingsAdapter webViewSettingsAdapter;
 
+  /// Developer Feature 的 App Shell Port 适配器；不把旧服务类型泄漏给页面。
+  final AppDeveloperLogAdapter developerLogAdapter;
+  final AppDeveloperSettingsAdapter developerSettingsAdapter;
+  final AppDeveloperDiagnosticsAdapter developerDiagnosticsAdapter;
+
+  /// 供 Provider 注册的开发者日志能力。
+  feature_developer.DeveloperLogPort get developerLogPort =>
+      developerLogAdapter;
+
+  /// 供 Provider 注册的开发者设置能力。
+  feature_developer.DeveloperSettingsPort get developerSettingsPort =>
+      developerSettingsAdapter;
+
+  /// 供 Provider 注册的开发者诊断能力。
+  feature_developer.DeveloperDiagnosticsPort get developerDiagnosticsPort =>
+      developerDiagnosticsAdapter;
+
   /// AI Module 的唯一 App Scope Owner；ai.db 只在首次 AI 使用时打开。
   final feature_ai.AiModule aiModule;
 
@@ -238,6 +260,10 @@ final class AppRuntime implements Disposable {
     // 已经释放的 Controller；设置适配器先解除 AppSettings 监听。
     await attempt(webViewSettingsAdapter.dispose);
     await attempt(webViewService.dispose);
+    // 先解除 Developer Feature 对底层服务的观察，再关闭被观察资源。
+    await attempt(developerDiagnosticsAdapter.dispose);
+    await attempt(developerLogAdapter.dispose);
+    await attempt(developerSettingsAdapter.dispose);
     await attempt(aiSettingsAdapter.dispose);
     await attempt(playbookModule.dispose);
     await attempt(playbookSettingsAdapter.dispose);

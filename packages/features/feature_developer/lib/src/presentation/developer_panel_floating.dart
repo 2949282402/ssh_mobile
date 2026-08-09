@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'package:ssh_mobile/services/app_settings.dart';
-import '../viewmodels/developer_panel_viewmodel.dart';
+import '../domain/developer_ports.dart';
 import 'developer_panel_screen.dart';
+import 'developer_panel_viewmodel.dart';
 
-/// Global overlay that shows a draggable floating ball for the Developer Panel
-/// when Developer Mode + "floating ball" are both enabled.
+/// 全局开发者面板悬浮层；只消费设置和 diagnostics 公共契约。
 ///
-/// Mounted near the app root (above the navigator) so the ball and its panel
-/// stay visible while the user is on any page (terminal, SFTP, AI chat, ...).
+/// 当开发者模式和悬浮开关同时开启时显示可拖拽按钮。
+///
+/// 它挂在 App Shell 的 Navigator 上方，因此终端、SFTP、AI 等页面切换时
+/// 仍能保持可见；ViewModel 生命周期由该 Host 独占。
 class DeveloperPanelFloatingHost extends StatefulWidget {
   final Widget child;
 
@@ -32,7 +33,9 @@ class _DeveloperPanelFloatingHostState
 
   void _syncViewModel(bool enabled) {
     if (enabled && _vm == null) {
-      _vm = DeveloperPanelViewModel()..start();
+      _vm = DeveloperPanelViewModel(
+        diagnostics: context.read<DeveloperDiagnosticsPort>(),
+      )..start();
     } else if (!enabled && _vm != null) {
       _panelOpen = false;
       _panelOffset = null;
@@ -44,12 +47,9 @@ class _DeveloperPanelFloatingHostState
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Initial mount: create the ViewModel if already enabled. Runtime toggles
-    // are handled in build (via context.select), which re-runs and reconciles.
-    final appSettings = context.read<AppSettings>();
-    _syncViewModel(
-      appSettings.developerMode && appSettings.developerPanelFloating,
-    );
+    // 首次挂载时同步状态；运行时切换由 build 中的 select 触发。
+    final settings = context.read<DeveloperSettingsPort>();
+    _syncViewModel(settings.developerMode && settings.floatingPanelEnabled);
   }
 
   @override
@@ -82,13 +82,11 @@ class _DeveloperPanelFloatingHostState
 
   @override
   Widget build(BuildContext context) {
-    final enabled = context.select<AppSettings, bool>(
-      (s) => s.developerMode && s.developerPanelFloating,
+    final enabled = context.select<DeveloperSettingsPort, bool>(
+      (settings) => settings.developerMode && settings.floatingPanelEnabled,
     );
-    // Reconcile the ViewModel against the current enabled state. context.select
-    // above re-runs this build whenever the setting flips, so a runtime toggle
-    // (on/off) correctly creates or disposes the ViewModel. Idempotent: it only
-    // acts on state transitions and never schedules a rebuild.
+    // select 在设置变化时重新执行，确保运行时切换能创建/释放 ViewModel。
+    // 该操作幂等，不主动安排额外重建。
     _syncViewModel(enabled);
 
     return Stack(

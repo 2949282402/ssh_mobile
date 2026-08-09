@@ -4,14 +4,27 @@ import 'dart:io' show Platform, ProcessInfo;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
-import '../../../services/native_memory_service.dart';
+import '../domain/developer_ports.dart';
 
-class DeveloperPanelViewModel extends ChangeNotifier {
+/// Developer Panel 路由的 ViewModel，收集帧率、内存和模块活动快照。
+///
+/// 帧计时、Timer 和 diagnostics 监听都由该路由持有；底层模块状态只通过
+/// [DeveloperDiagnosticsPort] 读取，避免面板直接依赖任意 Feature 实现。
+final class DeveloperPanelViewModel extends ChangeNotifier {
   static final Stopwatch _globalUptime = Stopwatch()..start();
 
+  /// 创建开发者面板状态并注入只读 diagnostics contract。
+  DeveloperPanelViewModel({required DeveloperDiagnosticsPort diagnostics})
+    : _diagnostics = diagnostics {
+    _diagnostics.addListener(_onDiagnosticsChanged);
+  }
+
+  final DeveloperDiagnosticsPort _diagnostics;
   final List<FrameTiming> _frameTimings = [];
   Timer? _memoryTimer;
   bool _active = false;
+  bool _disposed = false;
+  bool _memoryReadInFlight = false;
 
   // ── Observable state ──
 
@@ -37,10 +50,15 @@ class DeveloperPanelViewModel extends ChangeNotifier {
 
   double get memoryMB => _memoryBytes / (1024 * 1024);
 
-  /// OS-level memory category breakdown (Java/Native/Graphics/Code), or `null`
-  /// when unavailable (non-Android or no platform channel).
-  NativeMemorySnapshot? _nativeMemory;
-  NativeMemorySnapshot? get nativeMemory => _nativeMemory;
+  /// 操作系统级内存分类（Java/Native/Graphics/Code），不可用时为 null。
+  DeveloperNativeMemorySnapshot? _nativeMemory;
+
+  /// 当前操作系统级内存分类快照。
+  DeveloperNativeMemorySnapshot? get nativeMemory => _nativeMemory;
+
+  /// 当前被观察模块的短状态。
+  List<DeveloperComponentStatus> get componentStatuses =>
+      _diagnostics.componentStatuses;
 
   Duration get uptime => _globalUptime.elapsed;
 
@@ -79,7 +97,7 @@ class DeveloperPanelViewModel extends ChangeNotifier {
     SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
     _startMemoryPolling();
 
-    // Force first memory read
+    // 首次启动立即读取，避免面板打开后两秒才出现内存值。
     _readMemory();
   }
 
@@ -94,19 +112,25 @@ class DeveloperPanelViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    _diagnostics.removeListener(_onDiagnosticsChanged);
     stop();
     super.dispose();
   }
 
+  void _onDiagnosticsChanged() {
+    if (!_disposed) notifyListeners();
+  }
+
   // ── Frame timing ──
 
-  /// Threshold (ms) above which a frame is considered jank.
+  /// 超过该毫秒数的帧计为卡顿帧。
   static const double jankThresholdMs = 16.67;
 
   void _onFrameTimings(List<FrameTiming> timings) {
     _frameTimings.addAll(timings);
 
-    // Keep a rolling window of ~2 seconds (120 frames at 60 fps)
+    // 保留约两秒的滚动窗口（60 FPS 下最多 120 帧）。
     const maxFrames = 120;
     if (_frameTimings.length > maxFrames) {
       _frameTimings.removeRange(0, _frameTimings.length - maxFrames);
@@ -140,10 +164,10 @@ class DeveloperPanelViewModel extends ChangeNotifier {
           .reduce((a, b) => a + b);
       if (totalUs > 0) {
         _fps = (_frameTimings.length - 1) / (totalUs * 1e-6);
-        _fps = (_fps * 10).roundToDouble() / 10; // 1 decimal place
+        _fps = (_fps * 10).roundToDouble() / 10; // 保留一位小数。
       }
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   // ── Memory ──
@@ -156,16 +180,20 @@ class DeveloperPanelViewModel extends ChangeNotifier {
   }
 
   Future<void> _readMemory() async {
+    if (_disposed || _memoryReadInFlight) return;
+    _memoryReadInFlight = true;
     try {
       _memoryBytes = ProcessInfo.currentRss;
     } catch (_) {
-      _memoryBytes = -1; // not available (web or unsupported platform)
+      _memoryBytes = -1; // Web 或不支持的平台无法读取 RSS。
     }
     try {
-      _nativeMemory = await NativeMemoryService.instance.snapshot();
+      _nativeMemory = await _diagnostics.readNativeMemory();
     } catch (_) {
       _nativeMemory = null;
+    } finally {
+      _memoryReadInFlight = false;
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 }

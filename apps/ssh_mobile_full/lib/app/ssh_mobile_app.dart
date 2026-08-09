@@ -4,6 +4,7 @@ import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
 import 'package:feature_ai/feature_ai.dart' as feature_ai;
 import 'package:app_core/app_core.dart' as app_core;
+import 'package:feature_developer/feature_developer.dart' as feature_developer;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
@@ -17,7 +18,6 @@ import 'package:ssh_core/ssh_core.dart';
 
 import '../features/settings/viewmodels/settings_viewmodel.dart';
 import '../features/startup/viewmodels/startup_viewmodel.dart';
-import '../features/developer_panel/views/developer_panel_floating.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import '../services/app_settings.dart';
@@ -206,6 +206,15 @@ class _SshMobileAppState extends State<SshMobileApp>
         ListenableProvider<feature_webview.WebViewSettingsPort>.value(
           value: runtime.webViewSettingsAdapter,
         ),
+        ListenableProvider<feature_developer.DeveloperLogPort>.value(
+          value: runtime.developerLogPort,
+        ),
+        ListenableProvider<feature_developer.DeveloperSettingsPort>.value(
+          value: runtime.developerSettingsPort,
+        ),
+        ListenableProvider<feature_developer.DeveloperDiagnosticsPort>.value(
+          value: runtime.developerDiagnosticsPort,
+        ),
         Provider<feature_ai.AiStoragePort>.value(
           value: runtime.aiStorageAdapter,
         ),
@@ -347,14 +356,15 @@ class _SshMobileAppState extends State<SshMobileApp>
                     final adaptedMediaQuery = adaptMobileMediaQuery(mediaQuery);
                     final visualDensity = mobileVisualDensityFor(mediaQuery);
                     final effectiveChild = child ?? const SizedBox.shrink();
-                    final shadChild = DeveloperPanelFloatingHost(
-                      child: feature_lan_share.NetworkIncomingTransferHost(
-                        child: feature_lan_share.LanPairingNavigationHost(
-                          navigatorKey: _navigatorKey,
-                          child: ShadAppBuilder(child: effectiveChild),
-                        ),
-                      ),
-                    );
+                    final shadChild =
+                        feature_developer.DeveloperPanelFloatingHost(
+                          child: feature_lan_share.NetworkIncomingTransferHost(
+                            child: feature_lan_share.LanPairingNavigationHost(
+                              navigatorKey: _navigatorKey,
+                              child: ShadAppBuilder(child: effectiveChild),
+                            ),
+                          ),
+                        );
 
                     final currentTheme = Theme.of(context);
                     if (identical(adaptedMediaQuery, mediaQuery) &&

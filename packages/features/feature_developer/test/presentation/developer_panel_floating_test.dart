@@ -1,26 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:ssh_mobile/features/developer_panel/views/developer_panel_floating.dart';
-import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:feature_developer/feature_developer.dart';
+import '../support/developer_fakes.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('DeveloperPanelFloatingHost', () {
     testWidgets('shows ball and opens panel when enabled', (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final appSettings = AppSettings();
-      addTearDown(appSettings.dispose);
-      await appSettings.ensureCoreLoaded();
-      await appSettings.setDeveloperMode(true);
-      await appSettings.setDeveloperPanelFloating(true);
+      final settings = FakeDeveloperSettings();
+      final diagnostics = FakeDeveloperDiagnostics();
+      addTearDown(settings.dispose);
+      addTearDown(diagnostics.dispose);
 
       await tester.pumpWidget(
-        ChangeNotifierProvider<AppSettings>.value(
-          value: appSettings,
+        MultiProvider(
+          providers: [
+            ListenableProvider<DeveloperSettingsPort>.value(value: settings),
+            ListenableProvider<DeveloperDiagnosticsPort>.value(
+              value: diagnostics,
+            ),
+          ],
           child: MaterialApp(
             home: DeveloperPanelFloatingHost(
               child: const ColoredBox(
@@ -66,16 +68,19 @@ void main() {
     });
 
     testWidgets('hides ball when floating is disabled', (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final appSettings = AppSettings();
-      addTearDown(appSettings.dispose);
-      await appSettings.ensureCoreLoaded();
-      await appSettings.setDeveloperMode(true);
-      await appSettings.setDeveloperPanelFloating(false);
+      final settings = FakeDeveloperSettings(floatingPanelEnabled: false);
+      final diagnostics = FakeDeveloperDiagnostics();
+      addTearDown(settings.dispose);
+      addTearDown(diagnostics.dispose);
 
       await tester.pumpWidget(
-        ChangeNotifierProvider<AppSettings>.value(
-          value: appSettings,
+        MultiProvider(
+          providers: [
+            ListenableProvider<DeveloperSettingsPort>.value(value: settings),
+            ListenableProvider<DeveloperDiagnosticsPort>.value(
+              value: diagnostics,
+            ),
+          ],
           child: MaterialApp(
             home: DeveloperPanelFloatingHost(child: const SizedBox.expand()),
           ),
@@ -92,17 +97,19 @@ void main() {
     testWidgets('shows ball after enabling floating at runtime', (
       tester,
     ) async {
-      SharedPreferences.setMockInitialValues({});
-      final appSettings = AppSettings();
-      addTearDown(appSettings.dispose);
-      await appSettings.ensureCoreLoaded();
-      // Mount with floating OFF, then toggle it ON while the widget is live.
-      await appSettings.setDeveloperMode(true);
-      await appSettings.setDeveloperPanelFloating(false);
+      final settings = FakeDeveloperSettings(floatingPanelEnabled: false);
+      final diagnostics = FakeDeveloperDiagnostics();
+      addTearDown(settings.dispose);
+      addTearDown(diagnostics.dispose);
 
       await tester.pumpWidget(
-        ChangeNotifierProvider<AppSettings>.value(
-          value: appSettings,
+        MultiProvider(
+          providers: [
+            ListenableProvider<DeveloperSettingsPort>.value(value: settings),
+            ListenableProvider<DeveloperDiagnosticsPort>.value(
+              value: diagnostics,
+            ),
+          ],
           child: MaterialApp(
             home: DeveloperPanelFloatingHost(child: const SizedBox.expand()),
           ),
@@ -112,7 +119,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       expect(find.byIcon(Icons.bug_report_outlined), findsNothing);
 
-      await appSettings.setDeveloperPanelFloating(true);
+      settings.floatingPanelEnabled = true;
+      settings.notifyListeners();
       await tester.pumpAndSettle();
       await tester.pump(const Duration(milliseconds: 200));
 

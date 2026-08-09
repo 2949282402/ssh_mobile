@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile Flutter repository, including architecture, UI, SSH/SFTP, monitoring, AI tools, storage, security, platform builds, tests, and project documentation. Use for any non-trivial code, debugging, validation, documentation, or shared-agent-guidance change in this repository.
 ---
 
-> 最新更新时间：2026-08-08
+> 最新更新时间：2026-08-09
 
 # SSH Mobile Maintenance
 
@@ -118,6 +118,12 @@ extraction, and the URL/sensitive-form security policy. `AppRuntime` owns its
 `ClientWebViewService` and injects `AppLogger` plus the settings Port. AI must
 consume WebView only through `AiWebViewPort`, never through this package's
 `src/` implementation.
+The Developer Feature package is `packages/features/feature_developer/`; it owns
+Developer Log, Developer Panel, and diagnostics presentation. It observes only
+the public `DeveloperLogPort`, `DeveloperSettingsPort`, and
+`DeveloperDiagnosticsPort`; AppRuntime adapters provide redacted snapshots from
+App-owned services. It must not import App Shell or another Feature
+implementation.
 The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
 Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
@@ -186,6 +192,11 @@ implementations. The old App terminal files are compatibility exports/bridges.
   target binding and `approval_required` in the execution layer, keep
   `McpApprovalRequest.opaqueHandle` in memory only, and ensure `dispose()` stops
   the server, rejects pending requests, and closes the module database.
+- `feature_developer` must observe only public log/settings/diagnostics Ports.
+  AppRuntime owns the adapters and the underlying logging, SSH, RAG, MCP, and
+  monitoring resources; the Feature may render redacted snapshots but must not
+  control or dispose those App Scope resources. Route-scoped frame callbacks,
+  listeners, and memory-polling timers must be released by the ViewModel.
 - `feature_terminal` must keep `TerminalModule` as the owner of `terminal.db`
   and its repository. Route scope owns Terminal ViewModels and their
   subscriptions/controllers; disposing a route must not close the injected App
@@ -243,6 +254,7 @@ Read only the rows relevant to the task.
 | SFTP, preview, cache | `lib/features/sftp/`, `lib/services/sftp_service.dart` | `docs/security_manual_regression.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | AI chat, Agent, Skills, LLM, tools, ai.db | `packages/features/feature_ai/`, `apps/ssh_mobile_full/lib/app/ai_feature_adapters.dart` | `docs/AGENT_RUN_TRACE.md`, `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_ai/README.md` |
 | Client WebView, navigation, page text, search, security | `packages/features/feature_webview/`, `apps/ssh_mobile_full/lib/app/webview_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_webview/README.md` |
+| Developer Log, Panel, diagnostics | `packages/features/feature_developer/`, `apps/ssh_mobile_full/lib/app/developer_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_developer/README.md` |
 | MCP server, console, approval, mcp.db | `packages/features/feature_mcp/`, `apps/ssh_mobile_full/lib/app/mcp_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Monitoring or system admin | `lib/features/performance/`, `lib/features/system_admin/` | `docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `packages/infrastructure/ssh_mobile_network_native/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |

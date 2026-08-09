@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-08
+> 最新更新时间：2026-08-09
 
 # Agent Memory
 
@@ -168,6 +168,15 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   un-reviewed items after 10 minutes (`approval_timeout`). `ssh_ensure_session_connected`
   belongs in `defaultSecondaryReviewTools`. Do not re-open a fail-open
   execution path for external MCP write operations.
+
+### Developer diagnostics
+
+- 2026-08-09: `packages/features/feature_developer/` is the maintained owner of
+  Developer Log, Developer Panel, and diagnostics presentation. Its UI and
+  ViewModels consume only `DeveloperLogPort`, `DeveloperSettingsPort`, and
+  `DeveloperDiagnosticsPort`; AppRuntime owns adapters that expose redacted
+  snapshots from App-owned services. Frame callbacks, listeners, and memory
+  polling are route-scoped resources and must be released by the ViewModel.
 
 ### Network transfer
 

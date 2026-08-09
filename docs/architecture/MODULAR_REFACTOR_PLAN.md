@@ -466,6 +466,23 @@
 - Package 测试、App Dart 分析和迁移后的定向测试通过后，Step 19 按
   `refactor(webview): step 19 migrate webview module` 独立提交。
 
+## Step 20 执行记录（2026-08-09）
+
+- 已通过 Git 文件迁移创建 `packages/features/feature_developer/`，将
+  Developer Log、Developer Panel、诊断展示、ViewModel、悬浮面板和对应测试
+  聚合迁入同一个 Feature Package；原有业务行为保持不变，没有用删除实现
+  代替迁移。
+- Developer Feature 只依赖公开的 `DeveloperLogPort`、
+  `DeveloperSettingsPort` 和 `DeveloperDiagnosticsPort`。AppRuntime 持有
+  日志/设置/诊断适配器，向 Feature 提供脱敏快照；Feature 不引用 App Shell
+  或其他 Feature implementation，也不控制 App Scope 资源。
+- Developer Panel 的帧耗时回调、诊断监听和内存轮询由路由级 ViewModel 持有，
+  `dispose()` 会移除监听并取消 Timer；悬浮面板关闭或 Host 销毁时释放自己的
+  ViewModel，避免调试页面泄漏资源。
+- 依赖解析没有发生版本冲突，因此没有升级无关依赖。Package 测试、App
+  分析、格式检查和全量 Flutter 测试均通过；Step 20 按
+  `refactor(developer): step 20 migrate developer module` 独立提交。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

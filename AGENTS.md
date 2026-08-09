@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-> 最新更新时间：2026-08-08
+> 最新更新时间：2026-08-09
 
 ## Project Structure & Module Organization
 
@@ -34,6 +34,12 @@ chat-bound sessions, navigation UI, visible-text extraction, search parsing,
 and WebView security policy. `AppRuntime` owns the service and injects the
 settings Port and logger; AI consumes it only through the existing
 `AiWebViewPort` adapter.
+`packages/features/feature_developer/` now owns Developer Log, Developer Panel,
+and diagnostics presentation. It observes only `DeveloperLogPort`,
+`DeveloperSettingsPort`, and `DeveloperDiagnosticsPort`; AppRuntime adapters
+provide redacted snapshots from App-owned logging, SSH, RAG, MCP, monitoring,
+and native-memory services. The package must not import App Shell or another
+Feature implementation.
 `packages/features/feature_ai/` now owns AI chat, Agent, Skills, LLM provider/
 runtime, tool orchestration, AI WebView contracts, and independent `ai.db`.
 Its `AiModule` lazily owns the database and Repository; App Shell adapters in
@@ -121,7 +127,7 @@ flowchart LR
 - Current legacy feature roots under `apps/ssh_mobile_full/lib/features/`:
   `connection`, `terminal`, `sftp`, `ai_chat`, `ai_skills`,
   `performance`, `system_admin`, `lan_share`, `playbook`, `rag`, `settings`,
-  `startup`, `home`, `developer_log`, `developer_panel`.
+  `startup`, and `home`.
   `ai_chat`/`ai_skills` are compatibility surfaces owned by
   `packages/features/feature_ai/`. Migrated LAN UI belongs in
   `packages/features/feature_lan_share/`; migrated
@@ -170,6 +176,7 @@ Static checks and formatting:
 - `dart format packages/features/feature_playbook/lib packages/features/feature_playbook/test`: format the Playbook Feature package.
 - `dart format packages/features/feature_rag/lib packages/features/feature_rag/test`: format the RAG Feature package.
 - `dart format packages/features/feature_ai/lib packages/features/feature_ai/test`: format the AI Feature package.
+- `dart format packages/features/feature_developer/lib packages/features/feature_developer/test`: format the Developer Feature package.
 - `dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool`: format check that fails on diffs (used in CI).
 - From `apps/ssh_mobile_full/`, `flutter analyze`: run static analysis using the app's `analysis_options.yaml`. `third_party/**` is excluded from the analyzer.
 - From `apps/ssh_mobile_full/`, `flutter test`: run all Flutter tests under the app's `test/`.
@@ -185,6 +192,7 @@ Static checks and formatting:
 - From `packages/features/feature_playbook/`, `flutter analyze` and `flutter test`: validate the Playbook Module lifecycle, independent `playbook.db`, encrypted run history, approval target binding, and public AI capability boundary.
 - From `packages/features/feature_rag/`, `flutter analyze` and `flutter test`: validate the RAG Module lifecycle, independent `rag.db`, metadata-only persistence, bounded cache policy, and BM25/vector/Hybrid retrieval through injected Ports.
 - From `packages/features/feature_ai/`, `flutter analyze` and `flutter test`: validate the lazy AI Module/`ai.db` lifecycle, encrypted chat/metrics/trace Repository, AI Capability contracts, LLM providers, tool safety, and route-scoped runtime.
+- From `packages/features/feature_developer/`, `flutter analyze` and `flutter test`: validate Developer Log filtering, diagnostics Port observation, frame/memory polling lifecycle, and floating-panel disposal.
 - From `packages/core/app_ui/`, `flutter analyze` and `flutter test`: validate the shared theme, responsive helpers, and UI widgets.
 - From `apps/ssh_mobile_full/`, `flutter test --coverage --reporter expanded`: run tests with coverage.
 - From `apps/ssh_mobile_full/`, `dart run tool/check_coverage.dart --minimum=35`: enforce the 35% non-generated line-coverage floor (CI gate).

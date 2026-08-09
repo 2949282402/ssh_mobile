@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:feature_connection/feature_connection.dart';
 import 'package:feature_ai/feature_ai.dart' as feature_ai;
 import 'package:app_core/app_core.dart' as app_core;
+import 'package:feature_developer/feature_developer.dart' as feature_developer;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_sftp/feature_sftp.dart' as feature_sftp;
@@ -25,10 +26,6 @@ import 'package:ssh_mobile/app/sftp_feature_adapters.dart';
 import 'package:ssh_mobile/app/system_admin_feature_adapters.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_settings_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
-import 'package:ssh_mobile/features/developer_log/views/developer_log_screen.dart';
-import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
-import 'package:ssh_mobile/features/developer_panel/views/developer_panel_screen.dart';
-import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/features/home/views/widgets/home_navigation_semantics.dart';
 
 part 'widgets/settings_panel.dart';

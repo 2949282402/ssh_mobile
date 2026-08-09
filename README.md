@@ -1,4 +1,4 @@
-> Last updated: 2026-08-08
+> Last updated: 2026-08-09
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -413,7 +413,7 @@ flowchart LR
   feature-local widgets. Current feature roots are `connection`, `terminal`,
   `sftp`, `ai_chat`, `ai_skills`, `performance`,
   `system_admin`, `lan_share`, `playbook`, `rag`, `settings`, `startup`,
-  `home`, and `developer_log`.
+  `home`.
 - `packages/features/feature_connection/`: the migrated Connection editor,
   ViewModel, localized presentation contract, and runtime/verification ports. It
   depends on `connection_core` and never owns the Connection database. The App
@@ -460,6 +460,10 @@ flowchart LR
   receives `AppLogger` and a settings Port, while AI uses only its own
   `AiWebViewPort` adapter. `webview_flutter` is a direct dependency of this
   package.
+- `packages/features/feature_developer/`: Developer Log, Developer Panel, and
+  diagnostics presentation. It consumes only App-provided public Port contracts
+  and never imports App Shell or another Feature implementation; AppRuntime
+  adapters expose redacted module and native-memory snapshots.
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP, monitoring,
   storage, legacy LAN-share compatibility services, and platform adapters.
   Maintained AI/MCP implementations live in their Feature packages.
