@@ -127,6 +127,12 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
     return _cachedNewestFirstEntries ??= _entries.newestFirst;
   }
 
+  /// 当前 App 日志数据库是否已经完成绑定。
+  bool get databaseOpen => _database != null;
+
+  /// 当前由日志通知合并器持有的活动 Timer 数量。
+  int get activeTimerCount => _notifyTimer == null ? 0 : 1;
+
   /// 返回各级别的条数缓存。
   Map<AppLogLevel, int> get levelCounts {
     final cached = _cachedLevelCounts;
@@ -255,6 +261,7 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
     if (_notifyScheduled) return;
     _notifyScheduled = true;
     _notifyTimer = Timer(const Duration(milliseconds: 160), () {
+      _notifyTimer = null;
       _notifyScheduled = false;
       notifyListeners();
     });
@@ -279,6 +286,8 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
   @override
   void dispose() {
     _notifyTimer?.cancel();
+    _notifyTimer = null;
+    _notifyScheduled = false;
     super.dispose();
   }
 }

@@ -245,25 +245,36 @@ final class AppRuntime implements Disposable {
     // App Scope 模块先停止对外提供服务，避免释放基础设施时仍有新请求进入。
     await attempt(() async {
       await mcpModule.dispose();
+      _debugAssertModuleDisposed(mcpModule);
       mcpSettingsAdapter.dispose();
     });
-    await attempt(lanShareModule.dispose);
+    await attempt(() async {
+      await lanShareModule.dispose();
+      _debugAssertModuleDisposed(lanShareModule);
+    });
     await attempt(lanShareSettingsAdapter.dispose);
     await attempt(() async {
       await aiStorageAdapter.shutdown();
       aiStorageAdapter.dispose();
     });
-    await attempt(aiModule.dispose);
+    await attempt(() async {
+      await aiModule.dispose();
+      _debugAssertModuleDisposed(aiModule);
+    });
     // AI 停止后再关闭 WebView，确保运行中的客户端工具不会继续访问
     // 已经释放的 Controller；设置适配器先解除 AppSettings 监听。
     await attempt(webViewSettingsAdapter.dispose);
     await attempt(webViewService.dispose);
     // 先解除 Developer Feature 对底层服务的观察，再关闭被观察资源。
     await attempt(developerDiagnosticsAdapter.dispose);
+    developerDiagnosticsAdapter.debugAssertReleased();
     await attempt(developerLogAdapter.dispose);
     await attempt(developerSettingsAdapter.dispose);
     await attempt(aiSettingsAdapter.dispose);
-    await attempt(playbookModule.dispose);
+    await attempt(() async {
+      await playbookModule.dispose();
+      _debugAssertModuleDisposed(playbookModule);
+    });
     await attempt(playbookSettingsAdapter.dispose);
     await attempt(playbookConnectionCatalogAdapter.dispose);
 
@@ -279,19 +290,38 @@ final class AppRuntime implements Disposable {
 
     // SSH Manager 统一关闭共享 Session Pool、Runtime 和旧 API 兼容资源。
     await attempt(sshSessionManager.close);
+    assert(() {
+      if (sshService.activeSubscriptionCount != 0 ||
+          sshService.activeTimerCount != 0 ||
+          sshService.leaseCount != 0) {
+        throw StateError('SSH resources were not released.');
+      }
+      return true;
+    }());
 
     // 当前 SFTP 实现仍直接持有 SSH 客户端，这里作为网络资源组释放。
     await attempt(sftpService.dispose);
     // SSH/SFTP 停止后再关闭网络 Runtime，避免仍有会话向 native handle 发命令。
     await attempt(networkRuntime.dispose);
+    assert(() {
+      if (networkRuntime.diagnostics.nativeHandles != 0) {
+        throw StateError('Network native handles were not released.');
+      }
+      return true;
+    }());
 
     // 业务服务的 Timer/监听器先释放，再关闭其共享数据库。
     await attempt(() async {
       // 先解除旧兼容监听，再由 Module 取消 Timer、采样和所有资源。
       performanceMonitorService.dispose();
       await monitoringModule.dispose();
+      _debugAssertModuleDisposed(monitoringModule);
+      assert(!performanceMonitorService.isRunning);
     });
-    await attempt(ragModule.dispose);
+    await attempt(() async {
+      await ragModule.dispose();
+      _debugAssertModuleDisposed(ragModule);
+    });
     await attempt(ragSettingsAdapter.dispose);
     await attempt(shortcutCommandService.dispose);
     await attempt(appSettings.dispose);
@@ -306,10 +336,21 @@ final class AppRuntime implements Disposable {
 
     // Logger 必须最后释放，因为上面的资源可能仍需记录关闭失败。
     await attempt(appLogService.dispose);
+    assert(appLogService.activeTimerCount == 0);
 
     final error = firstError;
     if (error != null) {
       Error.throwWithStackTrace(error, firstStackTrace ?? StackTrace.current);
     }
+  }
+
+  /// Debug 模式下确认 Module 的生命周期 Owner 已完成资源释放。
+  static void _debugAssertModuleDisposed(AppModule module) {
+    assert(() {
+      if (module.state != ModuleState.disposed) {
+        throw StateError('Module ${module.id} was not disposed.');
+      }
+      return true;
+    }());
   }
 }

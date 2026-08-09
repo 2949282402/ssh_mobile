@@ -38,8 +38,12 @@ settings Port and logger; AI consumes it only through the existing
 and diagnostics presentation. It observes only `DeveloperLogPort`,
 `DeveloperSettingsPort`, and `DeveloperDiagnosticsPort`; AppRuntime adapters
 provide redacted snapshots from App-owned logging, SSH, RAG, MCP, monitoring,
-and native-memory services. The package must not import App Shell or another
-Feature implementation.
+and native-memory services. The diagnostics snapshot also reports known Module,
+SSH lease, NetworkRuntime handle, database, Timer, and subscription counts; it
+does not claim to enumerate resources owned by uninstrumented legacy services.
+AppRuntime performs debug-only post-dispose assertions for observable Module,
+SSH, network, and adapter resources. The package must not import App Shell or
+another Feature implementation.
 `packages/features/feature_ai/` now owns AI chat, Agent, Skills, LLM provider/
 runtime, tool orchestration, AI WebView contracts, and independent `ai.db`.
 Its `AiModule` lazily owns the database and Repository; App Shell adapters in
@@ -76,7 +80,7 @@ flowchart LR
 
 - `apps/ssh_mobile_full/lib/main.dart` only delegates to `lib/app/app_bootstrap.dart`; `AppRuntimeFactory` creates App Scope services and `AppRuntime` owns their lifecycle. `AppRuntime.logger` exposes the Core `AppLogger` contract, currently backed by the App-layer `AppLogService` adapter; its `scope(name)` views do not own or dispose the root Logger. `SshMobileApp` exposes only App Scope instances and Ports from the root Provider; route scopes create Feature ViewModels. `AppConnectionRouteScope` owns Connection route state and lets Home share its Connection ViewModel with Add/Edit and SFTP child routes, while `app/navigation/` aggregates public Feature route metadata without importing Feature `/src/` code. `AppBootstrapCoordinator` still starts core preference setup without blocking `runApp()`; Feature/Module databases initialize under their explicit Owners. Views hold layout and transient presentation state; validation, async orchestration, and repository coordination belong in ViewModels and services.
 - `packages/core/connection_core/` is the Connection data boundary. `AppRuntime` creates exactly one `ConnectionDatabase`, `ConnectionRepository`, `CredentialRepository`, and Host Key capability; the database stores no password/private-key columns, and the module uses a new `connection.sqlite` baseline. `packages/features/feature_connection/` consumes only the Core repositories and injected runtime/verification contracts. `apps/ssh_mobile_full/lib/app/connection_feature_adapters.dart` injects the Core repositories and runtime contracts; old App paths remain non-owning compatibility bridges and are not a second Feature data API.
-- `packages/infrastructure/network_transport/` is the App Scope network boundary. `AppRuntimeFactory` creates one lazy `NetworkRuntime`, `AppRuntime` disposes it after SSH/SFTP stop, and Features request only public Capability contracts. The package currently wraps the existing native v1 handle; it does not add a second TCP/UDP/QUIC/WebRTC implementation.
+- `packages/infrastructure/network_transport/` is the App Scope network boundary. `AppRuntimeFactory` creates one lazy `NetworkRuntime`, `AppRuntime` disposes it after SSH/SFTP stop, and Features request only public Capability contracts. The public `NetworkRuntime.diagnostics` reports the ready Capabilities and native handles directly owned by the Facade; it reports zero active connections until a protocol Owner registers them. The package currently wraps the existing native v1 handle; it does not add a second TCP/UDP/QUIC/WebRTC implementation.
 - `packages/infrastructure/ssh_core/` is the App Scope SSH boundary. Its public
   `SshSessionManager`, `SshSessionLease`, Session Pool, Runtime Adapter, Client,
   Host Key, command, and target-binding contracts do not depend on

@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # network_transport Package Guidelines
 
@@ -16,6 +16,9 @@ Feature UI、SSH 会话或 LAN 业务规则。
   `new` 全局网络实现；
 - `NativeNetworkAdapter` 不拥有跨 App 的静态单例，handle 的释放由创建它的
   `NetworkRuntimeImpl` 负责。
+- `NetworkRuntime.diagnostics` 是只读生命周期观察契约；它只能报告
+  `NetworkRuntimeImpl` 直接拥有的 native handle 和已登记的连接/Capability，
+  不得为了填充诊断数字而接管 Feature 协议连接。
 
 ## 生命周期
 

@@ -1,7 +1,9 @@
+import 'package:app_core/app_core.dart' as app_core;
 import 'package:feature_developer/feature_developer.dart' as developer;
 import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:flutter/foundation.dart';
+import 'package:network_transport/network_transport.dart';
 
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
@@ -142,7 +144,13 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
     required this.mcpServer,
     required this.performanceMonitor,
     required this.logService,
-  }) {
+    required Iterable<app_core.AppModule> modules,
+    required this.networkRuntime,
+    required Iterable<developer.DeveloperDatabaseDescriptor>
+    databaseDescriptors,
+  }) : modules = List.unmodifiable(modules),
+       databaseDescriptors = List.unmodifiable(databaseDescriptors) {
+    _subscriptionsAttached = true;
     for (final source in _sources) {
       source.addListener(_onSourceChanged);
     }
@@ -153,6 +161,11 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
   final feature_mcp.McpServerController mcpServer;
   final PerformanceMonitorService performanceMonitor;
   final AppLogService logService;
+  final List<app_core.AppModule> modules;
+  final NetworkRuntime networkRuntime;
+  final List<developer.DeveloperDatabaseDescriptor> databaseDescriptors;
+  bool _subscriptionsAttached = false;
+  bool _disposed = false;
 
   List<Listenable> get _sources => [
     sshService,
@@ -161,6 +174,10 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
     performanceMonitor,
     logService,
   ];
+
+  /// 当前由该适配器直接持有的 Listenable 订阅数。
+  int get activeSubscriptionCount =>
+      _subscriptionsAttached ? _sources.length : 0;
 
   @override
   List<developer.DeveloperComponentStatus> get componentStatuses => [
@@ -202,6 +219,40 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
   }
 
   @override
+  developer.DeveloperDiagnosticsSnapshot get snapshot =>
+      developer.DeveloperDiagnosticsSnapshot(
+        capturedAt: DateTime.now(),
+        modules: [
+          for (final module in modules)
+            developer.DeveloperModuleSnapshot(
+              id: module.id,
+              state: module.state,
+            ),
+        ],
+        ssh: developer.DeveloperSshSnapshot(
+          activeSessions: sshService.activeSessionCount,
+          idleSessions: sshService.idleSessionCount,
+          leaseCount: sshService.leaseCount,
+        ),
+        network: developer.DeveloperNetworkSnapshot(
+          activeConnections: networkRuntime.diagnostics.activeConnections,
+          nativeHandles: networkRuntime.diagnostics.nativeHandles,
+        ),
+        databases: [
+          for (final descriptor in databaseDescriptors)
+            descriptor.readSnapshot(),
+        ],
+        resources: developer.DeveloperResourceSnapshot(
+          activeTimers:
+              logService.activeTimerCount +
+              (performanceMonitor.isRunning ? 1 : 0) +
+              sshService.activeTimerCount,
+          activeSubscriptions:
+              activeSubscriptionCount + sshService.activeSubscriptionCount,
+        ),
+      );
+
+  @override
   Future<developer.DeveloperNativeMemorySnapshot?> readNativeMemory() async {
     final snapshot = await NativeMemoryService.instance.snapshot();
     if (snapshot == null) return null;
@@ -215,14 +266,34 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
     );
   }
 
-  void _onSourceChanged() => notifyListeners();
+  void _onSourceChanged() {
+    if (!_disposed) notifyListeners();
+  }
+
+  /// 在 Debug 模式检查该适配器已解除全部直接订阅。
+  ///
+  /// 适配器不拥有底层 Service 的 Timer/native handle，因此这里只断言其
+  /// 自己的订阅；底层资源由 AppRuntime 在后续释放阶段分别检查。
+  void debugAssertReleased() {
+    assert(() {
+      if (!_disposed || activeSubscriptionCount != 0) {
+        throw StateError(
+          'AppDeveloperDiagnosticsAdapter subscriptions were not released.',
+        );
+      }
+      return true;
+    }());
+  }
 
   /// 解除所有服务监听；底层服务由 AppRuntime 按自身顺序释放。
   @override
   void dispose() {
+    if (_disposed) return;
     for (final source in _sources) {
       source.removeListener(_onSourceChanged);
     }
+    _subscriptionsAttached = false;
+    _disposed = true;
     super.dispose();
   }
 }

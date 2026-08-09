@@ -33,6 +33,7 @@ void main() {
       logs.warning('Startup log 2');
 
       expect(logs.entries.length, 2);
+      expect(logs.activeTimerCount, 1);
       // memory IDs are sequential starting from 1 (or current _nextEntryId)
       final initialId1 = logs.entries[1].id;
       final initialId2 = logs.entries[0].id;
@@ -41,6 +42,8 @@ void main() {
       // 2. Set the database
       await logs.setDatabase(db);
       await logs.pendingDbWrites;
+
+      expect(logs.databaseOpen, isTrue);
 
       // Verify memory entries are still present
       expect(logs.entries.length, 2);

@@ -36,6 +36,8 @@ void main() {
       ]);
 
       expect(runtime.state, NetworkRuntimeState.ready);
+      expect(runtime.diagnostics.nativeHandles, 1);
+      expect(runtime.diagnostics.activeConnections, 0);
       expect(runtime.isCapabilityReady(NetworkCapability.quic), isTrue);
       expect(
         runtime.isCapabilityReady(NetworkCapability.webSocketRelay),
@@ -43,6 +45,8 @@ void main() {
       );
       await runtime.dispose();
       expect(handle.closeCalls, 1);
+      expect(runtime.diagnostics.nativeHandles, 0);
+      expect(runtime.diagnostics.state, NetworkRuntimeState.disposed);
     },
   );
 
@@ -68,6 +72,7 @@ void main() {
       await runtime.ensureCapability(NetworkCapability.quic);
       expect(adapter.createCalls, 2);
       expect(runtime.isCapabilityReady(NetworkCapability.quic), isTrue);
+      expect(runtime.diagnostics.readyCapabilities, [NetworkCapability.quic]);
 
       await runtime.dispose();
       expect(handle.closeCalls, 1);
@@ -105,6 +110,7 @@ void main() {
       await disposeFuture;
 
       expect(runtime.state, NetworkRuntimeState.disposed);
+      expect(runtime.diagnostics.nativeHandles, 0);
       expect(runtime.isCapabilityReady(NetworkCapability.quic), isFalse);
       expect(handle.closeCalls, 1);
       expect(

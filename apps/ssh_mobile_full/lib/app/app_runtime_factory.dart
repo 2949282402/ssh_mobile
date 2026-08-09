@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app_core/app_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:feature_developer/feature_developer.dart' as developer;
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:feature_ai/feature_ai.dart' as feature_ai;
 import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
@@ -288,12 +289,67 @@ final class AppRuntimeFactory {
     );
     await lanShareModule.initialize();
     await lanShareModule.activate();
+    // 这里只登记 AppRuntime 能直接观测到的数据库；Terminal/SFTP 数据库
+    // 由 Route Scope 持有，不在 App Scope 诊断中伪装成已打开资源。
+    const connectionDatabaseName = 'connection.sqlite';
+    const appLogDatabaseName = 'app_logs';
+    const aiDatabaseName = 'ai.db';
+    const playbookDatabaseName = 'playbook.db';
+    const ragDatabaseName = 'rag.db';
+    const mcpDatabaseName = 'mcp.db';
+    const lanShareDatabaseName = 'lan_share.db';
     final developerDiagnosticsAdapter = AppDeveloperDiagnosticsAdapter(
       sshService: sshService,
       ragService: ragModule.service,
       mcpServer: mcpModule.service,
       performanceMonitor: performanceMonitorService,
       logService: logger,
+      modules: [
+        aiModule,
+        playbookModule,
+        ragModule,
+        mcpModule,
+        lanShareModule,
+        monitoringModule,
+      ],
+      networkRuntime: runtimeNetworkRuntime,
+      databaseDescriptors: [
+        developer.DeveloperDatabaseDescriptor(
+          moduleId: 'connection_core',
+          databaseName: connectionDatabaseName,
+          isOpen: () => true,
+        ),
+        developer.DeveloperDatabaseDescriptor(
+          moduleId: 'app_shell',
+          databaseName: appLogDatabaseName,
+          isOpen: () => logger.databaseOpen,
+        ),
+        developer.DeveloperDatabaseDescriptor(
+          moduleId: 'feature_ai',
+          databaseName: aiDatabaseName,
+          isOpen: () => _isModuleDatabaseOpen(aiModule),
+        ),
+        developer.DeveloperDatabaseDescriptor(
+          moduleId: 'feature_playbook',
+          databaseName: playbookDatabaseName,
+          isOpen: () => _isModuleDatabaseOpen(playbookModule),
+        ),
+        developer.DeveloperDatabaseDescriptor(
+          moduleId: 'feature_rag',
+          databaseName: ragDatabaseName,
+          isOpen: () => _isModuleDatabaseOpen(ragModule),
+        ),
+        developer.DeveloperDatabaseDescriptor(
+          moduleId: 'feature_mcp',
+          databaseName: mcpDatabaseName,
+          isOpen: () => _isModuleDatabaseOpen(mcpModule),
+        ),
+        developer.DeveloperDatabaseDescriptor(
+          moduleId: 'feature_lan_share',
+          databaseName: lanShareDatabaseName,
+          isOpen: () => _isModuleDatabaseOpen(lanShareModule),
+        ),
+      ],
     );
 
     return AppRuntime(
@@ -356,4 +412,12 @@ final class AppRuntimeFactory {
       'A HostKeyRepository is required with a custom ConnectionRepository.',
     );
   }
+
+  /// 根据 Module 稳定状态判断其数据库是否已经由 Owner 打开。
+  static bool _isModuleDatabaseOpen(AppModule module) => switch (module.state) {
+    ModuleState.registered || ModuleState.disposed => false,
+    ModuleState.initialized ||
+    ModuleState.active ||
+    ModuleState.inactive => true,
+  };
 }

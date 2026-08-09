@@ -30,6 +30,13 @@ final class SshSessionPool {
   int get activeLeaseCount =>
       _entries.values.fold<int>(0, (total, entry) => total + entry.refCount);
 
+  /// 当前已安排空闲清理的 Session 数量。
+  ///
+  /// 该计数只用于诊断和生命周期验证，不允许调用方据此直接关闭 Session；
+  /// 真正的清理仍由 Pool 的 idle Timer Owner 执行。
+  int get idleTimerCount =>
+      _entries.values.where((entry) => entry.idleTimer != null).length;
+
   /// 获取一个共享 Session 的消费者租约。
   ///
   /// 相同 [sessionId] 的并发创建共享同一个 Future；创建失败会移除坏的

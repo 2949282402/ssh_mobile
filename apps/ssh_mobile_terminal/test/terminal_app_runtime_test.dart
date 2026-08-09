@@ -61,6 +61,14 @@ final class _FakeNetworkRuntime implements NetworkRuntime {
   NetworkRuntimeState get state => NetworkRuntimeState.idle;
 
   @override
+  NetworkRuntimeDiagnostics get diagnostics => NetworkRuntimeDiagnostics(
+    state: state,
+    activeConnections: 0,
+    nativeHandles: 0,
+    readyCapabilities: const <NetworkCapability>[],
+  );
+
+  @override
   Future<void> ensureCapability(NetworkCapability capability) async {}
 
   @override

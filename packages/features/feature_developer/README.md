@@ -11,6 +11,10 @@ Developer Log、Developer Panel 和 diagnostics 展示页面的 Feature Package�
   Feature 的 `src/` 实现。
 - 日志数据库、SSH、RAG、MCP、性能监控和平台内存读取仍由 AppRuntime 及其
   适配器拥有；Developer Feature 只能读取脱敏快照，不能控制这些资源。
+- `DeveloperDiagnosticsSnapshot` 展示 Module 初始化/激活状态、SSH 会话与
+  Lease、NetworkRuntime native handle、已知数据库打开状态，以及已接入诊断
+  的 Timer/订阅数量。它明确是 Owner 可观测资源的快照，不枚举所有 isolate
+  中未接入的 Timer 或 Stream。
 - `DeveloperPanelViewModel` 独占路由级帧计时回调和内存轮询 Timer，页面退出
   时通过 `dispose()` 移除监听、取消 Timer，避免调试页面泄漏资源。
 - 调用方只允许从 `package:feature_developer/feature_developer.dart` 使用公共 API。

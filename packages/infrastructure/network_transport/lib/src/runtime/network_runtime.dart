@@ -25,10 +25,40 @@ enum NetworkRuntimeState {
   disposed,
 }
 
+/// NetworkRuntime 当前能够直接观测到的资源快照。
+///
+/// Facade 只拥有 Capability 初始化和 native handle；具体 LAN 传输服务的
+/// 单连接生命周期仍由对应服务 Owner 管理，因此 [activeConnections] 只在
+/// Facade 实际登记连接时增加，当前实现固定为零而不是猜测底层连接数量。
+final class NetworkRuntimeDiagnostics {
+  /// 创建网络资源诊断快照。
+  NetworkRuntimeDiagnostics({
+    required this.state,
+    required this.activeConnections,
+    required this.nativeHandles,
+    required Iterable<NetworkCapability> readyCapabilities,
+  }) : readyCapabilities = List.unmodifiable(readyCapabilities);
+
+  /// 当前 Runtime 生命周期状态。
+  final NetworkRuntimeState state;
+
+  /// 当前由 Runtime 直接登记的活跃连接数。
+  final int activeConnections;
+
+  /// 当前由 Runtime 持有的 native handle 数量。
+  final int nativeHandles;
+
+  /// 已成功初始化的 Capability。
+  final List<NetworkCapability> readyCapabilities;
+}
+
 /// App Scope 唯一的网络运行时合约。
 abstract interface class NetworkRuntime implements Disposable {
   /// 当前运行时生命周期状态。
   NetworkRuntimeState get state;
+
+  /// 返回当前可观测的网络资源快照。
+  NetworkRuntimeDiagnostics get diagnostics;
 
   /// 请求按需初始化一个 Capability。
   ///

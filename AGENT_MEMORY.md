@@ -196,6 +196,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `DeveloperDiagnosticsPort`; AppRuntime owns adapters that expose redacted
   snapshots from App-owned services. Frame callbacks, listeners, and memory
   polling are route-scoped resources and must be released by the ViewModel.
+- 2026-08-09: Step27 added the public `DeveloperDiagnosticsSnapshot` contract
+  and lifecycle card. The App Shell reports only owner-observable Module, SSH
+  lease/session, NetworkRuntime native-handle, database, Timer, and subscription
+  counts; it must not present uninstrumented legacy resources as exact global
+  totals. AppRuntime debug assertions verify disposed Module state, released
+  SSH/network resources, and the Developer adapter's own subscriptions.
 
 ### Network transfer
 

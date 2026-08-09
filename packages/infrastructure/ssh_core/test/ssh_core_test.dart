@@ -93,6 +93,26 @@ void main() {
         await manager.close();
       },
     );
+
+    test('pool exposes idle timer count for lifecycle diagnostics', () async {
+      final pool = SshSessionPool(
+        idleTimeout: const Duration(milliseconds: 20),
+      );
+      final lease = await pool.acquire(
+        sessionId: 'session-a',
+        create: () async => SshSession(
+          id: 'session-a',
+          connectionId: 'connection-a',
+          connectionName: 'Server A',
+        ),
+      );
+
+      expect(pool.idleTimerCount, 0);
+      await lease.release();
+      expect(pool.idleTimerCount, 1);
+      await pool.close();
+      expect(pool.idleTimerCount, 0);
+    });
   });
 
   group('SshClientFactory contracts', () {

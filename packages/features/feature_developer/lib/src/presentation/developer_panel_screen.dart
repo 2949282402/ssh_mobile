@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../domain/developer_ports.dart';
+import 'developer_lifecycle_diagnostics_card.dart';
 import 'developer_panel_viewmodel.dart';
 
 /// Developer Panel 全屏页面；路由从 Provider 注入 diagnostics contract。
@@ -68,6 +69,8 @@ class DeveloperPanelContent extends StatelessWidget {
             _buildFrameCard(context),
             const SizedBox(height: 12),
             _buildComponentCard(context),
+            const SizedBox(height: 12),
+            DeveloperLifecycleDiagnosticsCard(snapshot: vm.diagnosticsSnapshot),
             const SizedBox(height: 12),
             _buildInfoCard(context),
           ],

@@ -15,6 +15,8 @@
   `native_memory_service.dart`、`shortcut_command_service.dart`，以及
   `app_log_*` 和 `app_log_database/**`。这些资源由 AppRuntime 或 App Shell
   持有并负责释放；`AppLogDatabase` 是独立的 `app_logs` 诊断数据库。
+  `AppLogService.databaseOpen` 和 `activeTimerCount` 只供生命周期诊断读取，
+  不改变数据库绑定或关闭 Owner。
 - App 能力适配器：`ai_storage_adapter.dart` 与 `ai_storage/**`、
   `client_system_tool_service.dart`、`client_health_advisor.dart`、
   `server_catalog_service.dart`、`server_diagnostics_service.dart`、
@@ -28,7 +30,9 @@
   `playbook_service.dart`、`rag_service.dart`、`terminal_history_service*.dart`。
   SSH、SFTP、Monitoring、System Admin、Playbook、RAG 和 Terminal 的真实
   Owner 已分别进入 `ssh_core` 或对应 Feature；这些旧入口仍被 App Shell、
-  旧页面或测试调用，因此当前只能作为非 Owner 兼容表面保留。
+  旧页面或测试调用，因此当前只能作为非 Owner 兼容表面保留。`SshService`
+  的会话、Lease、Pool idle Timer 和后台订阅计数也只是诊断读取面，不改变
+  其仍由 AppRuntime/SSH Manager 统一关闭的 Owner 关系。
 - 旧协议适配：`network/**`、`relay/**` 和 `lan_share/**`。LAN Feature 已有
   独立实现和 Module；这些文件仍承载现有 native v1 协议调用面。新的
   `network_transport` 只负责 App Scope Runtime/Handle Facade，不在本 Step

@@ -4,6 +4,7 @@ import 'dart:io' show Platform, ProcessInfo;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../domain/developer_diagnostics_models.dart';
 import '../domain/developer_ports.dart';
 
 /// Developer Panel 路由的 ViewModel，收集帧率、内存和模块活动快照。
@@ -25,6 +26,8 @@ final class DeveloperPanelViewModel extends ChangeNotifier {
   bool _active = false;
   bool _disposed = false;
   bool _memoryReadInFlight = false;
+  bool _diagnosticsSubscribed = true;
+  bool _frameTimingsRegistered = false;
 
   // ── Observable state ──
 
@@ -59,6 +62,9 @@ final class DeveloperPanelViewModel extends ChangeNotifier {
   /// 当前被观察模块的短状态。
   List<DeveloperComponentStatus> get componentStatuses =>
       _diagnostics.componentStatuses;
+
+  /// 当前模块、连接、数据库和已知资源的只读诊断快照。
+  DeveloperDiagnosticsSnapshot get diagnosticsSnapshot => _diagnostics.snapshot;
 
   Duration get uptime => _globalUptime.elapsed;
 
@@ -95,6 +101,7 @@ final class DeveloperPanelViewModel extends ChangeNotifier {
     _active = true;
 
     SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
+    _frameTimingsRegistered = true;
     _startMemoryPolling();
 
     // 首次启动立即读取，避免面板打开后两秒才出现内存值。
@@ -106,6 +113,7 @@ final class DeveloperPanelViewModel extends ChangeNotifier {
     _active = false;
 
     SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
+    _frameTimingsRegistered = false;
     _memoryTimer?.cancel();
     _memoryTimer = null;
   }
@@ -114,7 +122,18 @@ final class DeveloperPanelViewModel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _diagnostics.removeListener(_onDiagnosticsChanged);
+    _diagnosticsSubscribed = false;
     stop();
+    assert(() {
+      if (_diagnosticsSubscribed ||
+          _frameTimingsRegistered ||
+          _memoryTimer != null) {
+        throw StateError(
+          'DeveloperPanelViewModel resources were not released.',
+        );
+      }
+      return true;
+    }());
     super.dispose();
   }
 

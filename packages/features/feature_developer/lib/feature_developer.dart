@@ -2,8 +2,10 @@
 library;
 
 export 'src/domain/developer_ports.dart';
+export 'src/domain/developer_diagnostics_models.dart';
 export 'src/presentation/developer_log_screen.dart';
 export 'src/presentation/developer_log_viewmodel.dart';
+export 'src/presentation/developer_lifecycle_diagnostics_card.dart';
 export 'src/presentation/developer_panel_floating.dart';
 export 'src/presentation/developer_panel_screen.dart';
 export 'src/presentation/developer_panel_viewmodel.dart';

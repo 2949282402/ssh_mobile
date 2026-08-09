@@ -41,7 +41,7 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
 - **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; it supports `reviewConfiguredTools` (default) and `trustedAgent` modes while always enforcing its loopback-only and hard security boundaries.
-- **Developer panel** with opt-in runtime, memory, FPS, frame-jank, build-mode, platform, and Dart-version diagnostics; its floating entry can be configured independently.
+- **Developer panel** with opt-in runtime, memory, FPS, frame-jank, build-mode, platform, Dart-version, and known lifecycle-resource diagnostics; its floating entry can be configured independently.
 - **Secure storage** using platform secure storage, encrypted Drift fields, encrypted preview caches, secret redaction, and immutable approval targets.
 - **Adaptive layouts** for phones, tablets, and desktop environments, including dedicated 1.5K and 2K Android QA profiles.
 - **Backup and restore** for servers, terminal history, AI settings, chats, playbooks, metrics, and path records without exporting passwords, private keys, or API keys.
@@ -480,7 +480,9 @@ flowchart LR
 - `packages/features/feature_developer/`: Developer Log, Developer Panel, and
   diagnostics presentation. It consumes only App-provided public Port contracts
   and never imports App Shell or another Feature implementation; AppRuntime
-  adapters expose redacted module and native-memory snapshots.
+  adapters expose redacted module, connection, database, Timer/subscription,
+  and native-memory snapshots. Counts are limited to resources observable by
+  their owners, and AppRuntime performs debug-only release assertions.
 - Feature public entrypoints expose route metadata only; the App Shell aggregates
   these contributions under `apps/ssh_mobile_full/lib/app/navigation/`. The root
   Provider keeps App Scope instances and Ports, while route scopes own Feature
@@ -499,7 +501,7 @@ flowchart LR
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
 - `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; `feature_connection` consumes the public repositories and injected capabilities.
-- `packages/infrastructure/network_transport/`: the App Scope `NetworkRuntime` facade, lazy Capability state machine, transport contracts, metrics snapshot, and explicit native handle adapter. `AppRuntime` creates the single instance; this Step does not add a second protocol implementation.
+- `packages/infrastructure/network_transport/`: the App Scope `NetworkRuntime` facade, lazy Capability state machine, diagnostics snapshot, transport contracts, metrics snapshot, and explicit native handle adapter. `AppRuntime` creates the single instance; this Step does not add a second protocol implementation.
 - `packages/infrastructure/ssh_core/`: the App Scope SSH Session Manager, lease/pool lifecycle, Desktop/Mobile Runtime Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target bindings. The package does not depend on App Shell storage implementations; `AppRuntime` owns one Manager instance, and `feature_terminal` receives that Manager through injection while the old `SshService` remains a compatibility implementation.
 - `packages/infrastructure/ssh_mobile_network_native/`: native network package staged under the Infrastructure boundary.
 - `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,

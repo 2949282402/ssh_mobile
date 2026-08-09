@@ -164,6 +164,33 @@ class SshService extends ChangeNotifier
 
   @override
   List<SshSession> get sessions => _sessionsView;
+
+  /// 当前处于连接中或已连接状态的会话数量，供诊断页面读取。
+  int get activeSessionCount => _sessions.values
+      .where(
+        (session) =>
+            session.state == SshConnectionState.connecting ||
+            session.state == SshConnectionState.connected,
+      )
+      .length;
+
+  /// 当前已登记但不处于连接中/已连接状态的会话数量。
+  int get idleSessionCount => _sessions.length - activeSessionCount;
+
+  /// App Scope SSH Pool 当前仍被消费者持有的租约数量。
+  int get leaseCount => _coreSessionPool.activeLeaseCount;
+
+  /// SSH Service 当前已登记的后台事件订阅数量。
+  int get activeSubscriptionCount => [
+    _stateSub,
+    _outputSub,
+    _keepAliveSub,
+    _appLogSub,
+  ].where((subscription) => subscription != null).length;
+
+  /// SSH Pool 当前等待空闲回收的 Timer 数量。
+  int get activeTimerCount => _coreSessionPool.idleTimerCount;
+
   @override
   SshServerOverviewSnapshot get serverOverviewSnapshot =>
       _serverOverviewSnapshot;

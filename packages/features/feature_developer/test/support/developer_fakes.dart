@@ -71,37 +71,83 @@ final class FakeDeveloperLogPort extends ChangeNotifier
 final class FakeDeveloperDiagnostics extends ChangeNotifier
     implements DeveloperDiagnosticsPort {
   /// 创建包含固定模块状态的 diagnostics 假对象。
-  FakeDeveloperDiagnostics({List<DeveloperComponentStatus>? statuses})
-    : _statuses =
-          statuses ??
-          [
-            const DeveloperComponentStatus(
-              id: DeveloperComponentId.ssh,
-              state: '0 sessions',
-            ),
-            const DeveloperComponentStatus(
-              id: DeveloperComponentId.rag,
-              state: 'idle',
-            ),
-            const DeveloperComponentStatus(
-              id: DeveloperComponentId.mcpServer,
-              state: 'stopped',
-            ),
-            const DeveloperComponentStatus(
-              id: DeveloperComponentId.performanceMonitor,
-              state: 'idle',
-            ),
-            const DeveloperComponentStatus(
-              id: DeveloperComponentId.logBuffer,
-              state: '0 entries',
-            ),
-          ];
+  FakeDeveloperDiagnostics({
+    List<DeveloperComponentStatus>? statuses,
+    DeveloperDiagnosticsSnapshot? snapshot,
+  }) : _statuses =
+           statuses ??
+           [
+             const DeveloperComponentStatus(
+               id: DeveloperComponentId.ssh,
+               state: '0 sessions',
+             ),
+             const DeveloperComponentStatus(
+               id: DeveloperComponentId.rag,
+               state: 'idle',
+             ),
+             const DeveloperComponentStatus(
+               id: DeveloperComponentId.mcpServer,
+               state: 'stopped',
+             ),
+             const DeveloperComponentStatus(
+               id: DeveloperComponentId.performanceMonitor,
+               state: 'idle',
+             ),
+             const DeveloperComponentStatus(
+               id: DeveloperComponentId.logBuffer,
+               state: '0 entries',
+             ),
+           ],
+       _snapshot =
+           snapshot ??
+           DeveloperDiagnosticsSnapshot(
+             capturedAt: DateTime(2026, 8, 9),
+             modules: const [
+               DeveloperModuleSnapshot(
+                 id: 'feature_ai',
+                 state: ModuleState.registered,
+               ),
+               DeveloperModuleSnapshot(
+                 id: 'feature_playbook',
+                 state: ModuleState.active,
+               ),
+             ],
+             ssh: DeveloperSshSnapshot(
+               activeSessions: 1,
+               idleSessions: 2,
+               leaseCount: 1,
+             ),
+             network: DeveloperNetworkSnapshot(
+               activeConnections: 0,
+               nativeHandles: 1,
+             ),
+             databases: [
+               DeveloperDatabaseSnapshot(
+                 moduleId: 'feature_ai',
+                 databaseName: 'ai.db',
+                 opened: false,
+               ),
+               DeveloperDatabaseSnapshot(
+                 moduleId: 'feature_playbook',
+                 databaseName: 'playbook.db',
+                 opened: true,
+               ),
+             ],
+             resources: DeveloperResourceSnapshot(
+               activeTimers: 2,
+               activeSubscriptions: 3,
+             ),
+           );
 
   final List<DeveloperComponentStatus> _statuses;
+  final DeveloperDiagnosticsSnapshot _snapshot;
 
   @override
   List<DeveloperComponentStatus> get componentStatuses =>
       List.unmodifiable(_statuses);
+
+  @override
+  DeveloperDiagnosticsSnapshot get snapshot => _snapshot;
 
   @override
   Future<DeveloperNativeMemorySnapshot?> readNativeMemory() async => null;

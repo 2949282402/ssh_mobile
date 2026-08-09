@@ -138,8 +138,11 @@ The Developer Feature package is `packages/features/feature_developer/`; it owns
 Developer Log, Developer Panel, and diagnostics presentation. It observes only
 the public `DeveloperLogPort`, `DeveloperSettingsPort`, and
 `DeveloperDiagnosticsPort`; AppRuntime adapters provide redacted snapshots from
-App-owned services. It must not import App Shell or another Feature
-implementation.
+App-owned services. The lifecycle snapshot covers only owner-observable Module,
+SSH, NetworkRuntime, database, Timer, and subscription resources; do not claim
+global totals for legacy resources that have no diagnostics hook. AppRuntime's
+debug-only release assertions must remain aligned with those observable Owners.
+It must not import App Shell or another Feature implementation.
 The App Shell keeps its root Provider limited to App Scope instances and Ports;
 Feature ViewModels are created by Route Scope. Public route metadata is exposed
 by Feature entrypoints and aggregated in

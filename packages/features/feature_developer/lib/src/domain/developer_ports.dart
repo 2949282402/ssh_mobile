@@ -1,6 +1,8 @@
 import 'package:app_core/app_core.dart';
 import 'package:flutter/foundation.dart';
 
+import 'developer_diagnostics_models.dart';
+
 /// Developer Feature 只读观察契约。
 ///
 /// 这些接口描述开发者页面需要的最小数据，不暴露 App Shell、日志数据库或
@@ -215,6 +217,9 @@ final class DeveloperComponentStatus {
 abstract interface class DeveloperDiagnosticsPort implements Listenable {
   /// 返回当前模块活动快照。
   List<DeveloperComponentStatus> get componentStatuses;
+
+  /// 返回当前可观测的模块、连接、数据库和资源快照。
+  DeveloperDiagnosticsSnapshot get snapshot;
 
   /// 读取操作系统级内存分类；不支持的平台返回 null。
   Future<DeveloperNativeMemorySnapshot?> readNativeMemory();

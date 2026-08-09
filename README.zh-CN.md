@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-08
+> 最新更新时间：2026-08-09
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -33,7 +33,7 @@ SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 An
 - **服务器监控**：查看性能、端口、应用进程、服务、用户和活动会话。
 - **AI Chat 与 Agent 执行**：支持流式输出、Plan Mode、审批式工具调用、聊天历史、消息分支、上下文压缩、RAG、Skills 和执行 Trace。
 - **本地 MCP Server**：桌面端可生成 Codex、Claude Code 和 Gemini CLI 配置；支持默认的 `reviewConfiguredTools` 与显式启用的 `trustedAgent` 两种模式，同时始终执行回环监听和硬安全边界。
-- **开发者面板**：可选显示运行时长、内存、FPS、掉帧、构建模式、平台和 Dart 版本，并可单独控制悬浮入口。
+- **开发者面板**：可选显示运行时长、内存、FPS、掉帧、构建模式、平台、Dart 版本和已接入 Owner 的生命周期资源诊断，并可单独控制悬浮入口。
 - **安全存储**：使用平台 Secure Storage、加密 Drift 字段、加密预览缓存、敏感信息脱敏和不可变审批目标。
 - **自适应界面**：覆盖手机、平板和桌面环境，并提供专门的 1.5K 与 2K Android 测试配置。
 - **备份与恢复**：可导入导出服务器、终端历史、AI 设置、聊天、Playbook、运行指标和路径记录，但不会导出密码、私钥或 API Key。
@@ -408,6 +408,9 @@ flowchart LR
 - `packages/features/feature_mcp/`：本地 MCP HTTP/JSON-RPC Server、暴露与调用策略、
   审批队列、活动 Repository、控制台 UI 及独立的 `mcp.db`。设置、日志和 AI Tool
   Runtime 由 App Shell Adapter 注入；危险 Tool 的审批仍保留在执行层。
+- `packages/features/feature_developer/`：Developer Log、Developer Panel 和
+  生命周期诊断展示。Feature 只读取公共 Port；App Shell 适配器提供脱敏的
+  Module、SSH、NetworkRuntime、数据库和已接入 Timer/订阅快照。
 - `apps/ssh_mobile_full/lib/services/`：跨 Feature 的 SSH/SFTP/LLM/AI Tool、监控、存储、局域网
   快传兼容服务和平台适配基础设施。
 - `apps/ssh_mobile_full/lib/data/`：Drift 数据库、DAO 和 Repository 实现。
@@ -415,7 +418,7 @@ flowchart LR
 - `packages/core/app_ui/`：共享主题、响应式指标和跨 Feature 通用 Widget。只通过 `package:app_ui/app_ui.dart` 暴露，不依赖 Feature、SSH、网络、数据库或应用 Service；旧主题、响应式和通用 Widget 路径仅保留兼容导出。
 - `packages/core/connection_core/`：Connection 领域模型与契约、独立的非敏感 Drift 数据库、Secure Storage 凭据和 Host Key 信任元数据。`ConnectionDatabase` 由 `AppRuntime` 创建和关闭；`feature_connection` 只消费其公共 Repository 与注入的 Capability。
 - `packages/infrastructure/ssh_mobile_network_native/`：位于 Infrastructure 边界下的原生网络 Package。
-- `packages/infrastructure/network_transport/`：App Scope `NetworkRuntime` Facade、lazy Capability 状态机、传输端点/连接合约、指标快照和显式 native handle adapter。实例由 `AppRuntime` 唯一创建；当前 Step 不新增第二套协议实现。
+- `packages/infrastructure/network_transport/`：App Scope `NetworkRuntime` Facade、lazy Capability 状态机、生命周期诊断快照、传输端点/连接合约、指标快照和显式 native handle adapter。实例由 `AppRuntime` 唯一创建；当前 Step 不新增第二套协议实现。
 - `packages/infrastructure/ssh_core/`：App Scope SSH Session Manager、Lease/Pool 生命周期、桌面端与移动端 Runtime Adapter、SSH Client/Host Key/命令执行边界及非敏感目标绑定。该包不依赖 `StorageService`；`AppRuntime` 只持有一个 Manager，`feature_terminal` 通过注入使用它，旧 `SshService` 仅作为兼容实现保留。
 - `apps/ssh_mobile_full/lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
   策略和数据保护。

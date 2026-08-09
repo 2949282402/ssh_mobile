@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-08
+> 最新更新时间：2026-08-09
 
 # SSH Mobile 模块化重构执行 Plan
 
@@ -2846,6 +2846,29 @@ flutter pub deps
   App 持有，待后续 SSH 方法迁移完成后再接入。
 - 已补充 Runtime 幂等释放和 Feature Scope 注入测试；Terminal-only App 与
   `feature_terminal` 的 analyze/test、Windows Debug 构建及格式检查通过。
+
+## Step 27 执行记录（2026-08-09）
+
+- `feature_developer` 新增只读 `DeveloperDiagnosticsSnapshot` Contract 和
+  Lifecycle Diagnostics 卡片，展示 Modules 的 initialized/active 状态、SSH
+  active/idle sessions 与 Lease、Network active connections/native handles、
+  已知数据库打开状态，以及已接入 Owner 的 Timer/Stream subscription 数量。
+  旧的 Component Activity 卡片和原有面板行为保留；Feature 仍只依赖公共
+  diagnostics Port，不引用 App Shell 或其他 Feature implementation。
+- `NetworkRuntime.diagnostics` 和 `SshSessionPool.idleTimerCount` 补充为公共
+  只读观察契约；Network Facade 当前不拥有具体协议连接，因此 active connection
+  保持为其直接登记值（当前为零），不会为填充 UI 越权接管 LAN/Feature 连接。
+  App Shell 适配器动态读取 Module/数据库状态，并将 AppLog、SSH Pool、监控
+  Timer 与已知订阅汇总成脱敏快照。
+- Debug 模式新增可观测资源断言：Developer Panel ViewModel 释放帧回调、监听
+  和内存 Timer 后自检；AppRuntime 在 Module dispose、SSH Manager、Network
+  Runtime 和 Developer 适配器释放后检查对应的 disposed/零资源状态。不能被
+  当前 Owner 直接枚举的 legacy Timer/Stream 不被伪装成全局精确计数。
+- 新增 diagnostics 模型/页面、NetworkRuntime/SSH Pool 生命周期测试和面板
+  Widget 测试；未发生依赖版本冲突，因此没有升级无关依赖。
+- 验证通过：`feature_developer` 测试 10 项、`network_transport` 测试 4 项、
+  `ssh_core` 测试 7 项、LAN Share 定向测试 10 项、Terminal-only App 测试 2
+  项；Full App 全量 Flutter 测试 857 项通过，Dart analyze 无错误。
 
 ---
 
