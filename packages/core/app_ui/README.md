@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # app_ui
 
@@ -10,6 +10,7 @@
 - 通过 `lib/app_ui.dart` 暴露公共 API，调用方不得引用 `lib/src/`。
 - Feature 专属 Widget、业务模型、页面文案和状态逻辑继续留在所属 Feature。
 - `AppPageSurface`、`ConnectionProgressDialog`、`DestructiveConfirmDialog`、`OverflowScrollText`、`TactileFeedback`、`AppTheme` 和响应式工具在本 Step 迁入此包。
+- `AppTheme` 的主题组合入口与控件级构建器分文件维护；两者仍属于同一个私有 library，公共主题 API 不变。
 
 ## 生命周期
 

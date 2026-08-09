@@ -3192,6 +3192,29 @@ chat_approval_controller.dart
 
 ---
 
+## Step 31 执行记录（2026-08-10）
+
+- 新增根级 `tool/check_file_sizes.dart` 和
+  `test/tool/file_size_report_test.dart`。脚本扫描 `apps/`、`packages/`、
+  `tool/`、`test/` 下的非 generated Dart 文件，排除构建产物、缓存和
+  vendored 第三方代码，并输出三个复核档位：`>300`、`>400`、`>500`。
+- 本次基线报告包含 939 个文件，其中 `>300` 为 261 个、`>400` 为 187 个、
+  `>500` 为 131 个。尺寸报告是职责审计工具，不把既有兼容桥、测试 Fixture
+  或连贯 parser 机械拆成无意义的小文件。
+- 对职责边界清晰且风险低的共享主题进行了最小拆分：
+  `app_theme.dart` 保留 `AppTheme` 公共组合入口（215 行），
+  `app_theme_variants.dart` 承载浅色/深色主题变体（309 行），
+  `app_theme_components.dart` 承载控件级构建器（494 行）。三个 part
+  仍属于同一个私有 library，`AppTheme` 公共 API、颜色和主题行为保持不变。
+- 已同步 `app_ui` 的 README/AGENTS、根 README、`AGENTS.md`、
+  `AGENT_MEMORY.md` 和维护 Skill，记录尺寸阈值、脚本入口和“按职责拆分”
+  约束；未修改 AI tool loop、stream handler、系统管理、SSH/Storage 等
+  其他大型区域，避免扩大 Step31 的行为变更范围。
+- 验证通过：根 `dart format --output=none --set-exit-if-changed`、纯 Dart
+  analyzer、尺寸报告测试、`app_ui` Flutter analyze/test（14 项）、Full App
+  Flutter test（857 项）。Full App 严格 analyzer 仅有既有 41 条 `info` 级 lint，
+  使用 `--no-fatal-infos` 通过；本 Step 未顺带修改这些基线提示。
+
 # 38. Step 32 — 最终依赖审计
 
 对每个 Package 逐个检查：

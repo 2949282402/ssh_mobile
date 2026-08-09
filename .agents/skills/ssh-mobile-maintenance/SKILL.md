@@ -197,6 +197,11 @@ implementations. The old App terminal files are compatibility exports/bridges.
   and tests, then run the architecture guard. Main runs the full `melos run`
   format/analyze/test scripts and the Full App plus Terminal-only smoke builds;
   do not reintroduce a parallel `melos.yaml` configuration file.
+- Step31's `dart run tool/check_file_sizes.dart` reports non-generated Dart files
+  above the 300/400/500-line review thresholds. Use it to identify ownership
+  problems, then split only when responsibilities are independent; retain a
+  cohesive parser, test fixture, or compatibility bridge when splitting would
+  only add meaningless files.
 - `ssh_core` must keep `SshSessionManager` and its Session Pool under App Scope
   ownership. A Feature may acquire/release a Lease but must not close a shared
   Session, import `flutter_background_service`, or perform platform checks.

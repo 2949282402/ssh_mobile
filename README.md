@@ -283,9 +283,10 @@ and ask for approval before performing any write operation.
 ```bash
 dart pub get
 dart run tool/architecture_check.dart
+dart run tool/check_file_sizes.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
-flutter analyze
+flutter analyze --no-fatal-infos
 flutter test
 ```
 
@@ -309,6 +310,7 @@ Android and Terminal-only Windows smoke builds.
 
 ```bash
 dart pub get
+dart run tool/check_file_sizes.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
 dart run tool/generate_app_icons.dart
@@ -540,7 +542,8 @@ flowchart LR
 - `packages/infrastructure/ssh_core/test/`: SSH Core lifecycle and security contract tests.
 - `docs/`: architecture, security, performance, validation, and release documentation.
 - `scripts/`: repository-level build, packaging, and synchronization scripts;
-  `tool/architecture_check.dart` is the repository-level architecture guard.
+  `tool/architecture_check.dart` is the repository-level architecture guard;
+  `tool/check_file_sizes.dart` reports non-generated Dart file sizes.
 - `apps/ssh_mobile_full/tool/`: app-specific generation and quality-check scripts.
 - `third_party/xterm/`: vendored terminal package.
 

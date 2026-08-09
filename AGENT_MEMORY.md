@@ -215,6 +215,13 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   guard; `main` runs the full Melos format/analyze/test scripts and Full App /
   Terminal-only smoke builds. Keep the workspace list in root `pubspec.yaml`
   synchronized with every maintained package, including AI and MCP.
+- 2026-08-10: Step31 added `tool/check_file_sizes.dart` and its pure Dart
+  regression test. The report scans `apps/`, `packages/`, `tool/`, and `test/`,
+  excludes generated/build/vendored files, and uses 300/400/500-line thresholds
+  for review rather than automatic failure. `app_ui` keeps the public `AppTheme`
+  API unchanged while separating composition, theme variants, and control-level
+  builders; do not mechanically split cohesive parsers, tests, or compatibility
+  bridges only to reduce their line count.
 
 ### Network transfer
 

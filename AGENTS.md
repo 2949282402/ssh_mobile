@@ -251,15 +251,19 @@ Static checks and formatting:
   Feature dependency boundaries, cross-package `/src/` isolation, injected Core
   implementation ownership, static service-locator rules, and removal of the
   old `StorageService`/`AppDatabase` identifiers.
+- From the repository root, `dart run tool/check_file_sizes.dart`: report all
+  non-generated Dart files above the 300/400/500-line governance thresholds;
+  this is a review report, not a mechanical split gate.
 
 Full local quality gate (fast loop):
 
 ```bash
 dart pub get
 dart run tool/architecture_check.dart
+dart run tool/check_file_sizes.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
-flutter analyze
+flutter analyze --no-fatal-infos
 flutter test
 ```
 

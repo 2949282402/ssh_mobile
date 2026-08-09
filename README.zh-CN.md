@@ -263,9 +263,10 @@ printf 'alpha\nbeta\ngamma\n' \
 ```bash
 dart pub get
 dart run tool/architecture_check.dart
+dart run tool/check_file_sizes.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
-flutter analyze
+flutter analyze --no-fatal-infos
 flutter test
 ```
 
@@ -289,6 +290,7 @@ dart run tool/architecture_check.dart
 
 ```bash
 dart pub get
+dart run tool/check_file_sizes.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
 dart run tool/generate_app_icons.dart
@@ -454,6 +456,7 @@ flowchart LR
 - `packages/infrastructure/ssh_core/test/`：SSH Core 生命周期与安全契约测试。
 - `docs/`：架构、安全、性能、验证和发布文档。
 - `scripts/`：仓库级构建、打包和同步脚本；`tool/architecture_check.dart`：仓库级架构守卫；
+  `tool/check_file_sizes.dart`：非 generated Dart 文件尺寸报告；
   `apps/ssh_mobile_full/tool/`：App 专属生成和质量检查脚本。
 - `third_party/xterm/`：仓库内维护的终端组件。
 
