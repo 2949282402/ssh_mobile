@@ -26,3 +26,16 @@ dart format --output=none --set-exit-if-changed lib test
 flutter analyze --no-pub
 flutter test --no-pub
 ```
+
+## Package contract
+
+- 职责：提供剧本编辑、审批绑定、顺序执行、运行状态和历史记录。
+- 不负责：AI 编排、SSH 实现、凭据存储或 App Shell 路由生命周期。
+- Public API：`package:feature_playbook/feature_playbook.dart`，包括
+  `PlaybookAutomationPort` 和路由 metadata。
+- 依赖：`app_core`、`app_ui`、`connection_core`、`ssh_core`、Drift、Provider 和 Flutter。
+- 数据库：`PlaybookModule` 独占 `playbook.db`；命令、输出和敏感历史字段必须加密。
+- 生命周期与资源 Owner：Module 负责数据库、Repository、Service；Route Scope 负责
+  ViewModel；注入的 SSH、Logger 和 Data Protection 由 AppRuntime 释放。
+- 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
+  `flutter analyze --no-pub`、`flutter test --no-pub`。

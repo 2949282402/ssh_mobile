@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_webview
 
@@ -31,3 +31,16 @@ dart format --output=none --set-exit-if-changed lib test
 dart analyze lib test
 flutter test --no-pub
 ```
+
+## Package contract
+
+- 职责：提供聊天绑定 WebView、导航、可见文本提取、搜索解析和 WebView 安全策略。
+- 不负责：AI 编排、远端 SSH、其他 Feature 实现或把敏感页面正文写入持久化存储。
+- Public API：`package:feature_webview/feature_webview.dart`，包括 Service、页面、
+  ViewModel、Adapter 和 Settings Port。
+- 依赖：`app_core`、`app_ui`、Provider、`webview_flutter`。
+- 数据库：不拥有数据库；会话和 Controller 由 AppRuntime 运行时持有。
+- 生命周期与资源 Owner：AppRuntime 负责 ClientWebViewService、Controller Session
+  和互斥令牌；Route Scope 负责 ViewModel 监听。
+- 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
+  `flutter analyze --no-pub`、`flutter test --no-pub`。

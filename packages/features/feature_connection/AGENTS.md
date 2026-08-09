@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_connection Agent Notes
 
@@ -8,3 +8,12 @@
 - `ConnectionViewModel` 的资源 Owner 是 Route/Provider；它不负责关闭 App Scope 服务。
 - 新增或重构代码使用中文注释说明职责、生命周期和安全约束。
 - 修改后至少运行 `dart format --output=none --set-exit-if-changed lib test`、`flutter analyze` 和 `flutter test`。
+
+## Step29 标准字段
+
+- 允许修改范围：连接编辑 UI、ViewModel、文案、Route metadata、Port 和本 Package 测试。
+- 禁止依赖：App `/src/`、其他 Feature `/src/`、Drift 数据库、Secure Storage、SSH/SFTP 实现。
+- Public API 修改要求：只通过 `feature_connection.dart`，同步 App Route Scope 和 adapters。
+- 数据库约束：不拥有数据库，Connection 数据由 `connection_core` 管理。
+- 资源释放规则：Route/Provider Scope 释放 ViewModel 监听；App Scope 服务由 AppRuntime 释放。
+- 必须运行的测试：`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。

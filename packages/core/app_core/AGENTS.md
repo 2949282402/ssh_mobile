@@ -1,4 +1,4 @@
-最新更新时间：2026-08-07
+最新更新时间：2026-08-09
 
 # app_core Package Guidelines
 
@@ -33,3 +33,12 @@ flutter test
 ```
 
 公共 API 变更必须同步更新 `README.md`、测试和根架构执行记录。
+
+## Step29 标准字段
+
+- 允许修改范围：生命周期、Module、Logger、Capability 公共合约、轻量实现和纯测试。
+- 禁止依赖：Flutter UI、SSH、网络、Drift、Infrastructure、Feature 或静态 Service locator。
+- Public API 修改要求：同步 `package:app_core/app_core.dart`、所有调用方、测试和根架构文档。
+- 数据库约束：不拥有数据库，也不定义业务数据表。
+- 资源释放规则：CapabilityRegistry 不释放注册资源；创建方负责 `dispose/close/cancel/release`。
+- 必须运行的测试：`dart analyze .`、`flutter test`。

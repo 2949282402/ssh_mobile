@@ -38,3 +38,12 @@ flutter test --no-pub
 
 修改公共 API 或 AppRuntime Owner 时，必须同步根 `README`、`AGENTS`、架构执行记录、
 Agent memory 和维护 Skill。
+
+## Step29 标准字段
+
+- 允许修改范围：Network Runtime/Facade、Capability、native adapter、传输契约和测试。
+- 禁止依赖：Feature、App Shell 业务实现或其他 Package 的 `/src/`；不得新增第二套协议实现。
+- Public API 修改要求：同步 `network_transport.dart`、AppRuntime、Feature adapters、测试和架构文档。
+- 数据库约束：不拥有数据库，不保存配对凭据或业务历史。
+- 资源释放规则：AppRuntime 拥有 Runtime；adapter 按 `create/start/stop/destroy` 管理 native handle。
+- 必须运行的测试：`flutter analyze --no-pub`、`flutter test --no-pub`，native hook 变更还要运行 Rust 检查。

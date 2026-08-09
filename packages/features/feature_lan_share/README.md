@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_lan_share
 
@@ -18,3 +18,16 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
 旧 `apps/ssh_mobile_full/lib/features/lan_share/**` 与
 `apps/ssh_mobile_full/lib/services/lan_share/**` 在本迁移阶段保留为兼容面，
 不会被批量删除。
+
+## Package contract
+
+- 职责：提供 LAN 发现、配对、HTTPS/WebSocket 传输、Web Share 和传输历史。
+- 不负责：SSH、其他 Feature 实现、App `/src/`、未审批的网络写入或秘密持久化。
+- Public API：`package:feature_lan_share/feature_lan_share.dart`，包括 Module、
+  Receiver 配置、页面和 Port。
+- 依赖：`app_core`、`app_ui`、`network_transport` 及 LAN 直接插件。
+- 数据库：`LanShareModule` 独占 `lan_share.db`，只存历史和非秘密配对 metadata。
+- 生命周期与资源 Owner：Module 负责数据库、历史 Repository、Receiver、Timer、
+  WebSocket/HTTPS 资源；AppRuntime/NetworkRuntime 负责注入的 App Scope 资源。
+- 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
+  `flutter analyze --no-pub`、`flutter test --no-pub`。

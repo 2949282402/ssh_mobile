@@ -31,3 +31,16 @@ dart format --output=none --set-exit-if-changed lib test
 dart analyze
 flutter test
 ```
+
+## Package contract
+
+- 职责：提供 AI chat、Agent、Skills、LLM provider/runtime、工具编排和 `ai.db`。
+- 不负责：SSH、SFTP、RAG、MCP、WebView、日志或设置的具体 App 实现。
+- Public API：`package:feature_ai/feature_ai.dart` 及分类公共出口；不得引用 `src/`。
+- 依赖：`app_core`、`app_ui`、`connection_core`、`feature_playbook`、`ssh_core`、
+  Flutter/Provider、Drift 和 AI 直接插件。
+- 数据库：`AiModule` 独占 `ai.db`，正文/trace/metrics 等敏感字段写入前加密。
+- 生命周期与资源 Owner：Module 负责数据库/Repository；Route Scope 负责 AI 页面
+  ViewModel、Stream、Timer 和 Controller；AppRuntime 负责注入的 App Ports。
+- 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
+  `flutter analyze --no-pub`、`flutter test --no-pub`。

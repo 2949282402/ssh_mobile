@@ -14,3 +14,12 @@
   拥有并释放；调用方只能 release Lease。
 - 移动端 Background SDK 只能出现在 App 层注入的 Runtime 实现中。
 - 变更后执行 `dart format`、`flutter analyze` 和 `flutter test`。
+
+## Step29 标准字段
+
+- 允许修改范围：SSH Manager、Pool、Lease、Runtime/Client/Host Key/目标契约和测试。
+- 禁止依赖：Feature、App Shell 存储实现、Background SDK 或跨包 `/src/`。
+- Public API 修改要求：只通过 `package:ssh_core/ssh_core.dart`，同步 AppRuntime、Feature adapters 和安全测试。
+- 数据库约束：不拥有数据库；凭据、Host Key 和秘密由 Core Repository/Port 注入。
+- 资源释放规则：AppRuntime 关闭 Manager；Pool 释放 Socket、Shell、Timer、Stream；Feature 只能 release Lease。
+- 必须运行的测试：`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。

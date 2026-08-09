@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # connection_core 维护约束
 
@@ -12,3 +12,12 @@
   SharedPreferences 的迁移适配器。
 - 新增或修改代码需要补充中文职责/约束注释，并为 CRUD、并发顺序、凭据隔离和
   生命周期补充测试。
+
+## Step29 标准字段
+
+- 允许修改范围：Connection 模型、Repository、Host Key/凭据契约、数据库输入、生成代码和测试。
+- 禁止依赖：Feature、SSH 会话、UI、App Shell 业务实现或统一旧数据库。
+- Public API 修改要求：同步 `connection_core.dart`、AppRuntime 适配器、迁移文档和生成代码。
+- 数据库约束：只保存非敏感结构，数据库名固定为 `connection.sqlite`；秘密只能进 Secure Storage。
+- 资源释放规则：AppRuntime 创建并关闭 `ConnectionDatabase`；Repository 不隐藏全局 Owner。
+- 必须运行的测试：`dart run build_runner build`、`flutter analyze`、`flutter test`。

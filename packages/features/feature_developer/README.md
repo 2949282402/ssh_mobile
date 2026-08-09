@@ -31,3 +31,16 @@ dart format --output=none --set-exit-if-changed lib test
 dart analyze
 flutter test
 ```
+
+## Package contract
+
+- 职责：提供 Developer Log、Developer Panel、生命周期诊断模型和展示页面。
+- 不负责：创建或控制日志、SSH、RAG、MCP、监控、数据库和平台内存资源。
+- Public API：`package:feature_developer/feature_developer.dart`，包括三个 Port、
+  snapshot 模型、ViewModel 和面板组件。
+- 依赖：`app_core`、`app_ui`、Provider 和 Flutter SDK。
+- 数据库：不拥有数据库；只展示 AppRuntime 注入的脱敏数据库状态。
+- 生命周期与资源 Owner：AppRuntime 拥有底层适配器；Route/Panel ViewModel 拥有
+  帧回调、监听、Memory polling Timer 和 Controller，并在 `dispose()` 释放。
+- 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
+  `flutter analyze --no-pub`、`flutter test --no-pub`。

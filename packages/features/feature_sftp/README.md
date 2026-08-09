@@ -32,3 +32,16 @@ flutter test --no-pub
 
 Drift schema 变化后，在本目录运行 `dart run build_runner build`，并提交生成的
 `lib/src/data/database/sftp_database.g.dart`。
+
+## Package contract
+
+- 职责：提供 SFTP 浏览、传输、预览、编辑、路径历史和收藏。
+- 不负责：全局 SSH/SFTP 连接、凭据存储或其他 Feature 的实现。
+- Public API：`package:feature_sftp/feature_sftp.dart`，包括 `SftpModule`、页面、
+  ViewModel、模型和 Port。
+- 依赖：`app_core`、`app_ui`、`ssh_core`、Drift、Provider、SFTP/预览直接插件。
+- 数据库：`SftpModule` 独占 `sftp.db`；只保存路径/传输元数据，不保存密码、私钥或 Token。
+- 生命周期与资源 Owner：Module 负责数据库、Repository 和 Feature Service；Route
+  Scope 负责 ViewModel；AppRuntime 负责注入的 SSH Manager 和兼容 Backend。
+- 测试命令：`dart run build_runner build`、`flutter analyze --no-pub`、
+  `flutter test --no-pub`。

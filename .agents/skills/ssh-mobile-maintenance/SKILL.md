@@ -173,6 +173,13 @@ implementations. The old App terminal files are compatibility exports/bridges.
   Capability contracts; it must not create global service instances or retain
   heavy runtime objects. The full App's database/disk/redaction adapter remains
   in `apps/ssh_mobile_full/lib/services/` until its later Plan Step.
+- Every workspace member under `apps/` and `packages/` must keep a concise
+  `README.md` and `AGENTS.md` contract. README documents responsibility,
+  non-responsibility, public API, dependencies, database, lifecycle/resource
+  owner, and test commands; AGENTS documents edit scope, forbidden dependencies,
+  API-change requirements, database constraints, release rules, and required
+  tests. Update the document date marker when content changes, and add a
+  `CHANGELOG.md` only for genuine user-visible release changes.
 - `connection_core` owns the Connection database and repository contracts.
   `AppRuntime` creates and closes its single `ConnectionDatabase`; the package
   must not create a global database. Passwords/private keys stay in
@@ -738,6 +745,9 @@ was already built.
   needs to change. When citing entry points, prefer the current
   `lib/features/*` ViewModel/view path plus the coordinating screen/service over
   older screen-only descriptions.
+- When package ownership, public API, storage, lifecycle, or test commands change,
+  update that package's README and AGENTS contract in the same scoped change;
+  keep internal-package changelogs out unless the change is user-visible.
 - Format changed Dart files and run targeted `flutter analyze` plus the closest
   tests during the edit loop.
 - Broaden to the full gate in `AGENTS.md` when changing shared infrastructure,

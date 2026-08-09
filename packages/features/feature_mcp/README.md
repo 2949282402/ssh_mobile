@@ -29,3 +29,17 @@ dart format --output=none --set-exit-if-changed lib test
 dart analyze
 flutter test
 ```
+
+## Package contract
+
+- 职责：提供本地 MCP HTTP Server、JSON-RPC、工具暴露/调用策略、审批队列、活动记录
+  和控制台页面。
+- 不负责：远端 MCP、AI Tool Runtime 实现、共享业务数据库或 App Shell 设置实现。
+- Public API：`package:feature_mcp/feature_mcp.dart`，包括 `McpModule`、Ports、
+  路由 metadata 和 `McpFeatureScope`。
+- 依赖：`app_core`、`app_ui`、Drift、Provider 和 Flutter SDK。
+- 数据库：`McpModule` 独占 `mcp.db`；活动记录不得回流统一 `AppDatabase`。
+- 生命周期与资源 Owner：Module 负责数据库、Server、审批队列和 Repository；Route
+  Scope 负责 ViewModel；AppRuntime 注入设置、日志和 AI Tool Runtime。
+- 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
+  `flutter analyze --no-pub`、`flutter test --no-pub`。

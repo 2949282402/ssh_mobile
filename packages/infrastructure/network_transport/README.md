@@ -26,3 +26,15 @@ flutter pub get
 flutter analyze --no-pub
 flutter test --no-pub
 ```
+
+## Package contract
+
+- 职责：提供 App Scope 网络 Facade、Capability 初始化、native handle 适配和传输契约。
+- 不负责：具体 LAN/SSH/SFTP 业务协议、Feature 连接 Owner 或第二套 native 实现。
+- Public API：`package:network_transport/network_transport.dart`。
+- 依赖：`app_core` 和 `ssh_mobile_network_native`。
+- 数据库：不拥有数据库。
+- 生命周期与资源 Owner：AppRuntime 拥有 `NetworkRuntime`；Runtime/adapter 负责
+  native handle 的 `create/start/stop/destroy`，Feature 只能使用注入的 Capability。
+- 测试命令：`flutter analyze --no-pub`、`flutter test --no-pub`；native hook 变更时
+  还需运行对应 Rust toolchain 检查。

@@ -22,6 +22,11 @@ SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 An
 
 项目最初源于一台只有 2 核 CPU 和 1 GB 内存的服务器。完整 AI Agent 无法在这类低配置服务器上稳定运行，因此 SSH Mobile 将模型推理和 Agent 编排放在客户端，再通过 SSH 和 SFTP 检查、维护远程服务器，从而避免占用服务器有限的内存。
 
+每个 Workspace Member 都维护简洁的 Package 合同文档：`README.md` 说明职责、
+Public API、依赖、存储、生命周期和测试命令，`AGENTS.md` 说明允许修改范围、
+禁止依赖、数据库与资源释放约束及必跑测试。只有确实存在需要发布说明的用户可见
+变更时，才为 Package 增加 `CHANGELOG.md`。
+
 > 移动系统的省电策略、网络切换和进程回收仍可能影响后台连接。需要长期保留远程工作现场时，推荐配合 `SSH + tmux` 使用。
 
 ## 核心亮点

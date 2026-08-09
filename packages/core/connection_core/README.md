@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # connection_core
 
@@ -24,3 +24,15 @@ dart run build_runner build
 flutter analyze
 flutter test
 ```
+
+## Package contract
+
+- 职责：提供 Connection 模型、Repository、凭据/Host Key 契约和非敏感 Drift 数据库。
+- 不负责：UI、SSH 会话、Feature 编排或 App 全局生命周期。
+- Public API：`package:connection_core/connection_core.dart`。
+- 依赖：`app_core`、Drift、`flutter_secure_storage` 和 Flutter SDK。
+- 数据库：`ConnectionDatabase` 独占 `connection.sqlite`，表中不得出现密码、私钥或
+  Token 字段。
+- 生命周期与资源 Owner：AppRuntime 创建并关闭数据库、Repository 和 Secure Storage
+  能力；调用方不得通过静态单例隐藏 Owner。
+- 测试命令：`dart run build_runner build`、`flutter analyze`、`flutter test`。

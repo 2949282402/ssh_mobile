@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_terminal
 
@@ -21,3 +21,12 @@ Controller 和 SSH 相关监听。`TerminalModule` 独占自己的数据库和 R
 终端原始输出历史服务位于 `lib/src/data/`，不直接访问 App 的数据保护、日志或路径
 服务；这些能力通过 Port 注入。当前 App Shell 的兼容 facade 负责提供旧实现所需的
 平台适配，并由 SSH Owner 在关闭时调用 `dispose`，避免输出写入队列和文件句柄泄漏。
+
+## Step29 标准字段
+
+- 允许修改范围：终端页面、ViewModel、历史 Repository、Module、Feature Scope、Ports 和测试。
+- 禁止依赖：其他 Feature、App `/src/`、统一存储或自行创建/关闭 App Scope SSH Manager。
+- Public API 修改要求：只通过 `feature_terminal.dart` 和 `TerminalFeatureScope`，同步 Terminal-only App。
+- 数据库约束：`TerminalModule` 独占 `terminal.db`；历史原文按注入的保护 Port 处理。
+- 资源释放规则：Module 先停止自身任务再关闭数据库；Route Scope 释放 Controller、Timer、订阅；SSH Owner 由 AppRuntime 释放。
+- 必须运行的测试：`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。

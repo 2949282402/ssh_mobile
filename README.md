@@ -28,6 +28,12 @@ remaining shared services. AI data lives in `ai.db`; RAG metadata lives in
 `rag.db`, while bounded document/vector cache files follow TTL and eviction
 limits.
 
+Each workspace member keeps a concise package contract in its `README.md` and
+`AGENTS.md`, covering ownership, public APIs, dependencies, storage, lifecycle,
+and validation. These files are the first reference for package-scoped work;
+release-oriented `CHANGELOG.md` files are added only when a package has a
+user-visible change that needs release notes.
+
 The project began with a two-core server that had only 1 GB of memory. Running a complete AI agent directly on that machine was unreliable, so SSH Mobile moves model inference and agent orchestration to the client device. The client can inspect and manage low-resource servers through SSH and SFTP without consuming their limited memory.
 
 > Mobile operating systems may suspend background processes, switch networks, or reclaim the application process. For durable remote workspaces, use SSH Mobile together with `SSH + tmux`.

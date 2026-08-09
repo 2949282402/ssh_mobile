@@ -1,4 +1,4 @@
-最新更新时间：2026-08-07
+最新更新时间：2026-08-09
 
 # app_core
 
@@ -22,3 +22,14 @@ Descriptor，不缓存重型 Module Runtime。
 dart analyze .
 flutter test
 ```
+
+## Package contract
+
+- 职责：提供生命周期、Module、日志和 Capability 公共合约及轻量实现。
+- 不负责：Flutter UI、SSH、网络、数据库、平台适配和 Feature 业务规则。
+- Public API：`package:app_core/app_core.dart`。
+- 依赖：生产代码只依赖 Dart SDK；测试使用 `flutter_test` 和 lint 工具。
+- 数据库：不拥有数据库，也不保存业务数据。
+- 生命周期与资源 Owner：Registry/Capability 不拥有运行时资源；创建方负责
+  `dispose/close/cancel/release`，AppRuntime 负责 App Scope Logger。
+- 测试命令：`dart analyze .`、`flutter test`。

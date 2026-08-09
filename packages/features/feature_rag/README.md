@@ -18,3 +18,15 @@ App Shell 只能依赖 `package:feature_rag/feature_rag.dart`，不得引用 Pac
 
 公共入口提供知识库路由的纯 metadata；App Shell 负责聚合路由描述，RAG ViewModel
 仍由 Route Scope 创建和释放。
+
+## Package contract
+
+- 职责：提供文档解析、BM25/vector/Hybrid 检索、元数据 Repository 和受限缓存。
+- 不负责：AI 页面、Embedding/API Key 具体实现、旧 RAG 文件迁移或其他 Feature 实现。
+- Public API：`package:feature_rag/feature_rag.dart`，包括 `RagCapability` 和路由 metadata。
+- 依赖：`app_core`、Flutter、Drift、Provider、文件/网络解析插件和缓存所需 SDK。
+- 数据库：`RagModule` 独占 `rag.db`；只保存元数据，不保存大段正文或大向量。
+- 生命周期与资源 Owner：Module 负责数据库、Repository、Cache Store 和 Service；
+  Route Scope 负责 `RagViewModel`；AppRuntime 注入设置、日志和 API Key Port。
+- 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
+  `flutter analyze --no-pub`、`flutter test --no-pub`。

@@ -3071,6 +3071,22 @@ Public API 修改要求
 
 ---
 
+## Step 29 执行记录（2026-08-09）
+
+- 审计当前 Workspace Member，确认每个维护成员都具备 `README.md`、
+  `AGENTS.md`、`pubspec.yaml`、`lib/` 和 `test/`；不把非 Workspace 的
+  `example/` 工程误纳入标准化范围。
+- 为缺失文档的 App/Package 补充职责、边界、Public API、依赖、数据库、
+  生命周期与资源 Owner、测试命令，以及允许修改范围、禁止依赖、Public API
+  修改要求、数据库约束、资源释放规则和必须运行的测试。既有文档统一补齐
+  `Package contract`，并同步维护中文更新时间标记。
+- 本 Step 仅修改模块协作文档，没有新增代码、数据库或依赖版本；没有为内部
+  Package 机械创建 `CHANGELOG.md`，因为本次变更不包含用户可见功能发布说明。
+- 已同步根 `AGENTS.md`、双语 README、`AGENT_MEMORY.md` 和维护 Skill，保证
+  后续 Package 变更以本地合同文档为边界；外部执行 Plan 同步记录相同结论。
+
+---
+
 # 36. Step 30 — CI 调整为模块级
 
 PR 修改某 Feature 时优先运行对应 Package：

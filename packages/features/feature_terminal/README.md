@@ -31,3 +31,16 @@ Feature；App 通过公开 Port 提供兼容适配器。旧 App 路径在迁移�
 `TerminalModule` 负责打开和关闭 `terminal.db`。Route Scope 负责创建页面
 ViewModel；ViewModel 只拥有页面内 Controller、Subscription 和 Timer，不能
 关闭 App Scope SSH Manager。
+
+## Package contract
+
+- 职责：提供终端页面、交互 ViewModel、历史 Repository、`terminal.db` 和 Feature Scope。
+- 不负责：创建/关闭 App Scope SSH Manager、统一存储门面或其他 Feature 实现。
+- Public API：`package:feature_terminal/feature_terminal.dart`，包括
+  `TerminalFeatureScope` 和路由 metadata。
+- 依赖：`app_core`、`app_ui`、`ssh_core`、Drift、Provider、xterm 和终端 UI 直接插件。
+- 数据库：`TerminalModule` 独占 `terminal.db`；原始输出历史按既有保护 Port 处理。
+- 生命周期与资源 Owner：Module 负责数据库/Repository；Route Scope 负责页面
+  ViewModel、Controller、Timer 和 Subscription；AppRuntime 负责 SSH Manager。
+- 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
+  `flutter analyze --no-pub`、`flutter test --no-pub`。

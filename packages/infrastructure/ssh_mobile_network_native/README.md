@@ -1,4 +1,4 @@
-> Last updated: 2026-08-07
+> Last updated: 2026-08-09
 
 # SSH Mobile Network Native
 
@@ -59,3 +59,14 @@ cargo fmt --all -- --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
+
+## Package contract
+
+- 职责：提供 Rust `network-ffi` 的 Dart FFI facade、native asset hook 和 v1 协议绑定。
+- 不负责：Feature 业务、App Shell 生命周期、数据库或第二套 Dart 网络协议实现。
+- Public API：`package:ssh_mobile_network_native/ssh_mobile_network_native.dart`。
+- 依赖：Dart FFI、`code_assets`、`hooks` 和 Rust `native/network_core` 构建产物。
+- 数据库：不拥有数据库，也不持久化配对凭据、Token 或业务历史。
+- 生命周期与资源 Owner：调用方拥有 `NativeNetworkRuntime`；必须先停止 helper
+  isolate，再销毁 Rust handle，并保持 stop/destroy 幂等。
+- 测试命令：`dart analyze`、`dart test`、Cargo format/test/clippy 检查。

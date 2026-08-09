@@ -26,3 +26,15 @@ App Shell 存储实现、任何 Feature、Flutter 页面或平台 Background Ser
 当前应用仍保留 `SshService` 作为旧 Terminal/Background API 兼容层；该入口与
 App Runtime 的 SSH Manager 使用同一 Owner，后续 Terminal Pilot 会逐步替换旧
 方法面，避免一次迁移删除现有会话行为。
+
+## Package contract
+
+- 职责：提供 App Scope SSH Manager、Session Pool、Lease、Runtime Adapter、Client、
+  Host Key、命令和目标绑定契约。
+- 不负责：Feature UI、App Shell 存储、凭据持久化或平台 Background Service。
+- Public API：`package:ssh_core/ssh_core.dart`。
+- 依赖：`app_core`、`connection_core`、`dartssh2` 和 Flutter SDK。
+- 数据库：不拥有数据库；凭据/Host Key 由 Core Repository 契约注入。
+- 生命周期与资源 Owner：AppRuntime 创建并关闭唯一 `SshSessionManager`；Feature
+  只持有并释放 Lease，不得关闭共享 Session；Pool 负责 idle Timer/Stream 清理。
+- 测试命令：`flutter analyze --no-pub`、`flutter test --no-pub`。

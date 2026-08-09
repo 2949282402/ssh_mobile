@@ -10,3 +10,12 @@
   产品能力时应修改 Full App 或对应 Feature，而不是扩大这个验证切片。
 - 新增资源必须在同一 Owner 或明确的上级 Owner 中提供 `dispose`、`close`、
   `cancel` 或 `release`。
+
+## Step29 标准字段
+
+- 允许修改范围：最小 App Shell、Runtime、Terminal 测试和裁剪验证文档。
+- 禁止依赖：AI、RAG、MCP、WebView、LAN Share、SFTP 或 Full App `/src/`。
+- Public API 修改要求：同步 `TerminalFeatureScope`、Runtime 注入方、测试和依赖裁剪说明。
+- 数据库约束：只允许 `TerminalModule` 拥有 `terminal.db`，不得创建未选择 Feature 数据库。
+- 资源释放规则：Runtime 释放 App Scope；Module 释放数据库；Route Scope 释放页面资源。
+- 必须运行的测试：`flutter pub deps`、`flutter analyze`、`flutter test`。

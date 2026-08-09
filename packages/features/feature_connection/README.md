@@ -26,3 +26,15 @@ SSH Mobile 的连接 Feature，负责连接配置编辑界面和连接配置的�
 ## 生命周期
 
 `ConnectionViewModel` 是 Route/Provider Scope 资源，释放时只解除 Repository 监听；Repository、凭据存储和 SSH/SFTP 服务由 AppRuntime 或注入方负责释放。
+
+## Package contract
+
+- 职责：提供连接编辑页面、ViewModel、文案和 Route metadata。
+- 不负责：Connection 数据库、Secure Storage、SSH/SFTP 实现或 App Scope 资源。
+- Public API：`package:feature_connection/feature_connection.dart`。
+- 依赖：`app_core`、`connection_core`、Flutter、Provider 和 UI 直接依赖。
+- 数据库：不拥有数据库；Connection 数据由 `connection_core` 管理。
+- 生命周期与资源 Owner：Route Scope 拥有 `ConnectionViewModel`；AppRuntime 拥有
+  Repository、凭据、Host Key 和 SSH/SFTP 资源。
+- 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
+  `flutter analyze --no-pub`、`flutter test --no-pub`。

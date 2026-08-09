@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_monitoring 维护说明
 
@@ -12,3 +12,12 @@
 
 旧 `lib/services/performance_monitor_service.dart` 路径在迁移期间是兼容桥；新
 代码应依赖 `package:feature_monitoring/feature_monitoring.dart` 的公共 API。
+
+## Step29 标准字段
+
+- 允许修改范围：监控模型、解析器、Ports、Module、Service、ViewModel 和测试。
+- 禁止依赖：其他 Feature、旧统一存储、全局 SSH/Settings 实现或 App `/src/`。
+- Public API 修改要求：同步 Monitoring Capability、App adapters、AI/System Admin 调用方和测试。
+- 数据库约束：不创建 `monitoring.db`，采样历史保持在受限内存窗口。
+- 资源释放规则：AppRuntime 拥有 Module；Module/Service 停止并释放采样 Timer、Stream 和订阅。
+- 必须运行的测试：`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。
