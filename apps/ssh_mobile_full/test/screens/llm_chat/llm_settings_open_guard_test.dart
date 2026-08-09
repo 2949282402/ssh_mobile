@@ -9,7 +9,6 @@ import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/data/database/app_database.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_log_service.dart';
@@ -438,7 +437,7 @@ void main() {
 class _GuardedSettingsStorage extends TestStorageAdapter {
   static const alternateModel = 'settings-apply-test-model';
 
-  _GuardedSettingsStorage() : super(databaseFactory: AppDatabase.forTesting);
+  _GuardedSettingsStorage() : super();
 
   int settingsLoads = 0;
   int chatSaveAttempts = 0;

@@ -1,7 +1,7 @@
 // AI 数据库与 Repository 的持久化契约测试。
 //
 // 这些测试属于 feature_ai，因为 ai.db 的表、DAO 和加密边界已由 AI
-// Module 独立持有；AppDatabase 测试不再越过模块边界访问 AI 表。
+// Module 独立持有；外部测试不再越过模块边界访问 AI 表。
 
 import 'dart:convert';
 
@@ -22,7 +22,7 @@ void main() {
 
   tearDown(() => database.dispose());
 
-  test('AI database opens independently from AppDatabase', () async {
+  test('AI database opens independently from shared app storage', () async {
     final result = await database.customSelect('SELECT 1 AS value').getSingle();
 
     expect(result.read<int>('value'), 1);

@@ -1,9 +1,10 @@
 // 协调唯一 v1 LAN 接收器、原生运行时、发现服务和功能 ViewModel 生命周期。
 
 import 'dart:async';
+
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
-import '../../../data/database/app_database.dart';
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/lan_share/lan_discovery_service.dart';
@@ -22,8 +23,8 @@ import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 /// 负责 LAN 后台接收器（HTTPS 接收端口、mDNS 广播、配对事件监听等）的全局生命周期。
 /// 不触发 UI Isolate 上的全量历史 watch 和扫描，使冷启动更加轻量。
 class LanReceiverCoordinator extends ChangeNotifier {
-  /// 迁移期间由外层注入的历史 DAO；后续随 LAN Module Repository 一并替换。
-  final LanHistoryDao historyDao;
+  /// 兼容外观使用的 Feature-owned 历史 DAO；数据库由 LAN Module 持有。
+  final feature_lan_share.LanHistoryDao historyDao;
   final AppSettings appSettings;
   @visibleForTesting
   final bool initializeNetwork;

@@ -8,7 +8,7 @@ part of 'app_log_service.dart';
 extension AppLogServiceDatabaseStore on AppLogService {
   /// 将当前内存日志绑定到 [database]，并按顺序回放待处理变更。
   Future<void> setDatabase(
-    db.AppDatabase database, {
+    db.AppLogDatabase database, {
     @visibleForTesting Future<void> Function()? bindingCheckpoint,
   }) {
     if (identical(_database, database) && _bindingDatabase == null) {
@@ -56,7 +56,7 @@ extension AppLogServiceDatabaseStore on AppLogService {
   ///
   /// 解绑先同步切断新日志与旧数据库的联系，再等待队列排空，避免
   /// 关闭数据库时仍有异步写入持有连接。
-  Future<void> detachDatabase(db.AppDatabase database) async {
+  Future<void> detachDatabase(db.AppLogDatabase database) async {
     final activeBinding = _databaseBindingFuture;
     if (activeBinding != null && identical(_bindingDatabase, database)) {
       await activeBinding;
@@ -80,7 +80,7 @@ extension AppLogServiceDatabaseStore on AppLogService {
   }
 
   Future<void> _runDatabaseBinding(
-    db.AppDatabase database,
+    db.AppLogDatabase database,
     ListQueue<_DatabaseLogMutation> pendingMutations, {
     Future<void> Function()? bindingCheckpoint,
   }) async {
@@ -103,7 +103,7 @@ extension AppLogServiceDatabaseStore on AppLogService {
   }
 
   Future<void> _completeDatabaseBinding(
-    db.AppDatabase database,
+    db.AppLogDatabase database,
     ListQueue<_DatabaseLogMutation> pendingMutations, {
     Future<void> Function()? bindingCheckpoint,
   }) async {
@@ -165,7 +165,7 @@ extension AppLogServiceDatabaseStore on AppLogService {
   }
 
   Future<void> _writeEntryToDb(
-    db.AppDatabase database,
+    db.AppLogDatabase database,
     AppLogEntry entry,
   ) async {
     await database.appLogDao.insertLog(_toDatabaseRecord(entry));

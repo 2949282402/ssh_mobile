@@ -2,17 +2,17 @@ import 'dart:async';
 
 import 'package:drift/drift.dart' as drift;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/data/database/app_database.dart';
+import 'package:ssh_mobile/services/app_log_database.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late AppDatabase db;
+  late AppLogDatabase db;
   late AppLogService logs;
 
   setUp(() async {
-    db = AppDatabase.forTesting();
+    db = AppLogDatabase.forTesting();
     logs = AppLogService.instance;
     logs.clear();
     logs.resetDatabaseForTesting();
@@ -322,7 +322,7 @@ void main() {
     logs.info('Created after detach');
     await logs.pendingDbWrites;
 
-    db = AppDatabase.forTesting();
+    db = AppLogDatabase.forTesting();
     await logs.setDatabase(db);
     await logs.pendingDbWrites;
 

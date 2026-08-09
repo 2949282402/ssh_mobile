@@ -2,7 +2,7 @@
 //
 // 该夹具只用于把旧测试场景接到当前的 AppAiStorageAdapter、Connection
 // Repository、Playbook Repository 和终端元数据 Owner。它不恢复生产中的
-// 统一 TestStorageAdapter，也不创建 AppDatabase；每个测试实例都拥有独立的
+// 统一存储门面，也不创建共享业务数据库；每个测试实例都拥有独立的
 // 内存 Repository 和显式的关闭路径。
 
 import 'dart:async';
@@ -33,7 +33,7 @@ class TestStorageAdapter extends ChangeNotifier
   /// 创建一组完全隔离的内存 Repository。
   TestStorageAdapter({
     // 这些参数只为迁移旧测试的构造调用保留，生产代码不再创建
-    // AppDatabase；测试数据统一由下方的内存 Repository 管理。
+    // 共享业务数据库；测试数据统一由下方的内存 Repository 管理。
     Object? database,
     Object Function()? databaseFactory,
     Future<void> Function()? initializationCheckpoint,

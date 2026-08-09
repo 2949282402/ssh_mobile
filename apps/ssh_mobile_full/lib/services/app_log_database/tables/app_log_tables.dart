@@ -1,8 +1,9 @@
-part of '../app_database.dart';
+part of '../../app_log_database.dart';
 
+/// App 诊断日志表；日志内容已由 AppLogService 在写入前脱敏。
 class AppLogRecords extends Table {
   IntColumn get id => integer().autoIncrement()();
-  IntColumn get time => integer()(); // timestamp in milliseconds since epoch
+  IntColumn get time => integer()();
   TextColumn get level => text()();
   TextColumn get message => text()();
   TextColumn get sourceLocation => text().nullable()();

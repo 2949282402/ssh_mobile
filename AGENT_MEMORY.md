@@ -36,7 +36,7 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `LanReceiverCoordinator` exposes exactly one receiver-owned
   `LanShareViewModel` to the LAN page and pairing/chat routes.
 - `AppAiStorageAdapter` is an App Shell adapter for the public AI Storage Port.
-  It does not own `AppDatabase`: `AiModule` owns `ai.db`, Connection Core owns
+  It does not own a shared business database: `AiModule` owns `ai.db`, Connection Core owns
   connection data and secure credentials, and Playbook/Terminal/SFTP Modules
   own their respective repositories and lifecycle.
 
@@ -49,10 +49,11 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 - 2026-08-09: Feature 的路由元数据通过各自公共入口暴露，由
   `apps/ssh_mobile_full/lib/app/navigation/` 聚合；Core 只保存纯描述，不能持有
   Widget、ViewModel 或 Module 实例，App Shell 也不得引用 Feature `/src/`。
-- During active development Drift remains one current schema at version 1.
-  Schema changes regenerate `app_database.g.dart` and may require deleting the
-  local development database; do not add compatibility migrations without an
-  explicit release requirement.
+- During active development each Drift database remains on one current schema at
+  version 1. Feature/Core changes regenerate their package-local output, while
+  App diagnostics regenerate `services/app_log_database.g.dart`; development
+  database files may be deleted after schema changes. Do not add compatibility
+  migrations without an explicit release requirement.
 - `packages/core/connection_core/` owns the Connection domain model,
   structure/credential/Host Key contracts, and a separate `connection.sqlite`
   baseline. `AppRuntimeFactory` creates one `ConnectionDatabase`, one
@@ -148,7 +149,7 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 - 2026-08-08: `packages/features/feature_ai/` is the maintained AI owner. Its
   `AiModule` lazily owns `ai.db`, `DriftAiRepository`, provider/runtime creation,
   and tool registration; chat, Agent metrics, and trace data must not return to
-  the shared AppDatabase. App Shell adapters inject only AI Ports and the
+  a shared business database. App Shell adapters inject only AI Ports and the
   `app_core` capabilities actually used by the tool loop. The development
   refactor does not read or migrate old AI database tables; old App AI paths are
   non-owning compatibility surfaces.
@@ -540,7 +541,7 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   adapters provide `McpSettingsPort`, `McpLoggerPort`, and the AI tool runtime;
   `McpApprovalRequest.opaqueHandle` stays process-local so approved target
   bindings return to the execution layer without serializing secrets. MCP
-  activity is not part of `AppDatabase` or any unified storage facade, and development
+  activity is not part of a shared business database or any unified storage facade, and development
   refactor does not read or migrate the old MCP activity table.
 - 2026-07-18: LAN pairing completion is reciprocal and role-independent, so
   either peer may enter its PIN first and reciprocal invitations must preserve

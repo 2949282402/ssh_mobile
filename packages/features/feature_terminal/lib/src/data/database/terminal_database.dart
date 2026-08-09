@@ -1,7 +1,7 @@
 // Terminal 独立 Drift 数据库。
 //
-// 数据库 Owner 是 TerminalModule；Repository 不创建或关闭数据库。这样
-// Terminal 的历史数据可以在后续 Step 从旧统一 AppDatabase 独立迁移。
+// 数据库 Owner 是 TerminalModule；Repository 不创建或关闭数据库。Terminal
+// 历史数据已经由本 Module 独立持有，不再依赖旧统一业务数据库。
 
 import 'package:app_core/app_core.dart';
 import 'package:drift/drift.dart';

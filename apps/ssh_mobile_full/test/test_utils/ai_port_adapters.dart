@@ -86,7 +86,7 @@ void installTestAiLogger() {
 ///
 /// 生产路径由 AppRuntime 注入 AiModule；测试只能使用显式的内存执行器，
 /// 并在当前测试结束时关闭数据库，避免把测试数据库生命周期偷偷放回旧
-/// AppDatabase 或在生产 App 适配器中增加隐式回退。
+/// 共享业务数据库或在生产 App 适配器中增加隐式回退。
 ai.AiDatabase attachTestAiRepository(TestStorageAdapter storage) {
   final database = ai.AiDatabase.forTesting(NativeDatabase.memory());
   final repository = ai.DriftAiRepository(

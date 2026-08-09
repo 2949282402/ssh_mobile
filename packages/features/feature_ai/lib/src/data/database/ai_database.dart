@@ -1,6 +1,6 @@
 // AI Feature 的独立 Drift 数据库。
 //
-// 聊天、Agent 运行指标和 trace 由 AiModule 共同持有在 ai.db 中，AppDatabase
+// 聊天、Agent 运行指标和 trace 由 AiModule 共同持有在 ai.db 中，共享业务数据库
 // 不再声明这些表。生产数据库异常必须向上抛出，禁止静默退回内存实现。
 
 import 'package:app_core/app_core.dart';

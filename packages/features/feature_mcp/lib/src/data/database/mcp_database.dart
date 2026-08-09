@@ -1,6 +1,6 @@
 // MCP Feature 的独立 Drift 数据库。
 //
-// MCP 活动记录属于 MCP Module，不再写入 AppDatabase。数据库异常必须向上抛出，
+// MCP 活动记录属于 MCP Module，不再写入共享业务数据库。数据库异常必须向上抛出，
 // 不能为了继续启动而静默退回内存实现。
 
 import 'package:app_core/app_core.dart';

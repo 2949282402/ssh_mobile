@@ -3,10 +3,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:ssh_mobile/data/database/app_database.dart';
 import 'package:ssh_mobile/features/lan_share/viewmodels/lan_share_viewmodel.dart';
 import 'package:ssh_mobile/features/lan_share/views/lan_share_settings_screen.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
@@ -26,7 +26,8 @@ class _FakeLanDiscoveryService extends Fake implements LanDiscoveryService {
       const NetworkSuccess<void>(null);
 }
 
-class _FakeLanHistoryDao extends Fake implements LanHistoryDao {}
+class _FakeLanHistoryDao extends Fake
+    implements feature_lan_share.LanHistoryDao {}
 
 class _FakeLanStorageService extends Fake implements LanStorageService {}
 

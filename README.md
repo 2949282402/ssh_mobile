@@ -301,7 +301,7 @@ Check generated files and agent skills:
 ```bash
 cd ../..
 git diff --exit-code -- apps/ssh_mobile_full/assets apps/ssh_mobile_full/android apps/ssh_mobile_full/ios apps/ssh_mobile_full/macos apps/ssh_mobile_full/web apps/ssh_mobile_full/windows/runner/resources/app_icon.ico
-git diff --exit-code -- apps/ssh_mobile_full/lib/data/database/app_database.g.dart
+git diff --exit-code -- apps/ssh_mobile_full/lib/services/app_log_database.g.dart
 ```
 
 ```powershell
@@ -473,7 +473,7 @@ flowchart LR
   App Shell adapters, legacy LAN-share compatibility services, and platform
   adapters.
   Maintained AI/MCP implementations live in their Feature packages.
-- `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
+- `apps/ssh_mobile_full/lib/services/`: App-level adapters and the independent redacted `app_logs` diagnostic database.
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
 - `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; `feature_connection` consumes the public repositories and injected capabilities.
@@ -606,8 +606,9 @@ keeps its scheduling boundary.
 Growing structured data is stored in Feature-owned Drift databases: AI chats,
 agent metrics, and traces in `ai.db`; terminal-history metadata in `terminal.db`;
 playbooks in `playbook.db`; SFTP path records in `sftp.db`; and RAG/MCP metadata
-in their respective databases. The shared AppDatabase is not an AI/MCP data
-owner. Small preferences remain in SharedPreferences. Passwords, private keys,
+in their respective databases. App diagnostics use the independent redacted
+`app_logs` database and no shared business database owns Feature data. Small
+preferences remain in SharedPreferences. Passwords, private keys,
 API keys, and MCP tokens remain in platform secure storage.
 
 Sensitive Drift fields—including AI message bodies, context, attachments, tool traces, TODO steps, and playbook content—are encrypted before being written to SQLite. During active development, Drift uses one current version-1 schema without upgrade or legacy-import code; after a schema change, delete the local development database and regenerate the checked-in Drift output.

@@ -26,7 +26,7 @@ const Uuid _traceUuid = Uuid();
 
 /// App Shell 对 AI 设置、技能和 AI 数据库的最小组合适配器。
 ///
-/// 该类只编排注入的 Core/Feature Repository，不再拥有 AppDatabase，也不
+/// 该类只编排注入的 Core/Feature Repository，不再拥有共享业务数据库，也不
 /// 负责 SFTP、Playbook、Connection 等其他模块的底层实现。ai.db 由
 /// [feature_ai.AiModule] 持有；本适配器只在首次访问聊天或 trace 时请求它。
 final class AppAiStorageAdapter extends ChangeNotifier

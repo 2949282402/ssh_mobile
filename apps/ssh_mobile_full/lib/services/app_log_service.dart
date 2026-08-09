@@ -8,7 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import '../data/database/app_database.dart' as db;
+import 'app_log_database.dart' as db;
 import 'app_settings.dart';
 import 'tool_secret_policy.dart';
 
@@ -42,8 +42,8 @@ class AppLogService extends ChangeNotifier implements app_core.AppLogger {
 
   final app_core.LogBuffer<AppLogEntry> _entries =
       app_core.LogBuffer<AppLogEntry>(maxEntries: _maxEntries);
-  db.AppDatabase? _database;
-  db.AppDatabase? _bindingDatabase;
+  db.AppLogDatabase? _database;
+  db.AppLogDatabase? _bindingDatabase;
   ListQueue<_DatabaseLogMutation>? _databaseBindingMutations;
   Future<void>? _databaseBindingFuture;
   List<AppLogEntry>? _cachedNewestFirstEntries;

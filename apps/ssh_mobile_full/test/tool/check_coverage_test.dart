@@ -9,7 +9,7 @@ void main() {
       'LF:20',
       'LH:10',
       'end_of_record',
-      'SF:lib/data/database/example.g.dart',
+      'SF:lib/services/app_log_database.g.dart',
       'LF:100',
       'LH:100',
       'end_of_record',

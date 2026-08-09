@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 
 import 'package:ssh_mobile/features/lan_share/viewmodels/lan_share_viewmodel.dart';
 import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
@@ -6,7 +7,6 @@ import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_discovery_service.dart';
 import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/data/database/app_database.dart';
 
 class FakeLanSecurityService extends Fake implements LanSecurityService {
   String? unpairedDeviceId;
@@ -21,7 +21,8 @@ class FakeLanTransferService extends Fake implements LanTransferService {}
 
 class FakeLanDiscoveryService extends Fake implements LanDiscoveryService {}
 
-class FakeLanHistoryDao extends Fake implements LanHistoryDao {}
+class FakeLanHistoryDao extends Fake
+    implements feature_lan_share.LanHistoryDao {}
 
 class FakeLanStorageService extends Fake implements LanStorageService {}
 

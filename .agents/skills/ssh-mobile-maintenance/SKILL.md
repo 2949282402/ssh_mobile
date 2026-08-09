@@ -104,7 +104,7 @@ UI, activity Repository, and `mcp.db`. App Shell adapters in
 logging, and the AI tool runtime. The package must not import AI Feature
 implementation or App `/src/`; dangerous-tool `approval_required` behavior
 must remain in its execution layer, and MCP activity must not return to the
-shared AppDatabase or a unified storage facade.
+shared business database or a unified storage facade.
 The AI Feature package is `packages/features/feature_ai/`; it owns AI chat,
 Agent, Skills, LLM providers/runtime, tool orchestration, AI WebView contracts,
 and `ai.db`. `AiModule` lazily owns its database, Repository, provider/runtime,

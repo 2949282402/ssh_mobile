@@ -4,12 +4,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:drift/drift.dart';
 
+import 'package:drift/drift.dart';
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
-import '../../../data/database/app_database.dart';
 import '../../../core/services/data_protection_service.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/app_log_service.dart';
@@ -24,6 +24,13 @@ import '../../../services/network/network_models.dart';
 
 part 'lan_share_viewmodel_network.dart';
 part 'lan_share_viewmodel_history.dart';
+
+// 旧 App LAN 页面保留为兼容外观，但历史数据库已经由 LAN Feature
+// Module 持有；这些别名避免兼容 UI 重新创建共享业务数据库或复制 DAO。
+typedef LanHistoryDao = feature_lan_share.LanHistoryDao;
+typedef LanTransferRecord = feature_lan_share.LanTransferRecord;
+typedef LanTransferRecordsCompanion =
+    feature_lan_share.LanTransferRecordsCompanion;
 
 /// 功能范围内的 v1 LAN 状态、命令编排与历史记录外观。
 class LanShareViewModel extends ChangeNotifier {

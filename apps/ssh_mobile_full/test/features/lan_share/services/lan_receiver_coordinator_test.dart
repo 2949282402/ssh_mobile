@@ -1,27 +1,30 @@
+import 'package:drift/native.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/data/database/app_database.dart';
 import 'package:ssh_mobile/features/lan_share/services/lan_receiver_coordinator.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late AppDatabase database;
+  late feature_lan_share.LanShareDatabase database;
   late AppSettings appSettings;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
-    database = AppDatabase.forTesting();
+    database = feature_lan_share.LanShareDatabase.forTesting(
+      NativeDatabase.memory(),
+    );
     appSettings = AppSettings();
     await appSettings.ensureCoreLoaded();
   });
 
   tearDown(() async {
     appSettings.dispose();
-    await database.close();
+    await database.dispose();
   });
 
   group('LanReceiverCoordinator Tests', () {

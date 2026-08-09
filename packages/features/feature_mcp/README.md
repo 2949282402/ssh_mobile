@@ -9,7 +9,7 @@
 
 - `McpModule` 独占 `mcp.db`、活动 Repository、审批队列和 HTTP Server。
 - 工具执行、设置持久化和日志通过 `McpToolRuntimePort`、`McpSettingsPort`、
-  `McpLoggerPort` 注入；Package 不依赖旧 AI Service 或 AppDatabase。
+  `McpLoggerPort` 注入；Package 不依赖旧 AI Service 或共享业务数据库。
 - `tools/call` 的 `approval_required`、目标绑定和 fail-closed 策略在执行层，
   控制台页面只负责展示和批准/拒绝。
 - 调用方只允许从 `package:feature_mcp/feature_mcp.dart` 使用公共 API。

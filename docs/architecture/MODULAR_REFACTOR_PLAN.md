@@ -2666,6 +2666,13 @@ drift_dev/build_runner
 
 不存在全局业务 `AppDatabase`。
 
+> Step23 已于 2026-08-09 完成：旧 `AppDatabase`、生成文件、旧 tables/daos
+> 和 App 数据库连接入口已移除。Terminal/Playbook/SFTP/LAN/AI 等结构化数据
+> 由各自 Feature/Core Module 持有；App 日志保留原队列行为但改由独立
+> `AppLogDatabase`（`app_logs`）承载。App Shell 因仍实际使用该 Drift 数据库，
+> 保留自身的 `drift`、`drift_dev` 和 `build_runner` 声明。生产和测试 Dart
+> 不再引用 `AppDatabase`。
+
 ---
 
 # 30. Step 24 — 删除旧根 `lib/services` 杂物
@@ -3174,7 +3181,7 @@ flutter build windows
 
 ## Database
 
-- [ ] 删除统一 AppDatabase。
+- [x] 删除统一 AppDatabase。
 - [x] 删除 StorageService。
 - [ ] Connection 使用独立 DB/Secure Storage。
 - [ ] Terminal/SFTP/AI/Playbook/RAG/MCP/LAN 数据各归属自己的 Module。

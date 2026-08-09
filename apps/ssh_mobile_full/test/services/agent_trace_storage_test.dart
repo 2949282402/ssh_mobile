@@ -1,7 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/data/database/app_database.dart' as db;
 import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import '../test_utils/test_storage_adapter.dart';
@@ -18,13 +17,11 @@ void main() {
   });
 
   test('saves and loads a single trace event', () async {
-    final database = db.AppDatabase.forTesting();
-    final storage = TestStorageAdapter(database: database);
+    final storage = TestStorageAdapter();
     attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
-      await database.close();
     });
     await storage.init();
 
@@ -37,13 +34,11 @@ void main() {
   });
 
   test('batch save reads by run id ordered by sequence', () async {
-    final database = db.AppDatabase.forTesting();
-    final storage = TestStorageAdapter(database: database);
+    final storage = TestStorageAdapter();
     attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
-      await database.close();
     });
     await storage.init();
 
@@ -58,13 +53,11 @@ void main() {
   });
 
   test('loads recent run ids for chat by latest event time', () async {
-    final database = db.AppDatabase.forTesting();
-    final storage = TestStorageAdapter(database: database);
+    final storage = TestStorageAdapter();
     attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
-      await database.close();
     });
     await storage.init();
 
@@ -92,13 +85,11 @@ void main() {
   });
 
   test('trims old runs and caps events per run', () async {
-    final database = db.AppDatabase.forTesting();
-    final storage = TestStorageAdapter(database: database);
+    final storage = TestStorageAdapter();
     attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
-      await database.close();
     });
     await storage.init();
 
@@ -131,13 +122,11 @@ void main() {
   });
 
   test('cache is invalidated when retention trims stale runs', () async {
-    final database = db.AppDatabase.forTesting();
-    final storage = TestStorageAdapter(database: database);
+    final storage = TestStorageAdapter();
     attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
-      await database.close();
     });
     await storage.init();
 
@@ -161,13 +150,11 @@ void main() {
   });
 
   test('batch save caps events per run instead of per batch', () async {
-    final database = db.AppDatabase.forTesting();
-    final storage = TestStorageAdapter(database: database);
+    final storage = TestStorageAdapter();
     attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
-      await database.close();
     });
     await storage.init();
 
@@ -185,13 +172,11 @@ void main() {
   });
 
   test('truncates long content and empty batch save is harmless', () async {
-    final database = db.AppDatabase.forTesting();
-    final storage = TestStorageAdapter(database: database);
+    final storage = TestStorageAdapter();
     attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
-      await database.close();
     });
     await storage.init();
 
@@ -211,13 +196,11 @@ void main() {
 
   test('encrypts content_json in Drift and deletes events for run', () async {
     const marker = 'TRACE_SECRET_MARKER_20260622';
-    final database = db.AppDatabase.forTesting();
-    final storage = TestStorageAdapter(database: database);
+    final storage = TestStorageAdapter();
     final aiDatabase = attachTestAiRepository(storage);
     addTearDown(() async {
       await storage.shutdown();
       storage.dispose();
-      await database.close();
     });
     await storage.init();
 

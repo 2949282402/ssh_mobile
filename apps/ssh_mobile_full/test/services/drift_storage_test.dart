@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../test_utils/test_storage_adapter.dart';
 
 /// Step22 之后的存储边界测试：AI 数据库由 AI Module/Repository 自己拥有，
-/// 测试夹具也不得通过已经删除的统一 AppDatabase 暴露数据库句柄。
+/// 测试夹具也不得通过已经删除的统一业务数据库暴露数据库句柄。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 

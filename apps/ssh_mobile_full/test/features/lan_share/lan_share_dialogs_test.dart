@@ -1,9 +1,9 @@
 // v1 LAN WebShare 对话框渲染测试。
 
 import 'package:drift/native.dart';
+import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/data/database/app_database.dart';
 import 'package:ssh_mobile/features/lan_share/views/lan_share_screen.dart';
 import 'package:ssh_mobile/features/lan_share/viewmodels/lan_share_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
@@ -43,8 +43,10 @@ void main() {
     (tester) async {
       final sec = LanSecurityService();
       final stor = LanStorageService();
-      final db = AppDatabase(executor: NativeDatabase.memory());
-      addTearDown(() => db.close());
+      final db = feature_lan_share.LanShareDatabase.forTesting(
+        NativeDatabase.memory(),
+      );
+      addTearDown(db.dispose);
 
       final vm = _FakeLanShareViewModel(
         discoveryService: LanDiscoveryService(
@@ -58,7 +60,7 @@ void main() {
         ),
         storageService: stor,
         securityService: sec,
-        historyDao: LanHistoryDao(db),
+        historyDao: feature_lan_share.LanHistoryDao(db),
         appSettings: _FakeAppSettings(),
       );
       final strings = AppStrings(AppLanguage.zh);

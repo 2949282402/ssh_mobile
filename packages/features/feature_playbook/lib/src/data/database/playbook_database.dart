@@ -1,6 +1,6 @@
 // Playbook Feature 的独立 Drift 数据库。
 //
-// Module 独占本数据库，避免 Playbook 继续把成长型数据写入 AppDatabase。
+// Module 独占本数据库，避免 Playbook 继续把成长型数据写入共享业务数据库。
 // 数据库失败必须向上抛出，不能静默退回内存数据库。
 
 import 'package:app_core/app_core.dart';
