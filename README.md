@@ -308,7 +308,8 @@ dart run tool/check_resource_owners.dart
 
 On `main`, the CI workflow runs `dart run melos run format`,
 `dart run melos run analyze`, and `dart run melos run test`, followed by Full App
-Android and Terminal-only Windows smoke builds.
+Android and Terminal-only Windows smoke builds. The Workspace analyze script keeps
+existing `info`-level lints non-fatal while errors and warnings remain fatal.
 
 ### Full quality gate
 

@@ -203,7 +203,8 @@ Dependency and code generation (run after `pubspec.yaml` or Drift model changes)
 - `dart run melos exec --scope=app_core -- dart analyze .`: analyze the Core contract package.
 - `dart run melos exec --scope=app_core -- flutter test --no-pub`: run Core contract tests.
 - `dart run melos run format`: format every Workspace Member's `lib/` and `test/`.
-- `dart run melos run analyze`: analyze every Workspace Member with the pinned Flutter SDK.
+- `dart run melos run analyze`: analyze every Workspace Member with the pinned Flutter SDK;
+  existing `info`-level lints are non-fatal, while errors and warnings remain fatal.
 - `dart run melos run test`: run every Workspace Member test suite.
 - From `apps/ssh_mobile_full/`, `dart run build_runner build`: regenerate the App-level Drift output (`lib/services/app_log_database.g.dart`) and other codegen. Generated files are committed; verify with `git diff --exit-code -- apps/ssh_mobile_full/lib/services/app_log_database.g.dart`.
 - From `apps/ssh_mobile_full/`, `dart run tool/generate_app_icons.dart`: regenerate app icons. Verify with `git diff --exit-code -- apps/ssh_mobile_full/assets apps/ssh_mobile_full/android apps/ssh_mobile_full/ios apps/ssh_mobile_full/macos apps/ssh_mobile_full/web apps/ssh_mobile_full/windows/runner/resources/app_icon.ico`.

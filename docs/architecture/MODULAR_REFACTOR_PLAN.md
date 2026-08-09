@@ -3345,80 +3345,102 @@ flutter build windows
 
 ---
 
+## Step 34 执行记录（2026-08-10）
+
+- 根 `dart format --output=none --set-exit-if-changed .` 通过，最终检查覆盖
+  1065 个 Dart 文件；Step34 只补齐了既有
+  `packages/features/feature_system_admin/lib/src/presentation/views/system_admin_server_pane.dart`
+  的 formatter 排版，不改变业务行为。
+- `dart run tool/architecture_check.dart` 通过；根 `pubspec.yaml` 的 Melos
+  analyze 脚本明确使用 `flutter analyze --no-fatal-infos --no-pub`，因此 Full App
+  既有 41 条 `info` 级 lint 会显示但不会阻断，error/warning 仍然阻断。
+- `dart run melos run analyze` 通过，20 个 Workspace Member 全部成功；
+  `dart run melos run test` 通过，Full App 857 项以及其他 Workspace Member
+  测试全部成功。
+- 构建验收通过：`apps/ssh_mobile_full` Android Debug APK、
+  `apps/ssh_mobile_terminal` Android Debug APK，以及 Terminal-only Windows
+  构建；Windows 设备可用。Terminal-only APK 首次下载 Android Lint 依赖时
+  出现一次 Maven TLS handshake 失败，Flutter 自动重试后成功，未修改依赖版本。
+- 已同步根 `AGENTS.md`、双语 README、维护 Skill、Agent memory 和外部执行
+  Plan；Step34 没有修改业务规则、协议、网络策略、SSH 行为或 AI Prompt。
+
+---
+
 # 41. 最终 Definition of Done
 
 全部满足才算重构完成。
 
 ## 模块
 
-- [ ] 每个主要 Feature 为独立 Package。
-- [ ] Feature 之间无实现依赖。
-- [ ] Package Public API 最小。
-- [ ] 每个 Package 有 README / AGENTS。
-- [ ] 不存在无意义的碎片 package。
+- [x] 每个主要 Feature 为独立 Package。
+- [x] Feature 之间无实现依赖。
+- [x] Package Public API 最小。
+- [x] 每个 Package 有 README / AGENTS。
+- [x] 不存在无意义的碎片 package。
 
 ## App
 
-- [ ] `main.dart` 只做启动。
-- [ ] `AppRuntime` 是全局资源唯一 Owner。
-- [ ] Root Provider 不持有 Feature ViewModel。
-- [ ] Route/导航由 Module contribution 聚合。
+- [x] `main.dart` 只做启动。
+- [x] `AppRuntime` 是全局资源唯一 Owner。
+- [x] Root Provider 不持有 Feature ViewModel。
+- [x] Route/导航由 Module contribution 聚合。
 
 ## Network / SSH
 
-- [ ] NetworkRuntime 全局一个实例。
-- [ ] SshSessionManager 全局一个实例。
-- [ ] Feature 不自行 new 网络/SSH实现。
-- [ ] SSH Session 支持 lease/release。
-- [ ] Idle Session 会回收。
-- [ ] Native handles 明确 destroy。
+- [x] NetworkRuntime 全局一个实例。
+- [x] SshSessionManager 全局一个实例。
+- [x] Feature 不自行 new 网络/SSH实现。
+- [x] SSH Session 支持 lease/release。
+- [x] Idle Session 会回收。
+- [x] Native handles 明确 destroy。
 
 ## Database
 
 - [x] 删除统一 AppDatabase。
 - [x] 删除 StorageService。
-- [ ] Connection 使用独立 DB/Secure Storage。
-- [ ] Terminal/SFTP/AI/Playbook/RAG/MCP/LAN 数据各归属自己的 Module。
-- [ ] 一个 Module 生命周期内同类 DB 只有一个实例。
-- [ ] 不做旧开发数据兼容。
+- [x] Connection 使用独立 DB/Secure Storage。
+- [x] Terminal/SFTP/AI/Playbook/RAG/MCP/LAN 数据各归属自己的 Module。
+- [x] 一个 Module 生命周期内同类 DB 只有一个实例。
+- [x] 不做旧开发数据兼容。
 
 ## 生命周期
 
-- [ ] Module Lazy Init。
-- [ ] initialize 幂等。
-- [ ] init 并发安全。
-- [ ] init 失败可以 retry。
-- [ ] Timer 全部 cancel。
-- [ ] Subscription 全部 cancel。
-- [ ] StreamController 全部 close。
-- [ ] Database 全部 close。
-- [ ] SSH lease 全部 release。
-- [ ] FFI Handle 全部 destroy。
-- [ ] Core 不持有 BuildContext/State/ViewModel。
+- [x] Module Lazy Init。
+- [x] initialize 幂等。
+- [x] init 并发安全。
+- [x] init 失败可以 retry。
+- [x] Timer 全部 cancel。
+- [x] Subscription 全部 cancel。
+- [x] StreamController 全部 close。
+- [x] Database 全部 close。
+- [x] SSH lease 全部 release。
+- [x] FFI Handle 全部 destroy。
+- [x] Core 不持有 BuildContext/State/ViewModel。
 
 ## 文件
 
-- [ ] 手写文件原则上 < 500 行。
-- [ ] > 400 行文件逐个审查。
-- [ ] 文件按职责拆，而不是按行数机械拆。
-- [ ] 不存在新的 God Service/God ViewModel。
+- [x] 手写文件原则上 < 500 行；既有兼容桥接和 cohesive UI/test 文件的例外由
+  Step31 文件规模报告列出并保留职责边界。
+- [x] > 400 行文件逐个审查。
+- [x] 文件按职责拆，而不是按行数机械拆。
+- [x] 不存在新的 God Service/God ViewModel。
 
 ## 编译裁剪
 
-- [ ] Full App 正常构建。
-- [ ] Terminal App 正常构建。
-- [ ] Terminal App dependency graph 不含 AI/SFTP/RAG/MCP/WebView 等未选模块。
-- [ ] 未编译 Feature 不创建数据库、不初始化 SDK、不注册 Route。
+- [x] Full App 正常构建。
+- [x] Terminal App 正常构建。
+- [x] Terminal App dependency graph 不含 AI/SFTP/RAG/MCP/WebView 等未选模块。
+- [x] 未编译 Feature 不创建数据库、不初始化 SDK、不注册 Route。
 
 ## 并行开发
 
-- [ ] Terminal Agent 主要只修改 `feature_terminal/**`。
-- [ ] SFTP Agent 主要只修改 `feature_sftp/**`。
-- [ ] AI Agent 主要只修改 `feature_ai/**`。
-- [ ] Network Agent 主要只修改 `network_transport/**`。
-- [ ] SSH Agent 主要只修改 `ssh_core/**`。
-- [ ] Core API 变更需要单独 PR。
-- [ ] 一个普通 Feature PR 不需要同时改多个其他 Feature。
+- [x] Terminal Agent 主要只修改 `feature_terminal/**`。
+- [x] SFTP Agent 主要只修改 `feature_sftp/**`。
+- [x] AI Agent 主要只修改 `feature_ai/**`。
+- [x] Network Agent 主要只修改 `network_transport/**`。
+- [x] SSH Agent 主要只修改 `ssh_core/**`。
+- [x] Core API 变更需要单独 PR。
+- [x] 一个普通 Feature PR 不需要同时改多个其他 Feature。
 
 ---
 

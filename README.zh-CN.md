@@ -288,7 +288,8 @@ dart run tool/check_resource_owners.dart
 
 合并到 `main` 后，CI 会运行 `dart run melos run format`、
 `dart run melos run analyze`、`dart run melos run test`，再执行 Full App Android
-和 Terminal-only Windows 冒烟构建。
+和 Terminal-only Windows 冒烟构建。Workspace analyze 脚本将既有 `info` 级 lint
+视为非阻断项，但 error 和 warning 仍会使门禁失败。
 
 ### 完整质量门禁
 

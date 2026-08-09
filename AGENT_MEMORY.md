@@ -234,6 +234,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   are Route Scope-owned; AppRuntime owns the remaining App Scope Modules and
   infrastructure. Add Owner/Scope/Release before introducing a new database,
   session, handle, timer, stream, controller, or isolate.
+- 2026-08-10: The root `pubspec.yaml` remains the only Melos configuration source;
+  its Workspace analyze script uses `flutter analyze --no-fatal-infos --no-pub`.
+  Existing `info` lints may remain visible, but errors and warnings are still
+  fatal. Final acceptance also requires the root format check, architecture
+  guard, full Melos analyze/test, and the Full App plus Terminal-only smoke
+  builds documented by Step34.
 
 ### Network transfer
 

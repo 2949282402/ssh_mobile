@@ -196,7 +196,9 @@ implementations. The old App terminal files are compatibility exports/bridges.
   Requests run `melos exec --diff` with dependent packages for format, analyze,
   and tests, then run the architecture guard. Main runs the full `melos run`
   format/analyze/test scripts and the Full App plus Terminal-only smoke builds;
-  do not reintroduce a parallel `melos.yaml` configuration file.
+  the Workspace analyze script makes existing `info`-level lints non-fatal while
+  keeping errors and warnings fatal. Do not reintroduce a parallel `melos.yaml`
+  configuration file.
 - Step31's `dart run tool/check_file_sizes.dart` reports non-generated Dart files
   above the 300/400/500-line review thresholds. Use it to identify ownership
   problems, then split only when responsibilities are independent; retain a
