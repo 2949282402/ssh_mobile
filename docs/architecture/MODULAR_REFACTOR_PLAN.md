@@ -3272,23 +3272,45 @@ docs/architecture/MODULE_DEPENDENCY.md
 
 | Resource | Owner | Scope | Release |
 |---|---|---|---|
-| AppLogger | AppRuntime | App | dispose |
-| NetworkRuntime | AppRuntime | App | dispose |
-| SshSessionManager | AppRuntime | App | dispose |
-| SSH Session | SshSessionManager | lease | release + idle close |
-| ConnectionDatabase | AppRuntime/Connection Core | App | close |
-| TerminalDatabase | TerminalModule | Module | close |
-| SftpDatabase | SftpModule | Module | close |
-| AiDatabase | AiModule | Module | close |
-| ViewModel | Route Provider | Route | dispose |
-| polling Timer | owning Module/Controller | Module/Route | cancel |
-| Native handle | wrapper object | explicit | destroy |
+| AppLogger / AppLogDatabase | AppRuntime / AppLogService | App | flush, close, dispose last |
+| NetworkRuntime / Native handle | AppRuntime / native adapter | App/Native | stop, destroy, dispose |
+| SshSessionManager / SSH Session | AppRuntime / Session Pool | App/Lease | release lease, idle close, manager close |
+| ConnectionDatabase | AppRuntime / Connection Core | App | await init, then close |
+| TerminalDatabase | AppTerminalModuleScope / TerminalModule | Route Module | Module dispose, close DB |
+| SftpDatabase | AppSftpModuleScope / SftpModule | Route Module | Module dispose, close DB |
+| AiDatabase / PlaybookDatabase | AppRuntime / corresponding Module | App Module | Service dispose, then DB close |
+| RagDatabase / McpDatabase / LanShareDatabase | AppRuntime / corresponding Module | App Module | stop Service/Receiver, then DB close |
+| MonitoringService | AppRuntime / MonitoringModule | App | stop polling, cancel, dispose |
+| SystemAdminService | AppSystemAdminModuleScope / SystemAdminModule | Route Module | cancel commands, dispose |
+| SFTP compatibility service | AppRuntime / legacy SftpService | App | dispose after Route Modules stop |
+| WebViewService / AI chat runtime | AppRuntime / Route Provider | App/Route | cancel sessions/streams, dispose |
+| ViewModel / Route Controller | Route Provider / Widget State | Route/Widget | dispose |
+| Timer / Subscription / StreamController | owning Module, Service, or Controller | Owner scope | cancel or close before Owner release |
+| Isolate | launching parser/transfer/native Owner | Task/Owner scope | stop or kill, await exit |
+
+完整 29 条资源记录和自动检查见 `docs/architecture/RESOURCE_OWNERSHIP.md`。
 
 任何无法填 Owner 的对象：
 
 > 不允许完成重构。
 
 ---
+
+## Step 33 执行记录（2026-08-10）
+
+- 新增 `docs/architecture/RESOURCE_OWNERSHIP.md`，逐项记录 AppLogger、AppLog
+  Database、AppSettings、Connection/SSH/Network、Feature 数据库、Module/Service、
+  WebView、AI Route runtime、ViewModel、Controller、Timer、Subscription、
+  StreamController 和 Isolate 的 Owner、Scope 与 Release 动作。
+- 根据实际代码校正 Owner：AppRuntime 持有 App Scope Modules 和基础设施；
+  `AppTerminalModuleScope`、`AppSftpModuleScope`、`AppSystemAdminModuleScope`
+  分别持有对应 Route Module；Feature Repository 不关闭 Module 数据库，
+  Lease 使用方不关闭共享 SSH Session。
+- 新增 `tool/check_resource_owners.dart` 与
+  `test/tool/resource_owner_check_test.dart`，当前表包含 29 条记录，覆盖 27
+  个关键资源；缺少 Owner、Scope、Release 或出现占位符时检查失败。
+- 已同步根 README（中英文）、AGENTS、Agent memory、维护 Skill 和外部执行
+  Plan；未修改业务代码或资源生命周期实现。
 
 # 40. Step 34 — 最终验收
 

@@ -207,6 +207,10 @@ implementations. The old App terminal files are compatibility exports/bridges.
   exceptions explicit in `architectureAllowlist`, reject Core/Infrastructure
   reverse edges and cycles, and update `docs/architecture/MODULE_DEPENDENCY.md`
   when Package boundaries change.
+- Step33's `dart run tool/check_resource_owners.dart` guards the required rows in
+  `docs/architecture/RESOURCE_OWNERSHIP.md`. Every database, SSH/network
+  session, native handle, timer, stream, controller, and isolate needs an
+  explicit Owner, Scope, and Release action before the change is complete.
 - `ssh_core` must keep `SshSessionManager` and its Session Pool under App Scope
   ownership. A Feature may acquire/release a Lease but must not close a shared
   Session, import `flutter_background_service`, or perform platform checks.

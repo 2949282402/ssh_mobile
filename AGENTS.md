@@ -260,6 +260,9 @@ Static checks and formatting:
   audit all workspace Package production edges, Feature exceptions, forbidden
   lower-layer-to-Feature edges, and dependency cycles. The detailed result is
   documented in `docs/architecture/MODULE_DEPENDENCY.md`.
+- From the repository root, `dart run tool/check_resource_owners.dart`: verify
+  the required resources in `docs/architecture/RESOURCE_OWNERSHIP.md` each have
+  an explicit Owner, Scope, and Release action.
 
 Full local quality gate (fast loop):
 
@@ -268,6 +271,7 @@ dart pub get
 dart run tool/architecture_check.dart
 dart run tool/check_file_sizes.dart
 dart run tool/check_module_dependencies.dart
+dart run tool/check_resource_owners.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
 flutter analyze --no-fatal-infos

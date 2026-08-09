@@ -228,6 +228,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   public capability boundary, and rejects lower-layer-to-Feature edges and
   cycles. Its maintained result is `docs/architecture/MODULE_DEPENDENCY.md`;
   keep it synchronized when adding or moving a workspace Package.
+- 2026-08-10: Step33 records the resource Owner matrix in
+  `docs/architecture/RESOURCE_OWNERSHIP.md` and guards its required rows with
+  `tool/check_resource_owners.dart`. SFTP, Terminal, and System Admin Modules
+  are Route Scope-owned; AppRuntime owns the remaining App Scope Modules and
+  infrastructure. Add Owner/Scope/Release before introducing a new database,
+  session, handle, timer, stream, controller, or isolate.
 
 ### Network transfer
 

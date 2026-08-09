@@ -265,6 +265,7 @@ dart pub get
 dart run tool/architecture_check.dart
 dart run tool/check_file_sizes.dart
 dart run tool/check_module_dependencies.dart
+dart run tool/check_resource_owners.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
 flutter analyze --no-fatal-infos
@@ -282,6 +283,7 @@ dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -
 dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter test --no-pub"
 dart run tool/architecture_check.dart
 dart run tool/check_module_dependencies.dart
+dart run tool/check_resource_owners.dart
 ```
 
 合并到 `main` 后，CI 会运行 `dart run melos run format`、
@@ -294,6 +296,7 @@ dart run tool/check_module_dependencies.dart
 dart pub get
 dart run tool/check_file_sizes.dart
 dart run tool/check_module_dependencies.dart
+dart run tool/check_resource_owners.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
 dart run tool/generate_app_icons.dart
@@ -462,6 +465,8 @@ flowchart LR
   `tool/check_file_sizes.dart`：非 generated Dart 文件尺寸报告；
   `tool/check_module_dependencies.dart`：workspace 依赖图审计，结果维护在
   `docs/architecture/MODULE_DEPENDENCY.md`；
+  `tool/check_resource_owners.dart`：资源生命周期 Owner 完整性检查，结果维护在
+  `docs/architecture/RESOURCE_OWNERSHIP.md`；
   `apps/ssh_mobile_full/tool/`：App 专属生成和质量检查脚本。
 - `third_party/xterm/`：仓库内维护的终端组件。
 

@@ -285,6 +285,7 @@ dart pub get
 dart run tool/architecture_check.dart
 dart run tool/check_file_sizes.dart
 dart run tool/check_module_dependencies.dart
+dart run tool/check_resource_owners.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
 flutter analyze --no-fatal-infos
@@ -302,6 +303,7 @@ dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -
 dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "flutter test --no-pub"
 dart run tool/architecture_check.dart
 dart run tool/check_module_dependencies.dart
+dart run tool/check_resource_owners.dart
 ```
 
 On `main`, the CI workflow runs `dart run melos run format`,
@@ -314,6 +316,7 @@ Android and Terminal-only Windows smoke builds.
 dart pub get
 dart run tool/check_file_sizes.dart
 dart run tool/check_module_dependencies.dart
+dart run tool/check_resource_owners.dart
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
 cd apps/ssh_mobile_full
 dart run tool/generate_app_icons.dart
@@ -548,7 +551,9 @@ flowchart LR
   `tool/architecture_check.dart` is the repository-level architecture guard;
   `tool/check_file_sizes.dart` reports non-generated Dart file sizes;
   `tool/check_module_dependencies.dart` audits the workspace dependency graph;
-  see `docs/architecture/MODULE_DEPENDENCY.md` for the maintained result.
+  `tool/check_resource_owners.dart` verifies lifecycle Owner completeness;
+  see `docs/architecture/MODULE_DEPENDENCY.md` and
+  `docs/architecture/RESOURCE_OWNERSHIP.md` for maintained results.
 - `apps/ssh_mobile_full/tool/`: app-specific generation and quality-check scripts.
 - `third_party/xterm/`: vendored terminal package.
 

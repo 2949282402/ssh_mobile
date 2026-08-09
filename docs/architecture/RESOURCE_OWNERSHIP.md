@@ -1,0 +1,59 @@
+最新更新时间：2026-08-10
+
+# 资源 Owner 审计
+
+本表是 Step 33 的最终资源生命周期清单，覆盖 App Scope、Module/Route Scope、
+数据库、SSH/网络、异步任务以及 UI Controller。Owner 负责创建和释放；借用方
+只能调用公共能力或释放自己的 Lease，不能关闭上级 Owner 的资源。
+
+| Resource | Owner | Scope | Release |
+| --- | --- | --- | --- |
+| AppLogger | `AppRuntime` → `AppLogService` | App | `dispose` last; flush and close log DB |
+| AppLogDatabase | `AppLogService` / `AppRuntime` | App | `dispose` closes Drift handle |
+| AppSettings | `AppRuntime` | App | `dispose` cancels listeners and pending work |
+| ConnectionDatabase | `AppRuntime` / Connection Core | App | await repository init, then `close` |
+| NetworkRuntime | `AppRuntime` | App | `dispose` after SSH/SFTP stop |
+| Native handle | Network native adapter via `NetworkRuntime` | App/Native | stop isolate, then `destroy` handle |
+| SshSessionManager | `AppRuntime` | App | `close` Session Pool and runtime |
+| SSH Session | `SshSessionManager` / `SshSessionPool` | Lease/Session | Lease `release`; idle session `close` |
+| SFTP compatibility service | `AppRuntime` → legacy `SftpService` | App | `dispose` after route Modules stop |
+| TerminalDatabase | `AppTerminalModuleScope` → `TerminalModule` | Route Module | Module `dispose` closes DB |
+| SftpDatabase | `AppSftpModuleScope` → `SftpModule` | Route Module | Module `dispose` closes DB |
+| AiDatabase | `AppRuntime` → `AiModule` | App Module | Module `dispose` closes DB |
+| PlaybookDatabase | `AppRuntime` → `PlaybookModule` | App Module | Service `dispose`, then DB `dispose` |
+| RagDatabase | `AppRuntime` → `RagModule` | App Module | Service `dispose`, then DB `dispose` |
+| McpDatabase | `AppRuntime` → `McpModule` | App Module | stop HTTP Server, then DB `dispose` |
+| LanShareDatabase | `AppRuntime` → `LanShareModule` | App Module | stop receiver, then DB `dispose` |
+| MonitoringService | `AppRuntime` → `MonitoringModule` | App Module | stop polling, cancel subscriptions, `dispose` |
+| SystemAdminService | `AppSystemAdminModuleScope` → `SystemAdminModule` | Route Module | cancel commands, then `dispose` |
+| WebViewService | `AppRuntime` → `ClientWebViewService` | App | `dispose` chat sessions and controllers |
+| MCP HTTP Server | `McpModule` → `McpServerController` | App Module | `stop` server and pending approvals |
+| LAN Receiver | `LanShareModule` → `LanReceiverCoordinator` | App Module | deactivate receiver, close HTTP/WS/native resources |
+| RAG cache | `RagModule` → `RagService` | App Module | `dispose` cache store and service |
+| AI chat runtime | Route Provider → `AiChatRuntimeFactory` | Route | cancel streams and `dispose` controllers |
+| ViewModel | owning Route Provider/Scope | Route | Provider/Scope `dispose` |
+| Route Controller | owning Widget State/ViewModel | Route/Widget | State `dispose` |
+| Timer | owning Module/Service/ViewModel | Owner scope | `cancel` before owner release |
+| StreamSubscription | owning Service/Controller | Owner scope | `cancel` / `DisposableBag` |
+| StreamController | owning Service/Controller | Owner scope | `close` before owner release |
+| Isolate | launching parser/transfer/native owner | Task/Owner scope | stop/kill and await exit |
+
+## 审计结论
+
+- AppRuntime 的释放顺序是 Module → SSH → SFTP → Network → database/repository →
+  Logger；每组释放失败仍继续后续组，并重新抛出第一个错误。
+- Feature 不创建或关闭 App Scope SSH/Network；SSH 通过 Lease，网络通过
+  `NetworkRuntime` Capability，Route Module 只关闭自己的数据库和 Service。
+- Drift Repository 不关闭数据库；数据库只由表中对应 Module 或 AppRuntime 关闭。
+- Route Scope 的异步 Module dispose 必须在 Scope 销毁路径触发；ViewModel、
+  Controller、Timer 和 Subscription 不得逃逸到 AppRuntime。
+- Native 资源必须完成 `stop → destroy`，Isolate 必须在 Native handle destroy 前
+  停止并等待退出；这是防止 FFI handle 和后台事件泄漏的硬约束。
+
+新增数据库、网络连接、SSH Session、Timer、Stream、Controller、Isolate 或
+Native handle 时，先在本表增加 Owner/Scope/Release，再补生命周期测试。自动检查：
+
+```powershell
+dart run tool/check_resource_owners.dart
+dart run test/tool/resource_owner_check_test.dart
+```
