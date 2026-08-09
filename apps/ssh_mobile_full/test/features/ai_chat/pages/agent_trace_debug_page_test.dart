@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 
 import '../../../test_utils/ai_port_adapters.dart';
 
@@ -388,7 +388,7 @@ _FakeStorageService _fakeStorage({
   return storage;
 }
 
-class _FakeStorageService extends StorageService {
+class _FakeStorageService extends TestStorageAdapter {
   _FakeStorageService({
     List<AgentTraceEvent> events = const [],
     List<AgentRunMetrics> metrics = const [],
@@ -427,7 +427,7 @@ class _FakeStorageService extends StorageService {
 }
 
 Widget _traceTestApp({
-  required StorageService storage,
+  required TestStorageAdapter storage,
   required String runId,
   AppLanguage language = AppLanguage.en,
   _TestAppSettings? settings,

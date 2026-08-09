@@ -4,7 +4,7 @@ import 'operational_memory_retriever.dart';
 import 'package:feature_ai/src/chat/text_chunker.dart';
 
 class ChatContextAssembler {
-  final StorageService storageService;
+  final AiStoragePort storageService;
 
   const ChatContextAssembler({required this.storageService});
 

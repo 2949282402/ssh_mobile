@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../services/storage_service.dart';
+import 'package:connection_core/connection_core.dart';
 import '../../services/performance_monitor_service.dart';
 import '../../services/system_admin_service.dart';
 import 'viewmodels/system_admin_viewmodel.dart';
@@ -16,13 +16,16 @@ class SystemAdminFeatureScope extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(
-          create: (context) =>
-              SystemAdminService(context.read<StorageService>()),
+          create: (context) => SystemAdminService(
+            connectionRepository: context.read<ConnectionRepository>(),
+            credentialRepository: context.read<CredentialRepository>(),
+            hostKeyRepository: context.read<HostKeyRepository>(),
+          ),
         ),
         ChangeNotifierProvider(
           create: (context) => SystemAdminViewModel(
             adminService: context.read<SystemAdminService>(),
-            storageService: context.read<StorageService>(),
+            connectionRepository: context.read<ConnectionRepository>(),
           ),
         ),
         ChangeNotifierProvider(

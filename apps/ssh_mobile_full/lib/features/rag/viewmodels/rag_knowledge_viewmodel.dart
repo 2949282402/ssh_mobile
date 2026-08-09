@@ -2,18 +2,19 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../../../services/rag_service.dart';
-import '../../../services/storage_service.dart';
+import '../../../services/ai_storage_adapter.dart';
 
 class RagKnowledgeViewModel extends ChangeNotifier {
   final RagService _ragService;
-  final StorageService _storageService;
+  final AppAiStorageAdapter _aiStorage;
 
   bool _isProcessing = false;
 
   RagKnowledgeViewModel({
-    required this._ragService,
-    required this._storageService,
-  }) {
+    required RagService ragService,
+    required AppAiStorageAdapter aiStorage,
+  }) : _ragService = ragService,
+       _aiStorage = aiStorage {
     _ragService.addListener(_onServiceChanged);
   }
 
@@ -37,11 +38,11 @@ class RagKnowledgeViewModel extends ChangeNotifier {
   }
 
   Future<String?> getAliyunApiKey() async {
-    return await _storageService.getAliyunApiKey();
+    return await _aiStorage.getAliyunApiKey();
   }
 
   Future<void> saveAliyunApiKey(String key) async {
-    await _storageService.saveAliyunApiKey(key);
+    await _aiStorage.saveAliyunApiKey(key);
     notifyListeners();
   }
 

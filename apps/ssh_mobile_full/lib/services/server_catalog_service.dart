@@ -1,10 +1,12 @@
 import 'dart:convert';
 
+import 'package:connection_core/connection_core.dart' as connection_core;
+
 import '../features/connection/models/connection.dart';
+import 'app_log_service.dart';
 import 'sftp_service.dart';
 import '../core/services/ssh_client_factory.dart';
 import 'ssh_service.dart';
-import 'storage_service.dart';
 import 'remote_target_scope.dart';
 import 'connection_target_binding.dart';
 
@@ -27,10 +29,16 @@ abstract interface class ServerCatalogAdapter {
 }
 
 class ServerCatalogService implements ServerCatalogAdapter {
-  final StorageService storageService;
+  final connection_core.ConnectionRepository connectionRepository;
+  final connection_core.CredentialRepository credentialRepository;
+  final connection_core.HostKeyRepository hostKeyRepository;
   final SshClientAdapter sshService;
   final SftpClientAdapter sftpService;
-  late final SshClientFactory _clientFactory = SshClientFactory(storageService);
+  late final SshClientFactory _clientFactory = SshClientFactory(
+    credentialRepository: credentialRepository,
+    hostKeyRepository: hostKeyRepository,
+    logger: AppLogService.instance,
+  );
 
   static const Set<String> _sensitiveFields = {
     'password',
@@ -60,19 +68,21 @@ class ServerCatalogService implements ServerCatalogAdapter {
   };
 
   ServerCatalogService({
-    required this.storageService,
+    required this.connectionRepository,
+    required this.credentialRepository,
+    required this.hostKeyRepository,
     required this.sshService,
     required this.sftpService,
   });
 
   @override
   List<Map<String, dynamic>> listServerSummaries() {
-    return storageService.connections.map(_buildServerSummary).toList();
+    return connectionRepository.connections.map(_buildServerSummary).toList();
   }
 
   @override
   Map<String, dynamic>? getServerDetails(String connectionId) {
-    final config = storageService.getConnection(connectionId);
+    final config = connectionRepository.getConnection(connectionId);
     if (config == null) return null;
     final latestSession = sshService.latestSessionForConnection(connectionId);
     final sessionCount = sshService.sessionCountForConnection(connectionId);
@@ -98,8 +108,9 @@ class ServerCatalogService implements ServerCatalogAdapter {
     ConnectionConfig? approvedCandidate,
   }) async {
     final target = await RemoteTargetScope.resolveIfBound(
-      storageService,
-      connectionId,
+      connectionRepository: connectionRepository,
+      credentialRepository: credentialRepository,
+      connectionId: connectionId,
     );
     final current = target.config;
     if (approvedTarget != null && !approvedTarget.matches(current)) {
@@ -124,20 +135,23 @@ class ServerCatalogService implements ServerCatalogAdapter {
       timeout: const Duration(seconds: 10),
     );
     client.close();
-    final updated = approvedCurrent == null
-        ? await storageService.updateConnectionIfMatches(
-            target.binding,
-            next.copyWith(
-              password: target.password,
-              privateKey: target.privateKey,
-            ),
-          )
-        : await storageService.updateConnectionFromSnapshotIfUnchanged(
-            expected: approvedCurrent,
-            next: next,
-          );
-    if (!updated) {
+    final currentConfig = connectionRepository.getConnection(connectionId);
+    if (currentConfig == null ||
+        !target.binding.matches(currentConfig) ||
+        (approvedCurrent != null &&
+            _configFingerprint(approvedCurrent) !=
+                _configFingerprint(currentConfig))) {
       throw RemoteTargetScopeException.targetChanged(connectionId);
+    }
+    await connectionRepository.updateConnection(
+      ConnectionConfig.fromJson(next.toJson()),
+    );
+    if (approvedCurrent == null) {
+      await credentialRepository.saveCredentials(
+        connectionId: connectionId,
+        password: target.password,
+        privateKey: target.privateKey,
+      );
     }
     return {'updated': true, 'server': _buildServerDetails(next)};
   }
@@ -188,8 +202,9 @@ class ServerCatalogService implements ServerCatalogAdapter {
   @override
   Future<Map<String, dynamic>> deleteServer(String connectionId) async {
     final target = await RemoteTargetScope.resolveIfBound(
-      storageService,
-      connectionId,
+      connectionRepository: connectionRepository,
+      credentialRepository: credentialRepository,
+      connectionId: connectionId,
     );
     final config = target.config;
     await sshService.disconnectSessionsForConnection(connectionId);
@@ -198,18 +213,20 @@ class ServerCatalogService implements ServerCatalogAdapter {
       notify: false,
       forgetPath: true,
     );
-    final deleted = await storageService.deleteConnectionIfMatches(
-      target.binding,
-    );
-    if (!deleted) {
+    final current = connectionRepository.getConnection(connectionId);
+    if (!target.binding.matches(current)) {
       throw RemoteTargetScopeException.targetChanged(connectionId);
     }
+    await connectionRepository.deleteConnection(connectionId);
+    await credentialRepository.deleteCredentials(connectionId);
     return {'deleted': true, 'connectionId': connectionId, 'name': config.name};
   }
 
   @override
   Future<Map<String, dynamic>> reorderServers(List<String> orderedIds) async {
-    final current = storageService.connections.map((item) => item.id).toList();
+    final current = connectionRepository.connections
+        .map((item) => item.id)
+        .toList();
     if (orderedIds.length != current.length ||
         orderedIds.toSet().length != orderedIds.length ||
         !current.toSet().containsAll(orderedIds)) {
@@ -219,11 +236,11 @@ class ServerCatalogService implements ServerCatalogAdapter {
     }
     for (var targetIndex = 0; targetIndex < orderedIds.length; targetIndex++) {
       final wantedId = orderedIds[targetIndex];
-      final currentIndex = storageService.connections.indexWhere(
+      final currentIndex = connectionRepository.connections.indexWhere(
         (item) => item.id == wantedId,
       );
       if (currentIndex == -1 || currentIndex == targetIndex) continue;
-      await storageService.reorderConnections(currentIndex, targetIndex);
+      await connectionRepository.reorderConnections(currentIndex, targetIndex);
     }
     return {'reordered': true, 'orderedIds': orderedIds};
   }

@@ -6,6 +6,7 @@
 import 'dart:async';
 
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+import 'package:connection_core/connection_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
@@ -17,7 +18,6 @@ import 'background_service.dart';
 import 'connection_target_binding.dart';
 import 'server_status_probe.dart';
 import 'ssh_service.dart';
-import 'storage_service.dart';
 
 part 'performance_monitor_models.dart';
 
@@ -46,13 +46,15 @@ class PerformanceMonitorService extends ChangeNotifier {
   /// 创建旧 App 依赖的兼容服务。
   factory PerformanceMonitorService(
     SshService sshService,
-    StorageService storageService, {
+    ConnectionRepository connectionRepository, {
     AppSettings? appSettings,
   }) {
     return PerformanceMonitorService._(
       monitoring.MonitoringService(
         sshPort: _LegacyMonitoringSshPort(sshService),
-        connectionCatalog: _LegacyMonitoringConnectionCatalog(storageService),
+        connectionCatalog: _LegacyMonitoringConnectionCatalog(
+          connectionRepository,
+        ),
         logger: const _LegacyMonitoringLogger(),
         background: _LegacyMonitoringBackground(appSettings),
       ),
@@ -310,16 +312,16 @@ legacy_ssh.SshHostKeyConfirmation? _toLegacyConfirmation(
   );
 }
 
-/// 旧 StorageService 到连接平台 Port 的兼容适配器。
+/// Connection Core 到 Monitoring 连接 Port 的兼容适配器。
 final class _LegacyMonitoringConnectionCatalog
     implements monitoring.MonitoringConnectionCatalogPort {
-  const _LegacyMonitoringConnectionCatalog(this._storageService);
+  const _LegacyMonitoringConnectionCatalog(this._connectionRepository);
 
-  final StorageService _storageService;
+  final ConnectionRepository _connectionRepository;
 
   @override
   ServerPlatform? serverPlatformFor(String connectionId) =>
-      _storageService.getConnection(connectionId)?.serverPlatform;
+      _connectionRepository.getConnection(connectionId)?.serverPlatform;
 }
 
 /// 旧 AppLogService 到 Feature Logger Port 的兼容适配器。

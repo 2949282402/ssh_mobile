@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:connection_core/connection_core.dart';
 import '../../../core/services/ssh_host_key_policy.dart';
 import '../../../services/system_admin_service.dart';
-import '../../../services/storage_service.dart';
 import '../../../widgets/system_power_confirm_flow.dart';
 import '../../connection/models/connection.dart';
 import '../models/system_admin.dart';
 
 class SystemAdminViewModel extends ChangeNotifier {
   final SystemAdminService _adminService;
-  final StorageService _storageService;
+  final ConnectionRepository _connectionRepository;
 
   // View state
   static const _serversCollapsedStorageKey = 'system_admin_servers_collapsed';
@@ -37,11 +37,11 @@ class SystemAdminViewModel extends ChangeNotifier {
   String? _connectingConnectionId;
 
   SystemAdminViewModel({
-    required this._adminService,
-    required this._storageService,
-  }) {
+    required SystemAdminService adminService,
+    required ConnectionRepository connectionRepository,
+  }) : _adminService = adminService,
+       _connectionRepository = connectionRepository {
     _adminService.addListener(_onAdminServiceChanged);
-    _storageService.addListener(_onStorageChanged);
     if (_adminService.isConnected) {
       _selectedConnectionId = _adminService.connectionId;
       _lastConnectedId = _adminService.connectionId;
@@ -51,7 +51,6 @@ class SystemAdminViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _adminService.removeListener(_onAdminServiceChanged);
-    _storageService.removeListener(_onStorageChanged);
     super.dispose();
   }
 
@@ -92,8 +91,8 @@ class SystemAdminViewModel extends ChangeNotifier {
         _adminService.errorMessage != null;
   }
 
-  List<ConnectionConfig> get connections => _storageService.connections;
-  bool get storageInitialized => _storageService.initialized;
+  List<ConnectionConfig> get connections => _connectionRepository.connections;
+  bool get storageInitialized => true;
   ConnectionConfig? get selectedConnection =>
       connectionById(_selectedConnectionId);
   bool get hasValidSelection {
@@ -166,15 +165,6 @@ class SystemAdminViewModel extends ChangeNotifier {
       _clearManagementData();
       notifyListeners();
     }
-  }
-
-  void _onStorageChanged() {
-    if (_selectedConnectionId != null &&
-        connectionById(_selectedConnectionId) == null) {
-      clearInvalidSelection();
-      return;
-    }
-    notifyListeners();
   }
 
   void _clearManagementData() {

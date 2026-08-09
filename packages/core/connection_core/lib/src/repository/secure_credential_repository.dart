@@ -39,7 +39,7 @@ final class FlutterSecureStorageClient implements SecureStorageClient {
 
 /// 将 Connection 密码和私钥绑定到平台 Secure Storage 的 Repository。
 ///
-/// 键名带有模块前缀，避免与旧 StorageService 的 SharedPreferences/Secret
+/// 键名带有模块前缀，避免与其它 SharedPreferences/Secret
 /// 键混用；空值通过 delete 写入路径处理，避免把空字符串误认为有效凭据。
 final class SecureCredentialRepository implements CredentialRepository {
   /// 密码键前缀。

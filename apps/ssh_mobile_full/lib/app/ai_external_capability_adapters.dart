@@ -5,7 +5,7 @@
 // 由 feature_webview Package 持有，AI 只看到自己的能力 Port。
 
 import 'package:feature_ai/feature_ai.dart' as ai;
-import 'package:connection_core/connection_core.dart';
+import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_webview/feature_webview.dart' as webview;
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
@@ -18,7 +18,6 @@ import '../services/server_catalog_service.dart' as legacy_catalog;
 import '../services/server_diagnostics_service.dart' as legacy_diagnostics;
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
-import '../services/storage_service.dart';
 
 /// App 的 AES-GCM 数据保护服务到 AI 数据库加密 Port 的适配器。
 final class AppAiDataProtectionAdapter implements ai.AiTextProtectionPort {
@@ -411,11 +410,15 @@ final class AppAiWebViewAdapter implements ai.AiWebViewPort {
 /// 将服务端目录能力桥接为 AI Port，并保留原有审批快照校验。
 final class AppAiServerCatalogAdapter implements ai.AiServerCatalogPort {
   AppAiServerCatalogAdapter({
-    required StorageService storage,
+    required connection_core.ConnectionRepository connectionRepository,
+    required connection_core.CredentialRepository credentialRepository,
+    required connection_core.HostKeyRepository hostKeyRepository,
     required SshService ssh,
     required SftpService sftp,
   }) : _delegate = legacy_catalog.ServerCatalogService(
-         storageService: storage,
+         connectionRepository: connectionRepository,
+         credentialRepository: credentialRepository,
+         hostKeyRepository: hostKeyRepository,
          sshService: ssh,
          sftpService: sftp,
        );
@@ -431,8 +434,8 @@ final class AppAiServerCatalogAdapter implements ai.AiServerCatalogPort {
       _delegate.getServerDetails(connectionId);
 
   @override
-  ConnectionConfig buildUpdateCandidate(
-    ConnectionConfig current,
+  connection_core.ConnectionConfig buildUpdateCandidate(
+    connection_core.ConnectionConfig current,
     Map<String, dynamic> changes,
   ) => legacy_catalog.ServerCatalogService.buildUpdateCandidate(
     current,
@@ -444,8 +447,8 @@ final class AppAiServerCatalogAdapter implements ai.AiServerCatalogPort {
     required String connectionId,
     required Map<String, dynamic> changes,
     ssh_core.SshTargetBinding? approvedTarget,
-    ConnectionConfig? approvedCurrent,
-    ConnectionConfig? approvedCandidate,
+    connection_core.ConnectionConfig? approvedCurrent,
+    connection_core.ConnectionConfig? approvedCandidate,
   }) => _delegate.updateServerMetadata(
     connectionId: connectionId,
     changes: changes,
@@ -469,10 +472,10 @@ final class AppAiServerCatalogAdapter implements ai.AiServerCatalogPort {
 final class AppAiServerDiagnosticsAdapter
     implements ai.AiServerDiagnosticsPort {
   AppAiServerDiagnosticsAdapter({
-    required StorageService storage,
+    required connection_core.ConnectionRepository connectionRepository,
     required SshService ssh,
   }) : _delegate = legacy_diagnostics.ServerDiagnosticsService(
-         storageService: storage,
+         connectionRepository: connectionRepository,
          sshService: ssh,
        );
 

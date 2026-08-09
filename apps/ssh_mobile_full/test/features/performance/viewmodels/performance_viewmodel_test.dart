@@ -5,12 +5,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/performance/viewmodels/performance_viewmodel.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late SshService sshService;
   late PerformanceMonitorService monitorService;
 
@@ -19,11 +19,14 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
 
-    sshService = SshService(storageService);
-    monitorService = PerformanceMonitorService(sshService, storageService);
+    sshService = createTestSshService(storageService);
+    monitorService = createTestPerformanceMonitorService(
+      sshService,
+      storageService,
+    );
   });
 
   tearDown(() {

@@ -2,7 +2,7 @@ part of 'ai_tool_service.dart';
 
 class MonitorToolsProvider implements AiToolProvider {
   final PerformanceMonitorToolAdapter performanceMonitorToolService;
-  final StorageService storageService;
+  final AiStoragePort storageService;
 
   const MonitorToolsProvider({
     required this.performanceMonitorToolService,

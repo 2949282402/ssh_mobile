@@ -85,7 +85,7 @@ class RemoteTargetScope {
   /// operations. Inside a scope, connection ids absent from the authorized map
   /// fail closed and stale bindings cannot silently route to an edited server.
   static Future<ConnectionRuntimeTarget> resolveIfBound(
-    StorageService storage,
+    AiStoragePort storage,
     String connectionId,
   ) async {
     final normalizedId = connectionId.trim();

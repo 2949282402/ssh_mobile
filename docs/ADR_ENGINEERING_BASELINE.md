@@ -1,10 +1,10 @@
 # Engineering Baseline ADR
 
-> 最新更新时间：2026-08-08
+> 最新更新时间：2026-08-09
 
 Status: Accepted
 
-Updated: 2026-07-17
+Updated: 2026-08-09
 
 ## Decisions
 
@@ -28,20 +28,20 @@ Updated: 2026-07-17
   coordination, and reusable feature state belong in ViewModels or services.
 - Expose protocol and repository seams through small Dart interfaces
   (`SshClientAdapter`, `SftpClientAdapter`, `LlmClientAdapter`,
-  `AiToolExecutor`, and storage repository contracts) so ViewModels and tests
-  can inject fakes instead of real SSH/SFTP/LLM clients. `StorageService` may
-  implement repository contracts when that keeps persistence centralized.
+  `AiToolExecutor`, and repository contracts) so ViewModels and tests can
+  inject fakes instead of real SSH/SFTP/LLM clients. App Shell adapters may
+  compose repositories, but Feature/Core modules remain their data Owners.
 - Keep AI server tools safe by default: read-only diagnostics may run directly,
   write-like commands require user approval, and delete/remove commands remain
   blocked.
 - Store secrets in secure storage only. Export/import and durable memory must
   never include passwords, private keys, API keys, bearer tokens, or host
   credentials.
-- Keep `StorageService` as the compatibility facade. Store growth-oriented
-  structured data in Drift repositories under `lib/data/`, small settings in
-  SharedPreferences, and credentials in secure storage. Sensitive AI content,
-  traces, todo steps, and Playbook content must be encrypted before SQLite
-  writes.
+- Store growth-oriented structured data in the owning Feature/Core Drift
+  repositories, small settings in SharedPreferences, and credentials in secure
+  storage. `AppAiStorageAdapter` is only an injected AI Port adapter and does
+  not own the shared App database. Sensitive AI content, traces, todo steps,
+  and Playbook content must be encrypted before SQLite writes.
 - Android release builds do not allow cleartext traffic by default. Debug and
   profile builds may allow cleartext for local provider/SearXNG testing.
 

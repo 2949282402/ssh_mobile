@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_tools.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 import 'package:feature_ai/ai_agent.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
@@ -15,7 +15,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('Plan execution step-by-step integration tests', () {
-    late StorageService storage;
+    late TestStorageAdapter storage;
     late _MockToolService mockTools;
     late LlmChatService llm;
 
@@ -24,7 +24,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
 
-      storage = StorageService();
+      storage = TestStorageAdapter();
       await storage.init();
       attachTestAiRepository(storage);
 

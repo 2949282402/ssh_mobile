@@ -34,7 +34,7 @@ class OperationalMemoryBundle {
 }
 
 class OperationalMemoryRetriever {
-  final StorageService storageService;
+  final AiStoragePort storageService;
   final RagCapability? ragService;
   final SkillIndexService skillIndexService;
 

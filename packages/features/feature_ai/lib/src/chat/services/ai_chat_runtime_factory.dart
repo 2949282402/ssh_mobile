@@ -11,7 +11,7 @@ import 'package:feature_ai/src/chat/operational_memory_retriever.dart';
 import 'package:feature_ai/src/skills/skill_index_service.dart';
 
 class AiChatRuntimeFactory {
-  final StorageService storageService;
+  final AiStoragePort storageService;
   final SshService sshService;
   final SftpService sftpService;
   final PerformanceMonitorService performanceMonitorService;

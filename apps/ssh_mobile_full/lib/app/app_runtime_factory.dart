@@ -20,9 +20,9 @@ import '../services/display_mode_service.dart';
 import '../services/network/network_identity_service.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/sftp_service.dart';
+import '../services/terminal_session_metadata_store.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
-import '../services/storage_service.dart';
 import 'app_runtime.dart';
 import 'ai_external_capability_adapters.dart';
 import 'ai_feature_adapters.dart';
@@ -99,18 +99,21 @@ final class AppRuntimeFactory {
     final webViewSettingsAdapter = AppWebViewSettingsAdapter(appSettings);
     final developerLogAdapter = AppDeveloperLogAdapter(logger);
     final developerSettingsAdapter = AppDeveloperSettingsAdapter(appSettings);
-    final storageService = StorageService();
+    final terminalMetadataStore = TerminalSessionMetadataStore();
     final bootstrapCoordinator = AppBootstrapCoordinator(
       appSettings: appSettings,
-      storageService: storageService,
     );
     unawaited(bootstrapCoordinator.ensureBootstrap());
-    storageService.registerOnImportCallback(appSettings.init);
 
     final shortcutCommandService = ShortcutCommandService()..init();
-    storageService.registerOnImportCallback(shortcutCommandService.init);
 
-    final sshService = SshService(storageService, appSettings: appSettings);
+    final sshService = SshService(
+      connectionRepository: runtimeConnectionRepository,
+      credentialRepository: runtimeCredentialRepository,
+      hostKeyRepository: runtimeHostKeyRepository,
+      terminalMetadataStore: terminalMetadataStore,
+      appSettings: appSettings,
+    );
     final terminalSshManager = AppTerminalSshSessionManager(sshService);
     unawaited(
       sshService.ensureInitialized().catchError((error, stackTrace) {
@@ -124,7 +127,7 @@ final class AppRuntimeFactory {
 
     final playbookSettingsAdapter = AppPlaybookSettingsAdapter(appSettings);
     final playbookConnectionCatalogAdapter =
-        AppPlaybookConnectionCatalogAdapter(storageService);
+        AppPlaybookConnectionCatalogAdapter(runtimeConnectionRepository);
     final playbookModule = feature_playbook.PlaybookModule(
       databaseFactory: playbookDatabaseFactory,
     );
@@ -141,11 +144,31 @@ final class AppRuntimeFactory {
     );
     await playbookModule.initialize();
     await playbookModule.activate();
-    storageService.attachPlaybookRepository(playbookModule.repository);
+
+    final aiModule = feature_ai.AiModule(databaseFactory: aiDatabaseFactory);
+    final aiStorageAdapter = AppAiStorageAdapter(
+      connectionRepository: runtimeConnectionRepository,
+      credentialRepository: runtimeCredentialRepository,
+      hostKeyRepository: runtimeHostKeyRepository,
+      playbookRepository: playbookModule.repository,
+      aiModule: aiModule,
+      terminalMetadataStore: terminalMetadataStore,
+    );
+    aiStorageAdapter.registerOnImportCallback(appSettings.init);
+    aiStorageAdapter.registerOnImportCallback(shortcutCommandService.init);
+    unawaited(
+      aiStorageAdapter.init().catchError((error, stackTrace) {
+        logger.error(
+          'AI storage preferences initialization failed',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }),
+    );
 
     final ragSettingsAdapter = AppRagSettingsAdapter(
       appSettings,
-      storageService,
+      aiStorageAdapter,
     );
     final ragModule = feature_rag.RagModule(
       databaseFactory: ragDatabaseFactory,
@@ -160,7 +183,11 @@ final class AppRuntimeFactory {
     await ragModule.initialize();
     await ragModule.activate();
 
-    final sftpService = SftpService(storageService);
+    final sftpService = SftpService(
+      connectionRepository: runtimeConnectionRepository,
+      credentialRepository: runtimeCredentialRepository,
+      hostKeyRepository: runtimeHostKeyRepository,
+    );
     final monitoringModule = monitoring.MonitoringModule();
     await monitoringModule.register(
       ModuleContext.fromMap({
@@ -179,8 +206,6 @@ final class AppRuntimeFactory {
     final performanceMonitorService = PerformanceMonitorService.fromDelegate(
       monitoringService,
     );
-    final aiModule = feature_ai.AiModule(databaseFactory: aiDatabaseFactory);
-    final aiStorageAdapter = AppAiStorageAdapter(storageService);
     final aiSettingsAdapter = AppAiSettingsAdapter(appSettings);
     final aiSshAdapter = AppAiSshAdapter(sshService);
     final aiSftpAdapter = AppAiSftpAdapter(sftpService);
@@ -189,12 +214,14 @@ final class AppRuntimeFactory {
     final aiHealthAdapter = AppAiHealthAdapter(aiClientSystemAdapter);
     final aiWebViewAdapter = AppAiWebViewAdapter(delegate: webViewService);
     final aiServerCatalogAdapter = AppAiServerCatalogAdapter(
-      storage: storageService,
+      connectionRepository: runtimeConnectionRepository,
+      credentialRepository: runtimeCredentialRepository,
+      hostKeyRepository: runtimeHostKeyRepository,
       ssh: sshService,
       sftp: sftpService,
     );
     final aiServerDiagnosticsAdapter = AppAiServerDiagnosticsAdapter(
-      storage: storageService,
+      connectionRepository: runtimeConnectionRepository,
       ssh: sshService,
     );
     final aiRagCapability = AppAiRagCapabilityAdapter(ragModule.service);
@@ -210,12 +237,6 @@ final class AppRuntimeFactory {
         feature_ai.AiLoggerPort: aiLoggerAdapter,
       }),
     );
-    // StorageService 的旧 AI API 只作为兼容外观，第一次调用时才触发
-    // AiModule.initialize()，因此普通启动不会创建 ai.db。
-    storageService.attachAiRepositoryLoader(() async {
-      await aiModule.initialize();
-      return aiModule.repository;
-    });
     final aiChatRuntimeFactory = feature_ai.AiChatRuntimeFactory(
       storageService: aiStorageAdapter,
       sshService: aiSshAdapter,
@@ -278,7 +299,6 @@ final class AppRuntimeFactory {
     return AppRuntime(
       appLogService: logger,
       appSettings: appSettings,
-      storageService: storageService,
       connectionDatabase: runtimeConnectionDatabase,
       connectionRepository: runtimeConnectionRepository,
       credentialRepository: runtimeCredentialRepository,

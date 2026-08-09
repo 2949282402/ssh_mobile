@@ -63,7 +63,7 @@ void main() {
       expect(runtime.isDisposed, isFalse);
       expect(runtime.appLogService, isNotNull);
       expect(runtime.logger, same(runtime.appLogService));
-      expect(runtime.storageService, isNotNull);
+      expect(runtime.aiStorageAdapter, isNotNull);
       expect(runtime.connectionDatabase, isNotNull);
       expect(runtime.connectionRepository, isNotNull);
       expect(runtime.credentialRepository, isNotNull);

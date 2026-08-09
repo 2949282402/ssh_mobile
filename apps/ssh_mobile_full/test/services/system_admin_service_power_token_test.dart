@@ -1,11 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/ssh_service.dart'; // for RemoteCommandResult
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/system_admin_service.dart';
 import 'package:ssh_mobile/widgets/system_power_confirm_flow.dart';
 
 void main() {
-  late StorageService fakeStorage;
+  late TestStorageAdapter fakeStorage;
   late SystemAdminService service;
   String? lastCommand;
   int nextExitCode = 0;
@@ -13,8 +13,8 @@ void main() {
   String nextStderr = '';
 
   setUp(() {
-    fakeStorage = StorageService();
-    service = SystemAdminService(fakeStorage);
+    fakeStorage = TestStorageAdapter();
+    service = createTestSystemAdminService(fakeStorage);
     lastCommand = null;
     nextExitCode = 0;
     nextStdout = '';

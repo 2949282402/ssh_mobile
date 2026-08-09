@@ -13,7 +13,7 @@ import '../utils/pdf_text_extractor.dart';
 import '../utils/text_chunker.dart';
 import '../utils/vector_search_utils.dart';
 import 'app_log_service.dart';
-import 'storage_service.dart';
+import 'ai_storage_adapter.dart';
 
 /// 旧 App 调用面的 RAG 元数据类型别名。
 ///
@@ -22,7 +22,7 @@ import 'storage_service.dart';
 typedef RagDocumentMetadata = feature_rag.RagDocumentMetadata;
 
 class RagService extends ChangeNotifier implements feature_rag.RagCapability {
-  final StorageService storageService;
+  final AppAiStorageAdapter aiStorage;
   final List<RagDocumentMetadata> _documents = [];
   final Bm25SearchEngine _searchEngine = Bm25SearchEngine();
   bool _isLoading = false;
@@ -30,7 +30,7 @@ class RagService extends ChangeNotifier implements feature_rag.RagCapability {
 
   Future<void>? _initFuture;
 
-  RagService({required this.storageService});
+  RagService({required this.aiStorage});
 
   List<RagDocumentMetadata> get documents => List.unmodifiable(_documents);
   bool get isLoading => _isLoading;
@@ -51,7 +51,7 @@ class RagService extends ChangeNotifier implements feature_rag.RagCapability {
     notifyListeners();
 
     try {
-      await storageService.initFuture;
+      await aiStorage.initFuture;
       final supportDir = await getApplicationSupportDirectory();
       final metadataFile = File(p.join(supportDir.path, 'rag_metadata.json'));
 
@@ -134,8 +134,8 @@ class RagService extends ChangeNotifier implements feature_rag.RagCapability {
       }
 
       // 2.5 尝试生成向量 Embedding (如果配置了阿里云 DashScope Key)
-      final aliyunKey = await storageService.getAliyunApiKey();
-      if (aliyunKey != null && aliyunKey.isNotEmpty) {
+      final aliyunKey = (await aiStorage.getAliyunApiKey())?.trim() ?? '';
+      if (aliyunKey.isNotEmpty) {
         try {
           final client = AliyunEmbeddingClient(apiKey: aliyunKey);
           final chunkTexts = chunks.map((c) => c.text).toList();
@@ -293,8 +293,7 @@ class RagService extends ChangeNotifier implements feature_rag.RagCapability {
       };
       final aliyunKey = effectiveSearchMode == 'bm25'
           ? ''
-          : (aliyunApiKey ?? await storageService.getAliyunApiKey() ?? '')
-                .trim();
+          : (aliyunApiKey ?? await aiStorage.getAliyunApiKey() ?? '').trim();
       final supportDir = await getApplicationSupportDirectory();
 
       // 如果选了向量/混合搜索，但没有配 Aliyun 密钥，则回退为 BM25 搜索

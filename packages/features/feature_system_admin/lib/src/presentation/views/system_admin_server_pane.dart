@@ -125,7 +125,9 @@ class _AdminServerPane extends StatelessWidget {
           : Icons.keyboard_double_arrow_left_rounded,
       onCollapse: onCollapse,
       onReorder: (oldIndex, newIndex) {
-        context.read<StorageService>().reorderConnections(oldIndex, newIndex);
+        context
+            .read<SystemAdminConnectionCatalogPort>()
+            .reorderConnections(oldIndex, newIndex);
       },
       tileBuilder: (context, connection, compact) => _AdminServerTileBinding(
         connection: connection,

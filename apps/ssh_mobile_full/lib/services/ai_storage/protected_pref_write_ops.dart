@@ -1,23 +1,23 @@
-part of '../storage_service.dart';
+part of '../ai_storage_adapter.dart';
 
-/// Extension defining the buffered write operations for storage service.
+/// Extension defining the buffered write operations for AI storage adapter.
 ///
 /// Note: Methods starting with underscore in an extension can only be called
-/// within the library (since it's a part of `storage_service.dart`), which is perfect.
+/// within the library (since it is a part of `ai_storage_adapter.dart`), which is perfect.
 /// Public methods like `flushPendingWrites` must be declared on the class itself
 /// or as a public extension method, but since Dart extension methods are resolved statically,
-/// a public method on `extension _BufferedWriteOps` might not be visible as a member of `StorageService`
-/// if `_BufferedWriteOps` is a private extension. Let's make the extension public or move public method to StorageService.
-/// Actually, making the extension public (e.g. `extension BufferedWriteOps on StorageService`)
+/// a public method on `extension _BufferedWriteOps` might not be visible as a member of `AppAiStorageAdapter`
+/// if `_BufferedWriteOps` is a private extension. Let's make the extension public or move public method to AppAiStorageAdapter.
+/// Actually, making the extension public (e.g. `extension BufferedWriteOps on AppAiStorageAdapter`)
 /// solves the issue, as long as it's imported or part of the same library (which it is, since it's a `part`).
-/// Even better, we can declare `flushPendingWrites` directly in `StorageService` in `storage_service.dart` and let it delegate to
+/// Even better, we can declare `flushPendingWrites` directly in `AppAiStorageAdapter` in `ai_storage_adapter.dart` and let it delegate to
 /// a helper, or just make the extension public!
-/// Wait, in Dart, if a client does `context.read<StorageService>().flushPendingWrites()`, and `flushPendingWrites()`
-/// is defined in a public extension `extension BufferedWriteOps on StorageService` inside the same library,
-/// it will be visible to external users as long as they import `storage_service.dart`!
+/// Wait, in Dart, if a client does `context.read<AppAiStorageAdapter>().flushPendingWrites()`, and `flushPendingWrites()`
+/// is defined in a public extension `extension BufferedWriteOps on AppAiStorageAdapter` inside the same library,
+/// it will be visible to external users as long as they import `ai_storage_adapter.dart`!
 /// Yes, a public extension on a public class adds public methods to that class.
-/// Let's make it `extension BufferedWriteOps on StorageService`.
-extension BufferedWriteOps on StorageService {
+/// Let's make it `extension BufferedWriteOps on AppAiStorageAdapter`.
+extension BufferedWriteOps on AppAiStorageAdapter {
   /// 加密读取：从 SharedPreferences 读取后，如果已加密则自动解密
   Future<String?> _readProtectedPref(String key) async {
     final value = _prefs?.getString(key);
@@ -58,15 +58,10 @@ extension BufferedWriteOps on StorageService {
     pending.value = value;
     pending.generation++;
     pending.timer?.cancel();
-    pending.timer = Timer(StorageService._protectedPrefWriteDebounce, () {
+    pending.timer = Timer(AppAiStorageAdapter._protectedPrefWriteDebounce, () {
       unawaited(_flushProtectedPrefWrite(key));
     });
     return Future.value();
-  }
-
-  Future<void> flushPendingWrites() async {
-    final keys = _pendingProtectedPrefWrites.keys.toList(growable: false);
-    await Future.wait(keys.map(_flushProtectedPrefWrite));
   }
 
   Future<void> _flushProtectedPrefWrite(String key) {

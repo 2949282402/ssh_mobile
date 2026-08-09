@@ -1,12 +1,13 @@
-// App Shell 旧路径的兼容实现。
+// App Shell 的远程目标解析边界。
 //
-// AI 工具的新实现位于 feature_ai；SSH、SFTP 和服务目录等尚未迁移的
-// App Service 仍依赖旧 StorageService 类型，因此这里保留其原有边界，
-// 避免把 App 实现反向引入 Feature Package。
+// 该文件只处理审批绑定的 Zone 作用域和 Connection Core Repository，
+// 不持有数据库或统一存储门面；密码和私钥仅在解析后的短生命周期对象中
+// 存在。
 import 'dart:async';
 
+import 'package:connection_core/connection_core.dart';
+
 import 'connection_target_binding.dart';
-import 'storage_service.dart';
 
 /// 远程执行目标范围校验失败时返回的结构化异常。
 class RemoteTargetScopeException implements Exception {
@@ -87,14 +88,15 @@ class RemoteTargetScope {
   }
 
   /// 在网络边界解析当前保存的目标与凭据，并拒绝越权或过期绑定。
-  static Future<ConnectionRuntimeTarget> resolveIfBound(
-    StorageService storage,
-    String connectionId,
-  ) async {
+  static Future<ConnectionRuntimeTarget> resolveIfBound({
+    required ConnectionRepository connectionRepository,
+    required CredentialRepository credentialRepository,
+    required String connectionId,
+  }) async {
     final normalizedId = connectionId.trim();
     final scopedBindings = currentBindings;
     final binding = scopedBindings == null
-        ? storage.captureConnectionTargetBindings([normalizedId])[normalizedId]
+        ? _captureBinding(connectionRepository, normalizedId)
         : scopedBindings[normalizedId];
 
     if (binding == null) {
@@ -104,12 +106,40 @@ class RemoteTargetScope {
       throw RemoteTargetScopeException.notFound(normalizedId);
     }
 
-    final target = await storage.resolveConnectionTarget(binding);
+    final target = await resolveBinding(
+      binding,
+      connectionRepository: connectionRepository,
+      credentialRepository: credentialRepository,
+    );
     if (target != null) return target;
 
-    if (storage.getConnection(normalizedId) == null) {
+    if (connectionRepository.getConnection(normalizedId) == null) {
       throw RemoteTargetScopeException.notFound(normalizedId);
     }
     throw RemoteTargetScopeException.targetChanged(normalizedId);
+  }
+
+  /// 按已授权绑定读取当前配置和安全凭据。
+  static Future<ConnectionRuntimeTarget?> resolveBinding(
+    ConnectionTargetBinding binding, {
+    required ConnectionRepository connectionRepository,
+    required CredentialRepository credentialRepository,
+  }) async {
+    final config = connectionRepository.getConnection(binding.id);
+    if (!binding.matches(config)) return null;
+    return ConnectionRuntimeTarget(
+      binding,
+      config!,
+      await credentialRepository.getPassword(binding.id),
+      await credentialRepository.getPrivateKey(binding.id),
+    );
+  }
+
+  static ConnectionTargetBinding? _captureBinding(
+    ConnectionRepository repository,
+    String connectionId,
+  ) {
+    final config = repository.getConnection(connectionId);
+    return config == null ? null : ConnectionTargetBinding.fromConfig(config);
   }
 }

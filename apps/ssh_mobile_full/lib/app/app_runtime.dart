@@ -28,19 +28,17 @@ import '../services/performance_monitor_service.dart';
 import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
-import '../services/storage_service.dart';
 
 /// 应用生命周期运行时，持有 App Scope 的基础设施和长期服务。
 ///
-/// 这里暂时保留旧 Service 类型，是为了先建立唯一 Owner，再在后续
-/// Step 中逐个替换为 Core/Infrastructure 的公共契约。UI 只能通过构造
-/// 注入或 Provider 读取这些实例，不能自行创建同类全局对象。
+/// Runtime 只持有 App Scope 的基础设施与 Feature Module，不持有跨模块的
+/// 统一数据库门面。UI 只能通过构造注入或 Provider 读取这些实例，不能
+/// 自行创建同类全局对象。
 final class AppRuntime implements Disposable {
   /// 创建由 AppRuntime 独占的应用级资源集合。
   AppRuntime({
     required this.appLogService,
     required this.appSettings,
-    required this.storageService,
     required this.connectionDatabase,
     required this.connectionRepository,
     required this.credentialRepository,
@@ -91,10 +89,6 @@ final class AppRuntime implements Disposable {
   // TODO(refactor-step-06): 替换为配置模块的公共设置契约。
   final AppSettings appSettings;
 
-  // TODO(refactor-step-22): 将剩余跨 Feature 数据库逐步从旧 StorageService
-  // facade 拆到各自模块；Connection 数据库已在本 Runtime 中独立归属。
-  final StorageService storageService;
-
   /// Connection 模块独立数据库，由 Runtime 创建并在数据库阶段关闭。
   final connection_core.ConnectionDatabase connectionDatabase;
 
@@ -140,7 +134,7 @@ final class AppRuntime implements Disposable {
   /// 供 Playbook Route Scope 使用的设置适配器，不拥有 AppSettings。
   final AppPlaybookSettingsAdapter playbookSettingsAdapter;
 
-  /// 供 Playbook Route Scope 使用的连接目录适配器，不拥有 StorageService。
+  /// 供 Playbook Route Scope 使用的连接目录适配器，不拥有底层 Repository。
   final AppPlaybookConnectionCatalogAdapter playbookConnectionCatalogAdapter;
 
   /// 旧 Runtime API 兼容视图；实际 Service Owner 是 [playbookModule]。
@@ -150,7 +144,7 @@ final class AppRuntime implements Disposable {
   /// RAG Module 的唯一 App Scope Owner。
   final feature_rag.RagModule ragModule;
 
-  /// 供 RAG Route Scope 使用的设置适配器，不拥有 AppSettings/Storage。
+  /// 供 RAG Route Scope 使用的设置适配器，不拥有 AppSettings 或安全存储。
   final AppRagSettingsAdapter ragSettingsAdapter;
 
   /// 旧 Runtime API 兼容视图；实际 Service Owner 是 [ragModule]。
@@ -255,6 +249,10 @@ final class AppRuntime implements Disposable {
     });
     await attempt(lanShareModule.dispose);
     await attempt(lanShareSettingsAdapter.dispose);
+    await attempt(() async {
+      await aiStorageAdapter.shutdown();
+      aiStorageAdapter.dispose();
+    });
     await attempt(aiModule.dispose);
     // AI 停止后再关闭 WebView，确保运行中的客户端工具不会继续访问
     // 已经释放的 Controller；设置适配器先解除 AppSettings 监听。
@@ -297,13 +295,6 @@ final class AppRuntime implements Disposable {
     await attempt(ragSettingsAdapter.dispose);
     await attempt(shortcutCommandService.dispose);
     await attempt(appSettings.dispose);
-    await attempt(() async {
-      try {
-        await storageService.shutdown();
-      } finally {
-        storageService.dispose();
-      }
-    });
     await attempt(() async {
       try {
         // 等待异步首载完成，避免关闭数据库后初始化任务再次访问句柄。

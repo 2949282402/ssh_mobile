@@ -5,17 +5,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 
 import '../test_utils/ai_port_adapters.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storage;
+  late TestStorageAdapter storage;
 
-  Future<StorageService> initializedStorage() async {
-    final service = StorageService();
+  Future<TestStorageAdapter> initializedStorage() async {
+    final service = TestStorageAdapter();
     await service.init();
     attachTestAiRepository(service);
     return service;
@@ -680,7 +680,7 @@ void main() {
       final jsonText = await storage.exportAppDataJson();
       final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
 
-      expect(decoded['version'], 2);
+      expect(decoded['version'], 3);
 
       final appSettings = decoded['appSettings'] as Map<String, dynamic>;
       expect(appSettings['language'], 'en');

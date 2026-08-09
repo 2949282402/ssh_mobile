@@ -1,6 +1,6 @@
 # SSH Mobile Android 原生复写零基础教程
 
-> 最新更新时间：2026-08-03
+> 最新更新时间：2026-08-09
 
 这是一份从 0 开始复写 SSH Mobile 的 Android 原生教程。它假设你只学过传统 Java + XML Android 开发，现在想学习 Kotlin、Jetpack Compose 和 MVVM 架构，并用本项目已有功能做一个能投 Android 实习的作品。
 
@@ -59,7 +59,7 @@ ssh-mobile-native/
 
 | 当前 Flutter 文件 | 你要在 Android 原生版实现的功能 |
 | --- | --- |
-| `lib/services/storage_service.dart` | 本地存储、密钥、备份和多个 repository 合同实现 |
+| `packages/core/connection_core/`、`packages/features/feature_ai/` 等 | 按模块划分的数据库、Repository、偏好、密钥和备份边界；Android 版也应按 Owner 拆分，禁止复制一个统一存储门面 |
 | `lib/services/ssh_service.dart` | SSH 会话、多窗口、tmux |
 | `lib/services/sftp_service.dart` | SFTP 文件管理 |
 | `lib/services/performance_monitor_service.dart` | 性能监控 |

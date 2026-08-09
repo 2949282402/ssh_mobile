@@ -9,12 +9,9 @@ import 'package:feature_ai/ai_tools.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_system_tool_service.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
-import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 import 'package:feature_ai/ai_agent.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
@@ -23,7 +20,7 @@ part 'tool_loop_core_tests.dart';
 part 'tool_loop_gate_tests.dart';
 part 'tool_loop_test_fakes.dart';
 
-late StorageService storage;
+late TestStorageAdapter storage;
 late AiToolService tools;
 late LlmChatService llm;
 
@@ -34,7 +31,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
 
-      storage = StorageService();
+      storage = TestStorageAdapter();
       await storage.init();
       attachTestAiRepository(storage);
 
@@ -44,13 +41,13 @@ void main() {
         apiKey: 'dummy-key',
       );
 
-      final ssh = SshService(storage);
-      final sftp = SftpService(storage);
+      final ssh = createTestSshService(storage);
+      final sftp = createTestSftpService(storage);
       final diagnostics = ServerDiagnosticsService(
-        storageService: storage,
+        connectionRepository: storage.connectionRepository,
         sshService: ssh,
       );
-      final monitor = PerformanceMonitorService(ssh, storage);
+      final monitor = createTestPerformanceMonitorService(ssh, storage);
       tools = createAiToolServiceFromLegacy(
         storageService: storage,
         sshService: ssh,

@@ -5,12 +5,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/playbook/viewmodels/playbook_viewmodel.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late SshService sshService;
   late PlaybookService playbookService;
 
@@ -19,12 +19,12 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
 
-    sshService = SshService(storageService);
+    sshService = createTestSshService(storageService);
     playbookService = PlaybookService(
-      storageService: storageService,
+      repository: storageService.playbookRepository,
       sshService: sshService,
     );
   });
@@ -38,7 +38,7 @@ void main() {
     test('Initialization status and default connection setup', () {
       final viewModel = PlaybookViewModel(
         playbookService: playbookService,
-        storageService: storageService,
+        connectionRepository: storageService.connectionRepository,
       );
 
       expect(viewModel.playbooks, isEmpty);
@@ -51,7 +51,7 @@ void main() {
     test('Creating a new playbook initializes edit controllers and models', () {
       final viewModel = PlaybookViewModel(
         playbookService: playbookService,
-        storageService: storageService,
+        connectionRepository: storageService.connectionRepository,
       );
 
       viewModel.startNewPlaybook();
@@ -66,7 +66,7 @@ void main() {
     test('Steps manipulation during edit mode', () {
       final viewModel = PlaybookViewModel(
         playbookService: playbookService,
-        storageService: storageService,
+        connectionRepository: storageService.connectionRepository,
       );
 
       viewModel.startNewPlaybook();
@@ -80,7 +80,7 @@ void main() {
     test('Selecting connection ID updates ViewModel state', () {
       final viewModel = PlaybookViewModel(
         playbookService: playbookService,
-        storageService: storageService,
+        connectionRepository: storageService.connectionRepository,
       );
 
       viewModel.setSelectedConnectionId('conn_123');
@@ -90,7 +90,7 @@ void main() {
     test('Toggling step expanded updates expandedSteps list', () {
       final viewModel = PlaybookViewModel(
         playbookService: playbookService,
-        storageService: storageService,
+        connectionRepository: storageService.connectionRepository,
       );
 
       viewModel.toggleStepExpanded(0);

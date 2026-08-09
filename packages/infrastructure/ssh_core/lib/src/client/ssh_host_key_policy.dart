@@ -1,7 +1,7 @@
 // SSH Host Key 校验策略。
 //
 // 首次信任必须经过 UI 提示，已信任指纹或算法变化必须拒绝连接。持久化由
-// 注入的 HostKeyRepository 完成，策略本身不依赖 StorageService。
+// 注入的 HostKeyRepository 完成，策略本身不依赖 App Shell 存储实现。
 
 import 'dart:async';
 import 'dart:typed_data';

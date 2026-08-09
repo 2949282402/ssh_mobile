@@ -4,12 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late SftpService sftpService;
 
   setUp(() async {
@@ -17,10 +17,10 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
 
-    sftpService = SftpService(storageService);
+    sftpService = createTestSftpService(storageService);
   });
 
   tearDown(() {

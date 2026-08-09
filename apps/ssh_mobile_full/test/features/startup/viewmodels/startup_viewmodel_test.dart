@@ -7,22 +7,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ssh_mobile/features/startup/viewmodels/startup_viewmodel.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const powerChannel = MethodChannel('ssh_mobile/power');
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late AppSettings appSettings;
   late List<StartupViewModel> viewModels;
 
   StartupViewModel createViewModel() {
-    final viewModel = StartupViewModel(
-      storageService: storageService,
-      appSettings: appSettings,
-    );
+    final viewModel = StartupViewModel(appSettings: appSettings);
     viewModels.add(viewModel);
     return viewModel;
   }
@@ -31,7 +28,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
 
     appSettings = AppSettings();

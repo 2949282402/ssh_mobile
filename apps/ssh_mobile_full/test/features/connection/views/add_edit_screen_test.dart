@@ -14,7 +14,7 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
 
 void main() {
@@ -33,7 +33,7 @@ void main() {
     addTearDown(tester.view.resetViewInsets);
 
     late AppSettings settings;
-    late StorageService storage;
+    late TestStorageAdapter storage;
     late SshService ssh;
     late SftpService sftp;
     late PerformanceMonitorService performance;
@@ -43,13 +43,15 @@ void main() {
       FlutterSecureStorage.setMockInitialValues({});
       settings = AppSettings();
       await settings.init();
-      storage = StorageService();
+      storage = TestStorageAdapter();
       await storage.init();
-      ssh = SshService(storage);
-      sftp = SftpService(storage);
-      performance = PerformanceMonitorService(ssh, storage);
+      ssh = createTestSshService(storage);
+      sftp = createTestSftpService(storage);
+      performance = createTestPerformanceMonitorService(ssh, storage);
       viewModel = ConnectionViewModel(
-        connectionRepository: storage,
+        connectionRepository: storage.connectionRepository,
+        credentialRepository: storage.credentialRepository,
+        hostKeyRepository: storage.hostKeyRepository,
         sshService: ssh,
         sftpService: sftp,
         performanceService: performance,

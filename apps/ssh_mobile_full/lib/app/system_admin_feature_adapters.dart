@@ -15,44 +15,41 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
-import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart' as legacy_ssh;
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/remote_command_decoder.dart';
 import '../services/sftp_service.dart';
-import '../services/storage_service.dart';
 import '../widgets/ssh_host_key_trust_dialog.dart';
 import 'app_runtime.dart';
 
-/// 将旧 Storage 的连接目录适配为 System Admin Port。
+/// 将 Connection Core 的连接目录适配为 System Admin Port。
 final class AppSystemAdminConnectionCatalogAdapter extends ChangeNotifier
     implements admin.SystemAdminConnectionCatalogPort {
-  /// 创建不拥有 StorageService 的目录适配器。
-  AppSystemAdminConnectionCatalogAdapter(this._storage) {
-    _storage.addListener(notifyListeners);
-  }
+  /// 创建不拥有 Connection Repository 的目录适配器。
+  AppSystemAdminConnectionCatalogAdapter(this._repository);
 
-  final StorageService _storage;
+  final connection_core.ConnectionRepository _repository;
 
   @override
-  bool get isInitialized => _storage.initialized;
+  bool get isInitialized => true;
 
   @override
   List<connection_core.ConnectionConfig> get connections =>
-      _storage.connections;
+      _repository.connections;
 
   @override
   connection_core.ConnectionConfig? connectionById(String id) =>
-      _storage.getConnection(id);
+      _repository.getConnection(id);
 
   @override
-  Future<void> reorderConnections(int oldIndex, int newIndex) =>
-      _storage.reorderConnections(oldIndex, newIndex);
+  Future<void> reorderConnections(int oldIndex, int newIndex) async {
+    await _repository.reorderConnections(oldIndex, newIndex);
+    notifyListeners();
+  }
 
   @override
   void dispose() {
-    _storage.removeListener(notifyListeners);
     super.dispose();
   }
 }
@@ -235,21 +232,33 @@ final class AppSystemAdminStrings implements admin.SystemAdminStrings {
 
 /// 将旧系统管理 SSH Client 转换为不暴露 dartssh2 的 Feature Port。
 final class AppSystemAdminSshAdapter implements admin.SystemAdminSshPort {
-  /// 创建不拥有 Storage 或 SSH Client 的连接适配器。
-  const AppSystemAdminSshAdapter(this._storage);
+  /// 创建不拥有 Connection、Credential、Host Key Repository 或 SSH Client
+  /// 的连接适配器。
+  AppSystemAdminSshAdapter({
+    required connection_core.ConnectionRepository connectionRepository,
+    required connection_core.CredentialRepository credentialRepository,
+    required connection_core.HostKeyRepository hostKeyRepository,
+    required AppLogService logger,
+  }) : _connectionRepository = connectionRepository,
+       _clientFactory = ssh_core.SshClientFactory(
+         credentialRepository: credentialRepository,
+         hostKeyRepository: hostKeyRepository,
+         logger: logger,
+       );
 
-  final StorageService _storage;
+  final connection_core.ConnectionRepository _connectionRepository;
+  final ssh_core.SshClientFactory _clientFactory;
 
   @override
   Future<admin.SystemAdminSshSessionPort> connect(
     String connectionId, {
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
-    final config = _storage.getConnection(connectionId);
+    final config = _connectionRepository.getConnection(connectionId);
     if (config == null) throw StateError('Connection config not found');
-    final client = await SshClientFactory(_storage).connectClient(
+    final client = await _clientFactory.connectClient(
       config,
-      onUnknownHostKey: _toLegacyConfirmation(onUnknownHostKey),
+      onUnknownHostKey: onUnknownHostKey,
     );
     return _AppSystemAdminSshSession(client);
   }
@@ -584,23 +593,6 @@ legacy_ssh.SshHostKeyPromptRequest _toLegacyPrompt(
   fingerprint: request.fingerprint,
 );
 
-legacy_ssh.SshHostKeyConfirmation? _toLegacyConfirmation(
-  ssh_core.SshHostKeyConfirmation? callback,
-) {
-  if (callback == null) return null;
-  return (request) => callback(
-    ssh_core.SshHostKeyPromptRequest(
-      connectionId: request.connectionId,
-      connectionName: request.connectionName,
-      host: request.host,
-      port: request.port,
-      username: request.username,
-      algorithm: request.algorithm,
-      fingerprint: request.fingerprint,
-    ),
-  );
-}
-
 /// Stateful Route Scope；Module 是本 Scope 的唯一管理服务 Owner。
 final class AppSystemAdminModuleScope extends StatefulWidget {
   /// 创建 System Admin 页面 Scope。
@@ -628,7 +620,9 @@ final class _AppSystemAdminModuleScopeState
     if (_module != null) return;
 
     final runtime = context.read<AppRuntime>();
-    _catalog = AppSystemAdminConnectionCatalogAdapter(runtime.storageService);
+    _catalog = AppSystemAdminConnectionCatalogAdapter(
+      runtime.connectionRepository,
+    );
     _settings = AppSystemAdminSettingsAdapter(runtime.appSettings);
     _monitoring = AppSystemAdminMonitoringAdapter(runtime.monitoringService);
     _fileBrowser = AppSystemAdminFileBrowserAdapter(runtime.sftpService);
@@ -644,7 +638,10 @@ final class _AppSystemAdminModuleScopeState
     await module.register(
       ModuleContext.fromMap({
         admin.SystemAdminSshPort: AppSystemAdminSshAdapter(
-          runtime.storageService,
+          connectionRepository: runtime.connectionRepository,
+          credentialRepository: runtime.credentialRepository,
+          hostKeyRepository: runtime.hostKeyRepository,
+          logger: runtime.appLogService,
         ),
         admin.SystemAdminLoggerPort: AppSystemAdminLoggerAdapter(
           runtime.appLogService,

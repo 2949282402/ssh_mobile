@@ -28,14 +28,17 @@ void _registerAiChatViewModelCoreTests() {
     final retryStorage = _FailOnceInitialSettingsStorage();
     await retryStorage.init();
     addTearDown(retryStorage.dispose);
-    final retrySsh = SshService(retryStorage);
-    final retrySftp = SftpService(retryStorage);
-    final retryMonitor = PerformanceMonitorService(retrySsh, retryStorage);
+    final retrySsh = createTestSshService(retryStorage);
+    final retrySftp = createTestSftpService(retryStorage);
+    final retryMonitor = createTestPerformanceMonitorService(
+      retrySsh,
+      retryStorage,
+    );
     final retryPlaybooks = PlaybookService(
-      storageService: retryStorage,
+      repository: retryStorage.playbookRepository,
       sshService: retrySsh,
     );
-    final retryRag = RagService(storageService: retryStorage);
+    final retryRag = RagService(aiStorage: retryStorage.aiStorage);
     final viewModel = createAiChatViewModel(
       storageService: retryStorage,
       sshService: retrySsh,
@@ -304,7 +307,7 @@ void _registerAiChatViewModelCoreTests() {
     '/plan snapshots turn inputs before its mode persistence await',
     () async {
       final recordingRag = _RecordingTurnRagService(
-        storageService: storageService,
+        aiStorage: storageService.aiStorage,
       );
       final factory = FakeSuccessRuntimeFactory(
         storageService: storageService,

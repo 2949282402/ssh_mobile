@@ -1,335 +1,25 @@
 // AI Feature 的 App Shell 适配层。
 //
-// 这里仅把 AppRuntime 已经拥有的设置、Storage、SSH、SFTP 和监控实例
+// 这里仅把 AppRuntime 已经拥有的设置、AI Storage、SSH、SFTP 和监控实例
 // 转换为 feature_ai 的 Port。适配器不创建第二份连接、数据库或 Timer，
 // AI 的业务编排仍由 feature_ai Package 负责。
 
 import 'package:app_core/app_core.dart' as app_core;
-import 'package:connection_core/connection_core.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
-import 'package:feature_playbook/feature_playbook.dart' as playbook;
 import 'package:flutter/foundation.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 import '../services/app_settings.dart';
-import '../services/connection_target_binding.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
-import '../services/storage_service.dart';
+
+export '../services/ai_storage_adapter.dart';
 
 // AI 工具的默认传输限制属于 AI Port 合约；App 适配层保留同样的默认值，
 // 避免为了读取默认配置重新依赖 Package 内部兼容实现。
 const int _defaultAiSftpDownloadLimitBytes = 50 * 1024 * 1024;
 const int _defaultAiSftpTextEditLimitBytes = 2 * 1024 * 1024;
-
-/// 将旧 StorageService 的兼容 API 接到 AI Port。
-final class AppAiStorageAdapter implements ai.AiStoragePort {
-  const AppAiStorageAdapter(this._storage);
-
-  final StorageService _storage;
-
-  @override
-  List<ConnectionConfig> get connections => _storage.connections;
-
-  @override
-  ConnectionConfig? getConnection(String id) => _storage.getConnection(id);
-
-  @override
-  Future<List<ai.AiChatRecord>> loadAiChats() => _storage.loadAiChats();
-
-  @override
-  Future<void> saveAiChat(ai.AiChatRecord chat) => _storage.saveAiChat(chat);
-
-  @override
-  Future<void> deleteAiChat(String id) => _storage.deleteAiChat(id);
-
-  @override
-  Future<List<ai.AiSkillRecord>> loadAiSkills() => _storage.loadAiSkills();
-
-  @override
-  Future<void> saveAiSkill(ai.AiSkillRecord skill) =>
-      _storage.saveAiSkill(skill);
-
-  @override
-  Future<bool> saveAiSkillIfUnchanged(
-    ai.AiSkillRecord expected,
-    ai.AiSkillRecord next,
-  ) => _storage.saveAiSkillIfUnchanged(expected, next);
-
-  @override
-  Future<void> deleteAiSkill(String id) => _storage.deleteAiSkill(id);
-
-  @override
-  Future<List<ai.AgentRunMetrics>> loadAgentRunMetrics() =>
-      _storage.loadAgentRunMetrics();
-
-  @override
-  Future<void> saveAgentRunMetrics(ai.AgentRunMetrics metrics) =>
-      _storage.saveAgentRunMetrics(metrics);
-
-  @override
-  Future<List<ai.AgentTraceEvent>> loadAgentTraceEvents(String runId) =>
-      _storage.loadAgentTraceEvents(runId);
-
-  @override
-  Future<List<String>> loadRecentAgentTraceRunIdsForChat(
-    String chatId, {
-    int limit = 20,
-  }) => _storage.loadRecentAgentTraceRunIdsForChat(chatId, limit: limit);
-
-  @override
-  Future<void> saveAgentTraceEvent(ai.AgentTraceEvent event) =>
-      _storage.saveAgentTraceEvent(event);
-
-  @override
-  Future<void> saveAgentTraceEvents(List<ai.AgentTraceEvent> events) =>
-      _storage.saveAgentTraceEvents(events);
-
-  @override
-  Future<void> deleteAgentTraceEvents(String runId) =>
-      _storage.deleteAgentTraceEvents(runId);
-
-  @override
-  Future<ai.AiConnectionSettings> loadAiConnectionSettings() =>
-      _storage.loadAiConnectionSettings();
-
-  @override
-  Future<void> saveAiConnectionSettings(ai.AiConnectionSettings settings) =>
-      _storage.saveAiConnectionSettings(
-        baseUrl: settings.baseUrl,
-        model: settings.model,
-        helperModel: settings.helperModel,
-        auditModel: settings.auditModel,
-        modelFallbackPolicy: settings.modelFallbackPolicy,
-        contextWindowTokens: settings.contextWindowTokens,
-        timeoutSeconds: settings.timeoutSeconds,
-        deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
-        deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-        openAiReasoningEffort: settings.openAiReasoningEffort,
-        webSearchEnabled: settings.webSearchEnabled,
-        webSearchMaxResults: settings.webSearchMaxResults,
-        webSearchEngine: settings.webSearchEngine,
-        multiAgentEnabled: settings.multiAgentEnabled,
-        multiAgentMaxAgents: settings.multiAgentMaxAgents,
-        postToolReviewEnabled: settings.postToolReviewEnabled,
-        toolCallBudget: settings.toolCallBudget,
-        agentLoopMode: settings.agentLoopMode,
-        maxImageSizeBytes: settings.maxImageSizeBytes,
-        maxFileSizeBytes: settings.maxFileSizeBytes,
-        quarkSearchEndpoint: settings.quarkSearchEndpoint,
-        useCustomPrompts: settings.useCustomPrompts,
-        customSystemPrompt: settings.customSystemPrompt,
-        customPlannerPrompt: settings.customPlannerPrompt,
-        customOperatorPrompt: settings.customOperatorPrompt,
-        customExplorePrompt: settings.customExplorePrompt,
-        customReviewerPrompt: settings.customReviewerPrompt,
-        customSummarizerPrompt: settings.customSummarizerPrompt,
-        customCoordinatorPrompt: settings.customCoordinatorPrompt,
-        apiFormat: settings.apiFormat,
-      );
-
-  @override
-  Future<void> saveAiConnectionSettingsLegacy({
-    required String baseUrl,
-    required String model,
-    String? helperModel,
-    String? auditModel,
-    String? modelFallbackPolicy,
-    int? contextWindowTokens,
-    int? timeoutSeconds,
-    bool? deepSeekThinkingEnabled,
-    String? deepSeekReasoningEffort,
-    String? openAiReasoningEffort,
-    bool? webSearchEnabled,
-    int? webSearchMaxResults,
-    String? webSearchEngine,
-    bool? multiAgentEnabled,
-    int? multiAgentMaxAgents,
-    bool? postToolReviewEnabled,
-    int? toolCallBudget,
-    String? agentLoopMode,
-    int? maxImageSizeBytes,
-    int? maxFileSizeBytes,
-    String? apiKey,
-    String? selectedApiKeyId,
-    bool clearApiKey = false,
-    String? quarkSearchEndpoint,
-    String? quarkApiKey,
-    bool clearQuarkApiKey = false,
-    bool? useCustomPrompts,
-    String? customSystemPrompt,
-    String? customPlannerPrompt,
-    String? customOperatorPrompt,
-    String? customExplorePrompt,
-    String? customReviewerPrompt,
-    String? customSummarizerPrompt,
-    String? customCoordinatorPrompt,
-    ai.LlmApiFormat? apiFormat,
-  }) => _storage.saveAiConnectionSettings(
-    baseUrl: baseUrl,
-    model: model,
-    helperModel: helperModel,
-    auditModel: auditModel,
-    modelFallbackPolicy: modelFallbackPolicy,
-    contextWindowTokens: contextWindowTokens,
-    timeoutSeconds: timeoutSeconds,
-    deepSeekThinkingEnabled: deepSeekThinkingEnabled,
-    deepSeekReasoningEffort: deepSeekReasoningEffort,
-    openAiReasoningEffort: openAiReasoningEffort,
-    webSearchEnabled: webSearchEnabled,
-    webSearchMaxResults: webSearchMaxResults,
-    webSearchEngine: webSearchEngine,
-    multiAgentEnabled: multiAgentEnabled,
-    multiAgentMaxAgents: multiAgentMaxAgents,
-    postToolReviewEnabled: postToolReviewEnabled,
-    toolCallBudget: toolCallBudget,
-    agentLoopMode: agentLoopMode,
-    maxImageSizeBytes: maxImageSizeBytes,
-    maxFileSizeBytes: maxFileSizeBytes,
-    apiKey: apiKey,
-    selectedApiKeyId: selectedApiKeyId,
-    clearApiKey: clearApiKey,
-    quarkSearchEndpoint: quarkSearchEndpoint,
-    quarkApiKey: quarkApiKey,
-    clearQuarkApiKey: clearQuarkApiKey,
-    useCustomPrompts: useCustomPrompts,
-    customSystemPrompt: customSystemPrompt,
-    customPlannerPrompt: customPlannerPrompt,
-    customOperatorPrompt: customOperatorPrompt,
-    customExplorePrompt: customExplorePrompt,
-    customReviewerPrompt: customReviewerPrompt,
-    customSummarizerPrompt: customSummarizerPrompt,
-    customCoordinatorPrompt: customCoordinatorPrompt,
-    apiFormat: apiFormat,
-  );
-
-  @override
-  Future<ai.AiRuntimeConnectionSnapshot> loadAiRuntimeConnectionSnapshot() =>
-      _storage.loadAiRuntimeConnectionSnapshot();
-
-  @override
-  Future<String> getAiApiKey() async => await _storage.getAiApiKey() ?? '';
-
-  @override
-  Future<String?> getAiApiKeyById(String id) => _storage.getAiApiKeyById(id);
-
-  @override
-  Future<List<ai.AiApiKeyHistoryEntry>> loadAiApiKeyHistory() =>
-      _storage.loadAiApiKeyHistory();
-
-  @override
-  Future<List<String>> loadAiBaseUrlHistory() =>
-      _storage.loadAiBaseUrlHistory();
-
-  @override
-  Future<List<String>> loadCachedAiModels({String? baseUrl}) =>
-      _storage.loadCachedAiModels(baseUrl: baseUrl);
-
-  @override
-  Future<void> saveCachedAiModels({
-    required String baseUrl,
-    required List<String> models,
-  }) => _storage.saveCachedAiModels(baseUrl: baseUrl, models: models);
-
-  @override
-  Future<void> removeAiBaseUrlHistoryEntry(String baseUrl) =>
-      _storage.removeAiBaseUrlHistoryEntry(baseUrl);
-
-  @override
-  Future<void> removeAiApiKeyHistoryEntry(String id) =>
-      _storage.removeAiApiKeyHistoryEntry(id);
-
-  @override
-  Future<String> getAliyunApiKey() async =>
-      await _storage.getAliyunApiKey() ?? '';
-
-  @override
-  Future<List<playbook.Playbook>> loadPlaybooks() => _storage.loadPlaybooks();
-
-  @override
-  Future<void> savePlaybook(playbook.Playbook playbook) =>
-      _storage.savePlaybook(playbook);
-
-  @override
-  Future<String> exportAppDataJson() => _storage.exportAppDataJson();
-
-  @override
-  Future<void> importAppDataJson(String jsonText) =>
-      _storage.importAppDataJson(jsonText);
-
-  @override
-  bool get isSecretCacheEnabled => _storage.isSecretCacheEnabled;
-
-  @override
-  int get secretCacheTtlMinutes => _storage.secretCacheTtlMinutes;
-
-  @override
-  Future<void> setSecretCacheEnabled(bool enabled) =>
-      _storage.setSecretCacheEnabled(enabled);
-
-  @override
-  Future<void> setSecretCacheTtl(Duration ttl) =>
-      _storage.setSecretCacheTtl(ttl);
-
-  @override
-  void clearSecretCache() => _storage.clearSecretCache();
-
-  @override
-  Future<int> getAiRequestTimeoutSeconds() =>
-      _storage.getAiRequestTimeoutSeconds();
-
-  @override
-  Future<List<ai.AiSshSessionSnapshot>> loadRestorableTmuxSessions() async {
-    final result = <ai.AiSshSessionSnapshot>[];
-    for (final item in await _storage.loadRestorableTmuxSessions()) {
-      final connection = _storage.getConnection(item.connectionId);
-      result.add(
-        ai.AiSshSessionSnapshot(
-          id: item.sessionId,
-          connectionId: item.connectionId,
-          connectionName: connection?.name ?? 'SSH',
-          displayName: item.displayName,
-          state: ai.AiSshConnectionState.disconnected,
-          isConnected: false,
-          createdAt: item.updatedAt,
-          updatedAt: item.updatedAt,
-          tmuxSessionName: item.tmuxSessionName,
-        ),
-      );
-    }
-    return List.unmodifiable(result);
-  }
-
-  @override
-  Map<String, ssh_core.SshTargetBinding> captureConnectionTargetBindings(
-    Iterable<String> connectionIds,
-  ) {
-    final legacy = _storage.captureConnectionTargetBindings(connectionIds);
-    return Map.unmodifiable({
-      for (final entry in legacy.entries)
-        entry.key: ssh_core.SshTargetBinding.fromConfig(entry.value.config),
-    });
-  }
-
-  @override
-  Future<ssh_core.SshRuntimeTarget?> resolveConnectionTarget(
-    ssh_core.SshTargetBinding binding,
-  ) async {
-    final legacy = await _storage.resolveConnectionTarget(
-      ConnectionTargetBinding.fromConfig(binding.config),
-    );
-    if (legacy == null) return null;
-    return ssh_core.SshRuntimeTarget(
-      binding: binding,
-      config: legacy.config,
-      credentials: ssh_core.SshCredentials(
-        password: legacy.password,
-        privateKey: legacy.privateKey,
-      ),
-    );
-  }
-}
 
 /// 将 AppSettings 转换为 AI 的可监听设置 Port。
 final class AppAiSettingsAdapter extends ChangeNotifier
@@ -513,20 +203,20 @@ final class AppAiSshAdapter implements ai.AiSshPort {
     );
   }
 
-  ai.AiSshSessionSnapshot _toSnapshot(dynamic session) {
+  ai.AiSshSessionSnapshot _toSnapshot(SshSession session) {
     return ai.AiSshSessionSnapshot(
-      id: session.id as String,
-      connectionId: session.connectionId as String,
-      connectionName: session.connectionName as String,
-      displayName: session.displayName as String,
+      id: session.id,
+      connectionId: session.connectionId,
+      connectionName: session.connectionName,
+      displayName: session.displayName,
       state: _toState(session.state),
-      isConnected: session.isConnected as bool,
-      createdAt: session.createdAt as DateTime,
-      updatedAt: session.updatedAt as DateTime,
-      tmuxSessionName: session.tmuxSessionName as String?,
-      tmuxAutoDeleteSeconds: session.tmuxAutoDeleteSeconds as int?,
-      errorMessage: session.errorMessage as String?,
-      estimatedMemoryBytes: session.estimatedMemoryBytes as int,
+      isConnected: session.isConnected,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      tmuxSessionName: session.tmuxSessionName,
+      tmuxAutoDeleteSeconds: session.tmuxAutoDeleteSeconds,
+      errorMessage: session.errorMessage,
+      estimatedMemoryBytes: session.estimatedMemoryBytes,
     );
   }
 

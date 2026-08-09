@@ -9,9 +9,7 @@ import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
 import 'package:ssh_mobile/services/remote_target_scope.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
-import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -125,13 +123,13 @@ void main() {
     });
   });
 
-  group('StorageService remote target boundary', () {
-    late StorageService storage;
+  group('TestStorageAdapter remote target boundary', () {
+    late TestStorageAdapter storage;
 
     setUp(() async {
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
-      storage = StorageService();
+      storage = TestStorageAdapter();
       await storage.init();
     });
 
@@ -272,13 +270,18 @@ void main() {
         await RemoteTargetScope.run(bindings, () async {
           expect(
             (await RemoteTargetScope.resolveIfBound(
-              storage,
-              'server-a',
+              connectionRepository: storage.connectionRepository,
+              credentialRepository: storage.credentialRepository,
+              connectionId: 'server-a',
             )).config.host,
             'one.example.com',
           );
           await expectLater(
-            RemoteTargetScope.resolveIfBound(storage, 'server-b'),
+            RemoteTargetScope.resolveIfBound(
+              connectionRepository: storage.connectionRepository,
+              credentialRepository: storage.credentialRepository,
+              connectionId: 'server-b',
+            ),
             throwsA(
               isA<RemoteTargetScopeException>().having(
                 (error) => error.code,
@@ -294,7 +297,11 @@ void main() {
         );
         await RemoteTargetScope.run(bindings, () async {
           await expectLater(
-            RemoteTargetScope.resolveIfBound(storage, 'server-a'),
+            RemoteTargetScope.resolveIfBound(
+              connectionRepository: storage.connectionRepository,
+              credentialRepository: storage.credentialRepository,
+              connectionId: 'server-a',
+            ),
             throwsA(
               isA<RemoteTargetScopeException>().having(
                 (error) => error.code,
@@ -311,8 +318,8 @@ void main() {
       'SSH and detached SFTP stop stale scoped targets before sockets',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-        final ssh = SshService(storage);
-        final sftp = SftpService(storage);
+        final ssh = createTestSshService(storage);
+        final sftp = createTestSftpService(storage);
         try {
           final original = _connection(id: 'server-a', host: 'one.example.com');
           await storage.addConnection(original);
@@ -346,12 +353,12 @@ void main() {
   });
 
   group('AI skill compare-and-swap storage', () {
-    late StorageService storage;
+    late TestStorageAdapter storage;
 
     setUp(() async {
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
-      storage = StorageService();
+      storage = TestStorageAdapter();
       await storage.init();
     });
 
@@ -392,12 +399,12 @@ void main() {
   });
 
   group('Playbook action compare-and-swap storage', () {
-    late StorageService storage;
+    late TestStorageAdapter storage;
 
     setUp(() async {
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
-      storage = StorageService();
+      storage = TestStorageAdapter();
       await storage.init();
     });
 

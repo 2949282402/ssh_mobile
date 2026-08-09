@@ -82,6 +82,7 @@ class AppSettings extends ChangeNotifier {
   static const _relayEndpointKey = 'relay_endpoint';
   static const _developerModeKey = 'developer_mode';
   static const _developerPanelFloatingKey = 'developer_panel_floating';
+  static const _powerGuideSeenKey = 'power_guide_seen';
   static const int minSftpLimitBytes = 64 * 1024;
   static const int maxSftpLimitBytes = 2 * 1024 * 1024 * 1024;
   static const int defaultSftpDownloadLimitBytes = 512 * 1024 * 1024;
@@ -120,6 +121,7 @@ class AppSettings extends ChangeNotifier {
   String _relayEndpoint = '';
   bool _developerMode = false;
   bool _developerPanelFloating = false;
+  bool _powerGuideSeen = false;
   bool _coreLoaded = false;
   bool _initialized = false;
   Future<void>? _coreLoadFuture;
@@ -176,6 +178,7 @@ class AppSettings extends ChangeNotifier {
   String get serverListLayoutMode => _serverListLayoutMode;
   bool get developerMode => _developerMode;
   bool get developerPanelFloating => _developerPanelFloating;
+  bool get powerGuideSeen => _powerGuideSeen;
   McpServerSettings get mcpSettings => McpServerSettings(
     enabled: _mcpServerEnabled,
     host: _mcpServerHost,
@@ -289,6 +292,7 @@ class AppSettings extends ChangeNotifier {
       _developerMode = prefs.getBool(_developerModeKey) ?? false;
       _developerPanelFloating =
           prefs.getBool(_developerPanelFloatingKey) ?? false;
+      _powerGuideSeen = prefs.getBool(_powerGuideSeenKey) ?? false;
       _coreLoaded = true;
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -324,6 +328,7 @@ class AppSettings extends ChangeNotifier {
       _relayEndpoint = '';
       _developerMode = false;
       _developerPanelFloating = false;
+      _powerGuideSeen = false;
       _coreLoaded = true;
     } finally {
       _coreLoadFuture = null;
@@ -402,6 +407,15 @@ class AppSettings extends ChangeNotifier {
       'Language setting updated',
       details: 'language=${_language.name}',
     );
+  }
+
+  /// 记录用户已处理电池优化引导，避免启动页重新显示同一提示。
+  Future<void> markPowerGuideSeen() async {
+    if (_powerGuideSeen) return;
+    _powerGuideSeen = true;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_powerGuideSeenKey, true);
   }
 
   Future<void> setLanDeviceAlias(String alias) async {

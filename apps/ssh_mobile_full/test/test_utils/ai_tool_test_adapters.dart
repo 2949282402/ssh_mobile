@@ -26,7 +26,7 @@ import 'package:ssh_mobile/services/server_diagnostics_service.dart'
     as legacy_diagnostics;
 import 'package:ssh_mobile/services/sftp_service.dart' as legacy_sftp;
 import 'package:ssh_mobile/services/ssh_service.dart' as legacy_ssh;
-import 'package:ssh_mobile/services/storage_service.dart' as legacy_storage;
+import 'test_storage_adapter.dart';
 import 'package:ssh_mobile/services/app_settings.dart' as legacy_settings;
 import 'ai_port_adapters.dart' as ports;
 
@@ -57,9 +57,7 @@ ai.AiToolService createAiToolServiceFromLegacy({
   }
   return ai.AiToolService(
     providers: providers,
-    storageService: ports.aiStoragePort(
-      storageService as legacy_storage.StorageService,
-    ),
+    storageService: ports.aiStoragePort(storageService as TestStorageAdapter),
     sshService: _sshPort(sshService),
     sftpService: _sftpPort(sftpService),
     clientSystemToolService: clientSystemToolService == null

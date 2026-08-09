@@ -467,17 +467,17 @@ void _registerAiChatViewModelGenerationTests() {
     await failingStorage.init();
     attachTestAiRepository(failingStorage);
     addTearDown(failingStorage.dispose);
-    final failingSsh = SshService(failingStorage);
-    final failingSftp = SftpService(failingStorage);
-    final failingMonitor = PerformanceMonitorService(
+    final failingSsh = createTestSshService(failingStorage);
+    final failingSftp = createTestSftpService(failingStorage);
+    final failingMonitor = createTestPerformanceMonitorService(
       failingSsh,
       failingStorage,
     );
     final failingPlaybooks = PlaybookService(
-      storageService: failingStorage,
+      repository: failingStorage.playbookRepository,
       sshService: failingSsh,
     );
-    final failingRag = RagService(storageService: failingStorage);
+    final failingRag = RagService(aiStorage: failingStorage.aiStorage);
     final viewModel = createAiChatViewModel(
       storageService: failingStorage,
       sshService: failingSsh,

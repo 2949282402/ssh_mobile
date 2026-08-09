@@ -5,6 +5,7 @@
 library;
 
 export 'src/domain/ai_models.dart';
+export 'src/domain/ai_compat.dart' show AgentTraceRepository;
 export 'src/domain/ai_webview_models.dart';
 export 'src/application/ai_chat_runtime_factory.dart';
 export 'src/chat/chat_context_assembler.dart';

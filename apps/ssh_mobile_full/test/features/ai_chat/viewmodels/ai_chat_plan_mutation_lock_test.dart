@@ -13,7 +13,7 @@ import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -230,7 +230,7 @@ void main() {
   );
 
   test('branch before first history open still loads older chats', () async {
-    final storage = StorageService();
+    final storage = TestStorageAdapter();
     final harness = await _MutationHarness.create(storage);
     addTearDown(harness.dispose);
     final older = AiChatRecord(
@@ -297,12 +297,12 @@ Future<String> _seedFailedPlan(AiChatViewModel viewModel) async {
 
 AiTodoStep _step(AiChatRecord chat) => chat.messages.last.todoSteps.single;
 
-Future<AiChatRecord> _storedChat(StorageService storage, String id) async {
+Future<AiChatRecord> _storedChat(TestStorageAdapter storage, String id) async {
   return (await storage.loadAiChats()).singleWhere((chat) => chat.id == id);
 }
 
 class _MutationHarness {
-  final StorageService storage;
+  final TestStorageAdapter storage;
   final AppSettings settings;
   final SshService ssh;
   final SftpService sftp;
@@ -320,20 +320,23 @@ class _MutationHarness {
     required this.rag,
   });
 
-  static Future<_MutationHarness> create(StorageService storage) async {
+  static Future<_MutationHarness> create(TestStorageAdapter storage) async {
     await storage.init();
     attachTestAiRepository(storage);
     final settings = AppSettings();
     await settings.init();
-    final ssh = SshService(storage);
+    final ssh = createTestSshService(storage);
     return _MutationHarness(
       storage: storage,
       settings: settings,
       ssh: ssh,
-      sftp: SftpService(storage),
-      monitor: PerformanceMonitorService(ssh, storage),
-      playbooks: PlaybookService(storageService: storage, sshService: ssh),
-      rag: RagService(storageService: storage),
+      sftp: createTestSftpService(storage),
+      monitor: createTestPerformanceMonitorService(ssh, storage),
+      playbooks: PlaybookService(
+        repository: storage.playbookRepository,
+        sshService: ssh,
+      ),
+      rag: RagService(aiStorage: storage.aiStorage),
     );
   }
 
@@ -353,7 +356,7 @@ class _MutationHarness {
   }
 }
 
-class _GateNextChatSaveStorage extends StorageService {
+class _GateNextChatSaveStorage extends TestStorageAdapter {
   Completer<void>? _saveGate;
   Completer<void>? _saveStarted;
 
@@ -378,7 +381,7 @@ class _GateNextChatSaveStorage extends StorageService {
   }
 }
 
-class _GateNextSettingsLoadStorage extends StorageService {
+class _GateNextSettingsLoadStorage extends TestStorageAdapter {
   Completer<void>? _settingsGate;
   Completer<void>? _settingsStarted;
 
@@ -413,7 +416,7 @@ class _GateNextSettingsLoadStorage extends StorageService {
   }
 }
 
-class _GateHistorySnapshotStorage extends StorageService {
+class _GateHistorySnapshotStorage extends TestStorageAdapter {
   Completer<void>? _historyGate;
   Completer<void>? _snapshotCaptured;
 
@@ -439,7 +442,7 @@ class _GateHistorySnapshotStorage extends StorageService {
   }
 }
 
-class _FailOnceHistoryLoadStorage extends StorageService {
+class _FailOnceHistoryLoadStorage extends TestStorageAdapter {
   bool _shouldFail = true;
 
   @override

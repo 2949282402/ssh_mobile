@@ -29,15 +29,16 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   notifications.
   Existing service types remain temporarily inside Runtime with explicit
   Step TODO markers; route ViewModels are not part of Runtime ownership.
-- Startup is intentionally lazy. Bootstrap loads preferences and storage;
-  feature scopes own heavy ViewModels. `SshService.ensureInitialized()` gates
-  SSH runtime work, `AiChatRuntimeFactory` owns the view-scoped chat runtime,
-  and `LanReceiverCoordinator` exposes exactly one receiver-owned
+- Startup is intentionally lazy. Bootstrap loads core preferences only;
+  Feature/Module repositories initialize under their explicit Owners.
+  `SshService.ensureInitialized()` gates SSH runtime work,
+  `AiChatRuntimeFactory` owns the view-scoped chat runtime, and
+  `LanReceiverCoordinator` exposes exactly one receiver-owned
   `LanShareViewModel` to the LAN page and pairing/chat routes.
-- `StorageService.appDatabase` may be requested before async initialization.
-  It must own one cached database instance, concurrent `init()` calls must share
-  one future, Drift setup must reuse that instance, and log database binding
-  must finish before storage reports readiness.
+- `AppAiStorageAdapter` is an App Shell adapter for the public AI Storage Port.
+  It does not own `AppDatabase`: `AiModule` owns `ai.db`, Connection Core owns
+  connection data and secure credentials, and Playbook/Terminal/SFTP Modules
+  own their respective repositories and lifecycle.
 
 ### App Shell and route contributions
 
@@ -63,7 +64,7 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `ConnectionRuntimePort`/`ConnectionVerificationPort` contracts. Until later
   SSH/SFTP Steps migrate their consumers, `apps/ssh_mobile_full/lib/app/
   connection_feature_adapters.dart` performs a temporary dual-read/dual-write
-  bridge between the new Core repository and legacy `StorageService`; this is
+  bridge between the Core repositories and legacy App route surfaces; this is
   an App composition-root compatibility boundary, not a Feature data API.
 - `packages/infrastructure/network_transport/` owns the App Scope
   `NetworkRuntime` facade. `AppRuntimeFactory` creates exactly one lazy runtime
@@ -76,7 +77,7 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 - `packages/infrastructure/ssh_core/` owns the App Scope `SshSessionManager`,
   Runtime Adapter contracts, Session Pool/Lease lifecycle, SSH Client/Host Key/
   command boundaries, and non-secret target bindings. The package must not depend
-  on `StorageService`, Feature code, or mobile Background SDKs. The current
+  on App Shell storage implementations, Feature code, or mobile Background SDKs. The current
   `SshService` implements the public Manager contract as a same-instance bridge
   so existing terminal behavior remains intact until the Terminal Pilot moves
   its method surface. A Feature may release a Lease but must not close a shared
@@ -451,9 +452,9 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   freezes on massive runaway terminal streams.
 - 2026-05-31: Config export and import (version 2) now includes AppSettings
   (theme, language, font, SFTP limits), ShortcutCommandService (usage, custom
-  commands, order), secret cache configs, and max AI upload sizes. Registered
-  callbacks in `StorageService` (`registerOnImportCallback`) allow high-level
-  ChangeNotifiers to automatically reload and refresh UI states post-import.
+  commands, order), secret cache configs, and max AI upload sizes. The App AI
+  Storage Port exposes import callbacks so high-level ChangeNotifiers can
+  automatically reload and refresh UI states post-import.
 - 2026-06-01: Modularized `LlmChatService` (split into `llm_chat_types.dart`, `llm_system_prompt.dart`, and `llm_context_compressor.dart`) and `LlmChatScreen` (split into `llm_settings_screen.dart`, `message_bubble.dart`, `history_panel.dart`, `chat_tools_bar.dart`, `tool_approval_panel.dart`, and `ai_strings.dart`) using Dart's native `part`/`part of` pattern. This dramatically reduced the massive single-file complexity (screen down from 5600 lines to 3000 lines; service down from 1350 lines to 800 lines) while maintaining full feature coverage, same private/package access, and passing 100% of unit tests.
 - 2026-08-07: The repository is now a Dart workspace. The current full Flutter
   app is rooted at `apps/ssh_mobile_full/`; its existing feature-first MVVM
@@ -509,15 +510,15 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 - 2026-06-20: Execution Mode step-by-step reliability. Mutating remote tools are gated by the current step status during execution mode: pending tasks must be marked running first, failed tasks block subsequent execution, and skipped tasks require reasons. Added dedicated `client_task_retry` and `client_task_skip` tools and UI buttons in message bubble.
 - 2026-06-21: Execution Mode step-scoped remote tools gate. Gating now covers all server/ssh/sftp/monitor tools, including read-only diagnostics such as detect_os and sftp_read_text, to enforce proper step update workflows. Skipping running steps directly is disallowed; skipping a step from AI triggers a plan_task_change approval request.
 - 2026-06-21: Execution Mode step gate trace and approval-aware handler boundary. Plan execution gate traces include step-scoped metadata for easier debugging. Approval-aware tools such as client_task_skip must execute through AiToolService.execute/provider.execute so approvedWrite is propagated; direct handlers must not bypass approval.
-- 2026-06-21: Drift is the persistence backend for growth-oriented structured
-  data: AI chats/messages, AgentRunMetrics, terminal-history metadata,
-  Playbooks, and SFTP recent/favorite paths. Keep `StorageService` as the
-  facade, small settings in SharedPreferences, and credentials/API keys in
-  secure storage.
-- 2026-06-21: Production database open failures must surface through
-  `StorageService`; never hide them with `NativeDatabase.memory()` or a legacy
-  preference fallback. AI chat message text/context/attachments/traces/
-  todoSteps and Playbook `content_json` are field-encrypted before Drift writes.
+- 2026-08-09: Step22 removed the unified `StorageService`. Growth-oriented
+  data is owned by Feature/Core Repositories and their Module databases; small
+  preferences stay in SharedPreferences and credentials/API keys stay in
+  secure storage. Production database-open failures must surface from the
+  owning Module and must not fall back to an in-memory database.
+- 2026-08-09: AI chat message text/context/attachments/traces/todoSteps and
+  Playbook `content_json` remain field-encrypted before Drift writes. Backup
+  import is an App Shell adapter operation and clears device-local model caches
+  after importing settings.
 - 2026-08-08: `packages/features/feature_playbook/` is the maintained Playbook
   owner. `PlaybookModule` owns `playbook.db`, its Repository, and execution
   Service; the App Shell injects SSH, logger, and data-protection Ports. The
@@ -539,14 +540,8 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   adapters provide `McpSettingsPort`, `McpLoggerPort`, and the AI tool runtime;
   `McpApprovalRequest.opaqueHandle` stays process-local so approved target
   bindings return to the execution layer without serializing secrets. MCP
-  activity is not part of `AppDatabase` or `StorageService`, and development
+  activity is not part of `AppDatabase` or any unified storage facade, and development
   refactor does not read or migrate the old MCP activity table.
-- 2026-07-18: `StorageService.appDatabase` can be read by root providers before
-  asynchronous storage initialization starts. Keep database creation cached and
-  single-owner, make concurrent `init()` calls share one future, reuse the same
-  instance from Drift initialization, and await `AppLogService.setDatabase`
-  before signaling Drift readiness; otherwise Windows may reject a second open
-  of the same database or retain a closed logger database in tests.
 - 2026-07-18: LAN pairing completion is reciprocal and role-independent, so
   either peer may enter its PIN first and reciprocal invitations must preserve
   typed input on the active route. After pairing, require peer-specific bearer
@@ -556,9 +551,9 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   failed after deleting partial data. Web Share uses a short-lived capability;
   Android discovery owns a multicast lock, Apple targets declare local-network
   service access, and Windows firewall access remains app/local-subnet scoped.
-- 2026-06-22: Agent Trace history is now a Drift-only growth store under
-  `agent_trace_events`, with `StorageService` as the facade. Trace content is
-  redacted, size-capped, encrypted in `content_json`, tied to assistant
+- 2026-08-09: Agent Trace history is an AI Feature Drift store under
+  `ai.db`, with the App AI Storage Port as its injected boundary. Trace content
+  is redacted, size-capped, encrypted in `content_json`, tied to assistant
   messages via `agentRunId`, and intentionally excluded from backup export.
 - 2026-06-22: Widget testing pages like LlmChatScreen with locally-scoped providers and target platform overrides must manage debug variable changes inside the testWidgets body using a try-finally block, as the binding's invariant tester runs before the global tearDown hook. Subtree provider instances can be retrieved via context lookups on public descendant widgets (e.g. Scaffold).
 - 2026-06-23: App typography is now configured to completely rely on the native system fonts on all supported platforms (Android, Windows, iOS, macOS), and the custom app-level font selection feature has been completely removed to simplify settings and ensure standard system font behavior.

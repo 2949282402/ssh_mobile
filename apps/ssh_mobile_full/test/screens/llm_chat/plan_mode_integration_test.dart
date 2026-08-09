@@ -12,7 +12,6 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
-import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_health_advisor.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
@@ -20,7 +19,7 @@ import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -32,7 +31,7 @@ void main() {
 
   Future<_PlanScreenHarness> createHarness(
     WidgetTester tester, {
-    StorageService? storageService,
+    TestStorageAdapter? storageService,
   }) async {
     final harness = await tester.runAsync(
       () => _PlanScreenHarness.create(storageService: storageService),
@@ -558,7 +557,7 @@ class _HealthyAdvisor implements ClientHealthAdvisorAdapter {
 }
 
 class _PlanScreenHarness {
-  final StorageService storageService;
+  final TestStorageAdapter storageService;
   final AppSettings appSettings;
   final SshService sshService;
   final SftpService sftpService;
@@ -578,27 +577,24 @@ class _PlanScreenHarness {
   });
 
   static Future<_PlanScreenHarness> create({
-    StorageService? storageService,
+    TestStorageAdapter? storageService,
   }) async {
-    final resolvedStorageService = storageService ?? StorageService();
+    final resolvedStorageService = storageService ?? TestStorageAdapter();
     await resolvedStorageService.init();
     attachTestAiRepository(resolvedStorageService);
-    await AppLogService.instance.detachDatabase(
-      resolvedStorageService.appDatabase,
-    );
     final appSettings = AppSettings();
     await appSettings.init();
-    final sshService = SshService(resolvedStorageService);
-    final sftpService = SftpService(resolvedStorageService);
-    final performanceMonitorService = PerformanceMonitorService(
+    final sshService = createTestSshService(resolvedStorageService);
+    final sftpService = createTestSftpService(resolvedStorageService);
+    final performanceMonitorService = createTestPerformanceMonitorService(
       sshService,
       resolvedStorageService,
     );
     final playbookService = PlaybookService(
-      storageService: resolvedStorageService,
+      repository: resolvedStorageService.playbookRepository,
       sshService: sshService,
     );
-    final ragService = RagService(storageService: resolvedStorageService);
+    final ragService = RagService(aiStorage: resolvedStorageService.aiStorage);
     return _PlanScreenHarness(
       storageService: resolvedStorageService,
       appSettings: appSettings,
@@ -618,7 +614,7 @@ class _PlanScreenHarness {
   }) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider<StorageService>.value(value: storageService),
+        ChangeNotifierProvider<TestStorageAdapter>.value(value: storageService),
         Provider<ai.AiStoragePort>.value(value: aiStoragePort(storageService)),
         ChangeNotifierProvider<SshService>.value(value: sshService),
         Provider<ai.AiSshPort>.value(value: aiSshPort(sshService)),
@@ -687,7 +683,7 @@ class _PlanScreenHarness {
   }
 }
 
-class _GateNextSettingsLoadStorage extends StorageService {
+class _GateNextSettingsLoadStorage extends TestStorageAdapter {
   Completer<void>? _settingsGate;
   Completer<void>? _settingsStarted;
   Completer<void>? _chatSaveGate;

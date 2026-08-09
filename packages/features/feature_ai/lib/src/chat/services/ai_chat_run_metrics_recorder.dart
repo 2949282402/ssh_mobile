@@ -3,7 +3,7 @@ import 'llm_chat_service.dart';
 import 'package:feature_ai/src/domain/ai_compat.dart';
 
 class AiChatRunMetricsRecorder {
-  final StorageService _storageService;
+  final AiStoragePort _storageService;
 
   const AiChatRunMetricsRecorder(this._storageService);
 

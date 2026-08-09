@@ -9,7 +9,7 @@ import 'package:flutter/foundation.dart';
 
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
-import '../services/storage_service.dart';
+import '../services/ai_storage_adapter.dart';
 
 /// 提供 RAG 所需的语言、搜索模式和 DashScope Key。
 final class AppRagSettingsAdapter extends ChangeNotifier
@@ -19,7 +19,7 @@ final class AppRagSettingsAdapter extends ChangeNotifier
   }
 
   final AppSettings _settings;
-  final StorageService _storage;
+  final AppAiStorageAdapter _storage;
   bool _disposed = false;
 
   @override

@@ -16,7 +16,7 @@ import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 
 import '../../../test_utils/wait_until.dart';
 
@@ -642,7 +642,7 @@ void _expectPersistedTodo(AiChatMessageRecord message) {
 }
 
 Future<AiChatRecord> _storedChat(
-  StorageService storageService,
+  TestStorageAdapter storageService,
   String chatId,
 ) async {
   final chats = await storageService.loadAiChats();

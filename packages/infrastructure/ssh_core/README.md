@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # ssh_core
 
@@ -12,7 +12,7 @@
 ## 依赖边界
 
 本包只依赖 `app_core`、`connection_core` 和 `dartssh2`。它不依赖
-`StorageService`、任何 Feature、Flutter 页面或平台 Background Service。
+App Shell 存储实现、任何 Feature、Flutter 页面或平台 Background Service。
 密码、私钥不进入目标绑定、日志和序列化数据；持久化通过
 `CredentialRepository`、`HostKeyRepository` 等契约注入。
 

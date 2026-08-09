@@ -10,7 +10,7 @@ import 'package:feature_connection/feature_connection.dart';
 import 'package:ssh_mobile/features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:ssh_mobile/services/sftp_path_history_store.dart';
 import 'package:app_ui/app_ui.dart';
 import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
 import 'package:ssh_mobile/widgets/server_selector.dart';

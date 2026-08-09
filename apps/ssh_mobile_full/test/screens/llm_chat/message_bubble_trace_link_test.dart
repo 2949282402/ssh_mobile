@@ -9,8 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
-import 'package:ssh_mobile/services/app_log_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
@@ -32,7 +31,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
 
-      final storageService = StorageService();
+      final storageService = TestStorageAdapter();
       final appSettings = AppSettings();
       late final SshService sshService;
       late final SftpService sftpService;
@@ -43,20 +42,19 @@ void main() {
       await tester.runAsync(() async {
         await storageService.init();
         aiDatabase = attachTestAiRepository(storageService);
-        await AppLogService.instance.detachDatabase(storageService.appDatabase);
         await appSettings.init();
         await appSettings.toggleLanguage();
-        sshService = SshService(storageService);
-        sftpService = SftpService(storageService);
-        performanceMonitorService = PerformanceMonitorService(
+        sshService = createTestSshService(storageService);
+        sftpService = createTestSftpService(storageService);
+        performanceMonitorService = createTestPerformanceMonitorService(
           sshService,
           storageService,
         );
         playbookService = PlaybookService(
-          storageService: storageService,
+          repository: storageService.playbookRepository,
           sshService: sshService,
         );
-        ragService = RagService(storageService: storageService);
+        ragService = RagService(aiStorage: storageService.aiStorage);
       });
 
       try {
@@ -106,7 +104,7 @@ void main() {
         await tester.pumpWidget(
           MultiProvider(
             providers: [
-              ChangeNotifierProvider<StorageService>.value(
+              ChangeNotifierProvider<TestStorageAdapter>.value(
                 value: storageService,
               ),
               Provider<ai.AiStoragePort>.value(

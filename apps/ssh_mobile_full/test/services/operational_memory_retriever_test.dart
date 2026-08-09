@@ -5,14 +5,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 import 'package:feature_ai/ai_skills.dart';
 import 'package:ssh_mobile/utils/text_chunker.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storage;
+  late TestStorageAdapter storage;
   late OperationalMemoryRetriever retriever;
 
   setUp(() async {
@@ -20,7 +20,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storage = StorageService();
+    storage = TestStorageAdapter();
     await storage.init();
     // Operational memory reads AI chat history through the injected repository；
     // 测试夹具显式安装独立内存仓库，保持模块边界和资源生命周期可验证。
@@ -220,8 +220,8 @@ class _RecordingRagService extends RagService {
   String? receivedSearchMode;
   bool receivedExpectedKey = false;
 
-  _RecordingRagService({required StorageService storage})
-    : super(storageService: storage);
+  _RecordingRagService({required TestStorageAdapter storage})
+    : super(aiStorage: storage.aiStorage);
 
   @override
   Future<List<RagChunk>> retrieve(

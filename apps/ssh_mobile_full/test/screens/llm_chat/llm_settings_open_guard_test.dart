@@ -20,7 +20,7 @@ import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../test_utils/test_storage_adapter.dart';
 
 import '../../test_utils/ai_port_adapters.dart';
 
@@ -76,14 +76,16 @@ void main() {
       logs.clear();
       await storage.init();
       attachTestAiRepository(storage);
-      await logs.detachDatabase(storage.appDatabase);
       await settings.init();
       await settings.toggleLanguage();
-      ssh = SshService(storage);
-      sftp = SftpService(storage);
-      monitor = PerformanceMonitorService(ssh, storage);
-      playbooks = PlaybookService(storageService: storage, sshService: ssh);
-      rag = RagService(storageService: storage);
+      ssh = createTestSshService(storage);
+      sftp = createTestSftpService(storage);
+      monitor = createTestPerformanceMonitorService(ssh, storage);
+      playbooks = PlaybookService(
+        repository: storage.playbookRepository,
+        sshService: ssh,
+      );
+      rag = RagService(aiStorage: storage.aiStorage);
     });
     installTestAiLogger();
     addTearDown(logs.clear);
@@ -92,7 +94,7 @@ void main() {
       await tester.pumpWidget(
         MultiProvider(
           providers: [
-            ChangeNotifierProvider<StorageService>.value(value: storage),
+            ChangeNotifierProvider<TestStorageAdapter>.value(value: storage),
             Provider<ai.AiStoragePort>.value(value: aiStoragePort(storage)),
             ChangeNotifierProvider<SshService>.value(value: ssh),
             Provider<ai.AiSshPort>.value(value: aiSshPort(ssh)),
@@ -433,7 +435,7 @@ void main() {
   });
 }
 
-class _GuardedSettingsStorage extends StorageService {
+class _GuardedSettingsStorage extends TestStorageAdapter {
   static const alternateModel = 'settings-apply-test-model';
 
   _GuardedSettingsStorage() : super(databaseFactory: AppDatabase.forTesting);

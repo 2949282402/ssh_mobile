@@ -1,7 +1,7 @@
 part of 'ai_chat_plan_state_test.dart';
 
 class _PlanHarness {
-  final StorageService storageService;
+  final TestStorageAdapter storageService;
   final AppSettings appSettings;
   final SshService sshService;
   final SftpService sftpService;
@@ -19,15 +19,17 @@ class _PlanHarness {
     required this.ragService,
   });
 
-  static Future<_PlanHarness> create({StorageService? storageService}) async {
-    final storage = storageService ?? StorageService();
+  static Future<_PlanHarness> create({
+    TestStorageAdapter? storageService,
+  }) async {
+    final storage = storageService ?? TestStorageAdapter();
     await storage.init();
     attachTestAiRepository(storage);
     final settings = AppSettings();
     await settings.init();
-    final ssh = SshService(storage);
-    final sftp = SftpService(storage);
-    final monitor = PerformanceMonitorService(ssh, storage);
+    final ssh = createTestSshService(storage);
+    final sftp = createTestSftpService(storage);
+    final monitor = createTestPerformanceMonitorService(ssh, storage);
     return _PlanHarness(
       storageService: storage,
       appSettings: settings,
@@ -35,10 +37,10 @@ class _PlanHarness {
       sftpService: sftp,
       performanceMonitorService: monitor,
       playbookService: PlaybookService(
-        storageService: storage,
+        repository: storage.playbookRepository,
         sshService: ssh,
       ),
-      ragService: RagService(storageService: storage),
+      ragService: RagService(aiStorage: storage.aiStorage),
     );
   }
 
@@ -124,7 +126,7 @@ const _okHealthReport = ClientRuntimeHealthReport(
   raw: {},
 );
 
-class _FailNextChatSaveStorage extends StorageService {
+class _FailNextChatSaveStorage extends TestStorageAdapter {
   bool failNextChatSave = false;
   int failedChatSaves = 0;
 
@@ -139,7 +141,7 @@ class _FailNextChatSaveStorage extends StorageService {
   }
 }
 
-class _GateNextChatSaveStorage extends StorageService {
+class _GateNextChatSaveStorage extends TestStorageAdapter {
   Completer<void>? _saveGate;
   Completer<void>? _saveStarted;
 
@@ -166,7 +168,7 @@ class _GateNextChatSaveStorage extends StorageService {
   }
 }
 
-class _GateNextSettingsLoadStorage extends StorageService {
+class _GateNextSettingsLoadStorage extends TestStorageAdapter {
   Completer<void>? _settingsGate;
   Completer<void>? _settingsStarted;
 
@@ -203,7 +205,7 @@ class _GateNextSettingsLoadStorage extends StorageService {
   }
 }
 
-class _GateNumberedChatSaveStorage extends StorageService {
+class _GateNumberedChatSaveStorage extends TestStorageAdapter {
   int _chatSaveNumber = 0;
   int? _gatedSaveNumber;
   Completer<void>? _saveGate;

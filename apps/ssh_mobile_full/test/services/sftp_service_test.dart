@@ -1,14 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 
 void main() {
-  late StorageService storage;
+  late TestStorageAdapter storage;
   late SftpService sftp;
 
   setUp(() {
-    storage = StorageService();
-    sftp = SftpService(storage);
+    storage = TestStorageAdapter();
+    sftp = createTestSftpService(storage);
   });
 
   tearDown(() {

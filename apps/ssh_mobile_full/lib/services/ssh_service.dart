@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:dartssh2/dartssh2.dart';
+import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
@@ -17,7 +18,7 @@ import '../core/services/ssh_host_key_policy.dart';
 import 'connection_target_binding.dart';
 import 'remote_target_scope.dart';
 import 'remote_command_decoder.dart';
-import 'storage_service.dart';
+import 'terminal_session_metadata_store.dart' as terminal_metadata;
 import 'terminal_history_service.dart';
 import '../utils/startup_instrumentation.dart';
 
@@ -25,6 +26,8 @@ part 'ssh/ssh_session.dart';
 part 'ssh/local_ssh_runtime.dart';
 part 'ssh/ssh_connection_runtime.dart';
 part 'ssh/ssh_session_metadata.dart';
+
+typedef TerminalHistoryRecord = terminal_metadata.TerminalHistoryRecord;
 
 /// SSH 会话管理器。每个连接最多可以有多个 SshSession（窗口）。
 ///
@@ -36,10 +39,15 @@ part 'ssh/ssh_session_metadata.dart';
 /// App 重启后通过 RestorableTmuxSession 列表自动恢复会话。
 class SshService extends ChangeNotifier
     implements SshClientAdapter, ssh_core.SshSessionManager {
-  final StorageService _storageService;
+  final connection_core.ConnectionRepository _connectionRepository;
+  final connection_core.CredentialRepository _credentialRepository;
+  final connection_core.HostKeyRepository _hostKeyRepository;
+  final terminal_metadata.TerminalSessionMetadataStore _terminalMetadataStore;
   final AppSettings? _appSettings;
   late final SshClientFactory _clientFactory = SshClientFactory(
-    _storageService,
+    credentialRepository: _credentialRepository,
+    hostKeyRepository: _hostKeyRepository,
+    logger: AppLogService.instance,
   );
   final FlutterBackgroundService _backgroundService =
       FlutterBackgroundService();
@@ -68,7 +76,18 @@ class SshService extends ChangeNotifier
   Future<void>? _initFuture;
   Future<void>? _managerCloseFuture;
 
-  SshService(this._storageService, {this._appSettings}) {
+  SshService({
+    required connection_core.ConnectionRepository connectionRepository,
+    required connection_core.CredentialRepository credentialRepository,
+    required connection_core.HostKeyRepository hostKeyRepository,
+    required terminal_metadata.TerminalSessionMetadataStore
+    terminalMetadataStore,
+    AppSettings? appSettings,
+  }) : _connectionRepository = connectionRepository,
+       _credentialRepository = credentialRepository,
+       _hostKeyRepository = hostKeyRepository,
+       _terminalMetadataStore = terminalMetadataStore,
+       _appSettings = appSettings {
     StartupInstrumentation.instance.recordServiceConstructed('SshService');
   }
 
@@ -169,6 +188,11 @@ class SshService extends ChangeNotifier
   @override
   SshSession? getSession(String sessionId) => _sessions[sessionId];
 
+  ConnectionTargetBinding? _captureConnectionTargetBinding(String id) {
+    final config = _connectionRepository.getConnection(id);
+    return config == null ? null : ConnectionTargetBinding.fromConfig(config);
+  }
+
   @override
   Future<String> loadSessionHistoryText(String sessionId) {
     return _historyService.readTail(sessionId);
@@ -176,12 +200,28 @@ class SshService extends ChangeNotifier
 
   @override
   Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords() {
-    return _storageService.loadTerminalHistoryRecords();
+    return _terminalMetadataStore.loadTerminalHistoryRecords().then(
+      (records) => records
+          .map(
+            (record) => TerminalHistoryRecord(
+              sessionId: record.sessionId,
+              connectionId: record.connectionId,
+              connectionName: record.connectionName,
+              displayName: record.displayName,
+              tmuxSessionName: record.tmuxSessionName,
+              state: record.state,
+              errorMessage: record.errorMessage,
+              createdAt: record.createdAt,
+              updatedAt: record.updatedAt,
+            ),
+          )
+          .toList(growable: false),
+    );
   }
 
   @override
   Future<void> removeTerminalHistoryRecord(String sessionId) {
-    return _storageService.removeTerminalHistoryRecord(sessionId);
+    return _terminalMetadataStore.removeTerminalHistoryRecord(sessionId);
   }
 
   @override
@@ -244,8 +284,9 @@ class SshService extends ChangeNotifier
   Future<void> restoreTmuxSessions() async {
     if (_restoredTmuxSessions) return;
     _restoredTmuxSessions = true;
-    await _storageService.initFuture;
-    final storedSessions = await _storageService.loadRestorableTmuxSessions();
+    await _terminalMetadataStore.initFuture;
+    final storedSessions = await _terminalMetadataStore
+        .loadRestorableTmuxSessions();
     AppLogService.instance.info(
       'Restoring tmux sessions',
       details: 'count=${storedSessions.length}',
@@ -253,13 +294,15 @@ class SshService extends ChangeNotifier
     if (storedSessions.isEmpty) return;
 
     for (final stored in storedSessions) {
-      final config = _storageService.getConnection(stored.connectionId);
+      final config = _connectionRepository.getConnection(stored.connectionId);
       if (config?.launchMode != TerminalLaunchMode.tmux) {
         AppLogService.instance.warning(
           'Removing stale restorable tmux session',
           details: 'sessionId=${stored.sessionId}',
         );
-        await _storageService.removeRestorableTmuxSession(stored.sessionId);
+        await _terminalMetadataStore.removeRestorableTmuxSession(
+          stored.sessionId,
+        );
         continue;
       }
 
@@ -282,7 +325,7 @@ class SshService extends ChangeNotifier
     notifyListeners();
 
     for (final session in _sessions.values.toList()) {
-      final config = _storageService.getConnection(session.connectionId);
+      final config = _connectionRepository.getConnection(session.connectionId);
       if (config?.launchMode != TerminalLaunchMode.tmux ||
           session.isConnected) {
         continue;
@@ -369,8 +412,9 @@ class SshService extends ChangeNotifier
     try {
       await Future<void>.delayed(Duration.zero);
       runtimeTarget = await RemoteTargetScope.resolveIfBound(
-        _storageService,
-        connectionId,
+        connectionRepository: _connectionRepository,
+        credentialRepository: _credentialRepository,
+        connectionId: connectionId,
       );
     } on RemoteTargetScopeException catch (e) {
       AppLogService.instance.error(
@@ -557,7 +601,7 @@ class SshService extends ChangeNotifier
       unawaited(_saveTerminalHistoryRecord(session));
     }
     await session?.close();
-    await _storageService.removeRestorableTmuxSession(sessionId);
+    await _terminalMetadataStore.removeRestorableTmuxSession(sessionId);
     _sessionTargetBindings.remove(sessionId);
     _connectCompleters.remove(sessionId);
     if (_lastSessionId == sessionId) {
@@ -578,7 +622,7 @@ class SshService extends ChangeNotifier
       unawaited(_saveTerminalHistoryRecord(session));
     }
     await session?.close();
-    await _storageService.removeRestorableTmuxSession(sessionId);
+    await _terminalMetadataStore.removeRestorableTmuxSession(sessionId);
     _sessionTargetBindings.remove(sessionId);
     _connectCompleters.remove(sessionId);
     if (_lastSessionId == sessionId) {
@@ -615,7 +659,7 @@ class SshService extends ChangeNotifier
     _refreshSessionsView();
     _connectCompleters.clear();
     _lastSessionId = null;
-    await _storageService.clearRestorableTmuxSessions();
+    await _terminalMetadataStore.clearRestorableTmuxSessions();
     await BackgroundServiceManager.stop();
     notifyListeners();
   }
@@ -667,8 +711,9 @@ class SshService extends ChangeNotifier
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     final target = await RemoteTargetScope.resolveIfBound(
-      _storageService,
-      connectionId,
+      connectionRepository: _connectionRepository,
+      credentialRepository: _credentialRepository,
+      connectionId: connectionId,
     );
     return _runOneShotCommandForTarget(
       target: target,
@@ -688,9 +733,13 @@ class SshService extends ChangeNotifier
     Duration timeout = const Duration(seconds: 15),
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
-    final target = await _storageService.resolveConnectionTarget(binding);
+    final target = await RemoteTargetScope.resolveBinding(
+      binding,
+      connectionRepository: _connectionRepository,
+      credentialRepository: _credentialRepository,
+    );
     if (target == null) {
-      if (_storageService.getConnection(binding.id) == null) {
+      if (_connectionRepository.getConnection(binding.id) == null) {
         throw RemoteTargetScopeException.notFound(binding.id);
       }
       throw RemoteTargetScopeException.targetChanged(binding.id);

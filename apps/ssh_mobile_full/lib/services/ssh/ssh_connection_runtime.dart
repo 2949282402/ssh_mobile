@@ -190,11 +190,13 @@ extension _SshConnectionRuntime on SshService {
         );
         final binding =
             _sessionTargetBindings[sessionId] ??
-            _storageService.captureConnectionTargetBindings([
-              session.connectionId,
-            ])[session.connectionId];
+            _captureConnectionTargetBinding(session.connectionId);
         if (binding == null) return;
-        final target = await _storageService.resolveConnectionTarget(binding);
+        final target = await RemoteTargetScope.resolveBinding(
+          binding,
+          connectionRepository: _connectionRepository,
+          credentialRepository: _credentialRepository,
+        );
         if (target == null) {
           session.state = SshConnectionState.error;
           session.errorMessage =

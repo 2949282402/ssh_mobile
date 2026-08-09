@@ -23,7 +23,7 @@ import 'package:ssh_mobile/services/server_catalog_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 part 'ai_tool_core_tests.dart';
@@ -32,7 +32,7 @@ part 'ai_tool_plan_tests.dart';
 part 'ai_tool_connection_tests.dart';
 part 'ai_tool_test_fakes.dart';
 
-late StorageService storage;
+late TestStorageAdapter storage;
 late SshService ssh;
 late _FakeSftpClient sftp;
 late _FakeClientSystemToolService clientSystem;
@@ -55,7 +55,7 @@ void main() {
     });
     FlutterSecureStorage.setMockInitialValues({});
 
-    storage = StorageService();
+    storage = TestStorageAdapter();
     await storage.init();
     attachTestAiRepository(storage);
     await storage.addConnection(
@@ -68,7 +68,7 @@ void main() {
         serverPlatform: ServerPlatform.linux,
       ),
     );
-    ssh = SshService(storage);
+    ssh = createTestSshService(storage);
     sftp = _FakeSftpClient();
     clientSystem = _FakeClientSystemToolService();
     clientWebView = _FakeClientWebViewAdapter();

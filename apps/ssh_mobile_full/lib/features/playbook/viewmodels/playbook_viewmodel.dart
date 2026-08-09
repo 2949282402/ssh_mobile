@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:connection_core/connection_core.dart';
 import '../../../services/playbook_service.dart';
-import '../../../services/storage_service.dart';
 import '../models/playbook.dart';
 import '../../connection/models/connection.dart';
 
 class PlaybookViewModel extends ChangeNotifier {
   final PlaybookService _playbookService;
-  final StorageService _storageService;
+  final ConnectionRepository _connectionRepository;
 
   // Edit states
   bool _isEditing = false;
@@ -23,9 +23,10 @@ class PlaybookViewModel extends ChangeNotifier {
   String? _selectedConnectionId;
 
   PlaybookViewModel({
-    required this._playbookService,
-    required this._storageService,
-  }) {
+    required PlaybookService playbookService,
+    required ConnectionRepository connectionRepository,
+  }) : _playbookService = playbookService,
+       _connectionRepository = connectionRepository {
     _playbookService.addListener(_onServiceChanged);
     _initializeDefaultConnection();
   }
@@ -63,7 +64,7 @@ class PlaybookViewModel extends ChangeNotifier {
   Set<int> get expandedSteps => _expandedSteps;
   String? get selectedConnectionId => _selectedConnectionId;
 
-  List<ConnectionConfig> get connections => _storageService.connections;
+  List<ConnectionConfig> get connections => _connectionRepository.connections;
 
   void _initializeDefaultConnection() {
     if (connections.isNotEmpty) {

@@ -1,9 +1,9 @@
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
+import 'package:connection_core/connection_core.dart';
 
 import '../../features/connection/models/connection.dart';
 import '../../services/app_log_service.dart';
-import '../../services/storage_service.dart';
 import 'ssh_host_key_policy.dart';
 
 class SshCredentials {
@@ -26,17 +26,25 @@ class SshClientAuthOptions {
 }
 
 class SshClientFactory {
-  final StorageService _storageService;
+  final CredentialRepository _credentialRepository;
+  final HostKeyRepository _hostKeyRepository;
+  final AppLogService _logger;
   static final RegExp _passwordPromptPattern = RegExp(
     r'password|passphrase|pass phrase',
     caseSensitive: false,
   );
 
-  const SshClientFactory(this._storageService);
+  const SshClientFactory({
+    required CredentialRepository credentialRepository,
+    required HostKeyRepository hostKeyRepository,
+    required AppLogService logger,
+  }) : _credentialRepository = credentialRepository,
+       _hostKeyRepository = hostKeyRepository,
+       _logger = logger;
 
   Future<SshCredentials> loadCredentials(ConnectionConfig config) async {
-    final password = await _storageService.getPassword(config.id);
-    final privateKey = await _storageService.getPrivateKey(config.id);
+    final password = await _credentialRepository.getPassword(config.id);
+    final privateKey = await _credentialRepository.getPrivateKey(config.id);
     validateAuthSecrets(
       config: config,
       password: password,
@@ -67,7 +75,7 @@ class SshClientFactory {
       onUnknownHostKey: onUnknownHostKey,
       persistTrust: _persistTrustedHostKey,
     );
-    AppLogService.instance.info(
+    _logger.info(
       'SshClientFactory: connecting socket',
       details:
           'connection=${config.name} host=${config.host}:${config.port} user=${config.username} authMethod=${config.authMethod.name}',
@@ -95,7 +103,7 @@ class SshClientFactory {
       await client.authenticated.timeout(timeout);
       return client;
     } catch (e, stackTrace) {
-      AppLogService.instance.error(
+      _logger.error(
         'SshClientFactory: client setup failed',
         error: e,
         stackTrace: stackTrace,
@@ -107,7 +115,7 @@ class SshClientFactory {
   }
 
   Future<void> _persistTrustedHostKey(ConnectionConfig config) {
-    return _storageService.trustHostKey(
+    return _hostKeyRepository.trustHostKey(
       config.id,
       algorithm: config.hostKeyAlgorithm,
       fingerprint: config.hostKeyFingerprint,

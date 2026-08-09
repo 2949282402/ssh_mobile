@@ -7,12 +7,12 @@ import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.d
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late SshService sshService;
   late SftpService sftpService;
   late PerformanceMonitorService performanceService;
@@ -22,12 +22,15 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
 
-    sshService = SshService(storageService);
-    sftpService = SftpService(storageService);
-    performanceService = PerformanceMonitorService(sshService, storageService);
+    sshService = createTestSshService(storageService);
+    sftpService = createTestSftpService(storageService);
+    performanceService = createTestPerformanceMonitorService(
+      sshService,
+      storageService,
+    );
   });
 
   tearDown(() {
@@ -38,7 +41,9 @@ void main() {
   group('ConnectionViewModel Tests', () {
     test('Initialization and fetchConnections', () async {
       final viewModel = ConnectionViewModel(
-        connectionRepository: storageService,
+        connectionRepository: storageService.connectionRepository,
+        credentialRepository: storageService.credentialRepository,
+        hostKeyRepository: storageService.hostKeyRepository,
         sshService: sshService,
         sftpService: sftpService,
         performanceService: performanceService,
@@ -66,7 +71,9 @@ void main() {
       'deleteConnectionWithCleanup triggers disconnects and deletes',
       () async {
         final viewModel = ConnectionViewModel(
-          connectionRepository: storageService,
+          connectionRepository: storageService.connectionRepository,
+          credentialRepository: storageService.credentialRepository,
+          hostKeyRepository: storageService.hostKeyRepository,
           sshService: sshService,
           sftpService: sftpService,
           performanceService: performanceService,
@@ -93,7 +100,9 @@ void main() {
 
     test('deleteConnectionsWithCleanup batch delete', () async {
       final viewModel = ConnectionViewModel(
-        connectionRepository: storageService,
+        connectionRepository: storageService.connectionRepository,
+        credentialRepository: storageService.credentialRepository,
+        hostKeyRepository: storageService.hostKeyRepository,
         sshService: sshService,
         sftpService: sftpService,
         performanceService: performanceService,
@@ -129,7 +138,9 @@ void main() {
       'openTerminalSession handle error or returns null/session id',
       () async {
         final viewModel = ConnectionViewModel(
-          connectionRepository: storageService,
+          connectionRepository: storageService.connectionRepository,
+          credentialRepository: storageService.credentialRepository,
+          hostKeyRepository: storageService.hostKeyRepository,
           sshService: sshService,
           sftpService: sftpService,
           performanceService: performanceService,

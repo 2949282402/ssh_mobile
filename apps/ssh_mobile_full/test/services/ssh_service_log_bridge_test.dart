@@ -1,20 +1,20 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('SshService Log Bridge', () {
-    late StorageService storageService;
+    late TestStorageAdapter storageService;
     late SshService sshService;
 
     setUp(() {
       debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-      storageService = StorageService();
-      sshService = SshService(storageService);
+      storageService = TestStorageAdapter();
+      sshService = createTestSshService(storageService);
       AppLogService.instance.clear();
     });
 

@@ -4,13 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import '../features/playbook/models/playbook.dart';
 import 'connection_target_binding.dart';
-import 'storage_service.dart';
 import 'ssh_service.dart';
 import 'app_log_service.dart';
 
 class PlaybookService extends ChangeNotifier
     implements feature_playbook.PlaybookAutomationPort {
-  final StorageService _storageService;
+  final feature_playbook.PlaybookRepository _repository;
   final SshService _sshService;
 
   List<Playbook> _playbooks = [];
@@ -27,7 +26,7 @@ class PlaybookService extends ChangeNotifier
 
   String? _pendingDiagnosticPrompt;
 
-  PlaybookService({required this._storageService, required this._sshService}) {
+  PlaybookService({required this._repository, required this._sshService}) {
     _loadPlaybooksFromStorage();
   }
 
@@ -53,14 +52,14 @@ class PlaybookService extends ChangeNotifier
   String? get activeConnectionId => _activeConnectionId;
 
   Future<void> _loadPlaybooksFromStorage() async {
-    final playbooks = await _storageService.loadPlaybooks();
+    final playbooks = await _repository.loadPlaybooks();
     if (_disposed) return;
     _playbooks = playbooks;
     _notifyListeners();
   }
 
   Future<void> createPlaybook(Playbook playbook) async {
-    await _storageService.savePlaybook(playbook);
+    await _repository.savePlaybook(playbook);
     await _loadPlaybooksFromStorage();
   }
 
@@ -69,7 +68,7 @@ class PlaybookService extends ChangeNotifier
         _activeRun?.approvedActionFingerprint == null) {
       _activePlaybook = playbook;
     }
-    await _storageService.savePlaybook(playbook);
+    await _repository.savePlaybook(playbook);
     await _loadPlaybooksFromStorage();
   }
 
@@ -81,7 +80,7 @@ class PlaybookService extends ChangeNotifier
       _isPaused = false;
       _invalidateActiveRun();
     }
-    await _storageService.deletePlaybook(id);
+    await _repository.deletePlaybook(id);
     await _loadPlaybooksFromStorage();
   }
 
@@ -480,7 +479,7 @@ class PlaybookService extends ChangeNotifier
       final fingerprint = run.approvedActionFingerprint;
       final saved = fingerprint == null
           ? await _saveUnapprovedRunState(playbook)
-          : await _storageService.savePlaybookIfActionUnchanged(
+          : await _repository.savePlaybookIfActionUnchanged(
               playbookId: run.playbookId,
               expectedActionFingerprint: fingerprint,
               playbook: playbook,
@@ -505,7 +504,7 @@ class PlaybookService extends ChangeNotifier
       }
 
       if (!_isCurrentRun(run)) return false;
-      final playbooks = await _storageService.loadPlaybooks();
+      final playbooks = await _repository.loadPlaybooks();
       if (!_isCurrentRun(run)) return false;
       _playbooks = playbooks;
       return true;
@@ -513,7 +512,7 @@ class PlaybookService extends ChangeNotifier
   }
 
   Future<bool> _saveUnapprovedRunState(Playbook playbook) async {
-    await _storageService.savePlaybook(playbook);
+    await _repository.savePlaybook(playbook);
     return true;
   }
 

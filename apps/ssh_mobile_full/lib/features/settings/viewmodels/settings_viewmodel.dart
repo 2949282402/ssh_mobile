@@ -4,26 +4,27 @@ import 'package:flutter/material.dart';
 
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
-import '../../../services/storage_service.dart';
+import '../../../services/ai_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
 
 class SettingsViewModel extends ChangeNotifier {
   final AppSettings _appSettings;
-  final StorageService _storageService;
+  final AppAiStorageAdapter _aiStorage;
 
   SettingsViewModel({
-    required this._appSettings,
-    required this._storageService,
-  }) {
+    required AppSettings appSettings,
+    required AppAiStorageAdapter aiStorage,
+  }) : _appSettings = appSettings,
+       _aiStorage = aiStorage {
     // 监听底层 AppSettings 的更新，联动通知监听 SettingsViewModel 的视图
     _appSettings.addListener(notifyListeners);
-    _storageService.addListener(notifyListeners);
+    _aiStorage.addListener(notifyListeners);
   }
 
   @override
   void dispose() {
     _appSettings.removeListener(notifyListeners);
-    _storageService.removeListener(notifyListeners);
+    _aiStorage.removeListener(notifyListeners);
     super.dispose();
   }
 
@@ -36,11 +37,11 @@ class SettingsViewModel extends ChangeNotifier {
       _appSettings.showServerNamesInNotifications;
 
   // 秘钥缓存设置暴露
-  bool get secretCacheEnabled => _storageService.isSecretCacheEnabled;
-  Duration get secretCacheTtl => _storageService.secretCacheTtl;
-  int get secretCacheTtlMinutes => _storageService.secretCacheTtlMinutes;
+  bool get secretCacheEnabled => _aiStorage.isSecretCacheEnabled;
+  Duration get secretCacheTtl => _aiStorage.secretCacheTtl;
+  int get secretCacheTtlMinutes => _aiStorage.secretCacheTtlMinutes;
   List<int> get secretCacheTtlOptionsMinutes =>
-      _storageService.secretCacheTtlOptionsMinutes;
+      _aiStorage.secretCacheTtlOptionsMinutes;
 
   Future<void> changeLanguage(AppLanguage lang) async {
     if (lang != _appSettings.language) {
@@ -74,12 +75,12 @@ class SettingsViewModel extends ChangeNotifier {
   }
 
   Future<void> configureSecretCache(bool enabled, int ttlMinutes) async {
-    await _storageService.setSecretCacheEnabled(enabled);
-    await _storageService.setSecretCacheTtl(Duration(minutes: ttlMinutes));
+    await _aiStorage.setSecretCacheEnabled(enabled);
+    await _aiStorage.setSecretCacheTtl(Duration(minutes: ttlMinutes));
   }
 
   Future<void> clearSecretCache() async {
-    _storageService.clearSecretCache();
+    _aiStorage.clearSecretCache();
   }
 
   Future<void> setShowServerNamesInNotifications(bool value) async {
@@ -87,11 +88,11 @@ class SettingsViewModel extends ChangeNotifier {
   }
 
   Future<String> exportBackup() async {
-    return await _storageService.exportAppDataJson();
+    return await _aiStorage.exportAppDataJson();
   }
 
   Future<void> importBackup(String json) async {
-    await _storageService.importAppDataJson(json);
+    await _aiStorage.importAppDataJson(json);
   }
 
   bool _isImporting = false;
@@ -109,7 +110,7 @@ class SettingsViewModel extends ChangeNotifier {
     _lastOperationMessage = null;
     notifyListeners();
     try {
-      final jsonText = await _storageService.exportAppDataJson();
+      final jsonText = await _aiStorage.exportAppDataJson();
       final now = DateTime.now();
       final fileName =
           'ssh_mobile_backup_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.json';
@@ -144,7 +145,7 @@ class SettingsViewModel extends ChangeNotifier {
       if (bytes == null) {
         return false;
       }
-      await _storageService.importAppDataJson(utf8.decode(bytes));
+      await _aiStorage.importAppDataJson(utf8.decode(bytes));
       _lastOperationMessage = 'success';
       return true;
     } catch (e, stackTrace) {

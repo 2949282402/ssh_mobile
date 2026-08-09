@@ -74,7 +74,7 @@ abstract interface class LlmClientAdapter {
 
 /// OpenAI 兼容 LLM 流式对话服务。
 class LlmChatService implements LlmClientAdapter {
-  final StorageService storageService;
+  final AiStoragePort storageService;
   final AiToolExecutor toolService;
   final MultiAgentCoordinatorAdapter multiAgentCoordinator;
   final ToolExposureRouter toolExposureRouter;

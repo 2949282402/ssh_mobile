@@ -36,7 +36,7 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
 
   Future<_TraceDebugData> _load() async {
     try {
-      final storage = context.read<StorageService>();
+      final storage = context.read<AiStoragePort>();
       final events = await storage.loadAgentTraceEvents(widget.runId);
       final metrics = await storage.loadAgentRunMetrics();
       return _TraceDebugData(

@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 
 // --- Mocks for HttpClient ---
 class MockHttpOverrides extends HttpOverrides {
@@ -136,7 +136,7 @@ void main() {
     'plugins.flutter.io/path_provider',
   );
 
-  late StorageService storage;
+  late TestStorageAdapter storage;
 
   Future<void> cleanRagFiles() async {
     final dir = Directory('.');
@@ -170,7 +170,7 @@ void main() {
       'ai_aliyun_api_key': 'aliyun-test-key-123',
     });
 
-    storage = StorageService();
+    storage = TestStorageAdapter();
     await storage.init();
   });
 
@@ -184,7 +184,7 @@ void main() {
     test(
       'addDocument generates embeddings and retrieve uses RRF fusion',
       () async {
-        final service = RagService(storageService: storage);
+        final service = RagService(aiStorage: storage.aiStorage);
         await service.init();
 
         // 1. 添加带有阿里云向量的文档

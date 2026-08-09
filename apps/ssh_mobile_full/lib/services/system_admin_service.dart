@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'package:connection_core/connection_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:ssh_mobile/features/system_admin/models/system_admin.dart';
@@ -7,14 +8,17 @@ import '../widgets/system_power_confirm_flow.dart';
 import 'ssh_service.dart';
 import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
-import 'storage_service.dart';
 import 'app_log_service.dart';
 import 'remote_command_decoder.dart';
 
 class SystemAdminService extends ChangeNotifier {
-  final StorageService _storageService;
+  final ConnectionRepository _connectionRepository;
+  final CredentialRepository _credentialRepository;
+  final HostKeyRepository _hostKeyRepository;
   late final SshClientFactory _clientFactory = SshClientFactory(
-    _storageService,
+    credentialRepository: _credentialRepository,
+    hostKeyRepository: _hostKeyRepository,
+    logger: AppLogService.instance,
   );
 
   String? _activeConnectionId;
@@ -30,9 +34,13 @@ class SystemAdminService extends ChangeNotifier {
   @visibleForTesting
   Future<void> Function(String connectionId)? connectOverride;
 
-  SystemAdminService(this._storageService);
-
-  StorageService get storageService => _storageService;
+  SystemAdminService({
+    required ConnectionRepository connectionRepository,
+    required CredentialRepository credentialRepository,
+    required HostKeyRepository hostKeyRepository,
+  }) : _connectionRepository = connectionRepository,
+       _credentialRepository = credentialRepository,
+       _hostKeyRepository = hostKeyRepository;
 
   String? get connectionId => _activeConnectionId;
   bool get isConnecting => _isConnecting;
@@ -72,7 +80,7 @@ class SystemAdminService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final config = _storageService.getConnection(connectionId);
+      final config = _connectionRepository.getConnection(connectionId);
       if (config == null) {
         throw Exception('Connection config not found');
       }

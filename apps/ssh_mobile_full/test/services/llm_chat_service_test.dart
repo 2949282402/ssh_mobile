@@ -9,12 +9,9 @@ import 'package:feature_ai/ai_tools.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/ai_llm.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
-import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 
 void main() {
   group('LlmChatService token estimates', () {
@@ -167,7 +164,7 @@ void main() {
     test(
       'stream with cancelled token during compression throws LlmCancelledException',
       () async {
-        final storage = StorageService();
+        final storage = TestStorageAdapter();
         await storage.init();
         attachTestAiRepository(storage);
 
@@ -177,13 +174,13 @@ void main() {
           apiKey: 'dummy-key',
         );
 
-        final ssh = SshService(storage);
-        final sftp = SftpService(storage);
+        final ssh = createTestSshService(storage);
+        final sftp = createTestSftpService(storage);
         final diagnostics = ServerDiagnosticsService(
-          storageService: storage,
+          connectionRepository: storage.connectionRepository,
           sshService: ssh,
         );
-        final monitor = PerformanceMonitorService(ssh, storage);
+        final monitor = createTestPerformanceMonitorService(ssh, storage);
         final tools = createAiToolServiceFromLegacy(
           storageService: storage,
           sshService: ssh,
@@ -204,7 +201,7 @@ void main() {
           {'role': 'user', 'content': 'hello'},
         ];
 
-        expect(
+        await expectLater(
           () => llm
               .stream(
                 messages: messages,
@@ -372,7 +369,7 @@ void main() {
     test(
       'systemPromptFor appends plan mode instructions when planMode is true',
       () {
-        final storage = StorageService();
+        final storage = TestStorageAdapter();
         attachTestAiRepository(storage);
         final llmZh = LlmChatService(
           storageService: aiStoragePort(storage),
@@ -501,7 +498,7 @@ void main() {
           ),
         ]);
         final llm = LlmChatService(
-          storageService: aiStoragePort(StorageService()),
+          storageService: aiStoragePort(TestStorageAdapter()),
           toolService: executor,
           language: AppLanguage.en,
         );

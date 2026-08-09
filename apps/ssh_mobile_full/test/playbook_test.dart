@@ -11,13 +11,19 @@ import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/remote_target_scope.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import 'test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 
 class FakeSshService extends SshService {
-  final StorageService storage;
+  final TestStorageAdapter storage;
 
-  FakeSshService(this.storage) : super(storage);
+  FakeSshService(this.storage)
+    : super(
+        connectionRepository: storage.connectionRepository,
+        credentialRepository: storage.credentialRepository,
+        hostKeyRepository: storage.hostKeyRepository,
+        terminalMetadataStore: storage.terminalMetadataStore,
+      );
 
   String lastExecutedCommand = '';
   int callCount = 0;
@@ -54,7 +60,7 @@ class FakeSshService extends SshService {
   }
 }
 
-class _DelayedPlaybookStorage extends StorageService {
+class _DelayedPlaybookStorage extends TestStorageAdapter {
   final Completer<void> releaseLoad = Completer<void>();
 
   @override
@@ -69,7 +75,7 @@ class _GatedBoundSshService extends FakeSshService {
   final Completer<void> releaseFirstCommand = Completer<void>();
   final List<String> executedCommands = [];
 
-  _GatedBoundSshService(super.storage);
+  _GatedBoundSshService(TestStorageAdapter storage) : super(storage);
 
   @override
   Future<RemoteCommandResult> runOneShotCommandForBinding({
@@ -107,7 +113,7 @@ class _ConcurrentStartSshService extends FakeSshService {
   int activeCommandCount = 0;
   int maxConcurrentCommandCount = 0;
 
-  _ConcurrentStartSshService(super.storage);
+  _ConcurrentStartSshService(TestStorageAdapter storage) : super(storage);
 
   @override
   Future<RemoteCommandResult> runOneShotCommand({
@@ -231,7 +237,10 @@ void main() {
     () async {
       final storage = _DelayedPlaybookStorage();
       final ssh = FakeSshService(storage);
-      final service = PlaybookService(storageService: storage, sshService: ssh);
+      final service = PlaybookService(
+        repository: storage.playbookRepository,
+        sshService: ssh,
+      );
 
       service.dispose();
       storage.releaseLoad.complete();
@@ -243,7 +252,7 @@ void main() {
   );
 
   group('Playbook Service and Execution Tests', () {
-    late StorageService storage;
+    late TestStorageAdapter storage;
     late FakeSshService ssh;
     late PlaybookService service;
 
@@ -266,10 +275,13 @@ void main() {
             },
           );
       SharedPreferences.setMockInitialValues({});
-      storage = StorageService();
+      storage = TestStorageAdapter();
       await storage.init();
       ssh = FakeSshService(storage);
-      service = PlaybookService(storageService: storage, sshService: ssh);
+      service = PlaybookService(
+        repository: storage.playbookRepository,
+        sshService: ssh,
+      );
     });
 
     tearDown(() async {
@@ -371,7 +383,7 @@ void main() {
       () async {
         final concurrentSsh = _ConcurrentStartSshService(storage);
         final concurrentService = PlaybookService(
-          storageService: storage,
+          repository: storage.playbookRepository,
           sshService: concurrentSsh,
         );
         final now = DateTime.now();
@@ -489,7 +501,7 @@ void main() {
       () async {
         final gatedSsh = _ConcurrentStartSshService(storage);
         final gatedService = PlaybookService(
-          storageService: storage,
+          repository: storage.playbookRepository,
           sshService: gatedSsh,
         );
         final now = DateTime.now();
@@ -553,7 +565,7 @@ void main() {
     test('pause then skip waits for the in-flight command to settle', () async {
       final gatedSsh = _ConcurrentStartSshService(storage);
       final gatedService = PlaybookService(
-        storageService: storage,
+        repository: storage.playbookRepository,
         sshService: gatedSsh,
       );
       final now = DateTime.now();
@@ -620,7 +632,7 @@ void main() {
       () async {
         final gatedSsh = _ConcurrentStartSshService(storage);
         final gatedService = PlaybookService(
-          storageService: storage,
+          repository: storage.playbookRepository,
           sshService: gatedSsh,
         );
         final now = DateTime.now();
@@ -689,7 +701,7 @@ void main() {
         await storage.addConnection(connection);
         final gatedSsh = _GatedBoundSshService(storage);
         final approvedService = PlaybookService(
-          storageService: storage,
+          repository: storage.playbookRepository,
           sshService: gatedSsh,
         );
         final playbook = Playbook(
@@ -749,7 +761,7 @@ void main() {
         await storage.addConnection(connection);
         final gatedSsh = _GatedBoundSshService(storage);
         final approvedService = PlaybookService(
-          storageService: storage,
+          repository: storage.playbookRepository,
           sshService: gatedSsh,
         );
         final playbook = Playbook(

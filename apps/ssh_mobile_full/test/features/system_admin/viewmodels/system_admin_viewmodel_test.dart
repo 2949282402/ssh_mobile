@@ -4,13 +4,13 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
 import 'package:ssh_mobile/widgets/system_power_confirm_flow.dart';
 import 'package:ssh_mobile/services/system_admin_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late SystemAdminService adminService;
   String? lastCommand;
   int nextExitCode = 0;
@@ -21,10 +21,10 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
 
-    adminService = SystemAdminService(storageService);
+    adminService = createTestSystemAdminService(storageService);
 
     // Stub SSH connections and privilege checks
     adminService.connectOverride = (id) async {
@@ -58,7 +58,7 @@ void main() {
     Future<SystemAdminViewModel> rootConnectedViewModel() async {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
-        storageService: storageService,
+        connectionRepository: storageService.connectionRepository,
       )..debounceDuration = Duration.zero;
       viewModel.selectConnection('conn_123');
       await viewModel.connectIfNeeded('conn_123');
@@ -69,7 +69,7 @@ void main() {
     test('Initialization status checks', () {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
-        storageService: storageService,
+        connectionRepository: storageService.connectionRepository,
       );
 
       expect(viewModel.connectionId, isNull);
@@ -87,7 +87,7 @@ void main() {
       () {
         final viewModel = SystemAdminViewModel(
           adminService: adminService,
-          storageService: storageService,
+          connectionRepository: storageService.connectionRepository,
         );
 
         bool notified = false;
@@ -107,7 +107,7 @@ void main() {
       () async {
         final viewModel = SystemAdminViewModel(
           adminService: adminService,
-          storageService: storageService,
+          connectionRepository: storageService.connectionRepository,
         );
 
         bool notified = false;
@@ -125,7 +125,7 @@ void main() {
     test('selectConnection does not trigger root management connection', () {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
-        storageService: storageService,
+        connectionRepository: storageService.connectionRepository,
       );
 
       viewModel.selectConnection('conn_123');
@@ -137,7 +137,7 @@ void main() {
     test('failed connectIfNeeded retains selectedConnectionId', () async {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
-        storageService: storageService,
+        connectionRepository: storageService.connectionRepository,
       );
       viewModel.selectConnection('conn_123');
 
@@ -160,7 +160,7 @@ void main() {
       () async {
         final viewModel = SystemAdminViewModel(
           adminService: adminService,
-          storageService: storageService,
+          connectionRepository: storageService.connectionRepository,
         );
 
         viewModel.selectConnection('conn_123'); // selection is conn_123
@@ -316,7 +316,7 @@ root P
     test('rebootServer and shutdownServer require valid/fresh tokens', () async {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
-        storageService: storageService,
+        connectionRepository: storageService.connectionRepository,
       );
 
       // Connect the viewmodel/service mock so managementConnectionId is not null

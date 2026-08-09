@@ -2,7 +2,7 @@ part of 'ai_tool_service.dart';
 
 class SshToolsProvider implements AiToolProvider {
   final SshClientAdapter sshService;
-  final StorageService storageService;
+  final AiStoragePort storageService;
   final ToolSecretPolicy secretPolicy;
 
   const SshToolsProvider({

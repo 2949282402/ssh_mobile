@@ -52,7 +52,7 @@ construction remains in the App Shell adapter.
 The SSH infrastructure package is `packages/infrastructure/ssh_core/`; it owns
 the App Scope `SshSessionManager`, Lease/Pool lifecycle, platform-neutral Runtime
 Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target
-bindings. It must not depend on `StorageService` or Features. The current app
+bindings. It must not depend on App Shell storage implementations or Features. The current app
 keeps `SshService` as the same-instance compatibility surface until the Terminal
 Pilot migrates its method API.
 The Terminal Feature package is `packages/features/feature_terminal/`; it owns
@@ -104,7 +104,7 @@ UI, activity Repository, and `mcp.db`. App Shell adapters in
 logging, and the AI tool runtime. The package must not import AI Feature
 implementation or App `/src/`; dangerous-tool `approval_required` behavior
 must remain in its execution layer, and MCP activity must not return to the
-shared AppDatabase/StorageService.
+shared AppDatabase or a unified storage facade.
 The AI Feature package is `packages/features/feature_ai/`; it owns AI chat,
 Agent, Skills, LLM providers/runtime, tool orchestration, AI WebView contracts,
 and `ai.db`. `AiModule` lazily owns its database, Repository, provider/runtime,
@@ -235,7 +235,8 @@ implementations. The old App terminal files are compatibility exports/bridges.
   sensitive reads require approval; destructive shell deletion stays blocked.
 - Run AI shell tools through one-shot SSH exec. Never reuse an interactive
   terminal or silently trust an unknown or changed host key.
-- Keep structured growing data behind `StorageService` and Drift repositories.
+- Keep structured growing data behind the owning Feature/Core Repositories and
+  their Drift databases.
   Encrypt sensitive fields before SQLite writes; never hide a production
   database-open failure with an in-memory fallback.
 - Treat remote files and peer input as untrusted. Bound reads before allocation,
@@ -253,7 +254,7 @@ Read only the rows relevant to the task.
 
 | Task | Start with | Additional reference |
 | --- | --- | --- |
-| Architecture, MVVM, storage | Owning `lib/features/` code, `lib/data/`, `lib/services/storage_service.dart` | `docs/ADR_ENGINEERING_BASELINE.md` |
+| Architecture, MVVM, storage | Owning Feature/Core code, App Shell adapters, and module repositories | `docs/ADR_ENGINEERING_BASELINE.md` |
 | Core contracts, logging, and Module lifecycle | `packages/core/app_core/lib/`, `packages/core/app_core/test/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md` |
 | Shared UI and responsiveness | `packages/core/app_ui/lib/`, `packages/core/app_ui/test/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/MOBILE_UI_QA.md` |
 | Connection domain, repositories, database, credentials, Host Key | `packages/core/connection_core/` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
@@ -636,7 +637,7 @@ remain compatibility surfaces.
   `apps/ssh_mobile_full/lib/main.dart` only delegates to `AppBootstrap`.
   `SshMobileApp` exposes existing Runtime instances through `MultiProvider`.
 - `lib/features/settings/viewmodels/settings_viewmodel.dart` bridges
-  `AppSettings` plus `StorageService`, while `lib/features/home/views/home_screen.dart`
+  `AppSettings` plus injected Feature/Core Ports, while `lib/features/home/views/home_screen.dart`
   remains the navigation shell and settings entry surface.
 - Main page order is Servers, SFTP, AI, System Admin, then Logs, and app launch
   lands on Servers.

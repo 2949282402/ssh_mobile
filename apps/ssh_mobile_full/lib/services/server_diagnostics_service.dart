@@ -1,10 +1,10 @@
 import 'dart:convert';
 
+import 'package:connection_core/connection_core.dart';
 import 'package:flutter/foundation.dart';
 
 import 'server_status_probe.dart';
 import 'ssh_service.dart';
-import 'storage_service.dart';
 
 abstract interface class ServerDiagnosticsAdapter {
   Future<Map<String, dynamic>> detectOs(String connectionId);
@@ -18,11 +18,11 @@ abstract interface class ServerDiagnosticsAdapter {
 }
 
 class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
-  final StorageService storageService;
+  final ConnectionRepository connectionRepository;
   final SshClientAdapter sshService;
 
   const ServerDiagnosticsService({
-    required this.storageService,
+    required this.connectionRepository,
     required this.sshService,
   });
 
@@ -116,7 +116,7 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
 
   @override
   Future<Map<String, dynamic>> generateOpsReport(String connectionId) async {
-    final connection = storageService.getConnection(connectionId);
+    final connection = connectionRepository.getConnection(connectionId);
     final os = await _detectRemoteOs(connectionId);
 
     if (os['os'] == 'windows') {
@@ -249,7 +249,7 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
   }
 
   Future<Map<String, dynamic>> _detectRemoteOs(String connectionId) async {
-    final config = storageService.getConnection(connectionId);
+    final config = connectionRepository.getConnection(connectionId);
     if (config != null) {
       return {
         'os': config.serverPlatform.name,

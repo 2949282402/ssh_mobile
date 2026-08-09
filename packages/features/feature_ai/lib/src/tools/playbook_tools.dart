@@ -1,7 +1,7 @@
 part of 'ai_tool_service.dart';
 
 class PlaybookToolsProvider implements AiToolProvider {
-  final StorageService storageService;
+  final AiStoragePort storageService;
   final AppSettings? appSettings;
   final PlaybookAutomationPort? playbookService;
 

@@ -3,22 +3,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ssh_mobile/features/rag/viewmodels/rag_knowledge_viewmodel.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late RagService ragService;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
 
-    ragService = RagService(storageService: storageService);
+    ragService = RagService(aiStorage: storageService.aiStorage);
   });
 
   tearDown(() {
@@ -29,7 +29,7 @@ void main() {
     test('Initialization status checks', () {
       final viewModel = RagKnowledgeViewModel(
         ragService: ragService,
-        storageService: storageService,
+        aiStorage: storageService.aiStorage,
       );
 
       expect(viewModel.documents, isEmpty);
@@ -40,7 +40,7 @@ void main() {
     test('Aliyun API key save and retrieval updates settings', () async {
       final viewModel = RagKnowledgeViewModel(
         ragService: ragService,
-        storageService: storageService,
+        aiStorage: storageService.aiStorage,
       );
 
       var key = await viewModel.getAliyunApiKey();

@@ -1,11 +1,11 @@
-part of '../storage_service.dart';
+part of '../ai_storage_adapter.dart';
 
-extension AiSkillOps on StorageService {
+extension AiSkillOps on AppAiStorageAdapter {
   Future<List<AiSkillRecord>> _loadAiSkills() async {
     if (!_initialized || _prefs == null) return [];
     final cached = _aiSkillsCache;
     if (cached != null) return cached;
-    final jsonStr = await _readProtectedPref(StorageService._aiSkillsKey);
+    final jsonStr = await _readProtectedPref(AppAiStorageAdapter._aiSkillsKey);
     if (jsonStr == null || jsonStr.isEmpty) {
       return _aiSkillsCache = const [];
     }
@@ -53,7 +53,7 @@ extension AiSkillOps on StorageService {
     _aiSkillsCache = List.unmodifiable(ordered);
     final jsonStr = jsonEncode(ordered.map((item) => item.toJson()).toList());
     await _writeProtectedPrefBuffered(
-      StorageService._aiSkillsKey,
+      AppAiStorageAdapter._aiSkillsKey,
       jsonStr,
       immediate: immediate,
     );

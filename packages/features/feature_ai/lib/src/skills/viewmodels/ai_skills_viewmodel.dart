@@ -5,7 +5,7 @@ import 'package:feature_ai/src/skills/skill_domain_service.dart';
 import 'package:feature_ai/src/skills/skill_frontmatter.dart';
 
 class AiSkillsViewModel extends ChangeNotifier {
-  final StorageService _storageService;
+  final AiStoragePort _storageService;
   final AppSettings _appSettings;
   final SkillDomainService _skillDomainService;
 

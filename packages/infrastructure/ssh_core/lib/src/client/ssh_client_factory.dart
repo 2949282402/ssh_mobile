@@ -1,7 +1,7 @@
 // SSH Client 工厂。
 //
 // 工厂只负责凭据读取、身份解析、认证回调、Socket 建立和 Host Key 策略绑定。
-// 它依赖 Connection/Credential/HostKey Repository，不直接依赖 StorageService。
+// 它依赖 Connection/Credential/HostKey Repository，不直接依赖 App Shell 存储实现。
 
 import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart';

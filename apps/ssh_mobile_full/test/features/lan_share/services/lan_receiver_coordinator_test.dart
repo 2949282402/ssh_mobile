@@ -1,33 +1,33 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ssh_mobile/data/database/app_database.dart';
 import 'package:ssh_mobile/features/lan_share/services/lan_receiver_coordinator.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late AppDatabase database;
   late AppSettings appSettings;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
-    storageService = StorageService();
-    await storageService.init();
+    database = AppDatabase.forTesting();
     appSettings = AppSettings();
     await appSettings.ensureCoreLoaded();
   });
 
-  tearDown(() {
-    storageService.dispose();
+  tearDown(() async {
+    appSettings.dispose();
+    await database.close();
   });
 
   group('LanReceiverCoordinator Tests', () {
     test('initial state is not initialized', () {
       final coordinator = LanReceiverCoordinator(
-        storageService: storageService,
+        historyDao: database.lanHistoryDao,
         appSettings: appSettings,
       );
       expect(coordinator.initialized, isFalse);
@@ -36,7 +36,7 @@ void main() {
 
     test('ensureInitialized initializes services idempotently', () async {
       final coordinator = LanReceiverCoordinator(
-        storageService: storageService,
+        historyDao: database.lanHistoryDao,
         appSettings: appSettings,
         initializeNetwork: false,
       );

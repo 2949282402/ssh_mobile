@@ -6,6 +6,7 @@ import 'dart:typed_data';
 // ignore: depend_on_referenced_packages
 import 'package:crypto/crypto.dart';
 import 'package:dartssh2/dartssh2.dart';
+import 'package:connection_core/connection_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -16,7 +17,7 @@ import '../../core/services/ssh_client_factory.dart';
 import '../../core/services/data_protection_service.dart';
 import '../connection_target_binding.dart';
 import '../remote_target_scope.dart';
-import '../storage_service.dart';
+import '../sftp_path_history_store.dart';
 import '../tool_secret_policy.dart';
 import '../sftp_service.dart';
 import 'sftp_entry_parser.dart';
@@ -41,9 +42,14 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   static const int maxInMemoryTransferBytes = maxDownloadBytes;
   static const Duration _notifyCoalesceDelay = Duration(milliseconds: 16);
 
-  final StorageService _storageService;
+  final ConnectionRepository _connectionRepository;
+  final CredentialRepository _credentialRepository;
+  final HostKeyRepository _hostKeyRepository;
+  final SftpPathHistoryStore _pathHistoryStore;
   late final SshClientFactory _clientFactory = SshClientFactory(
-    _storageService,
+    credentialRepository: _credentialRepository,
+    hostKeyRepository: _hostKeyRepository,
+    logger: AppLogService.instance,
   );
 
   final Map<String, _SftpSession> _sessions = {};
@@ -61,15 +67,26 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   @override
   bool get hasActiveTransfer => _activeTransfer != null;
 
-  SftpService(this._storageService);
+  SftpService({
+    required ConnectionRepository connectionRepository,
+    required CredentialRepository credentialRepository,
+    required HostKeyRepository hostKeyRepository,
+    SftpPathHistoryStore? pathHistoryStore,
+  }) : _connectionRepository = connectionRepository,
+       _credentialRepository = credentialRepository,
+       _hostKeyRepository = hostKeyRepository,
+       _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore();
 
   @visibleForTesting
   SftpService.forTesting(
-    this._storageService, {
+    this._connectionRepository,
+    this._credentialRepository,
+    this._hostKeyRepository, {
     required ConnectionConfig connection,
     required SftpClient sftpClient,
     String currentPath = '.',
-  }) {
+    SftpPathHistoryStore? pathHistoryStore,
+  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore() {
     final session =
         _SftpSession(
             connectionId: connection.id,
@@ -129,18 +146,18 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     String connectionId, {
     int limit = 30,
   }) {
-    return _storageService.loadRecentPaths(connectionId, limit: limit);
+    return _pathHistoryStore.loadRecentPaths(connectionId, limit: limit);
   }
 
   Future<List<SftpFavoritePathRecord>> loadFavoritePaths(String connectionId) {
-    return _storageService.loadFavoritePaths(connectionId);
+    return _pathHistoryStore.loadFavoritePaths(connectionId);
   }
 
   Future<SftpFavoritePathRecord?> findFavoritePath(
     String connectionId,
     String path,
   ) {
-    return _storageService.findFavoritePath(connectionId, path);
+    return _pathHistoryStore.findFavoritePath(connectionId, path);
   }
 
   Future<SftpFavoritePathRecord> addFavoritePath(
@@ -148,11 +165,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     String path,
     String name,
   ) {
-    return _storageService.addFavoritePath(connectionId, path, name);
+    return _pathHistoryStore.addFavoritePath(connectionId, path, name);
   }
 
   Future<void> removeFavoritePath(String id) {
-    return _storageService.removeFavoritePath(id);
+    return _pathHistoryStore.removeFavoritePath(id);
   }
 
   @override
@@ -160,8 +177,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     ConnectionRuntimeTarget runtimeTarget;
     try {
       runtimeTarget = await RemoteTargetScope.resolveIfBound(
-        _storageService,
-        connectionId,
+        connectionRepository: _connectionRepository,
+        credentialRepository: _credentialRepository,
+        connectionId: connectionId,
       );
     } on RemoteTargetScopeException catch (e) {
       _activeConnectionId = connectionId;

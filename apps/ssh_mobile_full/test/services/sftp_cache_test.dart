@@ -10,7 +10,7 @@ import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
 import 'package:ssh_mobile/services/sftp/sftp_service_io.dart';
 import 'package:ssh_mobile/services/sftp_service.dart' hide SftpService;
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -260,7 +260,9 @@ void main() {
       ..setListing('/other', [_remoteFile('other.txt', size: 4)]);
     final storage = _NoopStorageService();
     final service = SftpService.forTesting(
-      storage,
+      storage.connectionRepository,
+      storage.credentialRepository,
+      storage.hostKeyRepository,
       connection: connection,
       sftpClient: remote,
       currentPath: '/srv',
@@ -318,7 +320,9 @@ void main() {
       ..setListing('/srv', [_remoteFile('old.txt', size: 3)]);
     final storage = _NoopStorageService();
     final service = SftpService.forTesting(
-      storage,
+      storage.connectionRepository,
+      storage.credentialRepository,
+      storage.hostKeyRepository,
       connection: connection,
       sftpClient: remote,
       currentPath: '/srv',
@@ -384,7 +388,7 @@ SftpName _remoteFile(String filename, {required int size}) {
   );
 }
 
-class _NoopStorageService extends StorageService {
+class _NoopStorageService extends TestStorageAdapter {
   @override
   Future<void> recordVisitedPath(String connectionId, String path) async {}
 }

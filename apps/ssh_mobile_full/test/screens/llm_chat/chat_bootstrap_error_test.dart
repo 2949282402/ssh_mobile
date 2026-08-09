@@ -15,7 +15,7 @@ import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../test_utils/test_storage_adapter.dart';
 
 import '../../test_utils/ai_port_adapters.dart';
 
@@ -40,17 +40,20 @@ void main() {
       await settings.init();
       await settings.toggleLanguage();
     });
-    final ssh = SshService(storage);
-    final sftp = SftpService(storage);
-    final monitor = PerformanceMonitorService(ssh, storage);
-    final playbooks = PlaybookService(storageService: storage, sshService: ssh);
-    final rag = RagService(storageService: storage);
+    final ssh = createTestSshService(storage);
+    final sftp = createTestSftpService(storage);
+    final monitor = createTestPerformanceMonitorService(ssh, storage);
+    final playbooks = PlaybookService(
+      repository: storage.playbookRepository,
+      sshService: ssh,
+    );
+    final rag = RagService(aiStorage: storage.aiStorage);
 
     try {
       await tester.pumpWidget(
         MultiProvider(
           providers: [
-            ChangeNotifierProvider<StorageService>.value(value: storage),
+            ChangeNotifierProvider<TestStorageAdapter>.value(value: storage),
             Provider<ai.AiStoragePort>.value(value: aiStoragePort(storage)),
             ChangeNotifierProvider<SshService>.value(value: ssh),
             Provider<ai.AiSshPort>.value(value: aiSshPort(ssh)),
@@ -116,7 +119,7 @@ void main() {
   });
 }
 
-class _FailOnceInitialSettingsStorage extends StorageService {
+class _FailOnceInitialSettingsStorage extends TestStorageAdapter {
   int settingsLoadAttempts = 0;
   static const _settings = AiConnectionSettings(
     baseUrl: 'https://api.example.com',

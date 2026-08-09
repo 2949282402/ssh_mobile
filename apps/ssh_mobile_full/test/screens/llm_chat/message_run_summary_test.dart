@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../test_utils/test_storage_adapter.dart';
 
 import '../../test_utils/ai_port_adapters.dart';
 
@@ -289,14 +289,14 @@ AiMessageTrace _messageTrace({
 }
 
 Widget _summaryHost({
-  required StorageService storage,
+  required TestStorageAdapter storage,
   required AppSettings settings,
   required AiChatMessageRecord message,
   required double textScale,
 }) {
   return MultiProvider(
     providers: [
-      ChangeNotifierProvider<StorageService>.value(value: storage),
+      ChangeNotifierProvider<TestStorageAdapter>.value(value: storage),
       Provider<ai.AiStoragePort>.value(value: aiStoragePort(storage)),
       ChangeNotifierProvider<AppSettings>.value(value: settings),
       ListenableProvider<ai.AiSettingsPort>.value(
@@ -323,7 +323,7 @@ Widget _summaryHost({
   );
 }
 
-class _CountingStorageService extends StorageService {
+class _CountingStorageService extends TestStorageAdapter {
   final List<AgentRunMetrics> metrics;
   final List<AgentTraceEvent> events;
   int metricsLoads = 0;

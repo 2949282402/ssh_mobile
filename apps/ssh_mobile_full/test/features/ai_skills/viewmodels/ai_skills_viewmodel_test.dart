@@ -3,7 +3,7 @@ import '../../../test_utils/ai_port_adapters.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:feature_ai/ai_skills.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
 void main() {
@@ -77,14 +77,14 @@ body''';
     });
   });
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late AppSettings appSettings;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
 
     appSettings = AppSettings();

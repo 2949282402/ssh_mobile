@@ -15,7 +15,7 @@ import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 import 'package:feature_ai/ai_agent.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 
@@ -198,7 +198,7 @@ class FakeMultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late AppSettings appSettings;
   late SshService sshService;
   late SftpService sftpService;
@@ -215,20 +215,20 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
     attachTestAiRepository(storageService);
 
     appSettings = AppSettings();
     await appSettings.init();
 
-    sshService = SshService(storageService);
-    sftpService = SftpService(storageService);
+    sshService = createTestSshService(storageService);
+    sftpService = createTestSftpService(storageService);
     serverDiagnosticsService = ServerDiagnosticsService(
-      storageService: storageService,
+      connectionRepository: storageService.connectionRepository,
       sshService: sshService,
     );
-    performanceMonitorService = PerformanceMonitorService(
+    performanceMonitorService = createTestPerformanceMonitorService(
       sshService,
       storageService,
     );
@@ -258,7 +258,9 @@ void main() {
       ),
       memoryRetriever: OperationalMemoryRetriever(
         storageService: aiStoragePort(storageService),
-        ragService: aiRagCapability(RagService(storageService: storageService)),
+        ragService: aiRagCapability(
+          RagService(aiStorage: storageService.aiStorage),
+        ),
       ),
     );
 

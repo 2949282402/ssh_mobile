@@ -2,35 +2,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/services/app_bootstrap_coordinator.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('AppBootstrapCoordinator Tests', () {
     late AppSettings appSettings;
-    late StorageService storageService;
 
     setUp(() {
       SharedPreferences.setMockInitialValues({});
       appSettings = AppSettings();
-      storageService = StorageService();
     });
 
     test('initial state is idle', () {
-      final coordinator = AppBootstrapCoordinator(
-        appSettings: appSettings,
-        storageService: storageService,
-      );
+      final coordinator = AppBootstrapCoordinator(appSettings: appSettings);
       expect(coordinator.phase, equals(BootstrapPhase.idle));
       expect(coordinator.isReady, isFalse);
     });
 
     test('ensureBootstrap transitions to ready and is idempotent', () async {
-      final coordinator = AppBootstrapCoordinator(
-        appSettings: appSettings,
-        storageService: storageService,
-      );
+      final coordinator = AppBootstrapCoordinator(appSettings: appSettings);
 
       final future1 = coordinator.ensureBootstrap();
       final future2 = coordinator.ensureBootstrap();

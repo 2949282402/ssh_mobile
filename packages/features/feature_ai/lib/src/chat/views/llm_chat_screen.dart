@@ -235,7 +235,7 @@ class LlmChatScreen extends StatelessWidget {
         final viewModel =
             viewModelFactory?.call(context) ??
             AiChatViewModel(
-              storageService: context.read<StorageService>(),
+              storageService: context.read<AiStoragePort>(),
               sshService: context.read<SshService>(),
               sftpService: context.read<SftpService>(),
               performanceMonitorService: context

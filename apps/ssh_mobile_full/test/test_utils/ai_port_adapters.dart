@@ -21,7 +21,7 @@ import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import 'test_storage_adapter.dart';
 
 final Expando<ai.AiStoragePort> _storageAdapters = Expando<ai.AiStoragePort>(
   'aiStoragePort',
@@ -41,8 +41,8 @@ final Expando<ai.AiHealthPort> _healthAdapters = Expando<ai.AiHealthPort>(
   'aiHealthPort',
 );
 
-ai.AiStoragePort aiStoragePort(StorageService service) {
-  return _storageAdapters[service] ??= AppAiStorageAdapter(service);
+ai.AiStoragePort aiStoragePort(TestStorageAdapter service) {
+  return _storageAdapters[service] ??= service.aiStoragePort;
 }
 
 ai.AiSettingsPort aiSettingsPort(AppSettings settings) {
@@ -82,12 +82,12 @@ void installTestAiLogger() {
   addTearDown(() => ai.AiLoggerContext.reset(logger));
 }
 
-/// 为仍通过旧 [StorageService] 外观执行 AI 持久化测试的夹具注册独立仓库。
+/// 为测试组合器注册独立的 AI Repository。
 ///
 /// 生产路径由 AppRuntime 注入 AiModule；测试只能使用显式的内存执行器，
 /// 并在当前测试结束时关闭数据库，避免把测试数据库生命周期偷偷放回旧
-/// AppDatabase 或在 StorageService 中增加隐式回退。
-ai.AiDatabase attachTestAiRepository(StorageService storage) {
+/// AppDatabase 或在生产 App 适配器中增加隐式回退。
+ai.AiDatabase attachTestAiRepository(TestStorageAdapter storage) {
   final database = ai.AiDatabase.forTesting(NativeDatabase.memory());
   final repository = ai.DriftAiRepository(
     database,
@@ -153,7 +153,7 @@ final class _TestAiLogger implements ai.AiLoggerPort {
 /// Storage、SSH 或监控资源。
 abstract class LegacyAiChatRuntimeFactory extends ai.AiChatRuntimeFactory {
   LegacyAiChatRuntimeFactory({
-    required StorageService storageService,
+    required TestStorageAdapter storageService,
     required SshService sshService,
     required SftpService sftpService,
     required PerformanceMonitorService performanceMonitorService,
@@ -173,7 +173,7 @@ abstract class LegacyAiChatRuntimeFactory extends ai.AiChatRuntimeFactory {
 
 /// 用旧 App Service 构造默认 AI Runtime Factory，供迁移中的测试复用。
 ai.AiChatRuntimeFactory createAiChatRuntimeFactory({
-  required StorageService storageService,
+  required TestStorageAdapter storageService,
   required SshService sshService,
   required SftpService sftpService,
   required PerformanceMonitorService performanceMonitorService,
@@ -194,7 +194,7 @@ ai.AiChatRuntimeFactory createAiChatRuntimeFactory({
 
 /// 用旧 App 测试夹具创建 AI ViewModel；ViewModel 本身仍只接收公开 Port。
 ai.AiChatViewModel createAiChatViewModel({
-  required StorageService storageService,
+  required TestStorageAdapter storageService,
   required SshService sshService,
   required SftpService sftpService,
   required PerformanceMonitorService performanceMonitorService,
@@ -221,7 +221,7 @@ ai.AiChatViewModel createAiChatViewModel({
 
 /// 用旧 App Service 构造 AI Skills ViewModel。
 ai.AiSkillsViewModel createAiSkillsViewModel({
-  required StorageService storageService,
+  required TestStorageAdapter storageService,
   required AppSettings appSettings,
 }) {
   return ai.AiSkillsViewModel(

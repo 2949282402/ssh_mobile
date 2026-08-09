@@ -11,16 +11,15 @@ Terminal Pilot 的独立 Feature Package。
 - `lib/src/application`：Module 与路由级 ViewModel；
 - `lib/src/presentation`：终端页面和专属 Widget。
 
-Terminal 不直接依赖 `StorageService`、`AppSettings`、`SshService` 或其他
+Terminal 不直接依赖统一存储门面、`AppSettings`、`SshService` 或其他
 Feature；App 通过公开 Port 提供兼容适配器。旧 App 路径在迁移期间保留导出桥，
 以便外部调用方逐步切换。
 - `feature_terminal.dart` 暴露终端路由的纯 metadata；路由页面和 ViewModel 仍由
   App Shell 的 Route Scope 创建，Core 不持有 UI 实例。
 
 终端元数据由 `TerminalModule` 独占的 `terminal.db` 保存；加密的原始输出历史
-服务也已迁入本包，并由 App Shell 的 SSH Owner 注入数据保护与日志 Port。为保持
-现有行为，App 组合根暂时对旧 `StorageService` 做兼容双写/读取，后续 Storage
-收敛 Step 再移除该桥。
+服务也已迁入本包，并由 App Shell 的 SSH Owner 注入数据保护与日志 Port。App
+组合根只保留终端元数据的显式兼容适配器，不再通过统一存储门面双写/读取。
 
 ## 生命周期
 

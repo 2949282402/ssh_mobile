@@ -16,7 +16,7 @@ import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 import 'package:feature_ai/ai_tools.dart';
 import 'package:feature_ai/ai_llm.dart';
 import '../../../test_utils/wait_until.dart';
@@ -25,7 +25,7 @@ part 'ai_chat_viewmodel_core_tests.dart';
 part 'ai_chat_viewmodel_generation_tests.dart';
 part 'ai_chat_viewmodel_fakes.dart';
 
-late StorageService storageService;
+late TestStorageAdapter storageService;
 late SshService sshService;
 late SftpService sftpService;
 late PerformanceMonitorService performanceMonitorService;
@@ -48,17 +48,17 @@ void main() {
     appSettings = AppSettings();
     await appSettings.init();
 
-    sshService = SshService(storageService);
-    sftpService = SftpService(storageService);
-    performanceMonitorService = PerformanceMonitorService(
+    sshService = createTestSshService(storageService);
+    sftpService = createTestSftpService(storageService);
+    performanceMonitorService = createTestPerformanceMonitorService(
       sshService,
       storageService,
     );
     playbookService = PlaybookService(
-      storageService: storageService,
+      repository: storageService.playbookRepository,
       sshService: sshService,
     );
-    ragService = RagService(storageService: storageService);
+    ragService = RagService(aiStorage: storageService.aiStorage);
   });
 
   tearDown(() {

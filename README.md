@@ -397,9 +397,9 @@ flowchart LR
   Views[Feature Views] --> ViewModels[Feature ViewModels]
   ViewModels --> Services[SSH / SFTP / Monitor / AI Services]
   Services --> Protocols[SSH / SFTP / HTTP / WebView Adapters]
-  Services --> Storage[StorageService Facade]
-  Storage --> Drift[Encrypted Drift Repositories]
-  Storage --> Secure[Platform Secure Storage]
+  Services --> Repositories[Feature/Core Repositories]
+  Repositories --> Drift[Encrypted Feature Drift Databases]
+  Repositories --> Secure[Platform Secure Storage]
   AI[AI Orchestration] --> Services
   AI --> Safety[Approval and Secret Policies]
 ```
@@ -417,8 +417,8 @@ flowchart LR
 - `packages/features/feature_connection/`: the migrated Connection editor,
   ViewModel, localized presentation contract, and runtime/verification ports. It
   depends on `connection_core` and never owns the Connection database. The App
-  composition root temporarily bridges the new Core repository to legacy
-  `StorageService` consumers until the later SSH/SFTP migration Steps.
+  composition root injects the Core repositories; old App paths remain
+  non-owning compatibility bridges until their later convergence Steps.
 - `packages/features/feature_terminal/`: the migrated Terminal Pilot, including
   route-scoped ViewModels, terminal presentation, terminal-specific output
   history, and the independent `terminal.db`. It consumes only public Core
@@ -470,14 +470,15 @@ flowchart LR
   ViewModels. `AppConnectionRouteScope` also preserves the Home-to-Add/Edit/SFTP
   shared Connection ViewModel flow.
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP, monitoring,
-  storage, legacy LAN-share compatibility services, and platform adapters.
+  App Shell adapters, legacy LAN-share compatibility services, and platform
+  adapters.
   Maintained AI/MCP implementations live in their Feature packages.
 - `apps/ssh_mobile_full/lib/data/`: Drift database, DAOs, and repository implementations.
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
 - `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; `feature_connection` consumes the public repositories and injected capabilities.
 - `packages/infrastructure/network_transport/`: the App Scope `NetworkRuntime` facade, lazy Capability state machine, transport contracts, metrics snapshot, and explicit native handle adapter. `AppRuntime` creates the single instance; this Step does not add a second protocol implementation.
-- `packages/infrastructure/ssh_core/`: the App Scope SSH Session Manager, lease/pool lifecycle, Desktop/Mobile Runtime Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target bindings. The package does not depend on `StorageService`; `AppRuntime` owns one Manager instance, and `feature_terminal` receives that Manager through injection while the old `SshService` remains a compatibility implementation.
+- `packages/infrastructure/ssh_core/`: the App Scope SSH Session Manager, lease/pool lifecycle, Desktop/Mobile Runtime Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target bindings. The package does not depend on App Shell storage implementations; `AppRuntime` owns one Manager instance, and `feature_terminal` receives that Manager through injection while the old `SshService` remains a compatibility implementation.
 - `packages/infrastructure/ssh_mobile_network_native/`: native network package staged under the Infrastructure boundary.
 - `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,
   including host-key policy and data protection.
@@ -519,8 +520,9 @@ and repository coordination belong in ViewModels and services.
 The Connection module uses a new `connection.sqlite` baseline during development.
 Its Drift table deliberately excludes passwords and private keys; those values
 are handled only by `CredentialRepository` and platform Secure Storage. The
-current legacy Connection ViewModel remains on `StorageService` until the
-planned `feature_connection` migration.
+current legacy Connection ViewModel consumes the Core Connection repositories
+through App Shell injection; its old App path remains only as a compatibility
+surface.
 
 LAN file transfer follows `LanShareViewModel → NetworkService → Rust
 NetworkRuntime`. Commands return typed acceptance results, while progress and

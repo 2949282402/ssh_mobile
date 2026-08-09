@@ -40,7 +40,7 @@ class AiToolService
   String get _clientScopeName => 'SSH Mobile client';
   static const int _maxToolTextChars = 12000;
 
-  final StorageService storageService;
+  final AiStoragePort storageService;
   final SshClientAdapter sshService;
   final SftpClientAdapter sftpService;
   final ClientSystemToolAdapter clientSystemToolService;
@@ -163,7 +163,7 @@ class AiToolService
       Zone.current[_approvalBindingZoneKey] as AiToolApprovalExecutionBinding?;
 
   static List<AiToolProvider> _buildDefaultProviders({
-    required StorageService storageService,
+    required AiStoragePort storageService,
     required SshClientAdapter sshService,
     required SftpClientAdapter sftpService,
     required ClientSystemToolAdapter clientSystemToolService,

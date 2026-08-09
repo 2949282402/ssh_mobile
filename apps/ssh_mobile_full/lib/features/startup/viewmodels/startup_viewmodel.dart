@@ -3,10 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../services/background_service.dart';
 import '../../../services/app_settings.dart';
-import '../../../services/storage_service.dart';
 
 class StartupViewModel extends ChangeNotifier {
-  final StorageService _storageService;
   final AppSettings _appSettings;
 
   bool _checkingPowerStatus = false;
@@ -15,17 +13,13 @@ class StartupViewModel extends ChangeNotifier {
   bool _shouldShowPowerGuide = false;
   bool _isExempt = false;
 
-  StartupViewModel({
-    required this._storageService,
-    required this._appSettings,
-  }) {
-    _storageService.addListener(_onServiceChanged);
+  StartupViewModel({required AppSettings appSettings})
+    : _appSettings = appSettings {
     _appSettings.addListener(_onServiceChanged);
   }
 
   @override
   void dispose() {
-    _storageService.removeListener(_onServiceChanged);
     _appSettings.removeListener(_onServiceChanged);
     super.dispose();
   }
@@ -35,7 +29,8 @@ class StartupViewModel extends ChangeNotifier {
   }
 
   // Getters
-  bool get storageInitialized => _storageService.initialized;
+  bool get storageInitialized =>
+      _appSettings.coreLoaded || _appSettings.initialized;
   bool get settingsInitialized =>
       _appSettings.coreLoaded || _appSettings.initialized;
   AppLanguage get language => _appSettings.language;
@@ -57,7 +52,7 @@ class StartupViewModel extends ChangeNotifier {
       return;
     }
 
-    if (_storageService.powerGuideSeen) {
+    if (_appSettings.powerGuideSeen) {
       _powerStatusChecked = true;
       _shouldShowPowerGuide = false;
       notifyListeners();
@@ -111,7 +106,7 @@ class StartupViewModel extends ChangeNotifier {
   }
 
   Future<void> markPowerGuideSeen() async {
-    await _storageService.markPowerGuideSeen();
+    await _appSettings.markPowerGuideSeen();
     enterAppForThisLaunch();
   }
 

@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:connection_core/connection_core.dart';
 import '../sftp_service.dart';
-import '../storage_service.dart';
+import '../sftp_path_history_store.dart';
 
 class SftpService extends ChangeNotifier implements SftpClientAdapter {
   static const int maxTextEditBytes = 512 * 1024;
@@ -11,7 +12,12 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   static const int maxDownloadBytes = 512 * 1024 * 1024;
   static const int maxInMemoryTransferBytes = maxDownloadBytes;
 
-  SftpService(StorageService storageService);
+  SftpService({
+    required ConnectionRepository connectionRepository,
+    required CredentialRepository credentialRepository,
+    required HostKeyRepository hostKeyRepository,
+    SftpPathHistoryStore? pathHistoryStore,
+  });
 
   String? _activeConnectionId;
   SftpConnectionState _state = SftpConnectionState.disconnected;

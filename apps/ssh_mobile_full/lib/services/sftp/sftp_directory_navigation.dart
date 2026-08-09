@@ -28,7 +28,10 @@ extension _SftpDirectoryNavigation on SftpService {
         session.currentPath = absolutePath;
         _lastPaths[session.connectionId] = absolutePath;
         unawaited(
-          _storageService.recordVisitedPath(session.connectionId, absolutePath),
+          _pathHistoryStore.recordVisitedPath(
+            session.connectionId,
+            absolutePath,
+          ),
         );
         session.entries = cached;
         session.entriesRevision++;
@@ -54,7 +57,7 @@ extension _SftpDirectoryNavigation on SftpService {
       session.currentPath = absolutePath;
       _lastPaths[session.connectionId] = absolutePath;
       unawaited(
-        _storageService.recordVisitedPath(session.connectionId, absolutePath),
+        _pathHistoryStore.recordVisitedPath(session.connectionId, absolutePath),
       );
       session.entries = entries;
       session.entriesRevision++;
@@ -98,8 +101,9 @@ extension _SftpDirectoryNavigation on SftpService {
     action,
   ) async {
     final target = await RemoteTargetScope.resolveIfBound(
-      _storageService,
-      connectionId,
+      connectionRepository: _connectionRepository,
+      credentialRepository: _credentialRepository,
+      connectionId: connectionId,
     );
     final config = target.config;
     final credentials = SshCredentials(

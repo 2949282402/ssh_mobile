@@ -216,7 +216,7 @@ class AiChatViewModel extends ChangeNotifier {
       ..sort();
   }
 
-  final StorageService _storageService;
+  final AiStoragePort _storageService;
   final PlaybookAutomationPort _playbookService;
   final AppSettings _appSettings;
   final AiChatRuntimeFactory _runtimeFactory;
@@ -278,7 +278,7 @@ class AiChatViewModel extends ChangeNotifier {
       StreamController<void>.broadcast();
 
   AiChatViewModel({
-    required StorageService storageService,
+    required AiStoragePort storageService,
     required SshService sshService,
     required SftpService sftpService,
     required PerformanceMonitorService performanceMonitorService,

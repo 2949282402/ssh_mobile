@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/startup/viewmodels/startup_viewmodel.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
 
 const _powerChannel = MethodChannel('ssh_mobile/power');
@@ -259,7 +259,7 @@ void main() {
 }
 
 class _StartupFixture {
-  final StorageService storageService;
+  final TestStorageAdapter storageService;
   final AppSettings appSettings;
   final StartupViewModel viewModel;
   final List<String> powerCalls;
@@ -309,14 +309,11 @@ Future<_StartupFixture> _createFixture({
         }
       });
 
-  final storageService = StorageService();
+  final storageService = TestStorageAdapter();
   await storageService.init();
   final appSettings = AppSettings();
   await appSettings.init();
-  final viewModel = StartupViewModel(
-    storageService: storageService,
-    appSettings: appSettings,
-  );
+  final viewModel = StartupViewModel(appSettings: appSettings);
   if (checkStatus) {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     try {

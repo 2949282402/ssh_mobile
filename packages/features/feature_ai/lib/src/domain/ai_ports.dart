@@ -117,7 +117,8 @@ abstract interface class AiStoragePort {
 
   Future<void> removeAiApiKeyHistoryEntry(String id);
 
-  Future<String> getAliyunApiKey();
+  /// 读取 RAG 使用的阿里云 API Key；未配置时返回 null，避免把“未配置”伪装成空字符串。
+  Future<String?> getAliyunApiKey();
 
   Future<List<Playbook>> loadPlaybooks();
 

@@ -1,7 +1,7 @@
 part of 'ai_tool_service.dart';
 
 class ClientToolsProvider implements AiToolProvider {
-  final StorageService storageService;
+  final AiStoragePort storageService;
   final ClientSystemToolAdapter clientSystemToolService;
   final ClientHealthAdvisorAdapter clientHealthAdvisor;
   final ClientWebViewAdapter clientWebViewService;

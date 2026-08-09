@@ -11,12 +11,12 @@ import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late SshService sshService;
   late SftpService sftpService;
   late PerformanceMonitorService performanceMonitorService;
@@ -29,23 +29,23 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
 
     appSettings = AppSettings();
     await appSettings.init();
 
-    sshService = SshService(storageService);
-    sftpService = SftpService(storageService);
-    performanceMonitorService = PerformanceMonitorService(
+    sshService = createTestSshService(storageService);
+    sftpService = createTestSftpService(storageService);
+    performanceMonitorService = createTestPerformanceMonitorService(
       sshService,
       storageService,
     );
     playbookService = PlaybookService(
-      storageService: storageService,
+      repository: storageService.playbookRepository,
       sshService: sshService,
     );
-    ragService = RagService(storageService: storageService);
+    ragService = RagService(aiStorage: storageService.aiStorage);
   });
 
   tearDown(() {

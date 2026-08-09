@@ -1,6 +1,6 @@
 part of 'ai_chat_viewmodel_test.dart';
 
-class _FailOnceInitialSettingsStorage extends StorageService {
+class _FailOnceInitialSettingsStorage extends TestStorageAdapter {
   int settingsLoadAttempts = 0;
 
   @override
@@ -13,7 +13,7 @@ class _FailOnceInitialSettingsStorage extends StorageService {
   }
 }
 
-class _FailPlanModeSaveStorage extends StorageService {
+class _FailPlanModeSaveStorage extends TestStorageAdapter {
   bool failNextAiChatSave = false;
 
   @override
@@ -196,7 +196,7 @@ class _GatedHealthAdvisor implements ClientHealthAdvisorAdapter {
   }
 }
 
-class _GateNextChatSaveStorage extends StorageService {
+class _GateNextChatSaveStorage extends TestStorageAdapter {
   Completer<void>? _chatSaveGate;
   Completer<void>? _chatSaveStarted;
 
@@ -284,7 +284,7 @@ class _RecordingTurnRagService extends RagService {
   int? receivedLimit;
   bool receivedExpectedKey = false;
 
-  _RecordingTurnRagService({required super.storageService});
+  _RecordingTurnRagService({required super.aiStorage});
 
   @override
   Future<List<feature_rag.RagChunk>> retrieve(

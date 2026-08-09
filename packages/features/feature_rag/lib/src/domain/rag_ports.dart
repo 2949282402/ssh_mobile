@@ -1,6 +1,6 @@
 // RAG 跨层和跨 Feature Contract。
 //
-// 这些接口让 RAG Package 不依赖 AppSettings、StorageService 或 AppLogService
+// 这些接口让 RAG Package 不依赖 AppSettings、统一存储门面或 AppLogService
 // 的实现；AI 只获得检索能力，页面通过 Module/Route Scope 获得完整服务。
 
 import 'package:flutter/foundation.dart';

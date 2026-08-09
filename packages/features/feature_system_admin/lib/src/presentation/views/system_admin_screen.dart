@@ -44,7 +44,7 @@ typedef AppSettings = SystemAdminSettingsPort;
 typedef AppStrings = SystemAdminStrings;
 typedef PerformanceMonitorViewModel = SystemAdminMonitoringPort;
 typedef PerformanceMonitorService = SystemAdminMonitoringPort;
-typedef StorageService = SystemAdminConnectionCatalogPort;
+typedef ConnectionCatalog = SystemAdminConnectionCatalogPort;
 typedef SftpService = SystemAdminFileBrowserPort;
 typedef SftpEntry = SystemAdminFileEntry;
 

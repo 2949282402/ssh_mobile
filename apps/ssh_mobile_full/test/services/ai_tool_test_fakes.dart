@@ -1,7 +1,7 @@
 part of 'ai_tool_service_test.dart';
 
 AiToolService _buildTools({
-  required StorageService storage,
+  required TestStorageAdapter storage,
   required SshClientAdapter ssh,
   required SftpClientAdapter sftp,
   required ClientSystemToolAdapter clientSystem,

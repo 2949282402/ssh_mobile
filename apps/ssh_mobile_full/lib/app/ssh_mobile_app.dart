@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:connection_core/connection_core.dart' as connection_core;
 import 'package:feature_connection/feature_connection.dart'
     as feature_connection;
 import 'package:feature_ai/feature_ai.dart' as feature_ai;
@@ -21,7 +22,6 @@ import '../features/startup/viewmodels/startup_viewmodel.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import '../services/app_settings.dart';
-import '../services/storage_service.dart';
 import 'package:app_ui/app_ui.dart';
 import 'app_runtime.dart';
 import 'connection_feature_adapters.dart';
@@ -139,7 +139,7 @@ class _SshMobileAppState extends State<SshMobileApp>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      unawaited(_runtime.storageService.flushPendingWrites());
+      unawaited(_runtime.aiStorageAdapter.flushPendingWrites());
     }
     if (state == AppLifecycleState.detached) {
       unawaited(_runtime.mcpServerController.stop());
@@ -167,22 +167,19 @@ class _SshMobileAppState extends State<SshMobileApp>
         AppTerminalShortcutAdapter(runtime.shortcutCommandService);
     final terminalConnections = AppTerminalConnectionAdapter(
       navigatorKey: _navigatorKey,
-      storageService: runtime.storageService,
+      connectionRepository: runtime.connectionRepository,
       sshService: runtime.sshService,
     );
     final terminalLogger = AppTerminalLoggerAdapter(runtime.appLogService);
     final lanLogger = AppLanShareLoggerAdapter(runtime.appLogService);
     _connectionRepositoryAdapter ??= AppConnectionRepositoryAdapter(
       primary: runtime.connectionRepository,
-      legacy: runtime.storageService,
     );
     _connectionCredentialAdapter ??= AppConnectionCredentialAdapter(
       primary: runtime.credentialRepository,
-      legacy: runtime.storageService,
     );
     _connectionHostKeyAdapter ??= AppConnectionHostKeyAdapter(
       primary: runtime.hostKeyRepository,
-      legacy: runtime.storageService,
     );
     _connectionRuntimeAdapter ??= AppConnectionRuntimeAdapter(
       sshServiceFactory: () => runtime.sshService,
@@ -190,12 +187,23 @@ class _SshMobileAppState extends State<SshMobileApp>
       performanceServiceFactory: () => runtime.performanceMonitorService,
     );
     _connectionVerificationAdapter ??= AppConnectionVerificationAdapter(
-      runtime.storageService,
+      credentialRepository: runtime.credentialRepository,
+      hostKeyRepository: runtime.hostKeyRepository,
+      logger: runtime.appLogService,
     );
     return MultiProvider(
       providers: [
         // Runtime 已经拥有这些实例，.value 防止 Provider 误替它们释放。
         Provider<AppRuntime>.value(value: runtime),
+        Provider<connection_core.ConnectionRepository>.value(
+          value: runtime.connectionRepository,
+        ),
+        Provider<connection_core.CredentialRepository>.value(
+          value: runtime.credentialRepository,
+        ),
+        Provider<connection_core.HostKeyRepository>.value(
+          value: runtime.hostKeyRepository,
+        ),
         Provider<SshSessionManager>.value(value: runtime.sshSessionManager),
         ListenableProvider<TerminalSettingsPort>.value(value: terminalSettings),
         ListenableProvider<TerminalShortcutPort>.value(
@@ -204,7 +212,7 @@ class _SshMobileAppState extends State<SshMobileApp>
         Provider<TerminalConnectionPort>.value(value: terminalConnections),
         Provider<TerminalLoggerPort>.value(value: terminalLogger),
         ChangeNotifierProvider.value(value: runtime.appLogService),
-        ChangeNotifierProvider.value(value: runtime.storageService),
+        ChangeNotifierProvider.value(value: runtime.aiStorageAdapter),
         ChangeNotifierProvider.value(value: runtime.appSettings),
         Provider<feature_webview.ClientWebViewService>.value(
           value: runtime.webViewService,
@@ -319,7 +327,7 @@ class _SshMobileAppState extends State<SshMobileApp>
       ChangeNotifierProvider<SettingsViewModel>(
         create: (_) => SettingsViewModel(
           appSettings: runtime.appSettings,
-          storageService: runtime.storageService,
+          aiStorage: runtime.aiStorageAdapter,
         ),
         child: child,
       ),
@@ -402,7 +410,6 @@ class _SshMobileAppState extends State<SshMobileApp>
                           builder: (_) => _homeRouteScope(
                             ChangeNotifierProvider(
                               create: (context) => StartupViewModel(
-                                storageService: context.read<StorageService>(),
                                 appSettings: context.read<AppSettings>(),
                               ),
                               child: const StartupScreen(),

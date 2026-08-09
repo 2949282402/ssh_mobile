@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
   group('AgentTraceRecorder', () {
@@ -157,32 +156,6 @@ class _FakeAgentTraceRepository implements AgentTraceRepository {
   final List<AgentTraceEvent> saved = [];
 
   _FakeAgentTraceRepository({this.throwOnSave = false});
-
-  @override
-  Future<void> deleteAgentTraceEvents(String runId) async {}
-
-  @override
-  Future<List<AgentTraceEvent>> loadAgentTraceEvents(String runId) async {
-    return saved.where((event) => event.runId == runId).toList();
-  }
-
-  @override
-  Future<List<String>> loadRecentAgentTraceRunIdsForChat(
-    String chatId, {
-    int limit = 20,
-  }) async {
-    return saved
-        .where((event) => event.chatId == chatId)
-        .map((event) => event.runId)
-        .toSet()
-        .take(limit)
-        .toList();
-  }
-
-  @override
-  Future<void> saveAgentTraceEvent(AgentTraceEvent event) async {
-    await saveAgentTraceEvents([event]);
-  }
 
   @override
   Future<void> saveAgentTraceEvents(List<AgentTraceEvent> events) async {

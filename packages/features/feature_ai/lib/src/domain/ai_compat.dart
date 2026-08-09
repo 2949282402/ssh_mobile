@@ -17,7 +17,6 @@ export 'ai_models.dart';
 export 'ai_ports.dart';
 export 'ai_webview_models.dart';
 
-typedef StorageService = AiStoragePort;
 typedef AppSettings = AiSettingsPort;
 typedef ConnectionTargetBinding = ssh_core.SshTargetBinding;
 typedef ConnectionRuntimeTarget = ssh_core.SshRuntimeTarget;
@@ -49,7 +48,7 @@ typedef ServerCatalogAdapter = AiServerCatalogPort;
 typedef ServerDiagnosticsAdapter = AiServerDiagnosticsPort;
 typedef AgentTraceRepository = ai_repository.AgentTraceRepository;
 
-/// 将仍由 App Shell StorageService 托管的旧轨迹写入能力接到新 Recorder。
+/// 将 App Shell 的 AI Storage Port 轨迹写入能力接到新 Recorder。
 final class StorageAgentTraceRepositoryAdapter implements AgentTraceRepository {
   const StorageAgentTraceRepositoryAdapter(this._storage);
 

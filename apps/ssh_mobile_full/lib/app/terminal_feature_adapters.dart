@@ -15,8 +15,8 @@ import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
-import '../services/storage_service.dart';
 import '../widgets/ssh_host_key_trust_dialog.dart';
+import 'package:connection_core/connection_core.dart';
 
 /// 将 AppSettings 暴露为 Terminal 的设置 Port。
 final class AppTerminalSettingsAdapter extends ChangeNotifier
@@ -163,17 +163,17 @@ final class AppTerminalConnectionAdapter
   /// 创建只持有短期 Navigator 引用的连接适配器。
   AppTerminalConnectionAdapter({
     required this.navigatorKey,
-    required this.storageService,
+    required this.connectionRepository,
     required this.sshService,
   });
 
   final GlobalKey<NavigatorState> navigatorKey;
-  final StorageService storageService;
+  final ConnectionRepository connectionRepository;
   final SshService sshService;
 
   @override
   feature_terminal.TerminalConnectionInfo? getConnection(String connectionId) {
-    final config = storageService.getConnection(connectionId);
+    final config = connectionRepository.getConnection(connectionId);
     if (config == null) return null;
     return feature_terminal.TerminalConnectionInfo(
       id: config.id,
@@ -247,87 +247,34 @@ final class AppTerminalLoggerAdapter
   }
 }
 
-/// Terminal 新旧历史数据库之间的迁移兼容 Repository。
+/// Terminal History Repository 的 App Shell 转发层。
 ///
-/// 新记录写入 terminal.db，同时镜像到旧 StorageService；读取时合并两侧
-/// 的同一 sessionId，避免升级后历史页面丢失已有记录或丢失旧 SSH Service
-/// 后续产生的记录。镜像层将在统一 StorageService 删除步骤继续收敛。
+/// terminal.db 的生命周期和数据归属由 TerminalModule 管理；App Shell 只
+/// 暴露 Feature Repository，不再维护第二份历史数据。
 final class AppTerminalHistoryRepository
     implements feature_terminal.TerminalHistoryRepository {
-  /// 创建双写/合并适配器。
-  AppTerminalHistoryRepository({required this._primary, required this._legacy});
+  /// 创建不拥有底层 Repository 的转发适配器。
+  const AppTerminalHistoryRepository(this._primary);
 
   final feature_terminal.TerminalHistoryRepository _primary;
-  final StorageService _legacy;
 
   @override
-  Future<List<feature_terminal.TerminalHistoryRecord>> loadRecords() async {
-    final primaryRecords = await _primary.loadRecords();
-    final legacyRecords = await _legacy.loadTerminalHistoryRecords();
-    final merged = <String, feature_terminal.TerminalHistoryRecord>{};
-    for (final record in legacyRecords) {
-      merged[record.sessionId] = _fromLegacy(record);
-    }
-    for (final record in primaryRecords) {
-      final current = merged[record.sessionId];
-      if (current == null || !current.updatedAt.isAfter(record.updatedAt)) {
-        merged[record.sessionId] = record;
-      }
-    }
-    final records = merged.values.toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    return records;
-  }
+  Future<List<feature_terminal.TerminalHistoryRecord>> loadRecords() =>
+      _primary.loadRecords();
 
   @override
-  Future<void> saveRecord(feature_terminal.TerminalHistoryRecord record) async {
-    await _primary.saveRecord(record);
-    await _legacy.saveTerminalHistoryRecord(_toLegacy(record));
-  }
+  Future<void> saveRecord(feature_terminal.TerminalHistoryRecord record) =>
+      _primary.saveRecord(record);
 
   @override
-  Future<void> removeRecord(String sessionId) async {
-    await _primary.removeRecord(sessionId);
-    await _legacy.removeTerminalHistoryRecord(sessionId);
-  }
+  Future<void> removeRecord(String sessionId) =>
+      _primary.removeRecord(sessionId);
 
   @override
   Future<void> replaceAll(
     Iterable<feature_terminal.TerminalHistoryRecord> records,
   ) {
     return _primary.replaceAll(records);
-  }
-
-  feature_terminal.TerminalHistoryRecord _fromLegacy(
-    TerminalHistoryRecord record,
-  ) {
-    return feature_terminal.TerminalHistoryRecord(
-      sessionId: record.sessionId,
-      connectionId: record.connectionId,
-      connectionName: record.connectionName,
-      displayName: record.displayName,
-      tmuxSessionName: record.tmuxSessionName,
-      state: record.state,
-      errorMessage: record.errorMessage,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-    );
-  }
-
-  TerminalHistoryRecord _toLegacy(
-    feature_terminal.TerminalHistoryRecord record,
-  ) {
-    return TerminalHistoryRecord(
-      sessionId: record.sessionId,
-      connectionId: record.connectionId,
-      connectionName: record.connectionName,
-      displayName: record.displayName,
-      tmuxSessionName: record.tmuxSessionName,
-      state: record.state,
-      errorMessage: record.errorMessage,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-    );
   }
 }
 
@@ -353,19 +300,14 @@ final class _AppTerminalModuleScopeState extends State<AppTerminalModuleScope> {
     super.initState();
     _module = feature_terminal.TerminalModule();
     final manager = context.read<SshSessionManager>();
-    final legacyStorage = context.read<StorageService>();
-    _activation = _activate(manager, legacyStorage);
+    _activation = _activate(manager);
   }
 
-  Future<void> _activate(
-    SshSessionManager manager,
-    StorageService legacyStorage,
-  ) async {
+  Future<void> _activate(SshSessionManager manager) async {
     await _module.register(ModuleContext.fromMap({SshSessionManager: manager}));
     await _module.activate();
     _historyRepository = AppTerminalHistoryRepository(
-      primary: _module.historyRepository,
-      legacy: legacyStorage,
+      _module.historyRepository,
     );
   }
 

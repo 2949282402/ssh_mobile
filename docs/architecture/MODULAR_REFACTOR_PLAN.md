@@ -2616,6 +2616,11 @@ lib/services/storage/**
 
 如果 Backup 仍依赖 StorageService，本 Step 暂时先移除/重写开发期 Backup，不做旧格式兼容。
 
+> Step22 已于 2026-08-09 完成：生产 Dart 代码不再引用统一 `StorageService`。
+> AI、Connection、Playbook、Terminal 元数据及 SFTP 路径分别通过独立
+> Repository/Owner 访问；App Shell 只保留注入适配器。Step23 继续处理旧
+> `AppDatabase`，不得在本 Step 中提前删除它。
+
 ---
 
 ## 完成条件
@@ -3170,7 +3175,7 @@ flutter build windows
 ## Database
 
 - [ ] 删除统一 AppDatabase。
-- [ ] 删除 StorageService。
+- [x] 删除 StorageService。
 - [ ] Connection 使用独立 DB/Secure Storage。
 - [ ] Terminal/SFTP/AI/Playbook/RAG/MCP/LAN 数据各归属自己的 Module。
 - [ ] 一个 Module 生命周期内同类 DB 只有一个实例。

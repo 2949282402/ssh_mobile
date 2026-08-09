@@ -5,25 +5,25 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/settings/viewmodels/settings_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late AppSettings appSettings;
   late SettingsViewModel viewModel;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
     appSettings = AppSettings();
     await appSettings.init();
     viewModel = SettingsViewModel(
       appSettings: appSettings,
-      storageService: storageService,
+      aiStorage: storageService.aiStorage,
     );
   });
 

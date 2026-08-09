@@ -3,9 +3,9 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
+import '../../../data/database/app_database.dart';
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
-import '../../../services/storage_service.dart';
 import '../../../services/lan_share/lan_discovery_service.dart';
 import '../../../services/lan_share/lan_security_service.dart';
 import '../../../services/lan_share/lan_storage_service.dart';
@@ -22,7 +22,8 @@ import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 /// 负责 LAN 后台接收器（HTTPS 接收端口、mDNS 广播、配对事件监听等）的全局生命周期。
 /// 不触发 UI Isolate 上的全量历史 watch 和扫描，使冷启动更加轻量。
 class LanReceiverCoordinator extends ChangeNotifier {
-  final StorageService storageService;
+  /// 迁移期间由外层注入的历史 DAO；后续随 LAN Module Repository 一并替换。
+  final LanHistoryDao historyDao;
   final AppSettings appSettings;
   @visibleForTesting
   final bool initializeNetwork;
@@ -50,7 +51,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
 
   /// 创建应用范围的 LAN 接收器协调器。
   LanReceiverCoordinator({
-    required this.storageService,
+    required this.historyDao,
     required this.appSettings,
     @visibleForTesting this.initializeNetwork = true,
   });
@@ -294,7 +295,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
         storageService: _lanStorageService!,
         transferService: _transferService!,
         networkService: _networkService,
-        historyDao: storageService.appDatabase.lanHistoryDao,
+        historyDao: historyDao,
         appSettings: appSettings,
         ownsRuntime: false,
         pairingRequestPublisher: publishPairingRequest,

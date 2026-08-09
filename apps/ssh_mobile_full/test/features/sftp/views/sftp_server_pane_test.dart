@@ -16,14 +16,14 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late AppSettings appSettings;
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late SshService sshService;
   late _FakeSftpService sftpService;
   late PerformanceMonitorService performanceService;
@@ -39,13 +39,18 @@ void main() {
     await appSettings.init();
     await appSettings.toggleLanguage();
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
-    sshService = SshService(storageService);
+    sshService = createTestSshService(storageService);
     sftpService = _FakeSftpService(storageService);
-    performanceService = PerformanceMonitorService(sshService, storageService);
+    performanceService = createTestPerformanceMonitorService(
+      sshService,
+      storageService,
+    );
     connectionViewModel = ConnectionViewModel(
-      connectionRepository: storageService,
+      connectionRepository: storageService.connectionRepository,
+      credentialRepository: storageService.credentialRepository,
+      hostKeyRepository: storageService.hostKeyRepository,
       sshService: sshService,
       sftpService: sftpService,
       performanceService: performanceService,
@@ -368,7 +373,12 @@ void main() {
 }
 
 class _FakeSftpService extends SftpService {
-  _FakeSftpService(super.storageService);
+  _FakeSftpService(TestStorageAdapter storageService)
+    : super(
+        connectionRepository: storageService.connectionRepository,
+        credentialRepository: storageService.credentialRepository,
+        hostKeyRepository: storageService.hostKeyRepository,
+      );
 
   final List<String> connectCalls = [];
   final Set<String> _busyConnections = {};

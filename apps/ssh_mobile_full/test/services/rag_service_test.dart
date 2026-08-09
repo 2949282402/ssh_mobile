@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -15,7 +15,7 @@ void main() {
     'plugins.flutter.io/path_provider',
   );
 
-  late StorageService storage;
+  late TestStorageAdapter storage;
 
   Future<void> cleanRagFiles() async {
     final dir = Directory('.');
@@ -46,7 +46,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storage = StorageService();
+    storage = TestStorageAdapter();
     await storage.init();
   });
 
@@ -57,7 +57,7 @@ void main() {
 
   group('RagService Core Tests', () {
     test('Initialization works with blank database', () async {
-      final service = RagService(storageService: storage);
+      final service = RagService(aiStorage: storage.aiStorage);
       await service.init();
 
       expect(service.isInitialized, true);
@@ -67,7 +67,7 @@ void main() {
     test(
       'Add, search, and delete document works perfectly with persistence',
       () async {
-        final service = RagService(storageService: storage);
+        final service = RagService(aiStorage: storage.aiStorage);
         await service.init();
 
         // 1. 添加文档
@@ -95,7 +95,7 @@ void main() {
         expect(chunks.first.text.contains('kubectl get pods'), true);
 
         // 3. 测试持久化：创建一个新服务实例并加载
-        final service2 = RagService(storageService: storage);
+        final service2 = RagService(aiStorage: storage.aiStorage);
         await service2.init();
 
         expect(service2.documents.length, 1);
@@ -113,7 +113,7 @@ void main() {
         expect(chunks3.isEmpty, true);
 
         // 5. 验证数据库文件重新保存后为空
-        final service3 = RagService(storageService: storage);
+        final service3 = RagService(aiStorage: storage.aiStorage);
         await service3.init();
         expect(service3.documents.isEmpty, true);
       },

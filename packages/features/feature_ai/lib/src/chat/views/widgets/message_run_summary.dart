@@ -32,7 +32,7 @@ class _AgentRunInlineSummaryState extends State<AgentRunInlineSummary> {
     final embedded = _AgentRunInlineData.fromMessage(widget.message);
     if (embedded != null) return embedded;
 
-    final storage = context.read<StorageService>();
+    final storage = context.read<AiStoragePort>();
     final metrics = await storage.loadAgentRunMetrics();
     AgentRunMetrics? metric;
     for (final item in metrics) {

@@ -30,7 +30,7 @@ class ChatTurnCompletion {
 }
 
 class ChatOrchestrator {
-  final StorageService storageService;
+  final AiStoragePort storageService;
   final ChatContextAssembler contextAssembler;
   final OperationalMemoryRetriever memoryRetriever;
 

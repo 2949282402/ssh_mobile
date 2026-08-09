@@ -1,6 +1,6 @@
 // SFTP Feature 的跨层 Port 与 Capability Contract。
 //
-// 业务包只依赖这些契约，不读取 AppSettings、StorageService、Connection
+// 业务包只依赖这些契约，不读取 AppSettings、统一存储门面或 Connection
 // ViewModel 或其他 Feature 的实现。具体适配器由 App Shell 注入。
 
 import 'package:flutter/foundation.dart';

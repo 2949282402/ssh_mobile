@@ -7,14 +7,13 @@ import 'package:provider/provider.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -23,9 +22,8 @@ void main() {
     final harness = await tester.runAsync(() async {
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
-      final storage = StorageService();
+      final storage = TestStorageAdapter();
       await storage.init();
-      await AppLogService.instance.detachDatabase(storage.appDatabase);
       final initial = await storage.loadAiConnectionSettings();
       await storage.saveAiConnectionSettings(
         baseUrl: initial.baseUrl,
@@ -40,17 +38,20 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.windows;
       late final SshService sshService;
       try {
-        sshService = SshService(storage);
+        sshService = createTestSshService(storage);
       } finally {
         debugDefaultTargetPlatformOverride = originalPlatform;
       }
-      final sftpService = SftpService(storage);
-      final performanceMonitor = PerformanceMonitorService(sshService, storage);
+      final sftpService = createTestSftpService(storage);
+      final performanceMonitor = createTestPerformanceMonitorService(
+        sshService,
+        storage,
+      );
       final playbookService = PlaybookService(
-        storageService: storage,
+        repository: storage.playbookRepository,
         sshService: sshService,
       );
-      final ragService = RagService(storageService: storage);
+      final ragService = RagService(aiStorage: storage.aiStorage);
       final viewModel = createAiChatViewModel(
         storageService: storage,
         sshService: sshService,
@@ -240,7 +241,7 @@ class _PromptHarness {
     required this.ragService,
   });
 
-  final StorageService storage;
+  final TestStorageAdapter storage;
   final AppSettings appSettings;
   final AiChatViewModel viewModel;
   final SshService sshService;

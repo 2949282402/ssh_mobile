@@ -6,7 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/ai_tools.dart';
 import 'package:feature_ai/ai_llm.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
@@ -79,7 +79,7 @@ class FakeTraceRuntimeFactory extends LegacyAiChatRuntimeFactory {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late SshService sshService;
   late SftpService sftpService;
   late PerformanceMonitorService performanceMonitorService;
@@ -92,24 +92,24 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
     attachTestAiRepository(storageService);
 
     appSettings = AppSettings();
     await appSettings.init();
 
-    sshService = SshService(storageService);
-    sftpService = SftpService(storageService);
-    performanceMonitorService = PerformanceMonitorService(
+    sshService = createTestSshService(storageService);
+    sftpService = createTestSftpService(storageService);
+    performanceMonitorService = createTestPerformanceMonitorService(
       sshService,
       storageService,
     );
     playbookService = PlaybookService(
-      storageService: storageService,
+      repository: storageService.playbookRepository,
       sshService: sshService,
     );
-    ragService = RagService(storageService: storageService);
+    ragService = RagService(aiStorage: storageService.aiStorage);
   });
 
   tearDown(() {

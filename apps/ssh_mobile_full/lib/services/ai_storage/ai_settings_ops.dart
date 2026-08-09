@@ -1,27 +1,30 @@
-part of '../storage_service.dart';
+part of '../ai_storage_adapter.dart';
 
-extension SettingsOps on StorageService {
+extension SettingsOps on AppAiStorageAdapter {
   /// 从 SharedPreferences 读取密钥缓存开关和 TTL
   Future<void> _loadSecretCacheSettings() async {
     if (_prefs == null) return;
     _secretCacheEnabled =
-        _prefs!.getBool(StorageService._secretCacheEnabledKey) ?? true;
+        _prefs!.getBool(AppAiStorageAdapter._secretCacheEnabledKey) ?? true;
 
-    final ttlSeconds = _prefs!.getInt(StorageService._secretCacheTtlSecondsKey);
+    final ttlSeconds = _prefs!.getInt(
+      AppAiStorageAdapter._secretCacheTtlSecondsKey,
+    );
     if (ttlSeconds != null && ttlSeconds > 0) {
       _secretCacheTtl = _normalizeSecretCacheTtl(Duration(seconds: ttlSeconds));
     } else {
-      _secretCacheTtl = StorageService._defaultSecretCacheTtl;
+      _secretCacheTtl = AppAiStorageAdapter._defaultSecretCacheTtl;
     }
   }
 
   /// 将用户输入的 TTL 规整到预设选项中最接近的大于等于值
   Duration _normalizeSecretCacheTtl(Duration value) {
     final requested = value.inMinutes.clamp(1, 120);
-    final normalized = StorageService._memorySecretTtlOptionsMinutes.firstWhere(
-      (option) => option >= requested,
-      orElse: () => StorageService._memorySecretTtlOptionsMinutes.last,
-    );
+    final normalized = AppAiStorageAdapter._memorySecretTtlOptionsMinutes
+        .firstWhere(
+          (option) => option >= requested,
+          orElse: () => AppAiStorageAdapter._memorySecretTtlOptionsMinutes.last,
+        );
     return Duration(minutes: normalized);
   }
 
@@ -32,7 +35,7 @@ extension SettingsOps on StorageService {
     if (!enabled) {
       clearSecretCache();
     }
-    await _prefs!.setBool(StorageService._secretCacheEnabledKey, enabled);
+    await _prefs!.setBool(AppAiStorageAdapter._secretCacheEnabledKey, enabled);
     notifyStorageListeners();
   }
 
@@ -42,7 +45,7 @@ extension SettingsOps on StorageService {
     if (_secretCacheTtl == normalized) return;
     _secretCacheTtl = normalized;
     await _prefs!.setInt(
-      StorageService._secretCacheTtlSecondsKey,
+      AppAiStorageAdapter._secretCacheTtlSecondsKey,
       normalized.inSeconds,
     );
     notifyStorageListeners();
@@ -50,10 +53,10 @@ extension SettingsOps on StorageService {
 
   /// 清除所有内存中缓存的秘密（密码/私钥/API Key）
   void clearSecretCache() {
-    _secretCache.remove(StorageService._memoryAiApiKeyCacheKey);
+    _secretCache.remove(AppAiStorageAdapter._memoryAiApiKeyCacheKey);
     for (final key in _secretCache.keys.toList()) {
-      if (key.startsWith(StorageService._passwordSecretKeyPrefix) ||
-          key.startsWith(StorageService._privateKeySecretKeyPrefix)) {
+      if (key.startsWith(AppAiStorageAdapter._passwordSecretKeyPrefix) ||
+          key.startsWith(AppAiStorageAdapter._privateKeySecretKeyPrefix)) {
         _secretCache.remove(key);
       }
     }
@@ -62,29 +65,36 @@ extension SettingsOps on StorageService {
   /// 加载 AI 连接设置（baseUrl、model、timeout 等），
   /// 各字段为空时返回合理的默认值。
   Future<AiConnectionSettings> loadAiConnectionSettings() async {
-    final baseUrl = _prefs?.getString(StorageService._aiBaseUrlKey)?.trim();
-    final model = _prefs?.getString(StorageService._aiModelKey)?.trim();
+    final baseUrl = _prefs
+        ?.getString(AppAiStorageAdapter._aiBaseUrlKey)
+        ?.trim();
+    final model = _prefs?.getString(AppAiStorageAdapter._aiModelKey)?.trim();
     final helperModel =
-        _prefs?.getString(StorageService._aiHelperModelKey)?.trim() ?? '';
+        _prefs?.getString(AppAiStorageAdapter._aiHelperModelKey)?.trim() ?? '';
     final auditModel =
-        _prefs?.getString(StorageService._aiAuditModelKey)?.trim() ?? '';
+        _prefs?.getString(AppAiStorageAdapter._aiAuditModelKey)?.trim() ?? '';
     final modelFallbackPolicy = AgentModelFallbackPolicy.normalize(
-      _prefs?.getString(StorageService._aiModelFallbackPolicyKey),
+      _prefs?.getString(AppAiStorageAdapter._aiModelFallbackPolicyKey),
     );
-    final contextWindow = _prefs?.getInt(StorageService._aiContextWindowKey);
+    final contextWindow = _prefs?.getInt(
+      AppAiStorageAdapter._aiContextWindowKey,
+    );
     final thinkingEnabled =
-        _prefs?.getBool(StorageService._aiDeepSeekThinkingEnabledKey) ?? true;
+        _prefs?.getBool(AppAiStorageAdapter._aiDeepSeekThinkingEnabledKey) ??
+        true;
     final reasoningEffort = DeepSeekReasoningEffort.normalize(
-      _prefs?.getString(StorageService._aiDeepSeekReasoningEffortKey),
+      _prefs?.getString(AppAiStorageAdapter._aiDeepSeekReasoningEffortKey),
     );
     final openAiReasoningEffort = OpenAiReasoningEffort.normalize(
-      _prefs?.getString(StorageService._aiOpenAiReasoningEffortKey),
+      _prefs?.getString(AppAiStorageAdapter._aiOpenAiReasoningEffortKey),
     );
     final webSearchEngine = AiWebSearchEngine.normalize(
-      _prefs?.getString(StorageService._aiWebSearchEngineKey),
+      _prefs?.getString(AppAiStorageAdapter._aiWebSearchEngineKey),
     );
     final quarkSearchEndpoint =
-        _prefs?.getString(StorageService._aiQuarkSearchEndpointKey)?.trim() ??
+        _prefs
+            ?.getString(AppAiStorageAdapter._aiQuarkSearchEndpointKey)
+            ?.trim() ??
         'https://dashscope.aliyuncs.com/api/v1/services/search/quark';
     final quarkApiKey = await getQuarkApiKey();
     final hasQuarkApiKey = quarkApiKey?.isNotEmpty == true;
@@ -94,22 +104,24 @@ extension SettingsOps on StorageService {
         ? maskAiApiKey(apiKey!)
         : null;
     final useCustomPrompts =
-        _prefs?.getBool(StorageService._aiUseCustomPromptsKey) ?? false;
+        _prefs?.getBool(AppAiStorageAdapter._aiUseCustomPromptsKey) ?? false;
     final customSystemPrompt =
-        _prefs?.getString(StorageService._aiCustomSystemPromptKey) ?? '';
+        _prefs?.getString(AppAiStorageAdapter._aiCustomSystemPromptKey) ?? '';
     final customPlannerPrompt =
-        _prefs?.getString(StorageService._aiCustomPlannerPromptKey) ?? '';
+        _prefs?.getString(AppAiStorageAdapter._aiCustomPlannerPromptKey) ?? '';
     final customOperatorPrompt =
-        _prefs?.getString(StorageService._aiCustomOperatorPromptKey) ?? '';
+        _prefs?.getString(AppAiStorageAdapter._aiCustomOperatorPromptKey) ?? '';
     final customExplorePrompt =
-        _prefs?.getString(StorageService._aiCustomExplorePromptKey) ?? '';
+        _prefs?.getString(AppAiStorageAdapter._aiCustomExplorePromptKey) ?? '';
     final customReviewerPrompt =
-        _prefs?.getString(StorageService._aiCustomReviewerPromptKey) ?? '';
+        _prefs?.getString(AppAiStorageAdapter._aiCustomReviewerPromptKey) ?? '';
     final customSummarizerPrompt =
-        _prefs?.getString(StorageService._aiCustomSummarizerPromptKey) ?? '';
+        _prefs?.getString(AppAiStorageAdapter._aiCustomSummarizerPromptKey) ??
+        '';
     final customCoordinatorPrompt =
-        _prefs?.getString(StorageService._aiCustomCoordinatorPromptKey) ?? '';
-    final apiFormatStr = _prefs?.getString(StorageService._aiApiFormatKey);
+        _prefs?.getString(AppAiStorageAdapter._aiCustomCoordinatorPromptKey) ??
+        '';
+    final apiFormatStr = _prefs?.getString(AppAiStorageAdapter._aiApiFormatKey);
     final apiFormat = LlmApiFormat.fromValue(apiFormatStr);
     return AiConnectionSettings(
       baseUrl: baseUrl?.isNotEmpty == true
@@ -125,31 +137,32 @@ extension SettingsOps on StorageService {
       deepSeekReasoningEffort: reasoningEffort,
       openAiReasoningEffort: openAiReasoningEffort,
       webSearchEnabled:
-          _prefs?.getBool(StorageService._aiWebSearchEnabledKey) ?? true,
+          _prefs?.getBool(AppAiStorageAdapter._aiWebSearchEnabledKey) ?? true,
       webSearchMaxResults: AiWebSearchMaxResults.normalize(
-        _prefs?.getInt(StorageService._aiWebSearchMaxResultsKey),
+        _prefs?.getInt(AppAiStorageAdapter._aiWebSearchMaxResultsKey),
       ),
       webSearchEngine: webSearchEngine,
       quarkSearchEndpoint: quarkSearchEndpoint,
       hasQuarkApiKey: hasQuarkApiKey,
       multiAgentEnabled:
-          _prefs?.getBool(StorageService._aiMultiAgentEnabledKey) ?? true,
+          _prefs?.getBool(AppAiStorageAdapter._aiMultiAgentEnabledKey) ?? true,
       multiAgentMaxAgents: AiMultiAgentMaxAgents.normalize(
-        _prefs?.getInt(StorageService._aiMultiAgentMaxAgentsKey),
+        _prefs?.getInt(AppAiStorageAdapter._aiMultiAgentMaxAgentsKey),
       ),
       postToolReviewEnabled:
-          _prefs?.getBool(StorageService._aiPostToolReviewEnabledKey) ?? true,
+          _prefs?.getBool(AppAiStorageAdapter._aiPostToolReviewEnabledKey) ??
+          true,
       toolCallBudget: AiToolCallBudget.normalize(
-        _prefs?.getInt(StorageService._aiToolCallBudgetKey),
+        _prefs?.getInt(AppAiStorageAdapter._aiToolCallBudgetKey),
       ),
       agentLoopMode: AiAgentLoopMode.normalize(
-        _prefs?.getString(StorageService._aiAgentLoopModeKey),
+        _prefs?.getString(AppAiStorageAdapter._aiAgentLoopModeKey),
       ),
       maxImageSizeBytes: AiUploadSizeLimit.normalizeImage(
-        _prefs?.getInt(StorageService._aiMaxImageSizeBytesKey),
+        _prefs?.getInt(AppAiStorageAdapter._aiMaxImageSizeBytesKey),
       ),
       maxFileSizeBytes: AiUploadSizeLimit.normalizeFile(
-        _prefs?.getInt(StorageService._aiMaxFileSizeBytesKey),
+        _prefs?.getInt(AppAiStorageAdapter._aiMaxFileSizeBytesKey),
       ),
       hasApiKey: apiKey?.isNotEmpty == true,
       activeApiKeyId: activeApiKeyId,
@@ -171,7 +184,7 @@ extension SettingsOps on StorageService {
     final normalizedBaseUrl = _normalizeAiModelsCacheBaseUrl(
       baseUrl?.trim().isNotEmpty == true
           ? baseUrl!
-          : (_prefs!.getString(StorageService._aiBaseUrlKey) ??
+          : (_prefs!.getString(AppAiStorageAdapter._aiBaseUrlKey) ??
                 'https://api.deepseek.com'),
     );
     if (normalizedBaseUrl.isEmpty) return const [];
@@ -181,10 +194,10 @@ extension SettingsOps on StorageService {
 
   Future<List<String>> loadAiBaseUrlHistory() async {
     if (!_initialized || _prefs == null) return const [];
-    final currentBaseUrl = _prefs?.getString(StorageService._aiBaseUrlKey);
+    final currentBaseUrl = _prefs?.getString(AppAiStorageAdapter._aiBaseUrlKey);
     return List.unmodifiable(
       _normalizeAiBaseUrlHistory(
-        _readStringListPref(StorageService._aiBaseUrlHistoryKey),
+        _readStringListPref(AppAiStorageAdapter._aiBaseUrlHistoryKey),
         prependValue: currentBaseUrl,
       ),
     );
@@ -195,10 +208,10 @@ extension SettingsOps on StorageService {
     final normalizedTarget = _normalizeAiModelsCacheBaseUrl(baseUrl);
     if (normalizedTarget.isEmpty) return;
     final nextHistory = _normalizeAiBaseUrlHistory(
-      _readStringListPref(StorageService._aiBaseUrlHistoryKey),
+      _readStringListPref(AppAiStorageAdapter._aiBaseUrlHistoryKey),
     )..remove(normalizedTarget);
     await _writeStringListPref(
-      StorageService._aiBaseUrlHistoryKey,
+      AppAiStorageAdapter._aiBaseUrlHistoryKey,
       nextHistory,
     );
   }
@@ -260,12 +273,12 @@ extension SettingsOps on StorageService {
     await _deleteSecure(_aiApiKeyStorageKey(id));
     await _writeAiApiKeyRefIds(nextIds);
     final selectedId = _prefs
-        ?.getString(StorageService._aiSelectedApiKeyIdKey)
+        ?.getString(AppAiStorageAdapter._aiSelectedApiKeyIdKey)
         ?.trim();
     if (selectedId == id) {
       await _setSelectedAiApiKeyId(nextIds.isNotEmpty ? nextIds.first : null);
     }
-    _secretCache.remove(StorageService._memoryAiApiKeyCacheKey);
+    _secretCache.remove(AppAiStorageAdapter._memoryAiApiKeyCacheKey);
   }
 
   /// Alias for removeAiApiKeyHistoryEntry to support deleteAiApiKey
@@ -280,7 +293,7 @@ extension SettingsOps on StorageService {
       return null;
     }
     final selectedId = _prefs
-        ?.getString(StorageService._aiSelectedApiKeyIdKey)
+        ?.getString(AppAiStorageAdapter._aiSelectedApiKeyIdKey)
         ?.trim();
     if (selectedId != null && ids.contains(selectedId)) {
       return selectedId;
@@ -308,7 +321,7 @@ extension SettingsOps on StorageService {
       cache[normalizedBaseUrl] = normalizedModels;
     }
     await _prefs!.setString(
-      StorageService._aiModelsCacheKey,
+      AppAiStorageAdapter._aiModelsCacheKey,
       jsonEncode(cache),
     );
   }
@@ -316,7 +329,7 @@ extension SettingsOps on StorageService {
   Future<void> clearCachedAiModels({String? baseUrl}) async {
     if (!_initialized || _prefs == null) return;
     if (baseUrl == null) {
-      await _prefs!.remove(StorageService._aiModelsCacheKey);
+      await _prefs!.remove(AppAiStorageAdapter._aiModelsCacheKey);
       return;
     }
     final normalizedBaseUrl = _normalizeAiModelsCacheBaseUrl(baseUrl);
@@ -324,18 +337,18 @@ extension SettingsOps on StorageService {
     final cache = _readAiModelsCacheMap();
     cache.remove(normalizedBaseUrl);
     if (cache.isEmpty) {
-      await _prefs!.remove(StorageService._aiModelsCacheKey);
+      await _prefs!.remove(AppAiStorageAdapter._aiModelsCacheKey);
       return;
     }
     await _prefs!.setString(
-      StorageService._aiModelsCacheKey,
+      AppAiStorageAdapter._aiModelsCacheKey,
       jsonEncode(cache),
     );
   }
 
   Future<int> getAiRequestTimeoutSeconds() async {
     return AiRequestTimeout.normalize(
-      _prefs?.getInt(StorageService._aiTimeoutSecondsKey),
+      _prefs?.getInt(AppAiStorageAdapter._aiTimeoutSecondsKey),
     );
   }
 
@@ -343,14 +356,14 @@ extension SettingsOps on StorageService {
     if (!_initialized) return null;
     await _ensureAiApiKeyHistoryMigrated();
     final cache = _readCachedSecretEntry(
-      StorageService._memoryAiApiKeyCacheKey,
+      AppAiStorageAdapter._memoryAiApiKeyCacheKey,
     );
     if (cache != null) return cache.value;
 
     while (true) {
       final selectedId = await getSelectedAiApiKeyId();
       if (selectedId == null) {
-        _secretCache.remove(StorageService._memoryAiApiKeyCacheKey);
+        _secretCache.remove(AppAiStorageAdapter._memoryAiApiKeyCacheKey);
         return null;
       }
       final value = await _readSecure(_aiApiKeyStorageKey(selectedId));
@@ -365,10 +378,8 @@ extension SettingsOps on StorageService {
         continue;
       }
       if (_secretCacheEnabled) {
-        _secretCache[StorageService._memoryAiApiKeyCacheKey] = _MemorySecret(
-          value: normalized,
-          loadedAt: DateTime.now(),
-        );
+        _secretCache[AppAiStorageAdapter._memoryAiApiKeyCacheKey] =
+            _MemorySecret(value: normalized, loadedAt: DateTime.now());
       }
       return normalized;
     }
@@ -376,7 +387,7 @@ extension SettingsOps on StorageService {
 
   Future<String?> getQuarkApiKey() async {
     if (!_initialized) return null;
-    final value = await _readSecure(StorageService._quarkApiKeySecureKey);
+    final value = await _readSecure(AppAiStorageAdapter._quarkApiKeySecureKey);
     return value?.trim();
   }
 
@@ -384,20 +395,20 @@ extension SettingsOps on StorageService {
     if (!_initialized) return;
     final trimmed = key.trim();
     if (trimmed.isEmpty) {
-      await _deleteSecure(StorageService._quarkApiKeySecureKey);
+      await _deleteSecure(AppAiStorageAdapter._quarkApiKeySecureKey);
     } else {
-      await _writeSecure(StorageService._quarkApiKeySecureKey, trimmed);
+      await _writeSecure(AppAiStorageAdapter._quarkApiKeySecureKey, trimmed);
     }
   }
 
   Future<void> clearQuarkApiKey() async {
     if (!_initialized) return;
-    await _deleteSecure(StorageService._quarkApiKeySecureKey);
+    await _deleteSecure(AppAiStorageAdapter._quarkApiKeySecureKey);
   }
 
   Future<String?> getAliyunApiKey() async {
     if (!_initialized) return null;
-    final value = await _readSecure(StorageService._aliyunApiKeySecureKey);
+    final value = await _readSecure(AppAiStorageAdapter._aliyunApiKeySecureKey);
     return value?.trim();
   }
 
@@ -405,9 +416,9 @@ extension SettingsOps on StorageService {
     if (!_initialized) return;
     final trimmed = key.trim();
     if (trimmed.isEmpty) {
-      await _deleteSecure(StorageService._aliyunApiKeySecureKey);
+      await _deleteSecure(AppAiStorageAdapter._aliyunApiKeySecureKey);
     } else {
-      await _writeSecure(StorageService._aliyunApiKeySecureKey, trimmed);
+      await _writeSecure(AppAiStorageAdapter._aliyunApiKeySecureKey, trimmed);
     }
   }
 
@@ -453,177 +464,189 @@ extension SettingsOps on StorageService {
     final normalizedModel = model.trim();
     final normalizedHelperModel = helperModel?.trim() ?? '';
     final normalizedAuditModel = auditModel?.trim() ?? '';
-    await _prefs!.setString(StorageService._aiBaseUrlKey, normalizedBaseUrl);
+    await _prefs!.setString(
+      AppAiStorageAdapter._aiBaseUrlKey,
+      normalizedBaseUrl,
+    );
     if (apiFormat != null) {
-      await _prefs!.setString(StorageService._aiApiFormatKey, apiFormat.value);
+      await _prefs!.setString(
+        AppAiStorageAdapter._aiApiFormatKey,
+        apiFormat.value,
+      );
     }
     await _persistAiBaseUrlHistory(normalizedBaseUrl);
-    await _prefs!.setString(StorageService._aiModelKey, normalizedModel);
+    await _prefs!.setString(AppAiStorageAdapter._aiModelKey, normalizedModel);
     if (normalizedHelperModel.isEmpty) {
-      await _prefs!.remove(StorageService._aiHelperModelKey);
+      await _prefs!.remove(AppAiStorageAdapter._aiHelperModelKey);
     } else {
       await _prefs!.setString(
-        StorageService._aiHelperModelKey,
+        AppAiStorageAdapter._aiHelperModelKey,
         normalizedHelperModel,
       );
     }
     if (normalizedAuditModel.isEmpty) {
-      await _prefs!.remove(StorageService._aiAuditModelKey);
+      await _prefs!.remove(AppAiStorageAdapter._aiAuditModelKey);
     } else {
       await _prefs!.setString(
-        StorageService._aiAuditModelKey,
+        AppAiStorageAdapter._aiAuditModelKey,
         normalizedAuditModel,
       );
     }
     await _prefs!.setString(
-      StorageService._aiModelFallbackPolicyKey,
+      AppAiStorageAdapter._aiModelFallbackPolicyKey,
       AgentModelFallbackPolicy.normalize(
         modelFallbackPolicy ??
-            _prefs!.getString(StorageService._aiModelFallbackPolicyKey),
+            _prefs!.getString(AppAiStorageAdapter._aiModelFallbackPolicyKey),
       ),
     );
     await _prefs!.setInt(
-      StorageService._aiContextWindowKey,
+      AppAiStorageAdapter._aiContextWindowKey,
       AiContextWindowSize.normalize(contextWindowTokens),
     );
     await _prefs!.setInt(
-      StorageService._aiTimeoutSecondsKey,
+      AppAiStorageAdapter._aiTimeoutSecondsKey,
       AiRequestTimeout.normalize(timeoutSeconds),
     );
     await _prefs!.setBool(
-      StorageService._aiDeepSeekThinkingEnabledKey,
+      AppAiStorageAdapter._aiDeepSeekThinkingEnabledKey,
       deepSeekThinkingEnabled ??
-          (_prefs!.getBool(StorageService._aiDeepSeekThinkingEnabledKey) ??
+          (_prefs!.getBool(AppAiStorageAdapter._aiDeepSeekThinkingEnabledKey) ??
               true),
     );
     await _prefs!.setString(
-      StorageService._aiDeepSeekReasoningEffortKey,
+      AppAiStorageAdapter._aiDeepSeekReasoningEffortKey,
       DeepSeekReasoningEffort.normalize(
         deepSeekReasoningEffort ??
-            _prefs!.getString(StorageService._aiDeepSeekReasoningEffortKey),
+            _prefs!.getString(
+              AppAiStorageAdapter._aiDeepSeekReasoningEffortKey,
+            ),
       ),
     );
     await _prefs!.setString(
-      StorageService._aiOpenAiReasoningEffortKey,
+      AppAiStorageAdapter._aiOpenAiReasoningEffortKey,
       OpenAiReasoningEffort.normalize(
         openAiReasoningEffort ??
-            _prefs!.getString(StorageService._aiOpenAiReasoningEffortKey),
+            _prefs!.getString(AppAiStorageAdapter._aiOpenAiReasoningEffortKey),
       ),
     );
     await _prefs!.setBool(
-      StorageService._aiWebSearchEnabledKey,
+      AppAiStorageAdapter._aiWebSearchEnabledKey,
       webSearchEnabled ??
-          (_prefs!.getBool(StorageService._aiWebSearchEnabledKey) ?? true),
+          (_prefs!.getBool(AppAiStorageAdapter._aiWebSearchEnabledKey) ?? true),
     );
     await _prefs!.setInt(
-      StorageService._aiWebSearchMaxResultsKey,
+      AppAiStorageAdapter._aiWebSearchMaxResultsKey,
       AiWebSearchMaxResults.normalize(
         webSearchMaxResults ??
-            _prefs!.getInt(StorageService._aiWebSearchMaxResultsKey),
+            _prefs!.getInt(AppAiStorageAdapter._aiWebSearchMaxResultsKey),
       ),
     );
     await _prefs!.setString(
-      StorageService._aiWebSearchEngineKey,
+      AppAiStorageAdapter._aiWebSearchEngineKey,
       AiWebSearchEngine.normalize(
         webSearchEngine ??
-            _prefs!.getString(StorageService._aiWebSearchEngineKey),
+            _prefs!.getString(AppAiStorageAdapter._aiWebSearchEngineKey),
       ),
     );
     if (quarkSearchEndpoint != null) {
       await _prefs!.setString(
-        StorageService._aiQuarkSearchEndpointKey,
+        AppAiStorageAdapter._aiQuarkSearchEndpointKey,
         quarkSearchEndpoint.trim(),
       );
     }
     if (useCustomPrompts != null) {
       await _prefs!.setBool(
-        StorageService._aiUseCustomPromptsKey,
+        AppAiStorageAdapter._aiUseCustomPromptsKey,
         useCustomPrompts,
       );
     }
     if (customSystemPrompt != null) {
       await _prefs!.setString(
-        StorageService._aiCustomSystemPromptKey,
+        AppAiStorageAdapter._aiCustomSystemPromptKey,
         customSystemPrompt,
       );
     }
     if (customPlannerPrompt != null) {
       await _prefs!.setString(
-        StorageService._aiCustomPlannerPromptKey,
+        AppAiStorageAdapter._aiCustomPlannerPromptKey,
         customPlannerPrompt,
       );
     }
     if (customOperatorPrompt != null) {
       await _prefs!.setString(
-        StorageService._aiCustomOperatorPromptKey,
+        AppAiStorageAdapter._aiCustomOperatorPromptKey,
         customOperatorPrompt,
       );
     }
     if (customExplorePrompt != null) {
       await _prefs!.setString(
-        StorageService._aiCustomExplorePromptKey,
+        AppAiStorageAdapter._aiCustomExplorePromptKey,
         customExplorePrompt,
       );
     }
     if (customReviewerPrompt != null) {
       await _prefs!.setString(
-        StorageService._aiCustomReviewerPromptKey,
+        AppAiStorageAdapter._aiCustomReviewerPromptKey,
         customReviewerPrompt,
       );
     }
     if (customSummarizerPrompt != null) {
       await _prefs!.setString(
-        StorageService._aiCustomSummarizerPromptKey,
+        AppAiStorageAdapter._aiCustomSummarizerPromptKey,
         customSummarizerPrompt,
       );
     }
     if (customCoordinatorPrompt != null) {
       await _prefs!.setString(
-        StorageService._aiCustomCoordinatorPromptKey,
+        AppAiStorageAdapter._aiCustomCoordinatorPromptKey,
         customCoordinatorPrompt,
       );
     }
     await _prefs!.setBool(
-      StorageService._aiMultiAgentEnabledKey,
+      AppAiStorageAdapter._aiMultiAgentEnabledKey,
       multiAgentEnabled ??
-          (_prefs!.getBool(StorageService._aiMultiAgentEnabledKey) ?? true),
+          (_prefs!.getBool(AppAiStorageAdapter._aiMultiAgentEnabledKey) ??
+              true),
     );
     await _prefs!.setBool(
-      StorageService._aiPostToolReviewEnabledKey,
+      AppAiStorageAdapter._aiPostToolReviewEnabledKey,
       postToolReviewEnabled ??
-          (_prefs!.getBool(StorageService._aiPostToolReviewEnabledKey) ?? true),
+          (_prefs!.getBool(AppAiStorageAdapter._aiPostToolReviewEnabledKey) ??
+              true),
     );
     await _prefs!.setInt(
-      StorageService._aiMultiAgentMaxAgentsKey,
+      AppAiStorageAdapter._aiMultiAgentMaxAgentsKey,
       AiMultiAgentMaxAgents.normalize(
         multiAgentMaxAgents ??
-            _prefs!.getInt(StorageService._aiMultiAgentMaxAgentsKey),
+            _prefs!.getInt(AppAiStorageAdapter._aiMultiAgentMaxAgentsKey),
       ),
     );
     await _prefs!.setInt(
-      StorageService._aiToolCallBudgetKey,
+      AppAiStorageAdapter._aiToolCallBudgetKey,
       AiToolCallBudget.normalize(
-        toolCallBudget ?? _prefs!.getInt(StorageService._aiToolCallBudgetKey),
+        toolCallBudget ??
+            _prefs!.getInt(AppAiStorageAdapter._aiToolCallBudgetKey),
       ),
     );
     await _prefs!.setString(
-      StorageService._aiAgentLoopModeKey,
+      AppAiStorageAdapter._aiAgentLoopModeKey,
       AiAgentLoopMode.normalize(
-        agentLoopMode ?? _prefs!.getString(StorageService._aiAgentLoopModeKey),
+        agentLoopMode ??
+            _prefs!.getString(AppAiStorageAdapter._aiAgentLoopModeKey),
       ),
     );
     await _prefs!.setInt(
-      StorageService._aiMaxImageSizeBytesKey,
+      AppAiStorageAdapter._aiMaxImageSizeBytesKey,
       AiUploadSizeLimit.normalizeImage(
         maxImageSizeBytes ??
-            _prefs!.getInt(StorageService._aiMaxImageSizeBytesKey),
+            _prefs!.getInt(AppAiStorageAdapter._aiMaxImageSizeBytesKey),
       ),
     );
     await _prefs!.setInt(
-      StorageService._aiMaxFileSizeBytesKey,
+      AppAiStorageAdapter._aiMaxFileSizeBytesKey,
       AiUploadSizeLimit.normalizeFile(
         maxFileSizeBytes ??
-            _prefs!.getInt(StorageService._aiMaxFileSizeBytesKey),
+            _prefs!.getInt(AppAiStorageAdapter._aiMaxFileSizeBytesKey),
       ),
     );
     await _ensureAiApiKeyHistoryMigrated();
@@ -643,15 +666,13 @@ extension SettingsOps on StorageService {
       final selectedId = await _upsertAiApiKeyHistoryEntry(normalizedApiKey);
       await _setSelectedAiApiKeyId(selectedId);
       if (_secretCacheEnabled) {
-        _secretCache[StorageService._memoryAiApiKeyCacheKey] = _MemorySecret(
-          value: normalizedApiKey,
-          loadedAt: DateTime.now(),
-        );
+        _secretCache[AppAiStorageAdapter._memoryAiApiKeyCacheKey] =
+            _MemorySecret(value: normalizedApiKey, loadedAt: DateTime.now());
       }
       apiKeyUpdated = true;
     } else if (selectedApiKeyId?.trim().isNotEmpty == true) {
       await _setSelectedAiApiKeyId(selectedApiKeyId!.trim());
-      _secretCache.remove(StorageService._memoryAiApiKeyCacheKey);
+      _secretCache.remove(AppAiStorageAdapter._memoryAiApiKeyCacheKey);
     } else if (clearApiKey) {
       final currentId = await getSelectedAiApiKeyId();
       if (currentId != null) {
@@ -666,20 +687,20 @@ extension SettingsOps on StorageService {
     if (quarkApiKey != null) {
       final trimmed = quarkApiKey.trim();
       if (trimmed.isNotEmpty) {
-        await _writeSecure(StorageService._quarkApiKeySecureKey, trimmed);
+        await _writeSecure(AppAiStorageAdapter._quarkApiKeySecureKey, trimmed);
         quarkApiKeyUpdated = true;
       } else {
-        await _deleteSecure(StorageService._quarkApiKeySecureKey);
+        await _deleteSecure(AppAiStorageAdapter._quarkApiKeySecureKey);
         quarkApiKeyUpdated = true;
       }
     } else if (clearQuarkApiKey) {
-      await _deleteSecure(StorageService._quarkApiKeySecureKey);
+      await _deleteSecure(AppAiStorageAdapter._quarkApiKeySecureKey);
       quarkApiKeyUpdated = true;
     }
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'hasBaseUrl=${normalizedBaseUrl.isNotEmpty} modelConfigured=${normalizedModel.isNotEmpty} helperModelConfigured=${normalizedHelperModel.isNotEmpty} auditModelConfigured=${normalizedAuditModel.isNotEmpty} quarkEndpointConfigured=${_prefs!.getString(StorageService._aiQuarkSearchEndpointKey)?.trim().isNotEmpty == true} apiKeyUpdated=$apiKeyUpdated quarkApiKeyUpdated=$quarkApiKeyUpdated customPromptsUpdated=${useCustomPrompts != null}',
+          'hasBaseUrl=${normalizedBaseUrl.isNotEmpty} modelConfigured=${normalizedModel.isNotEmpty} helperModelConfigured=${normalizedHelperModel.isNotEmpty} auditModelConfigured=${normalizedAuditModel.isNotEmpty} quarkEndpointConfigured=${_prefs!.getString(AppAiStorageAdapter._aiQuarkSearchEndpointKey)?.trim().isNotEmpty == true} apiKeyUpdated=$apiKeyUpdated quarkApiKeyUpdated=$quarkApiKeyUpdated customPromptsUpdated=${useCustomPrompts != null}',
     );
   }
 
@@ -696,30 +717,19 @@ extension SettingsOps on StorageService {
     return trimmed;
   }
 
-  Future<void> _clearAiApiKeySecret() async {
-    _secretCache.remove(StorageService._memoryAiApiKeyCacheKey);
-    await _clearLegacyAiApiKeySecret();
-    final ids = _readAiApiKeyRefIds();
-    for (final id in ids) {
-      await _deleteSecure(_aiApiKeyStorageKey(id));
-    }
-    await _writeAiApiKeyRefIds(const []);
-    await _setSelectedAiApiKeyId(null);
-  }
-
   Future<void> _clearLegacyAiApiKeySecret() async {
-    _secretCache.remove(StorageService._memoryAiApiKeyCacheKey);
-    await _deleteSecure(StorageService._aiApiKeyKey);
+    _secretCache.remove(AppAiStorageAdapter._memoryAiApiKeyCacheKey);
+    await _deleteSecure(AppAiStorageAdapter._aiApiKeyKey);
   }
 
   Future<void> _ensureAiApiKeyHistoryMigrated() async {
     if (!_initialized || _prefs == null) return;
     if (_readAiApiKeyRefIds().isNotEmpty) return;
-    final legacyValue = await _readSecure(StorageService._aiApiKeyKey);
+    final legacyValue = await _readSecure(AppAiStorageAdapter._aiApiKeyKey);
     final normalizedLegacy = _normalizeAiApiKey(legacyValue);
     if (normalizedLegacy == null) {
       if (legacyValue != null && legacyValue.isNotEmpty) {
-        await _deleteSecure(StorageService._aiApiKeyKey);
+        await _deleteSecure(AppAiStorageAdapter._aiApiKeyKey);
       }
       return;
     }
@@ -727,7 +737,7 @@ extension SettingsOps on StorageService {
     await _writeSecure(_aiApiKeyStorageKey(id), normalizedLegacy);
     await _writeAiApiKeyRefIds([id]);
     await _setSelectedAiApiKeyId(id);
-    await _deleteSecure(StorageService._aiApiKeyKey);
+    await _deleteSecure(AppAiStorageAdapter._aiApiKeyKey);
   }
 
   Future<String> _upsertAiApiKeyHistoryEntry(String apiKey) async {
@@ -755,28 +765,31 @@ extension SettingsOps on StorageService {
     if (_prefs == null) return;
     final normalized = id?.trim();
     if (normalized == null || normalized.isEmpty) {
-      await _prefs!.remove(StorageService._aiSelectedApiKeyIdKey);
+      await _prefs!.remove(AppAiStorageAdapter._aiSelectedApiKeyIdKey);
       return;
     }
-    await _prefs!.setString(StorageService._aiSelectedApiKeyIdKey, normalized);
+    await _prefs!.setString(
+      AppAiStorageAdapter._aiSelectedApiKeyIdKey,
+      normalized,
+    );
   }
 
   List<String> _readAiApiKeyRefIds() {
-    return _readStringListPref(StorageService._aiApiKeyRefsKey);
+    return _readStringListPref(AppAiStorageAdapter._aiApiKeyRefsKey);
   }
 
   Future<void> _writeAiApiKeyRefIds(List<String> ids) async {
-    await _writeStringListPref(StorageService._aiApiKeyRefsKey, ids);
+    await _writeStringListPref(AppAiStorageAdapter._aiApiKeyRefsKey, ids);
   }
 
   String _aiApiKeyStorageKey(String id) =>
-      '${StorageService._aiApiKeyEntryPrefix}$id';
+      '${AppAiStorageAdapter._aiApiKeyEntryPrefix}$id';
 
   Future<void> _persistAiBaseUrlHistory(String currentBaseUrl) async {
     await _writeStringListPref(
-      StorageService._aiBaseUrlHistoryKey,
+      AppAiStorageAdapter._aiBaseUrlHistoryKey,
       _normalizeAiBaseUrlHistory(
-        _readStringListPref(StorageService._aiBaseUrlHistoryKey),
+        _readStringListPref(AppAiStorageAdapter._aiBaseUrlHistoryKey),
         prependValue: currentBaseUrl,
       ),
     );
@@ -825,7 +838,7 @@ extension SettingsOps on StorageService {
   }
 
   Map<String, List<String>> _readAiModelsCacheMap() {
-    final raw = _prefs?.getString(StorageService._aiModelsCacheKey);
+    final raw = _prefs?.getString(AppAiStorageAdapter._aiModelsCacheKey);
     if (raw == null || raw.trim().isEmpty) {
       return <String, List<String>>{};
     }
@@ -877,10 +890,5 @@ extension SettingsOps on StorageService {
       return null;
     }
     return cached;
-  }
-
-  void _cancelPendingProtectedPrefWrite(String key) {
-    final pending = _pendingProtectedPrefWrites.remove(key);
-    pending?.timer?.cancel();
   }
 }

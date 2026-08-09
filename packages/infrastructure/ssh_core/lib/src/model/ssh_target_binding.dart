@@ -176,7 +176,7 @@ final class SshRuntimeTarget {
 /// SSH Core 需要的目标解析契约。
 ///
 /// App 层可以用 ConnectionRepository、CredentialRepository 和 HostKeyRepository
-/// 实现该接口，SSH Core 不需要知道 StorageService 的存在。
+/// 实现该接口，SSH Core 不需要知道 App Shell 存储实现的存在。
 abstract interface class SshTargetResolver {
   /// 按审批绑定读取当前配置和安全凭据；目标过期时返回空值。
   Future<SshRuntimeTarget?> resolve(SshTargetBinding binding);

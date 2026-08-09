@@ -2,14 +2,14 @@
 
 import 'package:feature_connection/feature_connection.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
-import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
 import '../features/connection/services/connection_runtime_actions.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
-import '../services/storage_service.dart';
+import '../services/app_log_service.dart';
 
 /// 旧 App Scope SSH/SFTP/监控服务到 Feature Runtime Port 的适配器。
 final class AppConnectionRuntimeAdapter implements ConnectionRuntimePort {
@@ -71,14 +71,23 @@ final class AppConnectionRuntimeAdapter implements ConnectionRuntimePort {
     final ssh = _sshService;
     if (ssh == null) return null;
     await ssh.ensureInitialized();
-    final legacyConfirmation = onUnknownHostKey == null
+    final confirmation = onUnknownHostKey == null
         ? null
-        : (SshHostKeyPromptRequest request) =>
-              onUnknownHostKey(_toFeaturePrompt(request));
+        : (SshHostKeyPromptRequest request) => onUnknownHostKey(
+            ConnectionHostKeyPrompt(
+              connectionId: request.connectionId,
+              connectionName: request.connectionName,
+              host: request.host,
+              port: request.port,
+              username: request.username,
+              algorithm: request.algorithm,
+              fingerprint: request.fingerprint,
+            ),
+          );
     return ssh.openSession(
       connectionId,
       displayName: windowName,
-      onUnknownHostKey: legacyConfirmation,
+      onUnknownHostKey: confirmation,
     );
   }
 }
@@ -86,9 +95,17 @@ final class AppConnectionRuntimeAdapter implements ConnectionRuntimePort {
 /// 旧 SSH ClientFactory 到 Feature Verification Port 的适配器。
 final class AppConnectionVerificationAdapter
     implements ConnectionVerificationPort {
-  AppConnectionVerificationAdapter(this._storageService);
+  AppConnectionVerificationAdapter({
+    required connection_core.CredentialRepository credentialRepository,
+    required connection_core.HostKeyRepository hostKeyRepository,
+    required AppLogService logger,
+  }) : _factory = ssh_core.SshClientFactory(
+         credentialRepository: credentialRepository,
+         hostKeyRepository: hostKeyRepository,
+         logger: logger,
+       );
 
-  final StorageService _storageService;
+  final ssh_core.SshClientFactory _factory;
 
   @override
   Future<ConnectionVerificationResult> verify(
@@ -99,13 +116,15 @@ final class AppConnectionVerificationAdapter
   }) async {
     final legacyConfirmation = onUnknownHostKey == null
         ? null
-        : (SshHostKeyPromptRequest request) =>
+        : (ssh_core.SshHostKeyPromptRequest request) =>
               onUnknownHostKey(_toFeaturePrompt(request));
-    final factory = SshClientFactory(_storageService);
-    final client = await factory.connectClient(
+    final client = await _factory.connectClient(
       config,
       timeout: const Duration(seconds: 12),
-      credentials: SshCredentials(password: password, privateKey: privateKey),
+      credentials: ssh_core.SshCredentials(
+        password: password,
+        privateKey: privateKey,
+      ),
       onUnknownHostKey: legacyConfirmation,
     );
     try {
@@ -121,7 +140,9 @@ final class AppConnectionVerificationAdapter
   }
 }
 
-ConnectionHostKeyPrompt _toFeaturePrompt(SshHostKeyPromptRequest prompt) {
+ConnectionHostKeyPrompt _toFeaturePrompt(
+  ssh_core.SshHostKeyPromptRequest prompt,
+) {
   return ConnectionHostKeyPrompt(
     connectionId: prompt.connectionId,
     connectionName: prompt.connectionName,

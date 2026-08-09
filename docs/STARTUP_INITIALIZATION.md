@@ -1,6 +1,6 @@
 # 应用启动按需初始化架构 (On-demand Startup Initialization Architecture)
 
-> 最新更新时间：2026-08-07
+> 最新更新时间：2026-08-09
 
 ## 概述
 为了大幅提升应用冷启动速度，降低 CPU/内存占用并减少未访问功能引起的后台 I/O 和网络开销，应用采用了**按需初始化架构（On-demand Initialization Architecture）**。
@@ -9,7 +9,7 @@
 
 ### 1. 核心 Bootstrap (`AppBootstrapCoordinator`)
 - `main()` 仅委托给 `AppBootstrap.run()`；`AppRuntimeFactory` 创建唯一的 App Scope 服务，`AppRuntime` 负责其生命周期，并发起 `AppBootstrapCoordinator.ensureBootstrap()`。
-- `AppBootstrapCoordinator` 仅装载核心偏好（语言、主题、色板、SFTP 限制等）与 `StorageService` 基础数据。
+- `AppBootstrapCoordinator` 仅装载核心偏好（语言、主题、色板、SFTP 限制等）；Feature/Module Repository 按各自 Owner 惰性初始化，不再由统一存储门面承载。
 - 剥离 MCP Token 生成、LAN Identity 查找与平台设备名获取等耗时/平台通道 I/O，移至具体功能触发时处理。
 
 ### 2. ConnectionViewModel 与 SshService 解耦 (`ConnectionRuntimeActions`)

@@ -13,15 +13,16 @@ import 'package:ssh_mobile/features/sftp/views/sftp_screen.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:ssh_mobile/services/sftp_path_history_store.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late AppSettings appSettings;
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late SshService sshService;
   late _FilePaneFakeSftpService sftpService;
   late PerformanceMonitorService performanceService;
@@ -37,13 +38,18 @@ void main() {
     await appSettings.init();
     await appSettings.toggleLanguage();
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
-    sshService = SshService(storageService);
+    sshService = createTestSshService(storageService);
     sftpService = _FilePaneFakeSftpService(storageService);
-    performanceService = PerformanceMonitorService(sshService, storageService);
+    performanceService = createTestPerformanceMonitorService(
+      sshService,
+      storageService,
+    );
     connectionViewModel = ConnectionViewModel(
-      connectionRepository: storageService,
+      connectionRepository: storageService.connectionRepository,
+      credentialRepository: storageService.credentialRepository,
+      hostKeyRepository: storageService.hostKeyRepository,
       sshService: sshService,
       sftpService: sftpService,
       performanceService: performanceService,
@@ -404,7 +410,12 @@ void main() {
 }
 
 class _FilePaneFakeSftpService extends SftpService {
-  _FilePaneFakeSftpService(super.storageService);
+  _FilePaneFakeSftpService(TestStorageAdapter storageService)
+    : super(
+        connectionRepository: storageService.connectionRepository,
+        credentialRepository: storageService.credentialRepository,
+        hostKeyRepository: storageService.hostKeyRepository,
+      );
 
   SftpConnectionState _state = SftpConnectionState.connected;
   String? _errorMessage;

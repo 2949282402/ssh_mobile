@@ -1,9 +1,9 @@
-part of '../storage_service.dart';
+part of '../ai_storage_adapter.dart';
 
 /// 迁移期间保留在 App Shell 的排序辅助函数。
 ///
 /// AI 聊天和技能记录的持久化已由 feature_ai 接管，但旧的 Playbook
-/// Repository 与 StorageService 仍调用这些稳定的去重排序行为。
+/// Repository 与 AppAiStorageAdapter 仍调用这些稳定的去重排序行为。
 List<AiChatRecord> upsertAiChatRecordsByUpdatedAt(
   Iterable<AiChatRecord> chats,
   AiChatRecord chat, {

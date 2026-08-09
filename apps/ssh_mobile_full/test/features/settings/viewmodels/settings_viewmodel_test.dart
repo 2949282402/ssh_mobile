@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/settings/viewmodels/settings_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../../../test_utils/test_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
 
 import '../../../test_utils/ai_port_adapters.dart';
@@ -13,7 +13,7 @@ import '../../../test_utils/ai_port_adapters.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late StorageService storageService;
+  late TestStorageAdapter storageService;
   late AppSettings appSettings;
 
   setUp(() async {
@@ -21,7 +21,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = TestStorageAdapter();
     await storageService.init();
     attachTestAiRepository(storageService);
 
@@ -38,7 +38,7 @@ void main() {
     test('Initialization status and settings exposure', () {
       final viewModel = SettingsViewModel(
         appSettings: appSettings,
-        storageService: storageService,
+        aiStorage: storageService.aiStorage,
       );
 
       expect(viewModel.language, equals(AppLanguage.zh));
@@ -52,7 +52,7 @@ void main() {
     test('changeLanguage toggles settings language', () async {
       final viewModel = SettingsViewModel(
         appSettings: appSettings,
-        storageService: storageService,
+        aiStorage: storageService.aiStorage,
       );
 
       expect(viewModel.language, equals(AppLanguage.zh));
@@ -63,7 +63,7 @@ void main() {
     test('changeThemeMode updates AppSettings', () {
       final viewModel = SettingsViewModel(
         appSettings: appSettings,
-        storageService: storageService,
+        aiStorage: storageService.aiStorage,
       );
 
       viewModel.changeThemeMode(ThemeMode.dark);
@@ -73,7 +73,7 @@ void main() {
     test('setColorPalette updates and persists AppSettings', () async {
       final viewModel = SettingsViewModel(
         appSettings: appSettings,
-        storageService: storageService,
+        aiStorage: storageService.aiStorage,
       );
 
       await viewModel.setColorPalette(AppColorPalette.rose);
@@ -86,7 +86,7 @@ void main() {
     test('configureSecretCache and clearSecretCache works', () async {
       final viewModel = SettingsViewModel(
         appSettings: appSettings,
-        storageService: storageService,
+        aiStorage: storageService.aiStorage,
       );
 
       expect(viewModel.secretCacheEnabled, isTrue);
@@ -103,7 +103,7 @@ void main() {
       () async {
         final viewModel = SettingsViewModel(
           appSettings: appSettings,
-          storageService: storageService,
+          aiStorage: storageService.aiStorage,
         );
 
         List<int>? exportedBytes;

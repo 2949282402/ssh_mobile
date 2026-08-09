@@ -16,7 +16,7 @@ extension SshSessionMetadataActions on SshService {
   }
 
   String defaultDisplayNameForConnection(String connectionId) {
-    final config = _storageService.getConnection(connectionId);
+    final config = _connectionRepository.getConnection(connectionId);
     return _defaultDisplayName(config?.name ?? 'SSH', connectionId);
   }
 
@@ -87,8 +87,8 @@ extension SshSessionMetadataActions on SshService {
 
   Future<void> _saveRestorableTmuxSession(SshSession session) async {
     if (session.tmuxSessionName == null) return;
-    await _storageService.saveRestorableTmuxSession(
-      RestorableTmuxSession(
+    await _terminalMetadataStore.saveRestorableTmuxSession(
+      terminal_metadata.RestorableTmuxSession(
         sessionId: session.id,
         connectionId: session.connectionId,
         displayName: session.displayName,
@@ -100,8 +100,8 @@ extension SshSessionMetadataActions on SshService {
   }
 
   Future<void> _saveTerminalHistoryRecord(SshSession session) async {
-    await _storageService.saveTerminalHistoryRecord(
-      TerminalHistoryRecord(
+    await _terminalMetadataStore.saveTerminalHistoryRecord(
+      terminal_metadata.TerminalHistoryRecord(
         sessionId: session.id,
         connectionId: session.connectionId,
         connectionName: session.connectionName,

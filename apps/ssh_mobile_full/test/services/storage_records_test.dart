@@ -13,9 +13,14 @@ import 'package:feature_ai/feature_ai.dart'
         canExitPlanMode,
         latestAssistantMessageForChat;
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../test_utils/test_storage_adapter.dart';
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
   AiChatRecord chat(String id, int minute) {
     final time = DateTime.utc(2026, 1, 1, 12, minute);
     return AiChatRecord(
@@ -28,27 +33,34 @@ void main() {
     );
   }
 
-  test('upsertAiChatRecordsByUpdatedAt inserts by latest updatedAt', () {
-    final result = upsertAiChatRecordsByUpdatedAt([
-      chat('old', 1),
-      chat('older', 0),
-    ], chat('new', 2));
+  test('AI Repository loads chat records by latest updatedAt', () async {
+    final storage = TestStorageAdapter();
+    await storage.init();
+    addTearDown(storage.dispose);
 
-    expect(result.map((item) => item.id), ['new', 'old', 'older']);
+    await storage.saveAiChat(chat('old', 1));
+    await storage.saveAiChat(chat('older', 0));
+    await storage.saveAiChat(chat('new', 2));
+
+    expect((await storage.loadAiChats()).map((item) => item.id), [
+      'new',
+      'old',
+      'older',
+    ]);
   });
 
-  test(
-    'upsertAiChatRecordsByUpdatedAt replaces existing record and limits',
-    () {
-      final result = upsertAiChatRecordsByUpdatedAt(
-        [chat('a', 3), chat('b', 2), chat('c', 1)],
-        chat('b', 4),
-        limit: 2,
-      );
+  test('AI Repository replaces an existing chat by its stable ID', () async {
+    final storage = TestStorageAdapter();
+    await storage.init();
+    addTearDown(storage.dispose);
 
-      expect(result.map((item) => item.id), ['b', 'a']);
-    },
-  );
+    await storage.saveAiChat(chat('same-id', 1));
+    await storage.saveAiChat(chat('same-id', 4));
+
+    final chats = await storage.loadAiChats();
+    expect(chats, hasLength(1));
+    expect(chats.single.updatedAt, DateTime.utc(2026, 1, 1, 12, 4).toLocal());
+  });
 
   test('AiChatMessageRecord round-trips context, traces, and token stats', () {
     final createdAt = DateTime.utc(2026, 1, 2, 3, 4, 5);

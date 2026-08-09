@@ -8,7 +8,7 @@ import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
 import 'package:ssh_mobile/services/sftp/sftp_service_io.dart';
 import 'package:ssh_mobile/services/sftp_service.dart' hide SftpService;
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -201,7 +201,9 @@ class _ServiceFixture {
       connection,
     ).fingerprint;
     service = SftpService.forTesting(
-      storage,
+      storage.connectionRepository,
+      storage.credentialRepository,
+      storage.hostKeyRepository,
       connection: connection,
       sftpClient: remote,
       currentPath: '/srv',
@@ -232,7 +234,7 @@ class _ServiceFixture {
   }
 }
 
-class _NoopStorageService extends StorageService {
+class _NoopStorageService extends TestStorageAdapter {
   @override
   Future<void> recordVisitedPath(String connectionId, String path) async {}
 }

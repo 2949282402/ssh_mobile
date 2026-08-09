@@ -1,7 +1,7 @@
 // Playbook Feature 的 App Shell 适配层。
 //
-// 旧 Storage、SSH、日志和 DataProtection 仍由 AppRuntime 持有；本文件只把
-// 这些实现转换为 Feature 的公开 Port，确保 Package 不反向依赖 App `/src/`。
+// AppRuntime 持有 Connection、SSH、日志和 DataProtection；本文件只把这些
+// 实现转换为 Feature 的公开 Port，确保 Package 不反向依赖 App `/src/`。
 
 import 'package:connection_core/connection_core.dart';
 import 'package:feature_playbook/feature_playbook.dart' as playbook;
@@ -13,7 +13,6 @@ import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/connection_target_binding.dart';
 import '../services/ssh_service.dart';
-import '../services/storage_service.dart';
 
 /// 将旧 AppSettings 适配为 Playbook 的最小设置 Port。
 final class AppPlaybookSettingsAdapter extends ChangeNotifier
@@ -47,35 +46,28 @@ final class AppPlaybookSettingsAdapter extends ChangeNotifier
   }
 }
 
-/// 将旧 Storage 的连接目录适配为 Playbook 的只读连接目录。
+/// 将 Connection Core 的连接目录适配为 Playbook 的只读连接目录。
 final class AppPlaybookConnectionCatalogAdapter extends ChangeNotifier
     implements playbook.PlaybookConnectionCatalogPort {
-  AppPlaybookConnectionCatalogAdapter(this._storage) {
-    _storage.addListener(_forwardChange);
-  }
+  AppPlaybookConnectionCatalogAdapter(this._repository);
 
-  final StorageService _storage;
+  final ConnectionRepository _repository;
   bool _disposed = false;
 
   @override
-  bool get isInitialized => _storage.initialized;
+  bool get isInitialized => true;
 
   @override
-  List<ConnectionConfig> get connections => _storage.connections;
+  List<ConnectionConfig> get connections => _repository.connections;
 
   @override
-  ConnectionConfig? connectionById(String id) => _storage.getConnection(id);
+  ConnectionConfig? connectionById(String id) => _repository.getConnection(id);
 
-  void _forwardChange() {
-    if (!_disposed) notifyListeners();
-  }
-
-  /// 只解除监听，不释放 StorageService。
+  /// 该适配器不拥有 Connection Repository，无需释放底层资源。
   @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _storage.removeListener(_forwardChange);
     super.dispose();
   }
 }

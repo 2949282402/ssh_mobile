@@ -5,16 +5,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/remote_target_scope.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 
 class _BoundMonitorSshService extends SshService {
-  final StorageService storage;
+  final TestStorageAdapter storage;
   int remoteCallCount = 0;
 
-  _BoundMonitorSshService(this.storage) : super(storage);
+  _BoundMonitorSshService(this.storage)
+    : super(
+        connectionRepository: storage.connectionRepository,
+        credentialRepository: storage.credentialRepository,
+        hostKeyRepository: storage.hostKeyRepository,
+        terminalMetadataStore: storage.terminalMetadataStore,
+      );
 
   @override
   Future<RemoteCommandResult> runOneShotCommandForBinding({
@@ -45,7 +50,7 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.windows;
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
-      final storage = StorageService();
+      final storage = TestStorageAdapter();
       await storage.init();
       final connection = ConnectionConfig(
         id: 'monitor-target',
@@ -56,7 +61,7 @@ void main() {
       );
       await storage.addConnection(connection);
       final ssh = _BoundMonitorSshService(storage);
-      final monitor = PerformanceMonitorService(ssh, storage);
+      final monitor = createTestPerformanceMonitorService(ssh, storage);
       monitor.toggleSelection(connection.id);
       final binding = ConnectionTargetBinding.fromConfig(connection);
 

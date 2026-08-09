@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
+import '../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
 void main() {
@@ -24,7 +24,7 @@ void main() {
   test(
     'finalizeAssistantTurn parses playbook steps and exits plan mode',
     () async {
-      final storage = StorageService();
+      final storage = TestStorageAdapter();
       await storage.init();
       attachTestAiRepository(storage);
       final orchestrator = ChatOrchestrator(
@@ -34,7 +34,7 @@ void main() {
         ),
         memoryRetriever: OperationalMemoryRetriever(
           storageService: aiStoragePort(storage),
-          ragService: aiRagCapability(RagService(storageService: storage)),
+          ragService: aiRagCapability(RagService(aiStorage: storage.aiStorage)),
         ),
       );
       final now = DateTime.now();
@@ -80,7 +80,7 @@ void main() {
   test(
     'finalizeAssistantTurn records a plan error when no todo steps persist',
     () async {
-      final storage = StorageService();
+      final storage = TestStorageAdapter();
       await storage.init();
       attachTestAiRepository(storage);
       final orchestrator = ChatOrchestrator(
@@ -90,7 +90,7 @@ void main() {
         ),
         memoryRetriever: OperationalMemoryRetriever(
           storageService: aiStoragePort(storage),
-          ragService: aiRagCapability(RagService(storageService: storage)),
+          ragService: aiRagCapability(RagService(aiStorage: storage.aiStorage)),
         ),
       );
       final now = DateTime.now();
@@ -133,7 +133,7 @@ void main() {
   test(
     'prepareTurn retrieves relevant skills, clips references and formats contextText',
     () async {
-      final storage = StorageService();
+      final storage = TestStorageAdapter();
       await storage.init();
       attachTestAiRepository(storage);
 
@@ -268,7 +268,7 @@ void main() {
   test(
     'finalizeAssistantTurn preserves existing todoSteps and does not overwrite',
     () async {
-      final storage = StorageService();
+      final storage = TestStorageAdapter();
       await storage.init();
       attachTestAiRepository(storage);
       final orchestrator = ChatOrchestrator(
@@ -278,7 +278,7 @@ void main() {
         ),
         memoryRetriever: OperationalMemoryRetriever(
           storageService: aiStoragePort(storage),
-          ragService: aiRagCapability(RagService(storageService: storage)),
+          ragService: aiRagCapability(RagService(aiStorage: storage.aiStorage)),
         ),
       );
       final now = DateTime.now();
@@ -328,7 +328,7 @@ void main() {
   test(
     'finalizeAssistantTurn skips first invalid playbook and parses second valid playbook',
     () async {
-      final storage = StorageService();
+      final storage = TestStorageAdapter();
       await storage.init();
       attachTestAiRepository(storage);
       final orchestrator = ChatOrchestrator(
@@ -338,7 +338,7 @@ void main() {
         ),
         memoryRetriever: OperationalMemoryRetriever(
           storageService: aiStoragePort(storage),
-          ragService: aiRagCapability(RagService(storageService: storage)),
+          ragService: aiRagCapability(RagService(aiStorage: storage.aiStorage)),
         ),
       );
       final now = DateTime.now();
@@ -386,7 +386,7 @@ Second good block:
   test(
     'finalizeAssistantTurn fails parsing steps with missing name and skips block',
     () async {
-      final storage = StorageService();
+      final storage = TestStorageAdapter();
       await storage.init();
       attachTestAiRepository(storage);
       final orchestrator = ChatOrchestrator(
@@ -396,7 +396,7 @@ Second good block:
         ),
         memoryRetriever: OperationalMemoryRetriever(
           storageService: aiStoragePort(storage),
-          ragService: aiRagCapability(RagService(storageService: storage)),
+          ragService: aiRagCapability(RagService(aiStorage: storage.aiStorage)),
         ),
       );
       final now = DateTime.now();
