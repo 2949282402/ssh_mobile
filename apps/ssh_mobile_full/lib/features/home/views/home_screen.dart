@@ -24,6 +24,7 @@ import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:ssh_mobile/app/sftp_feature_adapters.dart';
 import 'package:ssh_mobile/app/system_admin_feature_adapters.dart';
+import 'package:ssh_mobile/app/connection_route_scope.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_settings_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
 import 'package:ssh_mobile/features/home/views/widgets/home_navigation_semantics.dart';
@@ -192,7 +193,11 @@ class _HomeScreenState extends State<HomeScreen> {
           floatingActionButton:
               _selectedIndex == _serverPage && !desktop && hasConnections
               ? FloatingActionButton(
-                  onPressed: () => Navigator.pushNamed(context, '/add'),
+                  onPressed: () => Navigator.pushNamed(
+                    context,
+                    '/add',
+                    arguments: context.read<ConnectionViewModel>(),
+                  ),
                   tooltip: strings.addConnection,
                   child: const Icon(Icons.add),
                 )

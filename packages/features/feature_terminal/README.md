@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_terminal
 
@@ -14,6 +14,8 @@ Terminal Pilot 的独立 Feature Package。
 Terminal 不直接依赖 `StorageService`、`AppSettings`、`SshService` 或其他
 Feature；App 通过公开 Port 提供兼容适配器。旧 App 路径在迁移期间保留导出桥，
 以便外部调用方逐步切换。
+- `feature_terminal.dart` 暴露终端路由的纯 metadata；路由页面和 ViewModel 仍由
+  App Shell 的 Route Scope 创建，Core 不持有 UI 实例。
 
 终端元数据由 `TerminalModule` 独占的 `terminal.db` 保存；加密的原始输出历史
 服务也已迁入本包，并由 App Shell 的 SSH Owner 注入数据保护与日志 Port。为保持

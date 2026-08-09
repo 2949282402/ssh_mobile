@@ -38,6 +38,16 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   It must own one cached database instance, concurrent `init()` calls must share
   one future, Drift setup must reuse that instance, and log database binding
   must finish before storage reports readiness.
+
+### App Shell and route contributions
+
+- 2026-08-09: `SshMobileApp` 的根 Provider 只暴露 App Scope 实例和 Port；Feature
+  ViewModel 必须由 Route Scope 创建和释放。`AppConnectionRouteScope` 负责
+  Connection/Settings 页面所需的路由状态，并允许 Home 将同一个 Connection
+  ViewModel 传给 Add/Edit 与 SFTP 子路由。
+- 2026-08-09: Feature 的路由元数据通过各自公共入口暴露，由
+  `apps/ssh_mobile_full/lib/app/navigation/` 聚合；Core 只保存纯描述，不能持有
+  Widget、ViewModel 或 Module 实例，App Shell 也不得引用 Feature `/src/`。
 - During active development Drift remains one current schema at version 1.
   Schema changes regenerate `app_database.g.dart` and may require deleting the
   local development database; do not add compatibility migrations without an

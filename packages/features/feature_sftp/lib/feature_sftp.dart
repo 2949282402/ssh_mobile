@@ -4,6 +4,8 @@
 // 不得直接引用 package 内部的 src 路径。
 library;
 
+import 'package:app_core/app_core.dart';
+
 export 'src/application/sftp_module.dart';
 export 'src/application/sftp_viewmodel.dart';
 export 'src/data/database/sftp_database.dart';
@@ -16,3 +18,14 @@ export 'src/presentation/sftp_editor_screen.dart';
 export 'src/presentation/sftp_file_viewer_screen.dart';
 export 'src/presentation/sftp_screen.dart';
 export 'src/presentation/sftp_settings_screen.dart';
+
+/// SFTP Feature 对外公布的稳定路由名称。
+abstract final class SftpRouteNames {
+  /// SFTP 浏览页面。
+  static const browser = '/sftp';
+}
+
+/// SFTP Feature 的路由元数据贡献；App Shell 负责解释页面构建。
+final List<ModuleRouteContribution> sftpRouteContributions = List.unmodifiable([
+  ModuleRouteContribution(routeName: SftpRouteNames.browser),
+]);

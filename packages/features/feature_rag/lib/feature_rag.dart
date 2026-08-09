@@ -4,6 +4,8 @@
 // Scope 与页面，避免跨 Package 引用内部实现。
 library;
 
+import 'package:app_core/app_core.dart';
+
 export 'src/application/rag_module.dart';
 export 'src/application/rag_service.dart';
 export 'src/data/cache/rag_cache_store.dart';
@@ -18,3 +20,14 @@ export 'src/processing/bm25_search.dart' show Bm25SearchEngine, ScoredRagChunk;
 export 'src/processing/pdf_text_extractor.dart';
 export 'src/processing/text_chunker.dart' show TextChunker;
 export 'src/processing/vector_search_utils.dart';
+
+/// RAG Feature 对外公布的稳定路由名称。
+abstract final class RagRouteNames {
+  /// 知识库页面。
+  static const knowledge = '/rag-knowledge';
+}
+
+/// RAG Feature 的路由元数据贡献；App Shell 负责解释页面构建。
+final List<ModuleRouteContribution> ragRouteContributions = List.unmodifiable([
+  ModuleRouteContribution(routeName: RagRouteNames.knowledge),
+]);

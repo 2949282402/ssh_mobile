@@ -30,6 +30,7 @@ import 'terminal_feature_adapters.dart';
 import 'sftp_feature_adapters.dart';
 import 'rag_feature_adapters.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
+import 'navigation/app_route_contributions.dart';
 
 /// App Shell。它只消费由 [AppRuntime] 创建的 App Scope 实例。
 class SshMobileApp extends StatefulWidget {
@@ -47,6 +48,11 @@ class _SshMobileAppState extends State<SshMobileApp>
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   AppTerminalSettingsAdapter? _terminalSettingsAdapter;
   AppTerminalShortcutAdapter? _terminalShortcutAdapter;
+  AppConnectionRepositoryAdapter? _connectionRepositoryAdapter;
+  AppConnectionCredentialAdapter? _connectionCredentialAdapter;
+  AppConnectionHostKeyAdapter? _connectionHostKeyAdapter;
+  AppConnectionRuntimeAdapter? _connectionRuntimeAdapter;
+  AppConnectionVerificationAdapter? _connectionVerificationAdapter;
 
   static final Map<AppColorPalette, ThemeData> _lightThemes = {
     for (final palette in AppColorPalette.values)
@@ -166,24 +172,24 @@ class _SshMobileAppState extends State<SshMobileApp>
     );
     final terminalLogger = AppTerminalLoggerAdapter(runtime.appLogService);
     final lanLogger = AppLanShareLoggerAdapter(runtime.appLogService);
-    final connectionRepository = AppConnectionRepositoryAdapter(
+    _connectionRepositoryAdapter ??= AppConnectionRepositoryAdapter(
       primary: runtime.connectionRepository,
       legacy: runtime.storageService,
     );
-    final credentialRepository = AppConnectionCredentialAdapter(
+    _connectionCredentialAdapter ??= AppConnectionCredentialAdapter(
       primary: runtime.credentialRepository,
       legacy: runtime.storageService,
     );
-    final hostKeyRepository = AppConnectionHostKeyAdapter(
+    _connectionHostKeyAdapter ??= AppConnectionHostKeyAdapter(
       primary: runtime.hostKeyRepository,
       legacy: runtime.storageService,
     );
-    final connectionRuntime = AppConnectionRuntimeAdapter(
+    _connectionRuntimeAdapter ??= AppConnectionRuntimeAdapter(
       sshServiceFactory: () => runtime.sshService,
       sftpServiceFactory: () => runtime.sftpService,
       performanceServiceFactory: () => runtime.performanceMonitorService,
     );
-    final connectionVerification = AppConnectionVerificationAdapter(
+    _connectionVerificationAdapter ??= AppConnectionVerificationAdapter(
       runtime.storageService,
     );
     return MultiProvider(
@@ -258,24 +264,6 @@ class _SshMobileAppState extends State<SshMobileApp>
         ListenableProvider<
           feature_playbook.PlaybookConnectionCatalogPort
         >.value(value: runtime.playbookConnectionCatalogAdapter),
-        ChangeNotifierProxyProvider<
-          AppSettings,
-          feature_connection.ConnectionStrings
-        >(
-          create: (_) => feature_connection.ConnectionStrings(),
-          update: (_, settings, strings) {
-            final next = strings ?? feature_connection.ConnectionStrings();
-            next.setLanguage(
-              settings.language == AppLanguage.en
-                  ? feature_connection.ConnectionLanguage.english
-                  : feature_connection.ConnectionLanguage.chinese,
-            );
-            return next;
-          },
-        ),
-        Provider<feature_connection.ConnectionUiAdapter>.value(
-          value: AppConnectionUiAdapter(),
-        ),
         ChangeNotifierProvider.value(value: runtime.bootstrapCoordinator),
         ChangeNotifierProvider.value(value: runtime.shortcutCommandService),
         ChangeNotifierProvider.value(value: runtime.sshService),
@@ -300,27 +288,41 @@ class _SshMobileAppState extends State<SshMobileApp>
         ListenableProvider<feature_mcp.McpSettingsPort>.value(
           value: runtime.mcpSettingsAdapter,
         ),
-        ChangeNotifierProvider<feature_connection.ConnectionViewModel>(
-          // ViewModel 仍由根页面提供，数据和运行时能力已通过公共契约注入。
-          create: (_) => feature_connection.ConnectionViewModel(
-            connectionRepository: connectionRepository,
-            credentialRepository: credentialRepository,
-            hostKeyRepository: hostKeyRepository,
-            runtimePort: connectionRuntime,
-            verificationPort: connectionVerification,
-          )..fetchConnections(),
-        ),
-        ChangeNotifierProvider(
-          create: (_) => SettingsViewModel(
-            appSettings: runtime.appSettings,
-            storageService: runtime.storageService,
-          ),
-        ),
         ChangeNotifierProvider<feature_lan_share.LanReceiverCoordinator>.value(
           value: runtime.lanReceiverCoordinator,
         ),
       ],
       child: Builder(builder: (context) => _buildApp(context)),
+    );
+  }
+
+  /// 创建 Connection Feature 的路由 Scope；ViewModel 不进入 App 根 Provider。
+  Widget _connectionRouteScope(
+    Widget child, {
+    feature_connection.ConnectionViewModel? viewModel,
+  }) {
+    return AppConnectionRouteScope(
+      connectionRepository: _connectionRepositoryAdapter!,
+      credentialRepository: _connectionCredentialAdapter!,
+      hostKeyRepository: _connectionHostKeyAdapter!,
+      runtimePort: _connectionRuntimeAdapter!,
+      verificationPort: _connectionVerificationAdapter!,
+      viewModel: viewModel,
+      child: child,
+    );
+  }
+
+  /// 创建产品 Home Shell 的路由 Scope，并托管设置页面状态。
+  Widget _homeRouteScope(Widget child) {
+    final runtime = _runtime;
+    return _connectionRouteScope(
+      ChangeNotifierProvider<SettingsViewModel>(
+        create: (_) => SettingsViewModel(
+          appSettings: runtime.appSettings,
+          storageService: runtime.storageService,
+        ),
+        child: child,
+      ),
     );
   }
 
@@ -384,20 +386,30 @@ class _SshMobileAppState extends State<SshMobileApp>
                             ),
                     );
                   },
-                  initialRoute: '/',
+                  initialRoute: AppShellRouteNames.root,
                   onGenerateRoute: (settings) {
+                    assert(
+                      settings.name == null ||
+                          settings.name == AppShellRouteNames.root ||
+                          settings.name == AppShellRouteNames.performance ||
+                          AppRouteContributionCatalog.contains(settings.name),
+                      'Feature route is missing a public contribution: '
+                      '${settings.name}',
+                    );
                     switch (settings.name) {
-                      case '/':
+                      case AppShellRouteNames.root:
                         return MaterialPageRoute(
-                          builder: (_) => ChangeNotifierProvider(
-                            create: (context) => StartupViewModel(
-                              storageService: context.read<StorageService>(),
-                              appSettings: context.read<AppSettings>(),
+                          builder: (_) => _homeRouteScope(
+                            ChangeNotifierProvider(
+                              create: (context) => StartupViewModel(
+                                storageService: context.read<StorageService>(),
+                                appSettings: context.read<AppSettings>(),
+                              ),
+                              child: const StartupScreen(),
                             ),
-                            child: const StartupScreen(),
                           ),
                         );
-                      case '/terminal':
+                      case TerminalRouteNames.terminal:
                         final config =
                             settings.arguments as Map<String, dynamic>;
                         return MaterialPageRoute(
@@ -408,13 +420,13 @@ class _SshMobileAppState extends State<SshMobileApp>
                             ),
                           ),
                         );
-                      case '/history':
+                      case TerminalRouteNames.history:
                         return MaterialPageRoute(
                           builder: (_) => const AppTerminalModuleScope(
                             child: TerminalHistoryScreen(),
                           ),
                         );
-                      case '/terminal-windows':
+                      case TerminalRouteNames.windows:
                         final args = settings.arguments;
                         String? connectionId;
 
@@ -434,17 +446,21 @@ class _SshMobileAppState extends State<SshMobileApp>
                             ),
                           ),
                         );
-                      case '/sftp':
+                      case feature_sftp.SftpRouteNames.browser:
                         return MaterialPageRoute(
-                          builder: (_) => const AppSftpModuleScope(
-                            child: feature_sftp.SftpScreen(),
+                          builder: (_) => _connectionRouteScope(
+                            const AppSftpModuleScope(
+                              child: feature_sftp.SftpScreen(),
+                            ),
                           ),
                         );
-                      case '/performance':
+                      case AppShellRouteNames.performance:
                         return MaterialPageRoute(
-                          builder: (_) => const HomeScreen(initialIndex: 3),
+                          builder: (_) => _homeRouteScope(
+                            const HomeScreen(initialIndex: 3),
+                          ),
                         );
-                      case '/ai-skills':
+                      case feature_ai.AiRouteNames.skills:
                         return MaterialPageRoute(
                           builder: (_) => ChangeNotifierProvider(
                             create: (context) => feature_ai.AiSkillsViewModel(
@@ -456,7 +472,7 @@ class _SshMobileAppState extends State<SshMobileApp>
                             child: const feature_ai.AiSkillsScreen(),
                           ),
                         );
-                      case '/ai-skills/edit':
+                      case feature_ai.AiRouteNames.skillEdit:
                         final args = settings.arguments as Map<String, dynamic>;
                         final viewModel =
                             args['viewModel'] as feature_ai.AiSkillsViewModel;
@@ -466,7 +482,7 @@ class _SshMobileAppState extends State<SshMobileApp>
                             child: const feature_ai.AiSkillEditScreen(),
                           ),
                         );
-                      case '/playbooks':
+                      case feature_playbook.PlaybookRouteNames.list:
                         return MaterialPageRoute(
                           builder: (context) =>
                               feature_playbook.PlaybookFeatureScope(
@@ -482,32 +498,57 @@ class _SshMobileAppState extends State<SshMobileApp>
                                 child: const feature_playbook.PlaybookScreen(),
                               ),
                         );
-                      case '/add':
+                      case feature_connection.ConnectionRouteNames.add:
+                        final viewModel =
+                            settings.arguments
+                                is feature_connection.ConnectionViewModel
+                            ? settings.arguments
+                                  as feature_connection.ConnectionViewModel
+                            : null;
                         return MaterialPageRoute(
-                          builder: (_) =>
-                              const feature_connection.AddEditScreen(),
+                          builder: (_) => _connectionRouteScope(
+                            const feature_connection.AddEditScreen(),
+                            viewModel: viewModel,
+                          ),
                         );
-                      case '/edit':
-                        final id = settings.arguments as String;
+                      case feature_connection.ConnectionRouteNames.edit:
+                        final args = settings.arguments;
+                        final String id;
+                        final feature_connection.ConnectionViewModel? viewModel;
+                        if (args is String) {
+                          id = args;
+                          viewModel = null;
+                        } else if (args is AppConnectionEditRouteArguments) {
+                          id = args.connectionId;
+                          viewModel = args.viewModel;
+                        } else {
+                          throw ArgumentError.value(
+                            args,
+                            'settings.arguments',
+                            'Edit route requires a connection ID.',
+                          );
+                        }
                         return MaterialPageRoute(
-                          builder: (_) =>
-                              feature_connection.AddEditScreen(editId: id),
+                          builder: (_) => _connectionRouteScope(
+                            feature_connection.AddEditScreen(editId: id),
+                            viewModel: viewModel,
+                          ),
                         );
-                      case '/rag-knowledge':
+                      case feature_rag.RagRouteNames.knowledge:
                         return MaterialPageRoute(
                           builder: (_) => feature_rag.RagFeatureScope(
                             module: _runtime.ragModule,
                             child: const feature_rag.RagKnowledgeScreen(),
                           ),
                         );
-                      case '/mcp-console':
+                      case feature_mcp.McpRouteNames.console:
                         return MaterialPageRoute(
                           builder: (_) => feature_mcp.McpFeatureScope(
                             module: _runtime.mcpModule,
                             child: const feature_mcp.McpConsoleScreen(),
                           ),
                         );
-                      case '/mcp-settings':
+                      case feature_mcp.McpRouteNames.settings:
                         return MaterialPageRoute(
                           builder: (context) => ChangeNotifierProvider(
                             create: (_) => feature_mcp.McpSettingsViewModel(
@@ -521,7 +562,7 @@ class _SshMobileAppState extends State<SshMobileApp>
                         );
                       default:
                         return MaterialPageRoute(
-                          builder: (_) => const HomeScreen(),
+                          builder: (_) => _homeRouteScope(const HomeScreen()),
                         );
                     }
                   },

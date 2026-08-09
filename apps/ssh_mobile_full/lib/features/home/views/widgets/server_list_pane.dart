@@ -301,7 +301,14 @@ class _ServerListPaneState extends State<ServerListPane> {
   ) {
     switch (action) {
       case 'edit':
-        Navigator.pushNamed(context, '/edit', arguments: conn.id);
+        Navigator.pushNamed(
+          context,
+          '/edit',
+          arguments: AppConnectionEditRouteArguments(
+            connectionId: conn.id,
+            viewModel: context.read<ConnectionViewModel>(),
+          ),
+        );
         break;
       case 'delete':
         _confirmDelete(context, conn);
@@ -446,7 +453,11 @@ class _ServerListPaneState extends State<ServerListPane> {
         children: [
           layoutMenu,
           FilledButton.icon(
-            onPressed: () => Navigator.pushNamed(context, '/add'),
+            onPressed: () => Navigator.pushNamed(
+              context,
+              '/add',
+              arguments: context.read<ConnectionViewModel>(),
+            ),
             icon: const Icon(Icons.add_rounded),
             label: Text(strings.addConnection),
           ),

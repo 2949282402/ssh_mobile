@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_mcp
 
@@ -13,6 +13,8 @@
 - `tools/call` 的 `approval_required`、目标绑定和 fail-closed 策略在执行层，
   控制台页面只负责展示和批准/拒绝。
 - 调用方只允许从 `package:feature_mcp/feature_mcp.dart` 使用公共 API。
+- 公共入口提供 MCP 路由的纯 metadata；App Shell 只聚合描述并在 Route Scope 创建
+  控制台状态，Core 不持有 Widget、ViewModel 或 Module 实例。
 
 ## 生命周期
 

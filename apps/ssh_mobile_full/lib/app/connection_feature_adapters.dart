@@ -5,5 +5,6 @@
 library;
 
 export 'connection_repository_adapters.dart';
+export 'connection_route_scope.dart';
 export 'connection_runtime_adapters.dart';
 export 'connection_ui_adapters.dart';

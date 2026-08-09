@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_connection
 
@@ -10,6 +10,8 @@ SSH Mobile 的连接 Feature，负责连接配置编辑界面和连接配置的�
 - SSH/SFTP/监控等运行时能力通过 `ConnectionRuntimePort` 和 `ConnectionVerificationPort` 注入，Feature 不创建 App Service。
 - 不拥有 Connection 数据库；数据库生命周期仍由 AppRuntime 管理。
 - 当前 Step 06 暂时在包内保留连接页面所需的最小 UI 组件和双语文案。Step 09 建立 `app_ui` 后，再将共享组件迁移到公共 UI 包。
+- 公共入口同时提供纯 Route metadata；App Shell 只聚合这些描述并在 Route Scope 创建
+  ViewModel，不把 Widget 或 ViewModel 放入 Core。
 
 ## 公共入口
 

@@ -124,6 +124,11 @@ the public `DeveloperLogPort`, `DeveloperSettingsPort`, and
 `DeveloperDiagnosticsPort`; AppRuntime adapters provide redacted snapshots from
 App-owned services. It must not import App Shell or another Feature
 implementation.
+The App Shell keeps its root Provider limited to App Scope instances and Ports;
+Feature ViewModels are created by Route Scope. Public route metadata is exposed
+by Feature entrypoints and aggregated in
+`apps/ssh_mobile_full/lib/app/navigation/`; the Shell must not import Feature
+`/src/` implementations.
 The SFTP Feature package is `packages/features/feature_sftp/`; it owns SFTP UI,
 Route state, path-history/favorites Repository, and `sftp.db`. It consumes the
 injected `ssh_core.SshSessionManager` and an App Shell backend Port; it must not
@@ -163,6 +168,11 @@ implementations. The old App terminal files are compatibility exports/bridges.
   own public Capability Ports. It must not import `apps/ssh_mobile_full/lib/` or
   another Feature's `/src/`; `ConnectionViewModel` is Route/Provider scoped and
   never disposes App Scope SSH/SFTP resources.
+- App Shell route composition belongs under `apps/ssh_mobile_full/lib/app/`.
+  Root Providers may expose AppRuntime-owned instances and Ports only; route
+  scopes own Feature ViewModels. Feature route contributions are metadata-only
+  public API and are aggregated by `app/navigation/`; Core must not retain
+  Widget, ViewModel, or Module instances.
 - `feature_terminal` must keep `TerminalModule` as the owner of `terminal.db`
   and its repository. Route scope owns Terminal ViewModels and their
   subscriptions/controllers; disposing a route must not close the injected App
@@ -255,6 +265,7 @@ Read only the rows relevant to the task.
 | AI chat, Agent, Skills, LLM, tools, ai.db | `packages/features/feature_ai/`, `apps/ssh_mobile_full/lib/app/ai_feature_adapters.dart` | `docs/AGENT_RUN_TRACE.md`, `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_ai/README.md` |
 | Client WebView, navigation, page text, search, security | `packages/features/feature_webview/`, `apps/ssh_mobile_full/lib/app/webview_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_webview/README.md` |
 | Developer Log, Panel, diagnostics | `packages/features/feature_developer/`, `apps/ssh_mobile_full/lib/app/developer_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `packages/features/feature_developer/README.md` |
+| App Shell, route scopes, navigation contributions | `apps/ssh_mobile_full/lib/app/`, `apps/ssh_mobile_full/lib/app/navigation/`, `packages/features/*/lib/*_feature.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `AGENTS.md` |
 | MCP server, console, approval, mcp.db | `packages/features/feature_mcp/`, `apps/ssh_mobile_full/lib/app/mcp_feature_adapters.dart` | `docs/architecture/MODULAR_REFACTOR_PLAN.md`, `docs/security_manual_regression.md` |
 | Monitoring or system admin | `lib/features/performance/`, `lib/features/system_admin/` | `docs/SYSTEM_ADMIN_MONITOR_INTEGRATION.md`, `docs/PERFORMANCE_ACCEPTANCE.md` |
 | LAN share, native network, relay | `lib/features/lan_share/`, `lib/services/network/`, `packages/infrastructure/ssh_mobile_network_native/`, `native/network_core/`, `relay/` | `docs/NETWORK_PLATFORM_IMPLEMENTATION_PLAN.md`, relevant `docs/adr/ADR-*.md` |

@@ -4,6 +4,8 @@
 // Shell 只通过 Port、Capability 和 Module 注入基础设施。
 library;
 
+import 'package:app_core/app_core.dart';
+
 export 'src/application/ai_module.dart';
 export 'src/domain/ai_models.dart';
 export 'src/domain/ai_ports.dart';
@@ -25,3 +27,18 @@ export 'src/tools/ai_tool_service.dart';
 export 'src/tools/tool_exposure_router.dart';
 export 'src/tools/tool_secret_policy.dart';
 export 'src/llm/provider/llm_api_format.dart';
+
+/// AI Feature 对外公布的稳定路由名称。
+abstract final class AiRouteNames {
+  /// Skills 列表页面。
+  static const skills = '/ai-skills';
+
+  /// Skill 编辑页面。
+  static const skillEdit = '/ai-skills/edit';
+}
+
+/// AI Feature 的路由元数据贡献；App Shell 负责解释页面构建。
+final List<ModuleRouteContribution> aiRouteContributions = List.unmodifiable([
+  ModuleRouteContribution(routeName: AiRouteNames.skills),
+  ModuleRouteContribution(routeName: AiRouteNames.skillEdit),
+]);

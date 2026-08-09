@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_ai
 
@@ -21,6 +21,8 @@ AI chat、Agent、Skills、LLM provider/runtime 和工具编排 Feature。Packag
 - App Shell 只能依赖 `package:feature_ai/feature_ai.dart` 或分类公共出口，
   不得引用 Package 的 `src/` 路径。旧 `ai_chat`、`ai_skills` 和 AI service
   路径仅作为迁移期间的兼容边界。
+- 公共入口提供 Skills 路由的纯 metadata；App Shell 只聚合路由描述，AI 页面状态仍由
+  Route Scope 持有。
 
 ## 验证
 

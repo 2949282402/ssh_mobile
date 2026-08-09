@@ -464,6 +464,11 @@ flowchart LR
   diagnostics presentation. It consumes only App-provided public Port contracts
   and never imports App Shell or another Feature implementation; AppRuntime
   adapters expose redacted module and native-memory snapshots.
+- Feature public entrypoints expose route metadata only; the App Shell aggregates
+  these contributions under `apps/ssh_mobile_full/lib/app/navigation/`. The root
+  Provider keeps App Scope instances and Ports, while route scopes own Feature
+  ViewModels. `AppConnectionRouteScope` also preserves the Home-to-Add/Edit/SFTP
+  shared Connection ViewModel flow.
 - `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP, monitoring,
   storage, legacy LAN-share compatibility services, and platform adapters.
   Maintained AI/MCP implementations live in their Feature packages.
@@ -492,7 +497,9 @@ flowchart LR
 
 `AppRuntimeFactory` creates application-lifetime services, and `AppRuntime` is
 their single lifecycle owner. `main.dart` only delegates to `AppBootstrap`;
-`SshMobileApp` exposes existing Runtime instances through `MultiProvider`.
+`SshMobileApp` exposes only App Scope instances and Ports through `MultiProvider`;
+Feature ViewModels are created by route scopes, and public route contributions are
+aggregated by `app/navigation/` without importing Feature `/src/` code.
 The same Runtime owns one lazy `NetworkRuntime`; QUIC and WSS Relay capabilities
 share native initialization, failed initialization can retry, and disposal waits
 for and closes the native handle. LAN Share now has a Feature-owned Module and

@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_rag
 
@@ -15,3 +15,6 @@ RAG 运维知识库 Feature。Package 独占 `rag.db`、文档/索引元数据 R
 
 App Shell 只能依赖 `package:feature_rag/feature_rag.dart`，不得引用 Package 的
 `src/` 路径。
+
+公共入口提供知识库路由的纯 metadata；App Shell 负责聚合路由描述，RAG ViewModel
+仍由 Route Scope 创建和释放。

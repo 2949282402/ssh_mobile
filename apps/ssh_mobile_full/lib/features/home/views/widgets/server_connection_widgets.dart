@@ -70,7 +70,11 @@ class _ServerEmptyState extends StatelessWidget {
       title: strings.noConnections,
       message: strings.addHint,
       action: FilledButton.icon(
-        onPressed: () => Navigator.pushNamed(context, '/add'),
+        onPressed: () => Navigator.pushNamed(
+          context,
+          '/add',
+          arguments: context.read<ConnectionViewModel>(),
+        ),
         icon: const Icon(Icons.add_rounded),
         label: Text(strings.addConnection),
       ),

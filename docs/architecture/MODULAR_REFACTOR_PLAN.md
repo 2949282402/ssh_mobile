@@ -483,6 +483,21 @@
   分析、格式检查和全量 Flutter 测试均通过；Step 20 按
   `refactor(developer): step 20 migrate developer module` 独立提交。
 
+## Step 21 执行记录（2026-08-09）
+
+- 已收敛 `SshMobileApp` 的 App Shell Provider：根级 `MultiProvider` 只保留
+  `AppRuntime` 管理的 App Scope 实例和 Port，不再创建或持有
+  `ConnectionViewModel`、`SettingsViewModel` 等 Feature 页面状态。
+- 新增 `AppConnectionRouteScope` 负责创建和释放 Connection Route 的
+  `ConnectionViewModel`、`ConnectionStrings` 与 UI 适配器。Home Route 共享同一个
+  Connection ViewModel 给 Add/Edit 与 SFTP 子路由，保持原有保存后刷新和连接选择行为。
+- 各 Feature 公共入口提供纯元数据形式的 Route/Navigation contribution，App Shell
+  在 `app/navigation/` 聚合并解释这些贡献。`app_core` 只保存路由描述，不持有
+  Widget、ViewModel 或 Module 实例；未新增跨 Package `/src/` 依赖。
+- 依赖解析没有发生版本冲突，因此没有升级无关依赖。新增 Route Scope 和路由贡献测试，
+  Package 分析、App 分析、格式检查、定向测试及全量 Flutter 测试（861 项）均通过；
+  Step 21 按 `refactor(app): step 21 converge app shell` 独立提交。
+
 # 0. 重构目标
 
 将当前单体 Flutter 工程：

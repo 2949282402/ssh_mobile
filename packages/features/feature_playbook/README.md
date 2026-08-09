@@ -1,4 +1,4 @@
-最新更新时间：2026-08-08
+最新更新时间：2026-08-09
 
 # feature_playbook
 
@@ -14,6 +14,8 @@ Playbook Feature Package，负责可复用运维剧本的编辑、审批绑定�
   作为迁移兼容表面保留在 App Shell。
 - Playbook 内容、命令、输出和执行历史中的敏感文本写入数据库前必须加密；
   审批目标绑定使用 `ssh_core.SshTargetBinding` 的不可变快照。
+- 公共入口提供 Playbook 路由的纯 metadata；App Shell 聚合描述并在 Route Scope 创建
+  页面状态，不跨包暴露实现路径。
 
 ## 验证
 
