@@ -2827,6 +2827,26 @@ flutter pub deps
 不注册 AI route
 ```
 
+## Step 26 执行记录（2026-08-09）
+
+- 已将 `apps/ssh_mobile_terminal/` 加入 Dart workspace 和 Melos，并创建最小
+  Flutter App Shell。其生产依赖严格限制为 `app_core`、`app_ui`、
+  `connection_core`、`network_transport`、`ssh_core`、`feature_connection` 和
+  `feature_terminal`；`flutter pub deps` 的 App 节点未包含 AI、RAG、MCP、
+  WebView、LAN Share 或 SFTP。
+- 为避免精简 App 反向依赖 Provider 实现，`feature_terminal` 公共入口新增
+  `TerminalFeatureScope`，由 Feature 自己组合公开 Port；App 只注入
+  `SshSessionManager`、Terminal Port 和 `terminal.db` 历史 Repository，不拥有
+  Feature Scope 内部 Provider 的实现细节。
+- Terminal-only Runtime 只创建该切片需要的 Connection、Network、SSH、日志和
+  `TerminalModule` 资源，并按 Module → SSH Capability → SSH Manager → Network →
+  Database → Port → Logger 顺序释放。没有复制 Full App 的仍在使用的
+  `SshService` 兼容业务实现，也没有创建第二个 SSH Owner；当前切片使用安全的
+  空 Terminal Capability 作为编译/生命周期探针，真实 SSH 兼容后端继续由 Full
+  App 持有，待后续 SSH 方法迁移完成后再接入。
+- 已补充 Runtime 幂等释放和 Feature Scope 注入测试；Terminal-only App 与
+  `feature_terminal` 的 analyze/test、Windows Debug 构建及格式检查通过。
+
 ---
 
 # 33. Step 27 — 建立内存泄漏与生命周期检查

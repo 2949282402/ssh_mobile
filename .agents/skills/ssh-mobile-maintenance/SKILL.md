@@ -62,6 +62,15 @@ Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target
 bindings. It must not depend on App Shell storage implementations or Features. The current app
 keeps `SshService` as the same-instance compatibility surface until the Terminal
 Pilot migrates its method API.
+
+`apps/ssh_mobile_terminal/` is a separate minimal App Shell used for the
+Terminal-only dependency crop. Its direct package dependencies are limited to
+`app_core`, `app_ui`, `connection_core`, `network_transport`, `ssh_core`,
+`feature_connection`, and `feature_terminal`; do not copy the Full App runtime or
+add AI, RAG, MCP, WebView, LAN Share, or SFTP. Use the Feature's public
+`TerminalFeatureScope` for Provider composition and keep App/Module owners
+responsible for resource disposal. `flutter pub deps` must be checked at the app
+node, because the workspace aggregate naturally lists other members.
 The Terminal Feature package is `packages/features/feature_terminal/`; it owns
 terminal UI, route-scoped ViewModels, terminal history metadata, and
 `terminal.db`. It consumes `ssh_core.SshSessionManager` and App-defined Ports;
@@ -184,6 +193,10 @@ implementations. The old App terminal files are compatibility exports/bridges.
   and its repository. Route scope owns Terminal ViewModels and their
   subscriptions/controllers; disposing a route must not close the injected App
   Scope SSH Manager. Package consumers use only `package:feature_terminal/`.
+- The Terminal-only App may validate composition with a minimal injected SSH
+  Capability, but it must not duplicate the Full App's in-use SSH business
+  implementation or create a second App Scope SSH owner. A later SSH method
+  migration must preserve the same public contract and lifecycle rules.
 - `feature_monitoring` must send all SSH sampling through its public Ports with
   `MonitoringRequestPriority.low`. `MonitoringModule` cancels polling on
   deactivate/dispose and must not create a permanent App-start timer or a

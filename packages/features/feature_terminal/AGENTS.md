@@ -10,6 +10,10 @@ Package 外部只能从 `lib/feature_terminal.dart` 使用公共 API，不得引
 `lib/src/`。文案、设置、快捷命令、连接信息和日志通过本包定义的 Port 注入，
 避免 Feature 反向依赖 App Shell 或其他 Feature。
 
+`TerminalFeatureScope` 由 Feature 持有 Provider 组合逻辑；App Shell 或
+Terminal-only App 只能注入其公开的 `SshSessionManager`、Terminal Port 和
+历史 Repository，不能借此取得或关闭其他 App Scope 资源。
+
 Terminal 页面使用 Route Scope 创建 ViewModel；页面销毁时必须释放订阅、Timer、
 Controller 和 SSH 相关监听。`TerminalModule` 独占自己的数据库和 Repository，
 关闭时必须先停止活跃资源，再关闭数据库。

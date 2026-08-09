@@ -2,6 +2,7 @@ name: ssh_mobile
 
 packages:
   - apps/ssh_mobile_full
+  - apps/ssh_mobile_terminal
   - packages/core/app_core
   - packages/core/app_ui
   - packages/core/connection_core

@@ -493,6 +493,14 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   runtime and terminal session/history/window ViewModels are view-scoped. Keep
   README (both languages), CLAUDE.md, the shared maintenance skill, and
   architecture docs aligned with these ownership boundaries.
+- 2026-08-09: `apps/ssh_mobile_terminal/` is a separate Terminal-only workspace
+  member used to validate the smallest App Shell dependency graph. It may depend
+  only on `app_core`, `app_ui`, `connection_core`, `network_transport`, `ssh_core`,
+  `feature_connection`, and `feature_terminal` (plus Flutter SDK packages). It
+  must not copy Full App services or initialize AI/RAG/MCP/WebView/LAN Share/SFTP;
+  the Full App remains the owner of the still-in-use SSH compatibility backend
+  until the planned method migration. The Feature's public Scope owns Provider
+  composition, while Runtime/App owns injected resources.
 - 2026-06-15: Keep `README.md` and the shared SSH Mobile maintenance skill concise and factual. Prefer current product shape over changelog-style "now added" notes, and keep monitor docs aligned with the four current tabs: Performance, Ports, Applications, and Services.
 - 2026-06-15: AI chat tool use now has per-run budget guardrails. Default budget is 20 tool calls, the first limit auto-extends by half, and every later extension requires an internal safety audit that may disable further tools and force a final no-tools summary. Keep this audit independent from the normal multi-agent toggle, and keep state-changing SSH session and terminal-history tools behind the generic approval UI.
 - 2026-06-16: 完成整个 SSH Mobile Flutter 客户端项目的 MVVM 架构重构，将 Connection、Settings、Performance 以及 SFTP 模块完全分离为 View-ViewModel-Repository 模式，全局通过 ChangeNotifier 和精度选择（Selector）降低 rebuild 消耗，保证了终端及采样热路径的高性能与 100% 单元测试通过率。

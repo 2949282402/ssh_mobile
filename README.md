@@ -323,6 +323,17 @@ flutter test --reporter expanded
 flutter build windows
 ```
 
+Terminal-only dependency and build verification:
+
+```powershell
+Set-Location apps/ssh_mobile_terminal
+flutter pub deps
+flutter analyze --no-fatal-infos --no-pub
+flutter test --no-pub
+flutter build windows --debug --no-pub
+Set-Location ../..
+```
+
 ### Manual integration checklist
 
 1. Save a test server and confirm that invalid credentials are rejected.
@@ -409,6 +420,11 @@ flowchart LR
 - `apps/ssh_mobile_full/lib/main.dart`: thin application entry point; the App Shell and
   dependency composition live under `apps/ssh_mobile_full/lib/app/` (`AppBootstrap`,
   `AppRuntimeFactory`, `AppRuntime`, and `SshMobileApp`).
+- `apps/ssh_mobile_terminal/`: Terminal-only App Shell dependency crop. It declares
+  only `app_core`, `app_ui`, `connection_core`, `network_transport`, `ssh_core`,
+  `feature_connection`, and `feature_terminal`; it does not initialize or route
+  AI, RAG, MCP, WebView, LAN Share, or SFTP. The live SSH compatibility backend
+  remains owned by the Full App until the planned SSH method migration.
 - `apps/ssh_mobile_full/lib/features/`: feature-owned models, ViewModels, services, views, and
   feature-local widgets. Current feature roots are `connection`, `terminal`,
   `sftp`, `ai_chat`, `ai_skills`, `performance`,
@@ -422,8 +438,9 @@ flowchart LR
 - `packages/features/feature_terminal/`: the migrated Terminal Pilot, including
   route-scoped ViewModels, terminal presentation, terminal-specific output
   history, and the independent `terminal.db`. It consumes only public Core
-  contracts and injected Ports; old App terminal paths remain compatibility
-  exports while later storage/SSH migrations are pending.
+  contracts and injected Ports; `TerminalFeatureScope` owns its Provider
+  composition without owning injected resources. Old App terminal paths remain
+  compatibility exports while later storage/SSH migrations are pending.
 - `packages/features/feature_playbook/`: the migrated Playbook editor,
   approval-bound sequential execution, encrypted run history, and independent
   `playbook.db`. Cross-feature AI calls use the public

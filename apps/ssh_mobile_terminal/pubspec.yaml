@@ -1,0 +1,36 @@
+name: ssh_mobile_terminal
+description: Terminal-only build slice for SSH Mobile.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  app_core:
+    path: ../../packages/core/app_core
+  app_ui:
+    path: ../../packages/core/app_ui
+  connection_core:
+    path: ../../packages/core/connection_core
+  network_transport:
+    path: ../../packages/infrastructure/network_transport
+  ssh_core:
+    path: ../../packages/infrastructure/ssh_core
+  feature_connection:
+    path: ../../packages/features/feature_connection
+  feature_terminal:
+    path: ../../packages/features/feature_terminal
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

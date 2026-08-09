@@ -2,6 +2,12 @@
 library;
 
 import 'package:app_core/app_core.dart';
+import 'package:flutter/widgets.dart';
+import 'package:provider/provider.dart';
+import 'package:provider/single_child_widget.dart';
+import 'package:ssh_core/ssh_core.dart';
+
+import 'src/domain/terminal_ports.dart';
 
 export 'src/application/terminal_history_viewmodel.dart';
 export 'src/application/terminal_module.dart';
@@ -25,6 +31,60 @@ export 'src/presentation/terminal_shortcut_panel.dart';
 export 'src/presentation/terminal_view_area.dart';
 export 'src/presentation/terminal_windows_screen.dart';
 export 'src/presentation/widgets/terminal_custom_keyboard.dart';
+
+/// Terminal Feature 的最小 Provider 组合边界。
+///
+/// App Shell 只负责提供 App Scope 实例和 Port；Provider 的具体组合由
+/// Feature 自己拥有，避免精简 App 为了使用页面而反向依赖 Provider 实现。
+final class TerminalFeatureScope extends StatelessWidget {
+  /// 创建一个注入 Terminal 页面所需公共能力的 Scope。
+  const TerminalFeatureScope({
+    super.key,
+    required this.sshSessionManager,
+    required this.settings,
+    required this.shortcuts,
+    required this.connections,
+    required this.logger,
+    required this.historyRepository,
+    required this.child,
+  });
+
+  /// App Scope SSH Manager；Scope 不拥有它的生命周期。
+  final SshSessionManager sshSessionManager;
+
+  /// Terminal 设置 Port；资源 Owner 由 App Shell 保持。
+  final TerminalSettingsPort settings;
+
+  /// 快捷命令 Port；资源 Owner 由 App Shell 保持。
+  final TerminalShortcutPort shortcuts;
+
+  /// 连接和会话导航 Port。
+  final TerminalConnectionPort connections;
+
+  /// 脱敏日志 Port。
+  final TerminalLoggerPort logger;
+
+  /// Terminal Module 提供的历史 Repository。
+  final TerminalHistoryRepository historyRepository;
+
+  /// Scope 内的页面内容。
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: <SingleChildWidget>[
+        Provider<SshSessionManager>.value(value: sshSessionManager),
+        ListenableProvider<TerminalSettingsPort>.value(value: settings),
+        ListenableProvider<TerminalShortcutPort>.value(value: shortcuts),
+        Provider<TerminalConnectionPort>.value(value: connections),
+        Provider<TerminalLoggerPort>.value(value: logger),
+        Provider<TerminalHistoryRepository>.value(value: historyRepository),
+      ],
+      child: child,
+    );
+  }
+}
 
 /// Terminal Feature 对外公布的稳定路由名称。
 abstract final class TerminalRouteNames {

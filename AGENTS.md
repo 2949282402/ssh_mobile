@@ -51,6 +51,15 @@ This is a Dart workspace containing the full Flutter app for SSH, SFTP, server m
 
 ## High-Level Architecture
 
+`apps/ssh_mobile_terminal/` is a separate Terminal-only compile/runtime slice.
+Its App Shell declares only `app_core`, `app_ui`, `connection_core`,
+`network_transport`, `ssh_core`, `feature_connection`, and `feature_terminal`;
+it must not depend on AI, RAG, MCP, WebView, LAN Share, or SFTP. It reuses the
+public Terminal Feature Scope and owns only the resources needed by that slice.
+The live SSH compatibility implementation remains in the Full App until the
+planned SSH method migration; the Terminal-only slice must not copy that App
+business implementation or create a second SSH Owner.
+
 Feature-first MVVM with Provider/Selector for state. UI composition, protocol adapters, persistent storage, monitoring, and AI orchestration are independent, separately testable layers:
 
 ```mermaid
@@ -86,6 +95,11 @@ flowchart LR
   repository. It receives `ssh_core.SshSessionManager` and App/connection/logging
   Ports; it must not create or dispose the App Scope SSH Manager. The App Shell
   keeps only adapters and compatibility exports until later Storage/SSH Steps.
+- `apps/ssh_mobile_terminal/` is the minimal App Shell dependency crop for the
+  Terminal Feature. Its public dependency graph excludes AI, RAG, MCP, WebView,
+  LAN Share, and SFTP; its runtime must not initialize those Features or create
+  their databases/routes. This Step validates composition and lifecycle without
+  moving the Full App's still-in-use SSH compatibility implementation.
 - `packages/features/feature_sftp/` owns the SFTP Route UI, Port contracts,
   path-history/favorites Repository, and `sftp.db`. It receives the App Scope
   `ssh_core.SshSessionManager` and a compatibility backend through the App Shell;
@@ -160,6 +174,13 @@ RAG/AI `intl`/`http`/`archive`/`flutter_animate`, and the unused App
 dependencies. AppLog's `drift`/`drift_flutter` and still-used legacy compatibility
 plugin imports remain intentional until those App surfaces are migrated.
 
+Step26 dependency crop: `apps/ssh_mobile_terminal/pubspec.yaml` is intentionally
+limited to `app_core`, `app_ui`, `connection_core`, `network_transport`,
+`ssh_core`, `feature_connection`, and `feature_terminal` plus the Flutter SDK.
+Do not copy `AppRuntimeFactory` or Full App business services into this App;
+compose only the selected public contracts and confirm the app node in
+`flutter pub deps` has no AI/RAG/MCP/WebView/LAN Share/SFTP dependency.
+
 Dependency and code generation (run after `pubspec.yaml` or Drift model changes):
 
 - `dart pub get`: resolve the root Dart workspace from `pubspec.yaml`.
@@ -167,6 +188,8 @@ Dependency and code generation (run after `pubspec.yaml` or Drift model changes)
 - `dart run melos exec --scope=app_core -- flutter test --no-pub`: run Core contract tests.
 - From `apps/ssh_mobile_full/`, `dart run build_runner build`: regenerate the App-level Drift output (`lib/services/app_log_database.g.dart`) and other codegen. Generated files are committed; verify with `git diff --exit-code -- apps/ssh_mobile_full/lib/services/app_log_database.g.dart`.
 - From `apps/ssh_mobile_full/`, `dart run tool/generate_app_icons.dart`: regenerate app icons. Verify with `git diff --exit-code -- apps/ssh_mobile_full/assets apps/ssh_mobile_full/android apps/ssh_mobile_full/ios apps/ssh_mobile_full/macos apps/ssh_mobile_full/web apps/ssh_mobile_full/windows/runner/resources/app_icon.ico`.
+- From `apps/ssh_mobile_terminal/`, `flutter pub deps`: inspect the Terminal-only
+  app node and confirm that no unselected Feature is included.
 
 Static checks and formatting:
 
@@ -193,6 +216,9 @@ Static checks and formatting:
 - From `packages/infrastructure/network_transport/`, `flutter analyze` and `flutter test`: validate the Network Transport package. Native hook tests require the repository Rust toolchain on PATH.
 - From `packages/infrastructure/ssh_core/`, `flutter analyze` and `flutter test`: validate the SSH Core Session Pool, Runtime, Client, Host Key, and target contracts.
 - From `packages/features/feature_terminal/`, `flutter analyze` and `flutter test`: validate the Terminal Feature package. Run full App checks from `apps/ssh_mobile_full/` so Flutter hooks select the App package and Windows native assets.
+- From `apps/ssh_mobile_terminal/`, `flutter analyze`, `flutter test`, and
+  `flutter build windows --debug`: validate the Terminal-only dependency crop,
+  lifecycle owner, and minimal platform build.
 - From `packages/features/feature_sftp/`, `flutter analyze` and `flutter test`: validate the SFTP Feature package and its `sftp.db` lifecycle tests. Run full App checks from `apps/ssh_mobile_full/` so Flutter hooks select the App package and Windows native assets.
 - From `packages/features/feature_monitoring/`, `flutter analyze` and `flutter test`: validate the Monitoring Feature package, explicit sampling lifecycle, and low-priority SSH Port contract. Monitoring activation restores module availability but does not start polling until the existing user/tool start action.
 - From `packages/features/feature_system_admin/`, `flutter analyze` and `flutter test`: validate the System Admin Module lifecycle, management command parsing, and injected Port boundaries. Activation must not connect to a server automatically; disposal must close the Module-owned management session.
