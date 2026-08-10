@@ -656,9 +656,9 @@ final class _AppSftpModuleScopeState extends State<AppSftpModuleScope> {
             Provider<feature_sftp.SftpLoggerPort>.value(value: _logger),
             ChangeNotifierProvider<feature_sftp.SftpViewModel>(
               create: (_) => feature_sftp.SftpViewModel(_module.service),
-              child: widget.child,
             ),
           ],
+          child: widget.child,
         );
       },
     );
