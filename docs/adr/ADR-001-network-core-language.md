@@ -1,7 +1,9 @@
+> Last updated: 2026-08-10
+
 # ADR-001: Network Core Implementation Language
 
 ## Context
-The SSH Mobile application requires a high-performance, cross-platform network engine supporting P2P connections, QUIC file transfers, NAT traversal, and WireGuard tunneling across Windows, Android, iOS, and macOS.
+The SSH Mobile application requires a high-performance, cross-platform network engine supporting P2P connections, QUIC file transfers, and NAT traversal across Windows, Android, iOS, and macOS.
 
 ## Decision
 We choose **Rust** to implement the cross-platform client network core (`network_core`).

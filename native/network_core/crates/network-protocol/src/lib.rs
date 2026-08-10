@@ -19,7 +19,6 @@ pub enum NetworkErrorCode {
     QuicError = 6,
     NatError = 7,
     RelayError = 8,
-    WireguardError = 9,
     IoError = 10,
     Cancelled = 11,
 }
@@ -40,7 +39,6 @@ pub enum RouteType {
     Unspecified = 0,
     QuicDirect = 1,
     Relay = 2,
-    Wireguard = 3,
     Lan = 4,
 }
 

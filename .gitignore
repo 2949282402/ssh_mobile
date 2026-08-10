@@ -59,3 +59,15 @@ scripts/nginx_ssh_mobile.conf
 .env
 **/.env
 
+.gradle-user-home
+
+# Generated files from the legacy root-level Flutter scaffold.
+/android/.gradle/
+/android/local.properties
+/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+/ios/Flutter/ephemeral/
+/ios/Flutter/Generated.xcconfig
+/ios/Flutter/flutter_export_environment.sh
+/ios/Runner/GeneratedPluginRegistrant.*
+/macos/Flutter/ephemeral/
+/windows/flutter/ephemeral/

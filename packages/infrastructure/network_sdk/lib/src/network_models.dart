@@ -11,7 +11,6 @@ enum NetworkErrorCode {
   quicError(6),
   natError(7),
   relayError(8),
-  wireguardError(9),
   ioError(10),
   cancelled(11);
 
@@ -169,7 +168,6 @@ enum NetworkRouteType {
   unspecified(0),
   quicDirect(1),
   relay(2),
-  wireguard(3),
   lan(4);
 
   const NetworkRouteType(this.wireValue);

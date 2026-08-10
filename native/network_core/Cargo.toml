@@ -7,7 +7,6 @@ members = [
     "crates/network-nat",
     "crates/network-quic",
     "crates/network-transfer",
-    "crates/network-wireguard",
     "crates/network-relay",
     "crates/network-ffi",
 ]

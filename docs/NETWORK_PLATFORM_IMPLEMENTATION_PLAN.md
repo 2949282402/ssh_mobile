@@ -2,7 +2,7 @@
 
 # SSH Mobile 跨平台 P2P 网络平台实施计划
 
-**Status:** In progress
+**Status:** In progress; WireGuard scope removed from the current project
 **Target Repository:** `hejulian2004/ssh_mobile`
 **Plan Type:** Architecture + Implementation + Protocol + Engineering Specification
 
@@ -23,6 +23,8 @@
 - Rust Relay 已实现当前 v1 协议的 WSS 认证、opaque offer、AES-GCM chunk、
   complete/complete_ack、取消、接收入站审批及安全落盘；Flutter 只负责 v1
   enrollment、凭据安全存储和 native 配置，不再建立 Dart Relay 数据面。
+- 当前项目不再支持或实现 WireGuard；本文后续相关章节仅保留为历史方案记录，
+  不属于当前实现和发布验收范围。
 - Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；
   开发阶段不保留旧注册接口、协议降级或旧客户端兼容。
 - Flutter 公共网络层统一返回 `NetworkResult`，公开事件使用类型化事件；

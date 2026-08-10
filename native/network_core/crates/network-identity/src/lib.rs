@@ -4,7 +4,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret};
 
-/// Enforces strict key segregation between identity, E2E encryption, and WireGuard.
+/// Enforces strict key segregation between device identity and E2E encryption.
 pub struct DeviceIdentity {
     pub device_id: String,
     pub identity_key: SigningKey,
