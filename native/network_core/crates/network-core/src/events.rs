@@ -95,6 +95,7 @@ pub(crate) fn emit_incoming_offer(
     event_tx: &UnboundedSender<NetworkEvent>,
     peer_id: &str,
     manifest: &network_transfer::FileManifest,
+    route_type: RouteType,
 ) {
     let _ = event_tx.send(NetworkEvent {
         event_id: format!("{}/offer", manifest.transfer_id),
@@ -106,6 +107,7 @@ pub(crate) fn emit_incoming_offer(
                 peer_id: peer_id.to_string(),
                 file_name: manifest.file_name.clone(),
                 file_size: manifest.file_size,
+                route_type: Some(route_type as i32),
             },
         )),
     });

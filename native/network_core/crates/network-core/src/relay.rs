@@ -5,7 +5,9 @@ use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use network_protocol::{ConfigureRelayCommand, NetworkError as ProtocolError, NetworkErrorCode};
+use network_protocol::{
+    ConfigureRelayCommand, NetworkError as ProtocolError, NetworkErrorCode, RouteType,
+};
 use network_relay::{RelayClient, RelayEvent};
 use network_transfer::build_file_manifest;
 use rand::RngCore;
@@ -52,6 +54,11 @@ pub(crate) async fn configure_relay_for_state(
     state: Arc<RuntimeState>,
     command: ConfigureRelayCommand,
 ) -> Result<(), ProtocolError> {
+    let previous = state.relay.write().await.take();
+    if let Some(previous) = previous {
+        previous.request_disconnect().await;
+        cleanup_relay_state(&state).await;
+    }
     let device_id = state
         .identity
         .read()
@@ -84,8 +91,9 @@ pub(crate) async fn configure_relay_for_state(
     let events = relay
         .take_events()
         .map_err(|_| protocol_error(NetworkErrorCode::RelayError, "Relay event stream failed"))?;
-    *state.relay.write().await = Some(Arc::new(relay));
-    tokio::spawn(handle_relay_events(events, state));
+    let relay = Arc::new(relay);
+    *state.relay.write().await = Some(Arc::clone(&relay));
+    tokio::spawn(handle_relay_events(events, state, relay));
     Ok(())
 }
 
@@ -93,10 +101,9 @@ pub(crate) async fn configure_relay_for_state(
 pub(crate) async fn disconnect_relay(state: &RuntimeState) -> Result<(), ProtocolError> {
     let relay = state.relay.write().await.take();
     if let Some(relay) = relay {
-        if let Ok(mut relay) = Arc::try_unwrap(relay) {
-            relay.disconnect().await;
-        }
+        relay.request_disconnect().await;
     }
+    cleanup_relay_state(state).await;
     crate::events::emit_relay_state(
         &state.event_tx,
         network_protocol::RelayConnectionState::Disconnected,
@@ -109,7 +116,9 @@ pub(crate) async fn disconnect_relay(state: &RuntimeState) -> Result<(), Protoco
 pub(crate) async fn handle_relay_events(
     mut events: mpsc::Receiver<RelayEvent>,
     state: Arc<RuntimeState>,
+    relay: Arc<RelayClient>,
 ) {
+    let mut handled_disconnect_event = false;
     while let Some(event) = events.recv().await {
         match event {
             RelayEvent::Lookup { peer_id, online } => {
@@ -215,8 +224,112 @@ pub(crate) async fn handle_relay_events(
                     tracing::warn!("Rejected inbound Relay chunk: {}", error);
                 }
             }
+            RelayEvent::Disconnected { reason } => {
+                handled_disconnect_event = true;
+                let mut current = state.relay.write().await;
+                let is_current = current
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &relay));
+                if is_current {
+                    current.take();
+                    drop(current);
+                    cleanup_relay_state(&state).await;
+                    crate::events::emit_relay_state(
+                        &state.event_tx,
+                        network_protocol::RelayConnectionState::Disconnected,
+                        Some(protocol_error_with_context(
+                            NetworkErrorCode::RelayError,
+                            format!("Relay socket disconnected: {reason}"),
+                            "relay",
+                            None,
+                        )),
+                    );
+                }
+                break;
+            }
             RelayEvent::Control { .. } => {}
         }
+    }
+    if handled_disconnect_event {
+        return;
+    }
+    let mut current = state.relay.write().await;
+    if current
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, &relay))
+    {
+        current.take();
+        drop(current);
+        cleanup_relay_state(&state).await;
+        crate::events::emit_relay_state(
+            &state.event_tx,
+            network_protocol::RelayConnectionState::Disconnected,
+            Some(protocol_error_with_context(
+                NetworkErrorCode::RelayError,
+                "Relay event stream ended",
+                "relay",
+                None,
+            )),
+        );
+    }
+}
+
+/// 清理 Relay 断开后不能再完成的审批、会话和临时文件。
+async fn cleanup_relay_state(state: &RuntimeState) {
+    let outgoing = state
+        .relay_sessions
+        .write()
+        .await
+        .drain()
+        .map(|(transfer_id, _)| transfer_id)
+        .collect::<Vec<_>>();
+    let pending = state
+        .relay_pending_incoming
+        .write()
+        .await
+        .drain()
+        .map(|(transfer_id, _)| transfer_id)
+        .collect::<Vec<_>>();
+    let active = {
+        let mut active = state.relay_active_incoming.lock().await;
+        std::mem::take(&mut *active)
+    };
+    state.relay_acceptances.write().await.clear();
+    state.relay_completions.write().await.clear();
+    state.relay_lookups.write().await.clear();
+
+    for transfer_id in outgoing {
+        state.transfers.cancel_transfer(&transfer_id).await;
+        emit_transfer_error(
+            &state.event_tx,
+            &transfer_id,
+            NetworkErrorCode::RelayError,
+            "Relay connection was lost".to_string(),
+            "send",
+            None,
+        );
+    }
+    for transfer_id in pending {
+        emit_transfer_error(
+            &state.event_tx,
+            &transfer_id,
+            NetworkErrorCode::RelayError,
+            "Relay connection was lost before approval".to_string(),
+            "receive",
+            None,
+        );
+    }
+    for (transfer_id, incoming) in active {
+        drop(incoming.file);
+        tokio::fs::remove_file(incoming.temporary_path).await.ok();
+        emit_transfer_error(
+            &state.event_tx,
+            &transfer_id,
+            NetworkErrorCode::RelayError,
+            "Relay connection was lost during receive".to_string(),
+            "receive",
+            Some(&incoming.offer.sender_id),
+        );
     }
 }
 
@@ -353,7 +466,7 @@ async fn receive_relay_offer(
         content_hash: content_hash.to_string(),
         protocol_version: network_transfer::NETWORK_TRANSFER_PROTOCOL_VERSION,
     };
-    emit_incoming_offer(&state.event_tx, &sender_id, &manifest);
+    emit_incoming_offer(&state.event_tx, &sender_id, &manifest, RouteType::Relay);
     let expiry_state = Arc::clone(state);
     let expiry_session_id = manifest.transfer_id;
     tokio::spawn(async move {

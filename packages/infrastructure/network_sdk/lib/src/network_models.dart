@@ -341,12 +341,14 @@ final class IncomingTransferOffer extends SdkEvent {
     required this.peerId,
     required this.fileName,
     required this.fileSize,
+    this.routeType = NetworkRouteType.unspecified,
   });
 
   final String transferId;
   final String peerId;
   final String fileName;
   final int fileSize;
+  final NetworkRouteType routeType;
 }
 
 final class RouteChanged extends SdkEvent {

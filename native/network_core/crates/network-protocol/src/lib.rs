@@ -228,6 +228,9 @@ pub struct IncomingTransferOfferEvent {
     pub file_name: String,
     #[prost(uint64, tag = "4")]
     pub file_size: u64,
+    /// Optional route metadata added without changing v1 field meanings.
+    #[prost(enumeration = "RouteType", optional, tag = "5")]
+    pub route_type: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, Message)]

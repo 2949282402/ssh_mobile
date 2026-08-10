@@ -110,26 +110,74 @@ final class NativeNetworkService implements NetworkService {
     );
   }
 
-  /// 接受对端连接任务，并等待命令确认。
+  /// 接受对端连接任务，并等待最终的 connected/failed 状态。
   @override
-  Future<NetworkResult<void>> connect(String peerId) {
+  Future<NetworkResult<void>> connect(String peerId) async {
     _ensureUsable();
     if (peerId.trim().isEmpty) {
-      return Future.value(
-        _failure(
-          const NetworkError(
-            code: NetworkErrorCode.invalidArgument,
-            message: 'peer_id is required',
-            operation: NetworkOperation.connect,
-          ),
+      return _failure(
+        const NetworkError(
+          code: NetworkErrorCode.invalidArgument,
+          message: 'peer_id is required',
+          operation: NetworkOperation.connect,
         ),
       );
     }
-    return _submit(
+
+    if (_peerRoutes.containsKey(peerId)) {
+      return const NetworkSuccess<void>(null);
+    }
+    final terminalState = Completer<PeerStateChanged>();
+    final subscription = events
+        .where(
+          (event) =>
+              event is PeerStateChanged &&
+              event.peerId == peerId &&
+              (event.state == PeerConnectionState.connected ||
+                  event.state == PeerConnectionState.failed ||
+                  event.state == PeerConnectionState.disconnected),
+        )
+        .cast<PeerStateChanged>()
+        .listen((event) {
+          if (!terminalState.isCompleted) terminalState.complete(event);
+        });
+    final result = await _submit(
       _codec.connectPeerCommand(commandId: const Uuid().v4(), peerId: peerId),
       operation: NetworkOperation.connect,
       timeout: const Duration(seconds: 12),
     );
+    if (result is NetworkFailure<void>) {
+      await subscription.cancel();
+      return result;
+    }
+    try {
+      final event = await terminalState.future.timeout(
+        const Duration(seconds: 12),
+      );
+      if (event.state == PeerConnectionState.connected) {
+        return const NetworkSuccess<void>(null);
+      }
+      return _failure(
+        event.error ??
+            NetworkError(
+              code: NetworkErrorCode.noRoute,
+              message: 'peer connection failed',
+              operation: NetworkOperation.connect,
+              peerId: peerId,
+            ),
+      );
+    } on TimeoutException {
+      return _failure(
+        NetworkError(
+          code: NetworkErrorCode.timeout,
+          message: 'peer connection state timed out',
+          operation: NetworkOperation.connect,
+          peerId: peerId,
+        ),
+      );
+    } finally {
+      await subscription.cancel();
+    }
   }
 
   /// 接受对端断开任务，并等待命令确认。
@@ -156,10 +204,23 @@ final class NativeNetworkService implements NetworkService {
     );
   }
 
-  /// 配置原生 Relay 数据面。
+  /// 配置原生 Relay 数据面，并等待 socket 认证终态。
   @override
-  Future<NetworkResult<void>> configureRelay(RelayConfig config) {
-    return _submit(
+  Future<NetworkResult<void>> configureRelay(RelayConfig config) async {
+    _ensureUsable();
+    final terminalState = Completer<RelayStateChanged>();
+    final subscription = events
+        .where(
+          (event) =>
+              event is RelayStateChanged &&
+              (event.state == RelayConnectionState.connected ||
+                  event.state == RelayConnectionState.failed),
+        )
+        .cast<RelayStateChanged>()
+        .listen((event) {
+          if (!terminalState.isCompleted) terminalState.complete(event);
+        });
+    final result = await _submit(
       _codec.configureRelayCommand(
         commandId: const Uuid().v4(),
         config: config,
@@ -167,6 +228,36 @@ final class NativeNetworkService implements NetworkService {
       operation: NetworkOperation.configureRelay,
       timeout: const Duration(seconds: 15),
     );
+    if (result is NetworkFailure<void>) {
+      await subscription.cancel();
+      return result;
+    }
+    try {
+      final event = await terminalState.future.timeout(
+        const Duration(seconds: 15),
+      );
+      if (event.state == RelayConnectionState.connected) {
+        return const NetworkSuccess<void>(null);
+      }
+      return _failure(
+        event.error ??
+            const NetworkError(
+              code: NetworkErrorCode.relayError,
+              message: 'Relay connection failed',
+              operation: NetworkOperation.configureRelay,
+            ),
+      );
+    } on TimeoutException {
+      return _failure(
+        const NetworkError(
+          code: NetworkErrorCode.timeout,
+          message: 'Relay connection state timed out',
+          operation: NetworkOperation.configureRelay,
+        ),
+      );
+    } finally {
+      await subscription.cancel();
+    }
   }
 
   /// 请求断开原生 Relay。
@@ -355,6 +446,8 @@ final class NativeNetworkService implements NetworkService {
       }
       final event = frame.event;
       if (event == null || _eventController.isClosed) return;
+      final invalidatedRelayPeers = <String>[];
+      NetworkError? relayError;
       if (event case PeerStateChanged(
         :final peerId,
         :final state,
@@ -376,12 +469,36 @@ final class NativeNetworkService implements NetworkService {
         :final peerId,
       )) {
         _transferPeers[transferId] = peerId;
+      } else if (event case RelayStateChanged(:final state, :final error)) {
+        relayError = error;
+        if (state == RelayConnectionState.failed ||
+            state == RelayConnectionState.disconnected) {
+          for (final entry in _peerRoutes.entries.toList()) {
+            if (entry.value != NetworkRouteType.relay) continue;
+            invalidatedRelayPeers.add(entry.key);
+            _peerRoutes.remove(entry.key);
+            _routes.remove(entry.key);
+          }
+        }
       } else if (event
           case TransferCompleted(:final transferId) ||
               TransferFailed(:final transferId)) {
         _transferPeers.remove(transferId);
       }
       _eventController.add(event);
+      for (final peerId in invalidatedRelayPeers) {
+        _eventController.add(
+          PeerStateChanged(
+            eventId:
+                '$peerId/relay-disconnected/${event.timestamp.millisecondsSinceEpoch}',
+            timestamp: event.timestamp,
+            peerId: peerId,
+            state: PeerConnectionState.disconnected,
+            routeType: NetworkRouteType.unspecified,
+            error: relayError,
+          ),
+        );
+      }
     } on FormatException {
       // 格式错误的原生帧在事件边界被忽略。待完成调用只能由原生命令结果完成。
     }

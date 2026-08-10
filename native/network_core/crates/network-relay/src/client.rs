@@ -8,7 +8,10 @@ use ed25519_dalek::{Signer, SigningKey};
 use futures_util::{SinkExt, StreamExt};
 use rand::RngCore;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{
@@ -67,6 +70,10 @@ pub enum RelayEvent {
         sequence: u64,
         payload: Vec<u8>,
     },
+    /// Relay socket 或后台 worker 意外结束。
+    Disconnected {
+        reason: String,
+    },
 }
 
 /// 连接驻留内存的 Go Relay，并只转发不透明的 E2E 信封。
@@ -81,6 +88,8 @@ pub struct RelayClient {
     writer_task: Option<JoinHandle<()>>,
     reader_task: Option<JoinHandle<()>>,
     pub is_connected: Arc<RwLock<bool>>,
+    disconnect_notified: Arc<AtomicBool>,
+    intentional_disconnect: Arc<AtomicBool>,
 }
 
 impl Drop for RelayClient {
@@ -126,6 +135,8 @@ impl RelayClient {
             writer_task: None,
             reader_task: None,
             is_connected: Arc::new(RwLock::new(false)),
+            disconnect_notified: Arc::new(AtomicBool::new(false)),
+            intentional_disconnect: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -134,6 +145,11 @@ impl RelayClient {
         if *self.is_connected.read().await {
             return Ok(());
         }
+        if self.outbound.is_some() {
+            self.disconnect().await;
+        }
+        self.disconnect_notified.store(false, Ordering::Release);
+        self.intentional_disconnect.store(false, Ordering::Release);
         let mut nonce_bytes = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = URL_SAFE_NO_PAD.encode(nonce_bytes);
@@ -173,14 +189,23 @@ impl RelayClient {
         validate_ready(ready, &self.device_id)?;
 
         let (outbound, mut outbound_rx) = mpsc::channel::<Message>(8);
+        self.outbound = Some(outbound);
+        *self.is_connected.write().await = true;
         let connected_for_writer = Arc::clone(&self.is_connected);
+        let inbound_for_writer = self.inbound_tx.clone();
+        let notified_for_writer = Arc::clone(&self.disconnect_notified);
+        let intentional_for_writer = Arc::clone(&self.intentional_disconnect);
         self.writer_task = Some(tokio::spawn(async move {
             let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(20));
             heartbeat.tick().await;
+            let mut reason = "Relay writer stopped".to_string();
             loop {
                 let message = tokio::select! {
                     message = outbound_rx.recv() => {
-                        let Some(message) = message else { break };
+                        let Some(message) = message else {
+                            reason = "Relay outbound queue closed".to_string();
+                            break;
+                        };
                         message
                     }
                     _ = heartbeat.tick() => Message::Text(
@@ -192,36 +217,61 @@ impl RelayClient {
                         .into(),
                     ),
                 };
+                let should_stop = matches!(message, Message::Close(_));
                 if !matches!(
                     tokio::time::timeout(SOCKET_OPERATION_TIMEOUT, writer.send(message)).await,
                     Ok(Ok(()))
                 ) {
+                    reason = "Relay writer failed".to_string();
+                    break;
+                }
+                if should_stop {
                     break;
                 }
             }
-            *connected_for_writer.write().await = false;
+            mark_disconnected(
+                &connected_for_writer,
+                &inbound_for_writer,
+                &notified_for_writer,
+                &intentional_for_writer,
+                reason,
+            )
+            .await;
         }));
         let inbound_tx = self.inbound_tx.clone();
         let connected_for_reader = Arc::clone(&self.is_connected);
+        let notified_for_reader = Arc::clone(&self.disconnect_notified);
+        let intentional_for_reader = Arc::clone(&self.intentional_disconnect);
         self.reader_task = Some(tokio::spawn(async move {
+            let mut reason = "Relay reader stopped".to_string();
             while let Some(message) = reader.next().await {
                 let Ok(message) = message else {
+                    reason = "Relay reader failed".to_string();
                     break;
                 };
                 match decode_event(message) {
                     Ok(Some(event)) => {
                         if inbound_tx.send(event).await.is_err() {
+                            reason = "Relay event queue closed".to_string();
                             break;
                         }
                     }
                     Ok(None) => {}
-                    Err(_) => break,
+                    Err(_) => {
+                        reason = "Relay protocol stream failed".to_string();
+                        break;
+                    }
                 }
             }
-            *connected_for_reader.write().await = false;
+            mark_disconnected(
+                &connected_for_reader,
+                &inbound_tx,
+                &notified_for_reader,
+                &intentional_for_reader,
+                reason,
+            )
+            .await;
         }));
-        self.outbound = Some(outbound);
-        *self.is_connected.write().await = true;
         info!("Relay client connected using protocol v1");
         Ok(())
     }
@@ -231,6 +281,15 @@ impl RelayClient {
         self.inbound
             .take()
             .ok_or_else(|| RelayError::Protocol("Relay events were already consumed".into()))
+    }
+
+    /// 返回 Relay socket 是否仍可用于新的控制/数据帧。
+    pub async fn is_usable(&self) -> bool {
+        *self.is_connected.read().await
+            && self
+                .outbound
+                .as_ref()
+                .is_some_and(|sender| !sender.is_closed())
     }
 
     /// 发送经过 E2E 加密的文件 offer。
@@ -308,6 +367,7 @@ impl RelayClient {
 
     /// 关闭 Relay socket 和后台读写 worker。
     pub async fn disconnect(&mut self) {
+        self.intentional_disconnect.store(true, Ordering::Release);
         if let Some(outbound) = self.outbound.take() {
             let _ = outbound
                 .send_timeout(Message::Close(None), SOCKET_OPERATION_TIMEOUT)
@@ -322,6 +382,17 @@ impl RelayClient {
         }
         *self.is_connected.write().await = false;
         info!("Relay client disconnected");
+    }
+
+    /// 请求共享 Relay 客户端主动关闭；适用于运行时保存的 Arc 引用。
+    pub async fn request_disconnect(&self) {
+        self.intentional_disconnect.store(true, Ordering::Release);
+        if let Some(outbound) = self.outbound.as_ref() {
+            let _ = outbound
+                .send_timeout(Message::Close(None), SOCKET_OPERATION_TIMEOUT)
+                .await;
+        }
+        *self.is_connected.write().await = false;
     }
 
     /// 序列化并发送一个受大小限制的控制信封。
@@ -341,7 +412,25 @@ impl RelayClient {
 
     /// 返回已建立连接的出站队列。
     fn outbound(&self) -> Result<&mpsc::Sender<Message>, RelayError> {
-        self.outbound.as_ref().ok_or(RelayError::NotConnected)
+        let outbound = self.outbound.as_ref().ok_or(RelayError::NotConnected)?;
+        if outbound.is_closed() {
+            return Err(RelayError::NotConnected);
+        }
+        Ok(outbound)
+    }
+}
+
+/// 将 worker 终止转换为一次性的 Relay 断开事件。
+async fn mark_disconnected(
+    connected: &Arc<RwLock<bool>>,
+    inbound: &mpsc::Sender<RelayEvent>,
+    notified: &Arc<AtomicBool>,
+    intentional: &Arc<AtomicBool>,
+    reason: String,
+) {
+    *connected.write().await = false;
+    if !intentional.load(Ordering::Acquire) && !notified.swap(true, Ordering::AcqRel) {
+        let _ = inbound.send(RelayEvent::Disconnected { reason }).await;
     }
 }
 

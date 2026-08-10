@@ -30,6 +30,7 @@ void main() {
         payloadType: 'text',
         textContent: const Value('encrypted-history'),
         status: 'completed',
+        routeType: const Value('relay'),
         createdAt: 100,
       ),
     );
@@ -46,6 +47,7 @@ void main() {
     final history = await database.lanHistoryDao.getRecord('transfer-1');
     final peers = await database.lanPairingMetadataDao.getAll();
     expect(history?.textContent, 'encrypted-history');
+    expect(history?.routeType, 'relay');
     expect(peers.single.deviceId, 'peer-1');
     expect(peers.single.ip, '192.168.1.20');
   });

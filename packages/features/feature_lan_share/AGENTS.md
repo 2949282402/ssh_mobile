@@ -13,6 +13,12 @@
   的 Owner；Route Scope 只负责 ViewModel 生命周期。
 - 不把密钥、PIN、Bearer Token、Relay credential 或远端 localPath 写入明文
   数据库；接收文件必须经过 LAN sandbox 校验。
+- Relay 设置只能通过 `LanRelaySettingsViewModel` 和注入的 Receiver Coordinator
+  修改；页面 Token 只在当前表单调用中存在。endpoint 变化必须先断开旧 socket、
+  清除旧 enrollment；Relay 断线最多按 `1/2/4/8/16/30` 秒自动重连六次。
+- Relay 数据面只由 native NetworkService/Runtime 持有一个 socket。Dart 只负责
+  enrollment、secure storage 和状态展示；发送前必须使用最终 Peer 状态，历史必须
+  保留实际 Direct/Relay route metadata。
 - 修改 Dart 文件后运行本 Package 的 format、analyze 和 test；Drift 输入变化
   后重新生成并确认 `*.g.dart` 与输入一致。
 

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:network_sdk/network_sdk.dart';
+
 /// Device type enumeration
 enum LanDeviceType {
   mobile,
@@ -237,6 +239,7 @@ class LanMessage {
   final String? localPath;
   final FileManifest? manifest;
   final LanTransferStatus status;
+  final NetworkRouteType? routeType;
   final int bytesTransferred;
   final DateTime createdAt;
   final bool isIncoming;
@@ -256,6 +259,7 @@ class LanMessage {
     this.localPath,
     this.manifest,
     this.status = LanTransferStatus.pending,
+    this.routeType,
     this.bytesTransferred = 0,
     required this.createdAt,
     required this.isIncoming,
@@ -279,6 +283,7 @@ class LanMessage {
     String? localPath,
     FileManifest? manifest,
     LanTransferStatus? status,
+    NetworkRouteType? routeType,
     int? bytesTransferred,
     DateTime? createdAt,
     bool? isIncoming,
@@ -298,6 +303,7 @@ class LanMessage {
       localPath: localPath ?? this.localPath,
       manifest: manifest ?? this.manifest,
       status: status ?? this.status,
+      routeType: routeType ?? this.routeType,
       bytesTransferred: bytesTransferred ?? this.bytesTransferred,
       createdAt: createdAt ?? this.createdAt,
       isIncoming: isIncoming ?? this.isIncoming,
@@ -319,6 +325,7 @@ class LanMessage {
     'localPath': localPath,
     'manifest': manifest?.toJson(),
     'status': status.toJson(),
+    'routeType': routeType?.name,
     'bytesTransferred': bytesTransferred,
     'createdAt': createdAt.toIso8601String(),
     'isIncoming': isIncoming,
@@ -344,6 +351,7 @@ class LanMessage {
           ? FileManifest.fromJson(json['manifest'] as Map<String, dynamic>)
           : null,
       status: LanTransferStatus.fromJson(json['status'] as String? ?? ''),
+      routeType: networkRouteTypeFromJson(json['routeType'] as String?),
       bytesTransferred: (json['bytesTransferred'] as num?)?.toInt() ?? 0,
       createdAt: json['createdAt'] != null
           ? DateTime.tryParse(json['createdAt'] as String) ?? DateTime.now()
@@ -354,4 +362,12 @@ class LanMessage {
       sftpRemotePath: json['sftpRemotePath'] as String?,
     );
   }
+}
+
+NetworkRouteType? networkRouteTypeFromJson(String? value) {
+  if (value == null || value.isEmpty) return null;
+  for (final route in NetworkRouteType.values) {
+    if (route.name == value) return route;
+  }
+  return null;
 }

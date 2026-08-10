@@ -105,7 +105,7 @@ docker compose --env-file .env up --build
 
 This single command builds and starts `relay` and `caddy`, then keeps their combined logs attached. Restarting the memory-only relay invalidates existing device enrollment, so clients must enroll again.
 
-In SSH Mobile, open **Network Transfer → VPN / P2P → Server Configuration** and enter the HTTPS relay host, port, and enrollment token. Production clients require a valid TLS certificate.
+In SSH Mobile, open **LAN Share Settings** and enter the HTTPS relay host, port, and enrollment token. The token is used only for enrollment and is never persisted in preferences; the endpoint is stored as an origin while the device credential remains in platform secure storage. The page reports connected/disconnected/failed state and provides explicit reconnect, disconnect, and clear actions. Production clients require a valid TLS certificate.
 
 
 ### Platform builds

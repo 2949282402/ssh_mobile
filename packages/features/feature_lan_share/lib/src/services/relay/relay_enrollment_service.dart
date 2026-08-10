@@ -150,6 +150,12 @@ final class RelayEnrollmentService {
     );
   }
 
+  /// 清除当前设备的 Relay enrollment 凭据，但保留设备签名种子。
+  ///
+  /// 签名种子代表设备身份，不应因为更换 Relay 源站或用户主动清除
+  /// enrollment 而轮换；短期 Relay credential 则必须立即从安全存储移除。
+  Future<void> clearEnrollment() => _secureStorage.delete(key: _credentialKey);
+
   /// Dart 不承载 Relay 数据面，因此此处不释放 socket。
   Future<void> dispose() async {}
 

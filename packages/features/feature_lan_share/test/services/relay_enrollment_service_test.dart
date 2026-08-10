@@ -53,6 +53,15 @@ void main() {
     expect(native!.endpoint, endpoint);
     expect(native.credential, 'signed-credential');
     expect(native.signingSeed, hasLength(32));
+
+    await service.clearEnrollment();
+    expect(
+      await service.isEnrolled(RelaySettings(endpoint: endpoint)),
+      isFalse,
+    );
+    const storage = FlutterSecureStorage();
+    expect(await storage.read(key: 'relay_device_credential_v1'), isNull);
+    expect(await storage.read(key: 'relay_device_signing_seed_v1'), isNotNull);
   });
 
   test('relay enrollment rejects invalid endpoint and protocol', () async {

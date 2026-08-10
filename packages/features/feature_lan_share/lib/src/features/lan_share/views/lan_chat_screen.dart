@@ -758,6 +758,27 @@ class _LanChatScreenState extends State<LanChatScreen> {
                     color: colors.onSurfaceVariant,
                   ),
                 ),
+                if (msg.routeType == NetworkRouteType.quicDirect ||
+                    msg.routeType == NetworkRouteType.relay) ...[
+                  const SizedBox(width: 6),
+                  Icon(
+                    msg.routeType == NetworkRouteType.relay
+                        ? Icons.hub_outlined
+                        : Icons.swap_calls_rounded,
+                    size: 12,
+                    color: colors.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 2),
+                  Text(
+                    msg.routeType == NetworkRouteType.relay
+                        ? strings.lanRouteRelay
+                        : strings.lanRouteDirect,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontSize: 10,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
                 if (isMe && !msg.isRecalled) ...[
                   const SizedBox(width: 4),
                   _buildStatusIndicator(context, msg),

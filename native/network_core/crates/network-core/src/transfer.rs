@@ -2,7 +2,7 @@
 
 use network_protocol::{
     NetworkCommand, NetworkError as ProtocolError, NetworkErrorCode,
-    RespondIncomingTransferCommand, SendFileCommand,
+    RespondIncomingTransferCommand, RouteType, SendFileCommand,
 };
 use network_quic::{
     read_file_completion, read_file_decision, read_file_offer, write_file_completion,
@@ -77,7 +77,11 @@ pub(crate) async fn start_file_send(
                 &command.peer_id,
             )
         })?;
-    if connection.is_none() && state.relay.read().await.is_none() {
+    let relay_available = match state.relay.read().await.clone() {
+        Some(relay) => relay.is_usable().await,
+        None => false,
+    };
+    if connection.is_none() && !relay_available {
         return Err(protocol_error_with_peer(
             NetworkErrorCode::NoRoute,
             "peer has no active direct or Relay route",
@@ -234,7 +238,7 @@ pub(crate) async fn handle_incoming_file(
                 }
             }
         }
-        emit_incoming_offer(&state.event_tx, &peer_id, &manifest);
+        emit_incoming_offer(&state.event_tx, &peer_id, &manifest, RouteType::QuicDirect);
         let accepted = tokio::time::timeout(INCOMING_APPROVAL_TIMEOUT, decision_rx)
             .await
             .ok()

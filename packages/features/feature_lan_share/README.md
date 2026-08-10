@@ -3,7 +3,7 @@
 # feature_lan_share
 
 LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/WebSocket
-传输、Web Share、传输历史和配对元数据。
+传输、WSS Relay enrollment/数据面编排、Web Share、传输历史和配对元数据。
 
 ## 边界
 
@@ -16,6 +16,10 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
   Shell 只注入 App Scope 资源并负责配置是否激活接收器。
 - 数据库只保存传输历史和不含密钥、Token 的配对元数据；密钥、PIN、Bearer
   Token 和 Relay 凭据继续由安全存储边界管理。
+- Relay 设置页只接收当前会话的 enrollment Token；Token 不进入偏好设置、数据库、
+  日志或导出。Relay origin 可持久化，但更换 origin 会先断开旧 socket 并清除旧
+  enrollment。原生层只保持一个 Relay socket，直连优先、Relay 兜底；断线按
+  `1/2/4/8/16/30` 秒最多自动重连六次，传输历史记录实际的 Direct/Relay 路线。
 
 旧 `apps/ssh_mobile_full/lib/features/lan_share/**`、
 `apps/ssh_mobile_full/lib/services/lan_share/**` 和 Relay facade 已删除；
@@ -24,7 +28,8 @@ App Shell 只保留 `lan_share_feature_adapters.dart` 以及 native v1 network
 
 ## Package contract
 
-- 职责：提供 LAN 发现、配对、HTTPS/WebSocket 传输、Web Share 和传输历史。
+- 职责：提供 LAN 发现、配对、HTTPS/WebSocket 传输、WSS Relay enrollment/状态、
+  Web Share 和传输历史。
 - 不负责：SSH、其他 Feature 实现、App `/src/`、未审批的网络写入或秘密持久化。
 - Public API：`package:feature_lan_share/feature_lan_share.dart`，包括 Module、
   Receiver 配置、页面和 Port。

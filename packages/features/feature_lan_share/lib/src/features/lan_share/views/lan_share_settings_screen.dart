@@ -1,16 +1,22 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/app_settings.dart';
 import 'package:app_ui/app_ui.dart';
+import '../services/lan_receiver_coordinator.dart';
 import '../utils/lan_platform_capabilities.dart';
+import '../viewmodels/lan_relay_settings_viewmodel.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 
 class LanShareSettingsScreen extends StatefulWidget {
-  const LanShareSettingsScreen({super.key});
+  const LanShareSettingsScreen({super.key, this.coordinator});
+
+  /// 可选的显式 Coordinator，主要用于路由测试和嵌入式调用方。
+  final LanReceiverCoordinator? coordinator;
 
   @override
   State<LanShareSettingsScreen> createState() => _LanShareSettingsScreenState();
@@ -19,6 +25,7 @@ class LanShareSettingsScreen extends StatefulWidget {
 class _LanShareSettingsScreenState extends State<LanShareSettingsScreen> {
   bool _notificationGranted = false;
   bool _cameraGranted = false;
+  LanRelaySettingsViewModel? _relayViewModel;
 
   bool get _supportsRuntimePermissions => supportsLanShareRuntimePermissions(
     platform: defaultTargetPlatform,
@@ -29,6 +36,30 @@ class _LanShareSettingsScreenState extends State<LanShareSettingsScreen> {
   void initState() {
     super.initState();
     _refreshPermissions();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_relayViewModel != null) return;
+    final coordinator = widget.coordinator ?? _readCoordinator(context);
+    if (coordinator != null) {
+      _relayViewModel = LanRelaySettingsViewModel(coordinator);
+    }
+  }
+
+  LanReceiverCoordinator? _readCoordinator(BuildContext context) {
+    try {
+      return context.read<LanReceiverCoordinator>();
+    } on ProviderNotFoundException {
+      return null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _relayViewModel?.dispose();
+    super.dispose();
   }
 
   Future<void> _refreshPermissions() async {
@@ -115,18 +146,7 @@ class _LanShareSettingsScreenState extends State<LanShareSettingsScreen> {
                               },
                       ),
                     ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.hub_outlined),
-                      title: Text(strings.lanRelayServer),
-                      subtitle: Text(
-                        settings.relayHost.isEmpty
-                            ? strings.unknown
-                            : '${settings.relayHost}:${settings.relayPort}',
-                      ),
-                      trailing: const Icon(Icons.chevron_right_rounded),
-                      onTap: () => _editRelay(context, settings, strings),
-                    ),
+                    _buildRelayTile(context, settings, strings),
                   ],
                 ),
               ),
@@ -161,6 +181,69 @@ class _LanShareSettingsScreenState extends State<LanShareSettingsScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildRelayTile(
+    BuildContext context,
+    AppSettings settings,
+    AppStrings strings,
+  ) {
+    final relayViewModel = _relayViewModel;
+    if (relayViewModel == null) {
+      return ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.hub_outlined),
+        title: Text(strings.lanRelayServer),
+        subtitle: Text(
+          settings.relayHost.isEmpty
+              ? strings.unknown
+              : '${settings.relayHost}:${settings.relayPort}',
+        ),
+        trailing: const Icon(Icons.chevron_right_rounded),
+        onTap: () => _editRelay(context, settings, strings),
+      );
+    }
+    return AnimatedBuilder(
+      animation: relayViewModel,
+      builder: (context, _) => ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(
+          relayViewModel.status.isConnected
+              ? Icons.cloud_done_outlined
+              : Icons.hub_outlined,
+          color: relayViewModel.status.isConnected
+              ? Theme.of(context).colorScheme.primary
+              : null,
+        ),
+        title: Text(strings.lanRelayServer),
+        subtitle: Text(_relaySubtitle(settings, strings, relayViewModel)),
+        trailing: const Icon(Icons.chevron_right_rounded),
+        onTap: relayViewModel.busy
+            ? null
+            : () => _editRelay(context, settings, strings),
+      ),
+    );
+  }
+
+  String _relaySubtitle(
+    AppSettings settings,
+    AppStrings strings,
+    LanRelaySettingsViewModel relayViewModel,
+  ) {
+    final endpoint = settings.relayHost.isEmpty
+        ? strings.unknown
+        : '${settings.relayHost}:${settings.relayPort}';
+    final status = relayViewModel.status;
+    final statusText = switch (status.state) {
+      RelayConnectionState.connected => strings.connected,
+      RelayConnectionState.connecting => strings.lanRelayConnecting,
+      RelayConnectionState.failed => strings.lanRelayFailed,
+      RelayConnectionState.disconnected || RelayConnectionState.unspecified =>
+        status.enrolled
+            ? strings.disconnected
+            : strings.lanRelayEnrollmentRequired,
+    };
+    return '$endpoint · $statusText';
   }
 
   Future<void> _rename(
@@ -204,6 +287,19 @@ class _LanShareSettingsScreenState extends State<LanShareSettingsScreen> {
     AppSettings settings,
     AppStrings strings,
   ) async {
+    final relayViewModel = _relayViewModel;
+    if (relayViewModel != null) {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => _RelayEditorDialog(
+          viewModel: relayViewModel,
+          settings: settings,
+          strings: strings,
+        ),
+      );
+      return;
+    }
+
     final host = TextEditingController(text: settings.relayHost);
     final port = TextEditingController(text: '${settings.relayPort}');
     String? error;
@@ -269,6 +365,252 @@ class _LanShareSettingsScreenState extends State<LanShareSettingsScreen> {
         ).showSnackBar(SnackBar(content: Text(strings.invalidPort)));
       }
     }
+  }
+}
+
+class _RelayEditorDialog extends StatefulWidget {
+  const _RelayEditorDialog({
+    required this.viewModel,
+    required this.settings,
+    required this.strings,
+  });
+
+  final LanRelaySettingsViewModel viewModel;
+  final AppSettings settings;
+  final AppStrings strings;
+
+  @override
+  State<_RelayEditorDialog> createState() => _RelayEditorDialogState();
+}
+
+class _RelayEditorDialogState extends State<_RelayEditorDialog> {
+  late final TextEditingController _hostController;
+  late final TextEditingController _portController;
+  late final TextEditingController _tokenController;
+
+  @override
+  void initState() {
+    super.initState();
+    _hostController = TextEditingController(text: widget.settings.relayHost);
+    _portController = TextEditingController(
+      text: '${widget.settings.relayPort}',
+    );
+    _tokenController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _hostController.dispose();
+    _portController.dispose();
+    _tokenController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = widget.strings;
+    return AnimatedBuilder(
+      animation: widget.viewModel,
+      builder: (context, _) {
+        final status = widget.viewModel.status;
+        final busy = widget.viewModel.busy;
+        return AlertDialog(
+          title: Text(strings.lanRelayServer),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _RelayStatusBanner(status: status, strings: strings),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _hostController,
+                  enabled: !busy,
+                  keyboardType: TextInputType.url,
+                  textInputAction: TextInputAction.next,
+                  autocorrect: false,
+                  decoration: InputDecoration(labelText: strings.hostAddress),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _portController,
+                  enabled: !busy,
+                  keyboardType: TextInputType.number,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(labelText: strings.port),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _tokenController,
+                  enabled: !busy,
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  textInputAction: TextInputAction.done,
+                  decoration: InputDecoration(
+                    labelText: strings.lanRelayEnrollmentToken,
+                    helperText: strings.lanRelayEnrollmentTokenHint,
+                  ),
+                ),
+                if (widget.viewModel.error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    widget.viewModel.error!.message,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            if (status.enrolled && !status.isConnected)
+              TextButton(
+                onPressed: busy ? null : _connect,
+                child: Text(strings.lanRelayConnect),
+              ),
+            if (status.isConnected || status.isConnecting)
+              TextButton(
+                onPressed: busy ? null : _disconnect,
+                child: Text(strings.lanRelayDisconnect),
+              ),
+            if (status.enrolled || status.endpoint.isNotEmpty)
+              TextButton(
+                onPressed: busy ? null : _clear,
+                child: Text(strings.lanRelayClear),
+              ),
+            TextButton(
+              onPressed: busy ? null : () => Navigator.maybePop(context),
+              child: Text(strings.cancel),
+            ),
+            FilledButton(
+              onPressed: busy ? null : _save,
+              child: busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(strings.save),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _save() async {
+    final port = int.tryParse(_portController.text.trim());
+    if (port == null || port < 1 || port > 65535) {
+      _showError(widget.strings.invalidPort);
+      return;
+    }
+    final result = await widget.viewModel.save(
+      host: _hostController.text,
+      port: port,
+      enrollmentToken: _tokenController.text,
+    );
+    if (!mounted) return;
+    if (result is NetworkSuccess<void>) {
+      _tokenController.clear();
+      Navigator.maybePop(context);
+    }
+  }
+
+  Future<void> _connect() async {
+    final result = await widget.viewModel.connect();
+    if (!mounted) return;
+    if (result is NetworkSuccess<void>) Navigator.maybePop(context);
+  }
+
+  Future<void> _disconnect() async {
+    await widget.viewModel.disconnect();
+  }
+
+  Future<void> _clear() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(widget.strings.lanRelayClear),
+        content: Text(widget.strings.deleteConnectionConfirm),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(widget.strings.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(widget.strings.lanRelayClear),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final result = await widget.viewModel.clear();
+    if (!mounted) return;
+    if (result is NetworkSuccess<void>) Navigator.maybePop(context);
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _RelayStatusBanner extends StatelessWidget {
+  const _RelayStatusBanner({required this.status, required this.strings});
+
+  final LanRelayStatus status;
+  final AppStrings strings;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color, icon) = switch (status.state) {
+      RelayConnectionState.connected => (
+        strings.connected,
+        Colors.green,
+        Icons.cloud_done_outlined,
+      ),
+      RelayConnectionState.connecting => (
+        strings.lanRelayConnecting,
+        Colors.orange,
+        Icons.sync_rounded,
+      ),
+      RelayConnectionState.failed => (
+        strings.lanRelayFailed,
+        Theme.of(context).colorScheme.error,
+        Icons.error_outline_rounded,
+      ),
+      RelayConnectionState.disconnected || RelayConnectionState.unspecified => (
+        status.enrolled
+            ? strings.disconnected
+            : strings.lanRelayEnrollmentRequired,
+        Theme.of(context).colorScheme.onSurfaceVariant,
+        Icons.cloud_off_outlined,
+      ),
+    };
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label)),
+          if (status.reconnectAttempt > 0 && !status.isConnected)
+            Text(
+              '${status.reconnectAttempt}/6',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+        ],
+      ),
+    );
   }
 }
 

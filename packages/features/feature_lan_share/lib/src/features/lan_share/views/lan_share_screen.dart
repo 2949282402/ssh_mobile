@@ -791,7 +791,8 @@ class _LanShareScreenState extends State<LanShareScreen>
             },
             child: AppSectionCard(
               title: session.alias,
-              subtitle: _formatDateTime(session.lastMessage.createdAt),
+              subtitle:
+                  '${_formatDateTime(session.lastMessage.createdAt)}${_routeSuffix(strings, session.lastMessage.routeType)}',
               icon: session.isOnline
                   ? Icons.online_prediction_rounded
                   : Icons.devices_other_rounded,
@@ -890,5 +891,14 @@ class _LanShareScreenState extends State<LanShareScreen>
     final hour = dateTime.hour.toString().padLeft(2, '0');
     final minute = dateTime.minute.toString().padLeft(2, '0');
     return '$year-$month-$day $hour:$minute';
+  }
+
+  String _routeSuffix(AppStrings strings, NetworkRouteType? routeType) {
+    final label = switch (routeType) {
+      NetworkRouteType.quicDirect => strings.lanRouteDirect,
+      NetworkRouteType.relay => strings.lanRouteRelay,
+      _ => null,
+    };
+    return label == null ? '' : ' · $label';
   }
 }

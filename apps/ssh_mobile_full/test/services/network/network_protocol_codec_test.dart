@@ -75,4 +75,25 @@ void main() {
     expect(failure.error.operation, NetworkOperation.send);
     expect(failure.error.peerId, 'p1');
   });
+
+  test('incoming offer accepts optional Relay route metadata', () {
+    final frame = codec.decodeEvent(
+      Uint8List.fromList(<int>[
+        0x0a, 0x01, 0x65, // event_id = e
+        0x18, 0x01, // protocol_version = 1
+        0x72, 0x0d, // incoming offer message
+        0x0a, 0x01, 0x74, // transfer_id = t
+        0x12, 0x01, 0x70, // peer_id = p
+        0x1a, 0x01, 0x66, // file_name = f
+        0x20, 0x03, // file_size = 3
+        0x28, 0x02, // route_type = Relay
+      ]),
+    );
+
+    expect(frame.event, isA<IncomingTransferOffer>());
+    expect(
+      (frame.event! as IncomingTransferOffer).routeType,
+      NetworkRouteType.relay,
+    );
+  });
 }

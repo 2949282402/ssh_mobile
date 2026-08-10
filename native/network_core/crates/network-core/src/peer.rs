@@ -277,8 +277,14 @@ pub(crate) async fn connect_peer(
             );
             tokio::spawn(receive_file_streams(peer_id, connection, state));
             return Ok(());
-        } else if state.relay.read().await.is_none() {
-            return direct_result.map(|_| ());
+        } else {
+            let relay_available = match state.relay.read().await.clone() {
+                Some(relay) => relay.is_usable().await,
+                None => false,
+            };
+            if !relay_available {
+                return direct_result.map(|_| ());
+            }
         }
     }
     let relay = state.relay.read().await.clone().ok_or_else(|| {
@@ -289,6 +295,14 @@ pub(crate) async fn connect_peer(
             &peer_id,
         )
     })?;
+    if !relay.is_usable().await {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::RelayError,
+            "Relay socket is not connected",
+            "connect",
+            &peer_id,
+        ));
+    }
     let (lookup_tx, lookup_rx) = oneshot::channel();
     state
         .relay_lookups

@@ -10,6 +10,7 @@ export 'src/domain/lan_share_ports.dart'
     hide AppLanguage, AppSettings, AppStrings;
 export 'src/features/lan_share/lan_share_feature_scope.dart';
 export 'src/features/lan_share/services/lan_receiver_coordinator.dart';
+export 'src/features/lan_share/viewmodels/lan_relay_settings_viewmodel.dart';
 export 'src/features/lan_share/viewmodels/lan_share_viewmodel.dart';
 export 'src/features/lan_share/views/lan_chat_screen.dart';
 export 'src/features/lan_share/views/lan_pairing_navigation_host.dart';

@@ -54,6 +54,7 @@ extension LanShareViewModelHistory on LanShareViewModel {
         isRecalled: Value(msg.isRecalled),
         sftpServerId: Value(msg.sftpServerId),
         sftpRemotePath: Value(await _encryptSensitive(msg.sftpRemotePath)),
+        routeType: Value(msg.routeType?.name),
         bytesTotal: Value(msg.fileSize),
       ),
     );
@@ -111,6 +112,7 @@ extension LanShareViewModelHistory on LanShareViewModel {
           ? FileManifest.decodeJson(manifestJson)
           : null,
       status: LanTransferStatus.fromJson(record.status),
+      routeType: networkRouteTypeFromJson(record.routeType),
       bytesTransferred: record.bytesTransferred,
       createdAt: DateTime.fromMillisecondsSinceEpoch(record.createdAt),
       isIncoming: record.isIncoming,

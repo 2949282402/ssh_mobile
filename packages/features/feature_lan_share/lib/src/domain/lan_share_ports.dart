@@ -61,6 +61,7 @@ abstract interface class LanShareStrings {
   String get close;
   String get connected;
   String get copy;
+  String get disconnected;
   String get delete;
   String get deleteConnectionConfirm;
   String get externalPreviewContentBlocked;
@@ -95,7 +96,18 @@ abstract interface class LanShareStrings {
   String get lanDeviceId;
   String get lanNotificationPermission;
   String get lanPermissions;
+  String get lanRelayClear;
+  String get lanRelayConnect;
+  String get lanRelayConnecting;
+  String get lanRelayDisconnect;
+  String get lanRelayEnrollmentRequired;
+  String get lanRelayEnrollmentToken;
+  String get lanRelayEnrollmentTokenHint;
+  String get lanRelayFailed;
   String get lanRelayServer;
+  String get lanRouteDirect;
+  String get lanRouteRelay;
+  String get lanRouteUnknown;
   String get lanShare;
   String get lanShareChatInputHint;
   String get lanShareClearChatHistory;

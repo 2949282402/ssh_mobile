@@ -562,12 +562,16 @@ class LanShareViewModel extends ChangeNotifier {
     if (sendResult is NetworkFailure<TransferSession>) {
       return _recordNetworkFailure(msg.id, sendResult.error);
     }
+    final session = (sendResult as NetworkSuccess<TransferSession>).data;
     await _enqueueMessagePersistence(
       msg.id,
       () => historyDao.updateRecordStatus(
         msg.id,
         LanTransferStatus.transferring.toJson(),
         bytesTotal: fileSize,
+        routeType: session.routeType == NetworkRouteType.unspecified
+            ? null
+            : session.routeType.name,
       ),
     );
     return sendResult;

@@ -107,6 +107,8 @@ final class AppLanShareStrings implements lan.LanShareStrings {
   @override
   String get copy => _strings.copy;
   @override
+  String get disconnected => _strings.disconnected;
+  @override
   String get delete => _strings.delete;
   @override
   String get deleteConnectionConfirm => _strings.deleteConnectionConfirm;
@@ -177,7 +179,30 @@ final class AppLanShareStrings implements lan.LanShareStrings {
   @override
   String get lanPermissions => _strings.lanPermissions;
   @override
+  String get lanRelayClear => _strings.lanRelayClear;
+  @override
+  String get lanRelayConnect => _strings.lanRelayConnect;
+  @override
+  String get lanRelayConnecting => _strings.lanRelayConnecting;
+  @override
+  String get lanRelayDisconnect => _strings.lanRelayDisconnect;
+  @override
+  String get lanRelayEnrollmentRequired => _strings.lanRelayEnrollmentRequired;
+  @override
+  String get lanRelayEnrollmentToken => _strings.lanRelayEnrollmentToken;
+  @override
+  String get lanRelayEnrollmentTokenHint =>
+      _strings.lanRelayEnrollmentTokenHint;
+  @override
+  String get lanRelayFailed => _strings.lanRelayFailed;
+  @override
   String get lanRelayServer => _strings.lanRelayServer;
+  @override
+  String get lanRouteDirect => _strings.lanRouteDirect;
+  @override
+  String get lanRouteRelay => _strings.lanRouteRelay;
+  @override
+  String get lanRouteUnknown => _strings.lanRouteUnknown;
   @override
   String get lanShare => _strings.lanShare;
   @override

@@ -339,6 +339,7 @@ final class NetworkProtocolCodec {
     var peerId = '';
     var fileName = '';
     var fileSize = 0;
+    var route = 0;
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
@@ -350,6 +351,8 @@ final class NetworkProtocolCodec {
           fileName = utf8.decode(reader.bytes(field.wireType));
         case 4:
           fileSize = reader.varint(field.wireType);
+        case 5:
+          route = reader.varint(field.wireType);
         default:
           reader.skip(field.wireType);
       }
@@ -361,6 +364,7 @@ final class NetworkProtocolCodec {
       peerId: peerId,
       fileName: fileName,
       fileSize: fileSize,
+      routeType: NetworkRouteType.fromWire(route),
     );
   }
 

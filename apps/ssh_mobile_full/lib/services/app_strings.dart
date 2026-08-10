@@ -930,6 +930,19 @@ class AppStrings {
   String get lanDeviceAlias => _en ? 'Device alias / name' : '设备昵称 / 名称';
   String get lanDeviceId => _en ? 'Persistent device identifier' : '固定设备标识符';
   String get lanRelayServer => _en ? 'Public relay server' : '公网中继服务器';
+  String get lanRelayClear => _en ? 'Clear enrollment' : '清除注册';
+  String get lanRelayConnect => _en ? 'Connect' : '连接';
+  String get lanRelayConnecting => _en ? 'Connecting…' : '连接中…';
+  String get lanRelayDisconnect => _en ? 'Disconnect' : '断开连接';
+  String get lanRelayEnrollmentRequired => _en ? 'Enrollment required' : '需要注册';
+  String get lanRelayEnrollmentToken =>
+      _en ? 'Temporary enrollment token' : '临时注册 Token';
+  String get lanRelayEnrollmentTokenHint =>
+      _en ? 'Required for first enrollment; never saved' : '首次注册需要；不会保存';
+  String get lanRelayFailed => _en ? 'Connection failed' : '连接失败';
+  String get lanRouteDirect => _en ? 'Direct' : '直连';
+  String get lanRouteRelay => _en ? 'Relay' : '中继';
+  String get lanRouteUnknown => _en ? 'Route pending' : '路线待定';
   String get lanPermissions => _en ? 'Permissions' : '权限';
   String get lanNotificationPermission =>
       _en ? 'Background notification permission' : '后台通知权限';
