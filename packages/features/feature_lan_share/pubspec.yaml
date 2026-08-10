@@ -16,6 +16,8 @@ dependencies:
     path: ../../core/app_ui
   network_transport:
     path: ../../infrastructure/network_transport
+  network_sdk:
+    path: ../../infrastructure/network_sdk
   basic_utils: ^5.8.2
   crypto: ^3.0.7
   cryptography: ^2.9.0

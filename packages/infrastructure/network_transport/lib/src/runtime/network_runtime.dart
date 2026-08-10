@@ -5,6 +5,7 @@
 
 import 'package:app_core/app_core.dart';
 
+import '../native/network_command_gateway.dart';
 import 'network_capability.dart';
 
 /// 网络运行时的生命周期状态。
@@ -64,6 +65,12 @@ abstract interface class NetworkRuntime implements Disposable {
   ///
   /// 相同能力的并发调用必须共享同一个 Future；失败后可再次调用重试。
   Future<void> ensureCapability(NetworkCapability capability);
+
+  /// 打开一个共享的粗粒度 Command/Event gateway。
+  ///
+  /// Gateway 不拥有 Runtime 或 native handle；调用方只能释放自己的订阅，
+  /// 最终资源仍由 AppRuntime 释放 NetworkRuntime。
+  Future<NetworkCommandGateway> openCommandGateway();
 
   /// 返回某个 Capability 是否已经成功初始化。
   bool isCapabilityReady(NetworkCapability capability);

@@ -72,6 +72,10 @@ final class _FakeNetworkRuntime implements NetworkRuntime {
   Future<void> ensureCapability(NetworkCapability capability) async {}
 
   @override
+  Future<NetworkCommandGateway> openCommandGateway() async =>
+      throw UnsupportedError('fake runtime has no command gateway');
+
+  @override
   bool isCapabilityReady(NetworkCapability capability) => false;
 
   @override

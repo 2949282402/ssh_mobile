@@ -491,8 +491,9 @@ flowchart LR
 - `packages/features/feature_lan_share/`: LAN discovery, pairing,
   HTTPS/WebSocket transfer, Web Share, transfer history, non-secret pairing
   metadata, and the `LanShareModule` with its independent `lan_share.db`.
-  The package consumes only `network_transport`, `app_core`, `app_ui`, and
-  injected App Ports; native v1 construction remains in the App Shell adapter.
+  The package consumes `network_sdk` client contracts plus `network_transport`,
+  `app_core`, `app_ui`, and injected App Ports; native v1 construction remains
+  in the App Shell adapter.
 - `packages/features/feature_mcp/`: the local MCP HTTP/JSON-RPC server,
   exposure and invocation policy, approval queue, activity Repository, console
   UI, and independent `mcp.db`. Its settings, logger, and AI tool runtime are
@@ -533,7 +534,8 @@ flowchart LR
 - `packages/core/app_core/`: pure Dart lifecycle, Module, logging, and Capability contracts; it has no production Flutter/UI dependency. Logging includes scoped `AppLogger`, bounded `LogBuffer`, `LogSink`, and a disposable `AppLoggerImpl`.
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
 - `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; `feature_connection` consumes the public repositories and injected capabilities.
-- `packages/infrastructure/network_transport/`: the App Scope `NetworkRuntime` facade, lazy Capability state machine, diagnostics snapshot, transport contracts, metrics snapshot, and explicit native handle adapter. `AppRuntime` creates the single instance; this Step does not add a second protocol implementation.
+- `packages/infrastructure/network_sdk/`: typed Flutter client contracts for bootstrap, authenticated control-plane calls, business sessions, and event streams. It owns no Socket, HTTP client, FFI handle, database, or App lifecycle.
+- `packages/infrastructure/network_transport/`: the App Scope `NetworkRuntime` facade, lazy Capability state machine, diagnostics snapshot, transport contracts, metrics snapshot, explicit native handle adapter, and non-owning `NetworkCommandGateway`. `AppRuntime` creates the single instance; this Step does not add a second protocol implementation.
 - `packages/infrastructure/ssh_core/`: the App Scope SSH Session Manager, lease/pool lifecycle, Desktop/Mobile Runtime Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target bindings. The package does not depend on App Shell storage implementations; `AppRuntime` owns one Manager instance, and `feature_terminal` receives that Manager through injection while the old `SshService` remains a compatibility implementation.
 - `packages/infrastructure/ssh_mobile_network_native/`: native network package staged under the Infrastructure boundary.
 - `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,
@@ -565,9 +567,10 @@ Feature ViewModels are created by route scopes, and public route contributions a
 aggregated by `app/navigation/` without importing Feature `/src/` code.
 The same Runtime owns one lazy `NetworkRuntime`; QUIC and WSS Relay capabilities
 share native initialization, failed initialization can retry, and disposal waits
-for and closes the native handle. LAN Share now has a Feature-owned Module and
-database; its App Shell adapter is the only bridge to the legacy native v1
-service, while old LAN paths remain compatibility surfaces during migration.
+for and closes the native handle. The typed `network_sdk` client facade is injected
+above that runtime, while its App Shell adapter is the only bridge to the legacy
+native v1 service. LAN Share still has a Feature-owned Module and database; old
+LAN paths remain compatibility surfaces during migration.
 `AppRuntime.logger` exposes the Core logger contract; the current full-app
 implementation is an App-layer `AppLogService` adapter, so existing database,
 disk, redaction, and UI notification behavior remains unchanged during staged

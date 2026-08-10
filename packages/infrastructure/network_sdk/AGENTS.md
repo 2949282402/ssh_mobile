@@ -1,0 +1,32 @@
+最新更新时间：2026-08-10
+
+# network_sdk Package Guidelines
+
+## 允许范围
+
+- 修改 Flutter 网络客户端契约、类型化结果/错误、事件和 fake；
+- 修改公共入口和契约测试；
+- 修改必须同步 App Shell adapter、使用方 Feature、架构依赖文档和资源所有权记录。
+
+## 禁止事项
+
+- 不依赖任何 Feature 或 App `/src/`；
+- 不直接依赖 `ssh_mobile_network_native`、FFI symbol、Socket、HTTP client 或
+  secure storage；
+- 不实现第二套 QUIC、Relay、WebSocket 或文件协议；
+- 不拥有数据库、Timer、Isolate 或 App Scope runtime。
+
+## API 规则
+
+- `BootstrapClient` 不携带 Bearer；
+- `AuthenticatedApiClient` 只表达控制面请求；
+- `SessionClient` 只表达业务 Session/Transfer 操作；
+- `EventStreamClient` 只暴露统一 typed event stream；
+- 新增传输实现必须先更新 ADR，不得新增 `*SocketClient` 类型。
+
+## 必须验证
+
+```bash
+flutter analyze --no-pub
+flutter test --no-pub
+```

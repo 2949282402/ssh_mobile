@@ -243,6 +243,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 
 ### Network transfer
 
+- 2026-08-10: `packages/infrastructure/network_sdk/` is the typed Flutter client
+  boundary for bootstrap, authenticated API, business sessions, and event streams.
+  It owns no transport or lifecycle resource. `NetworkCommandGateway` is a borrowed
+  bridge from the App-owned v1 `NetworkRuntime` to the App Shell adapter; callers
+  release subscriptions only, while `AppRuntime` remains the sole native handle
+  owner. Keep the current v1 wire/protocol contract until a later planned migration.
 - LAN file sends use the injected v1 `NetworkService`; do not restore legacy
   transport adapters or protocol fallbacks. Native commands/events are typed,
   peer identity and keys are pinned before connect, and command acceptance is

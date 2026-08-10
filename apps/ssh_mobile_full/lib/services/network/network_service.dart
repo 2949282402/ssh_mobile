@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
+import 'package:network_transport/network_transport.dart';
 import 'package:uuid/uuid.dart';
 
 import 'network_models.dart';
@@ -14,12 +15,30 @@ import 'network_protocol_codec.dart';
 /// 将原生 v1 运行时适配为 Flutter 的类型化网络契约。
 final class NativeNetworkService implements NetworkService {
   /// 基于已创建的原生运行时创建服务。
-  NativeNetworkService(this._runtime, {NetworkProtocolCodec? codec})
-    : _codec = codec ?? const NetworkProtocolCodec() {
-    _nativeSubscription = _runtime.rawEvents.listen(_handleNativeEvent);
+  NativeNetworkService(
+    NativeNetworkRuntime runtime, {
+    NetworkProtocolCodec? codec,
+  }) : _gateway = _NativeRuntimeCommandGateway(runtime),
+       _ownedRuntime = runtime,
+       _codec = codec ?? const NetworkProtocolCodec() {
+    _nativeSubscription = _gateway.events.listen(_handleNativeEvent);
   }
 
-  final NativeNetworkRuntime _runtime;
+  /// 基于 AppRuntime 共享的 gateway 创建服务。
+  ///
+  /// 该构造方式只拥有自己的 command/event subscription，不拥有
+  /// NetworkRuntime 或 native handle；最终资源由 AppRuntime 释放。
+  NativeNetworkService.fromGateway(
+    NetworkCommandGateway gateway, {
+    NetworkProtocolCodec? codec,
+  }) : _gateway = gateway,
+       _ownedRuntime = null,
+       _codec = codec ?? const NetworkProtocolCodec() {
+    _nativeSubscription = _gateway.events.listen(_handleNativeEvent);
+  }
+
+  final NetworkCommandGateway _gateway;
+  final NativeNetworkRuntime? _ownedRuntime;
   final NetworkProtocolCodec _codec;
   final StreamController<NetworkEvent> _eventController =
       StreamController<NetworkEvent>.broadcast();
@@ -68,7 +87,10 @@ final class NativeNetworkService implements NetworkService {
       }
     }
     _pendingCommands.clear();
-    final status = await _runtime.stop();
+    final ownedRuntime = _ownedRuntime;
+    final status = ownedRuntime == null
+        ? NativeOperationStatus.success
+        : await ownedRuntime.stop();
     if (!status.isSuccess) {
       return _failure(
         _nativeStatusError(status, operation: NetworkOperation.stop),
@@ -288,10 +310,10 @@ final class NativeNetworkService implements NetworkService {
       operation: operation,
     );
     _pendingCommands[commandId] = pending;
-    final status = _runtime.sendCommand(command);
-    if (!status.isSuccess) {
+    final status = _gateway.sendCommand(command);
+    if (status != TransportOperationStatus.success) {
       _pendingCommands.remove(commandId);
-      return _failure(_nativeStatusError(status, operation: operation));
+      return _failure(_transportStatusError(status, operation: operation));
     }
     try {
       return await pending.completer.future.timeout(
@@ -382,6 +404,24 @@ final class NativeNetworkService implements NetworkService {
     );
   }
 
+  /// 将共享 gateway 的传输状态转换为稳定的网络错误。
+  NetworkError _transportStatusError(
+    TransportOperationStatus status, {
+    required NetworkOperation operation,
+  }) {
+    final code = switch (status) {
+      TransportOperationStatus.invalidArgument =>
+        NetworkErrorCode.invalidArgument,
+      TransportOperationStatus.stopped => NetworkErrorCode.cancelled,
+      _ => NetworkErrorCode.ioError,
+    };
+    return NetworkError(
+      code: code,
+      message: 'network command gateway rejected the command',
+      operation: operation,
+    );
+  }
+
   /// 创建运行时停止后使用的标准结果。
   NetworkFailure<void> _cancelled(NetworkOperation operation) => _failure(
     NetworkError(
@@ -426,13 +466,33 @@ final class NativeNetworkService implements NetworkService {
       }
       _pendingCommands.clear();
       await _nativeSubscription.cancel();
-      await _runtime.dispose();
+      await _ownedRuntime?.dispose();
     } else {
       await _nativeSubscription.cancel();
-      await _runtime.dispose();
+      await _ownedRuntime?.dispose();
     }
     if (!_eventController.isClosed) await _eventController.close();
   }
+}
+
+/// 将旧 native runtime 适配为共享 gateway，供现有 v1 单元测试使用。
+final class _NativeRuntimeCommandGateway implements NetworkCommandGateway {
+  _NativeRuntimeCommandGateway(this._runtime);
+
+  final NativeNetworkRuntime _runtime;
+
+  @override
+  Stream<Uint8List> get events => _runtime.rawEvents;
+
+  @override
+  TransportOperationStatus sendCommand(Uint8List command) =>
+      switch (_runtime.sendCommand(command)) {
+        NativeOperationStatus.success => TransportOperationStatus.success,
+        NativeOperationStatus.invalidArgument =>
+          TransportOperationStatus.invalidArgument,
+        NativeOperationStatus.stopped => TransportOperationStatus.stopped,
+        NativeOperationStatus.failure => TransportOperationStatus.failure,
+      };
 }
 
 /// 关联一个内部 commandId 与其公开操作结果上下文。

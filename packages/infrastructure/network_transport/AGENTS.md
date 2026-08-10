@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # network_transport Package Guidelines
 
@@ -19,6 +19,8 @@ Feature UI、SSH 会话或 LAN 业务规则。
 - `NetworkRuntime.diagnostics` 是只读生命周期观察契约；它只能报告
   `NetworkRuntimeImpl` 直接拥有的 native handle 和已登记的连接/Capability，
   不得为了填充诊断数字而接管 Feature 协议连接。
+- `NetworkCommandGateway` 只是 Runtime-owned native v1 handle 的借用型命令/事件
+  入口；它不得拥有、复制或关闭 handle，也不得在其中加入业务协议规则。
 
 ## 生命周期
 
@@ -26,6 +28,8 @@ Feature UI、SSH 会话或 LAN 业务规则。
   Future；失败会清除 in-flight 状态并允许重试；
 - Runtime dispose 会等待未完成的 handle 创建，然后显式 close；dispose 后所有新的
   Capability 请求必须失败；
+- `openCommandGateway()` 返回的 gateway 由 Runtime 绑定，调用方只负责取消自己的
+  事件订阅；AppRuntime/NetworkRuntime 仍是 native handle 的唯一释放 Owner；
 - handle 的底层顺序必须保持 `create -> start -> stop -> destroy`，Finalizer 不替代
   显式 close。
 
@@ -44,6 +48,7 @@ Agent memory 和维护 Skill。
 - 允许修改范围：Network Runtime/Facade、Capability、native adapter、传输契约和测试。
 - 禁止依赖：Feature、App Shell 业务实现或其他 Package 的 `/src/`；不得新增第二套协议实现。
 - Public API 修改要求：同步 `network_transport.dart`、AppRuntime、Feature adapters、测试和架构文档。
+  `NetworkCommandGateway` 的新增或修改必须明确借用关系和释放责任。
 - 数据库约束：不拥有数据库，不保存配对凭据或业务历史。
 - 资源释放规则：AppRuntime 拥有 Runtime；adapter 按 `create/start/stop/destroy` 管理 native handle。
 - 必须运行的测试：`flutter analyze --no-pub`、`flutter test --no-pub`，native hook 变更还要运行 Rust 检查。

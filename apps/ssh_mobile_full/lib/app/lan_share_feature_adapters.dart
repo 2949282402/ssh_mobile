@@ -5,7 +5,7 @@
 
 import 'package:feature_lan_share/feature_lan_share.dart' as lan;
 import 'package:flutter/foundation.dart';
-import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
+import 'package:network_transport/network_transport.dart';
 
 import '../core/services/data_protection_service.dart';
 import '../services/app_log_service.dart';
@@ -362,8 +362,10 @@ final class AppLanShareNetworkIdentityAdapter
 
 /// 在 App Shell 创建 native v1 NetworkService，并隐藏 FFI 具体类型。
 final class AppLanShareNetworkFactory implements lan.LanShareNetworkFactory {
-  /// 创建不持有 AppRuntime 的网络工厂。
-  const AppLanShareNetworkFactory();
+  /// 创建只使用 AppRuntime-owned NetworkRuntime 的网络工厂。
+  const AppLanShareNetworkFactory(this._networkRuntime);
+
+  final NetworkRuntime _networkRuntime;
 
   @override
   Future<lan.NetworkService?> create({
@@ -373,14 +375,10 @@ final class AppLanShareNetworkFactory implements lan.LanShareNetworkFactory {
     required String listenAddress,
     required String receiveDirectory,
   }) async {
-    NativeNetworkRuntime? runtime;
-    try {
-      runtime = await const SshMobileNetworkNative().createRuntime();
-      return _AppLanShareNetworkService(NativeNetworkService(runtime));
-    } on Object {
-      await runtime?.dispose();
-      rethrow;
-    }
+    final gateway = await _networkRuntime.openCommandGateway();
+    return _AppLanShareNetworkService(
+      NativeNetworkService.fromGateway(gateway),
+    );
   }
 }
 

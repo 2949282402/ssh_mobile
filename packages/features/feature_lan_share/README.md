@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # feature_lan_share
 
@@ -7,8 +7,9 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
 
 ## 边界
 
-- 只通过 `app_core`、`app_ui`、`network_transport` 及本包定义的 Port 使用
-  App 设置、日志、数据保护、网络和 Relay 能力。
+- 只通过 `app_core`、`app_ui`、`network_transport`、`network_sdk` 及本包定义的
+  Port 使用 App 设置、日志、数据保护、网络和 Relay 能力；`network_sdk` 只提供
+  Flutter 客户端契约，不拥有传输实现。
 - 不依赖 SSH、其他 Feature 的实现或 App 的 `/src/` 路径。
 - `LanShareModule` 独占 `lan_share.db`、历史 Repository 和接收器资源；App
   Shell 只注入 App Scope 资源并负责配置是否激活接收器。
@@ -25,9 +26,11 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
 - 不负责：SSH、其他 Feature 实现、App `/src/`、未审批的网络写入或秘密持久化。
 - Public API：`package:feature_lan_share/feature_lan_share.dart`，包括 Module、
   Receiver 配置、页面和 Port。
-- 依赖：`app_core`、`app_ui`、`network_transport` 及 LAN 直接插件。
+- 依赖：`app_core`、`app_ui`、`network_transport`、`network_sdk` 及 LAN 直接插件。
 - 数据库：`LanShareModule` 独占 `lan_share.db`，只存历史和非秘密配对 metadata。
 - 生命周期与资源 Owner：Module 负责数据库、历史 Repository、Receiver、Timer、
   WebSocket/HTTPS 资源；AppRuntime/NetworkRuntime 负责注入的 App Scope 资源。
+  App Shell adapter 将 Runtime-owned `NetworkCommandGateway` 适配为
+  `network_sdk.SessionClient`，Feature 只能释放自己的订阅和 Session 使用状态。
 - 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
   `flutter analyze --no-pub`、`flutter test --no-pub`。

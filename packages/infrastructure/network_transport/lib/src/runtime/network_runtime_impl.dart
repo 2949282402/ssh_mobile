@@ -4,9 +4,12 @@
 // 协议。一个 AppRuntime 只应创建一个实例，并在 App 退出时调用 dispose。
 
 import 'dart:async';
+import 'dart:typed_data';
 
 import '../config/network_config.dart';
+import '../native/network_command_gateway.dart';
 import '../native/native_network_adapter.dart';
+import '../transport/transport_connection.dart';
 import 'network_capability.dart';
 import 'network_runtime.dart';
 
@@ -93,6 +96,17 @@ final class NetworkRuntimeImpl implements NetworkRuntime {
   @override
   bool isCapabilityReady(NetworkCapability capability) =>
       _readyCapabilities.contains(capability);
+
+  @override
+  Future<NetworkCommandGateway> openCommandGateway() async {
+    _ensureUsable();
+    await ensureCapability(NetworkCapability.quic);
+    final handle = _nativeHandle;
+    if (handle == null) {
+      throw StateError('Network native handle is unavailable.');
+    }
+    return _RuntimeCommandGateway(handle);
+  }
 
   Future<void> _initializeCapability(NetworkCapability capability) async {
     _state = NetworkRuntimeState.starting;
@@ -191,4 +205,18 @@ final class NetworkRuntimeImpl implements NetworkRuntime {
       throw StateError('NetworkRuntime has been disposed.');
     }
   }
+}
+
+/// 将 Runtime-owned native handle 暴露为不拥有资源的 gateway。
+final class _RuntimeCommandGateway implements NetworkCommandGateway {
+  _RuntimeCommandGateway(this._handle);
+
+  final NativeNetworkHandle _handle;
+
+  @override
+  Stream<Uint8List> get events => _handle.rawEvents;
+
+  @override
+  TransportOperationStatus sendCommand(Uint8List command) =>
+      _handle.sendCommand(command);
 }

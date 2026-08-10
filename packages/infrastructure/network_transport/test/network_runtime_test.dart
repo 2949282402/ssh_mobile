@@ -92,6 +92,25 @@ void main() {
     expect(adapter.createCalls, 0);
   });
 
+  test('Command gateway shares the Runtime-owned native handle', () async {
+    final handle = _FakeNativeNetworkHandle();
+    final runtime = NetworkRuntimeImpl(
+      nativeAdapter: _FakeNativeNetworkAdapter(() async => handle),
+    );
+
+    final gateway = await runtime.openCommandGateway();
+
+    expect(
+      gateway.sendCommand(Uint8List.fromList(<int>[1])),
+      TransportOperationStatus.success,
+    );
+    await runtime.dispose();
+    expect(
+      gateway.sendCommand(Uint8List.fromList(<int>[1])),
+      TransportOperationStatus.stopped,
+    );
+  });
+
   test(
     'Dispose waits for a pending native handle and rejects later use',
     () async {
