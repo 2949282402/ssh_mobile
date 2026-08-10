@@ -4,7 +4,8 @@
 
 ## 允许范围
 
-- 修改 Flutter 网络客户端契约、类型化结果/错误、事件和 fake；
+- 修改 Flutter 网络客户端契约、类型化结果/错误、事件、请求执行器和 fake；
+- 修改不拥有网络资源的 JSON Bootstrap/鉴权客户端实现；
 - 修改公共入口和契约测试；
 - 修改必须同步 App Shell adapter、使用方 Feature、架构依赖文档和资源所有权记录。
 
@@ -19,7 +20,11 @@
 ## API 规则
 
 - `BootstrapClient` 不携带 Bearer；
+- `JsonBootstrapClient` 只能通过注入的 `SdkRequestExecutor` 发起公开探测和
+  enrollment；不得在 Package 内导入 `dart:io` 或创建 `HttpClient`；
 - `AuthenticatedApiClient` 只表达控制面请求；
+- `JsonAuthenticatedApiClient` 最多在 401 后刷新并重试一次，失败必须失效会话，
+  不得把 Token 放入错误、事件或日志；
 - `SessionClient` 只表达业务 Session/Transfer 操作；
 - `EventStreamClient` 只暴露统一 typed event stream；
 - 新增传输实现必须先更新 ADR，不得新增 `*SocketClient` 类型。

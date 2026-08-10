@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # ssh_mobile_full
 
@@ -33,7 +33,8 @@ Playbook、RAG、MCP 和 LAN Share 数据库分别由对应 Core/Feature Module 
 
 `AppRuntimeFactory` 创建 App Scope 资源，`AppRuntime` 按依赖逆序释放 Network、SSH、
 Modules、数据库、日志和适配器；Route Scope 负责 ViewModel、Controller、Timer 与
-Subscription。
+Subscription。控制面由 `network_sdk` 的 typed client 使用 App Shell 注入的
+`SdkRequestExecutor`，LAN 数据面仍由 Runtime-owned native gateway 负责。
 
 ## 测试命令
 

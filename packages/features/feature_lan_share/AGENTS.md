@@ -6,8 +6,8 @@
 - Package 不得导入 SSH、其他 Feature 实现或 App 的 `/src/`；跨边界能力必须
   通过 `LanShare*Port` 注入。
 - 网络客户端契约统一来自 `network_sdk`；Feature 不得自行创建 Socket、FFI、
-  HTTP client、native handle 或第二套传输实现。Runtime-owned gateway 只能由
-  App Shell adapter 注入。
+  HTTP client、native handle 或第二套传输实现。`BootstrapClient` 和
+  `NetworkCommandGateway` 只能由 App Shell adapter 注入。
 - `LanShareModule` 是 `lan_share.db`、Repository、Receiver 和 Route Service
   的 Owner；Route Scope 只负责 ViewModel 生命周期。
 - 不把密钥、PIN、Bearer Token、Relay credential 或远端 localPath 写入明文

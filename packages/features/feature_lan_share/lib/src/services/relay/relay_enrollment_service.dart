@@ -1,21 +1,14 @@
 // v1 Relay enrollment 与原生凭据桥接；Dart 不承载 Relay 数据面。
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:network_sdk/network_sdk.dart';
 
 import '../network/network_models.dart';
-
-/// 允许测试和平台适配层注入 HTTPS enrollment 调用。
-typedef RelayEnrollmentRequester =
-    Future<Map<String, dynamic>> Function(
-      Uri endpoint,
-      Map<String, dynamic> payload,
-    );
 
 /// 标识用于 enrollment 和原生配置的 Relay 源站。
 final class RelaySettings {
@@ -50,25 +43,22 @@ final class RelayEnrollmentService {
   /// 为一个稳定设备身份创建 enrollment 服务。
   RelayEnrollmentService({
     required this.currentDeviceId,
+    required BootstrapClient bootstrapClient,
     FlutterSecureStorage? secureStorage,
-    RelayEnrollmentRequester? enrollmentRequester,
   }) : _secureStorage =
            secureStorage ??
            const FlutterSecureStorage(
              mOptions: MacOsOptions(usesDataProtectionKeychain: false),
            ),
-       _enrollmentRequester = enrollmentRequester ?? _postEnrollment;
+       _bootstrapClient = bootstrapClient;
 
   /// 绑定在 enrollment 凭据中的当前设备标识。
   final String currentDeviceId;
   final FlutterSecureStorage _secureStorage;
-  final RelayEnrollmentRequester _enrollmentRequester;
+  final BootstrapClient _bootstrapClient;
 
   /// Go 与 Rust Relay 共享的当前开发线协议版本。
   static const int protocolVersion = 1;
-
-  /// v1 enrollment 端点。
-  static const String enrollPath = '/v1/devices/enroll';
 
   /// 为设备执行 enrollment，并将凭据写入安全存储。
   ///
@@ -101,52 +91,39 @@ final class RelayEnrollmentService {
     try {
       final pair = await _signingKeyPair();
       final publicKey = await pair.extractPublicKey();
-      final decoded = await _enrollmentRequester(endpoint.resolve(enrollPath), {
-        'device_id': currentDeviceId,
-        'public_key': base64UrlEncode(publicKey.bytes).replaceAll('=', ''),
-        'enrollment_token': enrollmentToken,
-        'protocol_version': protocolVersion,
-        'platform': Platform.operatingSystem,
-      });
-      final credential = decoded['credential'] as String?;
-      final responseVersion = (decoded['protocol_version'] as num?)?.toInt();
-      final serverExpiresAt = (decoded['expires_at'] as num?)?.toInt();
-      final serverTime = (decoded['server_time'] as num?)?.toInt();
+      final enrollment = await _bootstrapClient.enroll(
+        endpoint,
+        EnrollmentRequest(
+          deviceId: currentDeviceId,
+          identityPublicKey: Uint8List.fromList(publicKey.bytes),
+          enrollmentToken: enrollmentToken,
+          protocolVersion: protocolVersion,
+          platform: Platform.operatingSystem,
+        ),
+      );
+      if (enrollment is SdkFailure<DeviceEnrollment>) {
+        return NetworkFailure<void>(enrollment.error);
+      }
+      final data = (enrollment as SdkSuccess<DeviceEnrollment>).data;
       final nowSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      if (credential == null || credential.isEmpty) {
-        return _failure(
-          code: NetworkErrorCode.relayError,
-          message: 'Relay enrollment response omitted credentials.',
-        );
-      }
-      if (responseVersion != protocolVersion) {
-        return _failure(
-          code: NetworkErrorCode.relayError,
-          message: 'Relay enrollment response used an unsupported protocol.',
-        );
-      }
-      if (serverExpiresAt == null ||
-          serverTime == null ||
-          serverExpiresAt <= serverTime) {
-        return _failure(
-          code: NetworkErrorCode.relayError,
-          message: 'Relay enrollment response contained an invalid expiry.',
-        );
-      }
-      final localExpiresAt = nowSeconds + (serverExpiresAt - serverTime);
+      final localExpiresAt =
+          nowSeconds + data.expiresAt.difference(data.serverTime).inSeconds;
       await _secureStorage.write(
         key: _credentialKey,
         value: jsonEncode({
           'endpoint': _credentialEndpoint(endpoint),
           'device_id': currentDeviceId,
-          'credential': credential,
+          'credential': data.relayCredential,
           'expires_at': localExpiresAt,
-          'protocol_version': responseVersion,
+          'protocol_version': data.protocolVersion,
         }),
       );
       return const NetworkSuccess<void>(null);
-    } on Object catch (error) {
-      return NetworkFailure<void>(_networkError(error));
+    } on Object {
+      return _failure(
+        code: NetworkErrorCode.relayError,
+        message: 'Relay enrollment failed.',
+      );
     }
   }
 
@@ -217,37 +194,6 @@ final class RelayEnrollmentService {
   }
 }
 
-/// 将 enrollment 异常映射为公开网络错误，不暴露底层异常文本。
-NetworkError _networkError(Object error) {
-  if (error is TimeoutException) {
-    return const NetworkError(
-      code: NetworkErrorCode.timeout,
-      message: 'Relay enrollment timed out.',
-      operation: NetworkOperation.enrollRelay,
-    );
-  }
-  if (error is ArgumentError) {
-    return const NetworkError(
-      code: NetworkErrorCode.invalidArgument,
-      message: 'Relay enrollment arguments are invalid.',
-      operation: NetworkOperation.enrollRelay,
-    );
-  }
-  if (error is _RelayEnrollmentHttpException &&
-      error.statusCode == HttpStatus.unauthorized) {
-    return const NetworkError(
-      code: NetworkErrorCode.authenticationFailed,
-      message: 'Relay enrollment authentication failed.',
-      operation: NetworkOperation.enrollRelay,
-    );
-  }
-  return const NetworkError(
-    code: NetworkErrorCode.relayError,
-    message: 'Relay enrollment failed.',
-    operation: NetworkOperation.enrollRelay,
-  );
-}
-
 /// 将网络错误包装为统一失败结果。
 NetworkFailure<void> _failure({
   required NetworkErrorCode code,
@@ -259,54 +205,6 @@ NetworkFailure<void> _failure({
     operation: NetworkOperation.enrollRelay,
   ),
 );
-
-/// 记录 enrollment HTTP 状态，供错误策略转换为稳定错误码。
-final class _RelayEnrollmentHttpException implements Exception {
-  /// 创建带 HTTP 状态码的内部 enrollment 异常。
-  const _RelayEnrollmentHttpException(this.statusCode);
-
-  /// 导致失败的 HTTP 状态码。
-  final int statusCode;
-}
-
-/// 执行生产 HTTPS enrollment 请求，并限制响应体大小。
-Future<Map<String, dynamic>> _postEnrollment(
-  Uri endpoint,
-  Map<String, dynamic> payload,
-) async {
-  final client = HttpClient();
-  try {
-    final request = await client.postUrl(endpoint);
-    request.headers.contentType = ContentType.json;
-    request.write(jsonEncode(payload));
-    final response = await request.close().timeout(const Duration(seconds: 10));
-    final body = await _readBoundedUtf8(response, 64 * 1024);
-    if (response.statusCode != HttpStatus.ok) {
-      throw _RelayEnrollmentHttpException(response.statusCode);
-    }
-    final decoded = jsonDecode(body);
-    if (decoded is! Map<String, dynamic>) {
-      throw const FormatException('Relay enrollment response must be JSON.');
-    }
-    return decoded;
-  } finally {
-    client.close(force: true);
-  }
-}
-
-/// 在固定内存上限内读取 enrollment 响应。
-Future<String> _readBoundedUtf8(Stream<List<int>> source, int maxBytes) async {
-  final bytes = BytesBuilder(copy: false);
-  var total = 0;
-  await for (final chunk in source) {
-    total += chunk.length;
-    if (total > maxBytes) {
-      throw const FormatException('Relay response is too large.');
-    }
-    bytes.add(chunk);
-  }
-  return utf8.decode(bytes.takeBytes());
-}
 
 /// 将 Relay 源站转换为稳定的安全存储绑定字符串。
 String _credentialEndpoint(Uri endpoint) =>

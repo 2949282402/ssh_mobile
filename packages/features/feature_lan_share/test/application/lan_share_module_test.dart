@@ -8,6 +8,7 @@ import 'package:drift/native.dart';
 import 'package:feature_lan_share/feature_lan_share.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 
 void main() {
@@ -29,6 +30,7 @@ void main() {
           LanShareDataProtectionPort: _FakeDataProtection(),
           LanShareNetworkIdentityPort: _FakeIdentity(),
           LanShareNetworkFactory: networkFactory,
+          BootstrapClient: _FakeBootstrapClient(),
           NetworkRuntime: networkRuntime,
         }),
       );
@@ -56,6 +58,26 @@ void main() {
     await expectLater(module.initialize(), throwsStateError);
     expect(module.state, ModuleState.registered);
   });
+}
+
+final class _FakeBootstrapClient implements BootstrapClient {
+  @override
+  Future<SdkResult<BootstrapMetadata>> probe(Uri endpoint) async =>
+      const SdkSuccess(BootstrapMetadata(protocolVersion: 1));
+
+  @override
+  Future<SdkResult<DeviceEnrollment>> enroll(
+    Uri endpoint,
+    EnrollmentRequest request,
+  ) async => SdkSuccess(
+    DeviceEnrollment(
+      deviceId: request.deviceId,
+      relayCredential: 'fake',
+      expiresAt: DateTime.utc(2030),
+      serverTime: DateTime.utc(2029),
+      protocolVersion: 1,
+    ),
+  );
 }
 
 final class _FakeSettings extends ChangeNotifier

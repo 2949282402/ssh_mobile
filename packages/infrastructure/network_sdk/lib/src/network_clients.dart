@@ -6,12 +6,21 @@ import 'network_models.dart';
 abstract interface class BootstrapClient {
   Future<SdkResult<BootstrapMetadata>> probe(Uri endpoint);
 
-  Future<SdkResult<DeviceEnrollment>> enroll(EnrollmentRequest request);
+  Future<SdkResult<DeviceEnrollment>> enroll(
+    Uri endpoint,
+    EnrollmentRequest request,
+  );
 }
 
 /// 控制面鉴权会话提供者；具体 token 存储由 App Shell 实现。
 abstract interface class AuthSessionProvider {
   Future<String?> readAccessToken();
+
+  /// 尝试获取一个替换当前 token 的新 token；无法刷新时返回 null。
+  ///
+  /// 默认实现保持纯内存/无刷新 Provider 的行为，避免把刷新协议强加给
+  /// 仅使用静态设备凭据的 App Shell。
+  Future<String?> refreshAccessToken() async => null;
 
   Future<void> invalidate();
 }
@@ -100,9 +109,15 @@ final class NetworkSdkClients implements NetworkSdk {
 
 /// 公开 bootstrap 服务能力快照。
 final class BootstrapMetadata {
-  const BootstrapMetadata({required this.protocolVersion});
+  const BootstrapMetadata({
+    required this.protocolVersion,
+    this.capabilities = const <String>[],
+    this.serverTime,
+  });
 
   final int protocolVersion;
+  final List<String> capabilities;
+  final DateTime? serverTime;
 }
 
 final class EnrollmentRequest {
@@ -110,11 +125,15 @@ final class EnrollmentRequest {
     required this.deviceId,
     required this.identityPublicKey,
     this.enrollmentToken,
+    this.protocolVersion = 1,
+    this.platform,
   });
 
   final String deviceId;
   final Uint8List identityPublicKey;
   final String? enrollmentToken;
+  final int protocolVersion;
+  final String? platform;
 }
 
 /// enrollment 返回的敏感材料只交给 App Shell 安全存储。
@@ -122,10 +141,16 @@ final class DeviceEnrollment {
   const DeviceEnrollment({
     required this.deviceId,
     required this.relayCredential,
+    required this.expiresAt,
+    required this.serverTime,
+    required this.protocolVersion,
   });
 
   final String deviceId;
   final String relayCredential;
+  final DateTime expiresAt;
+  final DateTime serverTime;
+  final int protocolVersion;
 }
 
 final class PeerDescriptor {

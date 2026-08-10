@@ -3,3 +3,5 @@ library;
 
 export 'src/network_clients.dart';
 export 'src/network_models.dart';
+export 'src/network_requests.dart';
+export 'src/network_http_clients.dart';

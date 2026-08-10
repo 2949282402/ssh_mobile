@@ -43,6 +43,8 @@ dependencies:
     path: ../../packages/features/feature_webview
   feature_developer:
     path: ../../packages/features/feature_developer
+  network_sdk:
+    path: ../../packages/infrastructure/network_sdk
   dartssh2: ^2.22.5
   ssh_mobile_network_native:
     path: ../../packages/infrastructure/ssh_mobile_network_native

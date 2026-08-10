@@ -15,6 +15,7 @@
 | NetworkRuntime | `AppRuntime` | App | `dispose` after SSH/SFTP stop |
 | Native handle | Network native adapter via `NetworkRuntime` | App/Native | stop isolate, then `destroy` handle |
 | NetworkCommandGateway | `NetworkRuntime` / borrowed by App Shell adapter | App/borrowed Session | cancel adapter subscriptions; never stop or destroy the Runtime/native handle |
+| SDK control-plane HttpClient | `AppSdkRequestExecutor` | Request | read bounded response, then `close(force: true)` on success or error |
 | SshSessionManager | `AppRuntime` | App | `close` Session Pool and runtime |
 | SSH Session | `SshSessionManager` / `SshSessionPool` | Lease/Session | Lease `release`; idle session `close` |
 | SFTP compatibility service | `AppRuntime` → legacy `SftpService` | App | `dispose` after route Modules stop |

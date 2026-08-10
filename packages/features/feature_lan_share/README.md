@@ -31,6 +31,7 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
 - 生命周期与资源 Owner：Module 负责数据库、历史 Repository、Receiver、Timer、
   WebSocket/HTTPS 资源；AppRuntime/NetworkRuntime 负责注入的 App Scope 资源。
   App Shell adapter 将 Runtime-owned `NetworkCommandGateway` 适配为
-  `network_sdk.SessionClient`，Feature 只能释放自己的订阅和 Session 使用状态。
+  `network_sdk.SessionClient`，并将控制面请求执行器组装为
+  `network_sdk.BootstrapClient`；Feature 只能释放自己的订阅和 Session 使用状态。
 - 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
   `flutter analyze --no-pub`、`flutter test --no-pub`。

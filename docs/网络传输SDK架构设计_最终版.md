@@ -1,3 +1,5 @@
+> 最新更新时间：2026-08-10
+
 # 网络传输 SDK 架构设计
 
 > 文档定位：本文件作为后续 Flutter + Rust 跨平台网络传输 SDK 的总体架构设计基线，用于指导模块拆分、接口定义、协议接入、连接策略、Relay 实现、应用层加密、测试和迭代计划。
@@ -1879,6 +1881,73 @@ lib/
 Flutter 侧不能复制一份 Rust 的连接状态机。
 
 Rust 是网络状态的 Source of Truth，Flutter 只订阅状态事件。
+
+### 24.1 Flutter 通用客户端接口层
+
+Flutter 层可以提供面向业务的通用 Client Facade，用于区分访问策略和
+生命周期，但不应按 QUIC、TCP、WebSocket 等具体 Transport 暴露客户端。
+推荐的边界如下：
+
+```text
+Flutter Feature / ViewModel
+            ↓
+Flutter Client Facade
+├── BootstrapClient          无 Bearer 鉴权的公开/引导请求
+├── AuthenticatedApiClient   带鉴权的控制面请求
+├── EventStreamClient        Rust SDK 统一事件流
+└── SessionClient            设备业务会话和业务操作
+            ↓
+      App Shell Adapters
+      ├── SdkRequestExecutor → Control Plane HTTP
+      └── NetworkCommandGateway → Runtime-owned v1 Native SDK
+```
+
+客户端职责建议：
+
+- `BootstrapClient`：处理公开探测、版本/能力查询、登录或注册引导、Relay
+  enrollment 等不依赖已建立 Bearer Session 的请求。请求中的密码、密钥或
+  enrollment secret 仍属于敏感数据，不能写入日志或普通持久化存储。
+- `AuthenticatedApiClient`：处理控制面 API 的 Bearer Token 注入、Token
+  刷新、鉴权失败映射、请求取消和超时。Token 由安全存储和专用
+  `AuthSessionProvider` 管理，不能暴露给业务 Widget。
+- `EventStreamClient`：暴露 Rust SDK 的 `SdkEvent` 流，并负责订阅、取消、
+  生命周期和有界事件处理。它不是 Flutter 侧的裸 WebSocket/QUIC 客户端。
+- `SessionClient`：提供 `connect(peer)`、`disconnect(session)`、文件、终端、
+  剪贴板和远控等业务 API。Peer 身份认证、长连接、重连、Route 选择、
+  Delivery Recovery 和 Transport 切换由 Rust SDK 完成。
+
+示例接口可以保持粗粒度：
+
+```dart
+abstract interface class BootstrapClient {
+  Future<BootstrapMetadata> probe(Uri endpoint);
+  Future<DeviceEnrollment> enroll(Uri endpoint, EnrollmentRequest request);
+}
+
+abstract interface class AuthenticatedApiClient {
+  Future<UserProfile> getProfile();
+  Future<RelayConfig> saveRelayConfig(RelayConfig config);
+}
+
+abstract interface class SessionClient {
+  Stream<SdkEvent> get events;
+  Future<SessionInfo> connect(PeerId peerId);
+  Future<void> disconnect(SessionId sessionId);
+  Future<TransferInfo> sendFile(SessionId sessionId, String path);
+}
+```
+
+鉴权策略、连接生命周期和底层 Transport 是三个正交维度，不建议组合出
+`AuthenticatedSocketClient`、`UnauthenticatedSocketClient`、
+`RelaySocketClient` 等大量类型。只有控制面确实需要 Flutter 直接维护的
+HTTP/WebSocket 长连接时，才增加对应的 App Shell Adapter；网络数据面的
+Socket 始终由 Rust Core SDK 持有，Flutter 只消费统一状态和事件。
+
+当前开发实现已经将 `SdkRequestExecutor`、`JsonBootstrapClient` 和
+`JsonAuthenticatedApiClient` 放入 `packages/infrastructure/network_sdk/`；App
+Shell 负责提供真正的 HTTP/TLS 执行器，LAN Feature 只接收注入的
+`BootstrapClient`。网络数据面仍沿用 v1 `NetworkCommandGateway`，不在 Flutter
+层新增第二套 Socket 或协议实现。
 
 ---
 

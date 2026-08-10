@@ -71,7 +71,10 @@ enum NetworkOperation {
   startWebShare('start_webshare'),
   stopWebShare('stop_webshare'),
   enrollRelay('enroll_relay'),
-  connectRelay('connect_relay');
+  connectRelay('connect_relay'),
+  bootstrapProbe('bootstrap_probe'),
+  listPeers('list_peers'),
+  requestConnection('request_connection');
 
   const NetworkOperation(this.wireName);
 

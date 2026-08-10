@@ -127,7 +127,8 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   transfer implementation, `LanShareModule`, `LanShareHistoryRepository`, and
   `lan_share.db`. The database contains transfer history plus non-secret pairing
   metadata only. `AppRuntimeFactory` registers settings, logger, data
-  protection, QUIC identity, native-network factory, and `NetworkRuntime` Ports;
+  protection, QUIC identity, BootstrapClient, native-network factory, and
+  `NetworkRuntime` Ports;
   the Module activates the receiver only when its configuration allows it.
   `apps/ssh_mobile_full/lib/app/lan_share_feature_adapters.dart` remains the
   compatibility boundary, while old LAN paths stay non-owning migration
@@ -245,10 +246,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 
 - 2026-08-10: `packages/infrastructure/network_sdk/` is the typed Flutter client
   boundary for bootstrap, authenticated API, business sessions, and event streams.
-  It owns no transport or lifecycle resource. `NetworkCommandGateway` is a borrowed
-  bridge from the App-owned v1 `NetworkRuntime` to the App Shell adapter; callers
-  release subscriptions only, while `AppRuntime` remains the sole native handle
-  owner. Keep the current v1 wire/protocol contract until a later planned migration.
+  Its `JsonBootstrapClient` and `JsonAuthenticatedApiClient` own no transport or
+  lifecycle resource and consume only an App-provided `SdkRequestExecutor`.
+  `NetworkCommandGateway` is a borrowed bridge from the App-owned v1
+  `NetworkRuntime` to the App Shell adapter; callers release subscriptions only,
+  while `AppRuntime` remains the sole native handle owner. Keep the current v1
+  wire/protocol contract until a later planned migration.
 - LAN file sends use the injected v1 `NetworkService`; do not restore legacy
   transport adapters or protocol fallbacks. Native commands/events are typed,
   peer identity and keys are pinned before connect, and command acceptance is

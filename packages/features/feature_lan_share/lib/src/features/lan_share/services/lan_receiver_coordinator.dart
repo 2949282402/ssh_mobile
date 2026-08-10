@@ -7,6 +7,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 import 'package:uuid/uuid.dart';
 
@@ -30,6 +31,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     required this.dataProtection,
     required this.networkIdentity,
     required this.networkFactory,
+    required this.bootstrapClient,
     required this.historyRepository,
     required this.networkRuntime,
     this.initializeNetwork = true,
@@ -49,6 +51,9 @@ final class LanReceiverCoordinator extends ChangeNotifier {
 
   /// App Shell 创建原生网络服务的唯一入口。
   final LanShareNetworkFactory networkFactory;
+
+  /// App Shell 注入的无 Bearer Bootstrap 客户端。
+  final BootstrapClient bootstrapClient;
 
   /// Module 所有的历史 Repository。
   final LanShareHistoryRepository historyRepository;
@@ -407,6 +412,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
           : null;
       final relayEnrollmentService = RelayEnrollmentService(
         currentDeviceId: deviceId,
+        bootstrapClient: bootstrapClient,
       );
       transfer = LanTransferService(
         currentDeviceId: deviceId,

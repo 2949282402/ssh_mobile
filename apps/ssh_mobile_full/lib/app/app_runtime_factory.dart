@@ -11,6 +11,7 @@ import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:feature_webview/feature_webview.dart' as feature_webview;
+import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 
 import '../core/services/data_protection_service.dart';
@@ -31,6 +32,7 @@ import 'developer_feature_adapters.dart';
 import 'lan_share_feature_adapters.dart';
 import 'mcp_feature_adapters.dart';
 import 'monitoring_feature_adapters.dart';
+import 'network_sdk_adapters.dart';
 import 'playbook_feature_adapters.dart';
 import 'rag_feature_adapters.dart';
 import 'terminal_ssh_capability_adapter.dart';
@@ -81,6 +83,9 @@ final class AppRuntimeFactory {
       connectionRepository: runtimeConnectionRepository,
     );
     final runtimeNetworkRuntime = networkRuntime ?? NetworkRuntimeImpl();
+    final bootstrapClient = JsonBootstrapClient(
+      executor: const AppSdkRequestExecutor(),
+    );
     unawaited(
       runtimeConnectionRepository.initialize().catchError((error, stackTrace) {
         logger.error(
@@ -285,6 +290,7 @@ final class AppRuntimeFactory {
         feature_lan_share.LanShareNetworkFactory: AppLanShareNetworkFactory(
           runtimeNetworkRuntime,
         ),
+        BootstrapClient: bootstrapClient,
         NetworkRuntime: runtimeNetworkRuntime,
       }),
     );

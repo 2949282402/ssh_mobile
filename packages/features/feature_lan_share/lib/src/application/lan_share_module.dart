@@ -5,6 +5,7 @@
 // 单例，也不会因为包被编译就自动启动后台监听。
 
 import 'package:app_core/app_core.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 
 import '../data/database/lan_share_database.dart';
@@ -35,6 +36,7 @@ final class LanShareModule implements AppModule {
   LanShareDataProtectionPort? _dataProtection;
   LanShareNetworkIdentityPort? _networkIdentity;
   LanShareNetworkFactory? _networkFactory;
+  BootstrapClient? _bootstrapClient;
   NetworkRuntime? _networkRuntime;
   bool? _receiverEnabled;
   LanShareDatabase? _database;
@@ -77,6 +79,7 @@ final class LanShareModule implements AppModule {
     _dataProtection = context.require<LanShareDataProtectionPort>();
     _networkIdentity = context.require<LanShareNetworkIdentityPort>();
     _networkFactory = context.require<LanShareNetworkFactory>();
+    _bootstrapClient = context.require<BootstrapClient>();
     _networkRuntime = context.require<NetworkRuntime>();
     _receiverEnabled = _configuredReceiverEnabled ?? _settings!.receiverEnabled;
   }
@@ -95,12 +98,14 @@ final class LanShareModule implements AppModule {
     final dataProtection = _dataProtection;
     final networkIdentity = _networkIdentity;
     final networkFactory = _networkFactory;
+    final bootstrapClient = _bootstrapClient;
     final networkRuntime = _networkRuntime;
     if (settings == null ||
         logger == null ||
         dataProtection == null ||
         networkIdentity == null ||
         networkFactory == null ||
+        bootstrapClient == null ||
         networkRuntime == null) {
       _initializeFuture = null;
       throw StateError('LanShareModule must be registered first.');
@@ -119,6 +124,7 @@ final class LanShareModule implements AppModule {
         dataProtection: dataProtection,
         networkIdentity: networkIdentity,
         networkFactory: networkFactory,
+        bootstrapClient: bootstrapClient,
         historyRepository: repository,
         networkRuntime: networkRuntime,
         initializeNetwork: receiverEnabled,
@@ -189,6 +195,7 @@ final class LanShareModule implements AppModule {
     _dataProtection = null;
     _networkIdentity = null;
     _networkFactory = null;
+    _bootstrapClient = null;
     _networkRuntime = null;
     _state = ModuleState.disposed;
 
