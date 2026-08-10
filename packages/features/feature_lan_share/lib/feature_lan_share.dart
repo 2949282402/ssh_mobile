@@ -21,4 +21,3 @@ export 'src/features/lan_share/views/network_incoming_transfer_host.dart';
 export 'src/features/lan_share/views/vpn_p2p_share_view.dart';
 export 'src/services/lan_share/lan_network_models.dart';
 export 'src/services/lan_share/lan_share_models.dart';
-export 'src/services/network/network_models.dart';

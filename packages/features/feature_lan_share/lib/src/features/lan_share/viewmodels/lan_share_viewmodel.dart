@@ -18,7 +18,7 @@ import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/lan_share/lan_storage_service.dart';
 import '../../../services/lan_share/lan_transfer_protocol.dart';
 import '../../../services/lan_share/lan_transfer_service.dart';
-import '../../../services/network/network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 
 part 'lan_share_viewmodel_network.dart';
 part 'lan_share_viewmodel_history.dart';

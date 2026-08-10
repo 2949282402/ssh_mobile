@@ -18,7 +18,6 @@ import '../../../services/lan_share/lan_security_service.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/lan_share/lan_storage_service.dart';
 import '../../../services/lan_share/lan_transfer_service.dart';
-import '../../../services/network/network_models.dart';
 import '../../../services/relay/relay_enrollment_service.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 

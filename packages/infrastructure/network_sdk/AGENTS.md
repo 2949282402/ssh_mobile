@@ -27,6 +27,8 @@
   不得把 Token 放入错误、事件或日志；
 - `SessionClient` 只表达业务 Session/Transfer 操作；
 - `EventStreamClient` 只暴露统一 typed event stream；
+- 开发阶段过渡别名只能保留在 `network_sdk`；不得让 Feature 维护或重新导出
+  一份本地 `network_models.dart`；
 - 新增传输实现必须先更新 ADR，不得新增 `*SocketClient` 类型。
 
 ## 必须验证

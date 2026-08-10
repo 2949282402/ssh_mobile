@@ -5,6 +5,7 @@
 
 import 'package:feature_lan_share/feature_lan_share.dart' as lan;
 import 'package:flutter/foundation.dart';
+import 'package:network_sdk/network_sdk.dart' as sdk;
 import 'package:network_transport/network_transport.dart';
 
 import '../core/services/data_protection_service.dart';
@@ -368,7 +369,7 @@ final class AppLanShareNetworkFactory implements lan.LanShareNetworkFactory {
   final NetworkRuntime _networkRuntime;
 
   @override
-  Future<lan.NetworkService?> create({
+  Future<sdk.NetworkService?> create({
     required String deviceId,
     required Uint8List identityPrivateKey,
     required Uint8List e2ePrivateKey,
@@ -383,17 +384,17 @@ final class AppLanShareNetworkFactory implements lan.LanShareNetworkFactory {
 }
 
 /// 将旧 NetworkService 的模型和生命周期转换为 LAN Package 模型。
-final class _AppLanShareNetworkService implements lan.NetworkService {
+final class _AppLanShareNetworkService implements sdk.NetworkService {
   /// 创建不拥有除 delegate 外额外资源的适配器。
   _AppLanShareNetworkService(this._delegate);
 
   final NativeNetworkService _delegate;
 
   @override
-  Stream<lan.NetworkEvent> get events => _delegate.events.map(_toLanEvent);
+  Stream<sdk.NetworkEvent> get events => _delegate.events.map(_toLanEvent);
 
   @override
-  Future<lan.NetworkResult<void>> start(lan.NetworkRuntimeConfig config) async {
+  Future<sdk.NetworkResult<void>> start(sdk.NetworkRuntimeConfig config) async {
     final result = await _delegate.start(
       legacy_network.NetworkRuntimeConfig(
         deviceId: config.deviceId,
@@ -407,11 +408,11 @@ final class _AppLanShareNetworkService implements lan.NetworkService {
   }
 
   @override
-  Future<lan.NetworkResult<void>> stop() async =>
+  Future<sdk.NetworkResult<void>> stop() async =>
       _toVoidResult(await _delegate.stop());
 
   @override
-  Future<lan.NetworkResult<void>> upsertPeer(lan.PeerConfig peer) async =>
+  Future<sdk.NetworkResult<void>> upsertPeer(sdk.PeerConfig peer) async =>
       _toVoidResult(
         await _delegate.upsertPeer(
           legacy_network.PeerConfig(
@@ -424,16 +425,16 @@ final class _AppLanShareNetworkService implements lan.NetworkService {
       );
 
   @override
-  Future<lan.NetworkResult<void>> connect(String peerId) async =>
+  Future<sdk.NetworkResult<void>> connect(String peerId) async =>
       _toVoidResult(await _delegate.connect(peerId));
 
   @override
-  Future<lan.NetworkResult<void>> disconnect(String peerId) async =>
+  Future<sdk.NetworkResult<void>> disconnect(String peerId) async =>
       _toVoidResult(await _delegate.disconnect(peerId));
 
   @override
-  Future<lan.NetworkResult<void>> configureRelay(
-    lan.RelayConfig config,
+  Future<sdk.NetworkResult<void>> configureRelay(
+    sdk.RelayConfig config,
   ) async => _toVoidResult(
     await _delegate.configureRelay(
       legacy_network.RelayConfig(
@@ -445,11 +446,11 @@ final class _AppLanShareNetworkService implements lan.NetworkService {
   );
 
   @override
-  Future<lan.NetworkResult<void>> disconnectRelay() async =>
+  Future<sdk.NetworkResult<void>> disconnectRelay() async =>
       _toVoidResult(await _delegate.disconnectRelay());
 
   @override
-  Future<lan.NetworkResult<lan.TransferSession>> send({
+  Future<sdk.NetworkResult<sdk.TransferSession>> send({
     required String transferId,
     required String peerId,
     required String filePath,
@@ -461,7 +462,7 @@ final class _AppLanShareNetworkService implements lan.NetworkService {
     );
     return _toResult(
       result,
-      (session) => lan.TransferSession(
+      (session) => sdk.TransferSession(
         transferId: session.transferId,
         peerId: session.peerId,
         filePath: session.filePath,
@@ -471,11 +472,11 @@ final class _AppLanShareNetworkService implements lan.NetworkService {
   }
 
   @override
-  Future<lan.NetworkResult<void>> cancel(String transferId) async =>
+  Future<sdk.NetworkResult<void>> cancel(String transferId) async =>
       _toVoidResult(await _delegate.cancel(transferId));
 
   @override
-  Future<lan.NetworkResult<void>> respondToIncoming({
+  Future<sdk.NetworkResult<void>> respondToIncoming({
     required String transferId,
     required bool accept,
   }) async => _toVoidResult(
@@ -483,32 +484,32 @@ final class _AppLanShareNetworkService implements lan.NetworkService {
   );
 
   @override
-  Future<lan.NetworkResult<lan.RouteSnapshot>> state(String peerId) async =>
+  Future<sdk.NetworkResult<sdk.RouteSnapshot>> state(String peerId) async =>
       _toResult(await _delegate.state(peerId), _toLanRouteSnapshot);
 
   @override
   Future<void> dispose() => _delegate.dispose();
 }
 
-lan.NetworkResult<void> _toVoidResult(
+sdk.NetworkResult<void> _toVoidResult(
   legacy_network.NetworkResult<void> result,
 ) {
   return _toResult(result, (_) {});
 }
 
-lan.NetworkResult<T> _toResult<T, U>(
+sdk.NetworkResult<T> _toResult<T, U>(
   legacy_network.NetworkResult<U> result,
   T Function(U data) convert,
 ) {
   if (result is legacy_network.NetworkSuccess<U>) {
-    return lan.NetworkSuccess(convert(result.data));
+    return sdk.NetworkSuccess(convert(result.data));
   }
   final failure = result as legacy_network.NetworkFailure<U>;
-  return lan.NetworkFailure(_toLanError(failure.error));
+  return sdk.NetworkFailure(_toLanError(failure.error));
 }
 
-lan.NetworkError _toLanError(legacy_network.NetworkError error) =>
-    lan.NetworkError(
+sdk.NetworkError _toLanError(legacy_network.NetworkError error) =>
+    sdk.NetworkError(
       code: _toLanErrorCode(error.code),
       message: error.message,
       operation: error.operation == null
@@ -517,26 +518,26 @@ lan.NetworkError _toLanError(legacy_network.NetworkError error) =>
       peerId: error.peerId,
     );
 
-lan.NetworkErrorCode _toLanErrorCode(legacy_network.NetworkErrorCode code) =>
-    lan.NetworkErrorCode.values.byName(code.name);
+sdk.NetworkErrorCode _toLanErrorCode(legacy_network.NetworkErrorCode code) =>
+    sdk.NetworkErrorCode.values.byName(code.name);
 
-lan.NetworkOperation _toLanOperation(
+sdk.NetworkOperation _toLanOperation(
   legacy_network.NetworkOperation operation,
-) => lan.NetworkOperation.values.byName(operation.name);
+) => sdk.NetworkOperation.values.byName(operation.name);
 
-lan.NetworkRouteType _toLanRouteType(legacy_network.NetworkRouteType route) =>
-    lan.NetworkRouteType.values.byName(route.name);
+sdk.NetworkRouteType _toLanRouteType(legacy_network.NetworkRouteType route) =>
+    sdk.NetworkRouteType.values.byName(route.name);
 
-lan.PeerConnectionState _toLanPeerState(
+sdk.PeerConnectionState _toLanPeerState(
   legacy_network.PeerConnectionState state,
-) => lan.PeerConnectionState.values.byName(state.name);
+) => sdk.PeerConnectionState.values.byName(state.name);
 
-lan.RelayConnectionState _toLanRelayState(
+sdk.RelayConnectionState _toLanRelayState(
   legacy_network.RelayConnectionState state,
-) => lan.RelayConnectionState.values.byName(state.name);
+) => sdk.RelayConnectionState.values.byName(state.name);
 
-lan.RouteSnapshot _toLanRouteSnapshot(legacy_network.RouteSnapshot snapshot) =>
-    lan.RouteSnapshot(
+sdk.RouteSnapshot _toLanRouteSnapshot(legacy_network.RouteSnapshot snapshot) =>
+    sdk.RouteSnapshot(
       peerId: snapshot.peerId,
       routeType: _toLanRouteType(snapshot.routeType),
       endpoint: snapshot.endpoint,
@@ -544,7 +545,7 @@ lan.RouteSnapshot _toLanRouteSnapshot(legacy_network.RouteSnapshot snapshot) =>
       loss: snapshot.loss,
     );
 
-lan.NetworkEvent _toLanEvent(legacy_network.NetworkEvent event) {
+sdk.NetworkEvent _toLanEvent(legacy_network.NetworkEvent event) {
   return switch (event) {
     legacy_network.PeerStateChanged(
       :final eventId,
@@ -554,7 +555,7 @@ lan.NetworkEvent _toLanEvent(legacy_network.NetworkEvent event) {
       :final routeType,
       :final error,
     ) =>
-      lan.PeerStateChanged(
+      sdk.PeerStateChanged(
         eventId: eventId,
         timestamp: timestamp,
         peerId: peerId,
@@ -569,7 +570,7 @@ lan.NetworkEvent _toLanEvent(legacy_network.NetworkEvent event) {
       :final bytesTransferred,
       :final totalBytes,
     ) =>
-      lan.TransferProgress(
+      sdk.TransferProgress(
         eventId: eventId,
         timestamp: timestamp,
         transferId: transferId,
@@ -582,7 +583,7 @@ lan.NetworkEvent _toLanEvent(legacy_network.NetworkEvent event) {
       :final transferId,
       :final localPath,
     ) =>
-      lan.TransferCompleted(
+      sdk.TransferCompleted(
         eventId: eventId,
         timestamp: timestamp,
         transferId: transferId,
@@ -594,7 +595,7 @@ lan.NetworkEvent _toLanEvent(legacy_network.NetworkEvent event) {
       :final transferId,
       :final error,
     ) =>
-      lan.TransferFailed(
+      sdk.TransferFailed(
         eventId: eventId,
         timestamp: timestamp,
         transferId: transferId,
@@ -608,7 +609,7 @@ lan.NetworkEvent _toLanEvent(legacy_network.NetworkEvent event) {
       :final fileName,
       :final fileSize,
     ) =>
-      lan.IncomingTransferOffer(
+      sdk.IncomingTransferOffer(
         eventId: eventId,
         timestamp: timestamp,
         transferId: transferId,
@@ -621,7 +622,7 @@ lan.NetworkEvent _toLanEvent(legacy_network.NetworkEvent event) {
       :final timestamp,
       :final snapshot,
     ) =>
-      lan.RouteChanged(
+      sdk.RouteChanged(
         eventId: eventId,
         timestamp: timestamp,
         snapshot: _toLanRouteSnapshot(snapshot),
@@ -632,7 +633,7 @@ lan.NetworkEvent _toLanEvent(legacy_network.NetworkEvent event) {
       :final state,
       :final error,
     ) =>
-      lan.RelayStateChanged(
+      sdk.RelayStateChanged(
         eventId: eventId,
         timestamp: timestamp,
         state: _toLanRelayState(state),

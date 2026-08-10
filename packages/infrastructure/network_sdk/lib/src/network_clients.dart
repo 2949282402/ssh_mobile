@@ -166,3 +166,17 @@ final class ConnectionTicket {
   final String peerId;
   final String value;
 }
+
+// 开发阶段迁移别名：业务代码统一从 network_sdk 导入，避免各 Feature 维护一份
+// 网络模型副本。后续完成名称收敛后可删除这些别名，而不再引入 Feature 本地桥接。
+typedef NetworkResult<T> = SdkResult<T>;
+typedef NetworkSuccess<T> = SdkSuccess<T>;
+typedef NetworkFailure<T> = SdkFailure<T>;
+typedef NetworkServiceDisposedException = SdkClientDisposedException;
+typedef NetworkRuntimeConfig = SdkRuntimeConfig;
+typedef PeerConfig = SdkPeerConfig;
+typedef RelayConfig = SdkRelayConfig;
+typedef TransferSession = SdkTransferSession;
+typedef RouteSnapshot = SdkRouteSnapshot;
+typedef NetworkEvent = SdkEvent;
+typedef NetworkService = SessionClient;

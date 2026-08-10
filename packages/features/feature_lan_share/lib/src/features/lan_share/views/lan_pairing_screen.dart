@@ -8,7 +8,7 @@ import 'package:provider/provider.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/lan_share/lan_network_models.dart';
 import '../../../services/lan_share/lan_share_models.dart';
-import '../../../services/network/network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:app_ui/app_ui.dart';
 import '../lan_share_feature_scope.dart';
 import '../viewmodels/lan_share_viewmodel.dart';

@@ -8,8 +8,6 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:network_sdk/network_sdk.dart';
 
-import '../network/network_models.dart';
-
 /// 标识用于 enrollment 和原生配置的 Relay 源站。
 final class RelaySettings {
   /// 为一个 HTTPS Relay 源站创建配置。
@@ -43,14 +41,13 @@ final class RelayEnrollmentService {
   /// 为一个稳定设备身份创建 enrollment 服务。
   RelayEnrollmentService({
     required this.currentDeviceId,
-    required BootstrapClient bootstrapClient,
+    required this._bootstrapClient,
     FlutterSecureStorage? secureStorage,
   }) : _secureStorage =
            secureStorage ??
            const FlutterSecureStorage(
              mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-           ),
-       _bootstrapClient = bootstrapClient;
+           );
 
   /// 绑定在 enrollment 凭据中的当前设备标识。
   final String currentDeviceId;

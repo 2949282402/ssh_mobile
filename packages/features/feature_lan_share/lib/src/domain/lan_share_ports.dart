@@ -5,7 +5,7 @@
 
 import 'package:flutter/foundation.dart';
 
-import '../services/network/network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 
 /// LAN Share 支持的界面语言。
 enum LanShareLanguage { zh, en }

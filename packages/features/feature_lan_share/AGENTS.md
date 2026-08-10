@@ -7,7 +7,8 @@
   通过 `LanShare*Port` 注入。
 - 网络客户端契约统一来自 `network_sdk`；Feature 不得自行创建 Socket、FFI、
   HTTP client、native handle 或第二套传输实现。`BootstrapClient` 和
-  `NetworkCommandGateway` 只能由 App Shell adapter 注入。
+  `NetworkCommandGateway` 只能由 App Shell adapter 注入；网络结果、Session 和
+  Event 类型必须直接从 `network_sdk` 导入，不得恢复本地模型桥接。
 - `LanShareModule` 是 `lan_share.db`、Repository、Receiver 和 Route Service
   的 Owner；Route Scope 只负责 ViewModel 生命周期。
 - 不把密钥、PIN、Bearer Token、Relay credential 或远端 localPath 写入明文

@@ -26,6 +26,10 @@ import 'package:network_sdk/network_sdk.dart';
 `SdkRequestExecutor`，不会自行创建 HTTP client。Feature 只使用所需的最小客户端
 或 App Shell 注入的 Feature Port。
 
+开发阶段的旧网络类型别名也集中在本包中；Feature 必须直接导入
+`package:network_sdk/network_sdk.dart`，不得再创建或导出本地
+`network_models.dart` 桥接文件。
+
 ## 验证
 
 ```bash

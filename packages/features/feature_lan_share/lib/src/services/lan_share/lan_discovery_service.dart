@@ -13,7 +13,7 @@ import 'package:flutter/foundation.dart';
 import 'package:nsd/nsd.dart' as nsd;
 import 'lan_multicast_lock.dart';
 import 'lan_network_models.dart';
-import '../network/network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'lan_share_models.dart';
 import 'lan_security_service.dart';
 import 'lan_storage_service.dart';

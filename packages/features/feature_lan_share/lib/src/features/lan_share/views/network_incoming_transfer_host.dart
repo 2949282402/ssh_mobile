@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../domain/lan_share_ports.dart';
-import '../../../services/network/network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 import '../services/lan_receiver_coordinator.dart';
 
 /// Presents one root-level approval dialog at a time for current-protocol

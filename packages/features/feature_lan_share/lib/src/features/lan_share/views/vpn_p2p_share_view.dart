@@ -3,7 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:feature_lan_share/src/features/lan_share/services/lan_receiver_coordinator.dart';
-import 'package:feature_lan_share/src/services/network/network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:feature_lan_share/src/domain/lan_share_ports.dart';
 
 /// 展示由原生配置支持的 v1 Relay enrollment 控制界面。

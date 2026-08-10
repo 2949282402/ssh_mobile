@@ -15,7 +15,7 @@ import 'lan_pairing_crypto.dart';
 import 'lan_share_models.dart';
 import 'lan_storage_service.dart';
 import 'lan_transfer_protocol.dart';
-import '../network/network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 
 part 'lan_transfer_client.dart';
 part 'lan_pairing_server.dart';

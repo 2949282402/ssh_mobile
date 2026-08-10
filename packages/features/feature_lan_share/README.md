@@ -9,7 +9,8 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
 
 - 只通过 `app_core`、`app_ui`、`network_transport`、`network_sdk` 及本包定义的
   Port 使用 App 设置、日志、数据保护、网络和 Relay 能力；`network_sdk` 只提供
-  Flutter 客户端契约，不拥有传输实现。
+  Flutter 客户端契约和 canonical 网络模型，不拥有传输实现；本 Feature 不再维护
+  本地网络模型桥接。
 - 不依赖 SSH、其他 Feature 的实现或 App 的 `/src/` 路径。
 - `LanShareModule` 独占 `lan_share.db`、历史 Repository 和接收器资源；App
   Shell 只注入 App Scope 资源并负责配置是否激活接收器。

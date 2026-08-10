@@ -5,7 +5,7 @@
 
 import 'dart:async';
 
-import '../network/network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 
 /// 描述 v1 LAN 配对握手结果。
 final class LanHandshakeData {
