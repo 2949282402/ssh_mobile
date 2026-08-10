@@ -38,7 +38,7 @@ final class SystemAdminFeatureScope extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        Provider<SystemAdminConnectionCatalogPort>.value(
+        ListenableProvider<SystemAdminConnectionCatalogPort>.value(
           value: connectionCatalog,
         ),
         ListenableProvider<SystemAdminSettingsPort>.value(value: settings),
