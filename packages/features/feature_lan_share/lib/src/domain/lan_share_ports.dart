@@ -83,8 +83,6 @@ abstract interface class LanShareStrings {
     String fileSize,
   );
   String get networkIncomingTransferTitle;
-  String get networkTabLan;
-  String get networkTabVpn;
   String get port;
   String get reject;
   String get retry;
@@ -92,13 +90,6 @@ abstract interface class LanShareStrings {
   String get unknown;
   String get unsupportedPreview;
   String get unsupportedPreviewTitle;
-  String get vpnEnrollButton;
-  String get vpnEnrolledBadge;
-  String get vpnEnrollmentToken;
-  String get vpnNotEnrolledBadge;
-  String get vpnServerConfigTitle;
-  String get vpnServerHost;
-  String get vpnServerPort;
   String get lanCameraPermission;
   String get lanDeviceAlias;
   String get lanDeviceId;

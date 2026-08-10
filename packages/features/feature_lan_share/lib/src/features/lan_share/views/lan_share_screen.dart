@@ -16,7 +16,6 @@ import 'package:network_sdk/network_sdk.dart';
 import '../lan_share_feature_scope.dart';
 import 'lan_chat_screen.dart';
 import 'lan_qr_scanner_screen.dart';
-import 'vpn_p2p_share_view.dart';
 import 'lan_share_settings_screen.dart';
 
 part 'widgets/lan_share_dialogs.dart';
@@ -31,7 +30,6 @@ class LanShareScreen extends StatefulWidget {
 class _LanShareScreenState extends State<LanShareScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
-  int _selectedModeIndex = 0;
   bool _isDragging = false;
   StreamSubscription? _intentSubscription;
   String? _activeDeleteDeviceId;
@@ -281,43 +279,6 @@ class _LanShareScreenState extends State<LanShareScreen>
                         ),
                       ),
                     ),
-                    // Mode segmented bar (局域网 / VPN)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16.0,
-                        vertical: 4.0,
-                      ),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: SegmentedButton<int>(
-                          segments: [
-                            ButtonSegment<int>(
-                              value: 0,
-                              label: Text(strings.networkTabLan),
-                              icon: const Icon(Icons.lan_rounded),
-                            ),
-                            ButtonSegment<int>(
-                              value: 1,
-                              label: Text(strings.networkTabVpn),
-                              icon: const Icon(Icons.vpn_lock_rounded),
-                            ),
-                          ],
-                          selected: {_selectedModeIndex},
-                          onSelectionChanged: (Set<int> selected) {
-                            setState(() => _selectedModeIndex = selected.first);
-                          },
-                        ),
-                      ),
-                    ),
-                    if (_selectedModeIndex == 1) ...[
-                      const Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 16.0,
-                          vertical: 4.0,
-                        ),
-                        child: VpnP2pServerConfigCard(),
-                      ),
-                    ],
                     // Self device info bar
                     _buildSelfInfoBar(context, vm, strings),
                     TabBar(
@@ -396,7 +357,6 @@ class _LanShareScreenState extends State<LanShareScreen>
             Expanded(
               child: InkWell(
                 onTap: () async {
-                  if (_selectedModeIndex == 1) return;
                   final ipMap = await _localIpsFuture;
                   if (ipMap.isEmpty) return;
                   if (context.mounted) {
@@ -414,46 +374,6 @@ class _LanShareScreenState extends State<LanShareScreen>
                     child: FutureBuilder<Map<String, String>>(
                       future: _localIpsFuture,
                       builder: (context, snapshot) {
-                        final isVpnMode = _selectedModeIndex == 1;
-                        if (isVpnMode) {
-                          final endpoint = vm.appSettings.relayEndpoint;
-                          return RichText(
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            text: TextSpan(
-                              children: [
-                                TextSpan(
-                                  text: strings.isEnglish
-                                      ? 'Relay identity: '
-                                      : '中继身份：',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: colors.primary.withValues(
-                                      alpha: 0.7,
-                                    ),
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                TextSpan(
-                                  text: alias,
-                                  style: theme.textTheme.labelMedium?.copyWith(
-                                    color: colors.onSurface,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                TextSpan(
-                                  text: endpoint.isEmpty
-                                      ? (strings.isEnglish
-                                            ? '  · Not configured'
-                                            : '  · 未配置')
-                                      : '  · $endpoint',
-                                  style: theme.textTheme.labelSmall?.copyWith(
-                                    color: colors.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }
                         final ipMap = snapshot.data ?? {};
                         final ips = ipMap.keys.toList();
                         final customIp = vm.customIp;
@@ -541,40 +461,39 @@ class _LanShareScreenState extends State<LanShareScreen>
               ),
             ),
             const SizedBox(width: 4),
-            if (_selectedModeIndex == 0)
-              InkWell(
-                onTap: _isRefreshingIps
-                    ? null
-                    : () async {
-                        setState(() {
-                          _isRefreshingIps = true;
-                          _localIpsFuture =
-                              LanDiscoveryService.getLocalIpInterfaces();
-                        });
-                        await _localIpsFuture;
-                        if (mounted) setState(() => _isRefreshingIps = false);
-                      },
-                borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  child: _isRefreshingIps
-                      ? SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 1.5,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              colors.primary.withValues(alpha: 0.7),
-                            ),
+            InkWell(
+              onTap: _isRefreshingIps
+                  ? null
+                  : () async {
+                      setState(() {
+                        _isRefreshingIps = true;
+                        _localIpsFuture =
+                            LanDiscoveryService.getLocalIpInterfaces();
+                      });
+                      await _localIpsFuture;
+                      if (mounted) setState(() => _isRefreshingIps = false);
+                    },
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: _isRefreshingIps
+                    ? SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 1.5,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            colors.primary.withValues(alpha: 0.7),
                           ),
-                        )
-                      : Icon(
-                          Icons.refresh_rounded,
-                          size: 16,
-                          color: colors.primary.withValues(alpha: 0.6),
                         ),
-                ),
+                      )
+                    : Icon(
+                        Icons.refresh_rounded,
+                        size: 16,
+                        color: colors.primary.withValues(alpha: 0.6),
+                      ),
               ),
+            ),
           ],
         ),
       ),

@@ -153,10 +153,6 @@ final class AppLanShareStrings implements lan.LanShareStrings {
   String get networkIncomingTransferTitle =>
       _strings.networkIncomingTransferTitle;
   @override
-  String get networkTabLan => _strings.networkTabLan;
-  @override
-  String get networkTabVpn => _strings.networkTabVpn;
-  @override
   String get port => _strings.port;
   @override
   String get reject => _strings.reject;
@@ -170,20 +166,6 @@ final class AppLanShareStrings implements lan.LanShareStrings {
   String get unsupportedPreview => _strings.unsupportedPreview;
   @override
   String get unsupportedPreviewTitle => _strings.unsupportedPreviewTitle;
-  @override
-  String get vpnEnrollButton => _strings.vpnEnrollButton;
-  @override
-  String get vpnEnrolledBadge => _strings.vpnEnrolledBadge;
-  @override
-  String get vpnEnrollmentToken => _strings.vpnEnrollmentToken;
-  @override
-  String get vpnNotEnrolledBadge => _strings.vpnNotEnrolledBadge;
-  @override
-  String get vpnServerConfigTitle => _strings.vpnServerConfigTitle;
-  @override
-  String get vpnServerHost => _strings.vpnServerHost;
-  @override
-  String get vpnServerPort => _strings.vpnServerPort;
   @override
   String get lanCameraPermission => _strings.lanCameraPermission;
   @override

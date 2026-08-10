@@ -164,6 +164,30 @@ class LanDiscoveryService {
     return uniqueDevices.values.toList();
   }
 
+  /// 判断接口是否属于不参与 LAN 发现的虚拟网络或 VPN。
+  static bool _isVirtualNetworkInterface(String name) {
+    final lowerName = name.toLowerCase();
+    const markers = <String>[
+      'docker',
+      'vethernet',
+      'vbox',
+      'vmnet',
+      'wireguard',
+      'wintun',
+      'tailscale',
+      'zerotier',
+      'hamachi',
+      'nordlynx',
+      'mullvad',
+      'vpn',
+      'tun',
+      'tap',
+      'utun',
+      'ppp',
+    ];
+    return markers.any(lowerName.contains);
+  }
+
   /// 过滤虚拟网络接口（VPN、Docker、vEthernet）。
   static Future<List<String>> getLocalIpAddresses() async {
     final addresses = <String>[];
@@ -173,12 +197,7 @@ class LanDiscoveryService {
         type: InternetAddressType.IPv4,
       );
       for (final interface in interfaces) {
-        final name = interface.name.toLowerCase();
-        if (name.contains('docker') ||
-            name.contains('vethernet') ||
-            name.contains('vbox') ||
-            name.contains('vmnet') ||
-            name.contains('vEthernet')) {
+        if (_isVirtualNetworkInterface(interface.name)) {
           continue;
         }
         for (final addr in interface.addresses) {
@@ -203,12 +222,7 @@ class LanDiscoveryService {
       );
       for (final interface in interfaces) {
         final name = interface.name;
-        final lowerName = name.toLowerCase();
-        if (lowerName.contains('docker') ||
-            lowerName.contains('vethernet') ||
-            lowerName.contains('vbox') ||
-            lowerName.contains('vmnet') ||
-            lowerName.contains('vEthernet')) {
+        if (_isVirtualNetworkInterface(name)) {
           continue;
         }
         for (final addr in interface.addresses) {

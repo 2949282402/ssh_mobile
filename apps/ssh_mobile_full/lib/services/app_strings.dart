@@ -645,19 +645,6 @@ class AppStrings {
 
   // ── Network Transfer (Formerly LAN Share) ──
   String get lanShare => _en ? 'Network Transfer' : '网络传输';
-  String get networkTabLan => _en ? 'LAN' : '局域网';
-  String get networkTabVpn => _en ? 'VPN / P2P' : 'VPN';
-  String get vpnServerConfigTitle => _en ? 'Control Server' : '服务器配置';
-  String get vpnServerUrl => _en ? 'Server Address' : '服务器地址';
-  String get vpnServerHost => _en ? 'Host / IP / Domain' : '服务器主机 / 域名 / IP';
-  String get vpnServerPort => _en ? 'Port' : '端口';
-  String get vpnEnrollmentToken =>
-      _en ? 'Enrollment Token (Required)' : '注册凭据 Token（必填）';
-  String get vpnEnrollStatus => _en ? 'Enrollment Status' : '注册状态';
-  String get vpnEnrollButton => _en ? 'Enroll Device' : '注册设备';
-  String get vpnEnrolledBadge => _en ? 'Enrolled & Verified' : '已注册 (可信)';
-  String get vpnNotEnrolledBadge => _en ? 'Not Enrolled' : '未注册';
-  String get vpnRelayStatus => _en ? 'NAT / Relay Route' : 'NAT / 中继线路';
   String get networkIncomingTransferTitle =>
       _en ? 'Incoming network transfer' : '收到网络传输请求';
   String networkIncomingTransferDescription(
@@ -670,9 +657,6 @@ class AppStrings {
   String get accept => _en ? 'Accept' : '接收';
   String get reject => _en ? 'Reject' : '拒绝';
   String get clear => _en ? 'Clear' : '清空';
-  String get vpnPeerNodes => _en ? 'P2P Nodes' : 'P2P 节点列表';
-  String get vpnNoPeers => _en ? 'No P2P nodes enrolled' : '暂无可用的 P2P 节点';
-  String get vpnHolePunchProbe => _en ? 'Probe NAT Hole Punch' : '探测 NAT 打洞';
   String get lanShareScan => _en ? 'Scan for nearby devices' : '扫描附近设备';
   String get lanShareScanning =>
       _en ? 'Scanning for nearby devices' : '正在扫描附近设备';

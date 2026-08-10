@@ -310,11 +310,6 @@ extension _LanShareDialogActions on _LanShareScreenState {
     if (lower.contains('eth') || lower.contains('ethernet')) {
       return '以太网';
     }
-    if (lower.contains('tun') ||
-        lower.contains('tap') ||
-        lower.contains('vpn')) {
-      return 'VPN / 隧道网卡';
-    }
     return name;
   }
 }
