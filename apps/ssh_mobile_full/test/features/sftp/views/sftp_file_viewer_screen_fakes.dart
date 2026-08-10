@@ -39,15 +39,15 @@ class _ViewerLauncher extends StatelessWidget {
   }
 }
 
-class _TestAppSettings extends AppSettings {
+class _TestAppSettings extends ChangeNotifier implements SftpSettingsPort {
   _TestAppSettings({
     required this.language,
-    this.textLimitBytes = AppSettings.defaultSftpTextPreviewLimitBytes,
-    this.richLimitBytes = AppSettings.defaultSftpRichPreviewLimitBytes,
+    this.textLimitBytes = 2 * 1024 * 1024,
+    this.richLimitBytes = 20 * 1024 * 1024,
   });
 
   @override
-  AppLanguage language;
+  SftpLanguage language;
   final int textLimitBytes;
   final int richLimitBytes;
 
@@ -57,7 +57,25 @@ class _TestAppSettings extends AppSettings {
   @override
   int get sftpRichPreviewLimitBytes => richLimitBytes;
 
-  void setLanguage(AppLanguage nextLanguage) {
+  @override
+  int get sftpDownloadLimitBytes => 512 * 1024 * 1024;
+
+  @override
+  int get sftpTextEditLimitBytes => 512 * 1024;
+
+  @override
+  Future<void> setSftpDownloadLimitBytes(int bytes) async {}
+
+  @override
+  Future<void> setSftpTextPreviewLimitBytes(int bytes) async {}
+
+  @override
+  Future<void> setSftpRichPreviewLimitBytes(int bytes) async {}
+
+  @override
+  Future<void> setSftpTextEditLimitBytes(int bytes) async {}
+
+  void setLanguage(SftpLanguage nextLanguage) {
     if (language == nextLanguage) return;
     language = nextLanguage;
     notifyListeners();

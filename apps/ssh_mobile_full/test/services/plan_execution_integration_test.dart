@@ -8,8 +8,8 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:feature_ai/ai_chat.dart';
 import '../test_utils/test_storage_adapter.dart';
 import 'package:feature_ai/ai_agent.dart';
-import 'package:ssh_mobile/features/playbook/models/playbook.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:feature_playbook/feature_playbook.dart';
+import 'package:connection_core/connection_core.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

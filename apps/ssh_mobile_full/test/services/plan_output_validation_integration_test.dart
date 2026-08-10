@@ -10,14 +10,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_tools.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../test_utils/test_storage_adapter.dart';
 import 'package:feature_ai/ai_agent.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
 
 // --- Mocks for HttpClient for SSE ---
 class MockHttpOverrides extends HttpOverrides {
@@ -203,7 +201,7 @@ void main() {
   late SshService sshService;
   late SftpService sftpService;
   late ServerDiagnosticsService serverDiagnosticsService;
-  late PerformanceMonitorService performanceMonitorService;
+  late monitoring.MonitoringService performanceMonitorService;
   late AiToolService aiToolService;
   late ChatOrchestrator orchestrator;
   final String testChatId = 'chat-test-123';
@@ -244,9 +242,7 @@ void main() {
       sshService: sshService,
       sftpService: sftpService,
       serverDiagnosticsService: serverDiagnosticsService,
-      performanceMonitorToolService: PerformanceMonitorToolService(
-        performanceMonitorService,
-      ),
+      performanceMonitorToolService: performanceMonitorService,
       appSettings: appSettings,
       clientWebViewSessionId: testChatId,
     );
@@ -258,9 +254,7 @@ void main() {
       ),
       memoryRetriever: OperationalMemoryRetriever(
         storageService: aiStoragePort(storageService),
-        ragService: aiRagCapability(
-          RagService(aiStorage: storageService.aiStorage),
-        ),
+        ragService: aiRagCapability(await createTestRagService(storageService)),
       ),
     );
 

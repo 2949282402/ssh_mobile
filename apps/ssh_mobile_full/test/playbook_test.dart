@@ -5,11 +5,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/playbook/models/playbook.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:feature_playbook/feature_playbook.dart';
+import 'package:connection_core/connection_core.dart';
 import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
+
 import 'package:ssh_mobile/services/remote_target_scope.dart';
 import 'test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
@@ -237,7 +238,7 @@ void main() {
     () async {
       final storage = _DelayedPlaybookStorage();
       final ssh = FakeSshService(storage);
-      final service = PlaybookService(
+      final service = createTestPlaybook(
         repository: storage.playbookRepository,
         sshService: ssh,
       );
@@ -278,7 +279,7 @@ void main() {
       storage = TestStorageAdapter();
       await storage.init();
       ssh = FakeSshService(storage);
-      service = PlaybookService(
+      service = createTestPlaybook(
         repository: storage.playbookRepository,
         sshService: ssh,
       );
@@ -382,7 +383,7 @@ void main() {
       'a superseded execution cannot adopt or overwrite the new run',
       () async {
         final concurrentSsh = _ConcurrentStartSshService(storage);
-        final concurrentService = PlaybookService(
+        final concurrentService = createTestPlaybook(
           repository: storage.playbookRepository,
           sshService: concurrentSsh,
         );
@@ -500,7 +501,7 @@ void main() {
       'skip is ignored while the current remote command is in flight',
       () async {
         final gatedSsh = _ConcurrentStartSshService(storage);
-        final gatedService = PlaybookService(
+        final gatedService = createTestPlaybook(
           repository: storage.playbookRepository,
           sshService: gatedSsh,
         );
@@ -564,7 +565,7 @@ void main() {
 
     test('pause then skip waits for the in-flight command to settle', () async {
       final gatedSsh = _ConcurrentStartSshService(storage);
-      final gatedService = PlaybookService(
+      final gatedService = createTestPlaybook(
         repository: storage.playbookRepository,
         sshService: gatedSsh,
       );
@@ -631,7 +632,7 @@ void main() {
       'pause then resume waits before retrying the in-flight command',
       () async {
         final gatedSsh = _ConcurrentStartSshService(storage);
-        final gatedService = PlaybookService(
+        final gatedService = createTestPlaybook(
           repository: storage.playbookRepository,
           sshService: gatedSsh,
         );
@@ -700,7 +701,7 @@ void main() {
         );
         await storage.addConnection(connection);
         final gatedSsh = _GatedBoundSshService(storage);
-        final approvedService = PlaybookService(
+        final approvedService = createTestPlaybook(
           repository: storage.playbookRepository,
           sshService: gatedSsh,
         );
@@ -726,7 +727,7 @@ void main() {
           updatedAt: DateTime.now(),
         );
         await storage.savePlaybook(playbook);
-        final binding = ConnectionTargetBinding.fromConfig(connection);
+        final binding = ssh_core.SshTargetBinding.fromConfig(connection);
 
         expect(
           await approvedService.startApprovedExecution(
@@ -760,7 +761,7 @@ void main() {
         );
         await storage.addConnection(connection);
         final gatedSsh = _GatedBoundSshService(storage);
-        final approvedService = PlaybookService(
+        final approvedService = createTestPlaybook(
           repository: storage.playbookRepository,
           sshService: gatedSsh,
         );
@@ -791,7 +792,7 @@ void main() {
           await approvedService.startApprovedExecution(
             playbook: playbook,
             actionFingerprint: _actionFingerprint(playbook),
-            connectionTarget: ConnectionTargetBinding.fromConfig(connection),
+            connectionTarget: ssh_core.SshTargetBinding.fromConfig(connection),
           ),
           isTrue,
         );

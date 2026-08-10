@@ -28,7 +28,7 @@ void main() {
     r'^\s+- ((?:apps|packages)/[^\s]+)$',
     multiLine: true,
   ).allMatches(pubspec).map((match) => match.group(1)!).toList();
-  _expect(workspaceMembers.length == 20, 'Workspace Member 数量发生漂移');
+  _expect(workspaceMembers.length == 21, 'Workspace Member 数量发生漂移');
   for (final member in workspaceMembers) {
     _expect(
       Directory('${root.path}/$member').existsSync(),
@@ -73,6 +73,8 @@ const _requiredWorkflowMarkers = <String>[
   'flutter analyze --no-pub',
   'flutter test --no-pub',
   'dart run tool/architecture_check.dart',
+  'dart run tool/compatibility_check.dart',
+  'dart run tool/duplicate_implementation_check.dart',
   'dart run melos run analyze',
   'dart run melos run test',
   'flutter build apk --debug --no-pub',

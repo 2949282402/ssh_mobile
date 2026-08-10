@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:ui' show Tristate;
 
+import 'package:feature_sftp/feature_sftp.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:ssh_mobile/features/sftp/views/sftp_editor_screen.dart';
-import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:app_ui/app_ui.dart';
 
 void main() {
@@ -19,7 +17,7 @@ void main() {
     var loadCalls = 0;
     int? receivedLimit;
     final settings = _TestAppSettings(
-      language: AppLanguage.en,
+      language: SftpLanguage.english,
       editLimitBytes: 123456,
     );
     addTearDown(settings.dispose);
@@ -171,7 +169,7 @@ void main() {
   testWidgets('plain edit always asks before leaving and discard exits', (
     tester,
   ) async {
-    final settings = _TestAppSettings(language: AppLanguage.zh);
+    final settings = _TestAppSettings(language: SftpLanguage.chinese);
     addTearDown(settings.dispose);
     await tester.pumpWidget(
       _editorHost(settings: settings, readText: (_, _) async => '原始内容'),
@@ -222,7 +220,7 @@ void main() {
   });
 
   testWidgets('pristine file leaves without a discard prompt', (tester) async {
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     await tester.pumpWidget(
       _editorHost(settings: settings, readText: (_, _) async => 'unchanged'),
@@ -244,7 +242,7 @@ void main() {
     String? savedText;
     int? receivedLimit;
     final settings = _TestAppSettings(
-      language: AppLanguage.en,
+      language: SftpLanguage.english,
       editLimitBytes: 654321,
     );
     addTearDown(settings.dispose);
@@ -309,7 +307,7 @@ void main() {
     tester,
   ) async {
     var saveCalls = 0;
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     await tester.pumpWidget(
       _editorHost(
@@ -368,7 +366,7 @@ void main() {
     final secondSaveGate = Completer<void>();
     var saveCalls = 0;
     final savedTexts = <String>[];
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     await tester.pumpWidget(
       _editorHost(
@@ -441,7 +439,7 @@ void main() {
     tester,
   ) async {
     final settings = _TestAppSettings(
-      language: AppLanguage.en,
+      language: SftpLanguage.english,
       editLimitBytes: 512 * 1024,
     );
     addTearDown(settings.dispose);
@@ -466,13 +464,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('sftp-editor-save')));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text(
-        'This file is larger than the 512 KB edit limit. '
-        'Reduce its content before saving.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('File exceeds 512 KB edit limit.'), findsOneWidget);
     expect(find.textContaining('524289'), findsNothing);
     expect(
       find.byKey(const ValueKey('sftp-editor-text-field')),
@@ -484,7 +476,7 @@ void main() {
     tester,
   ) async {
     var loadCalls = 0;
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     await tester.pumpWidget(
       _editorHost(
@@ -532,7 +524,7 @@ void main() {
     tester,
   ) async {
     final loadGate = Completer<String>();
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     await tester.pumpWidget(
       _editorHost(settings: settings, readText: (_, _) => loadGate.future),
@@ -553,7 +545,7 @@ void main() {
   ) async {
     await tester.binding.setSurfaceSize(const Size(320, 568));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
 
     await tester.pumpWidget(
@@ -618,7 +610,7 @@ void main() {
   ) async {
     await tester.binding.setSurfaceSize(const Size(1000, 360));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final settings = _TestAppSettings(language: AppLanguage.zh);
+    final settings = _TestAppSettings(language: SftpLanguage.chinese);
     addTearDown(settings.dispose);
 
     await tester.pumpWidget(
@@ -656,15 +648,18 @@ const _defaultEntry = SftpEntry(
 );
 
 Widget _editorHost({
-  required AppSettings settings,
+  required _TestAppSettings settings,
   required SftpEditorReadText readText,
   SftpEditorSaveText? saveText,
   SftpEntry entry = _defaultEntry,
   double textScale = 1,
   EdgeInsets safePadding = EdgeInsets.zero,
 }) {
-  return ChangeNotifierProvider<AppSettings>.value(
-    value: settings,
+  return MultiProvider(
+    providers: [
+      ChangeNotifierProvider<_TestAppSettings>.value(value: settings),
+      ListenableProvider<SftpSettingsPort>.value(value: settings),
+    ],
     child: MaterialApp(
       theme: AppTheme.lightThemeFor(),
       builder: (context, child) {
@@ -747,16 +742,34 @@ class _EditorLauncherState extends State<_EditorLauncher> {
   }
 }
 
-class _TestAppSettings extends AppSettings {
-  _TestAppSettings({
-    required this.language,
-    this.editLimitBytes = AppSettings.defaultSftpTextEditLimitBytes,
-  });
+class _TestAppSettings extends ChangeNotifier implements SftpSettingsPort {
+  _TestAppSettings({required this.language, this.editLimitBytes = 512 * 1024});
 
   @override
-  final AppLanguage language;
+  final SftpLanguage language;
   final int editLimitBytes;
 
   @override
   int get sftpTextEditLimitBytes => editLimitBytes;
+
+  @override
+  int get sftpDownloadLimitBytes => 512 * 1024 * 1024;
+
+  @override
+  int get sftpTextPreviewLimitBytes => 2 * 1024 * 1024;
+
+  @override
+  int get sftpRichPreviewLimitBytes => 20 * 1024 * 1024;
+
+  @override
+  Future<void> setSftpDownloadLimitBytes(int bytes) async {}
+
+  @override
+  Future<void> setSftpTextPreviewLimitBytes(int bytes) async {}
+
+  @override
+  Future<void> setSftpRichPreviewLimitBytes(int bytes) async {}
+
+  @override
+  Future<void> setSftpTextEditLimitBytes(int bytes) async {}
 }

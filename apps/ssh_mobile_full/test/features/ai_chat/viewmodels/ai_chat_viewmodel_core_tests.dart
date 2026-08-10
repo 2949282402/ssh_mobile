@@ -34,11 +34,11 @@ void _registerAiChatViewModelCoreTests() {
       retrySsh,
       retryStorage,
     );
-    final retryPlaybooks = PlaybookService(
+    final retryPlaybooks = createTestPlaybook(
       repository: retryStorage.playbookRepository,
       sshService: retrySsh,
     );
-    final retryRag = RagService(aiStorage: retryStorage.aiStorage);
+    final retryRag = await createTestRagService(retryStorage);
     final viewModel = createAiChatViewModel(
       storageService: retryStorage,
       sshService: retrySsh,
@@ -306,9 +306,7 @@ void _registerAiChatViewModelCoreTests() {
   test(
     '/plan snapshots turn inputs before its mode persistence await',
     () async {
-      final recordingRag = _RecordingTurnRagService(
-        aiStorage: storageService.aiStorage,
-      );
+      final recordingRag = _RecordingTurnRagService(storage: storageService);
       final factory = FakeSuccessRuntimeFactory(
         storageService: storageService,
         sshService: sshService,

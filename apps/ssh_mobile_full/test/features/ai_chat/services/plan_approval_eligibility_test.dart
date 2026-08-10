@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/features/playbook/models/playbook.dart';
+import 'package:feature_playbook/feature_playbook.dart';
 
 void main() {
   final createdAt = DateTime.utc(2026, 7, 13, 12);

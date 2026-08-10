@@ -4,12 +4,11 @@ import '../test_utils/ai_tool_test_adapters.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import 'package:feature_ai/ai_tools.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/ai_llm.dart';
-import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
 import '../test_utils/test_storage_adapter.dart';
 
@@ -186,7 +185,7 @@ void main() {
           sshService: ssh,
           sftpService: sftp,
           serverDiagnosticsService: diagnostics,
-          performanceMonitorToolService: PerformanceMonitorToolService(monitor),
+          performanceMonitorToolService: monitor,
         );
 
         final llm = LlmChatService(

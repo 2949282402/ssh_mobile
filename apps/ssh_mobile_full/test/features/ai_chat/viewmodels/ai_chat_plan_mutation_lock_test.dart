@@ -6,12 +6,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/features/playbook/models/playbook.dart';
+import 'package:feature_playbook/feature_playbook.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../../../test_utils/test_storage_adapter.dart';
 
@@ -306,9 +305,9 @@ class _MutationHarness {
   final AppSettings settings;
   final SshService ssh;
   final SftpService sftp;
-  final PerformanceMonitorService monitor;
+  final monitoring.MonitoringService monitor;
   final PlaybookService playbooks;
-  final RagService rag;
+  final TestRagService rag;
 
   _MutationHarness({
     required this.storage,
@@ -332,11 +331,11 @@ class _MutationHarness {
       ssh: ssh,
       sftp: createTestSftpService(storage),
       monitor: createTestPerformanceMonitorService(ssh, storage),
-      playbooks: PlaybookService(
+      playbooks: createTestPlaybook(
         repository: storage.playbookRepository,
         sshService: ssh,
       ),
-      rag: RagService(aiStorage: storage.aiStorage),
+      rag: await createTestRagService(storage),
     );
   }
 

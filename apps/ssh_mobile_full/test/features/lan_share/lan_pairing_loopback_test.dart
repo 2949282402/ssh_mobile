@@ -5,11 +5,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_network_models.dart';
-import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
-import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 import 'support/fake_secure_storage.dart';
 

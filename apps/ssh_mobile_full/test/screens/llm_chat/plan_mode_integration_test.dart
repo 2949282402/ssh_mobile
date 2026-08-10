@@ -1,3 +1,4 @@
+import 'package:feature_playbook/feature_playbook.dart';
 import 'dart:async';
 import '../../test_utils/ai_port_adapters.dart';
 
@@ -14,10 +15,9 @@ import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_health_advisor.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../../test_utils/test_storage_adapter.dart';
 
@@ -561,9 +561,9 @@ class _PlanScreenHarness {
   final AppSettings appSettings;
   final SshService sshService;
   final SftpService sftpService;
-  final PerformanceMonitorService performanceMonitorService;
+  final monitoring.MonitoringService performanceMonitorService;
   final PlaybookService playbookService;
-  final RagService ragService;
+  final TestRagService ragService;
   AiChatViewModel? viewModel;
 
   _PlanScreenHarness({
@@ -590,11 +590,11 @@ class _PlanScreenHarness {
       sshService,
       resolvedStorageService,
     );
-    final playbookService = PlaybookService(
+    final playbookService = createTestPlaybook(
       repository: resolvedStorageService.playbookRepository,
       sshService: sshService,
     );
-    final ragService = RagService(aiStorage: resolvedStorageService.aiStorage);
+    final ragService = await createTestRagService(resolvedStorageService);
     return _PlanScreenHarness(
       storageService: resolvedStorageService,
       appSettings: appSettings,
@@ -620,7 +620,7 @@ class _PlanScreenHarness {
         Provider<ai.AiSshPort>.value(value: aiSshPort(sshService)),
         ChangeNotifierProvider<SftpService>.value(value: sftpService),
         Provider<ai.AiSftpPort>.value(value: aiSftpPort(sftpService)),
-        ChangeNotifierProvider<PerformanceMonitorService>.value(
+        ChangeNotifierProvider<monitoring.MonitoringService>.value(
           value: performanceMonitorService,
         ),
         Provider<ai.AiMonitoringPort>.value(
@@ -631,7 +631,7 @@ class _PlanScreenHarness {
         ListenableProvider<feature_playbook.PlaybookAutomationPort>.value(
           value: playbookService,
         ),
-        ChangeNotifierProvider<RagService>.value(value: ragService),
+        ChangeNotifierProvider<TestRagService>.value(value: ragService),
         // 旧测试保留具体实现，同时按 RAG 公共 Contract 注入能力。
         ListenableProvider<feature_rag.RagCapability>.value(value: ragService),
         Provider<app_core.RagCapability>.value(

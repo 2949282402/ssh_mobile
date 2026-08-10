@@ -6,10 +6,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
-import 'package:ssh_mobile/services/sftp/sftp_service_io.dart';
-import 'package:ssh_mobile/services/sftp_service.dart' hide SftpService;
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart' hide SftpService;
+import 'package:ssh_mobile/app/sftp_io_backend_adapters.dart';
 import '../test_utils/test_storage_adapter.dart';
 
 void main() {

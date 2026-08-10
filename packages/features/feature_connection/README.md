@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # feature_connection
 
@@ -12,6 +12,9 @@ SSH Mobile 的连接 Feature，负责连接配置编辑界面和连接配置的�
 - 当前 Step 06 暂时在包内保留连接页面所需的最小 UI 组件和双语文案。Step 09 建立 `app_ui` 后，再将共享组件迁移到公共 UI 包。
 - 公共入口同时提供纯 Route metadata；App Shell 只聚合这些描述并在 Route Scope 创建
   ViewModel，不把 Widget 或 ViewModel 放入 Core。
+- Full App 中旧 `features/connection/` 路径已完成零引用清理并删除；
+  `apps/ssh_mobile_full/lib/app/connection_*_adapters.dart` 仍是保留的
+  App Shell Port 适配边界，不属于旧业务实现。
 
 ## 公共入口
 

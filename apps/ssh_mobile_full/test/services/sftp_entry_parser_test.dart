@@ -1,7 +1,7 @@
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:ssh_mobile/services/sftp/sftp_entry_parser.dart';
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 
 void main() {
   test('SFTP entries are built and sorted in a background isolate', () async {

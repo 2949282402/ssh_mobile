@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/server_status_probe.dart';
+import 'package:feature_monitoring/feature_monitoring.dart';
 
 void main() {
   test('async probe parsers preserve results off the UI isolate', () async {

@@ -1,8 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/lan_share/lan_pairing_crypto.dart';
-import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 Map<String, dynamic> _credential({
   String status = 'pending_remote',

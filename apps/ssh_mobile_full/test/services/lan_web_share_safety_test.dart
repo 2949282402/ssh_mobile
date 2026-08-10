@@ -7,12 +7,7 @@ import 'dart:typed_data';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import 'package:ssh_mobile/services/lan_share/lan_discovery_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
-import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_transfer_protocol.dart';
-import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 class _HttpResult {
   final int statusCode;

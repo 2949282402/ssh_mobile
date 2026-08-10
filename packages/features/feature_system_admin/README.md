@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # feature_system_admin
 
@@ -12,8 +12,8 @@ App Shell 注入；不会创建全局 SSH/Storage，也不会直接引用
 当前模块不创建独立数据库。`SystemAdminModule` 持有管理服务并在 dispose 时关闭
 当前管理会话和活动命令；`SystemAdminViewModel` 由 Route Scope 持有。
 
-旧 `apps/ssh_mobile_full/lib/features/system_admin/` 路径在迁移期间保留为兼容
-实现和测试入口；新 App Shell 使用本 Package 的公共入口。
+旧 `apps/ssh_mobile_full/lib/features/system_admin/` 路径、命令 facade 和旧测试
+已删除；App Shell 仅保留 `system_admin_feature_adapters.dart` 这一 Port 适配边界。
 
 ## Package contract
 

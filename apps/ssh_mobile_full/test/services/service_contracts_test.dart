@@ -9,11 +9,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/client_system_tool_service.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:ssh_mobile/services/server_catalog_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../test_utils/ai_port_adapters.dart';
 import '../test_utils/ai_tool_test_adapters.dart';
@@ -25,7 +24,7 @@ void main() {
   late TestStorageAdapter storage;
   late SshService ssh;
   late SftpService sftp;
-  late PerformanceMonitorService monitor;
+  late monitoring.MonitoringService monitor;
   late ServerDiagnosticsService diagnostics;
   late AiToolService tools;
 
@@ -46,7 +45,7 @@ void main() {
       sshService: ssh,
       sftpService: sftp,
       serverDiagnosticsService: diagnostics,
-      performanceMonitorToolService: PerformanceMonitorToolService(monitor),
+      performanceMonitorToolService: monitor,
     );
   });
 
@@ -83,10 +82,7 @@ void main() {
       isA<ServerCatalogAdapter>(),
     );
     expect(diagnostics, isA<ServerDiagnosticsAdapter>());
-    expect(
-      PerformanceMonitorToolService(monitor),
-      isA<PerformanceMonitorToolAdapter>(),
-    );
+    expect(aiMonitoringPort(monitor), isA<ai.AiMonitoringPort>());
     expect(tools, isA<AiToolExecutor>());
     expect(llm, isA<LlmClientAdapter>());
     expect(const MultiAgentCoordinator(), isA<MultiAgentCoordinatorAdapter>());

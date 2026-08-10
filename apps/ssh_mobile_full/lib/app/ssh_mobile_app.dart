@@ -184,7 +184,7 @@ class _SshMobileAppState extends State<SshMobileApp>
     _connectionRuntimeAdapter ??= AppConnectionRuntimeAdapter(
       sshServiceFactory: () => runtime.sshService,
       sftpServiceFactory: () => runtime.sftpService,
-      performanceServiceFactory: () => runtime.performanceMonitorService,
+      monitoringServiceFactory: () => runtime.monitoringService,
     );
     _connectionVerificationAdapter ??= AppConnectionVerificationAdapter(
       credentialRepository: runtime.credentialRepository,
@@ -276,7 +276,7 @@ class _SshMobileAppState extends State<SshMobileApp>
         ChangeNotifierProvider.value(value: runtime.shortcutCommandService),
         ChangeNotifierProvider.value(value: runtime.sshService),
         ChangeNotifierProvider.value(value: runtime.sftpService),
-        ChangeNotifierProvider.value(value: runtime.performanceMonitorService),
+        ChangeNotifierProvider.value(value: runtime.monitoringService),
         ChangeNotifierProvider.value(value: runtime.playbookService),
         ListenableProvider<feature_playbook.PlaybookAutomationPort>.value(
           value: runtime.playbookService,

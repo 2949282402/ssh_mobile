@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import 'package:app_ui/app_ui.dart';
 
 typedef ServerSelectorTileBuilder =

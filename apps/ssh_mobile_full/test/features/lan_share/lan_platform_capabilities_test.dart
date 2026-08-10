@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/lan_share/utils/lan_platform_capabilities.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 void main() {
   test('LAN runtime permissions are limited to native mobile targets', () {

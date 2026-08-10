@@ -20,7 +20,6 @@ import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/display_mode_service.dart';
 import '../services/network/network_identity_service.dart';
-import '../services/performance_monitor_service.dart';
 import '../services/sftp_service.dart';
 import '../services/terminal_session_metadata_store.dart';
 import '../services/shortcut_command_service.dart';
@@ -209,9 +208,6 @@ final class AppRuntimeFactory {
     await monitoringModule.initialize();
     await monitoringModule.activate();
     final monitoringService = monitoringModule.service;
-    final performanceMonitorService = PerformanceMonitorService.fromDelegate(
-      monitoringService,
-    );
     final aiSettingsAdapter = AppAiSettingsAdapter(appSettings);
     final aiSshAdapter = AppAiSshAdapter(sshService);
     final aiSftpAdapter = AppAiSftpAdapter(sftpService);
@@ -309,7 +305,7 @@ final class AppRuntimeFactory {
       sshService: sshService,
       ragService: ragModule.service,
       mcpServer: mcpModule.service,
-      performanceMonitor: performanceMonitorService,
+      performanceMonitor: monitoringService,
       logService: logger,
       modules: [
         aiModule,
@@ -374,7 +370,6 @@ final class AppRuntimeFactory {
       sftpService: sftpService,
       monitoringModule: monitoringModule,
       monitoringService: monitoringService,
-      performanceMonitorService: performanceMonitorService,
       playbookModule: playbookModule,
       playbookSettingsAdapter: playbookSettingsAdapter,
       playbookConnectionCatalogAdapter: playbookConnectionCatalogAdapter,

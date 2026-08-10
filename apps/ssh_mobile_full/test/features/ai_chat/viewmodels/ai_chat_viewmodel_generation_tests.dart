@@ -473,11 +473,11 @@ void _registerAiChatViewModelGenerationTests() {
       failingSsh,
       failingStorage,
     );
-    final failingPlaybooks = PlaybookService(
+    final failingPlaybooks = createTestPlaybook(
       repository: failingStorage.playbookRepository,
       sshService: failingSsh,
     );
-    final failingRag = RagService(aiStorage: failingStorage.aiStorage);
+    final failingRag = await createTestRagService(failingStorage);
     final viewModel = createAiChatViewModel(
       storageService: failingStorage,
       sshService: failingSsh,

@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'compatibility_check.dart';
+import 'duplicate_implementation_check.dart';
+
 /// 架构守卫的显式例外清单。
 ///
 /// 迁移期间仍存在少量兼容实现，因此这里只允许已经审计过的公共边界和
@@ -70,6 +73,16 @@ final class ArchitectureChecker {
   final Directory repositoryRoot;
   final ArchitectureAllowlist allowlist;
 
+  CompatibilityAuditReport? _compatibilityReport;
+  DuplicateImplementationAuditReport? _duplicateImplementationReport;
+
+  /// 最近一次架构检查使用的兼容引用报告。
+  CompatibilityAuditReport? get compatibilityReport => _compatibilityReport;
+
+  /// 最近一次架构检查使用的重复实现报告。
+  DuplicateImplementationAuditReport? get duplicateImplementationReport =>
+      _duplicateImplementationReport;
+
   /// 返回全部违规；调用方负责将非空结果转换为 CI 失败。
   List<ArchitectureViolation> check() {
     final packages = _discoverPackages();
@@ -88,6 +101,36 @@ final class ArchitectureChecker {
         }
       }
     }
+
+    final compatibility = CompatibilityAuditor(
+      repositoryRoot: repositoryRoot,
+    ).audit();
+    _compatibilityReport = compatibility;
+    violations.addAll(
+      compatibility.violations.map(
+        (violation) => ArchitectureViolation(
+          rule: violation.rule,
+          path: violation.path,
+          line: violation.line,
+          message: '[${violation.module}] ${violation.message}',
+        ),
+      ),
+    );
+
+    final duplicates = DuplicateImplementationAuditor(
+      repositoryRoot: repositoryRoot,
+    ).audit();
+    _duplicateImplementationReport = duplicates;
+    violations.addAll(
+      duplicates.violations.map(
+        (violation) => ArchitectureViolation(
+          rule: violation.rule,
+          path: violation.path,
+          line: 1,
+          message: '[${violation.module}] ${violation.message}',
+        ),
+      ),
+    );
 
     violations.sort((a, b) {
       final path = a.path.compareTo(b.path);
@@ -352,9 +395,8 @@ String _basename(String path) => path.split(RegExp(r'[\\/]')).last;
 String _normalise(String path) => path.replaceAll('\\', '/').toLowerCase();
 
 void main() {
-  final violations = ArchitectureChecker(
-    repositoryRoot: Directory.current,
-  ).check();
+  final checker = ArchitectureChecker(repositoryRoot: Directory.current);
+  final violations = checker.check();
   if (violations.isEmpty) {
     stdout.writeln('Architecture check passed.');
     return;

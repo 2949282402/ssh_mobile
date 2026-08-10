@@ -1,3 +1,4 @@
+import 'package:feature_playbook/feature_playbook.dart';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -14,10 +15,9 @@ import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:feature_ai/ai_llm.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../../test_utils/test_storage_adapter.dart';
 
@@ -67,9 +67,9 @@ void main() {
 
     late final SshService ssh;
     late final SftpService sftp;
-    late final PerformanceMonitorService monitor;
+    late final monitoring.MonitoringService monitor;
     late final PlaybookService playbooks;
-    late final RagService rag;
+    late final TestRagService rag;
     await tester.runAsync(() async {
       logs = AppLogService.instance;
       logs.clear();
@@ -80,11 +80,11 @@ void main() {
       ssh = createTestSshService(storage);
       sftp = createTestSftpService(storage);
       monitor = createTestPerformanceMonitorService(ssh, storage);
-      playbooks = PlaybookService(
+      playbooks = createTestPlaybook(
         repository: storage.playbookRepository,
         sshService: ssh,
       );
-      rag = RagService(aiStorage: storage.aiStorage);
+      rag = await createTestRagService(storage);
     });
     installTestAiLogger();
     addTearDown(logs.clear);
@@ -99,7 +99,7 @@ void main() {
             Provider<ai.AiSshPort>.value(value: aiSshPort(ssh)),
             ChangeNotifierProvider<SftpService>.value(value: sftp),
             Provider<ai.AiSftpPort>.value(value: aiSftpPort(sftp)),
-            ChangeNotifierProvider<PerformanceMonitorService>.value(
+            ChangeNotifierProvider<monitoring.MonitoringService>.value(
               value: monitor,
             ),
             Provider<ai.AiMonitoringPort>.value(
@@ -110,7 +110,7 @@ void main() {
             ListenableProvider<feature_playbook.PlaybookAutomationPort>.value(
               value: playbooks,
             ),
-            ChangeNotifierProvider<RagService>.value(value: rag),
+            ChangeNotifierProvider<TestRagService>.value(value: rag),
             // 旧测试保留具体实现，同时按 RAG 公共 Contract 注入能力。
             ListenableProvider<feature_rag.RagCapability>.value(value: rag),
             Provider<app_core.RagCapability>.value(value: aiRagCapability(rag)),

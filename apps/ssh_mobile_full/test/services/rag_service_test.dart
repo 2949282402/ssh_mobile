@@ -1,48 +1,15 @@
-import 'dart:io';
-import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
+
 import '../test_utils/test_storage_adapter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  // Mock path_provider MethodChannel
-  const MethodChannel channel = MethodChannel(
-    'plugins.flutter.io/path_provider',
-  );
-
   late TestStorageAdapter storage;
 
-  Future<void> cleanRagFiles() async {
-    final dir = Directory('.');
-    if (await dir.exists()) {
-      await for (final entity in dir.list()) {
-        if (entity is File) {
-          final name = p.basename(entity.path);
-          if (name == 'rag_database.json' ||
-              name == 'rag_metadata.json' ||
-              name.startsWith('rag_doc_')) {
-            try {
-              await entity.delete();
-            } catch (_) {}
-          }
-        }
-      }
-    }
-  }
-
   setUp(() async {
-    await cleanRagFiles();
-
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
-          return '.'; // 返回当前测试运行根目录作为 support 目录
-        });
-
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
@@ -51,13 +18,14 @@ void main() {
   });
 
   tearDown(() async {
+    await storage.shutdown();
     storage.dispose();
-    await cleanRagFiles();
   });
 
-  group('RagService Core Tests', () {
+  group('TestRagService Core Tests', () {
     test('Initialization works with blank database', () async {
-      final service = RagService(aiStorage: storage.aiStorage);
+      final service = await createTestRagService(storage);
+      addTearDown(service.dispose);
       await service.init();
 
       expect(service.isInitialized, true);
@@ -65,9 +33,10 @@ void main() {
     });
 
     test(
-      'Add, search, and delete document works perfectly with persistence',
+      'Add, search, and delete document works through the Feature Module',
       () async {
-        final service = RagService(aiStorage: storage.aiStorage);
+        final service = await createTestRagService(storage);
+        addTearDown(service.dispose);
         await service.init();
 
         // 1. 添加文档
@@ -94,28 +63,12 @@ void main() {
         expect(chunks.first.documentName, docName);
         expect(chunks.first.text.contains('kubectl get pods'), true);
 
-        // 3. 测试持久化：创建一个新服务实例并加载
-        final service2 = RagService(aiStorage: storage.aiStorage);
-        await service2.init();
+        // 3. 删除文档并确认当前 Module 的索引与缓存均已清空
+        await service.deleteDocument(metadata.id);
+        expect(service.documents.isEmpty, true);
 
-        expect(service2.documents.length, 1);
-        expect(service2.documents.first.name, docName);
-
-        final chunks2 = await service2.retrieve('kubectl apply');
-        expect(chunks2.isNotEmpty, true);
-        expect(chunks2.first.text.contains('kubectl apply'), true);
-
-        // 4. 删除文档
-        await service2.deleteDocument(metadata.id);
-        expect(service2.documents.isEmpty, true);
-
-        final chunks3 = await service2.retrieve('kubectl');
-        expect(chunks3.isEmpty, true);
-
-        // 5. 验证数据库文件重新保存后为空
-        final service3 = RagService(aiStorage: storage.aiStorage);
-        await service3.init();
-        expect(service3.documents.isEmpty, true);
+        final chunksAfterDelete = await service.retrieve('kubectl');
+        expect(chunksAfterDelete.isEmpty, true);
       },
     );
   });

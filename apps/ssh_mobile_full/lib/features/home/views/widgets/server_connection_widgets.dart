@@ -27,32 +27,32 @@ IconData _getStatusIcon(ConnectionConfig conn, SshConnectionState? state) {
   return Icons.dns_outlined;
 }
 
-Color _healthColor(BuildContext context, ServerHealthLevel level) {
+Color _healthColor(BuildContext context, monitoring.ServerHealthLevel level) {
   final colorScheme = Theme.of(context).colorScheme;
   return switch (level) {
-    ServerHealthLevel.healthy => colorScheme.secondary,
-    ServerHealthLevel.warning => Colors.orangeAccent.shade700,
-    ServerHealthLevel.critical => colorScheme.error,
-    ServerHealthLevel.unknown => colorScheme.onSurfaceVariant,
+    monitoring.ServerHealthLevel.healthy => colorScheme.secondary,
+    monitoring.ServerHealthLevel.warning => Colors.orangeAccent.shade700,
+    monitoring.ServerHealthLevel.critical => colorScheme.error,
+    monitoring.ServerHealthLevel.unknown => colorScheme.onSurfaceVariant,
   };
 }
 
-IconData _healthIcon(ServerHealthLevel level) {
+IconData _healthIcon(monitoring.ServerHealthLevel level) {
   return switch (level) {
-    ServerHealthLevel.healthy => Icons.verified_rounded,
-    ServerHealthLevel.warning => Icons.warning_amber_rounded,
-    ServerHealthLevel.critical => Icons.error_rounded,
-    ServerHealthLevel.unknown => Icons.help_outline_rounded,
+    monitoring.ServerHealthLevel.healthy => Icons.verified_rounded,
+    monitoring.ServerHealthLevel.warning => Icons.warning_amber_rounded,
+    monitoring.ServerHealthLevel.critical => Icons.error_rounded,
+    monitoring.ServerHealthLevel.unknown => Icons.help_outline_rounded,
   };
 }
 
-String _healthLabel(AppStrings strings, ServerHealthLevel level) {
+String _healthLabel(AppStrings strings, monitoring.ServerHealthLevel level) {
   final en = strings.language == AppLanguage.en;
   return switch (level) {
-    ServerHealthLevel.healthy => en ? 'Healthy' : '正常',
-    ServerHealthLevel.warning => en ? 'Warning' : '警告',
-    ServerHealthLevel.critical => en ? 'Critical' : '危险',
-    ServerHealthLevel.unknown => strings.noMonitoringData,
+    monitoring.ServerHealthLevel.healthy => en ? 'Healthy' : '正常',
+    monitoring.ServerHealthLevel.warning => en ? 'Warning' : '警告',
+    monitoring.ServerHealthLevel.critical => en ? 'Critical' : '危险',
+    monitoring.ServerHealthLevel.unknown => strings.noMonitoringData,
   };
 }
 
@@ -530,8 +530,8 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                       scrollDirection: Axis.horizontal,
                       child:
                           Selector<
-                            PerformanceMonitorService,
-                            ServerHealthSnapshot
+                            monitoring.MonitoringService,
+                            monitoring.ServerHealthSnapshot
                           >(
                             selector: (_, monitor) =>
                                 monitor.healthFor(widget.conn.id),
@@ -666,13 +666,13 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
 
   Widget _buildHealthChip(
     BuildContext context,
-    ServerHealthSnapshot health,
+    monitoring.ServerHealthSnapshot health,
     AppStrings strings,
   ) {
     final color = _healthColor(context, health.level);
     final label = _healthLabel(strings, health.level);
     final detail = health.details.isEmpty ? label : health.details.join(' / ');
-    final text = health.level == ServerHealthLevel.unknown
+    final text = health.level == monitoring.ServerHealthLevel.unknown
         ? label
         : '${strings.language == AppLanguage.en ? 'Health' : '健康'} ${health.score} · $detail';
     return Container(

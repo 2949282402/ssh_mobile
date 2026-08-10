@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 
-import '../../features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import '../../services/app_log_service.dart';
 
 typedef SshHostKeyConfirmation =

@@ -4,7 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
+
 import '../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
@@ -34,7 +34,7 @@ void main() {
         ),
         memoryRetriever: OperationalMemoryRetriever(
           storageService: aiStoragePort(storage),
-          ragService: aiRagCapability(RagService(aiStorage: storage.aiStorage)),
+          ragService: aiRagCapability(await createTestRagService(storage)),
         ),
       );
       final now = DateTime.now();
@@ -90,7 +90,7 @@ void main() {
         ),
         memoryRetriever: OperationalMemoryRetriever(
           storageService: aiStoragePort(storage),
-          ragService: aiRagCapability(RagService(aiStorage: storage.aiStorage)),
+          ragService: aiRagCapability(await createTestRagService(storage)),
         ),
       );
       final now = DateTime.now();
@@ -278,7 +278,7 @@ void main() {
         ),
         memoryRetriever: OperationalMemoryRetriever(
           storageService: aiStoragePort(storage),
-          ragService: aiRagCapability(RagService(aiStorage: storage.aiStorage)),
+          ragService: aiRagCapability(await createTestRagService(storage)),
         ),
       );
       final now = DateTime.now();
@@ -338,7 +338,7 @@ void main() {
         ),
         memoryRetriever: OperationalMemoryRetriever(
           storageService: aiStoragePort(storage),
-          ragService: aiRagCapability(RagService(aiStorage: storage.aiStorage)),
+          ragService: aiRagCapability(await createTestRagService(storage)),
         ),
       );
       final now = DateTime.now();
@@ -396,7 +396,7 @@ Second good block:
         ),
         memoryRetriever: OperationalMemoryRetriever(
           storageService: aiStoragePort(storage),
-          ragService: aiRagCapability(RagService(aiStorage: storage.aiStorage)),
+          ragService: aiRagCapability(await createTestRagService(storage)),
         ),
       );
       final now = DateTime.now();

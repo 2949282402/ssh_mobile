@@ -9,7 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
-import '../features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import 'app_log_service.dart';
 import 'app_settings.dart';
 import 'background_service.dart';

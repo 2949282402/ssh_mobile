@@ -7,7 +7,7 @@ AiToolService _buildTools({
   required ClientSystemToolAdapter clientSystem,
   required ClientWebViewAdapter clientWebView,
   required ServerCatalogAdapter serverCatalog,
-  required PerformanceMonitorToolAdapter performanceMonitor,
+  required ai.AiMonitoringPort performanceMonitor,
   required ServerDiagnosticsAdapter diagnostics,
   required AppSettings appSettings,
   String? chatId,
@@ -665,11 +665,14 @@ class _FakeServerCatalogService implements ServerCatalogAdapter {
   }
 }
 
-class _FakePerformanceMonitorToolService
-    implements PerformanceMonitorToolAdapter {
+class _FakePerformanceMonitorToolService implements ai.AiMonitoringPort {
   bool getStateCalled = false;
   int startCalls = 0;
   List<String> selectedConnectionIds = [];
+
+  @override
+  Future<Map<String, dynamic>> query(app_core.MonitoringQuery request) async =>
+      getState();
 
   @override
   Map<String, dynamic> clearSelection() {
@@ -740,6 +743,11 @@ class _FakePerformanceMonitorToolService
     startCalls += 1;
     return getState();
   }
+
+  @override
+  Future<Map<String, dynamic>> startWithTargets(
+    Map<String, ssh_core.SshTargetBinding> targets,
+  ) => start();
 
   @override
   Map<String, dynamic> stop() => getState();

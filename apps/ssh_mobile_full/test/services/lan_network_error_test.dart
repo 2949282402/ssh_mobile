@@ -2,7 +2,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import 'package:ssh_mobile/services/lan_share/lan_network_models.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 /// 执行 LAN HTTP 错误模型测试。
 void main() {

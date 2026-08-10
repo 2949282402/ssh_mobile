@@ -1,3 +1,4 @@
+import 'package:feature_playbook/feature_playbook.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,10 +12,9 @@ import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
 import '../../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+
 import 'package:ssh_mobile/services/app_settings.dart';
 
 import '../../test_utils/ai_port_adapters.dart';
@@ -35,9 +35,9 @@ void main() {
       final appSettings = AppSettings();
       late final SshService sshService;
       late final SftpService sftpService;
-      late final PerformanceMonitorService performanceMonitorService;
+      late final monitoring.MonitoringService performanceMonitorService;
       late final PlaybookService playbookService;
-      late final RagService ragService;
+      late final TestRagService ragService;
       late final ai.AiDatabase aiDatabase;
       await tester.runAsync(() async {
         await storageService.init();
@@ -50,11 +50,11 @@ void main() {
           sshService,
           storageService,
         );
-        playbookService = PlaybookService(
+        playbookService = createTestPlaybook(
           repository: storageService.playbookRepository,
           sshService: sshService,
         );
-        ragService = RagService(aiStorage: storageService.aiStorage);
+        ragService = await createTestRagService(storageService);
       });
 
       try {
@@ -114,7 +114,7 @@ void main() {
               Provider<ai.AiSshPort>.value(value: aiSshPort(sshService)),
               ChangeNotifierProvider<SftpService>.value(value: sftpService),
               Provider<ai.AiSftpPort>.value(value: aiSftpPort(sftpService)),
-              ChangeNotifierProvider<PerformanceMonitorService>.value(
+              ChangeNotifierProvider<monitoring.MonitoringService>.value(
                 value: performanceMonitorService,
               ),
               Provider<ai.AiMonitoringPort>.value(
@@ -127,7 +127,7 @@ void main() {
               ListenableProvider<feature_playbook.PlaybookAutomationPort>.value(
                 value: playbookService,
               ),
-              ChangeNotifierProvider<RagService>.value(value: ragService),
+              ChangeNotifierProvider<TestRagService>.value(value: ragService),
               // 旧测试保留具体实现，同时按 RAG 公共 Contract 注入能力。
               ListenableProvider<feature_rag.RagCapability>.value(
                 value: ragService,

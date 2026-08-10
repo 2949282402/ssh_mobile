@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
 void main() {

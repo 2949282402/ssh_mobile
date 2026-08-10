@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # App Shell Services 分类
 
@@ -6,6 +6,12 @@
 代码只有 App Scope 基础设施、App 适配器，或仍被旧 App 调用面使用的兼容桥；
 新的业务实现必须进入对应的 `packages/features/`、`packages/core/` 或
 `packages/infrastructure/` 公共入口。
+
+兼容入口的逐模块引用基线、门禁状态、保留的 App Shell 适配器和删除条件
+统一记录在 [`docs/architecture/COMPATIBILITY_MIGRATION_INVENTORY.md`](../../../../docs/architecture/COMPATIBILITY_MIGRATION_INVENTORY.md)。
+Connection、Terminal、SFTP、Monitoring、System Admin、LAN Share、Playbook、
+RAG 和 Network 的旧 Feature/业务入口已经完成零引用收口；剩余文件均是明确
+登记的 App Scope 后端或适配边界，不能再作为新业务实现目的地。
 
 ## 分类与 Owner
 
@@ -21,22 +27,23 @@
   `client_system_tool_service.dart`、`client_health_advisor.dart`、
   `server_catalog_service.dart`、`server_diagnostics_service.dart`、
   `connection_target_binding.dart`、`remote_target_scope.dart`、
-  `remote_command_decoder.dart`、`terminal_session_metadata_store.dart`。
+  `remote_command_decoder.dart`、`terminal_session_metadata_store.dart`、
+  `sftp_backend_adapters.dart`、`sftp_io_backend_adapters.dart`、
+  `network_v1_adapters.dart`。
   它们只把 App-owned Repository、Secure Storage、SSH 或日志能力转换为
   Feature Port，不拥有 Feature 数据库。
-- 兼容桥：`ssh_service.dart` 与 `ssh/**`、`sftp_service.dart` 与 `sftp/**`、
-  `sftp_path_history_store.dart`、`performance_monitor_*.dart`、
-  `server_status_probe.dart`、`system_admin_service.dart`、
-  `playbook_service.dart`、`rag_service.dart`、`terminal_history_service*.dart`。
-  SSH、SFTP、Monitoring、System Admin、Playbook、RAG 和 Terminal 的真实
-  Owner 已分别进入 `ssh_core` 或对应 Feature；这些旧入口仍被 App Shell、
-  旧页面或测试调用，因此当前只能作为非 Owner 兼容表面保留。`SshService`
+- 仍保留的协议/基础设施后端：`ssh_service.dart` 与 `ssh/**`、
+  `sftp_service.dart` 与 `sftp/**`、`sftp_path_history_store.dart`、
+  `server_diagnostics_service.dart`、`server_status_probe.dart`、
+  `terminal_history_service*.dart`，以及 `network/**` 中登记的 native v1
+  codec/service/identity。它们不是 Feature UI 或业务 Owner，只能由 App Shell
+  适配器和组合测试使用；Playbook、RAG、Monitoring、System Admin、LAN Share
+  和 Network Relay 的旧业务 facade 已删除。`SshService`
   的会话、Lease、Pool idle Timer 和后台订阅计数也只是诊断读取面，不改变
   其仍由 AppRuntime/SSH Manager 统一关闭的 Owner 关系。
-- 旧协议适配：`network/**`、`relay/**` 和 `lan_share/**`。LAN Feature 已有
-  独立实现和 Module；这些文件仍承载现有 native v1 协议调用面。新的
-  `network_transport` 只负责 App Scope Runtime/Handle Facade，不在本 Step
-  复制或重写旧 TCP/UDP/QUIC/WebShare 协议。
+- 旧协议适配：`network/**`。LAN Feature 已有独立实现和 Module；`network/**`
+  仅承载 App Scope native v1 协议调用面。新的 `network_transport` 负责
+  Runtime/Handle Facade，不复制或重写 TCP/UDP/QUIC/WebShare 协议。
 - 内部拆分文件：被 `part of` 或条件导出引用的文件不是独立 Service，必须
   与其主库一起维护，不能按“零直接引用”误删。
 
@@ -51,5 +58,5 @@
 `tool_secret_policy.dart` 仍被旧 App Service 通过相对路径导入，因此保留为
 `feature_ai` 的兼容导出；它不拥有安全策略实现。
 
-后续迁移应先为兼容桥补齐对应的公共 Contract/Capability，再删除桥接文件；
-不得以批量删除替代 Feature 迁移，也不得新增 `packages/core/common_services/`。
+后续改动必须先通过对应的公共 Contract/Capability 和兼容清单守卫；不得把
+已删除的旧 Feature 入口恢复为 facade，也不得新增 `packages/core/common_services/`。

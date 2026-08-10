@@ -2,10 +2,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
-import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:feature_connection/feature_connection.dart';
+import 'package:ssh_mobile/app/connection_runtime_adapters.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../../../test_utils/test_storage_adapter.dart';
 
@@ -15,7 +16,7 @@ void main() {
   late TestStorageAdapter storageService;
   late SshService sshService;
   late SftpService sftpService;
-  late PerformanceMonitorService performanceService;
+  late monitoring.MonitoringService performanceService;
 
   setUp(() async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
@@ -44,9 +45,16 @@ void main() {
         connectionRepository: storageService.connectionRepository,
         credentialRepository: storageService.credentialRepository,
         hostKeyRepository: storageService.hostKeyRepository,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceService: performanceService,
+        runtimePort: AppConnectionRuntimeAdapter(
+          sshServiceFactory: () => sshService,
+          sftpServiceFactory: () => sftpService,
+          monitoringServiceFactory: () => performanceService,
+        ),
+        verificationPort: AppConnectionVerificationAdapter(
+          credentialRepository: storageService.credentialRepository,
+          hostKeyRepository: storageService.hostKeyRepository,
+          logger: AppLogService.instance,
+        ),
       );
 
       expect(viewModel.connections, isEmpty);
@@ -74,9 +82,16 @@ void main() {
           connectionRepository: storageService.connectionRepository,
           credentialRepository: storageService.credentialRepository,
           hostKeyRepository: storageService.hostKeyRepository,
-          sshService: sshService,
-          sftpService: sftpService,
-          performanceService: performanceService,
+          runtimePort: AppConnectionRuntimeAdapter(
+            sshServiceFactory: () => sshService,
+            sftpServiceFactory: () => sftpService,
+            monitoringServiceFactory: () => performanceService,
+          ),
+          verificationPort: AppConnectionVerificationAdapter(
+            credentialRepository: storageService.credentialRepository,
+            hostKeyRepository: storageService.hostKeyRepository,
+            logger: AppLogService.instance,
+          ),
         );
 
         final config = ConnectionConfig(
@@ -103,9 +118,16 @@ void main() {
         connectionRepository: storageService.connectionRepository,
         credentialRepository: storageService.credentialRepository,
         hostKeyRepository: storageService.hostKeyRepository,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceService: performanceService,
+        runtimePort: AppConnectionRuntimeAdapter(
+          sshServiceFactory: () => sshService,
+          sftpServiceFactory: () => sftpService,
+          monitoringServiceFactory: () => performanceService,
+        ),
+        verificationPort: AppConnectionVerificationAdapter(
+          credentialRepository: storageService.credentialRepository,
+          hostKeyRepository: storageService.hostKeyRepository,
+          logger: AppLogService.instance,
+        ),
       );
 
       final config1 = ConnectionConfig(
@@ -141,9 +163,16 @@ void main() {
           connectionRepository: storageService.connectionRepository,
           credentialRepository: storageService.credentialRepository,
           hostKeyRepository: storageService.hostKeyRepository,
-          sshService: sshService,
-          sftpService: sftpService,
-          performanceService: performanceService,
+          runtimePort: AppConnectionRuntimeAdapter(
+            sshServiceFactory: () => sshService,
+            sftpServiceFactory: () => sftpService,
+            monitoringServiceFactory: () => performanceService,
+          ),
+          verificationPort: AppConnectionVerificationAdapter(
+            credentialRepository: storageService.credentialRepository,
+            hostKeyRepository: storageService.hostKeyRepository,
+            logger: AppLogService.instance,
+          ),
         );
 
         final sessionId = await viewModel.openTerminalSession(

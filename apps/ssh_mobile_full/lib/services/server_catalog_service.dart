@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:connection_core/connection_core.dart' as connection_core;
 
-import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
 import 'sftp_service.dart';
 import '../core/services/ssh_client_factory.dart';
@@ -19,8 +18,8 @@ abstract interface class ServerCatalogAdapter {
     required String connectionId,
     required Map<String, dynamic> changes,
     ConnectionTargetBinding? approvedTarget,
-    ConnectionConfig? approvedCurrent,
-    ConnectionConfig? approvedCandidate,
+    connection_core.ConnectionConfig? approvedCurrent,
+    connection_core.ConnectionConfig? approvedCandidate,
   });
 
   Future<Map<String, dynamic>> deleteServer(String connectionId);
@@ -104,8 +103,8 @@ class ServerCatalogService implements ServerCatalogAdapter {
     required String connectionId,
     required Map<String, dynamic> changes,
     ConnectionTargetBinding? approvedTarget,
-    ConnectionConfig? approvedCurrent,
-    ConnectionConfig? approvedCandidate,
+    connection_core.ConnectionConfig? approvedCurrent,
+    connection_core.ConnectionConfig? approvedCandidate,
   }) async {
     final target = await RemoteTargetScope.resolveIfBound(
       connectionRepository: connectionRepository,
@@ -122,7 +121,7 @@ class ServerCatalogService implements ServerCatalogAdapter {
     }
     final next = approvedCandidate == null
         ? buildUpdateCandidate(current, changes)
-        : ConnectionConfig.fromJson(approvedCandidate.toJson());
+        : connection_core.ConnectionConfig.fromJson(approvedCandidate.toJson());
     if (next.id != connectionId) {
       throw StateError('Approved server candidate id does not match target.');
     }
@@ -144,7 +143,7 @@ class ServerCatalogService implements ServerCatalogAdapter {
       throw RemoteTargetScopeException.targetChanged(connectionId);
     }
     await connectionRepository.updateConnection(
-      ConnectionConfig.fromJson(next.toJson()),
+      connection_core.ConnectionConfig.fromJson(next.toJson()),
     );
     if (approvedCurrent == null) {
       await credentialRepository.saveCredentials(
@@ -156,8 +155,8 @@ class ServerCatalogService implements ServerCatalogAdapter {
     return {'updated': true, 'server': _buildServerDetails(next)};
   }
 
-  static ConnectionConfig buildUpdateCandidate(
-    ConnectionConfig current,
+  static connection_core.ConnectionConfig buildUpdateCandidate(
+    connection_core.ConnectionConfig current,
     Map<String, dynamic> changes,
   ) {
     _validateUpdateKeys(changes.keys);
@@ -168,10 +167,14 @@ class ServerCatalogService implements ServerCatalogAdapter {
       username: _readOptionalString(changes, 'username') ?? current.username,
       group: _readOptionalString(changes, 'group') ?? current.group,
       serverPlatform: changes.containsKey('serverPlatform')
-          ? ServerPlatform.fromName(changes['serverPlatform'] as String?)
+          ? connection_core.ServerPlatform.fromName(
+              changes['serverPlatform'] as String?,
+            )
           : current.serverPlatform,
       launchMode: changes.containsKey('launchMode')
-          ? TerminalLaunchMode.fromName(changes['launchMode'] as String?)
+          ? connection_core.TerminalLaunchMode.fromName(
+              changes['launchMode'] as String?,
+            )
           : current.launchMode,
       tmuxAutoDeleteSeconds:
           _readOptionalInt(changes, 'tmuxAutoDeleteSeconds') ??
@@ -196,7 +199,7 @@ class ServerCatalogService implements ServerCatalogAdapter {
     );
   }
 
-  static String _configFingerprint(ConnectionConfig config) =>
+  static String _configFingerprint(connection_core.ConnectionConfig config) =>
       jsonEncode(config.toJson());
 
   @override
@@ -245,7 +248,9 @@ class ServerCatalogService implements ServerCatalogAdapter {
     return {'reordered': true, 'orderedIds': orderedIds};
   }
 
-  Map<String, dynamic> _buildServerSummary(ConnectionConfig config) {
+  Map<String, dynamic> _buildServerSummary(
+    connection_core.ConnectionConfig config,
+  ) {
     return {
       'id': config.id,
       'name': config.name,
@@ -258,7 +263,9 @@ class ServerCatalogService implements ServerCatalogAdapter {
     };
   }
 
-  Map<String, dynamic> _buildServerDetails(ConnectionConfig config) {
+  Map<String, dynamic> _buildServerDetails(
+    connection_core.ConnectionConfig config,
+  ) {
     return {
       ..._buildServerSummary(config),
       'keepAlive': config.keepAlive,

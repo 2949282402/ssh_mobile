@@ -2,11 +2,10 @@
 
 import 'package:feature_connection/feature_connection.dart';
 import 'package:connection_core/connection_core.dart' as connection_core;
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 import '../core/services/ssh_host_key_policy.dart';
-import '../features/connection/services/connection_runtime_actions.dart';
-import '../services/performance_monitor_service.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/app_log_service.dart';
@@ -16,17 +15,17 @@ final class AppConnectionRuntimeAdapter implements ConnectionRuntimePort {
   AppConnectionRuntimeAdapter({
     this.sshServiceFactory,
     this.sftpServiceFactory,
-    this.performanceServiceFactory,
+    this.monitoringServiceFactory,
   });
 
   final SshService Function()? sshServiceFactory;
   final SftpService Function()? sftpServiceFactory;
-  final PerformanceMonitorService Function()? performanceServiceFactory;
+  final monitoring.MonitoringService Function()? monitoringServiceFactory;
 
   SshService? get _sshService => sshServiceFactory?.call();
   SftpService? get _sftpService => sftpServiceFactory?.call();
-  PerformanceMonitorService? get _performanceService =>
-      performanceServiceFactory?.call();
+  monitoring.MonitoringService? get _monitoringService =>
+      monitoringServiceFactory?.call();
 
   @override
   String? get errorMessage => _sshService?.errorMessage;
@@ -55,11 +54,11 @@ final class AppConnectionRuntimeAdapter implements ConnectionRuntimePort {
       await ssh.disconnectSessionsForConnection(connectionId);
     }
     await _sftpService?.disconnectConnection(connectionId, forgetPath: true);
-    _performanceService?.stopForConnection(connectionId);
+    _monitoringService?.stopForConnection(connectionId);
 
     // 旧缓存维护器当前没有可执行的磁盘清理逻辑，保留调用点以便后续
     // SFTP 模块迁移时接入真实 Owner，不在本 Step 改变缓存策略。
-    SftpCacheMaintenance.clearCacheForConnection(connectionId);
+    AppSftpCacheMaintenance.clearCacheForConnection(connectionId);
   }
 
   @override
@@ -152,4 +151,13 @@ ConnectionHostKeyPrompt _toFeaturePrompt(
     algorithm: prompt.algorithm,
     fingerprint: prompt.fingerprint,
   );
+}
+
+/// App Shell 兼容缓存清理边界；真实 SFTP Owner 迁移后再接入实现。
+final class AppSftpCacheMaintenance {
+  const AppSftpCacheMaintenance._();
+
+  static void clearCacheForConnection(String connectionId) {
+    // Step 06 不改变既有缓存策略；真实清理 Owner 在 SFTP 模块迁移时接入。
+  }
 }

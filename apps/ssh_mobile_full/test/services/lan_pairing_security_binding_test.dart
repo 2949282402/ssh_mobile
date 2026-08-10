@@ -1,6 +1,6 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

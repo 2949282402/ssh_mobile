@@ -102,6 +102,12 @@ final class RelayEnrollmentService {
         return NetworkFailure<void>(enrollment.error);
       }
       final data = (enrollment as SdkSuccess<DeviceEnrollment>).data;
+      if (data.protocolVersion != protocolVersion) {
+        return _failure(
+          code: NetworkErrorCode.relayError,
+          message: 'Relay enrollment protocol version is unsupported.',
+        );
+      }
       final nowSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final localExpiresAt =
           nowSeconds + data.expiresAt.difference(data.serverTime).inSeconds;

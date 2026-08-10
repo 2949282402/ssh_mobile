@@ -12,7 +12,7 @@ import 'package:feature_ai/feature_ai.dart'
         approvedPlanMessageForChat,
         canExitPlanMode,
         latestAssistantMessageForChat;
-import 'package:ssh_mobile/features/playbook/models/playbook.dart';
+import 'package:feature_playbook/feature_playbook.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../test_utils/test_storage_adapter.dart';
 

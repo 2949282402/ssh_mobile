@@ -4,13 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:ssh_mobile/features/lan_share/viewmodels/lan_share_viewmodel.dart';
-import 'package:ssh_mobile/features/lan_share/views/lan_pairing_navigation_host.dart';
-import 'package:ssh_mobile/features/lan_share/views/lan_pairing_screen.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
+import 'package:ssh_mobile/app/lan_share_feature_adapters.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
-import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
 
 LanDevice _device(String id, {String alias = 'Peer', int port = 53317}) {
   return LanDevice(
@@ -189,12 +185,18 @@ void main() {
       FlutterSecureStorage.setMockInitialValues({});
       final viewModel = _FakeLanShareViewModel();
       final navigatorKey = GlobalKey<NavigatorState>();
+      final appSettings = AppSettings();
+      final settings = AppLanShareSettingsAdapter(appSettings);
+      addTearDown(() {
+        settings.dispose();
+        appSettings.dispose();
+      });
 
       await tester.pumpWidget(
         MultiProvider(
           providers: [
             ListenableProvider<LanShareViewModel>.value(value: viewModel),
-            ChangeNotifierProvider<AppSettings>.value(value: AppSettings()),
+            ListenableProvider<LanShareSettingsPort>.value(value: settings),
           ],
           child: MaterialApp(
             navigatorKey: navigatorKey,
@@ -248,12 +250,18 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
     final viewModel = _FakeLanShareViewModel();
     final navigatorKey = GlobalKey<NavigatorState>();
+    final appSettings = AppSettings();
+    final settings = AppLanShareSettingsAdapter(appSettings);
+    addTearDown(() {
+      settings.dispose();
+      appSettings.dispose();
+    });
 
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           ListenableProvider<LanShareViewModel>.value(value: viewModel),
-          ChangeNotifierProvider<AppSettings>.value(value: AppSettings()),
+          ListenableProvider<LanShareSettingsPort>.value(value: settings),
         ],
         child: MaterialApp(
           navigatorKey: navigatorKey,

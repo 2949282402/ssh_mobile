@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # feature_connection Agent Notes
 
@@ -7,6 +7,9 @@
 - 页面需要的跨模块行为必须定义为本包的 Capability Contract，再由 App 组合根注入实现。
 - `ConnectionViewModel` 的资源 Owner 是 Route/Provider；它不负责关闭 App Scope 服务。
 - 新增或重构代码使用中文注释说明职责、生命周期和安全约束。
+- Connection 旧 App Feature 入口已关闭；调用方只能依赖
+  `package:feature_connection/feature_connection.dart` 或
+  `package:connection_core/connection_core.dart`，App Shell 适配器除外。
 - 修改后至少运行 `dart format --output=none --set-exit-if-changed lib test`、`flutter analyze` 和 `flutter test`。
 
 ## Step29 标准字段

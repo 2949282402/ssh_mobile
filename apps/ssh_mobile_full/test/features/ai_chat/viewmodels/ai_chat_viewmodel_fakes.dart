@@ -279,12 +279,13 @@ class FakeSuccessRuntimeFactory extends LegacyAiChatRuntimeFactory {
   }
 }
 
-class _RecordingTurnRagService extends RagService {
+class _RecordingTurnRagService extends ChangeNotifier
+    implements feature_rag.RagCapability {
   String? receivedSearchMode;
   int? receivedLimit;
   bool receivedExpectedKey = false;
 
-  _RecordingTurnRagService({required super.aiStorage});
+  _RecordingTurnRagService({required TestStorageAdapter storage});
 
   @override
   Future<List<feature_rag.RagChunk>> retrieve(

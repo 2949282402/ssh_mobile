@@ -8,6 +8,8 @@ import 'dart:convert';
 import 'package:drift/native.dart';
 import 'package:app_core/app_core.dart' as app_core;
 import 'package:feature_ai/feature_ai.dart' as ai;
+import 'package:feature_playbook/feature_playbook.dart' as playbook;
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ssh_mobile/app/ai_feature_adapters.dart';
@@ -16,10 +18,8 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/client_health_advisor.dart'
     as legacy_health;
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'test_storage_adapter.dart';
 
@@ -57,13 +57,11 @@ ai.AiSftpPort aiSftpPort(SftpService service) {
   return _sftpAdapters[service] ??= AppAiSftpAdapter(service);
 }
 
-ai.AiMonitoringPort aiMonitoringPort(PerformanceMonitorService service) {
-  return _monitoringAdapters[service] ??= AppAiMonitoringAdapter(
-    service.delegate,
-  );
+ai.AiMonitoringPort aiMonitoringPort(monitoring.MonitoringService service) {
+  return _monitoringAdapters[service] ??= AppAiMonitoringAdapter(service);
 }
 
-app_core.RagCapability aiRagCapability(RagService service) {
+app_core.RagCapability aiRagCapability(feature_rag.RagCapability service) {
   return _ragAdapters[service] ??= AppAiRagCapabilityAdapter(service);
 }
 
@@ -156,9 +154,9 @@ abstract class LegacyAiChatRuntimeFactory extends ai.AiChatRuntimeFactory {
     required TestStorageAdapter storageService,
     required SshService sshService,
     required SftpService sftpService,
-    required PerformanceMonitorService performanceMonitorService,
-    required PlaybookService playbookService,
-    required RagService ragService,
+    required monitoring.MonitoringService performanceMonitorService,
+    required playbook.PlaybookAutomationPort playbookService,
+    required feature_rag.RagCapability ragService,
     required AppSettings appSettings,
   }) : super(
          storageService: aiStoragePort(storageService),
@@ -176,9 +174,9 @@ ai.AiChatRuntimeFactory createAiChatRuntimeFactory({
   required TestStorageAdapter storageService,
   required SshService sshService,
   required SftpService sftpService,
-  required PerformanceMonitorService performanceMonitorService,
-  required PlaybookService playbookService,
-  required RagService ragService,
+  required monitoring.MonitoringService performanceMonitorService,
+  required playbook.PlaybookAutomationPort playbookService,
+  required feature_rag.RagCapability ragService,
   required AppSettings appSettings,
 }) {
   return ai.AiChatRuntimeFactory(
@@ -197,9 +195,9 @@ ai.AiChatViewModel createAiChatViewModel({
   required TestStorageAdapter storageService,
   required SshService sshService,
   required SftpService sftpService,
-  required PerformanceMonitorService performanceMonitorService,
-  required PlaybookService playbookService,
-  required RagService ragService,
+  required monitoring.MonitoringService performanceMonitorService,
+  required playbook.PlaybookAutomationPort playbookService,
+  required feature_rag.RagCapability ragService,
   required AppSettings appSettings,
   ai.AiChatRuntimeFactory? runtimeFactory,
   legacy_health.ClientHealthAdvisorAdapter? clientHealthAdvisor,

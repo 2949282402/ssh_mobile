@@ -7,25 +7,28 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:drift/native.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as playbook;
+import 'package:feature_rag/feature_rag.dart' as rag;
 import 'package:flutter/foundation.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ai_storage_adapter.dart';
 import 'package:ssh_mobile/services/connection_target_binding.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/remote_target_scope.dart';
-import 'package:ssh_mobile/services/sftp_path_history_store.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart'
     hide TerminalHistoryRecord;
-import 'package:ssh_mobile/services/system_admin_service.dart';
 import 'package:ssh_mobile/services/terminal_session_metadata_store.dart';
+import 'package:ssh_mobile/app/monitoring_feature_adapters.dart';
+import 'package:ssh_mobile/app/playbook_feature_adapters.dart';
 
 /// 测试中替代旧统一存储外观的组合器。
 class TestStorageAdapter extends ChangeNotifier
@@ -70,6 +73,7 @@ class TestStorageAdapter extends ChangeNotifier
       InMemorySftpPathHistoryStore();
   late final AppAiStorageAdapter _delegate;
   final List<ai.AiDatabase> _ownedAiDatabases = [];
+  final List<TestRagService> _ownedRagServices = [];
 
   /// 真实 AI Port 视图，供测试显式注入 Feature。
   ai.AiStoragePort get aiStoragePort => _TestAiStoragePort(this);
@@ -500,11 +504,19 @@ class TestStorageAdapter extends ChangeNotifier
 
   /// 关闭 Repository、SharedPreferences 写入队列和测试专用 AI 数据库。
   Future<void> shutdown() async {
+    for (final service in List<TestRagService>.of(_ownedRagServices)) {
+      await service.close();
+    }
+    _ownedRagServices.clear();
     await _delegate.shutdown();
     for (final database in _ownedAiDatabases) {
       await database.dispose();
     }
     _ownedAiDatabases.clear();
+  }
+
+  void _registerRagService(TestRagService service) {
+    _ownedRagServices.add(service);
   }
 
   @override
@@ -543,24 +555,192 @@ SftpService createTestSftpService(
   pathHistoryStore: pathHistoryStore ?? storage.sftpPathHistory,
 );
 
-/// 创建使用测试夹具中显式 Repository 的系统管理服务。
-SystemAdminService createTestSystemAdminService(TestStorageAdapter storage) =>
-    SystemAdminService(
-      connectionRepository: storage.connectionRepository,
-      credentialRepository: storage.credentialRepository,
-      hostKeyRepository: storage.hostKeyRepository,
-    );
-
-/// 创建使用测试夹具中显式 Connection Repository 的监控兼容外观。
-PerformanceMonitorService createTestPerformanceMonitorService(
+/// 创建使用测试夹具中显式 Ports 的 Monitoring Feature 服务。
+monitoring.MonitoringService createTestPerformanceMonitorService(
   SshService sshService,
   TestStorageAdapter storage, {
   AppSettings? appSettings,
-}) => PerformanceMonitorService(
-  sshService,
-  storage.connectionRepository,
-  appSettings: appSettings,
+}) => monitoring.MonitoringService(
+  sshPort: AppMonitoringSshAdapter(sshService),
+  connectionCatalog: AppMonitoringConnectionCatalogAdapter(
+    storage.connectionRepository,
+  ),
+  logger: const _TestMonitoringLogger(),
+  background: appSettings == null
+      ? null
+      : AppMonitoringBackgroundAdapter(appSettings),
 );
+
+final class _TestMonitoringLogger implements monitoring.MonitoringLoggerPort {
+  const _TestMonitoringLogger();
+
+  @override
+  void warning(String message, {String? details}) {}
+
+  @override
+  void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  }) {}
+}
+
+/// 创建使用显式 Feature Ports 的 Playbook Service。
+playbook.PlaybookService createTestPlaybook({
+  required playbook.PlaybookRepository repository,
+  required SshService sshService,
+}) => playbook.PlaybookService(
+  repository: repository,
+  sshPort: AppPlaybookSshAdapter(sshService),
+  logger: const _TestPlaybookLogger(),
+);
+
+final class _TestPlaybookLogger implements playbook.PlaybookLoggerPort {
+  const _TestPlaybookLogger();
+
+  @override
+  void info(String message, {String? details}) {}
+
+  @override
+  void warning(String message, {String? details}) {}
+
+  @override
+  void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  }) {}
+}
+
+/// 测试边界的 RAG Module Owner；Service、数据库和缓存仍按 Package 生命周期
+/// 创建，App 测试不再构造旧 RAG facade。
+Future<TestRagService> createTestRagService(
+  TestStorageAdapter storage, {
+  rag.RagSearchMode searchMode = rag.RagSearchMode.bm25,
+}) async {
+  final cacheDirectory = Directory.systemTemp.createTempSync(
+    'ssh-mobile-rag-test-',
+  );
+  final settings = _TestRagSettings(storage.aiStorage, searchMode);
+  final module = rag.RagModule(
+    databaseFactory: () => rag.RagDatabase.forTesting(NativeDatabase.memory()),
+    cacheStoreFactory: () =>
+        rag.RagCacheStore(directoryFactory: () async => cacheDirectory),
+  );
+  await module.register(
+    ModuleContext.fromMap({
+      rag.RagSettingsPort: settings,
+      rag.RagLoggerPort: const _TestRagLogger(),
+    }),
+  );
+  await module.initialize();
+  await module.activate();
+  final service = TestRagService(module, cacheDirectory);
+  storage._registerRagService(service);
+  return service;
+}
+
+final class TestRagService extends ChangeNotifier implements rag.RagCapability {
+  TestRagService(this._module, this._cacheDirectory) {
+    _module.service.addListener(notifyListeners);
+  }
+
+  final rag.RagModule _module;
+  final Directory _cacheDirectory;
+  Future<void>? _closeFuture;
+
+  rag.RagService get service => _module.service;
+
+  List<rag.RagDocumentMetadata> get documents => service.documents;
+
+  bool get isLoading => service.isLoading;
+
+  bool get isInitialized => service.isInitialized;
+
+  Future<void> init({bool force = false}) => service.init(force: force);
+
+  Future<rag.RagDocumentMetadata> addDocument({
+    required String name,
+    required List<int> bytes,
+    required String mimeType,
+  }) => service.addDocument(name: name, bytes: bytes, mimeType: mimeType);
+
+  Future<void> deleteDocument(String documentId) =>
+      service.deleteDocument(documentId);
+
+  @override
+  Future<List<rag.RagChunk>> retrieve(
+    String query, {
+    int limit = 3,
+    Set<String>? filterDocumentIds,
+    String? searchMode,
+    String? aliyunApiKey,
+  }) => service.retrieve(
+    query,
+    limit: limit,
+    filterDocumentIds: filterDocumentIds,
+    searchMode: searchMode,
+    aliyunApiKey: aliyunApiKey,
+  );
+
+  /// 等待 Module 关闭，用于 App 测试夹具的显式生命周期收尾。
+  Future<void> close() => _closeFuture ??= _closeResources();
+
+  Future<void> _closeResources() async {
+    _module.service.removeListener(notifyListeners);
+    await _module.dispose();
+    try {
+      _cacheDirectory.deleteSync(recursive: true);
+    } on FileSystemException {
+      // Cache cleanup is best effort when a platform still holds a file handle.
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(close());
+    super.dispose();
+  }
+}
+
+final class _TestRagSettings extends ChangeNotifier
+    implements rag.RagSettingsPort {
+  _TestRagSettings(this._storage, this.searchMode);
+
+  final AppAiStorageAdapter _storage;
+
+  @override
+  final rag.RagSearchMode searchMode;
+
+  @override
+  bool get isEnglish => false;
+
+  @override
+  Future<String?> getAliyunApiKey() => _storage.getAliyunApiKey();
+
+  @override
+  Future<void> saveAliyunApiKey(String key) => _storage.saveAliyunApiKey(key);
+}
+
+final class _TestRagLogger implements rag.RagLoggerPort {
+  const _TestRagLogger();
+
+  @override
+  void info(String message, {String? details}) {}
+
+  @override
+  void warning(String message, {String? details}) {}
+
+  @override
+  void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  }) {}
+}
 
 /// 测试边界的 AI Port 视图；它把可空的测试密钥转换为 Port 约定的空串。
 final class _TestAiStoragePort implements ai.AiStoragePort {

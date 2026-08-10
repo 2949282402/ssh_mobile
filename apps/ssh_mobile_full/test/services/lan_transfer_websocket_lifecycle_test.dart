@@ -4,10 +4,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_network_models.dart';
-import 'package:ssh_mobile/services/lan_share/lan_storage_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_transfer_service.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 class _ControllableWebSocket extends Fake implements WebSocket {
   final StreamController<dynamic> _controller = StreamController<dynamic>();

@@ -1,3 +1,4 @@
+import 'package:feature_playbook/feature_playbook.dart';
 import 'package:flutter/foundation.dart';
 import '../../test_utils/ai_port_adapters.dart';
 import 'package:flutter/material.dart';
@@ -8,10 +9,9 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../../test_utils/test_storage_adapter.dart';
 
@@ -47,11 +47,11 @@ void main() {
         sshService,
         storage,
       );
-      final playbookService = PlaybookService(
+      final playbookService = createTestPlaybook(
         repository: storage.playbookRepository,
         sshService: sshService,
       );
-      final ragService = RagService(aiStorage: storage.aiStorage);
+      final ragService = await createTestRagService(storage);
       final viewModel = createAiChatViewModel(
         storageService: storage,
         sshService: sshService,
@@ -246,9 +246,9 @@ class _PromptHarness {
   final AiChatViewModel viewModel;
   final SshService sshService;
   final SftpService sftpService;
-  final PerformanceMonitorService performanceMonitor;
+  final monitoring.MonitoringService performanceMonitor;
   final PlaybookService playbookService;
-  final RagService ragService;
+  final TestRagService ragService;
 
   Future<void> dispose() async {
     viewModel.dispose();

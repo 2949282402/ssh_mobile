@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # feature_sftp
 
@@ -12,16 +12,17 @@ SFTP 文件浏览、传输、预览、编辑和路径收藏 Feature。
 - Feature 通过 `SftpBackend` 使用 App Shell 注入的旧 SFTP 后端，并通过
   `ssh_core.SshSessionManager` 共享 App Scope SSH 初始化；Feature 不创建或关闭
   全局 SSH/SFTP 资源。
-- 页面使用 Route-scoped `SftpViewModel`。页面关闭时解除监听；当前兼容后端仍由
-  `AppRuntime` 持有，因此允许未迁移模块继续使用同一连接和传输任务。
+- 页面使用 Route-scoped `SftpViewModel`。页面关闭时解除监听；共享的旧
+  `SftpService` 仍由 `AppRuntime` 持有，只能通过 App Shell backend adapter 注入。
 - 公共入口提供 SFTP 路由的纯 metadata；App Shell 负责聚合并创建 Route Scope，Feature
   不依赖其他 Feature 的实现。
 
 ## 公共入口
 
 只通过 `package:feature_sftp/feature_sftp.dart` 引用 `SftpModule`、
-`SftpViewModel`、页面、模型和 Port。App Shell 的兼容适配器位于
-`apps/ssh_mobile_full/lib/app/sftp_feature_adapters.dart`。
+`SftpViewModel`、页面、模型和 Port。App Shell 的 Feature 适配器位于
+`apps/ssh_mobile_full/lib/app/sftp_feature_adapters.dart`；仍共享的 native
+后端仅通过 `sftp_backend_adapters.dart` / `sftp_io_backend_adapters.dart` 暴露。
 
 ## 验证
 

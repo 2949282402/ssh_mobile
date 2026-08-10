@@ -24,7 +24,6 @@ import 'developer_feature_adapters.dart';
 import '../services/app_bootstrap_coordinator.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
-import '../services/performance_monitor_service.dart';
 import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
@@ -51,7 +50,6 @@ final class AppRuntime implements Disposable {
     required this.sftpService,
     required this.monitoringModule,
     required this.monitoringService,
-    required this.performanceMonitorService,
     required this.playbookModule,
     required this.playbookSettingsAdapter,
     required this.playbookConnectionCatalogAdapter,
@@ -124,9 +122,6 @@ final class AppRuntime implements Disposable {
 
   /// Monitoring Module 创建的唯一监控服务实例。
   final monitoring.MonitoringService monitoringService;
-
-  /// 旧 API 兼容外观，不拥有 [monitoringService]。
-  final PerformanceMonitorService performanceMonitorService;
 
   /// Playbook Module 的唯一 App Scope Owner。
   final feature_playbook.PlaybookModule playbookModule;
@@ -310,13 +305,11 @@ final class AppRuntime implements Disposable {
       return true;
     }());
 
-    // 业务服务的 Timer/监听器先释放，再关闭其共享数据库。
+    // 业务 Module 的 Timer/监听器先释放，再关闭其共享数据库。
     await attempt(() async {
-      // 先解除旧兼容监听，再由 Module 取消 Timer、采样和所有资源。
-      performanceMonitorService.dispose();
       await monitoringModule.dispose();
       _debugAssertModuleDisposed(monitoringModule);
-      assert(!performanceMonitorService.isRunning);
+      assert(!monitoringService.isRunning);
     });
     await attempt(() async {
       await ragModule.dispose();

@@ -6,7 +6,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import 'package:ssh_mobile/services/network/network_service.dart';
+import 'package:ssh_mobile/app/network_v1_adapters.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
 /// 执行 v1 命令接受与终态事件语义测试。

@@ -2,7 +2,6 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 import 'package:connection_core/connection_core.dart';
 
-import '../../features/connection/models/connection.dart';
 import '../../services/app_log_service.dart';
 import 'ssh_host_key_policy.dart';
 

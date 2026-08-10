@@ -6,10 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:provider/provider.dart';
-import 'package:ssh_mobile/features/lan_share/utils/lan_preview_safety.dart';
-import 'package:ssh_mobile/features/lan_share/views/lan_preview_viewer_screen.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
+import 'package:ssh_mobile/app/lan_share_feature_adapters.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
 import 'package:app_ui/app_ui.dart';
 
 final Uint8List _testPng = Uint8List.fromList(
@@ -379,8 +378,10 @@ Widget _viewerHost({
   LanPreviewHtmlBuilder? htmlBuilder,
   LanPreviewImageProviderBuilder? imageProviderBuilder,
 }) {
-  return ChangeNotifierProvider<AppSettings>.value(
-    value: settings,
+  final settingsPort = AppLanShareSettingsAdapter(settings);
+  addTearDown(settingsPort.dispose);
+  return ListenableProvider<LanShareSettingsPort>.value(
+    value: settingsPort,
     child: MaterialApp(
       theme: AppTheme.lightThemeFor(),
       home: LanPreviewViewerScreen.forTesting(

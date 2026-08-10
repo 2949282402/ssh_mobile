@@ -4,7 +4,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
+import 'package:feature_rag/feature_rag.dart' as feature_rag;
+
 import '../test_utils/test_storage_adapter.dart';
 import 'package:feature_ai/ai_skills.dart';
 import 'package:ssh_mobile/utils/text_chunker.dart';
@@ -195,7 +196,7 @@ body instructions here''',
   );
 
   test('forwards the turn-scoped RAG mode, limit, and key', () async {
-    final recordingRag = _RecordingRagService(storage: storage);
+    final recordingRag = _RecordingTestRagService(storage: storage);
     final scopedRetriever = OperationalMemoryRetriever(
       storageService: aiStoragePort(storage),
       ragService: aiRagCapability(recordingRag),
@@ -215,13 +216,13 @@ body instructions here''',
   });
 }
 
-class _RecordingRagService extends RagService {
+class _RecordingTestRagService extends ChangeNotifier
+    implements feature_rag.RagCapability {
   int? receivedLimit;
   String? receivedSearchMode;
   bool receivedExpectedKey = false;
 
-  _RecordingRagService({required TestStorageAdapter storage})
-    : super(aiStorage: storage.aiStorage);
+  _RecordingTestRagService({required TestStorageAdapter storage});
 
   @override
   Future<List<RagChunk>> retrieve(

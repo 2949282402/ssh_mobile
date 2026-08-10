@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/lan_share/lan_pairing_crypto.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 void main() {
   const correctPin = '123456';

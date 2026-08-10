@@ -11,7 +11,6 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import '../../features/connection/models/connection.dart';
 import '../app_log_service.dart';
 import '../../core/services/ssh_client_factory.dart';
 import '../../core/services/data_protection_service.dart';

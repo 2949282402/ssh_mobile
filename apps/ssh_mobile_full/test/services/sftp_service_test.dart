@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import '../test_utils/test_storage_adapter.dart';
 
 void main() {

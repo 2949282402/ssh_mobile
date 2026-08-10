@@ -4,7 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import '../test_utils/test_storage_adapter.dart';
 
 import '../test_utils/ai_port_adapters.dart';

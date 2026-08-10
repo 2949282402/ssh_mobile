@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 void main() {
   group('LAN Share Models Test', () {

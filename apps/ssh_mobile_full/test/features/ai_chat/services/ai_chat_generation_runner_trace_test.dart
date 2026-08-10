@@ -1,3 +1,4 @@
+import 'package:feature_playbook/feature_playbook.dart';
 import 'package:flutter/foundation.dart';
 import '../../../test_utils/ai_port_adapters.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,12 +9,11 @@ import 'package:feature_ai/ai_tools.dart';
 import 'package:feature_ai/ai_llm.dart';
 import '../../../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import 'dart:convert';
 
 class ExceptionAiToolExecutor implements AiToolExecutor {
@@ -82,9 +82,9 @@ void main() {
   late TestStorageAdapter storageService;
   late SshService sshService;
   late SftpService sftpService;
-  late PerformanceMonitorService performanceMonitorService;
+  late monitoring.MonitoringService performanceMonitorService;
   late PlaybookService playbookService;
-  late RagService ragService;
+  late TestRagService ragService;
   late AppSettings appSettings;
 
   setUp(() async {
@@ -105,11 +105,11 @@ void main() {
       sshService,
       storageService,
     );
-    playbookService = PlaybookService(
+    playbookService = createTestPlaybook(
       repository: storageService.playbookRepository,
       sshService: sshService,
     );
-    ragService = RagService(aiStorage: storageService.aiStorage);
+    ragService = await createTestRagService(storageService);
   });
 
   tearDown(() {

@@ -7,6 +7,11 @@ export 'src/domain/system_admin_models.dart';
 export 'src/domain/system_admin_monitoring.dart';
 export 'src/domain/system_admin_ports.dart';
 export 'src/presentation/system_admin_feature_scope.dart';
-export 'src/presentation/views/system_admin_screen.dart';
+export 'src/presentation/views/system_admin_screen.dart'
+    hide
+        AppSettings,
+        AppStrings,
+        PerformanceMonitorService,
+        PerformanceMonitorViewModel;
 export 'src/presentation/system_power_confirm_flow.dart';
 export 'src/presentation/viewmodels/system_admin_viewmodel.dart';

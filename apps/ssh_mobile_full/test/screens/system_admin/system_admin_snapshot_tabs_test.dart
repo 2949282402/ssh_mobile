@@ -3,23 +3,40 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:ssh_mobile/features/system_admin/views/system_admin_screen.dart';
-import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
-import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
-import 'package:ssh_mobile/widgets/system_power_confirm_flow.dart';
-import 'package:ssh_mobile/features/performance/performance.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
+import 'package:feature_system_admin/feature_system_admin.dart' as admin;
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
+import 'package:ssh_mobile/app/system_admin_feature_adapters.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
-import 'package:ssh_mobile/features/system_admin/models/system_admin.dart';
-import 'package:ssh_mobile/services/server_status_probe.dart';
+import 'package:connection_core/connection_core.dart';
 
 part 'system_admin_snapshot_stubs.dart';
+
+typedef SystemAdminScreen = admin.SystemAdminScreen;
+typedef SystemAdminViewModel = admin.SystemAdminViewModel;
+typedef SystemAdminMonitoringPort = admin.SystemAdminMonitoringPort;
+typedef PerformanceMonitorViewModel = admin.SystemAdminMonitoringPort;
+typedef SshHostKeyConfirmation = ssh_core.SshHostKeyConfirmation;
+typedef SystemPowerConfirmationToken = admin.SystemPowerConfirmationToken;
+typedef SystemPowerAction = admin.SystemPowerAction;
+typedef LinuxUserAccount = admin.LinuxUserAccount;
+typedef ActiveSession = admin.ActiveSession;
+typedef SystemdService = admin.SystemdService;
+typedef ListeningPort = admin.ListeningPort;
+typedef LinuxUserProcess = admin.LinuxUserProcess;
+typedef MonitorAlert = admin.MonitorAlert;
+typedef PerformanceSample = admin.PerformanceSample;
+typedef DiskUsageSnapshot = admin.DiskUsageSnapshot;
+typedef ServerHealthSnapshot = admin.ServerHealthSnapshot;
+typedef ServerHealthLevel = admin.ServerHealthLevel;
+typedef PortProcessSnapshot = admin.PortProcessSnapshot;
+typedef ApplicationMemorySnapshot = admin.ApplicationMemorySnapshot;
+typedef ServiceStatusSnapshot = admin.ServiceStatusSnapshot;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late AppSettings appSettings;
+  late AppSystemAdminSettingsAdapter settingsAdapter;
   late List<ConnectionConfig> fakeConnections;
 
   setUp(() async {
@@ -27,6 +44,7 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
     appSettings = AppSettings();
     await appSettings.init();
+    settingsAdapter = AppSystemAdminSettingsAdapter(appSettings);
 
     fakeConnections = [
       ConnectionConfig(
@@ -46,9 +64,13 @@ void main() {
   }) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider.value(value: appSettings),
-        ChangeNotifierProvider.value(value: adminVm),
-        ChangeNotifierProvider.value(value: monitorVm),
+        ListenableProvider<admin.SystemAdminSettingsPort>.value(
+          value: settingsAdapter,
+        ),
+        ChangeNotifierProvider<SystemAdminViewModel>.value(value: adminVm),
+        ListenableProvider<admin.SystemAdminMonitoringPort>.value(
+          value: monitorVm,
+        ),
       ],
       child: MaterialApp(
         theme: ThemeData(

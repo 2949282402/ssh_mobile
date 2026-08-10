@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-10
 
 # connection_core
 
@@ -15,6 +15,8 @@ Connection/凭据/Host Key 公共契约，以及只保存非敏感连接结构�
 - `ConnectionDatabase` 是本 Package 的资源，由 AppRuntime 创建并关闭；它使用
   `connection.sqlite`，不读取或迁移旧统一业务数据库/SharedPreferences 连接数据。
 - 本 Package 不依赖任何 Feature，也不暴露 `/src/` 路径给外部调用方。
+- Full App 的旧 Connection 模型、ViewModel 和页面入口已完成零引用清理；
+  AppRuntime 仍通过公开 Repository/Host Key/Credential 契约提供唯一 Owner。
 
 ## 验证
 

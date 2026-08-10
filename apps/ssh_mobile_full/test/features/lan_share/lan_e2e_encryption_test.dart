@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/lan_share/lan_security_service.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 import 'support/fake_secure_storage.dart';
 

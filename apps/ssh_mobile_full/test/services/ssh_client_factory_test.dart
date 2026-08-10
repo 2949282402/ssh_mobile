@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import 'package:ssh_mobile/core/services/ssh_client_factory.dart';
 
 void main() {

@@ -2,17 +2,65 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/playbook/viewmodels/playbook_viewmodel.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
-import 'package:ssh_mobile/services/ssh_service.dart';
+import 'package:connection_core/connection_core.dart';
+import 'package:feature_playbook/feature_playbook.dart';
+import 'package:ssh_core/ssh_core.dart';
 import '../../../test_utils/test_storage_adapter.dart';
+
+final class _PlaybookCatalog extends ChangeNotifier
+    implements PlaybookConnectionCatalogPort {
+  _PlaybookCatalog(this._repository);
+
+  final ConnectionRepository _repository;
+
+  @override
+  bool get isInitialized => true;
+
+  @override
+  List<ConnectionConfig> get connections => _repository.connections;
+
+  @override
+  ConnectionConfig? connectionById(String id) => _repository.getConnection(id);
+}
+
+final class _PlaybookLogger implements PlaybookLoggerPort {
+  @override
+  void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  }) {}
+
+  @override
+  void info(String message, {String? details}) {}
+
+  @override
+  void warning(String message, {String? details}) {}
+}
+
+final class _PlaybookSsh implements PlaybookSshPort {
+  @override
+  Future<RemoteCommandResult> runCommand({
+    required String connectionId,
+    required String command,
+    Duration timeout = const Duration(seconds: 15),
+  }) async => const RemoteCommandResult(exitCode: 0, stdout: 'ok', stderr: '');
+
+  @override
+  Future<RemoteCommandResult> runCommandForBinding({
+    required SshTargetBinding binding,
+    required String command,
+    Duration timeout = const Duration(seconds: 15),
+  }) async => const RemoteCommandResult(exitCode: 0, stdout: 'ok', stderr: '');
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late TestStorageAdapter storageService;
-  late SshService sshService;
   late PlaybookService playbookService;
+  late _PlaybookCatalog catalog;
 
   setUp(() async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
@@ -22,15 +70,18 @@ void main() {
     storageService = TestStorageAdapter();
     await storageService.init();
 
-    sshService = createTestSshService(storageService);
+    catalog = _PlaybookCatalog(storageService.connectionRepository);
     playbookService = PlaybookService(
       repository: storageService.playbookRepository,
-      sshService: sshService,
+      sshPort: _PlaybookSsh(),
+      logger: _PlaybookLogger(),
     );
   });
 
   tearDown(() {
     debugDefaultTargetPlatformOverride = null;
+    playbookService.dispose();
+    catalog.dispose();
     storageService.dispose();
   });
 
@@ -38,7 +89,7 @@ void main() {
     test('Initialization status and default connection setup', () {
       final viewModel = PlaybookViewModel(
         playbookService: playbookService,
-        connectionRepository: storageService.connectionRepository,
+        connectionCatalog: catalog,
       );
 
       expect(viewModel.playbooks, isEmpty);
@@ -51,7 +102,7 @@ void main() {
     test('Creating a new playbook initializes edit controllers and models', () {
       final viewModel = PlaybookViewModel(
         playbookService: playbookService,
-        connectionRepository: storageService.connectionRepository,
+        connectionCatalog: catalog,
       );
 
       viewModel.startNewPlaybook();
@@ -66,7 +117,7 @@ void main() {
     test('Steps manipulation during edit mode', () {
       final viewModel = PlaybookViewModel(
         playbookService: playbookService,
-        connectionRepository: storageService.connectionRepository,
+        connectionCatalog: catalog,
       );
 
       viewModel.startNewPlaybook();
@@ -80,7 +131,7 @@ void main() {
     test('Selecting connection ID updates ViewModel state', () {
       final viewModel = PlaybookViewModel(
         playbookService: playbookService,
-        connectionRepository: storageService.connectionRepository,
+        connectionCatalog: catalog,
       );
 
       viewModel.setSelectedConnectionId('conn_123');
@@ -90,7 +141,7 @@ void main() {
     test('Toggling step expanded updates expandedSteps list', () {
       final viewModel = PlaybookViewModel(
         playbookService: playbookService,
-        connectionRepository: storageService.connectionRepository,
+        connectionCatalog: catalog,
       );
 
       viewModel.toggleStepExpanded(0);

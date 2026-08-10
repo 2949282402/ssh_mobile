@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/playbook/models/playbook.dart';
+import 'package:feature_playbook/feature_playbook.dart';
 import 'package:feature_ai/ai_agent.dart';
 import 'package:feature_ai/ai_approved_plan.dart';
 import 'package:ssh_mobile/services/app_settings.dart';

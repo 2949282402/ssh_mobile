@@ -307,13 +307,10 @@ class StubSystemAdminViewModel extends ChangeNotifier
 
 class StubPerformanceMonitorViewModel extends ChangeNotifier
     implements PerformanceMonitorViewModel {
-  @override
   int activeTabIndex = 0;
 
-  @override
   bool serversCollapsed = false;
 
-  @override
   String? activeConnectionId;
 
   @override
@@ -347,13 +344,10 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
   final List<String> fetchApplicationsCalls = [];
   final List<String> fetchServicesCalls = [];
 
-  @override
   List<PerformanceSample> getSamples(String connectionId) => [];
 
-  @override
   List<DiskUsageSnapshot> getDiskUsage(String connectionId) => [];
 
-  @override
   ServerHealthSnapshot getHealth(String connectionId) => ServerHealthSnapshot(
     connectionId: connectionId,
     level: ServerHealthLevel.healthy,
@@ -363,19 +357,16 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
     updatedAt: DateTime.now(),
   );
 
-  @override
   void setTabIndex(int index) {
     activeTabIndex = index;
     notifyListeners();
   }
 
-  @override
   void setServersCollapsed(bool collapsed) {
     serversCollapsed = collapsed;
     notifyListeners();
   }
 
-  @override
   void setActiveConnection(String? connectionId) {
     activeConnectionId = connectionId;
     notifyListeners();
@@ -396,7 +387,6 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
     notifyListeners();
   }
 
-  @override
   void forceRefresh({SshHostKeyConfirmation? onUnknownHostKey}) {}
 
   @override

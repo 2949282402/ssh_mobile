@@ -3,7 +3,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import 'package:ssh_mobile/services/connection_target_binding.dart';
 import 'package:ssh_mobile/services/remote_target_scope.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
@@ -63,7 +64,7 @@ void main() {
       final ssh = _BoundMonitorSshService(storage);
       final monitor = createTestPerformanceMonitorService(ssh, storage);
       monitor.toggleSelection(connection.id);
-      final binding = ConnectionTargetBinding.fromConfig(connection);
+      final binding = ssh_core.SshTargetBinding.fromConfig(connection);
 
       await monitor.startMonitoring(targetBindings: {connection.id: binding});
       final callsBeforeEdit = ssh.remoteCallCount;

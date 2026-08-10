@@ -1,3 +1,4 @@
+import 'package:feature_playbook/feature_playbook.dart';
 import 'dart:async';
 import '../../../test_utils/ai_port_adapters.dart';
 import 'dart:convert';
@@ -7,14 +8,13 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_health_advisor.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../../../test_utils/test_storage_adapter.dart';
 import 'package:feature_ai/ai_tools.dart';
@@ -28,9 +28,9 @@ part 'ai_chat_viewmodel_fakes.dart';
 late TestStorageAdapter storageService;
 late SshService sshService;
 late SftpService sftpService;
-late PerformanceMonitorService performanceMonitorService;
+late monitoring.MonitoringService performanceMonitorService;
 late PlaybookService playbookService;
-late RagService ragService;
+late TestRagService ragService;
 late AppSettings appSettings;
 
 void main() {
@@ -54,11 +54,11 @@ void main() {
       sshService,
       storageService,
     );
-    playbookService = PlaybookService(
+    playbookService = createTestPlaybook(
       repository: storageService.playbookRepository,
       sshService: sshService,
     );
-    ragService = RagService(aiStorage: storageService.aiStorage);
+    ragService = await createTestRagService(storageService);
   });
 
   tearDown(() {

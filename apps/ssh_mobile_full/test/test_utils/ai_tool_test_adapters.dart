@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:app_core/app_core.dart' as app_core;
 import 'package:connection_core/connection_core.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as playbook;
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
@@ -18,13 +19,11 @@ import 'package:ssh_mobile/services/client_health_advisor.dart'
 import 'package:feature_webview/feature_webview.dart' as webview;
 import 'package:ssh_mobile/services/connection_target_binding.dart'
     as legacy_binding;
-import 'package:ssh_mobile/services/performance_monitor_tool_service.dart'
-    as legacy_monitor;
 import 'package:ssh_mobile/services/server_catalog_service.dart'
     as legacy_catalog;
 import 'package:ssh_mobile/services/server_diagnostics_service.dart'
     as legacy_diagnostics;
-import 'package:ssh_mobile/services/sftp_service.dart' as legacy_sftp;
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart' as legacy_sftp;
 import 'package:ssh_mobile/services/ssh_service.dart' as legacy_ssh;
 import 'test_storage_adapter.dart';
 import 'package:ssh_mobile/services/app_settings.dart' as legacy_settings;
@@ -128,8 +127,8 @@ ai.AiServerCatalogPort _serverCatalogPort(Object value) {
 
 ai.AiMonitoringPort _monitoringPort(Object value) {
   if (value is ai.AiMonitoringPort) return value;
-  if (value is legacy_monitor.PerformanceMonitorToolAdapter) {
-    return _LegacyMonitoringPort(value);
+  if (value is monitoring.MonitoringService) {
+    return ports.aiMonitoringPort(value);
   }
   throw ArgumentError.value(value, 'performanceMonitorToolService');
 }
@@ -682,62 +681,6 @@ final class _LegacyServerCatalogPort implements ai.AiServerCatalogPort {
   @override
   Future<Map<String, dynamic>> reorderServers(List<String> orderedIds) =>
       _delegate.reorderServers(orderedIds);
-}
-
-final class _LegacyMonitoringPort implements ai.AiMonitoringPort {
-  const _LegacyMonitoringPort(this._delegate);
-
-  final legacy_monitor.PerformanceMonitorToolAdapter _delegate;
-
-  @override
-  Future<Map<String, dynamic>> query(app_core.MonitoringQuery request) async =>
-      _delegate.getState();
-  @override
-  Map<String, dynamic> getState() => _delegate.getState();
-  @override
-  Map<String, dynamic> setSelectedServers(List<String> connectionIds) =>
-      _delegate.setSelectedServers(connectionIds);
-  @override
-  Map<String, dynamic> clearSelection() => _delegate.clearSelection();
-  @override
-  Future<Map<String, dynamic>> start() => _delegate.start();
-  @override
-  Map<String, dynamic> stop() => _delegate.stop();
-  @override
-  Map<String, dynamic> stopForConnection(String connectionId) =>
-      _delegate.stopForConnection(connectionId);
-  @override
-  Map<String, dynamic> setInterval(Duration interval) =>
-      _delegate.setInterval(interval);
-  @override
-  Map<String, dynamic> setHistoryWindow(Duration window) =>
-      _delegate.setHistoryWindow(window);
-  @override
-  Map<String, dynamic> getHealth({List<String>? connectionIds}) =>
-      _delegate.getHealth(connectionIds: connectionIds);
-  @override
-  Map<String, dynamic> getSamples(
-    String connectionId, {
-    bool visibleOnly = true,
-    int limit = 100,
-  }) => _delegate.getSamples(
-    connectionId,
-    visibleOnly: visibleOnly,
-    limit: limit,
-  );
-  @override
-  Map<String, dynamic> getAlerts({int limit = 50}) =>
-      _delegate.getAlerts(limit: limit);
-  @override
-  Future<Map<String, dynamic>> getPorts(String connectionId) =>
-      _delegate.getPorts(connectionId);
-  @override
-  Future<Map<String, dynamic>> getApplications(String connectionId) =>
-      _delegate.getApplications(connectionId);
-  @override
-  Future<Map<String, dynamic>> startWithTargets(
-    Map<String, ssh_core.SshTargetBinding> targets,
-  ) => _delegate.start();
 }
 
 final class _LegacyDiagnosticsPort implements ai.AiServerDiagnosticsPort {

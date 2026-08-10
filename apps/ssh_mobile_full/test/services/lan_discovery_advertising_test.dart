@@ -2,9 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nsd/nsd.dart' as nsd;
-import 'package:ssh_mobile/services/lan_share/lan_discovery_service.dart';
-import 'package:ssh_mobile/services/lan_share/lan_multicast_lock.dart';
-import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 class _RecordingLanDiscoveryService extends LanDiscoveryService {
   final List<int> startedPorts = [];

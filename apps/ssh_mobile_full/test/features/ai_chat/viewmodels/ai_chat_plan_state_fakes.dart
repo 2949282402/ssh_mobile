@@ -5,9 +5,9 @@ class _PlanHarness {
   final AppSettings appSettings;
   final SshService sshService;
   final SftpService sftpService;
-  final PerformanceMonitorService performanceMonitorService;
+  final monitoring.MonitoringService performanceMonitorService;
   final PlaybookService playbookService;
-  final RagService ragService;
+  final TestRagService ragService;
 
   _PlanHarness({
     required this.storageService,
@@ -36,11 +36,11 @@ class _PlanHarness {
       sshService: ssh,
       sftpService: sftp,
       performanceMonitorService: monitor,
-      playbookService: PlaybookService(
+      playbookService: createTestPlaybook(
         repository: storage.playbookRepository,
         sshService: ssh,
       ),
-      ragService: RagService(aiStorage: storage.aiStorage),
+      ragService: await createTestRagService(storage),
     );
   }
 

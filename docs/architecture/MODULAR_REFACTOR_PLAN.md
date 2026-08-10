@@ -7,6 +7,9 @@
 > 执行对象：Codex / 开发者
 > 原则：不考虑旧版本兼容、不迁移旧开发数据库；每个 Step 完成后必须恢复可分析、可测试状态，再进入下一 Step。
 
+兼容层引用基线与模块关闭门禁见
+[`COMPATIBILITY_MIGRATION_INVENTORY.md`](COMPATIBILITY_MIGRATION_INVENTORY.md)。
+
 ---
 
 ## Step 00 执行记录（2026-08-07）

@@ -17,9 +17,10 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
 - 数据库只保存传输历史和不含密钥、Token 的配对元数据；密钥、PIN、Bearer
   Token 和 Relay 凭据继续由安全存储边界管理。
 
-旧 `apps/ssh_mobile_full/lib/features/lan_share/**` 与
-`apps/ssh_mobile_full/lib/services/lan_share/**` 在本迁移阶段保留为兼容面，
-不会被批量删除。
+旧 `apps/ssh_mobile_full/lib/features/lan_share/**`、
+`apps/ssh_mobile_full/lib/services/lan_share/**` 和 Relay facade 已删除；
+App Shell 只保留 `lan_share_feature_adapters.dart` 以及 native v1 network
+创建边界。
 
 ## Package contract
 

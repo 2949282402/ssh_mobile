@@ -1,29 +1,20 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
-import 'package:ssh_mobile/features/sftp/views/sftp_settings_screen.dart';
-import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:feature_sftp/feature_sftp.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late AppSettings appSettings;
+  late _TestSftpSettings settings;
 
-  setUp(() async {
-    SharedPreferences.setMockInitialValues({});
-    FlutterSecureStorage.setMockInitialValues({});
-    appSettings = AppSettings();
-    await appSettings.init();
-  });
+  setUp(() => settings = _TestSftpSettings());
 
-  tearDown(() => appSettings.dispose());
+  tearDown(() => settings.dispose());
 
   Widget buildSubject() {
-    return ChangeNotifierProvider<AppSettings>.value(
-      value: appSettings,
+    return ListenableProvider<SftpSettingsPort>.value(
+      value: settings,
       child: const MaterialApp(home: SftpSettingsScreen()),
     );
   }
@@ -41,7 +32,7 @@ void main() {
     await tester.pumpWidget(buildSubject());
     await tester.pumpAndSettle();
 
-    final before = appSettings.sftpDownloadLimitBytes;
+    final before = settings.sftpDownloadLimitBytes;
     await tester.tap(find.byType(ListTile).first);
     await tester.pumpAndSettle();
 
@@ -50,8 +41,8 @@ void main() {
     await tester.tap(find.byType(FilledButton));
     await tester.pumpAndSettle();
 
-    expect(appSettings.sftpDownloadLimitBytes, 600 * 1024 * 1024);
-    expect(appSettings.sftpDownloadLimitBytes, isNot(before));
+    expect(settings.sftpDownloadLimitBytes, 600 * 1024 * 1024);
+    expect(settings.sftpDownloadLimitBytes, isNot(before));
   });
 
   testWidgets('an out-of-range limit shows an error and does not persist', (
@@ -60,7 +51,7 @@ void main() {
     await tester.pumpWidget(buildSubject());
     await tester.pumpAndSettle();
 
-    final before = appSettings.sftpDownloadLimitBytes;
+    final before = settings.sftpDownloadLimitBytes;
     await tester.tap(find.byType(ListTile).first);
     await tester.pumpAndSettle();
 
@@ -68,8 +59,50 @@ void main() {
     await tester.tap(find.byType(FilledButton));
     await tester.pumpAndSettle();
 
-    expect(appSettings.sftpDownloadLimitBytes, before);
+    expect(settings.sftpDownloadLimitBytes, before);
     // The dialog stays open with an error message.
     expect(find.byType(TextField), findsOneWidget);
   });
+}
+
+final class _TestSftpSettings extends ChangeNotifier
+    implements SftpSettingsPort {
+  @override
+  SftpLanguage language = SftpLanguage.english;
+
+  @override
+  int sftpDownloadLimitBytes = 512 * 1024 * 1024;
+
+  @override
+  int sftpTextPreviewLimitBytes = 2 * 1024 * 1024;
+
+  @override
+  int sftpRichPreviewLimitBytes = 20 * 1024 * 1024;
+
+  @override
+  int sftpTextEditLimitBytes = 512 * 1024;
+
+  @override
+  Future<void> setSftpDownloadLimitBytes(int bytes) async {
+    sftpDownloadLimitBytes = bytes;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> setSftpTextPreviewLimitBytes(int bytes) async {
+    sftpTextPreviewLimitBytes = bytes;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> setSftpRichPreviewLimitBytes(int bytes) async {
+    sftpRichPreviewLimitBytes = bytes;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> setSftpTextEditLimitBytes(int bytes) async {
+    sftpTextEditLimitBytes = bytes;
+    notifyListeners();
+  }
 }

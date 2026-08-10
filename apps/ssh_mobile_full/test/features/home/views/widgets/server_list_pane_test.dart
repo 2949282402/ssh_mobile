@@ -6,12 +6,13 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_connection/feature_connection.dart' as feature;
 
-import 'package:ssh_mobile/features/connection/models/connection.dart';
-import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.dart';
+import 'package:connection_core/connection_core.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
+import 'package:ssh_mobile/app/connection_runtime_adapters.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../../../../test_utils/test_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
@@ -23,8 +24,8 @@ void main() {
   late TestStorageAdapter storageService;
   late _TestSshService sshService;
   late SftpService sftpService;
-  late PerformanceMonitorService performanceService;
-  late ConnectionViewModel connectionViewModel;
+  late monitoring.MonitoringService performanceService;
+  late feature.ConnectionViewModel connectionViewModel;
 
   setUp(() async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
@@ -43,13 +44,20 @@ void main() {
       sshService,
       storageService,
     );
-    connectionViewModel = ConnectionViewModel(
+    connectionViewModel = feature.ConnectionViewModel(
       connectionRepository: storageService.connectionRepository,
       credentialRepository: storageService.credentialRepository,
       hostKeyRepository: storageService.hostKeyRepository,
-      sshService: sshService,
-      sftpService: sftpService,
-      performanceService: performanceService,
+      runtimePort: AppConnectionRuntimeAdapter(
+        sshServiceFactory: () => sshService,
+        sftpServiceFactory: () => sftpService,
+        monitoringServiceFactory: () => performanceService,
+      ),
+      verificationPort: AppConnectionVerificationAdapter(
+        credentialRepository: storageService.credentialRepository,
+        hostKeyRepository: storageService.hostKeyRepository,
+        logger: AppLogService.instance,
+      ),
     );
     debugDefaultTargetPlatformOverride = null;
   });

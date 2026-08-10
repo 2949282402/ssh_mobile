@@ -9,12 +9,11 @@ import 'package:feature_ai/ai_tools.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_system_tool_service.dart';
 import 'package:feature_ai/ai_chat.dart';
-import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
 import '../test_utils/test_storage_adapter.dart';
 import 'package:feature_ai/ai_agent.dart';
-import 'package:ssh_mobile/features/playbook/models/playbook.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:feature_playbook/feature_playbook.dart';
+import 'package:connection_core/connection_core.dart';
 
 part 'tool_loop_core_tests.dart';
 part 'tool_loop_gate_tests.dart';
@@ -56,7 +55,7 @@ void main() {
         // “能力不可用”的工具错误。
         clientSystemToolService: ClientSystemToolService.instance,
         serverDiagnosticsService: diagnostics,
-        performanceMonitorToolService: PerformanceMonitorToolService(monitor),
+        performanceMonitorToolService: monitor,
       );
 
       llm = LlmChatService(

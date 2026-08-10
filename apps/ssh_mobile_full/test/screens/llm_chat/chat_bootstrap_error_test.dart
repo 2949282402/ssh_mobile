@@ -1,3 +1,4 @@
+import 'package:feature_playbook/feature_playbook.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -10,10 +11,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_ai/ai_chat.dart';
 import 'package:feature_ai/feature_ai.dart' as ai;
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/playbook_service.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../../test_utils/test_storage_adapter.dart';
 
@@ -43,11 +43,11 @@ void main() {
     final ssh = createTestSshService(storage);
     final sftp = createTestSftpService(storage);
     final monitor = createTestPerformanceMonitorService(ssh, storage);
-    final playbooks = PlaybookService(
+    final playbooks = createTestPlaybook(
       repository: storage.playbookRepository,
       sshService: ssh,
     );
-    final rag = RagService(aiStorage: storage.aiStorage);
+    final rag = await createTestRagService(storage);
 
     try {
       await tester.pumpWidget(
@@ -59,7 +59,7 @@ void main() {
             Provider<ai.AiSshPort>.value(value: aiSshPort(ssh)),
             ChangeNotifierProvider<SftpService>.value(value: sftp),
             Provider<ai.AiSftpPort>.value(value: aiSftpPort(sftp)),
-            ChangeNotifierProvider<PerformanceMonitorService>.value(
+            ChangeNotifierProvider<monitoring.MonitoringService>.value(
               value: monitor,
             ),
             Provider<ai.AiMonitoringPort>.value(
@@ -70,7 +70,7 @@ void main() {
             ListenableProvider<feature_playbook.PlaybookAutomationPort>.value(
               value: playbooks,
             ),
-            ChangeNotifierProvider<RagService>.value(value: rag),
+            ChangeNotifierProvider<TestRagService>.value(value: rag),
             // 旧测试保留具体实现，同时按 RAG 公共 Contract 注入能力。
             ListenableProvider<feature_rag.RagCapability>.value(value: rag),
             Provider<app_core.RagCapability>.value(value: aiRagCapability(rag)),

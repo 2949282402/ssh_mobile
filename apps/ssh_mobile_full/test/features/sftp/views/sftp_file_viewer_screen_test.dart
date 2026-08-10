@@ -2,14 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 
+import 'package:feature_sftp/feature_sftp.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:provider/provider.dart';
-import 'package:ssh_mobile/features/sftp/views/sftp_file_viewer_screen.dart';
-import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:app_ui/app_ui.dart';
 
 part 'sftp_file_viewer_screen_fakes.dart';
@@ -31,7 +29,7 @@ void main() {
   ) async {
     final gate = Completer<Uint8List>();
     final settings = _TestAppSettings(
-      language: AppLanguage.en,
+      language: SftpLanguage.english,
       textLimitBytes: 123456,
     );
     addTearDown(settings.dispose);
@@ -89,7 +87,7 @@ void main() {
     tester,
   ) async {
     final settings = _TestAppSettings(
-      language: AppLanguage.en,
+      language: SftpLanguage.english,
       textLimitBytes: 64 * 1024 * 1024,
     );
     addTearDown(settings.dispose);
@@ -128,7 +126,7 @@ final sample = '[fenced](https://code.example/fenced)';
 ~~~
     [indented](https://plain.example/indented)
 ''';
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     var readCalls = 0;
 
@@ -186,7 +184,7 @@ final sample = '[fenced](https://code.example/fenced)';
   });
 
   testWidgets('unsupported file never starts a remote read', (tester) async {
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     var readCalls = 0;
 
@@ -215,7 +213,7 @@ final sample = '[fenced](https://code.example/fenced)';
     tester,
   ) async {
     final settings = _TestAppSettings(
-      language: AppLanguage.en,
+      language: SftpLanguage.english,
       textLimitBytes: 10 * 1024,
     );
     addTearDown(settings.dispose);
@@ -252,7 +250,7 @@ final sample = '[fenced](https://code.example/fenced)';
     tester,
   ) async {
     final settings = _TestAppSettings(
-      language: AppLanguage.en,
+      language: SftpLanguage.english,
       textLimitBytes: 4 * 1024,
     );
     addTearDown(settings.dispose);
@@ -279,7 +277,7 @@ final sample = '[fenced](https://code.example/fenced)';
   testWidgets('load failure is safe and retry is single flight', (
     tester,
   ) async {
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     final retryGate = Completer<Uint8List>();
     var readCalls = 0;
@@ -334,7 +332,7 @@ final sample = '[fenced](https://code.example/fenced)';
   testWidgets(
     'late read completion after leaving does not touch disposed state',
     (tester) async {
-      final settings = _TestAppSettings(language: AppLanguage.en);
+      final settings = _TestAppSettings(language: SftpLanguage.english);
       addTearDown(settings.dispose);
       final gate = Completer<Uint8List>();
 
@@ -362,7 +360,7 @@ final sample = '[fenced](https://code.example/fenced)';
     tester,
   ) async {
     const rawHtml = '<img src="https://example.com/tracker.png">';
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     String? receivedHtml;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -409,7 +407,7 @@ final sample = '[fenced](https://code.example/fenced)';
   testWidgets('HTML sandbox receives readable dark theme colors', (
     tester,
   ) async {
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     String? receivedHtml;
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
@@ -451,7 +449,7 @@ final sample = '[fenced](https://code.example/fenced)';
     'unsupported HTML platform is explicit and source remains usable',
     (tester) async {
       const rawHtml = '<h1>Server report</h1>';
-      final settings = _TestAppSettings(language: AppLanguage.en);
+      final settings = _TestAppSettings(language: SftpLanguage.english);
       addTearDown(settings.dispose);
       var readCalls = 0;
       var htmlBuildCalls = 0;
@@ -509,7 +507,7 @@ final sample = '[fenced](https://code.example/fenced)';
   );
 
   testWidgets('HTML render error is safe and offers source', (tester) async {
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
 
@@ -554,7 +552,7 @@ final sample = '[fenced](https://code.example/fenced)';
     addTearDown(testImage.dispose);
     final successfulProvider = _SynchronousImageProvider(testImage);
     final settings = _TestAppSettings(
-      language: AppLanguage.en,
+      language: SftpLanguage.english,
       richLimitBytes: 765432,
     );
     addTearDown(settings.dispose);
@@ -622,7 +620,7 @@ final sample = '[fenced](https://code.example/fenced)';
   testWidgets('image frame failure hides zoom semantics and controls', (
     tester,
   ) async {
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     final failingProvider = MemoryImage(Uint8List.fromList([1, 2, 3, 4]));
 
@@ -651,7 +649,7 @@ final sample = '[fenced](https://code.example/fenced)';
   testWidgets('remote PDF is blocked before reading untrusted bytes', (
     tester,
   ) async {
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     var readCalls = 0;
 
@@ -695,7 +693,7 @@ final sample = '[fenced](https://code.example/fenced)';
       tester.view.resetPhysicalSize();
       tester.view.resetDevicePixelRatio();
     });
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
 
     await tester.pumpWidget(
@@ -754,7 +752,7 @@ final sample = '[fenced](https://code.example/fenced)';
       tester.view.resetDevicePixelRatio();
     });
     const safePadding = EdgeInsets.fromLTRB(42, 0, 18, 12);
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
 
     await tester.pumpWidget(
@@ -788,7 +786,7 @@ final sample = '[fenced](https://code.example/fenced)';
   testWidgets('language changes update safe error text without reloading', (
     tester,
   ) async {
-    final settings = _TestAppSettings(language: AppLanguage.en);
+    final settings = _TestAppSettings(language: SftpLanguage.english);
     addTearDown(settings.dispose);
     var readCalls = 0;
 
@@ -807,7 +805,7 @@ final sample = '[fenced](https://code.example/fenced)';
     expect(find.text('Could not load this preview'), findsOneWidget);
     expect(readCalls, 1);
 
-    settings.setLanguage(AppLanguage.zh);
+    settings.setLanguage(SftpLanguage.chinese);
     await tester.pump();
 
     expect(find.text('无法加载此文件预览'), findsOneWidget);
@@ -826,8 +824,11 @@ Widget _viewerHost({
   EdgeInsets safePadding = EdgeInsets.zero,
   bool darkMode = false,
 }) {
-  return ChangeNotifierProvider<AppSettings>.value(
-    value: settings,
+  return MultiProvider(
+    providers: [
+      ChangeNotifierProvider<_TestAppSettings>.value(value: settings),
+      ListenableProvider<SftpSettingsPort>.value(value: settings),
+    ],
     child: MaterialApp(
       theme: AppTheme.lightThemeFor(),
       darkTheme: AppTheme.darkThemeFor(oledDark: false),

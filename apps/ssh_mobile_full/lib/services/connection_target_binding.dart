@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import '../features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 
 /// Immutable, non-secret identity of a saved remote connection target.
 ///

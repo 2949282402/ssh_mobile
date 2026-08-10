@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/features/lan_share/utils/lan_text_action_helper.dart';
+import 'package:feature_lan_share/feature_lan_share.dart';
 
 void main() {
   group('LanTextActionHelper Test', () {

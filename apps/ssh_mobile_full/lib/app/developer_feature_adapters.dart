@@ -1,6 +1,7 @@
 import 'package:app_core/app_core.dart' as app_core;
 import 'package:feature_developer/feature_developer.dart' as developer;
 import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:flutter/foundation.dart';
 import 'package:network_transport/network_transport.dart';
@@ -8,7 +9,6 @@ import 'package:network_transport/network_transport.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/native_memory_service.dart';
-import '../services/performance_monitor_service.dart';
 import '../services/ssh_service.dart';
 
 /// AppSettings 到 Developer Feature 的最小设置适配器。
@@ -159,7 +159,7 @@ final class AppDeveloperDiagnosticsAdapter extends ChangeNotifier
   final SshService sshService;
   final feature_rag.RagService ragService;
   final feature_mcp.McpServerController mcpServer;
-  final PerformanceMonitorService performanceMonitor;
+  final monitoring.MonitoringService performanceMonitor;
   final AppLogService logService;
   final List<app_core.AppModule> modules;
   final NetworkRuntime networkRuntime;

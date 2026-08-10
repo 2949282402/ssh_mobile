@@ -1,12 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/services/rag_service.dart';
+
 import '../test_utils/test_storage_adapter.dart';
 
 // --- Mocks for HttpClient ---
@@ -132,40 +130,11 @@ class MockHttpClientResponse extends Stream<List<int>>
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const MethodChannel pathChannel = MethodChannel(
-    'plugins.flutter.io/path_provider',
-  );
-
   late TestStorageAdapter storage;
 
-  Future<void> cleanRagFiles() async {
-    final dir = Directory('.');
-    if (await dir.exists()) {
-      await for (final entity in dir.list()) {
-        if (entity is File) {
-          final name = p.basename(entity.path);
-          if (name == 'rag_database.json' ||
-              name == 'rag_metadata.json' ||
-              name.startsWith('rag_doc_')) {
-            try {
-              await entity.delete();
-            } catch (_) {}
-          }
-        }
-      }
-    }
-  }
-
   setUp(() async {
-    await cleanRagFiles();
     HttpOverrides.global = MockHttpOverrides();
-
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(pathChannel, (MethodCall methodCall) async {
-          return '.';
-        });
-
-    SharedPreferences.setMockInitialValues({'rag_search_mode': 'hybrid'});
+    SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({
       'ai_aliyun_api_key': 'aliyun-test-key-123',
     });
@@ -176,15 +145,16 @@ void main() {
 
   tearDown(() async {
     HttpOverrides.global = null;
+    await storage.shutdown();
     storage.dispose();
-    await cleanRagFiles();
   });
 
-  group('RagService Hybrid Search Tests', () {
+  group('TestRagService Hybrid Search Tests', () {
     test(
       'addDocument generates embeddings and retrieve uses RRF fusion',
       () async {
-        final service = RagService(aiStorage: storage.aiStorage);
+        final service = await createTestRagService(storage);
+        addTearDown(service.dispose);
         await service.init();
 
         // 1. 添加带有阿里云向量的文档
@@ -200,10 +170,10 @@ void main() {
         expect(metadata.chunkCount > 0, true);
 
         // 2. 向量检索模式验证
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('rag_search_mode', 'vector');
-
-        final vectorChunks = await service.retrieve('reboot nginx');
+        final vectorChunks = await service.retrieve(
+          'reboot nginx',
+          searchMode: 'vector',
+        );
         expect(vectorChunks.isNotEmpty, true);
         expect(
           vectorChunks.first.text.contains('systemctl restart nginx'),
@@ -211,9 +181,10 @@ void main() {
         );
 
         // 3. 混合检索模式验证
-        await prefs.setString('rag_search_mode', 'hybrid');
-
-        final hybridChunks = await service.retrieve('kubectl get pods');
+        final hybridChunks = await service.retrieve(
+          'kubectl get pods',
+          searchMode: 'hybrid',
+        );
         expect(hybridChunks.isNotEmpty, true);
         expect(hybridChunks.first.text.contains('kubectl get'), true);
       },

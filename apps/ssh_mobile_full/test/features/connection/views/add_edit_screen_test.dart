@@ -7,12 +7,12 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:feature_connection/feature_connection.dart' as feature;
 
-import 'package:ssh_mobile/features/connection/models/connection.dart';
-import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.dart';
-import 'package:ssh_mobile/features/connection/views/add_edit_screen.dart';
+import 'package:connection_core/connection_core.dart';
+import 'package:ssh_mobile/app/connection_runtime_adapters.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/performance_monitor_service.dart';
-import 'package:ssh_mobile/services/sftp_service.dart';
+import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
+import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../../../test_utils/test_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
@@ -36,8 +36,8 @@ void main() {
     late TestStorageAdapter storage;
     late SshService ssh;
     late SftpService sftp;
-    late PerformanceMonitorService performance;
-    late ConnectionViewModel viewModel;
+    late monitoring.MonitoringService performance;
+    late feature.ConnectionViewModel viewModel;
     await tester.runAsync(() async {
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
@@ -48,13 +48,20 @@ void main() {
       ssh = createTestSshService(storage);
       sftp = createTestSftpService(storage);
       performance = createTestPerformanceMonitorService(ssh, storage);
-      viewModel = ConnectionViewModel(
+      viewModel = feature.ConnectionViewModel(
         connectionRepository: storage.connectionRepository,
         credentialRepository: storage.credentialRepository,
         hostKeyRepository: storage.hostKeyRepository,
-        sshService: ssh,
-        sftpService: sftp,
-        performanceService: performance,
+        runtimePort: AppConnectionRuntimeAdapter(
+          sshServiceFactory: () => ssh,
+          sftpServiceFactory: () => sftp,
+          monitoringServiceFactory: () => performance,
+        ),
+        verificationPort: AppConnectionVerificationAdapter(
+          credentialRepository: storage.credentialRepository,
+          hostKeyRepository: storage.hostKeyRepository,
+          logger: AppLogService.instance,
+        ),
       );
       await storage.addConnection(
         ConnectionConfig(
@@ -89,7 +96,7 @@ void main() {
           data: ShadThemeData(brightness: Brightness.light),
           child: MaterialApp(
             theme: AppTheme.lightThemeFor(),
-            home: const AddEditScreen(editId: 'server-1'),
+            home: const feature.AddEditScreen(editId: 'server-1'),
           ),
         ),
       ),

@@ -9,7 +9,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'app_log_service.dart';
 
-import '../features/connection/models/connection.dart';
+import 'package:connection_core/connection_core.dart';
 import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
 
