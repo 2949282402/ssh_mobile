@@ -214,7 +214,7 @@ class _SshMobileAppState extends State<SshMobileApp>
         ChangeNotifierProvider.value(value: runtime.appLogService),
         ChangeNotifierProvider.value(value: runtime.aiStorageAdapter),
         ChangeNotifierProvider.value(value: runtime.appSettings),
-        Provider<feature_webview.ClientWebViewService>.value(
+        ChangeNotifierProvider<feature_webview.ClientWebViewService>.value(
           value: runtime.webViewService,
         ),
         ListenableProvider<feature_webview.WebViewSettingsPort>.value(
