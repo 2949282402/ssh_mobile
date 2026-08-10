@@ -126,8 +126,6 @@ func (s *Server) Close() { s.hub.close() }
 
 // RegisterRoutes 注册公开、管理端和 v1 设备端点。
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /", s.dashboard)
-	mux.Handle("GET /static/", s.staticFileHandler())
 	mux.HandleFunc("GET /healthz", s.health)
 
 	// 管理端认证路由。
@@ -137,6 +135,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// 管理端受认证保护的路由。
 	mux.HandleFunc("GET /api/stats", s.authMiddleware(s.apiStats))
+	mux.HandleFunc("GET /api/token", s.authMiddleware(s.apiToken))
 	mux.HandleFunc("POST /api/token/rotate", s.authMiddleware(s.rotateToken))
 	mux.HandleFunc("POST /api/devices/revoke", s.authMiddleware(s.revokeDevice))
 

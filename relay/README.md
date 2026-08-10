@@ -1,4 +1,4 @@
-> Last updated: 2026-08-07
+> Last updated: 2026-08-11
 
 # SSH Mobile Control and Relay Server
 
@@ -7,9 +7,11 @@
 </p>
 
 This Go service provides SSH Mobile's memory-only device control plane and
-WebSocket relay. It does not persist transfer frames, filenames, credentials,
-or device state. Restarting the process disconnects all peers and requires
-devices to enroll again.
+WebSocket relay. The standalone React + Vite + TypeScript administration UI is
+in `../front/` and is served by the `front` Compose service. Relay does not
+embed or serve the dashboard UI. It does not persist transfer frames,
+filenames, credentials, or device state. Restarting the process disconnects all
+peers and requires devices to enroll again.
 
 ## Required configuration
 
@@ -32,8 +34,8 @@ cryptographically secure generator.
 ## Docker Compose production deployment
 
 Docker Compose is the only supported deployment path. The supplied topology
-keeps the Go service on an internal network and uses Caddy for HTTPS/WSS
-termination.
+keeps the Go service and the front-end container on an internal network and
+uses Caddy for HTTPS/WSS termination and same-origin routing.
 
 1. Point a public DNS `A` or `AAAA` record at the host and allow ports 80/443.
 2. Copy `.env.example` to `.env` and replace every placeholder:
@@ -54,8 +56,7 @@ termination.
    docker compose --env-file .env up --build
    ```
 
-   This single command attaches the combined `caddy` and `relay` logs because
-   those are the only services in `compose.yaml`.
+   This single command attaches the combined `caddy`, `front`, and `relay` logs.
 
 Caddy persists certificate state only. Do not add a relay data volume or
 publish the internal Go port directly to the public internet.
@@ -70,8 +71,9 @@ publish the internal Go port directly to the public internet.
   the current process. Revocation closes an active socket immediately.
 - Browser WebSocket upgrades use the standard same-origin policy. Native
   clients without an `Origin` header remain supported.
-- Dashboard API routes require an authenticated HttpOnly-cookie session and
-  dynamic device data is rendered with safe DOM APIs.
+- Dashboard API routes require an authenticated HttpOnly-cookie session. The
+  front-end renders dynamic device data through React text nodes and loads no
+  external scripts or fonts.
 - Caddy applies restrictive framing, content-type, referrer, and content
   security headers.
 
@@ -80,9 +82,10 @@ boundary: all clients must enroll again.
 
 ## Endpoints
 
-- `GET /`: dashboard and static assets
+- `GET /`: front-end SPA through Caddy; the Go Relay has no embedded dashboard
 - `POST /api/login`, `POST /api/logout`, `GET /api/auth-status`: dashboard auth
 - `GET /api/stats`: authenticated in-memory telemetry
+- `GET /api/token`: authenticated current enrollment-token read
 - `POST /api/token/rotate`: authenticated enrollment-token rotation
 - `POST /api/devices/revoke`: authenticated device revocation
 - `POST /v1/devices/enroll`: protocol-v1 device enrollment

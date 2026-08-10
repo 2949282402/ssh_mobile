@@ -253,26 +253,8 @@ func TestCredentialRequiresCurrentEnrollment(t *testing.T) {
 	}
 }
 
-// TestDashboardContainsNoInlineHandlersOrDynamicInnerHTML 验证控制台不使用不安全的内联脚本。
-func TestDashboardContainsNoInlineHandlersOrDynamicInnerHTML(t *testing.T) {
-	index, err := staticFS.ReadFile("static/index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := staticFS.ReadFile("static/app.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Contains(index, []byte("onclick=")) || bytes.Contains(index, []byte("onsubmit=")) {
-		t.Fatal("dashboard contains inline event handlers")
-	}
-	if bytes.Contains(script, []byte("innerHTML")) {
-		t.Fatal("dashboard renders server data through innerHTML")
-	}
-}
-
-// TestDashboardAndApiStats 验证控制台登录和统计 API 的基本契约。
-func TestDashboardAndApiStats(t *testing.T) {
+// TestAdminApiContract 验证管理员登录、统计、Token 和设备撤销 API 的基本契约。
+func TestAdminApiContract(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte("01234567890123456789012345678901"),
 		EnrollmentToken: "test-token",
@@ -284,24 +266,20 @@ func TestDashboardAndApiStats(t *testing.T) {
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
 
-	// Test GET / HTML dashboard
-	reqDash := httptest.NewRequest("GET", "/", nil)
-	recDash := httptest.NewRecorder()
-	mux.ServeHTTP(recDash, reqDash)
-
-	if recDash.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for dashboard, got %d", recDash.Code)
-	}
-	if !bytes.Contains(recDash.Body.Bytes(), []byte("SSH Mobile")) {
-		t.Fatalf("dashboard missing expected HTML content")
-	}
-
 	// Test GET /api/stats JSON without auth (expected 401)
 	reqStatsUnauth := httptest.NewRequest("GET", "/api/stats", nil)
 	recStatsUnauth := httptest.NewRecorder()
 	mux.ServeHTTP(recStatsUnauth, reqStatsUnauth)
 	if recStatsUnauth.Code != http.StatusUnauthorized {
 		t.Fatalf("expected status 401 for unauthenticated stats, got %d", recStatsUnauth.Code)
+	}
+
+	// The enrollment token is narrower than runtime stats and needs its own auth.
+	reqTokenUnauth := httptest.NewRequest("GET", "/api/token", nil)
+	recTokenUnauth := httptest.NewRecorder()
+	mux.ServeHTTP(recTokenUnauth, reqTokenUnauth)
+	if recTokenUnauth.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401 for unauthenticated token, got %d", recTokenUnauth.Code)
 	}
 
 	// Login
@@ -339,6 +317,25 @@ func TestDashboardAndApiStats(t *testing.T) {
 	var stats statsResponse
 	if err := json.NewDecoder(recStats.Body).Decode(&stats); err != nil {
 		t.Fatalf("failed to decode stats JSON: %v", err)
+	}
+	if bytes.Contains(recStats.Body.Bytes(), []byte("enrollment_token")) {
+		t.Fatal("stats response leaked the enrollment token")
+	}
+
+	// Test GET /api/token JSON with auth.
+	reqToken := httptest.NewRequest("GET", "/api/token", nil)
+	reqToken.AddCookie(cookie)
+	recToken := httptest.NewRecorder()
+	mux.ServeHTTP(recToken, reqToken)
+	if recToken.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for token, got %d", recToken.Code)
+	}
+	var tokenPayload map[string]any
+	if err := json.NewDecoder(recToken.Body).Decode(&tokenPayload); err != nil {
+		t.Fatalf("failed to decode token JSON: %v", err)
+	}
+	if tokenPayload["enrollment_token"] != "test-token" {
+		t.Fatalf("unexpected token response: %+v", tokenPayload)
 	}
 
 	revokeBody, _ := json.Marshal(map[string]string{"device_id": "device-a"})

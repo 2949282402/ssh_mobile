@@ -15,6 +15,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  front-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: front
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+      - name: Install front dependencies
+        run: npm ci
+      - name: Typecheck front
+        run: npm run typecheck
+      - name: Lint front
+        run: npm run lint
+      - name: Test front
+        run: npm run test:run
+      - name: Build front
+        run: npm run build
+      - name: Build front container
+        run: docker build -t ssh-mobile-relay-front:test .
+
   native-network-quality:
     runs-on: ubuntu-latest
     defaults:

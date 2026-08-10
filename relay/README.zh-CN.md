@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-07
+> 最新更新时间：2026-08-11
 
 # SSH Mobile 控制与中继服务器
 
@@ -6,9 +6,10 @@
   <a href="./README.md">English</a> | <strong>简体中文</strong>
 </p>
 
-该 Go 服务提供 SSH Mobile 的内存设备控制平面和 WebSocket 中继。它不持久化
-传输数据帧、文件名、凭据或设备状态。进程重启会断开全部连接，客户端必须重新
-注册。
+该 Go 服务提供 SSH Mobile 的内存设备控制平面和 WebSocket 中继。独立的
+React + Vite + TypeScript 管理端位于 `../front/`，由 Compose 的 `front` 服务
+提供静态文件；Relay 不再嵌入或提供管理端页面。它不持久化传输数据帧、文件名、
+凭据或设备状态。进程重启会断开全部连接，客户端必须重新注册。
 
 ## 必填配置
 
@@ -30,7 +31,8 @@
 ## Docker Compose 生产部署
 
 Docker Compose 是唯一支持的部署方式。仓库提供的 Compose 配置将 Go 服务
-保留在内部网络，由 Caddy 负责 HTTPS/WSS 证书和反向代理。
+保留 Go 服务和前端容器在内部网络，由 Caddy 负责 HTTPS/WSS 证书、同源路由和
+反向代理。
 
 1. 将公网 DNS `A` 或 `AAAA` 记录指向主机，并开放 80/443 端口。
 2. 复制 `.env.example` 为 `.env`，替换其中每个占位值：
@@ -51,8 +53,8 @@ Docker Compose 是唯一支持的部署方式。仓库提供的 Compose 配置�
    docker compose --env-file .env up --build
    ```
 
-   `compose.yaml` 只有 `caddy` 和 `relay` 两项服务，因此这一条命令会持续显示
-   两者的合并日志。
+   `compose.yaml` 包含 `caddy`、`front` 和 `relay` 三项服务，因此这一条命令会
+   持续显示三者的合并日志。
 
 Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不要把内部 Go 端口直接
 暴露到公网。
@@ -64,17 +66,18 @@ Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不�
   拒绝。
 - 凭据仅在当前进程中存在匹配设备注册时有效；撤销设备会立即关闭活动连接。
 - 浏览器 WebSocket 使用标准同源校验；不携带 `Origin` 的原生客户端仍受支持。
-- 管理 API 必须具有 HttpOnly Cookie 会话，动态设备数据只通过安全 DOM API
-  渲染。
+- 管理 API 必须具有 HttpOnly Cookie 会话，前端动态设备数据通过 React 文本节点
+  渲染，不加载外部脚本或字体。
 - Caddy 设置内容安全、禁止嵌入、内容类型与引用来源等限制响应头。
 
 设备状态完全驻留内存，因此服务重启本身就是安全边界：全部客户端需要重新注册。
 
 ## 接口
 
-- `GET /`：管理面板和静态资源
+- `GET /`：由 Caddy 转发到前端 SPA；Go Relay 不再嵌入管理端
 - `POST /api/login`、`POST /api/logout`、`GET /api/auth-status`：面板鉴权
 - `GET /api/stats`：需要登录的内存遥测
+- `GET /api/token`：需要登录的当前注册 Token 读取
 - `POST /api/token/rotate`：需要登录的注册 Token 轮换
 - `POST /api/devices/revoke`：需要登录的设备撤销
 - `POST /v1/devices/enroll`：协议版本 1 的设备注册

@@ -61,6 +61,11 @@ scripts/nginx_ssh_mobile.conf
 
 .gradle-user-home
 
+# Relay admin frontend artifacts.
+front/node_modules/
+front/dist/
+front/coverage/
+
 # Generated files from the legacy root-level Flutter scaffold.
 /android/.gradle/
 /android/local.properties

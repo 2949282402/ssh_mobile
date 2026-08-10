@@ -1,4 +1,4 @@
-> Last updated: 2026-08-10
+> Last updated: 2026-08-11
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -92,7 +92,7 @@ The application can launch without real server or AI credentials. A reachable SS
 
 ## Control Plane & Public Relay Production Deployment
 
-The bundled `relay/` Go service provides a memory-only WSS relay, device control plane, and a **built-in Web Admin Dashboard** for Network Transfer / P2P fallback. Enrollment and dashboard credentials must be configured explicitly; the service refuses to start with missing or weak secrets.
+The bundled `relay/` Go service provides a memory-only WSS relay and device control plane for Network Transfer / P2P fallback. Its standalone React + Vite + TypeScript administration console lives in `front/`; enrollment and dashboard credentials must be configured explicitly, and the service refuses to start with missing or weak secrets.
 
 Docker Compose with Caddy is the supported production deployment path. Follow the [relay deployment guide](relay/README.md), then run:
 
@@ -103,7 +103,7 @@ Copy-Item .env.example .env
 docker compose --env-file .env up --build
 ```
 
-This single command builds and starts `relay` and `caddy`, then keeps their combined logs attached. Restarting the memory-only relay invalidates existing device enrollment, so clients must enroll again.
+This single command builds and starts `front`, `relay`, and `caddy`, then keeps their combined logs attached. Caddy exposes the front-end SPA publicly and forwards `/api`, `/v1`, and `/healthz` to the internal Relay service. Restarting the memory-only relay invalidates existing device enrollment, so clients must enroll again.
 
 In SSH Mobile, open **LAN Share Settings** and enter the HTTPS relay host, port, and enrollment token. The token is used only for enrollment and is never persisted in preferences; the endpoint is stored as an origin while the device credential remains in platform secure storage. The page reports connected/disconnected/failed state and provides explicit reconnect, disconnect, and clear actions. Production clients require a valid TLS certificate.
 

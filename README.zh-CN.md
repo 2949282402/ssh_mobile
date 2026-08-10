@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-10
+> 最新更新时间：2026-08-11
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -83,7 +83,7 @@ flutter run -d chrome
 
 ## 控制平面与中继服务器生产部署
 
-仓库内的 `relay/` Go 服务提供设备控制平面、基于 HTTPS/WSS 的内存中继以及**内置可视化 Web 管理面板**，用于网络传输与 P2P 备用链路。注册凭据与管理凭据必须显式配置；缺少密钥或使用弱口令时，服务会拒绝启动。
+仓库内的 `relay/` Go 服务提供设备控制平面和基于 HTTPS/WSS 的内存中继，用于网络传输与 P2P 备用链路；独立的 React + Vite + TypeScript 管理端位于根目录 `front/`。注册凭据与管理凭据必须显式配置；缺少密钥或使用弱口令时，服务会拒绝启动。
 
 仅支持使用 Docker Compose 与 Caddy 进行生产部署。按照[中继部署说明](relay/README.zh-CN.md)完成配置后运行：
 
@@ -94,7 +94,7 @@ Copy-Item .env.example .env
 docker compose --env-file .env up --build
 ```
 
-这一条命令会构建并启动 `relay` 与 `caddy`，随后持续显示两者的合并日志。中继状态仅驻留内存；服务重启后，客户端需要重新注册。
+这一条命令会构建并启动 `front`、`relay` 与 `caddy`，随后持续显示三者的合并日志。Caddy 对外提供前端 SPA，并把 `/api`、`/v1` 和 `/healthz` 转发到内部 Relay 服务。中继状态仅驻留内存；服务重启后，客户端需要重新注册。
 
 在 SSH Mobile 中打开“局域网共享设置”，填写具备有效 TLS 证书的 HTTPS 中继主机、端口和注册 Token。Token 只用于本次注册，不会写入偏好设置；应用只保存 Relay origin，设备凭据保存在平台安全存储中。设置页会显示已连接、已断开或失败状态，并提供手动连接、断开和清除操作。
 

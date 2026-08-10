@@ -1,19 +1,14 @@
-// v1 Relay 管理控制台和统计端点；设备数据面只通过 server.go 的 v1 路由处理。
+// v1 Relay 管理 API；设备数据面仍由 server.go 的 v1 路由处理。
 
 package relay
 
 import (
-	"embed"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"net/http"
 	"runtime"
 	"time"
 )
-
-//go:embed static/*
-var staticFS embed.FS
 
 var serverStartTime = time.Now()
 
@@ -26,7 +21,6 @@ type statsResponse struct {
 	AllocatedMemMB  float64           `json:"allocated_mem_mb"`
 	NumGoroutines   int               `json:"num_goroutines"`
 	ServerTime      int64             `json:"server_time"`
-	EnrollmentToken string            `json:"enrollment_token"`
 	EnrolledCount   int               `json:"enrolled_count"`
 	Peers           []peerInfo        `json:"peers"`
 	EnrolledDevices []*EnrolledDevice `json:"enrolled_devices"`
@@ -62,7 +56,6 @@ func (s *Server) apiStats(w http.ResponseWriter, _ *http.Request) {
 	for _, dev := range s.enrolledDevices {
 		enrolledList = append(enrolledList, dev)
 	}
-	enrollmentToken := s.config.EnrollmentToken
 	s.devicesMutex.Unlock()
 
 	var m runtime.MemStats
@@ -87,39 +80,23 @@ func (s *Server) apiStats(w http.ResponseWriter, _ *http.Request) {
 		AllocatedMemMB:  float64(m.Alloc) / 1024 / 1024,
 		NumGoroutines:   runtime.NumGoroutine(),
 		ServerTime:      time.Now().Unix(),
-		EnrollmentToken: enrollmentToken,
 		EnrolledCount:   enrolledCount,
 		Peers:           peerList,
 		EnrolledDevices: enrolledList,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// dashboard 返回内嵌的管理员控制台页面。
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	indexBytes, err := staticFS.ReadFile("static/index.html")
-	if err != nil {
-		http.Error(w, "Dashboard HTML missing", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("X-Frame-Options", "DENY")
-	w.Write(indexBytes)
-}
+// apiToken 返回仅供管理员 Access 页面使用的当前 enrollment token。
+func (s *Server) apiToken(w http.ResponseWriter, _ *http.Request) {
+	s.devicesMutex.Lock()
+	token := s.config.EnrollmentToken
+	s.devicesMutex.Unlock()
 
-// staticFileHandler 返回只读的内嵌静态资源处理器。
-func (s *Server) staticFileHandler() http.Handler {
-	sub, err := fs.Sub(staticFS, "static")
-	if err != nil {
-		panic(err)
-	}
-	return http.StripPrefix("/static/", http.FileServer(http.FS(sub)))
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"enrollment_token": token,
+	})
 }
