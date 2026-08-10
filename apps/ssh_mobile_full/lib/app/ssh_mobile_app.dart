@@ -229,7 +229,7 @@ class _SshMobileAppState extends State<SshMobileApp>
         ListenableProvider<feature_developer.DeveloperDiagnosticsPort>.value(
           value: runtime.developerDiagnosticsPort,
         ),
-        Provider<feature_ai.AiStoragePort>.value(
+        InheritedProvider<feature_ai.AiStoragePort>.value(
           value: runtime.aiStorageAdapter,
         ),
         ListenableProvider<feature_ai.AiSettingsPort>.value(
