@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/services/network/network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:ssh_mobile/services/network/network_service.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 

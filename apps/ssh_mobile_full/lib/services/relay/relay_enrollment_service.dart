@@ -7,8 +7,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-
-import '../network/network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 
 /// 允许测试和平台适配层注入 HTTPS enrollment 调用。
 typedef RelayEnrollmentRequester =

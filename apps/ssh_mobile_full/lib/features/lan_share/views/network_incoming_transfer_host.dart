@@ -3,11 +3,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
-import '../../../services/network/network_models.dart';
 import '../services/lan_receiver_coordinator.dart';
 
 /// Presents one root-level approval dialog at a time for current-protocol

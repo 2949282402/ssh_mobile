@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:flutter/foundation.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:uuid/uuid.dart';
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
@@ -13,7 +14,6 @@ import '../../../services/lan_share/lan_storage_service.dart';
 import '../../../services/lan_share/lan_transfer_service.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/network/network_identity_service.dart';
-import '../../../services/network/network_models.dart';
 import '../../../services/network/network_service.dart';
 import '../../../services/relay/relay_enrollment_service.dart';
 import '../../../utils/startup_instrumentation.dart';

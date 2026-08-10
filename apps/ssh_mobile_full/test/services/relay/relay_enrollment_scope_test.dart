@@ -2,8 +2,8 @@
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:ssh_mobile/services/relay/relay_enrollment_service.dart';
-import 'package:ssh_mobile/services/network/network_models.dart';
 
 /// 执行 v1 Relay enrollment 范围测试。
 void main() {

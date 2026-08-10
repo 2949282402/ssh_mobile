@@ -6,7 +6,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'network_models.dart';
+import 'package:network_sdk/network_sdk.dart';
 
 /// 解码后的 v1 信封，包含内部命令结果或公开事件。
 final class NetworkProtocolFrame {

@@ -6,10 +6,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 import 'package:uuid/uuid.dart';
 
-import 'network_models.dart';
 import 'network_protocol_codec.dart';
 
 /// 将原生 v1 运行时适配为 Flutter 的类型化网络契约。
@@ -454,6 +454,7 @@ final class NativeNetworkService implements NetworkService {
   }
 
   /// 销毁 Dart 服务及其底层原生运行时。
+  @override
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;

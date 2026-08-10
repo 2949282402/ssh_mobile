@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:feature_lan_share/feature_lan_share.dart' as feature_lan_share;
 import 'package:flutter/foundation.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/services/data_protection_service.dart';
@@ -20,7 +21,6 @@ import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/lan_share/lan_storage_service.dart';
 import '../../../services/lan_share/lan_transfer_protocol.dart';
 import '../../../services/lan_share/lan_transfer_service.dart';
-import '../../../services/network/network_models.dart';
 
 part 'lan_share_viewmodel_network.dart';
 part 'lan_share_viewmodel_history.dart';

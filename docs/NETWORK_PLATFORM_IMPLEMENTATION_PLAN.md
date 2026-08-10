@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-07
+> 最新更新时间：2026-08-10
 
 # SSH Mobile 跨平台 P2P 网络平台实施计划
 
@@ -1191,13 +1191,22 @@ abstract interface class NetworkService {
 新增：
 
 ```text
-lib/services/network/
+packages/infrastructure/network_sdk/lib/
+├── network_sdk.dart
+└── src/
+    ├── network_models.dart
+    ├── network_clients.dart
+    ├── network_http_clients.dart
+    └── network_requests.dart
+
+apps/ssh_mobile_full/lib/services/network/
 ├── network_service.dart
-├── network_models.dart
 └── network_protocol_codec.dart
 ```
 
-feature 不直接依赖 native package。
+`network_sdk` 是 Flutter 网络结果、Session、Route 和 typed event 的唯一模型源；
+App Shell 的 `network_service.dart` 只负责把已有 v1 FFI gateway 适配为 SDK
+`SessionClient`，Feature 不直接依赖 native package，也不维护本地模型桥接。
 
 ---
 

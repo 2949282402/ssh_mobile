@@ -1,8 +1,8 @@
 // v1 LAN HTTP 错误响应解码测试，锁定稳定 code、operation 和 peer_id 语义。
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:ssh_mobile/services/lan_share/lan_network_models.dart';
-import 'package:ssh_mobile/services/network/network_models.dart';
 
 /// 执行 LAN HTTP 错误模型测试。
 void main() {

@@ -1,11 +1,11 @@
 // 使用统一网络服务的 v1 点对点分享控制界面。
 
 import 'package:flutter/material.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:provider/provider.dart';
 import 'package:ssh_mobile/features/lan_share/services/lan_receiver_coordinator.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/network/network_models.dart';
 
 /// 展示由原生配置支持的 v1 Relay enrollment 控制界面。
 class VpnP2pServerConfigCard extends StatefulWidget {
