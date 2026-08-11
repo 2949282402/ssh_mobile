@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - master
+      - codex/sdk
 
 permissions:
   contents: read
@@ -154,7 +155,7 @@ jobs:
           "flutter test --no-pub"
 
   workspace-quality:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/codex/sdk')
     needs: architecture-check
     runs-on: ubuntu-latest
     defaults:
@@ -185,7 +186,7 @@ jobs:
         run: flutter build apk --debug --no-pub
 
   terminal-smoke-build:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/codex/sdk')
     needs: architecture-check
     runs-on: windows-latest
     defaults:
