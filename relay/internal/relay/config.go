@@ -13,9 +13,15 @@ import (
 
 const (
 	// maxControlFrameBytes 限制单个 JSON 控制帧的大小。
-	maxControlFrameBytes = 64 * 1024
+	maxControlFrameBytes = 384 * 1024
 	// maxBinaryFrameBytes 限制单个不透明二进制帧的大小。
 	maxBinaryFrameBytes = 1024*1024 + 25
+	// maxChannelPayloadBytes 限制 Delivery 控制信封携带的不透明正文大小。
+	maxChannelPayloadBytes = 48 * 1024
+	// maxCandidatePayloadBytes 限制 Candidate Offer/Answer 的信令正文大小。
+	maxCandidatePayloadBytes = 32 * 1024
+	// maxRealtimeSignalPayloadBytes 限制 WebRTC SDP/ICE 信令正文大小。
+	maxRealtimeSignalPayloadBytes = 256 * 1024
 )
 
 // Config 保存 Relay 服务器的监听、认证和资源边界。

@@ -123,6 +123,7 @@ pub enum AckResult {
 pub enum DedupDecision {
     New,
     Duplicate,
+    StaleEpoch,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -189,6 +190,7 @@ enum DedupState {
 #[derive(Clone, Copy, Debug)]
 struct DedupRecord {
     expires_at: Instant,
+    recovery_epoch: u64,
     state: DedupState,
 }
 
@@ -551,6 +553,7 @@ impl DeliveryManager {
         session_id: &str,
         channel_id: &str,
         message_id: MessageId,
+        recovery_epoch: u64,
         now: Instant,
     ) -> DedupDecision {
         let mut store = self.store.lock().await;
@@ -560,8 +563,18 @@ impl DeliveryManager {
             channel_id: channel_id.to_string(),
             message_id,
         };
-        if store.dedup.contains_key(&key) {
-            return DedupDecision::Duplicate;
+        if let Some(record) = store.dedup.get_mut(&key) {
+            return if record.recovery_epoch == recovery_epoch {
+                DedupDecision::Duplicate
+            } else if recovery_epoch > record.recovery_epoch {
+                // 同一 MessageId 进入更高 RecoveryEpoch 代表 transport 重放，
+                // 需要更新 ACK 绑定但不能再次执行应用 handler。
+                record.recovery_epoch = recovery_epoch;
+                record.state = DedupState::InFlight;
+                DedupDecision::Duplicate
+            } else {
+                DedupDecision::StaleEpoch
+            };
         }
         if self.config.dedup_max_entries == 0 {
             return DedupDecision::New;
@@ -581,6 +594,7 @@ impl DeliveryManager {
             key,
             DedupRecord {
                 expires_at: now + self.config.dedup_ttl,
+                recovery_epoch,
                 state: DedupState::InFlight,
             },
         );
@@ -592,6 +606,7 @@ impl DeliveryManager {
         session_id: &str,
         channel_id: &str,
         message_id: MessageId,
+        recovery_epoch: u64,
     ) -> bool {
         let mut store = self.store.lock().await;
         let key = DedupKey {
@@ -602,6 +617,9 @@ impl DeliveryManager {
         let Some(record) = store.dedup.get_mut(&key) else {
             return false;
         };
+        if record.recovery_epoch != recovery_epoch {
+            return false;
+        }
         record.state = DedupState::Processed;
         true
     }
@@ -847,24 +865,46 @@ mod tests {
         let message_id = MessageId([7; MESSAGE_ID_BYTES]);
         assert_eq!(
             manager
-                .begin_incoming("session-a", "control", message_id, now)
+                .begin_incoming("session-a", "control", message_id, 1, now)
                 .await,
             DedupDecision::New
         );
         assert!(
             manager
-                .complete_incoming("session-a", "control", message_id)
+                .complete_incoming("session-a", "control", message_id, 1)
                 .await
         );
         assert_eq!(
             manager
-                .begin_incoming("session-a", "control", message_id, now)
+                .begin_incoming("session-a", "control", message_id, 1, now)
                 .await,
             DedupDecision::Duplicate
         );
         assert_eq!(
             manager
-                .begin_incoming("session-b", "control", message_id, now)
+                .begin_incoming("session-a", "control", message_id, 2, now)
+                .await,
+            DedupDecision::Duplicate
+        );
+        assert!(
+            manager
+                .complete_incoming("session-a", "control", message_id, 2)
+                .await
+        );
+        assert_eq!(
+            manager
+                .begin_incoming("session-a", "control", message_id, 1, now)
+                .await,
+            DedupDecision::StaleEpoch
+        );
+        assert!(
+            !manager
+                .complete_incoming("session-a", "control", message_id, 1)
+                .await
+        );
+        assert_eq!(
+            manager
+                .begin_incoming("session-b", "control", message_id, 1, now)
                 .await,
             DedupDecision::New
         );
@@ -874,6 +914,7 @@ mod tests {
                     "session-a",
                     "control",
                     message_id,
+                    1,
                     now + Duration::from_secs(11),
                 )
                 .await,

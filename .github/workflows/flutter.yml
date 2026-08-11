@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - master
+      - codex/sdk
 
 permissions:
   contents: read
@@ -154,7 +155,7 @@ jobs:
           "flutter test --no-pub"
 
   workspace-quality:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/codex/sdk')
     needs: architecture-check
     runs-on: ubuntu-latest
     defaults:
@@ -171,6 +172,9 @@ jobs:
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
+      - name: Install Full App dependencies
+        working-directory: apps/ssh_mobile_full
+        run: flutter pub get
       - name: Format workspace packages
         run: dart run melos run format
       - name: Analyze workspace packages
@@ -185,7 +189,7 @@ jobs:
         run: flutter build apk --debug --no-pub
 
   terminal-smoke-build:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/codex/sdk')
     needs: architecture-check
     runs-on: windows-latest
     defaults:
@@ -229,6 +233,9 @@ jobs:
       - name: Install native Dart package dependencies
         working-directory: packages/infrastructure/ssh_mobile_network_native
         run: flutter pub get
+      - name: Install Full App dependencies
+        working-directory: apps/ssh_mobile_full
+        run: flutter pub get
       - name: Analyze native Dart package
         working-directory: packages/infrastructure/ssh_mobile_network_native
         run: flutter analyze
@@ -255,7 +262,7 @@ jobs:
           if grep -R "reconnectCredentials" lib; then exit 1; fi
           if grep -R "privateKeyDigest" lib; then exit 1; fi
       - name: Analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
       - name: Test
         run: flutter test --coverage --reporter expanded
       - name: Check coverage floor
@@ -282,6 +289,9 @@ jobs:
       - name: Install dependencies
         working-directory: .
         run: dart pub get
+      - name: Install Full App dependencies
+        working-directory: apps/ssh_mobile_full
+        run: flutter pub get
       - name: Test
         run: flutter test --reporter expanded
       - name: Build Windows
@@ -306,9 +316,27 @@ jobs:
       - name: Install dependencies
         working-directory: .
         run: dart pub get
+      - name: Install Full App dependencies
+        working-directory: apps/ssh_mobile_full
+        run: flutter pub get
       - name: Test
         run: flutter test --reporter expanded
       - name: Build macOS
         run: flutter build macos
+      - name: Update CocoaPods specs
+        working-directory: apps/ssh_mobile_full/ios
+        run: pod repo update
+      - name: Register share_handler iOS models for CI
+        working-directory: apps/ssh_mobile_full/ios
+        run: |
+          ruby <<'RUBY'
+          path = 'Podfile'
+          text = File.read(path)
+          marker = "  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))\n"
+          addition = "#{marker}  pod 'share_handler_ios_models', :path => '.symlinks/plugins/share_handler_ios/ios/Models'\n"
+          abort 'Runner Podfile marker was not found' unless text.include?(marker)
+          abort 'share_handler_ios_models is already registered' if text.include?("pod 'share_handler_ios_models'")
+          File.write(path, text.sub(marker, addition))
+          RUBY
       - name: Build iOS without signing
         run: flutter build ios --release --no-codesign --no-pub

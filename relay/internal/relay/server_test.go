@@ -493,6 +493,110 @@ func TestDartWireContractEndToEnd(t *testing.T) {
 		t.Fatalf("invalid online lookup response: %+v (%v)", onlineLookup, err)
 	}
 
+	const channelToken = "ffeeddccbbaa99887766554433221100"
+	opaqueChannel := base64.RawURLEncoding.EncodeToString([]byte("opaque-channel-message"))
+	if err := deviceA.WriteJSON(controlFrame{
+		Type:      "channel_message",
+		SessionID: channelToken,
+		TargetID:  "device-b",
+		Payload:   opaqueChannel,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var channelMessage controlFrame
+	if err := deviceB.ReadJSON(&channelMessage); err != nil ||
+		channelMessage.Type != "channel_message" ||
+		channelMessage.SessionID != channelToken ||
+		channelMessage.SenderID != "device-a" ||
+		channelMessage.Payload != opaqueChannel {
+		t.Fatalf("invalid opaque channel message: %+v (%v)", channelMessage, err)
+	}
+	if err := deviceB.WriteJSON(controlFrame{
+		Type:      "channel_ack",
+		SessionID: channelToken,
+		TargetID:  "device-a",
+		Payload:   opaqueChannel,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var channelAck controlFrame
+	if err := deviceA.ReadJSON(&channelAck); err != nil ||
+		channelAck.Type != "channel_ack" ||
+		channelAck.SessionID != channelToken ||
+		channelAck.SenderID != "device-b" ||
+		channelAck.Payload != opaqueChannel {
+		t.Fatalf("invalid opaque channel ACK: %+v (%v)", channelAck, err)
+	}
+
+	const realtimeToken = "aabbccddeeff00112233445566778899"
+	webrtcSignals := []struct {
+		sender   *websocket.Conn
+		target   *websocket.Conn
+		senderID string
+		targetID string
+		kind     string
+		payload  string
+	}{
+		{
+			sender:   deviceA,
+			target:   deviceB,
+			senderID: "device-a",
+			targetID: "device-b",
+			kind:     "webrtc_offer",
+			payload:  base64.RawURLEncoding.EncodeToString([]byte("v=0\r\n")),
+		},
+		{
+			sender:   deviceB,
+			target:   deviceA,
+			senderID: "device-b",
+			targetID: "device-a",
+			kind:     "webrtc_answer",
+			payload:  base64.RawURLEncoding.EncodeToString([]byte("v=0\r\ns=ssh-mobile\r\n")),
+		},
+		{
+			sender:   deviceA,
+			target:   deviceB,
+			senderID: "device-a",
+			targetID: "device-b",
+			kind:     "webrtc_ice_candidate",
+			payload:  base64.RawURLEncoding.EncodeToString([]byte("candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host")),
+		},
+		{
+			sender:   deviceB,
+			target:   deviceA,
+			senderID: "device-b",
+			targetID: "device-a",
+			kind:     "webrtc_ice_restart",
+			payload:  base64.RawURLEncoding.EncodeToString([]byte("restart")),
+		},
+		{
+			sender:   deviceA,
+			target:   deviceB,
+			senderID: "device-a",
+			targetID: "device-b",
+			kind:     "webrtc_close",
+			payload:  base64.RawURLEncoding.EncodeToString([]byte("close")),
+		},
+	}
+	for _, signal := range webrtcSignals {
+		if err := signal.sender.WriteJSON(controlFrame{
+			Type:      signal.kind,
+			SessionID: realtimeToken,
+			TargetID:  signal.targetID,
+			Payload:   signal.payload,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var forwarded controlFrame
+		if err := signal.target.ReadJSON(&forwarded); err != nil ||
+			forwarded.Type != signal.kind ||
+			forwarded.SessionID != realtimeToken ||
+			forwarded.SenderID != signal.senderID ||
+			forwarded.Payload != signal.payload {
+			t.Fatalf("invalid WebRTC signal forwarding: %+v (%v)", forwarded, err)
+		}
+	}
+
 	const sessionID = "00112233445566778899aabbccddeeff"
 	opaquePayload := base64.RawURLEncoding.EncodeToString([]byte("opaque-offer"))
 	if err := deviceA.WriteJSON(controlFrame{

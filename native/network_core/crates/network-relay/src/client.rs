@@ -27,8 +27,11 @@ use url::Url;
 
 const RELAY_PROTOCOL_VERSION: u32 = 1;
 const RELAY_CONNECT_PATH: &str = "/v1/connect";
-const MAX_CONTROL_BYTES: usize = 64 * 1024;
+const MAX_CONTROL_BYTES: usize = 384 * 1024;
 const MAX_BINARY_PAYLOAD_BYTES: usize = 512 * 1024 + 16;
+const MAX_CHANNEL_PAYLOAD_BYTES: usize = 48 * 1024;
+const MAX_CANDIDATE_PAYLOAD_BYTES: usize = 32 * 1024;
+const MAX_REALTIME_SIGNAL_PAYLOAD_BYTES: usize = 256 * 1024;
 const SOCKET_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
 /// 描述 Relay v1 连接、认证和帧校验失败。
@@ -314,6 +317,95 @@ impl RelayClient {
         .await
     }
 
+    /// 发送不透明的 Delivery DataMessage；Relay 只按 target_id 转发，
+    /// 不解析 session、MessageId 或业务 payload。
+    pub async fn send_channel_message(
+        &self,
+        session_token: &str,
+        target_id: &str,
+        payload: &[u8],
+    ) -> Result<(), RelayError> {
+        self.send_channel_control("channel_message", session_token, target_id, payload)
+            .await
+    }
+
+    /// 发送不透明的 DeliveryAck；它与 DataMessage 使用同一 message token。
+    pub async fn send_channel_ack(
+        &self,
+        session_token: &str,
+        target_id: &str,
+        payload: &[u8],
+    ) -> Result<(), RelayError> {
+        self.send_channel_control("channel_ack", session_token, target_id, payload)
+            .await
+    }
+
+    /// Sends an ICE-like candidate Offer through the authenticated Relay
+    /// signaling plane. The candidate list is not a file/data channel.
+    pub async fn send_candidate_offer(
+        &self,
+        session_token: &str,
+        target_id: &str,
+        payload: &[u8],
+    ) -> Result<(), RelayError> {
+        self.send_candidate_control("candidate_offer", session_token, target_id, payload)
+            .await
+    }
+
+    /// Sends an ICE-like candidate Answer through the authenticated Relay
+    /// signaling plane.
+    pub async fn send_candidate_answer(
+        &self,
+        session_token: &str,
+        target_id: &str,
+        payload: &[u8],
+    ) -> Result<(), RelayError> {
+        self.send_candidate_control("candidate_answer", session_token, target_id, payload)
+            .await
+    }
+
+    /// Sends bounded WebRTC Offer/Answer/ICE control through the authenticated
+    /// Relay. SDP and ICE are signaling data only; media does not use Relay's
+    /// file or Delivery data paths.
+    pub async fn send_webrtc_signal(
+        &self,
+        kind: &str,
+        session_token: &str,
+        target_id: &str,
+        payload: &[u8],
+    ) -> Result<(), RelayError> {
+        if !matches!(
+            kind,
+            "webrtc_offer"
+                | "webrtc_answer"
+                | "webrtc_ice_candidate"
+                | "webrtc_ice_restart"
+                | "webrtc_close"
+        ) {
+            return Err(RelayError::InvalidConfiguration(
+                "unsupported WebRTC signal control type".into(),
+            ));
+        }
+        validate_session_id(session_token)?;
+        if target_id.is_empty() || target_id.len() > 128 {
+            return Err(RelayError::InvalidConfiguration(
+                "WebRTC signal target must contain 1-128 characters".into(),
+            ));
+        }
+        if payload.is_empty() || payload.len() > MAX_REALTIME_SIGNAL_PAYLOAD_BYTES {
+            return Err(RelayError::InvalidConfiguration(
+                "WebRTC signal payload size is outside protocol bounds".into(),
+            ));
+        }
+        self.send_control(json!({
+            "type": kind,
+            "session_id": session_token,
+            "target_id": target_id,
+            "payload": URL_SAFE_NO_PAD.encode(payload),
+        }))
+        .await
+    }
+
     /// 请求 Relay 返回目标设备当前在线状态。
     pub async fn lookup_peer(&self, target_id: &str) -> Result<(), RelayError> {
         if target_id.is_empty() || target_id.len() > 128 {
@@ -334,14 +426,100 @@ impl RelayClient {
         kind: &str,
         session_id: &str,
     ) -> Result<(), RelayError> {
+        self.send_session_control_with_payload(kind, session_id, None)
+            .await
+    }
+
+    /// 发送一个带小型应用层确认 payload 的会话控制帧。
+    ///
+    /// Relay 只校验并转发这个字符串，不读取其中的文件元数据；文件恢复所需的
+    /// TransferId、Manifest Hash 和 Offset 仍由设备端 E2E 逻辑解释。
+    pub async fn send_session_control_with_payload(
+        &self,
+        kind: &str,
+        session_id: &str,
+        payload: Option<&str>,
+    ) -> Result<(), RelayError> {
         if !matches!(kind, "accept" | "complete" | "complete_ack" | "cancel") {
             return Err(RelayError::InvalidConfiguration(
                 "unsupported Relay control type".into(),
             ));
         }
         validate_session_id(session_id)?;
-        self.send_control(json!({"type": kind, "session_id": session_id}))
-            .await
+        let mut value = json!({"type": kind, "session_id": session_id});
+        if let Some(payload) = payload {
+            if payload.is_empty() || payload.len() > MAX_CONTROL_BYTES / 2 {
+                return Err(RelayError::InvalidConfiguration(
+                    "Relay control payload is outside protocol bounds".into(),
+                ));
+            }
+            value["payload"] = Value::String(payload.to_string());
+        }
+        self.send_control(value).await
+    }
+
+    async fn send_channel_control(
+        &self,
+        kind: &str,
+        session_token: &str,
+        target_id: &str,
+        payload: &[u8],
+    ) -> Result<(), RelayError> {
+        if !matches!(kind, "channel_message" | "channel_ack") {
+            return Err(RelayError::InvalidConfiguration(
+                "unsupported Relay channel control type".into(),
+            ));
+        }
+        validate_session_id(session_token)?;
+        if target_id.is_empty() || target_id.len() > 128 {
+            return Err(RelayError::InvalidConfiguration(
+                "channel target must contain 1-128 characters".into(),
+            ));
+        }
+        if payload.is_empty() || payload.len() > MAX_CHANNEL_PAYLOAD_BYTES {
+            return Err(RelayError::InvalidConfiguration(
+                "channel payload size is outside protocol bounds".into(),
+            ));
+        }
+        self.send_control(json!({
+            "type": kind,
+            "session_id": session_token,
+            "target_id": target_id,
+            "payload": URL_SAFE_NO_PAD.encode(payload),
+        }))
+        .await
+    }
+
+    async fn send_candidate_control(
+        &self,
+        kind: &str,
+        session_token: &str,
+        target_id: &str,
+        payload: &[u8],
+    ) -> Result<(), RelayError> {
+        if !matches!(kind, "candidate_offer" | "candidate_answer") {
+            return Err(RelayError::InvalidConfiguration(
+                "unsupported Relay candidate control type".into(),
+            ));
+        }
+        validate_session_id(session_token)?;
+        if target_id.is_empty() || target_id.len() > 128 {
+            return Err(RelayError::InvalidConfiguration(
+                "candidate target must contain 1-128 characters".into(),
+            ));
+        }
+        if payload.is_empty() || payload.len() > MAX_CANDIDATE_PAYLOAD_BYTES {
+            return Err(RelayError::InvalidConfiguration(
+                "candidate payload size is outside protocol bounds".into(),
+            ));
+        }
+        self.send_control(json!({
+            "type": kind,
+            "session_id": session_token,
+            "target_id": target_id,
+            "payload": URL_SAFE_NO_PAD.encode(payload),
+        }))
+        .await
     }
 
     /// 转发一个带会话和序号的 E2E 加密二进制分块。
@@ -527,7 +705,20 @@ fn decode_event(message: Message) -> Result<Option<RelayEvent>, RelayError> {
             }
             if !matches!(
                 kind,
-                "offer" | "accept" | "complete" | "complete_ack" | "cancel"
+                "offer"
+                    | "accept"
+                    | "complete"
+                    | "complete_ack"
+                    | "cancel"
+                    | "candidate_offer"
+                    | "candidate_answer"
+                    | "webrtc_offer"
+                    | "webrtc_answer"
+                    | "webrtc_ice_candidate"
+                    | "webrtc_ice_restart"
+                    | "webrtc_close"
+                    | "channel_message"
+                    | "channel_ack"
             ) {
                 return Err(RelayError::Protocol("unsupported control type".into()));
             }
@@ -646,6 +837,71 @@ mod tests {
             r#"{"type":"lookup_response","target_id":"offline-peer"}"#.into(),
         ))
         .is_err());
+    }
+
+    #[test]
+    /// 验证 Delivery channel 控制帧只保留 sender、session 和 opaque payload。
+    fn channel_control_preserves_opaque_payload() {
+        let event = decode_event(Message::Text(
+            r#"{"type":"channel_message","session_id":"00112233445566778899aabbccddeeff","sender_id":"device-a","payload":"b3BhcXVl"}"#.into(),
+        ))
+        .expect("decode")
+        .expect("channel event");
+        assert_eq!(
+            event,
+            RelayEvent::Control {
+                kind: "channel_message".into(),
+                session_id: "00112233445566778899aabbccddeeff".into(),
+                peer_id: Some("device-a".into()),
+                payload: Some("b3BhcXVl".into()),
+            }
+        );
+    }
+
+    #[test]
+    /// 验证 Candidate Offer/Answer 通过同一 opaque 控制帧边界解码。
+    fn candidate_control_preserves_opaque_payload() {
+        let event = decode_event(Message::Text(
+            r#"{"type":"candidate_offer","session_id":"00112233445566778899aabbccddeeff","sender_id":"device-a","payload":"eyJ2ZXJzaW9uIjoxfQ"}"#.into(),
+        ))
+        .expect("decode")
+        .expect("candidate event");
+        assert_eq!(
+            event,
+            RelayEvent::Control {
+                kind: "candidate_offer".into(),
+                session_id: "00112233445566778899aabbccddeeff".into(),
+                peer_id: Some("device-a".into()),
+                payload: Some("eyJ2ZXJzaW9uIjoxfQ".into()),
+            }
+        );
+    }
+
+    #[test]
+    /// 验证 WebRTC SDP/ICE 控制帧只在 Relay 信令层保留 opaque payload。
+    fn webrtc_control_preserves_opaque_payload() {
+        for kind in [
+            "webrtc_offer",
+            "webrtc_answer",
+            "webrtc_ice_candidate",
+            "webrtc_ice_restart",
+            "webrtc_close",
+        ] {
+            let frame = format!(
+                r#"{{"type":"{kind}","session_id":"00112233445566778899aabbccddeeff","sender_id":"device-a","payload":"dmFsaWQ"}}"#
+            );
+            assert_eq!(
+                decode_event(Message::Text(frame.into()))
+                    .expect("decode")
+                    .expect("WebRTC event"),
+                RelayEvent::Control {
+                    kind: kind.into(),
+                    session_id: "00112233445566778899aabbccddeeff".into(),
+                    peer_id: Some("device-a".into()),
+                    payload: Some("dmFsaWQ".into()),
+                }
+            );
+        }
     }
 
     #[test]

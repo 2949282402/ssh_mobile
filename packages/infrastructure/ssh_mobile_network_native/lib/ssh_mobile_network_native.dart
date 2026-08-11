@@ -7,8 +7,10 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'src/native_operation_status.dart';
+import 'src/native_realtime_protocol.dart';
 import 'src/network_native_isolate.dart';
 export 'src/native_operation_status.dart';
+export 'src/native_realtime_protocol.dart';
 
 /// ssh_mobile_network_native 的 C ABI FFI 绑定。
 
@@ -90,15 +92,79 @@ class NativeNetworkRuntime {
 
   Pointer<Void> _handle;
   final NetworkNativeIsolate _poller;
+  int _commandSequence = 0;
   bool _stopped = false;
 
   /// 发布 helper isolate 收到的原始 v1 事件帧。
   Stream<Uint8List> get rawEvents => _poller.rawEvents;
 
+  /// Typed native command/event stream. Unknown future events are ignored by
+  /// the decoder; [rawEvents] remains available for protocol diagnostics.
+  Stream<NativeNetworkEvent> get events => _poller.rawEvents
+      .map(_decodeTypedEvent)
+      .where((event) => event != null)
+      .cast<NativeNetworkEvent>();
+
   /// 向原生运行时提交一个已编码命令。
   NativeOperationStatus sendCommand(Uint8List command) {
     if (_handle == nullptr || _stopped) return NativeOperationStatus.stopped;
     return _poller.sendCommand(command);
+  }
+
+  /// Starts a Session-owned WebRTC Realtime route.
+  NativeOperationStatus startRealtimeSession({
+    required String realtimeId,
+    required String peerId,
+  }) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.startRealtimeSessionCommand(
+          commandId: _nextCommandId('realtime-start'),
+          realtimeId: realtimeId,
+          peerId: peerId,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
+  }
+
+  /// Stops a Session-owned WebRTC Realtime route.
+  NativeOperationStatus stopRealtimeSession({required String realtimeId}) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.stopRealtimeSessionCommand(
+          commandId: _nextCommandId('realtime-stop'),
+          realtimeId: realtimeId,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
+  }
+
+  /// Sends a bounded SDP/ICE/close signal through the native control plane.
+  NativeOperationStatus sendRealtimeSignal({
+    required String realtimeId,
+    required String peerId,
+    required NativeRealtimeSignalKind kind,
+    required int revision,
+    required Uint8List payload,
+  }) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.sendRealtimeSignalCommand(
+          commandId: _nextCommandId('realtime-signal'),
+          realtimeId: realtimeId,
+          peerId: peerId,
+          kind: kind,
+          revision: revision,
+          payload: payload,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
   }
 
   /// 在停止原生运行时前停止 helper isolate。
@@ -129,6 +195,19 @@ class NativeNetworkRuntime {
       throw StateError(
         'Native network runtime destroy failed (${result.name}).',
       );
+    }
+  }
+
+  String _nextCommandId(String operation) {
+    _commandSequence = (_commandSequence + 1) & 0x7fffffff;
+    return '$operation-${DateTime.now().microsecondsSinceEpoch}-$_commandSequence';
+  }
+
+  static NativeNetworkEvent? _decodeTypedEvent(Uint8List bytes) {
+    try {
+      return NativeNetworkProtocol.decodeEvent(bytes);
+    } on FormatException {
+      return null;
     }
   }
 }

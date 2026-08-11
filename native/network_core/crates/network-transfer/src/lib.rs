@@ -1,4 +1,5 @@
-//! QUIC file transfer protocol, manifests, streaming chunks, checksums, and resume.
+//! Route-independent file transfer sessions, manifests, streaming chunks,
+//! checksums, and resume primitives.
 
 pub mod cancellation;
 pub mod manager;
@@ -7,7 +8,10 @@ pub mod receiver;
 pub mod sender;
 
 pub use cancellation::TransferCancellation;
-pub use manager::{ResumableTransfer, TransferManager};
+pub use manager::{
+    ResumableTransfer, TransferFailureReason, TransferManager, TransferSession, TransferSnapshot,
+    TransferState,
+};
 pub use manifest::{
     FileManifest, ResumeRequest, TransferAccept, TransferOffer, TransferReject,
     DEFAULT_TRANSFER_BUFFER, NETWORK_TRANSFER_PROTOCOL_VERSION,

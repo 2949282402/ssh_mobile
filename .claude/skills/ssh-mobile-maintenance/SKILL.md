@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile Flutter repository, including architecture, UI, SSH/SFTP, monitoring, AI tools, storage, security, platform builds, tests, and project documentation. Use for any non-trivial code, debugging, validation, documentation, or shared-agent-guidance change in this repository.
 ---
 
-> 最新更新时间：2026-08-09
+> 最新更新时间：2026-08-10
 
 # SSH Mobile Maintenance
 
@@ -62,6 +62,15 @@ Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target
 bindings. It must not depend on App Shell storage implementations or Features. The current app
 keeps `SshService` as the same-instance compatibility surface until the Terminal
 Pilot migrates its method API.
+
+`apps/ssh_mobile_terminal/` is a separate minimal App Shell used for the
+Terminal-only dependency crop. Its direct package dependencies are limited to
+`app_core`, `app_ui`, `connection_core`, `network_transport`, `ssh_core`,
+and `feature_terminal`; do not copy the Full App runtime or
+add AI, RAG, MCP, WebView, LAN Share, or SFTP. Use the Feature's public
+`TerminalFeatureScope` for Provider composition and keep App/Module owners
+responsible for resource disposal. `flutter pub deps` must be checked at the app
+node, because the workspace aggregate naturally lists other members.
 The Terminal Feature package is `packages/features/feature_terminal/`; it owns
 terminal UI, route-scoped ViewModels, terminal history metadata, and
 `terminal.db`. It consumes `ssh_core.SshSessionManager` and App-defined Ports;
@@ -129,8 +138,11 @@ The Developer Feature package is `packages/features/feature_developer/`; it owns
 Developer Log, Developer Panel, and diagnostics presentation. It observes only
 the public `DeveloperLogPort`, `DeveloperSettingsPort`, and
 `DeveloperDiagnosticsPort`; AppRuntime adapters provide redacted snapshots from
-App-owned services. It must not import App Shell or another Feature
-implementation.
+App-owned services. The lifecycle snapshot covers only owner-observable Module,
+SSH, NetworkRuntime, database, Timer, and subscription resources; do not claim
+global totals for legacy resources that have no diagnostics hook. AppRuntime's
+debug-only release assertions must remain aligned with those observable Owners.
+It must not import App Shell or another Feature implementation.
 The App Shell keeps its root Provider limited to App Scope instances and Ports;
 Feature ViewModels are created by Route Scope. Public route metadata is exposed
 by Feature entrypoints and aggregated in
@@ -161,6 +173,13 @@ implementations. The old App terminal files are compatibility exports/bridges.
   Capability contracts; it must not create global service instances or retain
   heavy runtime objects. The full App's database/disk/redaction adapter remains
   in `apps/ssh_mobile_full/lib/services/` until its later Plan Step.
+- Every workspace member under `apps/` and `packages/` must keep a concise
+  `README.md` and `AGENTS.md` contract. README documents responsibility,
+  non-responsibility, public API, dependencies, database, lifecycle/resource
+  owner, and test commands; AGENTS documents edit scope, forbidden dependencies,
+  API-change requirements, database constraints, release rules, and required
+  tests. Update the document date marker when content changes, and add a
+  `CHANGELOG.md` only for genuine user-visible release changes.
 - `connection_core` owns the Connection database and repository contracts.
   `AppRuntime` creates and closes its single `ConnectionDatabase`; the package
   must not create a global database. Passwords/private keys stay in
@@ -168,6 +187,32 @@ implementations. The old App terminal files are compatibility exports/bridges.
 - `network_transport` must keep `NetworkRuntimeImpl` under App Scope ownership.
   Features may request public Capabilities but must not create a global network
   implementation or import another package's `/src/`.
+- Run `dart run tool/architecture_check.dart` from the repository root before
+  committing architecture work. Its explicit allowlist is the only place for
+  approved Feature-to-Feature public boundaries and known legacy singleton
+  compatibility names; do not silence a violation by adding a broad path
+  exception.
+- CI uses the root `pubspec.yaml` as the single Melos configuration source. Pull
+  Requests run `melos exec --diff` with dependent packages for format, analyze,
+  and tests, then run the architecture guard. Main runs the full `melos run`
+  format/analyze/test scripts and the Full App plus Terminal-only smoke builds;
+  the Workspace analyze script makes existing `info`-level lints non-fatal while
+  keeping errors and warnings fatal. Do not reintroduce a parallel `melos.yaml`
+  configuration file.
+- Step31's `dart run tool/check_file_sizes.dart` reports non-generated Dart files
+  above the 300/400/500-line review thresholds. Use it to identify ownership
+  problems, then split only when responsibilities are independent; retain a
+  cohesive parser, test fixture, or compatibility bridge when splitting would
+  only add meaningless files.
+- Step32's `dart run tool/check_module_dependencies.dart` audits the root
+  workspace's direct production dependency graph. Keep Feature-to-Feature
+  exceptions explicit in `architectureAllowlist`, reject Core/Infrastructure
+  reverse edges and cycles, and update `docs/architecture/MODULE_DEPENDENCY.md`
+  when Package boundaries change.
+- Step33's `dart run tool/check_resource_owners.dart` guards the required rows in
+  `docs/architecture/RESOURCE_OWNERSHIP.md`. Every database, SSH/network
+  session, native handle, timer, stream, controller, and isolate needs an
+  explicit Owner, Scope, and Release action before the change is complete.
 - `ssh_core` must keep `SshSessionManager` and its Session Pool under App Scope
   ownership. A Feature may acquire/release a Lease but must not close a shared
   Session, import `flutter_background_service`, or perform platform checks.
@@ -184,6 +229,10 @@ implementations. The old App terminal files are compatibility exports/bridges.
   and its repository. Route scope owns Terminal ViewModels and their
   subscriptions/controllers; disposing a route must not close the injected App
   Scope SSH Manager. Package consumers use only `package:feature_terminal/`.
+- The Terminal-only App may validate composition with a minimal injected SSH
+  Capability, but it must not duplicate the Full App's in-use SSH business
+  implementation or create a second App Scope SSH owner. A later SSH method
+  migration must preserve the same public contract and lifecycle rules.
 - `feature_monitoring` must send all SSH sampling through its public Ports with
   `MonitoringRequestPriority.low`. `MonitoringModule` cancels polling on
   deactivate/dispose and must not create a permanent App-start timer or a
@@ -717,6 +766,9 @@ was already built.
   needs to change. When citing entry points, prefer the current
   `lib/features/*` ViewModel/view path plus the coordinating screen/service over
   older screen-only descriptions.
+- When package ownership, public API, storage, lifecycle, or test commands change,
+  update that package's README and AGENTS contract in the same scoped change;
+  keep internal-package changelogs out unless the change is user-visible.
 - Format changed Dart files and run targeted `flutter analyze` plus the closest
   tests during the edit loop.
 - Broaden to the full gate in `AGENTS.md` when changing shared infrastructure,

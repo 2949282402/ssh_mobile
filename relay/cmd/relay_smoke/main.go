@@ -68,6 +68,70 @@ func runFunctional(base, token string) {
 	defer b.conn.Close()
 
 	lookup(a, b.id)
+	candidateSession := newSessionID()
+	candidatePayload := base64.RawURLEncoding.EncodeToString([]byte(`{"version":1,"kind":"offer","generation":1,"candidates":[]}`))
+	assert(sendJSON(a, map[string]any{
+		"type":       "candidate_offer",
+		"session_id": candidateSession,
+		"target_id":  b.id,
+		"payload":    candidatePayload,
+	}), "candidate offer")
+	assertControlPayload(b, "candidate_offer", candidateSession, candidatePayload)
+	answerPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"version":1,"kind":"answer","generation":1,"candidates":[]}`))
+	assert(sendJSON(b, map[string]any{
+		"type":       "candidate_answer",
+		"session_id": candidateSession,
+		"target_id":  a.id,
+		"payload":    answerPayload,
+	}), "candidate answer")
+	assertControlPayload(a, "candidate_answer", candidateSession, answerPayload)
+	webrtcSession := newSessionID()
+	webrtcSignals := []struct {
+		sender  *device
+		target  *device
+		kind    string
+		payload string
+	}{
+		{
+			sender:  a,
+			target:  b,
+			kind:    "webrtc_offer",
+			payload: base64.RawURLEncoding.EncodeToString([]byte("v=0\r\n")),
+		},
+		{
+			sender:  b,
+			target:  a,
+			kind:    "webrtc_answer",
+			payload: base64.RawURLEncoding.EncodeToString([]byte("v=0\r\ns=ssh-mobile\r\n")),
+		},
+		{
+			sender:  a,
+			target:  b,
+			kind:    "webrtc_ice_candidate",
+			payload: base64.RawURLEncoding.EncodeToString([]byte("candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host")),
+		},
+		{
+			sender:  b,
+			target:  a,
+			kind:    "webrtc_ice_restart",
+			payload: base64.RawURLEncoding.EncodeToString([]byte("restart")),
+		},
+		{
+			sender:  a,
+			target:  b,
+			kind:    "webrtc_close",
+			payload: base64.RawURLEncoding.EncodeToString([]byte("close")),
+		},
+	}
+	for _, signal := range webrtcSignals {
+		assert(sendJSON(signal.sender, map[string]any{
+			"type":       signal.kind,
+			"session_id": webrtcSession,
+			"target_id":  signal.target.id,
+			"payload":    signal.payload,
+		}), signal.kind)
+		assertControlPayload(signal.target, signal.kind, webrtcSession, signal.payload)
+	}
 	session := newSessionID()
 	assert(sendJSON(a, map[string]any{
 		"type":       "offer",
@@ -76,8 +140,9 @@ func runFunctional(base, token string) {
 		"payload":    base64.RawURLEncoding.EncodeToString([]byte("opaque-offer")),
 	}), "offer")
 	assertControl(b, "offer", session)
-	assert(sendJSON(b, map[string]any{"type": "accept", "session_id": session}), "accept")
-	assertControl(a, "accept", session)
+	acceptPayload := acceptancePayload("docker-functional-transfer", 0)
+	assert(sendJSON(b, map[string]any{"type": "accept", "session_id": session, "payload": acceptPayload}), "accept")
+	assertControlPayload(a, "accept", session, acceptPayload)
 
 	payload := []byte("docker-relay-binary-payload")
 	assert(sendBinary(a, session, 0, payload), "binary")
@@ -87,7 +152,7 @@ func runFunctional(base, token string) {
 	assert(sendJSON(b, map[string]any{"type": "complete_ack", "session_id": session}), "complete_ack")
 	assertControl(a, "complete_ack", session)
 
-	fmt.Println("FUNCTIONAL_PASS enrollment=2 ready=2 lookup=online control=offer,accept,complete,complete_ack binary=exact")
+	fmt.Println("FUNCTIONAL_PASS enrollment=2 ready=2 lookup=online control=candidate_offer,candidate_answer,webrtc_offer,webrtc_answer,webrtc_ice_candidate,webrtc_ice_restart,webrtc_close,offer,accept,complete,complete_ack binary=exact")
 }
 
 func runRecover(base, token, trigger string, restart bool) {
@@ -97,17 +162,20 @@ func runRecover(base, token, trigger string, restart bool) {
 	connect(base, b)
 
 	lookup(a, b.id)
+	transferID := "docker-recover-transfer"
+	manifestHash := strings.Repeat("a", 64)
 	session := newSessionID()
 	assert(sendJSON(a, map[string]any{
 		"type":       "offer",
 		"session_id": session,
 		"target_id":  b.id,
-		"payload":    base64.RawURLEncoding.EncodeToString([]byte("resume-offer")),
+		"payload":    base64.RawURLEncoding.EncodeToString([]byte("resume-offer-transfer=" + transferID + "-manifest=" + manifestHash)),
 	}), "offer")
 	assertControl(b, "offer", session)
-	assert(sendJSON(b, map[string]any{"type": "accept", "session_id": session}), "accept")
-	assertControl(a, "accept", session)
 	first := []byte("chunk-before-fault")
+	acceptPayload := acceptancePayload(transferID, len(first))
+	assert(sendJSON(b, map[string]any{"type": "accept", "session_id": session, "payload": acceptPayload}), "accept")
+	assertControlPayload(a, "accept", session, acceptPayload)
 	assert(sendBinary(a, session, 0, first), "binary-before-fault")
 	assertBinary(b, session, 0, first)
 
@@ -137,24 +205,22 @@ func runRecover(base, token, trigger string, restart bool) {
 	connectWithRetry(base, a, 30*time.Second)
 	connectWithRetry(base, b, 30*time.Second)
 	lookup(a, b.id)
-	if restart {
-		// The Go Relay is intentionally memory-only. A process restart drops
-		// the old session, so the client must recreate the offer/accept pair.
-		session = newSessionID()
-		assert(sendJSON(a, map[string]any{
-			"type":       "offer",
-			"session_id": session,
-			"target_id":  b.id,
-			"payload":    base64.RawURLEncoding.EncodeToString([]byte("recreated-offer")),
-		}), "recreated-offer")
-		assertControl(b, "offer", session)
-		assert(sendJSON(b, map[string]any{"type": "accept", "session_id": session}), "recreated-accept")
-		assertControl(a, "accept", session)
-		fmt.Println("SESSION_RECREATED_AFTER_RESTART=true")
-	} else {
-		assert(sendJSON(b, map[string]any{"type": "resume", "session_id": session}), "resume")
-		assertControl(a, "resume", session)
-	}
+	// A reconnect always creates a fresh socket session token. The stable
+	// TransferId and Manifest remain in the encrypted offer, while the
+	// receiver reports the durable .part offset in the accept payload.
+	oldSession := session
+	session = newSessionID()
+	assert(sendJSON(a, map[string]any{
+		"type":       "offer",
+		"session_id": session,
+		"target_id":  b.id,
+		"payload":    base64.RawURLEncoding.EncodeToString([]byte("resume-offer-transfer=" + transferID + "-manifest=" + manifestHash)),
+	}), "reoffer")
+	assertControl(b, "offer", session)
+	acceptPayload = acceptancePayload(transferID, len(first))
+	assert(sendJSON(b, map[string]any{"type": "accept", "session_id": session, "payload": acceptPayload}), "resume-accept")
+	assertControlPayload(a, "accept", session, acceptPayload)
+	fmt.Printf("REOFFER_OK old_session=%s new_session=%s offset=%d\n", oldSession, session, len(first))
 	second := []byte("chunk-after-reconnect")
 	sequence := uint64(1)
 	if restart {
@@ -170,9 +236,9 @@ func runRecover(base, token, trigger string, restart bool) {
 	_ = b.conn.Close()
 
 	if restart {
-		fmt.Println("RESTART_RECOVERY_PASS reenroll=true reconnect=true session_recreated=true binary=exact")
+		fmt.Println("RESTART_RECOVERY_PASS reenroll=true reconnect=true reoffer=true offset=true binary=exact")
 	} else {
-		fmt.Println("NETWORK_RECOVERY_PASS reconnect=true resume=true binary=exact")
+		fmt.Println("NETWORK_RECOVERY_PASS reconnect=true reoffer=true offset=true binary=exact")
 	}
 }
 
@@ -410,6 +476,18 @@ func assertControl(d *device, kind, session string) {
 	fmt.Printf("CONTROL_OK device=%s type=%s\n", d.id, kind)
 }
 
+func assertControlPayload(d *device, kind, session, expectedPayload string) {
+	_, message, err := readMessage(d, 8*time.Second)
+	if err != nil {
+		fatal("control %s: %v", kind, err)
+	}
+	var value map[string]any
+	if json.Unmarshal(message, &value) != nil || value["type"] != kind || value["session_id"] != session || value["payload"] != expectedPayload {
+		fatal("control %s payload invalid: %s", kind, string(message))
+	}
+	fmt.Printf("CONTROL_OK device=%s type=%s payload=true\n", d.id, kind)
+}
+
 func assertBinary(d *device, session string, sequence uint64, expected []byte) {
 	_, frame, err := readMessage(d, 8*time.Second)
 	if err != nil {
@@ -499,6 +577,20 @@ func newSessionID() string {
 		fatal("generate session ID: %v", err)
 	}
 	return hex.EncodeToString(bytes)
+}
+
+func acceptancePayload(transferID string, offset int) string {
+	payload, err := json.Marshal(map[string]any{
+		"v":             1,
+		"transfer_id":   transferID,
+		"manifest_hash": strings.Repeat("a", 64),
+		"file_hash":     strings.Repeat("b", 64),
+		"offset":        offset,
+	})
+	if err != nil {
+		fatal("encode acceptance payload: %v", err)
+	}
+	return string(payload)
 }
 
 func assert(err error, operation string) {

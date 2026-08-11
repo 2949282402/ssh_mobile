@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-10
+> 最新更新时间：2026-08-11
 
 # Agent Memory
 
@@ -263,6 +263,37 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 - Public relay frames remain memory-only and end-to-end encrypted. The only
   supported production deployment is `relay/compose.yaml` with Caddy; clients
   enroll explicitly, connect through HTTPS/WSS, and require receiver approval.
+- Native file transfer state is owned by `network-transfer::TransferSession` and
+  keyed by `PeerId + logical SessionId`; it never stores a Quinn or Relay handle.
+  `network-core::TransferDispatcher` selects the current Route for each attempt.
+  Direct QUIC recovery and Relay re-offer recovery can claim paused transfers on
+  the same Session. Relay uses a fresh attempt token plus stable TransferId,
+  Manifest Hash, File Hash and fixed-chunk offset; socket disconnect preserves
+  the `.part` checkpoint, and a verified final file makes completion idempotent.
+- 2026-08-11: Native peer routing exchanges bounded ICE-like Candidate
+  Offer/Answer controls through the authenticated Relay. Candidate generations
+  replace stale sets, while ranked direct attempts race in parallel and only an
+  identity-bound QUIC handshake can nominate a ready path; Relay remains the
+  fallback when no authenticated direct candidate succeeds.
+- 2026-08-11: A Session connected through Relay starts a deduplicated native
+  background direct-upgrade task. It keeps Relay untouched while candidates are
+  authenticated, waits for a short stable window, atomically swaps only when the
+  Session is still on Relay, then replays Delivery and resumes transfers before
+  starting direct receivers. Failed or stale probes close only their new QUIC
+  attempt and leave Relay available.
+- 2026-08-11: `network-core::connection` is the native Connection abstraction
+  for generic `network-transport` primitives. It maps TCP/UDP/WebSocket and
+  Session-owned QUIC/Relay routes to ReliableStream, ReliableMessage, or
+  UnreliableDatagram capabilities; it owns no Session or business payload.
+- 2026-08-11: WebRTC is now a Session-owned native Realtime Route beside the
+  ordinary QUIC/Relay Data Route. `network-core::RealtimeManager` owns the
+  bounded `network-webrtc::WebRtcPeer`; authenticated Relay controls carry only
+  versioned Offer/Answer/ICE/Restart/Close envelopes, while SDP/ICE revisions
+  reject stale/replayed SDP and close signals and bind trickled candidates to
+  the active ICE generation. The generic FFI protobuf ABI and
+  `ssh_mobile_network_native` Dart facade now carry bounded typed Realtime
+  commands/results/state/signaling events without exposing raw WebRTC handles;
+  the App Shell's existing `network_sdk` model boundary remains unchanged.
 
 ### UI and performance
 

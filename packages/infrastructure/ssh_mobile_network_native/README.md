@@ -1,4 +1,4 @@
-> Last updated: 2026-08-09
+> Last updated: 2026-08-11
 
 # SSH Mobile Network Native
 
@@ -12,10 +12,12 @@ and only then destroys the Rust handle.
 
 The current v1 runtime handles peer registration with pinned Ed25519/X25519
 keys, per-peer `PathManager` selection, authenticated Quinn sessions, approved
-and verified file receive, cancellation, progress/completion events, and the
-native WSS Relay data path. Dart performs enrollment and secure credential
-lookup only; Relay data frames stay in Rust. Unsupported commands and routes
-return explicit errors rather than synthetic success.
+and verified file receive, cancellation, progress/completion events, the
+native WSS Relay data path, and a Session-owned WebRTC Realtime route. Dart can
+submit bounded Realtime commands and consume typed state/signaling events;
+Rust still owns all long-lived network state, sockets, WebRTC peers, and Relay
+data frames. Unsupported commands and routes return explicit errors rather than
+synthetic success.
 
 ## v1 contract
 
@@ -23,6 +25,11 @@ return explicit errors rather than synthetic success.
   or fall back to another network protocol version.
 - `NativeNetworkRuntime` exposes typed operation status values to Dart and
   keeps raw FFI integers private to the package.
+- `NativeNetworkRuntime.startRealtimeSession`,
+  `stopRealtimeSession`, and `sendRealtimeSignal` expose only stable IDs,
+  revisions, enum values, and bounded byte payloads. `events` decodes command
+  results and Realtime state/signaling events without exposing Rust pointers,
+  Quinn connections, UDP sockets, or WebRTC raw objects.
 - Runtime disposal is ordered as `Running -> Stopping -> Stopped -> Destroyed`;
   stopping is idempotent and no command is accepted after stopping begins.
 - Relay enrollment, credentials, and configuration stay in Dart; the native

@@ -1,6 +1,6 @@
 # Release and Portfolio Checklist
 
-> 最新更新时间：2026-07-26
+> 最新更新时间：2026-08-11
 
 This checklist separates repository work that can be automated from decisions
 that require the project owner's identity, signing credentials, devices, or
@@ -13,6 +13,10 @@ legal choice. Never commit signing keys, passwords, API keys, or server data.
 - GitHub Actions pins Flutter and checks formatting, analysis, tests, coverage,
   Android compilation, Windows compilation, macOS compilation, and an unsigned
   iOS build.
+- The native network package exposes a bounded typed Realtime Dart facade over
+  the existing command/event FFI ABI; native runtime state and WebRTC handles
+  remain owned by Rust, and no Flutter UI/client business code depends on raw
+  native objects.
 - Dependabot checks Dart packages and GitHub Actions weekly.
 - The app has a custom icon across Android, iOS, macOS, Windows, and Web.
 - Custom mobile navigation items expose labels, button actions, and selected
