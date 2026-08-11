@@ -1,11 +1,12 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-11
 
 # ssh_mobile_network_native 维护约束
 
 ## 允许修改范围
 
 允许修改 Dart FFI facade、native asset hook、平台构建配置、Rust 协议绑定和对应
-测试；协议字节、状态枚举和构建目标变化必须同步 Network Transport 合约。
+测试；协议字节、状态枚举和构建目标变化必须同步 Network Transport 合约。Realtime
+command/event 的类型化 API 必须继续隐藏 Rust handle、Socket 和 WebRTC 内部对象。
 
 ## 禁止依赖
 

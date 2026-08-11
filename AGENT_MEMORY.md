@@ -290,9 +290,10 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   bounded `network-webrtc::WebRtcPeer`; authenticated Relay controls carry only
   versioned Offer/Answer/ICE/Restart/Close envelopes, while SDP/ICE revisions
   reject stale/replayed SDP and close signals and bind trickled candidates to
-  the active ICE generation. The generic FFI protobuf ABI carries typed
-  realtime commands/events without exposing raw WebRTC handles; Flutter/Dart
-  API closure remains the planned next Step.
+  the active ICE generation. The generic FFI protobuf ABI and
+  `ssh_mobile_network_native` Dart facade now carry bounded typed Realtime
+  commands/results/state/signaling events without exposing raw WebRTC handles;
+  the App Shell's existing `network_sdk` model boundary remains unchanged.
 
 ### UI and performance
 

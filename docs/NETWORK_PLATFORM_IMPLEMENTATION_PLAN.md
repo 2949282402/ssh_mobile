@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-10
+> 最新更新时间：2026-08-11
 
 # SSH Mobile 跨平台 P2P 网络平台实施计划
 
@@ -8,7 +8,7 @@
 
 ---
 
-# 当前实施状态（2026-08-07）
+# 当前实施状态（2026-08-11）
 
 本文件同时保留完整目标架构与后续阶段；以下状态只描述已经接入生产调用链的部分：
 
@@ -18,11 +18,16 @@
   有界流式传输、SHA-256 校验、临时文件提交、接收端持久化完成确认、取消和进度事件。
 - `LanShareViewModel` 通过 `NetworkService` 提交 native 文件任务；命令接受与
   `TransferCompleted`/`TransferFailed` 终态事件严格分离，历史只保存稳定错误码。
-- peer 公布的当前端点会进入每 peer `PathManager` 并由选择结果驱动 QUIC；
-  多 candidate 交换、持续 RTT/loss 探测和网络切换重探仍属于 Phase 4/10 后续工作。
+- peer 公布的 candidate 会进入每 peer `PathManager` 并由选择结果驱动 QUIC；
+  Candidate Offer/Answer、持续 RTT/loss 探测、并行 direct 竞速和 Relay 到
+  Direct 的稳定窗口升级已经进入 native Session 调用链。
 - Rust Relay 已实现当前 v1 协议的 WSS 认证、opaque offer、AES-GCM chunk、
   complete/complete_ack、取消、接收入站审批及安全落盘；Flutter 只负责 v1
   enrollment、凭据安全存储和 native 配置，不再建立 Dart Relay 数据面。
+- `network-core::RealtimeManager` 已作为 Session-owned Realtime Route 接入
+  WebRTC；Offer/Answer/ICE/Restart/Close 只走认证 Relay control plane，
+  `ssh_mobile_network_native` 通过 helper isolate 提供有界 typed Realtime
+  command/event API，不向 Dart 暴露 Quinn、Socket 或 WebRTC 原生句柄。
 - 当前项目不再支持或实现 WireGuard；本文后续相关章节仅保留为历史方案记录，
   不属于当前实现和发布验收范围。
 - Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；
@@ -257,12 +262,14 @@ server/
 当前仓库已经加入：
 
 ```text
-packages/ssh_mobile_network_native/
+packages/infrastructure/ssh_mobile_network_native/
 ```
 
 当前 native package 已经管理真实 `NetworkRuntime`，通过 command/event FFI
-执行 QUIC、文件传输和 Relay 数据路径；`ssh_net_abi_version()` 仅用于 ABI
-smoke test，不能代表业务命令成功。
+执行 QUIC、文件传输、Relay 数据路径和 WebRTC Realtime 控制路径；
+`NativeNetworkRuntime` 只暴露稳定 ID、枚举、revision、bounded bytes 和
+typed event stream。`ssh_net_abi_version()` 仅用于 ABI smoke test，不能代表
+业务命令成功。
 
 ---
 
@@ -1148,8 +1155,14 @@ NetworkEvent protobuf
      ↓
 FFI poll
      ↓
-Dart
+Dart helper isolate
+     ↓
+typed Stream
 ```
+
+Realtime v1 使用现有 ABI 的 command/event oneof：Start/Stop/Signal 命令对应
+RealtimeState/RealtimeSignal 事件；Dart facade 只镜像这些字段和大小边界，
+Rust `network-protocol` 仍是唯一 wire-contract owner。
 
 未来增加 voice / video / remote-control / port-forwarding 时无需不断修改 ABI。
 
@@ -1185,6 +1198,12 @@ abstract interface class NetworkService {
   Future<NetworkResult<RouteSnapshot>> state(String peerId);
 }
 ```
+
+底层 `ssh_mobile_network_native` facade 另外提供
+`startRealtimeSession`、`stopRealtimeSession`、`sendRealtimeSignal` 和
+`Stream<NativeNetworkEvent>`。它不替换 App Shell 的 `network_sdk` 模型源，
+也不让 Flutter 业务代码直接调用 FFI symbol；客户端集成由后续授权的 App
+Shell 变更完成。
 
 ---
 
@@ -1520,7 +1539,10 @@ H.264 / AV1
 WebRTC
 ```
 
-当前 MVP 不实现 WebRTC。
+Native v1 已实现 WebRTC Realtime subsystem 和 Runtime/FFI signaling 闭环：
+Rust 持有 PeerConnection，Relay 只转发有界控制信令，Dart 只消费 typed
+state/signaling events。音视频设备采集、媒体渲染和 Flutter UI 接入不属于
+本轮 native SDK Step，不能据此宣称 App 端媒体功能已验收。
 
 ---
 
