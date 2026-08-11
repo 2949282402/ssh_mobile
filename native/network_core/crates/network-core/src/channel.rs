@@ -223,8 +223,17 @@ async fn send_data_message(
         )
         .into());
     }
-    match state.sessions.current_route(peer_id).await {
-        Some(RouteType::QuicDirect | RouteType::Lan) => {
+    let route = state.sessions.current_route(peer_id).await;
+    let profile = route
+        .and_then(crate::connection::ConnectionProfile::for_route)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "message route unavailable",
+            )
+        })?;
+    match profile.transport() {
+        crate::connection::ConnectionTransportKind::Quic => {
             let connection = state
                 .sessions
                 .current_connection(peer_id)
@@ -237,7 +246,7 @@ async fn send_data_message(
                 })?;
             send_channel_frame(&connection, ChannelFrameKind::DataMessage, &encoded).await
         }
-        Some(RouteType::Relay) => {
+        crate::connection::ConnectionTransportKind::Relay => {
             let relay = state.relay.read().await.clone().ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::NotConnected, "Relay route unavailable")
             })?;
@@ -250,13 +259,9 @@ async fn send_data_message(
                 .await
                 .map_err(|error| std::io::Error::other(error.to_string()).into())
         }
-        Some(route) => {
-            Err(std::io::Error::other(format!("unsupported message route: {route:?}")).into())
-        }
-        None => Err(std::io::Error::new(
-            std::io::ErrorKind::NotConnected,
-            "message route unavailable",
-        )
+        transport => Err(std::io::Error::other(format!(
+            "unsupported message transport: {transport:?}"
+        ))
         .into()),
     }
 }

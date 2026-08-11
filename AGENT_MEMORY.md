@@ -281,6 +281,10 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   Session is still on Relay, then replays Delivery and resumes transfers before
   starting direct receivers. Failed or stale probes close only their new QUIC
   attempt and leave Relay available.
+- 2026-08-11: `network-core::connection` is the native Connection abstraction
+  for generic `network-transport` primitives. It maps TCP/UDP/WebSocket and
+  Session-owned QUIC/Relay routes to ReliableStream, ReliableMessage, or
+  UnreliableDatagram capabilities; it owns no Session or business payload.
 
 ### UI and performance
 

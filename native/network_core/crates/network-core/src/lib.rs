@@ -5,6 +5,7 @@
 
 mod channel;
 mod commands;
+pub mod connection;
 pub(crate) mod crypto;
 pub mod delivery;
 mod errors;
