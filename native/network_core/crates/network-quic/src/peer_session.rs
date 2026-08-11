@@ -12,8 +12,11 @@ use tracing::info;
 const MAX_DEVICE_ID_BYTES: usize = 128;
 const NONCE_BYTES: usize = 32;
 const SIGNATURE_BYTES: usize = 64;
+const CHANNEL_BINDING_BYTES: usize = 32;
 const INITIATOR_DOMAIN: &[u8] = b"ssh-mobile/quic-auth/initiator/v1";
 const RESPONDER_DOMAIN: &[u8] = b"ssh-mobile/quic-auth/responder/v1";
+const CHANNEL_BINDING_LABEL: &[u8] = b"ssh-mobile/quic-auth/channel-binding/v1";
+const CHANNEL_BINDING_CONTEXT: &[u8] = b"ssh-mobile/quic-auth/v1";
 
 pub struct QuicPeerSession {
     pub connection: Connection,
@@ -41,6 +44,7 @@ impl QuicPeerSession {
         local_identity: &DeviceIdentity,
         expected_peer_public_key: [u8; 32],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let channel_binding = self.channel_binding()?;
         let (mut send, mut recv) = self.connection.open_bi().await?;
         let local_public_key = local_identity.public_identity_key().to_bytes();
         let initiator_nonce = rand::random::<[u8; NONCE_BYTES]>();
@@ -48,6 +52,7 @@ impl QuicPeerSession {
             INITIATOR_DOMAIN,
             &local_identity.device_id,
             &local_public_key,
+            &channel_binding,
             &[&initiator_nonce],
         );
         let initiator_signature = local_identity.sign_proof(&initiator_payload);
@@ -68,6 +73,7 @@ impl QuicPeerSession {
             &self.peer_device_id,
             &expected_peer_public_key,
             RESPONDER_DOMAIN,
+            &channel_binding,
             &[&initiator_nonce, &response.nonce],
         )?;
 
@@ -85,6 +91,7 @@ impl QuicPeerSession {
         local_identity: &DeviceIdentity,
         expected_peer_public_key: [u8; 32],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let channel_binding = self.channel_binding()?;
         let (mut send, mut recv) = self.connection.accept_bi().await?;
         let request = read_auth_frame(&mut recv).await?;
         validate_peer_frame(
@@ -92,6 +99,7 @@ impl QuicPeerSession {
             &self.peer_device_id,
             &expected_peer_public_key,
             INITIATOR_DOMAIN,
+            &channel_binding,
             &[&request.nonce],
         )?;
 
@@ -101,6 +109,7 @@ impl QuicPeerSession {
             RESPONDER_DOMAIN,
             &local_identity.device_id,
             &local_public_key,
+            &channel_binding,
             &[&request.nonce, &responder_nonce],
         );
         let response_signature = local_identity.sign_proof(&response_payload);
@@ -129,6 +138,7 @@ impl QuicPeerSession {
         local_identity: &DeviceIdentity,
         trusted_peer_keys: &RwLock<HashMap<String, [u8; 32]>>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let channel_binding = export_channel_binding(&connection)?;
         let (mut send, mut recv) = connection.accept_bi().await?;
         let request = read_auth_frame(&mut recv).await?;
         let expected_peer_public_key = trusted_peer_keys
@@ -142,6 +152,7 @@ impl QuicPeerSession {
             &request.device_id,
             &expected_peer_public_key,
             INITIATOR_DOMAIN,
+            &channel_binding,
             &[&request.nonce],
         )?;
 
@@ -151,6 +162,7 @@ impl QuicPeerSession {
             RESPONDER_DOMAIN,
             &local_identity.device_id,
             &local_public_key,
+            &channel_binding,
             &[&request.nonce, &responder_nonce],
         );
         let response_signature = local_identity.sign_proof(&response_payload);
@@ -168,6 +180,29 @@ impl QuicPeerSession {
         session.authenticated.store(true, Ordering::SeqCst);
         Ok(session)
     }
+
+    fn channel_binding(
+        &self,
+    ) -> Result<[u8; CHANNEL_BINDING_BYTES], Box<dyn std::error::Error + Send + Sync>> {
+        export_channel_binding(&self.connection)
+    }
+}
+
+/// Derives a per-connection channel binding from the completed QUIC/TLS
+/// handshake. Ed25519 authentication signs this value so a proxy cannot
+/// forward a valid application transcript between two separate TLS sessions.
+fn export_channel_binding(
+    connection: &Connection,
+) -> Result<[u8; CHANNEL_BINDING_BYTES], Box<dyn std::error::Error + Send + Sync>> {
+    let mut channel_binding = [0u8; CHANNEL_BINDING_BYTES];
+    connection
+        .export_keying_material(
+            &mut channel_binding,
+            CHANNEL_BINDING_LABEL,
+            CHANNEL_BINDING_CONTEXT,
+        )
+        .map_err(|_| Error::other("failed to export QUIC channel binding"))?;
+    Ok(channel_binding)
 }
 
 struct AuthFrame {
@@ -236,6 +271,7 @@ fn validate_peer_frame(
     expected_device_id: &str,
     expected_public_key: &[u8; 32],
     domain: &[u8],
+    channel_binding: &[u8; CHANNEL_BINDING_BYTES],
     nonces: &[&[u8]],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if frame.device_id != expected_device_id || &frame.public_key != expected_public_key {
@@ -245,7 +281,13 @@ fn validate_peer_frame(
     }
     let peer_key = VerifyingKey::from_bytes(expected_public_key)
         .map_err(|_| Error::new(ErrorKind::InvalidData, "invalid peer Ed25519 key"))?;
-    let payload = authentication_payload(domain, &frame.device_id, &frame.public_key, nonces);
+    let payload = authentication_payload(
+        domain,
+        &frame.device_id,
+        &frame.public_key,
+        channel_binding,
+        nonces,
+    );
     if !DeviceIdentity::verify_peer_proof(&peer_key, &payload, &frame.signature) {
         return Err(Error::new(ErrorKind::PermissionDenied, "invalid QUIC peer proof").into());
     }
@@ -256,16 +298,23 @@ fn authentication_payload(
     domain: &[u8],
     device_id: &str,
     public_key: &[u8; 32],
+    channel_binding: &[u8; CHANNEL_BINDING_BYTES],
     nonces: &[&[u8]],
 ) -> Vec<u8> {
     let mut payload = Vec::with_capacity(
-        domain.len() + device_id.len() + public_key.len() + NONCE_BYTES * nonces.len() + 8,
+        domain.len()
+            + device_id.len()
+            + public_key.len()
+            + channel_binding.len()
+            + NONCE_BYTES * nonces.len()
+            + 8,
     );
     payload.extend_from_slice(domain);
     payload.extend_from_slice(&NETWORK_PROTOCOL_VERSION.to_be_bytes());
     payload.extend_from_slice(&(device_id.len() as u16).to_be_bytes());
     payload.extend_from_slice(device_id.as_bytes());
     payload.extend_from_slice(public_key);
+    payload.extend_from_slice(channel_binding);
     for nonce in nonces {
         payload.extend_from_slice(nonce);
     }
@@ -281,9 +330,15 @@ mod tests {
         let expected = DeviceIdentity::generate("expected".into());
         let attacker = DeviceIdentity::generate("expected".into());
         let nonce = [7u8; NONCE_BYTES];
+        let channel_binding = [9u8; CHANNEL_BINDING_BYTES];
         let attacker_key = attacker.public_identity_key().to_bytes();
-        let payload =
-            authentication_payload(INITIATOR_DOMAIN, "expected", &attacker_key, &[&nonce]);
+        let payload = authentication_payload(
+            INITIATOR_DOMAIN,
+            "expected",
+            &attacker_key,
+            &channel_binding,
+            &[&nonce],
+        );
         let frame = AuthFrame {
             device_id: "expected".into(),
             public_key: attacker_key,
@@ -299,6 +354,51 @@ mod tests {
             "expected",
             &expected.public_identity_key().to_bytes(),
             INITIATOR_DOMAIN,
+            &channel_binding,
+            &[&nonce],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_a_valid_signature_bound_to_another_quic_session() {
+        let identity = DeviceIdentity::generate("expected".into());
+        let nonce = [7u8; NONCE_BYTES];
+        let signed_binding = [9u8; CHANNEL_BINDING_BYTES];
+        let other_binding = [10u8; CHANNEL_BINDING_BYTES];
+        let public_key = identity.public_identity_key().to_bytes();
+        let payload = authentication_payload(
+            INITIATOR_DOMAIN,
+            "expected",
+            &public_key,
+            &signed_binding,
+            &[&nonce],
+        );
+        let frame = AuthFrame {
+            device_id: "expected".into(),
+            public_key,
+            nonce,
+            signature: identity
+                .sign_proof(&payload)
+                .try_into()
+                .expect("signature size"),
+        };
+
+        assert!(validate_peer_frame(
+            &frame,
+            "expected",
+            &public_key,
+            INITIATOR_DOMAIN,
+            &signed_binding,
+            &[&nonce],
+        )
+        .is_ok());
+        assert!(validate_peer_frame(
+            &frame,
+            "expected",
+            &public_key,
+            INITIATOR_DOMAIN,
+            &other_binding,
             &[&nonce],
         )
         .is_err());

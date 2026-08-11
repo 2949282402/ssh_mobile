@@ -70,9 +70,11 @@ impl QuicEndpointManager {
     }
 }
 
-/// QUIC uses ephemeral self-signed transport certificates. Authorization is
+/// QUIC uses ephemeral self-signed transport certificates. The certificate is
+/// intentionally only a transport-encryption credential: authorization is
 /// performed immediately afterwards by the pinned Ed25519 application
-/// handshake, and no application stream is exposed before it succeeds.
+/// handshake, whose signatures are bound to this connection's TLS exporter.
+/// No application stream is exposed before that handshake succeeds.
 #[derive(Debug)]
 struct ApplicationIdentityVerifier(Arc<rustls::crypto::CryptoProvider>);
 
