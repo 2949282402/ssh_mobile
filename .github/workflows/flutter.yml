@@ -330,7 +330,7 @@ jobs:
             exit 0
           fi
           diagnostic=''
-          failure_lines="$(grep -E -i 'error|failed|fatal|no such|cannot|could not|xcodebuild|clang|ld:' "$build_log" | tail -n 40 || true)"
+          failure_lines="$(grep -E -i '(^|[[:space:]])(error:|failed:|failed$|failed with|fatal:|no such file|cannot |could not|ld:|xcodebuild:|build process failed|build failed|build commands failed|nonzero exit|exit code)' "$build_log" | grep -v -E 'export .*(_ERROR|ERROR=|WARNINGS_AS_ERRORS)|ExecuteExternalTool' | tail -n 20 || true)"
           if [ -z "$failure_lines" ]; then
             failure_lines="$(tail -n 40 "$build_log")"
           fi
