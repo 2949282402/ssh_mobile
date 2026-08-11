@@ -99,7 +99,7 @@ Docker Compose with Caddy is the supported production deployment path. Follow th
 ```powershell
 cd relay
 Copy-Item .env.example .env
-# Set the public domain plus every required token, key, and admin credential.
+# Set the domain, all ports/runtime limits, and every token, key, and admin credential in .env.
 docker compose --env-file .env up --build
 ```
 

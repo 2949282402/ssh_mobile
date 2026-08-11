@@ -6,7 +6,8 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /relay ./cmd/relay
 
 FROM gcr.io/distroless/static-debian12:nonroot
+ARG RELAY_INTERNAL_PORT=8080
 COPY --from=build /relay /relay
-EXPOSE 8080
+EXPOSE ${RELAY_INTERNAL_PORT}
 USER nonroot:nonroot
 ENTRYPOINT ["/relay"]

@@ -13,23 +13,33 @@ embed or serve the dashboard UI. It does not persist transfer frames,
 filenames, credentials, or device state. Restarting the process disconnects all
 peers and requires devices to enroll again.
 
-## Required configuration
+## `.env` configuration
 
-The server fails closed when any required secret is missing or weak:
+All Compose deployment parameters come from `relay/.env`. The server fails
+closed when a required secret is missing or weak; Compose also requires every
+port, limit, duration, and image value to be present in that file.
 
 | Variable | Requirement |
 |---|---|
+| `RELAY_PUBLIC_DOMAIN` | Public DNS name, or an explicit local `http://` address for local smoke testing |
+| `RELAY_HTTP_PORT` | Host port for Caddy HTTP |
+| `RELAY_HTTPS_PORT` | Host port for Caddy HTTPS |
+| `RELAY_CADDY_IMAGE` | Caddy image and version, normally `caddy:2.8-alpine` |
+| `CADDY_HTTP_PORT` | Caddy's internal HTTP listener port |
+| `CADDY_HTTPS_PORT` | Caddy's internal HTTPS listener port |
+| `RELAY_INTERNAL_PORT` | Internal Go Relay listener port |
+| `FRONT_INTERNAL_PORT` | Internal Nginx front-end listener port |
+| `RELAY_CREDENTIAL_TTL` | Device credential lifetime, using Go duration syntax |
+| `RELAY_SESSION_TTL` | Relay session lifetime, using Go duration syntax |
+| `RELAY_MAX_CONNECTIONS` | Positive maximum number of Relay connections |
 | `RELAY_ENROLLMENT_TOKEN` | Random enrollment secret, at least 16 characters |
 | `RELAY_CREDENTIAL_KEY` | Base64url-encoded random key containing at least 32 bytes |
 | `RELAY_ADMIN_USER` | Dashboard administrator username |
 | `RELAY_ADMIN_PASSWORD` | Random dashboard password, at least 12 characters |
 
-Optional variables are `RELAY_ADDR` (default `:8080`),
-`RELAY_CREDENTIAL_TTL` (default `24h`), `RELAY_SESSION_TTL` (default `15m`),
-and `RELAY_MAX_CONNECTIONS` (default `2048`).
-
-Never commit real values. Generate independent secrets with a
-cryptographically secure generator.
+Compose derives the Go `RELAY_ADDR` from `RELAY_INTERNAL_PORT`; direct
+standalone Go execution may set `RELAY_ADDR` separately. Never commit real
+values. Generate independent secrets with a cryptographically secure generator.
 
 ## Docker Compose production deployment
 
@@ -38,7 +48,8 @@ keeps the Go service and the front-end container on an internal network and
 uses Caddy for HTTPS/WSS termination and same-origin routing.
 
 1. Point a public DNS `A` or `AAAA` record at the host and allow ports 80/443.
-2. Copy `.env.example` to `.env` and replace every placeholder:
+2. Copy `.env.example` to `.env` and replace every value, including ports,
+   runtime limits, and administrator credentials:
 
    ```sh
    cp .env.example .env

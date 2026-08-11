@@ -90,7 +90,7 @@ flutter run -d chrome
 ```powershell
 cd relay
 Copy-Item .env.example .env
-# 设置公网域名，以及所有必填 Token、签名密钥和管理员凭据。
+# 在 .env 中设置公网域名、所有端口/运行参数，以及 Token、签名密钥和管理员凭据。
 docker compose --env-file .env up --build
 ```
 

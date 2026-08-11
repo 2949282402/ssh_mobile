@@ -10,12 +10,14 @@ sessions, and the v1 WebSocket protocol.
 ## Development
 
 ```sh
+cp .env.example .env
 npm ci
 npm run dev
 ```
 
-Vite proxies `/api`, `/healthz`, and `/v1` to a local Relay on port `8080`.
-Production requests use relative paths through Caddy, so the browser keeps the
+Vite reads `FRONT_DEV_PORT` and `RELAY_DEV_API_ORIGIN` from `.env`, then proxies
+`/api`, `/healthz`, and `/v1` to the configured local Relay origin. Production
+requests use relative paths through Caddy, so the browser keeps the
 HttpOnly administrator session same-origin.
 
 ## Validation

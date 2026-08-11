@@ -11,22 +11,32 @@ React + Vite + TypeScript 管理端位于 `../front/`，由 Compose 的 `front` 
 提供静态文件；Relay 不再嵌入或提供管理端页面。它不持久化传输数据帧、文件名、
 凭据或设备状态。进程重启会断开全部连接，客户端必须重新注册。
 
-## 必填配置
+## `.env` 配置
 
-缺少必填密钥或密钥强度不足时，服务会拒绝启动：
+Compose 部署的所有参数都来自 `relay/.env`。缺少必填密钥或密钥强度不足时，
+服务会拒绝启动；Compose 也要求端口、限制、时长和镜像配置全部显式写入该文件：
 
 | 环境变量 | 要求 |
 |---|---|
+| `RELAY_PUBLIC_DOMAIN` | 公网 DNS 名称；本地冒烟测试可填写显式 `http://` 地址 |
+| `RELAY_HTTP_PORT` | Caddy 对外 HTTP 端口 |
+| `RELAY_HTTPS_PORT` | Caddy 对外 HTTPS 端口 |
+| `RELAY_CADDY_IMAGE` | Caddy 镜像及版本，通常为 `caddy:2.8-alpine` |
+| `CADDY_HTTP_PORT` | Caddy 容器内部 HTTP 监听端口 |
+| `CADDY_HTTPS_PORT` | Caddy 容器内部 HTTPS 监听端口 |
+| `RELAY_INTERNAL_PORT` | Go Relay 容器内部监听端口 |
+| `FRONT_INTERNAL_PORT` | Nginx 前端容器内部监听端口 |
+| `RELAY_CREDENTIAL_TTL` | 设备凭据有效期，使用 Go duration 格式 |
+| `RELAY_SESSION_TTL` | Relay 会话有效期，使用 Go duration 格式 |
+| `RELAY_MAX_CONNECTIONS` | Relay 最大连接数，必须为正整数 |
 | `RELAY_ENROLLMENT_TOKEN` | 随机注册口令，至少 16 个字符 |
 | `RELAY_CREDENTIAL_KEY` | Base64URL 编码的随机密钥，解码后至少 32 字节 |
 | `RELAY_ADMIN_USER` | Web 管理面板管理员账号 |
 | `RELAY_ADMIN_PASSWORD` | 随机管理密码，至少 12 个字符 |
 
-可选项包括 `RELAY_ADDR`（默认 `:8080`）、`RELAY_CREDENTIAL_TTL`
-（默认 `24h`）、`RELAY_SESSION_TTL`（默认 `15m`）和
-`RELAY_MAX_CONNECTIONS`（默认 `2048`）。
-
-请使用密码学安全随机数生成器分别创建这些密钥，绝对不要提交真实 `.env`。
+Compose 会根据 `RELAY_INTERNAL_PORT` 生成 Go 服务的 `RELAY_ADDR`；直接运行 Go
+程序时可以单独设置 `RELAY_ADDR`。请使用密码学安全随机数生成器分别创建密钥，
+绝对不要提交真实 `.env`。
 
 ## Docker Compose 生产部署
 
@@ -35,7 +45,8 @@ Docker Compose 是唯一支持的部署方式。仓库提供的 Compose 配置�
 反向代理。
 
 1. 将公网 DNS `A` 或 `AAAA` 记录指向主机，并开放 80/443 端口。
-2. 复制 `.env.example` 为 `.env`，替换其中每个占位值：
+2. 复制 `.env.example` 为 `.env`，替换其中所有值，包括端口、运行限制、时长和
+   管理员凭据：
 
    ```sh
    cp .env.example .env
