@@ -128,3 +128,22 @@ impl rustls::client::danger::ServerCertVerifier for ApplicationIdentityVerifier 
         self.0.signature_verification_algorithms.supported_schemes()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use network_nat::PathManager;
+
+    #[tokio::test]
+    async fn from_bound_socket_keeps_the_bound_udp_port() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind UDP socket");
+        let bound_address = socket.local_addr().expect("read bound address");
+        let manager = QuicEndpointManager::from_bound_socket(socket, Arc::new(PathManager::new()))
+            .expect("create QUIC endpoint");
+
+        assert_eq!(manager.endpoint.local_addr().unwrap(), bound_address);
+        manager
+            .endpoint
+            .close(quinn::VarInt::from_u32(0), b"test complete");
+    }
+}

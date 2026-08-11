@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
+use tokio::time::timeout;
 
 use crate::events::{emit_peer_state, protocol_error, protocol_error_with_peer};
 use crate::runtime::{
@@ -21,6 +22,9 @@ use crate::runtime::{
     RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF, RELAY_RACE_DELAY,
 };
 use crate::session::{ConnectDecision, SessionId};
+
+const STUN_SERVER_ENV: &str = "SSH_MOBILE_STUN_SERVER";
+const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
 
 /// 校验运行时密钥并启动 QUIC 监听器。
 pub(crate) async fn configure_runtime(
@@ -66,14 +70,58 @@ pub(crate) async fn configure_runtime(
         identity_private_key,
         e2e_private_key,
     ));
-    let manager = QuicEndpointManager::new(listen_address, Arc::new(PathManager::new()))
+    let path_manager = Arc::new(PathManager::new());
+    let (socket, bound_address) = bind_and_gather_candidates(listen_address, &path_manager)
+        .await
+        .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
+    let manager = QuicEndpointManager::from_bound_socket(socket, Arc::clone(&path_manager))
         .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
     let endpoint = manager.endpoint;
     *state.identity.write().await = Some(identity);
     *state.receive_directory.write().await = Some(receive_directory);
+    *state.local_path_manager.write().await = Some(path_manager);
     *state.endpoint.write().await = Some(endpoint.clone());
+    tracing::info!(%bound_address, "native UDP socket is shared by candidate discovery and QUIC");
     tokio::spawn(accept_connections(endpoint, Arc::clone(&state)));
     Ok(())
+}
+
+/// Binds exactly one native UDP socket, gathers candidates, and returns that
+/// same socket for Quinn to own. Optional STUN discovery is native-only and is
+/// enabled with `SSH_MOBILE_STUN_SERVER=host:port`; no client protocol field is
+/// needed for deployments that do not configure a STUN server.
+async fn bind_and_gather_candidates(
+    listen_address: SocketAddr,
+    path_manager: &PathManager,
+) -> Result<(std::net::UdpSocket, SocketAddr), Box<dyn std::error::Error + Send + Sync>> {
+    let socket = std::net::UdpSocket::bind(listen_address)?;
+    socket.set_nonblocking(true)?;
+    let bound_address = socket.local_addr()?;
+    let socket = tokio::net::UdpSocket::from_std(socket)?;
+
+    path_manager
+        .add_candidates(network_nat::discover_candidates(bound_address.port()).await)
+        .await;
+    if let Some(stun_server) = configured_stun_server() {
+        if let Some(candidate) = timeout(
+            STUN_PROBE_TIMEOUT,
+            network_nat::query_stun(&socket, stun_server),
+        )
+        .await
+        .ok()
+        .flatten()
+        {
+            path_manager.add_candidates(vec![candidate]).await;
+        }
+    }
+
+    Ok((socket.into_std()?, bound_address))
+}
+
+fn configured_stun_server() -> Option<SocketAddr> {
+    std::env::var(STUN_SERVER_ENV)
+        .ok()
+        .and_then(|value| value.parse().ok())
 }
 
 /// 校验并保存一个对端路由及其可信身份密钥。
