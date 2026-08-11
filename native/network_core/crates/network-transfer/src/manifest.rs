@@ -1,7 +1,7 @@
 pub const DEFAULT_TRANSFER_BUFFER: usize = 512 * 1024; // 512 KiB
 pub const NETWORK_TRANSFER_PROTOCOL_VERSION: u32 = 1;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManifest {
     pub transfer_id: String,
     pub file_name: String,

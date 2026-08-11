@@ -285,6 +285,7 @@ pub(crate) async fn connect_peer(
                 None,
             );
             let _ = state.delivery.recover_session(&peer_id).await;
+            crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
             tokio::spawn(receive_file_streams(peer_id, connection, state));
             Ok(())
         }
@@ -309,6 +310,7 @@ pub(crate) async fn connect_peer(
                 None,
             );
             let _ = state.delivery.recover_session(&peer_id).await;
+            crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
             Ok(())
         }
         Err(error) => {
@@ -508,6 +510,8 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     None,
                 );
                 let _ = state.delivery.recover_session(&peer_id).await;
+                crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
+                    .await;
                 receive_file_streams(peer_id, connection, Arc::clone(&state)).await;
                 Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
             }

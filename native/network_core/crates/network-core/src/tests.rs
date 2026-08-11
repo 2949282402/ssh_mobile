@@ -64,7 +64,9 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
     let receive_b = test_root.join("receive-b");
     fs::create_dir_all(&source_dir).expect("source directory");
     let source_path = source_dir.join("payload.txt");
-    fs::write(&source_path, b"verified native QUIC payload").expect("source file");
+    let source_data = b"verified native QUIC payload";
+    const TRANSFER_ID: &str = "transfer-native-1";
+    fs::write(&source_path, source_data).expect("source file");
 
     send_and_expect_accepted(
         &runtime_a,
@@ -106,6 +108,12 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
         &runtime_b,
         upsert_command("peer-a", "device-a", address_a, public_key_a),
     );
+    fs::create_dir_all(&receive_b).expect("receive directory");
+    fs::write(
+        receive_b.join(format!("{TRANSFER_ID}.part")),
+        &source_data[..8],
+    )
+    .expect("partial receive file");
     send_and_expect_accepted(
         &runtime_a,
         NetworkCommand {
@@ -134,7 +142,6 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
     });
     assert!(connected.is_some(), "peer never reached connected state");
 
-    const TRANSFER_ID: &str = "transfer-native-1";
     send_and_expect_accepted(
         &runtime_a,
         NetworkCommand {
@@ -178,7 +185,7 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
     assert!(completed.is_some(), "receiver never completed the transfer");
     assert_eq!(
         fs::read(receive_b.join("payload.txt")).expect("received file"),
-        b"verified native QUIC payload"
+        source_data
     );
     fs::remove_dir_all(test_root).ok();
 }

@@ -22,6 +22,73 @@ where
         .await
 }
 
+/// 返回与 manifest 对应的安全 `.part` checkpoint。
+///
+/// 只接受普通文件，并且不会跟随 symlink；checkpoint 大于当前 manifest
+/// 时返回 0，让后续正式接收流程安全地从头重建临时文件。
+pub async fn existing_partial_offset(
+    manifest: &FileManifest,
+    destination_dir: &Path,
+) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    manifest
+        .validate()
+        .map_err(|message| Error::new(ErrorKind::InvalidInput, message))?;
+    let temporary_path = destination_dir.join(format!("{}.part", manifest.transfer_id));
+    let metadata = match fs::symlink_metadata(&temporary_path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_file() {
+        return Err(
+            Error::new(ErrorKind::InvalidData, "partial file is not a regular file").into(),
+        );
+    }
+    let offset = metadata.len();
+    Ok(if offset <= manifest.file_size {
+        offset
+    } else {
+        0
+    })
+}
+
+/// 检查目标文件是否已经完整校验过，用于 completion ACK 丢失后的幂等恢复。
+pub async fn existing_completed_file(
+    manifest: &FileManifest,
+    destination_dir: &Path,
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    manifest
+        .validate()
+        .map_err(|message| Error::new(ErrorKind::InvalidInput, message))?;
+    let final_path = destination_dir.join(&manifest.file_name);
+    let metadata = match fs::symlink_metadata(&final_path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_file() {
+        return Err(Error::new(ErrorKind::InvalidData, "destination is not a regular file").into());
+    }
+    if metadata.len() != manifest.file_size {
+        return Ok(None);
+    }
+    let mut file = File::open(&final_path).await?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; DEFAULT_TRANSFER_BUFFER];
+    loop {
+        let read = file.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    if hex::encode(hasher.finalize()).eq_ignore_ascii_case(&manifest.content_hash) {
+        Ok(Some(final_path.to_string_lossy().to_string()))
+    } else {
+        Ok(None)
+    }
+}
+
 pub async fn stream_receive_file_cancellable<R>(
     manifest: &FileManifest,
     destination_dir: &Path,
@@ -187,6 +254,85 @@ mod tests {
             fs::read(directory.join("received.txt")).await.unwrap(),
             data
         );
+        fs::remove_dir_all(directory).await.ok();
+    }
+
+    #[tokio::test]
+    async fn discovers_a_matching_partial_offset() {
+        let data = b"payload";
+        let file_manifest = manifest("received.txt", data);
+        let directory = test_directory();
+        fs::create_dir_all(&directory).await.unwrap();
+        fs::write(
+            directory.join(format!("{}.part", file_manifest.transfer_id)),
+            &data[..3],
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            existing_partial_offset(&file_manifest, &directory)
+                .await
+                .unwrap(),
+            3
+        );
+        fs::remove_dir_all(directory).await.ok();
+    }
+
+    #[tokio::test]
+    async fn ignores_a_partial_file_larger_than_the_manifest() {
+        let data = b"payload";
+        let file_manifest = manifest("received.txt", data);
+        let directory = test_directory();
+        fs::create_dir_all(&directory).await.unwrap();
+        fs::write(
+            directory.join(format!("{}.part", file_manifest.transfer_id)),
+            b"payload-too-large",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            existing_partial_offset(&file_manifest, &directory)
+                .await
+                .unwrap(),
+            0
+        );
+        fs::remove_dir_all(directory).await.ok();
+    }
+
+    #[tokio::test]
+    async fn recognizes_an_already_completed_file() {
+        let data = b"payload";
+        let file_manifest = manifest("received.txt", data);
+        let directory = test_directory();
+        fs::create_dir_all(&directory).await.unwrap();
+        let final_path = directory.join("received.txt");
+        fs::write(&final_path, data).await.unwrap();
+        assert_eq!(
+            existing_completed_file(&file_manifest, &directory)
+                .await
+                .unwrap(),
+            Some(final_path.to_string_lossy().to_string())
+        );
+        fs::remove_dir_all(directory).await.ok();
+    }
+
+    #[tokio::test]
+    async fn resumes_from_a_matching_partial_file_and_finalizes_atomically() {
+        let data = b"payload";
+        let file_manifest = manifest("received.txt", data);
+        let directory = test_directory();
+        fs::create_dir_all(&directory).await.unwrap();
+        fs::write(
+            directory.join(format!("{}.part", file_manifest.transfer_id)),
+            &data[..3],
+        )
+        .await
+        .unwrap();
+        let local_path = stream_receive_file(&file_manifest, &directory, 3, &data[3..], None)
+            .await
+            .unwrap();
+        assert_eq!(fs::read(&local_path).await.unwrap(), data);
+        assert!(!directory.join("received.txt.part").exists());
         fs::remove_dir_all(directory).await.ok();
     }
 }

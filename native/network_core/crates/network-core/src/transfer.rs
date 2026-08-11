@@ -9,10 +9,12 @@ use network_quic::{
     write_file_decision, write_file_offer,
 };
 use network_transfer::{
-    build_file_manifest, stream_receive_file_cancellable, stream_send_file_cancellable,
+    build_file_manifest, existing_completed_file, existing_partial_offset,
+    stream_receive_file_cancellable, stream_send_file_cancellable, FileManifest, TransferManager,
 };
 use quinn::{Connection, RecvStream, SendStream};
 use std::collections::hash_map::Entry;
+use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -23,7 +25,7 @@ use crate::events::{
 };
 use crate::runtime::{
     RuntimeState, INCOMING_APPROVAL_TIMEOUT, MAX_PENDING_INCOMING_TRANSFERS,
-    TRANSFER_COMPLETION_TIMEOUT,
+    RECONNECT_INITIAL_BACKOFF, TRANSFER_COMPLETION_TIMEOUT,
 };
 
 /// 校验源文件，并分离直连传输任务。
@@ -85,19 +87,17 @@ pub(crate) async fn start_file_send(
         ));
     }
 
-    let placeholder = network_transfer::FileManifest {
-        transfer_id: command.transfer_id.clone(),
-        file_name: path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_string(),
-        file_size: metadata.len(),
-        modified_at: 0,
-        content_hash: "0".repeat(64),
-        protocol_version: network_transfer::NETWORK_TRANSFER_PROTOCOL_VERSION,
-    };
-    placeholder.validate().map_err(|message| {
+    let manifest = build_file_manifest(command.transfer_id.clone(), &path)
+        .await
+        .map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::IoError,
+                "source file cannot be hashed",
+                "send",
+                &command.peer_id,
+            )
+        })?;
+    manifest.validate().map_err(|message| {
         protocol_error_with_peer(
             NetworkErrorCode::InvalidArgument,
             message,
@@ -105,7 +105,11 @@ pub(crate) async fn start_file_send(
             &command.peer_id,
         )
     })?;
-    if !state.transfers.register_transfer(placeholder).await {
+    if !state
+        .transfers
+        .register_outgoing(manifest.clone(), path.clone(), command.peer_id.clone())
+        .await
+    {
         return Err(protocol_error_with_peer(
             NetworkErrorCode::InvalidArgument,
             "transfer_id is already active",
@@ -117,6 +121,7 @@ pub(crate) async fn start_file_send(
         tokio::spawn(send_file(
             connection,
             path,
+            manifest,
             command.transfer_id,
             command.peer_id,
             state,
@@ -137,12 +142,22 @@ pub(crate) async fn start_file_send(
 async fn send_file(
     connection: Connection,
     path: PathBuf,
+    manifest: FileManifest,
     transfer_id: String,
     peer_id: String,
     state: Arc<RuntimeState>,
 ) {
     let result = async {
-        let manifest = build_file_manifest(transfer_id.clone(), &path).await?;
+        let current_manifest = build_file_manifest(transfer_id.clone(), &path).await?;
+        if current_manifest != manifest {
+            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "source file changed during resumable transfer",
+                )
+                .into(),
+            );
+        }
         let (mut send, mut receive) = connection.open_bi().await?;
         write_file_offer(&mut send, &manifest).await?;
         let offset = read_file_decision(&mut receive).await?.ok_or_else(|| {
@@ -157,11 +172,13 @@ async fn send_file(
                     .into(),
             );
         }
+        state.transfers.update_progress(&transfer_id, offset).await;
         let (progress_tx, progress_rx) = unbounded_channel();
         tokio::spawn(forward_progress(
             transfer_id.clone(),
             progress_rx,
             state.event_tx.clone(),
+            state.transfers.clone(),
         ));
         let cancellation = state.transfers.cancellation_token(&transfer_id).await;
         stream_send_file_cancellable(
@@ -185,18 +202,56 @@ async fn send_file(
         Ok(())
     }
     .await;
-    state.transfers.remove_transfer(&transfer_id).await;
-    if let Err(error) = result {
-        emit_transfer_error(
-            &state.event_tx,
-            &transfer_id,
-            NetworkErrorCode::QuicError,
-            "file transfer failed".to_string(),
-            "send",
-            Some(&peer_id),
-        );
-        tracing::debug!(transfer_id = %transfer_id, error = %error, "native file transfer failed");
+    match result {
+        Ok(()) => state.transfers.remove_transfer(&transfer_id).await,
+        Err(error)
+            if !state.transfers.is_cancelled(&transfer_id).await
+                && is_transient_transport_error(error.as_ref())
+                && state.transfers.pause_transfer(&transfer_id).await =>
+        {
+            // 保留源文件、TransferId 和接收端的 `.part`，等待下一次
+            // Connection Ready 后重新走 manifest/offset 协商。
+            schedule_resume(Arc::clone(&state), peer_id);
+            tracing::debug!(transfer_id = %transfer_id, error = %error, "native QUIC transfer paused for resume");
+        }
+        Err(error) => {
+            state.transfers.remove_transfer(&transfer_id).await;
+            emit_transfer_error(
+                &state.event_tx,
+                &transfer_id,
+                NetworkErrorCode::QuicError,
+                "file transfer failed".to_string(),
+                "send",
+                Some(&peer_id),
+            );
+            tracing::debug!(transfer_id = %transfer_id, error = %error, "native file transfer failed");
+        }
     }
+}
+
+/// Connection Ready 后领取一个 Peer 的暂停传输，并重新协商真实 offset。
+pub(crate) async fn resume_transfers_for_peer(state: Arc<RuntimeState>, peer_id: String) {
+    let Some(connection) = state.sessions.current_connection(&peer_id).await else {
+        return;
+    };
+    for transfer in state.transfers.take_resumable_for_peer(&peer_id).await {
+        tokio::spawn(send_file(
+            connection.clone(),
+            transfer.source_path,
+            transfer.manifest,
+            transfer.transfer_id,
+            transfer.peer_id,
+            Arc::clone(&state),
+        ));
+    }
+}
+
+/// 让暂停发生在 Connection Ready 事件之后也能触发一次恢复检查。
+fn schedule_resume(state: Arc<RuntimeState>, peer_id: String) {
+    tokio::spawn(async move {
+        tokio::time::sleep(RECONNECT_INITIAL_BACKOFF).await;
+        resume_transfers_for_peer(state, peer_id).await;
+    });
 }
 
 /// 校验传入申请，并等待接收方审批决定。
@@ -207,6 +262,7 @@ pub(crate) async fn handle_incoming_file(
     state: Arc<RuntimeState>,
 ) {
     let mut active_transfer_id = None;
+    let mut owns_transfer = false;
     let result = async {
         let manifest = read_file_offer(&mut receive).await?;
         active_transfer_id = Some(manifest.transfer_id.clone());
@@ -244,8 +300,8 @@ pub(crate) async fn handle_incoming_file(
             .write()
             .await
             .remove(&manifest.transfer_id);
-        write_file_decision(&mut send, accepted, 0).await?;
         if !accepted {
+            write_file_decision(&mut send, false, 0).await?;
             send.finish()?;
             return Ok(());
         }
@@ -256,6 +312,18 @@ pub(crate) async fn handle_incoming_file(
             .await
             .clone()
             .ok_or_else(|| std::io::Error::other("receive directory is unavailable"))?;
+        let completed_path = existing_completed_file(&manifest, &receive_directory).await?;
+        let resume_offset = match completed_path.as_ref() {
+            Some(_) => manifest.file_size,
+            None => existing_partial_offset(&manifest, &receive_directory).await?,
+        };
+        write_file_decision(&mut send, true, resume_offset).await?;
+        if let Some(local_path) = completed_path {
+            write_file_completion(&mut send).await?;
+            send.finish()?;
+            emit_transfer_completed(&state.event_tx, &manifest.transfer_id, &local_path);
+            return Ok(());
+        }
         if !state.transfers.register_transfer(manifest.clone()).await {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
                 std::io::Error::new(
@@ -265,6 +333,11 @@ pub(crate) async fn handle_incoming_file(
                 .into(),
             );
         }
+        owns_transfer = true;
+        state
+            .transfers
+            .update_progress(&manifest.transfer_id, resume_offset)
+            .await;
         let cancellation = state
             .transfers
             .cancellation_token(&manifest.transfer_id)
@@ -274,11 +347,12 @@ pub(crate) async fn handle_incoming_file(
             manifest.transfer_id.clone(),
             progress_rx,
             state.event_tx.clone(),
+            state.transfers.clone(),
         ));
         let local_path = stream_receive_file_cancellable(
             &manifest,
             &receive_directory,
-            0,
+            resume_offset,
             &mut receive,
             Some(progress_tx),
             cancellation.as_ref(),
@@ -291,10 +365,16 @@ pub(crate) async fn handle_incoming_file(
         Ok(())
     }
     .await;
+    let preserve_partial = result
+        .as_ref()
+        .err()
+        .is_some_and(|error| is_transient_transport_error(error.as_ref()));
     if let Some(transfer_id) = active_transfer_id.as_deref() {
-        state.transfers.remove_transfer(transfer_id).await;
+        if owns_transfer {
+            state.transfers.remove_transfer(transfer_id).await;
+        }
         state.incoming_decisions.write().await.remove(transfer_id);
-        if result.is_err() {
+        if owns_transfer && result.is_err() && !preserve_partial {
             let receive_directory = state.receive_directory.read().await.clone();
             if let Some(receive_directory) = receive_directory {
                 tokio::fs::remove_file(receive_directory.join(format!("{transfer_id}.part")))
@@ -342,10 +422,48 @@ async fn forward_progress(
     transfer_id: String,
     mut progress: UnboundedReceiver<(u64, u64)>,
     event_tx: tokio::sync::mpsc::UnboundedSender<network_protocol::NetworkEvent>,
+    manager: TransferManager,
 ) {
     while let Some((bytes_transferred, total_bytes)) = progress.recv().await {
+        manager
+            .update_progress(&transfer_id, bytes_transferred)
+            .await;
         emit_transfer_progress(&event_tx, &transfer_id, bytes_transferred, total_bytes);
     }
+}
+
+/// 区分可通过新 Connection 恢复的 transport 失败与 manifest/审批/校验失败。
+fn is_transient_transport_error(error: &(dyn Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if let Some(error) = error.downcast_ref::<std::io::Error>() {
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::NotConnected
+                    | std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::TimedOut
+            ) {
+                return true;
+            }
+        }
+        if let Some(error) = error.downcast_ref::<quinn::ConnectionError>() {
+            if matches!(
+                error,
+                quinn::ConnectionError::TransportError(_)
+                    | quinn::ConnectionError::ConnectionClosed(_)
+                    | quinn::ConnectionError::ApplicationClosed(_)
+                    | quinn::ConnectionError::Reset
+                    | quinn::ConnectionError::TimedOut
+            ) {
+                return true;
+            }
+        }
+        current = error.source();
+    }
+    false
 }
 
 /// 将传输专属命令分发到所属传输子系统。
