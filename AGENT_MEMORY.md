@@ -285,6 +285,14 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   for generic `network-transport` primitives. It maps TCP/UDP/WebSocket and
   Session-owned QUIC/Relay routes to ReliableStream, ReliableMessage, or
   UnreliableDatagram capabilities; it owns no Session or business payload.
+- 2026-08-11: WebRTC is now a Session-owned native Realtime Route beside the
+  ordinary QUIC/Relay Data Route. `network-core::RealtimeManager` owns the
+  bounded `network-webrtc::WebRtcPeer`; authenticated Relay controls carry only
+  versioned Offer/Answer/ICE/Restart/Close envelopes, while SDP/ICE revisions
+  reject stale/replayed SDP and close signals and bind trickled candidates to
+  the active ICE generation. The generic FFI protobuf ABI carries typed
+  realtime commands/events without exposing raw WebRTC handles; Flutter/Dart
+  API closure remains the planned next Step.
 
 ### UI and performance
 

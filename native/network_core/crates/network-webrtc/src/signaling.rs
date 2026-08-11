@@ -148,6 +148,7 @@ impl SignalingStateMachine {
                 SignalingState::New,
                 SignalingState::Connected,
                 SignalingState::Restarting,
+                SignalingState::LocalAnswer,
             ],
             SignalingState::RemoteOffer,
         )
@@ -217,5 +218,15 @@ mod tests {
             IceCandidate::new("invalid".into(), None, None, None),
             Err(SignalingError::InvalidCandidate)
         ));
+    }
+
+    #[test]
+    fn remote_offer_can_start_a_new_generation_after_a_local_answer() {
+        let mut machine = SignalingStateMachine::default();
+        machine.remote_offer().unwrap();
+        machine.local_answer().unwrap();
+        machine.remote_offer().unwrap();
+        assert_eq!(machine.state(), SignalingState::RemoteOffer);
+        assert_eq!(machine.revision(), 3);
     }
 }

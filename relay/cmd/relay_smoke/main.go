@@ -85,6 +85,53 @@ func runFunctional(base, token string) {
 		"payload":    answerPayload,
 	}), "candidate answer")
 	assertControlPayload(a, "candidate_answer", candidateSession, answerPayload)
+	webrtcSession := newSessionID()
+	webrtcSignals := []struct {
+		sender  *device
+		target  *device
+		kind    string
+		payload string
+	}{
+		{
+			sender:  a,
+			target:  b,
+			kind:    "webrtc_offer",
+			payload: base64.RawURLEncoding.EncodeToString([]byte("v=0\r\n")),
+		},
+		{
+			sender:  b,
+			target:  a,
+			kind:    "webrtc_answer",
+			payload: base64.RawURLEncoding.EncodeToString([]byte("v=0\r\ns=ssh-mobile\r\n")),
+		},
+		{
+			sender:  a,
+			target:  b,
+			kind:    "webrtc_ice_candidate",
+			payload: base64.RawURLEncoding.EncodeToString([]byte("candidate:1 1 udp 2130706431 192.168.1.100 54321 typ host")),
+		},
+		{
+			sender:  b,
+			target:  a,
+			kind:    "webrtc_ice_restart",
+			payload: base64.RawURLEncoding.EncodeToString([]byte("restart")),
+		},
+		{
+			sender:  a,
+			target:  b,
+			kind:    "webrtc_close",
+			payload: base64.RawURLEncoding.EncodeToString([]byte("close")),
+		},
+	}
+	for _, signal := range webrtcSignals {
+		assert(sendJSON(signal.sender, map[string]any{
+			"type":       signal.kind,
+			"session_id": webrtcSession,
+			"target_id":  signal.target.id,
+			"payload":    signal.payload,
+		}), signal.kind)
+		assertControlPayload(signal.target, signal.kind, webrtcSession, signal.payload)
+	}
 	session := newSessionID()
 	assert(sendJSON(a, map[string]any{
 		"type":       "offer",
@@ -105,7 +152,7 @@ func runFunctional(base, token string) {
 	assert(sendJSON(b, map[string]any{"type": "complete_ack", "session_id": session}), "complete_ack")
 	assertControl(a, "complete_ack", session)
 
-	fmt.Println("FUNCTIONAL_PASS enrollment=2 ready=2 lookup=online control=candidate_offer,candidate_answer,offer,accept,complete,complete_ack binary=exact")
+	fmt.Println("FUNCTIONAL_PASS enrollment=2 ready=2 lookup=online control=candidate_offer,candidate_answer,webrtc_offer,webrtc_answer,webrtc_ice_candidate,webrtc_ice_restart,webrtc_close,offer,accept,complete,complete_ack binary=exact")
 }
 
 func runRecover(base, token, trigger string, restart bool) {

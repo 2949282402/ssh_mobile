@@ -208,7 +208,11 @@ pub unsafe extern "C" fn ssh_net_runtime_destroy(handle: SshNetRuntimeHandle) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use network_protocol::NetworkCommand;
+    use network_protocol::{
+        network_command, network_event, NetworkCommand, NetworkEvent, RealtimeSessionState,
+        RealtimeSignalEvent, RealtimeSignalKind, RealtimeStateChangedEvent,
+        StartRealtimeSessionCommand, NETWORK_PROTOCOL_VERSION,
+    };
     use prost::Message;
     use std::ptr;
 
@@ -254,5 +258,55 @@ mod tests {
             -4
         );
         assert_eq!(unsafe { ssh_net_runtime_destroy(handle) }, 0);
+    }
+
+    /// 验证新增 Realtime 命令和事件沿用现有 FFI Protobuf 边界，
+    /// 不暴露 WebRTC 原生句柄或内部类型。
+    #[test]
+    fn carries_realtime_commands_and_events_through_the_ffi_wire() {
+        let command = NetworkCommand {
+            command_id: "realtime-start".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::StartRealtimeSession(
+                StartRealtimeSessionCommand {
+                    realtime_id: "00112233445566778899aabbccddeeff".into(),
+                    peer_id: "peer-a".into(),
+                },
+            )),
+        };
+        let decoded_command = NetworkCommand::decode(command.encode_to_vec().as_slice())
+            .expect("decode realtime command");
+        assert!(matches!(
+            decoded_command.payload,
+            Some(network_command::Payload::StartRealtimeSession(_))
+        ));
+
+        let event = NetworkEvent {
+            event_id: "realtime-event".into(),
+            timestamp_ms: 123,
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_event::Payload::RealtimeSignal(
+                RealtimeSignalEvent {
+                    realtime_id: "00112233445566778899aabbccddeeff".into(),
+                    peer_id: "peer-a".into(),
+                    kind: RealtimeSignalKind::WebRtcOffer as i32,
+                    revision: 1,
+                    payload: b"v=0\r\n".to_vec(),
+                },
+            )),
+        };
+        let decoded_event =
+            NetworkEvent::decode(event.encode_to_vec().as_slice()).expect("decode realtime event");
+        match decoded_event.payload {
+            Some(network_event::Payload::RealtimeSignal(signal)) => {
+                assert_eq!(signal.kind, RealtimeSignalKind::WebRtcOffer as i32);
+                assert_eq!(signal.payload, b"v=0\r\n");
+            }
+            Some(network_event::Payload::RealtimeState(RealtimeStateChangedEvent {
+                state,
+                ..
+            })) => assert_eq!(state, RealtimeSessionState::Connected as i32),
+            other => panic!("unexpected realtime event payload: {other:?}"),
+        }
     }
 }

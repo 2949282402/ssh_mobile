@@ -1241,6 +1241,7 @@ dependencies = [
  "network-relay",
  "network-transfer",
  "network-transport",
+ "network-webrtc",
  "prost",
  "quinn",
  "rand 0.8.7",

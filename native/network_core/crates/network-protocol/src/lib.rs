@@ -42,6 +42,28 @@ pub enum RouteType {
     Lan = 4,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum RealtimeSessionState {
+    Unspecified = 0,
+    Negotiating = 1,
+    Connected = 2,
+    Restarting = 3,
+    Closed = 4,
+    Failed = 5,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum RealtimeSignalKind {
+    Unspecified = 0,
+    WebRtcOffer = 1,
+    WebRtcAnswer = 2,
+    IceCandidate = 3,
+    IceRestart = 4,
+    WebRtcClose = 5,
+}
+
 /// 应用消息进入 Delivery Manager 后采用的可靠性策略。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
 #[repr(i32)]
@@ -180,6 +202,34 @@ pub struct ConfigureRelayCommand {
 pub struct DisconnectRelayCommand {}
 
 #[derive(Clone, PartialEq, Message)]
+pub struct StartRealtimeSessionCommand {
+    #[prost(string, tag = "1")]
+    pub realtime_id: String,
+    #[prost(string, tag = "2")]
+    pub peer_id: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct StopRealtimeSessionCommand {
+    #[prost(string, tag = "1")]
+    pub realtime_id: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct SendRealtimeSignalCommand {
+    #[prost(string, tag = "1")]
+    pub realtime_id: String,
+    #[prost(string, tag = "2")]
+    pub peer_id: String,
+    #[prost(enumeration = "RealtimeSignalKind", tag = "3")]
+    pub kind: i32,
+    #[prost(uint64, tag = "4")]
+    pub revision: u64,
+    #[prost(bytes = "vec", tag = "5")]
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct NetworkCommand {
     #[prost(string, tag = "1")]
     pub command_id: String,
@@ -187,7 +237,7 @@ pub struct NetworkCommand {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_command::Payload",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23"
     )]
     pub payload: Option<network_command::Payload>,
 }
@@ -219,6 +269,12 @@ pub mod network_command {
         SendMessage(SendMessageCommand),
         #[prost(message, tag = "20")]
         AcknowledgeMessage(AcknowledgeMessageCommand),
+        #[prost(message, tag = "21")]
+        StartRealtimeSession(StartRealtimeSessionCommand),
+        #[prost(message, tag = "22")]
+        StopRealtimeSession(StopRealtimeSessionCommand),
+        #[prost(message, tag = "23")]
+        SendRealtimeSignal(SendRealtimeSignalCommand),
     }
 }
 
@@ -344,6 +400,34 @@ pub struct RelayStateChangedEvent {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct RealtimeStateChangedEvent {
+    #[prost(string, tag = "1")]
+    pub realtime_id: String,
+    #[prost(string, tag = "2")]
+    pub peer_id: String,
+    #[prost(enumeration = "RealtimeSessionState", tag = "3")]
+    pub state: i32,
+    #[prost(uint64, tag = "4")]
+    pub revision: u64,
+    #[prost(message, optional, tag = "5")]
+    pub error: Option<NetworkError>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct RealtimeSignalEvent {
+    #[prost(string, tag = "1")]
+    pub realtime_id: String,
+    #[prost(string, tag = "2")]
+    pub peer_id: String,
+    #[prost(enumeration = "RealtimeSignalKind", tag = "3")]
+    pub kind: i32,
+    #[prost(uint64, tag = "4")]
+    pub revision: u64,
+    #[prost(bytes = "vec", tag = "5")]
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct ChannelMessageEvent {
     #[prost(string, tag = "1")]
     pub peer_id: String,
@@ -385,7 +469,7 @@ pub struct NetworkEvent {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_event::Payload",
-        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20"
+        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22"
     )]
     pub payload: Option<network_event::Payload>,
 }
@@ -415,5 +499,9 @@ pub mod network_event {
         ChannelMessage(ChannelMessageEvent),
         #[prost(message, tag = "20")]
         DeliveryAcked(DeliveryAckedEvent),
+        #[prost(message, tag = "21")]
+        RealtimeState(RealtimeStateChangedEvent),
+        #[prost(message, tag = "22")]
+        RealtimeSignal(RealtimeSignalEvent),
     }
 }

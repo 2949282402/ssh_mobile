@@ -11,6 +11,7 @@ pub mod delivery;
 mod errors;
 mod events;
 mod peer;
+mod realtime;
 mod relay;
 mod runtime;
 mod session;

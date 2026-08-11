@@ -27,10 +27,11 @@ use url::Url;
 
 const RELAY_PROTOCOL_VERSION: u32 = 1;
 const RELAY_CONNECT_PATH: &str = "/v1/connect";
-const MAX_CONTROL_BYTES: usize = 64 * 1024;
+const MAX_CONTROL_BYTES: usize = 384 * 1024;
 const MAX_BINARY_PAYLOAD_BYTES: usize = 512 * 1024 + 16;
 const MAX_CHANNEL_PAYLOAD_BYTES: usize = 48 * 1024;
 const MAX_CANDIDATE_PAYLOAD_BYTES: usize = 32 * 1024;
+const MAX_REALTIME_SIGNAL_PAYLOAD_BYTES: usize = 256 * 1024;
 const SOCKET_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
 /// 描述 Relay v1 连接、认证和帧校验失败。
@@ -363,6 +364,48 @@ impl RelayClient {
             .await
     }
 
+    /// Sends bounded WebRTC Offer/Answer/ICE control through the authenticated
+    /// Relay. SDP and ICE are signaling data only; media does not use Relay's
+    /// file or Delivery data paths.
+    pub async fn send_webrtc_signal(
+        &self,
+        kind: &str,
+        session_token: &str,
+        target_id: &str,
+        payload: &[u8],
+    ) -> Result<(), RelayError> {
+        if !matches!(
+            kind,
+            "webrtc_offer"
+                | "webrtc_answer"
+                | "webrtc_ice_candidate"
+                | "webrtc_ice_restart"
+                | "webrtc_close"
+        ) {
+            return Err(RelayError::InvalidConfiguration(
+                "unsupported WebRTC signal control type".into(),
+            ));
+        }
+        validate_session_id(session_token)?;
+        if target_id.is_empty() || target_id.len() > 128 {
+            return Err(RelayError::InvalidConfiguration(
+                "WebRTC signal target must contain 1-128 characters".into(),
+            ));
+        }
+        if payload.is_empty() || payload.len() > MAX_REALTIME_SIGNAL_PAYLOAD_BYTES {
+            return Err(RelayError::InvalidConfiguration(
+                "WebRTC signal payload size is outside protocol bounds".into(),
+            ));
+        }
+        self.send_control(json!({
+            "type": kind,
+            "session_id": session_token,
+            "target_id": target_id,
+            "payload": URL_SAFE_NO_PAD.encode(payload),
+        }))
+        .await
+    }
+
     /// 请求 Relay 返回目标设备当前在线状态。
     pub async fn lookup_peer(&self, target_id: &str) -> Result<(), RelayError> {
         if target_id.is_empty() || target_id.len() > 128 {
@@ -669,6 +712,11 @@ fn decode_event(message: Message) -> Result<Option<RelayEvent>, RelayError> {
                     | "cancel"
                     | "candidate_offer"
                     | "candidate_answer"
+                    | "webrtc_offer"
+                    | "webrtc_answer"
+                    | "webrtc_ice_candidate"
+                    | "webrtc_ice_restart"
+                    | "webrtc_close"
                     | "channel_message"
                     | "channel_ack"
             ) {
@@ -827,6 +875,33 @@ mod tests {
                 payload: Some("eyJ2ZXJzaW9uIjoxfQ".into()),
             }
         );
+    }
+
+    #[test]
+    /// 验证 WebRTC SDP/ICE 控制帧只在 Relay 信令层保留 opaque payload。
+    fn webrtc_control_preserves_opaque_payload() {
+        for kind in [
+            "webrtc_offer",
+            "webrtc_answer",
+            "webrtc_ice_candidate",
+            "webrtc_ice_restart",
+            "webrtc_close",
+        ] {
+            let frame = format!(
+                r#"{{"type":"{kind}","session_id":"00112233445566778899aabbccddeeff","sender_id":"device-a","payload":"dmFsaWQ"}}"#
+            );
+            assert_eq!(
+                decode_event(Message::Text(frame.into()))
+                    .expect("decode")
+                    .expect("WebRTC event"),
+                RelayEvent::Control {
+                    kind: kind.into(),
+                    session_id: "00112233445566778899aabbccddeeff".into(),
+                    peer_id: Some("device-a".into()),
+                    payload: Some("dmFsaWQ".into()),
+                }
+            );
+        }
     }
 
     #[test]

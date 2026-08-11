@@ -10,10 +10,10 @@
 
 ## Automated Results
 
-Native network, Relay, and package-scoped Flutter checks were refreshed at the
-latest HEAD. Coverage and platform-build rows retain the most recent full
-release-chain evidence from 2026-07-10 and were not re-run because this Step
-is limited to native network/report validation.
+Native network and Relay checks were refreshed at the latest HEAD. Flutter,
+coverage, and platform-build rows retain the most recent full release-chain
+evidence from 2026-07-10 and were not re-run because this Step is limited to
+native network/report validation; Step 9 does not touch frontend/client code.
 
 | Check | Result |
 | --- | --- |
@@ -22,15 +22,16 @@ is limited to native network/report validation.
 | Unit and widget tests | Full App: 801 passed; Terminal slice: 3 passed |
 | Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
 | Native Dart package | `flutter analyze --no-pub` passed; `flutter test --no-pub` passed with 4 package tests |
-| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`, and `cargo test --workspace --locked` passed; 72 tests passed, including generic Connection capability/lifecycle checks, Relay-to-Direct atomic promotion, failed direct-auth fallback, Candidate Offer/Answer generation handling, multi-candidate ranking, cross-Connection Delivery recovery, Relay resume binding, and TransferSession state tests |
-| Delivery runtime wiring | `network-core` now sends `DataMessage` through QUIC uni streams or Relay opaque controls, binds Delivery to real `SessionId`, replays RecoverySnapshot, scans retry backoff, validates ACK epoch, and emits typed channel/ACK events; `cargo test -p network-core --lib --locked --offline` passed with 29 tests |
-| Transfer/Connection decoupling | `TransferSession` owns state, Manifest, offset, cancellation, and logical SessionId without a Connection handle; `TransferDispatcher` selects the current QUIC/Relay route, and same-Session direct/Relay resume is tested; `cargo test -p network-transfer -p network-core --locked --offline` passed with 41 tests |
+| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`, and `cargo test --workspace --locked --offline` passed; 81 tests passed, including generic Connection capability/lifecycle checks, Relay-to-Direct atomic promotion, failed direct-auth fallback, Candidate Offer/Answer generation handling, WebRTC offer/answer and ICE-generation/replay handling, ICE restart/stale close/size bounds, FFI realtime wire round-trips, multi-candidate ranking, cross-Connection Delivery recovery, Relay resume binding, and TransferSession state tests |
+| Delivery runtime wiring | `network-core` sends `DataMessage` through QUIC uni streams or Relay opaque controls, binds Delivery to real `SessionId`, replays RecoverySnapshot, scans retry backoff, validates ACK epoch, emits typed channel/ACK events, and keeps WebRTC on a separate Realtime Route; `cargo test -p network-core --lib --locked --offline` passed with 35 tests |
+| Transfer/Connection decoupling | `TransferSession` owns state, Manifest, offset, cancellation, and logical SessionId without a Connection handle; `TransferDispatcher` selects the current QUIC/Relay route, and same-Session direct/Relay resume is tested; `cargo test -p network-transfer -p network-core --locked --offline` passed with 47 tests |
 | Relay-to-Direct upgrade | Relay-backed Sessions keep their route during a deduplicated background candidate probe; an authenticated direct Connection must remain stable before `replace_route_if_current` atomically promotes it, then Delivery recovery and transfer resume run before direct receivers start |
 | Relay file resume | Relay re-offer binds stable TransferId + Manifest Hash + File Hash, accept returns fixed-chunk offset, socket disconnect preserves native `.part`, auto reconnect reclaims paused transfers, and verified final files are idempotent after lost completion ACK |
-| Docker Relay integration harness | `docker compose --env-file .env up -d --build`, `go run ./cmd/relay_smoke -scenario functional` (including Candidate Offer/Answer), and the Caddy restart `recover` scenario passed; the harness remains under `relay/cmd/relay_smoke/` |
+| Docker Relay integration harness | `docker compose --env-file .env up -d --build`, functional Candidate/WebRTC signaling plus file control/binary loopback, Caddy restart `recover`, and Relay process restart `restart` all passed; the harness remains under `relay/cmd/relay_smoke/` |
 | Relay channel control | `channel_message`/`channel_ack` opaque forwarding integration test passed in `go test ./...`; Rust Relay codec tests passed |
 | Go Relay | `gofmt -l .`, `go vet ./...`, and `go test ./...` passed |
-| Native WebRTC | `network-webrtc` uses locked stable `rtc 0.9.1`; SDP/ICE/DataChannel/Audio/Video transceiver and media QoS tests passed |
+| Native WebRTC runtime | `network-webrtc` uses locked stable `rtc 0.9.1`; `network-core::RealtimeManager` owns the WebRTC Peer beside QUIC/Relay, authenticated Relay forwards bounded versioned Offer/Answer/ICE/Restart/Close controls, and the native tests cover SDP/ICE/DataChannel/Audio/Video transceivers, media QoS, stale/replay revisions, and oversized signaling |
+| Native WebRTC FFI boundary | Existing protobuf command/event buffers carry Start/Stop/Signal commands and Realtime state/signal events; `network-ffi` round-trip coverage passed without exposing a raw WebRTC handle or changing Flutter/client code |
 | Generic native transports | `network-transport` TCP/UDP/WebSocket loopback tests passed; `network-core::connection::GenericConnection` now wraps those primitives behind capability-aware Connection routing and its TCP/UDP lifecycle, size, backpressure, and shutdown tests passed |
 | v1 static compatibility audit | No old transport, Dart Relay data-plane, protocol fallback, or v2/v3/v4 network symbols found |
 | Non-generated line coverage | 39.3% (`12690/32302`), last verified 2026-07-10 |
@@ -89,6 +90,7 @@ Docker Relay integration harness:
 docker compose --env-file .env up -d --build
 go run ./cmd/relay_smoke -scenario functional -base http://localhost:18080
 go run ./cmd/relay_smoke -scenario recover -base http://localhost:18080 -trigger <fault-trigger>
+go run ./cmd/relay_smoke -scenario restart -base http://localhost:18080 -trigger <fault-trigger>
 ```
 
 The repository-root `flutter analyze` command is not used as a quality gate:

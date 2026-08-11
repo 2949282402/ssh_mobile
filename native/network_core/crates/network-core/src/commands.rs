@@ -72,6 +72,15 @@ pub(crate) async fn dispatch_command(
         Some(network_command::Payload::AcknowledgeMessage(ack)) => {
             crate::channel::acknowledge_message(&state, ack).await
         }
+        Some(network_command::Payload::StartRealtimeSession(start)) => {
+            crate::realtime::start_session(state, start).await
+        }
+        Some(network_command::Payload::StopRealtimeSession(stop)) => {
+            crate::realtime::stop_session(&state, stop).await
+        }
+        Some(network_command::Payload::SendRealtimeSignal(signal)) => {
+            crate::realtime::send_signal_command(&state, signal).await
+        }
         Some(network_command::Payload::ConfigureRelay(config)) => {
             start_configure_relay(state, config).await
         }

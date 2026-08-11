@@ -67,6 +67,10 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 		h.routeCandidateControl(sender, frame)
 		return
 	}
+	if strings.HasPrefix(frame.Type, "webrtc_") {
+		h.routeWebRTCControl(sender, frame)
+		return
+	}
 
 	switch frame.Type {
 	case "offer", "accept", "resume", "complete", "complete_ack", "cancel":
@@ -216,6 +220,48 @@ func (h *hub) routeCandidateControl(sender *peer, frame controlFrame) {
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(frame.Payload)
 	if err != nil || len(decoded) == 0 || len(decoded) > maxCandidatePayloadBytes {
+		return
+	}
+	h.mutex.Lock()
+	isCurrent := h.peers[sender.deviceID] == sender
+	target := h.peers[frame.TargetID]
+	h.mutex.Unlock()
+	if !isCurrent || target == nil {
+		return
+	}
+	forwarded, err := json.Marshal(controlFrame{
+		Type:      frame.Type,
+		SessionID: frame.SessionID,
+		SenderID:  sender.deviceID,
+		Payload:   frame.Payload,
+	})
+	if err != nil || !target.enqueue(outboundFrame{websocket.TextMessage, forwarded}) {
+		go target.socket.Close()
+	}
+}
+
+// routeWebRTCControl 转发 WebRTC SDP/ICE 控制面信令，Relay 不解析媒体或
+// SDP 内容，也不把它绑定到文件传输 session。
+func (h *hub) routeWebRTCControl(sender *peer, frame controlFrame) {
+	if frame.Type != "webrtc_offer" &&
+		frame.Type != "webrtc_answer" &&
+		frame.Type != "webrtc_ice_candidate" &&
+		frame.Type != "webrtc_ice_restart" &&
+		frame.Type != "webrtc_close" {
+		return
+	}
+	if len(frame.SessionID) != 32 ||
+		frame.SessionID != strings.ToLower(frame.SessionID) ||
+		frame.TargetID == "" ||
+		frame.TargetID == sender.deviceID ||
+		frame.Payload == "" {
+		return
+	}
+	if _, err := hex.DecodeString(frame.SessionID); err != nil {
+		return
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(frame.Payload)
+	if err != nil || len(decoded) == 0 || len(decoded) > maxRealtimeSignalPayloadBytes {
 		return
 	}
 	h.mutex.Lock()

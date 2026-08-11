@@ -273,6 +273,39 @@ pub(crate) async fn handle_relay_events(
                 kind,
                 session_id,
                 peer_id,
+                payload,
+            } if matches!(
+                kind.as_str(),
+                "webrtc_offer"
+                    | "webrtc_answer"
+                    | "webrtc_ice_candidate"
+                    | "webrtc_ice_restart"
+                    | "webrtc_close"
+            ) =>
+            {
+                if let (Some(peer_id), Some(payload)) = (peer_id, payload) {
+                    if let Err(error) = crate::realtime::handle_relay_signal(
+                        &state,
+                        &relay,
+                        &kind,
+                        &session_id,
+                        &peer_id,
+                        &payload,
+                    )
+                    .await
+                    {
+                        tracing::debug!(
+                            peer_id = %peer_id,
+                            error = %error,
+                            "rejected WebRTC signaling control"
+                        );
+                    }
+                }
+            }
+            RelayEvent::Control {
+                kind,
+                session_id,
+                peer_id,
                 ..
             } if kind == "complete" => {
                 if let Err(error) =
