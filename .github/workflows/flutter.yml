@@ -323,5 +323,8 @@ jobs:
         run: flutter test --reporter expanded
       - name: Build macOS
         run: flutter build macos
+      - name: Update CocoaPods specs
+        working-directory: apps/ssh_mobile_full/ios
+        run: pod repo update
       - name: Build iOS without signing
         run: flutter build ios --release --no-codesign --no-pub
