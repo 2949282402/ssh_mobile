@@ -26,6 +26,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 pub(crate) const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+pub(crate) const RELAY_RACE_DELAY: Duration = Duration::from_millis(500);
 pub(crate) const INCOMING_APPROVAL_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) const MAX_PENDING_INCOMING_TRANSFERS: usize = 64;

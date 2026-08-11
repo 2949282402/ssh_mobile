@@ -7,13 +7,16 @@ use network_protocol::{
     UpsertPeerCommand,
 };
 use network_quic::{QuicEndpointManager, QuicPeerSession};
+use network_relay::RelayClient;
 use quinn::{Connection, Endpoint};
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::oneshot;
 
 use crate::events::{emit_peer_state, protocol_error, protocol_error_with_peer};
-use crate::runtime::{PeerConfig, RuntimeState, PEER_CONNECT_TIMEOUT};
+use crate::runtime::{PeerConfig, RuntimeState, PEER_CONNECT_TIMEOUT, RELAY_RACE_DELAY};
 use crate::session::ConnectDecision;
 
 /// 校验运行时密钥并启动 QUIC 监听器。
@@ -163,7 +166,7 @@ pub(crate) async fn disconnect_peer(
     Ok(())
 }
 
-/// 执行直连 QUIC 认证，必要时使用原生 Relay 路径。
+/// 执行 Direct/Relay 连接竞速，并将先 ready 的 Route 绑定到 Session。
 pub(crate) async fn connect_peer(
     state: Arc<RuntimeState>,
     peer_id: String,
@@ -209,62 +212,51 @@ pub(crate) async fn connect_peer(
             .map(|candidate| candidate.endpoint),
         None => peer.endpoint,
     };
-    if let Some(peer_endpoint) = selected_endpoint {
-        let direct_result = async {
-            let connecting = endpoint
-                .connect(peer_endpoint, "ssh-mobile")
-                .map_err(|_error| {
-                    protocol_error_with_peer(
-                        NetworkErrorCode::QuicError,
-                        "failed to create QUIC connection",
-                        "connect",
-                        &peer_id,
-                    )
-                })?;
-            let connection = tokio::time::timeout(PEER_CONNECT_TIMEOUT, connecting)
-                .await
-                .map_err(|_| {
-                    protocol_error_with_peer(
-                        NetworkErrorCode::Timeout,
-                        "QUIC connection timed out",
-                        "connect",
-                        &peer_id,
-                    )
-                })?
-                .map_err(|_| {
-                    protocol_error_with_peer(
-                        NetworkErrorCode::QuicError,
-                        "QUIC connection failed",
-                        "connect",
-                        &peer_id,
-                    )
-                })?;
-            let session = QuicPeerSession::new(connection.clone(), peer_id.clone());
-            tokio::time::timeout(
-                PEER_CONNECT_TIMEOUT,
-                session.perform_handshake(&identity, peer.identity_public_key),
-            )
-            .await
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::Timeout,
-                    "peer authentication timed out",
-                    "connect",
-                    &peer_id,
-                )
-            })?
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::AuthenticationFailed,
-                    "peer authentication failed",
-                    "connect",
-                    &peer_id,
-                )
-            })?;
-            Ok::<Connection, ProtocolError>(connection)
+    let relay = state.relay.read().await.clone();
+    let relay = match relay {
+        Some(relay) if relay.is_usable().await => Some(relay),
+        _ => None,
+    };
+
+    let route = match (selected_endpoint, relay) {
+        (Some(peer_endpoint), Some(relay)) => {
+            let direct = connect_direct(
+                endpoint,
+                peer_endpoint,
+                identity,
+                peer.identity_public_key,
+                peer_id.clone(),
+            );
+            let relay_attempt =
+                connect_relay(Arc::clone(&state), relay, peer_id.clone(), RELAY_RACE_DELAY);
+            let route = race_first_ready(direct, relay_attempt).await;
+            state.relay_lookups.write().await.remove(&peer_id);
+            route
         }
-        .await;
-        if let Ok(connection) = direct_result {
+        (Some(peer_endpoint), None) => connect_direct(
+            endpoint,
+            peer_endpoint,
+            identity,
+            peer.identity_public_key,
+            peer_id.clone(),
+        )
+        .await
+        .map(ReadyRoute::Direct),
+        (None, Some(relay)) => {
+            connect_relay(Arc::clone(&state), relay, peer_id.clone(), Duration::ZERO)
+                .await
+                .map(|_| ReadyRoute::Relay)
+        }
+        (None, None) => Err(protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            "peer has no usable direct or Relay route",
+            "connect",
+            &peer_id,
+        )),
+    };
+
+    match route {
+        Ok(ReadyRoute::Direct(connection)) => {
             state
                 .sessions
                 .attach_connection(&peer_id, connection.clone(), RouteType::QuicDirect)
@@ -277,39 +269,90 @@ pub(crate) async fn connect_peer(
                 None,
             );
             tokio::spawn(receive_file_streams(peer_id, connection, state));
-            return Ok(());
-        } else {
-            let relay_available = match state.relay.read().await.clone() {
-                Some(relay) => relay.is_usable().await,
-                None => false,
-            };
-            if !relay_available {
-                state.sessions.mark_failed(&peer_id).await;
-                return direct_result.map(|_| ());
-            }
+            Ok(())
+        }
+        Ok(ReadyRoute::Relay) => {
+            state
+                .sessions
+                .mark_route_connected(&peer_id, RouteType::Relay)
+                .await;
+            emit_peer_state(
+                &state.event_tx,
+                &peer_id,
+                PeerConnectionState::Connected,
+                RouteType::Relay,
+                None,
+            );
+            Ok(())
+        }
+        Err(error) => {
+            state.sessions.mark_failed(&peer_id).await;
+            Err(error)
         }
     }
-    let relay = match state.relay.read().await.clone() {
-        Some(relay) => relay,
-        None => {
-            state.sessions.mark_failed(&peer_id).await;
-            return Err(protocol_error_with_peer(
-                NetworkErrorCode::NoRoute,
-                "peer has no usable direct or Relay route",
+}
+
+/// Direct QUIC 尝试的总预算为 8 秒，避免连接和认证各自再等待一次。
+async fn connect_direct(
+    endpoint: Endpoint,
+    peer_endpoint: SocketAddr,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_public_key: [u8; 32],
+    peer_id: String,
+) -> Result<Connection, ProtocolError> {
+    let timeout_peer_id = peer_id.clone();
+    let attempt = async move {
+        let connecting = endpoint.connect(peer_endpoint, "ssh-mobile").map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::QuicError,
+                "failed to create QUIC connection",
                 "connect",
                 &peer_id,
-            ));
-        }
+            )
+        })?;
+        let connection = connecting.await.map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::QuicError,
+                "QUIC connection failed",
+                "connect",
+                &peer_id,
+            )
+        })?;
+        let session = QuicPeerSession::new(connection.clone(), peer_id.clone());
+        session
+            .perform_handshake(&identity, expected_peer_public_key)
+            .await
+            .map_err(|_| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::AuthenticationFailed,
+                    "peer authentication failed",
+                    "connect",
+                    &peer_id,
+                )
+            })?;
+        Ok::<Connection, ProtocolError>(connection)
     };
-    if !relay.is_usable().await {
-        state.sessions.mark_failed(&peer_id).await;
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::RelayError,
-            "Relay socket is not connected",
-            "connect",
-            &peer_id,
-        ));
-    }
+    tokio::time::timeout(PEER_CONNECT_TIMEOUT, attempt)
+        .await
+        .map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::Timeout,
+                "Direct QUIC connection timed out",
+                "connect",
+                &timeout_peer_id,
+            )
+        })?
+}
+
+/// Relay lookup 在 Direct 启动后延迟 500ms，避免 UDP 被封锁时先浪费完整
+/// Direct timeout；没有 Direct candidate 时由调用方传入零延迟。
+async fn connect_relay(
+    state: Arc<RuntimeState>,
+    relay: Arc<RelayClient>,
+    peer_id: String,
+    delay: Duration,
+) -> Result<(), ProtocolError> {
+    tokio::time::sleep(delay).await;
     let (lookup_tx, lookup_rx) = oneshot::channel();
     state
         .relay_lookups
@@ -318,7 +361,6 @@ pub(crate) async fn connect_peer(
         .insert(peer_id.clone(), lookup_tx);
     if relay.lookup_peer(&peer_id).await.is_err() {
         state.relay_lookups.write().await.remove(&peer_id);
-        state.sessions.mark_failed(&peer_id).await;
         return Err(protocol_error_with_peer(
             NetworkErrorCode::RelayError,
             "Relay peer lookup failed",
@@ -333,7 +375,6 @@ pub(crate) async fn connect_peer(
         .unwrap_or(false);
     state.relay_lookups.write().await.remove(&peer_id);
     if !online {
-        state.sessions.mark_failed(&peer_id).await;
         return Err(protocol_error_with_peer(
             NetworkErrorCode::PeerOffline,
             "Relay peer is offline or did not answer lookup",
@@ -341,18 +382,42 @@ pub(crate) async fn connect_peer(
             &peer_id,
         ));
     }
-    state
-        .sessions
-        .mark_route_connected(&peer_id, RouteType::Relay)
-        .await;
-    emit_peer_state(
-        &state.event_tx,
-        &peer_id,
-        PeerConnectionState::Connected,
-        RouteType::Relay,
-        None,
-    );
     Ok(())
+}
+
+enum ReadyRoute<T> {
+    Direct(T),
+    Relay,
+}
+
+/// 两条路线都必须以成功为胜出条件；一条路线快速失败时仍等待另一条
+/// 路线，只有全部失败才返回错误。
+async fn race_first_ready<Direct, Relay, ConnectionT>(
+    direct: Direct,
+    relay: Relay,
+) -> Result<ReadyRoute<ConnectionT>, ProtocolError>
+where
+    Direct: Future<Output = Result<ConnectionT, ProtocolError>>,
+    Relay: Future<Output = Result<(), ProtocolError>>,
+{
+    tokio::pin!(direct);
+    tokio::pin!(relay);
+    tokio::select! {
+        direct_result = &mut direct => match direct_result {
+            Ok(connection) => Ok(ReadyRoute::Direct(connection)),
+            Err(direct_error) => relay
+                .await
+                .map(|_| ReadyRoute::Relay)
+                .map_err(|_| direct_error),
+        },
+        relay_result = &mut relay => match relay_result {
+            Ok(()) => Ok(ReadyRoute::Relay),
+            Err(relay_error) => direct
+                .await
+                .map(ReadyRoute::Direct)
+                .map_err(|_| relay_error),
+        },
+    }
 }
 
 /// 为路径选择和诊断对端点进行分类。
@@ -455,5 +520,63 @@ pub(crate) async fn receive_file_streams(
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn relay_wins_when_direct_is_still_connecting() {
+        let route = race_first_ready(
+            async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok::<(), ProtocolError>(())
+            },
+            async {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                Ok::<(), ProtocolError>(())
+            },
+        )
+        .await
+        .expect("route should become ready");
+
+        assert!(matches!(route, ReadyRoute::Relay));
+    }
+
+    #[tokio::test]
+    async fn direct_wins_when_relay_is_still_starting() {
+        let route = race_first_ready(
+            async {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                Ok::<(), ProtocolError>(())
+            },
+            async {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok::<(), ProtocolError>(())
+            },
+        )
+        .await
+        .expect("route should become ready");
+
+        assert!(matches!(route, ReadyRoute::Direct(())));
+    }
+
+    #[tokio::test]
+    async fn a_failed_route_does_not_prevent_the_other_route() {
+        let route = race_first_ready(
+            async {
+                Err::<(), ProtocolError>(protocol_error(
+                    NetworkErrorCode::QuicError,
+                    "direct failed",
+                ))
+            },
+            async { Ok::<(), ProtocolError>(()) },
+        )
+        .await
+        .expect("relay should remain eligible");
+
+        assert!(matches!(route, ReadyRoute::Relay));
     }
 }
