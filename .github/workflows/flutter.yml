@@ -329,10 +329,12 @@ jobs:
           if flutter build macos -v 2>&1 | tee "$build_log"; then
             exit 0
           fi
+          diagnostic=''
           while IFS= read -r line; do
             escaped="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
-            echo "::error file=.github/workflows/flutter.yml,line=316::$escaped"
-          done < <(tail -n 25 "$build_log")
+            diagnostic="${diagnostic}${escaped}%0A"
+          done < <(tail -n 100 "$build_log")
+          echo "::error file=.github/workflows/flutter.yml,line=316::$diagnostic"
           exit 1
       - name: Build iOS without signing
         run: flutter build ios --release --no-codesign --no-pub
