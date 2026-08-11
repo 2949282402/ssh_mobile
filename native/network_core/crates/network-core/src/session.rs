@@ -31,8 +31,8 @@ pub(crate) enum ConnectDecision {
     InProgress(SessionId),
 }
 
-/// Session 聚合根。当前阶段只放置 Connection 生命周期和 Route 状态；
-/// Delivery/Crypto/Transfer 状态会在各自阶段接入，不回退到 Connection map。
+/// Session 聚合根只放置 Connection 生命周期和当前 Route；Delivery/Crypto/
+/// Transfer 状态在外部按这个 SessionId 关联，不能回退到 Connection map。
 struct Session {
     id: SessionId,
     state: SessionState,

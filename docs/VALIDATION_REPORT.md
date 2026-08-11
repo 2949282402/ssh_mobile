@@ -22,8 +22,9 @@ is limited to native network/report validation.
 | Unit and widget tests | Full App: 801 passed; Terminal slice: 3 passed |
 | Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
 | Native Dart package | `flutter analyze --no-pub` passed; `flutter test --no-pub` passed with 4 package tests |
-| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`, and `cargo test --workspace --locked` passed; 55 tests passed, including cross-Connection Delivery recovery |
+| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`, and `cargo test --workspace --locked` passed; 58 tests passed, including cross-Connection Delivery recovery and TransferSession state tests |
 | Delivery runtime wiring | `network-core` now sends `DataMessage` through QUIC uni streams or Relay opaque controls, binds Delivery to real `SessionId`, replays RecoverySnapshot, scans retry backoff, validates ACK epoch, and emits typed channel/ACK events; `cargo test -p network-core --lib --locked --offline` passed with 21 tests |
+| Transfer/Connection decoupling | `TransferSession` owns state, Manifest, offset, cancellation, and logical SessionId without a Connection handle; `TransferDispatcher` selects the current QUIC/Relay route, and same-Session direct resume is tested; `cargo test -p network-transfer -p network-core --locked --offline` passed with 32 tests |
 | Relay channel control | `channel_message`/`channel_ack` opaque forwarding integration test passed in `go test ./...`; Rust Relay codec tests passed |
 | Go Relay | `gofmt -l .`, `go vet ./...`, and `go test ./...` passed |
 | Native WebRTC | `network-webrtc` uses locked stable `rtc 0.9.1`; SDP/ICE/DataChannel/Audio/Video transceiver and media QoS tests passed |

@@ -10,11 +10,13 @@ use network_quic::{
 };
 use network_transfer::{
     build_file_manifest, existing_completed_file, existing_partial_offset,
-    stream_receive_file_cancellable, stream_send_file_cancellable, FileManifest, TransferManager,
+    stream_receive_file_cancellable, stream_send_file_cancellable, ResumableTransfer,
+    TransferFailureReason, TransferManager,
 };
 use quinn::{Connection, RecvStream, SendStream};
 use std::collections::hash_map::Entry;
 use std::error::Error;
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
@@ -28,7 +30,120 @@ use crate::runtime::{
     RECONNECT_INITIAL_BACKOFF, TRANSFER_COMPLETION_TIMEOUT,
 };
 
-/// 校验源文件，并分离直连传输任务。
+/// 当前一次传输尝试使用的 Route handle。它只存在于 dispatcher/worker，
+/// 不会进入 network-transfer 的 TransferSession。
+#[derive(Clone)]
+enum TransferRoute {
+    QuicDirect(Connection),
+    Relay,
+}
+
+/// 传输的 Route 适配边界。TransferManager 只管理业务会话和偏移，
+/// 当前 QUIC/Relay handle 的选择集中在这里。
+#[derive(Clone)]
+struct TransferDispatcher {
+    state: Arc<RuntimeState>,
+}
+
+impl TransferDispatcher {
+    fn new(state: Arc<RuntimeState>) -> Self {
+        Self { state }
+    }
+
+    async fn current_route(&self, peer_id: &str) -> Result<TransferRoute, ProtocolError> {
+        match self.state.sessions.current_route(peer_id).await {
+            Some(RouteType::QuicDirect | RouteType::Lan) => self
+                .state
+                .sessions
+                .current_connection(peer_id)
+                .await
+                .map(TransferRoute::QuicDirect)
+                .ok_or_else(|| {
+                    protocol_error_with_peer(
+                        NetworkErrorCode::NoRoute,
+                        "direct route has no active Connection",
+                        "send",
+                        peer_id,
+                    )
+                }),
+            Some(RouteType::Relay) => {
+                let relay = self.state.relay.read().await.clone();
+                let usable = match relay {
+                    Some(relay) => relay.is_usable().await,
+                    None => false,
+                };
+                if usable {
+                    Ok(TransferRoute::Relay)
+                } else {
+                    Err(protocol_error_with_peer(
+                        NetworkErrorCode::NoRoute,
+                        "Relay route is unavailable",
+                        "send",
+                        peer_id,
+                    ))
+                }
+            }
+            _ => Err(protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "peer has no active transfer route",
+                "send",
+                peer_id,
+            )),
+        }
+    }
+
+    async fn dispatch_outgoing(
+        &self,
+        route: TransferRoute,
+        transfer: ResumableTransfer,
+    ) -> Result<(), ProtocolError> {
+        match route {
+            TransferRoute::QuicDirect(connection) => {
+                tokio::spawn(send_file(connection, transfer, Arc::clone(&self.state)));
+                Ok(())
+            }
+            TransferRoute::Relay => {
+                let peer = self
+                    .state
+                    .peers
+                    .read()
+                    .await
+                    .get(&transfer.peer_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        protocol_error_with_peer(
+                            NetworkErrorCode::NoRoute,
+                            "peer is not registered",
+                            "send",
+                            &transfer.peer_id,
+                        )
+                    })?;
+                tokio::spawn(crate::relay::send_file_over_relay(
+                    peer,
+                    transfer,
+                    Arc::clone(&self.state),
+                ));
+                Ok(())
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TransferAttemptError {
+    reason: TransferFailureReason,
+    message: &'static str,
+}
+
+impl fmt::Display for TransferAttemptError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.message)
+    }
+}
+
+impl Error for TransferAttemptError {}
+
+/// 校验源文件，并交给当前逻辑 Session 的 Route Dispatcher。
 pub(crate) async fn start_file_send(
     state: Arc<RuntimeState>,
     command: SendFileCommand,
@@ -59,33 +174,28 @@ pub(crate) async fn start_file_send(
             &command.peer_id,
         ));
     }
-    let connection = state.sessions.current_connection(&command.peer_id).await;
-    let peer = state
-        .peers
-        .read()
-        .await
-        .get(&command.peer_id)
-        .cloned()
-        .ok_or_else(|| {
-            protocol_error_with_peer(
-                NetworkErrorCode::NoRoute,
-                "peer is not registered",
-                "send",
-                &command.peer_id,
-            )
-        })?;
-    let relay_available = match state.relay.read().await.clone() {
-        Some(relay) => relay.is_usable().await,
-        None => false,
-    };
-    if connection.is_none() && !relay_available {
+    if !state.peers.read().await.contains_key(&command.peer_id) {
         return Err(protocol_error_with_peer(
             NetworkErrorCode::NoRoute,
-            "peer has no active direct or Relay route",
+            "peer is not registered",
             "send",
             &command.peer_id,
         ));
     }
+    let session_id = state
+        .sessions
+        .current_session_id(&command.peer_id)
+        .await
+        .ok_or_else(|| {
+            protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "peer has no logical Session",
+                "send",
+                &command.peer_id,
+            )
+        })?;
+    let dispatcher = TransferDispatcher::new(Arc::clone(&state));
+    let route = dispatcher.current_route(&command.peer_id).await?;
 
     let manifest = build_file_manifest(command.transfer_id.clone(), &path)
         .await
@@ -107,7 +217,12 @@ pub(crate) async fn start_file_send(
     })?;
     if !state
         .transfers
-        .register_outgoing(manifest.clone(), path.clone(), command.peer_id.clone())
+        .register_outgoing(
+            manifest.clone(),
+            path.clone(),
+            command.peer_id.clone(),
+            session_id.wire_key(),
+        )
         .await
     {
         return Err(protocol_error_with_peer(
@@ -117,59 +232,62 @@ pub(crate) async fn start_file_send(
             &command.peer_id,
         ));
     }
-    if let Some(connection) = connection {
-        tokio::spawn(send_file(
-            connection,
-            path,
-            manifest,
-            command.transfer_id,
-            command.peer_id,
-            state,
-        ));
-    } else {
-        tokio::spawn(crate::relay::send_file_over_relay(
-            peer,
-            command.peer_id,
-            path,
-            command.transfer_id,
-            state,
-        ));
+    let transfer = ResumableTransfer {
+        transfer_id: manifest.transfer_id.clone(),
+        peer_id: command.peer_id,
+        session_id: session_id.wire_key(),
+        source_path: path,
+        manifest,
+        offset: 0,
+    };
+    if let Err(error) = dispatcher.dispatch_outgoing(route, transfer).await {
+        state.transfers.remove_transfer(&command.transfer_id).await;
+        return Err(error);
     }
     Ok(())
 }
 
-/// 流式传输直连 QUIC 文件，并只发布最终类型化结果。
-async fn send_file(
-    connection: Connection,
-    path: PathBuf,
-    manifest: FileManifest,
-    transfer_id: String,
-    peer_id: String,
-    state: Arc<RuntimeState>,
-) {
+/// 流式传输直连 QUIC 文件；Route handle 由 dispatcher 注入，业务状态仍
+/// 只通过 TransferManager 更新。
+async fn send_file(connection: Connection, transfer: ResumableTransfer, state: Arc<RuntimeState>) {
+    let transfer_id = transfer.transfer_id.clone();
+    let peer_id = transfer.peer_id.clone();
     let result = async {
-        let current_manifest = build_file_manifest(transfer_id.clone(), &path).await?;
-        if current_manifest != manifest {
+        let current_manifest =
+            build_file_manifest(transfer_id.clone(), &transfer.source_path).await?;
+        if current_manifest != transfer.manifest {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "source file changed during resumable transfer",
-                )
+                TransferAttemptError {
+                    reason: TransferFailureReason::SourceChanged,
+                    message: "source file changed during resumable transfer",
+                }
                 .into(),
             );
         }
         let (mut send, mut receive) = connection.open_bi().await?;
-        write_file_offer(&mut send, &manifest).await?;
-        let offset = read_file_decision(&mut receive).await?.ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "receiver rejected file",
-            )
-        })?;
-        if offset > manifest.file_size {
+        write_file_offer(&mut send, &transfer.manifest).await?;
+        let offset = read_file_decision(&mut receive)
+            .await?
+            .ok_or(TransferAttemptError {
+                reason: TransferFailureReason::UserRejected,
+                message: "receiver rejected file",
+            })?;
+        if offset > transfer.manifest.file_size {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid resume offset")
-                    .into(),
+                TransferAttemptError {
+                    reason: TransferFailureReason::Protocol,
+                    message: "invalid resume offset",
+                }
+                .into(),
+            );
+        }
+        if !state.transfers.mark_transferring(&transfer_id).await {
+            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                TransferAttemptError {
+                    reason: TransferFailureReason::Protocol,
+                    message: "transfer is no longer resumable",
+                }
+                .into(),
             );
         }
         state.transfers.update_progress(&transfer_id, offset).await;
@@ -182,7 +300,7 @@ async fn send_file(
         ));
         let cancellation = state.transfers.cancellation_token(&transfer_id).await;
         stream_send_file_cancellable(
-            &path,
+            &transfer.source_path,
             offset,
             &mut send,
             Some(progress_tx),
@@ -190,6 +308,7 @@ async fn send_file(
         )
         .await?;
         send.finish()?;
+        state.transfers.mark_verifying(&transfer_id).await;
         tokio::time::timeout(
             TRANSFER_COMPLETION_TIMEOUT,
             read_file_completion(&mut receive),
@@ -198,6 +317,7 @@ async fn send_file(
         .map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::TimedOut, "file completion timed out")
         })??;
+        state.transfers.mark_completed(&transfer_id).await;
         emit_transfer_completed(&state.event_tx, &transfer_id, "");
         Ok(())
     }
@@ -207,42 +327,50 @@ async fn send_file(
         Err(error)
             if !state.transfers.is_cancelled(&transfer_id).await
                 && is_transient_transport_error(error.as_ref())
-                && state.transfers.pause_transfer(&transfer_id).await =>
+                && state.transfers.pause_for_network(&transfer_id).await =>
         {
-            // 保留源文件、TransferId 和接收端的 `.part`，等待下一次
-            // Connection Ready 后重新走 manifest/offset 协商。
+            // 保留源文件、TransferId、SessionId 和接收端的 `.part`，等待
+            // 同一逻辑 Session 的下一次 Route Ready。
             schedule_resume(Arc::clone(&state), peer_id);
             tracing::debug!(transfer_id = %transfer_id, error = %error, "native QUIC transfer paused for resume");
         }
         Err(error) => {
-            state.transfers.remove_transfer(&transfer_id).await;
+            let reason = error
+                .downcast_ref::<TransferAttemptError>()
+                .map_or(TransferFailureReason::Io, |error| error.reason);
+            let code = transfer_failure_code(reason);
+            state.transfers.fail_transfer(&transfer_id, reason).await;
             emit_transfer_error(
                 &state.event_tx,
                 &transfer_id,
-                NetworkErrorCode::QuicError,
+                code,
                 "file transfer failed".to_string(),
                 "send",
                 Some(&peer_id),
             );
+            state.transfers.remove_transfer(&transfer_id).await;
             tracing::debug!(transfer_id = %transfer_id, error = %error, "native file transfer failed");
         }
     }
 }
 
-/// Connection Ready 后领取一个 Peer 的暂停传输，并重新协商真实 offset。
+/// Connection/Route Ready 后领取同一逻辑 Session 的暂停传输。
 pub(crate) async fn resume_transfers_for_peer(state: Arc<RuntimeState>, peer_id: String) {
-    let Some(connection) = state.sessions.current_connection(&peer_id).await else {
+    let dispatcher = TransferDispatcher::new(Arc::clone(&state));
+    let Ok(TransferRoute::QuicDirect(connection)) = dispatcher.current_route(&peer_id).await else {
+        // Relay 的断线续传协议在 Step 5 接入；此处不能把 QUIC 的 offset
+        // 会话错误地当成 Relay 新传输。
         return;
     };
-    for transfer in state.transfers.take_resumable_for_peer(&peer_id).await {
-        tokio::spawn(send_file(
-            connection.clone(),
-            transfer.source_path,
-            transfer.manifest,
-            transfer.transfer_id,
-            transfer.peer_id,
-            Arc::clone(&state),
-        ));
+    let Some(session_id) = state.sessions.current_session_id(&peer_id).await else {
+        return;
+    };
+    for transfer in state
+        .transfers
+        .take_resumable_for_session(&peer_id, &session_id.wire_key())
+        .await
+    {
+        tokio::spawn(send_file(connection.clone(), transfer, Arc::clone(&state)));
     }
 }
 
@@ -262,10 +390,29 @@ pub(crate) async fn handle_incoming_file(
     state: Arc<RuntimeState>,
 ) {
     let mut active_transfer_id = None;
-    let mut owns_transfer = false;
+    let mut registered_transfer = false;
     let result = async {
         let manifest = read_file_offer(&mut receive).await?;
         active_transfer_id = Some(manifest.transfer_id.clone());
+        let session_id = state
+            .sessions
+            .current_session_id(&peer_id)
+            .await
+            .ok_or_else(|| std::io::Error::other("logical Session is unavailable"))?;
+        if !state
+            .transfers
+            .register_incoming(manifest.clone(), peer_id.clone(), session_id.wire_key())
+            .await
+        {
+            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    "transfer ID is already active",
+                )
+                .into(),
+            );
+        }
+        registered_transfer = true;
         let (decision_tx, decision_rx) = tokio::sync::oneshot::channel();
         {
             let mut decisions = state.incoming_decisions.write().await;
@@ -303,6 +450,8 @@ pub(crate) async fn handle_incoming_file(
         if !accepted {
             write_file_decision(&mut send, false, 0).await?;
             send.finish()?;
+            state.transfers.cancel_transfer(&manifest.transfer_id).await;
+            state.transfers.remove_transfer(&manifest.transfer_id).await;
             return Ok(());
         }
 
@@ -319,21 +468,35 @@ pub(crate) async fn handle_incoming_file(
         };
         write_file_decision(&mut send, true, resume_offset).await?;
         if let Some(local_path) = completed_path {
+            state
+                .transfers
+                .mark_transferring(&manifest.transfer_id)
+                .await;
+            state
+                .transfers
+                .update_progress(&manifest.transfer_id, manifest.file_size)
+                .await;
+            state.transfers.mark_verifying(&manifest.transfer_id).await;
+            state.transfers.mark_completed(&manifest.transfer_id).await;
             write_file_completion(&mut send).await?;
             send.finish()?;
+            state.transfers.remove_transfer(&manifest.transfer_id).await;
             emit_transfer_completed(&state.event_tx, &manifest.transfer_id, &local_path);
             return Ok(());
         }
-        if !state.transfers.register_transfer(manifest.clone()).await {
+        if !state
+            .transfers
+            .mark_transferring(&manifest.transfer_id)
+            .await
+        {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
                 std::io::Error::new(
                     std::io::ErrorKind::AlreadyExists,
-                    "transfer ID is already active",
+                    "transfer is no longer awaiting approval",
                 )
                 .into(),
             );
         }
-        owns_transfer = true;
         state
             .transfers
             .update_progress(&manifest.transfer_id, resume_offset)
@@ -358,9 +521,11 @@ pub(crate) async fn handle_incoming_file(
             cancellation.as_ref(),
         )
         .await?;
-        state.transfers.remove_transfer(&manifest.transfer_id).await;
+        state.transfers.mark_verifying(&manifest.transfer_id).await;
+        state.transfers.mark_completed(&manifest.transfer_id).await;
         write_file_completion(&mut send).await?;
         send.finish()?;
+        state.transfers.remove_transfer(&manifest.transfer_id).await;
         emit_transfer_completed(&state.event_tx, &manifest.transfer_id, &local_path);
         Ok(())
     }
@@ -370,11 +535,11 @@ pub(crate) async fn handle_incoming_file(
         .err()
         .is_some_and(|error| is_transient_transport_error(error.as_ref()));
     if let Some(transfer_id) = active_transfer_id.as_deref() {
-        if owns_transfer {
-            state.transfers.remove_transfer(transfer_id).await;
-        }
         state.incoming_decisions.write().await.remove(transfer_id);
-        if owns_transfer && result.is_err() && !preserve_partial {
+        if registered_transfer && result.is_err() && preserve_partial {
+            state.transfers.pause_for_network(transfer_id).await;
+        } else if registered_transfer && result.is_err() {
+            state.transfers.remove_transfer(transfer_id).await;
             let receive_directory = state.receive_directory.read().await.clone();
             if let Some(receive_directory) = receive_directory {
                 tokio::fs::remove_file(receive_directory.join(format!("{transfer_id}.part")))
@@ -384,10 +549,17 @@ pub(crate) async fn handle_incoming_file(
         }
     }
     if let Err(error) = result {
+        if preserve_partial {
+            tracing::debug!(peer_id = %peer_id, error = %error, "incoming native transfer paused for resume");
+            return;
+        }
+        let reason = error
+            .downcast_ref::<TransferAttemptError>()
+            .map_or(TransferFailureReason::Io, |error| error.reason);
         emit_transfer_error(
             &state.event_tx,
             active_transfer_id.as_deref().unwrap_or("incoming"),
-            NetworkErrorCode::QuicError,
+            transfer_failure_code(reason),
             "incoming file transfer failed".to_string(),
             "receive",
             Some(&peer_id),
@@ -464,6 +636,18 @@ fn is_transient_transport_error(error: &(dyn Error + 'static)) -> bool {
         current = error.source();
     }
     false
+}
+
+fn transfer_failure_code(reason: TransferFailureReason) -> NetworkErrorCode {
+    match reason {
+        TransferFailureReason::UserRejected => NetworkErrorCode::Cancelled,
+        TransferFailureReason::Permission => NetworkErrorCode::InvalidArgument,
+        TransferFailureReason::Protocol => NetworkErrorCode::InvalidArgument,
+        TransferFailureReason::HashMismatch
+        | TransferFailureReason::SourceChanged
+        | TransferFailureReason::Io => NetworkErrorCode::IoError,
+        TransferFailureReason::RetryBudgetExhausted => NetworkErrorCode::Timeout,
+    }
 }
 
 /// 将传输专属命令分发到所属传输子系统。

@@ -6,7 +6,7 @@ use network_protocol::{
     NetworkErrorCode, RouteType,
 };
 use network_relay::{RelayClient, RelayEvent};
-use network_transfer::build_file_manifest;
+use network_transfer::{build_file_manifest, ResumableTransfer, TransferFailureReason};
 use prost::Message;
 use rand::RngCore;
 use serde_json::json;
@@ -805,11 +805,12 @@ fn relay_hash_matches(hasher: Sha256, expected: &str) -> bool {
 /// 发送加密 Relay 申请、分块和完成确认。
 pub(crate) async fn send_file_over_relay(
     peer: PeerConfig,
-    peer_id: String,
-    path: PathBuf,
-    transfer_id: String,
+    transfer: ResumableTransfer,
     state: Arc<RuntimeState>,
 ) {
+    let transfer_id = transfer.transfer_id.clone();
+    let peer_id = transfer.peer_id.clone();
+    let path = transfer.source_path.clone();
     let result = async {
         let relay = state
             .relay
@@ -817,7 +818,17 @@ pub(crate) async fn send_file_over_relay(
             .await
             .clone()
             .ok_or_else(|| std::io::Error::other("Relay is unavailable"))?;
-        let manifest = build_file_manifest(transfer_id.clone(), &path).await?;
+        let current_manifest = build_file_manifest(transfer_id.clone(), &path).await?;
+        if current_manifest != transfer.manifest {
+            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "source file changed during Relay transfer",
+                )
+                .into(),
+            );
+        }
+        let manifest = transfer.manifest.clone();
         let mut session_bytes = [0u8; 16];
         rand::rngs::OsRng.fill_bytes(&mut session_bytes);
         let session_id = hex::encode(session_bytes);
@@ -873,6 +884,11 @@ pub(crate) async fn send_file_over_relay(
                 .into(),
             );
         }
+        if !state.transfers.mark_transferring(&transfer_id).await {
+            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                std::io::Error::other("transfer is no longer active").into(),
+            );
+        }
         let cipher = RelayChunkCipher::new(&content_key, &session_bytes, nonce_prefix)?;
         let mut file = tokio::fs::File::open(&path).await?;
         let mut buffer = vec![0u8; network_transfer::DEFAULT_TRANSFER_BUFFER];
@@ -900,6 +916,10 @@ pub(crate) async fn send_file_over_relay(
                 .await?;
             sequence = crypto::next_sequence(sequence)?;
             transferred += read as u64;
+            state
+                .transfers
+                .update_progress(&transfer_id, transferred)
+                .await;
             emit_transfer_progress(
                 &state.event_tx,
                 &transfer_id,
@@ -932,8 +952,10 @@ pub(crate) async fn send_file_over_relay(
                 std::io::ErrorKind::TimedOut,
                 "Relay completion acknowledgement timed out",
             )
-            .into());
+                .into());
         }
+        state.transfers.mark_verifying(&transfer_id).await;
+        state.transfers.mark_completed(&transfer_id).await;
         emit_transfer_completed(&state.event_tx, &transfer_id, "");
         Ok(())
     }
@@ -945,8 +967,18 @@ pub(crate) async fn send_file_over_relay(
             }
         }
     }
-    state.transfers.remove_transfer(&transfer_id).await;
-    if let Err(error) = result {
+    if result.is_ok() {
+        state.transfers.remove_transfer(&transfer_id).await;
+    } else if let Err(error) = result {
+        let reason = if error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::InvalidData)
+        {
+            TransferFailureReason::SourceChanged
+        } else {
+            TransferFailureReason::Io
+        };
+        state.transfers.fail_transfer(&transfer_id, reason).await;
         emit_transfer_error(
             &state.event_tx,
             &transfer_id,
@@ -955,6 +987,7 @@ pub(crate) async fn send_file_over_relay(
             "send",
             Some(&peer_id),
         );
+        state.transfers.remove_transfer(&transfer_id).await;
         tracing::debug!(transfer_id = %transfer_id, error = %error, "native Relay transfer failed");
     }
 }

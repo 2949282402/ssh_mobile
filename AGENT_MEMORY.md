@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-10
+> 最新更新时间：2026-08-11
 
 # Agent Memory
 
@@ -263,6 +263,11 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 - Public relay frames remain memory-only and end-to-end encrypted. The only
   supported production deployment is `relay/compose.yaml` with Caddy; clients
   enroll explicitly, connect through HTTPS/WSS, and require receiver approval.
+- Native file transfer state is owned by `network-transfer::TransferSession` and
+  keyed by `PeerId + logical SessionId`; it never stores a Quinn or Relay handle.
+  `network-core::TransferDispatcher` selects the current Route for each attempt.
+  Direct QUIC recovery can claim paused transfers on the same Session; Relay
+  offset renegotiation remains the next numbered transfer Step.
 
 ### UI and performance
 
