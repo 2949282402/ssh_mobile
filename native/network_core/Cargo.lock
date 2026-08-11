@@ -982,6 +982,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "network-transport"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
+]
+
+[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
