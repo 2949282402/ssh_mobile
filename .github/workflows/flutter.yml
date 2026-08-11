@@ -202,6 +202,9 @@ jobs:
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
+      - name: Install Terminal app dependencies
+        working-directory: apps/ssh_mobile_terminal
+        run: flutter pub get
       - name: Build Terminal-only smoke app
         working-directory: apps/ssh_mobile_terminal
         run: flutter build windows --debug --no-pub
