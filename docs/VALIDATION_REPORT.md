@@ -1,8 +1,8 @@
-> 最新更新时间：2026-08-07
+> 最新更新时间：2026-08-11
 
 # Validation Report
 
-- Latest source validation: 2026-08-07
+- Latest source validation: 2026-08-11
 - Full build/coverage baseline: 2026-07-10
 - Host: Windows 10 x64
 - Flutter: 3.44.2 stable
@@ -10,20 +10,22 @@
 
 ## Automated Results
 
-Formatting, analysis, tests, and the network-layer source-size audit were
-refreshed after the v1 network refactor. Coverage and platform-build rows retain
-the most recent full release-chain evidence from 2026-07-10 and were not re-run
-for this documentation update.
+Native network, Relay, and package-scoped Flutter checks were refreshed at the
+latest HEAD. Coverage and platform-build rows retain the most recent full
+release-chain evidence from 2026-07-10 and were not re-run because this Step
+is limited to native network/report validation.
 
 | Check | Result |
 | --- | --- |
-| Dart formatting | 577 files checked, 0 changes required |
-| Flutter analyzer | Passed with 0 issues |
-| Unit and widget tests | 1017 passed |
+| Dart formatting | Full App + Terminal slice: 288 files checked, 0 changes required |
+| Flutter analyzer | Full App passed with `--no-fatal-infos` (26 existing info-level lints); Terminal slice passed with 0 issues |
+| Unit and widget tests | Full App: 801 passed; Terminal slice: 3 passed |
 | Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
-| Native Dart package | `dart analyze` passed; 4 package tests passed |
-| Rust network workspace | `cargo fmt`, `cargo clippy`, and `cargo test --workspace --locked` passed |
+| Native Dart package | `flutter analyze --no-pub` passed; `flutter test --no-pub` passed with 4 package tests |
+| Rust network workspace | `cargo fmt`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test --workspace --locked` passed; 51 tests passed |
 | Go Relay | `gofmt`, `go vet ./...`, and `go test ./...` passed |
+| Native WebRTC | `network-webrtc` uses locked stable `rtc 0.9.1`; SDP/ICE/DataChannel/Audio/Video transceiver and media QoS tests passed |
+| Generic native transports | `network-transport` TCP/UDP/WebSocket loopback tests passed |
 | v1 static compatibility audit | No old transport, Dart Relay data-plane, protocol fallback, or v2/v3/v4 network symbols found |
 | Non-generated line coverage | 39.3% (`12690/32302`), last verified 2026-07-10 |
 | Coverage regression floor | 35% |
@@ -41,18 +43,22 @@ for this documentation update.
 Latest source validation:
 
 ```powershell
-dart format --output=none --set-exit-if-changed lib test
-flutter analyze
-flutter test
-dart analyze
+dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool apps/ssh_mobile_terminal/lib apps/ssh_mobile_terminal/test
+cd apps/ssh_mobile_full
+flutter analyze --no-pub --no-fatal-infos
+flutter test --no-pub
+cd ../ssh_mobile_terminal
+flutter analyze --no-pub --no-fatal-infos
+flutter test --no-pub
+cd ../..
 git diff --check
 ```
 
-Native package validation from `packages/ssh_mobile_network_native`:
+Native package validation from `packages/infrastructure/ssh_mobile_network_native`:
 
 ```powershell
-dart analyze
-dart test
+flutter analyze --no-pub
+flutter test --no-pub
 ```
 
 Rust validation from `native/network_core`:
@@ -70,6 +76,12 @@ gofmt -l .
 go vet ./...
 go test ./...
 ```
+
+The repository-root `flutter analyze` command is not used as a quality gate:
+it intentionally sees the vendored `third_party/xterm` example/test sources,
+which are excluded by the Full App analyzer and lack that package's optional
+example-only dependencies. The package-scoped checks above are the authoritative
+Flutter results for this validation.
 
 Full build and coverage baseline from 2026-07-10:
 
