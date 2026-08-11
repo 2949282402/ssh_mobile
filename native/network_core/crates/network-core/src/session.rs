@@ -125,6 +125,35 @@ impl SessionManager {
         true
     }
 
+    /// Atomically replaces the current Connection for a Session after a new
+    /// route has completed authentication. The old handle is returned so the
+    /// caller can close it after releasing the Session lock.
+    pub(crate) async fn replace_connection_if_current(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        current_connection: &Connection,
+        replacement: Connection,
+        route: RouteType,
+    ) -> Option<Connection> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(peer_id)?;
+        let is_current = session
+            .connection
+            .as_ref()
+            .is_some_and(|connection| connection.stable_id() == current_connection.stable_id());
+        if session.id != expected_session_id || session.state == SessionState::Closed || !is_current
+        {
+            drop(sessions);
+            replacement.close(VarInt::from_u32(0), b"session replaced");
+            return None;
+        }
+        let previous = session.connection.replace(replacement);
+        session.state = SessionState::Connected;
+        session.active_route = route;
+        previous
+    }
+
     /// 记录一个没有 Quinn handle 的已连接 Route，例如 Relay 控制面。
     pub(crate) async fn mark_route_connected(
         &self,
@@ -153,6 +182,14 @@ impl SessionManager {
             .get(peer_id)
             .filter(|session| session.state == SessionState::Connected)
             .and_then(|session| session.connection.clone())
+    }
+
+    pub(crate) async fn current_session_id(&self, peer_id: &str) -> Option<SessionId> {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .map(|session| session.id)
     }
 
     pub(crate) async fn is_connected(&self, peer_id: &str) -> bool {

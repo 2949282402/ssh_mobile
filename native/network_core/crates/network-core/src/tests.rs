@@ -141,6 +141,18 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
         )
     });
     assert!(connected.is_some(), "peer never reached connected state");
+    let route_metrics = poll_until(&runtime_a, Duration::from_secs(5), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::RouteChanged(route))
+                if route.peer_id == "device-b"
+                    && route.route_type == RouteType::QuicDirect as i32
+        )
+    });
+    assert!(
+        route_metrics.is_some(),
+        "direct path metrics were not sampled"
+    );
 
     send_and_expect_accepted(
         &runtime_a,

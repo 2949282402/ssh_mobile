@@ -16,8 +16,10 @@ pub struct Candidate {
     pub kind: CandidateKind,
     pub priority: u32,
     pub rtt_ms: u32,
+    pub jitter_ms: u32,
     pub loss_rate: f32,
     pub last_success_timestamp: u64,
+    pub sample_count: u32,
 }
 
 impl Candidate {
@@ -36,8 +38,10 @@ impl Candidate {
             kind,
             priority: base_priority,
             rtt_ms: 0,
+            jitter_ms: 0,
             loss_rate: 0.0,
             last_success_timestamp: 0,
+            sample_count: 0,
         }
     }
 }

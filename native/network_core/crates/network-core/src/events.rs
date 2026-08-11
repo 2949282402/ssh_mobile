@@ -71,6 +71,33 @@ pub(crate) fn emit_peer_state(
     });
 }
 
+/// 发布 native RouteSelector 完成质量采样或路径迁移后的指标。
+pub(crate) fn emit_route_changed(
+    event_tx: &UnboundedSender<NetworkEvent>,
+    peer_id: &str,
+    route_type: RouteType,
+    endpoint: std::net::SocketAddr,
+    rtt_ms: u32,
+    loss_rate: f32,
+) {
+    let loss_per_mille = (loss_rate.clamp(0.0, 1.0) * 1000.0).round() as u32;
+    let timestamp = unix_timestamp_ms();
+    let _ = event_tx.send(NetworkEvent {
+        event_id: format!("{peer_id}/route/{timestamp}"),
+        timestamp_ms: timestamp,
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_event::Payload::RouteChanged(
+            network_protocol::RouteChangedEvent {
+                peer_id: peer_id.to_string(),
+                route_type: route_type as i32,
+                endpoint: endpoint.to_string(),
+                rtt_ms: rtt_ms as u64,
+                loss_per_mille,
+            },
+        )),
+    });
+}
+
 /// 发布带可选安全错误的类型化 Relay 生命周期事件。
 pub(crate) fn emit_relay_state(
     event_tx: &UnboundedSender<NetworkEvent>,

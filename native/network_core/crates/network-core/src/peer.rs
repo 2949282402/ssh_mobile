@@ -8,7 +8,7 @@ use network_protocol::{
 };
 use network_quic::{QuicEndpointManager, QuicPeerSession};
 use network_relay::RelayClient;
-use quinn::{Connection, Endpoint};
+use quinn::{Connection, Endpoint, VarInt};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -16,7 +16,9 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 
-use crate::events::{emit_peer_state, protocol_error, protocol_error_with_peer};
+use crate::events::{
+    emit_peer_state, emit_route_changed, protocol_error, protocol_error_with_peer,
+};
 use crate::runtime::{
     PeerConfig, RuntimeState, PEER_CONNECT_TIMEOUT, RECONNECT_INITIAL_BACKOFF,
     RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF, RELAY_RACE_DELAY,
@@ -25,6 +27,7 @@ use crate::session::{ConnectDecision, SessionId};
 
 const STUN_SERVER_ENV: &str = "SSH_MOBILE_STUN_SERVER";
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
+const PATH_METRICS_INTERVAL: Duration = Duration::from_secs(2);
 
 /// 校验运行时密钥并启动 QUIC 监听器。
 pub(crate) async fn configure_runtime(
@@ -332,6 +335,12 @@ pub(crate) async fn connect_peer(
                 RouteType::QuicDirect,
                 None,
             );
+            spawn_path_metrics_monitor(
+                Arc::clone(&state),
+                peer_id.clone(),
+                session_id,
+                connection.clone(),
+            );
             let _ = state.delivery.recover_session(&peer_id).await;
             crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
             tokio::spawn(receive_file_streams(peer_id, connection, state));
@@ -418,6 +427,167 @@ async fn connect_direct(
                 &timeout_peer_id,
             )
         })?
+}
+
+/// Starts native-only path quality sampling for one authenticated direct
+/// Connection. The task exits as soon as SessionManager observes a different
+/// current Connection.
+fn spawn_path_metrics_monitor(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    session_id: SessionId,
+    connection: Connection,
+) {
+    tokio::spawn(async move {
+        monitor_direct_path(state, peer_id, session_id, connection).await;
+    });
+}
+
+async fn monitor_direct_path(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    session_id: SessionId,
+    connection: Connection,
+) {
+    let manager = state.path_managers.read().await.get(&peer_id).cloned();
+    let Some(manager) = manager else {
+        return;
+    };
+
+    loop {
+        let current = state.sessions.current_connection(&peer_id).await;
+        if current
+            .as_ref()
+            .is_none_or(|current| current.stable_id() != connection.stable_id())
+        {
+            return;
+        }
+
+        let endpoint = connection.remote_address();
+        let stats = connection.stats();
+        manager
+            .record_quic_sample(
+                endpoint,
+                connection.rtt(),
+                stats.path.sent_packets,
+                stats.path.lost_packets,
+            )
+            .await;
+        if manager
+            .get_active_path()
+            .await
+            .is_none_or(|active| active.endpoint != endpoint)
+        {
+            let _ = manager.activate_path(endpoint).await;
+        }
+        if let Some(candidate) = manager.get_candidate(endpoint).await {
+            emit_route_changed(
+                &state.event_tx,
+                &peer_id,
+                RouteType::QuicDirect,
+                candidate.endpoint,
+                candidate.rtt_ms,
+                candidate.loss_rate,
+            );
+        }
+
+        if let Some(candidate) = manager.better_path_than_active().await {
+            if migrate_direct_path(
+                Arc::clone(&state),
+                peer_id.clone(),
+                session_id,
+                connection.clone(),
+                candidate,
+            )
+            .await
+            {
+                return;
+            }
+        }
+        tokio::time::sleep(PATH_METRICS_INTERVAL).await;
+    }
+}
+
+/// Establishes and authenticates a better candidate before atomically
+/// replacing the Session connection. Existing streams stay owned by the old
+/// connection until the replacement is ready.
+async fn migrate_direct_path(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    session_id: SessionId,
+    current_connection: Connection,
+    candidate: Candidate,
+) -> bool {
+    if candidate.endpoint == current_connection.remote_address() {
+        return false;
+    }
+    let endpoint = match state.endpoint.read().await.clone() {
+        Some(endpoint) => endpoint,
+        None => return false,
+    };
+    let identity = match state.identity.read().await.clone() {
+        Some(identity) => identity,
+        None => return false,
+    };
+    let peer = match state.peers.read().await.get(&peer_id).cloned() {
+        Some(peer) => peer,
+        None => return false,
+    };
+    let replacement = match connect_direct(
+        endpoint,
+        candidate.endpoint,
+        identity,
+        peer.identity_public_key,
+        peer_id.clone(),
+    )
+    .await
+    {
+        Ok(connection) => connection,
+        Err(error) => {
+            tracing::debug!(
+                peer_id = %peer_id,
+                endpoint = %candidate.endpoint,
+                error = %error.message,
+                "better direct path failed authentication"
+            );
+            return false;
+        }
+    };
+    let Some(previous) = state
+        .sessions
+        .replace_connection_if_current(
+            &peer_id,
+            session_id,
+            &current_connection,
+            replacement.clone(),
+            RouteType::QuicDirect,
+        )
+        .await
+    else {
+        return false;
+    };
+    previous.close(VarInt::from_u32(0), b"route migrated");
+    if let Some(manager) = state.path_managers.read().await.get(&peer_id).cloned() {
+        let _ = manager.activate_path(candidate.endpoint).await;
+    }
+    emit_route_changed(
+        &state.event_tx,
+        &peer_id,
+        RouteType::QuicDirect,
+        candidate.endpoint,
+        candidate.rtt_ms,
+        candidate.loss_rate,
+    );
+    spawn_path_metrics_monitor(
+        Arc::clone(&state),
+        peer_id.clone(),
+        session_id,
+        replacement.clone(),
+    );
+    let _ = state.delivery.recover_session(&peer_id).await;
+    crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
+    tokio::spawn(receive_file_streams(peer_id, replacement, state));
+    true
 }
 
 /// Relay lookup 在 Direct 启动后延迟 500ms，避免 UDP 被封锁时先浪费完整
@@ -557,6 +727,14 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     RouteType::QuicDirect,
                     None,
                 );
+                if let Some(session_id) = state.sessions.current_session_id(&peer_id).await {
+                    spawn_path_metrics_monitor(
+                        Arc::clone(&state),
+                        peer_id.clone(),
+                        session_id,
+                        connection.clone(),
+                    );
+                }
                 let _ = state.delivery.recover_session(&peer_id).await;
                 crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
                     .await;
