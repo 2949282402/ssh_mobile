@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile Flutter repository, including architecture, UI, SSH/SFTP, monitoring, AI tools, storage, security, platform builds, tests, and project documentation. Use for any non-trivial code, debugging, validation, documentation, or shared-agent-guidance change in this repository.
 ---
 
-> 最新更新时间：2026-08-10
+> 最新更新时间：2026-08-11
 
 # SSH Mobile Maintenance
 
@@ -192,13 +192,14 @@ implementations. The old App terminal files are compatibility exports/bridges.
   approved Feature-to-Feature public boundaries and known legacy singleton
   compatibility names; do not silence a violation by adding a broad path
   exception.
-- CI uses the root `pubspec.yaml` as the single Melos configuration source. Pull
-  Requests run `melos exec --diff` with dependent packages for format, analyze,
-  and tests, then run the architecture guard. Main runs the full `melos run`
-  format/analyze/test scripts and the Full App plus Terminal-only smoke builds;
-  the Workspace analyze script makes existing `info`-level lints non-fatal while
-  keeping errors and warnings fatal. Do not reintroduce a parallel `melos.yaml`
-  configuration file.
+- CI uses the root `pubspec.yaml` as the single Melos configuration source. Every
+  branch push runs one workflow; there is no parallel `pull_request` trigger.
+  Front, Relay, native Rust SDK, Dart SDK, workspace packages, Full App client
+  quality, and Android/Windows/macOS/iOS/Terminal builds run as independent
+  jobs. The Full App coverage test is owned only by `analyze-and-test`, while
+  `workspace-quality` excludes the Full App and the three SDK Dart packages;
+  existing `info`-level lints remain non-fatal while errors and warnings stay
+  fatal. Do not reintroduce a parallel `melos.yaml` configuration file.
 - Step31's `dart run tool/check_file_sizes.dart` reports non-generated Dart files
   above the 300/400/500-line review thresholds. Use it to identify ownership
   problems, then split only when responsibilities are independent; retain a
