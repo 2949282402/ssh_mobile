@@ -12,8 +12,12 @@ import 'package:ffi/ffi.dart';
 import 'native_operation_status.dart';
 import 'ssh_net_buffer.dart';
 
+const _nativeAssetId =
+    'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
+
 /// 向原生运行时发送一个已编码命令。
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size)>(
+  assetId: _nativeAssetId,
   symbol: 'ssh_net_runtime_command',
 )
 external int _sshNetRuntimeCommandNative(
@@ -24,6 +28,7 @@ external int _sshNetRuntimeCommandNative(
 
 /// 从原生运行时轮询一个事件帧。
 @Native<Int32 Function(Pointer<Void>, Uint32, Pointer<SshNetBuffer>)>(
+  assetId: _nativeAssetId,
   symbol: 'ssh_net_runtime_poll_event',
 )
 external int _sshNetRuntimePollEventNative(
@@ -33,7 +38,10 @@ external int _sshNetRuntimePollEventNative(
 );
 
 /// 释放轮询返回的原生事件缓冲区。
-@Native<Void Function(SshNetBuffer)>(symbol: 'ssh_net_buffer_free')
+@Native<Void Function(SshNetBuffer)>(
+  assetId: _nativeAssetId,
+  symbol: 'ssh_net_buffer_free',
+)
 external void _sshNetBufferFreeNative(SshNetBuffer buffer);
 
 /// 拥有真实 Dart isolate，在 Flutter UI isolate 之外执行阻塞式原生事件轮询。
