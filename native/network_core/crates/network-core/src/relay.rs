@@ -1,9 +1,5 @@
 //! Relay v1 enrollment 运行时、透明传输路由与 E2E 处理。
 
-use aes_gcm::{
-    aead::{Aead, Payload},
-    Aes256Gcm, KeyInit, Nonce,
-};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use network_protocol::{
     ConfigureRelayCommand, NetworkError as ProtocolError, NetworkErrorCode, RouteType,
@@ -18,8 +14,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
-use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
+use crate::crypto::{self, RelayChunkCipher, RELAY_CRYPTO_SUITE};
 use crate::events::{
     emit_incoming_offer, emit_transfer_completed, emit_transfer_error, emit_transfer_progress,
     protocol_error, protocol_error_with_context,
@@ -351,29 +347,16 @@ async fn receive_relay_offer(
         .into());
     }
     let envelope = URL_SAFE_NO_PAD.decode(encoded_payload)?;
-    if envelope.len() < 32 + 12 + 16 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Relay offer envelope is truncated",
-        )
-        .into());
-    }
-    let ephemeral_key: [u8; 32] = envelope[..32].try_into()?;
-    let nonce = &envelope[32..44];
+    let session_bytes: [u8; 16] = hex::decode(&session_id)?.try_into().map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Relay session ID")
+    })?;
     let identity = state
         .identity
         .read()
         .await
         .clone()
         .ok_or_else(|| std::io::Error::other("runtime identity is unavailable"))?;
-    let shared = identity
-        .e2e_key
-        .diffie_hellman(&X25519PublicKey::from(ephemeral_key));
-    let cipher = Aes256Gcm::new_from_slice(shared.as_bytes())
-        .map_err(|_| std::io::Error::other("invalid E2E shared secret"))?;
-    let clear = cipher
-        .decrypt(Nonce::from_slice(nonce), &envelope[44..])
-        .map_err(|_| std::io::Error::other("Relay offer authentication failed"))?;
+    let clear = crypto::decrypt_relay_offer(&envelope, &identity.e2e_key, &session_bytes)?;
     let value: serde_json::Value = serde_json::from_slice(&clear)?;
     let file_name = value
         .get("file_name")
@@ -390,6 +373,10 @@ async fn receive_relay_offer(
     let offer_sender = value.get("sender_id").and_then(serde_json::Value::as_str);
     let receiver = value.get("receiver_id").and_then(serde_json::Value::as_str);
     if value.get("v").and_then(serde_json::Value::as_u64) != Some(1)
+        || value
+            .get("crypto_suite")
+            .and_then(serde_json::Value::as_str)
+            != Some(RELAY_CRYPTO_SUITE)
         || value.get("session_id").and_then(serde_json::Value::as_str) != Some(session_id.as_str())
         || offer_sender != Some(sender_id.as_str())
         || receiver != Some(identity.device_id.as_str())
@@ -608,26 +595,15 @@ async fn receive_relay_chunk(
         )
         .into());
     }
-    let cipher = Aes256Gcm::new_from_slice(&active.offer.content_key)
-        .map_err(|_| std::io::Error::other("invalid Relay content key"))?;
     let session_bytes: [u8; 16] = hex::decode(session_id)?.try_into().map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Relay session ID")
     })?;
-    let mut nonce = [0u8; 12];
-    nonce[..4].copy_from_slice(&active.offer.nonce_prefix);
-    nonce[4..].copy_from_slice(&sequence.to_be_bytes());
-    let mut aad = [0u8; 24];
-    aad[..16].copy_from_slice(&session_bytes);
-    aad[16..].copy_from_slice(&sequence.to_be_bytes());
-    let clear = cipher
-        .decrypt(
-            Nonce::from_slice(&nonce),
-            Payload {
-                msg: ciphertext,
-                aad: &aad,
-            },
-        )
-        .map_err(|_| std::io::Error::other("Relay chunk authentication failed"))?;
+    let cipher = RelayChunkCipher::new(
+        &active.offer.content_key,
+        &session_bytes,
+        active.offer.nonce_prefix,
+    )?;
+    let clear = cipher.decrypt(sequence, ciphertext)?;
     if clear.is_empty() || active.received_bytes + clear.len() as u64 > active.offer.total_bytes {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -638,7 +614,7 @@ async fn receive_relay_chunk(
     active.file.write_all(&clear).await?;
     active.hasher.update(&clear);
     active.received_bytes += clear.len() as u64;
-    active.next_sequence += 1;
+    active.next_sequence = crypto::next_sequence(active.next_sequence)?;
     emit_transfer_progress(
         &state.event_tx,
         session_id,
@@ -768,6 +744,7 @@ pub(crate) async fn send_file_over_relay(
         rand::rngs::OsRng.fill_bytes(&mut nonce_prefix);
         let offer = serde_json::to_vec(&json!({
             "v": 1,
+            "crypto_suite": RELAY_CRYPTO_SUITE,
             "session_id": session_id,
             "sender_id": state.identity.read().await.as_ref().map(|identity| identity.device_id.as_str())
                 .ok_or_else(|| std::io::Error::other("runtime identity is unavailable"))?,
@@ -778,7 +755,8 @@ pub(crate) async fn send_file_over_relay(
             "content_key": URL_SAFE_NO_PAD.encode(content_key),
             "nonce_prefix": URL_SAFE_NO_PAD.encode(nonce_prefix),
         }))?;
-        let encrypted_offer = encrypt_relay_offer(&offer, peer.e2e_public_key)?;
+        let encrypted_offer =
+            crypto::encrypt_relay_offer(&offer, peer.e2e_public_key, &session_bytes)?;
         let (acceptance_tx, acceptance_rx) = oneshot::channel();
         state
             .relay_acceptances
@@ -812,8 +790,7 @@ pub(crate) async fn send_file_over_relay(
                 .into(),
             );
         }
-        let cipher = Aes256Gcm::new_from_slice(&content_key)
-            .map_err(|_| std::io::Error::other("invalid Relay content key"))?;
+        let cipher = RelayChunkCipher::new(&content_key, &session_bytes, nonce_prefix)?;
         let mut file = tokio::fs::File::open(&path).await?;
         let mut buffer = vec![0u8; network_transfer::DEFAULT_TRANSFER_BUFFER];
         let mut sequence = 0u64;
@@ -834,17 +811,11 @@ pub(crate) async fn send_file_over_relay(
             if read == 0 {
                 break;
             }
-            let ciphertext = encrypt_relay_chunk(
-                &cipher,
-                &session_bytes,
-                &nonce_prefix,
-                sequence,
-                &buffer[..read],
-            )?;
+            let ciphertext = cipher.encrypt(sequence, &buffer[..read])?;
             relay
                 .forward_opaque_payload(&session_id, sequence, &ciphertext)
                 .await?;
-            sequence += 1;
+            sequence = crypto::next_sequence(sequence)?;
             transferred += read as u64;
             emit_transfer_progress(
                 &state.event_tx,
@@ -903,53 +874,6 @@ pub(crate) async fn send_file_over_relay(
         );
         tracing::debug!(transfer_id = %transfer_id, error = %error, "native Relay transfer failed");
     }
-}
-
-/// 使用临时 X25519 密钥和 AES-GCM 加密 Relay 申请。
-fn encrypt_relay_offer(
-    plaintext: &[u8],
-    peer_public_key: [u8; 32],
-) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let ephemeral = StaticSecret::random_from_rng(rand::rngs::OsRng);
-    let ephemeral_public = X25519PublicKey::from(&ephemeral);
-    let shared = ephemeral.diffie_hellman(&X25519PublicKey::from(peer_public_key));
-    let cipher = Aes256Gcm::new_from_slice(shared.as_bytes())
-        .map_err(|_| std::io::Error::other("invalid E2E shared secret"))?;
-    let mut nonce = [0u8; 12];
-    rand::rngs::OsRng.fill_bytes(&mut nonce);
-    let encrypted = cipher
-        .encrypt(Nonce::from_slice(&nonce), plaintext)
-        .map_err(|_| std::io::Error::other("Relay offer encryption failed"))?;
-    let mut envelope = Vec::with_capacity(44 + encrypted.len());
-    envelope.extend_from_slice(ephemeral_public.as_bytes());
-    envelope.extend_from_slice(&nonce);
-    envelope.extend_from_slice(&encrypted);
-    Ok(envelope)
-}
-
-/// 使用序列绑定 nonce 和关联数据加密一个 Relay 分块。
-fn encrypt_relay_chunk(
-    cipher: &Aes256Gcm,
-    session_id: &[u8; 16],
-    nonce_prefix: &[u8; 4],
-    sequence: u64,
-    plaintext: &[u8],
-) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut nonce = [0u8; 12];
-    nonce[..4].copy_from_slice(nonce_prefix);
-    nonce[4..].copy_from_slice(&sequence.to_be_bytes());
-    let mut aad = [0u8; 24];
-    aad[..16].copy_from_slice(session_id);
-    aad[16..].copy_from_slice(&sequence.to_be_bytes());
-    cipher
-        .encrypt(
-            Nonce::from_slice(&nonce),
-            Payload {
-                msg: plaintext,
-                aad: &aad,
-            },
-        )
-        .map_err(|_| std::io::Error::other("Relay chunk encryption failed").into())
 }
 
 #[cfg(test)]

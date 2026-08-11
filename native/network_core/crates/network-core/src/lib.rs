@@ -4,6 +4,7 @@
 //! 线协议事件可以独立审查。
 
 mod commands;
+pub(crate) mod crypto;
 pub mod delivery;
 mod errors;
 mod events;
