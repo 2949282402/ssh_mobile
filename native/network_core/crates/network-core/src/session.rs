@@ -192,6 +192,16 @@ impl SessionManager {
             .map(|session| session.id)
     }
 
+    /// 返回当前逻辑 Session 的 active Route；Relay 没有 Quinn handle。
+    pub(crate) async fn current_route(&self, peer_id: &str) -> Option<RouteType> {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .filter(|session| session.state == SessionState::Connected)
+            .map(|session| session.active_route)
+    }
+
     pub(crate) async fn is_connected(&self, peer_id: &str) -> bool {
         self.sessions
             .read()
@@ -313,6 +323,13 @@ impl SessionManager {
     }
 }
 
+impl SessionId {
+    /// Delivery 使用独立的 Session key，避免把 peer_id 错当成 SessionId。
+    pub(crate) fn wire_key(self) -> String {
+        format!("{:016x}", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +380,45 @@ mod tests {
         assert!(manager.should_reconnect("peer-b", second).await);
         manager.close("peer-b").await;
         assert!(!manager.should_reconnect("peer-b", second).await);
+    }
+
+    #[tokio::test]
+    async fn explicit_close_does_not_recover_delivery_into_replacement_session() {
+        let manager = SessionManager::new();
+        let delivery = crate::delivery::DeliveryManager::new();
+        let first = match manager.begin_connect("peer-b").await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        delivery
+            .enqueue(
+                &first.wire_key(),
+                "control",
+                b"old-session".to_vec(),
+                crate::delivery::DeliveryPolicy::Acked,
+                Default::default(),
+            )
+            .await
+            .expect("enqueue old session message");
+        manager.close("peer-b").await;
+        let second = match manager.begin_connect("peer-b").await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        assert_ne!(first, second);
+        assert!(delivery
+            .recover_session(&second.wire_key())
+            .await
+            .messages
+            .is_empty());
+        assert_eq!(
+            delivery
+                .recover_session(&first.wire_key())
+                .await
+                .messages
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]

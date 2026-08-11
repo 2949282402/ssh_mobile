@@ -5,10 +5,11 @@ use super::*;
 use network_identity::DeviceIdentity;
 
 use network_protocol::{
-    network_command, network_event, CommandResultEvent, ConfigureRuntimeCommand,
-    ConnectPeerCommand, NetworkCommand, NetworkError as ProtocolError, NetworkErrorCode,
+    network_command, network_event, AcknowledgeMessageCommand, ChannelMessageEvent,
+    CommandResultEvent, ConfigureRuntimeCommand, ConnectPeerCommand, DeliveryAckedEvent,
+    DeliveryPolicyCode, NetworkCommand, NetworkError as ProtocolError, NetworkErrorCode,
     PeerConnectionState, RespondIncomingTransferCommand, RouteType, SendFileCommand,
-    UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
+    SendMessageCommand, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
 };
 use std::fs;
 use std::net::SocketAddr;
@@ -200,6 +201,235 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
         source_data
     );
     fs::remove_dir_all(test_root).ok();
+}
+
+/// 验证未 ACK 的消息在底层 Connection 断开后沿同一逻辑 Session 重放，
+/// 且接收端 dedup 不会再次把同一个 MessageId 交给应用。
+#[test]
+fn delivery_recovery_replays_same_message_across_reconnected_connection() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let address_a = available_loopback_address();
+    let address_b = available_loopback_address();
+    let identity_seed_a = [41u8; 32];
+    let identity_seed_b = [42u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("delivery-a".into(), identity_seed_a, [51u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("delivery-b".into(), identity_seed_b, [52u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let test_root = std::env::temp_dir().join(format!(
+        "ssh-mobile-delivery-recovery-{}",
+        rand::random::<u64>()
+    ));
+    fs::create_dir_all(&test_root).expect("test root");
+
+    configure_runtime_for_test(
+        &runtime_a,
+        "delivery-a",
+        identity_seed_a,
+        [51u8; 32],
+        address_a,
+        test_root.join("receive-a"),
+    );
+    configure_runtime_for_test(
+        &runtime_b,
+        "delivery-b",
+        identity_seed_b,
+        [52u8; 32],
+        address_b,
+        test_root.join("receive-b"),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        upsert_command("delivery-upsert-b", "delivery-b", address_b, public_key_b),
+    );
+    send_and_expect_accepted(
+        &runtime_b,
+        upsert_command("delivery-upsert-a", "delivery-a", address_a, public_key_a),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "delivery-connect".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "delivery-b".into(),
+                intent: 0,
+            })),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "delivery-b"
+                    && state.state == PeerConnectionState::Connected as i32
+        )
+    })
+    .is_some());
+
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "delivery-send".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SendMessage(SendMessageCommand {
+                peer_id: "delivery-b".into(),
+                channel_id: "control".into(),
+                payload: b"recover-me".to_vec(),
+                policy: DeliveryPolicyCode::AckedDeduplicated as i32,
+            })),
+        },
+    );
+    let first_message = poll_until(&runtime_b, Duration::from_secs(5), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::ChannelMessage(ChannelMessageEvent {
+                peer_id,
+                channel_id,
+                payload,
+                ..
+            })) if peer_id == "delivery-a" && channel_id == "control" && payload == b"recover-me"
+        )
+    })
+    .expect("receiver should observe the first delivery");
+    let (session_id, message_id) = match first_message.payload {
+        Some(network_event::Payload::ChannelMessage(message)) => {
+            (message.session_id, message.message_id)
+        }
+        _ => unreachable!("predicate already checked the event"),
+    };
+    assert_ne!(session_id, "delivery-b");
+    assert_eq!(message_id.len(), 16);
+
+    runtime_a.close_peer_connection_for_test("delivery-b");
+    assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "delivery-b"
+                    && state.state == PeerConnectionState::Disconnected as i32
+        )
+    })
+    .is_some());
+
+    // 不在第一次事件后 ACK；重连后的重复 DataMessage 会由接收端 dedup
+    // 分支自动 ACK，从而证明 RecoverySnapshot 真的重新进入了 transport。
+    let recovered_ack = poll_until(&runtime_a, Duration::from_secs(12), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id,
+                message_id: acknowledged_id,
+                ..
+            })) if peer_id == "delivery-b" && acknowledged_id == &message_id
+        )
+    });
+    assert!(recovered_ack.is_some(), "reconnected message was not ACKed");
+
+    // 该命令必须只在应用真正处理第一份消息后才会成功；这里确认其重复
+    // 进入不会产生第二次 ChannelMessage，而是被 dedup 直接 ACK。
+    let duplicate = poll_until(&runtime_b, Duration::from_millis(500), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::ChannelMessage(message))
+                if message.message_id == message_id
+        )
+    });
+    assert!(duplicate.is_none(), "dedup delivered the message twice");
+
+    // 再发一条新消息，验证应用在收到事件后显式提交 AcknowledgeMessage，
+    // 而不是只依赖重复消息的 transport-level ACK。
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "delivery-send-explicit-ack".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SendMessage(SendMessageCommand {
+                peer_id: "delivery-b".into(),
+                channel_id: "control".into(),
+                payload: b"application-ack".to_vec(),
+                policy: DeliveryPolicyCode::AckedDeduplicated as i32,
+            })),
+        },
+    );
+    let explicit_message = poll_until(&runtime_b, Duration::from_secs(5), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::ChannelMessage(message))
+                if message.payload == b"application-ack"
+        )
+    })
+    .expect("explicit ACK message");
+    let (explicit_session_id, explicit_message_id, explicit_epoch) = match explicit_message.payload
+    {
+        Some(network_event::Payload::ChannelMessage(message)) => (
+            message.session_id,
+            message.message_id,
+            message.recovery_epoch,
+        ),
+        _ => unreachable!("predicate already checked the event"),
+    };
+    send_and_expect_accepted(
+        &runtime_b,
+        NetworkCommand {
+            command_id: "delivery-ack-explicit".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::AcknowledgeMessage(
+                AcknowledgeMessageCommand {
+                    peer_id: "delivery-a".into(),
+                    session_id: explicit_session_id,
+                    channel_id: "control".into(),
+                    message_id: explicit_message_id.clone(),
+                    recovery_epoch: explicit_epoch,
+                },
+            )),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id,
+                message_id,
+                ..
+            })) if peer_id == "delivery-b" && message_id == &explicit_message_id
+        )
+    })
+    .is_some());
+    fs::remove_dir_all(test_root).ok();
+}
+
+fn configure_runtime_for_test(
+    runtime: &NetworkRuntime,
+    device_id: &str,
+    identity_seed: [u8; 32],
+    e2e_seed: [u8; 32],
+    address: SocketAddr,
+    receive_directory: std::path::PathBuf,
+) {
+    send_and_expect_accepted(
+        runtime,
+        NetworkCommand {
+            command_id: format!("configure-{device_id}"),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConfigureRuntime(
+                ConfigureRuntimeCommand {
+                    device_id: device_id.into(),
+                    identity_private_key: identity_seed.to_vec(),
+                    e2e_private_key: e2e_seed.to_vec(),
+                    listen_address: address.to_string(),
+                    receive_directory: receive_directory.to_string_lossy().to_string(),
+                },
+            )),
+        },
+    );
 }
 
 /// 为当前 v1 线协议契约创建对端 upsert 命令。

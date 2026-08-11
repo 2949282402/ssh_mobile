@@ -10,6 +10,7 @@ network-nat = { path = "../network-nat" }
 network-quic = { path = "../network-quic" }
 network-transfer = { path = "../network-transfer" }
 network-relay = { path = "../network-relay" }
+prost = "0.13"
 quinn = "0.11"
 tokio = { version = "1.38", features = ["full"] }
 tracing = "0.1"

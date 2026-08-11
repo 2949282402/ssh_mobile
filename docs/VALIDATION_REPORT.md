@@ -22,8 +22,10 @@ is limited to native network/report validation.
 | Unit and widget tests | Full App: 801 passed; Terminal slice: 3 passed |
 | Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
 | Native Dart package | `flutter analyze --no-pub` passed; `flutter test --no-pub` passed with 4 package tests |
-| Rust network workspace | `cargo fmt`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test --workspace --locked` passed; 51 tests passed |
-| Go Relay | `gofmt`, `go vet ./...`, and `go test ./...` passed |
+| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`, and `cargo test --workspace --locked` passed; 55 tests passed, including cross-Connection Delivery recovery |
+| Delivery runtime wiring | `network-core` now sends `DataMessage` through QUIC uni streams or Relay opaque controls, binds Delivery to real `SessionId`, replays RecoverySnapshot, scans retry backoff, validates ACK epoch, and emits typed channel/ACK events; `cargo test -p network-core --lib --locked --offline` passed with 21 tests |
+| Relay channel control | `channel_message`/`channel_ack` opaque forwarding integration test passed in `go test ./...`; Rust Relay codec tests passed |
+| Go Relay | `gofmt -l .`, `go vet ./...`, and `go test ./...` passed |
 | Native WebRTC | `network-webrtc` uses locked stable `rtc 0.9.1`; SDP/ICE/DataChannel/Audio/Video transceiver and media QoS tests passed |
 | Generic native transports | `network-transport` TCP/UDP/WebSocket loopback tests passed |
 | v1 static compatibility audit | No old transport, Dart Relay data-plane, protocol fallback, or v2/v3/v4 network symbols found |

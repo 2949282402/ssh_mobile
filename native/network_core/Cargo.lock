@@ -1240,6 +1240,7 @@ dependencies = [
  "network-quic",
  "network-relay",
  "network-transfer",
+ "prost",
  "quinn",
  "rand 0.8.7",
  "serde_json",

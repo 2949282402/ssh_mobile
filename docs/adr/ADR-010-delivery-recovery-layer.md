@@ -23,23 +23,26 @@ QUIC/Relay 的 transport ACK 只能说明当前连接完成了传输，不能说
 - ACK 必须同时匹配 Session、MessageId 和当前 Recovery Epoch；旧连接迟到的
   ACK 返回 `StaleEpoch`，不能删除新恢复周期的 Pending。
 - 接收端去重窗口按 `Session + Channel + MessageId` 维护，拥有 TTL 和最大条目
-  数；业务处理失败可以释放 in-flight 标记，重复消息只重新 ACK，不重复执行。
+  数；更高 Recovery Epoch 的同一 MessageId 只更新 ACK 绑定，较低 epoch 被拒绝，
+  重复消息只重新 ACK，不重复执行。
 - RetryPolicy 使用最大尝试次数、指数退避、TTL 和最大重试字节预算；过期或
   耗尽预算的消息不再无限后台重试。
-- Connection Ready 会为对应 Session 创建新的 Recovery Snapshot，将尚未
-  ACK 的消息重新排入 Queued，交由未来的 Channel/Transport adapter 在当前
-  Connection 上重新编码发送。Pending 保存逻辑 payload，不保存旧连接上的
-  Ciphertext。
-- 本 Step 只建立 Rust native core 的 Delivery/Recovery 边界和状态机，不改变
-  Flutter/Dart FFI 命令、事件或前端代码；File Resume 的 `.part`、checkpoint
-  和 TransferId 恢复在后续 Step 单独接入。
+- Connection Ready 会为对应真实 `SessionId` 创建新的 Recovery Snapshot，
+  逐条领取 Pending 消息并通过统一 Channel adapter 重新编码到当前 QUIC
+  单向 stream 或 Relay opaque control；ACK 超时由 Session 级 retry worker
+  继续扫描。Pending 保存逻辑 payload，不保存旧连接上的 Ciphertext。
+- native v1 协议现在包含 `SendMessage`、`AcknowledgeMessage`、`DataMessage`
+  和 `DeliveryAck`；Flutter/Dart 公共 API 仍不直接暴露 Quinn、Relay 或
+  Rust pointer，后续 FFI API Step 再把这些能力映射为 Session/Channel 语义。
+  File Resume 的 `.part`、checkpoint 和 TransferId 恢复仍在后续 Step 单独接入。
 
 ## 后果
 
 应用层可以在 Connection 重建后区分 ACK、重试、过期和重复消息，并保留跨路由
-切换的顺序语义。当前已有文件流仍使用自己的 manifest/完成 ACK，尚未把文件
-chunk 迁移为通用 Channel；该迁移留给 File Resume 步骤，避免同时改变现有 v1
-客户端契约。
+切换的顺序语义；真实 SessionId 变化时旧 Session 的 Pending 不会进入新 Session。
+QUIC 与 Relay 都可承载相同的 DataMessage/DeliveryAck，Relay 只转发 opaque
+payload。当前已有文件流仍使用自己的 manifest/完成 ACK，尚未把文件 chunk
+迁移为通用 Channel；该迁移留给 File Resume 步骤。
 
 ## 状态
 

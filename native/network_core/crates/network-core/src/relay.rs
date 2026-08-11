@@ -2,10 +2,12 @@
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use network_protocol::{
-    ConfigureRelayCommand, NetworkError as ProtocolError, NetworkErrorCode, RouteType,
+    ConfigureRelayCommand, DataMessage, DeliveryAck, NetworkError as ProtocolError,
+    NetworkErrorCode, RouteType,
 };
 use network_relay::{RelayClient, RelayEvent};
 use network_transfer::build_file_manifest;
+use prost::Message;
 use rand::RngCore;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -196,6 +198,36 @@ pub(crate) async fn handle_relay_events(
                 }
                 cancel_relay_incoming(&state, &session_id).await;
             }
+            RelayEvent::Control {
+                kind,
+                session_id,
+                peer_id,
+                payload,
+                ..
+            } if kind == "channel_message" => {
+                if let (Some(peer_id), Some(payload)) = (peer_id, payload) {
+                    if let Err(error) =
+                        receive_relay_channel_message(&state, &peer_id, &session_id, &payload).await
+                    {
+                        tracing::debug!(peer_id = %peer_id, error = %error, "rejected Relay DataMessage");
+                    }
+                }
+            }
+            RelayEvent::Control {
+                kind,
+                session_id,
+                peer_id,
+                payload,
+                ..
+            } if kind == "channel_ack" => {
+                if let (Some(peer_id), Some(payload)) = (peer_id, payload) {
+                    if let Err(error) =
+                        receive_relay_delivery_ack(&state, &peer_id, &session_id, &payload).await
+                    {
+                        tracing::debug!(peer_id = %peer_id, error = %error, "rejected Relay DeliveryAck");
+                    }
+                }
+            }
             RelayEvent::Binary {
                 session_id,
                 sequence,
@@ -268,6 +300,57 @@ pub(crate) async fn handle_relay_events(
             )),
         );
     }
+}
+
+/// Relay 只转发 Base64 包装的 opaque DataMessage，业务解码仍在 native core。
+async fn receive_relay_channel_message(
+    state: &RuntimeState,
+    peer_id: &str,
+    session_token: &str,
+    payload: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !state.peers.read().await.contains_key(peer_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Relay channel sender is not a registered peer",
+        )
+        .into());
+    }
+    let encoded = URL_SAFE_NO_PAD.decode(payload)?;
+    let message = DataMessage::decode(encoded.as_slice())?;
+    if hex::encode(&message.message_id) != session_token {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Relay channel token does not match MessageId",
+        )
+        .into());
+    }
+    crate::channel::handle_data_message(state, peer_id, &encoded).await
+}
+
+async fn receive_relay_delivery_ack(
+    state: &RuntimeState,
+    peer_id: &str,
+    session_token: &str,
+    payload: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !state.peers.read().await.contains_key(peer_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Relay channel sender is not a registered peer",
+        )
+        .into());
+    }
+    let encoded = URL_SAFE_NO_PAD.decode(payload)?;
+    let ack = DeliveryAck::decode(encoded.as_slice())?;
+    if hex::encode(&ack.message_id) != session_token {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Relay ACK token does not match MessageId",
+        )
+        .into());
+    }
+    crate::channel::handle_delivery_ack(state, peer_id, &encoded).await
 }
 
 /// 清理 Relay 断开后不能再完成的审批、会话和临时文件。

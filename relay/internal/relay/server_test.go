@@ -493,6 +493,41 @@ func TestDartWireContractEndToEnd(t *testing.T) {
 		t.Fatalf("invalid online lookup response: %+v (%v)", onlineLookup, err)
 	}
 
+	const channelToken = "ffeeddccbbaa99887766554433221100"
+	opaqueChannel := base64.RawURLEncoding.EncodeToString([]byte("opaque-channel-message"))
+	if err := deviceA.WriteJSON(controlFrame{
+		Type:      "channel_message",
+		SessionID: channelToken,
+		TargetID:  "device-b",
+		Payload:   opaqueChannel,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var channelMessage controlFrame
+	if err := deviceB.ReadJSON(&channelMessage); err != nil ||
+		channelMessage.Type != "channel_message" ||
+		channelMessage.SessionID != channelToken ||
+		channelMessage.SenderID != "device-a" ||
+		channelMessage.Payload != opaqueChannel {
+		t.Fatalf("invalid opaque channel message: %+v (%v)", channelMessage, err)
+	}
+	if err := deviceB.WriteJSON(controlFrame{
+		Type:      "channel_ack",
+		SessionID: channelToken,
+		TargetID:  "device-a",
+		Payload:   opaqueChannel,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var channelAck controlFrame
+	if err := deviceA.ReadJSON(&channelAck); err != nil ||
+		channelAck.Type != "channel_ack" ||
+		channelAck.SessionID != channelToken ||
+		channelAck.SenderID != "device-b" ||
+		channelAck.Payload != opaqueChannel {
+		t.Fatalf("invalid opaque channel ACK: %+v (%v)", channelAck, err)
+	}
+
 	const sessionID = "00112233445566778899aabbccddeeff"
 	opaquePayload := base64.RawURLEncoding.EncodeToString([]byte("opaque-offer"))
 	if err := deviceA.WriteJSON(controlFrame{

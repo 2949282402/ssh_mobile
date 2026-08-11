@@ -66,6 +66,12 @@ pub(crate) async fn dispatch_command(
         | Some(network_command::Payload::RespondIncomingTransfer(_)) => {
             transfer::dispatch_transfer_command(state, command).await
         }
+        Some(network_command::Payload::SendMessage(message)) => {
+            crate::channel::start_send_message(state, message).await
+        }
+        Some(network_command::Payload::AcknowledgeMessage(ack)) => {
+            crate::channel::acknowledge_message(&state, ack).await
+        }
         Some(network_command::Payload::ConfigureRelay(config)) => {
             start_configure_relay(state, config).await
         }

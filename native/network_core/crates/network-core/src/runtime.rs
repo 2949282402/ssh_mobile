@@ -22,6 +22,8 @@ use network_nat::PathManager;
 use network_relay::RelayClient;
 use network_transfer::TransferManager;
 use quinn::Endpoint;
+#[cfg(test)]
+use quinn::VarInt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -34,6 +36,7 @@ pub(crate) const RECONNECT_MAX_BACKOFF: Duration = Duration::from_secs(5);
 pub(crate) const INCOMING_APPROVAL_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) const MAX_PENDING_INCOMING_TRANSFERS: usize = 64;
+pub(crate) const DELIVERY_RETRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(crate) const RUNTIME_CREATED: u8 = 0;
 pub(crate) const RUNTIME_RUNNING: u8 = 1;
@@ -57,6 +60,7 @@ pub(crate) struct RuntimeState {
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
     pub(crate) sessions: SessionManager,
     pub(crate) delivery: DeliveryManager,
+    pub(crate) delivery_tasks: RwLock<HashMap<String, SessionId>>,
     pub(crate) reconnect_tasks: RwLock<HashMap<String, SessionId>>,
     pub(crate) relay: RwLock<Option<Arc<RelayClient>>>,
     pub(crate) relay_acceptances: RwLock<HashMap<String, oneshot::Sender<bool>>>,
@@ -84,6 +88,7 @@ impl RuntimeState {
             trusted_peer_keys: RwLock::new(HashMap::new()),
             sessions: SessionManager::new(),
             delivery: DeliveryManager::new(),
+            delivery_tasks: RwLock::new(HashMap::new()),
             reconnect_tasks: RwLock::new(HashMap::new()),
             relay: RwLock::new(None),
             relay_acceptances: RwLock::new(HashMap::new()),
@@ -107,6 +112,8 @@ pub struct NetworkRuntime {
     pub(crate) event_rx: Arc<Mutex<UnboundedReceiver<NetworkEvent>>>,
     pub(crate) event_tx: UnboundedSender<NetworkEvent>,
     pub(crate) lifecycle: AtomicU8,
+    #[cfg(test)]
+    test_state: Mutex<Option<Arc<RuntimeState>>>,
 }
 
 impl NetworkRuntime {
@@ -127,6 +134,8 @@ impl NetworkRuntime {
             event_rx: Arc::new(Mutex::new(event_rx)),
             event_tx,
             lifecycle: AtomicU8::new(RUNTIME_CREATED),
+            #[cfg(test)]
+            test_state: Mutex::new(None),
         })
     }
 
@@ -142,6 +151,7 @@ impl NetworkRuntime {
             .map_err(|_| NetworkError::RuntimeNotRunning)?;
         let (command_tx, command_rx) = unbounded_channel::<NetworkCommand>();
         let state = Arc::new(RuntimeState::new(self.event_tx.clone()));
+        self.store_test_state(Arc::clone(&state))?;
         let worker = self.runtime.spawn(run_command_worker(command_rx, state));
         *self
             .command_tx
@@ -232,6 +242,38 @@ impl NetworkRuntime {
     /// 为原生测试和受控集成注入一个事件。
     pub fn emit_event(&self, event: NetworkEvent) {
         let _ = self.event_tx.send(event);
+    }
+
+    #[cfg(test)]
+    fn store_test_state(&self, state: Arc<RuntimeState>) -> Result<(), NetworkError> {
+        *self
+            .test_state
+            .lock()
+            .map_err(|_| NetworkError::CommandQueueFailed("test state lock poisoned".into()))? =
+            Some(state);
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn store_test_state(&self, _state: Arc<RuntimeState>) -> Result<(), NetworkError> {
+        Ok(())
+    }
+
+    /// 只供 network-core 集成测试模拟底层 Connection 断开；生产 API 不暴露
+    /// Quinn handle，也不允许业务层绕过 Session/Delivery 生命周期。
+    #[cfg(test)]
+    pub(crate) fn close_peer_connection_for_test(&self, peer_id: &str) {
+        let state = self
+            .test_state
+            .lock()
+            .expect("test state lock")
+            .clone()
+            .expect("runtime test state");
+        self.runtime.block_on(async move {
+            if let Some(connection) = state.sessions.current_connection(peer_id).await {
+                connection.close(VarInt::from_u32(0), b"test transport interruption");
+            }
+        });
     }
 }
 

@@ -1,0 +1,535 @@
+//! Delivery Manager 与当前 Route 的生产接线。
+//!
+//! Delivery 只保存可重编码的应用消息；本模块负责在 Connection Ready、
+//! ACK、重连和 Route 变化时把同一份 DataMessage 发送到当前 QUIC 或 Relay。
+//! 所有发送都以逻辑 SessionId 为边界，不把 MessageId、Sequence 或
+//! RecoveryEpoch 存进具体 Connection。
+
+use network_protocol::{
+    network_event, AcknowledgeMessageCommand, ChannelMessageEvent, DataMessage, DeliveryAck,
+    DeliveryAckedEvent, DeliveryPolicyCode, NetworkError as ProtocolError, NetworkErrorCode,
+    NetworkEvent, RouteType, SendMessageCommand, NETWORK_PROTOCOL_VERSION,
+};
+use network_quic::{send_channel_frame, ChannelFrameKind, MAX_CHANNEL_FRAME_BYTES};
+use prost::Message;
+use std::sync::Arc;
+use std::time::Instant;
+
+use crate::delivery::{
+    AckResult, DedupDecision, DeliveryError, DeliveryPolicy, PendingMessage, RecoverySnapshot,
+};
+use crate::events::{protocol_error, protocol_error_with_peer};
+use crate::runtime::{RuntimeState, DELIVERY_RETRY_POLL_INTERVAL};
+use crate::session::SessionId;
+
+const MAX_DELIVERY_MESSAGE_PAYLOAD_BYTES: usize = MAX_CHANNEL_FRAME_BYTES - 1024;
+
+/// 将 Dart/Protobuf 命令转换为 Delivery 消息并立即排入当前逻辑 Session。
+pub(crate) async fn start_send_message(
+    state: Arc<RuntimeState>,
+    command: SendMessageCommand,
+) -> Result<(), ProtocolError> {
+    if command.peer_id.is_empty() || command.channel_id.is_empty() {
+        return Err(protocol_error(
+            NetworkErrorCode::InvalidArgument,
+            "peer_id and channel_id are required",
+        ));
+    }
+    if command.payload.len() > MAX_DELIVERY_MESSAGE_PAYLOAD_BYTES {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::InvalidArgument,
+            "message payload exceeds the channel frame limit",
+            "send_message",
+            &command.peer_id,
+        ));
+    }
+    let policy = decode_policy(command.policy).ok_or_else(|| {
+        protocol_error_with_peer(
+            NetworkErrorCode::InvalidArgument,
+            "unsupported Delivery policy",
+            "send_message",
+            &command.peer_id,
+        )
+    })?;
+    let Some(session_id) = state.sessions.current_session_id(&command.peer_id).await else {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            "peer has no connected logical Session",
+            "send_message",
+            &command.peer_id,
+        ));
+    };
+    if !state.sessions.is_connected(&command.peer_id).await {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            "peer has no connected logical Session",
+            "send_message",
+            &command.peer_id,
+        ));
+    }
+    let message = state
+        .delivery
+        .enqueue(
+            &session_id.wire_key(),
+            &command.channel_id,
+            command.payload,
+            policy,
+            Default::default(),
+        )
+        .await
+        .map_err(|error| delivery_error(&command.peer_id, error))?;
+    ensure_retry_worker(Arc::clone(&state), command.peer_id.clone(), session_id).await;
+    tokio::spawn(deliver_pending_message(
+        state,
+        command.peer_id,
+        session_id,
+        message,
+    ));
+    Ok(())
+}
+
+/// 在当前 Route 上发送一个已由 DeliveryManager 领取的消息。
+async fn deliver_pending_message(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    session_id: SessionId,
+    message: PendingMessage,
+) {
+    if message.policy == DeliveryPolicy::BestEffort {
+        if let Err(error) = send_data_message(&state, &peer_id, &message).await {
+            tracing::debug!(peer_id = %peer_id, error = %error, "best-effort channel message was not sent");
+        }
+        return;
+    }
+
+    let sendable = match state
+        .delivery
+        .begin_send(message.message_id, Instant::now())
+        .await
+    {
+        Ok(Some(message)) => message,
+        Ok(None) | Err(DeliveryError::NotFound) => return,
+        Err(error) => {
+            tracing::debug!(peer_id = %peer_id, error = %error, "delivery message was not sendable");
+            return;
+        }
+    };
+    let result = send_data_message(&state, &peer_id, &sendable).await;
+    match result {
+        Ok(()) => {
+            let _ = state
+                .delivery
+                .mark_sent(sendable.message_id, Instant::now())
+                .await;
+        }
+        Err(error) => {
+            let _ = state
+                .delivery
+                .mark_send_failed(sendable.message_id, Instant::now())
+                .await;
+            tracing::debug!(
+                peer_id = %peer_id,
+                session_id = %session_id.wire_key(),
+                error = %error,
+                "delivery message send failed and was returned to retry queue"
+            );
+        }
+    }
+}
+
+/// 将一个 RecoverySnapshot 逐条重新编码并发送；Snapshot 不再被静默丢弃。
+pub(crate) async fn recover_session(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    session_id: SessionId,
+) {
+    let session_key = session_id.wire_key();
+    let snapshot = state.delivery.recover_session(&session_key).await;
+    ensure_retry_worker(Arc::clone(&state), peer_id.clone(), session_id).await;
+    replay_snapshot(state, peer_id, session_id, snapshot).await;
+}
+
+async fn replay_snapshot(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    session_id: SessionId,
+    snapshot: RecoverySnapshot,
+) {
+    for message in snapshot.messages {
+        deliver_pending_message(Arc::clone(&state), peer_id.clone(), session_id, message).await;
+    }
+}
+
+/// 每个逻辑 Session 只运行一个 ACK 超时扫描器；Connection 替换不会重复
+/// 创建扫描任务，Session 关闭或换代时旧任务会自然退出。
+async fn ensure_retry_worker(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
+    let should_start = {
+        let mut tasks = state.delivery_tasks.write().await;
+        match tasks.get(&peer_id).copied() {
+            Some(existing) if existing == session_id => false,
+            _ => {
+                tasks.insert(peer_id.clone(), session_id);
+                true
+            }
+        }
+    };
+    if !should_start {
+        return;
+    }
+    tokio::spawn(async move {
+        let session_key = session_id.wire_key();
+        loop {
+            if state.sessions.current_session_id(&peer_id).await != Some(session_id)
+                || !state.sessions.is_connected(&peer_id).await
+            {
+                break;
+            }
+            for message in state
+                .delivery
+                .retryable_messages(&session_key, Instant::now())
+                .await
+            {
+                deliver_pending_message(Arc::clone(&state), peer_id.clone(), session_id, message)
+                    .await;
+            }
+            tokio::time::sleep(DELIVERY_RETRY_POLL_INTERVAL).await;
+        }
+        let mut tasks = state.delivery_tasks.write().await;
+        if tasks.get(&peer_id).copied() == Some(session_id) {
+            tasks.remove(&peer_id);
+        }
+    });
+}
+
+async fn send_data_message(
+    state: &RuntimeState,
+    peer_id: &str,
+    message: &PendingMessage,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let data = DataMessage {
+        session_id: message.session_id.clone(),
+        channel_id: message.channel_id.clone(),
+        message_id: message.message_id.to_bytes().to_vec(),
+        sequence: message.sequence,
+        recovery_epoch: message.recovery_epoch,
+        policy: policy_code(message.policy),
+        payload: message.payload.clone(),
+    };
+    let encoded = data.encode_to_vec();
+    if encoded.len() > MAX_CHANNEL_FRAME_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "encoded channel message exceeds frame limit",
+        )
+        .into());
+    }
+    match state.sessions.current_route(peer_id).await {
+        Some(RouteType::QuicDirect | RouteType::Lan) => {
+            let connection = state
+                .sessions
+                .current_connection(peer_id)
+                .await
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotConnected,
+                        "direct route unavailable",
+                    )
+                })?;
+            send_channel_frame(&connection, ChannelFrameKind::DataMessage, &encoded).await
+        }
+        Some(RouteType::Relay) => {
+            let relay = state.relay.read().await.clone().ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "Relay route unavailable")
+            })?;
+            relay
+                .send_channel_message(
+                    &hex::encode(message.message_id.to_bytes()),
+                    peer_id,
+                    &encoded,
+                )
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()).into())
+        }
+        Some(route) => {
+            Err(std::io::Error::other(format!("unsupported message route: {route:?}")).into())
+        }
+        None => Err(std::io::Error::new(
+            std::io::ErrorKind::NotConnected,
+            "message route unavailable",
+        )
+        .into()),
+    }
+}
+
+/// 处理 Dart 对已交付消息的 ACK，并把 ACK 发送到当前 Route。
+pub(crate) async fn acknowledge_message(
+    state: &RuntimeState,
+    command: AcknowledgeMessageCommand,
+) -> Result<(), ProtocolError> {
+    let message_id: [u8; 16] = command.message_id.try_into().map_err(|_| {
+        protocol_error(
+            NetworkErrorCode::InvalidArgument,
+            "message_id must contain 16 bytes",
+        )
+    })?;
+    if command.peer_id.is_empty() || command.session_id.is_empty() || command.channel_id.is_empty()
+    {
+        return Err(protocol_error(
+            NetworkErrorCode::InvalidArgument,
+            "peer_id, session_id, and channel_id are required",
+        ));
+    }
+    if !state
+        .delivery
+        .complete_incoming(
+            &command.session_id,
+            &command.channel_id,
+            crate::delivery::MessageId::from_bytes(message_id),
+            command.recovery_epoch,
+        )
+        .await
+    {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::InvalidArgument,
+            "message is not awaiting acknowledgement",
+            "acknowledge_message",
+            &command.peer_id,
+        ));
+    }
+    let ack = DeliveryAck {
+        session_id: command.session_id,
+        message_id: message_id.to_vec(),
+        recovery_epoch: command.recovery_epoch,
+    };
+    send_delivery_ack(state, &command.peer_id, &ack)
+        .await
+        .map_err(|error| {
+            protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                error.to_string(),
+                "acknowledge_message",
+                &command.peer_id,
+            )
+        })
+}
+
+async fn send_delivery_ack(
+    state: &RuntimeState,
+    peer_id: &str,
+    ack: &DeliveryAck,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let encoded = ack.encode_to_vec();
+    let message_id: [u8; 16] = ack
+        .message_id
+        .as_slice()
+        .try_into()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid ACK ID"))?;
+    match state.sessions.current_route(peer_id).await {
+        Some(RouteType::QuicDirect | RouteType::Lan) => {
+            let connection = state
+                .sessions
+                .current_connection(peer_id)
+                .await
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotConnected,
+                        "direct route unavailable",
+                    )
+                })?;
+            send_channel_frame(&connection, ChannelFrameKind::DeliveryAck, &encoded).await
+        }
+        Some(RouteType::Relay) => {
+            let relay = state.relay.read().await.clone().ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "Relay route unavailable")
+            })?;
+            relay
+                .send_channel_ack(&hex::encode(message_id), peer_id, &encoded)
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()).into())
+        }
+        Some(route) => {
+            Err(std::io::Error::other(format!("unsupported ACK route: {route:?}")).into())
+        }
+        None => Err(
+            std::io::Error::new(std::io::ErrorKind::NotConnected, "ACK route unavailable").into(),
+        ),
+    }
+}
+
+/// 处理 QUIC/Relay 到达的 DataMessage；只有 New 消息才进入应用事件流。
+pub(crate) async fn handle_data_message(
+    state: &RuntimeState,
+    peer_id: &str,
+    encoded: &[u8],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let message = DataMessage::decode(encoded)?;
+    validate_data_message(&message)?;
+    let message_id: [u8; 16] =
+        message.message_id.as_slice().try_into().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid message ID")
+        })?;
+    if message.policy != DeliveryPolicyCode::BestEffort as i32 {
+        match state
+            .delivery
+            .begin_incoming(
+                &message.session_id,
+                &message.channel_id,
+                crate::delivery::MessageId::from_bytes(message_id),
+                message.recovery_epoch,
+                Instant::now(),
+            )
+            .await
+        {
+            DedupDecision::Duplicate => {
+                // 首次事件已经交给本地应用；后续重传只补发 ACK，不能再次
+                // 进入业务 handler，也不能让发送方永久占用 Pending。
+                let _ = state
+                    .delivery
+                    .complete_incoming(
+                        &message.session_id,
+                        &message.channel_id,
+                        crate::delivery::MessageId::from_bytes(message_id),
+                        message.recovery_epoch,
+                    )
+                    .await;
+                let ack = DeliveryAck {
+                    session_id: message.session_id.clone(),
+                    message_id: message_id.to_vec(),
+                    recovery_epoch: message.recovery_epoch,
+                };
+                send_delivery_ack(state, peer_id, &ack).await?;
+                return Ok(());
+            }
+            DedupDecision::StaleEpoch => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "stale DataMessage recovery epoch",
+                )
+                .into());
+            }
+            DedupDecision::New => {}
+        }
+    }
+    let _ = state.event_tx.send(NetworkEvent {
+        event_id: format!(
+            "{peer_id}/channel/{}/{}/{}",
+            message.session_id,
+            message.channel_id,
+            hex::encode(message_id)
+        ),
+        timestamp_ms: crate::events::unix_timestamp_ms(),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_event::Payload::ChannelMessage(
+            ChannelMessageEvent {
+                peer_id: peer_id.to_string(),
+                session_id: message.session_id,
+                channel_id: message.channel_id,
+                message_id: message_id.to_vec(),
+                sequence: message.sequence,
+                recovery_epoch: message.recovery_epoch,
+                policy: message.policy,
+                payload: message.payload,
+            },
+        )),
+    });
+    Ok(())
+}
+
+/// 处理传输层收到的 ACK，并只接受当前 epoch 的 ACK。
+pub(crate) async fn handle_delivery_ack(
+    state: &RuntimeState,
+    peer_id: &str,
+    encoded: &[u8],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let ack = DeliveryAck::decode(encoded)?;
+    let message_id: [u8; 16] = ack
+        .message_id
+        .as_slice()
+        .try_into()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid ACK ID"))?;
+    if !ack.session_id.is_empty()
+        && state
+            .delivery
+            .acknowledge(
+                &ack.session_id,
+                crate::delivery::MessageId::from_bytes(message_id),
+                ack.recovery_epoch,
+            )
+            .await
+            == AckResult::Acknowledged
+    {
+        let _ = state.event_tx.send(NetworkEvent {
+            event_id: format!(
+                "{peer_id}/delivery-ack/{}/{}",
+                ack.session_id,
+                hex::encode(message_id)
+            ),
+            timestamp_ms: crate::events::unix_timestamp_ms(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id: peer_id.to_string(),
+                session_id: ack.session_id,
+                message_id: message_id.to_vec(),
+                recovery_epoch: ack.recovery_epoch,
+            })),
+        });
+    }
+    Ok(())
+}
+
+fn validate_data_message(
+    message: &DataMessage,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if message.session_id.is_empty()
+        || message.session_id.len() > 128
+        || message.channel_id.is_empty()
+        || message.channel_id.len() > 128
+        || message.message_id.len() != 16
+        || message.payload.len() > MAX_DELIVERY_MESSAGE_PAYLOAD_BYTES
+        || DeliveryPolicyCode::try_from(message.policy).is_err()
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid DataMessage envelope",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn decode_policy(value: i32) -> Option<DeliveryPolicy> {
+    match DeliveryPolicyCode::try_from(value).ok()? {
+        DeliveryPolicyCode::BestEffort => Some(DeliveryPolicy::BestEffort),
+        DeliveryPolicyCode::LatestState => Some(DeliveryPolicy::LatestState),
+        DeliveryPolicyCode::Acked => Some(DeliveryPolicy::Acked),
+        DeliveryPolicyCode::AckedDeduplicated => Some(DeliveryPolicy::AckedDeduplicated),
+        DeliveryPolicyCode::SessionBoundOrdered => Some(DeliveryPolicy::SessionBoundOrdered),
+        DeliveryPolicyCode::ResumableTransfer => Some(DeliveryPolicy::ResumableTransfer),
+    }
+}
+
+fn policy_code(policy: DeliveryPolicy) -> i32 {
+    match policy {
+        DeliveryPolicy::BestEffort => DeliveryPolicyCode::BestEffort as i32,
+        DeliveryPolicy::LatestState => DeliveryPolicyCode::LatestState as i32,
+        DeliveryPolicy::Acked => DeliveryPolicyCode::Acked as i32,
+        DeliveryPolicy::AckedDeduplicated => DeliveryPolicyCode::AckedDeduplicated as i32,
+        DeliveryPolicy::SessionBoundOrdered => DeliveryPolicyCode::SessionBoundOrdered as i32,
+        DeliveryPolicy::ResumableTransfer => DeliveryPolicyCode::ResumableTransfer as i32,
+    }
+}
+
+fn delivery_error(peer_id: &str, error: DeliveryError) -> ProtocolError {
+    let code = match error {
+        DeliveryError::QueueFull | DeliveryError::PayloadTooLarge => {
+            NetworkErrorCode::InvalidArgument
+        }
+        DeliveryError::InvalidScope | DeliveryError::InvalidRetryPolicy => {
+            NetworkErrorCode::InvalidArgument
+        }
+        DeliveryError::NotFound | DeliveryError::Expired | DeliveryError::RetryExhausted => {
+            NetworkErrorCode::IoError
+        }
+    };
+    protocol_error_with_peer(code, error.to_string(), "send_message", peer_id)
+}

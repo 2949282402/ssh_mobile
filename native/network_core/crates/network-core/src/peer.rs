@@ -6,7 +6,7 @@ use network_protocol::{
     NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState, RouteType,
     UpsertPeerCommand,
 };
-use network_quic::{QuicEndpointManager, QuicPeerSession};
+use network_quic::{read_channel_frame, ChannelFrameKind, QuicEndpointManager, QuicPeerSession};
 use network_relay::RelayClient;
 use quinn::{Connection, Endpoint, VarInt};
 use std::future::Future;
@@ -341,9 +341,14 @@ pub(crate) async fn connect_peer(
                 session_id,
                 connection.clone(),
             );
-            let _ = state.delivery.recover_session(&peer_id).await;
+            crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
             crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
-            tokio::spawn(receive_file_streams(peer_id, connection, state));
+            tokio::spawn(receive_file_streams(
+                peer_id.clone(),
+                connection.clone(),
+                Arc::clone(&state),
+            ));
+            tokio::spawn(receive_channel_streams(peer_id, connection, state));
             Ok(())
         }
         Ok(ReadyRoute::Relay) => {
@@ -366,7 +371,7 @@ pub(crate) async fn connect_peer(
                 RouteType::Relay,
                 None,
             );
-            let _ = state.delivery.recover_session(&peer_id).await;
+            crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
             crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
             Ok(())
         }
@@ -584,9 +589,14 @@ async fn migrate_direct_path(
         session_id,
         replacement.clone(),
     );
-    let _ = state.delivery.recover_session(&peer_id).await;
+    crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
     crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
-    tokio::spawn(receive_file_streams(peer_id, replacement, state));
+    tokio::spawn(receive_file_streams(
+        peer_id.clone(),
+        replacement.clone(),
+        Arc::clone(&state),
+    ));
+    tokio::spawn(receive_channel_streams(peer_id, replacement, state));
     true
 }
 
@@ -734,10 +744,20 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                         session_id,
                         connection.clone(),
                     );
+                    crate::channel::recover_session(
+                        Arc::clone(&state),
+                        peer_id.clone(),
+                        session_id,
+                    )
+                    .await;
                 }
-                let _ = state.delivery.recover_session(&peer_id).await;
                 crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
                     .await;
+                tokio::spawn(receive_channel_streams(
+                    peer_id.clone(),
+                    connection.clone(),
+                    Arc::clone(&state),
+                ));
                 receive_file_streams(peer_id, connection, Arc::clone(&state)).await;
                 Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
             }
@@ -765,23 +785,75 @@ pub(crate) async fn receive_file_streams(
                 });
             }
             Err(_) => {
-                let disconnected_session = state
-                    .sessions
-                    .mark_disconnected_if_current(&peer_id, &connection)
-                    .await;
-                if let Some(session_id) = disconnected_session {
-                    emit_peer_state(
-                        &state.event_tx,
-                        &peer_id,
-                        PeerConnectionState::Disconnected,
-                        RouteType::Unspecified,
-                        None,
-                    );
-                    schedule_reconnect(Arc::clone(&state), peer_id.clone(), session_id);
-                }
+                handle_connection_disconnect(&state, &peer_id, &connection).await;
                 return;
             }
         }
+    }
+}
+
+/// 接收一条 QUIC 单向 Delivery stream；stream 关闭只影响当前 Connection，
+/// 逻辑消息仍由 DeliveryManager 在下一条 Connection 上恢复。
+pub(crate) async fn receive_channel_streams(
+    peer_id: String,
+    connection: Connection,
+    state: Arc<RuntimeState>,
+) {
+    loop {
+        match connection.accept_uni().await {
+            Ok(mut receive) => {
+                let state = Arc::clone(&state);
+                let peer_id = peer_id.clone();
+                tokio::spawn(async move {
+                    match read_channel_frame(&mut receive).await {
+                        Ok((ChannelFrameKind::DataMessage, payload)) => {
+                            if let Err(error) =
+                                crate::channel::handle_data_message(&state, &peer_id, &payload)
+                                    .await
+                            {
+                                tracing::debug!(peer_id = %peer_id, error = %error, "rejected QUIC DataMessage");
+                            }
+                        }
+                        Ok((ChannelFrameKind::DeliveryAck, payload)) => {
+                            if let Err(error) =
+                                crate::channel::handle_delivery_ack(&state, &peer_id, &payload)
+                                    .await
+                            {
+                                tracing::debug!(peer_id = %peer_id, error = %error, "rejected QUIC DeliveryAck");
+                            }
+                        }
+                        Err(error) => {
+                            tracing::debug!(peer_id = %peer_id, error = %error, "QUIC channel stream failed");
+                        }
+                    }
+                });
+            }
+            Err(_) => {
+                handle_connection_disconnect(&state, &peer_id, &connection).await;
+                return;
+            }
+        }
+    }
+}
+
+async fn handle_connection_disconnect(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    connection: &Connection,
+) {
+    let disconnected_session = state
+        .sessions
+        .mark_disconnected_if_current(peer_id, connection)
+        .await;
+    if let Some(session_id) = disconnected_session {
+        emit_peer_state(
+            &state.event_tx,
+            peer_id,
+            PeerConnectionState::Disconnected,
+            RouteType::Unspecified,
+            None,
+        );
+        schedule_reconnect(Arc::clone(state), peer_id.to_string(), session_id);
     }
 }
 

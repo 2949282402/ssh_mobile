@@ -42,6 +42,18 @@ pub enum RouteType {
     Lan = 4,
 }
 
+/// 应用消息进入 Delivery Manager 后采用的可靠性策略。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum DeliveryPolicyCode {
+    BestEffort = 0,
+    LatestState = 1,
+    Acked = 2,
+    AckedDeduplicated = 3,
+    SessionBoundOrdered = 4,
+    ResumableTransfer = 5,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
 #[repr(i32)]
 pub enum RelayConnectionState {
@@ -129,6 +141,32 @@ pub struct RespondIncomingTransferCommand {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct SendMessageCommand {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(string, tag = "2")]
+    pub channel_id: String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub payload: Vec<u8>,
+    #[prost(enumeration = "DeliveryPolicyCode", tag = "4")]
+    pub policy: i32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct AcknowledgeMessageCommand {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(string, tag = "2")]
+    pub session_id: String,
+    #[prost(string, tag = "3")]
+    pub channel_id: String,
+    #[prost(bytes = "vec", tag = "4")]
+    pub message_id: Vec<u8>,
+    #[prost(uint64, tag = "5")]
+    pub recovery_epoch: u64,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct ConfigureRelayCommand {
     #[prost(string, tag = "1")]
     pub relay_url: String,
@@ -149,7 +187,7 @@ pub struct NetworkCommand {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_command::Payload",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20"
     )]
     pub payload: Option<network_command::Payload>,
 }
@@ -177,7 +215,41 @@ pub mod network_command {
         DisconnectPeer(DisconnectPeerCommand),
         #[prost(message, tag = "18")]
         DisconnectRelay(DisconnectRelayCommand),
+        #[prost(message, tag = "19")]
+        SendMessage(SendMessageCommand),
+        #[prost(message, tag = "20")]
+        AcknowledgeMessage(AcknowledgeMessageCommand),
     }
+}
+
+/// 跨 QUIC Connection 或 Relay 重传的应用消息信封。
+#[derive(Clone, PartialEq, Message)]
+pub struct DataMessage {
+    #[prost(string, tag = "1")]
+    pub session_id: String,
+    #[prost(string, tag = "2")]
+    pub channel_id: String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub message_id: Vec<u8>,
+    #[prost(uint64, tag = "4")]
+    pub sequence: u64,
+    #[prost(uint64, tag = "5")]
+    pub recovery_epoch: u64,
+    #[prost(enumeration = "DeliveryPolicyCode", tag = "6")]
+    pub policy: i32,
+    #[prost(bytes = "vec", tag = "7")]
+    pub payload: Vec<u8>,
+}
+
+/// 不携带业务正文的应用层 Delivery ACK。
+#[derive(Clone, PartialEq, Message)]
+pub struct DeliveryAck {
+    #[prost(string, tag = "1")]
+    pub session_id: String,
+    #[prost(bytes = "vec", tag = "2")]
+    pub message_id: Vec<u8>,
+    #[prost(uint64, tag = "3")]
+    pub recovery_epoch: u64,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -272,6 +344,38 @@ pub struct RelayStateChangedEvent {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct ChannelMessageEvent {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(string, tag = "2")]
+    pub session_id: String,
+    #[prost(string, tag = "3")]
+    pub channel_id: String,
+    #[prost(bytes = "vec", tag = "4")]
+    pub message_id: Vec<u8>,
+    #[prost(uint64, tag = "5")]
+    pub sequence: u64,
+    #[prost(uint64, tag = "6")]
+    pub recovery_epoch: u64,
+    #[prost(enumeration = "DeliveryPolicyCode", tag = "7")]
+    pub policy: i32,
+    #[prost(bytes = "vec", tag = "8")]
+    pub payload: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct DeliveryAckedEvent {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(string, tag = "2")]
+    pub session_id: String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub message_id: Vec<u8>,
+    #[prost(uint64, tag = "4")]
+    pub recovery_epoch: u64,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct NetworkEvent {
     #[prost(string, tag = "1")]
     pub event_id: String,
@@ -281,7 +385,7 @@ pub struct NetworkEvent {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_event::Payload",
-        tags = "10, 11, 13, 14, 15, 16, 17, 18"
+        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20"
     )]
     pub payload: Option<network_event::Payload>,
 }
@@ -307,5 +411,9 @@ pub mod network_event {
         RouteChanged(RouteChangedEvent),
         #[prost(message, tag = "18")]
         RelayStateChanged(RelayStateChangedEvent),
+        #[prost(message, tag = "19")]
+        ChannelMessage(ChannelMessageEvent),
+        #[prost(message, tag = "20")]
+        DeliveryAcked(DeliveryAckedEvent),
     }
 }

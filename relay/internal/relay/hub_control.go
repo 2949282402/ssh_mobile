@@ -59,6 +59,11 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 		return
 	}
 
+	if frame.Type == "channel_message" || frame.Type == "channel_ack" {
+		h.routeChannelControl(sender, frame)
+		return
+	}
+
 	switch frame.Type {
 	case "offer", "accept", "resume", "complete", "complete_ack", "cancel":
 	default:
@@ -154,5 +159,40 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 	}
 	if frame.Type == "cancel" || frame.Type == "complete_ack" {
 		delete(h.transferSessions, frame.SessionID)
+	}
+}
+
+// routeChannelControl 转发不透明 Delivery 信封。它不创建文件传输会话，
+// 因而不会让 ACK 或消息状态被 Relay 的文件 session 生命周期错误绑定。
+func (h *hub) routeChannelControl(sender *peer, frame controlFrame) {
+	if len(frame.SessionID) != 32 ||
+		frame.SessionID != strings.ToLower(frame.SessionID) ||
+		frame.TargetID == "" ||
+		frame.TargetID == sender.deviceID ||
+		frame.Payload == "" {
+		return
+	}
+	if _, err := hex.DecodeString(frame.SessionID); err != nil {
+		return
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(frame.Payload)
+	if err != nil || len(decoded) == 0 || len(decoded) > maxChannelPayloadBytes {
+		return
+	}
+	h.mutex.Lock()
+	isCurrent := h.peers[sender.deviceID] == sender
+	target := h.peers[frame.TargetID]
+	h.mutex.Unlock()
+	if !isCurrent || target == nil {
+		return
+	}
+	forwarded, err := json.Marshal(controlFrame{
+		Type:      frame.Type,
+		SessionID: frame.SessionID,
+		SenderID:  sender.deviceID,
+		Payload:   frame.Payload,
+	})
+	if err != nil || !target.enqueue(outboundFrame{websocket.TextMessage, forwarded}) {
+		go target.socket.Close()
 	}
 }

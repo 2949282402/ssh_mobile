@@ -16,6 +16,8 @@ const (
 	maxControlFrameBytes = 64 * 1024
 	// maxBinaryFrameBytes 限制单个不透明二进制帧的大小。
 	maxBinaryFrameBytes = 1024*1024 + 25
+	// maxChannelPayloadBytes 限制 Delivery 控制信封携带的不透明正文大小。
+	maxChannelPayloadBytes = 48 * 1024
 )
 
 // Config 保存 Relay 服务器的监听、认证和资源边界。
