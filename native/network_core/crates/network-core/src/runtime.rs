@@ -15,11 +15,12 @@ use tracing::info;
 
 use crate::commands::run_command_worker;
 use crate::errors::NetworkError;
+use crate::session::SessionManager;
 use network_identity::DeviceIdentity;
 use network_nat::PathManager;
 use network_relay::RelayClient;
 use network_transfer::TransferManager;
-use quinn::{Connection, Endpoint};
+use quinn::Endpoint;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -48,7 +49,7 @@ pub(crate) struct RuntimeState {
     pub(crate) peers: RwLock<HashMap<String, PeerConfig>>,
     pub(crate) path_managers: RwLock<HashMap<String, Arc<PathManager>>>,
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
-    pub(crate) connections: RwLock<HashMap<String, Connection>>,
+    pub(crate) sessions: SessionManager,
     pub(crate) relay: RwLock<Option<Arc<RelayClient>>>,
     pub(crate) relay_acceptances: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
@@ -72,7 +73,7 @@ impl RuntimeState {
             peers: RwLock::new(HashMap::new()),
             path_managers: RwLock::new(HashMap::new()),
             trusted_peer_keys: RwLock::new(HashMap::new()),
-            connections: RwLock::new(HashMap::new()),
+            sessions: SessionManager::new(),
             relay: RwLock::new(None),
             relay_acceptances: RwLock::new(HashMap::new()),
             relay_completions: RwLock::new(HashMap::new()),

@@ -57,12 +57,7 @@ pub(crate) async fn start_file_send(
             &command.peer_id,
         ));
     }
-    let connection = state
-        .connections
-        .read()
-        .await
-        .get(&command.peer_id)
-        .cloned();
+    let connection = state.sessions.current_connection(&command.peer_id).await;
     let peer = state
         .peers
         .read()

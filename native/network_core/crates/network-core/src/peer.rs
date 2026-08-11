@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 
 use crate::events::{emit_peer_state, protocol_error, protocol_error_with_peer};
 use crate::runtime::{PeerConfig, RuntimeState, PEER_CONNECT_TIMEOUT};
+use crate::session::ConnectDecision;
 
 /// 校验运行时密钥并启动 QUIC 监听器。
 pub(crate) async fn configure_runtime(
@@ -151,7 +152,7 @@ pub(crate) async fn disconnect_peer(
             "peer_id is required",
         ));
     }
-    state.connections.write().await.remove(&peer_id);
+    state.sessions.close(&peer_id).await;
     emit_peer_state(
         &state.event_tx,
         &peer_id,
@@ -167,9 +168,6 @@ pub(crate) async fn connect_peer(
     state: Arc<RuntimeState>,
     peer_id: String,
 ) -> Result<(), ProtocolError> {
-    if state.connections.read().await.contains_key(&peer_id) {
-        return Ok(());
-    }
     let endpoint = state.endpoint.read().await.clone().ok_or_else(|| {
         protocol_error_with_peer(
             NetworkErrorCode::InvalidArgument,
@@ -200,6 +198,10 @@ pub(crate) async fn connect_peer(
                 &peer_id,
             )
         })?;
+    match state.sessions.begin_connect(&peer_id).await {
+        ConnectDecision::AlreadyConnected(_) | ConnectDecision::InProgress(_) => return Ok(()),
+        ConnectDecision::Started(_) => {}
+    }
     let selected_endpoint = match state.path_managers.read().await.get(&peer_id).cloned() {
         Some(manager) => manager
             .select_best_path()
@@ -264,10 +266,9 @@ pub(crate) async fn connect_peer(
         .await;
         if let Ok(connection) = direct_result {
             state
-                .connections
-                .write()
-                .await
-                .insert(peer_id.clone(), connection.clone());
+                .sessions
+                .attach_connection(&peer_id, connection.clone(), RouteType::QuicDirect)
+                .await;
             emit_peer_state(
                 &state.event_tx,
                 &peer_id,
@@ -283,19 +284,25 @@ pub(crate) async fn connect_peer(
                 None => false,
             };
             if !relay_available {
+                state.sessions.mark_failed(&peer_id).await;
                 return direct_result.map(|_| ());
             }
         }
     }
-    let relay = state.relay.read().await.clone().ok_or_else(|| {
-        protocol_error_with_peer(
-            NetworkErrorCode::NoRoute,
-            "peer has no usable direct or Relay route",
-            "connect",
-            &peer_id,
-        )
-    })?;
+    let relay = match state.relay.read().await.clone() {
+        Some(relay) => relay,
+        None => {
+            state.sessions.mark_failed(&peer_id).await;
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "peer has no usable direct or Relay route",
+                "connect",
+                &peer_id,
+            ));
+        }
+    };
     if !relay.is_usable().await {
+        state.sessions.mark_failed(&peer_id).await;
         return Err(protocol_error_with_peer(
             NetworkErrorCode::RelayError,
             "Relay socket is not connected",
@@ -311,6 +318,7 @@ pub(crate) async fn connect_peer(
         .insert(peer_id.clone(), lookup_tx);
     if relay.lookup_peer(&peer_id).await.is_err() {
         state.relay_lookups.write().await.remove(&peer_id);
+        state.sessions.mark_failed(&peer_id).await;
         return Err(protocol_error_with_peer(
             NetworkErrorCode::RelayError,
             "Relay peer lookup failed",
@@ -325,6 +333,7 @@ pub(crate) async fn connect_peer(
         .unwrap_or(false);
     state.relay_lookups.write().await.remove(&peer_id);
     if !online {
+        state.sessions.mark_failed(&peer_id).await;
         return Err(protocol_error_with_peer(
             NetworkErrorCode::PeerOffline,
             "Relay peer is offline or did not answer lookup",
@@ -332,6 +341,10 @@ pub(crate) async fn connect_peer(
             &peer_id,
         ));
     }
+    state
+        .sessions
+        .mark_route_connected(&peer_id, RouteType::Relay)
+        .await;
     emit_peer_state(
         &state.event_tx,
         &peer_id,
@@ -389,10 +402,9 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     let peer_id = session.peer_device_id.clone();
                     let connection = session.connection.clone();
                     state
-                        .connections
-                        .write()
-                        .await
-                        .insert(peer_id.clone(), connection.clone());
+                        .sessions
+                        .attach_connection(&peer_id, connection.clone(), RouteType::QuicDirect)
+                        .await;
                     emit_peer_state(
                         &state.event_tx,
                         &peer_id,
@@ -427,14 +439,19 @@ pub(crate) async fn receive_file_streams(
                 });
             }
             Err(_) => {
-                state.connections.write().await.remove(&peer_id);
-                emit_peer_state(
-                    &state.event_tx,
-                    &peer_id,
-                    PeerConnectionState::Disconnected,
-                    RouteType::Unspecified,
-                    None,
-                );
+                let became_disconnected = state
+                    .sessions
+                    .mark_disconnected_if_current(&peer_id, &connection)
+                    .await;
+                if became_disconnected {
+                    emit_peer_state(
+                        &state.event_tx,
+                        &peer_id,
+                        PeerConnectionState::Disconnected,
+                        RouteType::Unspecified,
+                        None,
+                    );
+                }
                 return;
             }
         }

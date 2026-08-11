@@ -9,6 +9,7 @@ mod events;
 mod peer;
 mod relay;
 mod runtime;
+mod session;
 mod transfer;
 
 pub use errors::NetworkError;
