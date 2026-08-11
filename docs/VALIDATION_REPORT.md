@@ -10,16 +10,19 @@
 
 ## Automated Results
 
-Native network and Relay checks were refreshed at the latest HEAD. Flutter,
-coverage, and platform-build rows retain the most recent full release-chain
-evidence from 2026-07-10 and were not re-run because this Step is limited to
-native network/report validation; Step 9 does not touch frontend/client code.
+Native network, Relay, workspace Dart, Flutter App/Terminal, and Android/Windows
+debug checks were refreshed at the latest HEAD. Coverage, release signing, and
+macOS/iOS rows retain the most recent full release-chain evidence from
+2026-07-10; they were not re-run in this native-only change, and no frontend or
+client business source was modified.
 
 | Check | Result |
 | --- | --- |
 | Dart formatting | Full App + Terminal slice: 288 files checked, 0 changes required |
 | Flutter analyzer | Full App passed with `--no-fatal-infos` (26 existing info-level lints); Terminal slice passed with 0 issues |
 | Unit and widget tests | Full App: 801 passed; Terminal slice: 3 passed |
+| Workspace Dart gate | `dart run melos run format`, `dart run melos run analyze`, and `dart run melos run test` passed across all 21 workspace packages; existing info-level analyzer output remained non-fatal |
+| Repository architecture gates | `architecture_check`, `compatibility_check`, `duplicate_implementation_check`, `check_module_dependencies`, and `check_resource_owners` all passed |
 | Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
 | Native Dart package | `dart format --output=none --set-exit-if-changed lib test hook`, `flutter analyze --no-pub`, and `flutter test --no-pub` passed with 7 package tests; typed Realtime command/event facade is covered |
 | Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`, and `cargo test --workspace --locked --offline` passed; 81 tests passed, including generic Connection capability/lifecycle checks, Relay-to-Direct atomic promotion, failed direct-auth fallback, Candidate Offer/Answer generation handling, WebRTC offer/answer and ICE-generation/replay handling, ICE restart/stale close/size bounds, FFI realtime wire round-trips, multi-candidate ranking, cross-Connection Delivery recovery, Relay resume binding, and TransferSession state tests |
@@ -37,6 +40,8 @@ native network/report validation; Step 9 does not touch frontend/client code.
 | Non-generated line coverage | 39.3% (`12690/32302`), last verified 2026-07-10 |
 | Coverage regression floor | 35% |
 | Android debug APK | Built successfully |
+| Full App Windows debug | `flutter build windows --debug --no-pub` built `apps/ssh_mobile_full/build/windows/x64/runner/Debug/ssh_mobile.exe` successfully |
+| Terminal Windows debug | Terminal `flutter pub get` followed by `flutter build windows --debug --no-pub` built `apps/ssh_mobile_terminal/build/windows/x64/runner/Debug/ssh_mobile_terminal.exe` successfully |
 | Android release APK | Built successfully without signing credentials |
 | Android release signature check | Expected unsigned result confirmed with `apksigner` |
 | Windows release executable | Built successfully |
@@ -44,12 +49,18 @@ native network/report validation; Step 9 does not touch frontend/client code.
 | Drift generated database code | Deterministic on a second build |
 | Shared Codex/Claude maintenance skill | Synchronized |
 | Web manifest JSON and Git diff checks | Passed |
+| GitHub Actions for `codex/sdk` | Not run: `.github/workflows/flutter.yml` triggers pushes only on `main`/`master` and pull requests; the branch push was verified at `6e0e550`, but the Actions API returned no run |
 
 ## Commands
 
 Latest source validation:
 
 ```powershell
+dart pub get
+dart run melos run format
+dart run melos run analyze
+dart run melos run test
+
 dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool apps/ssh_mobile_terminal/lib apps/ssh_mobile_terminal/test
 cd apps/ssh_mobile_full
 flutter analyze --no-pub --no-fatal-infos
@@ -58,6 +69,11 @@ cd ../ssh_mobile_terminal
 flutter analyze --no-pub --no-fatal-infos
 flutter test --no-pub
 cd ../..
+dart run tool/architecture_check.dart
+dart run tool/compatibility_check.dart
+dart run tool/duplicate_implementation_check.dart
+dart run tool/check_module_dependencies.dart
+dart run tool/check_resource_owners.dart
 git diff --check
 ```
 
@@ -112,6 +128,10 @@ dart run tool/check_coverage.dart --minimum=35
 flutter build apk --debug --no-pub
 flutter build apk --release --no-pub
 flutter build windows --no-pub
+cd ../ssh_mobile_terminal
+flutter pub get
+flutter build windows --debug --no-pub
+cd ../..
 ```
 
 The unsigned Android release is a build-chain verification artifact, not a
@@ -124,6 +144,9 @@ in `docs/RELEASE_CHECKLIST.md` before distribution.
   performance on a physical device
 - iOS device behavior and signed archive creation
 - macOS and unsigned iOS jobs in the updated GitHub Actions workflow
+- GitHub Actions for `codex/sdk`: no workflow run exists because the workflow
+  only runs push jobs on `main`/`master` and pull-request jobs require an
+  actual pull request; no PR was opened by this task
 - TalkBack and VoiceOver behavior on physical devices
 - Store metadata, privacy policy, permanent application identifiers, and legal
   license choice
