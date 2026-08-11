@@ -322,6 +322,17 @@ jobs:
       - name: Test
         run: flutter test --reporter expanded
       - name: Build macOS
-        run: flutter build macos
+        shell: bash
+        run: |
+          set -o pipefail
+          build_log="$(mktemp)"
+          if flutter build macos -v 2>&1 | tee "$build_log"; then
+            exit 0
+          fi
+          while IFS= read -r line; do
+            escaped="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
+            echo "::error file=.github/workflows/flutter.yml,line=316::$escaped"
+          done < <(tail -n 25 "$build_log")
+          exit 1
       - name: Build iOS without signing
         run: flutter build ios --release --no-codesign --no-pub
