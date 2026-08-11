@@ -39,6 +39,48 @@ fn missing_payload_is_invalid_instead_of_a_fake_no_route() {
     ));
 }
 
+/// 验证 stop 会关闭 QUIC endpoint 并等待 accept task，旧端口可以立即被
+/// 新建的 native runtime 重新绑定，不依赖 sleep 或固定端口重试。
+#[test]
+fn stop_waits_for_accept_task_before_rebinding_loopback_port() {
+    let test_root = std::env::temp_dir().join(format!(
+        "ssh-mobile-runtime-rebind-{}",
+        rand::random::<u64>()
+    ));
+    fs::create_dir_all(&test_root).expect("test root");
+
+    let first = NetworkRuntime::new().expect("first runtime");
+    first.start().expect("start first runtime");
+    configure_runtime_for_test(
+        &first,
+        "rebind-first",
+        [61u8; 32],
+        [71u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-first"),
+    );
+    let port = first
+        .bound_local_port()
+        .expect("first runtime bound an ephemeral port");
+    first.stop().expect("stop first runtime");
+    drop(first);
+
+    let second = NetworkRuntime::new().expect("second runtime");
+    second.start().expect("start second runtime");
+    configure_runtime_for_test(
+        &second,
+        "rebind-second",
+        [62u8; 32],
+        [72u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], port)),
+        test_root.join("receive-second"),
+    );
+    assert_eq!(second.bound_local_port(), Some(port));
+    second.stop().expect("stop second runtime");
+
+    fs::remove_dir_all(test_root).expect("remove test root");
+}
+
 /// 验证直连 QUIC 认证和审批门控文件传输。
 #[test]
 fn two_runtimes_authenticate_and_transfer_a_verified_file() {

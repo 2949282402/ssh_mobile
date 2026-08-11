@@ -57,6 +57,10 @@ pub(crate) struct RuntimeState {
     /// 暴露给 Dart，也不参与 Session/Peer 的业务状态。
     pub(crate) bound_port: Arc<AtomicU16>,
     pub(crate) endpoint: RwLock<Option<Endpoint>>,
+    /// 配置 runtime 后启动的 QUIC accept loop。停止时必须先关闭 endpoint，
+    /// 再取出并等待这个 handle，避免 listener 在 Tokio runtime 释放后仍持有
+    /// 原生 UDP socket。
+    pub(crate) accept_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) identity: RwLock<Option<Arc<DeviceIdentity>>>,
     pub(crate) receive_directory: RwLock<Option<PathBuf>>,
     pub(crate) local_path_manager: RwLock<Option<Arc<PathManager>>>,
@@ -92,6 +96,7 @@ impl RuntimeState {
         Self {
             bound_port,
             endpoint: RwLock::new(None),
+            accept_task: Mutex::new(None),
             identity: RwLock::new(None),
             receive_directory: RwLock::new(None),
             local_path_manager: RwLock::new(None),
@@ -130,8 +135,7 @@ pub struct NetworkRuntime {
     pub(crate) event_tx: UnboundedSender<NetworkEvent>,
     pub(crate) bound_port: Arc<AtomicU16>,
     pub(crate) lifecycle: AtomicU8,
-    #[cfg(test)]
-    test_state: Mutex<Option<Arc<RuntimeState>>>,
+    pub(crate) state: Mutex<Option<Arc<RuntimeState>>>,
 }
 
 impl NetworkRuntime {
@@ -154,8 +158,7 @@ impl NetworkRuntime {
             event_tx,
             bound_port,
             lifecycle: AtomicU8::new(RUNTIME_CREATED),
-            #[cfg(test)]
-            test_state: Mutex::new(None),
+            state: Mutex::new(None),
         })
     }
 
@@ -174,7 +177,9 @@ impl NetworkRuntime {
             self.event_tx.clone(),
             Arc::clone(&self.bound_port),
         ));
-        self.store_test_state(Arc::clone(&state))?;
+        *self.state.lock().map_err(|_| {
+            NetworkError::CommandQueueFailed("runtime state lock poisoned".into())
+        })? = Some(Arc::clone(&state));
         let worker = self.runtime.spawn(run_command_worker(command_rx, state));
         *self
             .command_tx
@@ -222,6 +227,14 @@ impl NetworkRuntime {
                 worker.abort();
                 let _ = worker.await;
             });
+        }
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| NetworkError::CommandQueueFailed("runtime state lock poisoned".into()))?
+            .take();
+        if let Some(state) = state {
+            self.shutdown_listener(state);
         }
         self.bound_port.store(0, Ordering::Release);
         self.lifecycle.store(RUNTIME_STOPPED, Ordering::Release);
@@ -277,19 +290,22 @@ impl NetworkRuntime {
         let _ = self.event_tx.send(event);
     }
 
-    #[cfg(test)]
-    fn store_test_state(&self, state: Arc<RuntimeState>) -> Result<(), NetworkError> {
-        *self
-            .test_state
-            .lock()
-            .map_err(|_| NetworkError::CommandQueueFailed("test state lock poisoned".into()))? =
-            Some(state);
-        Ok(())
-    }
-
-    #[cfg(not(test))]
-    fn store_test_state(&self, _state: Arc<RuntimeState>) -> Result<(), NetworkError> {
-        Ok(())
+    /// 关闭 endpoint，并等待受管的 QUIC accept loop 退出。
+    fn shutdown_listener(&self, state: Arc<RuntimeState>) {
+        self.runtime.block_on(async move {
+            if let Some(endpoint) = state.endpoint.write().await.take() {
+                endpoint.close(quinn::VarInt::from_u32(0), b"runtime stopping");
+            }
+            let accept_task = state
+                .accept_task
+                .lock()
+                .ok()
+                .and_then(|mut task| task.take());
+            if let Some(accept_task) = accept_task {
+                accept_task.abort();
+                let _ = accept_task.await;
+            }
+        });
     }
 
     /// 只供 network-core 集成测试模拟底层 Connection 断开；生产 API 不暴露
@@ -297,11 +313,11 @@ impl NetworkRuntime {
     #[cfg(test)]
     pub(crate) fn close_peer_connection_for_test(&self, peer_id: &str) {
         let state = self
-            .test_state
+            .state
             .lock()
-            .expect("test state lock")
+            .expect("runtime state lock")
             .clone()
-            .expect("runtime test state");
+            .expect("runtime state");
         self.runtime.block_on(async move {
             if let Some(connection) = state.sessions.current_connection(peer_id).await {
                 connection.close(VarInt::from_u32(0), b"test transport interruption");
@@ -320,6 +336,20 @@ impl Drop for NetworkRuntime {
         if let Ok(mut worker) = self.worker_task.lock() {
             if let Some(worker) = worker.take() {
                 worker.abort();
+            }
+        }
+        if let Ok(mut state) = self.state.lock() {
+            if let Some(state) = state.take() {
+                if let Ok(mut endpoint) = state.endpoint.try_write() {
+                    if let Some(endpoint) = endpoint.take() {
+                        endpoint.close(quinn::VarInt::from_u32(0), b"runtime dropped");
+                    }
+                }
+                if let Ok(mut accept_task) = state.accept_task.lock() {
+                    if let Some(accept_task) = accept_task.take() {
+                        accept_task.abort();
+                    }
+                }
             }
         }
         self.bound_port.store(0, Ordering::Release);

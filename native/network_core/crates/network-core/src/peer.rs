@@ -97,7 +97,14 @@ pub(crate) async fn configure_runtime(
     *state.local_path_manager.write().await = Some(path_manager);
     *state.endpoint.write().await = Some(endpoint.clone());
     tracing::info!(%bound_address, "native UDP socket is shared by candidate discovery and QUIC");
-    tokio::spawn(accept_connections(endpoint, Arc::clone(&state)));
+    let mut accept_task = state
+        .accept_task
+        .lock()
+        .map_err(|_| protocol_error(NetworkErrorCode::QuicError, "accept task lock poisoned"))?;
+    *accept_task = Some(tokio::spawn(accept_connections(
+        endpoint,
+        Arc::clone(&state),
+    )));
     Ok(())
 }
 
