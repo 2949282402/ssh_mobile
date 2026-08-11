@@ -5,7 +5,7 @@
 `main.go` 是保留的 Relay v1 协议联调 harness，不属于生产 Relay 或 Flutter
 客户端。它会生成临时 Ed25519 设备身份，通过 Docker 暴露的 HTTP/WSS 前置端点
 执行 enrollment、签名 WebSocket 握手、在线查询、offer/accept、二进制分块和
-complete/ack 验证。
+complete/ack、Candidate Offer/Answer 验证。
 
 ## 前置条件
 
@@ -28,7 +28,7 @@ go run ./cmd/relay_smoke -scenario functional -base http://localhost:18080
 ```
 
 成功标志为 `FUNCTIONAL_PASS`，并且应看到两个设备的 `READY`、`LOOKUP_OK`、
-控制帧确认和 `BINARY_OK`。
+Candidate Offer/Answer 控制帧确认、其他控制帧确认和 `BINARY_OK`。
 
 ## 故障场景
 

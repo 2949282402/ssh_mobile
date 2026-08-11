@@ -270,6 +270,11 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   the same Session. Relay uses a fresh attempt token plus stable TransferId,
   Manifest Hash, File Hash and fixed-chunk offset; socket disconnect preserves
   the `.part` checkpoint, and a verified final file makes completion idempotent.
+- 2026-08-11: Native peer routing exchanges bounded ICE-like Candidate
+  Offer/Answer controls through the authenticated Relay. Candidate generations
+  replace stale sets, while ranked direct attempts race in parallel and only an
+  identity-bound QUIC handshake can nominate a ready path; Relay remains the
+  fallback when no authenticated direct candidate succeeds.
 
 ### UI and performance
 

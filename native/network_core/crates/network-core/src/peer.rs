@@ -1,7 +1,9 @@
 //! v1 对端注册表、路由选择与异步连接任务。
 
 use network_identity::DeviceIdentity;
-use network_nat::{Candidate, CandidateKind, PathManager};
+use network_nat::{
+    Candidate, CandidateKind, CandidateSignal, PathManager, MAX_CANDIDATES_PER_SIGNAL,
+};
 use network_protocol::{
     NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState, RouteType,
     UpsertPeerCommand,
@@ -14,6 +16,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::oneshot;
+use tokio::task::JoinSet;
 use tokio::time::timeout;
 
 use crate::events::{
@@ -28,6 +31,7 @@ use crate::session::{ConnectDecision, SessionId};
 const STUN_SERVER_ENV: &str = "SSH_MOBILE_STUN_SERVER";
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
 const PATH_METRICS_INTERVAL: Duration = Duration::from_secs(2);
+const CANDIDATE_SIGNAL_WAIT: Duration = Duration::from_millis(300);
 
 /// 校验运行时密钥并启动 QUIC 监听器。
 pub(crate) async fn configure_runtime(
@@ -77,6 +81,9 @@ pub(crate) async fn configure_runtime(
     let (socket, bound_address) = bind_and_gather_candidates(listen_address, &path_manager)
         .await
         .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
+    path_manager
+        .set_generation(rand::random::<u64>().max(1))
+        .await;
     let manager = QuicEndpointManager::from_bound_socket(socket, Arc::clone(&path_manager))
         .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
     let endpoint = manager.endpoint;
@@ -259,24 +266,38 @@ pub(crate) async fn connect_peer(
         ConnectDecision::AlreadyConnected(_) | ConnectDecision::InProgress(_) => return Ok(()),
         ConnectDecision::Started(session_id) => session_id,
     };
-    let selected_endpoint = match state.path_managers.read().await.get(&peer_id).cloned() {
-        Some(manager) => manager
-            .select_best_path()
-            .await
-            .map(|candidate| candidate.endpoint),
-        None => peer.endpoint,
-    };
     let relay = state.relay.read().await.clone();
     let relay = match relay {
         Some(relay) if relay.is_usable().await => Some(relay),
         _ => None,
     };
 
-    let route = match (selected_endpoint, relay) {
-        (Some(peer_endpoint), Some(relay)) => {
-            let direct = connect_direct(
+    if let Some(relay) = relay.as_ref() {
+        let candidate_update = state.candidate_signal_notify.notified();
+        if send_candidate_offer(&state, relay, &peer_id).await.is_ok() {
+            let _ = timeout(CANDIDATE_SIGNAL_WAIT, candidate_update).await;
+        }
+    }
+    let direct_candidates = match state.path_managers.read().await.get(&peer_id).cloned() {
+        Some(manager) => manager.ranked_candidates().await,
+        None => peer
+            .endpoint
+            .map(|endpoint| {
+                Candidate::new(
+                    endpoint,
+                    candidate_kind_for(endpoint),
+                    "peer-advertised".into(),
+                )
+            })
+            .into_iter()
+            .collect(),
+    };
+
+    let route = match (!direct_candidates.is_empty(), relay) {
+        (true, Some(relay)) => {
+            let direct = connect_direct_candidates(
                 endpoint,
-                peer_endpoint,
+                direct_candidates,
                 identity,
                 peer.identity_public_key,
                 peer_id.clone(),
@@ -287,21 +308,21 @@ pub(crate) async fn connect_peer(
             state.relay_lookups.write().await.remove(&peer_id);
             route
         }
-        (Some(peer_endpoint), None) => connect_direct(
+        (true, None) => connect_direct_candidates(
             endpoint,
-            peer_endpoint,
+            direct_candidates,
             identity,
             peer.identity_public_key,
             peer_id.clone(),
         )
         .await
         .map(ReadyRoute::Direct),
-        (None, Some(relay)) => {
+        (false, Some(relay)) => {
             connect_relay(Arc::clone(&state), relay, peer_id.clone(), Duration::ZERO)
                 .await
                 .map(|_| ReadyRoute::Relay)
         }
-        (None, None) => Err(protocol_error_with_peer(
+        (false, None) => Err(protocol_error_with_peer(
             NetworkErrorCode::NoRoute,
             "peer has no usable direct or Relay route",
             "connect",
@@ -432,6 +453,86 @@ async fn connect_direct(
                 &timeout_peer_id,
             )
         })?
+}
+
+/// Runs authenticated QUIC attempts for all currently advertised candidates.
+/// A candidate is not considered ready until the identity-bound handshake has
+/// succeeded; unreachable or unauthenticated candidates cannot block the
+/// remaining candidates from winning.
+async fn connect_direct_candidates(
+    endpoint: Endpoint,
+    candidates: Vec<Candidate>,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_public_key: [u8; 32],
+    peer_id: String,
+) -> Result<Connection, ProtocolError> {
+    let mut attempts = JoinSet::new();
+    for candidate in candidates.into_iter().take(MAX_CANDIDATES_PER_SIGNAL) {
+        let endpoint = endpoint.clone();
+        let identity = Arc::clone(&identity);
+        let peer_id = peer_id.clone();
+        attempts.spawn(async move {
+            connect_direct(
+                endpoint,
+                candidate.endpoint,
+                identity,
+                expected_peer_public_key,
+                peer_id,
+            )
+            .await
+        });
+    }
+    let mut last_error = None;
+    while let Some(result) = attempts.join_next().await {
+        match result {
+            Ok(Ok(connection)) => {
+                attempts.abort_all();
+                return Ok(connection);
+            }
+            Ok(Err(error)) => last_error = Some(error),
+            Err(error) => {
+                last_error = Some(protocol_error_with_peer(
+                    NetworkErrorCode::QuicError,
+                    format!("candidate connectivity task failed: {error}"),
+                    "connect",
+                    &peer_id,
+                ));
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            "candidate set is empty",
+            "connect",
+            &peer_id,
+        )
+    }))
+}
+
+async fn send_candidate_offer(
+    state: &RuntimeState,
+    relay: &RelayClient,
+    peer_id: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let local_manager = state
+        .local_path_manager
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| std::io::Error::other("local candidate manager is unavailable"))?;
+    let generation = local_manager.generation().await.max(1);
+    let candidates = local_manager.ranked_candidates().await;
+    let signal = CandidateSignal::offer(
+        generation,
+        candidates.iter().map(Candidate::advertisement).collect(),
+    );
+    let payload = serde_json::to_vec(&signal)?;
+    let token = hex::encode(rand::random::<[u8; 16]>());
+    relay
+        .send_candidate_offer(&token, peer_id, &payload)
+        .await?;
+    Ok(())
 }
 
 /// Starts native-only path quality sampling for one authenticated direct

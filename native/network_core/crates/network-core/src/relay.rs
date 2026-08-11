@@ -1,6 +1,7 @@
 //! Relay v1 enrollment 运行时、透明传输路由与 E2E 处理。
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use network_nat::{Candidate, CandidateSignal, CandidateSignalKind};
 use network_protocol::{
     ConfigureRelayCommand, DataMessage, DeliveryAck, NetworkError as ProtocolError,
     NetworkErrorCode, RouteType,
@@ -351,6 +352,27 @@ pub(crate) async fn handle_relay_events(
                     }
                 }
             }
+            RelayEvent::Control {
+                kind,
+                session_id,
+                peer_id,
+                payload,
+            } if kind == "candidate_offer" || kind == "candidate_answer" => {
+                if let (Some(peer_id), Some(payload)) = (peer_id, payload) {
+                    if let Err(error) = handle_candidate_signal(
+                        &state,
+                        &relay,
+                        &kind,
+                        &session_id,
+                        &peer_id,
+                        &payload,
+                    )
+                    .await
+                    {
+                        tracing::debug!(peer_id = %peer_id, error = %error, "rejected Relay candidate signal");
+                    }
+                }
+            }
             RelayEvent::Binary {
                 session_id,
                 sequence,
@@ -383,6 +405,91 @@ pub(crate) async fn handle_relay_events(
         }
     }
     handle_relay_disconnect(state, relay, "Relay event stream ended".to_string()).await;
+}
+
+async fn handle_candidate_signal(
+    state: &RuntimeState,
+    relay: &RelayClient,
+    kind: &str,
+    session_id: &str,
+    peer_id: &str,
+    payload: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !state.peers.read().await.contains_key(peer_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "candidate sender is not a registered peer",
+        )
+        .into());
+    }
+    let encoded = URL_SAFE_NO_PAD.decode(payload)?;
+    let signal: CandidateSignal = serde_json::from_slice(&encoded)?;
+    signal.validate().map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid candidate signal: {error}"),
+        )
+    })?;
+    let expected_kind = match kind {
+        "candidate_offer" => CandidateSignalKind::Offer,
+        "candidate_answer" => CandidateSignalKind::Answer,
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsupported candidate signal kind",
+            )
+            .into())
+        }
+    };
+    if signal.kind != expected_kind {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "candidate signal kind does not match Relay control type",
+        )
+        .into());
+    }
+    let candidates = signal
+        .candidates
+        .iter()
+        .cloned()
+        .map(Candidate::from_advertisement)
+        .collect::<Result<Vec<_>, _>>()?;
+    let manager = if let Some(manager) = state.path_managers.read().await.get(peer_id).cloned() {
+        manager
+    } else {
+        let mut managers = state.path_managers.write().await;
+        managers
+            .entry(peer_id.to_string())
+            .or_insert_with(|| Arc::new(network_nat::PathManager::new()))
+            .clone()
+    };
+    manager
+        .apply_remote_candidates(signal.generation, candidates)
+        .await;
+    state.candidate_signal_notify.notify_waiters();
+
+    if signal.kind == CandidateSignalKind::Offer {
+        let local_manager = state
+            .local_path_manager
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| std::io::Error::other("local candidate manager is unavailable"))?;
+        let local_candidates = local_manager.ranked_candidates().await;
+        let local_generation = local_manager.generation().await.max(1);
+        let answer = CandidateSignal::answer(
+            local_generation,
+            local_candidates
+                .iter()
+                .map(network_nat::Candidate::advertisement)
+                .collect(),
+        );
+        let answer_payload = serde_json::to_vec(&answer)?;
+        relay
+            .send_candidate_answer(session_id, peer_id, &answer_payload)
+            .await?;
+    }
+    Ok(())
 }
 
 async fn handle_relay_disconnect(

@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    oneshot, Mutex as AsyncMutex, RwLock,
+    oneshot, Mutex as AsyncMutex, Notify, RwLock,
 };
 use tracing::info;
 
@@ -69,6 +69,7 @@ pub(crate) struct RuntimeState {
         RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<bool>>>,
+    pub(crate) candidate_signal_notify: Notify,
     pub(crate) relay_sessions: RwLock<HashMap<String, String>>,
     pub(crate) relay_pending_incoming: RwLock<HashMap<String, crate::relay::PendingRelayIncoming>>,
     pub(crate) relay_active_incoming:
@@ -99,6 +100,7 @@ impl RuntimeState {
             relay_acceptances: RwLock::new(HashMap::new()),
             relay_completions: RwLock::new(HashMap::new()),
             relay_lookups: RwLock::new(HashMap::new()),
+            candidate_signal_notify: Notify::new(),
             relay_sessions: RwLock::new(HashMap::new()),
             relay_pending_incoming: RwLock::new(HashMap::new()),
             relay_active_incoming: AsyncMutex::new(HashMap::new()),

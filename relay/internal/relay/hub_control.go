@@ -63,6 +63,10 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 		h.routeChannelControl(sender, frame)
 		return
 	}
+	if frame.Type == "candidate_offer" || frame.Type == "candidate_answer" {
+		h.routeCandidateControl(sender, frame)
+		return
+	}
 
 	switch frame.Type {
 	case "offer", "accept", "resume", "complete", "complete_ack", "cancel":
@@ -177,6 +181,41 @@ func (h *hub) routeChannelControl(sender *peer, frame controlFrame) {
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(frame.Payload)
 	if err != nil || len(decoded) == 0 || len(decoded) > maxChannelPayloadBytes {
+		return
+	}
+	h.mutex.Lock()
+	isCurrent := h.peers[sender.deviceID] == sender
+	target := h.peers[frame.TargetID]
+	h.mutex.Unlock()
+	if !isCurrent || target == nil {
+		return
+	}
+	forwarded, err := json.Marshal(controlFrame{
+		Type:      frame.Type,
+		SessionID: frame.SessionID,
+		SenderID:  sender.deviceID,
+		Payload:   frame.Payload,
+	})
+	if err != nil || !target.enqueue(outboundFrame{websocket.TextMessage, forwarded}) {
+		go target.socket.Close()
+	}
+}
+
+// routeCandidateControl 转发 ICE-like candidate Offer/Answer。Candidate
+// payload 只由设备端解释，Relay 仍不读取 endpoint 或 generation 的语义。
+func (h *hub) routeCandidateControl(sender *peer, frame controlFrame) {
+	if len(frame.SessionID) != 32 ||
+		frame.SessionID != strings.ToLower(frame.SessionID) ||
+		frame.TargetID == "" ||
+		frame.TargetID == sender.deviceID ||
+		frame.Payload == "" {
+		return
+	}
+	if _, err := hex.DecodeString(frame.SessionID); err != nil {
+		return
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(frame.Payload)
+	if err != nil || len(decoded) == 0 || len(decoded) > maxCandidatePayloadBytes {
 		return
 	}
 	h.mutex.Lock()

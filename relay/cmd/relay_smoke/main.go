@@ -68,6 +68,23 @@ func runFunctional(base, token string) {
 	defer b.conn.Close()
 
 	lookup(a, b.id)
+	candidateSession := newSessionID()
+	candidatePayload := base64.RawURLEncoding.EncodeToString([]byte(`{"version":1,"kind":"offer","generation":1,"candidates":[]}`))
+	assert(sendJSON(a, map[string]any{
+		"type":       "candidate_offer",
+		"session_id": candidateSession,
+		"target_id":  b.id,
+		"payload":    candidatePayload,
+	}), "candidate offer")
+	assertControlPayload(b, "candidate_offer", candidateSession, candidatePayload)
+	answerPayload := base64.RawURLEncoding.EncodeToString([]byte(`{"version":1,"kind":"answer","generation":1,"candidates":[]}`))
+	assert(sendJSON(b, map[string]any{
+		"type":       "candidate_answer",
+		"session_id": candidateSession,
+		"target_id":  a.id,
+		"payload":    answerPayload,
+	}), "candidate answer")
+	assertControlPayload(a, "candidate_answer", candidateSession, answerPayload)
 	session := newSessionID()
 	assert(sendJSON(a, map[string]any{
 		"type":       "offer",
@@ -88,7 +105,7 @@ func runFunctional(base, token string) {
 	assert(sendJSON(b, map[string]any{"type": "complete_ack", "session_id": session}), "complete_ack")
 	assertControl(a, "complete_ack", session)
 
-	fmt.Println("FUNCTIONAL_PASS enrollment=2 ready=2 lookup=online control=offer,accept,complete,complete_ack binary=exact")
+	fmt.Println("FUNCTIONAL_PASS enrollment=2 ready=2 lookup=online control=candidate_offer,candidate_answer,offer,accept,complete,complete_ack binary=exact")
 }
 
 func runRecover(base, token, trigger string, restart bool) {
