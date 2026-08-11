@@ -15,7 +15,7 @@ use tracing::info;
 
 use crate::commands::run_command_worker;
 use crate::errors::NetworkError;
-use crate::session::SessionManager;
+use crate::session::{SessionId, SessionManager};
 use network_identity::DeviceIdentity;
 use network_nat::PathManager;
 use network_relay::RelayClient;
@@ -27,6 +27,9 @@ use std::path::PathBuf;
 
 pub(crate) const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 pub(crate) const RELAY_RACE_DELAY: Duration = Duration::from_millis(500);
+pub(crate) const RECONNECT_MAX_ATTEMPTS: usize = 5;
+pub(crate) const RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
+pub(crate) const RECONNECT_MAX_BACKOFF: Duration = Duration::from_secs(5);
 pub(crate) const INCOMING_APPROVAL_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) const MAX_PENDING_INCOMING_TRANSFERS: usize = 64;
@@ -51,6 +54,7 @@ pub(crate) struct RuntimeState {
     pub(crate) path_managers: RwLock<HashMap<String, Arc<PathManager>>>,
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
     pub(crate) sessions: SessionManager,
+    pub(crate) reconnect_tasks: RwLock<HashMap<String, SessionId>>,
     pub(crate) relay: RwLock<Option<Arc<RelayClient>>>,
     pub(crate) relay_acceptances: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
@@ -75,6 +79,7 @@ impl RuntimeState {
             path_managers: RwLock::new(HashMap::new()),
             trusted_peer_keys: RwLock::new(HashMap::new()),
             sessions: SessionManager::new(),
+            reconnect_tasks: RwLock::new(HashMap::new()),
             relay: RwLock::new(None),
             relay_acceptances: RwLock::new(HashMap::new()),
             relay_completions: RwLock::new(HashMap::new()),

@@ -96,29 +96,53 @@ impl SessionManager {
     pub(crate) async fn attach_connection(
         &self,
         peer_id: &str,
+        expected_session_id: Option<SessionId>,
         connection: Connection,
         route: RouteType,
-    ) -> SessionId {
+    ) -> bool {
         let mut sessions = self.sessions.write().await;
-        let session = sessions
-            .entry(peer_id.to_string())
-            .or_insert_with(|| self.new_session());
+        let session = match sessions.get_mut(peer_id) {
+            Some(session) => session,
+            None if expected_session_id.is_none() => sessions
+                .entry(peer_id.to_string())
+                .or_insert_with(|| self.new_session()),
+            None => {
+                drop(sessions);
+                connection.close(VarInt::from_u32(0), b"session replaced");
+                return false;
+            }
+        };
+        if session.state == SessionState::Closed
+            || expected_session_id.is_some_and(|id| id != session.id)
+        {
+            drop(sessions);
+            connection.close(VarInt::from_u32(0), b"session replaced");
+            return false;
+        }
         session.state = SessionState::Connected;
         session.active_route = route;
         session.connection = Some(connection);
-        session.id
+        true
     }
 
     /// 记录一个没有 Quinn handle 的已连接 Route，例如 Relay 控制面。
-    pub(crate) async fn mark_route_connected(&self, peer_id: &str, route: RouteType) -> SessionId {
+    pub(crate) async fn mark_route_connected(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        route: RouteType,
+    ) -> bool {
         let mut sessions = self.sessions.write().await;
-        let session = sessions
-            .entry(peer_id.to_string())
-            .or_insert_with(|| self.new_session());
+        let Some(session) = sessions.get_mut(peer_id) else {
+            return false;
+        };
+        if session.state == SessionState::Closed || session.id != expected_session_id {
+            return false;
+        }
         session.state = SessionState::Connected;
         session.active_route = route;
         session.connection = None;
-        session.id
+        true
     }
 
     /// 取得当前可靠 direct Connection；Session 自身不随 Connection drop 消失。
@@ -131,28 +155,35 @@ impl SessionManager {
             .and_then(|session| session.connection.clone())
     }
 
+    pub(crate) async fn is_connected(&self, peer_id: &str) -> bool {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|session| session.state == SessionState::Connected)
+    }
+
     /// 仅当断开的 Connection 仍是当前 Connection 时才更新 Session，避免旧
     /// Connection 的收尾任务覆盖已经接入的新 Connection。
     pub(crate) async fn mark_disconnected_if_current(
         &self,
         peer_id: &str,
         connection: &Connection,
-    ) -> bool {
+    ) -> Option<SessionId> {
         let mut sessions = self.sessions.write().await;
-        let Some(session) = sessions.get_mut(peer_id) else {
-            return false;
-        };
+        let session = sessions.get_mut(peer_id)?;
         let is_current = session
             .connection
             .as_ref()
             .is_some_and(|current| current.stable_id() == connection.stable_id());
         if !is_current {
-            return false;
+            return None;
         }
+        let session_id = session.id;
         session.connection = None;
         session.active_route = RouteType::Unspecified;
         session.state = SessionState::Disconnected;
-        true
+        Some(session_id)
     }
 
     /// 在没有具体 Connection handle 时记录一次断开，主要用于后续
@@ -169,13 +200,15 @@ impl SessionManager {
         true
     }
 
-    pub(crate) async fn mark_failed(&self, peer_id: &str) {
+    pub(crate) async fn mark_failed(&self, peer_id: &str, expected_session_id: SessionId) {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(peer_id) {
-            if matches!(
-                session.state,
-                SessionState::Connecting | SessionState::Reconnecting
-            ) {
+            if session.id == expected_session_id
+                && matches!(
+                    session.state,
+                    SessionState::Connecting | SessionState::Reconnecting
+                )
+            {
                 session.connection = None;
                 session.active_route = RouteType::Unspecified;
                 session.state = SessionState::Failed;
@@ -206,6 +239,22 @@ impl SessionManager {
             .await
             .get(peer_id)
             .map(|session| session.id)
+    }
+
+    /// 检查某次重连任务是否仍属于同一个 Session，且没有被显式关闭或
+    /// 其他连接任务完成。
+    pub(crate) async fn should_reconnect(&self, peer_id: &str, session_id: SessionId) -> bool {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|session| {
+                session.id == session_id
+                    && !matches!(
+                        session.state,
+                        SessionState::Connected | SessionState::Closed
+                    )
+            })
     }
 
     #[cfg(test)]
@@ -255,6 +304,7 @@ mod tests {
         };
         assert_eq!(first, second);
         assert_eq!(manager.session_id("peer-b").await, Some(first));
+        assert!(manager.should_reconnect("peer-b", first).await);
     }
 
     #[tokio::test]
@@ -272,5 +322,26 @@ mod tests {
             decision => panic!("unexpected decision: {decision:?}"),
         };
         assert_ne!(first, second);
+        assert!(!manager.should_reconnect("peer-b", first).await);
+        assert!(manager.should_reconnect("peer-b", second).await);
+        manager.close("peer-b").await;
+        assert!(!manager.should_reconnect("peer-b", second).await);
+    }
+
+    #[tokio::test]
+    async fn stale_connection_attempt_cannot_attach_to_replaced_session() {
+        let manager = SessionManager::new();
+        let first = match manager.begin_connect("peer-b").await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        manager.close("peer-b").await;
+        let second = match manager.begin_connect("peer-b").await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        assert_ne!(first, second);
+        assert!(!manager.should_reconnect("peer-b", first).await);
+        assert!(manager.should_reconnect("peer-b", second).await);
     }
 }

@@ -16,8 +16,11 @@ use std::time::Duration;
 use tokio::sync::oneshot;
 
 use crate::events::{emit_peer_state, protocol_error, protocol_error_with_peer};
-use crate::runtime::{PeerConfig, RuntimeState, PEER_CONNECT_TIMEOUT, RELAY_RACE_DELAY};
-use crate::session::ConnectDecision;
+use crate::runtime::{
+    PeerConfig, RuntimeState, PEER_CONNECT_TIMEOUT, RECONNECT_INITIAL_BACKOFF,
+    RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF, RELAY_RACE_DELAY,
+};
+use crate::session::{ConnectDecision, SessionId};
 
 /// 校验运行时密钥并启动 QUIC 监听器。
 pub(crate) async fn configure_runtime(
@@ -201,10 +204,10 @@ pub(crate) async fn connect_peer(
                 &peer_id,
             )
         })?;
-    match state.sessions.begin_connect(&peer_id).await {
+    let session_id = match state.sessions.begin_connect(&peer_id).await {
         ConnectDecision::AlreadyConnected(_) | ConnectDecision::InProgress(_) => return Ok(()),
-        ConnectDecision::Started(_) => {}
-    }
+        ConnectDecision::Started(session_id) => session_id,
+    };
     let selected_endpoint = match state.path_managers.read().await.get(&peer_id).cloned() {
         Some(manager) => manager
             .select_best_path()
@@ -257,10 +260,23 @@ pub(crate) async fn connect_peer(
 
     match route {
         Ok(ReadyRoute::Direct(connection)) => {
-            state
+            let attached = state
                 .sessions
-                .attach_connection(&peer_id, connection.clone(), RouteType::QuicDirect)
+                .attach_connection(
+                    &peer_id,
+                    Some(session_id),
+                    connection.clone(),
+                    RouteType::QuicDirect,
+                )
                 .await;
+            if !attached {
+                return Err(protocol_error_with_peer(
+                    NetworkErrorCode::Cancelled,
+                    "connection completed after Session was closed",
+                    "connect",
+                    &peer_id,
+                ));
+            }
             emit_peer_state(
                 &state.event_tx,
                 &peer_id,
@@ -272,10 +288,18 @@ pub(crate) async fn connect_peer(
             Ok(())
         }
         Ok(ReadyRoute::Relay) => {
-            state
+            let attached = state
                 .sessions
-                .mark_route_connected(&peer_id, RouteType::Relay)
+                .mark_route_connected(&peer_id, session_id, RouteType::Relay)
                 .await;
+            if !attached {
+                return Err(protocol_error_with_peer(
+                    NetworkErrorCode::Cancelled,
+                    "Relay route completed after Session was closed",
+                    "connect",
+                    &peer_id,
+                ));
+            }
             emit_peer_state(
                 &state.event_tx,
                 &peer_id,
@@ -286,7 +310,7 @@ pub(crate) async fn connect_peer(
             Ok(())
         }
         Err(error) => {
-            state.sessions.mark_failed(&peer_id).await;
+            state.sessions.mark_failed(&peer_id, session_id).await;
             Err(error)
         }
     }
@@ -442,45 +466,49 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
     while let Some(incoming) = endpoint.accept().await {
         let state = Arc::clone(&state);
         tokio::spawn(async move {
-            let result =
-                async {
-                    let connection = incoming.await?;
-                    let identity =
-                        state.identity.read().await.clone().ok_or_else(|| {
-                            std::io::Error::other("runtime identity is unavailable")
-                        })?;
-                    let session = tokio::time::timeout(
-                        PEER_CONNECT_TIMEOUT,
-                        QuicPeerSession::accept_trusted(
-                            connection,
-                            &identity,
-                            &state.trusted_peer_keys,
-                        ),
-                    )
+            let result = async {
+                let connection = incoming.await?;
+                let identity = state
+                    .identity
+                    .read()
                     .await
-                    .map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "peer authentication timed out",
-                        )
-                    })??;
-                    let peer_id = session.peer_device_id.clone();
-                    let connection = session.connection.clone();
-                    state
-                        .sessions
-                        .attach_connection(&peer_id, connection.clone(), RouteType::QuicDirect)
-                        .await;
-                    emit_peer_state(
-                        &state.event_tx,
-                        &peer_id,
-                        PeerConnectionState::Connected,
-                        RouteType::QuicDirect,
-                        None,
-                    );
-                    receive_file_streams(peer_id, connection, Arc::clone(&state)).await;
-                    Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+                    .clone()
+                    .ok_or_else(|| std::io::Error::other("runtime identity is unavailable"))?;
+                let session = tokio::time::timeout(
+                    PEER_CONNECT_TIMEOUT,
+                    QuicPeerSession::accept_trusted(
+                        connection,
+                        &identity,
+                        &state.trusted_peer_keys,
+                    ),
+                )
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "peer authentication timed out",
+                    )
+                })??;
+                let peer_id = session.peer_device_id.clone();
+                let connection = session.connection.clone();
+                let attached = state
+                    .sessions
+                    .attach_connection(&peer_id, None, connection.clone(), RouteType::QuicDirect)
+                    .await;
+                if !attached {
+                    return Err(std::io::Error::other("Session was closed").into());
                 }
-                .await;
+                emit_peer_state(
+                    &state.event_tx,
+                    &peer_id,
+                    PeerConnectionState::Connected,
+                    RouteType::QuicDirect,
+                    None,
+                );
+                receive_file_streams(peer_id, connection, Arc::clone(&state)).await;
+                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+            }
+            .await;
             if let Err(error) = result {
                 tracing::warn!("Rejected inbound QUIC connection: {}", error);
             }
@@ -504,11 +532,11 @@ pub(crate) async fn receive_file_streams(
                 });
             }
             Err(_) => {
-                let became_disconnected = state
+                let disconnected_session = state
                     .sessions
                     .mark_disconnected_if_current(&peer_id, &connection)
                     .await;
-                if became_disconnected {
+                if let Some(session_id) = disconnected_session {
                     emit_peer_state(
                         &state.event_tx,
                         &peer_id,
@@ -516,11 +544,92 @@ pub(crate) async fn receive_file_streams(
                         RouteType::Unspecified,
                         None,
                     );
+                    schedule_reconnect(Arc::clone(&state), peer_id.clone(), session_id);
                 }
                 return;
             }
         }
     }
+}
+
+/// 为一个 Session 建立唯一的自动重连任务。
+fn schedule_reconnect(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
+    tokio::spawn(async move {
+        let should_start = {
+            let mut tasks = state.reconnect_tasks.write().await;
+            match tasks.get(&peer_id).copied() {
+                Some(existing) if existing == session_id => false,
+                _ => {
+                    tasks.insert(peer_id.clone(), session_id);
+                    true
+                }
+            }
+        };
+        if !should_start {
+            return;
+        }
+        reconnect_loop(Arc::clone(&state), peer_id.clone(), session_id).await;
+        let mut tasks = state.reconnect_tasks.write().await;
+        if tasks.get(&peer_id).copied() == Some(session_id) {
+            tasks.remove(&peer_id);
+        }
+    });
+}
+
+/// 连接丢失后重新走当前 Candidate/Direct/Relay 选择；任务以 Session ID
+/// 为边界，显式关闭或新建 Session 后旧任务会自然退出。
+async fn reconnect_loop(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
+    let mut failures = 0;
+    let mut backoff = RECONNECT_INITIAL_BACKOFF;
+    let mut last_error = None;
+    while failures < RECONNECT_MAX_ATTEMPTS {
+        if !state.sessions.should_reconnect(&peer_id, session_id).await {
+            return;
+        }
+        if failures > 0 {
+            tokio::time::sleep(backoff).await;
+            backoff = std::cmp::min(backoff.saturating_mul(2), RECONNECT_MAX_BACKOFF);
+            if !state.sessions.should_reconnect(&peer_id, session_id).await {
+                return;
+            }
+        }
+        emit_peer_state(
+            &state.event_tx,
+            &peer_id,
+            PeerConnectionState::Connecting,
+            RouteType::Unspecified,
+            None,
+        );
+        match connect_peer(Arc::clone(&state), peer_id.clone()).await {
+            Ok(()) if state.sessions.is_connected(&peer_id).await => return,
+            Ok(()) => {
+                // Another caller may already own the in-flight attempt. Avoid
+                // spinning while that attempt is allowed to finish.
+                tokio::time::sleep(RECONNECT_INITIAL_BACKOFF).await;
+            }
+            Err(error) => {
+                failures += 1;
+                last_error = Some(error);
+            }
+        }
+    }
+    if !state.sessions.should_reconnect(&peer_id, session_id).await {
+        return;
+    }
+    emit_peer_state(
+        &state.event_tx,
+        &peer_id,
+        PeerConnectionState::Failed,
+        RouteType::Unspecified,
+        Some(last_error.unwrap_or_else(|| {
+            protocol_error_with_peer(
+                NetworkErrorCode::Timeout,
+                "automatic reconnect attempts exhausted",
+                "reconnect",
+                &peer_id,
+            )
+        })),
+    );
 }
 
 #[cfg(test)]
