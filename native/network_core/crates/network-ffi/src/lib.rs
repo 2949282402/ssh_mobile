@@ -74,6 +74,27 @@ pub unsafe extern "C" fn ssh_net_runtime_start(handle: SshNetRuntimeHandle) -> i
     result.unwrap_or(-99)
 }
 
+/// 查询 native QUIC endpoint 实际绑定的 UDP 端口。
+///
+/// 返回正数表示已完成配置，返回 0 表示 runtime 尚未完成配置；负值只表示
+/// FFI 参数或内部 panic 错误，Dart facade 不会把这些原始整数暴露给调用方。
+///
+/// # Safety
+/// `handle` 必须是由 `ssh_net_runtime_create` 创建的有效指针。
+#[no_mangle]
+pub unsafe extern "C" fn ssh_net_runtime_local_port(handle: SshNetRuntimeHandle) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+
+    let result = catch_unwind(|| {
+        let runtime = unsafe { &*(handle as *const NetworkRuntime) };
+        runtime.bound_local_port().map_or(0, i32::from)
+    });
+
+    result.unwrap_or(-99)
+}
+
 /// 停止运行时 worker。停止操作幂等，销毁句柄前必须调用。
 ///
 /// # Safety
@@ -222,6 +243,7 @@ mod tests {
         assert_eq!(unsafe { ssh_net_runtime_create(ptr::null_mut()) }, -1);
         assert_eq!(unsafe { ssh_net_runtime_start(ptr::null_mut()) }, -1);
         assert_eq!(unsafe { ssh_net_runtime_stop(ptr::null_mut()) }, -1);
+        assert_eq!(unsafe { ssh_net_runtime_local_port(ptr::null_mut()) }, -1);
         assert_eq!(
             unsafe { ssh_net_runtime_command(ptr::null_mut(), ptr::null(), 0) },
             -1
@@ -244,8 +266,11 @@ mod tests {
         let mut handle = ptr::null_mut();
         assert_eq!(unsafe { ssh_net_runtime_create(&mut handle) }, 0);
         assert!(!handle.is_null());
+        assert_eq!(unsafe { ssh_net_runtime_local_port(handle) }, 0);
         assert_eq!(unsafe { ssh_net_runtime_start(handle) }, 0);
+        assert_eq!(unsafe { ssh_net_runtime_local_port(handle) }, 0);
         assert_eq!(unsafe { ssh_net_runtime_stop(handle) }, 0);
+        assert_eq!(unsafe { ssh_net_runtime_local_port(handle) }, 0);
         assert_eq!(unsafe { ssh_net_runtime_stop(handle) }, 0);
         let command = NetworkCommand {
             command_id: "stopped-command".to_string(),

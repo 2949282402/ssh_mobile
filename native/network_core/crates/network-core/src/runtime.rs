@@ -2,7 +2,7 @@
 
 use network_protocol::{NetworkCommand, NetworkEvent};
 use std::sync::{
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicU16, AtomicU8, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
@@ -51,6 +51,11 @@ pub(crate) struct PeerConfig {
 }
 
 pub(crate) struct RuntimeState {
+    /// Native bind 完成后发布实际 UDP 端口，供受控 FFI 诊断读取。
+    ///
+    /// 该快照只描述当前 Runtime 的监听资源，不把 socket 或 Quinn handle
+    /// 暴露给 Dart，也不参与 Session/Peer 的业务状态。
+    pub(crate) bound_port: Arc<AtomicU16>,
     pub(crate) endpoint: RwLock<Option<Endpoint>>,
     pub(crate) identity: RwLock<Option<Arc<DeviceIdentity>>>,
     pub(crate) receive_directory: RwLock<Option<PathBuf>>,
@@ -83,8 +88,9 @@ pub(crate) struct RuntimeState {
 
 impl RuntimeState {
     /// 创建由一个已启动 worker 拥有的空运行时状态。
-    pub(crate) fn new(event_tx: UnboundedSender<NetworkEvent>) -> Self {
+    pub(crate) fn new(event_tx: UnboundedSender<NetworkEvent>, bound_port: Arc<AtomicU16>) -> Self {
         Self {
+            bound_port,
             endpoint: RwLock::new(None),
             identity: RwLock::new(None),
             receive_directory: RwLock::new(None),
@@ -122,6 +128,7 @@ pub struct NetworkRuntime {
     pub(crate) worker_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) event_rx: Arc<Mutex<UnboundedReceiver<NetworkEvent>>>,
     pub(crate) event_tx: UnboundedSender<NetworkEvent>,
+    pub(crate) bound_port: Arc<AtomicU16>,
     pub(crate) lifecycle: AtomicU8,
     #[cfg(test)]
     test_state: Mutex<Option<Arc<RuntimeState>>>,
@@ -137,6 +144,7 @@ impl NetworkRuntime {
             .build()
             .map_err(|error| NetworkError::RuntimeInitFailed(error.to_string()))?;
         let (event_tx, event_rx) = unbounded_channel::<NetworkEvent>();
+        let bound_port = Arc::new(AtomicU16::new(0));
         info!("NetworkRuntime initialized successfully");
         Ok(Self {
             runtime: Arc::new(runtime),
@@ -144,6 +152,7 @@ impl NetworkRuntime {
             worker_task: Mutex::new(None),
             event_rx: Arc::new(Mutex::new(event_rx)),
             event_tx,
+            bound_port,
             lifecycle: AtomicU8::new(RUNTIME_CREATED),
             #[cfg(test)]
             test_state: Mutex::new(None),
@@ -161,7 +170,10 @@ impl NetworkRuntime {
             )
             .map_err(|_| NetworkError::RuntimeNotRunning)?;
         let (command_tx, command_rx) = unbounded_channel::<NetworkCommand>();
-        let state = Arc::new(RuntimeState::new(self.event_tx.clone()));
+        let state = Arc::new(RuntimeState::new(
+            self.event_tx.clone(),
+            Arc::clone(&self.bound_port),
+        ));
         self.store_test_state(Arc::clone(&state))?;
         let worker = self.runtime.spawn(run_command_worker(command_rx, state));
         *self
@@ -181,6 +193,7 @@ impl NetworkRuntime {
     pub fn stop(&self) -> Result<(), NetworkError> {
         let current = self.lifecycle.load(Ordering::Acquire);
         if current == RUNTIME_CREATED || current == RUNTIME_STOPPED {
+            self.bound_port.store(0, Ordering::Release);
             self.lifecycle.store(RUNTIME_STOPPED, Ordering::Release);
             return Ok(());
         }
@@ -210,8 +223,17 @@ impl NetworkRuntime {
                 let _ = worker.await;
             });
         }
+        self.bound_port.store(0, Ordering::Release);
         self.lifecycle.store(RUNTIME_STOPPED, Ordering::Release);
         Ok(())
+    }
+
+    /// 返回 native QUIC endpoint 实际绑定的 UDP 端口。
+    ///
+    /// 该值只用于受控测试和诊断；调用方不会获得 socket 或 Quinn handle。
+    pub fn bound_local_port(&self) -> Option<u16> {
+        let port = self.bound_port.load(Ordering::Acquire);
+        (port != 0).then_some(port)
     }
 
     /// 返回原生轮询边界使用的 Tokio handle。
@@ -300,6 +322,7 @@ impl Drop for NetworkRuntime {
                 worker.abort();
             }
         }
+        self.bound_port.store(0, Ordering::Release);
         self.lifecycle.store(RUNTIME_STOPPED, Ordering::Release);
     }
 }

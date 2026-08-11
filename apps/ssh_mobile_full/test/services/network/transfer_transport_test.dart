@@ -43,11 +43,12 @@ void main() {
           deviceId: 'device-unregistered',
           identityPrivateKey: Uint8List.fromList(List.filled(32, 11)),
           e2ePrivateKey: Uint8List.fromList(List.filled(32, 31)),
-          listenAddress: '127.0.0.1:${await _availableUdpPort()}',
+          listenAddress: '127.0.0.1:0',
           receiveDirectory: directory.absolute.path,
         ),
       );
       expect(start, isA<NetworkSuccess<void>>());
+      expect(runtime.boundLocalPort, isNotNull);
 
       final result = await service.send(
         transferId: 'transfer-1',
@@ -73,11 +74,12 @@ void main() {
           deviceId: 'device-connect',
           identityPrivateKey: Uint8List.fromList(List.filled(32, 12)),
           e2ePrivateKey: Uint8List.fromList(List.filled(32, 32)),
-          listenAddress: '127.0.0.1:${await _availableUdpPort()}',
+          listenAddress: '127.0.0.1:0',
           receiveDirectory: root.absolute.path,
         ),
       );
       expect(start, isA<NetworkSuccess<void>>());
+      expect(runtime.boundLocalPort, isNotNull);
 
       final connect = await service.connect('not-registered');
       expect(connect, isA<NetworkFailure<void>>());
@@ -94,8 +96,6 @@ void main() {
       final source = File('${root.path}/native-payload.txt');
       await source.writeAsString('native verified payload');
       addTearDown(() => root.delete(recursive: true));
-      final portA = await _availableUdpPort();
-      final portB = await _availableUdpPort();
       final identitySeedA = Uint8List.fromList(List.filled(32, 11));
       final identitySeedB = Uint8List.fromList(List.filled(32, 22));
       final publicA = Uint8List.fromList(
@@ -122,7 +122,7 @@ void main() {
           deviceId: 'device-a',
           identityPrivateKey: identitySeedA,
           e2ePrivateKey: Uint8List.fromList(List.filled(32, 31)),
-          listenAddress: '127.0.0.1:$portA',
+          listenAddress: '127.0.0.1:0',
           receiveDirectory: receiveA.absolute.path,
         ),
       );
@@ -131,12 +131,18 @@ void main() {
           deviceId: 'device-b',
           identityPrivateKey: identitySeedB,
           e2ePrivateKey: Uint8List.fromList(List.filled(32, 32)),
-          listenAddress: '127.0.0.1:$portB',
+          listenAddress: '127.0.0.1:0',
           receiveDirectory: receiveB.absolute.path,
         ),
       );
       expect(startA, isA<NetworkSuccess<void>>());
       expect(startB, isA<NetworkSuccess<void>>());
+      final boundPortA = runtimeA.boundLocalPort;
+      final boundPortB = runtimeB.boundLocalPort;
+      expect(boundPortA, isNotNull);
+      expect(boundPortB, isNotNull);
+      final portA = boundPortA!;
+      final portB = boundPortB!;
 
       final upsertA = await serviceA.upsertPeer(
         PeerConfig(
@@ -218,10 +224,3 @@ Future<TransferCompleted> _firstCompleted(NetworkService service) => service
     .where((event) => event is TransferCompleted)
     .cast<TransferCompleted>()
     .first;
-
-Future<int> _availableUdpPort() async {
-  final socket = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
-  final port = socket.port;
-  socket.close();
-  return port;
-}
