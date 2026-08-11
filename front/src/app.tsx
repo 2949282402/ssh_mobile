@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { relayApi, ApiRequestError } from './api/types';
+import { authApi } from './api/auth';
+import { ApiRequestError } from './api/errors';
+import { queryKeys } from './api/query-keys';
 import { AppShell } from './layout/app-shell';
 import { LoginPage } from './features/auth/login-page';
 import { OverviewPage } from './features/overview/overview-page';
@@ -21,8 +23,8 @@ export function App() {
 function AuthGate() {
   const queryClient = useQueryClient();
   const authQuery = useQuery({
-    queryKey: ['auth'],
-    queryFn: relayApi.authStatus,
+    queryKey: queryKeys.auth,
+    queryFn: authApi.session,
     retry: false,
     staleTime: 0,
   });

@@ -13,6 +13,7 @@ services:
       RELAY_CREDENTIAL_KEY: ${RELAY_CREDENTIAL_KEY:?set a base64url 32-byte signing key}
       RELAY_CREDENTIAL_TTL: ${RELAY_CREDENTIAL_TTL:?set credential ttl}
       RELAY_SESSION_TTL: ${RELAY_SESSION_TTL:?set session ttl}
+      RELAY_ADMIN_SESSION_TTL: ${RELAY_ADMIN_SESSION_TTL:?set admin session ttl}
       RELAY_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:?set max connections}
       RELAY_ADMIN_USER: ${RELAY_ADMIN_USER:?set the dashboard administrator username}
       RELAY_ADMIN_PASSWORD: ${RELAY_ADMIN_PASSWORD:?set a dashboard password with at least 12 characters}

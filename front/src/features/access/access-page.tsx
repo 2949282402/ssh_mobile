@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Eye, EyeOff, KeyRound, RotateCcw, ShieldCheck } from 'lucide-react';
-import { ApiRequestError, relayApi } from '../../api/types';
+import { accessApi } from '../../api/access';
+import { ApiRequestError } from '../../api/errors';
+import { queryKeys } from '../../api/query-keys';
 import { ConfirmDialog } from '../../components/confirm-dialog';
 import { useToast } from '../../components/toast';
 import { Badge, Button, ErrorState, InlineNotice, PageHeader, Skeleton } from '../../components/ui';
@@ -13,15 +15,15 @@ export function AccessPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const tokenQuery = useQuery({
-    queryKey: ['relay', 'token'],
-    queryFn: relayApi.token,
+    queryKey: queryKeys.token,
+    queryFn: accessApi.token,
     staleTime: Number.POSITIVE_INFINITY,
     retry: 1,
   });
   const rotateMutation = useMutation({
-    mutationFn: relayApi.rotateToken,
+    mutationFn: accessApi.rotateToken,
     onSuccess: (result) => {
-      queryClient.setQueryData(['relay', 'token'], result);
+      queryClient.setQueryData(queryKeys.token, result);
       setRevealed(true);
       setShowRotateDialog(false);
       toast.push('Enrollment Token 已重新生成。', 'success');

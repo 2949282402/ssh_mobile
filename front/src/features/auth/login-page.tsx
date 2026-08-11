@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { ArrowRight, LockKeyhole, Radio, ShieldCheck } from 'lucide-react';
-import { relayApi, ApiRequestError } from '../../api/types';
+import { authApi } from '../../api/auth';
+import { ApiRequestError } from '../../api/errors';
 import { useToast } from '../../components/toast';
 import { BrandMark, Button, InlineNotice, SignalRail } from '../../components/ui';
 
@@ -22,7 +23,7 @@ export function LoginPage({
     if (initialError) setError(initialError);
   }, [initialError]);
   const loginMutation = useMutation({
-    mutationFn: () => relayApi.login(username.trim(), password),
+    mutationFn: () => authApi.login(username.trim(), password),
     onSuccess: () => {
       setPassword('');
       toast.push('已进入 Relay 控制台。', 'success');

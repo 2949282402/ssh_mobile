@@ -28,6 +28,7 @@ Compose 部署的所有参数都来自 `relay/.env`。缺少必填密钥或密�
 | `FRONT_INTERNAL_PORT` | Nginx 前端容器内部监听端口 |
 | `RELAY_CREDENTIAL_TTL` | 设备凭据有效期，使用 Go duration 格式 |
 | `RELAY_SESSION_TTL` | Relay 会话有效期，使用 Go duration 格式 |
+| `RELAY_ADMIN_SESSION_TTL` | 管理员会话有效期，使用 Go duration 格式 |
 | `RELAY_MAX_CONNECTIONS` | Relay 最大连接数，必须为正整数 |
 | `RELAY_ENROLLMENT_TOKEN` | 随机注册口令，至少 16 个字符 |
 | `RELAY_CREDENTIAL_KEY` | Base64URL 编码的随机密钥，解码后至少 32 字节 |
@@ -41,7 +42,7 @@ Compose 会根据 `RELAY_INTERNAL_PORT` 生成 Go 服务的 `RELAY_ADDR`；直�
 ## Docker Compose 生产部署
 
 Docker Compose 是唯一支持的部署方式。仓库提供的 Compose 配置将 Go 服务
-保留 Go 服务和前端容器在内部网络，由 Caddy 负责 HTTPS/WSS 证书、同源路由和
+Go 服务和前端容器保留在内部网络，由 Caddy 负责 HTTPS/WSS 证书、同源路由和
 反向代理。
 
 1. 将公网 DNS `A` 或 `AAAA` 记录指向主机，并开放 80/443 端口。
@@ -86,11 +87,15 @@ Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不�
 ## 接口
 
 - `GET /`：由 Caddy 转发到前端 SPA；Go Relay 不再嵌入管理端
-- `POST /api/login`、`POST /api/logout`、`GET /api/auth-status`：面板鉴权
-- `GET /api/stats`：需要登录的内存遥测
-- `GET /api/token`：需要登录的当前注册 Token 读取
-- `POST /api/token/rotate`：需要登录的注册 Token 轮换
-- `POST /api/devices/revoke`：需要登录的设备撤销
+- `POST /api/admin/v1/auth/login`：管理员登录
+- `POST /api/admin/v1/auth/logout`：管理员注销
+- `GET /api/admin/v1/auth/session`：当前管理员会话状态
+- `GET /api/admin/v1/overview`：需要登录的运行概览
+- `GET /api/admin/v1/devices`：需要登录的设备注册快照
+- `POST /api/admin/v1/devices/{deviceId}/revoke`：需要登录的设备撤销
+- `GET /api/admin/v1/access/enrollment-token`：需要登录的注册 Token 读取
+- `POST /api/admin/v1/access/enrollment-token/rotate`：需要登录的 Token 轮换
+- 旧的 `/api/*` 管理路由已移除，不提供兼容别名。
 - `POST /v1/devices/enroll`：协议版本 1 的设备注册
 - `GET /v1/connect`：已认证的中继 WebSocket
 - 不提供独立 control WebSocket 路由；设备数据使用 v1 已认证中继连接。
@@ -106,6 +111,20 @@ Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不�
   "peer_id": "optional-device-id"
 }
 ```
+
+管理端 HTTP 错误使用独立的版本化结构：
+
+```json
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "Administrator authentication failed."
+  }
+}
+```
+
+当前管理员 API 使用内存态 HttpOnly 会话；CSRF Header、Origin/Fetch
+Metadata 校验和登录限流留待下一阶段安全增强。
 
 服务会拒绝不支持的协议版本，不提供 v1 兼容降级、`/v1/control` 路由或
 Dart 侧 Relay 数据面。

@@ -42,14 +42,14 @@ func TestCredentialBindsDeviceAndKey(t *testing.T) {
 func TestHubDoesNotPersistExpiredSession(t *testing.T) {
 	hub := newHub(Config{SessionTTL: time.Nanosecond})
 	defer hub.close()
-	hub.sessions["0123456789abcdef0123456789abcdef"] = session{sender: "a", receiver: "b", expiresAt: time.Now().Add(-time.Second)}
+	hub.transferSessions["0123456789abcdef0123456789abcdef"] = session{sender: "a", receiver: "b", expiresAt: time.Now().Add(-time.Second)}
 	hub.mutex.Lock()
-	for id, value := range hub.sessions {
+	for id, value := range hub.transferSessions {
 		if time.Now().After(value.expiresAt) {
-			delete(hub.sessions, id)
+			delete(hub.transferSessions, id)
 		}
 	}
-	_, found := hub.sessions["0123456789abcdef0123456789abcdef"]
+	_, found := hub.transferSessions["0123456789abcdef0123456789abcdef"]
 	hub.mutex.Unlock()
 	if found {
 		t.Fatal("expired session was retained")
@@ -194,24 +194,24 @@ func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 
 	const activeSession = "00112233445566778899aabbccddeeff"
 	server.hub.mutex.Lock()
-	server.hub.sessions[activeSession] = session{
+	server.hub.transferSessions[activeSession] = session{
 		sender:    "device-a",
 		receiver:  "device-b",
 		expiresAt: time.Now().Add(time.Minute),
 	}
 	server.hub.mutex.Unlock()
-	revokeBody, _ := json.Marshal(map[string]string{"device_id": "device-a"})
-	revokeRequest := httptest.NewRequest("POST", "/api/devices/revoke", bytes.NewReader(revokeBody))
+	revokeRequest := httptest.NewRequest("POST", "/api/admin/v1/devices/device-a/revoke", nil)
+	revokeRequest.SetPathValue("deviceId", "device-a")
 	revokeResponse := httptest.NewRecorder()
-	server.revokeDevice(revokeResponse, revokeRequest)
-	if revokeResponse.Code != http.StatusOK {
-		t.Fatalf("expected revoke status 200, got %d", revokeResponse.Code)
+	server.adminRevokeDevice(revokeResponse, revokeRequest)
+	if revokeResponse.Code != http.StatusNoContent {
+		t.Fatalf("expected revoke status 204, got %d", revokeResponse.Code)
 	}
 	if _, _, ok := server.authenticatedRequest(authenticatedRequest(2)); ok {
 		t.Fatal("revoked device credential was accepted")
 	}
 	server.hub.mutex.Lock()
-	_, retained := server.hub.sessions[activeSession]
+	_, retained := server.hub.transferSessions[activeSession]
 	server.hub.mutex.Unlock()
 	if retained {
 		t.Fatal("revocation retained an active device session")
@@ -253,7 +253,7 @@ func TestCredentialRequiresCurrentEnrollment(t *testing.T) {
 	}
 }
 
-// TestAdminApiContract 验证管理员登录、统计、Token 和设备撤销 API 的基本契约。
+// TestAdminApiContract 验证独立版本化的管理员 API 契约。
 func TestAdminApiContract(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte("01234567890123456789012345678901"),
@@ -266,102 +266,114 @@ func TestAdminApiContract(t *testing.T) {
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
 
-	// Test GET /api/stats JSON without auth (expected 401)
-	reqStatsUnauth := httptest.NewRequest("GET", "/api/stats", nil)
-	recStatsUnauth := httptest.NewRecorder()
-	mux.ServeHTTP(recStatsUnauth, reqStatsUnauth)
-	if recStatsUnauth.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status 401 for unauthenticated stats, got %d", recStatsUnauth.Code)
+	for _, path := range []string{
+		"/api/admin/v1/overview",
+		"/api/admin/v1/access/enrollment-token",
+	} {
+		request := httptest.NewRequest("GET", path, nil)
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("expected status 401 for unauthenticated %s, got %d", path, response.Code)
+		}
+		var payload adminErrorResponse
+		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+			t.Fatalf("failed to decode admin error: %v", err)
+		}
+		if payload.Error.Code != adminErrorUnauthorized {
+			t.Fatalf("unexpected admin error: %+v", payload)
+		}
 	}
 
-	// The enrollment token is narrower than runtime stats and needs its own auth.
-	reqTokenUnauth := httptest.NewRequest("GET", "/api/token", nil)
-	recTokenUnauth := httptest.NewRecorder()
-	mux.ServeHTTP(recTokenUnauth, reqTokenUnauth)
-	if recTokenUnauth.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status 401 for unauthenticated token, got %d", recTokenUnauth.Code)
+	oldRoute := httptest.NewRecorder()
+	mux.ServeHTTP(oldRoute, httptest.NewRequest("GET", "/api/stats", nil))
+	if oldRoute.Code != http.StatusNotFound {
+		t.Fatalf("expected removed legacy route to return 404, got %d", oldRoute.Code)
 	}
 
-	// Login
 	loginBody, _ := json.Marshal(map[string]string{
 		"username": "test-admin",
 		"password": "test-password-123",
 	})
-	reqLogin := httptest.NewRequest("POST", "/api/login", bytes.NewReader(loginBody))
-	recLogin := httptest.NewRecorder()
-	mux.ServeHTTP(recLogin, reqLogin)
-	if recLogin.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for login, got %d", recLogin.Code)
+	loginRequest := httptest.NewRequest("POST", "/api/admin/v1/auth/login", bytes.NewReader(loginBody))
+	loginResponse := httptest.NewRecorder()
+	mux.ServeHTTP(loginResponse, loginRequest)
+	if loginResponse.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for login, got %d", loginResponse.Code)
 	}
-	var loginResponse map[string]any
-	if err := json.NewDecoder(recLogin.Body).Decode(&loginResponse); err != nil {
+	var loginPayload map[string]any
+	if err := json.NewDecoder(loginResponse.Body).Decode(&loginPayload); err != nil {
 		t.Fatalf("failed to decode login response: %v", err)
 	}
-	if loginResponse["username"] != "test-admin" {
-		t.Fatalf("unexpected login response: %+v", loginResponse)
+	if loginPayload["username"] != "test-admin" {
+		t.Fatalf("unexpected login response: %+v", loginPayload)
 	}
-	if _, exists := loginResponse["success"]; exists {
-		t.Fatal("login response retained the deprecated success field")
-	}
-	cookie := recLogin.Result().Cookies()[0]
+	cookie := loginResponse.Result().Cookies()[0]
 
-	// Test GET /api/stats JSON with auth
-	reqStats := httptest.NewRequest("GET", "/api/stats", nil)
-	reqStats.AddCookie(cookie)
-	recStats := httptest.NewRecorder()
-	mux.ServeHTTP(recStats, reqStats)
-
-	if recStats.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for stats, got %d", recStats.Code)
+	sessionRequest := httptest.NewRequest("GET", "/api/admin/v1/auth/session", nil)
+	sessionRequest.AddCookie(cookie)
+	sessionResponse := httptest.NewRecorder()
+	mux.ServeHTTP(sessionResponse, sessionRequest)
+	var sessionPayload adminSessionResponse
+	if sessionResponse.Code != http.StatusOK || json.NewDecoder(sessionResponse.Body).Decode(&sessionPayload) != nil {
+		t.Fatalf("unexpected session response: status=%d body=%s", sessionResponse.Code, sessionResponse.Body.String())
 	}
-	var stats statsResponse
-	if err := json.NewDecoder(recStats.Body).Decode(&stats); err != nil {
-		t.Fatalf("failed to decode stats JSON: %v", err)
-	}
-	if bytes.Contains(recStats.Body.Bytes(), []byte("enrollment_token")) {
-		t.Fatal("stats response leaked the enrollment token")
+	if !sessionPayload.Authenticated || sessionPayload.Username != "test-admin" {
+		t.Fatalf("unexpected session payload: %+v", sessionPayload)
 	}
 
-	// Test GET /api/token JSON with auth.
-	reqToken := httptest.NewRequest("GET", "/api/token", nil)
-	reqToken.AddCookie(cookie)
-	recToken := httptest.NewRecorder()
-	mux.ServeHTTP(recToken, reqToken)
-	if recToken.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for token, got %d", recToken.Code)
+	overviewRequest := httptest.NewRequest("GET", "/api/admin/v1/overview", nil)
+	overviewRequest.AddCookie(cookie)
+	overviewResponse := httptest.NewRecorder()
+	mux.ServeHTTP(overviewResponse, overviewRequest)
+	if overviewResponse.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for overview, got %d", overviewResponse.Code)
 	}
-	var tokenPayload map[string]any
-	if err := json.NewDecoder(recToken.Body).Decode(&tokenPayload); err != nil {
-		t.Fatalf("failed to decode token JSON: %v", err)
+	var overview adminOverviewResponse
+	if err := json.NewDecoder(overviewResponse.Body).Decode(&overview); err != nil {
+		t.Fatalf("failed to decode overview: %v", err)
 	}
-	if tokenPayload["enrollment_token"] != "test-token" {
-		t.Fatalf("unexpected token response: %+v", tokenPayload)
+	if overview.Devices.Enrolled != 0 || overview.Devices.Online != 0 {
+		t.Fatalf("unexpected overview devices: %+v", overview.Devices)
+	}
+	if bytes.Contains(overviewResponse.Body.Bytes(), []byte("enrollment_token")) {
+		t.Fatal("overview response leaked the enrollment token")
 	}
 
-	revokeBody, _ := json.Marshal(map[string]string{"device_id": "device-a"})
-	revokeRequest := httptest.NewRequest(
-		"POST",
-		"/api/devices/revoke",
-		bytes.NewReader(revokeBody),
+	server.replaceEnrollment(
+		"device-a",
+		base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, ed25519.PublicKeySize)),
+		"android",
+		1,
+		time.Date(2026, time.August, 10, 0, 0, 0, 0, time.UTC),
 	)
-	revokeRequest.AddCookie(cookie)
-	revokeResponse := httptest.NewRecorder()
-	mux.ServeHTTP(revokeResponse, revokeRequest)
-	if revokeResponse.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for revoke, got %d", revokeResponse.Code)
+	devicesRequest := httptest.NewRequest("GET", "/api/admin/v1/devices", nil)
+	devicesRequest.AddCookie(cookie)
+	devicesResponse := httptest.NewRecorder()
+	mux.ServeHTTP(devicesResponse, devicesRequest)
+	if devicesResponse.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for devices, got %d", devicesResponse.Code)
 	}
-	var revokePayload map[string]any
-	if err := json.NewDecoder(revokeResponse.Body).Decode(&revokePayload); err != nil {
-		t.Fatalf("failed to decode revoke response: %v", err)
+	var devicesPayload adminDevicesResponse
+	if err := json.NewDecoder(devicesResponse.Body).Decode(&devicesPayload); err != nil {
+		t.Fatalf("failed to decode devices: %v", err)
 	}
-	if revokePayload["device_id"] != "device-a" {
-		t.Fatalf("unexpected revoke response: %+v", revokePayload)
+	if len(devicesPayload.Items) != 1 || devicesPayload.Items[0].PublicKeyFingerprint == "" {
+		t.Fatalf("unexpected device DTO: %+v", devicesPayload)
 	}
-	if _, exists := revokePayload["success"]; exists {
-		t.Fatal("revoke response retained the deprecated success field")
+	if bytes.Contains(devicesResponse.Body.Bytes(), []byte(`"public_key":`)) {
+		t.Fatal("devices response leaked the full public key field")
 	}
 
-	logoutRequest := httptest.NewRequest("POST", "/api/logout", nil)
+	tokenRequest := httptest.NewRequest("GET", "/api/admin/v1/access/enrollment-token", nil)
+	tokenRequest.AddCookie(cookie)
+	tokenResponse := httptest.NewRecorder()
+	mux.ServeHTTP(tokenResponse, tokenRequest)
+	if tokenResponse.Code != http.StatusOK || !bytes.Contains(tokenResponse.Body.Bytes(), []byte("test-token")) {
+		t.Fatalf("unexpected token response: status=%d body=%s", tokenResponse.Code, tokenResponse.Body.String())
+	}
+
+	logoutRequest := httptest.NewRequest("POST", "/api/admin/v1/auth/logout", nil)
 	logoutRequest.AddCookie(cookie)
 	logoutResponse := httptest.NewRecorder()
 	mux.ServeHTTP(logoutResponse, logoutRequest)
@@ -508,7 +520,7 @@ func TestDartWireContractEndToEnd(t *testing.T) {
 	}
 	time.Sleep(20 * time.Millisecond)
 	server.hub.mutex.Lock()
-	prematureAckSession, prematureAckRetained := server.hub.sessions[sessionID]
+	prematureAckSession, prematureAckRetained := server.hub.transferSessions[sessionID]
 	server.hub.mutex.Unlock()
 	if !prematureAckRetained || prematureAckSession.completed {
 		t.Fatal("receiver acknowledged a transfer before sender completion")
@@ -557,7 +569,7 @@ func TestDartWireContractEndToEnd(t *testing.T) {
 	}
 
 	server.hub.mutex.Lock()
-	_, sessionExists := server.hub.sessions[sessionID]
+	_, sessionExists := server.hub.transferSessions[sessionID]
 	server.hub.mutex.Unlock()
 	if sessionExists {
 		t.Fatal("completed Relay session was not removed")

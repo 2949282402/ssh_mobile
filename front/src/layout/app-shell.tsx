@@ -10,7 +10,8 @@ import {
   Server,
   X,
 } from 'lucide-react';
-import { relayApi } from '../api/types';
+import { authApi } from '../api/auth';
+import { queryKeys } from '../api/query-keys';
 import { BrandMark, IconButton } from '../components/ui';
 import { useToast } from '../components/toast';
 
@@ -32,10 +33,10 @@ export function AppShell({ username }: { username: string }) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const logoutMutation = useMutation({
-    mutationFn: relayApi.logout,
+    mutationFn: authApi.logout,
     onSuccess: () => {
       queryClient.clear();
-      void queryClient.invalidateQueries({ queryKey: ['auth'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.auth });
     },
     onError: () => toast.push('退出登录失败，请重试。', 'error'),
   });

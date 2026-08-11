@@ -86,21 +86,21 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 		if _, err := base64.RawURLEncoding.DecodeString(frame.Payload); err != nil {
 			return
 		}
-		if _, exists := h.sessions[frame.SessionID]; exists {
+		if _, exists := h.transferSessions[frame.SessionID]; exists {
 			return
 		}
-		h.sessions[frame.SessionID] = session{
+		h.transferSessions[frame.SessionID] = session{
 			sender:    sender.deviceID,
 			receiver:  frame.TargetID,
 			expiresAt: time.Now().Add(h.config.SessionTTL),
 		}
 	} else {
-		current, exists := h.sessions[frame.SessionID]
+		current, exists := h.transferSessions[frame.SessionID]
 		if !exists ||
 			time.Now().After(current.expiresAt) ||
 			(current.sender != sender.deviceID && current.receiver != sender.deviceID) {
 			if exists && time.Now().After(current.expiresAt) {
-				delete(h.sessions, frame.SessionID)
+				delete(h.transferSessions, frame.SessionID)
 			}
 			return
 		}
@@ -130,9 +130,9 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 			return
 		}
 		current.expiresAt = time.Now().Add(h.config.SessionTTL)
-		h.sessions[frame.SessionID] = current
+		h.transferSessions[frame.SessionID] = current
 	}
-	current, ok := h.sessions[frame.SessionID]
+	current, ok := h.transferSessions[frame.SessionID]
 	if !ok {
 		return
 	}
@@ -153,6 +153,6 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 		}
 	}
 	if frame.Type == "cancel" || frame.Type == "complete_ack" {
-		delete(h.sessions, frame.SessionID)
+		delete(h.transferSessions, frame.SessionID)
 	}
 }

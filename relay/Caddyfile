@@ -15,7 +15,7 @@
     Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
   }
 
-  @relay_api path /api /api/* /v1 /v1/* /healthz
+  @relay_api path /api/admin/v1 /api/admin/v1/* /v1 /v1/* /healthz
   handle @relay_api {
     reverse_proxy relay:{$RELAY_INTERNAL_PORT}
   }

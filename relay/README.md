@@ -31,6 +31,7 @@ port, limit, duration, and image value to be present in that file.
 | `FRONT_INTERNAL_PORT` | Internal Nginx front-end listener port |
 | `RELAY_CREDENTIAL_TTL` | Device credential lifetime, using Go duration syntax |
 | `RELAY_SESSION_TTL` | Relay session lifetime, using Go duration syntax |
+| `RELAY_ADMIN_SESSION_TTL` | Dashboard administrator session lifetime, using Go duration syntax |
 | `RELAY_MAX_CONNECTIONS` | Positive maximum number of Relay connections |
 | `RELAY_ENROLLMENT_TOKEN` | Random enrollment secret, at least 16 characters |
 | `RELAY_CREDENTIAL_KEY` | Base64url-encoded random key containing at least 32 bytes |
@@ -94,11 +95,15 @@ boundary: all clients must enroll again.
 ## Endpoints
 
 - `GET /`: front-end SPA through Caddy; the Go Relay has no embedded dashboard
-- `POST /api/login`, `POST /api/logout`, `GET /api/auth-status`: dashboard auth
-- `GET /api/stats`: authenticated in-memory telemetry
-- `GET /api/token`: authenticated current enrollment-token read
-- `POST /api/token/rotate`: authenticated enrollment-token rotation
-- `POST /api/devices/revoke`: authenticated device revocation
+- `POST /api/admin/v1/auth/login`: dashboard administrator login
+- `POST /api/admin/v1/auth/logout`: dashboard administrator logout
+- `GET /api/admin/v1/auth/session`: current administrator session status
+- `GET /api/admin/v1/overview`: authenticated runtime and relay overview
+- `GET /api/admin/v1/devices`: authenticated device registry snapshot
+- `POST /api/admin/v1/devices/{deviceId}/revoke`: authenticated device revocation
+- `GET /api/admin/v1/access/enrollment-token`: authenticated enrollment-token read
+- `POST /api/admin/v1/access/enrollment-token/rotate`: authenticated token rotation
+- Legacy `/api/*` dashboard routes are removed; they are not compatibility aliases.
 - `POST /v1/devices/enroll`: protocol-v1 device enrollment
 - `GET /v1/connect`: authenticated relay WebSocket
 - No separate control WebSocket route is exposed; device traffic uses the v1
@@ -116,6 +121,21 @@ raw server errors:
   "peer_id": "optional-device-id"
 }
 ```
+
+Admin HTTP failures use a separate versioned error shape:
+
+```json
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "Administrator authentication failed."
+  }
+}
+```
+
+The admin API currently uses an in-memory HttpOnly session. CSRF header
+binding, origin/fetch-metadata validation, and login rate limiting are planned
+for the next security phase.
 
 The service rejects unsupported protocol versions and does not provide a v1
 compatibility fallback, a `/v1/control` route, or a Dart-side Relay data path.

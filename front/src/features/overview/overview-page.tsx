@@ -1,11 +1,10 @@
-import { useMemo, type ReactNode } from 'react';
-import { Activity, Cpu, Gauge, MemoryStick, RefreshCw, Server, TimerReset } from 'lucide-react';
-import { ApiRequestError } from '../../api/types';
-import { useRelayStats } from '../../hooks/use-relay-stats';
+import { type ReactNode } from 'react';
+import { Cpu, Gauge, MemoryStick, RefreshCw, Server, TimerReset } from 'lucide-react';
+import { ApiRequestError } from '../../api/errors';
+import { useAdminOverview } from '../../hooks/use-admin-overview';
 import {
   Badge,
   Button,
-  EmptyState,
   ErrorState,
   InlineNotice,
   MetricTile,
@@ -13,12 +12,11 @@ import {
   SignalRail,
   Skeleton,
 } from '../../components/ui';
-import { formatLastUpdated } from '../../utils/format';
+import { formatDuration, formatLastUpdated } from '../../utils/format';
 
 export function OverviewPage() {
-  const statsQuery = useRelayStats();
+  const statsQuery = useAdminOverview();
   const stats = statsQuery.data;
-  const onlinePeers = useMemo(() => new Map(stats?.peers.map((peer) => [peer.device_id, peer]) ?? []), [stats?.peers]);
 
   if (statsQuery.isPending && !stats) return <OverviewSkeleton />;
   if (statsQuery.isError && !stats) {
@@ -67,45 +65,33 @@ export function OverviewPage() {
         </div>
         <SignalRail
           nodes={[
-            { label: 'Registered devices', value: stats.enrolled_count },
-            { label: 'Online peers', value: stats.active_peers },
-            { label: 'Active sessions', value: stats.active_sessions, tone: stats.active_sessions > 0 ? 'amber' : 'teal' },
+            { label: 'Registered devices', value: stats.devices.enrolled },
+            { label: 'Online peers', value: stats.devices.online },
+            { label: 'Active sessions', value: stats.relay.active_transfers, tone: stats.relay.active_transfers > 0 ? 'amber' : 'teal' },
           ]}
         />
       </section>
 
       <section className="metric-grid" aria-label="Relay 核心指标">
-        <MetricTile label="Registered devices" value={stats.enrolled_count} detail="当前进程已注册" accent="teal" />
-        <MetricTile label="Online peers" value={stats.active_peers} detail="已建立 WebSocket 连接" accent="teal" />
-        <MetricTile label="Active sessions" value={stats.active_sessions} detail="内存中的传输会话" accent={stats.active_sessions > 0 ? 'amber' : 'ink'} />
-        <MetricTile label="Memory alloc" value={`${stats.allocated_mem_mb.toFixed(2)} MB`} detail={`${stats.num_goroutines} goroutines`} accent="coral" mono />
+        <MetricTile label="Registered devices" value={stats.devices.enrolled} detail="当前进程已注册" accent="teal" />
+        <MetricTile label="Online peers" value={stats.devices.online} detail="已建立 WebSocket 连接" accent="teal" />
+        <MetricTile label="Active sessions" value={stats.relay.active_transfers} detail="内存中的传输会话" accent={stats.relay.active_transfers > 0 ? 'amber' : 'ink'} />
+        <MetricTile label="Memory alloc" value={`${stats.runtime.allocated_mem_mb.toFixed(2)} MB`} detail={`${stats.runtime.goroutines} goroutines`} accent="coral" mono />
       </section>
 
       <div className="overview-grid">
         <section className="panel">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Connected now</p>
-              <h2>在线设备</h2>
+              <p className="eyebrow">Registry snapshot</p>
+              <h2>设备状态</h2>
             </div>
-            <Badge tone="neutral">{stats.active_peers} peers</Badge>
+            <Badge tone="neutral">{stats.devices.online} online</Badge>
           </div>
-          {stats.peers.length === 0 ? (
-            <EmptyState title="当前没有在线设备" description="设备完成注册并建立 Relay 连接后，会出现在这里。" icon={<Activity size={21} />} />
-          ) : (
-            <div className="peer-list">
-              {stats.peers.map((peer) => (
-                <div className="peer-row" key={peer.device_id}>
-                  <span className="peer-row__signal" aria-hidden="true"><span /></span>
-                  <div className="peer-row__identity">
-                    <strong className="type-mono">{peer.device_id}</strong>
-                    <span>{peer.remote_addr || '远端地址未知'}</span>
-                  </div>
-                  <Badge tone="online" dot>在线</Badge>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="overview-summary">
+            <strong>{stats.devices.online === 0 ? '当前没有在线设备' : `${stats.devices.online} 台设备在线`}</strong>
+            <p>设备详情、远端地址和公钥指纹请在 Devices 页面查看。</p>
+          </div>
         </section>
 
         <section className="panel runtime-panel">
@@ -117,9 +103,9 @@ export function OverviewPage() {
             <Gauge size={19} aria-hidden="true" className="section-heading__icon" />
           </div>
           <div className="runtime-list">
-            <RuntimeRow icon={<TimerReset size={16} />} label="服务运行时间" value={stats.uptime_formatted} mono />
-            <RuntimeRow icon={<MemoryStick size={16} />} label="内存占用" value={`${stats.allocated_mem_mb.toFixed(2)} MB`} mono />
-            <RuntimeRow icon={<Cpu size={16} />} label="Goroutines" value={String(stats.num_goroutines)} mono />
+            <RuntimeRow icon={<TimerReset size={16} />} label="服务运行时间" value={formatDuration(stats.uptime_seconds)} mono />
+            <RuntimeRow icon={<MemoryStick size={16} />} label="内存占用" value={`${stats.runtime.allocated_mem_mb.toFixed(2)} MB`} mono />
+            <RuntimeRow icon={<Cpu size={16} />} label="Goroutines" value={String(stats.runtime.goroutines)} mono />
             <RuntimeRow icon={<Server size={16} />} label="数据保存" value="仅驻留内存" />
           </div>
           <InlineNotice tone="warning">Relay 重启后，设备注册和传输会话都会清空。</InlineNotice>
@@ -127,7 +113,7 @@ export function OverviewPage() {
       </div>
 
       <div className="sr-only" aria-live="polite">
-        当前在线设备 {onlinePeers.size} 台，活动会话 {stats.active_sessions} 个。
+        当前在线设备 {stats.devices.online} 台，活动会话 {stats.relay.active_transfers} 个。
       </div>
     </div>
   );

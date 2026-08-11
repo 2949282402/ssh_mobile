@@ -16,6 +16,16 @@ export function formatLastUpdated(timestamp: number) {
   }).format(new Date(timestamp));
 }
 
+export function formatDuration(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const days = Math.floor(safeSeconds / 86400);
+  const hours = Math.floor(safeSeconds / 3600) % 24;
+  const minutes = Math.floor(safeSeconds / 60) % 60;
+  const remainingSeconds = safeSeconds % 60;
+  const prefix = days > 0 ? `${days}d ` : '';
+  return `${prefix}${String(hours).padStart(2, '0')}h ${String(minutes).padStart(2, '0')}m ${String(remainingSeconds).padStart(2, '0')}s`;
+}
+
 export async function copyToClipboard(value: string) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(value);

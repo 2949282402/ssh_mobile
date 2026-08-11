@@ -74,6 +74,8 @@ jobs:
           git diff --exit-code -- .
       - name: Test relay
         run: go test ./...
+      - name: Vet relay
+        run: go vet ./...
 
   architecture-check:
     runs-on: ubuntu-latest

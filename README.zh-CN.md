@@ -94,7 +94,7 @@ Copy-Item .env.example .env
 docker compose --env-file .env up --build
 ```
 
-这一条命令会构建并启动 `front`、`relay` 与 `caddy`，随后持续显示三者的合并日志。Caddy 对外提供前端 SPA，并把 `/api`、`/v1` 和 `/healthz` 转发到内部 Relay 服务。中继状态仅驻留内存；服务重启后，客户端需要重新注册。
+这一条命令会构建并启动 `front`、`relay` 与 `caddy`，随后持续显示三者的合并日志。Caddy 对外提供前端 SPA，并把 `/api/admin/v1`、`/v1` 和 `/healthz` 转发到内部 Relay 服务。中继状态仅驻留内存；服务重启后，客户端需要重新注册。
 
 在 SSH Mobile 中打开“局域网共享设置”，填写具备有效 TLS 证书的 HTTPS 中继主机、端口和注册 Token。Token 只用于本次注册，不会写入偏好设置；应用只保存 Relay origin，设备凭据保存在平台安全存储中。设置页会显示已连接、已断开或失败状态，并提供手动连接、断开和清除操作。
 

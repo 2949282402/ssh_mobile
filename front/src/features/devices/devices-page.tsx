@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check, Filter, Search, Server, ShieldOff, SlidersHorizontal, Wifi, X } from 'lucide-react';
-import { ApiRequestError, type EnrolledDevice } from '../../api/types';
-import { relayApi } from '../../api/types';
+import { devicesApi } from '../../api/devices';
+import { ApiRequestError } from '../../api/errors';
+import { queryKeys } from '../../api/query-keys';
+import type { EnrolledDevice } from '../../schemas/devices';
 import { ConfirmDialog } from '../../components/confirm-dialog';
 import { useToast } from '../../components/toast';
 import {
@@ -14,62 +16,56 @@ import {
   PageHeader,
   Skeleton,
 } from '../../components/ui';
-import { useRelayStats } from '../../hooks/use-relay-stats';
+import { useAdminDevices } from '../../hooks/use-admin-devices';
 import { formatDate } from '../../utils/format';
 
 type DeviceFilter = 'all' | 'online' | 'offline';
 
 export function DevicesPage() {
-  const statsQuery = useRelayStats();
+  const devicesQuery = useAdminDevices();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<DeviceFilter>('all');
   const [selectedDevice, setSelectedDevice] = useState<EnrolledDevice | null>(null);
   const queryClient = useQueryClient();
   const toast = useToast();
   const revokeMutation = useMutation({
-    mutationFn: (deviceId: string) => relayApi.revokeDevice(deviceId),
+    mutationFn: (deviceId: string) => devicesApi.revoke(deviceId),
     onSuccess: (_result, deviceId) => {
       setSelectedDevice(null);
       toast.push(`设备 ${deviceId} 已撤销注册。`, 'success');
-      void queryClient.invalidateQueries({ queryKey: ['relay', 'stats'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.devices });
     },
     onError: (error) => {
       toast.push(error instanceof ApiRequestError ? error.message : '设备撤销失败。', 'error');
     },
   });
 
-  const stats = statsQuery.data;
-  const onlineIds = useMemo(() => new Set(stats?.peers.map((peer) => peer.device_id) ?? []), [stats?.peers]);
-  const remoteAddresses = useMemo(
-    () => new Map(stats?.peers.map((peer) => [peer.device_id, peer.remote_addr]) ?? []),
-    [stats?.peers],
-  );
+  const devicesResponse = devicesQuery.data;
   const devices = useMemo(() => {
-    if (!stats) return [];
+    if (!devicesResponse) return [];
     const normalizedSearch = search.trim().toLowerCase();
-    return stats.enrolled_devices.filter((device) => {
+    return devicesResponse.items.filter((device) => {
       const matchesSearch = !normalizedSearch
         || device.device_id.toLowerCase().includes(normalizedSearch)
         || device.platform.toLowerCase().includes(normalizedSearch);
-      const isOnline = onlineIds.has(device.device_id);
-      const matchesFilter = filter === 'all' || (filter === 'online' ? isOnline : !isOnline);
+      const matchesFilter = filter === 'all' || (filter === 'online' ? device.online : !device.online);
       return matchesSearch && matchesFilter;
     });
-  }, [filter, onlineIds, search, stats]);
+  }, [devicesResponse, filter, search]);
 
-  if (statsQuery.isPending && !stats) return <DevicesSkeleton />;
-  if (statsQuery.isError && !stats) {
+  if (devicesQuery.isPending && !devicesResponse) return <DevicesSkeleton />;
+  if (devicesQuery.isError && !devicesResponse) {
     return (
       <div className="page page--narrow">
         <PageHeader eyebrow="Relay / Devices" title="设备管理" description="管理当前进程中的已注册设备。" />
         <ErrorState
-          description={statsQuery.error instanceof ApiRequestError ? statsQuery.error.message : undefined}
-          onRetry={() => void statsQuery.refetch()}
+          description={devicesQuery.error instanceof ApiRequestError ? devicesQuery.error.message : undefined}
+          onRetry={() => void devicesQuery.refetch()}
         />
       </div>
     );
   }
-  if (!stats) return null;
+  if (!devicesResponse) return null;
 
   return (
     <div className="page">
@@ -78,7 +74,7 @@ export function DevicesPage() {
         title="设备管理"
         description="查看设备注册信息和当前 Relay 连接状态。"
         action={(
-          <Button variant="outline" onClick={() => void statsQuery.refetch()} loading={statsQuery.isFetching}>
+          <Button variant="outline" onClick={() => void devicesQuery.refetch()} loading={devicesQuery.isFetching}>
             <Wifi size={15} aria-hidden="true" />
             刷新设备
           </Button>
@@ -114,7 +110,7 @@ export function DevicesPage() {
             </button>
           ))}
         </div>
-        <span className="list-toolbar__count">显示 {devices.length} / {stats.enrolled_count} 台</span>
+        <span className="list-toolbar__count">显示 {devices.length} / {devicesResponse.total} 台</span>
       </div>
 
       <section className="table-panel">
@@ -125,7 +121,7 @@ export function DevicesPage() {
           </div>
           <Badge tone="neutral"><SlidersHorizontal size={13} /> v1 registry</Badge>
         </div>
-        {stats.enrolled_devices.length === 0 ? (
+        {devicesResponse.items.length === 0 ? (
           <EmptyState title="还没有注册设备" description="使用当前 Enrollment Token 注册第一台设备。" icon={<ServerIcon />} />
         ) : devices.length === 0 ? (
           <EmptyState title="没有匹配设备" description="换一个设备 ID、平台或状态筛选条件。" icon={<Search size={21} />} />
@@ -144,7 +140,7 @@ export function DevicesPage() {
               </thead>
               <tbody>
                 {devices.map((device) => {
-                  const online = onlineIds.has(device.device_id);
+                  const online = device.online;
                   return (
                     <tr key={device.device_id}>
                       <td data-label="设备">
@@ -152,7 +148,8 @@ export function DevicesPage() {
                           <span className={`device-cell__icon${online ? ' device-cell__icon--online' : ''}`}><ServerIcon /></span>
                           <div>
                             <strong className="type-mono">{device.device_id}</strong>
-                            {online && remoteAddresses.get(device.device_id) ? <span>{remoteAddresses.get(device.device_id)}</span> : null}
+                            {online && device.remote_addr ? <span>{device.remote_addr}</span> : null}
+                            {device.public_key_fingerprint ? <span className="type-mono device-cell__fingerprint">{device.public_key_fingerprint}</span> : null}
                           </div>
                         </div>
                       </td>

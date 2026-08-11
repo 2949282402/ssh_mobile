@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => {
       ...(relayApiOrigin
         ? {
             proxy: {
-              '/api': relayApiOrigin,
+              '/api/admin/v1': relayApiOrigin,
               '/healthz': relayApiOrigin,
               '/v1': relayApiOrigin,
             },

@@ -34,7 +34,7 @@ describe('LoginPage', () => {
     await user.type(screen.getByLabelText('管理员密码'), 'password');
     await user.click(screen.getByRole('button', { name: /进入 Relay 控制台/ }));
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/login', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/v1/auth/login', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ username: 'admin', password: 'password' }),
     }));

@@ -25,6 +25,7 @@ type Config struct {
 	CredentialKey   []byte
 	CredentialTTL   time.Duration
 	SessionTTL      time.Duration
+	AdminSessionTTL time.Duration
 	MaxConnections  int
 	AdminUser       string
 	AdminPassword   string
@@ -68,6 +69,7 @@ func ConfigFromEnvironment() (Config, error) {
 		CredentialKey:   decoded,
 		CredentialTTL:   durationEnv("RELAY_CREDENTIAL_TTL", 24*time.Hour),
 		SessionTTL:      durationEnv("RELAY_SESSION_TTL", 15*time.Minute),
+		AdminSessionTTL: durationEnv("RELAY_ADMIN_SESSION_TTL", 24*time.Hour),
 		MaxConnections:  intEnv("RELAY_MAX_CONNECTIONS", 2048),
 		AdminUser:       adminUser,
 		AdminPassword:   adminPassword,
