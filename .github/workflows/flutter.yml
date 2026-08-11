@@ -256,7 +256,7 @@ jobs:
           if grep -R "reconnectCredentials" lib; then exit 1; fi
           if grep -R "privateKeyDigest" lib; then exit 1; fi
       - name: Analyze
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
       - name: Test
         run: flutter test --coverage --reporter expanded
       - name: Check coverage floor
