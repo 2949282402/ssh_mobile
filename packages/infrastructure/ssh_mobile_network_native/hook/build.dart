@@ -150,6 +150,9 @@ void main(List<String> args) async {
       buildEnvironment['CC_$cargoTargetTriple'] = linker.path;
       buildEnvironment['AR_$cargoTargetTriple'] = archiver.path;
     }
+    if ((targetOS == OS.macOS || targetOS == OS.iOS) && Platform.isMacOS) {
+      _configureAppleToolchain(buildEnvironment, cargoTargetTriple);
+    }
 
     final processResult = await Process.run(
       cargoExecutable,
@@ -201,6 +204,28 @@ void main(List<String> args) async {
       }
     }
   });
+}
+
+/// Flutter native-asset hooks can run with a reduced PATH that does not expose
+/// Xcode's compiler aliases. Pin the stable system tool paths so Rust build
+/// scripts such as `ring` can compile C/assembly for Apple targets.
+void _configureAppleToolchain(
+  Map<String, String> environment,
+  String cargoTargetTriple,
+) {
+  final clang = File('/usr/bin/clang');
+  final archiver = File('/usr/bin/ar');
+  if (!clang.existsSync() || !archiver.existsSync()) {
+    throw StateError(
+      'Apple toolchain is unavailable: expected ${clang.path} and '
+      '${archiver.path}.',
+    );
+  }
+
+  final cargoTargetKey = cargoTargetTriple.toUpperCase().replaceAll('-', '_');
+  environment['CARGO_TARGET_${cargoTargetKey}_LINKER'] = clang.path;
+  environment['CC_$cargoTargetTriple'] = clang.path;
+  environment['AR_$cargoTargetTriple'] = archiver.path;
 }
 
 /// Restores `RUSTUP_HOME`/`CARGO_HOME` when the surrounding build tool drops
