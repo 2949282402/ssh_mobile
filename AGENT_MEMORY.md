@@ -210,12 +210,13 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   source. The explicit allowlist currently contains only AI's public
   `feature_playbook` boundary and audited legacy singleton names; do not expand
   it without an architecture decision.
-- 2026-08-10: Step30 moved Melos 8 scripts into the root `pubspec.yaml` and removed
-  the obsolete second `melos.yaml` configuration source. Pull Requests use
-  `melos exec --diff` for changed packages and dependents, plus the architecture
-  guard; `main` runs the full Melos format/analyze/test scripts and Full App /
-  Terminal-only smoke builds. Keep the workspace list in root `pubspec.yaml`
-  synchronized with every maintained package, including AI and MCP.
+- 2026-08-11: Step30 CI now runs once for every branch push and intentionally has
+  no parallel `pull_request` trigger. Front, Relay, native Rust SDK, Dart SDK,
+  workspace packages, Full App client quality, and Android/Windows/macOS/iOS /
+  Terminal builds are independent jobs. Full App coverage is owned only by
+  `analyze-and-test`; `workspace-quality` excludes the Full App and the three
+  SDK Dart packages. Keep the workspace list in root `pubspec.yaml` synchronized
+  with every maintained package, including AI and MCP.
 - 2026-08-10: Step31 added `tool/check_file_sizes.dart` and its pure Dart
   regression test. The report scans `apps/`, `packages/`, `tool/`, and `test/`,
   excludes generated/build/vendored files, and uses 300/400/500-line thresholds

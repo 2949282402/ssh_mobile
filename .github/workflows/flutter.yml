@@ -1,12 +1,9 @@
 name: Flutter
 
 on:
-  pull_request:
   push:
     branches:
-      - main
-      - master
-      - codex/sdk
+      - '**'
 
 permissions:
   contents: read
@@ -58,6 +55,44 @@ jobs:
       - name: Lint Rust workspace
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+  sdk-dart-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Format SDK packages
+        run: >-
+          dart run melos run format
+          --scope=network_sdk
+          --scope=network_transport
+          --scope=ssh_mobile_network_native
+      - name: Analyze SDK packages
+        run: >-
+          dart run melos run analyze
+          --scope=network_sdk
+          --scope=network_transport
+          --scope=ssh_mobile_network_native
+      - name: Test SDK packages
+        run: >-
+          dart run melos run test
+          --scope=network_sdk
+          --scope=network_transport
+          --scope=ssh_mobile_network_native
+
   relay-quality:
     runs-on: ubuntu-latest
     defaults:
@@ -101,62 +136,7 @@ jobs:
       - name: Check duplicate implementations
         run: dart run tool/duplicate_implementation_check.dart
 
-  package-quality:
-    if: github.event_name == 'pull_request'
-    needs: architecture-check
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.44.2'
-          cache: true
-      - name: Install workspace dependencies
-        run: dart pub get
-      - name: Select pull request diff
-        id: diff
-        shell: bash
-        run: |
-          range="${{ github.event.pull_request.base.sha }}...${{ github.sha }}"
-          echo "range=$range" >> "$GITHUB_OUTPUT"
-          if git diff --name-only "$range" | grep -Eq '^(apps|packages)/'; then
-            echo "has_package_changes=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_package_changes=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Check changed package formatting
-        if: steps.diff.outputs.has_package_changes == 'true'
-        env:
-          MELOS_DIFF: ${{ steps.diff.outputs.range }}
-        run: >-
-          dart run melos exec --diff="$MELOS_DIFF" --include-dependents --fail-fast --
-          "dart format --output=none --set-exit-if-changed lib test"
-      - name: Analyze changed packages
-        if: steps.diff.outputs.has_package_changes == 'true'
-        env:
-          MELOS_DIFF: ${{ steps.diff.outputs.range }}
-        run: >-
-          dart run melos exec --diff="$MELOS_DIFF" --include-dependents --fail-fast --
-          "flutter analyze --no-pub"
-      - name: Test changed packages
-        if: steps.diff.outputs.has_package_changes == 'true'
-        env:
-          MELOS_DIFF: ${{ steps.diff.outputs.range }}
-        run: >-
-          dart run melos exec --diff="$MELOS_DIFF" --include-dependents --fail-fast --
-          "flutter test --no-pub"
-
   workspace-quality:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/codex/sdk')
-    needs: architecture-check
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -172,25 +152,29 @@ jobs:
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
-      - name: Install Full App dependencies
-        working-directory: apps/ssh_mobile_full
-        run: flutter pub get
       - name: Format workspace packages
-        run: dart run melos run format
+        run: >-
+          dart run melos run format
+          --ignore=ssh_mobile
+          --ignore=network_sdk
+          --ignore=network_transport
+          --ignore=ssh_mobile_network_native
       - name: Analyze workspace packages
-        run: dart run melos run analyze
+        run: >-
+          dart run melos run analyze
+          --ignore=ssh_mobile
+          --ignore=network_sdk
+          --ignore=network_transport
+          --ignore=ssh_mobile_network_native
       - name: Test workspace packages
-        run: dart run melos run test
-      - name: Check full app format and tools
-        working-directory: apps/ssh_mobile_full
-        run: dart format --output=none --set-exit-if-changed lib test tool
-      - name: Build full app smoke APK
-        working-directory: apps/ssh_mobile_full
-        run: flutter build apk --debug --no-pub
+        run: >-
+          dart run melos run test
+          --ignore=ssh_mobile
+          --ignore=network_sdk
+          --ignore=network_transport
+          --ignore=ssh_mobile_network_native
 
   terminal-smoke-build:
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/codex/sdk')
-    needs: architecture-check
     runs-on: windows-latest
     defaults:
       run:
@@ -236,12 +220,6 @@ jobs:
       - name: Install Full App dependencies
         working-directory: apps/ssh_mobile_full
         run: flutter pub get
-      - name: Analyze native Dart package
-        working-directory: packages/infrastructure/ssh_mobile_network_native
-        run: flutter analyze
-      - name: Test native Dart package
-        working-directory: packages/infrastructure/ssh_mobile_network_native
-        run: flutter test
       - name: Check generated app icons
         run: |
           dart run tool/generate_app_icons.dart
@@ -267,6 +245,29 @@ jobs:
         run: flutter test --coverage --reporter expanded
       - name: Check coverage floor
         run: dart run tool/check_coverage.dart --minimum=35
+
+  android-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/ssh_mobile_full
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install dependencies
+        working-directory: .
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Install Full App dependencies
+        run: flutter pub get
       - name: Build Android debug APK
         run: flutter build apk --debug --no-pub
 
@@ -292,8 +293,6 @@ jobs:
       - name: Install Full App dependencies
         working-directory: apps/ssh_mobile_full
         run: flutter pub get
-      - name: Test
-        run: flutter test --reporter expanded
       - name: Build Windows
         run: flutter build windows
 
@@ -306,7 +305,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin, x86_64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.2'
@@ -319,10 +318,28 @@ jobs:
       - name: Install Full App dependencies
         working-directory: apps/ssh_mobile_full
         run: flutter pub get
-      - name: Test
-        run: flutter test --reporter expanded
       - name: Build macOS
         run: flutter build macos
+
+  ios-build:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: apps/ssh_mobile_full
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install dependencies
+        working-directory: .
+        run: dart pub get
+      - name: Install Full App dependencies
+        run: flutter pub get
       - name: Update CocoaPods specs
         working-directory: apps/ssh_mobile_full/ios
         run: pod repo update

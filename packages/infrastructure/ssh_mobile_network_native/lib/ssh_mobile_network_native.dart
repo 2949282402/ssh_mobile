@@ -28,6 +28,10 @@ external int _sshNetRuntimeCreateNative(Pointer<Pointer<Void>> outHandle);
 @Native<Int32 Function(Pointer<Void>)>(symbol: 'ssh_net_runtime_start')
 external int _sshNetRuntimeStartNative(Pointer<Void> handle);
 
+/// 查询 native endpoint 实际绑定的 UDP 端口。
+@Native<Int32 Function(Pointer<Void>)>(symbol: 'ssh_net_runtime_local_port')
+external int _sshNetRuntimeLocalPortNative(Pointer<Void> handle);
+
 /// 停止正在运行的原生运行时。
 @Native<Int32 Function(Pointer<Void>)>(symbol: 'ssh_net_runtime_stop')
 external int _sshNetRuntimeStopNative(Pointer<Void> handle);
@@ -104,6 +108,16 @@ class NativeNetworkRuntime {
       .map(_decodeTypedEvent)
       .where((event) => event != null)
       .cast<NativeNetworkEvent>();
+
+  /// 返回 native QUIC endpoint 实际绑定的 UDP 端口。
+  ///
+  /// 该 getter 仅用于受控集成测试和诊断，不是 NetworkService、Feature 或
+  /// 客户端业务 API。runtime 尚未配置监听地址或已经停止时返回 `null`。
+  int? get boundLocalPort {
+    if (_handle == nullptr || _stopped) return null;
+    final port = _sshNetRuntimeLocalPortNative(_handle);
+    return port > 0 ? port : null;
+  }
 
   /// 向原生运行时提交一个已编码命令。
   NativeOperationStatus sendCommand(Uint8List command) {

@@ -32,6 +32,10 @@ synthetic success.
   Quinn connections, UDP sockets, or WebRTC raw objects.
 - Runtime disposal is ordered as `Running -> Stopping -> Stopped -> Destroyed`;
   stopping is idempotent and no command is accepted after stopping begins.
+- `NativeNetworkRuntime.boundLocalPort` is a read-only diagnostic for controlled
+  integration tests. It reports the port atomically bound by native QUIC after
+  configuration and returns `null` before configuration or after stopping; it
+  does not expose a socket, Quinn handle, or client business API.
 - Relay enrollment, credentials, and configuration stay in Dart; the native
   Rust runtime owns the authenticated WSS data path and its end-to-end
   encrypted frames.

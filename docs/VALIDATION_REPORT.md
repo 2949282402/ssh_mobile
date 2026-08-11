@@ -49,7 +49,7 @@ client business source was modified.
 | Drift generated database code | Deterministic on a second build |
 | Shared Codex/Claude maintenance skill | Synchronized |
 | Web manifest JSON and Git diff checks | Passed |
-| GitHub Actions for `codex/sdk` | Not run: `.github/workflows/flutter.yml` triggers pushes only on `main`/`master` and pull requests; the branch push was verified at `6e0e550`, but the Actions API returned no run |
+| GitHub Actions for `codex/sdk` | Not verified on this host; the workflow now triggers once for every branch push, with domain tests and platform builds split into independent jobs |
 
 ## Commands
 
@@ -144,9 +144,9 @@ in `docs/RELEASE_CHECKLIST.md` before distribution.
   performance on a physical device
 - iOS device behavior and signed archive creation
 - macOS and unsigned iOS jobs in the updated GitHub Actions workflow
-- GitHub Actions for `codex/sdk`: no workflow run exists because the workflow
-  only runs push jobs on `main`/`master` and pull-request jobs require an
-  actual pull request; no PR was opened by this task
+- GitHub Actions for `codex/sdk`: the new push-triggered workflow was not
+  observed from this local validation; remote Actions execution is required to
+  verify all independent test and platform-build jobs
 - TalkBack and VoiceOver behavior on physical devices
 - Store metadata, privacy policy, permanent application identifiers, and legal
   license choice

@@ -13,7 +13,7 @@ use network_relay::RelayClient;
 use quinn::{Connection, Endpoint, VarInt};
 use std::future::Future;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{atomic::Ordering, Arc};
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
@@ -89,12 +89,22 @@ pub(crate) async fn configure_runtime(
     let manager = QuicEndpointManager::from_bound_socket(socket, Arc::clone(&path_manager))
         .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
     let endpoint = manager.endpoint;
+    state
+        .bound_port
+        .store(bound_address.port(), Ordering::Release);
     *state.identity.write().await = Some(identity);
     *state.receive_directory.write().await = Some(receive_directory);
     *state.local_path_manager.write().await = Some(path_manager);
     *state.endpoint.write().await = Some(endpoint.clone());
     tracing::info!(%bound_address, "native UDP socket is shared by candidate discovery and QUIC");
-    tokio::spawn(accept_connections(endpoint, Arc::clone(&state)));
+    let mut accept_task = state
+        .accept_task
+        .lock()
+        .map_err(|_| protocol_error(NetworkErrorCode::QuicError, "accept task lock poisoned"))?;
+    *accept_task = Some(tokio::spawn(accept_connections(
+        endpoint,
+        Arc::clone(&state),
+    )));
     Ok(())
 }
 

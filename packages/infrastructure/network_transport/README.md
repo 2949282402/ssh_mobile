@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-11
 
 # network_transport
 
@@ -14,6 +14,8 @@
   handle 和已登记连接；当前具体协议连接仍由各协议 Service Owner 管理，因此
   `activeConnections` 在尚未登记连接时为零；
 - 原生 handle 的 `create -> start -> stop -> destroy` 由底层 adapter 明确拥有；
+- native 实际绑定端口的查询仅属于 `ssh_mobile_network_native` 的受控测试/诊断能力，
+  不进入 `NetworkRuntime`、Feature 或客户端业务合约；
 - `TransportEndpoint`、`TransportConnection` 和 metrics 是后续 SSH/SFTP/LAN 模块
   使用的稳定合约，本 Step 不把旧网络业务协议搬入本包；
 - `NetworkCommandGateway` 是连接 App Scope Runtime 与现有 v1 命令/事件服务的
