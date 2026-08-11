@@ -154,6 +154,37 @@ impl SessionManager {
         previous
     }
 
+    /// Atomically promotes a connected Relay route to a newly authenticated
+    /// direct Connection. The Relay route has no Connection handle, so this
+    /// transition has its own guard and cannot accidentally replace a newer
+    /// direct route or a closed Session.
+    pub(crate) async fn replace_route_if_current(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        expected_route: RouteType,
+        replacement: Connection,
+        route: RouteType,
+    ) -> bool {
+        let mut sessions = self.sessions.write().await;
+        let Some(session) = sessions.get_mut(peer_id) else {
+            replacement.close(VarInt::from_u32(0), b"session replaced");
+            return false;
+        };
+        if session.id != expected_session_id
+            || session.state != SessionState::Connected
+            || session.active_route != expected_route
+            || session.connection.is_some()
+        {
+            drop(sessions);
+            replacement.close(VarInt::from_u32(0), b"session replaced");
+            return false;
+        }
+        session.connection = Some(replacement);
+        session.active_route = route;
+        true
+    }
+
     /// 记录一个没有 Quinn handle 的已连接 Route，例如 Relay 控制面。
     pub(crate) async fn mark_route_connected(
         &self,
@@ -333,6 +364,9 @@ impl SessionId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use network_nat::PathManager;
+    use network_quic::QuicEndpointManager;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn transient_disconnect_keeps_session_id_for_reconnect() {
@@ -436,5 +470,72 @@ mod tests {
         assert_ne!(first, second);
         assert!(!manager.should_reconnect("peer-b", first).await);
         assert!(manager.should_reconnect("peer-b", second).await);
+    }
+
+    #[tokio::test]
+    async fn relay_route_can_be_promoted_atomically_after_direct_connection_is_ready() {
+        let manager = SessionManager::new();
+        let session_id = match manager.begin_connect("peer-b").await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        assert!(
+            manager
+                .mark_route_connected("peer-b", session_id, RouteType::Relay)
+                .await
+        );
+
+        let server_socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("server socket");
+        let server =
+            QuicEndpointManager::from_bound_socket(server_socket, Arc::new(PathManager::new()))
+                .expect("server endpoint");
+        let client_socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("client socket");
+        let client =
+            QuicEndpointManager::from_bound_socket(client_socket, Arc::new(PathManager::new()))
+                .expect("client endpoint");
+        let server_endpoint = server.endpoint.clone();
+        let accept_task = tokio::spawn(async move {
+            let incoming = server_endpoint.accept().await.expect("incoming connection");
+            incoming.await.expect("server connection")
+        });
+        let connection = client
+            .endpoint
+            .connect(
+                server.endpoint.local_addr().expect("server address"),
+                "ssh-mobile",
+            )
+            .expect("create direct connection")
+            .await
+            .expect("direct connection");
+        let server_connection = accept_task.await.expect("accept task");
+
+        assert!(
+            manager
+                .replace_route_if_current(
+                    "peer-b",
+                    session_id,
+                    RouteType::Relay,
+                    connection.clone(),
+                    RouteType::QuicDirect,
+                )
+                .await
+        );
+        assert_eq!(
+            manager.current_route("peer-b").await,
+            Some(RouteType::QuicDirect)
+        );
+        assert_eq!(
+            manager
+                .current_connection("peer-b")
+                .await
+                .expect("promoted connection")
+                .stable_id(),
+            connection.stable_id()
+        );
+
+        connection.close(VarInt::from_u32(0), b"test complete");
+        server_connection.close(VarInt::from_u32(0), b"test complete");
+        client.endpoint.close(VarInt::from_u32(0), b"test complete");
+        server.endpoint.close(VarInt::from_u32(0), b"test complete");
     }
 }

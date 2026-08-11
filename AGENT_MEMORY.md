@@ -275,6 +275,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   replace stale sets, while ranked direct attempts race in parallel and only an
   identity-bound QUIC handshake can nominate a ready path; Relay remains the
   fallback when no authenticated direct candidate succeeds.
+- 2026-08-11: A Session connected through Relay starts a deduplicated native
+  background direct-upgrade task. It keeps Relay untouched while candidates are
+  authenticated, waits for a short stable window, atomically swaps only when the
+  Session is still on Relay, then replays Delivery and resumes transfers before
+  starting direct receivers. Failed or stale probes close only their new QUIC
+  attempt and leave Relay available.
 
 ### UI and performance
 

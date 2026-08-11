@@ -32,6 +32,8 @@ const STUN_SERVER_ENV: &str = "SSH_MOBILE_STUN_SERVER";
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
 const PATH_METRICS_INTERVAL: Duration = Duration::from_secs(2);
 const CANDIDATE_SIGNAL_WAIT: Duration = Duration::from_millis(300);
+const DIRECT_UPGRADE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
+const DIRECT_UPGRADE_STABLE_DURATION: Duration = Duration::from_millis(750);
 
 /// 校验运行时密钥并启动 QUIC 监听器。
 pub(crate) async fn configure_runtime(
@@ -217,6 +219,7 @@ pub(crate) async fn disconnect_peer(
         ));
     }
     state.sessions.close(&peer_id).await;
+    state.direct_upgrade_tasks.write().await.remove(&peer_id);
     emit_peer_state(
         &state.event_tx,
         &peer_id,
@@ -278,7 +281,7 @@ pub(crate) async fn connect_peer(
             let _ = timeout(CANDIDATE_SIGNAL_WAIT, candidate_update).await;
         }
     }
-    let direct_candidates = match state.path_managers.read().await.get(&peer_id).cloned() {
+    let mut direct_candidates = match state.path_managers.read().await.get(&peer_id).cloned() {
         Some(manager) => manager.ranked_candidates().await,
         None => peer
             .endpoint
@@ -292,6 +295,18 @@ pub(crate) async fn connect_peer(
             .into_iter()
             .collect(),
     };
+    if let Some(endpoint) = peer.endpoint {
+        if !direct_candidates
+            .iter()
+            .any(|candidate| candidate.endpoint == endpoint)
+        {
+            direct_candidates.push(Candidate::new(
+                endpoint,
+                candidate_kind_for(endpoint),
+                "peer-configured".into(),
+            ));
+        }
+    }
 
     let route = match (!direct_candidates.is_empty(), relay) {
         (true, Some(relay)) => {
@@ -394,6 +409,7 @@ pub(crate) async fn connect_peer(
             );
             crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
             crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
+            schedule_direct_upgrade(Arc::clone(&state), peer_id, session_id);
             Ok(())
         }
         Err(error) => {
@@ -508,6 +524,179 @@ async fn connect_direct_candidates(
             &peer_id,
         )
     }))
+}
+
+/// Keeps a Relay-backed Session usable while probing the advertised direct
+/// candidates. The task owns no business state and exits when the Session is
+/// closed, replaced, or already promoted by another route.
+fn schedule_direct_upgrade(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
+    tokio::spawn(async move {
+        {
+            let mut tasks = state.direct_upgrade_tasks.write().await;
+            if tasks
+                .get(&peer_id)
+                .is_some_and(|current| *current == session_id)
+            {
+                return;
+            }
+            tasks.insert(peer_id.clone(), session_id);
+        }
+
+        direct_upgrade_loop(Arc::clone(&state), peer_id.clone(), session_id).await;
+
+        let mut tasks = state.direct_upgrade_tasks.write().await;
+        if tasks
+            .get(&peer_id)
+            .is_some_and(|current| *current == session_id)
+        {
+            tasks.remove(&peer_id);
+        }
+    });
+}
+
+async fn direct_upgrade_loop(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
+    loop {
+        if state.sessions.current_session_id(&peer_id).await != Some(session_id)
+            || state.sessions.current_route(&peer_id).await != Some(RouteType::Relay)
+        {
+            return;
+        }
+
+        let endpoint = state.endpoint.read().await.clone();
+        let identity = state.identity.read().await.clone();
+        let peer = state.peers.read().await.get(&peer_id).cloned();
+        let manager = state.path_managers.read().await.get(&peer_id).cloned();
+        let Some(endpoint) = endpoint else {
+            return;
+        };
+        let Some(identity) = identity else {
+            return;
+        };
+        let Some(peer) = peer else {
+            return;
+        };
+        let mut candidates = match manager.as_ref() {
+            Some(manager) => manager.ranked_candidates().await,
+            None => peer
+                .endpoint
+                .map(|endpoint| {
+                    Candidate::new(
+                        endpoint,
+                        candidate_kind_for(endpoint),
+                        "peer-advertised".into(),
+                    )
+                })
+                .into_iter()
+                .collect(),
+        };
+        if let Some(endpoint) = peer.endpoint {
+            if !candidates
+                .iter()
+                .any(|candidate| candidate.endpoint == endpoint)
+            {
+                candidates.push(Candidate::new(
+                    endpoint,
+                    candidate_kind_for(endpoint),
+                    "peer-configured".into(),
+                ));
+            }
+        }
+
+        if !candidates.is_empty() {
+            match connect_direct_candidates(
+                endpoint,
+                candidates,
+                identity,
+                peer.identity_public_key,
+                peer_id.clone(),
+            )
+            .await
+            {
+                Ok(connection) => {
+                    // Require a short stable window before replacing Relay;
+                    // a transient UDP success must not cause route flapping.
+                    tokio::time::sleep(DIRECT_UPGRADE_STABLE_DURATION).await;
+                    if state.sessions.current_session_id(&peer_id).await != Some(session_id)
+                        || state.sessions.current_route(&peer_id).await != Some(RouteType::Relay)
+                    {
+                        connection.close(VarInt::from_u32(0), b"upgrade superseded");
+                        return;
+                    }
+                    let remote_endpoint = connection.remote_address();
+                    let stats = connection.stats();
+                    if !state
+                        .sessions
+                        .replace_route_if_current(
+                            &peer_id,
+                            session_id,
+                            RouteType::Relay,
+                            connection.clone(),
+                            RouteType::QuicDirect,
+                        )
+                        .await
+                    {
+                        return;
+                    }
+                    if let Some(manager) = manager {
+                        manager
+                            .record_quic_sample(
+                                remote_endpoint,
+                                connection.rtt(),
+                                stats.path.sent_packets,
+                                stats.path.lost_packets,
+                            )
+                            .await;
+                        let _ = manager.activate_path(remote_endpoint).await;
+                        let candidate = manager.get_candidate(remote_endpoint).await;
+                        emit_route_changed(
+                            &state.event_tx,
+                            &peer_id,
+                            RouteType::QuicDirect,
+                            remote_endpoint,
+                            candidate.as_ref().map_or(0, |candidate| candidate.rtt_ms),
+                            candidate
+                                .as_ref()
+                                .map_or(0.0, |candidate| candidate.loss_rate),
+                        );
+                    } else {
+                        emit_route_changed(
+                            &state.event_tx,
+                            &peer_id,
+                            RouteType::QuicDirect,
+                            remote_endpoint,
+                            connection.rtt().as_millis().min(u32::MAX as u128) as u32,
+                            0.0,
+                        );
+                    }
+                    spawn_path_metrics_monitor(
+                        Arc::clone(&state),
+                        peer_id.clone(),
+                        session_id,
+                        connection.clone(),
+                    );
+                    crate::channel::recover_session(
+                        Arc::clone(&state),
+                        peer_id.clone(),
+                        session_id,
+                    )
+                    .await;
+                    crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
+                        .await;
+                    tokio::spawn(receive_file_streams(
+                        peer_id.clone(),
+                        connection.clone(),
+                        Arc::clone(&state),
+                    ));
+                    tokio::spawn(receive_channel_streams(peer_id, connection, state));
+                    return;
+                }
+                Err(error) => {
+                    tracing::debug!(peer_id = %peer_id, error = %error.message, "background direct probe failed; Relay remains active");
+                }
+            }
+        }
+        tokio::time::sleep(DIRECT_UPGRADE_PROBE_INTERVAL).await;
+    }
 }
 
 async fn send_candidate_offer(
@@ -1091,6 +1280,23 @@ mod tests {
         )
         .await
         .expect("relay should remain eligible");
+
+        assert!(matches!(route, ReadyRoute::Relay));
+    }
+
+    #[tokio::test]
+    async fn failed_authenticated_direct_probe_keeps_relay_eligible() {
+        let route = race_first_ready(
+            async {
+                Err::<(), ProtocolError>(protocol_error(
+                    NetworkErrorCode::AuthenticationFailed,
+                    "candidate identity rejected",
+                ))
+            },
+            async { Ok::<(), ProtocolError>(()) },
+        )
+        .await
+        .expect("Relay must remain available after direct auth failure");
 
         assert!(matches!(route, ReadyRoute::Relay));
     }
