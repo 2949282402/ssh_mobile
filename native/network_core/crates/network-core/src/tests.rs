@@ -81,6 +81,48 @@ fn stop_waits_for_accept_task_before_rebinding_loopback_port() {
     fs::remove_dir_all(test_root).expect("remove test root");
 }
 
+/// 连续创建、启动、停止并销毁 runtime；下一轮直接要求复用上一轮真实端口，
+/// 以覆盖同一进程中的 listener 清理竞态。
+#[test]
+fn repeated_runtime_lifecycle_reuses_bound_port_without_retry() {
+    const ITERATIONS: usize = 16;
+    let test_root = std::env::temp_dir().join(format!(
+        "ssh-mobile-runtime-stress-{}",
+        rand::random::<u64>()
+    ));
+    fs::create_dir_all(&test_root).expect("test root");
+    let mut previous_port = None;
+
+    for iteration in 0..ITERATIONS {
+        let requested_address = previous_port.map_or_else(
+            || SocketAddr::from(([127, 0, 0, 1], 0)),
+            |port| SocketAddr::from(([127, 0, 0, 1], port)),
+        );
+        let runtime = NetworkRuntime::new().expect("stress runtime");
+        runtime.start().expect("start stress runtime");
+        let address = configure_runtime_for_test(
+            &runtime,
+            &format!("stress-{iteration}"),
+            [80u8 + iteration as u8; 32],
+            [100u8 + iteration as u8; 32],
+            requested_address,
+            test_root.join(format!("receive-{iteration}")),
+        );
+        if let Some(previous_port) = previous_port {
+            assert_eq!(
+                address.port(),
+                previous_port,
+                "iteration {iteration} did not reuse the previous bound port"
+            );
+        }
+        previous_port = Some(address.port());
+        runtime.stop().expect("stop stress runtime");
+        drop(runtime);
+    }
+
+    fs::remove_dir_all(test_root).expect("remove stress test root");
+}
+
 /// 验证直连 QUIC 认证和审批门控文件传输。
 #[test]
 fn two_runtimes_authenticate_and_transfer_a_verified_file() {
@@ -88,8 +130,8 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
     let runtime_b = NetworkRuntime::new().expect("runtime B");
     runtime_a.start().expect("start runtime A");
     runtime_b.start().expect("start runtime B");
-    let address_a = available_loopback_address();
-    let address_b = available_loopback_address();
+    let requested_address_a = SocketAddr::from(([127, 0, 0, 1], 0));
+    let requested_address_b = SocketAddr::from(([127, 0, 0, 1], 0));
     let identity_seed_a = [11u8; 32];
     let identity_seed_b = [22u8; 32];
     let public_key_a =
@@ -111,37 +153,21 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
     const TRANSFER_ID: &str = "transfer-native-1";
     fs::write(&source_path, source_data).expect("source file");
 
-    send_and_expect_accepted(
+    let address_a = configure_runtime_for_test(
         &runtime_a,
-        NetworkCommand {
-            command_id: "configure-a".into(),
-            protocol_version: NETWORK_PROTOCOL_VERSION,
-            payload: Some(network_command::Payload::ConfigureRuntime(
-                ConfigureRuntimeCommand {
-                    device_id: "device-a".into(),
-                    identity_private_key: identity_seed_a.to_vec(),
-                    e2e_private_key: vec![31u8; 32],
-                    listen_address: address_a.to_string(),
-                    receive_directory: receive_a.to_string_lossy().to_string(),
-                },
-            )),
-        },
+        "device-a",
+        identity_seed_a,
+        [31u8; 32],
+        requested_address_a,
+        receive_a,
     );
-    send_and_expect_accepted(
+    let address_b = configure_runtime_for_test(
         &runtime_b,
-        NetworkCommand {
-            command_id: "configure-b".into(),
-            protocol_version: NETWORK_PROTOCOL_VERSION,
-            payload: Some(network_command::Payload::ConfigureRuntime(
-                ConfigureRuntimeCommand {
-                    device_id: "device-b".into(),
-                    identity_private_key: identity_seed_b.to_vec(),
-                    e2e_private_key: vec![32u8; 32],
-                    listen_address: address_b.to_string(),
-                    receive_directory: receive_b.to_string_lossy().to_string(),
-                },
-            )),
-        },
+        "device-b",
+        identity_seed_b,
+        [32u8; 32],
+        requested_address_b,
+        receive_b.clone(),
     );
     send_and_expect_accepted(
         &runtime_a,
@@ -253,8 +279,8 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
     let runtime_b = NetworkRuntime::new().expect("runtime B");
     runtime_a.start().expect("start runtime A");
     runtime_b.start().expect("start runtime B");
-    let address_a = available_loopback_address();
-    let address_b = available_loopback_address();
+    let requested_address_a = SocketAddr::from(([127, 0, 0, 1], 0));
+    let requested_address_b = SocketAddr::from(([127, 0, 0, 1], 0));
     let identity_seed_a = [41u8; 32];
     let identity_seed_b = [42u8; 32];
     let public_key_a =
@@ -271,20 +297,20 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
     ));
     fs::create_dir_all(&test_root).expect("test root");
 
-    configure_runtime_for_test(
+    let address_a = configure_runtime_for_test(
         &runtime_a,
         "delivery-a",
         identity_seed_a,
         [51u8; 32],
-        address_a,
+        requested_address_a,
         test_root.join("receive-a"),
     );
-    configure_runtime_for_test(
+    let address_b = configure_runtime_for_test(
         &runtime_b,
         "delivery-b",
         identity_seed_b,
         [52u8; 32],
-        address_b,
+        requested_address_b,
         test_root.join("receive-b"),
     );
     send_and_expect_accepted(
@@ -455,7 +481,7 @@ fn configure_runtime_for_test(
     e2e_seed: [u8; 32],
     address: SocketAddr,
     receive_directory: std::path::PathBuf,
-) {
+) -> SocketAddr {
     send_and_expect_accepted(
         runtime,
         NetworkCommand {
@@ -472,6 +498,10 @@ fn configure_runtime_for_test(
             )),
         },
     );
+    let port = runtime
+        .bound_local_port()
+        .expect("runtime bound an actual UDP port");
+    SocketAddr::new(address.ip(), port)
 }
 
 /// 为当前 v1 线协议契约创建对端 upsert 命令。
@@ -504,17 +534,20 @@ fn send_and_expect_accepted(runtime: &NetworkRuntime, command: NetworkCommand) {
                 if result.command_id == command_id
         )
     })
-    .expect("command result");
-    assert!(
-        matches!(
-            result.payload,
-            Some(network_event::Payload::CommandResult(CommandResultEvent {
-                accepted: true,
-                ..
-            }))
+    .unwrap_or_else(|| panic!("command {command_id} timed out waiting for command result"));
+    match result.payload {
+        Some(network_event::Payload::CommandResult(CommandResultEvent {
+            accepted: true, ..
+        })) => {}
+        Some(network_event::Payload::CommandResult(CommandResultEvent {
+            error: Some(error),
+            ..
+        })) => panic!(
+            "command {command_id} rejected: code={} message={} operation={} peer_id={}",
+            error.code, error.message, error.operation, error.peer_id
         ),
-        "command {command_id} was rejected"
-    );
+        other => panic!("command {command_id} returned unexpected result: {other:?}"),
+    }
 }
 
 /// 轮询原生事件，直到匹配谓词或超时。
@@ -532,12 +565,4 @@ fn poll_until(
         }
     }
     None
-}
-
-/// 为隔离运行时测试分配未使用的 loopback UDP 地址。
-fn available_loopback_address() -> SocketAddr {
-    std::net::UdpSocket::bind("127.0.0.1:0")
-        .expect("bind temporary socket")
-        .local_addr()
-        .expect("temporary socket address")
 }

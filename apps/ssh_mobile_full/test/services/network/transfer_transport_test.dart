@@ -47,7 +47,7 @@ void main() {
           receiveDirectory: directory.absolute.path,
         ),
       );
-      expect(start, isA<NetworkSuccess<void>>());
+      _expectNetworkSuccess(start, 'start unregistered-peer runtime');
       expect(runtime.boundLocalPort, isNotNull);
 
       final result = await service.send(
@@ -78,7 +78,7 @@ void main() {
           receiveDirectory: root.absolute.path,
         ),
       );
-      expect(start, isA<NetworkSuccess<void>>());
+      _expectNetworkSuccess(start, 'start connect runtime');
       expect(runtime.boundLocalPort, isNotNull);
 
       final connect = await service.connect('not-registered');
@@ -86,6 +86,65 @@ void main() {
       final failure = connect as NetworkFailure<void>;
       expect(failure.error.code, NetworkErrorCode.noRoute);
     });
+
+    test(
+      'native runtime lifecycle reuses ephemeral ports without retry',
+      () async {
+        const iterations = 12;
+        int? previousPort;
+
+        for (var iteration = 0; iteration < iterations; iteration++) {
+          final directory = await Directory.systemTemp.createTemp(
+            'ssh-mobile-native-stress-$iteration-',
+          );
+          final runtime = await const SshMobileNetworkNative().createRuntime();
+          final service = NativeNetworkService(runtime);
+          try {
+            final listenAddress = previousPort == null
+                ? '127.0.0.1:0'
+                : '127.0.0.1:$previousPort';
+            final start = await service.start(
+              NetworkRuntimeConfig(
+                deviceId: 'device-stress-$iteration',
+                identityPrivateKey: Uint8List.fromList(
+                  List.filled(32, 80 + iteration),
+                ),
+                e2ePrivateKey: Uint8List.fromList(
+                  List.filled(32, 100 + iteration),
+                ),
+                listenAddress: listenAddress,
+                receiveDirectory: directory.absolute.path,
+              ),
+            );
+            _expectNetworkSuccess(start, 'start stress runtime $iteration');
+            final boundPort = runtime.boundLocalPort;
+            expect(
+              boundPort,
+              isNotNull,
+              reason: 'stress runtime $iteration did not publish its port',
+            );
+            if (previousPort != null) {
+              expect(
+                boundPort,
+                previousPort,
+                reason:
+                    'stress runtime $iteration did not reuse the prior port',
+              );
+            }
+            previousPort = boundPort;
+          } finally {
+            await service.dispose();
+            expect(
+              runtime.boundLocalPort,
+              isNull,
+              reason:
+                  'stress runtime $iteration retained its port after dispose',
+            );
+            await directory.delete(recursive: true);
+          }
+        }
+      },
+    );
 
     test('two native runtimes transfer only after receiver approval', () async {
       final root = await Directory.systemTemp.createTemp(
@@ -135,8 +194,8 @@ void main() {
           receiveDirectory: receiveB.absolute.path,
         ),
       );
-      expect(startA, isA<NetworkSuccess<void>>());
-      expect(startB, isA<NetworkSuccess<void>>());
+      _expectNetworkSuccess(startA, 'start runtime A');
+      _expectNetworkSuccess(startB, 'start runtime B');
       final boundPortA = runtimeA.boundLocalPort;
       final boundPortB = runtimeB.boundLocalPort;
       expect(boundPortA, isNotNull);
@@ -160,8 +219,8 @@ void main() {
           e2ePublicKey: Uint8List.fromList(List.filled(32, 41)),
         ),
       );
-      expect(upsertA, isA<NetworkSuccess<void>>());
-      expect(upsertB, isA<NetworkSuccess<void>>());
+      _expectNetworkSuccess(upsertA, 'upsert peer B on runtime A');
+      _expectNetworkSuccess(upsertB, 'upsert peer A on runtime B');
 
       final connectedFuture = _firstPeerEvent(
         serviceA,
@@ -170,7 +229,7 @@ void main() {
             event.state == PeerConnectionState.connected,
       );
       final connectResult = await serviceA.connect('device-b');
-      expect(connectResult, isA<NetworkSuccess<void>>());
+      _expectNetworkSuccess(connectResult, 'connect runtime A to runtime B');
       await connectedFuture.timeout(const Duration(seconds: 10));
 
       final offerFuture = _firstOffer(serviceB);
@@ -180,7 +239,7 @@ void main() {
         peerId: 'device-b',
         filePath: source.path,
       );
-      expect(sendResult, isA<NetworkSuccess<TransferSession>>());
+      _expectNetworkSuccess(sendResult, 'send native file');
       final session = (sendResult as NetworkSuccess<TransferSession>).data;
       expect(session.transferId, 'native-transfer-1');
       expect(session.routeType, NetworkRouteType.quicDirect);
@@ -191,7 +250,7 @@ void main() {
         transferId: offer.transferId,
         accept: true,
       );
-      expect(approve, isA<NetworkSuccess<void>>());
+      _expectNetworkSuccess(approve, 'approve incoming native file');
 
       final completed = await completedFuture.timeout(
         const Duration(seconds: 10),
@@ -224,3 +283,21 @@ Future<TransferCompleted> _firstCompleted(NetworkService service) => service
     .where((event) => event is TransferCompleted)
     .cast<TransferCompleted>()
     .first;
+
+void _expectNetworkSuccess<T>(NetworkResult<T> result, String operation) {
+  if (result is NetworkFailure<T>) {
+    final error = result.error;
+    fail(
+      '$operation failed: '
+      'code=${error.code.name}; '
+      'message=${error.message}; '
+      'operation=${error.operation?.wireName ?? '<none>'}; '
+      'peerId=${error.peerId ?? '<none>'}',
+    );
+  }
+  expect(
+    result,
+    isA<NetworkSuccess<T>>(),
+    reason: '$operation returned ${result.runtimeType}',
+  );
+}
