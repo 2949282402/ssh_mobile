@@ -284,6 +284,7 @@ pub(crate) async fn connect_peer(
                 RouteType::QuicDirect,
                 None,
             );
+            let _ = state.delivery.recover_session(&peer_id).await;
             tokio::spawn(receive_file_streams(peer_id, connection, state));
             Ok(())
         }
@@ -307,6 +308,7 @@ pub(crate) async fn connect_peer(
                 RouteType::Relay,
                 None,
             );
+            let _ = state.delivery.recover_session(&peer_id).await;
             Ok(())
         }
         Err(error) => {
@@ -505,6 +507,7 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     RouteType::QuicDirect,
                     None,
                 );
+                let _ = state.delivery.recover_session(&peer_id).await;
                 receive_file_streams(peer_id, connection, Arc::clone(&state)).await;
                 Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
             }

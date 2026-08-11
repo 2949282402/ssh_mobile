@@ -14,6 +14,7 @@ use tokio::sync::{
 use tracing::info;
 
 use crate::commands::run_command_worker;
+use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
 use crate::session::{SessionId, SessionManager};
 use network_identity::DeviceIdentity;
@@ -54,6 +55,7 @@ pub(crate) struct RuntimeState {
     pub(crate) path_managers: RwLock<HashMap<String, Arc<PathManager>>>,
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
     pub(crate) sessions: SessionManager,
+    pub(crate) delivery: DeliveryManager,
     pub(crate) reconnect_tasks: RwLock<HashMap<String, SessionId>>,
     pub(crate) relay: RwLock<Option<Arc<RelayClient>>>,
     pub(crate) relay_acceptances: RwLock<HashMap<String, oneshot::Sender<bool>>>,
@@ -79,6 +81,7 @@ impl RuntimeState {
             path_managers: RwLock::new(HashMap::new()),
             trusted_peer_keys: RwLock::new(HashMap::new()),
             sessions: SessionManager::new(),
+            delivery: DeliveryManager::new(),
             reconnect_tasks: RwLock::new(HashMap::new()),
             relay: RwLock::new(None),
             relay_acceptances: RwLock::new(HashMap::new()),
