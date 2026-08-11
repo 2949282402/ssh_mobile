@@ -330,10 +330,14 @@ jobs:
             exit 0
           fi
           diagnostic=''
+          failure_lines="$(grep -E -i 'error|failed|fatal|no such|cannot|could not|xcodebuild|clang|ld:' "$build_log" | tail -n 40 || true)"
+          if [ -z "$failure_lines" ]; then
+            failure_lines="$(tail -n 40 "$build_log")"
+          fi
           while IFS= read -r line; do
             escaped="$(printf '%s' "$line" | sed 's/%/%25/g; s/\r/%0D/g')"
             diagnostic="${diagnostic}${escaped}%0A"
-          done < <(tail -n 100 "$build_log")
+          done <<< "$failure_lines"
           echo "::error file=.github/workflows/flutter.yml,line=316::$diagnostic"
           exit 1
       - name: Build iOS without signing
