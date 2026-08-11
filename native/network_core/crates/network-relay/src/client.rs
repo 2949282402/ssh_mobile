@@ -358,14 +358,36 @@ impl RelayClient {
         kind: &str,
         session_id: &str,
     ) -> Result<(), RelayError> {
+        self.send_session_control_with_payload(kind, session_id, None)
+            .await
+    }
+
+    /// 发送一个带小型应用层确认 payload 的会话控制帧。
+    ///
+    /// Relay 只校验并转发这个字符串，不读取其中的文件元数据；文件恢复所需的
+    /// TransferId、Manifest Hash 和 Offset 仍由设备端 E2E 逻辑解释。
+    pub async fn send_session_control_with_payload(
+        &self,
+        kind: &str,
+        session_id: &str,
+        payload: Option<&str>,
+    ) -> Result<(), RelayError> {
         if !matches!(kind, "accept" | "complete" | "complete_ack" | "cancel") {
             return Err(RelayError::InvalidConfiguration(
                 "unsupported Relay control type".into(),
             ));
         }
         validate_session_id(session_id)?;
-        self.send_control(json!({"type": kind, "session_id": session_id}))
-            .await
+        let mut value = json!({"type": kind, "session_id": session_id});
+        if let Some(payload) = payload {
+            if payload.is_empty() || payload.len() > MAX_CONTROL_BYTES / 2 {
+                return Err(RelayError::InvalidConfiguration(
+                    "Relay control payload is outside protocol bounds".into(),
+                ));
+            }
+            value["payload"] = Value::String(payload.to_string());
+        }
+        self.send_control(value).await
     }
 
     async fn send_channel_control(

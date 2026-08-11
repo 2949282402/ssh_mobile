@@ -23,8 +23,14 @@ TransferId、Manifest、逻辑 SessionId 和已确认偏移。若 TransferManage
   不再读取 `Option<quinn::Connection>`。
 - 恢复领取按 `PeerId + SessionId` 原子筛选。同一逻辑 Session 的 Connection
   更换可以重新领取暂停传输；显式关闭后创建的新 Session 不能领取旧传输。
-- Direct QUIC 已接入该状态机和同 Session offset 恢复；Relay 文件重新协商
-  offset 的具体协议留在下一 Step，不能把 QUIC offset 当成 Relay 新传输。
+- Direct QUIC 已接入该状态机和同 Session offset 恢复。Relay 文件恢复使用新的
+  socket token，但加密 offer 固定携带 TransferId、Manifest Hash、File Hash 和
+  Manifest 字段；接收方通过带校验的 accept 返回稳定 `.part` offset，不能把
+  QUIC offset 或 Relay token 当成新的 TransferId。
+- Relay socket 意外断开只清理当前 attempt handle，TransferSession 与 `.part`
+  保留在 native runtime；指数退避重连成功后会重新 Offer 并领取同一逻辑
+  Session 的暂停传输。已完成文件在 complete_ack 丢失后按 SHA-256 幂等确认，
+  不覆盖目标文件。
 
 ## 后果
 

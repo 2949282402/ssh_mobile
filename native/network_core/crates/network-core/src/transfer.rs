@@ -331,7 +331,7 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
         {
             // 保留源文件、TransferId、SessionId 和接收端的 `.part`，等待
             // 同一逻辑 Session 的下一次 Route Ready。
-            schedule_resume(Arc::clone(&state), peer_id);
+            schedule_transfer_resume(Arc::clone(&state), peer_id);
             tracing::debug!(transfer_id = %transfer_id, error = %error, "native QUIC transfer paused for resume");
         }
         Err(error) => {
@@ -357,25 +357,51 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
 /// Connection/Route Ready 后领取同一逻辑 Session 的暂停传输。
 pub(crate) async fn resume_transfers_for_peer(state: Arc<RuntimeState>, peer_id: String) {
     let dispatcher = TransferDispatcher::new(Arc::clone(&state));
-    let Ok(TransferRoute::QuicDirect(connection)) = dispatcher.current_route(&peer_id).await else {
-        // Relay 的断线续传协议在 Step 5 接入；此处不能把 QUIC 的 offset
-        // 会话错误地当成 Relay 新传输。
-        return;
-    };
     let Some(session_id) = state.sessions.current_session_id(&peer_id).await else {
         return;
     };
-    for transfer in state
-        .transfers
-        .take_resumable_for_session(&peer_id, &session_id.wire_key())
-        .await
-    {
-        tokio::spawn(send_file(connection.clone(), transfer, Arc::clone(&state)));
+    match dispatcher.current_route(&peer_id).await {
+        Ok(TransferRoute::QuicDirect(connection)) => {
+            for transfer in state
+                .transfers
+                .take_resumable_for_session(&peer_id, &session_id.wire_key())
+                .await
+            {
+                tokio::spawn(send_file(connection.clone(), transfer, Arc::clone(&state)));
+            }
+        }
+        Ok(TransferRoute::Relay) => {
+            for transfer in state
+                .transfers
+                .take_resumable_for_session(&peer_id, &session_id.wire_key())
+                .await
+            {
+                if dispatcher
+                    .dispatch_outgoing(TransferRoute::Relay, transfer)
+                    .await
+                    .is_err()
+                {
+                    tracing::debug!(peer_id = %peer_id, "Relay transfer remained paused after resume dispatch failed");
+                }
+            }
+        }
+        Err(_) => {}
+    }
+}
+
+/// Relay socket 重连后恢复所有仍处于 Relay Route 的暂停传输。
+pub(crate) async fn resume_relay_transfers(state: Arc<RuntimeState>) {
+    let peer_ids = state.peers.read().await.keys().cloned().collect::<Vec<_>>();
+    for peer_id in peer_ids {
+        if state.sessions.current_route(&peer_id).await != Some(RouteType::Relay) {
+            continue;
+        }
+        resume_transfers_for_peer(Arc::clone(&state), peer_id).await;
     }
 }
 
 /// 让暂停发生在 Connection Ready 事件之后也能触发一次恢复检查。
-fn schedule_resume(state: Arc<RuntimeState>, peer_id: String) {
+pub(crate) fn schedule_transfer_resume(state: Arc<RuntimeState>, peer_id: String) {
     tokio::spawn(async move {
         tokio::time::sleep(RECONNECT_INITIAL_BACKOFF).await;
         resume_transfers_for_peer(state, peer_id).await;
@@ -661,6 +687,7 @@ pub(crate) async fn dispatch_transfer_command(
         }
         Some(network_protocol::network_command::Payload::CancelTransfer(cancel)) => {
             if state.transfers.cancel_transfer(&cancel.transfer_id).await {
+                crate::relay::cancel_transfer(&state, &cancel.transfer_id).await;
                 Ok(())
             } else {
                 Err(protocol_error(

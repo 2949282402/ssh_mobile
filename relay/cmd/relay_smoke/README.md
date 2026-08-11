@@ -46,8 +46,9 @@ New-Item -ItemType File -Path $trigger -Force | Out-Null
 docker compose --env-file .env restart caddy
 ```
 
-`recover` 验证 Caddy/链路中断、客户端重连、Relay 内存 session 的 `resume`、
-序号连续的后续分块以及 complete/ack。成功标志为 `NETWORK_RECOVERY_PASS`。
+`recover` 验证 Caddy/链路中断、客户端重连、稳定 TransferId/Manifest 的重新
+Offer、接收方 offset accept、序号连续的后续分块以及 complete/ack。成功标志为
+`NETWORK_RECOVERY_PASS`。
 
 验证 Relay 进程重启及其内存状态边界：
 
@@ -57,9 +58,10 @@ New-Item -ItemType File -Path $trigger -Force | Out-Null
 docker compose --env-file .env restart relay
 ```
 
-`restart` 应报告旧凭据被拒绝、重新 enrollment、重新建立 offer/accept 和
-数据回环，成功标志为 `RESTART_RECOVERY_PASS`。Relay 进程重启会清空内存中的
-设备注册和传输 session，因此这里不能期待旧 session 直接 `resume`。
+`restart` 应报告旧凭据被拒绝、重新 enrollment、使用同一 TransferId 重新建立
+offer/accept、返回 checkpoint offset 和数据回环，成功标志为
+`RESTART_RECOVERY_PASS`。Relay 进程重启会清空内存中的设备注册和传输 session，
+因此客户端必须创建新的 socket session token，不能依赖旧 token 直接 `resume`。
 
 ## 注意事项
 
@@ -67,6 +69,6 @@ docker compose --env-file .env restart relay
   `ws://` 测试连接；生产客户端设置和 Rust `RelayClient` 只接受 HTTPS/WSS，
   要做真实 Flutter 客户端联调，需要先配置受信任的本地 TLS 证书。
 - Relay 只做透明转发；应用层 ACK、去重、重传和文件断点状态属于客户端。
-  harness 验证的是 Relay 不篡改帧、session 恢复边界和控制帧方向。
+  harness 验证的是 Relay 不篡改帧、重新 Offer/offset 控制帧方向和 session 恢复边界。
 - 延迟、丢包、乱序需要在 Docker Desktop/宿主机网络层或独立 traffic proxy
   中注入；本 harness 已覆盖代理重启和 Relay 进程重启两类可重复故障。

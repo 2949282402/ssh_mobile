@@ -266,8 +266,10 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 - Native file transfer state is owned by `network-transfer::TransferSession` and
   keyed by `PeerId + logical SessionId`; it never stores a Quinn or Relay handle.
   `network-core::TransferDispatcher` selects the current Route for each attempt.
-  Direct QUIC recovery can claim paused transfers on the same Session; Relay
-  offset renegotiation remains the next numbered transfer Step.
+  Direct QUIC recovery and Relay re-offer recovery can claim paused transfers on
+  the same Session. Relay uses a fresh attempt token plus stable TransferId,
+  Manifest Hash, File Hash and fixed-chunk offset; socket disconnect preserves
+  the `.part` checkpoint, and a verified final file makes completion idempotent.
 
 ### UI and performance
 

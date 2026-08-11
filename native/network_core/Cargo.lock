@@ -1243,6 +1243,7 @@ dependencies = [
  "prost",
  "quinn",
  "rand 0.8.7",
+ "serde",
  "serde_json",
  "sha2",
  "thiserror 1.0.69",

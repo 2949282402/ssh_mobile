@@ -124,6 +124,30 @@ impl TransferManager {
         }
     }
 
+    /// 原子领取同一逻辑 Session 的暂停接收传输。
+    ///
+    /// Relay 重新 Offer 时会携带新的 socket token，但业务 TransferId、Manifest
+    /// 和逻辑 SessionId 必须保持一致；只有满足这三个条件才允许跳过再次审批。
+    pub async fn claim_incoming_resume(
+        &self,
+        manifest: &FileManifest,
+        peer_id: &str,
+        session_id: &str,
+    ) -> Option<u64> {
+        let mut transfers = self.transfers.write().await;
+        let item = transfers.get_mut(&manifest.transfer_id)?;
+        if item.state == TransferState::Paused
+            && item.peer_id == peer_id
+            && item.session_id == session_id
+            && item.manifest == *manifest
+        {
+            item.state = TransferState::Resuming;
+            Some(item.bytes_transferred)
+        } else {
+            None
+        }
+    }
+
     /// 注册出站传输；Route handle 不进入 TransferSession。
     pub async fn register_outgoing(
         &self,
@@ -456,6 +480,34 @@ mod tests {
                 )
                 .await
         );
+    }
+
+    #[tokio::test]
+    async fn incoming_resume_claim_keeps_offset_and_rejects_wrong_binding() {
+        let manager = TransferManager::new();
+        let file_manifest = manifest("transfer-resume");
+        assert!(
+            manager
+                .register_incoming(
+                    file_manifest.clone(),
+                    "peer-b".into(),
+                    "0000000000000001".into(),
+                )
+                .await
+        );
+        assert!(manager.mark_transferring("transfer-resume").await);
+        assert!(manager.update_progress("transfer-resume", 2).await);
+        assert!(manager.pause_for_network("transfer-resume").await);
+        assert_eq!(
+            manager
+                .claim_incoming_resume(&file_manifest, "peer-b", "0000000000000001",)
+                .await,
+            Some(2)
+        );
+        assert!(manager
+            .claim_incoming_resume(&file_manifest, "peer-b", "0000000000000002")
+            .await
+            .is_none());
     }
 
     #[tokio::test]

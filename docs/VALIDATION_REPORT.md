@@ -22,9 +22,11 @@ is limited to native network/report validation.
 | Unit and widget tests | Full App: 801 passed; Terminal slice: 3 passed |
 | Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
 | Native Dart package | `flutter analyze --no-pub` passed; `flutter test --no-pub` passed with 4 package tests |
-| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`, and `cargo test --workspace --locked` passed; 58 tests passed, including cross-Connection Delivery recovery and TransferSession state tests |
-| Delivery runtime wiring | `network-core` now sends `DataMessage` through QUIC uni streams or Relay opaque controls, binds Delivery to real `SessionId`, replays RecoverySnapshot, scans retry backoff, validates ACK epoch, and emits typed channel/ACK events; `cargo test -p network-core --lib --locked --offline` passed with 21 tests |
-| Transfer/Connection decoupling | `TransferSession` owns state, Manifest, offset, cancellation, and logical SessionId without a Connection handle; `TransferDispatcher` selects the current QUIC/Relay route, and same-Session direct resume is tested; `cargo test -p network-transfer -p network-core --locked --offline` passed with 32 tests |
+| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`, and `cargo test --workspace --locked` passed; 62 tests passed, including cross-Connection Delivery recovery, Relay resume binding, and TransferSession state tests |
+| Delivery runtime wiring | `network-core` now sends `DataMessage` through QUIC uni streams or Relay opaque controls, binds Delivery to real `SessionId`, replays RecoverySnapshot, scans retry backoff, validates ACK epoch, and emits typed channel/ACK events; `cargo test -p network-core --lib --locked --offline` passed with 24 tests |
+| Transfer/Connection decoupling | `TransferSession` owns state, Manifest, offset, cancellation, and logical SessionId without a Connection handle; `TransferDispatcher` selects the current QUIC/Relay route, and same-Session direct/Relay resume is tested; `cargo test -p network-transfer -p network-core --locked --offline` passed with 36 tests |
+| Relay file resume | Relay re-offer binds stable TransferId + Manifest Hash + File Hash, accept returns fixed-chunk offset, socket disconnect preserves native `.part`, auto reconnect reclaims paused transfers, and verified final files are idempotent after lost completion ACK |
+| Docker Relay integration harness | `docker compose --env-file .env up -d --build`, `go run ./cmd/relay_smoke -scenario functional`, and the Caddy restart `recover` scenario passed; the harness remains under `relay/cmd/relay_smoke/` |
 | Relay channel control | `channel_message`/`channel_ack` opaque forwarding integration test passed in `go test ./...`; Rust Relay codec tests passed |
 | Go Relay | `gofmt -l .`, `go vet ./...`, and `go test ./...` passed |
 | Native WebRTC | `network-webrtc` uses locked stable `rtc 0.9.1`; SDP/ICE/DataChannel/Audio/Video transceiver and media QoS tests passed |
@@ -78,6 +80,14 @@ Relay validation from `relay`:
 gofmt -l .
 go vet ./...
 go test ./...
+```
+
+Docker Relay integration harness:
+
+```powershell
+docker compose --env-file .env up -d --build
+go run ./cmd/relay_smoke -scenario functional -base http://localhost:18080
+go run ./cmd/relay_smoke -scenario recover -base http://localhost:18080 -trigger <fault-trigger>
 ```
 
 The repository-root `flutter analyze` command is not used as a quality gate:
