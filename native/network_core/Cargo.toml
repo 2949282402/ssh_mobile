@@ -9,5 +9,6 @@ members = [
     "crates/network-transfer",
     "crates/network-relay",
     "crates/network-transport",
+    "crates/network-webrtc",
     "crates/network-ffi",
 ]
