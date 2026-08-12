@@ -96,4 +96,23 @@ void main() {
       NetworkRouteType.relay,
     );
   });
+
+  test('peer and route events decode composed topology and transport', () {
+    final frame = codec.decodeEvent(
+      Uint8List.fromList(<int>[
+        0x0a, 0x01, 0x65, // event_id = e
+        0x18, 0x01, // protocol_version = 1
+        0x52, 0x0b, // peer state message
+        0x0a, 0x01, 0x70, // peer_id = p
+        0x10, 0x02, // connected
+        0x18, 0x00, // legacy flat route = unspecified
+        0x28, 0x01, // topology = direct
+        0x30, 0x02, // transport = tcp
+      ]),
+    );
+    final event = frame.event! as PeerStateChanged;
+    expect(event.routeType, NetworkRouteType.unspecified);
+    expect(event.routeTopology, NetworkRouteTopology.direct);
+    expect(event.routeTransport, NetworkRouteTransport.tcp);
+  });
 }

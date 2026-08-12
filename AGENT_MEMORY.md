@@ -259,6 +259,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   map, command-result timeout, and dispose cancellation. `RealtimeSession` may enter
   local `starting`, but negotiating/connected/restarting/stopped/failed come from
   native state events; stop command success does not replace the later `closed` event.
+- 2026-08-12: Plan 3 Step 3 makes native `SessionManager` own a composed
+  `ActiveRoute` and bounded generic carrier. TCP and direct WebSocket routes are
+  admitted only after pinned Ed25519 identity plus logical Session binding
+  authentication; Delivery sends through the current ReliableMessage capability,
+  while UDP remains datagram-only. Route migration swaps the carrier atomically,
+  recovers pending Delivery, and preserves SessionId and application E2EE state.
 - 2026-08-10: `packages/infrastructure/network_sdk/` is the typed Flutter client
   boundary for bootstrap, authenticated API, business sessions, and event streams.
   Its `JsonBootstrapClient` and `JsonAuthenticatedApiClient` own no transport or

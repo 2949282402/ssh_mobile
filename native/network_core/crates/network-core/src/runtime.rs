@@ -76,6 +76,12 @@ pub(crate) struct RuntimeState {
     /// `RuntimeTaskSupervisor`; this field is a cancellation lookup, not a
     /// second ownership path.
     pub(crate) accept_task: Mutex<Option<TaskId>>,
+    /// Runtime-owned TCP fallback accept loop. TCP shares the configured port
+    /// with QUIC's UDP socket because TCP and UDP have independent bind
+    /// namespaces.
+    pub(crate) tcp_accept_task: Mutex<Option<TaskId>>,
+    #[cfg(test)]
+    pub(crate) tcp_fallback_enabled: AtomicBool,
     pub(crate) identity: RwLock<Option<Arc<DeviceIdentity>>>,
     pub(crate) receive_directory: RwLock<Option<PathBuf>>,
     pub(crate) local_path_manager: RwLock<Option<Arc<PathManager>>>,
@@ -118,6 +124,9 @@ impl RuntimeState {
             bound_port,
             endpoint: RwLock::new(None),
             accept_task: Mutex::new(None),
+            tcp_accept_task: Mutex::new(None),
+            #[cfg(test)]
+            tcp_fallback_enabled: AtomicBool::new(true),
             identity: RwLock::new(None),
             receive_directory: RwLock::new(None),
             local_path_manager: RwLock::new(None),

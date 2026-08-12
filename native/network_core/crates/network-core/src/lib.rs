@@ -10,6 +10,7 @@ pub(crate) mod crypto;
 pub mod delivery;
 mod errors;
 mod events;
+mod generic_auth;
 mod peer;
 mod realtime;
 mod relay;

@@ -3,7 +3,7 @@
 # Network Fault Matrix
 
 本矩阵是 SSH Mobile 网络 SDK 下一阶段 Step 9 的固定验收入口。当前固定场景覆盖
-A–L；每次网络核心、
+A–O；每次网络核心、
 Relay、Native Realtime、Delivery 或文件 Resume 变更后，按同一场景编号记录证据，
 不得只以“连接恢复”判定成功。
 
@@ -41,6 +41,9 @@ Relay、Native Realtime、Delivery 或文件 Resume 变更后，按同一场景�
 | J | 1GB+ file resume；在 checkpoint 后断网并继续传输 | `cargo test -p network-transfer -p network-core --locked`；设备上用 1 GiB+ fixture 重复 F/G | offset 单调、Manifest/File Hash 相同、最终 exactly-once、内存不随文件大小线性增长 | native checkpoint/resume 已通过；1 GiB+ physical transfer 需设备记录 |
 | K | Ordered long handler；应用处理超过 processed dedup TTL 后再 ACK，期间收到后续序号 | 当前工作区 `cargo test -p network-core --locked`；覆盖 `inflight_survives_processed_dedup_ttl_until_application_ack`、`ordered_buffer_survives_processed_dedup_ttl_and_releases_in_sequence` 与 Runtime owner 测试 | active handler 与 ordered buffer 不被 TTL/LRU 删除，ACK 后严格按 `0 → 1 → 2` 推进；显式 Session close 清空接收态 | native 自动化测试已通过；真实设备长 handler 时间窗尚未执行 |
 | L | Realtime command result delayed/rejected；queue accepted 但 native result 或 `closed` state delayed | `apps/ssh_mobile_full/test/app/realtime_feature_adapters_test.dart`；`packages/infrastructure/network_sdk/test/realtime_test.dart`；`packages/infrastructure/network_transport/test/network_runtime_test.dart` | start/stop Future 只由 `commandId` 对应的 `NativeCommandResultEvent` 完成；超时/ dispose 有界清理；stop 等 native `closed` 才变为 `stopped` | 代码与测试场景已加入；当前 WSL Flutter tester 无法完成测试子进程 loopback，需 CI/可用 Flutter tester 复核 |
+| M | QUIC unavailable；authenticated direct TCP fallback | `cargo test -p network-core tcp_fallback_authenticates_delivery_and_keeps_session_id -- --nocapture` | TCP route enters the same Session, Delivery reaches the peer, application ACK completes it, reconnect keeps SessionId, and bounded carrier shutdown leaves no stale active route | native integration test passed |
+| N | QUIC/TCP direct unavailable；authenticated direct WebSocket fallback | `cargo test -p network-core websocket_fallback_authenticates_delivery_and_ack -- --nocapture` | binary WebSocket route is identity-authenticated, composed event metadata identifies direct/WebSocket, Delivery ACK completes, and no plaintext/unauthenticated route enters Session | native integration test passed |
+| O | TCP active；QUIC becomes available and replaces it | `cargo test -p network-core tcp_to_quic_migration_preserves_pending_delivery_and_session_id -- --nocapture` | new QUIC route authenticates before atomic swap, pending Delivery is recovered once, SessionId remains unchanged, and the old generic carrier is closed after replacement | native integration test passed |
 
 ## Docker Relay 故障运行约定
 

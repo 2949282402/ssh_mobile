@@ -181,6 +181,42 @@ enum NetworkRouteType {
       );
 }
 
+/// Composed route metadata for transports that do not fit the legacy flat
+/// [NetworkRouteType] projection.
+enum NetworkRouteTopology {
+  unspecified(0),
+  direct(1),
+  relay(2);
+
+  const NetworkRouteTopology(this.wireValue);
+
+  final int wireValue;
+
+  static NetworkRouteTopology fromWire(int value) =>
+      NetworkRouteTopology.values.firstWhere(
+        (topology) => topology.wireValue == value,
+        orElse: () => unspecified,
+      );
+}
+
+enum NetworkRouteTransport {
+  unspecified(0),
+  quic(1),
+  tcp(2),
+  udp(3),
+  webSocket(4);
+
+  const NetworkRouteTransport(this.wireValue);
+
+  final int wireValue;
+
+  static NetworkRouteTransport fromWire(int value) =>
+      NetworkRouteTransport.values.firstWhere(
+        (transport) => transport.wireValue == value,
+        orElse: () => unspecified,
+      );
+}
+
 enum RelayConnectionState {
   unspecified(0),
   connecting(1),
@@ -259,6 +295,8 @@ final class SdkRouteSnapshot {
   const SdkRouteSnapshot({
     required this.peerId,
     required this.routeType,
+    this.topology = NetworkRouteTopology.unspecified,
+    this.transport = NetworkRouteTransport.unspecified,
     this.endpoint,
     this.rtt,
     this.loss,
@@ -266,6 +304,8 @@ final class SdkRouteSnapshot {
 
   final String peerId;
   final NetworkRouteType routeType;
+  final NetworkRouteTopology topology;
+  final NetworkRouteTransport transport;
   final String? endpoint;
   final Duration? rtt;
   final double? loss;
@@ -286,12 +326,16 @@ final class PeerStateChanged extends SdkEvent {
     required this.peerId,
     required this.state,
     required this.routeType,
+    this.routeTopology = NetworkRouteTopology.unspecified,
+    this.routeTransport = NetworkRouteTransport.unspecified,
     this.error,
   });
 
   final String peerId;
   final PeerConnectionState state;
   final NetworkRouteType routeType;
+  final NetworkRouteTopology routeTopology;
+  final NetworkRouteTransport routeTransport;
   final NetworkError? error;
 }
 

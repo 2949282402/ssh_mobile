@@ -44,6 +44,24 @@ pub enum RouteType {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
 #[repr(i32)]
+pub enum RouteTopology {
+    Unspecified = 0,
+    Direct = 1,
+    Relay = 2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum RouteTransport {
+    Unspecified = 0,
+    Quic = 1,
+    Tcp = 2,
+    Udp = 3,
+    WebSocket = 4,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
 pub enum RealtimeSessionState {
     Unspecified = 0,
     Negotiating = 1,
@@ -339,6 +357,10 @@ pub struct PeerStateChangedEvent {
     pub active_route: i32,
     #[prost(message, optional, tag = "4")]
     pub error: Option<NetworkError>,
+    #[prost(enumeration = "RouteTopology", tag = "5")]
+    pub route_topology: i32,
+    #[prost(enumeration = "RouteTransport", tag = "6")]
+    pub route_transport: i32,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -404,6 +426,10 @@ pub struct RouteChangedEvent {
     pub rtt_ms: u64,
     #[prost(uint32, tag = "5")]
     pub loss_per_mille: u32,
+    #[prost(enumeration = "RouteTopology", tag = "6")]
+    pub topology: i32,
+    #[prost(enumeration = "RouteTransport", tag = "7")]
+    pub transport: i32,
 }
 
 #[derive(Clone, PartialEq, Message)]

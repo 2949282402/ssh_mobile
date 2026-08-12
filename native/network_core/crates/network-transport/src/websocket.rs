@@ -2,7 +2,7 @@ use crate::TransportError;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
-    connect_async,
+    accept_async, connect_async,
     tungstenite::{client::IntoClientRequest, Message},
     MaybeTlsStream, WebSocketStream,
 };
@@ -25,6 +25,16 @@ impl WebSocketTransport {
             .into_client_request()
             .map_err(|_| TransportError::InvalidUrl)?;
         let (socket, _) = connect_async(request)
+            .await
+            .map_err(|error| TransportError::WebSocket(error.to_string()))?;
+        Ok(Self { socket })
+    }
+
+    /// Accepts a binary WebSocket on the runtime's shared TCP listener. The
+    /// caller is responsible for dispatching HTTP-looking connections here;
+    /// identity authentication still belongs to `network-core`.
+    pub async fn accept(stream: TcpStream) -> Result<Self, TransportError> {
+        let socket = accept_async(MaybeTlsStream::Plain(stream))
             .await
             .map_err(|error| TransportError::WebSocket(error.to_string()))?;
         Ok(Self { socket })

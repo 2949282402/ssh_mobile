@@ -39,6 +39,13 @@
   bounded `commandId → Completer<SdkResult<void>>` map with timeout and dispose
   cleanup. `RealtimeSession` lifecycle states remain native-state-event driven, and
   a successful stop command waits for native `closed` before reporting `stopped`.
+- Plan 3 Step 3 now makes `Session` own a composed `ActiveRoute` with a bounded
+  generic carrier. Authenticated TCP and direct WebSocket routes can carry
+  Delivery data/ACK frames, reconnect under the same logical SessionId, and
+  recover pending Delivery state. Route admission reuses pinned Ed25519 identity
+  proof plus a Session binding; UDP has no reliable-message capability. QUIC
+  migration atomically swaps the active carrier before Delivery recovery, and
+  public peer/route events expose `RouteTopology × RouteTransport` metadata.
 - `network_sdk.RealtimeClient` now provides a Feature-safe `RealtimeSession` boundary;
   the App Shell maps native lifecycle events while Features cannot encode SDP/ICE or
   touch PeerConnection, sockets, or native handles. Native DataChannel media remains

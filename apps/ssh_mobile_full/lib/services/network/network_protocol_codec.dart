@@ -248,6 +248,8 @@ final class NetworkProtocolCodec {
     var peerId = '';
     var state = 0;
     var route = 0;
+    var topology = 0;
+    var transport = 0;
     NetworkError? error;
     while (!reader.isDone) {
       final field = reader.field();
@@ -260,6 +262,10 @@ final class NetworkProtocolCodec {
           route = reader.varint(field.wireType);
         case 4:
           error = _decodeError(reader.bytes(field.wireType));
+        case 5:
+          topology = reader.varint(field.wireType);
+        case 6:
+          transport = reader.varint(field.wireType);
         default:
           reader.skip(field.wireType);
       }
@@ -270,6 +276,8 @@ final class NetworkProtocolCodec {
       peerId: peerId,
       state: PeerConnectionState.fromWire(state),
       routeType: NetworkRouteType.fromWire(route),
+      routeTopology: NetworkRouteTopology.fromWire(topology),
+      routeTransport: NetworkRouteTransport.fromWire(transport),
       error: error,
     );
   }
@@ -441,6 +449,8 @@ final class NetworkProtocolCodec {
     String? endpoint;
     int? rtt;
     int? loss;
+    var topology = 0;
+    var transport = 0;
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
@@ -454,6 +464,10 @@ final class NetworkProtocolCodec {
           rtt = reader.varint(field.wireType);
         case 5:
           loss = reader.varint(field.wireType);
+        case 6:
+          topology = reader.varint(field.wireType);
+        case 7:
+          transport = reader.varint(field.wireType);
         default:
           reader.skip(field.wireType);
       }
@@ -464,6 +478,8 @@ final class NetworkProtocolCodec {
       snapshot: RouteSnapshot(
         peerId: peerId,
         routeType: NetworkRouteType.fromWire(route),
+        topology: NetworkRouteTopology.fromWire(topology),
+        transport: NetworkRouteTransport.fromWire(transport),
         endpoint: endpoint,
         rtt: rtt == null ? null : Duration(milliseconds: rtt),
         loss: loss == null ? null : loss / 1000,

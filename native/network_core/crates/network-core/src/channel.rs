@@ -8,9 +8,9 @@
 use network_protocol::{
     network_event, AcknowledgeMessageCommand, ChannelMessageEvent, DataMessage, DeliveryAck,
     DeliveryAckedEvent, DeliveryPolicyCode, NetworkError as ProtocolError, NetworkErrorCode,
-    NetworkEvent, RouteType, SendMessageCommand, NETWORK_PROTOCOL_VERSION,
+    NetworkEvent, SendMessageCommand, NETWORK_PROTOCOL_VERSION,
 };
-use network_quic::{send_channel_frame, ChannelFrameKind, MAX_CHANNEL_FRAME_BYTES};
+use network_quic::MAX_CHANNEL_FRAME_BYTES;
 use prost::Message;
 use std::sync::Arc;
 use std::time::Instant;
@@ -73,6 +73,22 @@ pub(crate) async fn start_send_message(
         return Err(protocol_error_with_peer(
             NetworkErrorCode::NoRoute,
             "peer has no connected logical Session",
+            "send_message",
+            &command.peer_id,
+        ));
+    }
+    let Some(profile) = state.sessions.current_profile(&command.peer_id).await else {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            "peer route has no reliable message capability",
+            "send_message",
+            &command.peer_id,
+        ));
+    };
+    if !profile.supports(crate::connection::ConnectionCapability::ReliableMessage) {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            "current route does not support Delivery messages",
             "send_message",
             &command.peer_id,
         ));
@@ -299,44 +315,15 @@ async fn send_data_message(
         )
         .into());
     }
-    let route = state.sessions.current_route(peer_id).await;
-    let profile = route
-        .and_then(crate::connection::ConnectionProfile::for_route)
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotConnected,
-                "message route unavailable",
-            )
-        })?;
-    match (profile.topology(), profile.transport()) {
-        (crate::connection::RouteTopology::Direct, crate::connection::RouteTransport::Quic) => {
-            let connection = state
-                .sessions
-                .current_connection(peer_id)
-                .await
-                .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotConnected,
-                        "direct route unavailable",
-                    )
-                })?;
-            send_channel_frame(&connection, ChannelFrameKind::DataMessage, &encoded).await
-        }
-        (crate::connection::RouteTopology::Relay, crate::connection::RouteTransport::WebSocket) => {
-            let relay = state.relay.read().await.clone().ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotConnected, "Relay route unavailable")
-            })?;
-            relay
-                .send_channel_message(
-                    &hex::encode(message.message_id.to_bytes()),
-                    peer_id,
-                    &encoded,
-                )
-                .await
-                .map_err(|error| std::io::Error::other(error.to_string()).into())
-        }
-        route => Err(std::io::Error::other(format!("unsupported message route: {route:?}")).into()),
-    }
+    state
+        .sessions
+        .send_channel_frame(
+            peer_id,
+            &hex::encode(message.message_id.to_bytes()),
+            crate::connection::GenericFrameKind::DataMessage,
+            &encoded,
+        )
+        .await
 }
 
 /// 处理 Dart 对已交付消息的 ACK，并把 ACK 发送到当前 Route。
@@ -400,41 +387,20 @@ async fn send_delivery_ack(
     ack: &DeliveryAck,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let encoded = ack.encode_to_vec();
-    let message_id: [u8; 16] = ack
+    let _message_id: [u8; 16] = ack
         .message_id
         .as_slice()
         .try_into()
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid ACK ID"))?;
-    match state.sessions.current_route(peer_id).await {
-        Some(RouteType::QuicDirect | RouteType::Lan) => {
-            let connection = state
-                .sessions
-                .current_connection(peer_id)
-                .await
-                .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotConnected,
-                        "direct route unavailable",
-                    )
-                })?;
-            send_channel_frame(&connection, ChannelFrameKind::DeliveryAck, &encoded).await
-        }
-        Some(RouteType::Relay) => {
-            let relay = state.relay.read().await.clone().ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotConnected, "Relay route unavailable")
-            })?;
-            relay
-                .send_channel_ack(&hex::encode(message_id), peer_id, &encoded)
-                .await
-                .map_err(|error| std::io::Error::other(error.to_string()).into())
-        }
-        Some(route) => {
-            Err(std::io::Error::other(format!("unsupported ACK route: {route:?}")).into())
-        }
-        None => Err(
-            std::io::Error::new(std::io::ErrorKind::NotConnected, "ACK route unavailable").into(),
-        ),
-    }
+    state
+        .sessions
+        .send_channel_frame(
+            peer_id,
+            &hex::encode(_message_id),
+            crate::connection::GenericFrameKind::DeliveryAck,
+            &encoded,
+        )
+        .await
 }
 
 /// 处理 QUIC/Relay 到达的 DataMessage；只有 New 消息才进入应用事件流。

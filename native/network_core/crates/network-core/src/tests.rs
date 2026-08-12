@@ -8,8 +8,8 @@ use network_protocol::{
     network_command, network_event, AcknowledgeMessageCommand, ChannelMessageEvent,
     CommandResultEvent, ConfigureRuntimeCommand, ConnectPeerCommand, DeliveryAckedEvent,
     DeliveryPolicyCode, NetworkCommand, NetworkError as ProtocolError, NetworkErrorCode,
-    PeerConnectionState, RespondIncomingTransferCommand, RouteType, SendFileCommand,
-    SendMessageCommand, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
+    PeerConnectionState, RespondIncomingTransferCommand, RouteTransport, RouteType,
+    SendFileCommand, SendMessageCommand, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
 };
 use std::fs;
 use std::net::SocketAddr;
@@ -609,6 +609,629 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
         )
     })
     .is_some());
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// QUIC is intentionally closed after both runtimes bind. The same configured
+/// numeric port still accepts TCP, proving that fallback is a real authenticated
+/// Session route rather than a capability-only wrapper. The test also sends a
+/// Delivery message and completes the application ACK through that route.
+#[test]
+fn tcp_fallback_authenticates_delivery_and_keeps_session_id() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root =
+        std::env::temp_dir().join(format!("ssh-mobile-tcp-fallback-{}", rand::random::<u64>()));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [101u8; 32];
+    let identity_seed_b = [102u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("tcp-a".into(), identity_seed_a, [111u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("tcp-b".into(), identity_seed_b, [112u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "tcp-a",
+        identity_seed_a,
+        [111u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "tcp-b",
+        identity_seed_b,
+        [112u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    let state_b = runtime_b
+        .state
+        .lock()
+        .expect("runtime B state lock")
+        .clone()
+        .expect("runtime B state");
+    runtime_b.handle().block_on(async {
+        state_b
+            .endpoint
+            .read()
+            .await
+            .as_ref()
+            .expect("B endpoint")
+            .close(quinn::VarInt::from_u32(0), b"TCP fallback test");
+    });
+    send_and_expect_accepted(
+        &runtime_a,
+        upsert_command(
+            "tcp-upsert-b",
+            "tcp-b",
+            address_b,
+            public_key_b,
+            [112u8; 32],
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_b,
+        upsert_command(
+            "tcp-upsert-a",
+            "tcp-a",
+            address_a,
+            public_key_a,
+            [111u8; 32],
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "tcp-connect".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "tcp-b".into(),
+                intent: 0,
+            })),
+        },
+    );
+    let connected = poll_until(&runtime_a, Duration::from_secs(25), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "tcp-b"
+                    && state.state == PeerConnectionState::Connected as i32
+                    && state.route_transport == RouteTransport::Tcp as i32
+        )
+    });
+    assert!(
+        connected.is_some(),
+        "TCP fallback route never became active"
+    );
+    let state_a = runtime_a
+        .state
+        .lock()
+        .expect("runtime A state lock")
+        .clone()
+        .expect("runtime A state");
+    let original_session_id = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_session_id("tcp-b")
+            .await
+            .expect("TCP Session ID")
+    });
+
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "tcp-send".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SendMessage(SendMessageCommand {
+                peer_id: "tcp-b".into(),
+                channel_id: "control".into(),
+                payload: b"tcp-delivery".to_vec(),
+                policy: DeliveryPolicyCode::AckedDeduplicated as i32,
+                crypto_mode: 0,
+            })),
+        },
+    );
+    let received = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::ChannelMessage(message))
+                if message.peer_id == "tcp-a" && message.payload == b"tcp-delivery"
+        )
+    })
+    .expect("TCP route did not deliver the message");
+    let (session_id, message_id) = match received.payload {
+        Some(network_event::Payload::ChannelMessage(message)) => {
+            (message.session_id, message.message_id)
+        }
+        _ => unreachable!("predicate already checked the event"),
+    };
+    send_and_expect_accepted(
+        &runtime_b,
+        NetworkCommand {
+            command_id: "tcp-ack".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::AcknowledgeMessage(
+                AcknowledgeMessageCommand {
+                    peer_id: "tcp-a".into(),
+                    session_id,
+                    channel_id: "control".into(),
+                    message_id: message_id.clone(),
+                },
+            )),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id,
+                message_id: acknowledged_id,
+                ..
+            })) if peer_id == "tcp-b" && acknowledged_id == &message_id
+        )
+    })
+    .is_some());
+
+    let route = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_active_route("tcp-b")
+            .await
+            .expect("active TCP route")
+    });
+    runtime_a.handle().block_on(route.close());
+    assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "tcp-b"
+                    && state.state == PeerConnectionState::Disconnected as i32
+        )
+    })
+    .is_some());
+    assert!(poll_until(&runtime_a, Duration::from_secs(25), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "tcp-b"
+                    && state.state == PeerConnectionState::Connected as i32
+                    && state.route_transport == RouteTransport::Tcp as i32
+        )
+    })
+    .is_some());
+    let reconnected_session_id = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_session_id("tcp-b")
+            .await
+            .expect("reconnected TCP Session ID")
+    });
+    assert_eq!(original_session_id, reconnected_session_id);
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// With QUIC closed and the test TCP fallback gate disabled, the shared
+/// listener admits the binary WebSocket path. Delivery and application ACKs
+/// use the same Session capability dispatch as TCP.
+#[test]
+fn websocket_fallback_authenticates_delivery_and_ack() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root = std::env::temp_dir().join(format!(
+        "ssh-mobile-websocket-fallback-{}",
+        rand::random::<u64>()
+    ));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [121u8; 32];
+    let identity_seed_b = [122u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("ws-a".into(), identity_seed_a, [131u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("ws-b".into(), identity_seed_b, [132u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "ws-a",
+        identity_seed_a,
+        [131u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "ws-b",
+        identity_seed_b,
+        [132u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    let state_b = runtime_b
+        .state
+        .lock()
+        .expect("runtime B state lock")
+        .clone()
+        .expect("runtime B state");
+    runtime_b.handle().block_on(async {
+        state_b
+            .endpoint
+            .read()
+            .await
+            .as_ref()
+            .expect("B endpoint")
+            .close(quinn::VarInt::from_u32(0), b"WebSocket fallback test");
+        state_b
+            .tcp_fallback_enabled
+            .store(false, std::sync::atomic::Ordering::Release);
+    });
+    send_and_expect_accepted(
+        &runtime_a,
+        upsert_command("ws-upsert-b", "ws-b", address_b, public_key_b, [132u8; 32]),
+    );
+    send_and_expect_accepted(
+        &runtime_b,
+        upsert_command("ws-upsert-a", "ws-a", address_a, public_key_a, [131u8; 32]),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "ws-connect".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "ws-b".into(),
+                intent: 0,
+            })),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(25), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "ws-b"
+                    && state.state == PeerConnectionState::Connected as i32
+                    && state.route_transport == RouteTransport::WebSocket as i32
+        )
+    })
+    .is_some());
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "ws-send".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SendMessage(SendMessageCommand {
+                peer_id: "ws-b".into(),
+                channel_id: "control".into(),
+                payload: b"websocket-delivery".to_vec(),
+                policy: DeliveryPolicyCode::AckedDeduplicated as i32,
+                crypto_mode: 0,
+            })),
+        },
+    );
+    let received = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::ChannelMessage(message))
+                if message.peer_id == "ws-a" && message.payload == b"websocket-delivery"
+        )
+    })
+    .expect("WebSocket route did not deliver the message");
+    let (session_id, message_id) = match received.payload {
+        Some(network_event::Payload::ChannelMessage(message)) => {
+            (message.session_id, message.message_id)
+        }
+        _ => unreachable!("predicate already checked the event"),
+    };
+    send_and_expect_accepted(
+        &runtime_b,
+        NetworkCommand {
+            command_id: "ws-ack".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::AcknowledgeMessage(
+                AcknowledgeMessageCommand {
+                    peer_id: "ws-a".into(),
+                    session_id,
+                    channel_id: "control".into(),
+                    message_id: message_id.clone(),
+                },
+            )),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id,
+                message_id: acknowledged_id,
+                ..
+            })) if peer_id == "ws-b" && acknowledged_id == &message_id
+        )
+    })
+    .is_some());
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// A pending Delivery item is kept under the logical Session while the
+/// authenticated route changes from TCP to a newly available QUIC endpoint.
+/// The old carrier is closed only after the atomic Session swap.
+#[test]
+fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_tcp = NetworkRuntime::new().expect("TCP peer runtime");
+    let runtime_quic = NetworkRuntime::new().expect("QUIC peer runtime");
+    runtime_a.start().expect("start runtime A");
+    runtime_tcp.start().expect("start TCP peer runtime");
+    runtime_quic.start().expect("start QUIC peer runtime");
+    let test_root = std::env::temp_dir().join(format!(
+        "ssh-mobile-route-migration-{}",
+        rand::random::<u64>()
+    ));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [141u8; 32];
+    let identity_seed_peer = [142u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("migration-a".into(), identity_seed_a, [151u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_peer =
+        DeviceIdentity::from_private_keys("migration-peer".into(), identity_seed_peer, [152u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "migration-a",
+        identity_seed_a,
+        [151u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_tcp = configure_runtime_for_test(
+        &runtime_tcp,
+        "migration-peer",
+        identity_seed_peer,
+        [152u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-tcp"),
+    );
+    let address_quic = configure_runtime_for_test(
+        &runtime_quic,
+        "migration-peer",
+        identity_seed_peer,
+        [152u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-quic"),
+    );
+    let tcp_state = runtime_tcp
+        .state
+        .lock()
+        .expect("TCP peer state lock")
+        .clone()
+        .expect("TCP peer state");
+    runtime_tcp.handle().block_on(async {
+        tcp_state
+            .endpoint
+            .read()
+            .await
+            .as_ref()
+            .expect("TCP peer endpoint")
+            .close(quinn::VarInt::from_u32(0), b"migration TCP phase");
+    });
+    send_and_expect_accepted(
+        &runtime_a,
+        upsert_command(
+            "migration-upsert-peer-tcp",
+            "migration-peer",
+            address_tcp,
+            public_key_peer,
+            [152u8; 32],
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_tcp,
+        upsert_command(
+            "migration-tcp-upsert-a",
+            "migration-a",
+            address_a,
+            public_key_a,
+            [151u8; 32],
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_quic,
+        upsert_command(
+            "migration-quic-upsert-a",
+            "migration-a",
+            address_a,
+            public_key_a,
+            [151u8; 32],
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "migration-connect".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "migration-peer".into(),
+                intent: 0,
+            })),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(25), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "migration-peer"
+                    && state.state == PeerConnectionState::Connected as i32
+                    && state.route_transport == RouteTransport::Tcp as i32
+        )
+    })
+    .is_some());
+    let state_a = runtime_a
+        .state
+        .lock()
+        .expect("runtime A state lock")
+        .clone()
+        .expect("runtime A state");
+    let (session_id, old_route) = runtime_a.handle().block_on(async {
+        let session_id = state_a
+            .sessions
+            .current_session_id("migration-peer")
+            .await
+            .expect("migration Session ID");
+        let route = state_a
+            .sessions
+            .current_active_route("migration-peer")
+            .await
+            .expect("TCP active route");
+        (session_id, route)
+    });
+    runtime_a
+        .handle()
+        .block_on(state_a.delivery.enqueue_with_crypto(
+            &session_id.wire_key(),
+            "control",
+            b"pending-before-quic".to_vec(),
+            crate::delivery::DeliveryPolicy::AckedDeduplicated,
+            crate::crypto::CryptoMode::None,
+            Default::default(),
+        ))
+        .expect("queue pending migration Delivery");
+    runtime_a.handle().block_on(async {
+        state_a
+            .peers
+            .write()
+            .await
+            .get_mut("migration-peer")
+            .expect("migration peer config")
+            .endpoint = Some(address_quic);
+    });
+    let identity = runtime_a.handle().block_on(async {
+        state_a
+            .identity
+            .read()
+            .await
+            .clone()
+            .expect("migration identity")
+    });
+    let endpoint = runtime_a.handle().block_on(async {
+        state_a
+            .endpoint
+            .read()
+            .await
+            .clone()
+            .expect("migration QUIC endpoint")
+    });
+    let replacement = runtime_a
+        .handle()
+        .block_on(crate::peer::connect_direct(
+            endpoint,
+            address_quic,
+            identity,
+            public_key_peer,
+            "migration-peer".into(),
+            "migration-attempt".into(),
+            Duration::from_secs(5),
+        ))
+        .expect("authenticated QUIC replacement");
+    let replacement_receiver = replacement.clone();
+    let previous = runtime_a
+        .handle()
+        .block_on(state_a.sessions.replace_active_route_if_current(
+            "migration-peer",
+            session_id,
+            &old_route,
+            crate::session::ActiveRoute::quic(replacement, RouteType::QuicDirect),
+        ))
+        .expect("atomic TCP to QUIC route swap");
+    runtime_a.handle().block_on(previous.close());
+    runtime_a.handle().block_on(async {
+        crate::peer::spawn_session_receivers(
+            state_a.clone(),
+            "migration-peer".into(),
+            replacement_receiver,
+            session_id,
+        );
+    });
+    runtime_a.handle().block_on(crate::channel::recover_session(
+        state_a.clone(),
+        "migration-peer".into(),
+        session_id,
+    ));
+    let received = poll_until(&runtime_quic, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::ChannelMessage(message))
+                if message.peer_id == "migration-a"
+                    && message.payload == b"pending-before-quic"
+        )
+    })
+    .expect("pending Delivery was not recovered on QUIC");
+    let (remote_session_id, message_id) = match received.payload {
+        Some(network_event::Payload::ChannelMessage(message)) => {
+            (message.session_id, message.message_id)
+        }
+        _ => unreachable!("predicate already checked the event"),
+    };
+    send_and_expect_accepted(
+        &runtime_quic,
+        NetworkCommand {
+            command_id: "migration-ack".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::AcknowledgeMessage(
+                AcknowledgeMessageCommand {
+                    peer_id: "migration-a".into(),
+                    session_id: remote_session_id,
+                    channel_id: "control".into(),
+                    message_id,
+                },
+            )),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id,
+                ..
+            })) if peer_id == "migration-peer"
+        )
+    })
+    .is_some());
+    let (same_session, transport) = runtime_a.handle().block_on(async {
+        let profile = state_a
+            .sessions
+            .current_profile("migration-peer")
+            .await
+            .expect("migrated profile");
+        (
+            state_a
+                .sessions
+                .current_session_id("migration-peer")
+                .await
+                .expect("migrated Session ID"),
+            profile.transport(),
+        )
+    });
+    assert_eq!(same_session, session_id);
+    assert_eq!(transport, crate::connection::RouteTransport::Quic);
+    runtime_a.stop().expect("stop runtime A");
+    runtime_tcp.stop().expect("stop TCP peer runtime");
+    runtime_quic.stop().expect("stop QUIC peer runtime");
     fs::remove_dir_all(test_root).ok();
 }
 

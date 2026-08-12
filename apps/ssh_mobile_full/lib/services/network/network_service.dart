@@ -452,10 +452,17 @@ final class NativeNetworkService implements NetworkService {
         :final peerId,
         :final state,
         :final routeType,
+        :final routeTopology,
+        :final routeTransport,
       )) {
         if (state == PeerConnectionState.connected) {
           _peerRoutes[peerId] = routeType;
-          _routes[peerId] = RouteSnapshot(peerId: peerId, routeType: routeType);
+          _routes[peerId] = RouteSnapshot(
+            peerId: peerId,
+            routeType: routeType,
+            topology: routeTopology,
+            transport: routeTransport,
+          );
         } else if (state == PeerConnectionState.disconnected ||
             state == PeerConnectionState.failed) {
           _peerRoutes.remove(peerId);

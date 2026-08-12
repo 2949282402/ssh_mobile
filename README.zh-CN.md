@@ -34,7 +34,7 @@ Public API、依赖、存储、生命周期和测试命令，`AGENTS.md` 说明�
 - **SSH 连接管理**：支持密码、私钥、私钥密码、跳板机、服务器平台选择和 SSH Host Key 首次信任校验。
 - **多终端窗口**：同一服务器可创建多个固定名称的终端窗口，并稳定绑定 tmux 会话。
 - **SFTP 文件管理**：支持目录浏览、最近与收藏路径、上传、下载、编辑、预览和输入完整名称确认删除。
-- **局域网快传与网络传输**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；文件发送统一进入 Rust 网络运行时，优先使用固定身份的 Quinn 直连，无法直达时由当前 WSS Relay 路径转发 AES-GCM 密文。直连和中继的入站文件都通过全局弹窗显式审批，校验后才提交到应用沙箱，并在接收端持久化和确认后报告成功。当前开发版本不保留旧 HTTPS 文件发送降级路径。RealtimeSession 只向 Flutter
+- **局域网快传与网络传输**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；文件发送统一进入 Rust 网络运行时，优先使用固定身份的 Quinn 直连，无法直达时由当前 WSS Relay 路径转发 AES-GCM 密文。经过身份认证的 TCP 与直连 WebSocket 也可作为有界 Delivery 降级路径，路由迁移会保留逻辑 SessionId 和待处理 Delivery。直连和中继的入站文件都通过全局弹窗显式审批，校验后才提交到应用沙箱，并在接收端持久化和确认后报告成功。当前开发版本不保留旧 HTTPS 文件发送降级路径。RealtimeSession 只向 Flutter
 Feature 暴露 start/stop、状态、远端视频流和音频状态；PeerConnection、ICE、
 SDP、Socket 与 Relay signaling 继续由 Rust/native/App Shell 持有。
 - **服务器监控**：查看性能、端口、应用进程、服务、用户和活动会话。
@@ -504,9 +504,9 @@ Connection 模块在开发期使用全新的 `connection.sqlite` 基线；Drift 
 
 LAN 文件数据路径为 `LanShareViewModel → NetworkService → Rust
 NetworkRuntime`。命令只返回 typed accepted 结果，进度和终态通过 typed events
-返回。Rust 负责每 peer 路径选择、身份认证 QUIC、流式文件校验以及原生 Relay
-收发；Flutter 负责配对、审批 UI、历史记录和展示状态。Go Relay 只作为 v1
-内存路由器，不接触文件明文元数据或明文字节。
+返回。Rust 负责每 peer 路径选择、身份认证 QUIC/TCP/WebSocket、流式文件校验
+以及原生 Relay 收发；Flutter 负责配对、审批 UI、历史记录和展示状态。Go Relay
+只作为 v1 内存路由器，不接触文件明文元数据或明文字节。
 
 Native Channel Delivery 会把仍在处理的 incoming handler 和 ordered buffer
 独立于已完成消息的 dedup TTL/LRU。应用 ACK timeout 使用单独策略；严格有序

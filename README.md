@@ -43,7 +43,7 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 - **SSH connection management** with passwords, private keys, encrypted private keys, jump hosts, server platform selection, and SSH host-key trust-on-first-use verification.
 - **Multi-window terminals** that allow several fixed-name sessions per server and stable tmux session binding.
 - **SFTP file management** with browsing, recent and favorite paths, uploads, downloads, editing, previews, and explicit deletion confirmation. The upload action follows the active theme's secondary color instead of a fixed deep purple.
-- **LAN Quick Share & Network Transfer** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. File sends run through the Rust network runtime: pinned-identity Quinn direct paths are selected first and the current WSS Relay path carries only AES-GCM ciphertext when direct reachability is unavailable. Incoming direct and Relay offers require a global explicit approval, verified data is committed in the app sandbox, and success is reported only after receiver persistence and acknowledgement. The active development build does not retain the old HTTPS file-send fallback. The
+- **LAN Quick Share & Network Transfer** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. File sends run through the Rust network runtime: pinned-identity Quinn direct paths are selected first and the current WSS Relay path carries only AES-GCM ciphertext when direct reachability is unavailable. Authenticated TCP and direct WebSocket routes are available as bounded Delivery fallbacks, while route migration preserves the logical SessionId and pending Delivery state. Incoming direct and Relay offers require a global explicit approval, verified data is committed in the app sandbox, and success is reported only after receiver persistence and acknowledgement. The active development build does not retain the old HTTPS file-send fallback. The
 feature-facing RealtimeSession exposes only lifecycle/state/media views; PeerConnection,
 ICE, SDP, sockets, and Relay signaling remain native/App Shell owned.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
@@ -596,10 +596,10 @@ surface.
 LAN file transfer follows `LanShareViewModel → NetworkService → Rust
 NetworkRuntime`. Commands return typed acceptance results, while progress and
 terminal outcomes arrive as typed events. The runtime owns per-peer path
-selection, authenticated QUIC, streaming file verification, and native Relay
-send/receive; Flutter owns pairing, approval UI, history, and presentation
-state. The Go Relay remains a memory-only v1 router and never receives
-plaintext file metadata or bytes.
+selection, authenticated QUIC/TCP/WebSocket routes, streaming file verification,
+and native Relay send/receive; Flutter owns pairing, approval UI, history, and
+presentation state. The Go Relay remains a memory-only v1 router and never
+receives plaintext file metadata or bytes.
 
 Native channel Delivery keeps active incoming handlers and ordered-buffered
 messages outside the processed dedup TTL/LRU window. Application ACK timeout is

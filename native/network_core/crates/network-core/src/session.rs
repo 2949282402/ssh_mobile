@@ -1,10 +1,18 @@
 //! Session 生命周期与当前 transport connection 的隔离。
 
 use network_protocol::RouteType;
+use network_quic::{send_channel_frame, ChannelFrameKind};
+use network_relay::RelayClient;
 use quinn::{Connection, VarInt};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::sync::RwLock;
+
+use crate::connection::{
+    ConnectionCapability, ConnectionProfile, GenericFrameKind, GenericRouteHandle, Route,
+    RouteTransport,
+};
 
 /// 标识一次跨 Connection 的业务会话。
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -36,8 +44,83 @@ pub(crate) enum ConnectDecision {
 struct Session {
     id: SessionId,
     state: SessionState,
-    active_route: RouteType,
-    connection: Option<Connection>,
+    route: Option<ActiveRoute>,
+}
+
+/// A route is a composed profile plus its authenticated carrier. The legacy
+/// `RouteType` remains only as a compatibility projection for old transfer and
+/// UI consumers; generic routes are represented by `profile` directly.
+#[derive(Clone)]
+pub(crate) struct ActiveRoute {
+    profile: ConnectionProfile,
+    carrier: ActiveConnection,
+}
+
+#[derive(Clone)]
+enum ActiveConnection {
+    Quic(Connection),
+    Generic(GenericRouteHandle),
+    Relay(Option<Arc<RelayClient>>),
+}
+
+impl ActiveRoute {
+    pub(crate) fn quic(connection: Connection, route: RouteType) -> Self {
+        let profile = ConnectionProfile::for_route(route)
+            .expect("QUIC and Relay route types have a composed profile");
+        Self {
+            profile,
+            carrier: ActiveConnection::Quic(connection),
+        }
+    }
+
+    fn generic(handle: GenericRouteHandle) -> Self {
+        Self {
+            profile: handle.profile(),
+            carrier: ActiveConnection::Generic(handle),
+        }
+    }
+
+    fn relay(client: Option<Arc<RelayClient>>) -> Self {
+        Self {
+            profile: ConnectionProfile::new(Route::relay(RouteTransport::WebSocket)),
+            carrier: ActiveConnection::Relay(client),
+        }
+    }
+
+    pub(crate) fn profile(&self) -> ConnectionProfile {
+        self.profile
+    }
+
+    fn same_carrier(&self, other: &Self) -> bool {
+        match (&self.carrier, &other.carrier) {
+            (ActiveConnection::Quic(left), ActiveConnection::Quic(right)) => {
+                left.stable_id() == right.stable_id()
+            }
+            (ActiveConnection::Generic(left), ActiveConnection::Generic(right)) => {
+                left.id() == right.id()
+            }
+            (ActiveConnection::Relay(left), ActiveConnection::Relay(right)) => {
+                match (left, right) {
+                    (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                    (None, None) => true,
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) async fn close(&self) {
+        match &self.carrier {
+            ActiveConnection::Quic(connection) => {
+                connection.close(VarInt::from_u32(0), b"session route closed");
+            }
+            ActiveConnection::Generic(handle) => {
+                let _ = handle.close().await;
+            }
+            ActiveConnection::Relay(_) => {}
+        }
+    }
 }
 
 /// App Scope 内唯一的 Session owner。
@@ -72,14 +155,12 @@ impl SessionManager {
                 }
                 SessionState::Idle => {
                     session.state = SessionState::Connecting;
-                    session.active_route = RouteType::Unspecified;
-                    session.connection = None;
+                    session.route = None;
                     return ConnectDecision::Started(session.id);
                 }
                 SessionState::Disconnected | SessionState::Failed => {
                     session.state = SessionState::Reconnecting;
-                    session.active_route = RouteType::Unspecified;
-                    session.connection = None;
+                    session.route = None;
                     return ConnectDecision::Started(session.id);
                 }
             }
@@ -119,14 +200,54 @@ impl SessionManager {
             connection.close(VarInt::from_u32(0), b"session replaced");
             return false;
         }
-        if session.state == SessionState::Connected && session.connection.is_some() {
+        if session.state == SessionState::Connected && session.route.is_some() {
             drop(sessions);
             connection.close(VarInt::from_u32(0), b"direct nomination already won");
             return false;
         }
         session.state = SessionState::Connected;
-        session.active_route = route;
-        session.connection = Some(connection);
+        session.route = Some(ActiveRoute::quic(connection, route));
+        true
+    }
+
+    /// Attaches an authenticated TCP/WebSocket route without replacing an
+    /// already active route. Authentication is completed by the caller before
+    /// this method is reached.
+    pub(crate) async fn attach_generic_connection(
+        &self,
+        peer_id: &str,
+        expected_session_id: Option<SessionId>,
+        connection: GenericRouteHandle,
+    ) -> bool {
+        if !connection
+            .profile()
+            .supports(ConnectionCapability::ReliableMessage)
+        {
+            let _ = connection.close().await;
+            return false;
+        }
+        let mut sessions = self.sessions.write().await;
+        let session = match sessions.get_mut(peer_id) {
+            Some(session) => session,
+            None if expected_session_id.is_none() => sessions
+                .entry(peer_id.to_string())
+                .or_insert_with(|| self.new_session()),
+            None => {
+                drop(sessions);
+                let _ = connection.close().await;
+                return false;
+            }
+        };
+        if session.state == SessionState::Closed
+            || expected_session_id.is_some_and(|id| id != session.id)
+            || (session.state == SessionState::Connected && session.route.is_some())
+        {
+            drop(sessions);
+            let _ = connection.close().await;
+            return false;
+        }
+        session.state = SessionState::Connected;
+        session.route = Some(ActiveRoute::generic(connection));
         true
     }
 
@@ -144,19 +265,29 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         let session = sessions.get_mut(peer_id)?;
         let is_current = session
-            .connection
+            .route
             .as_ref()
-            .is_some_and(|connection| connection.stable_id() == current_connection.stable_id());
+            .is_some_and(|route| match &route.carrier {
+                ActiveConnection::Quic(connection) => {
+                    connection.stable_id() == current_connection.stable_id()
+                }
+                _ => false,
+            });
         if session.id != expected_session_id || session.state == SessionState::Closed || !is_current
         {
             drop(sessions);
             replacement.close(VarInt::from_u32(0), b"session replaced");
             return None;
         }
-        let previous = session.connection.replace(replacement);
+        let previous = session.route.replace(ActiveRoute::quic(replacement, route));
         session.state = SessionState::Connected;
-        session.active_route = route;
-        previous
+        match previous {
+            Some(ActiveRoute {
+                carrier: ActiveConnection::Quic(connection),
+                ..
+            }) => Some(connection),
+            _ => None,
+        }
     }
 
     /// Atomically promotes a connected Relay route to a newly authenticated
@@ -178,24 +309,42 @@ impl SessionManager {
         };
         if session.id != expected_session_id
             || session.state != SessionState::Connected
-            || session.active_route != expected_route
-            || session.connection.is_some()
+            || session
+                .route
+                .as_ref()
+                .and_then(|route| route.profile.route().to_wire())
+                != Some(expected_route)
+            || session
+                .route
+                .as_ref()
+                .is_some_and(|route| !matches!(route.carrier, ActiveConnection::Relay(_)))
         {
             drop(sessions);
             replacement.close(VarInt::from_u32(0), b"session replaced");
             return false;
         }
-        session.connection = Some(replacement);
-        session.active_route = route;
+        session.route = Some(ActiveRoute::quic(replacement, route));
         true
     }
 
     /// 记录一个没有 Quinn handle 的已连接 Route，例如 Relay 控制面。
-    pub(crate) async fn mark_route_connected(
+    #[cfg(test)]
+    async fn mark_route_connected(
         &self,
         peer_id: &str,
         expected_session_id: SessionId,
         route: RouteType,
+    ) -> bool {
+        self.mark_relay_route_connected(peer_id, expected_session_id, route, None)
+            .await
+    }
+
+    pub(crate) async fn mark_relay_route_connected(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        route: RouteType,
+        relay: Option<Arc<RelayClient>>,
     ) -> bool {
         let mut sessions = self.sessions.write().await;
         let Some(session) = sessions.get_mut(peer_id) else {
@@ -205,9 +354,48 @@ impl SessionManager {
             return false;
         }
         session.state = SessionState::Connected;
-        session.active_route = route;
-        session.connection = None;
+        session.route = match route {
+            RouteType::Relay => Some(ActiveRoute::relay(relay)),
+            _ => None,
+        };
         true
+    }
+
+    /// Atomically swaps any authenticated active route while retaining the
+    /// logical SessionId. The caller closes the returned old route only after
+    /// the swap has become visible to Delivery and receiver tasks.
+    pub(crate) async fn replace_active_route_if_current(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        expected_route: &ActiveRoute,
+        replacement: ActiveRoute,
+    ) -> Option<ActiveRoute> {
+        let mut sessions = self.sessions.write().await;
+        let Some(session) = sessions.get_mut(peer_id) else {
+            drop(sessions);
+            replacement.close().await;
+            return None;
+        };
+        let matches_current = session
+            .route
+            .as_ref()
+            .is_some_and(|current| current.same_carrier(expected_route));
+        if session.id != expected_session_id
+            || session.state != SessionState::Connected
+            || !matches_current
+        {
+            drop(sessions);
+            replacement.close().await;
+            return None;
+        }
+        session.state = SessionState::Connected;
+        Some(
+            session
+                .route
+                .replace(replacement)
+                .expect("matched active route"),
+        )
     }
 
     /// 取得当前可靠 direct Connection；Session 自身不随 Connection drop 消失。
@@ -217,7 +405,11 @@ impl SessionManager {
             .await
             .get(peer_id)
             .filter(|session| session.state == SessionState::Connected)
-            .and_then(|session| session.connection.clone())
+            .and_then(|session| session.route.as_ref())
+            .and_then(|route| match &route.carrier {
+                ActiveConnection::Quic(connection) => Some(connection.clone()),
+                _ => None,
+            })
     }
 
     pub(crate) async fn current_session_id(&self, peer_id: &str) -> Option<SessionId> {
@@ -228,14 +420,92 @@ impl SessionManager {
             .map(|session| session.id)
     }
 
-    /// 返回当前逻辑 Session 的 active Route；Relay 没有 Quinn handle。
+    /// Returns the composed profile of the current authenticated route.
+    pub(crate) async fn current_profile(&self, peer_id: &str) -> Option<ConnectionProfile> {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .filter(|session| session.state == SessionState::Connected)
+            .and_then(|session| session.route.as_ref())
+            .map(ActiveRoute::profile)
+    }
+
+    pub(crate) async fn current_active_route(&self, peer_id: &str) -> Option<ActiveRoute> {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .filter(|session| session.state == SessionState::Connected)
+            .and_then(|session| session.route.clone())
+    }
+
+    /// Returns the old flat projection for compatibility surfaces. Generic
+    /// routes intentionally return `Unspecified`; callers needing routing
+    /// semantics must use `current_profile`.
     pub(crate) async fn current_route(&self, peer_id: &str) -> Option<RouteType> {
         self.sessions
             .read()
             .await
             .get(peer_id)
             .filter(|session| session.state == SessionState::Connected)
-            .map(|session| session.active_route)
+            .and_then(|session| session.route.as_ref())
+            .map(|route| {
+                route
+                    .profile
+                    .route()
+                    .to_wire()
+                    .unwrap_or(RouteType::Unspecified)
+            })
+    }
+
+    /// Sends one Delivery data/ACK frame through the current route capability.
+    /// The caller supplies the opaque token required by the Relay protocol;
+    /// no caller branches on QUIC, TCP, WebSocket, UDP, or Relay.
+    pub(crate) async fn send_channel_frame(
+        &self,
+        peer_id: &str,
+        relay_token: &str,
+        kind: GenericFrameKind,
+        payload: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let route = self.current_active_route(peer_id).await.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotConnected, "route unavailable")
+        })?;
+        if !route
+            .profile
+            .supports(ConnectionCapability::ReliableMessage)
+        {
+            return Err(std::io::Error::other("route does not support reliable messages").into());
+        }
+        match route.carrier {
+            ActiveConnection::Quic(connection) => {
+                let kind = match kind {
+                    GenericFrameKind::DataMessage => ChannelFrameKind::DataMessage,
+                    GenericFrameKind::DeliveryAck => ChannelFrameKind::DeliveryAck,
+                };
+                send_channel_frame(&connection, kind, payload).await
+            }
+            ActiveConnection::Generic(connection) => connection
+                .send(kind, payload)
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()).into()),
+            ActiveConnection::Relay(Some(relay)) => match kind {
+                GenericFrameKind::DataMessage => relay
+                    .send_channel_message(relay_token, peer_id, payload)
+                    .await
+                    .map_err(|error| std::io::Error::other(error.to_string()).into()),
+                GenericFrameKind::DeliveryAck => relay
+                    .send_channel_ack(relay_token, peer_id, payload)
+                    .await
+                    .map_err(|error| std::io::Error::other(error.to_string()).into()),
+            },
+            ActiveConnection::Relay(None) => Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "Relay route unavailable",
+            )
+            .into()),
+        }
     }
 
     pub(crate) async fn is_connected(&self, peer_id: &str) -> bool {
@@ -243,7 +513,9 @@ impl SessionManager {
             .read()
             .await
             .get(peer_id)
-            .is_some_and(|session| session.state == SessionState::Connected)
+            .is_some_and(|session| {
+                session.state == SessionState::Connected && session.route.is_some()
+            })
     }
 
     /// 仅当断开的 Connection 仍是当前 Connection 时才更新 Session，避免旧
@@ -256,15 +528,36 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         let session = sessions.get_mut(peer_id)?;
         let is_current = session
-            .connection
+            .route
             .as_ref()
-            .is_some_and(|current| current.stable_id() == connection.stable_id());
+            .is_some_and(|route| match &route.carrier {
+                ActiveConnection::Quic(current) => current.stable_id() == connection.stable_id(),
+                _ => false,
+            });
         if !is_current {
             return None;
         }
         let session_id = session.id;
-        session.connection = None;
-        session.active_route = RouteType::Unspecified;
+        session.route = None;
+        session.state = SessionState::Disconnected;
+        Some(session_id)
+    }
+
+    pub(crate) async fn mark_generic_disconnected_if_current(
+        &self,
+        peer_id: &str,
+        route_id: u64,
+    ) -> Option<SessionId> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(peer_id)?;
+        let is_current = session.route.as_ref().is_some_and(|route| {
+            matches!(&route.carrier, ActiveConnection::Generic(handle) if handle.id() == route_id)
+        });
+        if !is_current {
+            return None;
+        }
+        let session_id = session.id;
+        session.route = None;
         session.state = SessionState::Disconnected;
         Some(session_id)
     }
@@ -277,8 +570,7 @@ impl SessionManager {
         let Some(session) = sessions.get_mut(peer_id) else {
             return false;
         };
-        session.connection = None;
-        session.active_route = RouteType::Unspecified;
+        session.route = None;
         session.state = SessionState::Disconnected;
         true
     }
@@ -292,26 +584,24 @@ impl SessionManager {
                     SessionState::Connecting | SessionState::Reconnecting
                 )
             {
-                session.connection = None;
-                session.active_route = RouteType::Unspecified;
+                session.route = None;
                 session.state = SessionState::Failed;
             }
         }
     }
 
-    /// 显式断开结束 Session，并关闭仍绑定的 QUIC Connection。
+    /// 显式断开结束 Session，并关闭仍绑定的 route carrier。
     pub(crate) async fn close(&self, peer_id: &str) {
-        let connection = {
+        let route = {
             let mut sessions = self.sessions.write().await;
             let Some(session) = sessions.get_mut(peer_id) else {
                 return;
             };
             session.state = SessionState::Closed;
-            session.active_route = RouteType::Unspecified;
-            session.connection.take()
+            session.route.take()
         };
-        if let Some(connection) = connection {
-            connection.close(VarInt::from_u32(0), b"session closed");
+        if let Some(route) = route {
+            route.close().await;
         }
     }
 
@@ -353,8 +643,7 @@ impl SessionManager {
         Session {
             id: SessionId(self.next_id.fetch_add(1, Ordering::Relaxed)),
             state: SessionState::Idle,
-            active_route: RouteType::Unspecified,
-            connection: None,
+            route: None,
         }
     }
 }

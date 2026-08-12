@@ -10,18 +10,26 @@ use network_protocol::{
 };
 use network_quic::{read_channel_frame, ChannelFrameKind, QuicEndpointManager, QuicPeerSession};
 use network_relay::RelayClient;
+use network_transport::{TcpTransport, Transport, WebSocketTransport};
 use quinn::{Connection, Endpoint, VarInt};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, Instant};
-use tokio::sync::oneshot;
+use tokio::net::TcpListener;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 
-use crate::events::{
-    emit_peer_state, emit_route_changed, protocol_error, protocol_error_with_peer,
+use crate::connection::{
+    spawn_generic_route, GenericConnection, GenericFrameKind, GenericInboundFrame,
+    GenericRouteHandle, RouteTopology, RouteTransport,
 };
+use crate::events::{
+    emit_peer_state, emit_peer_state_profile, emit_route_changed, emit_route_changed_profile,
+    protocol_error, protocol_error_with_peer,
+};
+use crate::generic_auth::{authenticate_initiator, authenticate_responder};
 use crate::runtime::{
     CandidateAttempt, PeerConfig, RuntimeState, DEFAULT_CANDIDATE_CONNECT_WINDOW,
     PEER_CONNECT_TIMEOUT, RECONNECT_INITIAL_BACKOFF, RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF,
@@ -35,6 +43,29 @@ const PATH_METRICS_INTERVAL: Duration = Duration::from_secs(2);
 const CANDIDATE_SIGNAL_WAIT: Duration = Duration::from_millis(300);
 const DIRECT_UPGRADE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const DIRECT_UPGRADE_STABLE_DURATION: Duration = Duration::from_millis(750);
+const GENERIC_ROUTE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+
+struct AuthenticatedGenericRoute {
+    handle: GenericRouteHandle,
+    inbound: mpsc::Receiver<GenericInboundFrame>,
+    endpoint: SocketAddr,
+}
+
+enum ConnectedRoute {
+    Quic(Connection),
+    Generic(AuthenticatedGenericRoute),
+}
+
+struct DirectRouteAttempt {
+    endpoint: Endpoint,
+    candidates: Vec<Candidate>,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_public_key: [u8; 32],
+    peer_id: String,
+    session_binding: String,
+    attempt_id: String,
+    connect_window: Duration,
+}
 
 /// 校验运行时密钥并启动 QUIC 监听器。
 pub(crate) async fn configure_runtime(
@@ -90,6 +121,21 @@ pub(crate) async fn configure_runtime(
     let manager = QuicEndpointManager::from_bound_socket(socket, Arc::clone(&path_manager))
         .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
     let endpoint = manager.endpoint;
+    let tcp_socket = std::net::TcpListener::bind(bound_address).map_err(|error| {
+        protocol_error(
+            NetworkErrorCode::IoError,
+            format!("failed to bind TCP fallback listener: {error}"),
+        )
+    })?;
+    tcp_socket
+        .set_nonblocking(true)
+        .map_err(|error| protocol_error(NetworkErrorCode::IoError, error.to_string()))?;
+    let tcp_listener = TcpListener::from_std(tcp_socket).map_err(|error| {
+        protocol_error(
+            NetworkErrorCode::IoError,
+            format!("failed to configure TCP fallback listener: {error}"),
+        )
+    })?;
     state
         .bound_port
         .store(bound_address.port(), Ordering::Release);
@@ -112,6 +158,20 @@ pub(crate) async fn configure_runtime(
         .lock()
         .map_err(|_| protocol_error(NetworkErrorCode::QuicError, "accept task lock poisoned"))?;
     *accept_task = Some(task_id);
+    let tcp_task_id = state
+        .task_supervisor
+        .spawn_runtime(
+            "tcp-accept",
+            accept_tcp_connections(tcp_listener, Arc::clone(&state)),
+        )
+        .ok_or_else(|| {
+            protocol_error(NetworkErrorCode::Cancelled, "network runtime is stopping")
+        })?;
+    let mut tcp_accept_task = state
+        .tcp_accept_task
+        .lock()
+        .map_err(|_| protocol_error(NetworkErrorCode::IoError, "TCP accept task lock poisoned"))?;
+    *tcp_accept_task = Some(tcp_task_id);
     Ok(())
 }
 
@@ -320,6 +380,7 @@ pub(crate) async fn connect_peer(
         Some(relay) if relay.is_usable().await => Some(relay),
         _ => None,
     };
+    let relay_for_session = relay.clone();
 
     let local_manager = state.local_path_manager.read().await.clone();
     let local_generation = match local_manager {
@@ -384,30 +445,32 @@ pub(crate) async fn connect_peer(
 
     let route = match (!direct_candidates.is_empty(), relay) {
         (true, Some(relay)) => {
-            let direct = connect_direct_candidates(
+            let direct = connect_direct_or_generic(DirectRouteAttempt {
                 endpoint,
-                direct_candidates,
+                candidates: direct_candidates,
                 identity,
-                peer.identity_public_key,
-                peer_id.clone(),
-                attempt_id.clone(),
+                expected_peer_public_key: peer.identity_public_key,
+                peer_id: peer_id.clone(),
+                session_binding: session_id.wire_key(),
+                attempt_id: attempt_id.clone(),
                 connect_window,
-            );
+            });
             let relay_attempt =
                 connect_relay(Arc::clone(&state), relay, peer_id.clone(), RELAY_RACE_DELAY);
             let route = race_first_ready(direct, relay_attempt).await;
             state.relay_lookups.write().await.remove(&peer_id);
             route
         }
-        (true, None) => connect_direct_candidates(
+        (true, None) => connect_direct_or_generic(DirectRouteAttempt {
             endpoint,
-            direct_candidates,
+            candidates: direct_candidates,
             identity,
-            peer.identity_public_key,
-            peer_id.clone(),
-            attempt_id.clone(),
+            expected_peer_public_key: peer.identity_public_key,
+            peer_id: peer_id.clone(),
+            session_binding: session_id.wire_key(),
+            attempt_id: attempt_id.clone(),
             connect_window,
-        )
+        })
         .await
         .map(ReadyRoute::Direct),
         (false, Some(relay)) => {
@@ -426,7 +489,7 @@ pub(crate) async fn connect_peer(
     clear_candidate_attempt(&state, &peer_id, &attempt_id).await;
 
     match route {
-        Ok(ReadyRoute::Direct(connection)) => {
+        Ok(ReadyRoute::Direct(ConnectedRoute::Quic(connection))) => {
             let attached = state
                 .sessions
                 .attach_connection(
@@ -462,10 +525,55 @@ pub(crate) async fn connect_peer(
             spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
             Ok(())
         }
+        Ok(ReadyRoute::Direct(ConnectedRoute::Generic(generic))) => {
+            let profile = generic.handle.profile();
+            let attached = state
+                .sessions
+                .attach_generic_connection(&peer_id, Some(session_id), generic.handle.clone())
+                .await;
+            if !attached {
+                let _ = generic.handle.close().await;
+                return Err(protocol_error_with_peer(
+                    NetworkErrorCode::Cancelled,
+                    "generic connection completed after Session was closed",
+                    "connect",
+                    &peer_id,
+                ));
+            }
+            emit_peer_state_profile(
+                &state.event_tx,
+                &peer_id,
+                PeerConnectionState::Connected,
+                Some(profile),
+                None,
+            );
+            emit_route_changed_profile(
+                &state.event_tx,
+                &peer_id,
+                Some(profile),
+                generic.endpoint,
+                0,
+                0.0,
+            );
+            crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
+            spawn_generic_receivers(
+                Arc::clone(&state),
+                peer_id,
+                generic.handle,
+                generic.inbound,
+                session_id,
+            );
+            Ok(())
+        }
         Ok(ReadyRoute::Relay) => {
             let attached = state
                 .sessions
-                .mark_route_connected(&peer_id, session_id, RouteType::Relay)
+                .mark_relay_route_connected(
+                    &peer_id,
+                    session_id,
+                    RouteType::Relay,
+                    relay_for_session,
+                )
                 .await;
             if !attached {
                 return Err(protocol_error_with_peer(
@@ -495,7 +603,7 @@ pub(crate) async fn connect_peer(
 }
 
 /// Direct QUIC 尝试的总预算为 8 秒，避免连接和认证各自再等待一次。
-async fn connect_direct(
+pub(crate) async fn connect_direct(
     endpoint: Endpoint,
     peer_endpoint: SocketAddr,
     identity: Arc<DeviceIdentity>,
@@ -615,6 +723,209 @@ async fn connect_direct_candidates(
     }))
 }
 
+/// Route selection keeps QUIC as the first direct candidate, then falls back
+/// to authenticated TCP and finally a binary WebSocket route. Each generic
+/// route is admitted only after the same identity proof used by QUIC.
+async fn connect_direct_or_generic(
+    attempt: DirectRouteAttempt,
+) -> Result<ConnectedRoute, ProtocolError> {
+    let DirectRouteAttempt {
+        endpoint,
+        candidates,
+        identity,
+        expected_peer_public_key,
+        peer_id,
+        session_binding,
+        attempt_id,
+        connect_window,
+    } = attempt;
+    let generic_candidates = candidates.clone();
+    match connect_direct_candidates(
+        endpoint,
+        candidates,
+        Arc::clone(&identity),
+        expected_peer_public_key,
+        peer_id.clone(),
+        attempt_id,
+        connect_window,
+    )
+    .await
+    {
+        Ok(connection) => Ok(ConnectedRoute::Quic(connection)),
+        Err(quic_error) => connect_generic_candidates(
+            generic_candidates,
+            identity,
+            expected_peer_public_key,
+            peer_id,
+            session_binding,
+        )
+        .await
+        .map(ConnectedRoute::Generic)
+        .map_err(|_| quic_error),
+    }
+}
+
+async fn connect_generic_candidates(
+    candidates: Vec<Candidate>,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_public_key: [u8; 32],
+    peer_id: String,
+    session_binding: String,
+) -> Result<AuthenticatedGenericRoute, ProtocolError> {
+    let mut last_error = None;
+    for candidate in candidates.iter().take(MAX_CANDIDATES_PER_SIGNAL) {
+        match connect_tcp_route(
+            candidate.endpoint,
+            Arc::clone(&identity),
+            expected_peer_public_key,
+            peer_id.clone(),
+            session_binding.clone(),
+        )
+        .await
+        {
+            Ok(route) => return Ok(route),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    for candidate in candidates.iter().take(MAX_CANDIDATES_PER_SIGNAL) {
+        match connect_websocket_route(
+            candidate.endpoint,
+            Arc::clone(&identity),
+            expected_peer_public_key,
+            peer_id.clone(),
+            session_binding.clone(),
+        )
+        .await
+        {
+            Ok(route) => return Ok(route),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            "no generic direct candidates are available",
+            "connect",
+            &peer_id,
+        )
+    }))
+}
+
+async fn connect_tcp_route(
+    endpoint: SocketAddr,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_public_key: [u8; 32],
+    peer_id: String,
+    session_binding: String,
+) -> Result<AuthenticatedGenericRoute, ProtocolError> {
+    let timeout_peer_id = peer_id.clone();
+    let result = tokio::time::timeout(GENERIC_ROUTE_CONNECT_TIMEOUT, async move {
+        let mut connection = GenericConnection::connect_tcp(
+            "0.0.0.0:0".parse().expect("wildcard address"),
+            endpoint,
+        )
+        .await
+        .map_err(|error| {
+            protocol_error_with_peer(
+                NetworkErrorCode::IoError,
+                format!("TCP route connection failed: {error}"),
+                "connect",
+                &peer_id,
+            )
+        })?;
+        authenticate_initiator(
+            &mut connection,
+            &identity,
+            &peer_id,
+            expected_peer_public_key,
+            &session_binding,
+        )
+        .await
+        .map_err(|error| {
+            protocol_error_with_peer(
+                NetworkErrorCode::AuthenticationFailed,
+                format!("TCP route authentication failed: {error}"),
+                "connect",
+                &peer_id,
+            )
+        })?;
+        let transport = connection.route().transport();
+        let (handle, inbound) = spawn_generic_route(connection);
+        debug_assert_eq!(transport, RouteTransport::Tcp);
+        Ok(AuthenticatedGenericRoute {
+            handle,
+            inbound,
+            endpoint,
+        })
+    })
+    .await;
+    match result {
+        Ok(result) => result,
+        Err(_) => Err(protocol_error_with_peer(
+            NetworkErrorCode::Timeout,
+            "TCP route connection timed out",
+            "connect",
+            &timeout_peer_id,
+        )),
+    }
+}
+
+async fn connect_websocket_route(
+    endpoint: SocketAddr,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_public_key: [u8; 32],
+    peer_id: String,
+    session_binding: String,
+) -> Result<AuthenticatedGenericRoute, ProtocolError> {
+    let url = format!("ws://{endpoint}/v1/transport");
+    let timeout_peer_id = peer_id.clone();
+    let result = tokio::time::timeout(GENERIC_ROUTE_CONNECT_TIMEOUT, async move {
+        let mut connection = GenericConnection::connect_websocket(&url)
+            .await
+            .map_err(|error| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::IoError,
+                    format!("WebSocket route connection failed: {error}"),
+                    "connect",
+                    &peer_id,
+                )
+            })?
+            .with_topology(RouteTopology::Direct);
+        authenticate_initiator(
+            &mut connection,
+            &identity,
+            &peer_id,
+            expected_peer_public_key,
+            &session_binding,
+        )
+        .await
+        .map_err(|error| {
+            protocol_error_with_peer(
+                NetworkErrorCode::AuthenticationFailed,
+                format!("WebSocket route authentication failed: {error}"),
+                "connect",
+                &peer_id,
+            )
+        })?;
+        let (handle, inbound) = spawn_generic_route(connection);
+        Ok(AuthenticatedGenericRoute {
+            handle,
+            inbound,
+            endpoint,
+        })
+    })
+    .await;
+    match result {
+        Ok(result) => result,
+        Err(_) => Err(protocol_error_with_peer(
+            NetworkErrorCode::Timeout,
+            "WebSocket route connection timed out",
+            "connect",
+            &timeout_peer_id,
+        )),
+    }
+}
+
 /// Starts the answering side of the same bounded QUIC connectivity window.
 /// Receiving a candidate Offer is enough to authorize one direct punch; it
 /// must not recursively create another candidate Offer or a second Relay
@@ -670,14 +981,19 @@ async fn run_candidate_punch(
             session_id
         }
         ConnectDecision::AlreadyConnected(session_id) => {
-            if state.sessions.current_route(&peer_id).await != Some(RouteType::Relay) {
+            if state
+                .sessions
+                .current_profile(&peer_id)
+                .await
+                .is_some_and(|profile| profile.transport() == RouteTransport::Quic)
+            {
                 return;
             }
             session_id
         }
     };
-    let current_route = state.sessions.current_route(&peer_id).await;
-    if current_route == Some(RouteType::QuicDirect) {
+    let current_profile = state.sessions.current_profile(&peer_id).await;
+    if current_profile.is_some_and(|profile| profile.transport() == RouteTransport::Quic) {
         return;
     }
     let connect_window = connect_window
@@ -702,14 +1018,16 @@ async fn run_candidate_punch(
                 error = %error.message,
                 "coordinated QUIC candidate punch failed"
             );
-            if current_route.is_none() {
+            if current_profile.is_none() {
                 state.sessions.mark_failed(&peer_id, session_id).await;
             }
             return;
         }
     };
 
-    let attached = if current_route == Some(RouteType::Relay) {
+    let previous_route = if current_profile
+        .is_some_and(|profile| profile.topology() == crate::connection::RouteTopology::Relay)
+    {
         state
             .sessions
             .replace_route_if_current(
@@ -720,10 +1038,24 @@ async fn run_candidate_punch(
                 RouteType::QuicDirect,
             )
             .await
-    } else if current_route == Some(RouteType::QuicDirect) {
-        false
-    } else {
+            .then_some(None)
+    } else if current_profile.is_some() {
+        let Some(current_route) = state.sessions.current_active_route(&peer_id).await else {
+            connection.close(VarInt::from_u32(0), b"candidate route disappeared");
+            return;
+        };
         state
+            .sessions
+            .replace_active_route_if_current(
+                &peer_id,
+                session_id,
+                &current_route,
+                crate::session::ActiveRoute::quic(connection.clone(), RouteType::QuicDirect),
+            )
+            .await
+            .map(Some)
+    } else {
+        if state
             .sessions
             .attach_connection(
                 &peer_id,
@@ -732,10 +1064,18 @@ async fn run_candidate_punch(
                 RouteType::QuicDirect,
             )
             .await
+        {
+            Some(None)
+        } else {
+            None
+        }
     };
-    if !attached {
+    let Some(previous_route) = previous_route else {
         connection.close(VarInt::from_u32(0), b"candidate punch superseded");
         return;
+    };
+    if let Some(previous_route) = previous_route {
+        previous_route.close().await;
     }
     emit_peer_state(
         &state.event_tx,
@@ -1336,6 +1676,116 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
     }
 }
 
+/// Accepts TCP fallback sockets on the same numeric port as the QUIC UDP
+/// endpoint. A socket is not admitted into a Session until the generic
+/// Ed25519/Session-binding handshake succeeds.
+pub(crate) async fn accept_tcp_connections(listener: TcpListener, state: Arc<RuntimeState>) {
+    loop {
+        let (stream, peer_address) = match listener.accept().await {
+            Ok(connection) => connection,
+            Err(error) => {
+                tracing::debug!(%error, "TCP fallback accept loop stopped");
+                return;
+            }
+        };
+        let state = Arc::clone(&state);
+        let supervisor = Arc::clone(&state.task_supervisor);
+        let _ = supervisor.spawn_runtime("incoming-tcp-handshake", async move {
+            let mut probe = [0u8; 4];
+            let looks_like_websocket =
+                tokio::time::timeout(GENERIC_ROUTE_CONNECT_TIMEOUT, stream.peek(&mut probe))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .is_some_and(|length| length == probe.len() && &probe == b"GET ");
+            #[cfg(test)]
+            if !looks_like_websocket && !state.tcp_fallback_enabled.load(Ordering::Acquire) {
+                return;
+            }
+            let connection = if looks_like_websocket {
+                WebSocketTransport::accept(stream).await.map(|socket| {
+                    GenericConnection::from_transport(Transport::WebSocket(Box::new(socket)))
+                })
+            } else {
+                Ok(GenericConnection::from_transport(Transport::Tcp(
+                    TcpTransport::from_stream(stream),
+                )))
+            };
+            let result = match connection {
+                Ok(connection) => {
+                    accept_authenticated_generic(state, connection, peer_address).await
+                }
+                Err(error) => Err(error.into()),
+            };
+            if let Err(error) = result {
+                tracing::debug!(%error, "rejected inbound TCP fallback route");
+            }
+        });
+    }
+}
+
+async fn accept_authenticated_generic(
+    state: Arc<RuntimeState>,
+    mut connection: GenericConnection,
+    peer_address: SocketAddr,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let identity = state
+        .identity
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| std::io::Error::other("runtime identity is unavailable"))?;
+    let authenticated = tokio::time::timeout(
+        GENERIC_ROUTE_CONNECT_TIMEOUT,
+        authenticate_responder(&mut connection, &identity, &state.trusted_peer_keys),
+    )
+    .await
+    .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "TCP auth timed out"))??;
+    let crate::generic_auth::AuthenticatedPeer {
+        peer_id,
+        session_binding,
+    } = authenticated;
+    tracing::debug!(%session_binding, "generic route Session binding authenticated");
+    if !state.peers.read().await.contains_key(&peer_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "authenticated TCP peer is not configured",
+        )
+        .into());
+    }
+    let session_id = match state.sessions.begin_connect(&peer_id).await {
+        ConnectDecision::Started(session_id) | ConnectDecision::InProgress(session_id) => {
+            session_id
+        }
+        ConnectDecision::AlreadyConnected(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "peer already has an active route",
+            )
+            .into())
+        }
+    };
+    let (handle, inbound) = spawn_generic_route(connection);
+    if !state
+        .sessions
+        .attach_generic_connection(&peer_id, Some(session_id), handle.clone())
+        .await
+    {
+        return Err(std::io::Error::other("TCP route lost its Session race").into());
+    }
+    emit_peer_state_profile(
+        &state.event_tx,
+        &peer_id,
+        PeerConnectionState::Connected,
+        Some(handle.profile()),
+        None,
+    );
+    crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
+    spawn_generic_receivers(Arc::clone(&state), peer_id, handle, inbound, session_id);
+    tracing::debug!(%peer_address, session_id = %session_id.wire_key(), "authenticated TCP fallback route attached");
+    Ok(())
+}
+
 /// 接受一个已认证对端的双向流。
 pub(crate) async fn receive_file_streams(
     peer_id: String,
@@ -1415,7 +1865,7 @@ pub(crate) async fn receive_channel_streams(
     }
 }
 
-fn spawn_session_receivers(
+pub(crate) fn spawn_session_receivers(
     state: Arc<RuntimeState>,
     peer_id: String,
     connection: Connection,
@@ -1436,6 +1886,51 @@ fn spawn_session_receivers(
         session_id.wire_key(),
         "channel-receiver",
         receive_channel_streams(peer_id, connection, Arc::clone(&state), session_id),
+    );
+}
+
+fn spawn_generic_receivers(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    handle: GenericRouteHandle,
+    mut inbound: mpsc::Receiver<GenericInboundFrame>,
+    session_id: SessionId,
+) {
+    let route_id = handle.id();
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let _ = supervisor.spawn_session(
+        session_id.wire_key(),
+        "generic-route-receiver",
+        async move {
+            while let Some(frame) = inbound.recv().await {
+                let result = match frame.kind {
+                    GenericFrameKind::DataMessage => {
+                        crate::channel::handle_data_message(&state, &peer_id, &frame.payload).await
+                    }
+                    GenericFrameKind::DeliveryAck => {
+                        crate::channel::handle_delivery_ack(&state, &peer_id, &frame.payload).await
+                    }
+                };
+                if let Err(error) = result {
+                    tracing::debug!(peer_id = %peer_id, error = %error, "rejected generic channel frame");
+                }
+            }
+            if state
+                .sessions
+                .mark_generic_disconnected_if_current(&peer_id, route_id)
+                .await
+                .is_some()
+            {
+                emit_peer_state(
+                    &state.event_tx,
+                    &peer_id,
+                    PeerConnectionState::Disconnected,
+                    RouteType::Unspecified,
+                    None,
+                );
+                schedule_reconnect(Arc::clone(&state), peer_id, session_id);
+            }
+        },
     );
 }
 

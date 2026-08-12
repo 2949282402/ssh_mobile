@@ -3,10 +3,13 @@
 use network_protocol::{
     network_event, CommandResultEvent, NetworkError as ProtocolError, NetworkErrorCode,
     NetworkEvent, PeerConnectionState, PeerStateChangedEvent, RealtimeSignalEvent,
-    RealtimeStateChangedEvent, RelayConnectionState, RouteType, TransferCompletedEvent,
+    RealtimeStateChangedEvent, RelayConnectionState, RouteTopology as ProtocolRouteTopology,
+    RouteTransport as ProtocolRouteTransport, RouteType, TransferCompletedEvent,
     TransferFailedEvent, TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
 };
 use tokio::sync::mpsc::UnboundedSender;
+
+use crate::connection::{ConnectionProfile, Route, RouteTopology, RouteTransport};
 
 /// 为活跃传输发布类型化进度事件。
 pub(crate) fn emit_transfer_progress(
@@ -59,6 +62,29 @@ pub(crate) fn emit_peer_state(
     active_route: RouteType,
     error: Option<ProtocolError>,
 ) {
+    emit_peer_state_profile(
+        event_tx,
+        peer_id,
+        state,
+        Route::from_wire(active_route).map(ConnectionProfile::new),
+        error,
+    );
+}
+
+pub(crate) fn emit_peer_state_profile(
+    event_tx: &UnboundedSender<NetworkEvent>,
+    peer_id: &str,
+    state: PeerConnectionState,
+    profile: Option<ConnectionProfile>,
+    error: Option<ProtocolError>,
+) {
+    let active_route = profile
+        .and_then(|profile| profile.route().to_wire())
+        .unwrap_or(RouteType::Unspecified);
+    let (route_topology, route_transport) = profile.map(protocol_route_metadata).unwrap_or((
+        ProtocolRouteTopology::Unspecified,
+        ProtocolRouteTransport::Unspecified,
+    ));
     let _ = event_tx.send(NetworkEvent {
         event_id: format!("{peer_id}/state/{}", unix_timestamp_ms()),
         timestamp_ms: unix_timestamp_ms(),
@@ -68,6 +94,8 @@ pub(crate) fn emit_peer_state(
             state: state as i32,
             active_route: active_route as i32,
             error,
+            route_topology: route_topology as i32,
+            route_transport: route_transport as i32,
         })),
     });
 }
@@ -81,8 +109,33 @@ pub(crate) fn emit_route_changed(
     rtt_ms: u32,
     loss_rate: f32,
 ) {
+    emit_route_changed_profile(
+        event_tx,
+        peer_id,
+        Route::from_wire(route_type).map(ConnectionProfile::new),
+        endpoint,
+        rtt_ms,
+        loss_rate,
+    );
+}
+
+pub(crate) fn emit_route_changed_profile(
+    event_tx: &UnboundedSender<NetworkEvent>,
+    peer_id: &str,
+    profile: Option<ConnectionProfile>,
+    endpoint: std::net::SocketAddr,
+    rtt_ms: u32,
+    loss_rate: f32,
+) {
     let loss_per_mille = (loss_rate.clamp(0.0, 1.0) * 1000.0).round() as u32;
     let timestamp = unix_timestamp_ms();
+    let route_type = profile
+        .and_then(|profile| profile.route().to_wire())
+        .unwrap_or(RouteType::Unspecified);
+    let (topology, transport) = profile.map(protocol_route_metadata).unwrap_or((
+        ProtocolRouteTopology::Unspecified,
+        ProtocolRouteTransport::Unspecified,
+    ));
     let _ = event_tx.send(NetworkEvent {
         event_id: format!("{peer_id}/route/{timestamp}"),
         timestamp_ms: timestamp,
@@ -94,9 +147,27 @@ pub(crate) fn emit_route_changed(
                 endpoint: endpoint.to_string(),
                 rtt_ms: rtt_ms as u64,
                 loss_per_mille,
+                topology: topology as i32,
+                transport: transport as i32,
             },
         )),
     });
+}
+
+fn protocol_route_metadata(
+    profile: ConnectionProfile,
+) -> (ProtocolRouteTopology, ProtocolRouteTransport) {
+    let topology = match profile.topology() {
+        RouteTopology::Direct => ProtocolRouteTopology::Direct,
+        RouteTopology::Relay => ProtocolRouteTopology::Relay,
+    };
+    let transport = match profile.transport() {
+        RouteTransport::Quic => ProtocolRouteTransport::Quic,
+        RouteTransport::Tcp => ProtocolRouteTransport::Tcp,
+        RouteTransport::Udp => ProtocolRouteTransport::Udp,
+        RouteTransport::WebSocket => ProtocolRouteTransport::WebSocket,
+    };
+    (topology, transport)
 }
 
 /// 发布 WebRTC realtime Session 的状态变化，不改变普通 Data Route 的状态。

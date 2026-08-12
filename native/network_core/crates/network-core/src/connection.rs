@@ -9,6 +9,13 @@
 use network_protocol::RouteType;
 use network_transport::{Transport, TransportError, TransportKind};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::{mpsc, oneshot};
+
+const GENERIC_FRAME_MAGIC: &[u8; 4] = b"SMGF";
+const GENERIC_FRAME_HEADER_BYTES: usize = 4 + 4 + 1 + 4;
+const GENERIC_ROUTE_CHANNEL_CAPACITY: usize = 32;
+static NEXT_GENERIC_ROUTE_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteTopology {
@@ -58,7 +65,7 @@ impl Route {
             (self.transport, capability),
             (
                 RouteTransport::Tcp | RouteTransport::Quic,
-                ConnectionCapability::ReliableStream
+                ConnectionCapability::ReliableStream | ConnectionCapability::ReliableMessage
             ) | (
                 RouteTransport::WebSocket,
                 ConnectionCapability::ReliableMessage
@@ -79,9 +86,9 @@ impl Route {
         }
     }
 
-    /// Returns the existing event projection when one is defined. New generic
-    /// routes stay native-composed until the public event contract gains
-    /// separate topology and transport fields.
+    /// Returns the existing event projection when one is defined. Generic
+    /// routes use the composed topology/transport event fields instead of
+    /// expanding the legacy flat enum.
     pub const fn to_wire(self) -> Option<RouteType> {
         match (self.topology, self.transport) {
             (RouteTopology::Direct, RouteTransport::Quic) => Some(RouteType::QuicDirect),
@@ -162,12 +169,20 @@ impl ConnectionProfile {
     }
 
     pub const fn for_generic(kind: TransportKind) -> Self {
+        Self::for_generic_with_topology(kind, RouteTopology::Direct)
+    }
+
+    pub const fn for_generic_with_topology(kind: TransportKind, topology: RouteTopology) -> Self {
         let transport = match kind {
             TransportKind::Tcp => RouteTransport::Tcp,
             TransportKind::Udp => RouteTransport::Udp,
             TransportKind::WebSocket => RouteTransport::WebSocket,
         };
-        Self::new(Route::direct(transport))
+        let route = match topology {
+            RouteTopology::Direct => Route::direct(transport),
+            RouteTopology::Relay => Route::relay(transport),
+        };
+        Self::new(route)
     }
 }
 
@@ -191,10 +206,9 @@ impl ConnectionRouteSelector {
     }
 }
 
-/// Owns one generic primitive connection. QUIC and Relay remain Session-owned
-/// routes because their authentication, Delivery, and recovery state are
-/// managed by `network-core`; this wrapper only proves the generic transport
-/// boundary is usable by the Connection layer.
+/// Owns one generic primitive connection until identity authentication has
+/// completed. After authentication, [`spawn_generic_route`] moves the
+/// primitive into a bounded I/O owner and returns a clonable Session carrier.
 pub struct GenericConnection {
     transport: Transport,
     profile: ConnectionProfile,
@@ -232,6 +246,12 @@ impl GenericConnection {
         self.profile.route()
     }
 
+    pub fn with_topology(mut self, topology: RouteTopology) -> Self {
+        self.profile =
+            ConnectionProfile::for_generic_with_topology(self.transport.kind(), topology);
+        self
+    }
+
     pub async fn send(&mut self, payload: &[u8]) -> Result<usize, TransportError> {
         self.transport.send(payload).await
     }
@@ -243,6 +263,220 @@ impl GenericConnection {
     pub async fn close(&mut self) -> Result<(), TransportError> {
         self.transport.close().await
     }
+}
+
+/// The two application channel frames supported by reliable generic routes.
+/// UDP deliberately has no conversion into this type, so it cannot silently
+/// acquire Delivery semantics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum GenericFrameKind {
+    DataMessage = 1,
+    DeliveryAck = 2,
+}
+
+impl TryFrom<u8> for GenericFrameKind {
+    type Error = ConnectionError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::DataMessage),
+            2 => Ok(Self::DeliveryAck),
+            _ => Err(ConnectionError::InvalidFrame),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct GenericInboundFrame {
+    pub(crate) kind: GenericFrameKind,
+    pub(crate) payload: Vec<u8>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ConnectionError {
+    #[error("generic route is closed")]
+    Closed,
+    #[error("generic route frame is invalid")]
+    InvalidFrame,
+    #[error("generic route frame is too large")]
+    FrameTooLarge,
+    #[error("generic route transport failed: {0}")]
+    Transport(#[from] TransportError),
+    #[error("generic route command was cancelled")]
+    Cancelled,
+}
+
+enum GenericRouteCommand {
+    Send {
+        kind: GenericFrameKind,
+        payload: Vec<u8>,
+        result: oneshot::Sender<Result<(), ConnectionError>>,
+    },
+    Close {
+        result: oneshot::Sender<Result<(), ConnectionError>>,
+    },
+}
+
+/// A bounded, authenticated generic transport carrier owned by one Session.
+/// The I/O task owns the underlying socket, allowing receive and send to make
+/// progress concurrently without holding a mutex across a blocking read.
+#[derive(Clone)]
+pub(crate) struct GenericRouteHandle {
+    id: u64,
+    profile: ConnectionProfile,
+    commands: mpsc::Sender<GenericRouteCommand>,
+}
+
+impl GenericRouteHandle {
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub(crate) fn profile(&self) -> ConnectionProfile {
+        self.profile
+    }
+
+    pub(crate) async fn send(
+        &self,
+        kind: GenericFrameKind,
+        payload: &[u8],
+    ) -> Result<(), ConnectionError> {
+        let (result_tx, result_rx) = oneshot::channel();
+        self.commands
+            .send(GenericRouteCommand::Send {
+                kind,
+                payload: payload.to_vec(),
+                result: result_tx,
+            })
+            .await
+            .map_err(|_| ConnectionError::Closed)?;
+        result_rx.await.map_err(|_| ConnectionError::Cancelled)?
+    }
+
+    pub(crate) async fn close(&self) -> Result<(), ConnectionError> {
+        let (result_tx, result_rx) = oneshot::channel();
+        self.commands
+            .send(GenericRouteCommand::Close { result: result_tx })
+            .await
+            .map_err(|_| ConnectionError::Closed)?;
+        result_rx.await.map_err(|_| ConnectionError::Cancelled)?
+    }
+}
+
+/// Moves an authenticated primitive into its single bounded I/O owner.
+pub(crate) fn spawn_generic_route(
+    connection: GenericConnection,
+) -> (GenericRouteHandle, mpsc::Receiver<GenericInboundFrame>) {
+    let (command_tx, mut command_rx) = mpsc::channel(GENERIC_ROUTE_CHANNEL_CAPACITY);
+    let (inbound_tx, inbound_rx) = mpsc::channel(GENERIC_ROUTE_CHANNEL_CAPACITY);
+    let profile = connection.profile;
+    let handle = GenericRouteHandle {
+        id: NEXT_GENERIC_ROUTE_ID.fetch_add(1, Ordering::Relaxed),
+        profile,
+        commands: command_tx,
+    };
+
+    tokio::spawn(async move {
+        let mut connection = connection;
+        loop {
+            tokio::select! {
+                command = command_rx.recv() => {
+                    let Some(command) = command else {
+                        let _ = connection.close().await;
+                        return;
+                    };
+                    match command {
+                        GenericRouteCommand::Send { kind, payload, result } => {
+                            let encoded = match encode_generic_frame(kind, &payload) {
+                                Ok(encoded) => encoded,
+                                Err(error) => {
+                                    let _ = result.send(Err(error));
+                                    continue;
+                                }
+                            };
+                            let send_result = connection
+                                .send(&encoded)
+                                .await
+                                .map(|_| ())
+                                .map_err(ConnectionError::from);
+                            let failed = send_result.is_err();
+                            let _ = result.send(send_result);
+                            if failed {
+                                return;
+                            }
+                        }
+                        GenericRouteCommand::Close { result } => {
+                            let close_result = connection
+                                .close()
+                                .await
+                                .map(|_| ())
+                                .map_err(ConnectionError::from);
+                            let _ = result.send(close_result);
+                            return;
+                        }
+                    }
+                }
+                received = connection.recv() => {
+                    match received {
+                        Ok(encoded) => match decode_generic_frame(&encoded) {
+                            Ok(frame) => {
+                                if inbound_tx.try_send(frame).is_err() {
+                                    let _ = connection.close().await;
+                                    return;
+                                }
+                            }
+                            Err(_) => {
+                                let _ = connection.close().await;
+                                return;
+                            }
+                        },
+                        Err(_) => return,
+                    }
+                }
+            }
+        }
+    });
+    (handle, inbound_rx)
+}
+
+fn encode_generic_frame(
+    kind: GenericFrameKind,
+    payload: &[u8],
+) -> Result<Vec<u8>, ConnectionError> {
+    if payload.is_empty()
+        || payload.len() + GENERIC_FRAME_HEADER_BYTES > network_quic::MAX_CHANNEL_FRAME_BYTES
+    {
+        return Err(ConnectionError::FrameTooLarge);
+    }
+    let mut encoded = Vec::with_capacity(GENERIC_FRAME_HEADER_BYTES + payload.len());
+    encoded.extend_from_slice(GENERIC_FRAME_MAGIC);
+    encoded.extend_from_slice(&network_protocol::NETWORK_PROTOCOL_VERSION.to_be_bytes());
+    encoded.push(kind as u8);
+    encoded.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    encoded.extend_from_slice(payload);
+    Ok(encoded)
+}
+
+fn decode_generic_frame(encoded: &[u8]) -> Result<GenericInboundFrame, ConnectionError> {
+    if encoded.len() < GENERIC_FRAME_HEADER_BYTES
+        || &encoded[..4] != GENERIC_FRAME_MAGIC
+        || u32::from_be_bytes(encoded[4..8].try_into().expect("version bytes"))
+            != network_protocol::NETWORK_PROTOCOL_VERSION
+    {
+        return Err(ConnectionError::InvalidFrame);
+    }
+    let kind = GenericFrameKind::try_from(encoded[8])?;
+    let payload_len = u32::from_be_bytes(encoded[9..13].try_into().expect("length bytes")) as usize;
+    if payload_len == 0
+        || payload_len + GENERIC_FRAME_HEADER_BYTES != encoded.len()
+        || payload_len + GENERIC_FRAME_HEADER_BYTES > network_quic::MAX_CHANNEL_FRAME_BYTES
+    {
+        return Err(ConnectionError::FrameTooLarge);
+    }
+    Ok(GenericInboundFrame {
+        kind,
+        payload: encoded[GENERIC_FRAME_HEADER_BYTES..].to_vec(),
+    })
 }
 
 #[cfg(test)]

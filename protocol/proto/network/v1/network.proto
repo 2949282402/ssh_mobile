@@ -36,6 +36,22 @@ enum RouteType {
   ROUTE_TYPE_LAN = 4;
 }
 
+// Composed route metadata for transports that cannot be represented by the
+// legacy flat RouteType enum.
+enum RouteTopology {
+  ROUTE_TOPOLOGY_UNSPECIFIED = 0;
+  ROUTE_TOPOLOGY_DIRECT = 1;
+  ROUTE_TOPOLOGY_RELAY = 2;
+}
+
+enum RouteTransport {
+  ROUTE_TRANSPORT_UNSPECIFIED = 0;
+  ROUTE_TRANSPORT_QUIC = 1;
+  ROUTE_TRANSPORT_TCP = 2;
+  ROUTE_TRANSPORT_UDP = 3;
+  ROUTE_TRANSPORT_WEBSOCKET = 4;
+}
+
 enum RelayConnectionState {
   RELAY_CONNECTION_STATE_UNSPECIFIED = 0;
   RELAY_CONNECTION_STATE_CONNECTING = 1;
@@ -119,6 +135,8 @@ message PeerStateChangedEvent {
   PeerConnectionState state = 2;
   RouteType active_route = 3;
   NetworkError error = 4;
+  RouteTopology route_topology = 5;
+  RouteTransport route_transport = 6;
 }
 
 message TransferProgressEvent {
@@ -157,6 +175,8 @@ message RouteChangedEvent {
   string endpoint = 3;
   uint64 rtt_ms = 4;
   uint32 loss_per_mille = 5;
+  RouteTopology topology = 6;
+  RouteTransport transport = 7;
 }
 
 message RelayStateChangedEvent {
