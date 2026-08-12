@@ -122,7 +122,8 @@ pub enum AckResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DedupDecision {
     New,
-    Duplicate,
+    DuplicateInFlight,
+    DuplicateProcessed,
     StaleEpoch,
 }
 
@@ -564,16 +565,19 @@ impl DeliveryManager {
             message_id,
         };
         if let Some(record) = store.dedup.get_mut(&key) {
-            return if record.recovery_epoch == recovery_epoch {
-                DedupDecision::Duplicate
-            } else if recovery_epoch > record.recovery_epoch {
-                // 同一 MessageId 进入更高 RecoveryEpoch 代表 transport 重放，
-                // 需要更新 ACK 绑定但不能再次执行应用 handler。
+            if recovery_epoch < record.recovery_epoch {
+                return DedupDecision::StaleEpoch;
+            }
+            if recovery_epoch > record.recovery_epoch {
+                // 同一 MessageId 进入更高 RecoveryEpoch 代表 transport 重放。
+                // 只更新 ACK 绑定，保留业务处理状态，避免把尚未完成的
+                // handler 错误地当成已处理消息而提前 ACK。
                 record.recovery_epoch = recovery_epoch;
-                record.state = DedupState::InFlight;
-                DedupDecision::Duplicate
-            } else {
-                DedupDecision::StaleEpoch
+                record.expires_at = now + self.config.dedup_ttl;
+            }
+            return match record.state {
+                DedupState::InFlight => DedupDecision::DuplicateInFlight,
+                DedupState::Processed => DedupDecision::DuplicateProcessed,
             };
         }
         if self.config.dedup_max_entries == 0 {
@@ -606,22 +610,38 @@ impl DeliveryManager {
         session_id: &str,
         channel_id: &str,
         message_id: MessageId,
-        recovery_epoch: u64,
-    ) -> bool {
+    ) -> Option<u64> {
         let mut store = self.store.lock().await;
         let key = DedupKey {
             session_id: session_id.to_string(),
             channel_id: channel_id.to_string(),
             message_id,
         };
-        let Some(record) = store.dedup.get_mut(&key) else {
-            return false;
-        };
-        if record.recovery_epoch != recovery_epoch {
-            return false;
-        }
+        let record = store.dedup.get_mut(&key)?;
         record.state = DedupState::Processed;
-        true
+        Some(record.recovery_epoch)
+    }
+
+    /// Return the latest transport recovery epoch for a received message.
+    ///
+    /// The epoch is deliberately kept out of the application ACK command. It
+    /// belongs to Delivery recovery state and may change after the application
+    /// first observes a message but before it acknowledges that message.
+    pub async fn incoming_recovery_epoch(
+        &self,
+        session_id: &str,
+        channel_id: &str,
+        message_id: MessageId,
+    ) -> Option<u64> {
+        let store = self.store.lock().await;
+        store
+            .dedup
+            .get(&DedupKey {
+                session_id: session_id.to_string(),
+                channel_id: channel_id.to_string(),
+                message_id,
+            })
+            .map(|record| record.recovery_epoch)
     }
 
     pub async fn abandon_incoming(
@@ -869,27 +889,33 @@ mod tests {
                 .await,
             DedupDecision::New
         );
-        assert!(
-            manager
-                .complete_incoming("session-a", "control", message_id, 1)
-                .await
-        );
         assert_eq!(
             manager
                 .begin_incoming("session-a", "control", message_id, 1, now)
                 .await,
-            DedupDecision::Duplicate
+            DedupDecision::DuplicateInFlight
+        );
+        assert!(manager
+            .complete_incoming("session-a", "control", message_id)
+            .await
+            .is_some());
+        assert_eq!(
+            manager
+                .begin_incoming("session-a", "control", message_id, 1, now)
+                .await,
+            DedupDecision::DuplicateProcessed
         );
         assert_eq!(
             manager
                 .begin_incoming("session-a", "control", message_id, 2, now)
                 .await,
-            DedupDecision::Duplicate
+            DedupDecision::DuplicateProcessed
         );
-        assert!(
+        assert_eq!(
             manager
-                .complete_incoming("session-a", "control", message_id, 2)
-                .await
+                .incoming_recovery_epoch("session-a", "control", message_id)
+                .await,
+            Some(2)
         );
         assert_eq!(
             manager
@@ -897,11 +923,10 @@ mod tests {
                 .await,
             DedupDecision::StaleEpoch
         );
-        assert!(
-            !manager
-                .complete_incoming("session-a", "control", message_id, 1)
-                .await
-        );
+        assert!(manager
+            .complete_incoming("session-a", "control", message_id)
+            .await
+            .is_some());
         assert_eq!(
             manager
                 .begin_incoming("session-b", "control", message_id, 1, now)
@@ -919,6 +944,56 @@ mod tests {
                 )
                 .await,
             DedupDecision::New
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_epoch_updates_do_not_turn_inflight_into_processed() {
+        let manager = DeliveryManager::with_config(config());
+        let now = Instant::now();
+        let message_id = MessageId([8; MESSAGE_ID_BYTES]);
+
+        assert_eq!(
+            manager
+                .begin_incoming("session-a", "control", message_id, 1, now)
+                .await,
+            DedupDecision::New
+        );
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    "session-a",
+                    "control",
+                    message_id,
+                    2,
+                    now + Duration::from_secs(1),
+                )
+                .await,
+            DedupDecision::DuplicateInFlight
+        );
+        assert_eq!(
+            manager
+                .incoming_recovery_epoch("session-a", "control", message_id)
+                .await,
+            Some(2)
+        );
+        assert_eq!(
+            manager
+                .complete_incoming("session-a", "control", message_id)
+                .await,
+            Some(2)
+        );
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    "session-a",
+                    "control",
+                    message_id,
+                    2,
+                    now + Duration::from_secs(1),
+                )
+                .await,
+            DedupDecision::DuplicateProcessed
         );
     }
 

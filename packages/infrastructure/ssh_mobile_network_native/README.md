@@ -1,4 +1,4 @@
-> Last updated: 2026-08-11
+> Last updated: 2026-08-12
 
 # SSH Mobile Network Native
 
@@ -30,6 +30,9 @@ synthetic success.
   revisions, enum values, and bounded byte payloads. `events` decodes command
   results and Realtime state/signaling events without exposing Rust pointers,
   Quinn connections, UDP sockets, or WebRTC raw objects.
+- Delivery application acknowledgements are identified by logical Session ID,
+  Channel ID, and Message ID only. Recovery epochs remain native Delivery state;
+  Dart must not cache or echo an epoch from an earlier event.
 - Runtime disposal is ordered as `Running -> Stopping -> Stopped -> Destroyed`;
   stopping is idempotent and no command is accepted after stopping begins.
 - `NativeNetworkRuntime.boundLocalPort` is a read-only diagnostic for controlled

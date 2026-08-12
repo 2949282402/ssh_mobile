@@ -387,9 +387,19 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
     })
     .is_some());
 
-    // 不在第一次事件后 ACK；重连后的重复 DataMessage 会由接收端 dedup
-    // 分支自动 ACK，从而证明 RecoverySnapshot 真的重新进入了 transport。
-    let recovered_ack = poll_until(&runtime_a, Duration::from_secs(12), |event| {
+    assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "delivery-b"
+                    && state.state == PeerConnectionState::Connected as i32
+        )
+    })
+    .is_some());
+
+    // 不在第一次事件后 ACK；Connection #2 重放的重复 DataMessage 仍处于
+    // InFlight，所以接收端既不重新发布事件，也不能自动 ACK。
+    let unexpected_ack = poll_until(&runtime_a, Duration::from_millis(700), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
@@ -399,10 +409,13 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
             })) if peer_id == "delivery-b" && acknowledged_id == &message_id
         )
     });
-    assert!(recovered_ack.is_some(), "reconnected message was not ACKed");
+    assert!(
+        unexpected_ack.is_none(),
+        "InFlight duplicate was incorrectly ACKed"
+    );
 
-    // 该命令必须只在应用真正处理第一份消息后才会成功；这里确认其重复
-    // 进入不会产生第二次 ChannelMessage，而是被 dedup 直接 ACK。
+    // 重放只能更新 DeliveryManager 内部的 epoch；应用事件不携带旧 epoch，
+    // 应用 ACK 也不需要保存它。显式 ACK 必须使用当前恢复周期的 epoch。
     let duplicate = poll_until(&runtime_b, Duration::from_millis(500), |event| {
         matches!(
             &event.payload,
@@ -411,9 +424,41 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
         )
     });
     assert!(duplicate.is_none(), "dedup delivered the message twice");
+    send_and_expect_accepted(
+        &runtime_b,
+        NetworkCommand {
+            command_id: "delivery-ack-recovered".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::AcknowledgeMessage(
+                AcknowledgeMessageCommand {
+                    peer_id: "delivery-a".into(),
+                    session_id: session_id.clone(),
+                    channel_id: "control".into(),
+                    message_id: message_id.clone(),
+                },
+            )),
+        },
+    );
+    let recovered_ack = poll_until(&runtime_a, Duration::from_secs(5), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id,
+                message_id: acknowledged_id,
+                recovery_epoch,
+                ..
+            })) if peer_id == "delivery-b"
+                && acknowledged_id == &message_id
+                && *recovery_epoch >= 2
+        )
+    });
+    assert!(
+        recovered_ack.is_some(),
+        "explicit ACK did not use the latest recovery epoch"
+    );
 
     // 再发一条新消息，验证应用在收到事件后显式提交 AcknowledgeMessage，
-    // 而不是只依赖重复消息的 transport-level ACK。
+    // 而不是只依赖 transport-level ACK。
     send_and_expect_accepted(
         &runtime_a,
         NetworkCommand {
@@ -435,13 +480,10 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
         )
     })
     .expect("explicit ACK message");
-    let (explicit_session_id, explicit_message_id, explicit_epoch) = match explicit_message.payload
-    {
-        Some(network_event::Payload::ChannelMessage(message)) => (
-            message.session_id,
-            message.message_id,
-            message.recovery_epoch,
-        ),
+    let (explicit_session_id, explicit_message_id) = match explicit_message.payload {
+        Some(network_event::Payload::ChannelMessage(message)) => {
+            (message.session_id, message.message_id)
+        }
         _ => unreachable!("predicate already checked the event"),
     };
     send_and_expect_accepted(
@@ -455,7 +497,6 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
                     session_id: explicit_session_id,
                     channel_id: "control".into(),
                     message_id: explicit_message_id.clone(),
-                    recovery_epoch: explicit_epoch,
                 },
             )),
         },

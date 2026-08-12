@@ -284,27 +284,26 @@ pub(crate) async fn acknowledge_message(
             "peer_id, session_id, and channel_id are required",
         ));
     }
-    if !state
+    let Some(recovery_epoch) = state
         .delivery
         .complete_incoming(
             &command.session_id,
             &command.channel_id,
             crate::delivery::MessageId::from_bytes(message_id),
-            command.recovery_epoch,
         )
         .await
-    {
+    else {
         return Err(protocol_error_with_peer(
             NetworkErrorCode::InvalidArgument,
             "message is not awaiting acknowledgement",
             "acknowledge_message",
             &command.peer_id,
         ));
-    }
+    };
     let ack = DeliveryAck {
         session_id: command.session_id,
         message_id: message_id.to_vec(),
-        recovery_epoch: command.recovery_epoch,
+        recovery_epoch,
     };
     send_delivery_ack(state, &command.peer_id, &ack)
         .await
@@ -385,22 +384,33 @@ pub(crate) async fn handle_data_message(
             )
             .await
         {
-            DedupDecision::Duplicate => {
-                // 首次事件已经交给本地应用；后续重传只补发 ACK，不能再次
-                // 进入业务 handler，也不能让发送方永久占用 Pending。
-                let _ = state
+            DedupDecision::DuplicateInFlight => {
+                // 首次事件已经交给本地应用，但应用还没有 ACK；后续重传
+                // 只能保持 InFlight，不能再次进入业务 handler 或发送 ACK。
+                return Ok(());
+            }
+            DedupDecision::DuplicateProcessed => {
+                // 应用已经完成首次处理；后续重传可以安全地用当前 epoch
+                // 重发 ACK，但绝不能再次进入业务 handler。
+                let Some(recovery_epoch) = state
                     .delivery
-                    .complete_incoming(
+                    .incoming_recovery_epoch(
                         &message.session_id,
                         &message.channel_id,
                         crate::delivery::MessageId::from_bytes(message_id),
-                        message.recovery_epoch,
                     )
-                    .await;
+                    .await
+                else {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "processed message lost its dedup record",
+                    )
+                    .into());
+                };
                 let ack = DeliveryAck {
                     session_id: message.session_id.clone(),
                     message_id: message_id.to_vec(),
-                    recovery_epoch: message.recovery_epoch,
+                    recovery_epoch,
                 };
                 send_delivery_ack(state, peer_id, &ack).await?;
                 return Ok(());
@@ -431,7 +441,6 @@ pub(crate) async fn handle_data_message(
                 channel_id: message.channel_id,
                 message_id: message_id.to_vec(),
                 sequence: message.sequence,
-                recovery_epoch: message.recovery_epoch,
                 policy: message.policy,
                 payload: message.payload,
             },

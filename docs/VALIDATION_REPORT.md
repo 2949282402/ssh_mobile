@@ -1,8 +1,8 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-12
 
 # Validation Report
 
-- Latest source validation: 2026-08-11
+- Latest source validation: 2026-08-12
 - Full build/coverage baseline: 2026-07-10
 - Host: Windows 10 x64
 - Flutter: 3.44.2 stable
@@ -25,8 +25,8 @@ client business source was modified.
 | Repository architecture gates | `architecture_check`, `compatibility_check`, `duplicate_implementation_check`, `check_module_dependencies`, and `check_resource_owners` all passed |
 | Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
 | Native Dart package | `dart format --output=none --set-exit-if-changed lib test hook`, `flutter analyze --no-pub`, and `flutter test --no-pub` passed with 7 package tests; typed Realtime command/event facade is covered |
-| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`, and `cargo test --workspace --locked --offline` passed; 81 tests passed, including generic Connection capability/lifecycle checks, Relay-to-Direct atomic promotion, failed direct-auth fallback, Candidate Offer/Answer generation handling, WebRTC offer/answer and ICE-generation/replay handling, ICE restart/stale close/size bounds, FFI realtime wire round-trips, multi-candidate ranking, cross-Connection Delivery recovery, Relay resume binding, and TransferSession state tests |
-| Delivery runtime wiring | `network-core` sends `DataMessage` through QUIC uni streams or Relay opaque controls, binds Delivery to real `SessionId`, replays RecoverySnapshot, scans retry backoff, validates ACK epoch, emits typed channel/ACK events, and keeps WebRTC on a separate Realtime Route; `cargo test -p network-core --lib --locked --offline` passed with 35 tests |
+| Rust network workspace | Previous workspace evidence remains valid for unchanged crates; Step 1 additionally passed `cargo fmt --all -- --check`, `cargo clippy -p network-core --all-targets --locked --offline -- -D warnings`, and the privileged loopback `cargo test -p network-core --lib --locked --offline` run |
+| Delivery runtime wiring | `network-core` now distinguishes `DuplicateInFlight` from `DuplicateProcessed`: in-flight replay emits no application event and no ACK, processed replay re-ACKs with the latest native Recovery Epoch, and Flutter ACK commands carry only Session/Channel/Message ID; `cargo test -p network-core --lib --locked --offline` passed with 38 tests |
 | Transfer/Connection decoupling | `TransferSession` owns state, Manifest, offset, cancellation, and logical SessionId without a Connection handle; `TransferDispatcher` selects the current QUIC/Relay route, and same-Session direct/Relay resume is tested; `cargo test -p network-transfer -p network-core --locked --offline` passed with 47 tests |
 | Relay-to-Direct upgrade | Relay-backed Sessions keep their route during a deduplicated background candidate probe; an authenticated direct Connection must remain stable before `replace_route_if_current` atomically promotes it, then Delivery recovery and transfer resume run before direct receivers start |
 | Relay file resume | Relay re-offer binds stable TransferId + Manifest Hash + File Hash, accept returns fixed-chunk offset, socket disconnect preserves native `.part`, auto reconnect reclaims paused transfers, and verified final files are idempotent after lost completion ACK |

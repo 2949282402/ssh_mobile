@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-12
 
 # ADR-010：跨 Connection 的 Delivery/Recovery Layer
 
@@ -20,11 +20,15 @@ QUIC/Relay 的 transport ACK 只能说明当前连接完成了传输，不能说
   `SessionBoundOrdered` 和 `ResumableTransfer` 策略。LatestState 只替换同一
   Session/Channel 的旧状态，其余可靠消息受消息数、payload 字节数和总 Pending
   字节数上限约束。
-- ACK 必须同时匹配 Session、MessageId 和当前 Recovery Epoch；旧连接迟到的
-  ACK 返回 `StaleEpoch`，不能删除新恢复周期的 Pending。
+- Transport `DeliveryAck` 必须同时匹配 Session、MessageId 和当前 Recovery
+  Epoch；旧连接迟到的 ACK 返回 `StaleEpoch`，不能删除新恢复周期的 Pending。
+  Flutter 的 `AcknowledgeMessage` 只提交 Session、Channel 和 MessageId，
+  `DeliveryManager` 在内部解析最新 epoch，避免应用保存已经过期的 transport
+  状态。
 - 接收端去重窗口按 `Session + Channel + MessageId` 维护，拥有 TTL 和最大条目
-  数；更高 Recovery Epoch 的同一 MessageId 只更新 ACK 绑定，较低 epoch 被拒绝，
-  重复消息只重新 ACK，不重复执行。
+  数；更高 Recovery Epoch 的同一 MessageId 只更新 ACK 绑定并保留原处理状态。
+  `DuplicateInFlight` 不发布事件也不发送 ACK，`DuplicateProcessed` 不重复执行
+  但使用最新 epoch 重发 ACK，较低 epoch 被拒绝。
 - RetryPolicy 使用最大尝试次数、指数退避、TTL 和最大重试字节预算；过期或
   耗尽预算的消息不再无限后台重试。
 - Connection Ready 会为对应真实 `SessionId` 创建新的 Recovery Snapshot，
@@ -39,7 +43,8 @@ QUIC/Relay 的 transport ACK 只能说明当前连接完成了传输，不能说
 ## 后果
 
 应用层可以在 Connection 重建后区分 ACK、重试、过期和重复消息，并保留跨路由
-切换的顺序语义；真实 SessionId 变化时旧 Session 的 Pending 不会进入新 Session。
+切换的顺序语义；未完成的应用 handler 不会因为 transport 重放而被误判为已处理，
+真实 SessionId 变化时旧 Session 的 Pending 也不会进入新 Session。
 QUIC 与 Relay 都可承载相同的 DataMessage/DeliveryAck，Relay 只转发 opaque
 payload。当前已有文件流仍使用自己的 manifest/完成 ACK，尚未把文件 chunk
 迁移为通用 Channel；该迁移留给 File Resume 步骤。

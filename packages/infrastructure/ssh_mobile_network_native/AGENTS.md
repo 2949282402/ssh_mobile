@@ -1,4 +1,4 @@
-最新更新时间：2026-08-11
+最新更新时间：2026-08-12
 
 # ssh_mobile_network_native 维护约束
 
@@ -18,6 +18,10 @@ FFI handle 调用 Rust，不得在这里复制业务层 LAN/SSH/SFTP 实现。
 公共入口为 `package:ssh_mobile_network_native/ssh_mobile_network_native.dart`。
 修改 FFI 状态、命令、事件或 hook 行为时，必须同步 `network_transport`、平台
 构建文档和 Dart/Rust 测试。
+
+Delivery 的应用 ACK 只能使用逻辑 Session、Channel 和 Message ID；Recovery
+Epoch 属于 Rust Delivery transport 状态，不得成为 Dart/Flutter 业务身份或由
+客户端回传的字段。重复消息必须区分 InFlight 与 Processed，前者禁止 ACK。
 
 ## 数据库约束
 

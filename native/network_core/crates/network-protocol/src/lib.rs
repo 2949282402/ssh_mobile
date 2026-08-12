@@ -184,8 +184,6 @@ pub struct AcknowledgeMessageCommand {
     pub channel_id: String,
     #[prost(bytes = "vec", tag = "4")]
     pub message_id: Vec<u8>,
-    #[prost(uint64, tag = "5")]
-    pub recovery_epoch: u64,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -439,11 +437,9 @@ pub struct ChannelMessageEvent {
     pub message_id: Vec<u8>,
     #[prost(uint64, tag = "5")]
     pub sequence: u64,
-    #[prost(uint64, tag = "6")]
-    pub recovery_epoch: u64,
-    #[prost(enumeration = "DeliveryPolicyCode", tag = "7")]
+    #[prost(enumeration = "DeliveryPolicyCode", tag = "6")]
     pub policy: i32,
-    #[prost(bytes = "vec", tag = "8")]
+    #[prost(bytes = "vec", tag = "7")]
     pub payload: Vec<u8>,
 }
 
