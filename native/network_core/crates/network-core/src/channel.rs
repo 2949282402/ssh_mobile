@@ -292,8 +292,8 @@ async fn send_data_message(
                 "message route unavailable",
             )
         })?;
-    match profile.transport() {
-        crate::connection::ConnectionTransportKind::Quic => {
+    match (profile.topology(), profile.transport()) {
+        (crate::connection::RouteTopology::Direct, crate::connection::RouteTransport::Quic) => {
             let connection = state
                 .sessions
                 .current_connection(peer_id)
@@ -306,7 +306,7 @@ async fn send_data_message(
                 })?;
             send_channel_frame(&connection, ChannelFrameKind::DataMessage, &encoded).await
         }
-        crate::connection::ConnectionTransportKind::Relay => {
+        (crate::connection::RouteTopology::Relay, crate::connection::RouteTransport::WebSocket) => {
             let relay = state.relay.read().await.clone().ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::NotConnected, "Relay route unavailable")
             })?;
@@ -319,10 +319,7 @@ async fn send_data_message(
                 .await
                 .map_err(|error| std::io::Error::other(error.to_string()).into())
         }
-        transport => Err(std::io::Error::other(format!(
-            "unsupported message transport: {transport:?}"
-        ))
-        .into()),
+        route => Err(std::io::Error::other(format!("unsupported message route: {route:?}")).into()),
     }
 }
 

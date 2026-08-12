@@ -8,7 +8,7 @@
 
 ---
 
-# 当前实施状态（2026-08-11）
+# 当前实施状态（2026-08-12）
 
 本文件同时保留完整目标架构与后续阶段；以下状态只描述已经接入生产调用链的部分：
 
@@ -28,6 +28,7 @@
   WebRTC；Offer/Answer/ICE/Restart/Close 只走认证 Relay control plane，
   `ssh_mobile_network_native` 通过 helper isolate 提供有界 typed Realtime
   command/event API，不向 Dart 暴露 Quinn、Socket 或 WebRTC 原生句柄。
+- native `network-core::connection` now models routes as `RouteTopology × RouteTransport`. Native route selection records blocked QUIC/UDP candidates explicitly, falls back to TCP or WebSocket/WSS only when the requested capability permits it, and leaves SessionId/Delivery/Recovery ownership unchanged.
 - 当前项目不再支持或实现 WireGuard；本文后续相关章节仅保留为历史方案记录，
   不属于当前实现和发布验收范围。
 - Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；

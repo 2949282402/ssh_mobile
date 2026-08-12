@@ -11,12 +11,84 @@ use network_transport::{Transport, TransportError, TransportKind};
 use std::net::SocketAddr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionTransportKind {
+pub enum RouteTopology {
+    Direct,
+    Relay,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteTransport {
+    Quic,
     Tcp,
     Udp,
     WebSocket,
-    Quic,
-    Relay,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Route {
+    topology: RouteTopology,
+    transport: RouteTransport,
+}
+
+impl Route {
+    pub const fn direct(transport: RouteTransport) -> Self {
+        Self {
+            topology: RouteTopology::Direct,
+            transport,
+        }
+    }
+
+    pub const fn relay(transport: RouteTransport) -> Self {
+        Self {
+            topology: RouteTopology::Relay,
+            transport,
+        }
+    }
+
+    pub const fn topology(self) -> RouteTopology {
+        self.topology
+    }
+
+    pub const fn transport(self) -> RouteTransport {
+        self.transport
+    }
+
+    pub const fn supports(self, capability: ConnectionCapability) -> bool {
+        matches!(
+            (self.transport, capability),
+            (
+                RouteTransport::Tcp | RouteTransport::Quic,
+                ConnectionCapability::ReliableStream
+            ) | (
+                RouteTransport::WebSocket,
+                ConnectionCapability::ReliableMessage
+            ) | (
+                RouteTransport::Udp | RouteTransport::Quic,
+                ConnectionCapability::UnreliableDatagram
+            )
+        )
+    }
+
+    /// Converts the current wire-era route projection into the composed form.
+    /// Generic transports intentionally have no flat v1 enum projection.
+    pub const fn from_wire(route: RouteType) -> Option<Self> {
+        match route {
+            RouteType::QuicDirect | RouteType::Lan => Some(Self::direct(RouteTransport::Quic)),
+            RouteType::Relay => Some(Self::relay(RouteTransport::WebSocket)),
+            RouteType::Unspecified => None,
+        }
+    }
+
+    /// Returns the existing event projection when one is defined. New generic
+    /// routes stay native-composed until the public event contract gains
+    /// separate topology and transport fields.
+    pub const fn to_wire(self) -> Option<RouteType> {
+        match (self.topology, self.transport) {
+            (RouteTopology::Direct, RouteTransport::Quic) => Some(RouteType::QuicDirect),
+            (RouteTopology::Relay, RouteTransport::WebSocket) => Some(RouteType::Relay),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,76 +99,93 @@ pub enum ConnectionCapability {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouteCandidate {
+    route: Route,
+    available: bool,
+}
+
+impl RouteCandidate {
+    pub const fn available(route: Route) -> Self {
+        Self {
+            route,
+            available: true,
+        }
+    }
+
+    pub const fn blocked(route: Route) -> Self {
+        Self {
+            route,
+            available: false,
+        }
+    }
+
+    pub const fn route(self) -> Route {
+        self.route
+    }
+
+    pub const fn is_available(self) -> bool {
+        self.available
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConnectionProfile {
-    transport: ConnectionTransportKind,
+    route: Route,
 }
 
 impl ConnectionProfile {
-    pub const fn new(transport: ConnectionTransportKind) -> Self {
-        Self { transport }
+    pub const fn new(route: Route) -> Self {
+        Self { route }
     }
 
-    pub const fn transport(self) -> ConnectionTransportKind {
-        self.transport
+    pub const fn route(self) -> Route {
+        self.route
+    }
+
+    pub const fn topology(self) -> RouteTopology {
+        self.route.topology()
+    }
+
+    pub const fn transport(self) -> RouteTransport {
+        self.route.transport()
     }
 
     pub const fn supports(self, capability: ConnectionCapability) -> bool {
-        matches!(
-            (self.transport, capability),
-            (
-                ConnectionTransportKind::Tcp,
-                ConnectionCapability::ReliableStream
-            ) | (
-                ConnectionTransportKind::Quic,
-                ConnectionCapability::ReliableStream
-            ) | (
-                ConnectionTransportKind::Relay,
-                ConnectionCapability::ReliableMessage
-            ) | (
-                ConnectionTransportKind::WebSocket,
-                ConnectionCapability::ReliableMessage
-            ) | (
-                ConnectionTransportKind::Udp,
-                ConnectionCapability::UnreliableDatagram
-            ) | (
-                ConnectionTransportKind::Quic,
-                ConnectionCapability::UnreliableDatagram
-            )
-        )
+        self.route.supports(capability)
     }
 
     pub const fn for_route(route: RouteType) -> Option<Self> {
-        match route {
-            RouteType::QuicDirect | RouteType::Lan => {
-                Some(Self::new(ConnectionTransportKind::Quic))
-            }
-            RouteType::Relay => Some(Self::new(ConnectionTransportKind::Relay)),
-            RouteType::Unspecified => None,
+        match Route::from_wire(route) {
+            Some(route) => Some(Self::new(route)),
+            None => None,
         }
     }
 
     pub const fn for_generic(kind: TransportKind) -> Self {
         let transport = match kind {
-            TransportKind::Tcp => ConnectionTransportKind::Tcp,
-            TransportKind::Udp => ConnectionTransportKind::Udp,
-            TransportKind::WebSocket => ConnectionTransportKind::WebSocket,
+            TransportKind::Tcp => RouteTransport::Tcp,
+            TransportKind::Udp => RouteTransport::Udp,
+            TransportKind::WebSocket => RouteTransport::WebSocket,
         };
-        Self::new(transport)
+        Self::new(Route::direct(transport))
     }
 }
 
-/// Selects the first route that actually advertises the requested capability.
+/// Selects the first available route that advertises the requested capability.
 /// Candidate order is supplied by the Session/Route owner, so this helper does
-/// not invent a second priority or retry policy.
+/// not invent a second priority or retry policy. A blocked candidate is a
+/// normal probe result, not a transport error or an application retry.
 pub struct ConnectionRouteSelector;
 
 impl ConnectionRouteSelector {
     pub fn select(
         capability: ConnectionCapability,
-        candidates: impl IntoIterator<Item = ConnectionTransportKind>,
+        candidates: impl IntoIterator<Item = RouteCandidate>,
     ) -> Option<ConnectionProfile> {
         candidates
             .into_iter()
+            .filter(|candidate| candidate.is_available())
+            .map(RouteCandidate::route)
             .map(ConnectionProfile::new)
             .find(|profile| profile.supports(capability))
     }
@@ -139,6 +228,10 @@ impl GenericConnection {
         self.profile
     }
 
+    pub fn route(&self) -> Route {
+        self.profile.route()
+    }
+
     pub async fn send(&mut self, payload: &[u8]) -> Result<usize, TransportError> {
         self.transport.send(payload).await
     }
@@ -160,30 +253,53 @@ mod tests {
 
     #[test]
     fn capability_mapping_and_route_selection_are_explicit() {
-        assert!(ConnectionProfile::new(ConnectionTransportKind::Tcp)
+        assert!(ConnectionProfile::new(Route::direct(RouteTransport::Tcp))
             .supports(ConnectionCapability::ReliableStream));
-        assert!(ConnectionProfile::new(ConnectionTransportKind::WebSocket)
-            .supports(ConnectionCapability::ReliableMessage));
-        assert!(ConnectionProfile::new(ConnectionTransportKind::Udp)
+        assert!(
+            ConnectionProfile::new(Route::relay(RouteTransport::WebSocket))
+                .supports(ConnectionCapability::ReliableMessage)
+        );
+        assert!(ConnectionProfile::new(Route::direct(RouteTransport::Udp))
             .supports(ConnectionCapability::UnreliableDatagram));
-        assert!(ConnectionProfile::new(ConnectionTransportKind::Quic)
+        assert!(ConnectionProfile::new(Route::direct(RouteTransport::Quic))
             .supports(ConnectionCapability::ReliableStream));
 
+        assert!(!Route::direct(RouteTransport::Udp).supports(ConnectionCapability::ReliableMessage));
         assert_eq!(
             ConnectionRouteSelector::select(
                 ConnectionCapability::ReliableStream,
-                [ConnectionTransportKind::Udp, ConnectionTransportKind::Tcp]
+                [
+                    RouteCandidate::blocked(Route::direct(RouteTransport::Quic)),
+                    RouteCandidate::available(Route::direct(RouteTransport::Tcp)),
+                ]
             )
             .expect("TCP fallback")
-            .transport(),
-            ConnectionTransportKind::Tcp
+            .route(),
+            Route::direct(RouteTransport::Tcp)
+        );
+        assert_eq!(
+            ConnectionRouteSelector::select(
+                ConnectionCapability::ReliableMessage,
+                [
+                    RouteCandidate::blocked(Route::direct(RouteTransport::Udp)),
+                    RouteCandidate::available(Route::relay(RouteTransport::WebSocket)),
+                ],
+            )
+            .expect("WSS fallback")
+            .route(),
+            Route::relay(RouteTransport::WebSocket)
         );
         assert_eq!(
             ConnectionProfile::for_route(RouteType::Relay)
                 .expect("Relay profile")
-                .transport(),
-            ConnectionTransportKind::Relay
+                .route(),
+            Route::relay(RouteTransport::WebSocket)
         );
+        assert_eq!(
+            Route::direct(RouteTransport::Quic).to_wire(),
+            Some(RouteType::QuicDirect)
+        );
+        assert_eq!(Route::direct(RouteTransport::Tcp).to_wire(), None);
     }
 
     #[tokio::test]
@@ -233,7 +349,7 @@ mod tests {
         let mut client = GenericConnection::connect_tcp("0.0.0.0:0".parse().unwrap(), peer)
             .await
             .unwrap();
-        assert_eq!(client.profile().transport(), ConnectionTransportKind::Tcp);
+        assert_eq!(client.route(), Route::direct(RouteTransport::Tcp));
         client.send(b"reliable-stream").await.unwrap();
         assert_eq!(client.recv().await.unwrap(), b"reliable-stream");
         client.close().await.unwrap();

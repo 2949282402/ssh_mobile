@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-12
 
 # ADR-019：Generic Transport Connection Layer
 
@@ -16,18 +16,25 @@ business commands.
 
 ## Decision
 
-- `network-core::connection` owns the capability vocabulary
-  (`ReliableStream`, `ReliableMessage`, `UnreliableDatagram`) and maps TCP,
-  UDP, WebSocket, Session-owned QUIC, and Relay to it.
-- `ConnectionRouteSelector` selects the first candidate that satisfies a
-  requested capability; candidate order remains the responsibility of the
-  Session/Route owner, so this layer does not introduce another retry policy.
+- `network-core::connection` owns a composed `Route`:
+  `RouteTopology::{Direct, Relay}` × `RouteTransport::{Quic, Tcp, Udp,
+  WebSocket}`. This prevents transport/topology enum multiplication.
+- The existing flat `RouteType` is only the wire/event projection for routes
+  already represented by the v1 client contract; generic routes stay composed
+  inside the native route owner.
+- `ConnectionRouteSelector` selects the first available candidate that
+  satisfies a requested capability. Candidate order remains the responsibility
+  of the Session/Route owner, so this layer adds no retry policy.
+- Route candidates carry explicit availability. A blocked QUIC candidate can
+  therefore fall back to TCP for `ReliableStream`; a blocked UDP candidate can
+  promote a reliable-message intent to WebSocket/WSS.
+- `ConnectionCapability` keeps UDP limited to `UnreliableDatagram`; Acked,
+  Ordered, and File delivery cannot silently select a UDP route.
 - `GenericConnection` wraps the existing `network-transport::Transport` and
   preserves its bounded framing, backpressure, error, and shutdown semantics.
-  QUIC and Relay continue to use their existing Session-owned resources and are
-  represented by profiles rather than copied into this wrapper.
-- The existing channel route dispatch consumes the Connection profile before
-  choosing QUIC or Relay, while the public client protocol remains unchanged.
+- Existing channel dispatch consumes the composed Connection profile before
+  choosing the Session-owned QUIC or Relay route; SessionId, Delivery, and
+  Recovery remain outside the transport wrapper.
 
 ## Consequences
 
@@ -39,6 +46,11 @@ not folded into this ordinary transport abstraction.
 
 ## Verification
 
-Native tests cover capability mapping, route fallback, TCP reliable-stream
-round trips, UDP datagram limits, transport failure after shutdown, and the
-existing WebSocket/TCP/UDP primitive loopbacks.
+- Route policy tests cover a blocked QUIC candidate selecting direct TCP for
+  `ReliableStream` and a blocked UDP candidate selecting relay WebSocket/WSS
+  for a reliable-message intent; UDP is rejected for that capability.
+- Generic TCP, UDP, and WebSocket loopbacks retain their bounded framing,
+  datagram boundaries, binary-message semantics, and close behavior.
+- Session tests confirm SessionId survives route replacement, while existing
+  Delivery Recovery tests continue to use the same logical Session boundary.
+- Clippy and the native workspace test gate remain required.
