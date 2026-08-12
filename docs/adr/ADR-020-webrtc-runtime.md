@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-12
 
 # ADR-020：WebRTC Runtime Signaling Integration
 
@@ -41,9 +41,11 @@ boundary.
 
 WebRTC is now a real native runtime subsystem and remains deliberately outside
 the generic TCP/UDP/WebSocket transport abstraction. Relay only carries
-signaling; the PeerConnection's sans-I/O network packet/event pump remains
-owned by the future native realtime route/socket adapter. Realtime media is not
-fed into Delivery/Recovery or file resume.
+signaling; `RealtimeIoDriver` owns the UDP socket and drives the
+PeerConnection's sans-I/O ICE, DTLS, SRTP, SCTP/DataChannel, and timer pump.
+Each driver task is registered under the logical `realtime:<id>` supervisor
+group, and local/STUN/TURN candidates use the existing authenticated signaling
+control plane. Realtime media is not fed into Delivery/Recovery or file resume.
 
 ## Verification
 
@@ -56,3 +58,5 @@ fed into Delivery/Recovery or file resume.
   exposing raw handles.
 - Rust Relay codec, Go Relay integration, and the retained Docker functional
   harness cover all five opaque WebRTC control types.
+- The native network quality job runs a localhost DataChannel E2E and a
+  coturn-backed relay-only DataChannel E2E.

@@ -12,12 +12,15 @@ use network_protocol::{
 };
 use network_relay::RelayClient;
 use network_webrtc::{
-    DescriptionType, IceCandidate, SessionDescription, WebRtcConfig, WebRtcPeer,
-    MAX_ICE_CANDIDATE_BYTES, MAX_SDP_BYTES,
+    run_realtime_io, DescriptionType, IceCandidate, IceServerConfig, RealtimeIoDriver,
+    RealtimeIoDriverHandle, RealtimeIoEvent, SessionDescription, WebRtcConfig, WebRtcError,
+    WebRtcPeer, MAX_ICE_CANDIDATE_BYTES, MAX_SDP_BYTES,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use tokio::sync::mpsc::unbounded_channel;
 
 use crate::events::{
     emit_realtime_signal, emit_realtime_state, protocol_error, protocol_error_with_peer,
@@ -36,7 +39,12 @@ struct RealtimeSignalEnvelope {
 
 struct RealtimeSession {
     peer_id: String,
-    peer: WebRtcPeer,
+    /// Signaling uses this only for sessions created by the pure state-machine
+    /// tests. Runtime sessions keep the peer inside `RealtimeIoDriver` and
+    /// access it through `driver` so the socket and sans-I/O peer share one
+    /// owner.
+    peer: Option<WebRtcPeer>,
+    driver: Option<RealtimeIoDriverHandle>,
     revision: u64,
     /// Highest signaling revision authored by the remote peer and accepted
     /// by this Session. It is separate from the local WebRTC state revision:
@@ -58,7 +66,7 @@ impl RealtimeManager {
     /// Close every WebRTC peer before the runtime supervisor joins its tasks.
     pub(crate) fn close_all(&mut self) {
         for (_, mut session) in self.sessions.drain() {
-            let _ = session.peer.close();
+            let _ = with_session_peer(&mut session, WebRtcPeer::close);
         }
     }
 }
@@ -86,15 +94,19 @@ pub(crate) async fn start_session(
     validate_peer(&state, &command.peer_id).await?;
     let relay = usable_relay(&state).await?;
 
-    let mut peer = WebRtcPeer::new(WebRtcConfig::default()).map_err(|error| {
-        realtime_error(
-            network_protocol::NetworkErrorCode::IoError,
-            error.to_string(),
-            "start_realtime",
-            &command.peer_id,
-        )
-    })?;
-    peer.create_data_channel("ssh-mobile-realtime", Default::default())
+    let mut driver = create_io_driver(&state, runtime_webrtc_config())
+        .await
+        .map_err(|error| {
+            realtime_error(
+                network_protocol::NetworkErrorCode::IoError,
+                error.to_string(),
+                "start_realtime",
+                &command.peer_id,
+            )
+        })?;
+    driver
+        .peer_mut()
+        .create_data_channel("ssh-mobile-realtime", Default::default())
         .map_err(|error| {
             realtime_error(
                 network_protocol::NetworkErrorCode::IoError,
@@ -103,7 +115,7 @@ pub(crate) async fn start_session(
                 &command.peer_id,
             )
         })?;
-    let offer = peer.create_offer().map_err(|error| {
+    let offer = driver.peer_mut().create_offer().map_err(|error| {
         realtime_error(
             network_protocol::NetworkErrorCode::IoError,
             error.to_string(),
@@ -111,7 +123,8 @@ pub(crate) async fn start_session(
             &command.peer_id,
         )
     })?;
-    let revision = peer.signaling_revision();
+    let revision = driver.peer_mut().signaling_revision();
+    let driver = driver.into_handle();
     let realtime_id = command.realtime_id;
     let peer_id = command.peer_id;
     let mut sessions = state.realtime.lock().await;
@@ -127,7 +140,8 @@ pub(crate) async fn start_session(
         realtime_id.clone(),
         RealtimeSession {
             peer_id: peer_id.clone(),
-            peer,
+            peer: None,
+            driver: Some(driver.clone()),
             revision,
             remote_revision: 0,
             ice_revision: revision,
@@ -154,6 +168,23 @@ pub(crate) async fn start_session(
             Some(error.clone()),
         );
         return Err(error);
+    }
+    if state
+        .task_supervisor
+        .spawn_session(
+            realtime_task_key(&realtime_id),
+            "realtime-io",
+            run_realtime_session_io(state.clone(), realtime_id.clone(), peer_id.clone(), driver),
+        )
+        .is_none()
+    {
+        state.realtime.lock().await.sessions.remove(&realtime_id);
+        return Err(realtime_error(
+            network_protocol::NetworkErrorCode::Cancelled,
+            "runtime task supervisor is stopping",
+            "start_realtime",
+            &peer_id,
+        ));
     }
     emit_realtime_state(
         &state.event_tx,
@@ -192,7 +223,11 @@ pub(crate) async fn stop_session(
         ));
     };
     let close_revision = session.revision.saturating_add(1);
-    let _ = session.peer.close();
+    state
+        .task_supervisor
+        .cancel_session(&realtime_task_key(&command.realtime_id))
+        .await;
+    let _ = with_session_peer(&mut session, WebRtcPeer::close);
     if let Some(relay) = state.relay.read().await.clone() {
         let outbound = OutboundSignal {
             realtime_id: command.realtime_id.clone(),
@@ -281,7 +316,7 @@ pub(crate) async fn send_signal_command(
 }
 
 pub(crate) async fn handle_relay_signal(
-    state: &RuntimeState,
+    state: &Arc<RuntimeState>,
     relay: &RelayClient,
     kind: &str,
     realtime_id: &str,
@@ -298,17 +333,81 @@ pub(crate) async fn handle_relay_signal(
     validate_signal(kind, envelope.revision, &envelope.payload_bytes())
         .map_err(boxed_protocol_error)?;
 
+    let pending_driver = if kind == RealtimeSignalKind::WebRtcOffer
+        && !state
+            .realtime
+            .lock()
+            .await
+            .sessions
+            .contains_key(realtime_id)
+    {
+        Some(
+            create_io_driver(state, runtime_webrtc_config())
+                .await
+                .map_err(|error| boxed_message(error.to_string()))?
+                .into_handle(),
+        )
+    } else {
+        None
+    };
+
+    let pending_driver_for_spawn = pending_driver.clone();
     let outcome = {
         let mut manager = state.realtime.lock().await;
-        apply_signal(
+        apply_signal_with_driver(
             &mut manager,
             realtime_id,
             peer_id,
             kind,
             envelope.revision,
             envelope.payload_bytes(),
+            pending_driver,
         )?
     };
+
+    let driver_to_spawn = if let Some(pending_driver) = pending_driver_for_spawn {
+        let sessions = state.realtime.lock().await;
+        sessions.sessions.get(realtime_id).and_then(|session| {
+            session
+                .driver
+                .as_ref()
+                .filter(|driver| Arc::ptr_eq(driver, &pending_driver))
+                .cloned()
+        })
+    } else {
+        None
+    };
+    let mut spawned_io = false;
+    if let Some(driver) = driver_to_spawn {
+        if state
+            .task_supervisor
+            .spawn_session(
+                realtime_task_key(realtime_id),
+                "realtime-io",
+                run_realtime_session_io(
+                    Arc::clone(state),
+                    realtime_id.to_owned(),
+                    peer_id.to_owned(),
+                    driver,
+                ),
+            )
+            .is_none()
+        {
+            let removed = state.realtime.lock().await.sessions.remove(realtime_id);
+            if let Some(mut removed) = removed {
+                let _ = with_session_peer(&mut removed, WebRtcPeer::close);
+            }
+            return Err(boxed_message("runtime task supervisor is stopping"));
+        }
+        spawned_io = true;
+    }
+
+    if outcome.state == RealtimeSessionState::Closed {
+        state
+            .task_supervisor
+            .cancel_session(&realtime_task_key(realtime_id))
+            .await;
+    }
 
     emit_realtime_signal(
         &state.event_tx,
@@ -327,9 +426,16 @@ pub(crate) async fn handle_relay_signal(
         None,
     );
     if let Some(outbound) = outcome.outbound {
-        send_signal(relay, &outbound)
-            .await
-            .map_err(boxed_protocol_error)?;
+        if let Err(error) = send_signal(relay, &outbound).await {
+            if spawned_io {
+                state
+                    .task_supervisor
+                    .cancel_session(&realtime_task_key(realtime_id))
+                    .await;
+                remove_realtime_session(state, realtime_id, peer_id).await;
+            }
+            return Err(boxed_protocol_error(error));
+        }
         emit_realtime_signal(
             &state.event_tx,
             &outbound.realtime_id,
@@ -342,6 +448,7 @@ pub(crate) async fn handle_relay_signal(
     Ok(())
 }
 
+#[cfg(test)]
 fn apply_signal(
     manager: &mut RealtimeManager,
     realtime_id: &str,
@@ -349,6 +456,18 @@ fn apply_signal(
     kind: RealtimeSignalKind,
     revision: u64,
     payload: Vec<u8>,
+) -> Result<SignalOutcome, Box<dyn std::error::Error + Send + Sync>> {
+    apply_signal_with_driver(manager, realtime_id, peer_id, kind, revision, payload, None)
+}
+
+fn apply_signal_with_driver(
+    manager: &mut RealtimeManager,
+    realtime_id: &str,
+    peer_id: &str,
+    kind: RealtimeSignalKind,
+    revision: u64,
+    payload: Vec<u8>,
+    pending_driver: Option<RealtimeIoDriverHandle>,
 ) -> Result<SignalOutcome, Box<dyn std::error::Error + Send + Sync>> {
     if kind == RealtimeSignalKind::WebRtcClose {
         let Some(session) = manager.sessions.get(realtime_id) else {
@@ -363,7 +482,7 @@ fn apply_signal(
         let Some(mut session) = manager.sessions.remove(realtime_id) else {
             return Err(boxed_message("realtime session does not exist"));
         };
-        let _ = session.peer.close();
+        let _ = with_session_peer(&mut session, WebRtcPeer::close);
         return Ok(SignalOutcome {
             peer_id: peer_id.to_string(),
             revision,
@@ -396,15 +515,32 @@ fn apply_signal(
         RealtimeSignalKind::WebRtcOffer => {
             let existing = manager.sessions.remove(realtime_id);
             let had_existing = existing.is_some();
-            let mut session = existing.unwrap_or_else(|| RealtimeSession {
-                peer_id: peer_id.to_string(),
-                peer: WebRtcPeer::new(WebRtcConfig::default())
-                    .expect("validated default WebRTC configuration"),
-                revision: 0,
-                remote_revision: 0,
-                ice_revision: 0,
-                seen_candidates: HashSet::new(),
-            });
+            let mut session = match existing {
+                Some(session) => session,
+                None => match pending_driver {
+                    Some(driver) => RealtimeSession {
+                        peer_id: peer_id.to_string(),
+                        peer: None,
+                        driver: Some(driver),
+                        revision: 0,
+                        remote_revision: 0,
+                        ice_revision: 0,
+                        seen_candidates: HashSet::new(),
+                    },
+                    None => RealtimeSession {
+                        peer_id: peer_id.to_string(),
+                        peer: Some(
+                            WebRtcPeer::new(WebRtcConfig::default())
+                                .expect("validated default WebRTC configuration"),
+                        ),
+                        driver: None,
+                        revision: 0,
+                        remote_revision: 0,
+                        ice_revision: 0,
+                        seen_candidates: HashSet::new(),
+                    },
+                },
+            };
             let description = match String::from_utf8(payload)
                 .map_err(|error| boxed_message(error.to_string()))
                 .and_then(|sdp| {
@@ -419,13 +555,15 @@ fn apply_signal(
                     return Err(error);
                 }
             };
-            if let Err(error) = session.peer.accept_remote_offer(description) {
+            if let Err(error) =
+                with_session_peer(&mut session, |peer| peer.accept_remote_offer(description))
+            {
                 if had_existing {
                     manager.sessions.insert(realtime_id.to_string(), session);
                 }
                 return Err(boxed_message(error.to_string()));
             }
-            let answer = match session.peer.create_answer() {
+            let answer = match with_session_peer(&mut session, WebRtcPeer::create_answer) {
                 Ok(answer) => answer,
                 Err(error) => {
                     if had_existing {
@@ -434,7 +572,11 @@ fn apply_signal(
                     return Err(boxed_message(error.to_string()));
                 }
             };
-            let answer_revision = session.peer.signaling_revision().max(revision);
+            let answer_revision = with_session_peer(&mut session, |peer| {
+                Ok::<_, WebRtcError>(peer.signaling_revision())
+            })
+            .map_err(|error| boxed_message(error.to_string()))?
+            .max(revision);
             session.revision = answer_revision;
             session.remote_revision = revision;
             session.ice_revision = revision;
@@ -459,11 +601,13 @@ fn apply_signal(
                 .sessions
                 .get_mut(realtime_id)
                 .ok_or_else(|| boxed_message("realtime session does not exist"))?;
-            session.peer.accept_remote_answer(SessionDescription::new(
-                DescriptionType::Answer,
-                String::from_utf8(payload)?,
-            )?)?;
-            session.revision = session.peer.signaling_revision().max(revision);
+            let description =
+                SessionDescription::new(DescriptionType::Answer, String::from_utf8(payload)?)?;
+            with_session_peer(&mut *session, |peer| peer.accept_remote_answer(description))?;
+            session.revision = with_session_peer(&mut *session, |peer| {
+                Ok::<_, WebRtcError>(peer.signaling_revision())
+            })?
+            .max(revision);
             session.remote_revision = revision;
             Ok(SignalOutcome {
                 peer_id: session.peer_id.clone(),
@@ -477,12 +621,11 @@ fn apply_signal(
                 .sessions
                 .get_mut(realtime_id)
                 .ok_or_else(|| boxed_message("realtime session does not exist"))?;
-            session.peer.add_remote_ice_candidate(IceCandidate::new(
-                String::from_utf8(payload.clone())?,
-                None,
-                None,
-                None,
-            )?)?;
+            let candidate =
+                IceCandidate::new(String::from_utf8(payload.clone())?, None, None, None)?;
+            with_session_peer(&mut *session, |peer| {
+                peer.add_remote_ice_candidate(candidate)
+            })?;
             session.seen_candidates.insert(payload);
             Ok(SignalOutcome {
                 peer_id: session.peer_id.clone(),
@@ -496,9 +639,12 @@ fn apply_signal(
                 .sessions
                 .get_mut(realtime_id)
                 .ok_or_else(|| boxed_message("realtime session does not exist"))?;
-            session.peer.restart_ice()?;
-            let offer = session.peer.create_offer()?;
-            session.revision = session.peer.signaling_revision().max(revision);
+            with_session_peer(&mut *session, WebRtcPeer::restart_ice)?;
+            let offer = with_session_peer(&mut *session, WebRtcPeer::create_offer)?;
+            session.revision = with_session_peer(&mut *session, |peer| {
+                Ok::<_, WebRtcError>(peer.signaling_revision())
+            })?
+            .max(revision);
             session.remote_revision = revision;
             session.ice_revision = session.revision;
             session.seen_candidates.clear();
@@ -519,6 +665,251 @@ fn apply_signal(
             Err(boxed_message("unsupported WebRTC signal kind"))
         }
     }
+}
+
+fn with_session_peer<T>(
+    session: &mut RealtimeSession,
+    operation: impl FnOnce(&mut WebRtcPeer) -> Result<T, WebRtcError>,
+) -> Result<T, WebRtcError> {
+    if let Some(driver) = session.driver.as_ref() {
+        let mut driver = driver
+            .lock()
+            .map_err(|_| WebRtcError::Io("realtime I/O driver mutex was poisoned".to_owned()))?;
+        return operation(driver.peer_mut());
+    }
+    if let Some(peer) = session.peer.as_mut() {
+        return operation(peer);
+    }
+    Err(WebRtcError::Io(
+        "realtime session has no WebRTC peer owner".to_owned(),
+    ))
+}
+
+fn runtime_webrtc_config() -> WebRtcConfig {
+    let mut config = WebRtcConfig::default();
+    let turn_urls = std::env::var("SSH_MOBILE_TURN_SERVERS")
+        .ok()
+        .or_else(|| std::env::var("SSH_MOBILE_TURN_URL").ok())
+        .unwrap_or_default();
+    if !turn_urls.trim().is_empty() {
+        let username = std::env::var("SSH_MOBILE_TURN_USERNAME").unwrap_or_default();
+        let credential = std::env::var("SSH_MOBILE_TURN_CREDENTIAL").unwrap_or_default();
+        config.ice_servers = turn_urls
+            .split(',')
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(|url| IceServerConfig::turn(url, &username, &credential))
+            .collect();
+        config.relay_only = matches!(
+            std::env::var("SSH_MOBILE_TURN_RELAY_ONLY").ok().as_deref(),
+            Some("1" | "true" | "TRUE" | "yes" | "YES")
+        );
+    }
+    config
+}
+
+async fn create_io_driver(
+    state: &RuntimeState,
+    config: WebRtcConfig,
+) -> Result<RealtimeIoDriver, WebRtcError> {
+    let bind_ip = state
+        .endpoint
+        .read()
+        .await
+        .as_ref()
+        .and_then(|endpoint| endpoint.local_addr().ok().map(|address| address.ip()))
+        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+    let bind_addr = SocketAddr::new(bind_ip, 0);
+    let advertised_ip = (!bind_ip.is_unspecified()).then_some(bind_ip);
+    let peer = WebRtcPeer::new(config)?;
+    RealtimeIoDriver::bind_with_advertised_ip(peer, bind_addr, advertised_ip).await
+}
+
+fn realtime_task_key(realtime_id: &str) -> String {
+    format!("realtime:{realtime_id}")
+}
+
+async fn run_realtime_session_io(
+    state: Arc<RuntimeState>,
+    realtime_id: String,
+    peer_id: String,
+    driver: RealtimeIoDriverHandle,
+) {
+    let (event_tx, mut event_rx) = unbounded_channel();
+    let io = run_realtime_io(driver, event_tx);
+    tokio::pin!(io);
+    loop {
+        tokio::select! {
+            result = &mut io => {
+                if let Err(error) = result {
+                    let revision = session_revision(&state, &realtime_id).await;
+                    emit_realtime_state(
+                        &state.event_tx,
+                        &realtime_id,
+                        &peer_id,
+                        RealtimeSessionState::Failed as i32,
+                        revision,
+                        Some(realtime_error(
+                            network_protocol::NetworkErrorCode::IoError,
+                            error.to_string(),
+                            "realtime_io",
+                            &peer_id,
+                        )),
+                    );
+                }
+                remove_realtime_session(&state, &realtime_id, &peer_id).await;
+                break;
+            }
+            event = event_rx.recv() => {
+                let Some(event) = event else { break; };
+                if handle_io_event(&state, &realtime_id, &peer_id, event).await {
+                    remove_realtime_session(&state, &realtime_id, &peer_id).await;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+async fn handle_io_event(
+    state: &RuntimeState,
+    realtime_id: &str,
+    peer_id: &str,
+    event: RealtimeIoEvent,
+) -> bool {
+    match event {
+        RealtimeIoEvent::LocalIceCandidate(candidate) => {
+            forward_local_candidate(state, realtime_id, peer_id, candidate).await;
+            false
+        }
+        RealtimeIoEvent::PeerConnected => {
+            emit_realtime_state(
+                &state.event_tx,
+                realtime_id,
+                peer_id,
+                RealtimeSessionState::Connected as i32,
+                session_revision(state, realtime_id).await,
+                None,
+            );
+            false
+        }
+        RealtimeIoEvent::PeerFailed | RealtimeIoEvent::IceFailed => {
+            emit_realtime_state(
+                &state.event_tx,
+                realtime_id,
+                peer_id,
+                RealtimeSessionState::Failed as i32,
+                session_revision(state, realtime_id).await,
+                Some(realtime_error(
+                    network_protocol::NetworkErrorCode::IoError,
+                    "WebRTC peer connection failed",
+                    "realtime_io",
+                    peer_id,
+                )),
+            );
+            true
+        }
+        RealtimeIoEvent::PeerDisconnected => {
+            emit_realtime_state(
+                &state.event_tx,
+                realtime_id,
+                peer_id,
+                RealtimeSessionState::Negotiating as i32,
+                session_revision(state, realtime_id).await,
+                None,
+            );
+            false
+        }
+        RealtimeIoEvent::DataChannelMessage {
+            channel_id,
+            is_string,
+            payload,
+        } => {
+            tracing::debug!(
+                realtime_id,
+                peer_id,
+                channel_id,
+                is_string,
+                payload_bytes = payload.len(),
+                "WebRTC data channel payload received by native realtime owner"
+            );
+            false
+        }
+        RealtimeIoEvent::IceConnected
+        | RealtimeIoEvent::DataChannelOpened(_)
+        | RealtimeIoEvent::DataChannelClosed(_) => false,
+    }
+}
+
+async fn remove_realtime_session(state: &RuntimeState, realtime_id: &str, peer_id: &str) {
+    let removed = {
+        let mut sessions = state.realtime.lock().await;
+        let should_remove = sessions
+            .sessions
+            .get(realtime_id)
+            .is_some_and(|session| session.peer_id == peer_id);
+        should_remove
+            .then(|| sessions.sessions.remove(realtime_id))
+            .flatten()
+    };
+    if let Some(mut session) = removed {
+        let _ = with_session_peer(&mut session, WebRtcPeer::close);
+    }
+}
+
+async fn session_revision(state: &RuntimeState, realtime_id: &str) -> u64 {
+    state
+        .realtime
+        .lock()
+        .await
+        .sessions
+        .get(realtime_id)
+        .map(|session| session.revision)
+        .unwrap_or_default()
+}
+
+async fn forward_local_candidate(
+    state: &RuntimeState,
+    realtime_id: &str,
+    peer_id: &str,
+    candidate: IceCandidate,
+) {
+    let (session_peer_id, revision) = {
+        let sessions = state.realtime.lock().await;
+        let Some(session) = sessions.sessions.get(realtime_id) else {
+            return;
+        };
+        (session.peer_id.clone(), session.ice_revision)
+    };
+    if session_peer_id != peer_id {
+        return;
+    }
+    let Some(relay) = state.relay.read().await.clone() else {
+        return;
+    };
+    if !relay.is_usable().await {
+        return;
+    }
+    let payload = candidate.candidate.into_bytes();
+    let outbound = OutboundSignal {
+        realtime_id: realtime_id.to_owned(),
+        peer_id: peer_id.to_owned(),
+        kind: RealtimeSignalKind::IceCandidate,
+        revision,
+        payload,
+    };
+    if let Err(error) = send_signal(&relay, &outbound).await {
+        tracing::debug!(peer_id, error = %error.message, "failed to forward WebRTC ICE candidate");
+        return;
+    }
+    emit_realtime_signal(
+        &state.event_tx,
+        realtime_id,
+        peer_id,
+        RealtimeSignalKind::IceCandidate as i32,
+        revision,
+        outbound.payload,
+    );
 }
 
 async fn usable_relay(
@@ -708,6 +1099,8 @@ fn boxed_message(message: impl Into<String>) -> Box<dyn std::error::Error + Send
 #[cfg(test)]
 mod tests {
     use super::*;
+    use network_webrtc::DataChannelReliability;
+    use std::time::Duration;
 
     #[test]
     fn signaling_envelope_round_trips_revision_and_binary_payload() {
@@ -716,6 +1109,101 @@ mod tests {
         let decoded = decode_envelope(&outer).expect("decode");
         assert_eq!(decoded.revision, 3);
         assert_eq!(decoded.payload, b"sdp-bytes");
+    }
+
+    #[tokio::test]
+    async fn task_supervisor_drives_two_runtime_realtime_data_channels() {
+        let caller = RealtimeIoDriver::bind(
+            WebRtcPeer::new(WebRtcConfig::default()).expect("caller peer"),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .await
+        .expect("caller driver")
+        .into_handle();
+        let responder = RealtimeIoDriver::bind(
+            WebRtcPeer::new(WebRtcConfig::default()).expect("responder peer"),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .await
+        .expect("responder driver")
+        .into_handle();
+
+        let channel_id = caller
+            .lock()
+            .unwrap()
+            .peer_mut()
+            .create_data_channel("runtime-e2e", DataChannelReliability::default())
+            .expect("data channel");
+        let offer = caller.lock().unwrap().peer_mut().create_offer().unwrap();
+        let answer = {
+            let mut responder_driver = responder.lock().unwrap();
+            responder_driver
+                .peer_mut()
+                .accept_remote_offer(offer)
+                .unwrap();
+            responder_driver.peer_mut().create_answer().unwrap()
+        };
+        caller
+            .lock()
+            .unwrap()
+            .peer_mut()
+            .accept_remote_answer(answer)
+            .unwrap();
+
+        let supervisor = crate::task_supervisor::RuntimeTaskSupervisor::new();
+        let (caller_tx, mut caller_rx) = unbounded_channel();
+        let (responder_tx, mut responder_rx) = unbounded_channel();
+        let caller_task_handle = Arc::clone(&caller);
+        let responder_task_handle = Arc::clone(&responder);
+        assert!(supervisor
+            .spawn_session("realtime:caller", "webrtc-io", async move {
+                let _ = run_realtime_io(caller_task_handle, caller_tx).await;
+            },)
+            .is_some());
+        assert!(supervisor
+            .spawn_session("realtime:responder", "webrtc-io", async move {
+                let _ = run_realtime_io(responder_task_handle, responder_tx).await;
+            },)
+            .is_some());
+
+        let mut caller_open = false;
+        let mut responder_open = false;
+        let open_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while !(caller_open && responder_open) {
+            tokio::select! {
+                Some(event) = caller_rx.recv() => {
+                    caller_open |= matches!(event, RealtimeIoEvent::DataChannelOpened(_));
+                    assert!(!matches!(event, RealtimeIoEvent::PeerFailed | RealtimeIoEvent::IceFailed));
+                }
+                Some(event) = responder_rx.recv() => {
+                    responder_open |= matches!(event, RealtimeIoEvent::DataChannelOpened(_));
+                    assert!(!matches!(event, RealtimeIoEvent::PeerFailed | RealtimeIoEvent::IceFailed));
+                }
+                _ = tokio::time::sleep_until(open_deadline) => panic!("supervised data channel did not open"),
+            }
+        }
+        caller
+            .lock()
+            .unwrap()
+            .peer_mut()
+            .send_data(channel_id, b"runtime-frame")
+            .unwrap();
+        let payload_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let payload = loop {
+            tokio::select! {
+                Some(event) = responder_rx.recv() => {
+                    if let RealtimeIoEvent::DataChannelMessage { payload, .. } = event {
+                        break payload;
+                    }
+                }
+                Some(_event) = caller_rx.recv() => {}
+                _ = tokio::time::sleep_until(payload_deadline) => panic!("supervised data channel payload not received"),
+            }
+        };
+        assert_eq!(payload, b"runtime-frame");
+
+        supervisor.cancel_session("realtime:caller").await;
+        supervisor.cancel_session("realtime:responder").await;
     }
 
     #[test]
@@ -760,7 +1248,8 @@ mod tests {
             realtime_id.into(),
             RealtimeSession {
                 peer_id: "peer-b".into(),
-                peer: caller,
+                peer: Some(caller),
+                driver: None,
                 revision: caller_revision,
                 remote_revision: 0,
                 ice_revision: caller_revision,

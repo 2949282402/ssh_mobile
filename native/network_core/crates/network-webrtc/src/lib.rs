@@ -4,10 +4,12 @@
 //! RTP media negotiation while generic TCP/UDP/WebSocket transports stay in the
 //! `network-transport` crate. The FFI/client protocol is intentionally unchanged.
 
+mod driver;
 mod peer;
 mod qos;
 mod signaling;
 
+pub use driver::{run_realtime_io, RealtimeIoDriver, RealtimeIoDriverHandle, RealtimeIoEvent};
 pub use peer::{
     DataChannelReliability, IceServerConfig, MediaDirection, WebRtcConfig, WebRtcError, WebRtcPeer,
     MAX_DATA_CHANNEL_PAYLOAD_BYTES,

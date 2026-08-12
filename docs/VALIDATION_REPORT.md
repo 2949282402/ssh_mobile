@@ -25,7 +25,7 @@ client business source was modified.
 | Repository architecture gates | `architecture_check`, `compatibility_check`, `duplicate_implementation_check`, `check_module_dependencies`, and `check_resource_owners` all passed |
 | Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
 | Native Dart package | `dart format --output=none --set-exit-if-changed lib test hook`, `flutter analyze --no-pub`, and `flutter test --no-pub` passed with 7 package tests; typed Realtime command/event facade is covered |
-| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --offline -- -D warnings`, and privileged `cargo test --workspace --offline` passed after Step 5; the latest run includes 51 `network-core`, 3 FFI, and 13 `network-nat` tests |
+| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --offline -- -D warnings`, and privileged `cargo test --workspace --offline` passed after Step 6; the latest run includes 52 `network-core`, 10 `network-webrtc` (9 active + 1 TURN integration test), 3 FFI, and 13 `network-nat` tests |
 | Delivery runtime wiring | `network-core` distinguishes `DuplicateInFlight` from `DuplicateProcessed`, keeps `SessionBoundOrdered` behind expected sequence + in-flight ACK gating, bounds reorder count/bytes/gap, preserves the native Recovery Epoch boundary, and keeps logical plaintext plus crypto mode in pending state; privileged loopback `cargo test -p network-core --lib --locked --offline` passed with 50 tests |
 | Session application E2EE | Session-owned `CryptoContext` derives directional HKDF-SHA256/AES-256-GCM keys from paired DeviceIdentity E2E keys, keeps state across Route changes, re-encrypts Delivery retries with fresh nonces, rejects tamper/wrong-key/replay/nonce reuse, and protects channel payloads on QUIC and Relay plus Relay file chunks; disabled mode is explicit and secure-by-default E2EE is integration-tested |
 | Runtime task supervision | `RuntimeTaskSupervisor` owns the command worker, QUIC accept/handshake, Relay reconnect/events, Session reconnect/direct-upgrade/path metrics, Delivery retry, channel/file receivers, and transfer workers; root/session cancellation joins all registered tasks before stop returns; the native test suite includes cancellation/join coverage and a 100-cycle loopback bind/stop/recreate stress test |
@@ -36,7 +36,9 @@ client business source was modified.
 | Docker Relay integration harness | `docker compose --env-file .env up -d --build`, functional Candidate/WebRTC signaling plus file control/binary loopback, Caddy restart `recover`, and Relay process restart `restart` all passed; the harness remains under `relay/cmd/relay_smoke/` |
 | Relay channel control | `channel_message`/`channel_ack` opaque forwarding integration test passed in `go test ./...`; Rust Relay codec tests passed |
 | Go Relay | `gofmt -l .`, `go vet ./...`, and `go test ./...` passed |
-| Native WebRTC runtime | `network-webrtc` uses locked stable `rtc 0.9.1`; `network-core::RealtimeManager` owns the WebRTC Peer beside QUIC/Relay, authenticated Relay forwards bounded versioned Offer/Answer/ICE/Restart/Close controls, and the native tests cover SDP/ICE/DataChannel/Audio/Video transceivers, media QoS, stale/replay revisions, and oversized signaling |
+| Native WebRTC runtime | `network-webrtc` uses locked stable `rtc 0.9.1`; `network-core::RealtimeManager` owns the WebRTC Peer beside QUIC/Relay, authenticated Relay forwards bounded versioned Offer/Answer/ICE/Restart/Close controls, and `RealtimeIoDriver` now owns the UDP/ICE/DTLS/SRTP/SCTP/DataChannel/timer pump under `RuntimeTaskSupervisor` |
+| WebRTC DataChannel E2E | Privileged localhost test passed between two native driver owners and a `network-core` supervisor test passed with two `realtime:<id>` task groups; payload delivery was verified after real ICE and DTLS/SCTP negotiation |
+| WebRTC TURN fallback | A pinned local coturn 4.6.3 server passed the relay-only DataChannel test with direct ICE disabled; the native GitHub job starts the same image and runs the ignored TURN test explicitly |
 | Native WebRTC FFI boundary | Existing protobuf command/event buffers carry Start/Stop/Signal commands and Realtime state/signal events; `ssh_mobile_network_native` now exposes bounded typed commands/results/state/signaling through the helper-isolate stream; `network-ffi` round-trip coverage passed without exposing a raw WebRTC handle or changing Flutter/client code |
 | Generic native transports | `network-transport` TCP/UDP/WebSocket loopback tests passed; `network-core::connection::GenericConnection` now wraps those primitives behind capability-aware Connection routing and its TCP/UDP lifecycle, size, backpressure, and shutdown tests passed |
 | v1 static compatibility audit | No old transport, Dart Relay data-plane, protocol fallback, or v2/v3/v4 network symbols found |
@@ -94,6 +96,8 @@ Rust validation from `native/network_core`:
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
+# Native WebRTC E2E (native/network_core; coturn at 127.0.0.1:3478)
+cargo test -p network-webrtc --locked -- --ignored relay_only_drivers_exchange_data_channel_payloads
 ```
 
 Relay validation from `relay`:

@@ -1,4 +1,4 @@
-最新更新时间：2026-08-11
+最新更新时间：2026-08-12
 
 # ADR-016: Native WebRTC Realtime Subsystem and Media QoS
 
@@ -13,8 +13,8 @@ SDP、ICE/STUN/TURN、DTLS/SRTP、RTP/RTCP、Audio、Video 和 DataChannel；实
 ## 决策
 
 - 新增 native-only `network-webrtc` crate，固定使用稳定版 `rtc 0.9.1` 的
-  sans-I/O PeerConnection；网络 I/O 仍由上层提供，便于后续复用 native UDP
-  所有权，而不把 WebRTC 塞进 `network-transport`。
+  sans-I/O PeerConnection；网络 I/O 由 `RealtimeIoDriver` 提供，复用 native
+  UDP 所有权，而不把 WebRTC 塞进 `network-transport`。
 - PeerConnection 暴露受边界保护的 SDP offer/answer、ICE candidate、ICE restart、
   Audio/Video RTP transceiver、DataChannel 以及 sans-I/O packet/event pump。
 - Audio/Video/DataChannel 使用独立有界 QoS 队列。Audio/Video 过期或拥塞时丢弃旧
@@ -29,8 +29,9 @@ SDP、ICE/STUN/TURN、DTLS/SRTP、RTP/RTCP、Audio、Video 和 DataChannel；实
 
 WebRTC Audio/Video/DataChannel 现在有独立的 native owner 和可测试的 QoS/恢复语义：
 媒体恢复是“丢弃旧帧 + 请求关键帧”，而不是向 Delivery/Recovery 层塞入媒体 payload。
-PeerConnection 的 sans-I/O packet pump 让未来的 UDP socket、STUN/TURN 与生命周期
-可以由 native App Scope 组合，客户端仍只接收上层事件。
+`RealtimeIoDriver` 将 PeerConnection 的 sans-I/O packet pump、UDP socket、
+STUN/TURN、DTLS/SRTP/SCTP 和 timer 生命周期组合在 native App Scope，客户端
+仍只接收上层事件。
 
 ## 验证
 
@@ -39,3 +40,5 @@ PeerConnection 的 sans-I/O packet pump 让未来的 UDP socket、STUN/TURN 与�
   DataChannel backpressure。
 - PeerConnection 本地生成的 offer 覆盖 Audio、Video、DataChannel 三类媒体段；
   WebRTC crate 使用 locked workspace 测试和 Clippy 验证。
+- localhost 与 coturn relay-only DataChannel E2E 通过，Runtime I/O task 由
+  `RuntimeTaskSupervisor` 取消并 join。

@@ -13,11 +13,13 @@ and only then destroys the Rust handle.
 The current v1 runtime handles peer registration with pinned Ed25519/X25519
 keys, per-peer `PathManager` selection, authenticated Quinn sessions, approved
 and verified file receive, cancellation, progress/completion events, the
-native WSS Relay data path, and a Session-owned WebRTC Realtime route. Dart can
-submit bounded Realtime commands and consume typed state/signaling events;
-Rust still owns all long-lived network state, sockets, WebRTC peers, and Relay
-data frames. Unsupported commands and routes return explicit errors rather than
-synthetic success.
+native WSS Relay data path, and a Session-owned WebRTC Realtime route. The
+native `RealtimeIoDriver` now owns each WebRTC UDP socket and drives the
+sans-I/O ICE, DTLS, SRTP, SCTP/DataChannel, and timeout pump under the Runtime
+TaskSupervisor. Dart can submit bounded Realtime commands and consume typed
+state/signaling events; Rust still owns all long-lived network state, sockets,
+WebRTC peers, and Relay data frames. Unsupported commands and routes return
+explicit errors rather than synthetic success.
 
 ## v1 contract
 
@@ -54,6 +56,11 @@ synthetic success.
   second production protocol. Optional native STUN discovery accepts a
   comma-separated `SSH_MOBILE_STUN_SERVERS=host:port,host:port` list and
   validates transaction IDs plus IPv4/IPv6 XOR-MAPPED-ADDRESS responses.
+- WebRTC TURN is configured natively through `SSH_MOBILE_TURN_SERVERS` (or
+  `SSH_MOBILE_TURN_URL`) plus `SSH_MOBILE_TURN_USERNAME` and
+  `SSH_MOBILE_TURN_CREDENTIAL`; setting `SSH_MOBILE_TURN_RELAY_ONLY=true`
+  disables direct ICE candidates for relay-only validation. TURN credentials
+  stay in the runtime object and are never emitted as events or logs.
 - Runtime disposal is ordered as `Running -> Stopping -> Stopped -> Destroyed`;
   stopping is idempotent and no command is accepted after stopping begins.
 - `NativeNetworkRuntime.boundLocalPort` is a read-only diagnostic for controlled
@@ -93,6 +100,8 @@ From `native/network_core`:
 cargo fmt --all -- --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
+# With coturn listening on 127.0.0.1:3478:
+cargo test -p network-webrtc --locked -- --ignored relay_only_drivers_exchange_data_channel_payloads
 ```
 
 ## Package contract

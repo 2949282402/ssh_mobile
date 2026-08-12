@@ -3,7 +3,9 @@ use std::time::Instant;
 use bytes::BytesMut;
 use rtc::data_channel::{RTCDataChannelId, RTCDataChannelInit};
 use rtc::peer_connection::configuration::media_engine::MediaEngine;
-use rtc::peer_connection::configuration::{RTCConfigurationBuilder, RTCIceServer};
+use rtc::peer_connection::configuration::{
+    RTCConfigurationBuilder, RTCIceServer, RTCIceTransportPolicy,
+};
 use rtc::peer_connection::event::RTCPeerConnectionEvent;
 use rtc::peer_connection::message::RTCMessage;
 use rtc::peer_connection::sdp::RTCSessionDescription;
@@ -56,6 +58,10 @@ impl IceServerConfig {
 #[derive(Debug, Clone, Default)]
 pub struct WebRtcConfig {
     pub ice_servers: Vec<IceServerConfig>,
+    /// Restrict ICE to TURN relay candidates.  This is used for privacy and
+    /// for the direct-path-failure fallback test; the default keeps host and
+    /// server-reflexive candidates enabled.
+    pub relay_only: bool,
     pub qos: MediaQosConfig,
 }
 
@@ -87,6 +93,8 @@ impl Default for DataChannelReliability {
 pub enum WebRtcError {
     #[error("WebRTC configuration is invalid: {0}")]
     InvalidConfiguration(String),
+    #[error("WebRTC I/O failed: {0}")]
+    Io(String),
     #[error("WebRTC operation failed: {0}")]
     Rtc(String),
     #[error(transparent)]
@@ -118,9 +126,13 @@ impl WebRtcPeer {
             .collect::<Result<Vec<_>, _>>()?;
         let mut media_engine = MediaEngine::default();
         media_engine.register_default_codecs().map_err(rtc_error)?;
-        let configuration = RTCConfigurationBuilder::new()
-            .with_ice_servers(ice_servers)
-            .build();
+        let mut configuration_builder =
+            RTCConfigurationBuilder::new().with_ice_servers(ice_servers);
+        if config.relay_only {
+            configuration_builder =
+                configuration_builder.with_ice_transport_policy(RTCIceTransportPolicy::Relay);
+        }
+        let configuration = configuration_builder.build();
         let peer = RTCPeerConnectionBuilder::new()
             .with_configuration(configuration)
             .with_media_engine(media_engine)
@@ -199,6 +211,22 @@ impl WebRtcPeer {
     pub fn add_remote_ice_candidate(&mut self, candidate: IceCandidate) -> Result<(), WebRtcError> {
         self.peer
             .add_remote_candidate(RTCIceCandidateInit {
+                candidate: candidate.candidate,
+                sdp_mid: candidate.sdp_mid,
+                sdp_mline_index: candidate.sdp_mline_index,
+                username_fragment: candidate.username_fragment,
+                url: None,
+            })
+            .map_err(rtc_error)
+    }
+
+    /// Adds a locally bound host, server-reflexive, or relay candidate before
+    /// an offer/answer is generated.  The sans-I/O rtc crate does not own a
+    /// UDP socket, so its application-provided I/O driver must explicitly
+    /// register the socket candidate.
+    pub fn add_local_ice_candidate(&mut self, candidate: IceCandidate) -> Result<(), WebRtcError> {
+        self.peer
+            .add_local_candidate(RTCIceCandidateInit {
                 candidate: candidate.candidate,
                 sdp_mid: candidate.sdp_mid,
                 sdp_mline_index: candidate.sdp_mline_index,

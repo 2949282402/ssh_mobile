@@ -47,6 +47,16 @@ second raw UDP probe protocol or let an independent `recv_from` loop compete
 with Quinn. Candidate Offer/Answer changes must preserve generation, attempt
 ID, connect-window bounds, stale-answer rejection, and Relay fallback.
 
+WebRTC data-plane ownership is native-only. `network-webrtc::RealtimeIoDriver`
+owns the UDP socket together with the sans-I/O `WebRtcPeer` and must be started
+and cancelled through `network-core::RuntimeTaskSupervisor`; no Feature or Dart
+code may open a second WebRTC socket or drive `poll_write`, `poll_read`, or
+`handle_timeout` directly. Local host candidates are registered before SDP is
+created, trickled STUN/TURN candidates are forwarded through the existing
+authenticated signaling control plane, and `relay_only` is reserved for TURN
+fallback/privacy validation. The local E2E and coturn-backed relay-only tests
+are part of the native network quality gate.
+
 ## 数据库约束
 
 本 Package 不拥有数据库；配对凭据、Token 和业务历史由上层安全存储或 Feature
@@ -66,4 +76,6 @@ dart test
 cargo fmt --all -- --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
+# With coturn listening on 127.0.0.1:3478:
+cargo test -p network-webrtc --locked -- --ignored relay_only_drivers_exchange_data_channel_payloads
 ```

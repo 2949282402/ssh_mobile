@@ -40,9 +40,9 @@ or stream receivers had exited before `NetworkRuntime::stop()` returned.
 `stop()` has a checkable completion boundary: no supervisor-owned listener,
 Relay reconnect, Session reconnect, Delivery retry, direct-upgrade probe,
 channel receiver, file receiver, or persistent WebRTC peer remains alive when
-it returns. The native realtime implementation currently uses synchronous
-`rtc` peer operations and therefore has no separate long-lived I/O driver;
-Step 6 will add that driver through the same supervisor boundary.
+it returns. WebRTC `RealtimeIoDriver` tasks are registered under the logical
+`realtime:<id>` Session group, and cancellation drops the UDP socket together
+with the sans-I/O PeerConnection before the supervisor join completes.
 
 The supervisor is deliberately native-only. Flutter receives no task handles
 and cannot outlive or restart a Session child independently of the native

@@ -50,8 +50,22 @@ jobs:
           components: rustfmt, clippy
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
+      - name: Start local coturn
+        run: >-
+          docker run -d --rm --name ssh-mobile-coturn --network host
+          coturn/coturn:4.6.3 -n --log-file=stdout --lt-cred-mech
+          --fingerprint --user test:test --realm=ssh-mobile.test
+          --no-tls --no-dtls --min-port=49160 --max-port=49200
+          --no-multicast-peers
       - name: Test Rust workspace
         run: cargo test --workspace --locked
+      - name: Test WebRTC TURN fallback
+        run: >-
+          cargo test -p network-webrtc --locked --
+          --ignored relay_only_drivers_exchange_data_channel_payloads
+      - name: Stop local coturn
+        if: always()
+        run: docker rm -f ssh-mobile-coturn || true
       - name: Lint Rust workspace
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 

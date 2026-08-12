@@ -1541,10 +1541,13 @@ H.264 / AV1
 WebRTC
 ```
 
-Native v1 已实现 WebRTC Realtime subsystem 和 Runtime/FFI signaling 闭环：
-Rust 持有 PeerConnection，Relay 只转发有界控制信令，Dart 只消费 typed
-state/signaling events。音视频设备采集、媒体渲染和 Flutter UI 接入不属于
-本轮 native SDK Step，不能据此宣称 App 端媒体功能已验收。
+Native v1 已实现 WebRTC Realtime subsystem、Runtime/FFI signaling 闭环和真实
+native data plane：`RealtimeIoDriver` 将每个 `WebRtcPeer` 与 UDP socket、ICE/
+DTLS/SRTP/SCTP/DataChannel packet pump、timeout driver 绑定，并由
+`RuntimeTaskSupervisor` 按 `realtime:<id>` 管理。localhost 双端 DataChannel 和
+coturn relay-only DataChannel E2E 已通过；Relay 仍只转发有界控制信令，Dart
+仍只消费 typed state/signaling events。音视频设备采集、媒体渲染和 Flutter UI
+接入不属于本轮 native SDK Step，不能据此宣称 App 端媒体功能已验收。
 
 ---
 
