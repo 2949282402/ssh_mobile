@@ -15,6 +15,7 @@ use prost::Message;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::crypto::{self, CryptoMode};
 use crate::delivery::{
     AckResult, DedupDecision, DeliveryError, DeliveryPolicy, OrderedInsertResult, OrderedMessage,
     PendingMessage, RecoverySnapshot,
@@ -52,6 +53,14 @@ pub(crate) async fn start_send_message(
             &command.peer_id,
         )
     })?;
+    let crypto_mode = decode_crypto_mode(command.crypto_mode).ok_or_else(|| {
+        protocol_error_with_peer(
+            NetworkErrorCode::InvalidArgument,
+            "unsupported application crypto mode",
+            "send_message",
+            &command.peer_id,
+        )
+    })?;
     let Some(session_id) = state.sessions.current_session_id(&command.peer_id).await else {
         return Err(protocol_error_with_peer(
             NetworkErrorCode::NoRoute,
@@ -70,11 +79,12 @@ pub(crate) async fn start_send_message(
     }
     let message = state
         .delivery
-        .enqueue(
+        .enqueue_with_crypto(
             &session_id.wire_key(),
             &command.channel_id,
             command.payload,
             policy,
+            crypto_mode,
             Default::default(),
         )
         .await
@@ -237,15 +247,34 @@ async fn send_data_message(
     peer_id: &str,
     message: &PendingMessage,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let data = DataMessage {
+    let mut data = DataMessage {
         session_id: message.session_id.clone(),
         channel_id: message.channel_id.clone(),
         message_id: message.message_id.to_bytes().to_vec(),
         sequence: message.sequence,
         recovery_epoch: message.recovery_epoch,
         policy: policy_code(message.policy),
-        payload: message.payload.clone(),
+        payload: Vec::new(),
+        crypto_mode: message.crypto_mode.code(),
     };
+    let aad = crypto::data_message_aad(
+        &data.session_id,
+        &data.channel_id,
+        &data.message_id,
+        data.sequence,
+        data.recovery_epoch,
+        data.policy,
+        message.crypto_mode,
+    );
+    data.payload = state
+        .encrypt_application_payload(
+            peer_id,
+            &data.session_id,
+            message.crypto_mode,
+            &aad,
+            &message.payload,
+        )
+        .await?;
     let encoded = data.encode_to_vec();
     if encoded.len() > MAX_CHANNEL_FRAME_BYTES {
         return Err(std::io::Error::new(
@@ -401,15 +430,48 @@ pub(crate) async fn handle_data_message(
     peer_id: &str,
     encoded: &[u8],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let message = DataMessage::decode(encoded)?;
+    let mut message = DataMessage::decode(encoded)?;
     validate_data_message(&message)?;
+    let crypto_mode = decode_crypto_mode(message.crypto_mode).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid crypto mode")
+    })?;
+    let policy = decode_policy(message.policy).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Delivery policy")
+    })?;
+    let aad = crypto::data_message_aad(
+        &message.session_id,
+        &message.channel_id,
+        &message.message_id,
+        message.sequence,
+        message.recovery_epoch,
+        message.policy,
+        crypto_mode,
+    );
+    message.payload = if policy == DeliveryPolicy::BestEffort {
+        state
+            .decrypt_application_payload(
+                peer_id,
+                &message.session_id,
+                crypto_mode,
+                &aad,
+                &message.payload,
+            )
+            .await?
+    } else {
+        state
+            .decrypt_application_payload_for_delivery(
+                peer_id,
+                &message.session_id,
+                crypto_mode,
+                &aad,
+                &message.payload,
+            )
+            .await?
+    };
     let message_id: [u8; 16] =
         message.message_id.as_slice().try_into().map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid message ID")
         })?;
-    let policy = decode_policy(message.policy).ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Delivery policy")
-    })?;
     let incoming = OrderedMessage {
         peer_id: peer_id.to_string(),
         session_id: message.session_id.clone(),
@@ -586,6 +648,7 @@ fn validate_data_message(
         || message.message_id.len() != 16
         || message.payload.len() > MAX_DELIVERY_MESSAGE_PAYLOAD_BYTES
         || DeliveryPolicyCode::try_from(message.policy).is_err()
+        || CryptoMode::from_code(message.crypto_mode).is_none()
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -605,6 +668,10 @@ fn decode_policy(value: i32) -> Option<DeliveryPolicy> {
         DeliveryPolicyCode::SessionBoundOrdered => Some(DeliveryPolicy::SessionBoundOrdered),
         DeliveryPolicyCode::ResumableTransfer => Some(DeliveryPolicy::ResumableTransfer),
     }
+}
+
+fn decode_crypto_mode(value: i32) -> Option<CryptoMode> {
+    CryptoMode::from_code(value)
 }
 
 fn policy_code(policy: DeliveryPolicy) -> i32 {

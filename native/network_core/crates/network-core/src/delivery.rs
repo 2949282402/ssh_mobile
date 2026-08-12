@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
+use crate::crypto::CryptoMode;
+
 const MAX_SCOPE_ID_BYTES: usize = 128;
 const MESSAGE_ID_BYTES: usize = 16;
 
@@ -94,6 +96,9 @@ pub struct PendingMessage {
     pub channel_id: String,
     pub sequence: u64,
     pub payload: Vec<u8>,
+    /// Logical plaintext mode. The payload itself is never replaced with a
+    /// Route-specific ciphertext while it waits for retry/recovery.
+    pub(crate) crypto_mode: CryptoMode,
     pub policy: DeliveryPolicy,
     pub state: DeliveryState,
     pub attempts: u32,
@@ -345,23 +350,70 @@ impl DeliveryManager {
         policy: DeliveryPolicy,
         retry_policy: RetryPolicy,
     ) -> Result<PendingMessage, DeliveryError> {
-        self.enqueue_at(
+        self.enqueue_with_crypto(
             session_id,
             channel_id,
             payload,
             policy,
+            CryptoMode::E2ee,
+            retry_policy,
+        )
+        .await
+    }
+
+    /// Enqueue logical plaintext together with its application crypto mode.
+    /// Every later send derives a fresh ciphertext from this stored plaintext.
+    pub(crate) async fn enqueue_with_crypto(
+        &self,
+        session_id: &str,
+        channel_id: &str,
+        payload: Vec<u8>,
+        policy: DeliveryPolicy,
+        crypto_mode: CryptoMode,
+        retry_policy: RetryPolicy,
+    ) -> Result<PendingMessage, DeliveryError> {
+        self.enqueue_at_with_crypto(
+            session_id,
+            channel_id,
+            payload,
+            policy,
+            crypto_mode,
             retry_policy,
             Instant::now(),
         )
         .await
     }
 
+    #[cfg(test)]
     async fn enqueue_at(
         &self,
         session_id: &str,
         channel_id: &str,
         payload: Vec<u8>,
         policy: DeliveryPolicy,
+        retry_policy: RetryPolicy,
+        now: Instant,
+    ) -> Result<PendingMessage, DeliveryError> {
+        self.enqueue_at_with_crypto(
+            session_id,
+            channel_id,
+            payload,
+            policy,
+            CryptoMode::E2ee,
+            retry_policy,
+            now,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn enqueue_at_with_crypto(
+        &self,
+        session_id: &str,
+        channel_id: &str,
+        payload: Vec<u8>,
+        policy: DeliveryPolicy,
+        crypto_mode: CryptoMode,
         retry_policy: RetryPolicy,
         now: Instant,
     ) -> Result<PendingMessage, DeliveryError> {
@@ -419,6 +471,7 @@ impl DeliveryManager {
             channel_id: channel_id.to_string(),
             sequence: message_sequence,
             payload,
+            crypto_mode,
             policy,
             state: DeliveryState::Queued,
             attempts: 0,
@@ -1000,6 +1053,8 @@ mod tests {
             .expect("begin send")
             .expect("sendable");
         assert_eq!(sent.attempts, 1);
+        assert_eq!(sent.payload, b"one");
+        assert_eq!(sent.crypto_mode, CryptoMode::E2ee);
         assert!(manager.mark_sent(first.message_id, now).await);
 
         let recovery = manager
@@ -1032,6 +1087,31 @@ mod tests {
             AckResult::Acknowledged
         );
         assert_eq!(manager.pending_len().await, 1);
+    }
+
+    #[tokio::test]
+    async fn pending_message_keeps_plaintext_and_explicit_crypto_mode() {
+        let manager = DeliveryManager::with_config(config());
+        let message = manager
+            .enqueue_with_crypto(
+                "session-a",
+                "control",
+                b"plaintext".to_vec(),
+                DeliveryPolicy::Acked,
+                CryptoMode::None,
+                retry_policy(),
+            )
+            .await
+            .expect("enqueue message");
+        assert_eq!(message.payload, b"plaintext");
+        assert_eq!(message.crypto_mode, CryptoMode::None);
+        let sent = manager
+            .begin_send(message.message_id, Instant::now())
+            .await
+            .expect("begin send")
+            .expect("sendable");
+        assert_eq!(sent.payload, b"plaintext");
+        assert_eq!(sent.crypto_mode, CryptoMode::None);
     }
 
     #[tokio::test]

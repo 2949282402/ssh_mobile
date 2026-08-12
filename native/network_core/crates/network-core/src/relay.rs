@@ -21,7 +21,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::crypto::{self, RelayChunkCipher, RELAY_CRYPTO_SUITE};
+use crate::crypto::{self, CryptoMode, APPLICATION_CRYPTO_SUITE};
 use crate::events::{
     emit_incoming_offer, emit_transfer_completed, emit_transfer_error, emit_transfer_progress,
     protocol_error, protocol_error_with_context,
@@ -68,8 +68,9 @@ pub(crate) struct PendingRelayIncoming {
     pub(crate) sender_id: String,
     pub(crate) manifest: FileManifest,
     pub(crate) manifest_hash: String,
-    pub(crate) content_key: [u8; 32],
-    pub(crate) nonce_prefix: [u8; 4],
+    /// The sender's logical Session key. The Relay attempt token is separate
+    /// and must never select the application crypto context.
+    pub(crate) crypto_session_id: String,
 }
 
 /// 在校验文件提交前使用的活跃 Relay 接收状态。
@@ -702,7 +703,7 @@ async fn receive_relay_offer(
         .await
         .clone()
         .ok_or_else(|| std::io::Error::other("runtime identity is unavailable"))?;
-    let clear = crypto::decrypt_relay_offer(&envelope, &identity.e2e_key, &session_bytes)?;
+    let clear = crypto::decrypt_application_offer(&envelope, &identity.e2e_key, &session_bytes)?;
     let value: serde_json::Value = serde_json::from_slice(&clear)?;
     let transfer_id = value
         .get("transfer_id")
@@ -735,7 +736,7 @@ async fn receive_relay_offer(
         || value
             .get("crypto_suite")
             .and_then(serde_json::Value::as_str)
-            != Some(RELAY_CRYPTO_SUITE)
+            != Some(APPLICATION_CRYPTO_SUITE)
         || value.get("session_id").and_then(serde_json::Value::as_str) != Some(session_id.as_str())
         || value.get("transfer_id").and_then(serde_json::Value::as_str)
             != Some(transfer_id.as_str())
@@ -751,24 +752,12 @@ async fn receive_relay_offer(
         )
         .into());
     }
-    let content_key: [u8; 32] = URL_SAFE_NO_PAD
-        .decode(
-            value
-                .get("content_key")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| std::io::Error::other("content key is missing"))?,
-        )?
-        .try_into()
-        .map_err(|_| std::io::Error::other("content key has an invalid length"))?;
-    let nonce_prefix: [u8; 4] = URL_SAFE_NO_PAD
-        .decode(
-            value
-                .get("nonce_prefix")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| std::io::Error::other("nonce prefix is missing"))?,
-        )?
-        .try_into()
-        .map_err(|_| std::io::Error::other("nonce prefix has an invalid length"))?;
+    let crypto_session_id = value
+        .get("crypto_session_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| std::io::Error::other("Relay crypto SessionId is invalid"))?
+        .to_string();
     let manifest = FileManifest {
         transfer_id: transfer_id.clone(),
         file_name: file_name.to_string(),
@@ -799,8 +788,7 @@ async fn receive_relay_offer(
         sender_id: sender_id.clone(),
         manifest: manifest.clone(),
         manifest_hash: manifest_hash.to_string(),
-        content_key,
-        nonce_prefix,
+        crypto_session_id,
     };
     if state
         .relay_active_incoming
@@ -1102,15 +1090,18 @@ async fn receive_relay_chunk(
         )
         .into());
     }
-    let session_bytes: [u8; 16] = hex::decode(session_id)?.try_into().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Relay session ID")
-    })?;
-    let cipher = RelayChunkCipher::new(
-        &active.offer.content_key,
-        &session_bytes,
-        active.offer.nonce_prefix,
-    )?;
-    let clear = cipher.decrypt(sequence, ciphertext)?;
+    let crypto_session_id = active.offer.crypto_session_id.clone();
+    let manifest_hash = active.offer.manifest_hash.clone();
+    let aad = crypto::file_chunk_aad(&crypto_session_id, &transfer_id, &manifest_hash, sequence);
+    let clear = state
+        .decrypt_application_payload(
+            &active.offer.sender_id,
+            &crypto_session_id,
+            CryptoMode::E2ee,
+            &aad,
+            ciphertext,
+        )
+        .await?;
     if clear.is_empty()
         || active.received_bytes + clear.len() as u64 > active.offer.manifest.file_size
     {
@@ -1460,14 +1451,11 @@ pub(crate) async fn send_file_over_relay(
         let mut session_bytes = [0u8; 16];
         rand::rngs::OsRng.fill_bytes(&mut session_bytes);
         let session_id = hex::encode(session_bytes);
-        let mut content_key = [0u8; 32];
-        let mut nonce_prefix = [0u8; 4];
-        rand::rngs::OsRng.fill_bytes(&mut content_key);
-        rand::rngs::OsRng.fill_bytes(&mut nonce_prefix);
         let offer = serde_json::to_vec(&json!({
             "v": 1,
-            "crypto_suite": RELAY_CRYPTO_SUITE,
+            "crypto_suite": APPLICATION_CRYPTO_SUITE,
             "session_id": session_id,
+            "crypto_session_id": transfer.session_id,
             "transfer_id": manifest.transfer_id,
             "manifest_hash": relay_manifest_hash(&manifest),
             "sender_id": state.identity.read().await.as_ref().map(|identity| identity.device_id.as_str())
@@ -1477,11 +1465,9 @@ pub(crate) async fn send_file_over_relay(
             "file_size": manifest.file_size,
             "modified_at": manifest.modified_at,
             "content_hash": manifest.content_hash,
-            "content_key": URL_SAFE_NO_PAD.encode(content_key),
-            "nonce_prefix": URL_SAFE_NO_PAD.encode(nonce_prefix),
         }))?;
         let encrypted_offer =
-            crypto::encrypt_relay_offer(&offer, peer.e2e_public_key, &session_bytes)?;
+            crypto::encrypt_application_offer(&offer, peer.e2e_public_key, &session_bytes)?;
         let (acceptance_tx, acceptance_rx) = oneshot::channel();
         state
             .relay_acceptances
@@ -1557,7 +1543,6 @@ pub(crate) async fn send_file_over_relay(
             .transfers
             .update_progress(&transfer_id, acceptance.offset)
             .await;
-        let cipher = RelayChunkCipher::new(&content_key, &session_bytes, nonce_prefix)?;
         let mut file = tokio::fs::File::open(&path).await?;
         file.seek(SeekFrom::Start(acceptance.offset)).await?;
         let mut buffer = vec![0u8; DEFAULT_TRANSFER_BUFFER];
@@ -1583,7 +1568,21 @@ pub(crate) async fn send_file_over_relay(
             if read == 0 {
                 break;
             }
-            let ciphertext = cipher.encrypt(sequence, &buffer[..read])?;
+            let aad = crypto::file_chunk_aad(
+                &transfer.session_id,
+                &manifest.transfer_id,
+                &relay_manifest_hash(&manifest),
+                sequence,
+            );
+            let ciphertext = state
+                .encrypt_application_payload(
+                    &peer_id,
+                    &transfer.session_id,
+                    CryptoMode::E2ee,
+                    &aad,
+                    &buffer[..read],
+                )
+                .await?;
             relay
                 .forward_opaque_payload(&session_id, sequence, &ciphertext)
                 .await?;
@@ -1761,5 +1760,49 @@ mod tests {
             relay_manifest_hash(&manifest),
             relay_manifest_hash(&changed)
         );
+    }
+
+    #[test]
+    fn relay_file_chunk_uses_session_application_context() {
+        let sender = network_identity::DeviceIdentity::from_private_keys(
+            "sender".into(),
+            [11u8; 32],
+            [21u8; 32],
+        );
+        let receiver = network_identity::DeviceIdentity::from_private_keys(
+            "receiver".into(),
+            [12u8; 32],
+            [22u8; 32],
+        );
+        let session_id = "0000000000000001";
+        let transfer_id = "relay-transfer";
+        let manifest_hash = "a".repeat(64);
+        let aad = crypto::file_chunk_aad(session_id, transfer_id, &manifest_hash, 3);
+        let mut sender_context = crate::crypto::CryptoContext::from_identity(
+            &sender,
+            *receiver.public_e2e_key().as_bytes(),
+            session_id,
+        )
+        .expect("sender Session crypto");
+        let mut receiver_context = crate::crypto::CryptoContext::from_identity(
+            &receiver,
+            *sender.public_e2e_key().as_bytes(),
+            session_id,
+        )
+        .expect("receiver Session crypto");
+        let ciphertext = sender_context
+            .encrypt(&aad, b"opaque relay chunk")
+            .expect("encrypt Relay chunk");
+        assert_ne!(ciphertext, b"opaque relay chunk");
+        assert_eq!(
+            receiver_context.decrypt(&aad, &ciphertext).unwrap(),
+            b"opaque relay chunk"
+        );
+        assert!(receiver_context
+            .decrypt(
+                &crypto::file_chunk_aad(session_id, transfer_id, &manifest_hash, 4),
+                &ciphertext,
+            )
+            .is_err());
     }
 }

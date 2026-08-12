@@ -42,6 +42,11 @@ synthetic success.
   Delivery retry, channel receivers, and file receivers. `stop()` cancels the
   root, closes Relay/WebRTC/QUIC resources, and waits for every registered task
   before returning.
+- Application payload crypto is Session-owned and Route-independent. E2EE is
+  the secure protobuf default; clear payloads require an explicit opt-out.
+  Delivery retains logical plaintext and re-encrypts each retry with a fresh
+  nonce. The same `CryptoContext` covers QUIC channel messages and Relay
+  forwarding/file chunks, while Relay sees only opaque ciphertext.
 - Runtime disposal is ordered as `Running -> Stopping -> Stopped -> Destroyed`;
   stopping is idempotent and no command is accepted after stopping begins.
 - `NativeNetworkRuntime.boundLocalPort` is a read-only diagnostic for controlled

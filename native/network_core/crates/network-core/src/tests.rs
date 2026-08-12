@@ -171,11 +171,11 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
     );
     send_and_expect_accepted(
         &runtime_a,
-        upsert_command("peer-b", "device-b", address_b, public_key_b),
+        upsert_command("peer-b", "device-b", address_b, public_key_b, [32u8; 32]),
     );
     send_and_expect_accepted(
         &runtime_b,
-        upsert_command("peer-a", "device-a", address_a, public_key_a),
+        upsert_command("peer-a", "device-a", address_a, public_key_a, [31u8; 32]),
     );
     fs::create_dir_all(&receive_b).expect("receive directory");
     fs::write(
@@ -315,11 +315,23 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
     );
     send_and_expect_accepted(
         &runtime_a,
-        upsert_command("delivery-upsert-b", "delivery-b", address_b, public_key_b),
+        upsert_command(
+            "delivery-upsert-b",
+            "delivery-b",
+            address_b,
+            public_key_b,
+            [52u8; 32],
+        ),
     );
     send_and_expect_accepted(
         &runtime_b,
-        upsert_command("delivery-upsert-a", "delivery-a", address_a, public_key_a),
+        upsert_command(
+            "delivery-upsert-a",
+            "delivery-a",
+            address_a,
+            public_key_a,
+            [51u8; 32],
+        ),
     );
     send_and_expect_accepted(
         &runtime_a,
@@ -352,6 +364,7 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
                 channel_id: "control".into(),
                 payload: b"recover-me".to_vec(),
                 policy: DeliveryPolicyCode::AckedDeduplicated as i32,
+                crypto_mode: 0,
             })),
         },
     );
@@ -469,6 +482,9 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
                 channel_id: "control".into(),
                 payload: b"application-ack".to_vec(),
                 policy: DeliveryPolicyCode::AckedDeduplicated as i32,
+                // Explicit opt-out exercises the clear application mode; the
+                // first message in this test remains the secure default.
+                crypto_mode: 1,
             })),
         },
     );
@@ -551,7 +567,12 @@ fn upsert_command(
     peer_id: &str,
     endpoint: SocketAddr,
     public_key: [u8; 32],
+    e2e_private_key: [u8; 32],
 ) -> NetworkCommand {
+    let e2e_public_key =
+        DeviceIdentity::from_private_keys(peer_id.to_string(), [1u8; 32], e2e_private_key)
+            .public_e2e_key()
+            .to_bytes();
     NetworkCommand {
         command_id: command_id.into(),
         protocol_version: NETWORK_PROTOCOL_VERSION,
@@ -559,7 +580,7 @@ fn upsert_command(
             peer_id: peer_id.into(),
             endpoint_address: endpoint.to_string(),
             identity_public_key: public_key.to_vec(),
-            e2e_public_key: vec![0u8; 32],
+            e2e_public_key: e2e_public_key.to_vec(),
         })),
     }
 }

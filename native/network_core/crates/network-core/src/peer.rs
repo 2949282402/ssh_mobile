@@ -237,7 +237,7 @@ pub(crate) async fn disconnect_peer(
     let session_id = state.sessions.current_session_id(&peer_id).await;
     state.sessions.close(&peer_id).await;
     if let Some(session_id) = session_id {
-        state.cancel_session_tasks(session_id).await;
+        state.cancel_session_tasks(&peer_id, session_id).await;
     }
     state.direct_upgrade_tasks.write().await.remove(&peer_id);
     emit_peer_state(

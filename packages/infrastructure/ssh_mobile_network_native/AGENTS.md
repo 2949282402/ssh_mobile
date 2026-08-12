@@ -25,6 +25,13 @@ Epoch 属于 Rust Delivery transport 状态，不得成为 Dart/Flutter 业务�
 `SessionBoundOrdered` 必须由 native Delivery owner 维护 expected sequence、
 单个 in-flight 消息和有界 reorder buffer；不得在 Dart 侧用事件到达顺序补偿。
 
+Application E2EE 必须由 native Session owner 维护。E2EE 是 `SendMessage` /
+`DataMessage` 的默认模式；`None` 只能由调用方显式选择。Pending Delivery
+状态只能保存逻辑明文和 crypto mode，不能缓存任何 Route ciphertext。QUIC、
+Relay 以及 Relay 文件分块必须通过同一个 logical Session crypto context；
+Route migration/reconnect 不得丢弃该 context，只有显式 Session close 才能清理。
+Relay 控制面可以转发 opaque bytes，但不得读取业务明文、内容密钥或 nonce。
+
 Rust native background work must be registered with `RuntimeTaskSupervisor`.
 Production code must not create an unowned `tokio::spawn`; bounded local
 `JoinSet` attempts are allowed only when the surrounding Session/runtime task

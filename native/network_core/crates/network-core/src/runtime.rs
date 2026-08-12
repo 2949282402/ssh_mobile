@@ -14,6 +14,7 @@ use tokio::sync::{
 use tracing::info;
 
 use crate::commands::run_command_worker;
+use crate::crypto::{CryptoContext, CryptoError, CryptoMode, SessionCryptoManager};
 use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
 use crate::session::{SessionId, SessionManager};
@@ -69,6 +70,9 @@ pub(crate) struct RuntimeState {
     pub(crate) path_managers: RwLock<HashMap<String, Arc<PathManager>>>,
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
     pub(crate) sessions: SessionManager,
+    /// Session-owned application crypto. Route changes do not replace this
+    /// manager; explicit Session close removes the corresponding context.
+    pub(crate) crypto: SessionCryptoManager,
     pub(crate) delivery: DeliveryManager,
     pub(crate) realtime: AsyncMutex<crate::realtime::RealtimeManager>,
     pub(crate) delivery_tasks: RwLock<HashMap<String, SessionId>>,
@@ -107,6 +111,7 @@ impl RuntimeState {
             path_managers: RwLock::new(HashMap::new()),
             trusted_peer_keys: RwLock::new(HashMap::new()),
             sessions: SessionManager::new(),
+            crypto: SessionCryptoManager::new(),
             delivery: DeliveryManager::new(),
             realtime: AsyncMutex::new(crate::realtime::RealtimeManager::default()),
             delivery_tasks: RwLock::new(HashMap::new()),
@@ -130,9 +135,10 @@ impl RuntimeState {
         }
     }
 
-    pub(crate) async fn cancel_session_tasks(&self, session_id: SessionId) {
+    pub(crate) async fn cancel_session_tasks(&self, peer_id: &str, session_id: SessionId) {
         let session_key = session_id.wire_key();
         self.task_supervisor.cancel_session(&session_key).await;
+        self.crypto.remove_session(peer_id, &session_key);
         self.delivery_tasks
             .write()
             .await
@@ -145,6 +151,87 @@ impl RuntimeState {
             .write()
             .await
             .retain(|_, current| *current != session_id);
+    }
+
+    pub(crate) async fn crypto_context(
+        &self,
+        peer_id: &str,
+        session_id: &str,
+        mode: CryptoMode,
+    ) -> Result<Option<Arc<Mutex<CryptoContext>>>, CryptoError> {
+        if mode == CryptoMode::None {
+            return Ok(None);
+        }
+        let identity = self
+            .identity
+            .read()
+            .await
+            .clone()
+            .ok_or(CryptoError::MissingContext)?;
+        let peer_key = self
+            .peers
+            .read()
+            .await
+            .get(peer_id)
+            .map(|peer| peer.e2e_public_key)
+            .ok_or(CryptoError::MissingContext)?;
+        self.crypto
+            .get_or_create(peer_id, session_id, &identity, peer_key)
+            .map(Some)
+    }
+
+    pub(crate) async fn encrypt_application_payload(
+        &self,
+        peer_id: &str,
+        session_id: &str,
+        mode: CryptoMode,
+        aad: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        let Some(context) = self.crypto_context(peer_id, session_id, mode).await? else {
+            return Ok(plaintext.to_vec());
+        };
+        let result = context
+            .lock()
+            .map_err(|_| CryptoError::StateUnavailable)?
+            .encrypt(aad, plaintext);
+        result
+    }
+
+    pub(crate) async fn decrypt_application_payload(
+        &self,
+        peer_id: &str,
+        session_id: &str,
+        mode: CryptoMode,
+        aad: &[u8],
+        envelope: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        let Some(context) = self.crypto_context(peer_id, session_id, mode).await? else {
+            return Ok(envelope.to_vec());
+        };
+        let result = context
+            .lock()
+            .map_err(|_| CryptoError::StateUnavailable)?
+            .decrypt(aad, envelope);
+        result
+    }
+
+    pub(crate) async fn decrypt_application_payload_for_delivery(
+        &self,
+        peer_id: &str,
+        session_id: &str,
+        mode: CryptoMode,
+        aad: &[u8],
+        envelope: &[u8],
+    ) -> Result<Vec<u8>, CryptoError> {
+        let Some(context) = self.crypto_context(peer_id, session_id, mode).await? else {
+            return Ok(envelope.to_vec());
+        };
+        let result = context
+            .lock()
+            .map_err(|_| CryptoError::StateUnavailable)?
+            .decrypt_for_delivery(aad, envelope);
+        result
     }
 }
 

@@ -172,6 +172,10 @@ pub struct SendMessageCommand {
     pub payload: Vec<u8>,
     #[prost(enumeration = "DeliveryPolicyCode", tag = "4")]
     pub policy: i32,
+    /// Application payload protection. The zero protobuf value is E2EE so a
+    /// caller that does not know about this field remains secure by default.
+    #[prost(enumeration = "CryptoModeCode", tag = "5")]
+    pub crypto_mode: i32,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -293,6 +297,19 @@ pub struct DataMessage {
     pub policy: i32,
     #[prost(bytes = "vec", tag = "7")]
     pub payload: Vec<u8>,
+    /// Application payload protection used for `payload`. The zero protobuf
+    /// value is E2EE; the clear mode must be explicitly requested.
+    #[prost(enumeration = "CryptoModeCode", tag = "8")]
+    pub crypto_mode: i32,
+}
+
+/// Application payload protection mode. E2EE is intentionally value zero so
+/// older callers that omit the field do not silently downgrade security.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum CryptoModeCode {
+    E2ee = 0,
+    None = 1,
 }
 
 /// 不携带业务正文的应用层 Delivery ACK。
