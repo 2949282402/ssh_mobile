@@ -365,12 +365,12 @@ pub(crate) async fn acknowledge_message(
         message_id: message_id.to_vec(),
         recovery_epoch: completion.recovery_epoch,
     };
-    let result = send_delivery_ack(state, &command.peer_id, &ack).await;
     if let Some(next) = completion.next_ordered {
         // The application ACK is the ordering gate. The next buffered message
         // is published even if this transport ACK needs a later retry.
         emit_ordered_message(state, next);
     }
+    let result = send_delivery_ack(state, &command.peer_id, &ack).await;
     result.map_err(|error| {
         protocol_error_with_peer(
             NetworkErrorCode::NoRoute,
@@ -691,4 +691,167 @@ fn delivery_error(peer_id: &str, error: DeliveryError) -> ProtocolError {
         }
     };
     protocol_error_with_peer(code, error.to_string(), "send_message", peer_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::acknowledge_message;
+    use crate::connection::{test_blocking_generic_route, TestBlockingGenericRoute};
+    use crate::delivery::{
+        DedupDecision, DeliveryPolicy, MessageId, OrderedInsertResult, OrderedMessage,
+    };
+    use crate::runtime::RuntimeState;
+    use network_protocol::{network_event, AcknowledgeMessageCommand};
+    use std::sync::{atomic::AtomicU16, Arc};
+    use std::time::{Duration, Instant};
+    use tokio::sync::mpsc;
+
+    const TEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+    #[tokio::test]
+    async fn ordered_next_is_published_before_transport_ack_completes() {
+        let peer_id = "ordered-peer";
+        let channel_id = "control";
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+
+        let session_id = match state.sessions.begin_connect(peer_id).await {
+            crate::session::ConnectDecision::Started(session_id) => session_id,
+            decision => panic!("unexpected session decision: {decision:?}"),
+        };
+        let session_key = session_id.wire_key();
+
+        let TestBlockingGenericRoute {
+            handle,
+            mut started,
+            release,
+            mut worker,
+        } = test_blocking_generic_route();
+        state
+            .sessions
+            .attach_generic_connection_for_session(peer_id, Some(session_id), handle, false)
+            .await
+            .expect("attach test route");
+
+        let now = Instant::now();
+        for (sequence, message_id, payload, expected_result) in [
+            (
+                0,
+                MessageId::from_bytes([0; 16]),
+                b"ordered-zero".to_vec(),
+                OrderedInsertResult::Ready,
+            ),
+            (
+                1,
+                MessageId::from_bytes([1; 16]),
+                b"ordered-one".to_vec(),
+                OrderedInsertResult::Buffered,
+            ),
+        ] {
+            assert_eq!(
+                state
+                    .delivery
+                    .begin_incoming(&session_key, channel_id, message_id, 1, now)
+                    .await,
+                DedupDecision::New
+            );
+            assert_eq!(
+                state
+                    .delivery
+                    .accept_ordered(OrderedMessage {
+                        peer_id: peer_id.to_string(),
+                        session_id: session_key.clone(),
+                        channel_id: channel_id.to_string(),
+                        message_id,
+                        sequence,
+                        policy: DeliveryPolicy::SessionBoundOrdered,
+                        payload,
+                    })
+                    .await,
+                expected_result
+            );
+        }
+
+        let command = AcknowledgeMessageCommand {
+            peer_id: peer_id.to_string(),
+            session_id: session_key,
+            channel_id: channel_id.to_string(),
+            message_id: [0; 16].to_vec(),
+        };
+        let state_for_ack = Arc::clone(&state);
+        let mut acknowledge_task =
+            tokio::spawn(async move { acknowledge_message(&state_for_ack, command).await });
+
+        let observation = async {
+            let event = tokio::time::timeout(TEST_TIMEOUT, event_rx.recv())
+                .await
+                .map_err(|_| "#1 was not published while ACK transport was blocked")?
+                .ok_or("event channel closed before #1 was published")?;
+            let expected = matches!(
+                event.payload,
+                Some(network_event::Payload::ChannelMessage(message))
+                    if message.peer_id == peer_id
+                        && message.channel_id == channel_id
+                        && message.sequence == 1
+                        && message.message_id == [1; 16].to_vec()
+                        && message.payload == b"ordered-one".to_vec()
+            );
+            if !expected {
+                return Err("unexpected event received before ordered #1".to_string());
+            }
+
+            tokio::time::timeout(TEST_TIMEOUT, &mut started)
+                .await
+                .map_err(|_| "ACK transport did not start")?
+                .map_err(|_| "ACK transport start signal was dropped")?;
+            if acknowledge_task.is_finished() {
+                return Err("ACK completed before its release barrier".to_string());
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+
+        let _ = release.send(());
+        let acknowledge_completed =
+            match tokio::time::timeout(TEST_TIMEOUT, &mut acknowledge_task).await {
+                Ok(Ok(Ok(()))) => true,
+                Ok(Ok(Err(error))) => {
+                    eprintln!("acknowledge_message returned an error: {error:?}");
+                    false
+                }
+                Ok(Err(error)) => {
+                    eprintln!("acknowledge_message task failed: {error}");
+                    false
+                }
+                Err(_) => {
+                    acknowledge_task.abort();
+                    let _ = acknowledge_task.await;
+                    false
+                }
+            };
+
+        let route_closed = tokio::time::timeout(TEST_TIMEOUT, state.sessions.close(peer_id))
+            .await
+            .is_ok();
+        let worker_completed = match tokio::time::timeout(TEST_TIMEOUT, &mut worker).await {
+            Ok(Ok(())) => true,
+            Ok(Err(error)) => {
+                eprintln!("test transport worker failed: {error}");
+                false
+            }
+            Err(_) => {
+                worker.abort();
+                let _ = worker.await;
+                false
+            }
+        };
+
+        assert!(observation.is_ok(), "{observation:?}");
+        assert!(
+            acknowledge_completed,
+            "acknowledge_message did not complete successfully"
+        );
+        assert!(route_closed, "test route did not close during cleanup");
+        assert!(worker_completed, "test transport worker did not terminate");
+    }
 }

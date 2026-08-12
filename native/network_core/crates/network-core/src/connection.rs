@@ -363,6 +363,55 @@ impl GenericRouteHandle {
     }
 }
 
+#[cfg(test)]
+pub(crate) struct TestBlockingGenericRoute {
+    pub(crate) handle: GenericRouteHandle,
+    pub(crate) started: oneshot::Receiver<()>,
+    pub(crate) release: oneshot::Sender<()>,
+    pub(crate) worker: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(test)]
+pub(crate) fn test_blocking_generic_route() -> TestBlockingGenericRoute {
+    let (command_tx, mut command_rx) = mpsc::channel(GENERIC_ROUTE_CHANNEL_CAPACITY);
+    let (started_tx, started_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let handle = GenericRouteHandle {
+        id: NEXT_GENERIC_ROUTE_ID.fetch_add(1, Ordering::Relaxed),
+        profile: ConnectionProfile::for_generic(TransportKind::Tcp),
+        commands: command_tx,
+    };
+    let worker = tokio::spawn(async move {
+        let mut started_tx = Some(started_tx);
+        let mut release_rx = Some(release_rx);
+        while let Some(command) = command_rx.recv().await {
+            match command {
+                GenericRouteCommand::Send { kind, result, .. } => {
+                    debug_assert_eq!(kind, GenericFrameKind::DeliveryAck);
+                    if let Some(sender) = started_tx.take() {
+                        let _ = sender.send(());
+                    }
+                    if let Some(release) = release_rx.take() {
+                        let _ = release.await;
+                    }
+                    let _ = result.send(Ok(()));
+                }
+                GenericRouteCommand::Close { result } => {
+                    let _ = result.send(Ok(()));
+                    return;
+                }
+            }
+        }
+    });
+
+    TestBlockingGenericRoute {
+        handle,
+        started: started_rx,
+        release: release_tx,
+        worker,
+    }
+}
+
 /// Moves an authenticated primitive into its single bounded I/O owner.
 pub(crate) fn spawn_generic_route(
     connection: GenericConnection,
