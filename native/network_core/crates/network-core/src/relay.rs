@@ -523,19 +523,22 @@ async fn handle_relay_crypto_handshake(
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
     let key = relay_crypto_key(peer_id, session_token);
     match step {
-        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE => {
+        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE
+        | crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED
+        | crate::crypto_handshake::RELAY_CRYPTO_ACCEPT => {
             let sender = state
                 .relay_crypto_waiters
-                .write()
+                .read()
                 .await
-                .remove(&key)
+                .get(&key)
+                .cloned()
                 .ok_or_else(|| {
                     std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        "Relay E2EE response has no active initiator",
+                        "Relay E2EE response has no active initiator state",
                     )
                 })?;
-            sender.send(payload.to_vec()).map_err(|_| {
+            sender.send((step, payload.to_vec())).await.map_err(|_| {
                 std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "Relay E2EE initiator is no longer waiting",
@@ -543,6 +546,7 @@ async fn handle_relay_crypto_handshake(
             })?;
         }
         crate::crypto_handshake::RELAY_CRYPTO_HELLO => {
+            state.relay_crypto_confirmers.lock().await.remove(&key);
             let identity = state
                 .identity
                 .read()
@@ -585,7 +589,7 @@ async fn handle_relay_crypto_handshake(
                         "Relay E2EE final message has no active responder",
                     )
                 })?;
-            let (authenticated_peer_id, material) = responder
+            let (authenticated_peer_id, confirmer, encrypted_seed) = responder
                 .accept_final(payload, &state.trusted_peer_keys)
                 .await
                 .map_err(|error| {
@@ -598,6 +602,58 @@ async fn handle_relay_crypto_handshake(
                 )
                 .into());
             }
+            let mut confirmers = state.relay_crypto_confirmers.lock().await;
+            if confirmers.len() >= MAX_PENDING_RELAY_CRYPTO_HANDSHAKES
+                && !confirmers.contains_key(&key)
+            {
+                return Err(std::io::Error::other("Relay E2EE confirmer queue is full").into());
+            }
+            confirmers.insert(key, confirmer);
+            drop(confirmers);
+            let root_seed = crate::crypto_handshake::encode_relay_frame(
+                crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED,
+                &encrypted_seed,
+            )
+            .map_err(|error| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+            })?;
+            relay
+                .send_crypto_handshake(session_token, peer_id, &root_seed)
+                .await?;
+        }
+        crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM => {
+            let confirmer = state
+                .relay_crypto_confirmers
+                .lock()
+                .await
+                .remove(&key)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Relay E2EE confirmation has no authenticated responder",
+                    )
+                })?;
+            let (authenticated_peer_id, encrypted_accept, material) =
+                confirmer.accept_root_confirm(payload).map_err(|error| {
+                    std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string())
+                })?;
+            if authenticated_peer_id != peer_id {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "Relay E2EE confirmation identity does not match the routed peer",
+                )
+                .into());
+            }
+            let accept = crate::crypto_handshake::encode_relay_frame(
+                crate::crypto_handshake::RELAY_CRYPTO_ACCEPT,
+                &encrypted_accept,
+            )
+            .map_err(|error| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+            })?;
+            relay
+                .send_crypto_handshake(session_token, peer_id, &accept)
+                .await?;
             let decision = state.sessions.begin_connect(peer_id).await;
             let session_id = match decision {
                 crate::session::ConnectDecision::Started(session_id)
@@ -891,6 +947,7 @@ async fn cleanup_relay_state(state: &RuntimeState) {
     state.relay_lookups.write().await.clear();
     state.relay_crypto_waiters.write().await.clear();
     state.relay_crypto_responders.lock().await.clear();
+    state.relay_crypto_confirmers.lock().await.clear();
 
     for transfer_id in outgoing {
         if state.transfers.pause_for_network(&transfer_id).await {

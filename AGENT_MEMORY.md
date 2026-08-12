@@ -265,14 +265,18 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   authentication; Delivery sends through the current ReliableMessage capability,
   while UDP remains datagram-only. Route migration swaps the carrier atomically,
   recovers pending Delivery, and preserves SessionId and application E2EE state.
-- 2026-08-12: Plan 3 Step 4 installs Session application traffic roots only after
-  `Noise_XX_25519_AESGCM_SHA256` with fresh ephemeral X25519 material and a
-  pinned Ed25519 identity proof. The same opaque handshake is used on QUIC,
-  authenticated TCP/WebSocket, and Relay control; route migration reuses the
-  Session-owned crypto context. Production nonces are epoch/direction prefixes
-  plus monotonic counters with message/byte key-rotation limits, and an E2EE
-  request fails with `E2eeRequired` when no context exists. Long-lived identity
-  keys authenticate but never directly become Session traffic roots; see
+- 2026-08-12: Plan 3 Step 4 uses only the wire-incompatible
+  `e2ee/noise-xx-aes256gcm-v3` handshake. After pinned Ed25519 identity proof,
+  both peers enter `snow::TransportState`; the responder generates a fresh
+  32-byte `RootSeed` with `OsRng` and sends it only as Noise transport
+  ciphertext. HKDF uses RootSeed as secret input and the Noise handshake hash
+  only as transcript salt/context, then RootConfirm and final Accept complete
+  before Session Connected. QUIC and authenticated TCP/WebSocket reuse their
+  handshake carrier; Relay forwards six opaque stages and never obtains
+  RootSeed plaintext or ApplicationRoot. Route migration retains the existing
+  Session-owned CryptoContext, key epoch, and counters. Production nonces remain
+  epoch/direction prefixes plus monotonic counters, and missing E2EE context
+  remains `E2eeRequired`; no v2 downgrade exists. See
   `docs/adr/ADR-028-forward-secret-session-e2ee.md`.
 - 2026-08-10: `packages/infrastructure/network_sdk/` is the typed Flutter client
   boundary for bootstrap, authenticated API, business sessions, and event streams.

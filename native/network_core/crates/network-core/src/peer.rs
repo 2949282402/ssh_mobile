@@ -1737,7 +1737,7 @@ async fn establish_relay_crypto(
             },
         )?;
     let key = format!("{peer_id}/{session_token}");
-    let (response_tx, response_rx) = oneshot::channel();
+    let (response_tx, mut response_rx) = mpsc::channel(3);
     let mut waiters = state.relay_crypto_waiters.write().await;
     if waiters.len() >= MAX_PENDING_RELAY_CRYPTO_HANDSHAKES && !waiters.contains_key(&key) {
         return Err(protocol_error_with_peer(
@@ -1761,72 +1761,135 @@ async fn establish_relay_crypto(
             peer_id,
         )
     })?;
-    if relay
-        .send_crypto_handshake(&session_token, peer_id, &hello)
-        .await
-        .is_err()
-    {
-        state.relay_crypto_waiters.write().await.remove(&key);
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::RelayError,
-            "Relay application E2EE hello could not be sent",
-            "connect",
+    let result = async {
+        relay
+            .send_crypto_handshake(&session_token, peer_id, &hello)
+            .await
+            .map_err(|_| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::RelayError,
+                    "Relay application E2EE hello could not be sent",
+                    "connect",
+                    peer_id,
+                )
+            })?;
+        let response = receive_relay_crypto_step(
+            &mut response_rx,
+            crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
             peer_id,
-        ));
-    }
-    let response = match timeout(PEER_CONNECT_TIMEOUT, response_rx).await {
-        Ok(Ok(response)) => response,
-        _ => {
-            state.relay_crypto_waiters.write().await.remove(&key);
-            return Err(protocol_error_with_peer(
-                NetworkErrorCode::Timeout,
-                "Relay application E2EE handshake timed out",
-                "connect",
-                peer_id,
-            ));
-        }
-    };
-    let final_message = handshake
-        .accept_response(&response, peer_id, expected_peer_public_key)
+        )
+        .await?;
+        let final_message = handshake
+            .accept_response(&response, peer_id, expected_peer_public_key)
+            .map_err(|_| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::AuthenticationFailed,
+                    "Relay application E2EE identity proof failed",
+                    "connect",
+                    peer_id,
+                )
+            })?;
+        let final_frame = crate::crypto_handshake::encode_relay_frame(
+            crate::crypto_handshake::RELAY_CRYPTO_FINAL,
+            &final_message,
+        )
         .map_err(|_| {
             protocol_error_with_peer(
                 NetworkErrorCode::AuthenticationFailed,
-                "Relay application E2EE identity proof failed",
+                "Relay application E2EE final message is invalid",
                 "connect",
                 peer_id,
             )
         })?;
-    let final_frame = crate::crypto_handshake::encode_relay_frame(
-        crate::crypto_handshake::RELAY_CRYPTO_FINAL,
-        &final_message,
-    )
-    .map_err(|_| {
-        protocol_error_with_peer(
-            NetworkErrorCode::AuthenticationFailed,
-            "Relay application E2EE final message is invalid",
-            "connect",
+        relay
+            .send_crypto_handshake(&session_token, peer_id, &final_frame)
+            .await
+            .map_err(|_| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::RelayError,
+                    "Relay application E2EE final message could not be sent",
+                    "connect",
+                    peer_id,
+                )
+            })?;
+        let encrypted_seed = receive_relay_crypto_step(
+            &mut response_rx,
+            crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED,
             peer_id,
         )
-    })?;
-    relay
-        .send_crypto_handshake(&session_token, peer_id, &final_frame)
-        .await
+        .await?;
+        let (confirmation, encrypted_confirm) =
+            handshake.accept_root_seed(&encrypted_seed).map_err(|_| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::AuthenticationFailed,
+                    "Relay application E2EE RootSeed was rejected",
+                    "connect",
+                    peer_id,
+                )
+            })?;
+        let confirm_frame = crate::crypto_handshake::encode_relay_frame(
+            crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM,
+            &encrypted_confirm,
+        )
         .map_err(|_| {
             protocol_error_with_peer(
-                NetworkErrorCode::RelayError,
-                "Relay application E2EE final message could not be sent",
+                NetworkErrorCode::AuthenticationFailed,
+                "Relay application E2EE root confirmation is invalid",
                 "connect",
                 peer_id,
             )
         })?;
-    handshake.finish().map_err(|_| {
-        protocol_error_with_peer(
-            NetworkErrorCode::AuthenticationFailed,
-            "Relay application E2EE root could not be derived",
-            "connect",
+        relay
+            .send_crypto_handshake(&session_token, peer_id, &confirm_frame)
+            .await
+            .map_err(|_| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::RelayError,
+                    "Relay application E2EE root confirmation could not be sent",
+                    "connect",
+                    peer_id,
+                )
+            })?;
+        let encrypted_accept = receive_relay_crypto_step(
+            &mut response_rx,
+            crate::crypto_handshake::RELAY_CRYPTO_ACCEPT,
             peer_id,
         )
-    })
+        .await?;
+        confirmation.accept(&encrypted_accept).map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::AuthenticationFailed,
+                "Relay application E2EE acceptance failed",
+                "connect",
+                peer_id,
+            )
+        })
+    }
+    .await;
+    state.relay_crypto_waiters.write().await.remove(&key);
+    result
+}
+
+async fn receive_relay_crypto_step(
+    receiver: &mut mpsc::Receiver<(u8, Vec<u8>)>,
+    expected_step: u8,
+    peer_id: &str,
+) -> Result<Vec<u8>, ProtocolError> {
+    match timeout(PEER_CONNECT_TIMEOUT, receiver.recv()).await {
+        Ok(Some((step, payload))) if step == expected_step => Ok(payload),
+        Ok(Some(_)) => Err(protocol_error_with_peer(
+            NetworkErrorCode::AuthenticationFailed,
+            "Relay application E2EE handshake step is out of order",
+            "connect",
+            peer_id,
+        )),
+        _ => Err(protocol_error_with_peer(
+            NetworkErrorCode::Timeout,
+            "Relay application E2EE handshake timed out",
+            "connect",
+            peer_id,
+        )),
+    }
 }
 
 enum ReadyRoute<T> {

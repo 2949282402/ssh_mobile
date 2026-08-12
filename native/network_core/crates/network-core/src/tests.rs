@@ -15,6 +15,16 @@ use std::fs;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+#[test]
+fn session_root_source_requires_noise_transport_secret_export() {
+    let source = include_str!("crypto_handshake.rs");
+    assert!(!source.contains("fn derive_session_root("));
+    assert!(!source.contains("noise-xx-aes256gcm-v2\";"));
+    assert!(source.contains("fn derive_application_root("));
+    assert!(source.contains("OsRng.fill_bytes(&mut root_seed)"));
+    assert!(source.contains("into_transport_mode()"));
+}
+
 /// 验证格式错误的命令载荷会以类型化结果拒绝。
 #[test]
 fn missing_payload_is_invalid_instead_of_a_fake_no_route() {
@@ -1100,6 +1110,14 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
             .expect("TCP active route");
         (session_id, route)
     });
+    let original_context = state_a
+        .crypto
+        .get("migration-peer", &session_id.wire_key())
+        .expect("original Session crypto context");
+    let original_epoch = original_context
+        .lock()
+        .expect("original Session crypto lock")
+        .current_epoch();
     runtime_a
         .handle()
         .block_on(state_a.delivery.enqueue_with_crypto(
@@ -1154,6 +1172,21 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
             .install_crypto_material("migration-peer", &session_id.wire_key(), &crypto)
             .expect("install replacement E2EE context");
     });
+    let replacement_context = state_a
+        .crypto
+        .get("migration-peer", &session_id.wire_key())
+        .expect("replacement route Session crypto context");
+    assert!(std::sync::Arc::ptr_eq(
+        &original_context,
+        &replacement_context
+    ));
+    assert_eq!(
+        replacement_context
+            .lock()
+            .expect("replacement Session crypto lock")
+            .current_epoch(),
+        original_epoch
+    );
     let replacement_receiver = replacement.clone();
     let previous = runtime_a
         .handle()

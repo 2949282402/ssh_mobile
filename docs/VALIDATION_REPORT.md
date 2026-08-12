@@ -15,6 +15,32 @@ debug checks were refreshed by the successful main GitHub Actions run recorded b
 Coverage and release signing retain the most recent full release-chain evidence from
 2026-07-10; the current Step 2 source-level validation is recorded separately below.
 
+## Noise v3 Session Root correction — 2026-08-12
+
+The working tree based on `79edd02` removes the transcript-only Session root
+derivation and upgrades the application handshake to the intentionally
+wire-incompatible `e2ee/noise-xx-aes256gcm-v3` protocol. Both peers enter Noise
+TransportState before a responder-generated CSPRNG RootSeed is transferred as
+ciphertext; RootConfirm and final Accept complete before either route reports a
+connected Session. Relay now forwards six opaque stages, and route migration
+tests assert that the existing `CryptoContext` Arc and `KeyEpoch` survive.
+
+Local validation passed:
+
+- `cargo fmt --all -- --check`;
+- `cargo clippy --workspace --all-targets --locked -- -D warnings`;
+- `cargo test --workspace --locked`: 129 active tests passed, including 76
+  `network-core` tests; the coturn-only WebRTC test remains intentionally ignored;
+- focused TCP, WebSocket, TCP → QUIC migration, v2 rejection, RootSeed tamper,
+  RootConfirm failure, missing Accept, wrong identity, and six-stage Relay tests;
+- repository architecture, module-dependency, resource-owner, file-size report,
+  and `git diff --check` gates.
+
+The repository's CRLF Flutter/Dart launcher was bypassed with the bundled direct
+`dart.exe` for repository gates. These uncommitted changes have not been pushed,
+so no GitHub Actions run exists for this working tree; the last successful main
+run remains the baseline recorded below.
+
 ## Plan 3 Final Validation — 2026-08-12
 
 The current Plan 3 HEAD is `f11337c`. Native and repository-level validation passed
@@ -43,8 +69,8 @@ local session.
 
 GitHub Actions main evidence:
 
-- HEAD: `d40c532189c1d41bdb714310ea2ae75e11ec506e`
-- Workflow: `Flutter`, Run `#31565893203`
+- HEAD: `79edd026a549f7a0fe38d05dcf23c358b5f291c7`
+- Workflow: `Flutter`, Run `#31581110499`
 - Result: `success`
 - Jobs: `sdk-dart-quality`, `workspace-quality`, `architecture-check`,
   `relay-quality`, `native-network-quality`, `analyze-and-test`, `android-build`,
@@ -60,12 +86,12 @@ GitHub Actions main evidence:
 | Repository architecture gates | `architecture_check`, `compatibility_check`, `duplicate_implementation_check`, `check_module_dependencies`, and `check_resource_owners` all passed |
 | Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
 | Native Dart package | `dart format --output=none --set-exit-if-changed lib test hook`, `flutter analyze --no-pub`, and `flutter test --no-pub` passed with 7 package tests; typed Realtime command/event facade is covered |
-| Rust network workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --offline -- -D warnings`, and privileged `cargo test --workspace --offline` passed after Step 7; the latest run includes 52 `network-core`, 10 `network-webrtc` (9 active + 1 TURN integration test), 3 FFI, and 13 `network-nat` tests |
+| Rust network workspace | The Noise v3 correction passed locked workspace fmt, Clippy with warnings denied, and tests: 129 active tests, including 76 `network-core`, 9 active `network-webrtc` plus 1 ignored coturn-only test, 3 FFI, and 13 `network-nat` tests. |
 | Delivery runtime wiring | `network-core` distinguishes `DuplicateInFlight` from `DuplicateProcessed`, keeps `SessionBoundOrdered` behind expected sequence + in-flight ACK gating, bounds reorder count/bytes/gap, preserves the native Recovery Epoch boundary, and keeps logical plaintext plus crypto mode in pending state; privileged loopback `cargo test -p network-core --lib --locked --offline` passed with 50 tests |
 | Plan 3 Step 1 active Delivery state | In the current workspace, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test -p network-core --locked` passed; the focused native suite reported 59 tests, including active-over-TTL, ordered-buffer-over-TTL, processed-capacity eviction, application ACK timeout, Session close, and Runtime owner coverage |
 | Plan 3 Step 2 Realtime command completion | Local Dart formatting and `flutter analyze --no-pub` passed for `network_sdk` and `network_transport`; Full App analysis reported no errors/warnings and only the existing info-level lints. Ticket/result correlation, bounded pending commands, timeout, dispose cleanup, state-source, and delayed-closed cases are covered by the new SDK/App/transport tests. Flutter test execution remains unverified in this WSL session because `flutter_tester` exits while opening its local HTTP loopback (`HttpException: Connection closed before full header was received`). |
 | Plan 3 Step 3 generic Session routes | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test --workspace --locked` passed. Focused native integration tests passed for authenticated TCP fallback with Delivery ACK and reconnect, WebSocket fallback with Delivery ACK, and TCP → QUIC migration with pending Delivery recovery and unchanged SessionId. Dart route-event codec formatting and Full App analysis passed; composed `RouteTopology × RouteTransport` fields are decoded and retained in `RouteSnapshot`. |
-| Plan 3 Step 4 forward-secret Session E2EE | Native `Noise_XX_25519_AESGCM_SHA256` uses fresh ephemeral X25519 material and pinned Ed25519 identity proofs across QUIC, authenticated TCP/WebSocket, and opaque Relay control. Session roots are not derived directly from long-lived identity keys; structured epoch/direction/counter nonces, message/byte rotation limits, recent-epoch acceptance, wrong-identity rejection, 100k uniqueness, E2EE-required downgrade rejection, and Delivery-compatible replay behavior are covered by native tests. |
+| Plan 3 Step 4 forward-secret Session E2EE | The v3-only handshake uses pinned Ed25519 proofs, converts Noise XX into TransportState, and transfers a fresh `OsRng` RootSeed only as Noise ciphertext. HKDF uses RootSeed as IKM and the transcript hash only as salt/context. RootConfirm and Accept gate connection; v2, wrong identity, tamper, wrong confirmation, and incomplete exchange fail closed across QUIC, TCP/WebSocket, and six-stage opaque Relay control. |
 | Session application E2EE | Session-owned `CryptoContext` expands directional HKDF-SHA256/AES-256-GCM keys from the authenticated Noise root, keeps state across Route changes, re-encrypts Delivery retries with fresh structured nonces, rejects tamper/wrong-key/replay/nonce reuse, and protects channel payloads on QUIC, Relay, TCP, and WebSocket plus Relay file chunks; explicit plaintext mode remains opt-in. |
 | Runtime task supervision | `RuntimeTaskSupervisor` owns the command worker, QUIC accept/handshake, Relay reconnect/events, Session reconnect/direct-upgrade/path metrics, Delivery retry, channel/file receivers, and transfer workers; root/session cancellation joins all registered tasks before stop returns; the native test suite includes cancellation/join coverage and a 100-cycle loopback bind/stop/recreate stress test |
 | Transfer/Connection decoupling | `TransferSession` owns state, Manifest, offset, cancellation, and logical SessionId without a Connection handle; `TransferDispatcher` selects the current QUIC/Relay route, and same-Session direct/Relay resume is tested; `cargo test -p network-transfer -p network-core --locked --offline` passed with 47 tests |
@@ -96,7 +122,7 @@ GitHub Actions main evidence:
 | Drift generated database code | Deterministic on a second build |
 | Shared Codex/Claude maintenance skill | Synchronized |
 | Web manifest JSON and Git diff checks | Passed |
-| GitHub Actions main | Run `#31565893203` at HEAD `d40c532189c1d41bdb714310ea2ae75e11ec506e` completed with `success`; all 12 independent quality, test, and platform-build jobs passed |
+| GitHub Actions main | Run `#31581110499` at HEAD `79edd026a549f7a0fe38d05dcf23c358b5f291c7` completed with `success`; all 12 independent quality, test, and platform-build jobs passed |
 
 ## Commands
 

@@ -8,14 +8,16 @@ use std::sync::{
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender},
     oneshot, Mutex as AsyncMutex, Notify, RwLock,
 };
 use tracing::info;
 
 use crate::commands::run_command_worker;
 use crate::crypto::{CryptoContext, CryptoError, CryptoMode, SessionCryptoManager};
-use crate::crypto_handshake::{RelayResponderHandshake, SessionCryptoMaterial};
+use crate::crypto_handshake::{
+    RelayResponderConfirmation, RelayResponderHandshake, SessionCryptoMaterial,
+};
 use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
 use crate::session::{SessionId, SessionManager};
@@ -48,6 +50,9 @@ pub(crate) const RUNTIME_CREATED: u8 = 0;
 pub(crate) const RUNTIME_RUNNING: u8 = 1;
 pub(crate) const RUNTIME_STOPPING: u8 = 2;
 pub(crate) const RUNTIME_STOPPED: u8 = 3;
+
+pub(crate) type RelayCryptoMessage = (u8, Vec<u8>);
+type RelayCryptoSender = mpsc::Sender<RelayCryptoMessage>;
 
 #[derive(Clone)]
 pub(crate) struct PeerConfig {
@@ -108,8 +113,9 @@ pub(crate) struct RuntimeState {
         RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<bool>>>,
-    pub(crate) relay_crypto_waiters: RwLock<HashMap<String, oneshot::Sender<Vec<u8>>>>,
+    pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
+    pub(crate) relay_crypto_confirmers: AsyncMutex<HashMap<String, RelayResponderConfirmation>>,
     pub(crate) candidate_signal_notify: Notify,
     pub(crate) relay_sessions: RwLock<HashMap<String, String>>,
     pub(crate) relay_pending_incoming: RwLock<HashMap<String, crate::relay::PendingRelayIncoming>>,
@@ -154,6 +160,7 @@ impl RuntimeState {
             relay_lookups: RwLock::new(HashMap::new()),
             relay_crypto_waiters: RwLock::new(HashMap::new()),
             relay_crypto_responders: AsyncMutex::new(HashMap::new()),
+            relay_crypto_confirmers: AsyncMutex::new(HashMap::new()),
             candidate_signal_notify: Notify::new(),
             relay_sessions: RwLock::new(HashMap::new()),
             relay_pending_incoming: RwLock::new(HashMap::new()),

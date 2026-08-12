@@ -11,11 +11,14 @@
 use ed25519_dalek::VerifyingKey;
 use network_identity::DeviceIdentity;
 use network_protocol::NETWORK_PROTOCOL_VERSION;
-use snow::{params::NoiseParams, Builder, HandshakeState};
+use rand::{rngs::OsRng, RngCore};
+use snow::{params::NoiseParams, Builder, HandshakeState, TransportState};
 use std::collections::HashMap;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::connection::GenericConnection;
 
@@ -23,7 +26,14 @@ const NOISE_PATTERN: &str = "Noise_XX_25519_AESGCM_SHA256";
 const HANDSHAKE_DOMAIN: &[u8] = b"ssh-mobile/session-e2ee/noise-xx/v1";
 const HANDSHAKE_HELLO_MAGIC: &[u8; 4] = b"SMEH";
 const HANDSHAKE_PROOF_MAGIC: &[u8; 4] = b"SMEP";
-const HANDSHAKE_CAPABILITY: &[u8] = b"e2ee/noise-xx-aes256gcm-v2";
+const HANDSHAKE_CAPABILITY: &[u8] = b"e2ee/noise-xx-aes256gcm-v3";
+const ROOT_EXCHANGE_MAGIC: &[u8; 4] = b"SMKR";
+const ROOT_EXCHANGE_VERSION: u8 = 3;
+const ROOT_EXCHANGE_ROOT_SEED: u8 = 1;
+const ROOT_EXCHANGE_ROOT_CONFIRM: u8 = 2;
+const ROOT_EXCHANGE_ACCEPT: u8 = 3;
+const APPLICATION_ROOT_DOMAIN: &[u8] = b"ssh-mobile/session/application/root/v3";
+const ROOT_CONFIRM_DOMAIN: &[u8] = b"ssh-mobile/session/application/root-confirm/v3";
 const MAX_DEVICE_ID_BYTES: usize = 128;
 const MAX_SESSION_BINDING_BYTES: usize = 128;
 const MAX_HANDSHAKE_PAYLOAD_BYTES: usize = 4 * 1024;
@@ -31,6 +41,9 @@ const MAX_HANDSHAKE_FRAME_BYTES: usize = 64 * 1024;
 const NOISE_PUBLIC_KEY_BYTES: usize = 32;
 const IDENTITY_PUBLIC_KEY_BYTES: usize = 32;
 const SIGNATURE_BYTES: usize = 64;
+const ROOT_SEED_BYTES: usize = 32;
+const ROOT_CONFIRM_BYTES: usize = 32;
+const NOISE_TRANSPORT_TAG_BYTES: usize = 16;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CryptoHandshakeError {
@@ -63,6 +76,24 @@ struct NoiseHandshake {
     local_static_public: [u8; NOISE_PUBLIC_KEY_BYTES],
     identity_public: [u8; IDENTITY_PUBLIC_KEY_BYTES],
     initiator: bool,
+}
+
+struct EstablishedNoise {
+    transport: TransportState,
+    handshake_hash: [u8; 32],
+    session_binding: String,
+    initiator: bool,
+}
+
+struct InitiatorRootExchange {
+    noise: EstablishedNoise,
+    root_key: Zeroizing<[u8; 32]>,
+}
+
+struct ResponderRootExchange {
+    noise: EstablishedNoise,
+    root_key: Zeroizing<[u8; 32]>,
+    expected_confirm: Zeroizing<[u8; ROOT_CONFIRM_BYTES]>,
 }
 
 impl NoiseHandshake {
@@ -124,23 +155,163 @@ impl NoiseHandshake {
         Ok(payload)
     }
 
-    fn finish(
+    fn into_established(
         self,
         session_binding: String,
-    ) -> Result<SessionCryptoMaterial, CryptoHandshakeError> {
+    ) -> Result<EstablishedNoise, CryptoHandshakeError> {
         if !self.state.is_handshake_finished() {
             return Err(CryptoHandshakeError::Failed);
         }
-        let handshake_hash = self.state.get_handshake_hash();
-        let root_key = derive_session_root(handshake_hash, &session_binding)?;
-        self.state
+        validate_binding(&session_binding)?;
+        let handshake_hash = self
+            .state
+            .get_handshake_hash()
+            .try_into()
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+        let transport = self
+            .state
             .into_transport_mode()
             .map_err(|_| CryptoHandshakeError::Failed)?;
-        Ok(SessionCryptoMaterial {
-            root_key,
+        Ok(EstablishedNoise {
+            transport,
+            handshake_hash,
             session_binding,
             initiator: self.initiator,
         })
+    }
+}
+
+impl EstablishedNoise {
+    fn begin_responder(mut self) -> Result<(ResponderRootExchange, Vec<u8>), CryptoHandshakeError> {
+        if self.initiator {
+            return Err(CryptoHandshakeError::Failed);
+        }
+        let mut root_seed = [0u8; ROOT_SEED_BYTES];
+        OsRng.fill_bytes(&mut root_seed);
+        let root_key = Zeroizing::new(derive_application_root(
+            &root_seed,
+            &self.handshake_hash,
+            &self.session_binding,
+        )?);
+        let expected_confirm = Zeroizing::new(derive_root_confirm(
+            &root_key,
+            &self.handshake_hash,
+            &self.session_binding,
+        )?);
+        let encrypted_seed = self.encrypt_exchange(ROOT_EXCHANGE_ROOT_SEED, &root_seed)?;
+        root_seed.zeroize();
+        Ok((
+            ResponderRootExchange {
+                noise: self,
+                root_key,
+                expected_confirm,
+            },
+            encrypted_seed,
+        ))
+    }
+
+    fn accept_root_seed(
+        mut self,
+        encrypted_seed: &[u8],
+    ) -> Result<(InitiatorRootExchange, Vec<u8>), CryptoHandshakeError> {
+        if !self.initiator {
+            return Err(CryptoHandshakeError::Failed);
+        }
+        let seed = self.decrypt_exchange(ROOT_EXCHANGE_ROOT_SEED, encrypted_seed)?;
+        let mut root_seed: [u8; ROOT_SEED_BYTES] =
+            seed.try_into().map_err(|_| CryptoHandshakeError::Invalid)?;
+        let root_key = Zeroizing::new(derive_application_root(
+            &root_seed,
+            &self.handshake_hash,
+            &self.session_binding,
+        )?);
+        root_seed.zeroize();
+        let mut confirm =
+            derive_root_confirm(&root_key, &self.handshake_hash, &self.session_binding)?;
+        let encrypted_confirm = self.encrypt_exchange(ROOT_EXCHANGE_ROOT_CONFIRM, &confirm)?;
+        confirm.zeroize();
+        Ok((
+            InitiatorRootExchange {
+                noise: self,
+                root_key,
+            },
+            encrypted_confirm,
+        ))
+    }
+
+    fn encrypt_exchange(
+        &mut self,
+        message_type: u8,
+        payload: &[u8],
+    ) -> Result<Vec<u8>, CryptoHandshakeError> {
+        let plaintext = Zeroizing::new(root_exchange_payload(
+            message_type,
+            &self.session_binding,
+            payload,
+        )?);
+        let mut ciphertext = vec![0u8; plaintext.len() + NOISE_TRANSPORT_TAG_BYTES];
+        let length = self
+            .transport
+            .write_message(&plaintext, &mut ciphertext)
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+        ciphertext.truncate(length);
+        Ok(ciphertext)
+    }
+
+    fn decrypt_exchange(
+        &mut self,
+        expected_type: u8,
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, CryptoHandshakeError> {
+        if ciphertext.is_empty() || ciphertext.len() > MAX_HANDSHAKE_FRAME_BYTES {
+            return Err(CryptoHandshakeError::Invalid);
+        }
+        let mut plaintext = Zeroizing::new(vec![0u8; MAX_HANDSHAKE_PAYLOAD_BYTES]);
+        let length = self
+            .transport
+            .read_message(ciphertext, &mut plaintext)
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+        plaintext.truncate(length);
+        parse_root_exchange_payload(&plaintext, expected_type, &self.session_binding)
+    }
+
+    fn into_material(self, root_key: [u8; 32]) -> SessionCryptoMaterial {
+        SessionCryptoMaterial {
+            root_key,
+            session_binding: self.session_binding,
+            initiator: self.initiator,
+        }
+    }
+}
+
+impl InitiatorRootExchange {
+    fn accept(
+        self,
+        encrypted_accept: &[u8],
+    ) -> Result<SessionCryptoMaterial, CryptoHandshakeError> {
+        let mut noise = self.noise;
+        let payload = noise.decrypt_exchange(ROOT_EXCHANGE_ACCEPT, encrypted_accept)?;
+        if !payload.is_empty() {
+            return Err(CryptoHandshakeError::Invalid);
+        }
+        Ok(noise.into_material(*self.root_key))
+    }
+}
+
+impl ResponderRootExchange {
+    fn accept_confirm(
+        self,
+        encrypted_confirm: &[u8],
+    ) -> Result<(Vec<u8>, SessionCryptoMaterial), CryptoHandshakeError> {
+        let mut noise = self.noise;
+        let confirm = noise.decrypt_exchange(ROOT_EXCHANGE_ROOT_CONFIRM, encrypted_confirm)?;
+        if confirm.len() != ROOT_CONFIRM_BYTES
+            || !bool::from(confirm.as_slice().ct_eq(self.expected_confirm.as_ref()))
+        {
+            return Err(CryptoHandshakeError::Failed);
+        }
+        let encrypted_accept = noise.encrypt_exchange(ROOT_EXCHANGE_ACCEPT, &[])?;
+        Ok((encrypted_accept, noise.into_material(*self.root_key)))
     }
 }
 
@@ -179,7 +350,21 @@ pub(crate) async fn initiate_generic(
         .send(&handshake.write(&initiator_proof)?)
         .await
         .map_err(|_| CryptoHandshakeError::Failed)?;
-    handshake.finish(session_binding.to_string())
+    let established = handshake.into_established(session_binding.to_string())?;
+    let encrypted_seed = connection
+        .recv()
+        .await
+        .map_err(|_| CryptoHandshakeError::Failed)?;
+    let (initiator, encrypted_confirm) = established.accept_root_seed(&encrypted_seed)?;
+    connection
+        .send(&encrypted_confirm)
+        .await
+        .map_err(|_| CryptoHandshakeError::Failed)?;
+    let encrypted_accept = connection
+        .recv()
+        .await
+        .map_err(|_| CryptoHandshakeError::Failed)?;
+    initiator.accept(&encrypted_accept)
 }
 
 /// Performs Noise XX as the responder and resolves the claimed peer against
@@ -220,16 +405,35 @@ pub(crate) async fn respond_generic(
         return Err(CryptoHandshakeError::UntrustedIdentity);
     }
     verify_proof_signature(&initiator_payload, &peer_id, &session_binding, &peer_key)?;
-    let material = handshake.finish(session_binding)?;
+    let established = handshake.into_established(session_binding)?;
+    let (responder, encrypted_seed) = established.begin_responder()?;
+    connection
+        .send(&encrypted_seed)
+        .await
+        .map_err(|_| CryptoHandshakeError::Failed)?;
+    let encrypted_confirm = connection
+        .recv()
+        .await
+        .map_err(|_| CryptoHandshakeError::Failed)?;
+    let (encrypted_accept, material) = responder.accept_confirm(&encrypted_confirm)?;
+    connection
+        .send(&encrypted_accept)
+        .await
+        .map_err(|_| CryptoHandshakeError::Failed)?;
     Ok((peer_id, material))
 }
 
-/// Relay carries the same three Noise XX messages as opaque control payloads.
+/// Relay carries the Noise XX messages plus the post-handshake root exchange
+/// as six opaque control payloads.
 /// The relay event loop owns the message exchange; these small state objects
 /// keep the handshake transcript and identity proof in this crypto module.
 pub(crate) struct RelayInitiatorHandshake {
     handshake: NoiseHandshake,
     session_binding: String,
+}
+
+pub(crate) struct RelayInitiatorConfirmation {
+    exchange: InitiatorRootExchange,
 }
 
 impl RelayInitiatorHandshake {
@@ -269,14 +473,33 @@ impl RelayInitiatorHandshake {
         self.handshake.write(&initiator_proof)
     }
 
-    pub(crate) fn finish(self) -> Result<SessionCryptoMaterial, CryptoHandshakeError> {
-        self.handshake.finish(self.session_binding)
+    pub(crate) fn accept_root_seed(
+        self,
+        encrypted_seed: &[u8],
+    ) -> Result<(RelayInitiatorConfirmation, Vec<u8>), CryptoHandshakeError> {
+        let established = self.handshake.into_established(self.session_binding)?;
+        let (exchange, encrypted_confirm) = established.accept_root_seed(encrypted_seed)?;
+        Ok((RelayInitiatorConfirmation { exchange }, encrypted_confirm))
+    }
+}
+
+impl RelayInitiatorConfirmation {
+    pub(crate) fn accept(
+        self,
+        encrypted_accept: &[u8],
+    ) -> Result<SessionCryptoMaterial, CryptoHandshakeError> {
+        self.exchange.accept(encrypted_accept)
     }
 }
 
 pub(crate) struct RelayResponderHandshake {
     handshake: NoiseHandshake,
     session_binding: String,
+}
+
+pub(crate) struct RelayResponderConfirmation {
+    peer_id: String,
+    exchange: ResponderRootExchange,
 }
 
 impl RelayResponderHandshake {
@@ -301,7 +524,7 @@ impl RelayResponderHandshake {
         mut self,
         final_message: &[u8],
         trusted_peer_keys: &RwLock<HashMap<String, [u8; 32]>>,
-    ) -> Result<(String, SessionCryptoMaterial), CryptoHandshakeError> {
+    ) -> Result<(String, RelayResponderConfirmation, Vec<u8>), CryptoHandshakeError> {
         let initiator_payload = self.handshake.read(final_message)?;
         let (peer_id, peer_key) = parse_proof_identity(
             &initiator_payload,
@@ -324,14 +547,32 @@ impl RelayResponderHandshake {
             &self.session_binding,
             &peer_key,
         )?;
-        let material = self.handshake.finish(self.session_binding)?;
-        Ok((peer_id, material))
+        let established = self.handshake.into_established(self.session_binding)?;
+        let (exchange, encrypted_seed) = established.begin_responder()?;
+        Ok((
+            peer_id.clone(),
+            RelayResponderConfirmation { peer_id, exchange },
+            encrypted_seed,
+        ))
+    }
+}
+
+impl RelayResponderConfirmation {
+    pub(crate) fn accept_root_confirm(
+        self,
+        encrypted_confirm: &[u8],
+    ) -> Result<(String, Vec<u8>, SessionCryptoMaterial), CryptoHandshakeError> {
+        let (encrypted_accept, material) = self.exchange.accept_confirm(encrypted_confirm)?;
+        Ok((self.peer_id, encrypted_accept, material))
     }
 }
 
 pub(crate) const RELAY_CRYPTO_HELLO: u8 = 1;
 pub(crate) const RELAY_CRYPTO_RESPONSE: u8 = 2;
 pub(crate) const RELAY_CRYPTO_FINAL: u8 = 3;
+pub(crate) const RELAY_CRYPTO_ROOT_SEED: u8 = 4;
+pub(crate) const RELAY_CRYPTO_ROOT_CONFIRM: u8 = 5;
+pub(crate) const RELAY_CRYPTO_ACCEPT: u8 = 6;
 
 pub(crate) fn encode_relay_frame(
     step: u8,
@@ -339,7 +580,12 @@ pub(crate) fn encode_relay_frame(
 ) -> Result<Vec<u8>, CryptoHandshakeError> {
     if !matches!(
         step,
-        RELAY_CRYPTO_HELLO | RELAY_CRYPTO_RESPONSE | RELAY_CRYPTO_FINAL
+        RELAY_CRYPTO_HELLO
+            | RELAY_CRYPTO_RESPONSE
+            | RELAY_CRYPTO_FINAL
+            | RELAY_CRYPTO_ROOT_SEED
+            | RELAY_CRYPTO_ROOT_CONFIRM
+            | RELAY_CRYPTO_ACCEPT
     ) || payload.is_empty()
         || payload.len() > MAX_HANDSHAKE_FRAME_BYTES
     {
@@ -355,7 +601,12 @@ pub(crate) fn decode_relay_frame(frame: &[u8]) -> Result<(u8, &[u8]), CryptoHand
     let (&step, payload) = frame.split_first().ok_or(CryptoHandshakeError::Invalid)?;
     if !matches!(
         step,
-        RELAY_CRYPTO_HELLO | RELAY_CRYPTO_RESPONSE | RELAY_CRYPTO_FINAL
+        RELAY_CRYPTO_HELLO
+            | RELAY_CRYPTO_RESPONSE
+            | RELAY_CRYPTO_FINAL
+            | RELAY_CRYPTO_ROOT_SEED
+            | RELAY_CRYPTO_ROOT_CONFIRM
+            | RELAY_CRYPTO_ACCEPT
     ) || payload.is_empty()
         || payload.len() > MAX_HANDSHAKE_FRAME_BYTES
     {
@@ -394,8 +645,14 @@ pub(crate) async fn initiate_quic(
     )?;
     let initiator_proof = proof_payload_with_signature(&handshake, 1, session_binding)?;
     write_quic_frame(&mut send, &handshake.write(&initiator_proof)?).await?;
+    let established = handshake.into_established(session_binding.to_string())?;
+    let encrypted_seed = read_quic_frame(&mut recv).await?;
+    let (initiator, encrypted_confirm) = established.accept_root_seed(&encrypted_seed)?;
+    write_quic_frame(&mut send, &encrypted_confirm).await?;
+    let encrypted_accept = read_quic_frame(&mut recv).await?;
+    let material = initiator.accept(&encrypted_accept)?;
     send.finish().map_err(|_| CryptoHandshakeError::Failed)?;
-    handshake.finish(session_binding.to_string())
+    Ok(material)
 }
 
 pub(crate) async fn respond_quic(
@@ -424,7 +681,13 @@ pub(crate) async fn respond_quic(
         return Err(CryptoHandshakeError::UntrustedIdentity);
     }
     verify_proof_signature(&initiator_payload, &peer_id, &session_binding, &peer_key)?;
-    let material = handshake.finish(session_binding)?;
+    let established = handshake.into_established(session_binding)?;
+    let (responder, encrypted_seed) = established.begin_responder()?;
+    write_quic_frame(&mut send, &encrypted_seed).await?;
+    let encrypted_confirm = read_quic_frame(&mut recv).await?;
+    let (encrypted_accept, material) = responder.accept_confirm(&encrypted_confirm)?;
+    write_quic_frame(&mut send, &encrypted_accept).await?;
+    send.finish().map_err(|_| CryptoHandshakeError::Failed)?;
     Ok((peer_id, material))
 }
 
@@ -590,15 +853,78 @@ fn verify_signature(
     }
 }
 
-fn derive_session_root(
+fn derive_application_root(
+    root_seed: &[u8; ROOT_SEED_BYTES],
     handshake_hash: &[u8],
     session_binding: &str,
 ) -> Result<[u8; 32], CryptoHandshakeError> {
-    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(session_binding.as_bytes()), handshake_hash);
+    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(handshake_hash), root_seed);
     let mut root = [0u8; 32];
-    hkdf.expand(b"ssh-mobile/session/application/noise-root/v2", &mut root)
+    let mut info = Vec::with_capacity(APPLICATION_ROOT_DOMAIN.len() + session_binding.len());
+    info.extend_from_slice(APPLICATION_ROOT_DOMAIN);
+    info.extend_from_slice(session_binding.as_bytes());
+    hkdf.expand(&info, &mut root)
         .map_err(|_| CryptoHandshakeError::Failed)?;
     Ok(root)
+}
+
+fn derive_root_confirm(
+    root_key: &[u8; 32],
+    handshake_hash: &[u8; 32],
+    session_binding: &str,
+) -> Result<[u8; ROOT_CONFIRM_BYTES], CryptoHandshakeError> {
+    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(Some(handshake_hash), root_key);
+    let mut info = Vec::with_capacity(ROOT_CONFIRM_DOMAIN.len() + session_binding.len());
+    info.extend_from_slice(ROOT_CONFIRM_DOMAIN);
+    info.extend_from_slice(session_binding.as_bytes());
+    let mut confirm = [0u8; ROOT_CONFIRM_BYTES];
+    hkdf.expand(&info, &mut confirm)
+        .map_err(|_| CryptoHandshakeError::Failed)?;
+    Ok(confirm)
+}
+
+fn root_exchange_payload(
+    message_type: u8,
+    session_binding: &str,
+    payload: &[u8],
+) -> Result<Vec<u8>, CryptoHandshakeError> {
+    if !matches!(
+        message_type,
+        ROOT_EXCHANGE_ROOT_SEED | ROOT_EXCHANGE_ROOT_CONFIRM | ROOT_EXCHANGE_ACCEPT
+    ) || payload.len() > MAX_HANDSHAKE_PAYLOAD_BYTES
+    {
+        return Err(CryptoHandshakeError::Invalid);
+    }
+    validate_binding(session_binding)?;
+    let mut output = Vec::with_capacity(12 + session_binding.len() + payload.len());
+    output.extend_from_slice(ROOT_EXCHANGE_MAGIC);
+    output.push(ROOT_EXCHANGE_VERSION);
+    output.push(message_type);
+    output.extend_from_slice(&NETWORK_PROTOCOL_VERSION.to_be_bytes());
+    append_string(&mut output, session_binding)?;
+    append_bytes(&mut output, payload)?;
+    Ok(output)
+}
+
+fn parse_root_exchange_payload(
+    message: &[u8],
+    expected_type: u8,
+    session_binding: &str,
+) -> Result<Vec<u8>, CryptoHandshakeError> {
+    let mut cursor = Cursor::new(message);
+    if cursor.take(4)? != ROOT_EXCHANGE_MAGIC
+        || cursor.take_byte()? != ROOT_EXCHANGE_VERSION
+        || cursor.take_byte()? != expected_type
+        || cursor.take_u32()? != NETWORK_PROTOCOL_VERSION
+        || cursor.take_string(MAX_SESSION_BINDING_BYTES)? != session_binding
+    {
+        return Err(CryptoHandshakeError::Invalid);
+    }
+    let payload = cursor.take_bytes(MAX_HANDSHAKE_PAYLOAD_BYTES)?.to_vec();
+    if !cursor.done() {
+        return Err(CryptoHandshakeError::Invalid);
+    }
+    Ok(payload)
 }
 
 fn validate_binding(binding: &str) -> Result<(), CryptoHandshakeError> {
@@ -809,8 +1135,8 @@ mod tests {
         );
         verify_proof_signature(&payload, &peer_id, binding, &peer_key).unwrap();
 
-        let initiator_material = initiator.finish(binding.to_string()).unwrap();
-        let responder_material = responder.finish(responder_binding).unwrap();
+        let (initiator_material, responder_material) =
+            complete_root_exchange(initiator, responder, binding.to_string(), responder_binding);
         assert_eq!(initiator_material.root_key, responder_material.root_key);
         assert_ne!(initiator_material.root_key, [0u8; 32]);
         assert!(initiator_material.initiator);
@@ -843,6 +1169,109 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn application_root_requires_secret_seed_and_binds_transcript() {
+        let handshake_hash = [7u8; 32];
+        let binding = "0000000000000001";
+        let first = derive_application_root(&[1u8; 32], &handshake_hash, binding).unwrap();
+        let second = derive_application_root(&[2u8; 32], &handshake_hash, binding).unwrap();
+        assert_ne!(first, second);
+        assert_ne!(first, handshake_hash);
+    }
+
+    #[test]
+    fn tampered_root_seed_ciphertext_fails_before_material_exists() {
+        let (initiator, responder, binding) = completed_identity_handshake();
+        let initiator = initiator.into_established(binding.clone()).unwrap();
+        let responder = responder.into_established(binding).unwrap();
+        let (_, mut encrypted_seed) = responder.begin_responder().unwrap();
+        let last = encrypted_seed.last_mut().unwrap();
+        *last ^= 0x80;
+        assert!(matches!(
+            initiator.accept_root_seed(&encrypted_seed),
+            Err(CryptoHandshakeError::Failed)
+        ));
+    }
+
+    #[test]
+    fn incorrect_root_confirmation_is_rejected() {
+        let (initiator, responder, binding) = completed_identity_handshake();
+        let mut initiator = initiator.into_established(binding.clone()).unwrap();
+        let responder = responder.into_established(binding).unwrap();
+        let (responder, encrypted_seed) = responder.begin_responder().unwrap();
+        let _ = initiator
+            .decrypt_exchange(ROOT_EXCHANGE_ROOT_SEED, &encrypted_seed)
+            .unwrap();
+        let encrypted_wrong_confirm = initiator
+            .encrypt_exchange(ROOT_EXCHANGE_ROOT_CONFIRM, &[0u8; ROOT_CONFIRM_BYTES])
+            .unwrap();
+        assert!(matches!(
+            responder.accept_confirm(&encrypted_wrong_confirm),
+            Err(CryptoHandshakeError::Failed)
+        ));
+    }
+
+    #[test]
+    fn initiator_does_not_receive_material_without_accept() {
+        let (initiator, responder, binding) = completed_identity_handshake();
+        let initiator = initiator.into_established(binding.clone()).unwrap();
+        let responder = responder.into_established(binding).unwrap();
+        let (responder, encrypted_seed) = responder.begin_responder().unwrap();
+        let (initiator, encrypted_confirm) = initiator.accept_root_seed(&encrypted_seed).unwrap();
+        let (_, responder_material) = responder.accept_confirm(&encrypted_confirm).unwrap();
+        assert_ne!(responder_material.root_key, [0u8; 32]);
+        assert!(initiator.accept(&[]).is_err());
+    }
+
+    #[test]
+    fn v2_capability_is_rejected_without_downgrade() {
+        let (initiator_identity, responder_identity) = identities();
+        let mut initiator = NoiseHandshake::new(initiator_identity, true).unwrap();
+        let mut responder = NoiseHandshake::new(responder_identity, false).unwrap();
+        let binding = "0000000000000001";
+        let mut legacy_hello = Vec::new();
+        legacy_hello.extend_from_slice(HANDSHAKE_HELLO_MAGIC);
+        legacy_hello.extend_from_slice(&NETWORK_PROTOCOL_VERSION.to_be_bytes());
+        append_string(&mut legacy_hello, binding).unwrap();
+        append_bytes(&mut legacy_hello, b"e2ee/noise-xx-aes256gcm-v2").unwrap();
+        let message = initiator.write(&legacy_hello).unwrap();
+        let payload = responder.read(&message).unwrap();
+        assert!(matches!(
+            parse_hello(&payload),
+            Err(CryptoHandshakeError::Unsupported)
+        ));
+    }
+
+    #[tokio::test]
+    async fn wrong_initiator_identity_never_produces_relay_root_seed() {
+        let (initiator_identity, responder_identity) = identities();
+        let binding = "0000000000000001";
+        let (mut initiator, hello) =
+            RelayInitiatorHandshake::start(initiator_identity, binding).unwrap();
+        let (responder, response) =
+            RelayResponderHandshake::accept_hello(responder_identity, &hello).unwrap();
+        let expected_responder = identities().1;
+        let final_message = initiator
+            .accept_response(
+                &response,
+                &expected_responder.device_id,
+                expected_responder.public_identity_key().to_bytes(),
+            )
+            .unwrap();
+        let mut trusted = HashMap::new();
+        let wrong = DeviceIdentity::generate("wrong-initiator".into());
+        trusted.insert(
+            "initiator".to_string(),
+            wrong.public_identity_key().to_bytes(),
+        );
+        assert!(matches!(
+            responder
+                .accept_final(&final_message, &RwLock::new(trusted))
+                .await,
+            Err(CryptoHandshakeError::UntrustedIdentity)
+        ));
+    }
+
     #[tokio::test]
     async fn relay_noise_xx_preserves_the_same_session_root() {
         let (initiator_identity, responder_identity) = identities();
@@ -864,12 +1293,56 @@ mod tests {
             initiator_identity.public_identity_key().to_bytes(),
         );
         let trusted = RwLock::new(trusted);
-        let (_, responder_material) = responder
+        let (_, confirmer, encrypted_seed) = responder
             .accept_final(&final_message, &trusted)
             .await
             .unwrap();
-        let initiator_material = initiator.finish().unwrap();
+        let (initiator, encrypted_confirm) = initiator.accept_root_seed(&encrypted_seed).unwrap();
+        let (_, encrypted_accept, responder_material) =
+            confirmer.accept_root_confirm(&encrypted_confirm).unwrap();
+        let initiator_material = initiator.accept(&encrypted_accept).unwrap();
         assert_eq!(initiator_material.root_key, responder_material.root_key);
+        for (step, payload) in [
+            (RELAY_CRYPTO_HELLO, hello.as_slice()),
+            (RELAY_CRYPTO_RESPONSE, response.as_slice()),
+            (RELAY_CRYPTO_FINAL, final_message.as_slice()),
+            (RELAY_CRYPTO_ROOT_SEED, encrypted_seed.as_slice()),
+            (RELAY_CRYPTO_ROOT_CONFIRM, encrypted_confirm.as_slice()),
+            (RELAY_CRYPTO_ACCEPT, encrypted_accept.as_slice()),
+        ] {
+            let frame = encode_relay_frame(step, payload).unwrap();
+            assert_eq!(decode_relay_frame(&frame).unwrap(), (step, payload));
+        }
+    }
+
+    #[tokio::test]
+    async fn tampered_relay_root_seed_ciphertext_fails_closed() {
+        let (initiator_identity, responder_identity) = identities();
+        let binding = "0000000000000001";
+        let (mut initiator, hello) =
+            RelayInitiatorHandshake::start(Arc::clone(&initiator_identity), binding).unwrap();
+        let (responder, response) =
+            RelayResponderHandshake::accept_hello(Arc::clone(&responder_identity), &hello).unwrap();
+        let final_message = initiator
+            .accept_response(
+                &response,
+                &responder_identity.device_id,
+                responder_identity.public_identity_key().to_bytes(),
+            )
+            .unwrap();
+        let trusted = RwLock::new(HashMap::from([(
+            initiator_identity.device_id.clone(),
+            initiator_identity.public_identity_key().to_bytes(),
+        )]));
+        let (_, _, mut encrypted_seed) = responder
+            .accept_final(&final_message, &trusted)
+            .await
+            .unwrap();
+        encrypted_seed[0] ^= 0x40;
+        assert!(matches!(
+            initiator.accept_root_seed(&encrypted_seed),
+            Err(CryptoHandshakeError::Failed)
+        ));
     }
 
     #[test]
@@ -909,6 +1382,42 @@ mod tests {
         let (peer_id, peer_key) =
             parse_proof_identity(&final_payload, 1, &responder, binding).unwrap();
         verify_proof_signature(&final_payload, &peer_id, binding, &peer_key).unwrap();
-        initiator.finish(binding.to_string()).unwrap().root_key
+        complete_root_exchange(initiator, responder, binding.to_string(), responder_binding)
+            .0
+            .root_key
+    }
+
+    fn completed_identity_handshake() -> (NoiseHandshake, NoiseHandshake, String) {
+        let (initiator_identity, responder_identity) = identities();
+        let binding = "0000000000000001".to_string();
+        let mut initiator = NoiseHandshake::new(initiator_identity, true).unwrap();
+        let mut responder = NoiseHandshake::new(responder_identity, false).unwrap();
+        let hello = initiator.write(&hello_payload(&binding).unwrap()).unwrap();
+        let responder_binding = parse_hello(&responder.read(&hello).unwrap()).unwrap();
+        let response = responder
+            .write(&proof_payload_with_signature(&responder, 2, &responder_binding).unwrap())
+            .unwrap();
+        let _ = initiator.read(&response).unwrap();
+        let final_message = initiator
+            .write(&proof_payload_with_signature(&initiator, 1, &binding).unwrap())
+            .unwrap();
+        let _ = responder.read(&final_message).unwrap();
+        (initiator, responder, binding)
+    }
+
+    fn complete_root_exchange(
+        initiator: NoiseHandshake,
+        responder: NoiseHandshake,
+        initiator_binding: String,
+        responder_binding: String,
+    ) -> (SessionCryptoMaterial, SessionCryptoMaterial) {
+        let initiator = initiator.into_established(initiator_binding).unwrap();
+        let responder = responder.into_established(responder_binding).unwrap();
+        let (responder, encrypted_seed) = responder.begin_responder().unwrap();
+        let (initiator, encrypted_confirm) = initiator.accept_root_seed(&encrypted_seed).unwrap();
+        let (encrypted_accept, responder_material) =
+            responder.accept_confirm(&encrypted_confirm).unwrap();
+        let initiator_material = initiator.accept(&encrypted_accept).unwrap();
+        (initiator_material, responder_material)
     }
 }

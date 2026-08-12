@@ -1259,10 +1259,12 @@ dependencies = [
  "serde_json",
  "sha2",
  "snow",
+ "subtle",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

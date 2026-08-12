@@ -47,9 +47,11 @@
   migration atomically swaps the active carrier before Delivery recovery, and
   public peer/route events expose `RouteTopology × RouteTransport` metadata.
 - Plan 3 Step 4 now installs Session application roots only after an authenticated
-  `Noise_XX_25519_AESGCM_SHA256` exchange. Fresh ephemeral X25519 material is
-  identity-bound by the pinned Ed25519 proof; QUIC, Relay, TCP, and WebSocket
-  carriers use the same Session crypto owner. Production nonces are structured
+  `Noise_XX_25519_AESGCM_SHA256` exchange and the v3 post-handshake export.
+  After pinned identity proof, Noise TransportState protects a fresh random
+  RootSeed plus RootConfirm/Accept; the transcript hash is context, not secret
+  root material. QUIC, Relay, TCP, and WebSocket carriers use the same Session
+  crypto owner. Production nonces are structured
   epoch/direction prefixes plus monotonic counters, bounded key rotation is
   enforced, and missing E2EE context returns an error instead of silently
   downgrading to plaintext. See `docs/adr/ADR-028-forward-secret-session-e2ee.md`.

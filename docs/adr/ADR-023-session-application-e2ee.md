@@ -25,10 +25,12 @@ forward-secret Noise agreement documented in ADR-028.
 - E2EE is the protobuf zero value and therefore the secure default. Clear
   application payloads require an explicit `CryptoModeCode::None` request.
 - E2EE installs a Session root only after the authenticated
-  `Noise_XX_25519_AESGCM_SHA256` handshake. Fresh ephemeral X25519 material
-  provides forward secrecy; the pinned Ed25519 DeviceIdentity signs the peer,
-  protocol version, capability, Noise static key, and logical Session binding.
-  The root is expanded into directional AES-256-GCM keys. See
+  `Noise_XX_25519_AESGCM_SHA256` handshake and v3 Root exchange. Fresh
+  ephemeral X25519 material provides forward secrecy; the pinned Ed25519
+  DeviceIdentity signs the peer, protocol version, capability, Noise static
+  key, and logical Session binding. After identity proof, Noise TransportState
+  protects a fresh CSPRNG RootSeed, RootConfirm, and final Accept. The root is
+  expanded into directional AES-256-GCM keys. See
   [ADR-028](ADR-028-forward-secret-session-e2ee.md) for the threat model,
   identity assumptions, and rejected IK/static alternatives.
 - Each E2EE envelope carries a version, suite, key epoch, structured nonce
@@ -40,8 +42,9 @@ forward-secret Noise agreement documented in ADR-028.
   and retry invokes the current context and gets a new nonce. Ciphertext is
   never persisted in Delivery recovery state.
 - Channel `DataMessage` payloads use the context on QUIC, Relay, TCP, and
-  WebSocket. Relay forwards the three Noise handshake messages only as an
-  opaque `crypto_handshake` control and never sees the root or plaintext.
+  WebSocket. Relay forwards the three Noise handshake plus RootSeed,
+  RootConfirm, and Accept ciphertexts only as opaque `crypto_handshake`
+  controls and never sees RootSeed plaintext, the root, or business plaintext.
 - Relay file offers no longer carry `content_key` or `nonce_prefix`. The
   encrypted offer carries the sender's logical Session key; file chunks use
   the same Session context and AAD binds the transfer, manifest, and chunk

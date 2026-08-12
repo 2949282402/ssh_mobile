@@ -92,6 +92,15 @@ flowchart LR
 - `packages/core/connection_core/` is the Connection data boundary. `AppRuntime` creates exactly one `ConnectionDatabase`, `ConnectionRepository`, `CredentialRepository`, and Host Key capability; the database stores no password/private-key columns, and the module uses a new `connection.sqlite` baseline. `packages/features/feature_connection/` consumes only the Core repositories and injected runtime/verification contracts. `apps/ssh_mobile_full/lib/app/connection_feature_adapters.dart` injects the Core repositories and runtime contracts; old App paths remain non-owning compatibility bridges and are not a second Feature data API.
 - `packages/infrastructure/network_transport/` is the App Scope network boundary. `AppRuntimeFactory` creates one lazy `NetworkRuntime`, `AppRuntime` disposes it after SSH/SFTP stop, and Features request only public Capability contracts. The public `NetworkRuntime.diagnostics` reports the ready Capabilities and native handles directly owned by the Facade; it reports zero active connections until a protocol Owner registers them. The package currently wraps the existing native v1 handle; it does not add a second TCP/UDP/QUIC/WebRTC implementation.
 - Plan 3 Step 2 keeps Realtime queue acceptance separate from command completion. `NetworkRealtimeGateway` returns a `NativeCommandTicket`; the App Shell `AppRealtimeSessionBackend` correlates bounded pending `commandId` entries with `NativeCommandResultEvent`, applies a result timeout, and cancels pending commands and subscriptions on dispose. Realtime session states remain native-state-event driven; a successful stop command does not become `stopped` until native reports `closed`.
+- The native application E2EE handshake is wire-incompatible v3 only. After
+  mutual pinned-identity authentication, `snow::TransportState` carries a fresh
+  responder-generated 32-byte `RootSeed`, an Application Root confirmation,
+  and the final acceptance. The handshake hash is transcript salt/context only
+  and must never be the Application Root's secret input. QUIC, TCP, WebSocket,
+  and Relay finish this exchange before reporting the Session connected; Relay
+  forwards six opaque stages and never sees RootSeed plaintext. Route migration
+  may authenticate a new carrier but retains the existing Session-owned
+  `CryptoContext`, key epoch, and counters.
 - `native/network_core/` keeps Delivery state independent from any concrete Connection. `DeliveryManager` separates active incoming handlers and ordered-buffer records from processed dedup history; dedup TTL/LRU may prune only processed history, while application ACK timeout and explicit Session close own active-state release. Strict ordered timeout fails the channel without skipping Sequence, and direct native changes must preserve the invariant between `incoming_active` and `reorder_buffer`.
 - `packages/infrastructure/ssh_core/` is the App Scope SSH boundary. Its public
   `SshSessionManager`, `SshSessionLease`, Session Pool, Runtime Adapter, Client,
