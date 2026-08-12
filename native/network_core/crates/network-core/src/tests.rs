@@ -426,16 +426,16 @@ async fn run_fake_relay(
             return;
         }
         let (outbound_tx, mut outbound_rx) = mpsc::channel::<Message>(32);
-        let _ = tokio::spawn(async move {
+        std::mem::drop(tokio::spawn(async move {
             while let Some(message) = outbound_rx.recv().await {
                 if writer.send(message).await.is_err() {
                     break;
                 }
             }
-        });
+        }));
         let incoming_tx = incoming_tx.clone();
         let sender_id = device_id.to_string();
-        let _ = tokio::spawn(async move {
+        std::mem::drop(tokio::spawn(async move {
             let mut reader = reader;
             while let Some(result) = reader.next().await {
                 let Ok(message) = result else {
@@ -449,7 +449,7 @@ async fn run_fake_relay(
                     break;
                 }
             }
-        });
+        }));
         outbound.insert(device_id.to_string(), outbound_tx);
     }
     drop(incoming_tx);

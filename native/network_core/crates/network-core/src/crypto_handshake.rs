@@ -189,16 +189,16 @@ impl EstablishedNoise {
         let mut root_seed = Zeroizing::new([0u8; ROOT_SEED_BYTES]);
         OsRng.fill_bytes(root_seed.as_mut());
         let root_key = Zeroizing::new(derive_application_root(
-            &*root_seed,
+            &root_seed,
             &self.handshake_hash,
             &self.session_binding,
         )?);
         let expected_confirm = Zeroizing::new(derive_root_confirm(
-            &*root_key,
+            &root_key,
             &self.handshake_hash,
             &self.session_binding,
         )?);
-        let encrypted_seed = self.encrypt_exchange(ROOT_EXCHANGE_ROOT_SEED, &*root_seed)?;
+        let encrypted_seed = self.encrypt_exchange(ROOT_EXCHANGE_ROOT_SEED, root_seed.as_ref())?;
         Ok((
             ResponderRootExchange {
                 noise: self,
@@ -219,16 +219,17 @@ impl EstablishedNoise {
         let root_seed = self
             .decrypt_fixed_exchange::<ROOT_SEED_BYTES>(ROOT_EXCHANGE_ROOT_SEED, encrypted_seed)?;
         let root_key = Zeroizing::new(derive_application_root(
-            &*root_seed,
+            &root_seed,
             &self.handshake_hash,
             &self.session_binding,
         )?);
         let confirm = Zeroizing::new(derive_root_confirm(
-            &*root_key,
+            &root_key,
             &self.handshake_hash,
             &self.session_binding,
         )?);
-        let encrypted_confirm = self.encrypt_exchange(ROOT_EXCHANGE_ROOT_CONFIRM, &*confirm)?;
+        let encrypted_confirm =
+            self.encrypt_exchange(ROOT_EXCHANGE_ROOT_CONFIRM, confirm.as_ref())?;
         Ok((
             InitiatorRootExchange {
                 noise: self,
@@ -307,7 +308,7 @@ impl ResponderRootExchange {
             ROOT_EXCHANGE_ROOT_CONFIRM,
             encrypted_confirm,
         )?;
-        if !bool::from((&confirm[..]).ct_eq(&self.expected_confirm[..])) {
+        if !bool::from(confirm[..].ct_eq(&self.expected_confirm[..])) {
             return Err(CryptoHandshakeError::Failed);
         }
         let encrypted_accept = noise.encrypt_exchange(ROOT_EXCHANGE_ACCEPT, &[])?;
