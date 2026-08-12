@@ -11,10 +11,19 @@
 ## Automated Results
 
 Native network, Relay, workspace Dart, Flutter App/Terminal, and Android/Windows
-debug checks were refreshed at the latest HEAD. Coverage, release signing, and
-macOS/iOS rows retain the most recent full release-chain evidence from
-2026-07-10; they were not re-run in this native-only change, and no frontend or
-client business source was modified.
+debug checks were refreshed by the successful main GitHub Actions run recorded below.
+Coverage and release signing retain the most recent full release-chain evidence from
+2026-07-10; no frontend or client business source was modified.
+
+GitHub Actions main evidence:
+
+- HEAD: `d40c532189c1d41bdb714310ea2ae75e11ec506e`
+- Workflow: `Flutter`, Run `#31565893203`
+- Result: `success`
+- Jobs: `sdk-dart-quality`, `workspace-quality`, `architecture-check`,
+  `relay-quality`, `native-network-quality`, `analyze-and-test`, `android-build`,
+  `windows-build`, `macos-build`, `ios-build`, `terminal-smoke-build`, and
+  `front-quality` all succeeded.
 
 | Check | Result |
 | --- | --- |
@@ -41,7 +50,7 @@ client business source was modified.
 | WebRTC DataChannel E2E | Privileged localhost test passed between two native driver owners and a `network-core` supervisor test passed with two `realtime:<id>` task groups; payload delivery was verified after real ICE and DTLS/SCTP negotiation |
 | WebRTC TURN fallback | A pinned local coturn 4.6.3 server passed the relay-only DataChannel test with direct ICE disabled; the native GitHub job starts the same image and runs the ignored TURN test explicitly |
 | Native WebRTC FFI boundary | Existing protobuf command/event buffers carry Start/Stop/Signal commands and Realtime state/signal events; `ssh_mobile_network_native` now exposes bounded typed commands/results/state/signaling through the helper-isolate stream; `network-ffi` round-trip coverage passed without exposing a raw WebRTC handle or changing Flutter/client code |
-| Flutter Realtime SDK boundary | `network_sdk.RealtimeClient` exposes only `RealtimeSession` lifecycle/state/media contracts; App Shell maps native events and keeps SDP/ICE/command-result details internal. `network_sdk` and `network_transport` analyzers passed; local WSL `flutter_tester` could not complete its loopback handshake, so widget-test execution remains a CI verification item |
+| Flutter Realtime SDK boundary | `network_sdk.RealtimeClient` exposes only `RealtimeSession` lifecycle/state/media contracts; App Shell maps native events and keeps SDP/ICE/command-result details internal. `network_sdk` and `network_transport` analyzers and package tests passed in GitHub Actions Run `#31565893203`; local WSL `flutter_tester` still cannot complete its loopback handshake, but CI verification is green |
 | Generic native transports | `network-transport` TCP/UDP/WebSocket loopbacks and `network-core::connection::GenericConnection` lifecycle/size/backpressure/shutdown tests passed; generic transports now enter the composed native Route boundary |
 | Composed Route fallback | `RouteTopology × RouteTransport` removes flat transport/topology combinations; blocked QUIC selects TCP for `ReliableStream`, blocked UDP selects WebSocket/WSS only for a reliable-message intent, and UDP cannot silently carry reliable delivery |
 | v1 static compatibility audit | No old transport, Dart Relay data-plane, protocol fallback, or v2/v3/v4 network symbols found |
@@ -57,7 +66,7 @@ client business source was modified.
 | Drift generated database code | Deterministic on a second build |
 | Shared Codex/Claude maintenance skill | Synchronized |
 | Web manifest JSON and Git diff checks | Passed |
-| GitHub Actions for `codex/sdk` | Not verified on this host; the workflow now triggers once for every branch push, with domain tests and platform builds split into independent jobs |
+| GitHub Actions main | Run `#31565893203` at HEAD `d40c532189c1d41bdb714310ea2ae75e11ec506e` completed with `success`; all 12 independent quality, test, and platform-build jobs passed |
 
 ## Commands
 
@@ -155,10 +164,6 @@ in `docs/RELEASE_CHECKLIST.md` before distribution.
 - Step 9 physical Fault Matrix scenarios G/I/J: Wi-Fi-to-4G/5G switching,
   background/foreground recovery, and 1 GiB+ file resume on real devices
 - iOS device behavior and signed archive creation
-- macOS and unsigned iOS jobs in the updated GitHub Actions workflow
-- GitHub Actions for `codex/sdk`: the new push-triggered workflow was not
-  observed from this local validation; remote Actions execution is required to
-  verify all independent test and platform-build jobs
 - TalkBack and VoiceOver behavior on physical devices
 - Store metadata, privacy policy, permanent application identifiers, and legal
   license choice
