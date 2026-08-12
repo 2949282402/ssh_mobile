@@ -79,7 +79,14 @@ void main(List<String> args) async {
       throw UnsupportedError('Target OS $targetOS is not supported yet');
     }
 
-    final cargoExecutable = Platform.environment['CARGO'] ?? 'cargo';
+    final cargoBinDirectory = _locateCargoBinDirectory();
+    final cargoExecutable =
+        Platform.environment['CARGO'] ??
+        (cargoBinDirectory != null
+            ? File(
+                '${cargoBinDirectory.path}${Platform.pathSeparator}${Platform.isWindows ? "cargo.exe" : "cargo"}',
+              ).path
+            : 'cargo');
 
     final cargoArgs = [
       'build',
@@ -287,16 +294,25 @@ Directory? _locateCargoBinDirectory() {
     return File(explicitCargo).parent;
   }
 
+  final candidateEntries = <String>[];
   final pathValue = Platform.environment['PATH'];
-  if (pathValue == null || pathValue.isEmpty) {
-    return null;
+  if (pathValue != null && pathValue.isNotEmpty) {
+    final separator = Platform.isWindows ? ';' : ':';
+    candidateEntries.addAll(pathValue.split(separator));
   }
 
-  final separator = Platform.isWindows ? ';' : ':';
+  final userHome =
+      Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'];
+  if (userHome != null && userHome.isNotEmpty) {
+    candidateEntries.add(
+      '$userHome${Platform.pathSeparator}.cargo${Platform.pathSeparator}bin',
+    );
+  }
+
   final executableNames = Platform.isWindows
       ? const ['cargo.exe', 'cargo.bat']
       : const ['cargo'];
-  for (final rawEntry in pathValue.split(separator)) {
+  for (final rawEntry in candidateEntries) {
     final entry = rawEntry.trim();
     if (entry.isEmpty) continue;
     for (final executableName in executableNames) {

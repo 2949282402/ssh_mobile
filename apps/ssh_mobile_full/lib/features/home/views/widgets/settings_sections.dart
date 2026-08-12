@@ -346,8 +346,7 @@ class _FeatureSettingsSection extends StatelessWidget {
           title: Text(strings.sftpSettings),
           trailing: const Icon(Icons.chevron_right_rounded, size: 18),
           onTap: () {
-            final connectionViewModel =
-                context.read<ConnectionViewModel?>();
+            final connectionViewModel = context.read<ConnectionViewModel?>();
             Navigator.push(
               context,
               MaterialPageRoute(
