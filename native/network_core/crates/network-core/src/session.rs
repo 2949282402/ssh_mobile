@@ -4,8 +4,8 @@ use network_protocol::RouteType;
 use network_quic::{send_channel_frame, ChannelFrameKind};
 use network_relay::RelayClient;
 use quinn::{Connection, VarInt};
+use rand::{rngs::OsRng, RngCore};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -16,7 +16,9 @@ use crate::connection::{
 
 /// 标识一次跨 Connection 的业务会话。
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct SessionId(u64);
+pub(crate) struct SessionId([u8; SESSION_ID_BYTES]);
+
+pub(crate) const SESSION_ID_BYTES: usize = 16;
 
 /// Session 自身的生命周期；Connection 断开只会让 Session 进入
 /// Disconnected，而不会销毁 Session。
@@ -125,14 +127,12 @@ impl ActiveRoute {
 
 /// App Scope 内唯一的 Session owner。
 pub(crate) struct SessionManager {
-    next_id: AtomicU64,
     sessions: RwLock<HashMap<String, Session>>,
 }
 
 impl SessionManager {
     pub(crate) fn new() -> Self {
         Self {
-            next_id: AtomicU64::new(1),
             sessions: RwLock::new(HashMap::new()),
         }
     }
@@ -147,7 +147,7 @@ impl SessionManager {
                     return ConnectDecision::InProgress(session.id);
                 }
                 SessionState::Closed => {
-                    let mut replacement = self.new_session();
+                    let mut replacement = Self::new_session();
                     replacement.state = SessionState::Connecting;
                     let id = replacement.id;
                     *session = replacement;
@@ -166,7 +166,7 @@ impl SessionManager {
             }
         }
 
-        let mut session = self.new_session();
+        let mut session = Self::new_session();
         session.state = SessionState::Connecting;
         let id = session.id;
         sessions.insert(peer_id.to_string(), session);
@@ -186,7 +186,7 @@ impl SessionManager {
             Some(session) => session,
             None if expected_session_id.is_none() => sessions
                 .entry(peer_id.to_string())
-                .or_insert_with(|| self.new_session()),
+                .or_insert_with(Self::new_session),
             None => {
                 drop(sessions);
                 connection.close(VarInt::from_u32(0), b"session replaced");
@@ -231,7 +231,7 @@ impl SessionManager {
             Some(session) => session,
             None if expected_session_id.is_none() => sessions
                 .entry(peer_id.to_string())
-                .or_insert_with(|| self.new_session()),
+                .or_insert_with(Self::new_session),
             None => {
                 drop(sessions);
                 let _ = connection.close().await;
@@ -639,9 +639,9 @@ impl SessionManager {
             .map(|session| session.state)
     }
 
-    fn new_session(&self) -> Session {
+    fn new_session() -> Session {
         Session {
-            id: SessionId(self.next_id.fetch_add(1, Ordering::Relaxed)),
+            id: SessionId::random(),
             state: SessionState::Idle,
             route: None,
         }
@@ -649,9 +649,15 @@ impl SessionManager {
 }
 
 impl SessionId {
+    fn random() -> Self {
+        let mut bytes = [0u8; SESSION_ID_BYTES];
+        OsRng.fill_bytes(&mut bytes);
+        Self(bytes)
+    }
+
     /// Delivery 使用独立的 Session key，避免把 peer_id 错当成 SessionId。
     pub(crate) fn wire_key(self) -> String {
-        format!("{:016x}", self.0)
+        hex::encode(self.0)
     }
 }
 
@@ -661,6 +667,32 @@ mod tests {
     use network_nat::PathManager;
     use network_quic::QuicEndpointManager;
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn new_session_ids_are_random_128_bit_lowercase_hex() {
+        let manager = SessionManager::new();
+        let first = match manager.begin_connect("peer-a").await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        let second = match manager.begin_connect("peer-b").await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        let first_key = first.wire_key();
+        let second_key = second.wire_key();
+
+        assert_eq!(first_key.len(), SESSION_ID_BYTES * 2);
+        assert_eq!(second_key.len(), SESSION_ID_BYTES * 2);
+        assert!(first_key
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
+        assert!(second_key
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
+        assert_ne!(first, second);
+        assert_ne!(first_key, second_key);
+    }
 
     #[tokio::test]
     async fn transient_disconnect_keeps_session_id_for_reconnect() {

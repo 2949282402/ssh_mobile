@@ -802,9 +802,13 @@ fn decode_binary_frame(frame: &[u8]) -> Result<RelayEvent, RelayError> {
 
 /// 校验会话标识是 16 字节十六进制值。
 fn validate_session_id(session_id: &str) -> Result<(), RelayError> {
-    if session_id.len() != 32 || !session_id.bytes().all(|value| value.is_ascii_hexdigit()) {
+    if session_id.len() != 32
+        || !session_id
+            .bytes()
+            .all(|value| value.is_ascii_hexdigit() && !value.is_ascii_uppercase())
+    {
         return Err(RelayError::InvalidConfiguration(
-            "session ID must be 32 hexadecimal characters".into(),
+            "session ID must be 32 lowercase hexadecimal characters".into(),
         ));
     }
     Ok(())
@@ -946,5 +950,12 @@ mod tests {
             [0u8; 32],
         )
         .is_err());
+    }
+
+    #[test]
+    fn session_ids_require_32_lowercase_hex_characters() {
+        assert!(validate_session_id("00112233445566778899aabbccddeeff").is_ok());
+        assert!(validate_session_id("00112233445566778899AABBCCDDEEFF").is_err());
+        assert!(validate_session_id("00112233445566778899aabbccddeef").is_err());
     }
 }
