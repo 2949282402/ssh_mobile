@@ -15,6 +15,32 @@ debug checks were refreshed by the successful main GitHub Actions run recorded b
 Coverage and release signing retain the most recent full release-chain evidence from
 2026-07-10; the current Step 2 source-level validation is recorded separately below.
 
+## Plan 3 Final Validation — 2026-08-12
+
+The current Plan 3 HEAD is `f11337c`. Native and repository-level validation passed
+locally as follows:
+
+- Rust: `cargo fmt --all -- --check`, locked workspace Clippy, and locked workspace
+  tests all passed.
+- WebRTC TURN: pinned `coturn/coturn:4.6.3` passed the ignored relay-only
+  DataChannel test; the temporary container was removed after validation.
+- Go Relay: read-only Docker execution with `golang:1.24-alpine` produced no
+  `gofmt` output, and both `go vet ./...` and `go test ./...` passed.
+- Dart formatting: the direct equivalent of the Melos format command checked all
+  21 workspace members with 0 changes. Direct package analysis passed for all 21
+  members, and root, Full App, and Terminal `pub get` completed successfully.
+- Repository gates: architecture, compatibility, duplicate implementation,
+  module dependency, resource owner, file-size report, and `git diff --check`
+  passed. The file-size command remains an informational governance report.
+
+The exact Melos wrapper could not start on this host because its package command
+invocation reaches `/usr/bin/env bash\r`; the direct format/analyze equivalents
+above were used instead. Flutter test execution for the Native Dart package, Full
+App, and Terminal remains blocked before test loading by the WSL
+`flutter_tester` loopback error `HttpException: Connection closed before full
+header was received`. The required GitHub Actions gate was not rerun from this
+local session.
+
 GitHub Actions main evidence:
 
 - HEAD: `d40c532189c1d41bdb714310ea2ae75e11ec506e`
@@ -49,7 +75,7 @@ GitHub Actions main evidence:
 | Docker Relay integration harness | `docker compose --env-file .env up -d --build`, functional Candidate/WebRTC signaling plus file control/binary loopback, Caddy restart `recover`, and Relay process restart `restart` all passed; the harness remains under `relay/cmd/relay_smoke/` |
 | Network Fault Matrix (Step 9) | Fixed A–L matrix is maintained in `docs/NETWORK_FAULT_MATRIX.md`; the native A–K evidence remains as recorded, while the Realtime command/result and delayed-close scenario is covered by the Step 2 Dart tests and awaits a working Flutter tester/CI run; physical G/I and 1 GiB+ device transfer remain unverified |
 | Relay channel control | `channel_message`/`channel_ack` opaque forwarding integration test passed in `go test ./...`; Rust Relay codec tests passed |
-| Go Relay | The prior CI baseline passed `gofmt -l .`, `go vet ./...`, and `go test ./...`; the Step 4 local rerun was not available because this host has no `go` executable. The only Go change is the bounded opaque `crypto_handshake` control forwarding branch, which must be rechecked in CI or a Go-enabled environment. |
+| Go Relay | The prior CI baseline and the current Step 4 local Docker rerun passed `gofmt -l .`, `go vet ./...`, and `go test ./...`; the current Go source adds only the bounded opaque `crypto_handshake` control forwarding branch. |
 | Native WebRTC runtime | `network-webrtc` uses locked stable `rtc 0.9.1`; `network-core::RealtimeManager` owns the WebRTC Peer beside QUIC/Relay, authenticated Relay forwards bounded versioned Offer/Answer/ICE/Restart/Close controls, and `RealtimeIoDriver` now owns the UDP/ICE/DTLS/SRTP/SCTP/DataChannel/timer pump under `RuntimeTaskSupervisor` |
 | WebRTC DataChannel E2E | Privileged localhost test passed between two native driver owners and a `network-core` supervisor test passed with two `realtime:<id>` task groups; payload delivery was verified after real ICE and DTLS/SCTP negotiation |
 | WebRTC TURN fallback | A pinned local coturn 4.6.3 server passed the relay-only DataChannel test with direct ICE disabled; the native GitHub job starts the same image and runs the ignored TURN test explicitly |
