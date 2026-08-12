@@ -27,7 +27,7 @@ use crate::events::{
 };
 use crate::runtime::{
     RuntimeState, INCOMING_APPROVAL_TIMEOUT, MAX_PENDING_INCOMING_TRANSFERS,
-    RECONNECT_INITIAL_BACKOFF, TRANSFER_COMPLETION_TIMEOUT,
+    TRANSFER_COMPLETION_TIMEOUT,
 };
 
 /// 当前一次传输尝试使用的 Route handle。它只存在于 dispatcher/worker，
@@ -99,7 +99,22 @@ impl TransferDispatcher {
     ) -> Result<(), ProtocolError> {
         match route {
             TransferRoute::QuicDirect(connection) => {
-                tokio::spawn(send_file(connection, transfer, Arc::clone(&self.state)));
+                let session_key = transfer.session_id.clone();
+                if self
+                    .state
+                    .task_supervisor
+                    .spawn_session(
+                        session_key,
+                        "file-send",
+                        send_file(connection, transfer, Arc::clone(&self.state)),
+                    )
+                    .is_none()
+                {
+                    return Err(protocol_error(
+                        NetworkErrorCode::Cancelled,
+                        "network runtime is stopping",
+                    ));
+                }
                 Ok(())
             }
             TransferRoute::Relay => {
@@ -118,11 +133,22 @@ impl TransferDispatcher {
                             &transfer.peer_id,
                         )
                     })?;
-                tokio::spawn(crate::relay::send_file_over_relay(
-                    peer,
-                    transfer,
-                    Arc::clone(&self.state),
-                ));
+                let session_key = transfer.session_id.clone();
+                if self
+                    .state
+                    .task_supervisor
+                    .spawn_session(
+                        session_key,
+                        "relay-file-send",
+                        crate::relay::send_file_over_relay(peer, transfer, Arc::clone(&self.state)),
+                    )
+                    .is_none()
+                {
+                    return Err(protocol_error(
+                        NetworkErrorCode::Cancelled,
+                        "network runtime is stopping",
+                    ));
+                }
                 Ok(())
             }
         }
@@ -292,12 +318,16 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
         }
         state.transfers.update_progress(&transfer_id, offset).await;
         let (progress_tx, progress_rx) = unbounded_channel();
-        tokio::spawn(forward_progress(
-            transfer_id.clone(),
-            progress_rx,
-            state.event_tx.clone(),
-            state.transfers.clone(),
-        ));
+        let _ = state.task_supervisor.spawn_session(
+            transfer.session_id.clone(),
+            "file-send-progress",
+            forward_progress(
+                transfer_id.clone(),
+                progress_rx,
+                state.event_tx.clone(),
+                state.transfers.clone(),
+            ),
+        );
         let cancellation = state.transfers.cancellation_token(&transfer_id).await;
         stream_send_file_cancellable(
             &transfer.source_path,
@@ -331,7 +361,6 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
         {
             // 保留源文件、TransferId、SessionId 和接收端的 `.part`，等待
             // 同一逻辑 Session 的下一次 Route Ready。
-            schedule_transfer_resume(Arc::clone(&state), peer_id);
             tracing::debug!(transfer_id = %transfer_id, error = %error, "native QUIC transfer paused for resume");
         }
         Err(error) => {
@@ -367,7 +396,11 @@ pub(crate) async fn resume_transfers_for_peer(state: Arc<RuntimeState>, peer_id:
                 .take_resumable_for_session(&peer_id, &session_id.wire_key())
                 .await
             {
-                tokio::spawn(send_file(connection.clone(), transfer, Arc::clone(&state)));
+                let _ = state.task_supervisor.spawn_session(
+                    transfer.session_id.clone(),
+                    "file-send-resume",
+                    send_file(connection.clone(), transfer, Arc::clone(&state)),
+                );
             }
         }
         Ok(TransferRoute::Relay) => {
@@ -400,14 +433,6 @@ pub(crate) async fn resume_relay_transfers(state: Arc<RuntimeState>) {
     }
 }
 
-/// 让暂停发生在 Connection Ready 事件之后也能触发一次恢复检查。
-pub(crate) fn schedule_transfer_resume(state: Arc<RuntimeState>, peer_id: String) {
-    tokio::spawn(async move {
-        tokio::time::sleep(RECONNECT_INITIAL_BACKOFF).await;
-        resume_transfers_for_peer(state, peer_id).await;
-    });
-}
-
 /// 校验传入申请，并等待接收方审批决定。
 pub(crate) async fn handle_incoming_file(
     peer_id: String,
@@ -425,6 +450,7 @@ pub(crate) async fn handle_incoming_file(
             .current_session_id(&peer_id)
             .await
             .ok_or_else(|| std::io::Error::other("logical Session is unavailable"))?;
+        let session_key = session_id.wire_key();
         if !state
             .transfers
             .register_incoming(manifest.clone(), peer_id.clone(), session_id.wire_key())
@@ -532,12 +558,16 @@ pub(crate) async fn handle_incoming_file(
             .cancellation_token(&manifest.transfer_id)
             .await;
         let (progress_tx, progress_rx) = unbounded_channel();
-        tokio::spawn(forward_progress(
-            manifest.transfer_id.clone(),
-            progress_rx,
-            state.event_tx.clone(),
-            state.transfers.clone(),
-        ));
+        let _ = state.task_supervisor.spawn_session(
+            session_key,
+            "file-receive-progress",
+            forward_progress(
+                manifest.transfer_id.clone(),
+                progress_rx,
+                state.event_tx.clone(),
+                state.transfers.clone(),
+            ),
+        );
         let local_path = stream_receive_file_cancellable(
             &manifest,
             &receive_directory,

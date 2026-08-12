@@ -85,7 +85,7 @@ fn stop_waits_for_accept_task_before_rebinding_loopback_port() {
 /// 以覆盖同一进程中的 listener 清理竞态。
 #[test]
 fn repeated_runtime_lifecycle_reuses_bound_port_without_retry() {
-    const ITERATIONS: usize = 16;
+    const ITERATIONS: usize = 100;
     let test_root = std::env::temp_dir().join(format!(
         "ssh-mobile-runtime-stress-{}",
         rand::random::<u64>()

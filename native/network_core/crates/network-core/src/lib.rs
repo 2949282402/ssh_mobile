@@ -15,6 +15,7 @@ mod realtime;
 mod relay;
 mod runtime;
 mod session;
+mod task_supervisor;
 mod transfer;
 
 pub use errors::NetworkError;

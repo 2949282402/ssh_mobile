@@ -97,14 +97,20 @@ pub(crate) async fn configure_runtime(
     *state.local_path_manager.write().await = Some(path_manager);
     *state.endpoint.write().await = Some(endpoint.clone());
     tracing::info!(%bound_address, "native UDP socket is shared by candidate discovery and QUIC");
+    let task_id = state
+        .task_supervisor
+        .spawn_runtime(
+            "quic-accept",
+            accept_connections(endpoint, Arc::clone(&state)),
+        )
+        .ok_or_else(|| {
+            protocol_error(NetworkErrorCode::Cancelled, "network runtime is stopping")
+        })?;
     let mut accept_task = state
         .accept_task
         .lock()
         .map_err(|_| protocol_error(NetworkErrorCode::QuicError, "accept task lock poisoned"))?;
-    *accept_task = Some(tokio::spawn(accept_connections(
-        endpoint,
-        Arc::clone(&state),
-    )));
+    *accept_task = Some(task_id);
     Ok(())
 }
 
@@ -228,7 +234,11 @@ pub(crate) async fn disconnect_peer(
             "peer_id is required",
         ));
     }
+    let session_id = state.sessions.current_session_id(&peer_id).await;
     state.sessions.close(&peer_id).await;
+    if let Some(session_id) = session_id {
+        state.cancel_session_tasks(session_id).await;
+    }
     state.direct_upgrade_tasks.write().await.remove(&peer_id);
     emit_peer_state(
         &state.event_tx,
@@ -389,12 +399,7 @@ pub(crate) async fn connect_peer(
             );
             crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
             crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
-            tokio::spawn(receive_file_streams(
-                peer_id.clone(),
-                connection.clone(),
-                Arc::clone(&state),
-            ));
-            tokio::spawn(receive_channel_streams(peer_id, connection, state));
+            spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
             Ok(())
         }
         Ok(ReadyRoute::Relay) => {
@@ -540,7 +545,8 @@ async fn connect_direct_candidates(
 /// candidates. The task owns no business state and exits when the Session is
 /// closed, replaced, or already promoted by another route.
 fn schedule_direct_upgrade(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
-    tokio::spawn(async move {
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let _ = supervisor.spawn_session(session_id.wire_key(), "direct-upgrade", async move {
         {
             let mut tasks = state.direct_upgrade_tasks.write().await;
             if tasks
@@ -692,12 +698,7 @@ async fn direct_upgrade_loop(state: Arc<RuntimeState>, peer_id: String, session_
                     .await;
                     crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
                         .await;
-                    tokio::spawn(receive_file_streams(
-                        peer_id.clone(),
-                        connection.clone(),
-                        Arc::clone(&state),
-                    ));
-                    tokio::spawn(receive_channel_streams(peer_id, connection, state));
+                    spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
                     return;
                 }
                 Err(error) => {
@@ -743,7 +744,8 @@ fn spawn_path_metrics_monitor(
     session_id: SessionId,
     connection: Connection,
 ) {
-    tokio::spawn(async move {
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let _ = supervisor.spawn_session(session_id.wire_key(), "path-metrics", async move {
         monitor_direct_path(state, peer_id, session_id, connection).await;
     });
 }
@@ -891,12 +893,7 @@ async fn migrate_direct_path(
     );
     crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
     crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
-    tokio::spawn(receive_file_streams(
-        peer_id.clone(),
-        replacement.clone(),
-        Arc::clone(&state),
-    ));
-    tokio::spawn(receive_channel_streams(peer_id, replacement, state));
+    spawn_session_receivers(Arc::clone(&state), peer_id, replacement, session_id);
     true
 }
 
@@ -997,7 +994,8 @@ fn candidate_kind_for(endpoint: SocketAddr) -> CandidateKind {
 pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeState>) {
     while let Some(incoming) = endpoint.accept().await {
         let state = Arc::clone(&state);
-        tokio::spawn(async move {
+        let supervisor = Arc::clone(&state.task_supervisor);
+        let _ = supervisor.spawn_runtime("incoming-quic-handshake", async move {
             let result = async {
                 let connection = incoming.await?;
                 let identity = state
@@ -1053,12 +1051,9 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                 }
                 crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
                     .await;
-                tokio::spawn(receive_channel_streams(
-                    peer_id.clone(),
-                    connection.clone(),
-                    Arc::clone(&state),
-                ));
-                receive_file_streams(peer_id, connection, Arc::clone(&state)).await;
+                if let Some(session_id) = state.sessions.current_session_id(&peer_id).await {
+                    spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
+                }
                 Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
             }
             .await;
@@ -1074,15 +1069,21 @@ pub(crate) async fn receive_file_streams(
     peer_id: String,
     connection: Connection,
     state: Arc<RuntimeState>,
+    session_id: SessionId,
 ) {
     loop {
         match connection.accept_bi().await {
             Ok((send, receive)) => {
                 let state = Arc::clone(&state);
                 let peer_id = peer_id.clone();
-                tokio::spawn(async move {
-                    crate::transfer::handle_incoming_file(peer_id, send, receive, state).await;
-                });
+                let supervisor = Arc::clone(&state.task_supervisor);
+                let _ = supervisor.spawn_session(
+                    session_id.wire_key(),
+                    "file-stream-receiver",
+                    async move {
+                        crate::transfer::handle_incoming_file(peer_id, send, receive, state).await;
+                    },
+                );
             }
             Err(_) => {
                 handle_connection_disconnect(&state, &peer_id, &connection).await;
@@ -1098,13 +1099,18 @@ pub(crate) async fn receive_channel_streams(
     peer_id: String,
     connection: Connection,
     state: Arc<RuntimeState>,
+    session_id: SessionId,
 ) {
     loop {
         match connection.accept_uni().await {
             Ok(mut receive) => {
                 let state = Arc::clone(&state);
                 let peer_id = peer_id.clone();
-                tokio::spawn(async move {
+                let supervisor = Arc::clone(&state.task_supervisor);
+                let _ = supervisor.spawn_session(
+                    session_id.wire_key(),
+                    "channel-stream-receiver",
+                    async move {
                     match read_channel_frame(&mut receive).await {
                         Ok((ChannelFrameKind::DataMessage, payload)) => {
                             if let Err(error) =
@@ -1126,7 +1132,8 @@ pub(crate) async fn receive_channel_streams(
                             tracing::debug!(peer_id = %peer_id, error = %error, "QUIC channel stream failed");
                         }
                     }
-                });
+                    },
+                );
             }
             Err(_) => {
                 handle_connection_disconnect(&state, &peer_id, &connection).await;
@@ -1134,6 +1141,30 @@ pub(crate) async fn receive_channel_streams(
             }
         }
     }
+}
+
+fn spawn_session_receivers(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    connection: Connection,
+    session_id: SessionId,
+) {
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let _ = supervisor.spawn_session(
+        session_id.wire_key(),
+        "file-receiver",
+        receive_file_streams(
+            peer_id.clone(),
+            connection.clone(),
+            Arc::clone(&state),
+            session_id,
+        ),
+    );
+    let _ = supervisor.spawn_session(
+        session_id.wire_key(),
+        "channel-receiver",
+        receive_channel_streams(peer_id, connection, Arc::clone(&state), session_id),
+    );
 }
 
 async fn handle_connection_disconnect(
@@ -1159,7 +1190,8 @@ async fn handle_connection_disconnect(
 
 /// 为一个 Session 建立唯一的自动重连任务。
 fn schedule_reconnect(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
-    tokio::spawn(async move {
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let _ = supervisor.spawn_session(session_id.wire_key(), "session-reconnect", async move {
         let should_start = {
             let mut tasks = state.reconnect_tasks.write().await;
             match tasks.get(&peer_id).copied() {

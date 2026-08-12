@@ -80,12 +80,22 @@ pub(crate) async fn start_send_message(
         .await
         .map_err(|error| delivery_error(&command.peer_id, error))?;
     ensure_retry_worker(Arc::clone(&state), command.peer_id.clone(), session_id).await;
-    tokio::spawn(deliver_pending_message(
-        state,
-        command.peer_id,
-        session_id,
-        message,
-    ));
+    let supervisor = Arc::clone(&state.task_supervisor);
+    if supervisor
+        .spawn_session(
+            session_id.wire_key(),
+            "delivery-send",
+            deliver_pending_message(state, command.peer_id.clone(), session_id, message),
+        )
+        .is_none()
+    {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::Cancelled,
+            "network runtime is stopping",
+            "send_message",
+            &command.peer_id,
+        ));
+    }
     Ok(())
 }
 
@@ -177,29 +187,49 @@ async fn ensure_retry_worker(state: Arc<RuntimeState>, peer_id: String, session_
     if !should_start {
         return;
     }
-    tokio::spawn(async move {
-        let session_key = session_id.wire_key();
-        loop {
-            if state.sessions.current_session_id(&peer_id).await != Some(session_id)
-                || !state.sessions.is_connected(&peer_id).await
-            {
-                break;
-            }
-            for message in state
-                .delivery
-                .retryable_messages(&session_key, Instant::now())
-                .await
-            {
-                deliver_pending_message(Arc::clone(&state), peer_id.clone(), session_id, message)
-                    .await;
-            }
-            tokio::time::sleep(DELIVERY_RETRY_POLL_INTERVAL).await;
-        }
+    let retry_state = Arc::clone(&state);
+    let retry_peer_id = peer_id.clone();
+    let task_started =
+        state
+            .task_supervisor
+            .spawn_session(session_id.wire_key(), "delivery-retry", async move {
+                let session_key = session_id.wire_key();
+                loop {
+                    if retry_state
+                        .sessions
+                        .current_session_id(&retry_peer_id)
+                        .await
+                        != Some(session_id)
+                        || !retry_state.sessions.is_connected(&retry_peer_id).await
+                    {
+                        break;
+                    }
+                    for message in retry_state
+                        .delivery
+                        .retryable_messages(&session_key, Instant::now())
+                        .await
+                    {
+                        deliver_pending_message(
+                            Arc::clone(&retry_state),
+                            retry_peer_id.clone(),
+                            session_id,
+                            message,
+                        )
+                        .await;
+                    }
+                    tokio::time::sleep(DELIVERY_RETRY_POLL_INTERVAL).await;
+                }
+                let mut tasks = retry_state.delivery_tasks.write().await;
+                if tasks.get(&retry_peer_id).copied() == Some(session_id) {
+                    tasks.remove(&retry_peer_id);
+                }
+            });
+    if task_started.is_none() {
         let mut tasks = state.delivery_tasks.write().await;
         if tasks.get(&peer_id).copied() == Some(session_id) {
             tasks.remove(&peer_id);
         }
-    });
+    }
 }
 
 async fn send_data_message(

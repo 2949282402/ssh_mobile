@@ -36,6 +36,12 @@ synthetic success.
 - `SessionBoundOrdered` delivery is also native-owned: only the expected
   sequence reaches the application, while later messages stay in bounded
   reorder state until the current application ACK releases the next one.
+- All native background work is owned by `RuntimeTaskSupervisor`: the root
+  cancellation scope owns runtime tasks, and each logical Session owns a
+  cancellable child group for reconnect, direct-upgrade, path metrics,
+  Delivery retry, channel receivers, and file receivers. `stop()` cancels the
+  root, closes Relay/WebRTC/QUIC resources, and waits for every registered task
+  before returning.
 - Runtime disposal is ordered as `Running -> Stopping -> Stopped -> Destroyed`;
   stopping is idempotent and no command is accepted after stopping begins.
 - `NativeNetworkRuntime.boundLocalPort` is a read-only diagnostic for controlled

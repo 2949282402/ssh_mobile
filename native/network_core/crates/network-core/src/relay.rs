@@ -124,11 +124,15 @@ pub(crate) async fn configure_relay_for_state(
         .map_err(|error| protocol_error(NetworkErrorCode::RelayError, error.to_string()))?;
     *state.relay_config.write().await = Some(config);
     *state.relay.write().await = Some(Arc::clone(&relay));
-    tokio::spawn(handle_relay_events(
-        events,
-        Arc::clone(&state),
-        Arc::clone(&relay),
-    ));
+    state
+        .task_supervisor
+        .spawn_runtime(
+            "relay-events",
+            handle_relay_events(events, Arc::clone(&state), Arc::clone(&relay)),
+        )
+        .ok_or_else(|| {
+            protocol_error(NetworkErrorCode::Cancelled, "network runtime is stopping")
+        })?;
     crate::transfer::resume_relay_transfers(state).await;
     Ok(())
 }
@@ -168,13 +172,16 @@ async fn connect_relay_client(
 /// 只在 socket 意外结束时启动一个共享重连任务；显式 DisconnectRelay 会先清除配置，
 /// 因此不会被这个后台任务重新拉起。
 fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
-    tokio::spawn(async move {
-        let mut task = state.relay_reconnect_task.lock().await;
-        if task.is_some() {
-            return;
-        }
-        let reconnect_state = Arc::clone(&state);
-        let handle = tokio::spawn(async move {
+    if state
+        .relay_reconnect_active
+        .swap(true, std::sync::atomic::Ordering::AcqRel)
+    {
+        return;
+    }
+    let reconnect_state = Arc::clone(&state);
+    let task_id = state
+        .task_supervisor
+        .spawn_runtime("relay-reconnect", async move {
             let mut backoff = crate::runtime::RECONNECT_INITIAL_BACKOFF;
             loop {
                 tokio::time::sleep(backoff).await;
@@ -198,11 +205,14 @@ fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
                             network_protocol::RelayConnectionState::Connected,
                             None,
                         );
-                        tokio::spawn(handle_relay_events(
-                            events,
-                            Arc::clone(&reconnect_state),
-                            Arc::clone(&relay),
-                        ));
+                        let _ = reconnect_state.task_supervisor.spawn_runtime(
+                            "relay-events",
+                            handle_relay_events(
+                                events,
+                                Arc::clone(&reconnect_state),
+                                Arc::clone(&relay),
+                            ),
+                        );
                         crate::transfer::resume_relay_transfers(Arc::clone(&reconnect_state)).await;
                         break;
                     }
@@ -215,18 +225,35 @@ fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
                     }
                 }
             }
-            let mut task = reconnect_state.relay_reconnect_task.lock().await;
-            task.take();
+            reconnect_state
+                .relay_reconnect_active
+                .store(false, std::sync::atomic::Ordering::Release);
+            if let Ok(mut task) = reconnect_state.relay_reconnect_task.lock() {
+                task.take();
+            }
         });
-        *task = Some(handle);
-    });
+    if let Some(task_id) = task_id {
+        if let Ok(mut task) = state.relay_reconnect_task.lock() {
+            *task = Some(task_id);
+        }
+    } else {
+        state
+            .relay_reconnect_active
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 async fn stop_relay_reconnect_task(state: &RuntimeState) {
-    let handle = state.relay_reconnect_task.lock().await.take();
-    if let Some(handle) = handle {
-        handle.abort();
-        let _ = handle.await;
+    state
+        .relay_reconnect_active
+        .store(false, std::sync::atomic::Ordering::Release);
+    let task_id = state
+        .relay_reconnect_task
+        .lock()
+        .ok()
+        .and_then(|mut task| task.take());
+    if let Some(task_id) = task_id {
+        state.task_supervisor.cancel_task(task_id).await;
     }
 }
 
@@ -854,29 +881,31 @@ async fn receive_relay_offer(
     }
     let expiry_state = Arc::clone(state);
     let expiry_transfer_id = transfer_id;
-    tokio::spawn(async move {
-        tokio::time::sleep(INCOMING_APPROVAL_TIMEOUT).await;
-        let expired = expiry_state
-            .relay_pending_incoming
-            .write()
-            .await
-            .get(&expiry_transfer_id)
-            .is_some_and(|pending| pending.session_id == session_id);
-        if expired {
-            expiry_state
+    let _ = state
+        .task_supervisor
+        .spawn_runtime("relay-approval-timeout", async move {
+            tokio::time::sleep(INCOMING_APPROVAL_TIMEOUT).await;
+            let expired = expiry_state
                 .relay_pending_incoming
                 .write()
                 .await
-                .remove(&expiry_transfer_id);
-            expiry_state
-                .transfers
-                .fail_transfer(&expiry_transfer_id, TransferFailureReason::UserRejected)
-                .await;
-            if let Some(relay) = expiry_state.relay.read().await.as_ref() {
-                let _ = relay.send_session_control("cancel", &session_id).await;
+                .get(&expiry_transfer_id)
+                .is_some_and(|pending| pending.session_id == session_id);
+            if expired {
+                expiry_state
+                    .relay_pending_incoming
+                    .write()
+                    .await
+                    .remove(&expiry_transfer_id);
+                expiry_state
+                    .transfers
+                    .fail_transfer(&expiry_transfer_id, TransferFailureReason::UserRejected)
+                    .await;
+                if let Some(relay) = expiry_state.relay.read().await.as_ref() {
+                    let _ = relay.send_session_control("cancel", &session_id).await;
+                }
             }
-        }
-    });
+        });
     Ok(())
 }
 
@@ -1627,7 +1656,6 @@ pub(crate) async fn send_file_over_relay(
                 error = %error,
                 "native Relay transfer paused for socket recovery"
             );
-            crate::transfer::schedule_transfer_resume(Arc::clone(&state), peer_id.clone());
             return;
         }
         let reason = if error

@@ -2,7 +2,7 @@
 
 use network_protocol::{NetworkCommand, NetworkEvent};
 use std::sync::{
-    atomic::{AtomicU16, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
@@ -17,6 +17,7 @@ use crate::commands::run_command_worker;
 use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
 use crate::session::{SessionId, SessionManager};
+use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
 use network_identity::DeviceIdentity;
 use network_nat::PathManager;
 use network_relay::RelayClient;
@@ -57,10 +58,10 @@ pub(crate) struct RuntimeState {
     /// 暴露给 Dart，也不参与 Session/Peer 的业务状态。
     pub(crate) bound_port: Arc<AtomicU16>,
     pub(crate) endpoint: RwLock<Option<Endpoint>>,
-    /// 配置 runtime 后启动的 QUIC accept loop。停止时必须先关闭 endpoint，
-    /// 再取出并等待这个 handle，避免 listener 在 Tokio runtime 释放后仍持有
-    /// 原生 UDP socket。
-    pub(crate) accept_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Runtime-owned QUIC accept loop task id.  The task itself lives only in
+    /// `RuntimeTaskSupervisor`; this field is a cancellation lookup, not a
+    /// second ownership path.
+    pub(crate) accept_task: Mutex<Option<TaskId>>,
     pub(crate) identity: RwLock<Option<Arc<DeviceIdentity>>>,
     pub(crate) receive_directory: RwLock<Option<PathBuf>>,
     pub(crate) local_path_manager: RwLock<Option<Arc<PathManager>>>,
@@ -75,7 +76,8 @@ pub(crate) struct RuntimeState {
     pub(crate) direct_upgrade_tasks: RwLock<HashMap<String, SessionId>>,
     pub(crate) relay: RwLock<Option<Arc<RelayClient>>>,
     pub(crate) relay_config: RwLock<Option<crate::relay::RelayReconnectConfig>>,
-    pub(crate) relay_reconnect_task: AsyncMutex<Option<tokio::task::JoinHandle<()>>>,
+    pub(crate) relay_reconnect_task: Mutex<Option<TaskId>>,
+    pub(crate) relay_reconnect_active: AtomicBool,
     pub(crate) relay_acceptances:
         RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
@@ -88,6 +90,7 @@ pub(crate) struct RuntimeState {
     pub(crate) incoming_decisions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) transfers: TransferManager,
     pub(crate) event_tx: UnboundedSender<NetworkEvent>,
+    pub(crate) task_supervisor: Arc<RuntimeTaskSupervisor>,
 }
 
 impl RuntimeState {
@@ -111,7 +114,8 @@ impl RuntimeState {
             direct_upgrade_tasks: RwLock::new(HashMap::new()),
             relay: RwLock::new(None),
             relay_config: RwLock::new(None),
-            relay_reconnect_task: AsyncMutex::new(None),
+            relay_reconnect_task: Mutex::new(None),
+            relay_reconnect_active: AtomicBool::new(false),
             relay_acceptances: RwLock::new(HashMap::new()),
             relay_completions: RwLock::new(HashMap::new()),
             relay_lookups: RwLock::new(HashMap::new()),
@@ -122,7 +126,25 @@ impl RuntimeState {
             incoming_decisions: RwLock::new(HashMap::new()),
             transfers: TransferManager::new(),
             event_tx,
+            task_supervisor: RuntimeTaskSupervisor::new(),
         }
+    }
+
+    pub(crate) async fn cancel_session_tasks(&self, session_id: SessionId) {
+        let session_key = session_id.wire_key();
+        self.task_supervisor.cancel_session(&session_key).await;
+        self.delivery_tasks
+            .write()
+            .await
+            .retain(|_, current| *current != session_id);
+        self.reconnect_tasks
+            .write()
+            .await
+            .retain(|_, current| *current != session_id);
+        self.direct_upgrade_tasks
+            .write()
+            .await
+            .retain(|_, current| *current != session_id);
     }
 }
 
@@ -130,12 +152,12 @@ impl RuntimeState {
 pub struct NetworkRuntime {
     pub(crate) runtime: Arc<Runtime>,
     pub(crate) command_tx: Mutex<Option<UnboundedSender<NetworkCommand>>>,
-    pub(crate) worker_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub(crate) event_rx: Arc<Mutex<UnboundedReceiver<NetworkEvent>>>,
     pub(crate) event_tx: UnboundedSender<NetworkEvent>,
     pub(crate) bound_port: Arc<AtomicU16>,
     pub(crate) lifecycle: AtomicU8,
     pub(crate) state: Mutex<Option<Arc<RuntimeState>>>,
+    pub(crate) stop_notify: Arc<Notify>,
 }
 
 impl NetworkRuntime {
@@ -153,12 +175,12 @@ impl NetworkRuntime {
         Ok(Self {
             runtime: Arc::new(runtime),
             command_tx: Mutex::new(None),
-            worker_task: Mutex::new(None),
             event_rx: Arc::new(Mutex::new(event_rx)),
             event_tx,
             bound_port,
             lifecycle: AtomicU8::new(RUNTIME_CREATED),
             state: Mutex::new(None),
+            stop_notify: Arc::new(Notify::new()),
         })
     }
 
@@ -180,17 +202,22 @@ impl NetworkRuntime {
         *self.state.lock().map_err(|_| {
             NetworkError::CommandQueueFailed("runtime state lock poisoned".into())
         })? = Some(Arc::clone(&state));
-        let worker = self.runtime.spawn(run_command_worker(command_rx, state));
+        let _runtime_guard = self.runtime.enter();
+        if state
+            .task_supervisor
+            .spawn_runtime(
+                "command-worker",
+                run_command_worker(command_rx, Arc::clone(&state)),
+            )
+            .is_none()
+        {
+            return Err(NetworkError::RuntimeNotRunning);
+        }
         *self
             .command_tx
             .lock()
             .map_err(|_| NetworkError::CommandQueueFailed("command lock poisoned".into()))? =
             Some(command_tx);
-        *self
-            .worker_task
-            .lock()
-            .map_err(|_| NetworkError::CommandQueueFailed("worker lock poisoned".into()))? =
-            Some(worker);
         Ok(())
     }
 
@@ -200,9 +227,17 @@ impl NetworkRuntime {
         if current == RUNTIME_CREATED || current == RUNTIME_STOPPED {
             self.bound_port.store(0, Ordering::Release);
             self.lifecycle.store(RUNTIME_STOPPED, Ordering::Release);
+            self.stop_notify.notify_waiters();
             return Ok(());
         }
         if current == RUNTIME_STOPPING {
+            loop {
+                let notified = self.stop_notify.notified();
+                if self.lifecycle.load(Ordering::Acquire) != RUNTIME_STOPPING {
+                    break;
+                }
+                self.runtime.block_on(notified);
+            }
             return Ok(());
         }
         self.lifecycle
@@ -217,17 +252,6 @@ impl NetworkRuntime {
             .lock()
             .map_err(|_| NetworkError::CommandQueueFailed("command lock poisoned".into()))?
             .take();
-        let worker = self
-            .worker_task
-            .lock()
-            .map_err(|_| NetworkError::CommandQueueFailed("worker lock poisoned".into()))?
-            .take();
-        if let Some(worker) = worker {
-            self.runtime.block_on(async {
-                worker.abort();
-                let _ = worker.await;
-            });
-        }
         let state = self
             .state
             .lock()
@@ -238,6 +262,7 @@ impl NetworkRuntime {
         }
         self.bound_port.store(0, Ordering::Release);
         self.lifecycle.store(RUNTIME_STOPPED, Ordering::Release);
+        self.stop_notify.notify_waiters();
         Ok(())
     }
 
@@ -290,21 +315,20 @@ impl NetworkRuntime {
         let _ = self.event_tx.send(event);
     }
 
-    /// 关闭 endpoint，并等待受管的 QUIC accept loop 退出。
+    /// Cancel the root, close every native I/O owner, then await every task
+    /// registered in the supervisor before releasing the runtime state.
     fn shutdown_listener(&self, state: Arc<RuntimeState>) {
         self.runtime.block_on(async move {
+            state.task_supervisor.cancel_root();
+            let relay = state.relay.write().await.take();
+            if let Some(relay) = relay {
+                relay.request_disconnect().await;
+            }
+            state.realtime.lock().await.close_all();
             if let Some(endpoint) = state.endpoint.write().await.take() {
                 endpoint.close(quinn::VarInt::from_u32(0), b"runtime stopping");
             }
-            let accept_task = state
-                .accept_task
-                .lock()
-                .ok()
-                .and_then(|mut task| task.take());
-            if let Some(accept_task) = accept_task {
-                accept_task.abort();
-                let _ = accept_task.await;
-            }
+            state.task_supervisor.shutdown().await;
         });
     }
 
@@ -326,17 +350,12 @@ impl NetworkRuntime {
     }
 }
 
-/// Rust 侧最终销毁时中止仍存在的 worker。
+/// Rust 侧最终销毁时中止仍存在的 supervised tasks。
 impl Drop for NetworkRuntime {
-    /// 中止在显式停止转换后仍存活的 worker。
+    /// 中止在显式停止转换后仍存活的 tasks。
     fn drop(&mut self) {
         if let Ok(mut sender) = self.command_tx.lock() {
             sender.take();
-        }
-        if let Ok(mut worker) = self.worker_task.lock() {
-            if let Some(worker) = worker.take() {
-                worker.abort();
-            }
         }
         if let Ok(mut state) = self.state.lock() {
             if let Some(state) = state.take() {
@@ -345,14 +364,17 @@ impl Drop for NetworkRuntime {
                         endpoint.close(quinn::VarInt::from_u32(0), b"runtime dropped");
                     }
                 }
-                if let Ok(mut accept_task) = state.accept_task.lock() {
-                    if let Some(accept_task) = accept_task.take() {
-                        accept_task.abort();
-                    }
+                if let Ok(mut relay) = state.relay.try_write() {
+                    relay.take();
                 }
+                if let Ok(mut realtime) = state.realtime.try_lock() {
+                    realtime.close_all();
+                }
+                state.task_supervisor.abort_all_now();
             }
         }
         self.bound_port.store(0, Ordering::Release);
         self.lifecycle.store(RUNTIME_STOPPED, Ordering::Release);
+        self.stop_notify.notify_waiters();
     }
 }

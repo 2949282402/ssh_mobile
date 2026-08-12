@@ -25,6 +25,14 @@ Epoch 属于 Rust Delivery transport 状态，不得成为 Dart/Flutter 业务�
 `SessionBoundOrdered` 必须由 native Delivery owner 维护 expected sequence、
 单个 in-flight 消息和有界 reorder buffer；不得在 Dart 侧用事件到达顺序补偿。
 
+Rust native background work must be registered with `RuntimeTaskSupervisor`.
+Production code must not create an unowned `tokio::spawn`; bounded local
+`JoinSet` attempts are allowed only when the surrounding Session/runtime task
+owns and joins the set. Session-scoped reconnect, direct-upgrade, path metrics,
+Delivery retry, channel receiver, and file receiver work must use the Session
+task group. Runtime stop must cancel the root, close Relay/WebRTC/QUIC owners,
+await all supervisor tasks, and only then release the native runtime.
+
 ## 数据库约束
 
 本 Package 不拥有数据库；配对凭据、Token 和业务历史由上层安全存储或 Feature

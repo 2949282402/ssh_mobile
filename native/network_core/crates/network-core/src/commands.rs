@@ -129,7 +129,8 @@ async fn start_connect_peer(
         RouteType::Unspecified,
         None,
     );
-    tokio::spawn(async move {
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let task_started = supervisor.spawn_runtime("peer-connect", async move {
         if let Err(error) = peer::connect_peer(Arc::clone(&state), peer_id.clone()).await {
             let code =
                 NetworkErrorCode::try_from(error.code).unwrap_or(NetworkErrorCode::Unspecified);
@@ -147,6 +148,12 @@ async fn start_connect_peer(
             );
         }
     });
+    if task_started.is_none() {
+        return Err(protocol_error(
+            NetworkErrorCode::Cancelled,
+            "network runtime is stopping",
+        ));
+    }
     Ok(())
 }
 
@@ -174,7 +181,8 @@ async fn start_configure_relay(
         ));
     }
     emit_relay_state(&state.event_tx, RelayConnectionState::Connecting, None);
-    tokio::spawn(async move {
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let task_started = supervisor.spawn_runtime("relay-configure", async move {
         match relay::configure_relay_for_state(Arc::clone(&state), command).await {
             Ok(()) => emit_relay_state(&state.event_tx, RelayConnectionState::Connected, None),
             Err(error) => emit_relay_state(
@@ -189,5 +197,11 @@ async fn start_configure_relay(
             ),
         }
     });
+    if task_started.is_none() {
+        return Err(protocol_error(
+            NetworkErrorCode::Cancelled,
+            "network runtime is stopping",
+        ));
+    }
     Ok(())
 }

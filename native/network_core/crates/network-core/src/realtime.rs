@@ -54,6 +54,15 @@ pub(crate) struct RealtimeManager {
     sessions: HashMap<String, RealtimeSession>,
 }
 
+impl RealtimeManager {
+    /// Close every WebRTC peer before the runtime supervisor joins its tasks.
+    pub(crate) fn close_all(&mut self) {
+        for (_, mut session) in self.sessions.drain() {
+            let _ = session.peer.close();
+        }
+    }
+}
+
 struct OutboundSignal {
     realtime_id: String,
     peer_id: String,
