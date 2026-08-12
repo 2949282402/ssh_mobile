@@ -3,6 +3,9 @@ name = "network-relay"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+test-support = []
+
 [dependencies]
 network-protocol = { path = "../network-protocol" }
 tokio = { version = "1.38", features = ["full"] }

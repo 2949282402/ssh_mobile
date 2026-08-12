@@ -646,11 +646,32 @@ fn normalize_relay_url(value: &str) -> Result<Url, RelayError> {
             "Relay URL must be an origin without credentials, path, query, or fragment".into(),
         ));
     }
+    #[cfg(feature = "test-support")]
+    let is_insecure_local_test_url = matches!(url.scheme(), "http" | "ws");
+    #[cfg(feature = "test-support")]
+    if is_insecure_local_test_url
+        && !url.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|address| address.is_loopback())
+        })
+    {
+        return Err(RelayError::InvalidConfiguration(
+            "insecure Relay test URLs must target loopback".into(),
+        ));
+    }
     match url.scheme() {
         "https" => url
             .set_scheme("wss")
             .map_err(|_| RelayError::InvalidConfiguration("invalid Relay URL scheme".into()))?,
         "wss" => {}
+        #[cfg(feature = "test-support")]
+        "http" => url
+            .set_scheme("ws")
+            .map_err(|_| RelayError::InvalidConfiguration("invalid Relay URL scheme".into()))?,
+        #[cfg(feature = "test-support")]
+        "ws" => {}
         _ => {
             return Err(RelayError::InvalidConfiguration(
                 "Relay URL must use HTTPS/WSS".into(),
