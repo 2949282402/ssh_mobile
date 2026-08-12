@@ -6,6 +6,7 @@
 import 'package:app_core/app_core.dart';
 
 import '../native/network_command_gateway.dart';
+import '../realtime/network_realtime_gateway.dart';
 import 'network_capability.dart';
 
 /// 网络运行时的生命周期状态。
@@ -71,6 +72,12 @@ abstract interface class NetworkRuntime implements Disposable {
   /// Gateway 不拥有 Runtime 或 native handle；调用方只能释放自己的订阅，
   /// 最终资源仍由 AppRuntime 释放 NetworkRuntime。
   Future<NetworkCommandGateway> openCommandGateway();
+
+  /// Opens a borrowed typed gateway for the native Realtime route.
+  ///
+  /// The gateway does not own the native handle. Realtime session state is
+  /// released by the SDK/App adapter before this Runtime is disposed.
+  Future<NetworkRealtimeGateway> openRealtimeGateway();
 
   /// 返回某个 Capability 是否已经成功初始化。
   bool isCapabilityReady(NetworkCapability capability);

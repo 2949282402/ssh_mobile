@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-12
 
 # network_transport Package Guidelines
 
@@ -21,6 +21,9 @@ Feature UI、SSH 会话或 LAN 业务规则。
   不得为了填充诊断数字而接管 Feature 协议连接。
 - `NetworkCommandGateway` 只是 Runtime-owned native v1 handle 的借用型命令/事件
   入口；它不得拥有、复制或关闭 handle，也不得在其中加入业务协议规则。
+- `NetworkRealtimeGateway` 同样是 Runtime-owned handle 的借用型入口；它只能
+  编解码 native typed Realtime command/event，不能把 PeerConnection、ICE、SDP、
+  socket 或 signaling policy 放进 Feature 或 gateway。
 
 ## 生命周期
 
@@ -30,6 +33,8 @@ Feature UI、SSH 会话或 LAN 业务规则。
   Capability 请求必须失败；
 - `openCommandGateway()` 返回的 gateway 由 Runtime 绑定，调用方只负责取消自己的
   事件订阅；AppRuntime/NetworkRuntime 仍是 native handle 的唯一释放 Owner；
+- `openRealtimeGateway()` 返回的 gateway 不拥有 native handle；App Shell adapter
+  负责事件订阅和 SDK session 映射，必须在 Runtime dispose 前取消订阅。
 - handle 的底层顺序必须保持 `create -> start -> stop -> destroy`，Finalizer 不替代
   显式 close。
 

@@ -1,11 +1,12 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-12
 
 # ADR-021：Native Dart Realtime API Boundary
 
 ## Status
 
-Accepted for the native network v1 SDK. The Flutter App and Feature business
-layers remain unchanged in this Step.
+Accepted for the native network v1 SDK. The App Shell now owns the adapter into the
+feature-facing Realtime session contract; Feature business code remains
+transport-agnostic.
 
 ## Context
 
@@ -14,6 +15,8 @@ package still exposed only a raw command/event byte stream for the new Realtime
 route. That left callers responsible for encoding command tags and decoding
 Realtime state or signaling payloads, which could accidentally expose native
 handles or couple application code to the wire layout.
+
+Step 8 adds a high-level RealtimeSession without moving WebRTC ownership into Flutter.
 
 ## Decision
 
@@ -34,9 +37,13 @@ handles or couple application code to the wire layout.
   payloads are accepted for end-of-candidates, while SDP/answer payloads must
   remain non-empty and all signaling data stays bounded.
 - The existing generic App-level `NetworkService` and `network_sdk` model
-  boundary are not replaced or duplicated by this low-level package. This
-  Step only closes the native Realtime API boundary, so no Flutter UI or client
-  business code is changed.
+  boundary are not replaced or duplicated by this low-level package. This Step adds
+  only the SDK contract and App Shell adapter; no Flutter Feature UI or WebRTC
+  implementation is changed. The App Shell adapter maps native typed state events
+  and keeps command results plus SDP/ICE signaling internal. The current native
+  DataChannel is a data-plane capability; until a native media decoder/AudioTrack
+  event exists, remoteVideo and audio remain typed unavailable states rather than
+  pretending that bytes are renderable media.
 
 ## Consequences
 
@@ -44,8 +51,8 @@ The native package can expose WebRTC Realtime control without increasing the C
 ABI surface or leaking transport-specific objects. Callers can correlate
 queue acceptance with typed events using the generated command ID, and future
 wire events remain forward-compatible through bounded unknown-event handling.
-The App Shell still decides how these native events map into its existing
-`network_sdk` contracts when that client integration is authorized.
+The App Shell owns the mapping into network_sdk.RealtimeSession; Features never
+encode commands or receive SDP/ICE signaling.
 
 ## Verification
 

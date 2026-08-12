@@ -8,10 +8,12 @@ void main() {
   test('client aggregate keeps authentication and lifecycle boundaries', () {
     final sessions = _FakeSessionClient();
     final events = _FakeEvents(sessions.events);
+    final realtime = _FakeRealtimeClient();
     final sdk = NetworkSdkClients(
       bootstrap: _FakeBootstrapClient(),
       authenticatedApi: _FakeAuthenticatedApiClient(),
       sessions: sessions,
+      realtime: realtime,
       events: events,
     );
 
@@ -19,6 +21,7 @@ void main() {
     expect(identical(sdk.events, events), isTrue);
     expect(sdk.bootstrap, isA<BootstrapClient>());
     expect(sdk.authenticatedApi, isA<AuthenticatedApiClient>());
+    expect(identical(sdk.realtime, realtime), isTrue);
   });
 
   test(
@@ -202,6 +205,17 @@ final class _FakeAuthenticatedApiClient implements AuthenticatedApiClient {
   @override
   Future<SdkResult<ConnectionTicket>> requestConnection(String peerId) async =>
       SdkSuccess(ConnectionTicket(peerId: peerId, value: 'fake'));
+}
+
+final class _FakeRealtimeClient implements RealtimeClient {
+  @override
+  RealtimeSession createSession({
+    required String realtimeId,
+    required String peerId,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<void> dispose() async {}
 }
 
 final class _FakeEvents implements EventStreamClient {

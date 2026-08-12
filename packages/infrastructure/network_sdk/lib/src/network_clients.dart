@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'network_models.dart';
+import 'realtime.dart';
 
 /// 公开服务能力和 enrollment 的非鉴权客户端。
 abstract interface class BootstrapClient {
@@ -82,6 +83,8 @@ abstract interface class NetworkSdk {
 
   SessionClient get sessions;
 
+  RealtimeClient get realtime;
+
   EventStreamClient get events;
 }
 
@@ -91,6 +94,7 @@ final class NetworkSdkClients implements NetworkSdk {
     required this.bootstrap,
     required this.authenticatedApi,
     required this.sessions,
+    required this.realtime,
     EventStreamClient? events,
   }) : events = events ?? sessions;
 
@@ -102,6 +106,9 @@ final class NetworkSdkClients implements NetworkSdk {
 
   @override
   final SessionClient sessions;
+
+  @override
+  final RealtimeClient realtime;
 
   @override
   final EventStreamClient events;

@@ -8,6 +8,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_transport/network_transport.dart';
+import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
 void main() {
   test(
@@ -110,6 +111,52 @@ void main() {
       TransportOperationStatus.stopped,
     );
   });
+  test('Realtime gateway shares the Runtime-owned native handle', () async {
+    final handle = _FakeNativeNetworkHandle();
+    final runtime = NetworkRuntimeImpl(
+      nativeAdapter: _FakeNativeNetworkAdapter(() async => handle),
+    );
+
+    final gateway = await runtime.openRealtimeGateway();
+
+    expect(runtime.isCapabilityReady(NetworkCapability.realtime), isTrue);
+    expect(
+      gateway
+          .start(
+            realtimeId: '00112233445566778899aabbccddeeff',
+            peerId: 'peer-a',
+          )
+          .name,
+      'success',
+    );
+    await runtime.dispose();
+    expect(
+      gateway.stop(realtimeId: '00112233445566778899aabbccddeeff').name,
+      'stopped',
+    );
+  });
+
+  test(
+    'Realtime gateway maps native state events without exposing signaling',
+    () async {
+      final handle = _FakeNativeNetworkHandle();
+      final runtime = NetworkRuntimeImpl(
+        nativeAdapter: _FakeNativeNetworkAdapter(() async => handle),
+      );
+      final gateway = await runtime.openRealtimeGateway();
+      final eventFuture = gateway.events.first;
+
+      handle.emit(_connectedRealtimeStateFrame());
+      final event = await eventFuture;
+
+      expect(event, isA<NativeRealtimeStateChangedEvent>());
+      final state = event as NativeRealtimeStateChangedEvent;
+      expect(state.realtimeId, '00112233445566778899aabbccddeeff');
+      expect(state.peerId, 'peer-a');
+      expect(state.state, NativeRealtimeSessionState.connected);
+      await runtime.dispose();
+    },
+  );
 
   test(
     'Dispose waits for a pending native handle and rejects later use',
@@ -165,6 +212,8 @@ final class _FakeNativeNetworkHandle implements NativeNetworkHandle {
   bool _closed = false;
   int closeCalls = 0;
 
+  void emit(Uint8List frame) => _events.add(frame);
+
   @override
   Stream<Uint8List> get rawEvents => _events.stream;
 
@@ -185,4 +234,32 @@ final class _FakeNativeNetworkHandle implements NativeNetworkHandle {
 
   @override
   Future<void> dispose() => close();
+}
+
+Uint8List _connectedRealtimeStateFrame() {
+  final nested = <int>[
+    0x0a,
+    0x20,
+    ...'00112233445566778899aabbccddeeff'.codeUnits,
+    0x12,
+    0x06,
+    ...'peer-a'.codeUnits,
+    0x18,
+    NativeRealtimeSessionState.connected.wireValue,
+    0x20,
+    0x03,
+  ];
+  return Uint8List.fromList(<int>[
+    0x0a,
+    0x03,
+    ...'evt'.codeUnits,
+    0x10,
+    0x01,
+    0x18,
+    0x01,
+    0xb2,
+    0x01,
+    nested.length,
+    ...nested,
+  ]);
 }

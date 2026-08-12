@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile Flutter repository, including architecture, UI, SSH/SFTP, monitoring, AI tools, storage, security, platform builds, tests, and project documentation. Use for any non-trivial code, debugging, validation, documentation, or shared-agent-guidance change in this repository.
 ---
 
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-12
 
 # SSH Mobile Maintenance
 
@@ -55,7 +55,9 @@ The Network Transport infrastructure package is
 `NetworkRuntime` facade, lazy Capability state, transport contracts, and the
 explicit native handle adapter. `AppRuntime` creates the sole instance; the
 migrated LAN Feature consumes it through injected Ports, while native v1
-construction remains in the App Shell adapter.
+construction remains in the App Shell adapter. The public `network_sdk` Realtime
+contract exposes only session lifecycle/state/media views; WebRTC negotiation,
+signaling, sockets, and native media ownership stay below the App Shell.
 The SSH infrastructure package is `packages/infrastructure/ssh_core/`; it owns
 the App Scope `SshSessionManager`, Lease/Pool lifecycle, platform-neutral Runtime
 Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target

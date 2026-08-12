@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import '../config/network_config.dart';
 import '../native/network_command_gateway.dart';
 import '../native/native_network_adapter.dart';
+import '../realtime/network_realtime_gateway.dart';
 import '../transport/transport_connection.dart';
 import 'network_capability.dart';
 import 'network_runtime.dart';
@@ -108,11 +109,23 @@ final class NetworkRuntimeImpl implements NetworkRuntime {
     return _RuntimeCommandGateway(handle);
   }
 
+  @override
+  Future<NetworkRealtimeGateway> openRealtimeGateway() async {
+    _ensureUsable();
+    await ensureCapability(NetworkCapability.realtime);
+    final handle = _nativeHandle;
+    if (handle == null) {
+      throw StateError('Network native handle is unavailable.');
+    }
+    return RuntimeNetworkRealtimeGateway(_RuntimeCommandGateway(handle));
+  }
+
   Future<void> _initializeCapability(NetworkCapability capability) async {
     _state = NetworkRuntimeState.starting;
     switch (capability) {
       case NetworkCapability.quic:
       case NetworkCapability.webSocketRelay:
+      case NetworkCapability.realtime:
         await _ensureNativeHandle();
       case NetworkCapability.tcp:
       case NetworkCapability.udp:

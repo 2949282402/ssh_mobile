@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-12
 
 # network_sdk Package Guidelines
 
@@ -26,10 +26,15 @@
 - `JsonAuthenticatedApiClient` 最多在 401 后刷新并重试一次，失败必须失效会话，
   不得把 Token 放入错误、事件或日志；
 - `SessionClient` 只表达业务 Session/Transfer 操作；
+- `RealtimeSession` 是 Feature 唯一的实时会话接口；只允许读取 `state`、
+  `remoteVideo`、`audioState` 并调用 `start()`/`stop()`，不得增加 SDP、ICE、
+  PeerConnection、socket 或 native handle 参数。
 - `EventStreamClient` 只暴露统一 typed event stream；
 - 开发阶段过渡别名只能保留在 `network_sdk`；不得让 Feature 维护或重新导出
   一份本地 `network_models.dart`；
 - 新增传输实现必须先更新 ADR，不得新增 `*SocketClient` 类型。
+- Realtime backend 事件必须由 App Shell adapter 映射；CommandResult、SDP/ICE
+  signaling 和 native media resource 不得泄漏到 Feature。
 
 ## 必须验证
 

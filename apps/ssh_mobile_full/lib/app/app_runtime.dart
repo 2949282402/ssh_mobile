@@ -10,6 +10,7 @@ import 'package:feature_monitoring/feature_monitoring.dart' as monitoring;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:feature_webview/feature_webview.dart' as feature_webview;
+import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
 
@@ -43,6 +44,7 @@ final class AppRuntime implements Disposable {
     required this.credentialRepository,
     required this.hostKeyRepository,
     required this.networkRuntime,
+    required this.realtimeClient,
     required this.bootstrapCoordinator,
     required this.shortcutCommandService,
     required this.sshSessionManager,
@@ -101,6 +103,9 @@ final class AppRuntime implements Disposable {
 
   /// App Scope 唯一的网络运行时；其 native handle 只按 Capability 延迟创建。
   final NetworkRuntime networkRuntime;
+
+  /// App Scope Realtime SDK owner; its backend borrows the NetworkRuntime handle.
+  final RealtimeClient realtimeClient;
 
   /// 启动协调器属于 App Shell，负责首帧前后的核心初始化状态。
   final AppBootstrapCoordinator bootstrapCoordinator;
@@ -296,6 +301,8 @@ final class AppRuntime implements Disposable {
 
     // 当前 SFTP 实现仍直接持有 SSH 客户端，这里作为网络资源组释放。
     await attempt(sftpService.dispose);
+    // Realtime sessions/backend subscriptions must stop before native Runtime.
+    await attempt(realtimeClient.dispose);
     // SSH/SFTP 停止后再关闭网络 Runtime，避免仍有会话向 native handle 发命令。
     await attempt(networkRuntime.dispose);
     assert(() {

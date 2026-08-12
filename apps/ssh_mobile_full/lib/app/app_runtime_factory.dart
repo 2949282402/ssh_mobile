@@ -34,6 +34,7 @@ import 'monitoring_feature_adapters.dart';
 import 'network_sdk_adapters.dart';
 import 'playbook_feature_adapters.dart';
 import 'rag_feature_adapters.dart';
+import 'realtime_feature_adapters.dart';
 import 'terminal_ssh_capability_adapter.dart';
 import 'webview_feature_adapters.dart';
 
@@ -82,6 +83,9 @@ final class AppRuntimeFactory {
       connectionRepository: runtimeConnectionRepository,
     );
     final runtimeNetworkRuntime = networkRuntime ?? NetworkRuntimeImpl();
+    final runtimeRealtimeClient = RealtimeClientImpl(
+      backend: AppRealtimeSessionBackend(networkRuntime: runtimeNetworkRuntime),
+    );
     final bootstrapClient = JsonBootstrapClient(
       executor: const AppSdkRequestExecutor(),
     );
@@ -363,6 +367,7 @@ final class AppRuntimeFactory {
       credentialRepository: runtimeCredentialRepository,
       hostKeyRepository: runtimeHostKeyRepository,
       networkRuntime: runtimeNetworkRuntime,
+      realtimeClient: runtimeRealtimeClient,
       bootstrapCoordinator: bootstrapCoordinator,
       shortcutCommandService: shortcutCommandService,
       sshSessionManager: terminalSshManager,

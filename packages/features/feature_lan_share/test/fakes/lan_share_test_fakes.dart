@@ -149,6 +149,10 @@ final class FakeLanShareNetworkRuntime implements NetworkRuntime {
       throw UnsupportedError('fake runtime has no command gateway');
 
   @override
+  Future<NetworkRealtimeGateway> openRealtimeGateway() async =>
+      throw UnsupportedError('fake runtime has no realtime gateway');
+
+  @override
   bool isCapabilityReady(NetworkCapability capability) => false;
 
   @override

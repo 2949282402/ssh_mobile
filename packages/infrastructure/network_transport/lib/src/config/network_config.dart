@@ -14,6 +14,7 @@ final class NetworkConfig {
   const NetworkConfig({
     this.enableQuic = true,
     this.enableWebSocketRelay = true,
+    this.enableRealtime = true,
   });
 
   /// 是否允许初始化 QUIC 能力。
@@ -22,10 +23,14 @@ final class NetworkConfig {
   /// 是否允许初始化 WSS Relay 能力。
   final bool enableWebSocketRelay;
 
+  /// Whether native WebRTC Realtime may be initialized.
+  final bool enableRealtime;
+
   /// 返回配置是否允许请求指定能力。
   bool allows(NetworkCapability capability) => switch (capability) {
     NetworkCapability.quic => enableQuic,
     NetworkCapability.webSocketRelay => enableWebSocketRelay,
+    NetworkCapability.realtime => enableRealtime,
     NetworkCapability.tcp || NetworkCapability.udp => false,
   };
 }

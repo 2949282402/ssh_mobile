@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-12
 
 # Agent Memory
 
@@ -294,7 +294,7 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   the active ICE generation. The generic FFI protobuf ABI and
   `ssh_mobile_network_native` Dart facade now carry bounded typed Realtime
   commands/results/state/signaling events without exposing raw WebRTC handles;
-  the App Shell's existing `network_sdk` model boundary remains unchanged.
+  the App Shell now maps those native events into the feature-facing `network_sdk.RealtimeSession`; Features only call `start()`/`stop()` and observe state/media contracts.
 
 ### UI and performance
 

@@ -9,6 +9,7 @@ import 'package:feature_mcp/feature_mcp.dart' as feature_mcp;
 import 'package:feature_playbook/feature_playbook.dart' as feature_playbook;
 import 'package:feature_rag/feature_rag.dart' as feature_rag;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:network_sdk/network_sdk.dart';
 import 'package:ssh_mobile/app/app_runtime_factory.dart';
 import 'package:ssh_mobile/app/terminal_ssh_capability_adapter.dart';
 
@@ -69,6 +70,7 @@ void main() {
       expect(runtime.credentialRepository, isNotNull);
       expect(runtime.hostKeyRepository, same(runtime.connectionRepository));
       expect(runtime.networkRuntime, isNotNull);
+      expect(runtime.realtimeClient, isA<RealtimeClient>());
       expect(runtime.sshService, isNotNull);
       expect(runtime.sshSessionManager, isA<AppTerminalSshSessionManager>());
       final terminalManager =

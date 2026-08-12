@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-12
 
 # 资源 Owner 审计
 
@@ -15,6 +15,7 @@
 | NetworkRuntime | `AppRuntime` | App | `dispose` after SSH/SFTP stop |
 | Native handle | Network native adapter via `NetworkRuntime` | App/Native | stop isolate, then `destroy` handle |
 | NetworkCommandGateway | `NetworkRuntime` / borrowed by App Shell adapter | App/borrowed Session | cancel adapter subscriptions; never stop or destroy the Runtime/native handle |
+| NetworkRealtimeGateway | `NetworkRuntime` / borrowed by App Shell Realtime adapter | App/borrowed Session | cancel event subscription before Runtime dispose; never stop or destroy the Runtime/native handle |
 | SDK control-plane HttpClient | `AppSdkRequestExecutor` | Request | read bounded response, then `close(force: true)` on success or error |
 | SshSessionManager | `AppRuntime` | App | `close` Session Pool and runtime |
 | SSH Session | `SshSessionManager` / `SshSessionPool` | Lease/Session | Lease `release`; idle session `close` |

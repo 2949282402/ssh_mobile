@@ -15,6 +15,9 @@ enum NetworkCapability {
 
   /// 当前 native v1 使用的 WSS Relay 数据面。
   webSocketRelay,
+
+  /// Session-owned native WebRTC Realtime data plane.
+  realtime,
 }
 
 /// 为能力枚举提供稳定的诊断名称。
@@ -25,5 +28,6 @@ extension NetworkCapabilityDescription on NetworkCapability {
     NetworkCapability.udp => 'udp',
     NetworkCapability.quic => 'quic',
     NetworkCapability.webSocketRelay => 'webSocketRelay',
+    NetworkCapability.realtime => 'realtime',
   };
 }
