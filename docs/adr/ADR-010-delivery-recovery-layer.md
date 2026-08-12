@@ -29,6 +29,11 @@ QUIC/Relay 的 transport ACK 只能说明当前连接完成了传输，不能说
   数；更高 Recovery Epoch 的同一 MessageId 只更新 ACK 绑定并保留原处理状态。
   `DuplicateInFlight` 不发布事件也不发送 ACK，`DuplicateProcessed` 不重复执行
   但使用最新 epoch 重发 ACK，较低 epoch 被拒绝。
+- `SessionBoundOrdered` 由 Session + Channel 的 `OrderedChannelState` 承担，
+  维护 `expected_sequence`、单个 `in_flight` 和有界 `reorder_buffer`。只有
+  `sequence == expected_sequence` 的消息进入应用；更大的序号在
+  `MAX_REORDER_MESSAGES`、`MAX_REORDER_BYTES` 和 `MAX_SEQUENCE_GAP` 内暂存，
+  且只有当前消息完成应用 ACK 后才释放下一个连续序号。
 - RetryPolicy 使用最大尝试次数、指数退避、TTL 和最大重试字节预算；过期或
   耗尽预算的消息不再无限后台重试。
 - Connection Ready 会为对应真实 `SessionId` 创建新的 Recovery Snapshot，

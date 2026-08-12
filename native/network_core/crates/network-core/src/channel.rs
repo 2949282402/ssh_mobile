@@ -16,7 +16,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::delivery::{
-    AckResult, DedupDecision, DeliveryError, DeliveryPolicy, PendingMessage, RecoverySnapshot,
+    AckResult, DedupDecision, DeliveryError, DeliveryPolicy, OrderedInsertResult, OrderedMessage,
+    PendingMessage, RecoverySnapshot,
 };
 use crate::events::{protocol_error, protocol_error_with_peer};
 use crate::runtime::{RuntimeState, DELIVERY_RETRY_POLL_INTERVAL};
@@ -284,7 +285,7 @@ pub(crate) async fn acknowledge_message(
             "peer_id, session_id, and channel_id are required",
         ));
     }
-    let Some(recovery_epoch) = state
+    let Some(completion) = state
         .delivery
         .complete_incoming(
             &command.session_id,
@@ -303,18 +304,22 @@ pub(crate) async fn acknowledge_message(
     let ack = DeliveryAck {
         session_id: command.session_id,
         message_id: message_id.to_vec(),
-        recovery_epoch,
+        recovery_epoch: completion.recovery_epoch,
     };
-    send_delivery_ack(state, &command.peer_id, &ack)
-        .await
-        .map_err(|error| {
-            protocol_error_with_peer(
-                NetworkErrorCode::NoRoute,
-                error.to_string(),
-                "acknowledge_message",
-                &command.peer_id,
-            )
-        })
+    let result = send_delivery_ack(state, &command.peer_id, &ack).await;
+    if let Some(next) = completion.next_ordered {
+        // The application ACK is the ordering gate. The next buffered message
+        // is published even if this transport ACK needs a later retry.
+        emit_ordered_message(state, next);
+    }
+    result.map_err(|error| {
+        protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            error.to_string(),
+            "acknowledge_message",
+            &command.peer_id,
+        )
+    })
 }
 
 async fn send_delivery_ack(
@@ -372,6 +377,18 @@ pub(crate) async fn handle_data_message(
         message.message_id.as_slice().try_into().map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid message ID")
         })?;
+    let policy = decode_policy(message.policy).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Delivery policy")
+    })?;
+    let incoming = OrderedMessage {
+        peer_id: peer_id.to_string(),
+        session_id: message.session_id.clone(),
+        channel_id: message.channel_id.clone(),
+        message_id: crate::delivery::MessageId::from_bytes(message_id),
+        sequence: message.sequence,
+        policy,
+        payload: message.payload.clone(),
+    };
     if message.policy != DeliveryPolicyCode::BestEffort as i32 {
         match state
             .delivery
@@ -422,31 +439,69 @@ pub(crate) async fn handle_data_message(
                 )
                 .into());
             }
-            DedupDecision::New => {}
+            DedupDecision::New => {
+                if policy == DeliveryPolicy::SessionBoundOrdered {
+                    match state.delivery.accept_ordered(incoming.clone()).await {
+                        OrderedInsertResult::Ready => {}
+                        OrderedInsertResult::Buffered => return Ok(()),
+                        OrderedInsertResult::Duplicate => {
+                            let _ = state
+                                .delivery
+                                .abandon_incoming(
+                                    &message.session_id,
+                                    &message.channel_id,
+                                    crate::delivery::MessageId::from_bytes(message_id),
+                                )
+                                .await;
+                            return Ok(());
+                        }
+                        OrderedInsertResult::Rejected => {
+                            let _ = state
+                                .delivery
+                                .abandon_incoming(
+                                    &message.session_id,
+                                    &message.channel_id,
+                                    crate::delivery::MessageId::from_bytes(message_id),
+                                )
+                                .await;
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "ordered message exceeds reorder limits",
+                            )
+                            .into());
+                        }
+                    }
+                }
+            }
         }
     }
+    emit_ordered_message(state, incoming);
+    Ok(())
+}
+
+fn emit_ordered_message(state: &RuntimeState, message: OrderedMessage) {
     let _ = state.event_tx.send(NetworkEvent {
         event_id: format!(
-            "{peer_id}/channel/{}/{}/{}",
+            "{}/channel/{}/{}/{}",
+            message.peer_id,
             message.session_id,
             message.channel_id,
-            hex::encode(message_id)
+            hex::encode(message.message_id.to_bytes())
         ),
         timestamp_ms: crate::events::unix_timestamp_ms(),
         protocol_version: NETWORK_PROTOCOL_VERSION,
         payload: Some(network_event::Payload::ChannelMessage(
             ChannelMessageEvent {
-                peer_id: peer_id.to_string(),
+                peer_id: message.peer_id,
                 session_id: message.session_id,
                 channel_id: message.channel_id,
-                message_id: message_id.to_vec(),
+                message_id: message.message_id.to_bytes().to_vec(),
                 sequence: message.sequence,
-                policy: message.policy,
+                policy: policy_code(message.policy),
                 payload: message.payload,
             },
         )),
     });
-    Ok(())
 }
 
 /// 处理传输层收到的 ACK，并只接受当前 epoch 的 ACK。

@@ -33,6 +33,9 @@ synthetic success.
 - Delivery application acknowledgements are identified by logical Session ID,
   Channel ID, and Message ID only. Recovery epochs remain native Delivery state;
   Dart must not cache or echo an epoch from an earlier event.
+- `SessionBoundOrdered` delivery is also native-owned: only the expected
+  sequence reaches the application, while later messages stay in bounded
+  reorder state until the current application ACK releases the next one.
 - Runtime disposal is ordered as `Running -> Stopping -> Stopped -> Destroyed`;
   stopping is idempotent and no command is accepted after stopping begins.
 - `NativeNetworkRuntime.boundLocalPort` is a read-only diagnostic for controlled

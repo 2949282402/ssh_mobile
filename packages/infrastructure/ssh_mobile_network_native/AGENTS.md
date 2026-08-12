@@ -22,6 +22,8 @@ FFI handle 调用 Rust，不得在这里复制业务层 LAN/SSH/SFTP 实现。
 Delivery 的应用 ACK 只能使用逻辑 Session、Channel 和 Message ID；Recovery
 Epoch 属于 Rust Delivery transport 状态，不得成为 Dart/Flutter 业务身份或由
 客户端回传的字段。重复消息必须区分 InFlight 与 Processed，前者禁止 ACK。
+`SessionBoundOrdered` 必须由 native Delivery owner 维护 expected sequence、
+单个 in-flight 消息和有界 reorder buffer；不得在 Dart 侧用事件到达顺序补偿。
 
 ## 数据库约束
 

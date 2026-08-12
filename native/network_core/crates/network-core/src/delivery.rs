@@ -5,7 +5,7 @@
 //! 上重新发送；因此 ACK、去重和重试不会绑定到某一条已失效的 Connection。
 
 use rand::RngCore;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -161,6 +161,9 @@ pub struct DeliveryConfig {
     pub max_payload_bytes: usize,
     pub dedup_max_entries: usize,
     pub dedup_ttl: Duration,
+    pub max_reorder_messages: usize,
+    pub max_reorder_bytes: usize,
+    pub max_sequence_gap: u64,
 }
 
 impl Default for DeliveryConfig {
@@ -171,8 +174,100 @@ impl Default for DeliveryConfig {
             max_payload_bytes: 1024 * 1024,
             dedup_max_entries: 4096,
             dedup_ttl: Duration::from_secs(10 * 60),
+            max_reorder_messages: 64,
+            max_reorder_bytes: 4 * 1024 * 1024,
+            max_sequence_gap: 1024,
         }
     }
+}
+
+/// A message waiting for an application-ordered channel to release it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OrderedMessage {
+    pub(crate) peer_id: String,
+    pub(crate) session_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) message_id: MessageId,
+    pub(crate) sequence: u64,
+    pub(crate) policy: DeliveryPolicy,
+    pub(crate) payload: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OrderedInsertResult {
+    Ready,
+    Buffered,
+    Duplicate,
+    Rejected,
+}
+
+#[derive(Default)]
+struct OrderedChannelState {
+    expected_sequence: u64,
+    in_flight: Option<MessageId>,
+    reorder_buffer: BTreeMap<u64, OrderedMessage>,
+    reorder_bytes: usize,
+}
+
+impl OrderedChannelState {
+    fn insert(
+        &mut self,
+        message: OrderedMessage,
+        max_messages: usize,
+        max_bytes: usize,
+        max_gap: u64,
+    ) -> OrderedInsertResult {
+        if message.sequence < self.expected_sequence {
+            return OrderedInsertResult::Duplicate;
+        }
+        if message.sequence == self.expected_sequence {
+            return match self.in_flight {
+                Some(message_id) if message_id == message.message_id => {
+                    OrderedInsertResult::Duplicate
+                }
+                Some(_) => OrderedInsertResult::Rejected,
+                None => {
+                    self.in_flight = Some(message.message_id);
+                    OrderedInsertResult::Ready
+                }
+            };
+        }
+        if message.sequence.saturating_sub(self.expected_sequence) > max_gap
+            || self.reorder_buffer.len() >= max_messages
+            || self.reorder_bytes.saturating_add(message.payload.len()) > max_bytes
+        {
+            return OrderedInsertResult::Rejected;
+        }
+        match self.reorder_buffer.get(&message.sequence) {
+            Some(existing) if existing.message_id == message.message_id => {
+                OrderedInsertResult::Duplicate
+            }
+            Some(_) => OrderedInsertResult::Rejected,
+            None => {
+                self.reorder_bytes = self.reorder_bytes.saturating_add(message.payload.len());
+                self.reorder_buffer.insert(message.sequence, message);
+                OrderedInsertResult::Buffered
+            }
+        }
+    }
+
+    fn acknowledge(&mut self, message_id: MessageId) -> Option<OrderedMessage> {
+        if self.in_flight != Some(message_id) {
+            return None;
+        }
+        self.in_flight = None;
+        self.expected_sequence = self.expected_sequence.saturating_add(1);
+        let next = self.reorder_buffer.remove(&self.expected_sequence)?;
+        self.reorder_bytes = self.reorder_bytes.saturating_sub(next.payload.len());
+        self.in_flight = Some(next.message_id);
+        Some(next)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct IncomingCompletion {
+    pub(crate) recovery_epoch: u64,
+    pub(crate) next_ordered: Option<OrderedMessage>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -201,6 +296,7 @@ struct DeliveryStore {
     next_sequences: HashMap<(String, String), u64>,
     recovery_epochs: HashMap<String, u64>,
     dedup: HashMap<DedupKey, DedupRecord>,
+    ordered: HashMap<(String, String), OrderedChannelState>,
 }
 
 impl DeliveryStore {
@@ -211,6 +307,7 @@ impl DeliveryStore {
             next_sequences: HashMap::new(),
             recovery_epochs: HashMap::new(),
             dedup: HashMap::new(),
+            ordered: HashMap::new(),
         }
     }
 }
@@ -605,21 +702,53 @@ impl DeliveryManager {
         DedupDecision::New
     }
 
-    pub async fn complete_incoming(
+    /// Insert a newly deduplicated message into its SessionBoundOrdered state.
+    ///
+    /// Only the message at `expected_sequence` becomes application-visible;
+    /// later messages stay in a bounded buffer until the current in-flight
+    /// message is acknowledged.
+    pub(crate) async fn accept_ordered(&self, message: OrderedMessage) -> OrderedInsertResult {
+        let mut store = self.store.lock().await;
+        let key = (message.session_id.clone(), message.channel_id.clone());
+        store.ordered.entry(key).or_default().insert(
+            message,
+            self.config.max_reorder_messages,
+            self.config.max_reorder_bytes,
+            self.config.max_sequence_gap,
+        )
+    }
+
+    pub(crate) async fn complete_incoming(
         &self,
         session_id: &str,
         channel_id: &str,
         message_id: MessageId,
-    ) -> Option<u64> {
+    ) -> Option<IncomingCompletion> {
         let mut store = self.store.lock().await;
         let key = DedupKey {
             session_id: session_id.to_string(),
             channel_id: channel_id.to_string(),
             message_id,
         };
+        let record_state = store.dedup.get(&key)?.state;
+        let next_ordered = if let Some(ordered) = store
+            .ordered
+            .get_mut(&(session_id.to_string(), channel_id.to_string()))
+        {
+            match ordered.in_flight {
+                Some(current) if current == message_id => ordered.acknowledge(message_id),
+                Some(_) if record_state == DedupState::Processed => None,
+                Some(_) | None => return None,
+            }
+        } else {
+            None
+        };
         let record = store.dedup.get_mut(&key)?;
         record.state = DedupState::Processed;
-        Some(record.recovery_epoch)
+        Some(IncomingCompletion {
+            recovery_epoch: record.recovery_epoch,
+            next_ordered,
+        })
     }
 
     /// Return the latest transport recovery epoch for a received message.
@@ -715,7 +844,125 @@ mod tests {
             max_payload_bytes: 16,
             dedup_max_entries: 4,
             dedup_ttl: Duration::from_secs(10),
+            max_reorder_messages: 2,
+            max_reorder_bytes: 8,
+            max_sequence_gap: 4,
         }
+    }
+
+    fn ordered_message(sequence: u64, message_id: u8) -> OrderedMessage {
+        OrderedMessage {
+            peer_id: "peer-a".into(),
+            session_id: "session-a".into(),
+            channel_id: "control".into(),
+            message_id: MessageId([message_id; MESSAGE_ID_BYTES]),
+            sequence,
+            policy: DeliveryPolicy::SessionBoundOrdered,
+            payload: vec![message_id],
+        }
+    }
+
+    #[test]
+    fn ordered_channel_releases_only_the_next_contiguous_message() {
+        let mut state = OrderedChannelState::default();
+        assert_eq!(
+            state.insert(ordered_message(2, 2), 4, 16, 4),
+            OrderedInsertResult::Buffered
+        );
+        assert_eq!(
+            state.insert(ordered_message(1, 1), 4, 16, 4),
+            OrderedInsertResult::Buffered
+        );
+        assert_eq!(
+            state.insert(ordered_message(0, 0), 4, 16, 4),
+            OrderedInsertResult::Ready
+        );
+        assert_eq!(
+            state
+                .acknowledge(MessageId([0; MESSAGE_ID_BYTES]))
+                .map(|message| message.sequence),
+            Some(1)
+        );
+        assert_eq!(
+            state
+                .acknowledge(MessageId([1; MESSAGE_ID_BYTES]))
+                .map(|message| message.sequence),
+            Some(2)
+        );
+        assert_eq!(state.acknowledge(MessageId([2; MESSAGE_ID_BYTES])), None);
+    }
+
+    #[test]
+    fn ordered_channel_rejects_sequence_gap_and_reorder_overflow() {
+        let mut state = OrderedChannelState::default();
+        assert_eq!(
+            state.insert(ordered_message(5, 5), 4, 16, 4),
+            OrderedInsertResult::Rejected
+        );
+        assert_eq!(
+            state.insert(ordered_message(2, 2), 1, 16, 4),
+            OrderedInsertResult::Buffered
+        );
+        assert_eq!(
+            state.insert(ordered_message(3, 3), 1, 16, 4),
+            OrderedInsertResult::Rejected
+        );
+        assert_eq!(
+            state.insert(
+                OrderedMessage {
+                    payload: vec![0; 17],
+                    ..ordered_message(1, 1)
+                },
+                4,
+                16,
+                4,
+            ),
+            OrderedInsertResult::Rejected
+        );
+    }
+
+    #[tokio::test]
+    async fn ordered_delivery_waits_for_application_ack_before_releasing_buffer() {
+        let manager = DeliveryManager::with_config(config());
+        let now = Instant::now();
+        for (sequence, id) in [(0, 0), (2, 2), (1, 1)] {
+            let message = ordered_message(sequence, id);
+            assert_eq!(
+                manager
+                    .begin_incoming(
+                        &message.session_id,
+                        &message.channel_id,
+                        message.message_id,
+                        1,
+                        now,
+                    )
+                    .await,
+                DedupDecision::New
+            );
+            let result = manager.accept_ordered(message).await;
+            if sequence == 0 {
+                assert_eq!(result, OrderedInsertResult::Ready);
+            } else {
+                assert_eq!(result, OrderedInsertResult::Buffered);
+            }
+        }
+
+        let first = manager
+            .complete_incoming("session-a", "control", MessageId([0; MESSAGE_ID_BYTES]))
+            .await
+            .expect("first ordered message should be ACKable");
+        assert_eq!(
+            first.next_ordered.as_ref().map(|message| message.sequence),
+            Some(1)
+        );
+        let second = manager
+            .complete_incoming("session-a", "control", MessageId([1; MESSAGE_ID_BYTES]))
+            .await
+            .expect("second ordered message should be ACKable after release");
+        assert_eq!(
+            second.next_ordered.as_ref().map(|message| message.sequence),
+            Some(2)
+        );
     }
 
     #[tokio::test]
@@ -981,7 +1228,10 @@ mod tests {
             manager
                 .complete_incoming("session-a", "control", message_id)
                 .await,
-            Some(2)
+            Some(IncomingCompletion {
+                recovery_epoch: 2,
+                next_ordered: None,
+            })
         );
         assert_eq!(
             manager
@@ -1005,6 +1255,9 @@ mod tests {
             max_payload_bytes: 4,
             dedup_max_entries: 4,
             dedup_ttl: Duration::from_secs(10),
+            max_reorder_messages: 2,
+            max_reorder_bytes: 8,
+            max_sequence_gap: 4,
         });
         let now = Instant::now();
         let best_effort = manager
