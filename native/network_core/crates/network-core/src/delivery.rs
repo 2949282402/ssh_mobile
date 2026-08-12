@@ -5,7 +5,7 @@
 //! 上重新发送；因此 ACK、去重和重试不会绑定到某一条已失效的 Connection。
 
 use rand::RngCore;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -14,6 +14,12 @@ use crate::crypto::CryptoMode;
 
 const MAX_SCOPE_ID_BYTES: usize = 128;
 const MESSAGE_ID_BYTES: usize = 16;
+
+/// 应用 handler 的 ACK 超时是独立的生命周期策略，不能复用 processed dedup
+/// 的 TTL。超时由 Delivery owner 显式扫描；严格有序通道会进入 Failed，不能
+/// 通过跳过 Sequence 来伪造顺序恢复。
+pub(crate) const APPLICATION_ACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const MAX_ACTIVE_INCOMING_RECORDS: usize = 4096;
 
 /// 应用层消息的稳定标识；跨 Connection 重试时保持不变。
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -130,6 +136,11 @@ pub enum DedupDecision {
     DuplicateInFlight,
     DuplicateProcessed,
     StaleEpoch,
+    /// Active 记录不能为了满足 history 上限而淘汰；调用方必须拒绝新消息，
+    /// 等待现有应用 ACK 或显式 timeout。
+    CapacityExceeded,
+    /// 严格有序通道因显式 abandon 或 ACK timeout 进入失败态。
+    ChannelFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -164,7 +175,11 @@ pub struct DeliveryConfig {
     pub max_pending_messages: usize,
     pub max_pending_bytes: usize,
     pub max_payload_bytes: usize,
+    /// 仅限制已完成消息的 processed dedup history；InFlight 与
+    /// OrderedBuffered 不参与淘汰。
     pub dedup_max_entries: usize,
+    /// 仅用于 processed dedup history。Active handler 使用
+    /// `APPLICATION_ACK_TIMEOUT`，避免两个生命周期语义混用。
     pub dedup_ttl: Duration,
     pub max_reorder_messages: usize,
     pub max_reorder_bytes: usize,
@@ -282,17 +297,36 @@ struct DedupKey {
     message_id: MessageId,
 }
 
+/// 接收端仍在等待应用 ACK 的状态；两种状态都不受 processed history 淘汰。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DedupState {
+enum ActiveIncomingState {
     InFlight,
-    Processed,
+    OrderedBuffered,
 }
 
+/// Active receive record 的生命周期与恢复 epoch；deadline 不是 dedup TTL。
 #[derive(Clone, Copy, Debug)]
-struct DedupRecord {
-    expires_at: Instant,
+struct ActiveIncomingRecord {
+    ack_deadline: Instant,
     recovery_epoch: u64,
-    state: DedupState,
+    state: ActiveIncomingState,
+}
+
+/// 已完成消息的有限历史，只承担重复判断，不承担 ACK gate。
+#[derive(Clone, Copy, Debug)]
+struct ProcessedDedupRecord {
+    expires_at: Instant,
+    last_seen_at: Instant,
+    recovery_epoch: u64,
+}
+
+/// Application ACK 超时后的可观测摘要。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct IncomingTimeout {
+    pub(crate) session_id: String,
+    pub(crate) channel_id: String,
+    pub(crate) message_id: MessageId,
+    pub(crate) ordered_channel_failed: bool,
 }
 
 struct DeliveryStore {
@@ -300,8 +334,12 @@ struct DeliveryStore {
     pending_bytes: usize,
     next_sequences: HashMap<(String, String), u64>,
     recovery_epochs: HashMap<String, u64>,
-    dedup: HashMap<DedupKey, DedupRecord>,
+    /// 未完成的应用处理状态。这里的记录不受 dedup TTL/LRU 影响。
+    incoming_active: HashMap<DedupKey, ActiveIncomingRecord>,
+    /// 已完成消息的有限去重历史；只有这里允许 TTL 和容量淘汰。
+    processed_dedup: HashMap<DedupKey, ProcessedDedupRecord>,
     ordered: HashMap<(String, String), OrderedChannelState>,
+    failed_ordered: HashSet<(String, String)>,
 }
 
 impl DeliveryStore {
@@ -311,8 +349,10 @@ impl DeliveryStore {
             pending_bytes: 0,
             next_sequences: HashMap::new(),
             recovery_epochs: HashMap::new(),
-            dedup: HashMap::new(),
+            incoming_active: HashMap::new(),
+            processed_dedup: HashMap::new(),
             ordered: HashMap::new(),
+            failed_ordered: HashSet::new(),
         }
     }
 }
@@ -708,13 +748,16 @@ impl DeliveryManager {
         now: Instant,
     ) -> DedupDecision {
         let mut store = self.store.lock().await;
-        prune_dedup(&mut store, now);
-        let key = DedupKey {
-            session_id: session_id.to_string(),
-            channel_id: channel_id.to_string(),
-            message_id,
-        };
-        if let Some(record) = store.dedup.get_mut(&key) {
+        // Application timeout 是独立且显式的生命周期决策；它可以清理超时
+        // handler，但下面的普通 dedup TTL 只能淘汰已完成的历史。
+        let _ = expire_incoming_locked(&mut store, now, Some(session_id));
+        prune_processed_dedup(&mut store, now);
+        let key = dedup_key(session_id, channel_id, message_id);
+        let scope = (session_id.to_string(), channel_id.to_string());
+        if store.failed_ordered.contains(&scope) {
+            return DedupDecision::ChannelFailed;
+        }
+        if let Some(record) = store.incoming_active.get_mut(&key) {
             if recovery_epoch < record.recovery_epoch {
                 return DedupDecision::StaleEpoch;
             }
@@ -723,35 +766,37 @@ impl DeliveryManager {
                 // 只更新 ACK 绑定，保留业务处理状态，避免把尚未完成的
                 // handler 错误地当成已处理消息而提前 ACK。
                 record.recovery_epoch = recovery_epoch;
-                record.expires_at = now + self.config.dedup_ttl;
             }
-            return match record.state {
-                DedupState::InFlight => DedupDecision::DuplicateInFlight,
-                DedupState::Processed => DedupDecision::DuplicateProcessed,
-            };
+            return DedupDecision::DuplicateInFlight;
         }
-        if self.config.dedup_max_entries == 0 {
-            return DedupDecision::New;
+        if let Some(record) = store.processed_dedup.get_mut(&key) {
+            if recovery_epoch < record.recovery_epoch {
+                return DedupDecision::StaleEpoch;
+            }
+            if recovery_epoch > record.recovery_epoch {
+                // Processed history 可以更新 ACK 所绑定的恢复周期，但不再
+                // 重新进入应用 handler。
+                record.recovery_epoch = recovery_epoch;
+            }
+            record.last_seen_at = now;
+            record.expires_at = now + self.config.dedup_ttl;
+            return DedupDecision::DuplicateProcessed;
         }
-        while store.dedup.len() >= self.config.dedup_max_entries {
-            let oldest = store
-                .dedup
-                .iter()
-                .min_by_key(|(_, record)| record.expires_at)
-                .map(|(key, _)| key.clone());
-            let Some(oldest) = oldest else {
-                break;
-            };
-            store.dedup.remove(&oldest);
+        if store.incoming_active.len() >= MAX_ACTIVE_INCOMING_RECORDS {
+            // Active records are never removed to satisfy the processed-history
+            // bound. Rejecting new work preserves the ACK contract and gives
+            // existing handlers a chance to finish or time out explicitly.
+            return DedupDecision::CapacityExceeded;
         }
-        store.dedup.insert(
+        store.incoming_active.insert(
             key,
-            DedupRecord {
-                expires_at: now + self.config.dedup_ttl,
+            ActiveIncomingRecord {
+                ack_deadline: now + APPLICATION_ACK_TIMEOUT,
                 recovery_epoch,
-                state: DedupState::InFlight,
+                state: ActiveIncomingState::InFlight,
             },
         );
+        assert_delivery_invariants(&store);
         DedupDecision::New
     }
 
@@ -763,12 +808,38 @@ impl DeliveryManager {
     pub(crate) async fn accept_ordered(&self, message: OrderedMessage) -> OrderedInsertResult {
         let mut store = self.store.lock().await;
         let key = (message.session_id.clone(), message.channel_id.clone());
-        store.ordered.entry(key).or_default().insert(
+        if store.failed_ordered.contains(&key) {
+            return OrderedInsertResult::Rejected;
+        }
+        let active_key = dedup_key(&message.session_id, &message.channel_id, message.message_id);
+        if !store.incoming_active.contains_key(&active_key) {
+            debug_assert!(
+                false,
+                "ordered message must have an active dedup record before insertion"
+            );
+            return OrderedInsertResult::Rejected;
+        }
+        let result = store.ordered.entry(key).or_default().insert(
             message,
             self.config.max_reorder_messages,
             self.config.max_reorder_bytes,
             self.config.max_sequence_gap,
-        )
+        );
+        match result {
+            OrderedInsertResult::Ready => {
+                if let Some(record) = store.incoming_active.get_mut(&active_key) {
+                    record.state = ActiveIncomingState::InFlight;
+                }
+            }
+            OrderedInsertResult::Buffered => {
+                if let Some(record) = store.incoming_active.get_mut(&active_key) {
+                    record.state = ActiveIncomingState::OrderedBuffered;
+                }
+            }
+            OrderedInsertResult::Duplicate | OrderedInsertResult::Rejected => {}
+        }
+        assert_delivery_invariants(&store);
+        result
     }
 
     pub(crate) async fn complete_incoming(
@@ -777,29 +848,85 @@ impl DeliveryManager {
         channel_id: &str,
         message_id: MessageId,
     ) -> Option<IncomingCompletion> {
+        self.complete_incoming_at(session_id, channel_id, message_id, Instant::now())
+            .await
+    }
+
+    async fn complete_incoming_at(
+        &self,
+        session_id: &str,
+        channel_id: &str,
+        message_id: MessageId,
+        now: Instant,
+    ) -> Option<IncomingCompletion> {
         let mut store = self.store.lock().await;
-        let key = DedupKey {
-            session_id: session_id.to_string(),
-            channel_id: channel_id.to_string(),
-            message_id,
-        };
-        let record_state = store.dedup.get(&key)?.state;
-        let next_ordered = if let Some(ordered) = store
-            .ordered
-            .get_mut(&(session_id.to_string(), channel_id.to_string()))
-        {
+        let key = dedup_key(session_id, channel_id, message_id);
+        let active = *store.incoming_active.get(&key)?;
+        let scope = (session_id.to_string(), channel_id.to_string());
+
+        if let Some(ordered) = store.ordered.get(&scope) {
+            match ordered.in_flight {
+                Some(current) if current == message_id => {}
+                Some(_) => return None,
+                None if active.state == ActiveIncomingState::OrderedBuffered => return None,
+                None => {}
+            }
+        } else if active.state == ActiveIncomingState::OrderedBuffered {
+            debug_assert!(false, "buffered ordered record lost its channel state");
+            return None;
+        }
+
+        // 先检查下一个 buffer 条目再修改 ordering gate，保证 active record
+        // 与 reorder_buffer 的 invariant 在同一把 store 锁内保持原子一致。
+        let next_key = store.ordered.get(&scope).and_then(|ordered| {
+            (ordered.in_flight == Some(message_id))
+                .then(|| ordered.expected_sequence.saturating_add(1))
+                .and_then(|sequence| ordered.reorder_buffer.get(&sequence))
+                .map(|next| dedup_key(&next.session_id, &next.channel_id, next.message_id))
+        });
+        if let Some(next_key) = next_key.as_ref() {
+            let next_active = store.incoming_active.get(next_key);
+            if !matches!(
+                next_active,
+                Some(record) if record.state == ActiveIncomingState::OrderedBuffered
+            ) {
+                debug_assert!(false, "ordered buffer entry has no active dedup record");
+                return None;
+            }
+        }
+
+        let next_ordered = if let Some(ordered) = store.ordered.get_mut(&scope) {
             match ordered.in_flight {
                 Some(current) if current == message_id => ordered.acknowledge(message_id),
-                Some(_) if record_state == DedupState::Processed => None,
-                Some(_) | None => return None,
+                Some(_) => return None,
+                None => None,
             }
         } else {
             None
         };
-        let record = store.dedup.get_mut(&key)?;
-        record.state = DedupState::Processed;
+        store.incoming_active.remove(&key)?;
+        if let Some(next) = next_ordered.as_ref() {
+            let next_key = dedup_key(&next.session_id, &next.channel_id, next.message_id);
+            if let Some(record) = store.incoming_active.get_mut(&next_key) {
+                record.state = ActiveIncomingState::InFlight;
+            } else {
+                debug_assert!(false, "ordered next message lost its active record");
+                return None;
+            }
+        }
+        remember_processed(
+            &mut store,
+            key,
+            ProcessedDedupRecord {
+                expires_at: now + self.config.dedup_ttl,
+                last_seen_at: now,
+                recovery_epoch: active.recovery_epoch,
+            },
+            self.config.dedup_max_entries,
+        );
+        assert_delivery_invariants(&store);
         Some(IncomingCompletion {
-            recovery_epoch: record.recovery_epoch,
+            recovery_epoch: active.recovery_epoch,
             next_ordered,
         })
     }
@@ -816,14 +943,17 @@ impl DeliveryManager {
         message_id: MessageId,
     ) -> Option<u64> {
         let store = self.store.lock().await;
+        let key = dedup_key(session_id, channel_id, message_id);
         store
-            .dedup
-            .get(&DedupKey {
-                session_id: session_id.to_string(),
-                channel_id: channel_id.to_string(),
-                message_id,
-            })
+            .incoming_active
+            .get(&key)
             .map(|record| record.recovery_epoch)
+            .or_else(|| {
+                store
+                    .processed_dedup
+                    .get(&key)
+                    .map(|record| record.recovery_epoch)
+            })
     }
 
     pub async fn abandon_incoming(
@@ -833,14 +963,91 @@ impl DeliveryManager {
         message_id: MessageId,
     ) -> bool {
         let mut store = self.store.lock().await;
+        let key = dedup_key(session_id, channel_id, message_id);
+        if !store.incoming_active.contains_key(&key) {
+            return false;
+        }
+        let scope = (session_id.to_string(), channel_id.to_string());
+        let ordered = store.ordered.get(&scope).is_some_and(|state| {
+            state.in_flight == Some(message_id)
+                || state
+                    .reorder_buffer
+                    .values()
+                    .any(|message| message.message_id == message_id)
+        });
+        if ordered {
+            let _ = fail_ordered_channel(&mut store, &scope);
+        } else {
+            store.incoming_active.remove(&key);
+        }
+        assert_delivery_invariants(&store);
+        true
+    }
+
+    /// 拒绝尚未进入 ordered buffer 的消息。它与应用显式 abandon 分开，避免
+    /// malformed/超限 packet 意外使健康的 ordered channel 进入 Failed。
+    pub(crate) async fn reject_incoming(
+        &self,
+        session_id: &str,
+        channel_id: &str,
+        message_id: MessageId,
+    ) -> bool {
+        let mut store = self.store.lock().await;
+        let removed = store
+            .incoming_active
+            .remove(&dedup_key(session_id, channel_id, message_id))
+            .is_some();
+        assert_delivery_invariants(&store);
+        removed
+    }
+
+    /// Explicitly closes a logical Session's receive-side state. Outgoing
+    /// pending messages remain separate so a caller can decide their retry or
+    /// cancellation policy; active application work must never survive a closed
+    /// Session and leave an ordered gate permanently occupied.
+    pub(crate) async fn close_session(&self, session_id: &str) {
+        let mut store = self.store.lock().await;
         store
-            .dedup
-            .remove(&DedupKey {
-                session_id: session_id.to_string(),
-                channel_id: channel_id.to_string(),
-                message_id,
-            })
-            .is_some()
+            .incoming_active
+            .retain(|key, _| key.session_id != session_id);
+        store
+            .processed_dedup
+            .retain(|key, _| key.session_id != session_id);
+        store
+            .ordered
+            .retain(|(session, _), _| session != session_id);
+        store
+            .failed_ordered
+            .retain(|(session, _)| session != session_id);
+        assert_delivery_invariants(&store);
+    }
+
+    /// 扫描应用 ACK 超时。非有序消息只释放 active 记录；严格有序通道会
+    /// 整体进入 Failed 并清空缓冲，绝不自动跳过缺失的 Sequence。
+    pub(crate) async fn expire_incoming(
+        &self,
+        session_id: &str,
+        now: Instant,
+    ) -> Vec<IncomingTimeout> {
+        let mut store = self.store.lock().await;
+        let expired = expire_incoming_locked(&mut store, now, Some(session_id));
+        assert_delivery_invariants(&store);
+        expired
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn incoming_state_counts(&self) -> (usize, usize, usize) {
+        let store = self.store.lock().await;
+        let reorder_messages = store
+            .ordered
+            .values()
+            .map(|state| state.reorder_buffer.len())
+            .sum();
+        (
+            store.incoming_active.len(),
+            store.processed_dedup.len(),
+            reorder_messages,
+        )
     }
 
     #[cfg(test)]
@@ -872,9 +1079,172 @@ fn remove_pending(store: &mut DeliveryStore, message_id: &MessageId) -> Option<P
     Some(message)
 }
 
-fn prune_dedup(store: &mut DeliveryStore, now: Instant) {
-    store.dedup.retain(|_, record| record.expires_at > now);
+fn dedup_key(session_id: &str, channel_id: &str, message_id: MessageId) -> DedupKey {
+    DedupKey {
+        session_id: session_id.to_string(),
+        channel_id: channel_id.to_string(),
+        message_id,
+    }
 }
+
+fn prune_processed_dedup(store: &mut DeliveryStore, now: Instant) {
+    store
+        .processed_dedup
+        .retain(|_, record| record.expires_at > now);
+}
+
+fn remember_processed(
+    store: &mut DeliveryStore,
+    key: DedupKey,
+    record: ProcessedDedupRecord,
+    max_entries: usize,
+) {
+    if max_entries == 0 {
+        // 零窗口仍会保留 active record 到当前 ACK，只是不保留 ACK 后的
+        // duplicate history。
+        return;
+    }
+    store
+        .processed_dedup
+        .retain(|_, existing| existing.expires_at > record.last_seen_at);
+    while store.processed_dedup.len() >= max_entries {
+        let oldest = store
+            .processed_dedup
+            .iter()
+            .min_by_key(|(_, existing)| existing.last_seen_at)
+            .map(|(key, _)| key.clone());
+        let Some(oldest) = oldest else {
+            break;
+        };
+        store.processed_dedup.remove(&oldest);
+    }
+    store.processed_dedup.insert(key, record);
+}
+
+fn fail_ordered_channel(store: &mut DeliveryStore, scope: &(String, String)) -> HashSet<DedupKey> {
+    let mut affected = HashSet::new();
+    if let Some(ordered) = store.ordered.remove(scope) {
+        if let Some(message_id) = ordered.in_flight {
+            affected.insert(dedup_key(&scope.0, &scope.1, message_id));
+        }
+        for message in ordered.reorder_buffer.into_values() {
+            affected.insert(dedup_key(
+                &message.session_id,
+                &message.channel_id,
+                message.message_id,
+            ));
+        }
+    }
+    for key in store
+        .incoming_active
+        .keys()
+        .filter(|key| key.session_id == scope.0 && key.channel_id == scope.1)
+        .cloned()
+        .collect::<Vec<_>>()
+    {
+        affected.insert(key);
+    }
+    for key in &affected {
+        store.incoming_active.remove(key);
+    }
+    store.failed_ordered.insert(scope.clone());
+    affected
+}
+
+fn expire_incoming_locked(
+    store: &mut DeliveryStore,
+    now: Instant,
+    session_id: Option<&str>,
+) -> Vec<IncomingTimeout> {
+    let timed_out = store
+        .incoming_active
+        .iter()
+        .filter(|(key, record)| {
+            session_id.is_none_or(|session| key.session_id == session) && now >= record.ack_deadline
+        })
+        .map(|(key, record)| (key.clone(), *record))
+        .collect::<Vec<_>>();
+    let mut ordered_scopes = HashSet::new();
+    let mut expired = Vec::new();
+    for (key, record) in timed_out {
+        let scope = (key.session_id.clone(), key.channel_id.clone());
+        let is_ordered = record.state == ActiveIncomingState::OrderedBuffered
+            || store
+                .ordered
+                .get(&scope)
+                .is_some_and(|ordered| ordered.in_flight == Some(key.message_id));
+        if is_ordered {
+            ordered_scopes.insert(scope);
+        } else if store.incoming_active.remove(&key).is_some() {
+            expired.push(IncomingTimeout {
+                session_id: key.session_id,
+                channel_id: key.channel_id,
+                message_id: key.message_id,
+                ordered_channel_failed: false,
+            });
+        }
+    }
+    for scope in ordered_scopes {
+        let affected = fail_ordered_channel(store, &scope);
+        for key in affected {
+            expired.push(IncomingTimeout {
+                session_id: key.session_id,
+                channel_id: key.channel_id,
+                message_id: key.message_id,
+                ordered_channel_failed: true,
+            });
+        }
+    }
+    expired
+}
+
+#[cfg(debug_assertions)]
+fn assert_delivery_invariants(store: &DeliveryStore) {
+    for (key, record) in &store.incoming_active {
+        assert!(
+            !store.processed_dedup.contains_key(key),
+            "active incoming record also exists in processed history"
+        );
+        if record.state == ActiveIncomingState::OrderedBuffered {
+            let ordered = store
+                .ordered
+                .get(&(key.session_id.clone(), key.channel_id.clone()))
+                .expect("ordered buffered record lost its channel state");
+            assert!(
+                ordered
+                    .reorder_buffer
+                    .values()
+                    .any(|message| message.message_id == key.message_id),
+                "ordered buffered record is missing from reorder_buffer"
+            );
+        }
+    }
+    for (scope, ordered) in &store.ordered {
+        if let Some(message_id) = ordered.in_flight {
+            let key = dedup_key(&scope.0, &scope.1, message_id);
+            assert!(
+                store
+                    .incoming_active
+                    .get(&key)
+                    .is_some_and(|record| { record.state == ActiveIncomingState::InFlight }),
+                "ordered in-flight message is missing its active record"
+            );
+        }
+        for message in ordered.reorder_buffer.values() {
+            let key = dedup_key(&message.session_id, &message.channel_id, message.message_id);
+            assert!(
+                store
+                    .incoming_active
+                    .get(&key)
+                    .is_some_and(|record| { record.state == ActiveIncomingState::OrderedBuffered }),
+                "reorder_buffer message is missing its active record"
+            );
+        }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn assert_delivery_invariants(_store: &DeliveryStore) {}
 
 #[cfg(test)]
 mod tests {
@@ -1015,6 +1385,346 @@ mod tests {
         assert_eq!(
             second.next_ordered.as_ref().map(|message| message.sequence),
             Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn inflight_survives_processed_dedup_ttl_until_application_ack() {
+        let manager = DeliveryManager::with_config(config());
+        let now = Instant::now();
+        let message_id = MessageId([20; MESSAGE_ID_BYTES]);
+        assert_eq!(
+            manager
+                .begin_incoming("session-a", "control", message_id, 1, now)
+                .await,
+            DedupDecision::New
+        );
+
+        // 11 seconds exceeds this test's processed-history TTL, but remains
+        // below the independent application ACK timeout.
+        for id in [21, 22] {
+            assert_eq!(
+                manager
+                    .begin_incoming(
+                        "session-a",
+                        "control",
+                        MessageId([id; MESSAGE_ID_BYTES]),
+                        1,
+                        now + Duration::from_secs(11),
+                    )
+                    .await,
+                DedupDecision::New
+            );
+        }
+        assert_eq!(manager.incoming_state_counts().await.0, 3);
+        assert!(manager
+            .complete_incoming("session-a", "control", message_id)
+            .await
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn ordered_buffer_survives_processed_dedup_ttl_and_releases_in_sequence() {
+        let manager = DeliveryManager::with_config(config());
+        let now = Instant::now();
+        for (sequence, id) in [(2, 2), (1, 1)] {
+            let message = ordered_message(sequence, id);
+            assert_eq!(
+                manager
+                    .begin_incoming(
+                        &message.session_id,
+                        &message.channel_id,
+                        message.message_id,
+                        1,
+                        now,
+                    )
+                    .await,
+                DedupDecision::New
+            );
+            assert_eq!(
+                manager.accept_ordered(message).await,
+                OrderedInsertResult::Buffered
+            );
+        }
+
+        let first = ordered_message(0, 0);
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    &first.session_id,
+                    &first.channel_id,
+                    first.message_id,
+                    1,
+                    now + Duration::from_secs(11),
+                )
+                .await,
+            DedupDecision::New
+        );
+        assert_eq!(
+            manager.accept_ordered(first).await,
+            OrderedInsertResult::Ready
+        );
+
+        let mut released = Vec::new();
+        for id in [0, 1, 2] {
+            let completion = manager
+                .complete_incoming_at(
+                    "session-a",
+                    "control",
+                    MessageId([id; MESSAGE_ID_BYTES]),
+                    now + Duration::from_secs(11),
+                )
+                .await
+                .expect("ordered message should be ACKable");
+            released.push(id);
+            if id < 2 {
+                assert_eq!(
+                    completion
+                        .next_ordered
+                        .as_ref()
+                        .map(|message| message.sequence),
+                    Some(u64::from(id + 1))
+                );
+            } else {
+                assert!(completion.next_ordered.is_none());
+            }
+        }
+        assert_eq!(released, vec![0, 1, 2]);
+        assert_eq!(manager.incoming_state_counts().await, (0, 3, 0));
+    }
+
+    #[tokio::test]
+    async fn processed_history_pressure_never_evicts_active_or_ordered_buffered() {
+        let mut limited = config();
+        limited.dedup_max_entries = 2;
+        let manager = DeliveryManager::with_config(limited);
+        let now = Instant::now();
+
+        let first = ordered_message(0, 0);
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    &first.session_id,
+                    &first.channel_id,
+                    first.message_id,
+                    1,
+                    now,
+                )
+                .await,
+            DedupDecision::New
+        );
+        assert_eq!(
+            manager.accept_ordered(first).await,
+            OrderedInsertResult::Ready
+        );
+        let buffered = ordered_message(1, 1);
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    &buffered.session_id,
+                    &buffered.channel_id,
+                    buffered.message_id,
+                    1,
+                    now,
+                )
+                .await,
+            DedupDecision::New
+        );
+        assert_eq!(
+            manager.accept_ordered(buffered).await,
+            OrderedInsertResult::Buffered
+        );
+
+        for (offset, id) in [10u8, 11, 12].into_iter().enumerate() {
+            let at = now + Duration::from_secs((offset + 1) as u64);
+            let message_id = MessageId([id; MESSAGE_ID_BYTES]);
+            assert_eq!(
+                manager
+                    .begin_incoming("session-a", "history", message_id, 1, at)
+                    .await,
+                DedupDecision::New
+            );
+            assert!(manager
+                .complete_incoming_at("session-a", "history", message_id, at)
+                .await
+                .is_some());
+        }
+        assert_eq!(manager.incoming_state_counts().await, (2, 2, 1));
+
+        assert!(manager
+            .complete_incoming_at(
+                "session-a",
+                "control",
+                MessageId([0; MESSAGE_ID_BYTES]),
+                now + Duration::from_secs(5),
+            )
+            .await
+            .is_some());
+        assert!(manager
+            .complete_incoming_at(
+                "session-a",
+                "control",
+                MessageId([1; MESSAGE_ID_BYTES]),
+                now + Duration::from_secs(5),
+            )
+            .await
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn processed_history_is_the_only_state_evicted_by_capacity() {
+        let mut limited = config();
+        limited.dedup_max_entries = 2;
+        let manager = DeliveryManager::with_config(limited);
+        let now = Instant::now();
+        for (offset, id) in [30u8, 31, 32].into_iter().enumerate() {
+            let at = now + Duration::from_secs(offset as u64);
+            let message_id = MessageId([id; MESSAGE_ID_BYTES]);
+            assert_eq!(
+                manager
+                    .begin_incoming("session-a", "control", message_id, 1, at)
+                    .await,
+                DedupDecision::New
+            );
+            assert!(manager
+                .complete_incoming_at("session-a", "control", message_id, at)
+                .await
+                .is_some());
+        }
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    "session-a",
+                    "control",
+                    MessageId([30; MESSAGE_ID_BYTES]),
+                    1,
+                    now + Duration::from_secs(4),
+                )
+                .await,
+            DedupDecision::New
+        );
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    "session-a",
+                    "control",
+                    MessageId([31; MESSAGE_ID_BYTES]),
+                    1,
+                    now + Duration::from_secs(4),
+                )
+                .await,
+            DedupDecision::DuplicateProcessed
+        );
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    "session-a",
+                    "control",
+                    MessageId([32; MESSAGE_ID_BYTES]),
+                    1,
+                    now + Duration::from_secs(4),
+                )
+                .await,
+            DedupDecision::DuplicateProcessed
+        );
+    }
+
+    #[tokio::test]
+    async fn application_ack_timeout_fails_ordered_channel_without_skipping_sequence() {
+        let manager = DeliveryManager::with_config(config());
+        let now = Instant::now();
+        for (sequence, id) in [(0, 40), (1, 41)] {
+            let message = ordered_message(sequence, id);
+            assert_eq!(
+                manager
+                    .begin_incoming(
+                        &message.session_id,
+                        &message.channel_id,
+                        message.message_id,
+                        1,
+                        now,
+                    )
+                    .await,
+                DedupDecision::New
+            );
+            assert!(matches!(
+                manager.accept_ordered(message).await,
+                OrderedInsertResult::Ready | OrderedInsertResult::Buffered
+            ));
+        }
+        let expired = manager
+            .expire_incoming(
+                "session-a",
+                now + APPLICATION_ACK_TIMEOUT + Duration::from_secs(1),
+            )
+            .await;
+        assert_eq!(expired.len(), 2);
+        assert!(expired.iter().all(|timeout| timeout.ordered_channel_failed));
+        assert_eq!(manager.incoming_state_counts().await, (0, 0, 0));
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    "session-a",
+                    "control",
+                    MessageId([42; MESSAGE_ID_BYTES]),
+                    1,
+                    now + APPLICATION_ACK_TIMEOUT + Duration::from_secs(1),
+                )
+                .await,
+            DedupDecision::ChannelFailed
+        );
+        manager.close_session("session-a").await;
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    "session-a",
+                    "control",
+                    MessageId([42; MESSAGE_ID_BYTES]),
+                    1,
+                    now + APPLICATION_ACK_TIMEOUT + Duration::from_secs(1),
+                )
+                .await,
+            DedupDecision::New
+        );
+    }
+
+    #[tokio::test]
+    async fn closing_session_clears_active_incoming_and_ordered_buffer() {
+        let manager = DeliveryManager::with_config(config());
+        let now = Instant::now();
+        for (sequence, id) in [(0, 50), (1, 51)] {
+            let message = ordered_message(sequence, id);
+            assert_eq!(
+                manager
+                    .begin_incoming(
+                        &message.session_id,
+                        &message.channel_id,
+                        message.message_id,
+                        1,
+                        now,
+                    )
+                    .await,
+                DedupDecision::New
+            );
+            let result = manager.accept_ordered(message).await;
+            assert!(matches!(
+                result,
+                OrderedInsertResult::Ready | OrderedInsertResult::Buffered
+            ));
+        }
+        manager.close_session("session-a").await;
+        assert_eq!(manager.incoming_state_counts().await, (0, 0, 0));
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    "session-a",
+                    "control",
+                    MessageId([50; MESSAGE_ID_BYTES]),
+                    1,
+                    now + Duration::from_secs(1),
+                )
+                .await,
+            DedupDecision::New
         );
     }
 
@@ -1253,7 +1963,7 @@ mod tests {
         assert!(manager
             .complete_incoming("session-a", "control", message_id)
             .await
-            .is_some());
+            .is_none());
         assert_eq!(
             manager
                 .begin_incoming("session-b", "control", message_id, 1, now)

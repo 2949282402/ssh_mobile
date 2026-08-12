@@ -39,6 +39,87 @@ fn missing_payload_is_invalid_instead_of_a_fake_no_route() {
     ));
 }
 
+/// 通过 Runtime owner 验证：processed dedup TTL 到期不会清理仍等待应用
+/// ACK 的消息；显式 disconnect 则会释放 active receive 与 ordered buffer。
+#[test]
+fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
+    let runtime = NetworkRuntime::new().expect("runtime");
+    runtime.start().expect("start runtime");
+    let state = runtime
+        .state
+        .lock()
+        .expect("runtime state lock")
+        .clone()
+        .expect("runtime state");
+
+    runtime.handle().block_on(async {
+        let session_id = match state.sessions.begin_connect("delivery-peer").await {
+            crate::session::ConnectDecision::Started(session_id) => session_id,
+            decision => panic!("unexpected session decision: {decision:?}"),
+        };
+        let session_key = session_id.wire_key();
+        let first = crate::delivery::MessageId::from_bytes([90; 16]);
+        let buffered = crate::delivery::MessageId::from_bytes([91; 16]);
+        assert_eq!(
+            state
+                .delivery
+                .begin_incoming(&session_key, "control", first, 1, Instant::now())
+                .await,
+            crate::delivery::DedupDecision::New
+        );
+        assert_eq!(
+            state
+                .delivery
+                .accept_ordered(crate::delivery::OrderedMessage {
+                    peer_id: "delivery-peer".into(),
+                    session_id: session_key.clone(),
+                    channel_id: "control".into(),
+                    message_id: first,
+                    sequence: 0,
+                    policy: crate::delivery::DeliveryPolicy::SessionBoundOrdered,
+                    payload: vec![0],
+                })
+                .await,
+            crate::delivery::OrderedInsertResult::Ready
+        );
+        assert_eq!(
+            state
+                .delivery
+                .begin_incoming(&session_key, "control", buffered, 1, Instant::now())
+                .await,
+            crate::delivery::DedupDecision::New
+        );
+        assert_eq!(
+            state
+                .delivery
+                .accept_ordered(crate::delivery::OrderedMessage {
+                    peer_id: "delivery-peer".into(),
+                    session_id: session_key.clone(),
+                    channel_id: "control".into(),
+                    message_id: buffered,
+                    sequence: 1,
+                    policy: crate::delivery::DeliveryPolicy::SessionBoundOrdered,
+                    payload: vec![1],
+                })
+                .await,
+            crate::delivery::OrderedInsertResult::Buffered
+        );
+        assert_eq!(state.delivery.incoming_state_counts().await, (2, 0, 1));
+        let expired = state
+            .delivery
+            .expire_incoming(&session_key, Instant::now() + Duration::from_secs(11))
+            .await;
+        assert!(expired.is_empty());
+        assert_eq!(state.delivery.incoming_state_counts().await, (2, 0, 1));
+
+        crate::peer::disconnect_peer(&state, "delivery-peer".into())
+            .await
+            .expect("disconnect peer");
+        assert_eq!(state.delivery.incoming_state_counts().await, (0, 0, 0));
+    });
+    runtime.stop().expect("stop runtime");
+}
+
 /// 验证 stop 会关闭 QUIC endpoint 并等待 accept task，旧端口可以立即被
 /// 新建的 native runtime 重新绑定，不依赖 sleep 或固定端口重试。
 #[test]

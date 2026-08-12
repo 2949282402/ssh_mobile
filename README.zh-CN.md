@@ -506,6 +506,11 @@ NetworkRuntime`。命令只返回 typed accepted 结果，进度和终态通过 
 收发；Flutter 负责配对、审批 UI、历史记录和展示状态。Go Relay 只作为 v1
 内存路由器，不接触文件明文元数据或明文字节。
 
+Native Channel Delivery 会把仍在处理的 incoming handler 和 ordered buffer
+独立于已完成消息的 dedup TTL/LRU。应用 ACK timeout 使用单独策略；严格有序
+通道超时后进入失败态，不跳过 Sequence，显式关闭逻辑 Session 时会释放接收端
+active state。
+
 ## AI Agent Runtime
 
 AI Agent 运行在客户端，而不是被管理服务器上。SSH Mobile 负责构建模型上下文、调用已配置的模型服务、控制工具循环，并通过 SSH 和 SFTP 访问远程系统。

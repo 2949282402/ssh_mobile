@@ -25,15 +25,20 @@ QUIC/Relay 的 transport ACK 只能说明当前连接完成了传输，不能说
   Flutter 的 `AcknowledgeMessage` 只提交 Session、Channel 和 MessageId，
   `DeliveryManager` 在内部解析最新 epoch，避免应用保存已经过期的 transport
   状态。
-- 接收端去重窗口按 `Session + Channel + MessageId` 维护，拥有 TTL 和最大条目
-  数；更高 Recovery Epoch 的同一 MessageId 只更新 ACK 绑定并保留原处理状态。
+- 接收端按 `Session + Channel + MessageId` 把状态分为 active receive 与
+  processed history。`InFlight` 和 `OrderedBuffered` 在应用 ACK、显式拒绝/
+  abandon、逻辑 Session close 或独立 `APPLICATION_ACK_TIMEOUT` 之前不能被
+  普通 dedup TTL/LRU 删除；TTL 与最大条目数只作用于 processed history。
+  更高 Recovery Epoch 的同一 MessageId 只更新 ACK 绑定并保留原处理状态。
   `DuplicateInFlight` 不发布事件也不发送 ACK，`DuplicateProcessed` 不重复执行
   但使用最新 epoch 重发 ACK，较低 epoch 被拒绝。
 - `SessionBoundOrdered` 由 Session + Channel 的 `OrderedChannelState` 承担，
   维护 `expected_sequence`、单个 `in_flight` 和有界 `reorder_buffer`。只有
   `sequence == expected_sequence` 的消息进入应用；更大的序号在
   `MAX_REORDER_MESSAGES`、`MAX_REORDER_BYTES` 和 `MAX_SEQUENCE_GAP` 内暂存，
-  且只有当前消息完成应用 ACK 后才释放下一个连续序号。
+  且只有当前消息完成应用 ACK 后才释放下一个连续序号。每个 buffer
+  MessageId 必须同时存在于 active receive state；ACK timeout 或显式 abandon
+  会使严格有序 channel 进入 Failed，而不是跳过缺失序号。
 - RetryPolicy 使用最大尝试次数、指数退避、TTL 和最大重试字节预算；过期或
   耗尽预算的消息不再无限后台重试。
 - Connection Ready 会为对应真实 `SessionId` 创建新的 Recovery Snapshot，

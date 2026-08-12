@@ -245,6 +245,14 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 
 ### Network transfer
 
+- 2026-08-12: Plan 3 Step 1 keeps `DeliveryManager` receive-side active state
+  (`InFlight` and `OrderedBuffered`) separate from processed dedup history.
+  `dedup_ttl` and `dedup_max_entries` apply only to processed records; active
+  records are protected until application ACK, explicit rejection/abandon,
+  logical Session close, or the separate `APPLICATION_ACK_TIMEOUT` policy.
+  Ordered ACK promotion checks that every buffered MessageId still has an
+  active record, and an ordered application timeout fails the channel instead
+  of skipping a Sequence.
 - 2026-08-10: `packages/infrastructure/network_sdk/` is the typed Flutter client
   boundary for bootstrap, authenticated API, business sessions, and event streams.
   Its `JsonBootstrapClient` and `JsonAuthenticatedApiClient` own no transport or

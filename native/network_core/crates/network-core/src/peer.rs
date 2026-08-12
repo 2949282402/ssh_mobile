@@ -259,6 +259,10 @@ pub(crate) async fn disconnect_peer(
     state.sessions.close(&peer_id).await;
     if let Some(session_id) = session_id {
         state.cancel_session_tasks(&peer_id, session_id).await;
+        // Explicit Session close releases receive-side active handlers and
+        // ordered buffers. A transient Connection loss takes a different
+        // path and keeps them for Delivery recovery.
+        state.delivery.close_session(&session_id.wire_key()).await;
     }
     state.candidate_attempts.write().await.remove(&peer_id);
     state.direct_upgrade_tasks.write().await.remove(&peer_id);

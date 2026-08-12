@@ -214,6 +214,22 @@ async fn ensure_retry_worker(state: Arc<RuntimeState>, peer_id: String, session_
                     {
                         break;
                     }
+                    let expired = retry_state
+                        .delivery
+                        .expire_incoming(&session_key, Instant::now())
+                        .await;
+                    if !expired.is_empty() {
+                        let failed_ordered_channels = expired
+                            .iter()
+                            .filter(|timeout| timeout.ordered_channel_failed)
+                            .count();
+                        tracing::warn!(
+                            session_id = %session_key,
+                            expired = expired.len(),
+                            failed_ordered_channels,
+                            "application delivery ACK timeout released receive state"
+                        );
+                    }
                     for message in retry_state
                         .delivery
                         .retryable_messages(&session_key, Instant::now())
@@ -528,6 +544,20 @@ pub(crate) async fn handle_data_message(
                 )
                 .into());
             }
+            DedupDecision::CapacityExceeded => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "active delivery handler capacity exceeded",
+                )
+                .into());
+            }
+            DedupDecision::ChannelFailed => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "ordered delivery channel failed after application ACK timeout",
+                )
+                .into());
+            }
             DedupDecision::New => {
                 if policy == DeliveryPolicy::SessionBoundOrdered {
                     match state.delivery.accept_ordered(incoming.clone()).await {
@@ -536,7 +566,7 @@ pub(crate) async fn handle_data_message(
                         OrderedInsertResult::Duplicate => {
                             let _ = state
                                 .delivery
-                                .abandon_incoming(
+                                .reject_incoming(
                                     &message.session_id,
                                     &message.channel_id,
                                     crate::delivery::MessageId::from_bytes(message_id),
@@ -547,7 +577,7 @@ pub(crate) async fn handle_data_message(
                         OrderedInsertResult::Rejected => {
                             let _ = state
                                 .delivery
-                                .abandon_incoming(
+                                .reject_incoming(
                                     &message.session_id,
                                     &message.channel_id,
                                     crate::delivery::MessageId::from_bytes(message_id),

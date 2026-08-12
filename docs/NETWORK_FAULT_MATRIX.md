@@ -38,6 +38,7 @@ Relay、Native Realtime、Delivery 或文件 Resume 变更后，按同一场景�
 | H | Relay restart；Relay 内存状态清空后重新 enrollment | `go run ./cmd/relay_smoke -scenario restart -base http://localhost:18080 -trigger <trigger>`；另起 `docker compose restart relay` | 旧 credential 被拒绝、重新 enrollment、新 socket token、同一 TransferId/offset、无重复完成 | `RESTART_RECOVERY_PASS` harness 已覆盖 |
 | I | App background/foreground；挂起/恢复 App | Android/iOS physical-device runbook（见下文） | adapter/session 生命周期、后台策略、恢复时间、task/订阅无泄漏；前台恢复不重复执行命令 | 需要真实 Android/iOS 设备，未在 Linux CI 伪造 |
 | J | 1GB+ file resume；在 checkpoint 后断网并继续传输 | `cargo test -p network-transfer -p network-core --locked`；设备上用 1 GiB+ fixture 重复 F/G | offset 单调、Manifest/File Hash 相同、最终 exactly-once、内存不随文件大小线性增长 | native checkpoint/resume 已通过；1 GiB+ physical transfer 需设备记录 |
+| K | Ordered long handler；应用处理超过 processed dedup TTL 后再 ACK，期间收到后续序号 | 当前工作区 `cargo test -p network-core --locked`；覆盖 `inflight_survives_processed_dedup_ttl_until_application_ack`、`ordered_buffer_survives_processed_dedup_ttl_and_releases_in_sequence` 与 Runtime owner 测试 | active handler 与 ordered buffer 不被 TTL/LRU 删除，ACK 后严格按 `0 → 1 → 2` 推进；显式 Session close 清空接收态 | native 自动化测试已通过；真实设备长 handler 时间窗尚未执行 |
 
 ## Docker Relay 故障运行约定
 

@@ -599,6 +599,11 @@ send/receive; Flutter owns pairing, approval UI, history, and presentation
 state. The Go Relay remains a memory-only v1 router and never receives
 plaintext file metadata or bytes.
 
+Native channel Delivery keeps active incoming handlers and ordered-buffered
+messages outside the processed dedup TTL/LRU window. Application ACK timeout is
+a separate policy; strict ordered channels fail without skipping a Sequence,
+and explicit logical Session close releases receive-side active state.
+
 ## AI Agent Runtime
 
 The AI agent runs on the client rather than on the managed server. SSH Mobile builds the model context, calls the configured provider, controls the tool loop, and accesses remote systems through SSH and SFTP.
