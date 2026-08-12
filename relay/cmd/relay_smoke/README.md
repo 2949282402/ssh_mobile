@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-12
 
 # Docker Relay 联调客户端
 
@@ -72,4 +72,5 @@ offer/accept、返回 checkpoint offset 和数据回环，成功标志为
 - Relay 只做透明转发；应用层 ACK、去重、重传和文件断点状态属于客户端。
   harness 验证的是 Relay 不篡改帧、重新 Offer/offset 控制帧方向和 session 恢复边界。
 - 延迟、丢包、乱序需要在 Docker Desktop/宿主机网络层或独立 traffic proxy
-  中注入；本 harness 已覆盖代理重启和 Relay 进程重启两类可重复故障。
+  中注入；本 harness 已覆盖代理重启和 Relay 进程重启两类可重复故障。完整 A-J 固定
+  验收字段和人工设备记录格式见 `docs/NETWORK_FAULT_MATRIX.md`。

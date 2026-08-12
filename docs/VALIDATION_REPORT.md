@@ -34,6 +34,7 @@ client business source was modified.
 | Coordinated QUIC NAT traversal | Candidate Offer/Answer now carries generation, attempt ID, and a 500–8000 ms connect window; both peers can run identity-authenticated QUIC Initial attempts on the shared UDP socket, stale answers are rejected, multi-server STUN validates transaction IDs and IPv4/IPv6 XOR-MAPPED-ADDRESS, and the unused raw UDP probe module was removed |
 | Relay file resume | Relay re-offer binds stable TransferId + Manifest Hash + File Hash, accept returns fixed-chunk offset, socket disconnect preserves native `.part`, auto reconnect reclaims paused transfers, and verified final files are idempotent after lost completion ACK |
 | Docker Relay integration harness | `docker compose --env-file .env up -d --build`, functional Candidate/WebRTC signaling plus file control/binary loopback, Caddy restart `recover`, and Relay process restart `restart` all passed; the harness remains under `relay/cmd/relay_smoke/` |
+| Network Fault Matrix (Step 9) | Fixed A–J matrix added in `docs/NETWORK_FAULT_MATRIX.md`; full Rust workspace passed offline (network-core 52, FFI 3, NAT 13, QUIC 5, Relay 6, transfer 12, transport 4, WebRTC 9 active plus 1 TURN test), LAN DataChannel and coturn relay-only tests passed, Go `gofmt`/`go vet`/`go test` passed, and functional/Caddy-recovery/Relay-restart smoke runs returned `FUNCTIONAL_PASS`, `NETWORK_RECOVERY_PASS`, and `RESTART_RECOVERY_PASS`; physical G/I and 1 GiB+ device transfer remain unverified |
 | Relay channel control | `channel_message`/`channel_ack` opaque forwarding integration test passed in `go test ./...`; Rust Relay codec tests passed |
 | Go Relay | `gofmt -l .`, `go vet ./...`, and `go test ./...` passed |
 | Native WebRTC runtime | `network-webrtc` uses locked stable `rtc 0.9.1`; `network-core::RealtimeManager` owns the WebRTC Peer beside QUIC/Relay, authenticated Relay forwards bounded versioned Offer/Answer/ICE/Restart/Close controls, and `RealtimeIoDriver` now owns the UDP/ICE/DTLS/SRTP/SCTP/DataChannel/timer pump under `RuntimeTaskSupervisor` |
@@ -151,6 +152,8 @@ in `docs/RELEASE_CHECKLIST.md` before distribution.
 
 - Android touch, lifecycle, background execution, network switching, and
   performance on a physical device
+- Step 9 physical Fault Matrix scenarios G/I/J: Wi-Fi-to-4G/5G switching,
+  background/foreground recovery, and 1 GiB+ file resume on real devices
 - iOS device behavior and signed archive creation
 - macOS and unsigned iOS jobs in the updated GitHub Actions workflow
 - GitHub Actions for `codex/sdk`: the new push-triggered workflow was not

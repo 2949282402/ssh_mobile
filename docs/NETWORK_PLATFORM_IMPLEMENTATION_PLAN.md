@@ -33,6 +33,11 @@
   the App Shell maps native lifecycle events while Features cannot encode SDP/ICE or
   touch PeerConnection, sockets, or native handles. Native DataChannel media remains
   typed-unavailable until a native decoder/media event is implemented.
+- Step 9 has a fixed A–J real-network fault matrix in
+  `docs/NETWORK_FAULT_MATRIX.md`; native direct/route migration/recovery,
+  coturn fallback, Docker functional smoke, Caddy recovery, Relay restart, and
+  checkpoint/resume tests are recorded, while physical network switching,
+  background/foreground, and 1 GiB+ device transfer still require device evidence.
 - 当前项目不再支持或实现 WireGuard；本文后续相关章节仅保留为历史方案记录，
   不属于当前实现和发布验收范围。
 - Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；
