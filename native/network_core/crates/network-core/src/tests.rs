@@ -6,6 +6,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures_util::{SinkExt, StreamExt};
 use network_identity::DeviceIdentity;
 use network_relay::{RelayClient, RelayEvent};
+use network_transfer::{FileManifest, NETWORK_TRANSFER_PROTOCOL_VERSION};
 
 use network_protocol::{
     network_command, network_event, AcknowledgeMessageCommand, ChannelMessageEvent,
@@ -1214,6 +1215,40 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
         .crypto
         .get("restart-a", &old_b_session_id.wire_key())
         .expect("B1 CryptoContext");
+    let orphaned_transfer_id = "restart-orphaned-transfer";
+    let orphaned_manifest = FileManifest {
+        transfer_id: orphaned_transfer_id.into(),
+        file_name: "restart-payload.bin".into(),
+        file_size: 1,
+        modified_at: 0,
+        content_hash: "00".repeat(32),
+        protocol_version: NETWORK_TRANSFER_PROTOCOL_VERSION,
+    };
+    runtime_b.handle().block_on(async {
+        assert!(
+            state_b
+                .transfers
+                .register_outgoing(
+                    orphaned_manifest,
+                    test_root.join("restart-payload.bin"),
+                    "restart-a".into(),
+                    old_b_session_id.wire_key(),
+                )
+                .await
+        );
+        assert!(
+            state_b
+                .transfers
+                .mark_transferring(orphaned_transfer_id)
+                .await
+        );
+        assert!(
+            state_b
+                .transfers
+                .pause_for_network(orphaned_transfer_id)
+                .await
+        );
+    });
     let a_port = address_a.port();
     runtime_a1.stop().expect("stop runtime A1");
     drop(runtime_a1);
@@ -1308,6 +1343,21 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
         .get("restart-a", &new_b_session_id.wire_key())
         .expect("B2 CryptoContext");
     assert!(!Arc::ptr_eq(&old_context, &new_context));
+    assert!(runtime_b.handle().block_on(async {
+        state_b
+            .transfers
+            .snapshot(orphaned_transfer_id)
+            .await
+            .is_none()
+    }));
+    assert!(poll_until(&runtime_b, Duration::from_secs(5), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::TransferFailed(transfer))
+                if transfer.transfer_id == orphaned_transfer_id
+        )
+    })
+    .is_some());
 
     send_and_expect_accepted(
         &runtime_a2,
@@ -1847,8 +1897,8 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
             tcp_state.task_supervisor.cancel_task(task_id).await;
         }
     });
-    let replacement_socket =
-        std::net::UdpSocket::bind(address_tcp).expect("bind QUIC endpoint for route migration");
+    let replacement_socket = std::net::UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .expect("bind replacement QUIC endpoint for route migration");
     replacement_socket
         .set_nonblocking(true)
         .expect("configure migration QUIC socket");
@@ -1860,6 +1910,9 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
         .expect("create replacement QUIC endpoint")
         .endpoint
     });
+    let replacement_address = replacement_endpoint
+        .local_addr()
+        .expect("read replacement QUIC endpoint address");
     let replacement_accept_task = runtime_tcp.handle().block_on(async {
         *tcp_state.endpoint.write().await = Some(replacement_endpoint.clone());
         tcp_state
@@ -1903,7 +1956,7 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
             .await
             .get_mut("migration-peer")
             .expect("migration peer config")
-            .endpoint = Some(address_tcp);
+            .endpoint = Some(replacement_address);
     });
     let identity = runtime_a.handle().block_on(async {
         state_a
@@ -1925,7 +1978,7 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
         .handle()
         .block_on(crate::peer::connect_direct_with_crypto(
             endpoint,
-            address_tcp,
+            replacement_address,
             identity,
             public_key_peer,
             "migration-peer".into(),

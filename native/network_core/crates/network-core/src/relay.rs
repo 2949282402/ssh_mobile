@@ -1569,13 +1569,15 @@ async fn complete_relay_incoming(
         return Err(error.into());
     }
     state.transfers.mark_verifying(&transfer_id).await;
-    state.transfers.mark_completed(&transfer_id).await;
+    let completed = state.transfers.mark_completed(&transfer_id).await;
     state.transfers.remove_transfer(&transfer_id).await;
-    emit_transfer_completed(
-        &state.event_tx,
-        &transfer_id,
-        &active.final_path.to_string_lossy(),
-    );
+    if completed {
+        emit_transfer_completed(
+            &state.event_tx,
+            &transfer_id,
+            &active.final_path.to_string_lossy(),
+        );
+    }
     relay
         .send_session_control("complete_ack", session_id)
         .await?;
@@ -1947,8 +1949,9 @@ pub(crate) async fn send_file_over_relay(
                 .into());
         }
         state.transfers.mark_verifying(&transfer_id).await;
-        state.transfers.mark_completed(&transfer_id).await;
-        emit_transfer_completed(&state.event_tx, &transfer_id, "");
+        if state.transfers.mark_completed(&transfer_id).await {
+            emit_transfer_completed(&state.event_tx, &transfer_id, "");
+        }
         Ok(())
     }
     .await;
@@ -1963,6 +1966,9 @@ pub(crate) async fn send_file_over_relay(
                 let _ = relay.send_session_control("cancel", &session_id).await;
             }
         }
+    }
+    if result.is_err() && state.transfers.snapshot(&transfer_id).await.is_none() {
+        return;
     }
     if result.is_ok() || state.transfers.is_cancelled(&transfer_id).await {
         state.transfers.remove_transfer(&transfer_id).await;

@@ -17,6 +17,8 @@ pub enum TransferFailureReason {
     Permission,
     RetryBudgetExhausted,
     Io,
+    /// The peer restarted its runtime and replaced the logical Session.
+    SessionReplaced,
 }
 
 /// 与具体 Connection 无关的文件传输状态机。
@@ -337,6 +339,39 @@ impl TransferManager {
             .map(|item| item.cancellation.clone())
     }
 
+    /// Terminate every non-terminal transfer bound to a replaced logical
+    /// Session. Session replacement is not a route migration: these business
+    /// sessions must not be claimed by the new Session.
+    pub async fn terminate_session_transfers(
+        &self,
+        peer_id: &str,
+        session_id: &str,
+        reason: TransferFailureReason,
+    ) -> Vec<TransferSnapshot> {
+        let mut transfers = self.transfers.write().await;
+        let mut terminated = Vec::new();
+        transfers.retain(|_, item| {
+            if item.peer_id != peer_id || item.session_id != session_id {
+                return true;
+            }
+            if !matches!(
+                item.state,
+                TransferState::Completed | TransferState::Cancelled | TransferState::Failed(_)
+            ) {
+                item.cancellation.cancel();
+                terminated.push(TransferSnapshot {
+                    transfer_id: item.transfer_id.clone(),
+                    peer_id: item.peer_id.clone(),
+                    session_id: item.session_id.clone(),
+                    bytes_transferred: item.bytes_transferred,
+                    state: TransferState::Failed(reason),
+                });
+            }
+            false
+        });
+        terminated
+    }
+
     pub async fn snapshot(&self, transfer_id: &str) -> Option<TransferSnapshot> {
         self.transfers
             .read()
@@ -424,7 +459,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replacement_session_cannot_claim_old_transfer() {
+    async fn replacement_session_terminates_old_transfer() {
         let manager = TransferManager::new();
         assert!(
             manager
@@ -442,10 +477,24 @@ mod tests {
             .take_resumable_for_session("peer-b", "0000000000000002")
             .await
             .is_empty());
+        let cancellation = manager
+            .cancellation_token("transfer-2")
+            .await
+            .expect("transfer cancellation token");
+        let terminated = manager
+            .terminate_session_transfers(
+                "peer-b",
+                "0000000000000001",
+                TransferFailureReason::SessionReplaced,
+            )
+            .await;
+        assert_eq!(terminated.len(), 1);
         assert_eq!(
-            manager.snapshot("transfer-2").await.unwrap().state,
-            TransferState::Paused
+            terminated[0].state,
+            TransferState::Failed(TransferFailureReason::SessionReplaced)
         );
+        assert!(cancellation.is_cancelled());
+        assert!(manager.snapshot("transfer-2").await.is_none());
     }
 
     #[tokio::test]

@@ -347,8 +347,9 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
         .map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::TimedOut, "file completion timed out")
         })??;
-        state.transfers.mark_completed(&transfer_id).await;
-        emit_transfer_completed(&state.event_tx, &transfer_id, "");
+        if state.transfers.mark_completed(&transfer_id).await {
+            emit_transfer_completed(&state.event_tx, &transfer_id, "");
+        }
         Ok(())
     }
     .await;
@@ -364,6 +365,9 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
             tracing::debug!(transfer_id = %transfer_id, error = %error, "native QUIC transfer paused for resume");
         }
         Err(error) => {
+            if state.transfers.snapshot(&transfer_id).await.is_none() {
+                return;
+            }
             let reason = error
                 .downcast_ref::<TransferAttemptError>()
                 .map_or(TransferFailureReason::Io, |error| error.reason);
@@ -529,11 +533,13 @@ pub(crate) async fn handle_incoming_file(
                 .update_progress(&manifest.transfer_id, manifest.file_size)
                 .await;
             state.transfers.mark_verifying(&manifest.transfer_id).await;
-            state.transfers.mark_completed(&manifest.transfer_id).await;
+            let completed = state.transfers.mark_completed(&manifest.transfer_id).await;
             write_file_completion(&mut send).await?;
             send.finish()?;
             state.transfers.remove_transfer(&manifest.transfer_id).await;
-            emit_transfer_completed(&state.event_tx, &manifest.transfer_id, &local_path);
+            if completed {
+                emit_transfer_completed(&state.event_tx, &manifest.transfer_id, &local_path);
+            }
             return Ok(());
         }
         if !state
@@ -578,11 +584,13 @@ pub(crate) async fn handle_incoming_file(
         )
         .await?;
         state.transfers.mark_verifying(&manifest.transfer_id).await;
-        state.transfers.mark_completed(&manifest.transfer_id).await;
+        let completed = state.transfers.mark_completed(&manifest.transfer_id).await;
         write_file_completion(&mut send).await?;
         send.finish()?;
         state.transfers.remove_transfer(&manifest.transfer_id).await;
-        emit_transfer_completed(&state.event_tx, &manifest.transfer_id, &local_path);
+        if completed {
+            emit_transfer_completed(&state.event_tx, &manifest.transfer_id, &local_path);
+        }
         Ok(())
     }
     .await;
@@ -605,6 +613,11 @@ pub(crate) async fn handle_incoming_file(
         }
     }
     if let Err(error) = result {
+        if let Some(transfer_id) = active_transfer_id.as_deref() {
+            if state.transfers.snapshot(transfer_id).await.is_none() {
+                return;
+            }
+        }
         if preserve_partial {
             tracing::debug!(peer_id = %peer_id, error = %error, "incoming native transfer paused for resume");
             return;
@@ -653,10 +666,14 @@ async fn forward_progress(
     manager: TransferManager,
 ) {
     while let Some((bytes_transferred, total_bytes)) = progress.recv().await {
-        manager
+        if manager
             .update_progress(&transfer_id, bytes_transferred)
-            .await;
-        emit_transfer_progress(&event_tx, &transfer_id, bytes_transferred, total_bytes);
+            .await
+        {
+            emit_transfer_progress(&event_tx, &transfer_id, bytes_transferred, total_bytes);
+        } else {
+            return;
+        }
     }
 }
 
@@ -703,6 +720,7 @@ fn transfer_failure_code(reason: TransferFailureReason) -> NetworkErrorCode {
         | TransferFailureReason::SourceChanged
         | TransferFailureReason::Io => NetworkErrorCode::IoError,
         TransferFailureReason::RetryBudgetExhausted => NetworkErrorCode::Timeout,
+        TransferFailureReason::SessionReplaced => NetworkErrorCode::Cancelled,
     }
 }
 

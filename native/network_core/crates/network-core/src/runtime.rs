@@ -1,6 +1,6 @@
 //! v1 网络运行时生命周期、共享状态与命令/事件通道。
 
-use network_protocol::{NetworkCommand, NetworkEvent};
+use network_protocol::{NetworkCommand, NetworkErrorCode, NetworkEvent};
 use std::sync::{
     atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering},
     Arc, Mutex,
@@ -27,7 +27,7 @@ use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
 use network_identity::DeviceIdentity;
 use network_nat::PathManager;
 use network_relay::RelayClient;
-use network_transfer::TransferManager;
+use network_transfer::{TransferFailureReason, TransferManager};
 use quinn::Endpoint;
 #[cfg(test)]
 use quinn::VarInt;
@@ -195,6 +195,29 @@ impl RuntimeState {
             .await
             .retain(|_, current| *current != session_id);
         self.candidate_attempts.write().await.remove(peer_id);
+        let terminated_transfers = self
+            .transfers
+            .terminate_session_transfers(
+                peer_id,
+                &session_key,
+                TransferFailureReason::SessionReplaced,
+            )
+            .await;
+        for transfer in terminated_transfers {
+            self.incoming_decisions
+                .write()
+                .await
+                .remove(&transfer.transfer_id);
+            crate::relay::cancel_transfer(self, &transfer.transfer_id).await;
+            crate::events::emit_transfer_error(
+                &self.event_tx,
+                &transfer.transfer_id,
+                NetworkErrorCode::Cancelled,
+                "transfer terminated because the peer Session was replaced".to_string(),
+                "session_replace",
+                Some(peer_id),
+            );
+        }
         self.delivery.close_session(&session_key).await;
     }
 
