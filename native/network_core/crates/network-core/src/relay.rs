@@ -1,7 +1,7 @@
 //! Relay v1 enrollment 运行时、透明传输路由与 E2E 处理。
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use network_nat::{Candidate, CandidateSignal, CandidateSignalKind};
+use network_nat::{Candidate, CandidateSignal, CandidateSignalKind, DEFAULT_CONNECT_WINDOW_MS};
 use network_protocol::{
     ConfigureRelayCommand, DataMessage, DeliveryAck, NetworkError as ProtocolError,
     NetworkErrorCode, RouteType,
@@ -18,6 +18,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::sync::{mpsc, oneshot};
 
@@ -469,7 +470,7 @@ pub(crate) async fn handle_relay_events(
 }
 
 async fn handle_candidate_signal(
-    state: &RuntimeState,
+    state: &Arc<RuntimeState>,
     relay: &RelayClient,
     kind: &str,
     session_id: &str,
@@ -509,6 +510,27 @@ async fn handle_candidate_signal(
         )
         .into());
     }
+    if signal.kind == CandidateSignalKind::Answer {
+        let attempt = state
+            .candidate_attempts
+            .read()
+            .await
+            .get(peer_id)
+            .cloned()
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "candidate answer has no active local attempt",
+                )
+            })?;
+        if attempt.attempt_id != signal.attempt_id || attempt.expires_at <= Instant::now() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "candidate answer does not match the active attempt",
+            )
+            .into());
+        }
+    }
     let candidates = signal
         .candidates
         .iter()
@@ -524,9 +546,22 @@ async fn handle_candidate_signal(
             .or_insert_with(|| Arc::new(network_nat::PathManager::new()))
             .clone()
     };
-    manager
-        .apply_remote_candidates(signal.generation, candidates)
-        .await;
+    if !manager
+        .apply_remote_candidates(
+            signal.kind,
+            &signal.attempt_id,
+            signal.connect_window_ms,
+            signal.generation,
+            candidates,
+        )
+        .await
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "candidate signal is stale for the current attempt",
+        )
+        .into());
+    }
     state.candidate_signal_notify.notify_waiters();
 
     if signal.kind == CandidateSignalKind::Offer {
@@ -540,6 +575,8 @@ async fn handle_candidate_signal(
         let local_generation = local_manager.generation().await.max(1);
         let answer = CandidateSignal::answer(
             local_generation,
+            signal.attempt_id.clone(),
+            signal.connect_window_ms.min(DEFAULT_CONNECT_WINDOW_MS),
             local_candidates
                 .iter()
                 .map(network_nat::Candidate::advertisement)
@@ -549,6 +586,12 @@ async fn handle_candidate_signal(
         relay
             .send_candidate_answer(session_id, peer_id, &answer_payload)
             .await?;
+        crate::peer::spawn_candidate_punch(
+            Arc::clone(state),
+            peer_id.to_string(),
+            signal.attempt_id,
+            std::time::Duration::from_millis(u64::from(signal.connect_window_ms)),
+        );
     }
     Ok(())
 }

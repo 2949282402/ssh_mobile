@@ -47,6 +47,13 @@ synthetic success.
   Delivery retains logical plaintext and re-encrypts each retry with a fresh
   nonce. The same `CryptoContext` covers QUIC channel messages and Relay
   forwarding/file chunks, while Relay sees only opaque ciphertext.
+- NAT traversal uses the same native UDP socket for candidate gathering and
+  Quinn. Candidate Offer/Answer carries generation, attempt ID, and a bounded
+  connect window; both peers may run simultaneous authenticated QUIC Initial
+  attempts, and Relay remains the fallback. Raw UDP probe packets are not a
+  second production protocol. Optional native STUN discovery accepts a
+  comma-separated `SSH_MOBILE_STUN_SERVERS=host:port,host:port` list and
+  validates transaction IDs plus IPv4/IPv6 XOR-MAPPED-ADDRESS responses.
 - Runtime disposal is ordered as `Running -> Stopping -> Stopped -> Destroyed`;
   stopping is idempotent and no command is accepted after stopping begins.
 - `NativeNetworkRuntime.boundLocalPort` is a read-only diagnostic for controlled

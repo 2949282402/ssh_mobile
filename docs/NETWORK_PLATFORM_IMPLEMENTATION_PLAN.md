@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-12
 
 # SSH Mobile 跨平台 P2P 网络平台实施计划
 
@@ -81,7 +81,7 @@
 | 文件传输 | QUIC |
 | QUIC 首选实现 | Quinn |
 | QUIC 实现 | Quinn |
-| NAT | IPv6 + STUN + UDP Hole Punching + ICE-style candidate probing |
+| NAT | IPv6 + multi-server STUN + Candidate Exchange + simultaneous QUIC connectivity checks |
 | VPN | WireGuard |
 | 服务端 | Go |
 | 控制连接 | HTTPS + WSS |
@@ -500,9 +500,11 @@ Nominate Path
 ```text
 同一个 UDP socket
       ↓
-STUN
+本地候选 + 多服务器 STUN
       ↓
-Hole Punch
+交给 Quinn
+      ↓
+有界 simultaneous QUIC connectivity check
       ↓
 实际 P2P transport
 ```
@@ -940,9 +942,9 @@ private key persistence 必须通过 host secure-storage adapter。
 Interface enumeration
 IPv4
 IPv6
-STUN
+multi-server STUN
 Candidate
-Hole Punch
+QUIC connectivity check
 Path Probe
 Keepalive
 ```
@@ -1836,21 +1838,17 @@ ipv6 candidate
 srflx candidate
 ```
 
-## Step 4.5 Hole Punch
+## Step 4.5 QUIC Connectivity Punch
 
-双方收到 candidates 后同时发 UDP probe。
+双方收到 Candidate Offer/Answer 后，在 generation 绑定的 attempt ID 和有界
+connect window 内同时发起 Quinn Initial。QUIC 的身份握手本身就是 connectivity
+check；不能再让独立的 raw `UdpSocket::recv_from()` probe 与 Quinn 竞争共享
+socket。
 
-## Step 4.6 Probe Authentication
+## Step 4.6 Connectivity Authentication
 
-Probe 必须包含：
-
-```text
-session id
-nonce
-device identity signature/MAC
-```
-
-禁止匿名 UDP probe。
+候选可达不等于可信。只有通过现有设备身份绑定的 QUIC 应用握手后，Connection
+才能被 nominated；超时、身份失败或 UDP 被阻断时保留 Relay fallback。
 
 ## Step 4.7 Path Benchmark
 
@@ -2785,7 +2783,7 @@ Protobuf
 IPv6
 STUN
 Candidates
-Hole Punch
+simultaneous QUIC connectivity check
 PathManager
 ```
 
@@ -2852,7 +2850,7 @@ Screen Share
 #9  IPv6 candidate discovery
 #10 STUN client
 #11 Candidate exchange
-#12 UDP hole punching
+#12 QUIC connectivity punch
 #13 PathManager
 #14 Quinn backend
 #15 QUIC peer authentication

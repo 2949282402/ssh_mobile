@@ -40,6 +40,13 @@ Delivery retry, channel receiver, and file receiver work must use the Session
 task group. Runtime stop must cancel the root, close Relay/WebRTC/QUIC owners,
 await all supervisor tasks, and only then release the native runtime.
 
+NAT candidate exchange is also native-owned. The shared UDP socket is handed to
+Quinn after local and multi-server STUN gathering; the production connectivity
+check is the bounded, identity-authenticated QUIC attempt itself. Do not add a
+second raw UDP probe protocol or let an independent `recv_from` loop compete
+with Quinn. Candidate Offer/Answer changes must preserve generation, attempt
+ID, connect-window bounds, stale-answer rejection, and Relay fallback.
+
 ## 数据库约束
 
 本 Package 不拥有数据库；配对凭据、Token 和业务历史由上层安全存储或 Feature

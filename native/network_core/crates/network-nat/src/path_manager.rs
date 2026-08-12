@@ -1,4 +1,5 @@
 use crate::candidate::{Candidate, CandidateKind};
+use crate::exchange::CandidateSignalKind;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,6 +14,8 @@ pub struct PathManager {
     active_candidate: Arc<RwLock<Option<Candidate>>>,
     local_generation: Arc<RwLock<u64>>,
     remote_generation: Arc<RwLock<u64>>,
+    remote_attempt_id: Arc<RwLock<Option<String>>>,
+    remote_connect_window_ms: Arc<RwLock<u32>>,
 }
 
 impl Default for PathManager {
@@ -28,6 +31,10 @@ impl PathManager {
             active_candidate: Arc::new(RwLock::new(None)),
             local_generation: Arc::new(RwLock::new(0)),
             remote_generation: Arc::new(RwLock::new(0)),
+            remote_attempt_id: Arc::new(RwLock::new(None)),
+            remote_connect_window_ms: Arc::new(RwLock::new(
+                crate::exchange::DEFAULT_CONNECT_WINDOW_MS,
+            )),
         }
     }
 
@@ -68,14 +75,27 @@ impl PathManager {
         *self.local_generation.read().await
     }
 
-    /// Applies a complete remote Candidate Offer/Answer. Older generations are
-    /// ignored; a newer generation replaces the previous remote candidate set.
-    pub async fn apply_remote_candidates(&self, generation: u64, list: Vec<Candidate>) -> bool {
+    /// Applies a complete remote Candidate Offer/Answer. Older generations and
+    /// stale answers are ignored; a newer generation or attempt replaces the
+    /// previous remote candidate set.
+    pub async fn apply_remote_candidates(
+        &self,
+        signal_kind: CandidateSignalKind,
+        attempt_id: &str,
+        connect_window_ms: u32,
+        generation: u64,
+        list: Vec<Candidate>,
+    ) -> bool {
         let incoming_ids = list
             .iter()
             .map(|candidate| candidate.candidate_id.clone())
             .collect::<HashSet<_>>();
         if generation == 0
+            || attempt_id.is_empty()
+            || attempt_id.len() > crate::exchange::MAX_ATTEMPT_ID_BYTES
+            || !attempt_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !(crate::exchange::MIN_CONNECT_WINDOW_MS..=crate::exchange::MAX_CONNECT_WINDOW_MS)
+                .contains(&connect_window_ms)
             || list.len() > crate::exchange::MAX_CANDIDATES_PER_SIGNAL
             || incoming_ids.len() != list.len()
             || list
@@ -88,12 +108,24 @@ impl PathManager {
         if generation < *current_generation {
             return false;
         }
+        let mut current_attempt = self.remote_attempt_id.write().await;
+        let is_new_attempt = current_attempt
+            .as_deref()
+            .is_some_and(|current| current != attempt_id);
+        if is_new_attempt && signal_kind == CandidateSignalKind::Answer {
+            return false;
+        }
         let mut guard = self.candidates.write().await;
-        if generation > *current_generation {
+        if generation > *current_generation || is_new_attempt {
             guard.clear();
             *current_generation = generation;
+            *current_attempt = Some(attempt_id.to_string());
+            *self.remote_connect_window_ms.write().await = connect_window_ms;
         } else {
             guard.retain(|candidate| incoming_ids.contains(&candidate.candidate_id));
+        }
+        if current_attempt.is_none() {
+            *current_attempt = Some(attempt_id.to_string());
         }
         for candidate in list {
             if let Some(existing) = guard
@@ -118,6 +150,14 @@ impl PathManager {
             }
         }
         true
+    }
+
+    pub async fn remote_attempt_id(&self) -> Option<String> {
+        self.remote_attempt_id.read().await.clone()
+    }
+
+    pub async fn remote_connect_window(&self) -> Duration {
+        Duration::from_millis(u64::from(*self.remote_connect_window_ms.read().await))
     }
 
     /// Returns all candidates for signaling or a multi-candidate connectivity
@@ -331,6 +371,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nat_fixture_candidate_priority_prefers_direct_paths_and_keeps_relay_fallback() {
+        let manager = PathManager::new();
+        let candidates = vec![
+            candidate("192.168.1.10:41010", CandidateKind::Lan),
+            candidate("[2001:db8::10]:41011", CandidateKind::PublicIpv6),
+            candidate("198.51.100.10:41012", CandidateKind::PortMapped),
+            candidate("203.0.113.10:41013", CandidateKind::ServerReflexive),
+            candidate("203.0.113.20:41014", CandidateKind::Relay),
+        ];
+        manager.add_candidates(candidates).await;
+
+        let ranked = manager.ranked_candidates().await;
+        assert_eq!(ranked[0].kind, CandidateKind::Lan);
+        assert_eq!(ranked[1].kind, CandidateKind::PublicIpv6);
+        assert_eq!(ranked[2].kind, CandidateKind::PortMapped);
+        assert_eq!(ranked[3].kind, CandidateKind::ServerReflexive);
+        assert_eq!(ranked[4].kind, CandidateKind::Relay);
+    }
+
+    #[tokio::test]
     async fn multiple_candidates_rank_and_replace_by_generation() {
         let manager = PathManager::new();
         let lan = candidate("192.168.1.10:41004", CandidateKind::Lan).with_generation(2);
@@ -338,7 +398,13 @@ mod tests {
             candidate("203.0.113.10:41005", CandidateKind::ServerReflexive).with_generation(2);
         assert!(
             manager
-                .apply_remote_candidates(2, vec![srflx.clone(), lan.clone()])
+                .apply_remote_candidates(
+                    CandidateSignalKind::Answer,
+                    "attempt-a",
+                    crate::exchange::DEFAULT_CONNECT_WINDOW_MS,
+                    2,
+                    vec![srflx.clone(), lan.clone()],
+                )
                 .await
         );
 
@@ -347,13 +413,37 @@ mod tests {
         assert_eq!(ranked[0].candidate_id, lan.candidate_id);
 
         let stale = candidate("192.168.1.10:41006", CandidateKind::Lan).with_generation(1);
-        assert!(!manager.apply_remote_candidates(1, vec![stale]).await);
+        assert!(
+            !manager
+                .apply_remote_candidates(
+                    CandidateSignalKind::Answer,
+                    "attempt-a",
+                    crate::exchange::DEFAULT_CONNECT_WINDOW_MS,
+                    1,
+                    vec![stale]
+                )
+                .await
+        );
         assert_eq!(manager.ranked_candidates().await.len(), 2);
 
         let ipv6 = candidate("[2001:db8::10]:41007", CandidateKind::PublicIpv6).with_generation(3);
-        assert!(manager.apply_remote_candidates(3, vec![ipv6.clone()]).await);
+        assert!(
+            manager
+                .apply_remote_candidates(
+                    CandidateSignalKind::Offer,
+                    "attempt-b",
+                    crate::exchange::DEFAULT_CONNECT_WINDOW_MS,
+                    3,
+                    vec![ipv6.clone()]
+                )
+                .await
+        );
         let ranked = manager.ranked_candidates().await;
         assert_eq!(ranked.len(), 1);
         assert_eq!(ranked[0].candidate_id, ipv6.candidate_id);
+        assert_eq!(
+            manager.remote_attempt_id().await.as_deref(),
+            Some("attempt-b")
+        );
     }
 }

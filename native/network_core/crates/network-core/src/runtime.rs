@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering},
     Arc, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -31,6 +31,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 pub(crate) const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+pub(crate) const DEFAULT_CANDIDATE_CONNECT_WINDOW: Duration =
+    Duration::from_millis(network_nat::DEFAULT_CONNECT_WINDOW_MS as u64);
 pub(crate) const RELAY_RACE_DELAY: Duration = Duration::from_millis(500);
 pub(crate) const RECONNECT_MAX_ATTEMPTS: usize = 5;
 pub(crate) const RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
@@ -52,6 +54,17 @@ pub(crate) struct PeerConfig {
     pub(crate) e2e_public_key: [u8; 32],
 }
 
+/// One locally initiated candidate-exchange window. The attempt ID is kept
+/// outside PathManager so an old Relay answer cannot authorize a new QUIC
+/// connectivity check.
+#[derive(Clone, Debug)]
+pub(crate) struct CandidateAttempt {
+    pub(crate) attempt_id: String,
+    pub(crate) generation: u64,
+    pub(crate) connect_window: Duration,
+    pub(crate) expires_at: Instant,
+}
+
 pub(crate) struct RuntimeState {
     /// Native bind 完成后发布实际 UDP 端口，供受控 FFI 诊断读取。
     ///
@@ -68,6 +81,7 @@ pub(crate) struct RuntimeState {
     pub(crate) local_path_manager: RwLock<Option<Arc<PathManager>>>,
     pub(crate) peers: RwLock<HashMap<String, PeerConfig>>,
     pub(crate) path_managers: RwLock<HashMap<String, Arc<PathManager>>>,
+    pub(crate) candidate_attempts: RwLock<HashMap<String, CandidateAttempt>>,
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
     pub(crate) sessions: SessionManager,
     /// Session-owned application crypto. Route changes do not replace this
@@ -109,6 +123,7 @@ impl RuntimeState {
             local_path_manager: RwLock::new(None),
             peers: RwLock::new(HashMap::new()),
             path_managers: RwLock::new(HashMap::new()),
+            candidate_attempts: RwLock::new(HashMap::new()),
             trusted_peer_keys: RwLock::new(HashMap::new()),
             sessions: SessionManager::new(),
             crypto: SessionCryptoManager::new(),
@@ -151,6 +166,7 @@ impl RuntimeState {
             .write()
             .await
             .retain(|_, current| *current != session_id);
+        self.candidate_attempts.write().await.remove(peer_id);
     }
 
     pub(crate) async fn crypto_context(

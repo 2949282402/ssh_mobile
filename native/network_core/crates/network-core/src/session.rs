@@ -119,6 +119,11 @@ impl SessionManager {
             connection.close(VarInt::from_u32(0), b"session replaced");
             return false;
         }
+        if session.state == SessionState::Connected && session.connection.is_some() {
+            drop(sessions);
+            connection.close(VarInt::from_u32(0), b"direct nomination already won");
+            return false;
+        }
         session.state = SessionState::Connected;
         session.active_route = route;
         session.connection = Some(connection);
