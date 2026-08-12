@@ -18,7 +18,6 @@ const MESSAGE_ID_BYTES: usize = 16;
 /// 应用 handler 的 ACK 超时是独立的生命周期策略，不能复用 processed dedup
 /// 的 TTL。超时由 Delivery owner 显式扫描；严格有序通道会进入 Failed，不能
 /// 通过跳过 Sequence 来伪造顺序恢复。
-pub(crate) const APPLICATION_ACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MAX_ACTIVE_INCOMING_RECORDS: usize = 4096;
 
 /// 应用层消息的稳定标识；跨 Connection 重试时保持不变。
@@ -179,8 +178,11 @@ pub struct DeliveryConfig {
     /// OrderedBuffered 不参与淘汰。
     pub dedup_max_entries: usize,
     /// 仅用于 processed dedup history。Active handler 使用
-    /// `APPLICATION_ACK_TIMEOUT`，避免两个生命周期语义混用。
+    /// `application_ack_timeout`，避免两个生命周期语义混用。
     pub dedup_ttl: Duration,
+    /// 应用真正收到消息后等待 ACK 的时间。OrderedBuffered 不使用该计时器，
+    /// 只有晋升为 InFlight 时才会生成 deadline。
+    pub application_ack_timeout: Duration,
     pub max_reorder_messages: usize,
     pub max_reorder_bytes: usize,
     pub max_sequence_gap: u64,
@@ -194,6 +196,7 @@ impl Default for DeliveryConfig {
             max_payload_bytes: 1024 * 1024,
             dedup_max_entries: 4096,
             dedup_ttl: Duration::from_secs(10 * 60),
+            application_ack_timeout: Duration::from_secs(5 * 60),
             max_reorder_messages: 64,
             max_reorder_bytes: 4 * 1024 * 1024,
             max_sequence_gap: 1024,
@@ -307,7 +310,7 @@ enum ActiveIncomingState {
 /// Active receive record 的生命周期与恢复 epoch；deadline 不是 dedup TTL。
 #[derive(Clone, Copy, Debug)]
 struct ActiveIncomingRecord {
-    ack_deadline: Instant,
+    ack_deadline: Option<Instant>,
     recovery_epoch: u64,
     state: ActiveIncomingState,
 }
@@ -791,7 +794,7 @@ impl DeliveryManager {
         store.incoming_active.insert(
             key,
             ActiveIncomingRecord {
-                ack_deadline: now + APPLICATION_ACK_TIMEOUT,
+                ack_deadline: Some(now + self.config.application_ack_timeout),
                 recovery_epoch,
                 state: ActiveIncomingState::InFlight,
             },
@@ -806,6 +809,14 @@ impl DeliveryManager {
     /// later messages stay in a bounded buffer until the current in-flight
     /// message is acknowledged.
     pub(crate) async fn accept_ordered(&self, message: OrderedMessage) -> OrderedInsertResult {
+        self.accept_ordered_at(message, Instant::now()).await
+    }
+
+    async fn accept_ordered_at(
+        &self,
+        message: OrderedMessage,
+        now: Instant,
+    ) -> OrderedInsertResult {
         let mut store = self.store.lock().await;
         let key = (message.session_id.clone(), message.channel_id.clone());
         if store.failed_ordered.contains(&key) {
@@ -829,11 +840,13 @@ impl DeliveryManager {
             OrderedInsertResult::Ready => {
                 if let Some(record) = store.incoming_active.get_mut(&active_key) {
                     record.state = ActiveIncomingState::InFlight;
+                    record.ack_deadline = Some(now + self.config.application_ack_timeout);
                 }
             }
             OrderedInsertResult::Buffered => {
                 if let Some(record) = store.incoming_active.get_mut(&active_key) {
                     record.state = ActiveIncomingState::OrderedBuffered;
+                    record.ack_deadline = None;
                 }
             }
             OrderedInsertResult::Duplicate | OrderedInsertResult::Rejected => {}
@@ -909,6 +922,7 @@ impl DeliveryManager {
             let next_key = dedup_key(&next.session_id, &next.channel_id, next.message_id);
             if let Some(record) = store.incoming_active.get_mut(&next_key) {
                 record.state = ActiveIncomingState::InFlight;
+                record.ack_deadline = Some(now + self.config.application_ack_timeout);
             } else {
                 debug_assert!(false, "ordered next message lost its active record");
                 return None;
@@ -1051,6 +1065,20 @@ impl DeliveryManager {
     }
 
     #[cfg(test)]
+    async fn incoming_record_state(
+        &self,
+        session_id: &str,
+        channel_id: &str,
+        message_id: MessageId,
+    ) -> Option<(ActiveIncomingState, Option<Instant>)> {
+        let store = self.store.lock().await;
+        store
+            .incoming_active
+            .get(&dedup_key(session_id, channel_id, message_id))
+            .map(|record| (record.state, record.ack_deadline))
+    }
+
+    #[cfg(test)]
     async fn pending_len(&self) -> usize {
         self.store.lock().await.pending.len()
     }
@@ -1159,10 +1187,30 @@ fn expire_incoming_locked(
     let timed_out = store
         .incoming_active
         .iter()
-        .filter(|(key, record)| {
-            session_id.is_none_or(|session| key.session_id == session) && now >= record.ack_deadline
+        .filter_map(|(key, record)| {
+            if !session_id.is_none_or(|session| key.session_id == session) {
+                return None;
+            }
+            match record.state {
+                ActiveIncomingState::InFlight => {
+                    debug_assert!(
+                        record.ack_deadline.is_some(),
+                        "in-flight record is missing its application ACK deadline"
+                    );
+                    record
+                        .ack_deadline
+                        .filter(|deadline| now >= *deadline)
+                        .map(|_| (key.clone(), *record))
+                }
+                ActiveIncomingState::OrderedBuffered => {
+                    debug_assert!(
+                        record.ack_deadline.is_none(),
+                        "ordered buffered record must not have an application ACK deadline"
+                    );
+                    None
+                }
+            }
         })
-        .map(|(key, record)| (key.clone(), *record))
         .collect::<Vec<_>>();
     let mut ordered_scopes = HashSet::new();
     let mut expired = Vec::new();
@@ -1205,18 +1253,30 @@ fn assert_delivery_invariants(store: &DeliveryStore) {
             !store.processed_dedup.contains_key(key),
             "active incoming record also exists in processed history"
         );
-        if record.state == ActiveIncomingState::OrderedBuffered {
-            let ordered = store
-                .ordered
-                .get(&(key.session_id.clone(), key.channel_id.clone()))
-                .expect("ordered buffered record lost its channel state");
-            assert!(
-                ordered
-                    .reorder_buffer
-                    .values()
-                    .any(|message| message.message_id == key.message_id),
-                "ordered buffered record is missing from reorder_buffer"
-            );
+        match record.state {
+            ActiveIncomingState::InFlight => {
+                assert!(
+                    record.ack_deadline.is_some(),
+                    "in-flight record is missing its application ACK deadline"
+                );
+            }
+            ActiveIncomingState::OrderedBuffered => {
+                assert!(
+                    record.ack_deadline.is_none(),
+                    "ordered buffered record must not have an application ACK deadline"
+                );
+                let ordered = store
+                    .ordered
+                    .get(&(key.session_id.clone(), key.channel_id.clone()))
+                    .expect("ordered buffered record lost its channel state");
+                assert!(
+                    ordered
+                        .reorder_buffer
+                        .values()
+                        .any(|message| message.message_id == key.message_id),
+                    "ordered buffered record is missing from reorder_buffer"
+                );
+            }
         }
     }
     for (scope, ordered) in &store.ordered {
@@ -1267,9 +1327,19 @@ mod tests {
             max_payload_bytes: 16,
             dedup_max_entries: 4,
             dedup_ttl: Duration::from_secs(10),
+            application_ack_timeout: Duration::from_secs(5 * 60),
             max_reorder_messages: 2,
             max_reorder_bytes: 8,
             max_sequence_gap: 4,
+        }
+    }
+
+    const SHORT_ACK_TIMEOUT: Duration = Duration::from_millis(50);
+
+    fn short_timeout_config() -> DeliveryConfig {
+        DeliveryConfig {
+            application_ack_timeout: SHORT_ACK_TIMEOUT,
+            ..config()
         }
     }
 
@@ -1386,6 +1456,261 @@ mod tests {
             second.next_ordered.as_ref().map(|message| message.sequence),
             Some(2)
         );
+    }
+
+    #[tokio::test]
+    async fn ordered_buffered_message_does_not_keep_an_ack_deadline() {
+        let manager = DeliveryManager::with_config(short_timeout_config());
+        let now = Instant::now();
+        for (sequence, id) in [(0, 60), (1, 61)] {
+            let message = ordered_message(sequence, id);
+            assert_eq!(
+                manager
+                    .begin_incoming(
+                        &message.session_id,
+                        &message.channel_id,
+                        message.message_id,
+                        1,
+                        now,
+                    )
+                    .await,
+                DedupDecision::New
+            );
+            assert_eq!(
+                manager.accept_ordered_at(message, now).await,
+                if sequence == 0 {
+                    OrderedInsertResult::Ready
+                } else {
+                    OrderedInsertResult::Buffered
+                }
+            );
+        }
+        assert_eq!(
+            manager
+                .incoming_record_state("session-a", "control", MessageId([61; MESSAGE_ID_BYTES]))
+                .await,
+            Some((ActiveIncomingState::OrderedBuffered, None))
+        );
+
+        let head_ack_at = now + Duration::from_millis(25);
+        let completion = manager
+            .complete_incoming_at(
+                "session-a",
+                "control",
+                MessageId([60; MESSAGE_ID_BYTES]),
+                head_ack_at,
+            )
+            .await
+            .expect("head message should be ACKable");
+        assert_eq!(
+            completion
+                .next_ordered
+                .as_ref()
+                .map(|message| message.sequence),
+            Some(1)
+        );
+        let promoted_deadline = head_ack_at + SHORT_ACK_TIMEOUT;
+        assert_eq!(
+            manager
+                .incoming_record_state("session-a", "control", MessageId([61; MESSAGE_ID_BYTES]))
+                .await,
+            Some((ActiveIncomingState::InFlight, Some(promoted_deadline)))
+        );
+
+        let old_deadline = now + SHORT_ACK_TIMEOUT;
+        assert!(manager
+            .expire_incoming("session-a", old_deadline + Duration::from_millis(1))
+            .await
+            .is_empty());
+        assert!(manager
+            .complete_incoming_at(
+                "session-a",
+                "control",
+                MessageId([61; MESSAGE_ID_BYTES]),
+                old_deadline + Duration::from_millis(1),
+            )
+            .await
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn ordered_buffer_promotion_gets_a_full_ack_timeout_window() {
+        let manager = DeliveryManager::with_config(short_timeout_config());
+        let now = Instant::now();
+        for (sequence, id) in [(0, 62), (1, 63)] {
+            let message = ordered_message(sequence, id);
+            assert_eq!(
+                manager
+                    .begin_incoming(
+                        &message.session_id,
+                        &message.channel_id,
+                        message.message_id,
+                        1,
+                        now,
+                    )
+                    .await,
+                DedupDecision::New
+            );
+            assert_eq!(
+                manager.accept_ordered_at(message, now).await,
+                if sequence == 0 {
+                    OrderedInsertResult::Ready
+                } else {
+                    OrderedInsertResult::Buffered
+                }
+            );
+        }
+
+        let head_ack_at = now + Duration::from_millis(49);
+        let completion = manager
+            .complete_incoming_at(
+                "session-a",
+                "control",
+                MessageId([62; MESSAGE_ID_BYTES]),
+                head_ack_at,
+            )
+            .await
+            .expect("head message should be ACKable");
+        assert_eq!(
+            completion
+                .next_ordered
+                .as_ref()
+                .map(|message| message.sequence),
+            Some(1)
+        );
+        let promoted_deadline = head_ack_at + SHORT_ACK_TIMEOUT;
+        assert_eq!(
+            manager
+                .incoming_record_state("session-a", "control", MessageId([63; MESSAGE_ID_BYTES]))
+                .await,
+            Some((ActiveIncomingState::InFlight, Some(promoted_deadline)))
+        );
+
+        assert!(manager
+            .expire_incoming("session-a", promoted_deadline - Duration::from_millis(1),)
+            .await
+            .is_empty());
+        let expired = manager
+            .expire_incoming("session-a", promoted_deadline + Duration::from_millis(1))
+            .await;
+        assert_eq!(expired.len(), 1);
+        assert!(expired[0].ordered_channel_failed);
+        assert_eq!(manager.incoming_state_counts().await, (0, 1, 0));
+    }
+
+    #[tokio::test]
+    async fn ordered_buffered_messages_restart_ack_timeout_in_sequence() {
+        let manager = DeliveryManager::with_config(short_timeout_config());
+        let now = Instant::now();
+        for (sequence, id) in [(0, 64), (1, 65), (2, 66)] {
+            let message = ordered_message(sequence, id);
+            assert_eq!(
+                manager
+                    .begin_incoming(
+                        &message.session_id,
+                        &message.channel_id,
+                        message.message_id,
+                        1,
+                        now,
+                    )
+                    .await,
+                DedupDecision::New
+            );
+            assert_eq!(
+                manager.accept_ordered_at(message, now).await,
+                if sequence == 0 {
+                    OrderedInsertResult::Ready
+                } else {
+                    OrderedInsertResult::Buffered
+                }
+            );
+        }
+        assert_eq!(
+            manager
+                .incoming_record_state("session-a", "control", MessageId([65; MESSAGE_ID_BYTES]))
+                .await,
+            Some((ActiveIncomingState::OrderedBuffered, None))
+        );
+        assert_eq!(
+            manager
+                .incoming_record_state("session-a", "control", MessageId([66; MESSAGE_ID_BYTES]))
+                .await,
+            Some((ActiveIncomingState::OrderedBuffered, None))
+        );
+
+        let first_ack_at = now + Duration::from_millis(25);
+        let first_completion = manager
+            .complete_incoming_at(
+                "session-a",
+                "control",
+                MessageId([64; MESSAGE_ID_BYTES]),
+                first_ack_at,
+            )
+            .await
+            .expect("first message should be ACKable");
+        assert_eq!(
+            first_completion
+                .next_ordered
+                .as_ref()
+                .map(|message| message.sequence),
+            Some(1)
+        );
+        assert_eq!(
+            manager
+                .incoming_record_state("session-a", "control", MessageId([65; MESSAGE_ID_BYTES]))
+                .await,
+            Some((
+                ActiveIncomingState::InFlight,
+                Some(first_ack_at + SHORT_ACK_TIMEOUT),
+            ))
+        );
+        assert!(manager
+            .expire_incoming("session-a", now + Duration::from_millis(51))
+            .await
+            .is_empty());
+
+        let second_ack_at = now + Duration::from_millis(60);
+        let second_completion = manager
+            .complete_incoming_at(
+                "session-a",
+                "control",
+                MessageId([65; MESSAGE_ID_BYTES]),
+                second_ack_at,
+            )
+            .await
+            .expect("second message should be ACKable after release");
+        assert_eq!(
+            second_completion
+                .next_ordered
+                .as_ref()
+                .map(|message| message.sequence),
+            Some(2)
+        );
+        assert_eq!(
+            manager
+                .incoming_record_state("session-a", "control", MessageId([66; MESSAGE_ID_BYTES]))
+                .await,
+            Some((
+                ActiveIncomingState::InFlight,
+                Some(second_ack_at + SHORT_ACK_TIMEOUT),
+            ))
+        );
+        assert!(manager
+            .expire_incoming("session-a", now + Duration::from_millis(101))
+            .await
+            .is_empty());
+
+        let final_completion = manager
+            .complete_incoming_at(
+                "session-a",
+                "control",
+                MessageId([66; MESSAGE_ID_BYTES]),
+                now + Duration::from_millis(105),
+            )
+            .await
+            .expect("third message should be ACKable after release");
+        assert!(final_completion.next_ordered.is_none());
+        assert_eq!(manager.incoming_state_counts().await, (0, 3, 0));
     }
 
     #[tokio::test]
@@ -1631,8 +1956,9 @@ mod tests {
 
     #[tokio::test]
     async fn application_ack_timeout_fails_ordered_channel_without_skipping_sequence() {
-        let manager = DeliveryManager::with_config(config());
+        let manager = DeliveryManager::with_config(short_timeout_config());
         let now = Instant::now();
+        let timeout_at = now + SHORT_ACK_TIMEOUT + Duration::from_millis(1);
         for (sequence, id) in [(0, 40), (1, 41)] {
             let message = ordered_message(sequence, id);
             assert_eq!(
@@ -1648,16 +1974,11 @@ mod tests {
                 DedupDecision::New
             );
             assert!(matches!(
-                manager.accept_ordered(message).await,
+                manager.accept_ordered_at(message, now).await,
                 OrderedInsertResult::Ready | OrderedInsertResult::Buffered
             ));
         }
-        let expired = manager
-            .expire_incoming(
-                "session-a",
-                now + APPLICATION_ACK_TIMEOUT + Duration::from_secs(1),
-            )
-            .await;
+        let expired = manager.expire_incoming("session-a", timeout_at).await;
         assert_eq!(expired.len(), 2);
         assert!(expired.iter().all(|timeout| timeout.ordered_channel_failed));
         assert_eq!(manager.incoming_state_counts().await, (0, 0, 0));
@@ -1668,7 +1989,7 @@ mod tests {
                     "control",
                     MessageId([42; MESSAGE_ID_BYTES]),
                     1,
-                    now + APPLICATION_ACK_TIMEOUT + Duration::from_secs(1),
+                    timeout_at,
                 )
                 .await,
             DedupDecision::ChannelFailed
@@ -1681,7 +2002,7 @@ mod tests {
                     "control",
                     MessageId([42; MESSAGE_ID_BYTES]),
                     1,
-                    now + APPLICATION_ACK_TIMEOUT + Duration::from_secs(1),
+                    timeout_at,
                 )
                 .await,
             DedupDecision::New
@@ -2045,6 +2366,7 @@ mod tests {
             max_payload_bytes: 4,
             dedup_max_entries: 4,
             dedup_ttl: Duration::from_secs(10),
+            application_ack_timeout: Duration::from_secs(5 * 60),
             max_reorder_messages: 2,
             max_reorder_bytes: 8,
             max_sequence_gap: 4,
