@@ -18,7 +18,7 @@ use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use crate::connection::GenericConnection;
 
@@ -186,20 +186,19 @@ impl EstablishedNoise {
         if self.initiator {
             return Err(CryptoHandshakeError::Failed);
         }
-        let mut root_seed = [0u8; ROOT_SEED_BYTES];
-        OsRng.fill_bytes(&mut root_seed);
+        let mut root_seed = Zeroizing::new([0u8; ROOT_SEED_BYTES]);
+        OsRng.fill_bytes(root_seed.as_mut());
         let root_key = Zeroizing::new(derive_application_root(
-            &root_seed,
+            &*root_seed,
             &self.handshake_hash,
             &self.session_binding,
         )?);
         let expected_confirm = Zeroizing::new(derive_root_confirm(
-            &root_key,
+            &*root_key,
             &self.handshake_hash,
             &self.session_binding,
         )?);
-        let encrypted_seed = self.encrypt_exchange(ROOT_EXCHANGE_ROOT_SEED, &root_seed)?;
-        root_seed.zeroize();
+        let encrypted_seed = self.encrypt_exchange(ROOT_EXCHANGE_ROOT_SEED, &*root_seed)?;
         Ok((
             ResponderRootExchange {
                 noise: self,
@@ -217,19 +216,19 @@ impl EstablishedNoise {
         if !self.initiator {
             return Err(CryptoHandshakeError::Failed);
         }
-        let seed = self.decrypt_exchange(ROOT_EXCHANGE_ROOT_SEED, encrypted_seed)?;
-        let mut root_seed: [u8; ROOT_SEED_BYTES] =
-            seed.try_into().map_err(|_| CryptoHandshakeError::Invalid)?;
+        let root_seed = self
+            .decrypt_fixed_exchange::<ROOT_SEED_BYTES>(ROOT_EXCHANGE_ROOT_SEED, encrypted_seed)?;
         let root_key = Zeroizing::new(derive_application_root(
-            &root_seed,
+            &*root_seed,
             &self.handshake_hash,
             &self.session_binding,
         )?);
-        root_seed.zeroize();
-        let mut confirm =
-            derive_root_confirm(&root_key, &self.handshake_hash, &self.session_binding)?;
-        let encrypted_confirm = self.encrypt_exchange(ROOT_EXCHANGE_ROOT_CONFIRM, &confirm)?;
-        confirm.zeroize();
+        let confirm = Zeroizing::new(derive_root_confirm(
+            &*root_key,
+            &self.handshake_hash,
+            &self.session_binding,
+        )?);
+        let encrypted_confirm = self.encrypt_exchange(ROOT_EXCHANGE_ROOT_CONFIRM, &*confirm)?;
         Ok((
             InitiatorRootExchange {
                 noise: self,
@@ -258,21 +257,24 @@ impl EstablishedNoise {
         Ok(ciphertext)
     }
 
-    fn decrypt_exchange(
+    fn decrypt_fixed_exchange<const N: usize>(
         &mut self,
         expected_type: u8,
         ciphertext: &[u8],
-    ) -> Result<Vec<u8>, CryptoHandshakeError> {
+    ) -> Result<Zeroizing<[u8; N]>, CryptoHandshakeError> {
         if ciphertext.is_empty() || ciphertext.len() > MAX_HANDSHAKE_FRAME_BYTES {
             return Err(CryptoHandshakeError::Invalid);
         }
-        let mut plaintext = Zeroizing::new(vec![0u8; MAX_HANDSHAKE_PAYLOAD_BYTES]);
+        let mut plaintext = Zeroizing::new([0u8; MAX_HANDSHAKE_PAYLOAD_BYTES]);
         let length = self
             .transport
-            .read_message(ciphertext, &mut plaintext)
+            .read_message(ciphertext, &mut plaintext[..])
             .map_err(|_| CryptoHandshakeError::Failed)?;
-        plaintext.truncate(length);
-        parse_root_exchange_payload(&plaintext, expected_type, &self.session_binding)
+        parse_fixed_root_exchange_payload::<N>(
+            &plaintext[..length],
+            expected_type,
+            &self.session_binding,
+        )
     }
 
     fn into_material(self, root_key: [u8; 32]) -> SessionCryptoMaterial {
@@ -290,10 +292,7 @@ impl InitiatorRootExchange {
         encrypted_accept: &[u8],
     ) -> Result<SessionCryptoMaterial, CryptoHandshakeError> {
         let mut noise = self.noise;
-        let payload = noise.decrypt_exchange(ROOT_EXCHANGE_ACCEPT, encrypted_accept)?;
-        if !payload.is_empty() {
-            return Err(CryptoHandshakeError::Invalid);
-        }
+        noise.decrypt_fixed_exchange::<0>(ROOT_EXCHANGE_ACCEPT, encrypted_accept)?;
         Ok(noise.into_material(*self.root_key))
     }
 }
@@ -304,10 +303,11 @@ impl ResponderRootExchange {
         encrypted_confirm: &[u8],
     ) -> Result<(Vec<u8>, SessionCryptoMaterial), CryptoHandshakeError> {
         let mut noise = self.noise;
-        let confirm = noise.decrypt_exchange(ROOT_EXCHANGE_ROOT_CONFIRM, encrypted_confirm)?;
-        if confirm.len() != ROOT_CONFIRM_BYTES
-            || !bool::from(confirm.as_slice().ct_eq(self.expected_confirm.as_ref()))
-        {
+        let confirm = noise.decrypt_fixed_exchange::<ROOT_CONFIRM_BYTES>(
+            ROOT_EXCHANGE_ROOT_CONFIRM,
+            encrypted_confirm,
+        )?;
+        if !bool::from((&confirm[..]).ct_eq(&self.expected_confirm[..])) {
             return Err(CryptoHandshakeError::Failed);
         }
         let encrypted_accept = noise.encrypt_exchange(ROOT_EXCHANGE_ACCEPT, &[])?;
@@ -906,11 +906,11 @@ fn root_exchange_payload(
     Ok(output)
 }
 
-fn parse_root_exchange_payload(
-    message: &[u8],
+fn parse_root_exchange_payload<'a>(
+    message: &'a [u8],
     expected_type: u8,
     session_binding: &str,
-) -> Result<Vec<u8>, CryptoHandshakeError> {
+) -> Result<&'a [u8], CryptoHandshakeError> {
     let mut cursor = Cursor::new(message);
     if cursor.take(4)? != ROOT_EXCHANGE_MAGIC
         || cursor.take_byte()? != ROOT_EXCHANGE_VERSION
@@ -920,11 +920,23 @@ fn parse_root_exchange_payload(
     {
         return Err(CryptoHandshakeError::Invalid);
     }
-    let payload = cursor.take_bytes(MAX_HANDSHAKE_PAYLOAD_BYTES)?.to_vec();
+    let payload = cursor.take_bytes(MAX_HANDSHAKE_PAYLOAD_BYTES)?;
     if !cursor.done() {
         return Err(CryptoHandshakeError::Invalid);
     }
     Ok(payload)
+}
+
+fn parse_fixed_root_exchange_payload<const N: usize>(
+    message: &[u8],
+    expected_type: u8,
+    session_binding: &str,
+) -> Result<Zeroizing<[u8; N]>, CryptoHandshakeError> {
+    let payload = parse_root_exchange_payload(message, expected_type, session_binding)?;
+    let value = payload
+        .try_into()
+        .map_err(|_| CryptoHandshakeError::Invalid)?;
+    Ok(Zeroizing::new(value))
 }
 
 fn validate_binding(binding: &str) -> Result<(), CryptoHandshakeError> {
@@ -1200,7 +1212,7 @@ mod tests {
         let responder = responder.into_established(binding).unwrap();
         let (responder, encrypted_seed) = responder.begin_responder().unwrap();
         let _ = initiator
-            .decrypt_exchange(ROOT_EXCHANGE_ROOT_SEED, &encrypted_seed)
+            .decrypt_fixed_exchange::<ROOT_SEED_BYTES>(ROOT_EXCHANGE_ROOT_SEED, &encrypted_seed)
             .unwrap();
         let encrypted_wrong_confirm = initiator
             .encrypt_exchange(ROOT_EXCHANGE_ROOT_CONFIRM, &[0u8; ROOT_CONFIRM_BYTES])
@@ -1343,6 +1355,31 @@ mod tests {
             initiator.accept_root_seed(&encrypted_seed),
             Err(CryptoHandshakeError::Failed)
         ));
+    }
+
+    #[test]
+    fn root_seed_parser_accepts_only_32_bytes() {
+        let binding = "00112233445566778899aabbccddeeff";
+        let valid = root_exchange_payload(ROOT_EXCHANGE_ROOT_SEED, binding, &[7u8; 32]).unwrap();
+        let parsed = parse_fixed_root_exchange_payload::<ROOT_SEED_BYTES>(
+            &valid,
+            ROOT_EXCHANGE_ROOT_SEED,
+            binding,
+        )
+        .expect("32-byte RootSeed");
+        assert_eq!(&parsed[..], &[7u8; 32]);
+
+        for length in [31, 33] {
+            let invalid =
+                root_exchange_payload(ROOT_EXCHANGE_ROOT_SEED, binding, &vec![7u8; length])
+                    .unwrap();
+            assert!(parse_fixed_root_exchange_payload::<ROOT_SEED_BYTES>(
+                &invalid,
+                ROOT_EXCHANGE_ROOT_SEED,
+                binding,
+            )
+            .is_err());
+        }
     }
 
     #[test]

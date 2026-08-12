@@ -30,7 +30,8 @@ fn session_root_source_requires_noise_transport_secret_export() {
     assert!(!source.contains("fn derive_session_root("));
     assert!(!source.contains("noise-xx-aes256gcm-v2\";"));
     assert!(source.contains("fn derive_application_root("));
-    assert!(source.contains("OsRng.fill_bytes(&mut root_seed)"));
+    assert!(source.contains("OsRng.fill_bytes(root_seed.as_mut())"));
+    assert!(source.contains("decrypt_fixed_exchange::<ROOT_SEED_BYTES>"));
     assert!(source.contains("into_transport_mode()"));
 }
 
