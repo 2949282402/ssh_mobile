@@ -257,7 +257,7 @@ Uint8List _connectedRealtimeStateFrame() {
     0x01,
     0x18,
     0x01,
-    0xb2,
+    0xaa,
     0x01,
     nested.length,
     ...nested,
