@@ -31,6 +31,12 @@ forwarder; it is not trusted with Session plaintext or Noise state.
   initiator. The responder aliases that binding to its local SessionId only
   after the authenticated transcript completes; a Relay attempt token is not
   a crypto key selector.
+- Session continuity is decided centrally by comparing the authenticated
+  remote binding with the current Session's `remote_session_binding`. An equal
+  binding is a route replacement and retains the local SessionId, crypto
+  context, key epoch, and pending Delivery state. A different binding is a
+  peer Runtime restart: the old Session, aliases, task indexes, and Delivery
+  state are retired before a new local SessionId and root are installed.
 - Protocol version, the `e2ee/noise-xx-aes256gcm-v3` capability, peer/device
   identity, and Session binding are signed or transcript-bound before a root
   is installed. A failed proof never creates a Connected Session or a crypto

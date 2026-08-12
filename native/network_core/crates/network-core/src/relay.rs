@@ -589,8 +589,30 @@ async fn handle_relay_crypto_handshake(
                         "Relay E2EE final message has no active responder",
                     )
                 })?;
+            let binding_state = Arc::clone(state);
             let (authenticated_peer_id, confirmer, encrypted_seed) = responder
-                .accept_final(payload, &state.trusted_peer_keys)
+                .accept_final(
+                    payload,
+                    &state.trusted_peer_keys,
+                    move |authenticated_peer_id, remote_session_binding| {
+                        let binding_state = Arc::clone(&binding_state);
+                        let authenticated_peer_id = authenticated_peer_id.to_string();
+                        let remote_session_binding = remote_session_binding.to_string();
+                        async move {
+                            let admission = binding_state
+                                .admit_authenticated_session(
+                                    &authenticated_peer_id,
+                                    None,
+                                    &remote_session_binding,
+                                )
+                                .await
+                                .map_err(|_| {
+                                    crate::crypto_handshake::CryptoHandshakeError::Failed
+                                })?;
+                            Ok((admission.session_id.wire_key(), admission))
+                        }
+                    },
+                )
                 .await
                 .map_err(|error| {
                     std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string())
@@ -633,7 +655,7 @@ async fn handle_relay_crypto_handshake(
                         "Relay E2EE confirmation has no authenticated responder",
                     )
                 })?;
-            let (authenticated_peer_id, encrypted_accept, material) =
+            let (authenticated_peer_id, encrypted_accept, material, admission) =
                 confirmer.accept_root_confirm(payload).map_err(|error| {
                     std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string())
                 })?;
@@ -654,20 +676,26 @@ async fn handle_relay_crypto_handshake(
             relay
                 .send_crypto_handshake(session_token, peer_id, &accept)
                 .await?;
-            let decision = state.sessions.begin_connect(peer_id).await;
-            let session_id = match decision {
-                crate::session::ConnectDecision::Started(session_id)
-                | crate::session::ConnectDecision::InProgress(session_id) => session_id,
-                crate::session::ConnectDecision::AlreadyConnected(session_id) => {
-                    if state.sessions.current_route(peer_id).await != Some(RouteType::Relay) {
-                        return Ok(());
-                    }
-                    session_id
-                }
-            };
+            if admission.session_id.wire_key() != material.local_session_binding {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "Relay Session binding became stale",
+                )
+                .into());
+            }
             state
-                .install_crypto_material(peer_id, &session_id.wire_key(), &material)
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
+                .sessions
+                .finalize_authenticated_session(
+                    peer_id,
+                    admission.session_id,
+                    &material.remote_session_binding,
+                )
+                .await
+                .map_err(|_| {
+                    std::io::Error::other("Relay Session was replaced during handshake")
+                })?;
+            crate::peer::install_admitted_crypto(state, peer_id, admission, &material).await?;
+            let session_id = admission.session_id;
             if !state
                 .sessions
                 .mark_relay_route_connected(
@@ -693,13 +721,16 @@ async fn handle_relay_crypto_handshake(
             );
             crate::channel::recover_session(Arc::clone(state), peer_id.to_string(), session_id)
                 .await;
-            crate::transfer::resume_transfers_for_peer(Arc::clone(state), peer_id.to_string())
-                .await;
+            if admission.decision != crate::session::SessionCryptoDecision::ReplaceWithNew {
+                crate::transfer::resume_transfers_for_peer(Arc::clone(state), peer_id.to_string())
+                    .await;
+            }
             crate::peer::schedule_direct_upgrade(
                 Arc::clone(state),
                 peer_id.to_string(),
                 session_id,
             );
+            state.finish_session_replacement(admission);
         }
         _ => {
             return Err(std::io::Error::new(

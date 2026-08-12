@@ -31,7 +31,7 @@ fn session_root_source_requires_noise_transport_secret_export() {
     assert!(!source.contains("noise-xx-aes256gcm-v2\";"));
     assert!(source.contains("fn derive_application_root("));
     assert!(source.contains("OsRng.fill_bytes(root_seed.as_mut())"));
-    assert!(source.contains("decrypt_fixed_exchange::<ROOT_SEED_BYTES>"));
+    assert!(source.contains("decrypt_root_seed_exchange"));
     assert!(source.contains("into_transport_mode()"));
 }
 
@@ -206,7 +206,10 @@ async fn run_relay_e2ee_handshake(tamper_root_seed: bool, omit_accept: bool) -> 
         initiator_identity.public_identity_key().to_bytes(),
     )]));
     let (peer_id, confirmer, mut encrypted_seed) = responder
-        .accept_final(&final_at_responder, &trusted_peer_keys)
+        .accept_final(&final_at_responder, &trusted_peer_keys, |_, binding| {
+            let binding = binding.to_string();
+            async move { Ok((binding, ())) }
+        })
         .await
         .expect("accept Relay Noise final");
     assert_eq!(peer_id, initiator_identity.device_id);
@@ -228,7 +231,7 @@ async fn run_relay_e2ee_handshake(tamper_root_seed: bool, omit_accept: bool) -> 
         crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED,
     )
     .await;
-    let (confirmation, encrypted_confirm) = match initiator.accept_root_seed(&seed_at_initiator) {
+    let confirmation = match initiator.accept_root_seed(&seed_at_initiator) {
         Ok(value) => value,
         Err(_) => {
             return RelayE2eeAttempt {
@@ -241,6 +244,9 @@ async fn run_relay_e2ee_handshake(tamper_root_seed: bool, omit_accept: bool) -> 
             };
         }
     };
+    let (confirmation, encrypted_confirm) = confirmation
+        .confirm(token.clone())
+        .expect("confirm Relay root with local Session binding");
     send_relay_crypto_step(
         &initiator_relay,
         &token,
@@ -256,7 +262,7 @@ async fn run_relay_e2ee_handshake(tamper_root_seed: bool, omit_accept: bool) -> 
         crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM,
     )
     .await;
-    let (peer_id, encrypted_accept, responder_material) = confirmer
+    let (peer_id, encrypted_accept, responder_material, _) = confirmer
         .accept_root_confirm(&confirm_at_responder)
         .expect("accept Relay root confirmation");
     assert_eq!(peer_id, initiator_identity.device_id);
@@ -1099,6 +1105,270 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
     fs::remove_dir_all(test_root).ok();
 }
 
+/// 对端 runtime 重启会携带新的本地 Session binding；接收端必须换代本地
+/// Session/Crypto alias，而不是把新的 Root 当作旧 Session 的普通 reconnect。
+#[test]
+fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
+    let runtime_a1 = NetworkRuntime::new().expect("runtime A1");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a1.start().expect("start runtime A1");
+    runtime_b.start().expect("start runtime B");
+    let test_root = std::env::temp_dir().join(format!(
+        "ssh-mobile-peer-runtime-restart-{}",
+        rand::random::<u64>()
+    ));
+    fs::create_dir_all(&test_root).expect("test root");
+
+    let identity_seed_a = [141u8; 32];
+    let identity_seed_b = [142u8; 32];
+    let e2e_seed_a = [151u8; 32];
+    let e2e_seed_b = [152u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("restart-a".into(), identity_seed_a, e2e_seed_a)
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("restart-b".into(), identity_seed_b, e2e_seed_b)
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a1,
+        "restart-a",
+        identity_seed_a,
+        e2e_seed_a,
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a1"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "restart-b",
+        identity_seed_b,
+        e2e_seed_b,
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    send_and_expect_accepted(
+        &runtime_a1,
+        upsert_command(
+            "restart-upsert-b-a1",
+            "restart-b",
+            address_b,
+            public_key_b,
+            e2e_seed_b,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_b,
+        upsert_command(
+            "restart-upsert-a-b",
+            "restart-a",
+            address_a,
+            public_key_a,
+            e2e_seed_a,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_a1,
+        NetworkCommand {
+            command_id: "restart-connect-a1".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "restart-b".into(),
+                intent: 0,
+            })),
+        },
+    );
+    assert!(poll_until(&runtime_a1, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "restart-b"
+                    && state.state == PeerConnectionState::Connected as i32
+        )
+    })
+    .is_some());
+    assert!(poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "restart-a"
+                    && state.state == PeerConnectionState::Connected as i32
+        )
+    })
+    .is_some());
+
+    let state_b = runtime_b
+        .state
+        .lock()
+        .expect("runtime B state lock")
+        .clone()
+        .expect("runtime B state");
+    let old_b_session_id = runtime_b.handle().block_on(async {
+        state_b
+            .sessions
+            .current_session_id("restart-a")
+            .await
+            .expect("B1 Session ID")
+    });
+    let old_context = state_b
+        .crypto
+        .get("restart-a", &old_b_session_id.wire_key())
+        .expect("B1 CryptoContext");
+    let a_port = address_a.port();
+    runtime_a1.stop().expect("stop runtime A1");
+    drop(runtime_a1);
+
+    assert!(poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "restart-a"
+                    && state.state == PeerConnectionState::Disconnected as i32
+        )
+    })
+    .is_some());
+
+    let runtime_a2 = NetworkRuntime::new().expect("runtime A2");
+    runtime_a2.start().expect("start runtime A2");
+    let address_a2 = configure_runtime_for_test(
+        &runtime_a2,
+        "restart-a",
+        identity_seed_a,
+        e2e_seed_a,
+        SocketAddr::from(([127, 0, 0, 1], a_port)),
+        test_root.join("receive-a2"),
+    );
+    assert_eq!(address_a2.port(), a_port);
+    send_and_expect_accepted(
+        &runtime_a2,
+        upsert_command(
+            "restart-upsert-b-a2",
+            "restart-b",
+            address_b,
+            public_key_b,
+            e2e_seed_b,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_b,
+        NetworkCommand {
+            command_id: "restart-connect-b2".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "restart-a".into(),
+                intent: 0,
+            })),
+        },
+    );
+    assert!(wait_for_session_connected(
+        &runtime_b,
+        "restart-a",
+        Duration::from_secs(20)
+    ));
+    assert!(wait_for_session_connected(
+        &runtime_a2,
+        "restart-b",
+        Duration::from_secs(20)
+    ));
+    let new_b_session_id = runtime_b.handle().block_on(async {
+        state_b
+            .sessions
+            .current_session_id("restart-a")
+            .await
+            .expect("B2 Session ID")
+    });
+    assert_ne!(old_b_session_id, new_b_session_id);
+    let stale_context = state_b
+        .crypto
+        .get("restart-a", &old_b_session_id.wire_key());
+    let current_remote_binding = runtime_b.handle().block_on(async {
+        state_b
+            .sessions
+            .current_remote_session_binding("restart-a")
+            .await
+    });
+    let state_a2 = runtime_a2
+        .state
+        .lock()
+        .expect("runtime A2 state lock")
+        .clone()
+        .expect("runtime A2 state");
+    let current_a2_session_id = runtime_a2
+        .handle()
+        .block_on(async { state_a2.sessions.current_session_id("restart-b").await });
+    assert!(
+        stale_context.is_err(),
+        "old B1 alias survived: old={old_b_session_id:?}, new={new_b_session_id:?}, remote={current_remote_binding:?}, a2={current_a2_session_id:?}, same_context={}",
+        stale_context
+            .as_ref()
+            .is_ok_and(|context| Arc::ptr_eq(context, &old_context))
+    );
+    let new_context = state_b
+        .crypto
+        .get("restart-a", &new_b_session_id.wire_key())
+        .expect("B2 CryptoContext");
+    assert!(!Arc::ptr_eq(&old_context, &new_context));
+
+    send_and_expect_accepted(
+        &runtime_a2,
+        NetworkCommand {
+            command_id: "restart-send-e2ee".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SendMessage(SendMessageCommand {
+                peer_id: "restart-b".into(),
+                channel_id: "control".into(),
+                payload: b"after-peer-restart".to_vec(),
+                policy: DeliveryPolicyCode::AckedDeduplicated as i32,
+                crypto_mode: 0,
+            })),
+        },
+    );
+    let received = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::ChannelMessage(message))
+                if message.peer_id == "restart-a"
+                    && message.payload == b"after-peer-restart"
+        )
+    })
+    .expect("post-restart E2EE message");
+    let (session_id, message_id) = match received.payload {
+        Some(network_event::Payload::ChannelMessage(message)) => {
+            (message.session_id, message.message_id)
+        }
+        _ => unreachable!("predicate already checked the event"),
+    };
+    send_and_expect_accepted(
+        &runtime_b,
+        NetworkCommand {
+            command_id: "restart-ack-e2ee".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::AcknowledgeMessage(
+                AcknowledgeMessageCommand {
+                    peer_id: "restart-a".into(),
+                    session_id,
+                    channel_id: "control".into(),
+                    message_id,
+                },
+            )),
+        },
+    );
+    assert!(poll_until(&runtime_a2, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id,
+                ..
+            })) if peer_id == "restart-b"
+        )
+    })
+    .is_some());
+
+    runtime_a2.stop().expect("stop runtime A2");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
 /// QUIC is intentionally closed after both runtimes bind. The same configured
 /// numeric port still accepts TCP, proving that fallback is a real authenticated
 /// Session route rather than a capability-only wrapper. The test also sends a
@@ -1459,10 +1729,8 @@ fn websocket_fallback_authenticates_delivery_and_ack() {
 fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
     let runtime_a = NetworkRuntime::new().expect("runtime A");
     let runtime_tcp = NetworkRuntime::new().expect("TCP peer runtime");
-    let runtime_quic = NetworkRuntime::new().expect("QUIC peer runtime");
     runtime_a.start().expect("start runtime A");
     runtime_tcp.start().expect("start TCP peer runtime");
-    runtime_quic.start().expect("start QUIC peer runtime");
     let test_root = std::env::temp_dir().join(format!(
         "ssh-mobile-route-migration-{}",
         rand::random::<u64>()
@@ -1494,14 +1762,6 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
         SocketAddr::from(([127, 0, 0, 1], 0)),
         test_root.join("receive-tcp"),
     );
-    let address_quic = configure_runtime_for_test(
-        &runtime_quic,
-        "migration-peer",
-        identity_seed_peer,
-        [152u8; 32],
-        SocketAddr::from(([127, 0, 0, 1], 0)),
-        test_root.join("receive-quic"),
-    );
     let tcp_state = runtime_tcp
         .state
         .lock()
@@ -1531,16 +1791,6 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
         &runtime_tcp,
         upsert_command(
             "migration-tcp-upsert-a",
-            "migration-a",
-            address_a,
-            public_key_a,
-            [151u8; 32],
-        ),
-    );
-    send_and_expect_accepted(
-        &runtime_quic,
-        upsert_command(
-            "migration-quic-upsert-a",
             "migration-a",
             address_a,
             public_key_a,
@@ -1587,6 +1837,46 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
             .expect("TCP active route");
         (session_id, route)
     });
+    let old_accept_task = *tcp_state.accept_task.lock().expect("TCP accept task lock");
+    runtime_tcp.handle().block_on(async {
+        let old_endpoint = tcp_state.endpoint.write().await.take();
+        if let Some(old_endpoint) = old_endpoint {
+            old_endpoint.close(quinn::VarInt::from_u32(0), b"migration TCP phase ended");
+        }
+        if let Some(task_id) = old_accept_task {
+            tcp_state.task_supervisor.cancel_task(task_id).await;
+        }
+    });
+    let replacement_socket =
+        std::net::UdpSocket::bind(address_tcp).expect("bind QUIC endpoint for route migration");
+    replacement_socket
+        .set_nonblocking(true)
+        .expect("configure migration QUIC socket");
+    let replacement_endpoint = runtime_tcp.handle().block_on(async {
+        network_quic::QuicEndpointManager::from_bound_socket(
+            replacement_socket,
+            Arc::new(network_nat::PathManager::new()),
+        )
+        .expect("create replacement QUIC endpoint")
+        .endpoint
+    });
+    let replacement_accept_task = runtime_tcp.handle().block_on(async {
+        *tcp_state.endpoint.write().await = Some(replacement_endpoint.clone());
+        tcp_state
+            .task_supervisor
+            .spawn_runtime(
+                "migration-quic-accept",
+                crate::peer::accept_connections(
+                    replacement_endpoint.clone(),
+                    Arc::clone(&tcp_state),
+                ),
+            )
+            .expect("spawn replacement QUIC accept task")
+    });
+    *tcp_state
+        .accept_task
+        .lock()
+        .expect("replacement accept task lock") = Some(replacement_accept_task);
     let original_context = state_a
         .crypto
         .get("migration-peer", &session_id.wire_key())
@@ -1613,7 +1903,7 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
             .await
             .get_mut("migration-peer")
             .expect("migration peer config")
-            .endpoint = Some(address_quic);
+            .endpoint = Some(address_tcp);
     });
     let identity = runtime_a.handle().block_on(async {
         state_a
@@ -1631,22 +1921,29 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
             .clone()
             .expect("migration QUIC endpoint")
     });
-    let (replacement, crypto) = runtime_a
+    let (replacement, crypto, admission) = runtime_a
         .handle()
         .block_on(crate::peer::connect_direct_with_crypto(
             endpoint,
-            address_quic,
+            address_tcp,
             identity,
             public_key_peer,
             "migration-peer".into(),
             "migration-attempt".into(),
             Duration::from_secs(5),
             &session_id.wire_key(),
+            Arc::clone(&state_a),
+            session_id,
         ))
         .expect("authenticated QUIC replacement");
     runtime_a.handle().block_on(async {
         state_a
-            .install_crypto_material("migration-peer", &session_id.wire_key(), &crypto)
+            .install_crypto_material(
+                "migration-peer",
+                &session_id.wire_key(),
+                &crypto,
+                admission.decision,
+            )
             .expect("install replacement E2EE context");
     });
     let replacement_context = state_a
@@ -1667,14 +1964,43 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
     let replacement_receiver = replacement.clone();
     let previous = runtime_a
         .handle()
-        .block_on(state_a.sessions.replace_active_route_if_current(
-            "migration-peer",
-            session_id,
-            &old_route,
-            crate::session::ActiveRoute::quic(replacement, RouteType::QuicDirect),
-        ))
+        .block_on(async {
+            if state_a
+                .sessions
+                .current_active_route("migration-peer")
+                .await
+                .is_some()
+            {
+                state_a
+                    .sessions
+                    .replace_active_route_if_current(
+                        "migration-peer",
+                        session_id,
+                        &old_route,
+                        crate::session::ActiveRoute::quic(replacement, RouteType::QuicDirect),
+                    )
+                    .await
+                    .map(Some)
+            } else {
+                Some(
+                    state_a
+                        .sessions
+                        .attach_connection_for_session(
+                            "migration-peer",
+                            Some(session_id),
+                            replacement,
+                            RouteType::QuicDirect,
+                            true,
+                        )
+                        .await
+                        .expect("attach route after old callback"),
+                )
+            }
+        })
         .expect("atomic TCP to QUIC route swap");
-    runtime_a.handle().block_on(previous.close());
+    if let Some(previous) = previous {
+        runtime_a.handle().block_on(previous.close());
+    }
     runtime_a.handle().block_on(async {
         crate::peer::spawn_session_receivers(
             state_a.clone(),
@@ -1688,7 +2014,7 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
         "migration-peer".into(),
         session_id,
     ));
-    let received = poll_until(&runtime_quic, Duration::from_secs(10), |event| {
+    let received = poll_until(&runtime_tcp, Duration::from_secs(10), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::ChannelMessage(message))
@@ -1704,7 +2030,7 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
         _ => unreachable!("predicate already checked the event"),
     };
     send_and_expect_accepted(
-        &runtime_quic,
+        &runtime_tcp,
         NetworkCommand {
             command_id: "migration-ack".into(),
             protocol_version: NETWORK_PROTOCOL_VERSION,
@@ -1747,7 +2073,6 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
     assert_eq!(transport, crate::connection::RouteTransport::Quic);
     runtime_a.stop().expect("stop runtime A");
     runtime_tcp.stop().expect("stop TCP peer runtime");
-    runtime_quic.stop().expect("stop QUIC peer runtime");
     fs::remove_dir_all(test_root).ok();
 }
 
@@ -1847,4 +2172,24 @@ fn poll_until(
         }
     }
     None
+}
+
+fn wait_for_session_connected(runtime: &NetworkRuntime, peer_id: &str, timeout: Duration) -> bool {
+    let state = runtime
+        .state
+        .lock()
+        .expect("runtime state lock")
+        .clone()
+        .expect("runtime state");
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if runtime
+            .handle()
+            .block_on(state.sessions.is_connected(peer_id))
+        {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    false
 }

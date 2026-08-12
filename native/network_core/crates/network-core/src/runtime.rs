@@ -20,7 +20,9 @@ use crate::crypto_handshake::{
 };
 use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
-use crate::session::{SessionId, SessionManager};
+use crate::session::{
+    SessionAdmission, SessionAdmissionError, SessionCryptoDecision, SessionId, SessionManager,
+};
 use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
 use network_identity::DeviceIdentity;
 use network_nat::PathManager;
@@ -115,7 +117,8 @@ pub(crate) struct RuntimeState {
     pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
-    pub(crate) relay_crypto_confirmers: AsyncMutex<HashMap<String, RelayResponderConfirmation>>,
+    pub(crate) relay_crypto_confirmers:
+        AsyncMutex<HashMap<String, RelayResponderConfirmation<SessionAdmission>>>,
     pub(crate) candidate_signal_notify: Notify,
     pub(crate) relay_sessions: RwLock<HashMap<String, String>>,
     pub(crate) relay_pending_incoming: RwLock<HashMap<String, crate::relay::PendingRelayIncoming>>,
@@ -172,9 +175,12 @@ impl RuntimeState {
         }
     }
 
-    pub(crate) async fn cancel_session_tasks(&self, peer_id: &str, session_id: SessionId) {
+    async fn retire_session_resources(&self, peer_id: &str, session_id: SessionId) {
         let session_key = session_id.wire_key();
-        self.task_supervisor.cancel_session(&session_key).await;
+        // Retire aliases and task indexes before awaiting the old task group.
+        // A reconnect/receiver task may be inside a bounded I/O wait; the
+        // replacement Session must become cryptographically isolated without
+        // waiting for that transport task to finish unwinding.
         self.crypto.remove_session(peer_id, &session_key);
         self.delivery_tasks
             .write()
@@ -189,6 +195,52 @@ impl RuntimeState {
             .await
             .retain(|_, current| *current != session_id);
         self.candidate_attempts.write().await.remove(peer_id);
+        self.delivery.close_session(&session_key).await;
+    }
+
+    pub(crate) async fn cancel_session_tasks(&self, peer_id: &str, session_id: SessionId) {
+        let session_key = session_id.wire_key();
+        self.retire_session_resources(peer_id, session_id).await;
+        self.task_supervisor.cancel_session(&session_key).await;
+    }
+
+    /// Admit authenticated Noise material only after Session continuity has
+    /// been evaluated. A changed remote binding retires the old Session's
+    /// aliases and receive-side Delivery state before the new crypto context
+    /// is installed; task cancellation is deferred until the replacement
+    /// route has attached.
+    pub(crate) async fn admit_authenticated_session(
+        &self,
+        peer_id: &str,
+        expected_session_id: Option<SessionId>,
+        remote_session_binding: &str,
+    ) -> Result<SessionAdmission, SessionAdmissionError> {
+        let admission = self
+            .sessions
+            .admit_authenticated_session(peer_id, expected_session_id, remote_session_binding)
+            .await?;
+        if let Some(replaced_session_id) = admission.replaced_session_id {
+            self.retire_session_resources(peer_id, replaced_session_id)
+                .await;
+        }
+        Ok(admission)
+    }
+
+    /// Finish cancellation only after the winning replacement route has been
+    /// attached. A reconnect task can itself be the handshake that discovers
+    /// the peer restart; canceling its old Session group before it installs the
+    /// new route would abort the successful handshake midway.
+    pub(crate) fn finish_session_replacement(&self, admission: SessionAdmission) {
+        let Some(replaced_session_id) = admission.replaced_session_id else {
+            return;
+        };
+        let supervisor = Arc::clone(&self.task_supervisor);
+        let session_key = replaced_session_id.wire_key();
+        let _ = self
+            .task_supervisor
+            .spawn_runtime("cancel-replaced-session", async move {
+                supervisor.cancel_session(&session_key).await;
+            });
     }
 
     pub(crate) async fn crypto_context(
@@ -208,13 +260,15 @@ impl RuntimeState {
         peer_id: &str,
         session_id: &str,
         material: &SessionCryptoMaterial,
+        decision: SessionCryptoDecision,
     ) -> Result<(), CryptoError> {
         self.crypto
             .install_material_aliases(
                 peer_id,
-                &[session_id, material.session_binding.as_str()],
+                &[session_id, material.remote_session_binding.as_str()],
                 material.root_key,
                 material.initiator,
+                decision,
             )
             .map(|_| ())
     }

@@ -55,6 +55,16 @@
   epoch/direction prefixes plus monotonic counters, bounded key rotation is
   enforced, and missing E2EE context returns an error instead of silently
   downgrading to plaintext. See `docs/adr/ADR-028-forward-secret-session-e2ee.md`.
+- Session continuity is now decided once in `SessionManager` from the
+  authenticated `remote_session_binding`. A matching binding means ordinary
+  reconnect or route migration: the local SessionId, CryptoContext, Root,
+  KeyEpoch, pending Delivery, and transfer state remain attached. A changed
+  binding means peer Runtime restart: the old Session is replaced, its crypto
+  aliases, Delivery state, and task indexes are retired, and the fresh Noise
+  Root is installed under a new local SessionId. The responder selects that
+  final local binding before sending RootSeed; the initiator returns it inside
+  RootConfirm so stale pre-auth reservations cannot make the two peers replace
+  one another repeatedly.
 - `network_sdk.RealtimeClient` now provides a Feature-safe `RealtimeSession` boundary;
   the App Shell maps native lifecycle events while Features cannot encode SDP/ICE or
   touch PeerConnection, sockets, or native handles. Native DataChannel media remains

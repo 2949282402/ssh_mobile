@@ -20,6 +20,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
+use crate::session::SessionCryptoDecision;
+
 /// The application crypto suite carried by encrypted Relay offer metadata.
 /// Data messages carry the numeric suite marker inside their envelope.
 pub(crate) const APPLICATION_CRYPTO_SUITE: &str = "hkdf-sha256-aes256gcm-v1";
@@ -475,19 +477,32 @@ impl SessionCryptoManager {
         session_ids: &[&str],
         root_key: [u8; 32],
         initiator: bool,
+        decision: SessionCryptoDecision,
     ) -> Result<Arc<Mutex<CryptoContext>>, CryptoError> {
+        let reuse_existing = decision == SessionCryptoDecision::ContinueExisting;
         let mut contexts = self
             .contexts
             .lock()
             .map_err(|_| CryptoError::StateUnavailable)?;
-        let existing = session_ids.iter().find_map(|session_id| {
-            contexts
-                .get(&CryptoContextKey {
-                    peer_id: peer_id.to_string(),
-                    session_id: (*session_id).to_string(),
-                })
-                .cloned()
-        });
+        let existing = if reuse_existing {
+            session_ids.iter().find_map(|session_id| {
+                contexts
+                    .get(&CryptoContextKey {
+                        peer_id: peer_id.to_string(),
+                        session_id: (*session_id).to_string(),
+                    })
+                    .cloned()
+            })
+        } else {
+            None
+        };
+        if !reuse_existing {
+            // A peer owns one logical Session at a time.  A changed remote
+            // binding therefore retires every alias for that peer before the
+            // new root is installed; a new alias must never discover an older
+            // context by collision.
+            contexts.retain(|key, _| key.peer_id != peer_id);
+        }
         let context = existing.unwrap_or_else(|| {
             Arc::new(Mutex::new(CryptoContext::from_session_root(
                 root_key, initiator,
@@ -909,6 +924,45 @@ mod tests {
         assert!(manager.contains("peer", "session"));
         manager.remove_session("peer", "session");
         assert!(!manager.contains("peer", "session"));
+    }
+
+    #[test]
+    fn replacing_remote_session_binding_installs_a_fresh_crypto_context() {
+        let manager = SessionCryptoManager::new();
+        let first = manager
+            .install_material_aliases(
+                "peer",
+                &["local-a", "remote-a"],
+                [1u8; 32],
+                true,
+                SessionCryptoDecision::Initialize,
+            )
+            .unwrap();
+        let continued = manager
+            .install_material_aliases(
+                "peer",
+                &["local-a", "remote-a"],
+                [2u8; 32],
+                true,
+                SessionCryptoDecision::ContinueExisting,
+            )
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &continued));
+
+        let replaced = manager
+            .install_material_aliases(
+                "peer",
+                &["local-b", "remote-b"],
+                [3u8; 32],
+                true,
+                SessionCryptoDecision::ReplaceWithNew,
+            )
+            .unwrap();
+        assert!(!Arc::ptr_eq(&first, &replaced));
+        assert!(manager.get("peer", "local-a").is_err());
+        assert!(manager.get("peer", "remote-a").is_err());
+        assert!(manager.get("peer", "local-b").is_ok());
+        assert!(manager.get("peer", "remote-b").is_ok());
     }
 
     #[test]
