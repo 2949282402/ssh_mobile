@@ -32,7 +32,9 @@ import 'package:network_sdk/network_sdk.dart';
 `RealtimeSession` 是唯一的 Realtime Feature 边界。`RealtimeClientImpl` 只协调
 App Shell 注入的 backend 事件和生命周期；当前 native DataChannel 暴露的是 typed
 session state，未解码的视频帧和音频设备能力保持 unavailable，不把 SDP/ICE 事件
-泄漏给 Feature。
+泄漏给 Feature。`start()`/`stop()` 的 Future 等待 App Shell 关联到
+`NativeCommandResultEvent` 的命令完成；队列入列成功不会被当作操作完成，且 stop
+只有在 native `closed` 状态事件到达后才把 session 状态置为 `stopped`。
 
 开发阶段的旧网络类型别名也集中在本包中；Feature 必须直接导入
 `package:network_sdk/network_sdk.dart`，不得再创建或导出本地

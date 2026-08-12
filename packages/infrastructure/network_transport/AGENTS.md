@@ -23,7 +23,9 @@ Feature UI、SSH 会话或 LAN 业务规则。
   入口；它不得拥有、复制或关闭 handle，也不得在其中加入业务协议规则。
 - `NetworkRealtimeGateway` 同样是 Runtime-owned handle 的借用型入口；它只能
   编解码 native typed Realtime command/event，不能把 PeerConnection、ICE、SDP、
-  socket 或 signaling policy 放进 Feature 或 gateway。
+  socket 或 signaling policy 放进 Feature 或 gateway。Realtime start/stop 必须返回
+  `NativeCommandTicket`，把 queue acceptance 与 `NativeCommandResultEvent` 的操作完成
+  分开；结果关联、超时和 pending map 由 App Shell adapter 负责。
 
 ## 生命周期
 
@@ -53,7 +55,8 @@ Agent memory 和维护 Skill。
 - 允许修改范围：Network Runtime/Facade、Capability、native adapter、传输契约和测试。
 - 禁止依赖：Feature、App Shell 业务实现或其他 Package 的 `/src/`；不得新增第二套协议实现。
 - Public API 修改要求：同步 `network_transport.dart`、AppRuntime、Feature adapters、测试和架构文档。
-  `NetworkCommandGateway` 的新增或修改必须明确借用关系和释放责任。
+  `NetworkCommandGateway` 或 `NetworkRealtimeGateway` 的新增或修改必须明确借用关系、
+  ticket/result 语义和释放责任。
 - 数据库约束：不拥有数据库，不保存配对凭据或业务历史。
 - 资源释放规则：AppRuntime 拥有 Runtime；adapter 按 `create/start/stop/destroy` 管理 native handle。
 - 必须运行的测试：`flutter analyze --no-pub`、`flutter test --no-pub`，native hook 变更还要运行 Rust 检查。

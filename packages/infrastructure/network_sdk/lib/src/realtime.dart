@@ -237,6 +237,7 @@ final class _RealtimeSession implements RealtimeSession {
   RealtimeAudioState _audioState = RealtimeAudioState.unavailable;
   Future<SdkResult<void>>? _startFuture;
   Future<SdkResult<void>>? _stopFuture;
+  bool _stopCommandCompleted = false;
   bool _disposed = false;
 
   @override
@@ -265,6 +266,7 @@ final class _RealtimeSession implements RealtimeSession {
         _state == RealtimeSessionState.connected) {
       return Future<SdkResult<void>>.value(const SdkSuccess<void>(null));
     }
+    _stopCommandCompleted = false;
     _state = RealtimeSessionState.starting;
     final future = _startInternal();
     _startFuture = future;
@@ -281,10 +283,9 @@ final class _RealtimeSession implements RealtimeSession {
 
   Future<SdkResult<void>> _startInternal() async {
     final result = await _client._start(this);
+    if (_disposed) return result;
     if (result is SdkFailure<void>) {
       _state = RealtimeSessionState.failed;
-    } else if (_state == RealtimeSessionState.starting) {
-      _state = RealtimeSessionState.negotiating;
     }
     return result;
   }
@@ -296,6 +297,9 @@ final class _RealtimeSession implements RealtimeSession {
     if (existing != null) return existing;
     if (_state == RealtimeSessionState.idle ||
         _state == RealtimeSessionState.stopped) {
+      return Future<SdkResult<void>>.value(const SdkSuccess<void>(null));
+    }
+    if (_stopCommandCompleted) {
       return Future<SdkResult<void>>.value(const SdkSuccess<void>(null));
     }
     final future = _stopInternal();
@@ -313,10 +317,13 @@ final class _RealtimeSession implements RealtimeSession {
 
   Future<SdkResult<void>> _stopInternal() async {
     final result = await _client._stop(this);
+    if (_disposed) return result;
     if (result is SdkFailure<void>) {
       _state = RealtimeSessionState.failed;
     } else {
-      _state = RealtimeSessionState.stopped;
+      // The command result only confirms native command completion. The
+      // authoritative stopped state arrives through the closed state event.
+      _stopCommandCompleted = true;
     }
     return result;
   }
@@ -324,6 +331,10 @@ final class _RealtimeSession implements RealtimeSession {
   void _applyState(RealtimeSessionState state, NetworkError? error) {
     if (_disposed) return;
     _state = error == null ? state : RealtimeSessionState.failed;
+    if (_state == RealtimeSessionState.stopped ||
+        _state == RealtimeSessionState.failed) {
+      _stopCommandCompleted = false;
+    }
   }
 
   void _addVideoFrame(RealtimeVideoFrame frame) {
@@ -344,11 +355,13 @@ final class _RealtimeSession implements RealtimeSession {
     _disposed = true;
     _client._remove(this);
     if (shouldStop) {
-      try {
-        await _client._stop(this, allowDisposed: true);
-      } catch (_) {
-        // Disposal must continue closing the stream even if native stop fails.
-      }
+      // Disposal must not wait for a command-result timeout. The backend is
+      // disposed immediately after all sessions have requested their stop;
+      // that cancellation completes any in-flight command futures.
+      final stopFuture = _client._stop(this, allowDisposed: true);
+      unawaited(
+        stopFuture.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+      );
     }
     _state = RealtimeSessionState.stopped;
     await _videoController.close();

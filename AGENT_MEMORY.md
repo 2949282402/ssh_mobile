@@ -253,6 +253,12 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   Ordered ACK promotion checks that every buffered MessageId still has an
   active record, and an ordered application timeout fails the channel instead
   of skipping a Sequence.
+- 2026-08-12: Plan 3 Step 2 keeps Realtime queue acceptance distinct from native
+  command completion. `NetworkRealtimeGateway` returns a `NativeCommandTicket`,
+  while the App Shell `AppRealtimeSessionBackend` owns the bounded pending command
+  map, command-result timeout, and dispose cancellation. `RealtimeSession` may enter
+  local `starting`, but negotiating/connected/restarting/stopped/failed come from
+  native state events; stop command success does not replace the later `closed` event.
 - 2026-08-10: `packages/infrastructure/network_sdk/` is the typed Flutter client
   boundary for bootstrap, authenticated API, business sessions, and event streams.
   Its `JsonBootstrapClient` and `JsonAuthenticatedApiClient` own no transport or

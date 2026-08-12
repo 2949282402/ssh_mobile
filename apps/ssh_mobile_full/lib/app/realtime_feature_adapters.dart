@@ -4,18 +4,30 @@ import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
+const _defaultMaxPendingCommands = 32;
+const _defaultCommandResultTimeout = Duration(seconds: 30);
+
 /// App Shell adapter from the Runtime-owned native Realtime gateway to the
 /// high-level network_sdk session contract.
 ///
 /// Native owns PeerConnection, SDP, ICE, signaling, sockets, and media
-/// resources. This adapter only maps typed lifecycle events and queue-level
-/// command status; it never forwards native signaling to a Feature.
+/// resources. This adapter correlates queue tickets with typed command results,
+/// maps lifecycle events, and never forwards native signaling to a Feature.
 final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
-  AppRealtimeSessionBackend({required this._networkRuntime});
+  AppRealtimeSessionBackend({
+    required this._networkRuntime,
+    this.maxPendingCommands = _defaultMaxPendingCommands,
+    this.commandResultTimeout = _defaultCommandResultTimeout,
+  }) : assert(maxPendingCommands > 0),
+       assert(commandResultTimeout > Duration.zero);
 
   final NetworkRuntime _networkRuntime;
+  final int maxPendingCommands;
+  final Duration commandResultTimeout;
   final StreamController<RealtimeBackendEvent> _events =
       StreamController<RealtimeBackendEvent>.broadcast();
+  final Map<String, _PendingRealtimeCommand> _pendingCommands =
+      <String, _PendingRealtimeCommand>{};
   NetworkRealtimeGateway? _gateway;
   Future<NetworkRealtimeGateway>? _gatewayFuture;
   StreamSubscription<NativeNetworkEvent>? _nativeSubscription;
@@ -29,24 +41,60 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
   Future<SdkResult<void>> start({
     required String realtimeId,
     required String peerId,
-  }) async {
-    _ensureUsable();
-    final gateway = await _ensureGateway();
-    return _mapStatus(
-      gateway.start(realtimeId: realtimeId, peerId: peerId),
-      operation: NetworkOperation.connect,
-      peerId: peerId,
-    );
-  }
+  }) => _sendCommand(
+    operation: NetworkOperation.connect,
+    peerId: peerId,
+    send: (gateway) => gateway.start(realtimeId: realtimeId, peerId: peerId),
+  );
 
   @override
-  Future<SdkResult<void>> stop({required String realtimeId}) async {
+  Future<SdkResult<void>> stop({required String realtimeId}) => _sendCommand(
+    operation: NetworkOperation.disconnect,
+    send: (gateway) => gateway.stop(realtimeId: realtimeId),
+  );
+
+  Future<SdkResult<void>> _sendCommand({
+    required NetworkOperation operation,
+    required NativeCommandTicket Function(NetworkRealtimeGateway gateway) send,
+    String? peerId,
+  }) async {
     _ensureUsable();
+    if (_pendingCommands.length >= maxPendingCommands) {
+      return _pendingCapacityFailure(operation: operation, peerId: peerId);
+    }
     final gateway = await _ensureGateway();
-    return _mapStatus(
-      gateway.stop(realtimeId: realtimeId),
-      operation: NetworkOperation.disconnect,
+    _ensureUsable();
+    if (_pendingCommands.length >= maxPendingCommands) {
+      return _pendingCapacityFailure(operation: operation, peerId: peerId);
+    }
+
+    final ticket = send(gateway);
+    final queueResult = _mapQueueStatus(
+      ticket.queueStatus,
+      operation: operation,
+      peerId: peerId,
     );
+    if (queueResult is SdkFailure<void>) return queueResult;
+
+    final pending = _PendingRealtimeCommand(
+      operation: operation,
+      peerId: peerId,
+      completer: Completer<SdkResult<void>>(),
+    );
+    _pendingCommands[ticket.commandId] = pending;
+    pending.timer = Timer(commandResultTimeout, () {
+      final current = _pendingCommands.remove(ticket.commandId);
+      if (!identical(current, pending) || pending.completer.isCompleted) return;
+      pending.completer.complete(
+        _failure(
+          code: NetworkErrorCode.timeout,
+          message: 'Native Realtime command result timed out.',
+          operation: operation,
+          peerId: peerId,
+        ),
+      );
+    });
+    return pending.completer.future;
   }
 
   @override
@@ -55,6 +103,7 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
     if (existing != null) return existing;
     if (_disposed) return Future<void>.value();
     _disposed = true;
+    _cancelPendingCommands();
     final future = _disposeResources();
     _disposeFuture = future;
     return future;
@@ -100,14 +149,38 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
             error: error == null ? null : _mapError(error),
           ),
         );
-      case NativeCommandResultEvent():
+      case NativeCommandResultEvent event:
+        _completeCommand(event);
       case NativeRealtimeSignalEvent():
       // Command acceptance and SDP/ICE signaling are native concerns. The
       // session state event is the only lifecycle source for Features.
     }
   }
 
+  void _completeCommand(NativeCommandResultEvent event) {
+    final pending = _pendingCommands.remove(event.commandId);
+    if (pending == null || _disposed) return;
+    pending.timer?.cancel();
+    if (event.accepted) {
+      pending.completer.complete(const SdkSuccess<void>(null));
+      return;
+    }
+    pending.completer.complete(
+      _failure(
+        code: event.error == null
+            ? NetworkErrorCode.ioError
+            : NetworkErrorCode.fromWire(event.error!.code),
+        message:
+            event.error?.message ?? 'Native Realtime command was rejected.',
+        operation: pending.operation,
+        peerId: event.error?.peerId ?? pending.peerId,
+      ),
+    );
+  }
+
   Future<void> _disposeResources() async {
+    await _nativeSubscription?.cancel();
+    _nativeSubscription = null;
     final pendingGateway = _gatewayFuture;
     if (pendingGateway != null) {
       try {
@@ -116,8 +189,6 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
         // A failed lazy open has no subscription to cancel.
       }
     }
-    await _nativeSubscription?.cancel();
-    _nativeSubscription = null;
     _gateway = null;
     _gatewayFuture = null;
     await _events.close();
@@ -127,37 +198,73 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
     if (_disposed) throw const SdkClientDisposedException();
   }
 
-  static SdkResult<void> _mapStatus(
+  void _cancelPendingCommands() {
+    final pendingCommands = _pendingCommands.values.toList();
+    _pendingCommands.clear();
+    for (final pending in pendingCommands) {
+      pending.timer?.cancel();
+      if (!pending.completer.isCompleted) {
+        pending.completer.complete(
+          _failure(
+            code: NetworkErrorCode.cancelled,
+            message: 'Realtime backend was disposed.',
+            operation: pending.operation,
+            peerId: pending.peerId,
+          ),
+        );
+      }
+    }
+  }
+
+  static SdkResult<void> _mapQueueStatus(
     NativeOperationStatus status, {
     required NetworkOperation operation,
     String? peerId,
   }) => switch (status) {
     NativeOperationStatus.success => const SdkSuccess<void>(null),
-    NativeOperationStatus.invalidArgument => SdkFailure<void>(
-      NetworkError(
-        code: NetworkErrorCode.invalidArgument,
-        message: 'Realtime command arguments were rejected.',
-        operation: operation,
-        peerId: peerId,
-      ),
+    NativeOperationStatus.invalidArgument => _failure(
+      code: NetworkErrorCode.invalidArgument,
+      message: 'Realtime command arguments were rejected.',
+      operation: operation,
+      peerId: peerId,
     ),
-    NativeOperationStatus.stopped => SdkFailure<void>(
-      NetworkError(
-        code: NetworkErrorCode.cancelled,
-        message: 'Native network runtime is stopped.',
-        operation: operation,
-        peerId: peerId,
-      ),
+    NativeOperationStatus.stopped => _failure(
+      code: NetworkErrorCode.cancelled,
+      message: 'Native network runtime is stopped.',
+      operation: operation,
+      peerId: peerId,
     ),
-    NativeOperationStatus.failure => SdkFailure<void>(
-      NetworkError(
-        code: NetworkErrorCode.ioError,
-        message: 'Native Realtime command was not queued.',
-        operation: operation,
-        peerId: peerId,
-      ),
+    NativeOperationStatus.failure => _failure(
+      code: NetworkErrorCode.ioError,
+      message: 'Native Realtime command was not queued.',
+      operation: operation,
+      peerId: peerId,
     ),
   };
+
+  static SdkFailure<void> _pendingCapacityFailure({
+    required NetworkOperation operation,
+    String? peerId,
+  }) => _failure(
+    code: NetworkErrorCode.ioError,
+    message: 'Too many Realtime commands are awaiting native results.',
+    operation: operation,
+    peerId: peerId,
+  );
+
+  static SdkFailure<void> _failure({
+    required NetworkErrorCode code,
+    required String message,
+    required NetworkOperation operation,
+    String? peerId,
+  }) => SdkFailure<void>(
+    NetworkError(
+      code: code,
+      message: message,
+      operation: operation,
+      peerId: peerId,
+    ),
+  );
 
   static RealtimeSessionState _mapState(
     NativeRealtimeSessionState state,
@@ -175,4 +282,17 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
     message: error.message,
     peerId: error.peerId,
   );
+}
+
+final class _PendingRealtimeCommand {
+  _PendingRealtimeCommand({
+    required this.operation,
+    required this.peerId,
+    required this.completer,
+  });
+
+  final NetworkOperation operation;
+  final String? peerId;
+  final Completer<SdkResult<void>> completer;
+  Timer? timer;
 }

@@ -2,7 +2,8 @@
 
 # Network Fault Matrix
 
-本矩阵是 SSH Mobile 网络 SDK 下一阶段 Step 9 的固定验收入口。每次网络核心、
+本矩阵是 SSH Mobile 网络 SDK 下一阶段 Step 9 的固定验收入口。当前固定场景覆盖
+A–L；每次网络核心、
 Relay、Native Realtime、Delivery 或文件 Resume 变更后，按同一场景编号记录证据，
 不得只以“连接恢复”判定成功。
 
@@ -39,6 +40,7 @@ Relay、Native Realtime、Delivery 或文件 Resume 变更后，按同一场景�
 | I | App background/foreground；挂起/恢复 App | Android/iOS physical-device runbook（见下文） | adapter/session 生命周期、后台策略、恢复时间、task/订阅无泄漏；前台恢复不重复执行命令 | 需要真实 Android/iOS 设备，未在 Linux CI 伪造 |
 | J | 1GB+ file resume；在 checkpoint 后断网并继续传输 | `cargo test -p network-transfer -p network-core --locked`；设备上用 1 GiB+ fixture 重复 F/G | offset 单调、Manifest/File Hash 相同、最终 exactly-once、内存不随文件大小线性增长 | native checkpoint/resume 已通过；1 GiB+ physical transfer 需设备记录 |
 | K | Ordered long handler；应用处理超过 processed dedup TTL 后再 ACK，期间收到后续序号 | 当前工作区 `cargo test -p network-core --locked`；覆盖 `inflight_survives_processed_dedup_ttl_until_application_ack`、`ordered_buffer_survives_processed_dedup_ttl_and_releases_in_sequence` 与 Runtime owner 测试 | active handler 与 ordered buffer 不被 TTL/LRU 删除，ACK 后严格按 `0 → 1 → 2` 推进；显式 Session close 清空接收态 | native 自动化测试已通过；真实设备长 handler 时间窗尚未执行 |
+| L | Realtime command result delayed/rejected；queue accepted 但 native result 或 `closed` state delayed | `apps/ssh_mobile_full/test/app/realtime_feature_adapters_test.dart`；`packages/infrastructure/network_sdk/test/realtime_test.dart`；`packages/infrastructure/network_transport/test/network_runtime_test.dart` | start/stop Future 只由 `commandId` 对应的 `NativeCommandResultEvent` 完成；超时/ dispose 有界清理；stop 等 native `closed` 才变为 `stopped` | 代码与测试场景已加入；当前 WSL Flutter tester 无法完成测试子进程 loopback，需 CI/可用 Flutter tester 复核 |
 
 ## Docker Relay 故障运行约定
 
@@ -91,5 +93,7 @@ evidence: <screen recording or test log path>
 - `packages/infrastructure/network_sdk/`：Feature-facing RealtimeSession lifecycle；
 - `packages/infrastructure/network_transport/`：Runtime-owned gateway 和 task/handle
   生命周期。
+- `apps/ssh_mobile_full/lib/app/realtime_feature_adapters.dart`：command ticket/result
+  correlation、pending timeout、dispose cleanup 和 native state mapping。
 
 任何新增场景必须先加入本表并定义可重复的故障注入与通过字符串，再修改实现。

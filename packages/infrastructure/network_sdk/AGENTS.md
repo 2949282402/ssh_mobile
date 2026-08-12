@@ -35,6 +35,10 @@
 - 新增传输实现必须先更新 ADR，不得新增 `*SocketClient` 类型。
 - Realtime backend 事件必须由 App Shell adapter 映射；CommandResult、SDP/ICE
   signaling 和 native media resource 不得泄漏到 Feature。
+- `RealtimeSession.start()`/`stop()` 的 Future 只能由 App Shell adapter 关联到
+  `NativeCommandResultEvent` 后完成；队列 acceptance 不得推进 negotiating、connected
+  或 stopped。`RealtimeStateChangedEvent` 是 negotiating、connected、restarting、
+  stopped、failed 的主要 Source of Truth；stop command 成功仍须等待 native `closed`。
 
 ## 必须验证
 

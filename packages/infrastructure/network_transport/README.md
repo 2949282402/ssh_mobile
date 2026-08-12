@@ -21,7 +21,9 @@
 - `NetworkCommandGateway` 是连接 App Scope Runtime 与现有 v1 命令/事件服务的
   非拥有型桥接；它可以被 App Shell adapter 借用，但不会复制或关闭 native handle；
 - `openRealtimeGateway()` 返回同一 Runtime-owned native handle 上的非拥有型 typed
-  Realtime gateway；App Shell 负责映射状态，Feature 不得直接消费该 gateway。
+  Realtime gateway；start/stop 返回带 `commandId` 和 queue status 的
+  `NativeCommandTicket`，App Shell 负责关联 `NativeCommandResultEvent` 和映射状态，
+  Feature 不得直接消费该 gateway。
 - 旧 LAN Share 仍暂时保留自己的协议适配，以保持本 Step 的行为范围；后续 LAN
   Step 会通过本 Facade 收敛运行时 Owner。
 
@@ -38,12 +40,14 @@ flutter test --no-pub
 - 职责：提供 App Scope 网络 Facade、Capability 初始化、native handle 适配和传输契约。
 - 不负责：具体 LAN/SSH/SFTP 业务协议、Feature 连接 Owner 或第二套 native 实现。
 - Public API：`package:network_transport/network_transport.dart`，包括
-  `NetworkRuntime`、`NetworkCommandGateway`、`NetworkRealtimeGateway` 和传输契约。
+  `NetworkRuntime`、`NetworkCommandGateway`、`NetworkRealtimeGateway`、
+  `NativeCommandTicket` 和传输契约。
 - 依赖：`app_core` 和 `ssh_mobile_network_native`。
 - 数据库：不拥有数据库。
 - 生命周期与资源 Owner：AppRuntime 拥有 `NetworkRuntime`；Runtime/adapter 负责
   native handle 的 `create/start/stop/destroy`，Feature 只能使用注入的 Capability。
   Gateway 及其事件订阅由借用方释放，但借用方不得停止或销毁 Runtime/native handle；
-  Realtime session 必须在 Runtime dispose 前停止并释放其 adapter 订阅。
+  Realtime session 必须在 Runtime dispose 前停止；App Shell adapter 还必须清理
+  pending command tickets、取消结果超时和释放事件订阅。
 - 测试命令：`flutter analyze --no-pub`、`flutter test --no-pub`；native hook 变更时
   还需运行对应 Rust toolchain 检查。

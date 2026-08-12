@@ -34,11 +34,16 @@
   `OrderedBuffered`; application ACK timeout fails a strict ordered channel
   without skipping Sequence, and explicit Session close clears receive-side
   active state.
+- Plan 3 Step 2 now separates Realtime queue acceptance from command completion.
+  `NetworkRealtimeGateway` returns a `NativeCommandTicket`; the App Shell keeps a
+  bounded `commandId → Completer<SdkResult<void>>` map with timeout and dispose
+  cleanup. `RealtimeSession` lifecycle states remain native-state-event driven, and
+  a successful stop command waits for native `closed` before reporting `stopped`.
 - `network_sdk.RealtimeClient` now provides a Feature-safe `RealtimeSession` boundary;
   the App Shell maps native lifecycle events while Features cannot encode SDP/ICE or
   touch PeerConnection, sockets, or native handles. Native DataChannel media remains
   typed-unavailable until a native decoder/media event is implemented.
-- Step 9 has a fixed A–J real-network fault matrix in
+- Step 9 has a fixed A–L real-network fault matrix in
   `docs/NETWORK_FAULT_MATRIX.md`; native direct/route migration/recovery,
   coturn fallback, Docker functional smoke, Caddy recovery, Relay restart, and
   checkpoint/resume tests are recorded, while physical network switching,
@@ -48,7 +53,8 @@
 - Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；
   开发阶段不保留旧注册接口、协议降级或旧客户端兼容。
 - Flutter 公共网络层统一返回 `NetworkResult`，公开事件使用类型化事件；
-  command result 只用于 native 内部关联。LAN HTTP 错误使用稳定的
+  Realtime command result 只在 App Shell adapter 内部关联，不向 Feature 暴露。
+  LAN HTTP 错误使用稳定的
   `code`、`message`、`operation`、`peer_id` 结构，WebShare 固定 HTTPS，
   浏览器不满足安全上下文时禁止传输而不自动降级。
 - WireGuard、完整公网 candidate 协调、路径迁移和 Phase 11 RTC 尚未完成，不能因

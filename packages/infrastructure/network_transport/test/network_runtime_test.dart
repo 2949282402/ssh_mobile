@@ -120,19 +120,16 @@ void main() {
     final gateway = await runtime.openRealtimeGateway();
 
     expect(runtime.isCapabilityReady(NetworkCapability.realtime), isTrue);
-    expect(
-      gateway
-          .start(
-            realtimeId: '00112233445566778899aabbccddeeff',
-            peerId: 'peer-a',
-          )
-          .name,
-      'success',
+    final ticket = gateway.start(
+      realtimeId: '00112233445566778899aabbccddeeff',
+      peerId: 'peer-a',
     );
+    expect(ticket.queueStatus, NativeOperationStatus.success);
+    expect(ticket.commandId, startsWith('realtime-start-'));
     await runtime.dispose();
     expect(
-      gateway.stop(realtimeId: '00112233445566778899aabbccddeeff').name,
-      'stopped',
+      gateway.stop(realtimeId: '00112233445566778899aabbccddeeff').queueStatus,
+      NativeOperationStatus.stopped,
     );
   });
 

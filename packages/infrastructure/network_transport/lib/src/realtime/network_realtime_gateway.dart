@@ -14,16 +14,38 @@ abstract interface class NetworkRealtimeGateway {
   /// App/adapter and are never forwarded to a Feature.
   Stream<NativeNetworkEvent> get events;
 
-  /// Queues a native start command. Success means accepted by the native
-  /// command queue; the eventual session state arrives through [events].
-  NativeOperationStatus start({
+  /// Queues a native start command and returns its command identity.
+  ///
+  /// [NativeCommandTicket.queueStatus] only describes acceptance by the native
+  /// command queue. The eventual operation result arrives as a
+  /// [NativeCommandResultEvent] on [events].
+  NativeCommandTicket start({
     required String realtimeId,
     required String peerId,
   });
 
-  /// Queues a native stop command. Success means accepted by the native
-  /// command queue; `closed` is reported asynchronously through [events].
-  NativeOperationStatus stop({required String realtimeId});
+  /// Queues a native stop command and returns its command identity.
+  ///
+  /// A successful command result still does not mean the native session is
+  /// closed; `closed` is reported asynchronously through [events].
+  NativeCommandTicket stop({required String realtimeId});
+}
+
+/// Identity and queue-level status for one native Realtime command.
+///
+/// The ticket deliberately does not contain an operation result. Callers must
+/// correlate [commandId] with [NativeCommandResultEvent.commandId].
+final class NativeCommandTicket {
+  const NativeCommandTicket({
+    required this.commandId,
+    required this.queueStatus,
+  });
+
+  /// Identifier copied into the native command envelope and result event.
+  final String commandId;
+
+  /// Whether the native runtime accepted the command into its queue.
+  final NativeOperationStatus queueStatus;
 }
 
 /// Runtime-owned implementation backed by a borrowed command gateway.
@@ -40,45 +62,60 @@ final class RuntimeNetworkRealtimeGateway implements NetworkRealtimeGateway {
       .cast<NativeNetworkEvent>();
 
   @override
-  NativeOperationStatus start({
+  NativeCommandTicket start({
     required String realtimeId,
     required String peerId,
   }) {
+    final commandId = _nextCommandId('realtime-start');
     try {
       return _send(
-        NativeNetworkProtocol.startRealtimeSessionCommand(
-          commandId: _nextCommandId('realtime-start'),
+        commandId: commandId,
+        command: NativeNetworkProtocol.startRealtimeSessionCommand(
+          commandId: commandId,
           realtimeId: realtimeId,
           peerId: peerId,
         ),
       );
     } on ArgumentError {
-      return NativeOperationStatus.invalidArgument;
+      return NativeCommandTicket(
+        commandId: commandId,
+        queueStatus: NativeOperationStatus.invalidArgument,
+      );
     }
   }
 
   @override
-  NativeOperationStatus stop({required String realtimeId}) {
+  NativeCommandTicket stop({required String realtimeId}) {
+    final commandId = _nextCommandId('realtime-stop');
     try {
       return _send(
-        NativeNetworkProtocol.stopRealtimeSessionCommand(
-          commandId: _nextCommandId('realtime-stop'),
+        commandId: commandId,
+        command: NativeNetworkProtocol.stopRealtimeSessionCommand(
+          commandId: commandId,
           realtimeId: realtimeId,
         ),
       );
     } on ArgumentError {
-      return NativeOperationStatus.invalidArgument;
+      return NativeCommandTicket(
+        commandId: commandId,
+        queueStatus: NativeOperationStatus.invalidArgument,
+      );
     }
   }
 
-  NativeOperationStatus _send(Uint8List command) =>
-      switch (_gateway.sendCommand(command)) {
-        TransportOperationStatus.success => NativeOperationStatus.success,
-        TransportOperationStatus.invalidArgument =>
-          NativeOperationStatus.invalidArgument,
-        TransportOperationStatus.stopped => NativeOperationStatus.stopped,
-        TransportOperationStatus.failure => NativeOperationStatus.failure,
-      };
+  NativeCommandTicket _send({
+    required String commandId,
+    required Uint8List command,
+  }) => NativeCommandTicket(
+    commandId: commandId,
+    queueStatus: switch (_gateway.sendCommand(command)) {
+      TransportOperationStatus.success => NativeOperationStatus.success,
+      TransportOperationStatus.invalidArgument =>
+        NativeOperationStatus.invalidArgument,
+      TransportOperationStatus.stopped => NativeOperationStatus.stopped,
+      TransportOperationStatus.failure => NativeOperationStatus.failure,
+    },
+  );
 
   String _nextCommandId(String operation) {
     _commandSequence = (_commandSequence + 1) & 0x7fffffff;

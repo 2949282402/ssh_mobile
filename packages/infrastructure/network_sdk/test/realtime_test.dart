@@ -22,9 +22,16 @@ void main() {
     expect(session.state, RealtimeSessionState.idle);
     expect(session.audioState, RealtimeAudioState.unavailable);
     expect(await session.start(), isA<SdkSuccess<void>>());
-    expect(session.state, RealtimeSessionState.negotiating);
+    expect(session.state, RealtimeSessionState.starting);
     expect(backend.startCalls, 1);
 
+    backend.emit(
+      const RealtimeSessionStateChangedEvent(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+        state: RealtimeSessionState.negotiating,
+      ),
+    );
     backend.emit(
       const RealtimeSessionStateChangedEvent(
         realtimeId: '00112233445566778899aabbccddeeff',
@@ -54,8 +61,18 @@ void main() {
     expect(frames.single.bytes, orderedEquals(<int>[1, 2, 3]));
 
     expect(await session.stop(), isA<SdkSuccess<void>>());
-    expect(session.state, RealtimeSessionState.stopped);
+    expect(session.state, RealtimeSessionState.connected);
     expect(backend.stopCalls, 1);
+
+    backend.emit(
+      const RealtimeSessionStateChangedEvent(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+        state: RealtimeSessionState.stopped,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(session.state, RealtimeSessionState.stopped);
   });
 
   test(
