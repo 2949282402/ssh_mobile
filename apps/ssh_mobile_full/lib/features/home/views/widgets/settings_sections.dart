@@ -346,12 +346,21 @@ class _FeatureSettingsSection extends StatelessWidget {
           title: Text(strings.sftpSettings),
           trailing: const Icon(Icons.chevron_right_rounded, size: 18),
           onTap: () {
+            final connectionViewModel =
+                context.read<ConnectionViewModel?>();
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => const AppSftpModuleScope(
-                  child: feature_sftp.SftpSettingsScreen(),
-                ),
+                builder: (_) => connectionViewModel != null
+                    ? ChangeNotifierProvider<ConnectionViewModel>.value(
+                        value: connectionViewModel,
+                        child: const AppSftpModuleScope(
+                          child: feature_sftp.SftpSettingsScreen(),
+                        ),
+                      )
+                    : const AppSftpModuleScope(
+                        child: feature_sftp.SftpSettingsScreen(),
+                      ),
               ),
             );
           },
