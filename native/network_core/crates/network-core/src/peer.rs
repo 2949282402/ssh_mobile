@@ -25,6 +25,7 @@ use crate::connection::{
     spawn_generic_route, GenericConnection, GenericFrameKind, GenericInboundFrame,
     GenericRouteHandle, RouteTopology, RouteTransport,
 };
+use crate::crypto_handshake::SessionCryptoMaterial;
 use crate::events::{
     emit_peer_state, emit_peer_state_profile, emit_route_changed, emit_route_changed_profile,
     protocol_error, protocol_error_with_peer,
@@ -32,8 +33,8 @@ use crate::events::{
 use crate::generic_auth::{authenticate_initiator, authenticate_responder};
 use crate::runtime::{
     CandidateAttempt, PeerConfig, RuntimeState, DEFAULT_CANDIDATE_CONNECT_WINDOW,
-    PEER_CONNECT_TIMEOUT, RECONNECT_INITIAL_BACKOFF, RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF,
-    RELAY_RACE_DELAY,
+    MAX_PENDING_RELAY_CRYPTO_HANDSHAKES, PEER_CONNECT_TIMEOUT, RECONNECT_INITIAL_BACKOFF,
+    RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF, RELAY_RACE_DELAY,
 };
 use crate::session::{ConnectDecision, SessionId};
 
@@ -49,10 +50,14 @@ struct AuthenticatedGenericRoute {
     handle: GenericRouteHandle,
     inbound: mpsc::Receiver<GenericInboundFrame>,
     endpoint: SocketAddr,
+    crypto: SessionCryptoMaterial,
 }
 
 enum ConnectedRoute {
-    Quic(Connection),
+    Quic {
+        connection: Connection,
+        crypto: SessionCryptoMaterial,
+    },
     Generic(AuthenticatedGenericRoute),
 }
 
@@ -489,7 +494,19 @@ pub(crate) async fn connect_peer(
     clear_candidate_attempt(&state, &peer_id, &attempt_id).await;
 
     match route {
-        Ok(ReadyRoute::Direct(ConnectedRoute::Quic(connection))) => {
+        Ok(ReadyRoute::Direct(ConnectedRoute::Quic { connection, crypto })) => {
+            if state
+                .install_crypto_material(&peer_id, &session_id.wire_key(), &crypto)
+                .is_err()
+            {
+                state.sessions.mark_failed(&peer_id, session_id).await;
+                return Err(protocol_error_with_peer(
+                    NetworkErrorCode::AuthenticationFailed,
+                    "application E2EE handshake was not accepted",
+                    "connect",
+                    &peer_id,
+                ));
+            }
             let attached = state
                 .sessions
                 .attach_connection(
@@ -500,6 +517,7 @@ pub(crate) async fn connect_peer(
                 )
                 .await;
             if !attached {
+                state.sessions.mark_failed(&peer_id, session_id).await;
                 return Err(protocol_error_with_peer(
                     NetworkErrorCode::Cancelled,
                     "connection completed after Session was closed",
@@ -527,12 +545,26 @@ pub(crate) async fn connect_peer(
         }
         Ok(ReadyRoute::Direct(ConnectedRoute::Generic(generic))) => {
             let profile = generic.handle.profile();
+            if state
+                .install_crypto_material(&peer_id, &session_id.wire_key(), &generic.crypto)
+                .is_err()
+            {
+                let _ = generic.handle.close().await;
+                state.sessions.mark_failed(&peer_id, session_id).await;
+                return Err(protocol_error_with_peer(
+                    NetworkErrorCode::AuthenticationFailed,
+                    "application E2EE handshake was not accepted",
+                    "connect",
+                    &peer_id,
+                ));
+            }
             let attached = state
                 .sessions
                 .attach_generic_connection(&peer_id, Some(session_id), generic.handle.clone())
                 .await;
             if !attached {
                 let _ = generic.handle.close().await;
+                state.sessions.mark_failed(&peer_id, session_id).await;
                 return Err(protocol_error_with_peer(
                     NetworkErrorCode::Cancelled,
                     "generic connection completed after Session was closed",
@@ -566,6 +598,50 @@ pub(crate) async fn connect_peer(
             Ok(())
         }
         Ok(ReadyRoute::Relay) => {
+            let relay = relay_for_session.clone().ok_or_else(|| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::RelayError,
+                    "Relay route completed without a Relay client",
+                    "connect",
+                    &peer_id,
+                )
+            })?;
+            let crypto_identity = state.identity.read().await.clone().ok_or_else(|| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::InvalidArgument,
+                    "runtime identity is unavailable",
+                    "connect",
+                    &peer_id,
+                )
+            })?;
+            let crypto = match establish_relay_crypto(
+                &state,
+                relay,
+                &peer_id,
+                session_id,
+                crypto_identity,
+                peer.identity_public_key,
+            )
+            .await
+            {
+                Ok(crypto) => crypto,
+                Err(error) => {
+                    state.sessions.mark_failed(&peer_id, session_id).await;
+                    return Err(error);
+                }
+            };
+            if state
+                .install_crypto_material(&peer_id, &session_id.wire_key(), &crypto)
+                .is_err()
+            {
+                state.sessions.mark_failed(&peer_id, session_id).await;
+                return Err(protocol_error_with_peer(
+                    NetworkErrorCode::AuthenticationFailed,
+                    "Relay application E2EE handshake was not accepted",
+                    "connect",
+                    &peer_id,
+                ));
+            }
             let attached = state
                 .sessions
                 .mark_relay_route_connected(
@@ -576,6 +652,7 @@ pub(crate) async fn connect_peer(
                 )
                 .await;
             if !attached {
+                state.sessions.mark_failed(&peer_id, session_id).await;
                 return Err(protocol_error_with_peer(
                     NetworkErrorCode::Cancelled,
                     "Relay route completed after Session was closed",
@@ -663,11 +740,63 @@ pub(crate) async fn connect_direct(
         })?
 }
 
-/// Runs authenticated QUIC attempts for all currently advertised candidates.
-/// A candidate is not considered ready until the identity-bound handshake has
-/// succeeded; unreachable or unauthenticated candidates cannot block the
-/// remaining candidates from winning.
-async fn connect_direct_candidates(
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn connect_direct_with_crypto(
+    endpoint: Endpoint,
+    peer_endpoint: SocketAddr,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_public_key: [u8; 32],
+    peer_id: String,
+    attempt_id: String,
+    connect_window: Duration,
+    session_binding: &str,
+) -> Result<(Connection, SessionCryptoMaterial), ProtocolError> {
+    let started = Instant::now();
+    let connection = connect_direct(
+        endpoint,
+        peer_endpoint,
+        Arc::clone(&identity),
+        expected_peer_public_key,
+        peer_id.clone(),
+        attempt_id,
+        connect_window,
+    )
+    .await?;
+    let remaining = connect_window
+        .min(PEER_CONNECT_TIMEOUT)
+        .saturating_sub(started.elapsed());
+    let crypto = tokio::time::timeout(
+        remaining,
+        crate::crypto_handshake::initiate_quic(
+            &connection,
+            identity,
+            &peer_id,
+            expected_peer_public_key,
+            session_binding,
+        ),
+    )
+    .await
+    .map_err(|_| {
+        protocol_error_with_peer(
+            NetworkErrorCode::Timeout,
+            "application E2EE handshake timed out",
+            "connect",
+            &peer_id,
+        )
+    })?
+    .map_err(|_| {
+        protocol_error_with_peer(
+            NetworkErrorCode::AuthenticationFailed,
+            "application E2EE handshake failed",
+            "connect",
+            &peer_id,
+        )
+    })?;
+    Ok((connection, crypto))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn connect_direct_candidates_with_crypto(
     endpoint: Endpoint,
     candidates: Vec<Candidate>,
     identity: Arc<DeviceIdentity>,
@@ -675,15 +804,17 @@ async fn connect_direct_candidates(
     peer_id: String,
     attempt_id: String,
     connect_window: Duration,
-) -> Result<Connection, ProtocolError> {
+    session_binding: String,
+) -> Result<(Connection, SessionCryptoMaterial), ProtocolError> {
     let mut attempts = JoinSet::new();
     for candidate in candidates.into_iter().take(MAX_CANDIDATES_PER_SIGNAL) {
         let endpoint = endpoint.clone();
         let identity = Arc::clone(&identity);
         let peer_id = peer_id.clone();
+        let session_binding = session_binding.clone();
         let attempt_id = attempt_id.clone();
         attempts.spawn(async move {
-            connect_direct(
+            connect_direct_with_crypto(
                 endpoint,
                 candidate.endpoint,
                 identity,
@@ -691,6 +822,7 @@ async fn connect_direct_candidates(
                 peer_id,
                 attempt_id,
                 connect_window,
+                &session_binding,
             )
             .await
         });
@@ -698,9 +830,9 @@ async fn connect_direct_candidates(
     let mut last_error = None;
     while let Some(result) = attempts.join_next().await {
         match result {
-            Ok(Ok(connection)) => {
+            Ok(Ok(route)) => {
                 attempts.abort_all();
-                return Ok(connection);
+                return Ok(route);
             }
             Ok(Err(error)) => last_error = Some(error),
             Err(error) => {
@@ -740,7 +872,7 @@ async fn connect_direct_or_generic(
         connect_window,
     } = attempt;
     let generic_candidates = candidates.clone();
-    match connect_direct_candidates(
+    match connect_direct_candidates_with_crypto(
         endpoint,
         candidates,
         Arc::clone(&identity),
@@ -748,10 +880,11 @@ async fn connect_direct_or_generic(
         peer_id.clone(),
         attempt_id,
         connect_window,
+        session_binding.clone(),
     )
     .await
     {
-        Ok(connection) => Ok(ConnectedRoute::Quic(connection)),
+        Ok((connection, crypto)) => Ok(ConnectedRoute::Quic { connection, crypto }),
         Err(quic_error) => connect_generic_candidates(
             generic_candidates,
             identity,
@@ -833,9 +966,9 @@ async fn connect_tcp_route(
                 &peer_id,
             )
         })?;
-        authenticate_initiator(
+        let crypto = authenticate_initiator(
             &mut connection,
-            &identity,
+            identity,
             &peer_id,
             expected_peer_public_key,
             &session_binding,
@@ -856,6 +989,7 @@ async fn connect_tcp_route(
             handle,
             inbound,
             endpoint,
+            crypto,
         })
     })
     .await;
@@ -891,9 +1025,9 @@ async fn connect_websocket_route(
                 )
             })?
             .with_topology(RouteTopology::Direct);
-        authenticate_initiator(
+        let crypto = authenticate_initiator(
             &mut connection,
-            &identity,
+            identity,
             &peer_id,
             expected_peer_public_key,
             &session_binding,
@@ -912,6 +1046,7 @@ async fn connect_websocket_route(
             handle,
             inbound,
             endpoint,
+            crypto,
         })
     })
     .await;
@@ -999,7 +1134,7 @@ async fn run_candidate_punch(
     let connect_window = connect_window
         .min(manager.remote_connect_window().await)
         .min(DEFAULT_CANDIDATE_CONNECT_WINDOW);
-    let connection = match connect_direct_candidates(
+    let (connection, crypto) = match connect_direct_candidates_with_crypto(
         endpoint,
         candidates,
         identity,
@@ -1007,10 +1142,11 @@ async fn run_candidate_punch(
         peer_id.clone(),
         attempt_id.clone(),
         connect_window,
+        session_id.wire_key(),
     )
     .await
     {
-        Ok(connection) => connection,
+        Ok(route) => route,
         Err(error) => {
             tracing::debug!(
                 peer_id = %peer_id,
@@ -1024,6 +1160,16 @@ async fn run_candidate_punch(
             return;
         }
     };
+    if state
+        .install_crypto_material(&peer_id, &session_id.wire_key(), &crypto)
+        .is_err()
+    {
+        connection.close(VarInt::from_u32(0), b"application E2EE install failed");
+        if current_profile.is_none() {
+            state.sessions.mark_failed(&peer_id, session_id).await;
+        }
+        return;
+    }
 
     let previous_route = if current_profile
         .is_some_and(|profile| profile.topology() == crate::connection::RouteTopology::Relay)
@@ -1120,7 +1266,11 @@ async fn clear_candidate_attempt(state: &RuntimeState, peer_id: &str, attempt_id
 /// Keeps a Relay-backed Session usable while probing the advertised direct
 /// candidates. The task owns no business state and exits when the Session is
 /// closed, replaced, or already promoted by another route.
-fn schedule_direct_upgrade(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
+pub(crate) fn schedule_direct_upgrade(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    session_id: SessionId,
+) {
     let supervisor = Arc::clone(&state.task_supervisor);
     let _ = supervisor.spawn_session(session_id.wire_key(), "direct-upgrade", async move {
         {
@@ -1210,7 +1360,7 @@ async fn direct_upgrade_loop(state: Arc<RuntimeState>, peer_id: String, session_
         };
 
         if !candidates.is_empty() {
-            match connect_direct_candidates(
+            match connect_direct_candidates_with_crypto(
                 endpoint,
                 candidates,
                 identity,
@@ -1218,10 +1368,18 @@ async fn direct_upgrade_loop(state: Arc<RuntimeState>, peer_id: String, session_
                 peer_id.clone(),
                 attempt_id,
                 connect_window,
+                session_id.wire_key(),
             )
             .await
             {
-                Ok(connection) => {
+                Ok((connection, crypto)) => {
+                    if state
+                        .install_crypto_material(&peer_id, &session_id.wire_key(), &crypto)
+                        .is_err()
+                    {
+                        connection.close(VarInt::from_u32(0), b"application E2EE install failed");
+                        return;
+                    }
                     // Require a short stable window before replacing Relay;
                     // a transient UDP success must not cause route flapping.
                     tokio::time::sleep(DIRECT_UPGRADE_STABLE_DURATION).await;
@@ -1450,7 +1608,7 @@ async fn migrate_direct_path(
             .min(DEFAULT_CANDIDATE_CONNECT_WINDOW),
         None => DEFAULT_CANDIDATE_CONNECT_WINDOW,
     };
-    let replacement = match connect_direct(
+    let (replacement, crypto) = match connect_direct_with_crypto(
         endpoint,
         candidate.endpoint,
         identity,
@@ -1458,10 +1616,11 @@ async fn migrate_direct_path(
         peer_id.clone(),
         attempt_id,
         connect_window,
+        &session_id.wire_key(),
     )
     .await
     {
-        Ok(connection) => connection,
+        Ok(route) => route,
         Err(error) => {
             tracing::debug!(
                 peer_id = %peer_id,
@@ -1472,6 +1631,13 @@ async fn migrate_direct_path(
             return false;
         }
     };
+    if state
+        .install_crypto_material(&peer_id, &session_id.wire_key(), &crypto)
+        .is_err()
+    {
+        replacement.close(VarInt::from_u32(0), b"application E2EE install failed");
+        return false;
+    }
     let Some(previous) = state
         .sessions
         .replace_connection_if_current(
@@ -1550,6 +1716,119 @@ async fn connect_relay(
     Ok(())
 }
 
+async fn establish_relay_crypto(
+    state: &RuntimeState,
+    relay: Arc<RelayClient>,
+    peer_id: &str,
+    session_id: SessionId,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_public_key: [u8; 32],
+) -> Result<SessionCryptoMaterial, ProtocolError> {
+    let session_token = session_id.wire_key();
+    let (mut handshake, hello) =
+        crate::crypto_handshake::RelayInitiatorHandshake::start(identity, &session_token).map_err(
+            |_| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::AuthenticationFailed,
+                    "Relay application E2EE handshake could not start",
+                    "connect",
+                    peer_id,
+                )
+            },
+        )?;
+    let key = format!("{peer_id}/{session_token}");
+    let (response_tx, response_rx) = oneshot::channel();
+    let mut waiters = state.relay_crypto_waiters.write().await;
+    if waiters.len() >= MAX_PENDING_RELAY_CRYPTO_HANDSHAKES && !waiters.contains_key(&key) {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::RelayError,
+            "Relay application E2EE handshake queue is full",
+            "connect",
+            peer_id,
+        ));
+    }
+    waiters.insert(key.clone(), response_tx);
+    drop(waiters);
+    let hello = crate::crypto_handshake::encode_relay_frame(
+        crate::crypto_handshake::RELAY_CRYPTO_HELLO,
+        &hello,
+    )
+    .map_err(|_| {
+        protocol_error_with_peer(
+            NetworkErrorCode::AuthenticationFailed,
+            "Relay application E2EE hello is invalid",
+            "connect",
+            peer_id,
+        )
+    })?;
+    if relay
+        .send_crypto_handshake(&session_token, peer_id, &hello)
+        .await
+        .is_err()
+    {
+        state.relay_crypto_waiters.write().await.remove(&key);
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::RelayError,
+            "Relay application E2EE hello could not be sent",
+            "connect",
+            peer_id,
+        ));
+    }
+    let response = match timeout(PEER_CONNECT_TIMEOUT, response_rx).await {
+        Ok(Ok(response)) => response,
+        _ => {
+            state.relay_crypto_waiters.write().await.remove(&key);
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::Timeout,
+                "Relay application E2EE handshake timed out",
+                "connect",
+                peer_id,
+            ));
+        }
+    };
+    let final_message = handshake
+        .accept_response(&response, peer_id, expected_peer_public_key)
+        .map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::AuthenticationFailed,
+                "Relay application E2EE identity proof failed",
+                "connect",
+                peer_id,
+            )
+        })?;
+    let final_frame = crate::crypto_handshake::encode_relay_frame(
+        crate::crypto_handshake::RELAY_CRYPTO_FINAL,
+        &final_message,
+    )
+    .map_err(|_| {
+        protocol_error_with_peer(
+            NetworkErrorCode::AuthenticationFailed,
+            "Relay application E2EE final message is invalid",
+            "connect",
+            peer_id,
+        )
+    })?;
+    relay
+        .send_crypto_handshake(&session_token, peer_id, &final_frame)
+        .await
+        .map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::RelayError,
+                "Relay application E2EE final message could not be sent",
+                "connect",
+                peer_id,
+            )
+        })?;
+    handshake.finish().map_err(|_| {
+        protocol_error_with_peer(
+            NetworkErrorCode::AuthenticationFailed,
+            "Relay application E2EE root could not be derived",
+            "connect",
+            peer_id,
+        )
+    })
+}
+
 enum ReadyRoute<T> {
     Direct(T),
     Relay,
@@ -1608,6 +1887,7 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
         let state = Arc::clone(&state);
         let supervisor = Arc::clone(&state.task_supervisor);
         let _ = supervisor.spawn_runtime("incoming-quic-handshake", async move {
+            let mut attempted_session = None;
             let result = async {
                 let connection = incoming.await?;
                 let identity = state
@@ -1633,9 +1913,57 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                 })??;
                 let peer_id = session.peer_device_id.clone();
                 let connection = session.connection.clone();
+                let session_id = match state.sessions.begin_connect(&peer_id).await {
+                    ConnectDecision::Started(session_id)
+                    | ConnectDecision::InProgress(session_id) => session_id,
+                    ConnectDecision::AlreadyConnected(_) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::AlreadyExists,
+                            "peer already has an active Session route",
+                        )
+                        .into())
+                    }
+                };
+                attempted_session = Some((peer_id.clone(), session_id));
+                let crypto =
+                    tokio::time::timeout(
+                        PEER_CONNECT_TIMEOUT,
+                        crate::crypto_handshake::respond_quic(
+                            &connection,
+                            state.identity.read().await.clone().ok_or_else(|| {
+                                std::io::Error::other("runtime identity unavailable")
+                            })?,
+                            &state.trusted_peer_keys,
+                        ),
+                    )
+                    .await
+                    .map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "application E2EE handshake timed out",
+                        )
+                    })??;
+                let (authenticated_peer_id, crypto) = crypto;
+                if authenticated_peer_id != peer_id {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "application E2EE identity does not match transport peer",
+                    )
+                    .into());
+                }
+                state
+                    .install_crypto_material(&peer_id, &session_id.wire_key(), &crypto)
+                    .map_err(|_| {
+                        std::io::Error::other("application E2EE handshake was not accepted")
+                    })?;
                 let attached = state
                     .sessions
-                    .attach_connection(&peer_id, None, connection.clone(), RouteType::QuicDirect)
+                    .attach_connection(
+                        &peer_id,
+                        Some(session_id),
+                        connection.clone(),
+                        RouteType::QuicDirect,
+                    )
                     .await;
                 if !attached {
                     return Err(std::io::Error::other("Session was closed").into());
@@ -1647,29 +1975,24 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     RouteType::QuicDirect,
                     None,
                 );
-                if let Some(session_id) = state.sessions.current_session_id(&peer_id).await {
-                    spawn_path_metrics_monitor(
-                        Arc::clone(&state),
-                        peer_id.clone(),
-                        session_id,
-                        connection.clone(),
-                    );
-                    crate::channel::recover_session(
-                        Arc::clone(&state),
-                        peer_id.clone(),
-                        session_id,
-                    )
+                spawn_path_metrics_monitor(
+                    Arc::clone(&state),
+                    peer_id.clone(),
+                    session_id,
+                    connection.clone(),
+                );
+                crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id)
                     .await;
-                }
                 crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
                     .await;
-                if let Some(session_id) = state.sessions.current_session_id(&peer_id).await {
-                    spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
-                }
+                spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
                 Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
             }
             .await;
             if let Err(error) = result {
+                if let Some((peer_id, session_id)) = attempted_session {
+                    state.sessions.mark_failed(&peer_id, session_id).await;
+                }
                 tracing::warn!("Rejected inbound QUIC connection: {}", error);
             }
         });
@@ -1737,13 +2060,14 @@ async fn accept_authenticated_generic(
         .ok_or_else(|| std::io::Error::other("runtime identity is unavailable"))?;
     let authenticated = tokio::time::timeout(
         GENERIC_ROUTE_CONNECT_TIMEOUT,
-        authenticate_responder(&mut connection, &identity, &state.trusted_peer_keys),
+        authenticate_responder(&mut connection, identity, &state.trusted_peer_keys),
     )
     .await
     .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "TCP auth timed out"))??;
     let crate::generic_auth::AuthenticatedPeer {
         peer_id,
         session_binding,
+        crypto,
     } = authenticated;
     tracing::debug!(%session_binding, "generic route Session binding authenticated");
     if !state.peers.read().await.contains_key(&peer_id) {
@@ -1765,25 +2089,39 @@ async fn accept_authenticated_generic(
             .into())
         }
     };
-    let (handle, inbound) = spawn_generic_route(connection);
-    if !state
-        .sessions
-        .attach_generic_connection(&peer_id, Some(session_id), handle.clone())
-        .await
-    {
-        return Err(std::io::Error::other("TCP route lost its Session race").into());
+    let attempted_peer_id = peer_id.clone();
+    let result = async {
+        state
+            .install_crypto_material(&peer_id, &session_id.wire_key(), &crypto)
+            .map_err(|_| std::io::Error::other("application E2EE handshake was not accepted"))?;
+        let (handle, inbound) = spawn_generic_route(connection);
+        if !state
+            .sessions
+            .attach_generic_connection(&peer_id, Some(session_id), handle.clone())
+            .await
+        {
+            return Err(std::io::Error::other("TCP route lost its Session race").into());
+        }
+        emit_peer_state_profile(
+            &state.event_tx,
+            &peer_id,
+            PeerConnectionState::Connected,
+            Some(handle.profile()),
+            None,
+        );
+        crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
+        spawn_generic_receivers(Arc::clone(&state), peer_id, handle, inbound, session_id);
+        tracing::debug!(%peer_address, session_id = %session_id.wire_key(), "authenticated TCP fallback route attached");
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     }
-    emit_peer_state_profile(
-        &state.event_tx,
-        &peer_id,
-        PeerConnectionState::Connected,
-        Some(handle.profile()),
-        None,
-    );
-    crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-    spawn_generic_receivers(Arc::clone(&state), peer_id, handle, inbound, session_id);
-    tracing::debug!(%peer_address, session_id = %session_id.wire_key(), "authenticated TCP fallback route attached");
-    Ok(())
+    .await;
+    if result.is_err() {
+        state
+            .sessions
+            .mark_failed(&attempted_peer_id, session_id)
+            .await;
+    }
+    result
 }
 
 /// 接受一个已认证对端的双向流。

@@ -15,6 +15,7 @@ use tracing::info;
 
 use crate::commands::run_command_worker;
 use crate::crypto::{CryptoContext, CryptoError, CryptoMode, SessionCryptoManager};
+use crate::crypto_handshake::{RelayResponderHandshake, SessionCryptoMaterial};
 use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
 use crate::session::{SessionId, SessionManager};
@@ -40,6 +41,7 @@ pub(crate) const RECONNECT_MAX_BACKOFF: Duration = Duration::from_secs(5);
 pub(crate) const INCOMING_APPROVAL_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) const MAX_PENDING_INCOMING_TRANSFERS: usize = 64;
+pub(crate) const MAX_PENDING_RELAY_CRYPTO_HANDSHAKES: usize = 64;
 pub(crate) const DELIVERY_RETRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(crate) const RUNTIME_CREATED: u8 = 0;
@@ -106,6 +108,8 @@ pub(crate) struct RuntimeState {
         RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<bool>>>,
+    pub(crate) relay_crypto_waiters: RwLock<HashMap<String, oneshot::Sender<Vec<u8>>>>,
+    pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
     pub(crate) candidate_signal_notify: Notify,
     pub(crate) relay_sessions: RwLock<HashMap<String, String>>,
     pub(crate) relay_pending_incoming: RwLock<HashMap<String, crate::relay::PendingRelayIncoming>>,
@@ -148,6 +152,8 @@ impl RuntimeState {
             relay_acceptances: RwLock::new(HashMap::new()),
             relay_completions: RwLock::new(HashMap::new()),
             relay_lookups: RwLock::new(HashMap::new()),
+            relay_crypto_waiters: RwLock::new(HashMap::new()),
+            relay_crypto_responders: AsyncMutex::new(HashMap::new()),
             candidate_signal_notify: Notify::new(),
             relay_sessions: RwLock::new(HashMap::new()),
             relay_pending_incoming: RwLock::new(HashMap::new()),
@@ -187,22 +193,23 @@ impl RuntimeState {
         if mode == CryptoMode::None {
             return Ok(None);
         }
-        let identity = self
-            .identity
-            .read()
-            .await
-            .clone()
-            .ok_or(CryptoError::MissingContext)?;
-        let peer_key = self
-            .peers
-            .read()
-            .await
-            .get(peer_id)
-            .map(|peer| peer.e2e_public_key)
-            .ok_or(CryptoError::MissingContext)?;
+        self.crypto.get(peer_id, session_id).map(Some)
+    }
+
+    pub(crate) fn install_crypto_material(
+        &self,
+        peer_id: &str,
+        session_id: &str,
+        material: &SessionCryptoMaterial,
+    ) -> Result<(), CryptoError> {
         self.crypto
-            .get_or_create(peer_id, session_id, &identity, peer_key)
-            .map(Some)
+            .install_material_aliases(
+                peer_id,
+                &[session_id, material.session_binding.as_str()],
+                material.root_key,
+                material.initiator,
+            )
+            .map(|_| ())
     }
 
     pub(crate) async fn encrypt_application_payload(

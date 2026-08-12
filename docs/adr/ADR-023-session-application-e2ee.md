@@ -12,7 +12,8 @@ Route ciphertext or exposing business bytes to the Relay.
 The existing Relay file implementation carried a per-attempt content key and
 nonce prefix inside the encrypted offer. That protected Relay chunks, but it
 made the crypto state Relay-specific and did not give Delivery retries a
-single application crypto owner.
+single application crypto owner. Step 4 hardens the Session root with the
+forward-secret Noise agreement documented in ADR-028.
 
 ## Decision
 
@@ -23,23 +24,24 @@ single application crypto owner.
   Relay route change does not remove a context; explicit Session close does.
 - E2EE is the protobuf zero value and therefore the secure default. Clear
   application payloads require an explicit `CryptoModeCode::None` request.
-- E2EE derives a Session root with HKDF-SHA256 from the already paired static
-  X25519 DeviceIdentity keys and the logical wire SessionId. Directional
-  AES-256-GCM keys are domain-separated by the ordered public keys. The
-  existing Ed25519 identity-bound QUIC handshake and pinned peer E2E key
-  registry remain the authentication boundary; this Step does not invent a
-  second handshake. A future forward-secret handshake can replace the root
-  derivation behind the same context boundary. Noise is a framework for such
-  authenticated DH handshakes, not a reason to add an ad-hoc handshake here;
-  see the [Noise Protocol Framework](https://noiseprotocol.org/noise.html).
-- Each E2EE envelope carries a version, suite, key epoch, random 96-bit
-  nonce, and AEAD ciphertext. AAD binds the logical Session, channel,
+- E2EE installs a Session root only after the authenticated
+  `Noise_XX_25519_AESGCM_SHA256` handshake. Fresh ephemeral X25519 material
+  provides forward secrecy; the pinned Ed25519 DeviceIdentity signs the peer,
+  protocol version, capability, Noise static key, and logical Session binding.
+  The root is expanded into directional AES-256-GCM keys. See
+  [ADR-028](ADR-028-forward-secret-session-e2ee.md) for the threat model,
+  identity assumptions, and rejected IK/static alternatives.
+- Each E2EE envelope carries a version, suite, key epoch, structured nonce
+  prefix/counter, and AEAD ciphertext. AAD binds the logical Session, channel,
   MessageId, sequence, recovery epoch, delivery policy, and crypto mode.
+  `MAX_MESSAGES_PER_KEY` and `MAX_BYTES_PER_KEY` trigger key rotation; a
+  bounded current/recent epoch window handles reordering.
 - `PendingMessage` stores logical plaintext plus its crypto mode. Every send
   and retry invokes the current context and gets a new nonce. Ciphertext is
   never persisted in Delivery recovery state.
-- Channel `DataMessage` payloads use the context on both QUIC and Relay. Relay
-  continues to forward only opaque encoded messages.
+- Channel `DataMessage` payloads use the context on QUIC, Relay, TCP, and
+  WebSocket. Relay forwards the three Noise handshake messages only as an
+  opaque `crypto_handshake` control and never sees the root or plaintext.
 - Relay file offers no longer carry `content_key` or `nonce_prefix`. The
   encrypted offer carries the sender's logical Session key; file chunks use
   the same Session context and AAD binds the transfer, manifest, and chunk
@@ -54,13 +56,15 @@ single application crypto owner.
 - Treating the Relay offer's random attempt token as the crypto Session would
   discard keys during reconnect and violate Session/Connection separation.
 - Adding a custom unauthenticated DH exchange would duplicate identity
-  protocol responsibilities and create a new downgrade surface.
+  protocol responsibilities and create a new downgrade surface; the selected
+  Noise framework and ADR-028 identity proof are the only Session root path.
 
 ## Verification
 
-Native tests cover disabled and default E2EE modes, QUIC delivery recovery,
-Relay file chunks, same-context Route migration, key rotation, wrong-key and
-tamper rejection, replay rejection, nonce reuse rejection, and plaintext
-retention in Delivery pending state. `cargo fmt`, workspace Clippy with
-`-D warnings`, and the full locked native workspace test suite are required
-before this Step is committed.
+Native tests cover disabled and default E2EE modes, Noise identity and
+forward-secrecy properties, opaque Relay handshake framing, QUIC/TCP/WebSocket
+delivery recovery, Relay file chunks, same-context Route migration, 100,000
+structured nonces, key rotation, wrong-key and tamper rejection, replay
+rejection, nonce reuse rejection, and plaintext retention in Delivery pending
+state. `cargo fmt`, workspace Clippy with `-D warnings`, and the full locked
+native workspace test suite are required before this Step is committed.

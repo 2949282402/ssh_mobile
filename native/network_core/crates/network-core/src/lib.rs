@@ -7,6 +7,7 @@ mod channel;
 mod commands;
 pub mod connection;
 pub(crate) mod crypto;
+mod crypto_handshake;
 pub mod delivery;
 mod errors;
 mod events;

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-11
+> Last updated: 2026-08-12
 
 # SSH Mobile Control and Relay Server
 
@@ -147,6 +147,9 @@ compatibility fallback, a `/v1/control` route, or a Dart-side Relay data path.
   before validating this frame.
 - `heartbeat` receives `heartbeat_ack`. Transfer control types are `offer`,
   `accept`, `resume`, `complete`, `complete_ack`, and `cancel`.
+- `crypto_handshake` is an additional bounded opaque control type for the
+  Session's Noise XX application E2EE exchange; the Relay only validates the
+  routing envelope and never parses Noise payloads or Session keys.
 - The server removes client-supplied identity fields and adds the authenticated
   `sender_id` to every forwarded transfer control frame.
 - A 32-character lowercase hexadecimal `session_id` identifies one in-memory

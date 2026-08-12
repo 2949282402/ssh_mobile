@@ -46,6 +46,13 @@
   proof plus a Session binding; UDP has no reliable-message capability. QUIC
   migration atomically swaps the active carrier before Delivery recovery, and
   public peer/route events expose `RouteTopology × RouteTransport` metadata.
+- Plan 3 Step 4 now installs Session application roots only after an authenticated
+  `Noise_XX_25519_AESGCM_SHA256` exchange. Fresh ephemeral X25519 material is
+  identity-bound by the pinned Ed25519 proof; QUIC, Relay, TCP, and WebSocket
+  carriers use the same Session crypto owner. Production nonces are structured
+  epoch/direction prefixes plus monotonic counters, bounded key rotation is
+  enforced, and missing E2EE context returns an error instead of silently
+  downgrading to plaintext. See `docs/adr/ADR-028-forward-secret-session-e2ee.md`.
 - `network_sdk.RealtimeClient` now provides a Feature-safe `RealtimeSession` boundary;
   the App Shell maps native lifecycle events while Features cannot encode SDP/ICE or
   touch PeerConnection, sockets, or native handles. Native DataChannel media remains
@@ -746,21 +753,23 @@ seek(offset)
 
 # 19. 文件 E2E 加密
 
-QUIC 已经加密。
-
-但考虑 Relay 以及现有安全模型，建议继续保留应用层 E2E：
+QUIC 已经加密，但考虑 Relay、generic fallback 以及现有安全模型，继续保留
+Session-owned 应用层 E2E。应用层 root 只在 authenticated Noise XX 完成后安装：
 
 ```text
 File
  ↓
-Application E2E
+Session Application E2E
  ↓
-QUIC
+QUIC / TCP / WebSocket / Relay
  ↓
-UDP
+Route
 ```
 
-Relay 永远只看到 ciphertext。
+Noise XX 使用每次 Session 的 ephemeral X25519 DH，长期 Ed25519 DeviceIdentity
+只用于身份认证；Relay 只转发 opaque handshake/control 和 ciphertext，永远看不到
+Session root 或业务明文。详细 threat model、身份绑定和 nonce/rotation policy
+见 `docs/adr/ADR-028-forward-secret-session-e2ee.md`。
 
 现有项目已经具备 X25519 + AES-256-GCM 和 pinned peer key，因此 V1 不要同步更换密码算法。
 

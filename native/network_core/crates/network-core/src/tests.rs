@@ -1136,9 +1136,9 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
             .clone()
             .expect("migration QUIC endpoint")
     });
-    let replacement = runtime_a
+    let (replacement, crypto) = runtime_a
         .handle()
-        .block_on(crate::peer::connect_direct(
+        .block_on(crate::peer::connect_direct_with_crypto(
             endpoint,
             address_quic,
             identity,
@@ -1146,8 +1146,14 @@ fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
             "migration-peer".into(),
             "migration-attempt".into(),
             Duration::from_secs(5),
+            &session_id.wire_key(),
         ))
         .expect("authenticated QUIC replacement");
+    runtime_a.handle().block_on(async {
+        state_a
+            .install_crypto_material("migration-peer", &session_id.wire_key(), &crypto)
+            .expect("install replacement E2EE context");
+    });
     let replacement_receiver = replacement.clone();
     let previous = runtime_a
         .handle()

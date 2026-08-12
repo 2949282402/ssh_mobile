@@ -59,7 +59,7 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 		return
 	}
 
-	if frame.Type == "channel_message" || frame.Type == "channel_ack" {
+	if frame.Type == "channel_message" || frame.Type == "channel_ack" || frame.Type == "crypto_handshake" {
 		h.routeChannelControl(sender, frame)
 		return
 	}

@@ -340,6 +340,18 @@ impl RelayClient {
             .await
     }
 
+    /// Sends an opaque Session E2EE handshake message. The Relay only routes
+    /// this bounded payload to the target and never interprets Noise state.
+    pub async fn send_crypto_handshake(
+        &self,
+        session_token: &str,
+        target_id: &str,
+        payload: &[u8],
+    ) -> Result<(), RelayError> {
+        self.send_channel_control("crypto_handshake", session_token, target_id, payload)
+            .await
+    }
+
     /// Sends an ICE-like candidate Offer through the authenticated Relay
     /// signaling plane. The candidate list is not a file/data channel.
     pub async fn send_candidate_offer(
@@ -465,9 +477,9 @@ impl RelayClient {
         target_id: &str,
         payload: &[u8],
     ) -> Result<(), RelayError> {
-        if !matches!(kind, "channel_message" | "channel_ack") {
+        if !matches!(kind, "channel_message" | "channel_ack" | "crypto_handshake") {
             return Err(RelayError::InvalidConfiguration(
-                "unsupported Relay channel control type".into(),
+                "unsupported Relay channel or crypto control type".into(),
             ));
         }
         validate_session_id(session_token)?;
@@ -719,6 +731,7 @@ fn decode_event(message: Message) -> Result<Option<RelayEvent>, RelayError> {
                     | "webrtc_close"
                     | "channel_message"
                     | "channel_ack"
+                    | "crypto_handshake"
             ) {
                 return Err(RelayError::Protocol("unsupported control type".into()));
             }
@@ -854,6 +867,25 @@ mod tests {
                 session_id: "00112233445566778899aabbccddeeff".into(),
                 peer_id: Some("device-a".into()),
                 payload: Some("b3BhcXVl".into()),
+            }
+        );
+    }
+
+    #[test]
+    /// 验证 Noise Session E2EE 握手仍只作为 opaque Relay control 转发。
+    fn crypto_handshake_control_preserves_opaque_payload() {
+        let event = decode_event(Message::Text(
+            r#"{"type":"crypto_handshake","session_id":"00112233445566778899aabbccddeeff","sender_id":"device-a","payload":"AQIDBA"}"#.into(),
+        ))
+        .expect("decode")
+        .expect("crypto handshake event");
+        assert_eq!(
+            event,
+            RelayEvent::Control {
+                kind: "crypto_handshake".into(),
+                session_id: "00112233445566778899aabbccddeeff".into(),
+                peer_id: Some("device-a".into()),
+                payload: Some("AQIDBA".into()),
             }
         );
     }

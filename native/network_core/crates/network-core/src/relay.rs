@@ -29,6 +29,7 @@ use crate::events::{
 };
 use crate::runtime::{
     PeerConfig, RuntimeState, INCOMING_APPROVAL_TIMEOUT, MAX_PENDING_INCOMING_TRANSFERS,
+    MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
 };
 
 /// Relay 配置只存在 native runtime 内存中，用于 socket 意外断开后的指数退避重连。
@@ -303,6 +304,30 @@ pub(crate) async fn handle_relay_events(
                 session_id,
                 peer_id,
                 payload,
+            } if kind == "crypto_handshake" => {
+                if let (Some(peer_id), Some(payload)) = (peer_id, payload) {
+                    if let Err(error) = handle_relay_crypto_handshake(
+                        &state,
+                        &relay,
+                        &session_id,
+                        &peer_id,
+                        &payload,
+                    )
+                    .await
+                    {
+                        tracing::debug!(
+                            peer_id = %peer_id,
+                            error = %error,
+                            "rejected Relay Session E2EE handshake"
+                        );
+                    }
+                }
+            }
+            RelayEvent::Control {
+                kind,
+                session_id,
+                peer_id,
+                payload,
             } if matches!(
                 kind.as_str(),
                 "webrtc_offer"
@@ -467,6 +492,168 @@ pub(crate) async fn handle_relay_events(
         }
     }
     handle_relay_disconnect(state, relay, "Relay event stream ended".to_string()).await;
+}
+
+fn relay_crypto_key(peer_id: &str, session_token: &str) -> String {
+    format!("{peer_id}/{session_token}")
+}
+
+async fn handle_relay_crypto_handshake(
+    state: &Arc<RuntimeState>,
+    relay: &Arc<RelayClient>,
+    session_token: &str,
+    peer_id: &str,
+    encoded_payload: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if session_token.len() != 32
+        || !session_token
+            .bytes()
+            .all(|value| value.is_ascii_hexdigit() && !value.is_ascii_uppercase())
+        || peer_id.is_empty()
+        || !state.peers.read().await.contains_key(peer_id)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Relay E2EE handshake is not bound to a registered peer",
+        )
+        .into());
+    }
+    let frame = URL_SAFE_NO_PAD.decode(encoded_payload)?;
+    let (step, payload) = crate::crypto_handshake::decode_relay_frame(&frame)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    let key = relay_crypto_key(peer_id, session_token);
+    match step {
+        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE => {
+            let sender = state
+                .relay_crypto_waiters
+                .write()
+                .await
+                .remove(&key)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Relay E2EE response has no active initiator",
+                    )
+                })?;
+            sender.send(payload.to_vec()).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "Relay E2EE initiator is no longer waiting",
+                )
+            })?;
+        }
+        crate::crypto_handshake::RELAY_CRYPTO_HELLO => {
+            let identity = state
+                .identity
+                .read()
+                .await
+                .clone()
+                .ok_or_else(|| std::io::Error::other("runtime identity is unavailable"))?;
+            let (responder, response) =
+                crate::crypto_handshake::RelayResponderHandshake::accept_hello(identity, payload)
+                    .map_err(|error| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+                })?;
+            let mut responders = state.relay_crypto_responders.lock().await;
+            if responders.len() >= MAX_PENDING_RELAY_CRYPTO_HANDSHAKES
+                && !responders.contains_key(&key)
+            {
+                return Err(std::io::Error::other("Relay E2EE responder queue is full").into());
+            }
+            responders.insert(key, responder);
+            drop(responders);
+            let response = crate::crypto_handshake::encode_relay_frame(
+                crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
+                &response,
+            )
+            .map_err(|error| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+            })?;
+            relay
+                .send_crypto_handshake(session_token, peer_id, &response)
+                .await?;
+        }
+        crate::crypto_handshake::RELAY_CRYPTO_FINAL => {
+            let responder = state
+                .relay_crypto_responders
+                .lock()
+                .await
+                .remove(&key)
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Relay E2EE final message has no active responder",
+                    )
+                })?;
+            let (authenticated_peer_id, material) = responder
+                .accept_final(payload, &state.trusted_peer_keys)
+                .await
+                .map_err(|error| {
+                    std::io::Error::new(std::io::ErrorKind::PermissionDenied, error.to_string())
+                })?;
+            if authenticated_peer_id != peer_id {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "Relay E2EE identity does not match the routed peer",
+                )
+                .into());
+            }
+            let decision = state.sessions.begin_connect(peer_id).await;
+            let session_id = match decision {
+                crate::session::ConnectDecision::Started(session_id)
+                | crate::session::ConnectDecision::InProgress(session_id) => session_id,
+                crate::session::ConnectDecision::AlreadyConnected(session_id) => {
+                    if state.sessions.current_route(peer_id).await != Some(RouteType::Relay) {
+                        return Ok(());
+                    }
+                    session_id
+                }
+            };
+            state
+                .install_crypto_material(peer_id, &session_id.wire_key(), &material)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            if !state
+                .sessions
+                .mark_relay_route_connected(
+                    peer_id,
+                    session_id,
+                    RouteType::Relay,
+                    Some(Arc::clone(relay)),
+                )
+                .await
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "Relay Session was closed before E2EE completion",
+                )
+                .into());
+            }
+            crate::events::emit_peer_state(
+                &state.event_tx,
+                peer_id,
+                network_protocol::PeerConnectionState::Connected,
+                RouteType::Relay,
+                None,
+            );
+            crate::channel::recover_session(Arc::clone(state), peer_id.to_string(), session_id)
+                .await;
+            crate::transfer::resume_transfers_for_peer(Arc::clone(state), peer_id.to_string())
+                .await;
+            crate::peer::schedule_direct_upgrade(
+                Arc::clone(state),
+                peer_id.to_string(),
+                session_id,
+            );
+        }
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "unsupported Relay E2EE handshake step",
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 async fn handle_candidate_signal(
@@ -702,6 +889,8 @@ async fn cleanup_relay_state(state: &RuntimeState) {
     state.relay_acceptances.write().await.clear();
     state.relay_completions.write().await.clear();
     state.relay_lookups.write().await.clear();
+    state.relay_crypto_waiters.write().await.clear();
+    state.relay_crypto_responders.lock().await.clear();
 
     for transfer_id in outgoing {
         if state.transfers.pause_for_network(&transfer_id).await {

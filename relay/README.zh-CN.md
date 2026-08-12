@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-12
 
 # SSH Mobile 控制与中继服务器
 
@@ -136,6 +136,8 @@ Dart 侧 Relay 数据面。
   后才能报告连接成功。
 - `heartbeat` 对应 `heartbeat_ack`。文件控制类型固定为 `offer`、`accept`、
   `resume`、`complete`、`complete_ack` 和 `cancel`。
+- `crypto_handshake` 是 Session Noise XX 应用层 E2EE 的有界 opaque 控制类型；
+  Relay 只校验路由信封并转发，不解析 Noise payload，也不接触 Session key。
 - 服务端丢弃客户端声明的身份字段，并在每个转发的文件控制帧中写入已经鉴权的
   `sender_id`。
 - 32 位小写十六进制 `session_id` 标识一个内存传输会话。只有发送端可以

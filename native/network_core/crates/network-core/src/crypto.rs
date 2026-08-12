@@ -2,15 +2,16 @@
 //!
 //! The transport only carries opaque bytes.  A `CryptoContext` is created for
 //! one logical `(peer, SessionId)` pair and survives QUIC/Relay route changes.
-//! Its key material is derived from the already paired DeviceIdentity E2E
-//! keys; the existing identity-bound QUIC handshake remains the transport
-//! authentication boundary.  This module does not add a second handshake.
+//! Its traffic root is installed only after the authenticated Noise XX
+//! handshake in `crypto_handshake.rs`; long-lived DeviceIdentity keys do not
+//! directly become application traffic keys.
 
 use aes_gcm::{
     aead::{Aead, Payload},
     Aes256Gcm, KeyInit, Nonce,
 };
 use hkdf::Hkdf;
+#[cfg(test)]
 use network_identity::DeviceIdentity;
 use rand::RngCore;
 use sha2::Sha256;
@@ -23,9 +24,13 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 /// Data messages carry the numeric suite marker inside their envelope.
 pub(crate) const APPLICATION_CRYPTO_SUITE: &str = "hkdf-sha256-aes256gcm-v1";
 
-const ROOT_KDF_INFO: &[u8] = b"ssh-mobile/session/application/root/v1";
-const LOW_TO_HIGH_KDF_INFO: &[u8] = b"ssh-mobile/session/application/low-to-high/v1";
-const HIGH_TO_LOW_KDF_INFO: &[u8] = b"ssh-mobile/session/application/high-to-low/v1";
+#[cfg(test)]
+const TEST_ROOT_KDF_INFO: &[u8] = b"ssh-mobile/session/application/test-root/v1";
+const INITIATOR_TO_RESPONDER_KDF_INFO: &[u8] =
+    b"ssh-mobile/session/application/initiator-to-responder/v2";
+const RESPONDER_TO_INITIATOR_KDF_INFO: &[u8] =
+    b"ssh-mobile/session/application/responder-to-initiator/v2";
+const NONCE_PREFIX_KDF_INFO: &[u8] = b"ssh-mobile/session/application/nonce-prefix/v2";
 const OFFER_KDF_INFO: &[u8] = b"ssh-mobile/session/application/offer/v1";
 const OFFER_AAD_PREFIX: &[u8] = b"ssh-mobile/session/application/offer/v1";
 const FILE_CHUNK_AAD_PREFIX: &[u8] = b"ssh-mobile/session/application/file-chunk/v1";
@@ -37,6 +42,9 @@ const GCM_TAG_BYTES: usize = 16;
 const ENVELOPE_HEADER_BYTES: usize = 4 + 1 + 1 + std::mem::size_of::<u64>() + GCM_NONCE_BYTES;
 const REPLAY_WINDOW_CAPACITY: usize = 4096;
 const MAX_RETAINED_KEY_EPOCHS: u64 = 4;
+pub(crate) const MAX_MESSAGES_PER_KEY: u64 = 1_048_576;
+pub(crate) const MAX_BYTES_PER_KEY: u64 = 1 << 30;
+const NONCE_PREFIX_BYTES: usize = 4;
 
 /// Application payload protection mode.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -154,7 +162,8 @@ pub(crate) enum CryptoError {
     ReplayDetected,
     NonceReuse,
     KeyEpochUnavailable,
-    MissingContext,
+    NoncePrefixMismatch,
+    E2eeRequired,
     StateUnavailable,
 }
 
@@ -170,7 +179,8 @@ impl fmt::Display for CryptoError {
             Self::ReplayDetected => "application ciphertext replay detected",
             Self::NonceReuse => "application nonce reuse rejected",
             Self::KeyEpochUnavailable => "application key epoch is unavailable",
-            Self::MissingContext => "application crypto context is unavailable",
+            Self::NoncePrefixMismatch => "application nonce prefix is invalid",
+            Self::E2eeRequired => "application E2EE context is required",
             Self::StateUnavailable => "application crypto state is unavailable",
         };
         formatter.write_str(message)
@@ -179,56 +189,57 @@ impl fmt::Display for CryptoError {
 
 impl std::error::Error for CryptoError {}
 
-/// Session-owned AEAD context.  It owns directional keys, key epoch state,
-/// and bounded send/receive replay windows; it has no Route or Connection
-/// handle dependency.
+/// Session-owned AEAD context. It owns directional keys, key epoch state,
+/// structured nonce counters, and bounded replay windows; it has no Route or
+/// Connection handle dependency.
 pub(crate) struct CryptoContext {
     suite: CryptoSuite,
     root_key: [u8; 32],
     tx_info: &'static [u8],
     rx_info: &'static [u8],
-    current_epoch: KeyEpoch,
+    send_epoch: KeyEpoch,
+    receive_epoch: KeyEpoch,
+    send_counter: u64,
+    messages_in_epoch: u64,
+    bytes_in_epoch: u64,
     send_window: ReplayWindow,
     receive_window: ReplayWindow,
+    #[cfg(test)]
+    allow_arbitrary_test_nonce: bool,
 }
 
 impl CryptoContext {
-    /// Derive a context from the paired long-lived DeviceIdentity E2E keys.
-    /// The logical wire SessionId is included as HKDF salt, so a new Session
-    /// gets fresh application keys while Route migration keeps this context.
-    pub(crate) fn from_identity(
-        local_identity: &DeviceIdentity,
-        peer_public_key: [u8; 32],
-        session_id: &str,
-    ) -> Result<Self, CryptoError> {
-        let local_public = X25519PublicKey::from(&local_identity.e2e_key);
-        let peer_public = X25519PublicKey::from(peer_public_key);
-        let shared = local_identity.e2e_key.diffie_hellman(&peer_public);
-        if shared.as_bytes().iter().all(|byte| *byte == 0) {
-            return Err(CryptoError::InvalidKey);
-        }
-        let (low, high) = if local_public.as_bytes() <= peer_public.as_bytes() {
-            (true, false)
+    /// Creates a context from the root produced by an authenticated Noise
+    /// handshake. The root is already bound to the handshake transcript and
+    /// logical Session binding; only directional traffic keys are expanded
+    /// here.
+    pub(crate) fn from_session_root(root_key: [u8; 32], initiator: bool) -> Self {
+        let (tx_info, rx_info) = if initiator {
+            (
+                INITIATOR_TO_RESPONDER_KDF_INFO,
+                RESPONDER_TO_INITIATOR_KDF_INFO,
+            )
         } else {
-            (false, true)
+            (
+                RESPONDER_TO_INITIATOR_KDF_INFO,
+                INITIATOR_TO_RESPONDER_KDF_INFO,
+            )
         };
-        let (tx_info, rx_info) = if low {
-            (LOW_TO_HIGH_KDF_INFO, HIGH_TO_LOW_KDF_INFO)
-        } else if high {
-            (HIGH_TO_LOW_KDF_INFO, LOW_TO_HIGH_KDF_INFO)
-        } else {
-            return Err(CryptoError::InvalidKey);
-        };
-        let root_key = derive_material(shared.as_bytes(), session_id.as_bytes(), ROOT_KDF_INFO)?;
-        Ok(Self {
+        Self {
             suite: CryptoSuite::HkdfSha256Aes256GcmV1,
             root_key,
             tx_info,
             rx_info,
-            current_epoch: KeyEpoch::INITIAL,
+            send_epoch: KeyEpoch::INITIAL,
+            receive_epoch: KeyEpoch::INITIAL,
+            send_counter: 0,
+            messages_in_epoch: 0,
+            bytes_in_epoch: 0,
             send_window: ReplayWindow::default(),
             receive_window: ReplayWindow::default(),
-        })
+            #[cfg(test)]
+            allow_arbitrary_test_nonce: false,
+        }
     }
 
     #[allow(dead_code)]
@@ -238,7 +249,7 @@ impl CryptoContext {
 
     #[allow(dead_code)]
     pub(crate) fn current_epoch(&self) -> KeyEpoch {
-        self.current_epoch
+        self.send_epoch.max(self.receive_epoch)
     }
 
     /// Advance the local send epoch.  The authenticated epoch marker lets the
@@ -246,22 +257,41 @@ impl CryptoContext {
     #[allow(dead_code)]
     pub(crate) fn rotate_key(&mut self) -> Result<KeyEpoch, CryptoError> {
         let next = self
-            .current_epoch
+            .send_epoch
             .0
             .checked_add(1)
             .ok_or(CryptoError::SequenceOverflow)?;
-        self.current_epoch = KeyEpoch(next);
-        Ok(self.current_epoch)
+        self.send_epoch = KeyEpoch(next);
+        self.send_counter = 0;
+        self.messages_in_epoch = 0;
+        self.bytes_in_epoch = 0;
+        Ok(self.send_epoch)
     }
 
     pub(crate) fn encrypt(&mut self, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        let mut nonce = [0u8; GCM_NONCE_BYTES];
-        rand::rngs::OsRng.fill_bytes(&mut nonce);
-        self.encrypt_with_nonce(aad, plaintext, nonce)
+        let plaintext_bytes =
+            u64::try_from(plaintext.len()).map_err(|_| CryptoError::SequenceOverflow)?;
+        if self.messages_in_epoch >= MAX_MESSAGES_PER_KEY
+            || self.bytes_in_epoch > MAX_BYTES_PER_KEY.saturating_sub(plaintext_bytes)
+        {
+            self.rotate_key()?;
+        }
+        let nonce = self.next_nonce()?;
+        let envelope = self.encrypt_with_nonce(aad, plaintext, nonce)?;
+        self.messages_in_epoch = self
+            .messages_in_epoch
+            .checked_add(1)
+            .ok_or(CryptoError::SequenceOverflow)?;
+        self.bytes_in_epoch = self
+            .bytes_in_epoch
+            .checked_add(plaintext_bytes)
+            .ok_or(CryptoError::SequenceOverflow)?;
+        Ok(envelope)
     }
 
-    /// Deterministic nonce injection is kept inside the native crate for
-    /// tests that prove nonce reuse rejection; production sends use `encrypt`.
+    /// Deterministic nonce injection is test-only support for proving that a
+    /// nonce cannot be reused. Production sends use the structured counter in
+    /// [`Self::encrypt`].
     pub(crate) fn encrypt_with_nonce(
         &mut self,
         aad: &[u8],
@@ -269,7 +299,7 @@ impl CryptoContext {
         nonce: [u8; GCM_NONCE_BYTES],
     ) -> Result<Vec<u8>, CryptoError> {
         self.send_window.reserve(nonce)?;
-        let key = self.epoch_key(self.tx_info, self.current_epoch)?;
+        let key = self.epoch_key(self.tx_info, self.send_epoch)?;
         let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| CryptoError::InvalidKey)?;
         let ciphertext = cipher
             .encrypt(
@@ -284,7 +314,7 @@ impl CryptoContext {
         envelope.extend_from_slice(ENVELOPE_MAGIC);
         envelope.push(ENVELOPE_VERSION);
         envelope.push(self.suite.code());
-        envelope.extend_from_slice(&self.current_epoch.0.to_be_bytes());
+        envelope.extend_from_slice(&self.send_epoch.0.to_be_bytes());
         envelope.extend_from_slice(&nonce);
         envelope.extend_from_slice(&ciphertext);
         Ok(envelope)
@@ -327,14 +357,21 @@ impl CryptoContext {
                 .try_into()
                 .map_err(|_| CryptoError::InvalidEnvelope)?,
         ));
-        if epoch.0 > self.current_epoch.0.saturating_add(1)
-            || self.current_epoch.0.saturating_sub(epoch.0) >= MAX_RETAINED_KEY_EPOCHS
+        if epoch.0 > self.receive_epoch.0.saturating_add(1)
+            || self.receive_epoch.0.saturating_sub(epoch.0) >= MAX_RETAINED_KEY_EPOCHS
         {
             return Err(CryptoError::KeyEpochUnavailable);
         }
         let nonce: [u8; GCM_NONCE_BYTES] = envelope[14..26]
             .try_into()
             .map_err(|_| CryptoError::InvalidEnvelope)?;
+        let nonce_prefix_matches = nonce[..NONCE_PREFIX_BYTES]
+            == self.nonce_prefix(self.rx_info, epoch)?[..NONCE_PREFIX_BYTES];
+        #[cfg(test)]
+        let nonce_prefix_matches = nonce_prefix_matches || self.allow_arbitrary_test_nonce;
+        if !nonce_prefix_matches {
+            return Err(CryptoError::NoncePrefixMismatch);
+        }
         let key = self.epoch_key(self.rx_info, epoch)?;
         let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| CryptoError::InvalidKey)?;
         let clear = cipher
@@ -353,10 +390,29 @@ impl CryptoContext {
         } else {
             self.receive_window.accept_received(nonce)?;
         }
-        if epoch > self.current_epoch {
-            self.current_epoch = epoch;
+        if epoch > self.receive_epoch {
+            self.receive_epoch = epoch;
         }
         Ok(clear)
+    }
+
+    fn next_nonce(&mut self) -> Result<[u8; GCM_NONCE_BYTES], CryptoError> {
+        let counter = self.send_counter;
+        self.send_counter = self
+            .send_counter
+            .checked_add(1)
+            .ok_or(CryptoError::SequenceOverflow)?;
+        let mut nonce = [0u8; GCM_NONCE_BYTES];
+        nonce[..NONCE_PREFIX_BYTES].copy_from_slice(
+            &self.nonce_prefix(self.tx_info, self.send_epoch)?[..NONCE_PREFIX_BYTES],
+        );
+        nonce[NONCE_PREFIX_BYTES..].copy_from_slice(&counter.to_be_bytes());
+        Ok(nonce)
+    }
+
+    fn nonce_prefix(&self, info: &'static [u8], epoch: KeyEpoch) -> Result<[u8; 32], CryptoError> {
+        let key = self.epoch_key(info, epoch)?;
+        derive_material(&key, &[], NONCE_PREFIX_KDF_INFO)
     }
 
     fn epoch_key(&self, info: &'static [u8], epoch: KeyEpoch) -> Result<[u8; 32], CryptoError> {
@@ -364,6 +420,26 @@ impl CryptoContext {
         epoch_info.extend_from_slice(info);
         epoch_info.extend_from_slice(&epoch.0.to_be_bytes());
         derive_material(&self.root_key, &[], &epoch_info)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_identity(
+        local_identity: &DeviceIdentity,
+        peer_public_key: [u8; 32],
+        session_id: &str,
+    ) -> Result<Self, CryptoError> {
+        let local_public = X25519PublicKey::from(&local_identity.e2e_key);
+        let peer_public = X25519PublicKey::from(peer_public_key);
+        let shared = local_identity.e2e_key.diffie_hellman(&peer_public);
+        if shared.as_bytes().iter().all(|byte| *byte == 0) {
+            return Err(CryptoError::InvalidKey);
+        }
+        let root_key =
+            derive_material(shared.as_bytes(), session_id.as_bytes(), TEST_ROOT_KDF_INFO)?;
+        let mut context =
+            Self::from_session_root(root_key, local_public.as_bytes() <= peer_public.as_bytes());
+        context.allow_arbitrary_test_nonce = true;
+        Ok(context)
     }
 }
 
@@ -393,7 +469,44 @@ impl SessionCryptoManager {
         }
     }
 
-    pub(crate) fn get_or_create(
+    pub(crate) fn install_material_aliases(
+        &self,
+        peer_id: &str,
+        session_ids: &[&str],
+        root_key: [u8; 32],
+        initiator: bool,
+    ) -> Result<Arc<Mutex<CryptoContext>>, CryptoError> {
+        let mut contexts = self
+            .contexts
+            .lock()
+            .map_err(|_| CryptoError::StateUnavailable)?;
+        let existing = session_ids.iter().find_map(|session_id| {
+            contexts
+                .get(&CryptoContextKey {
+                    peer_id: peer_id.to_string(),
+                    session_id: (*session_id).to_string(),
+                })
+                .cloned()
+        });
+        let context = existing.unwrap_or_else(|| {
+            Arc::new(Mutex::new(CryptoContext::from_session_root(
+                root_key, initiator,
+            )))
+        });
+        for session_id in session_ids {
+            contexts.insert(
+                CryptoContextKey {
+                    peer_id: peer_id.to_string(),
+                    session_id: (*session_id).to_string(),
+                },
+                Arc::clone(&context),
+            );
+        }
+        Ok(context)
+    }
+
+    #[cfg(test)]
+    fn get_or_create(
         &self,
         peer_id: &str,
         session_id: &str,
@@ -420,12 +533,32 @@ impl SessionCryptoManager {
         Ok(context)
     }
 
-    pub(crate) fn remove_session(&self, peer_id: &str, session_id: &str) {
-        if let Ok(mut contexts) = self.contexts.lock() {
-            contexts.remove(&CryptoContextKey {
+    pub(crate) fn get(
+        &self,
+        peer_id: &str,
+        session_id: &str,
+    ) -> Result<Arc<Mutex<CryptoContext>>, CryptoError> {
+        self.contexts
+            .lock()
+            .map_err(|_| CryptoError::StateUnavailable)?
+            .get(&CryptoContextKey {
                 peer_id: peer_id.to_string(),
                 session_id: session_id.to_string(),
-            });
+            })
+            .cloned()
+            .ok_or(CryptoError::E2eeRequired)
+    }
+
+    pub(crate) fn remove_session(&self, peer_id: &str, session_id: &str) {
+        if let Ok(mut contexts) = self.contexts.lock() {
+            let key = CryptoContextKey {
+                peer_id: peer_id.to_string(),
+                session_id: session_id.to_string(),
+            };
+            let Some(context) = contexts.remove(&key) else {
+                return;
+            };
+            contexts.retain(|_, current| !Arc::ptr_eq(current, &context));
         }
     }
 
@@ -731,6 +864,25 @@ mod tests {
             receiver.decrypt(b"message-aad", &ciphertext),
             Err(CryptoError::ReplayDetected)
         );
+    }
+
+    #[test]
+    fn structured_nonce_is_unique_across_one_hundred_thousand_messages() {
+        let mut context = CryptoContext::from_session_root([0x31; 32], true);
+        let mut nonces = HashSet::with_capacity(100_000);
+        for _ in 0..100_000 {
+            let envelope = context.encrypt(b"nonce-test", b"payload").unwrap();
+            assert!(nonces.insert(envelope[14..26].to_vec()));
+        }
+        assert_eq!(nonces.len(), 100_000);
+    }
+
+    #[test]
+    fn missing_session_root_rejects_the_e2ee_default() {
+        assert!(matches!(
+            SessionCryptoManager::new().get("peer", "session"),
+            Err(CryptoError::E2eeRequired)
+        ));
     }
 
     #[test]
