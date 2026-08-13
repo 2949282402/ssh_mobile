@@ -143,6 +143,10 @@ jobs:
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
+      - name: Check agent documentation
+        run: dart run tool/check_agent_docs.dart
+      - name: Test agent documentation checker
+        run: dart run test/tool/agent_docs_check_test.dart
       - name: Check architecture guard
         run: dart run tool/architecture_check.dart
       - name: Check compatibility import inventory

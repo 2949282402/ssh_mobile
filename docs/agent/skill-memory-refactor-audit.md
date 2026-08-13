@@ -184,4 +184,37 @@ Canonical owner 保持为各 ADR 自身。Memory 只保留当前约束摘要与�
 - [x] Canonical governance、scoped Memory 与 Memory Map 已建立。
 - [x] Skill/Claude mirror 已切换为单向知识链。
 - [x] 旧 Memory 与 `.workbuddy` 日志已退役。
-- [ ] 轻量引用守卫、CI 与六类路由验收已完成。
+- [x] 轻量引用守卫、CI 与六类路由验收已完成。
+
+## 10. 最终体积与守卫结果
+
+`dart run tool/check_agent_docs.dart` 最终扫描 **130** 个 maintained Markdown，
+并对两个默认 Profile 分别计算 normalized UTF-8 bytes：
+
+| Profile | 读取链 | 最终体积 | 上限 | 相对旧基线缩减 |
+| --- | --- | ---: | ---: | ---: |
+| Codex | `AGENTS + canonical Skill + memory-map + workflow` | 25,955 B | 40,960 B | 82.3% |
+| Claude | `CLAUDE + AGENTS + mirror Skill + memory-map + workflow` | 27,297 B | 40,960 B | 81.4% |
+
+旧默认知识入口基线为 146,424 B。两个新 Profile 均超过 70% 的缩减目标，
+且 `validation.md`、治理文档、Domain/Feature Memory、Package contracts 与正式
+ADR/Architecture 均保持按需加载，不计入默认链。
+
+最终守卫同时验证：必需 topology 与启动边、Memory Map 的真实 Markdown links、
+全仓 maintained Markdown 本地链接、路径大小写与仓库逃逸、按路径限定的中英文日期、
+retired token 精确 allowlist、Skill 镜像字节一致性、单向同步脚本，以及两个
+Profile 的 40 KiB 边界。
+
+## 11. 六类读取链模拟
+
+| Task | 实际读取链 | 不默认加载 |
+| --- | --- | --- |
+| Flutter UI | Skill → map → Client overview/current-state → owning App/Feature AGENTS+README；共享 ownership 变化才加 Client architecture | SDK、Backend、Front |
+| Rust QUIC | Skill → map → SDK overview/current-state → transport-routing → 精确 QUIC/Session/route ADR；公开 Dart/FFI 变化才升级 Client | Front；无 Relay 变化时不加载 Backend |
+| Backend API | Skill → map → Backend overview/current-state → `relay/README.md`；Admin consumer 变化加 Front，device/wire 变化加 SDK | 无实际 consumer/协议变化时的 Client/Front/SDK |
+| Front Admin | Skill → map → Front overview → `front/README.md`；API/auth/session contract 变化才加 Backend | Flutter Client、SDK |
+| Client↔SDK API | Skill → map → Client 与 SDK overview/current-state/architecture → 两侧局部合同 → dependency/resource docs 与精确 ADR | Backend、Front，除非 wire/Relay/Admin 边界同时变化 |
+| Relay architecture | Skill → map → Backend + SDK current-state/architecture → transport-routing → Relay README → 精确 Relay/Session/E2EE ADR；Dashboard/API 变化才加 Front | 无 UI/API 变化时的 Front；无 Flutter public boundary 变化时的 Client |
+
+六次模拟均由同一 Memory Map 路由规则得出，未通过主目录掩盖跨域边界，也未默认
+读取整个 `docs/`、全部 Memory 或历史型 `MODULAR_REFACTOR_PLAN.md`。
