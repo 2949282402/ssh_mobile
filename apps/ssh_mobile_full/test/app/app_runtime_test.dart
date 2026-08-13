@@ -24,9 +24,8 @@ final class _FakeNetworkRuntime implements NetworkRuntime {
   bool disposed = false;
 
   @override
-  NetworkRuntimeState get state => disposed
-      ? NetworkRuntimeState.disposed
-      : NetworkRuntimeState.idle;
+  NetworkRuntimeState get state =>
+      disposed ? NetworkRuntimeState.disposed : NetworkRuntimeState.idle;
 
   @override
   NetworkRuntimeDiagnostics get diagnostics => NetworkRuntimeDiagnostics(
@@ -205,17 +204,11 @@ void main() {
         expect(runtime.connectionDatabase, isNotNull);
         expect(runtime.connectionRepository, isNotNull);
         expect(runtime.credentialRepository, isNotNull);
-        expect(
-          runtime.hostKeyRepository,
-          same(runtime.connectionRepository),
-        );
+        expect(runtime.hostKeyRepository, same(runtime.connectionRepository));
         expect(runtime.networkRuntime, isNotNull);
         expect(runtime.realtimeClient, isA<RealtimeClient>());
         expect(runtime.sshService, isNotNull);
-        expect(
-          runtime.sshSessionManager,
-          isA<AppTerminalSshSessionManager>(),
-        );
+        expect(runtime.sshSessionManager, isA<AppTerminalSshSessionManager>());
         final terminalManager =
             runtime.sshSessionManager as AppTerminalSshSessionManager;
         expect(terminalManager.service, same(runtime.sshService));
@@ -272,42 +265,36 @@ void main() {
     },
   );
 
-  test(
-    'construction failure rolls back in reverse priority order',
-    () async {
-      final events = <String>[];
-      final harness = await _newHarness(
-        lanShareDatabaseFactory: () =>
-            throw StateError('injected lan share failure'),
-        disposeLogger: false,
-        lifecycleObserver: events.add,
-      );
-      try {
-        await expectLater(
-          harness.createFuture,
-          throwsA(isA<StateError>()),
-        );
+  test('construction failure rolls back in reverse priority order', () async {
+    final events = <String>[];
+    final harness = await _newHarness(
+      lanShareDatabaseFactory: () =>
+          throw StateError('injected lan share failure'),
+      disposeLogger: false,
+      lifecycleObserver: events.add,
+    );
+    try {
+      await expectLater(harness.createFuture, throwsA(isA<StateError>()));
 
-        final priorities = _rollbackPriorities(events);
-        expect(priorities, isNotEmpty);
-        // 适配器(80) → Module(70) → Realtime(60) → SFTP(50) → SSH(40) →
-        // metadata(35) → Network(30) → database(20) → settings(10)。
+      final priorities = _rollbackPriorities(events);
+      expect(priorities, isNotEmpty);
+      // 适配器(80) → Module(70) → Realtime(60) → SFTP(50) → SSH(40) →
+      // metadata(35) → Network(30) → database(20) → settings(10)。
+      expect(
+        priorities.toSet(),
+        containsAll(<int>[80, 70, 60, 50, 40, 35, 30, 20, 10]),
+      );
+      for (var i = 1; i < priorities.length; i++) {
         expect(
-          priorities.toSet(),
-          containsAll(<int>[80, 70, 60, 50, 40, 35, 30, 20, 10]),
+          priorities[i],
+          lessThanOrEqualTo(priorities[i - 1]),
+          reason: 'rollback must run in reverse priority order',
         );
-        for (var i = 1; i < priorities.length; i++) {
-          expect(
-            priorities[i],
-            lessThanOrEqualTo(priorities[i - 1]),
-            reason: 'rollback must run in reverse priority order',
-          );
-        }
-      } finally {
-        await harness.close();
       }
-    },
-  );
+    } finally {
+      await harness.close();
+    }
+  });
 
   test(
     'a throwing cleanup does not prevent later cleanups from running',
@@ -323,10 +310,7 @@ void main() {
         lifecycleObserver: events.add,
       );
       try {
-        await expectLater(
-          harness.createFuture,
-          throwsA(isA<StateError>()),
-        );
+        await expectLater(harness.createFuture, throwsA(isA<StateError>()));
 
         // Network(30) dispose 抛错后，database(20)/settings(10) 仍被尝试。
         expect(network.disposeCalls, 1);
@@ -370,51 +354,48 @@ void main() {
     },
   );
 
-  test(
-    'dispose releases resources in Module → Realtime → SFTP → SSH → '
-    'Network → Database → Logger order',
-    () async {
-      final events = <String>[];
-      final harness = await _newHarness(
-        disposeLogger: true,
-        lifecycleObserver: events.add,
-      );
-      try {
-        final runtime = await harness.createFuture;
-        await runtime.dispose();
+  test('dispose releases resources in Module → Realtime → SFTP → SSH → '
+      'Network → Database → Logger order', () async {
+    final events = <String>[];
+    final harness = await _newHarness(
+      disposeLogger: true,
+      lifecycleObserver: events.add,
+    );
+    try {
+      final runtime = await harness.createFuture;
+      await runtime.dispose();
 
-        final starts = <String>[
-          for (final event in events)
-            if (event.endsWith('.start'))
-              event.substring(0, event.length - '.start'.length),
-        ];
-        int indexOf(String name) {
-          final index = starts.indexOf(name);
-          expect(
-            index,
-            isNot(-1),
-            reason: 'expected lifecycle start event $name in $starts',
-          );
-          return index;
-        }
-
-        final moduleIndex = indexOf('mcp-module.dispose');
-        final realtimeIndex = indexOf('realtime.dispose');
-        final sftpIndex = indexOf('sftp.dispose');
-        final sshIndex = indexOf('ssh.close');
-        final networkIndex = indexOf('network.dispose');
-        final databaseIndex = indexOf('connection-database.dispose');
-        final loggerIndex = indexOf('app-log.dispose');
-
-        expect(moduleIndex, lessThan(realtimeIndex));
-        expect(realtimeIndex, lessThan(sftpIndex));
-        expect(sftpIndex, lessThan(sshIndex));
-        expect(sshIndex, lessThan(networkIndex));
-        expect(networkIndex, lessThan(databaseIndex));
-        expect(databaseIndex, lessThan(loggerIndex));
-      } finally {
-        await harness.close();
+      final starts = <String>[
+        for (final event in events)
+          if (event.endsWith('.start'))
+            event.substring(0, event.length - '.start'.length),
+      ];
+      int indexOf(String name) {
+        final index = starts.indexOf(name);
+        expect(
+          index,
+          isNot(-1),
+          reason: 'expected lifecycle start event $name in $starts',
+        );
+        return index;
       }
-    },
-  );
+
+      final moduleIndex = indexOf('mcp-module.dispose');
+      final realtimeIndex = indexOf('realtime.dispose');
+      final sftpIndex = indexOf('sftp.dispose');
+      final sshIndex = indexOf('ssh.close');
+      final networkIndex = indexOf('network.dispose');
+      final databaseIndex = indexOf('connection-database.dispose');
+      final loggerIndex = indexOf('app-log.dispose');
+
+      expect(moduleIndex, lessThan(realtimeIndex));
+      expect(realtimeIndex, lessThan(sftpIndex));
+      expect(sftpIndex, lessThan(sshIndex));
+      expect(sshIndex, lessThan(networkIndex));
+      expect(networkIndex, lessThan(databaseIndex));
+      expect(databaseIndex, lessThan(loggerIndex));
+    } finally {
+      await harness.close();
+    }
+  });
 }

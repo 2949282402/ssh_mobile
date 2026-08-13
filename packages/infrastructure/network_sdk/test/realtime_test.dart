@@ -150,38 +150,41 @@ void main() {
     expect(session.revision, 7);
   });
 
-  test('client dispatches snapshot and revision to the matching session', () async {
-    final backend = _FakeRealtimeBackend();
-    final client = RealtimeClientImpl(backend: backend);
-    final session = client.createSession(
-      realtimeId: '00112233445566778899aabbccddeeff',
-      peerId: 'peer-a',
-    );
-    addTearDown(() => client.dispose());
+  test(
+    'client dispatches snapshot and revision to the matching session',
+    () async {
+      final backend = _FakeRealtimeBackend();
+      final client = RealtimeClientImpl(backend: backend);
+      final session = client.createSession(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+      );
+      addTearDown(() => client.dispose());
 
-    backend.emit(
-      const RealtimeSnapshotBackendEvent(
-        RealtimeSnapshot(
+      backend.emit(
+        const RealtimeSnapshotBackendEvent(
+          RealtimeSnapshot(
+            realtimeId: '00112233445566778899aabbccddeeff',
+            peerId: 'peer-a',
+            state: RealtimeSessionState.connected,
+            revision: 5,
+          ),
+        ),
+      );
+      backend.emit(
+        const RealtimeSessionStateChangedEvent(
           realtimeId: '00112233445566778899aabbccddeeff',
           peerId: 'peer-a',
           state: RealtimeSessionState.connected,
-          revision: 5,
+          revision: 6,
         ),
-      ),
-    );
-    backend.emit(
-      const RealtimeSessionStateChangedEvent(
-        realtimeId: '00112233445566778899aabbccddeeff',
-        peerId: 'peer-a',
-        state: RealtimeSessionState.connected,
-        revision: 6,
-      ),
-    );
-    await Future<void>.delayed(Duration.zero);
+      );
+      await Future<void>.delayed(Duration.zero);
 
-    expect(session.state, RealtimeSessionState.connected);
-    expect(session.revision, 6);
-  });
+      expect(session.state, RealtimeSessionState.connected);
+      expect(session.revision, 6);
+    },
+  );
 
   test('client ignores snapshots for a different session peer', () async {
     final backend = _FakeRealtimeBackend();

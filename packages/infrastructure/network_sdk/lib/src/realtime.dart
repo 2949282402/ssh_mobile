@@ -213,11 +213,7 @@ final class RealtimeClientImpl implements RealtimeClient {
       case RealtimeSessionStateChangedEvent(:final realtimeId, :final peerId):
         final session = _sessions[realtimeId];
         if (session == null || session.peerId != peerId) return;
-        session._applyState(
-          event.state,
-          event.error,
-          revision: event.revision,
-        );
+        session._applyState(event.state, event.error, revision: event.revision);
       case RealtimeSnapshotBackendEvent(:final snapshot):
         final session = _sessions[snapshot.realtimeId];
         if (session == null || session.peerId != snapshot.peerId) return;
@@ -387,11 +383,7 @@ final class _RealtimeSession implements RealtimeSession {
 
   void _applySnapshot(RealtimeSnapshot snapshot) {
     if (_disposed) return;
-    _applyState(
-      snapshot.state,
-      snapshot.error,
-      revision: snapshot.revision,
-    );
+    _applyState(snapshot.state, snapshot.error, revision: snapshot.revision);
   }
 
   void _addVideoFrame(RealtimeVideoFrame frame) {

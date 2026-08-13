@@ -67,42 +67,39 @@ final class _RecordingQueryExecutor implements drift.QueryExecutor {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test(
-    'AppLogService.dispose does not close the bound log database; '
-    'the database owner closes it',
-    () async {
-      final logs = AppLogService.instance;
-      logs.clear();
-      logs.resetDatabaseForTesting();
+  test('AppLogService.dispose does not close the bound log database; '
+      'the database owner closes it', () async {
+    final logs = AppLogService.instance;
+    logs.clear();
+    logs.resetDatabaseForTesting();
 
-      final recording = _RecordingQueryExecutor(NativeDatabase.memory());
-      final db = AppLogDatabase.forTesting(recording);
-      try {
-        await logs.setDatabase(db);
-        await logs.pendingDbWrites;
-        expect(logs.databaseOpen, isTrue);
-        expect(recording.closeCalls, 0);
+    final recording = _RecordingQueryExecutor(NativeDatabase.memory());
+    final db = AppLogDatabase.forTesting(recording);
+    try {
+      await logs.setDatabase(db);
+      await logs.pendingDbWrites;
+      expect(logs.databaseOpen, isTrue);
+      expect(recording.closeCalls, 0);
 
-        // 审计结论：dispose 只取消通知 Timer，不关闭数据库。
-        logs.dispose();
-        expect(logs.activeTimerCount, 0);
-        expect(
-          recording.closeCalls,
-          0,
-          reason: 'AppLogService.dispose must not close the bound log DB',
-        );
+      // 审计结论：dispose 只取消通知 Timer，不关闭数据库。
+      logs.dispose();
+      expect(logs.activeTimerCount, 0);
+      expect(
+        recording.closeCalls,
+        0,
+        reason: 'AppLogService.dispose must not close the bound log DB',
+      );
 
-        // 数据库由其 Owner 显式释放，dispose 关闭 Drift handle 且幂等。
+      // 数据库由其 Owner 显式释放，dispose 关闭 Drift handle 且幂等。
+      await db.dispose();
+      expect(recording.closeCalls, 1);
+      await db.dispose();
+      expect(recording.closeCalls, 1);
+    } finally {
+      if (recording.closeCalls == 0) {
         await db.dispose();
-        expect(recording.closeCalls, 1);
-        await db.dispose();
-        expect(recording.closeCalls, 1);
-      } finally {
-        if (recording.closeCalls == 0) {
-          await db.dispose();
-        }
-        logs.resetDatabaseForTesting();
       }
-    },
-  );
+      logs.resetDatabaseForTesting();
+    }
+  });
 }
