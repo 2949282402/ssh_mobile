@@ -27,7 +27,7 @@ dependencies:
   shadcn_ui: ^0.56.1
 
 dev_dependencies:
-  build_runner: ^2.15.1
+  build_runner: ^2.16.0
   drift_dev: ^2.34.5
   flutter_lints: ^6.0.0
   flutter_test:
