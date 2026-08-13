@@ -10,7 +10,7 @@ resolution: workspace
 dependencies:
   code_assets: ^1.0.0
   ffi: ^2.1.4
-  hooks: ^1.0.0
+  hooks: ^2.1.0
 
 dev_dependencies:
   # 使用宿主 Flutter 应用的测试运行时，避免与工作区 analyzer 版本产生分叉。
