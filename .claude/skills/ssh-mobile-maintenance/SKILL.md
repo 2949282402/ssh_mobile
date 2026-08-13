@@ -93,8 +93,11 @@ Skill and Memory ownership is governed by
 - Keep user-visible text in the owning localization/string contract.
 - Add focused tests for changed behavior and regressions. Use fakes and bounded
   fixtures; tests must not require real SSH credentials or API keys.
-- Follow local format and naming conventions. Do not split cohesive code merely
-  to satisfy a line-count report.
+- Follow local format and naming conventions, and run the owning format gate
+  (`dart format`/`cargo fmt`/`gofmt`/the front prettier command, plus `dart run
+  melos run format` for the Dart workspace) on every changed file before
+  finishing. CI enforces formatting, so never submit unformatted code. Do not
+  split cohesive code merely to satisfy a line-count report.
 - Develop and validate inside the WSL Linux environment: run every build, test,
   analyze, and validation command with the Linux toolchain inside WSL; never
   invoke Windows-hosted toolchains (Windows `dart`/`flutter`/`go`/`cargo`/`node`,

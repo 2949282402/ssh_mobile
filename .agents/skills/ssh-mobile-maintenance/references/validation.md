@@ -27,6 +27,31 @@ git status --short
 Review the final diff for unrelated work, secrets, generated noise, stale
 documentation, and accidental public API/dependency changes.
 
+## Formatting
+
+All changed code must be formatted before completion; the CI pipeline enforces
+the same gates, so submitting unformatted code fails the build. Run the owning
+package's format gate (its README/AGENTS lists the exact command) and the
+CI-mirrored checks below:
+
+```bash
+# Dart/Flutter workspace — format the changed lib/test/tool dirs (CI mirrors
+# this in apps/ssh_mobile_full and via melos on the SDK packages):
+dart format --output=none --set-exit-if-changed <changed dirs>
+dart run melos run format   # repo-wide Dart workspace formatting
+# Rust:
+cargo fmt --all -- --check
+# Go:
+gofmt -l <changed dirs>   # fix any listed files with gofmt -w
+# Front (TypeScript/React):
+npm run lint   # plus the package's prettier/format command if present
+```
+
+If a changed file is not formatted, fix it with the formatter (`dart format`,
+`cargo fmt`, `gofmt -w`, the front prettier command) and re-run the gate until
+clean. Do not commit unformatted code, and never bypass the gate with a
+no-op/`--set-exit-if-changed` false pass.
+
 ## Agent knowledge and documentation
 
 After a canonical Skill change:
