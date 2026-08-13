@@ -84,32 +84,33 @@ final class AppSftpConnectionCatalogAdapter extends ChangeNotifier
     implements feature_sftp.SftpConnectionCatalogPort {
   /// 创建适配器并转发 ConnectionViewModel 的列表变化。
   AppSftpConnectionCatalogAdapter(this._viewModel) {
-    _viewModel.addListener(_forwardChanged);
+    _viewModel?.addListener(_forwardChanged);
   }
 
-  final feature_connection.ConnectionViewModel _viewModel;
+  final feature_connection.ConnectionViewModel? _viewModel;
   bool _disposed = false;
 
   @override
-  bool get isLoading => _viewModel.isLoading;
+  bool get isLoading => _viewModel?.isLoading ?? false;
 
   @override
-  List<feature_sftp.SftpConnectionInfo> get connections => _viewModel
-      .connections
-      .map(
-        (connection) => feature_sftp.SftpConnectionInfo(
-          id: connection.id,
-          name: connection.name,
-          host: connection.host,
-          port: connection.port,
-          username: connection.username,
-        ),
-      )
-      .toList(growable: false);
+  List<feature_sftp.SftpConnectionInfo> get connections =>
+      _viewModel?.connections
+          .map(
+            (connection) => feature_sftp.SftpConnectionInfo(
+              id: connection.id,
+              name: connection.name,
+              host: connection.host,
+              port: connection.port,
+              username: connection.username,
+            ),
+          )
+          .toList(growable: false) ??
+      const [];
 
   @override
   Future<void> reorderConnections(int oldIndex, int newIndex) =>
-      _viewModel.reorderConnections(oldIndex, newIndex);
+      _viewModel?.reorderConnections(oldIndex, newIndex) ?? Future.value();
 
   void _forwardChanged() {
     if (!_disposed) notifyListeners();
@@ -120,7 +121,7 @@ final class AppSftpConnectionCatalogAdapter extends ChangeNotifier
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _viewModel.removeListener(_forwardChanged);
+    _viewModel?.removeListener(_forwardChanged);
     super.dispose();
   }
 }
@@ -601,7 +602,7 @@ final class _AppSftpModuleScopeState extends State<AppSftpModuleScope> {
     _module = feature_sftp.SftpModule();
     _settings = AppSftpSettingsAdapter(context.read<AppSettings>());
     _catalog = AppSftpConnectionCatalogAdapter(
-      context.read<feature_connection.ConnectionViewModel>(),
+      context.read<feature_connection.ConnectionViewModel?>(),
     );
     _hostKey = AppSftpHostKeyConfirmationAdapter(() => context);
     _logger = AppSftpLoggerAdapter(context.read<AppLogService>());
