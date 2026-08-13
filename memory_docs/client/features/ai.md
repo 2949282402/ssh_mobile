@@ -17,6 +17,12 @@ fall back to an in-memory production store.
 
 ## Execution boundaries
 
+- Encode OpenAI-compatible JSON request bodies as UTF-8 bytes. Streaming
+  parsers must tolerate fragmented tool-call deltas and a usage-only chunk
+  before the terminal marker.
+- Preserve provider-required reasoning payloads across the provider's tool
+  rounds, while keeping hidden reasoning out of future model context and
+  redacted persisted traces.
 - Tool visibility is an execution boundary, not only a model hint. A hidden or
   unexposed tool never reaches approval, execution, cache, loop guard, or budget paths.
 - Remote writes and sensitive reads require approval bound to immutable target

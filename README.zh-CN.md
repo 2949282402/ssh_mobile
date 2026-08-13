@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-13
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -365,7 +365,7 @@ Codex 主要用于：
 - 在修复问题的同时生成回归测试；
 - 执行结构化代码审查，定位旧状态覆盖、并发竞争和安全边界绕过问题；
 - 通过 `.agents/skills/ssh-mobile-maintenance/SKILL.md` 固化维护规则；
-- 使用 `AGENT_MEMORY.md` 保存非敏感的跨会话架构决策；
+- 使用 scoped `memory_docs/` 保存已核验的非敏感项目知识；
 - 在保留修改前执行可复现的格式化、代码生成、静态分析、测试、覆盖率和构建检查。
 
 ### GPT-5.6 实现阶段：2026 年 7 月 10 日起
@@ -592,15 +592,17 @@ GPT-5.6 实现阶段开始时，项目使用 Flutter 3.44.2 和 Dart 3.12.2 完�
 
 ## Agent 协作文件
 
-- Codex 维护 Skill：`.agents/skills/ssh-mobile-maintenance/SKILL.md`
-- Claude Code 维护 Skill：`.claude/skills/ssh-mobile-maintenance/SKILL.md`
-- 跨会话非敏感项目记忆：`AGENT_MEMORY.md`
+- Canonical 维护 Skill：`.agents/skills/ssh-mobile-maintenance/SKILL.md`
+- Claude Code 生成镜像：`.claude/skills/ssh-mobile-maintenance/SKILL.md`
+- 任务路由：`.agents/skills/ssh-mobile-maintenance/references/memory-map.md`
+- Scoped 项目 Memory：`memory_docs/`
+- 临时旧兼容入口（待退役）：`AGENT_MEMORY.md`
 
-修改共享 Skill 后执行：
+修改 canonical Skill 后，生成并校验镜像：
 
 ```powershell
+.\scripts\sync_agent_skills.ps1 -Mode SyncFromAgents
 .\scripts\sync_agent_skills.ps1 -Mode Check
-.\scripts\sync_agent_skills.ps1 -Mode Link -Force
 ```
 
 不要在 Agent Skill、项目记忆、日志、测试、截图或文档中保存密码、私钥、API Key、Token 或服务器凭据。

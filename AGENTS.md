@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-13
 
 ## Project Structure & Module Organization
 
@@ -302,8 +302,8 @@ Run and platform builds:
 
 Agent skill sync (run after editing shared skills):
 
+- `powershell -ExecutionPolicy Bypass -File .\scripts\sync_agent_skills.ps1 -Mode SyncFromAgents`
 - `powershell -ExecutionPolicy Bypass -File .\scripts\sync_agent_skills.ps1 -Mode Check`
-- `powershell -ExecutionPolicy Bypass -File .\scripts\sync_agent_skills.ps1 -Mode Link -Force`
 
 ## Coding Style & Naming Conventions
 
@@ -326,4 +326,4 @@ Recent commit subjects are short and direct, often English or Chinese, for examp
 
 ## Security & Agent-Specific Notes
 
-Never commit passwords, private keys, API keys, tokens, or server credentials. Store secrets through `flutter_secure_storage`, not `SharedPreferences`, and keep exports credential-free. Read `AGENT_MEMORY.md` before non-trivial maintenance work. Keep `.agents/skills/ssh-mobile-maintenance/SKILL.md` and `.claude/skills/ssh-mobile-maintenance/SKILL.md` synchronized with `.\scripts\sync_agent_skills.ps1 -Mode Check` after skill edits.
+Never commit passwords, private keys, API keys, tokens, or server credentials. Store secrets through `flutter_secure_storage`, not `SharedPreferences`, and keep exports credential-free. Route non-trivial work through `.agents/skills/ssh-mobile-maintenance/references/memory-map.md` and the scoped `memory_docs/`; `AGENT_MEMORY.md` is only a temporary compatibility entry pending retirement. Treat `.agents/skills/ssh-mobile-maintenance/SKILL.md` as canonical; generate the `.claude` mirror with `.\scripts\sync_agent_skills.ps1 -Mode SyncFromAgents` and verify it with `-Mode Check` after skill edits.

@@ -11,6 +11,10 @@
 - Provider selectors reduce rebuilds only when selected values have stable
   identity. Prefer cached snapshots or revision counters over allocating lists
   or scanning large collections during selection.
+- Keep a `ReorderableListView` item's stable key on the immediate child returned
+  by its builder; wrapping the keyed child breaks reorder identity.
+- Memoize xterm `TerminalStyle` and `TerminalTheme` values while their inputs
+  are unchanged; new object identities invalidate renderer caches.
 - Large remote-output decoding, SFTP entry construction/sorting, and monitoring
   parsing stay off the UI isolate; only final state assignment belongs on it.
 - In widget tests, restore debug platform overrides inside the `testWidgets`

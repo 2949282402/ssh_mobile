@@ -1,4 +1,4 @@
-> Last updated: 2026-08-12
+> Last updated: 2026-08-13
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -396,7 +396,7 @@ Codex accelerated the project by:
 - generating regression tests alongside fixes;
 - running structured code review and identifying stale state, race conditions, and security-boundary violations;
 - keeping maintenance instructions synchronized through `.agents/skills/ssh-mobile-maintenance/SKILL.md`;
-- preserving non-sensitive architectural decisions in `AGENT_MEMORY.md`;
+- preserving verified, non-sensitive project knowledge in scoped `memory_docs/`;
 - using deterministic formatting, generation, analysis, test, coverage, and build commands before changes were retained.
 
 ### GPT-5.6 implementation period: July 10 onward
@@ -708,15 +708,17 @@ See [docs/VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md) for the original vali
 
 ## Agent Collaboration Files
 
-- Codex maintenance skill: `.agents/skills/ssh-mobile-maintenance/SKILL.md`
-- Claude Code maintenance skill: `.claude/skills/ssh-mobile-maintenance/SKILL.md`
-- Non-sensitive cross-session project memory: `AGENT_MEMORY.md`
+- Canonical maintenance skill: `.agents/skills/ssh-mobile-maintenance/SKILL.md`
+- Generated Claude Code mirror: `.claude/skills/ssh-mobile-maintenance/SKILL.md`
+- Task routing: `.agents/skills/ssh-mobile-maintenance/references/memory-map.md`
+- Scoped project memory: `memory_docs/`
+- Temporary legacy compatibility entry (pending retirement): `AGENT_MEMORY.md`
 
-After modifying a shared skill, run:
+After modifying a canonical skill, generate and verify the mirror:
 
 ```powershell
+.\scripts\sync_agent_skills.ps1 -Mode SyncFromAgents
 .\scripts\sync_agent_skills.ps1 -Mode Check
-.\scripts\sync_agent_skills.ps1 -Mode Link -Force
 ```
 
 Never store passwords, private keys, API keys, tokens, or server credentials in agent skills, project memory, logs, tests, screenshots, or documentation.

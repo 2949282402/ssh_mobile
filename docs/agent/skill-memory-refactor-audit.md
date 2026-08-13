@@ -182,6 +182,6 @@ Canonical owner 保持为各 ADR 自身。Memory 只保留当前约束摘要与�
 - [x] ADR、Architecture 和专题文档已列入完整路径清单并分类。
 - [x] 重复、过期、冲突和历史内容已记录。
 - [x] Canonical governance、scoped Memory 与 Memory Map 已建立。
-- [ ] Skill/Claude mirror 已切换为单向知识链。
+- [x] Skill/Claude mirror 已切换为单向知识链。
 - [ ] 旧 Memory 与 `.workbuddy` 日志已退役。
 - [ ] 轻量引用守卫、CI 与六类路由验收已完成。

@@ -1,8 +1,6 @@
 param(
-  [ValidateSet('Check', 'Link', 'CopyFromAgents', 'CopyFromClaude')]
-  [string] $Mode = 'Check',
-
-  [switch] $Force
+  [ValidateSet('Check', 'SyncFromAgents')]
+  [string] $Mode = 'Check'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,6 +30,19 @@ function Get-Sha256 {
   (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash
 }
 
+function Get-SkillNames {
+  param([string] $Directory)
+  if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
+    return @()
+  }
+  @(
+    Get-ChildItem -LiteralPath $Directory -Directory |
+      Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'SKILL.md') -PathType Leaf } |
+      Select-Object -ExpandProperty Name |
+      Sort-Object
+  )
+}
+
 function Copy-Skill {
   param(
     [string] $From,
@@ -44,75 +55,45 @@ function Copy-Skill {
   Copy-Item -LiteralPath $From -Destination $To -Force
 }
 
-# Collect all unique skill names from both directories
-$skillNames = @()
-if (Test-Path -LiteralPath $agentsSkillsDir -PathType Container) {
-  $skillNames += Get-ChildItem -LiteralPath $agentsSkillsDir -Directory | Select-Object -ExpandProperty Name
-}
-if (Test-Path -LiteralPath $claudeSkillsDir -PathType Container) {
-  $skillNames += Get-ChildItem -LiteralPath $claudeSkillsDir -Directory | Select-Object -ExpandProperty Name
-}
-$skillNames = $skillNames | Sort-Object -Unique
+$agentsNames = @(Get-SkillNames $agentsSkillsDir)
+$claudeNames = @(Get-SkillNames $claudeSkillsDir)
 
-if ($skillNames.Count -eq 0) {
-  Write-Host "No agent skills found to synchronize."
+if ($agentsNames.Count -eq 0) {
+  throw 'No canonical skills found under .agents/skills.'
+}
+
+if ($Mode -eq 'Check') {
+  $nameDiff = @(Compare-Object -ReferenceObject $agentsNames -DifferenceObject $claudeNames)
+  if ($nameDiff.Count -ne 0) {
+    $details = ($nameDiff | ForEach-Object { "$($_.InputObject) $($_.SideIndicator)" }) -join ', '
+    throw "Canonical and Claude skill sets differ: $details. Run -Mode SyncFromAgents after resolving any Claude-only orphan."
+  }
+
+  foreach ($skill in $agentsNames) {
+    $agentsSkill = Join-Path $agentsSkillsDir "$skill\SKILL.md"
+    $claudeSkill = Join-Path $claudeSkillsDir "$skill\SKILL.md"
+    Assert-ExistingFile $agentsSkill
+    Assert-ExistingFile $claudeSkill
+    if ((Get-Sha256 $agentsSkill) -ne (Get-Sha256 $claudeSkill)) {
+      throw "Skill '$skill' mirror differs. Run -Mode SyncFromAgents."
+    }
+    Write-Host "Skill '$skill' mirror is synchronized."
+  }
+
+  Write-Host 'All generated Claude skill mirrors are synchronized.'
   return
 }
 
-foreach ($skill in $skillNames) {
-  $agentsSkill = Join-Path $agentsSkillsDir "$skill\SKILL.md"
-  $claudeSkill = Join-Path $claudeSkillsDir "$skill\SKILL.md"
-
-  Write-Host "Processing skill: $skill"
-
-  switch ($Mode) {
-    'Check' {
-      Assert-ExistingFile $agentsSkill
-      Assert-ExistingFile $claudeSkill
-      $agentsHash = Get-Sha256 $agentsSkill
-      $claudeHash = Get-Sha256 $claudeSkill
-      if ($agentsHash -ne $claudeHash) {
-        throw "Skill '$skill' files differ. Run with -Mode CopyFromAgents, -Mode CopyFromClaude, or -Mode Link -Force."
-      }
-      Write-Host "  - Skill '$skill' files are synchronized."
-    }
-
-    'Link' {
-      Assert-ExistingFile $agentsSkill
-      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $claudeSkill) | Out-Null
-      if (Test-Path -LiteralPath $claudeSkill -PathType Leaf) {
-        if (-not $Force -and ((Get-Sha256 $agentsSkill) -ne (Get-Sha256 $claudeSkill))) {
-          throw "Claude skill '$skill' differs. Re-run with -Force to replace it with a hard link to the Codex skill."
-        }
-        Remove-Item -LiteralPath $claudeSkill -Force
-      }
-      try {
-        New-Item -ItemType HardLink -Path $claudeSkill -Target $agentsSkill | Out-Null
-        Write-Host "  - Created hard link for '$skill'."
-      } catch {
-        Copy-Skill -From $agentsSkill -To $claudeSkill
-        Write-Warning "  - Hard link failed for '$skill'; copied instead. Details: $($_.Exception.Message)"
-      }
-    }
-
-    'CopyFromAgents' {
-      if (Test-Path -LiteralPath $agentsSkill -PathType Leaf) {
-        Copy-Skill -From $agentsSkill -To $claudeSkill
-        Write-Host "  - Copied Codex skill '$skill' to Claude skill."
-      } else {
-        Write-Warning "  - Codex skill '$skill' does not exist; skipping copy."
-      }
-    }
-
-    'CopyFromClaude' {
-      if (Test-Path -LiteralPath $claudeSkill -PathType Leaf) {
-        Copy-Skill -From $claudeSkill -To $agentsSkill
-        Write-Host "  - Copied Claude skill '$skill' to Codex skill."
-      } else {
-        Write-Warning "  - Claude skill '$skill' does not exist; skipping copy."
-      }
-    }
-  }
+$claudeOnly = @($claudeNames | Where-Object { $_ -notin $agentsNames })
+if ($claudeOnly.Count -ne 0) {
+  throw "Refusing to overwrite Claude-only skill(s): $($claudeOnly -join ', '). Remove or migrate them explicitly first."
 }
 
-Write-Host "Synchronization complete for all skills in $Mode mode."
+foreach ($skill in $agentsNames) {
+  $agentsSkill = Join-Path $agentsSkillsDir "$skill\SKILL.md"
+  $claudeSkill = Join-Path $claudeSkillsDir "$skill\SKILL.md"
+  Copy-Skill -From $agentsSkill -To $claudeSkill
+  Write-Host "Generated Claude mirror for '$skill'."
+}
+
+Write-Host 'Generated all Claude skill mirrors from canonical .agents sources.'
