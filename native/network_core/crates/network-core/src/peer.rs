@@ -3021,6 +3021,22 @@ mod tests {
         }
     }
 
+    async fn wait_for_active_task_count(
+        supervisor: &crate::task_supervisor::RuntimeTaskSupervisor,
+        expected: usize,
+    ) {
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if supervisor.active_count() == expected {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("supervisor did not reach {expected} active tasks"));
+    }
+
     #[tokio::test]
     async fn relay_wins_when_direct_is_still_connecting() {
         let route = race_first_ready(
@@ -3306,7 +3322,7 @@ mod tests {
             .await
             .expect("old Session cancellation did not complete")
             .expect("old Session sentinel signal was dropped");
-        assert_eq!(state.task_supervisor.active_count(), 2);
+        wait_for_active_task_count(&state.task_supervisor, 2).await;
         assert_eq!(
             state.sessions.current_session_id(peer_id).await,
             Some(new_session_id)
