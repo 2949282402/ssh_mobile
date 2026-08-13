@@ -1,4 +1,4 @@
-最新更新时间：2026-08-12
+最新更新时间：2026-08-13
 
 # network_transport Package Guidelines
 
@@ -47,10 +47,10 @@ flutter analyze --no-pub
 flutter test --no-pub
 ```
 
-修改公共 API 或 AppRuntime Owner 时，必须同步根 `README`、`AGENTS`、架构执行记录、
-Agent memory 和维护 Skill。
+修改公共 API 或 AppRuntime Owner 时，必须同步 package/root contracts 与相关
+Architecture；只有满足治理门槛的跨包当前知识才更新 Client/SDK scoped Memory。
 
-## Step29 标准字段
+## Package contract fields
 
 - 允许修改范围：Network Runtime/Facade、Capability、native adapter、传输契约和测试。
 - 禁止依赖：Feature、App Shell 业务实现或其他 Package 的 `/src/`；不得新增第二套协议实现。

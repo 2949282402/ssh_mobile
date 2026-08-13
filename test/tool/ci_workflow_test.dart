@@ -58,6 +58,16 @@ void main() {
     );
   }
 
+  final architectureCheck = _jobSection(workflow, 'architecture-check');
+  _expect(
+    architectureCheck.contains('dart run tool/check_agent_docs.dart'),
+    'architecture-check 必须运行 Agent 文档检查器',
+  );
+  _expect(
+    architectureCheck.contains('dart run test/tool/agent_docs_check_test.dart'),
+    'architecture-check 必须运行 Agent 文档检查器回归测试',
+  );
+
   final clientQuality = _jobSection(workflow, 'analyze-and-test');
   _expect(
     _countOccurrences(
@@ -171,6 +181,9 @@ const _requiredWorkflowMarkers = <String>[
   'flutter analyze --no-fatal-infos',
   'flutter test --coverage --reporter expanded',
   'dart run tool/architecture_check.dart',
+  'dart run tool/check_agent_docs.dart',
+  'dart run test/tool/agent_docs_check_test.dart',
+  './scripts/sync_agent_skills.ps1 -Mode Check',
   'dart run tool/compatibility_check.dart',
   'dart run tool/duplicate_implementation_check.dart',
   'dart run melos run analyze',

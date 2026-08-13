@@ -3239,6 +3239,7 @@ mod tests {
             .local_addr()
             .expect("outbound GenericRoute test endpoint");
         let (release_tx, release_rx) = oneshot::channel();
+        let (received_frame_tx, received_frame_rx) = oneshot::channel();
         let expected_old_binding = old_session_id.wire_key();
         let expected_local_peer_id = local_peer_id.to_string();
         let responder_task = tokio::spawn(async move {
@@ -3266,6 +3267,13 @@ mod tests {
             .await
             .expect("complete outbound GenericRoute authentication");
             assert_eq!(authenticated.peer_id, local_peer_id);
+            let received_frame = timeout(Duration::from_secs(1), connection.recv())
+                .await
+                .expect("outbound GenericRoute frame was not received")
+                .expect("read outbound GenericRoute frame");
+            received_frame_tx
+                .send(received_frame)
+                .expect("send received GenericRoute frame to test");
             release_rx.await.expect("release responder connection");
         });
 
@@ -3327,6 +3335,27 @@ mod tests {
             state.sessions.current_session_id(peer_id).await,
             Some(new_session_id)
         );
+
+        let payload = b"replacement-route-still-alive";
+        timeout(
+            Duration::from_secs(1),
+            state
+                .sessions
+                .send_channel_frame(peer_id, "", GenericFrameKind::DataMessage, payload),
+        )
+        .await
+        .expect("sending through replacement GenericRoute timed out")
+        .expect("replacement GenericRoute should still send frames");
+        let received_frame = timeout(Duration::from_secs(1), received_frame_rx)
+            .await
+            .expect("replacement GenericRoute frame confirmation timed out")
+            .expect("replacement GenericRoute frame confirmation was dropped");
+        let mut expected_frame = b"SMGF".to_vec();
+        expected_frame.extend_from_slice(&network_protocol::NETWORK_PROTOCOL_VERSION.to_be_bytes());
+        expected_frame.push(GenericFrameKind::DataMessage as u8);
+        expected_frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        expected_frame.extend_from_slice(payload);
+        assert_eq!(received_frame, expected_frame);
 
         let current_route = state
             .sessions
