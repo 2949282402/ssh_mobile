@@ -9,11 +9,12 @@ import '../runtime/network_capability.dart';
 final class NetworkConfig {
   /// 创建默认网络配置。
   ///
-  /// QUIC 和 WSS Relay 是当前 native v1 已存在的能力；TCP/UDP 在当前 Step
-  /// 仍明确返回 unsupported，不通过默认配置伪造支持。
+  /// Native runtime、QUIC、WSS Relay 和 Realtime 是当前 native v1 已存在的
+  /// 能力；TCP/UDP 在当前 Step 仍明确返回 unsupported，不通过默认配置伪造支持。
   const NetworkConfig({
     this.enableQuic = true,
     this.enableWebSocketRelay = true,
+    this.enableRuntime = true,
     this.enableRealtime = true,
   });
 
@@ -23,6 +24,9 @@ final class NetworkConfig {
   /// 是否允许初始化 WSS Relay 能力。
   final bool enableWebSocketRelay;
 
+  /// 是否允许初始化 App Scope native runtime。
+  final bool enableRuntime;
+
   /// Whether native WebRTC Realtime may be initialized.
   final bool enableRealtime;
 
@@ -30,6 +34,7 @@ final class NetworkConfig {
   bool allows(NetworkCapability capability) => switch (capability) {
     NetworkCapability.quic => enableQuic,
     NetworkCapability.webSocketRelay => enableWebSocketRelay,
+    NetworkCapability.runtime => enableRuntime,
     NetworkCapability.realtime => enableRealtime,
     NetworkCapability.tcp || NetworkCapability.udp => false,
   };

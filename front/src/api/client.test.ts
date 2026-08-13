@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { REQUEST_TIMEOUT_MS, request } from './client';
 import { authApi } from './auth';
 import { devicesApi } from './devices';
 import { overviewApi } from './overview';
+import { overviewSchema } from '../schemas/overview';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -79,5 +81,171 @@ describe('admin API client', () => {
     await expect(authApi.login('admin', 'wrong-password')).rejects.toMatchObject({ status: 401 });
     expect(unauthorized).not.toHaveBeenCalled();
     window.removeEventListener('relay:unauthorized', unauthorized);
+  });
+
+  it('does not emit the expiry event while checking the session', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      error: { code: 'unauthorized', message: 'not signed in' },
+    }, 401));
+    const unauthorized = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    window.addEventListener('relay:unauthorized', unauthorized);
+
+    await expect(authApi.session()).rejects.toMatchObject({ status: 401 });
+    expect(unauthorized).not.toHaveBeenCalled();
+    window.removeEventListener('relay:unauthorized', unauthorized);
+  });
+
+  it('passes an AbortSignal through and preserves caller cancellation', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockImplementation((_path: string, init: RequestInit) => new Promise<never>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = request('/api/admin/v1/overview', overviewSchema, { signal: controller.signal });
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/v1/overview', expect.objectContaining({
+      signal: expect.any(AbortSignal),
+    }));
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('converts a stalled request into a bounded timeout error', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn().mockImplementation((_path: string, init: RequestInit) => new Promise<never>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const pending = request('/api/admin/v1/overview', overviewSchema);
+      // Attach the rejection handler up-front so the timer-driven rejection is
+      // observed instead of surfacing as an unhandled rejection mid-advance.
+      const assertion = expect(pending).rejects.toMatchObject({
+        status: 0,
+        message: 'Relay 请求超时，请稍后重试。',
+      });
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the timeout after a mutation-style request settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(request('/api/admin/v1/devices/device-a/revoke', overviewSchema, { method: 'POST' })).resolves.toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('honors a caller signal that is already aborted before the request starts', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchMock = vi.fn().mockImplementation((_path: string, init: RequestInit) => new Promise<never>((_resolve, reject) => {
+      if (init.signal?.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'));
+      } else {
+        init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      }
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(request('/api/admin/v1/overview', overviewSchema, { signal: controller.signal }))
+      .rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({
+      signal: expect.any(AbortSignal),
+    }));
+    expect((fetchMock.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
+  it('cleans up the timeout timer and the caller abort listener after caller cancellation', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const signal = controller.signal;
+      const addEventListener = vi.spyOn(signal, 'addEventListener');
+      const removeEventListener = vi.spyOn(signal, 'removeEventListener');
+      const fetchMock = vi.fn().mockImplementation((_path: string, init: RequestInit) => new Promise<never>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const pending = request('/api/admin/v1/overview', overviewSchema, { signal });
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(vi.getTimerCount()).toBe(1);
+
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+
+      expect(vi.getTimerCount()).toBe(0);
+      expect(addEventListener).toHaveBeenCalledWith('abort', expect.any(Function), { once: true });
+      expect(removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('classifies a timeout that fires before a caller abort as a timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const fetchMock = vi.fn().mockImplementation((_path: string, init: RequestInit) => new Promise<never>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const pending = request('/api/admin/v1/overview', overviewSchema, { signal: controller.signal });
+      const assertion = expect(pending).rejects.toMatchObject({
+        status: 0,
+        message: 'Relay 请求超时，请稍后重试。',
+      });
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      controller.abort();
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('classifies a caller abort that fires before the timeout as a cancellation', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const fetchMock = vi.fn().mockImplementation((_path: string, init: RequestInit) => new Promise<never>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const pending = request('/api/admin/v1/overview', overviewSchema, { signal: controller.signal });
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+
+      // The winning caller abort clears the timeout, so advancing past the
+      // deadline must not retroactively reclassify the result as a timeout.
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects a schema mismatch without exposing the response body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ server_time: 'not-a-number' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(overviewApi.get()).rejects.toMatchObject({
+      status: 200,
+      message: 'Relay 返回的数据格式无效。',
+    });
   });
 });

@@ -78,6 +78,20 @@ final class _FakeBootstrapClient implements BootstrapClient {
       protocolVersion: 1,
     ),
   );
+
+  @override
+  Future<SdkResult<DeviceEnrollment>> refresh(
+    Uri endpoint,
+    RefreshRequest request,
+  ) async => SdkSuccess(
+    DeviceEnrollment(
+      deviceId: request.deviceId,
+      relayCredential: 'fake-refreshed',
+      expiresAt: DateTime.utc(2030),
+      serverTime: DateTime.utc(2029),
+      protocolVersion: 1,
+    ),
+  );
 }
 
 final class _FakeSettings extends ChangeNotifier

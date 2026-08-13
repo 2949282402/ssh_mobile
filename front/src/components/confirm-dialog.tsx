@@ -1,6 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { Button, IconButton } from './ui';
+
+const FOCUSABLE_SELECTOR = [
+  'button:not([disabled])',
+  '[href]',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
 
 export function ConfirmDialog({
   title,
@@ -20,17 +29,68 @@ export function ConfirmDialog({
   onCancel: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const loadingRef = useRef(loading);
+  const cancelRef = useRef(onCancel);
+  const titleId = useId();
+  const descriptionId = useId();
 
   useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    cancelRef.current = onCancel;
+  }, [onCancel]);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     dialogRef.current?.focus();
+
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !loading) {
-        onCancel();
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+
+      if (event.key === 'Escape') {
+        if (!loadingRef.current) {
+          event.preventDefault();
+          cancelRef.current();
+        }
+        return;
       }
+
+      if (event.key !== 'Tab') return;
+
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const activeElement = document.activeElement;
+      const activeIndex = focusable.indexOf(activeElement as HTMLElement);
+      const nextIndex = event.shiftKey
+        ? activeIndex <= 0 ? focusable.length - 1 : activeIndex - 1
+        : activeIndex === focusable.length - 1 ? 0 : activeIndex + 1;
+
+      if (activeIndex === -1 || activeElement === dialog) {
+        event.preventDefault();
+        focusable[event.shiftKey ? focusable.length - 1 : 0]?.focus();
+        return;
+      }
+
+      event.preventDefault();
+      focusable[nextIndex]?.focus();
     };
+
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [loading, onCancel]);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, []);
 
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
@@ -40,7 +100,8 @@ export function ConfirmDialog({
         className="dialog"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="confirm-dialog-title"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
         tabIndex={-1}
         ref={dialogRef}
       >
@@ -50,8 +111,8 @@ export function ConfirmDialog({
             <X size={17} />
           </IconButton>
         </div>
-        <h2 id="confirm-dialog-title">{title}</h2>
-        <p>{description}</p>
+        <h2 id={titleId}>{title}</h2>
+        <p id={descriptionId}>{description}</p>
         <div className="dialog__actions">
           <Button variant="quiet" onClick={onCancel} disabled={loading}>取消</Button>
           <Button variant={tone} loading={loading} onClick={onConfirm}>{confirmLabel}</Button>

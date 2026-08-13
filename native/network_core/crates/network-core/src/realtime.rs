@@ -23,7 +23,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::events::{
-    emit_realtime_signal, emit_realtime_state, protocol_error, protocol_error_with_peer,
+    emit_realtime_signal, emit_realtime_snapshot, emit_realtime_state, protocol_error,
+    protocol_error_with_peer,
 };
 use crate::runtime::RuntimeState;
 
@@ -783,12 +784,22 @@ async fn handle_io_event(
             false
         }
         RealtimeIoEvent::PeerConnected => {
+            let revision = session_revision(state, realtime_id).await;
             emit_realtime_state(
                 &state.event_tx,
                 realtime_id,
                 peer_id,
                 RealtimeSessionState::Connected as i32,
-                session_revision(state, realtime_id).await,
+                revision,
+                None,
+            );
+            // Session 稳定后发布完整快照；订阅方在 delta 状态之后看到一致快照。
+            emit_realtime_snapshot(
+                &state.event_tx,
+                realtime_id,
+                peer_id,
+                RealtimeSessionState::Connected as i32,
+                revision,
                 None,
             );
             false
@@ -1099,8 +1110,61 @@ fn boxed_message(message: impl Into<String>) -> Box<dyn std::error::Error + Send
 #[cfg(test)]
 mod tests {
     use super::*;
+    use network_protocol::network_event;
     use network_webrtc::DataChannelReliability;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn realtime_snapshot_carries_authoritative_state_and_revision_after_connected() {
+        let (event_tx, mut event_rx) = unbounded_channel();
+        let state = RuntimeState::new(event_tx, Arc::new(std::sync::atomic::AtomicU16::new(0)));
+        let realtime_id = "00112233445566778899aabbccddeeff";
+        {
+            let mut manager = state.realtime.lock().await;
+            manager.sessions.insert(
+                realtime_id.into(),
+                RealtimeSession {
+                    peer_id: "peer-a".into(),
+                    peer: None,
+                    driver: None,
+                    revision: 7,
+                    remote_revision: 2,
+                    ice_revision: 3,
+                    seen_candidates: HashSet::new(),
+                },
+            );
+        }
+        let finished = handle_io_event(
+            &state,
+            realtime_id,
+            "peer-a",
+            RealtimeIoEvent::PeerConnected,
+        )
+        .await;
+        assert!(!finished);
+        let mut state_events = Vec::new();
+        let mut snapshots = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            match event.payload {
+                Some(network_event::Payload::RealtimeState(delta)) => state_events.push(delta),
+                Some(network_event::Payload::RealtimeSnapshot(snapshot)) => {
+                    snapshots.push(snapshot)
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(state_events.len(), 1);
+        assert_eq!(
+            state_events[0].state,
+            RealtimeSessionState::Connected as i32
+        );
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].realtime_id, realtime_id);
+        assert_eq!(snapshots[0].peer_id, "peer-a");
+        assert_eq!(snapshots[0].state, RealtimeSessionState::Connected as i32);
+        assert_eq!(snapshots[0].revision, 7);
+        assert!(snapshots[0].error.is_none());
+    }
 
     #[test]
     fn signaling_envelope_round_trips_revision_and_binary_payload() {

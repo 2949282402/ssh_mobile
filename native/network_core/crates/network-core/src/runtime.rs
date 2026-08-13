@@ -167,6 +167,9 @@ pub(crate) struct RuntimeState {
     pub(crate) relay_config: RwLock<Option<crate::relay::RelayReconnectConfig>>,
     pub(crate) relay_reconnect_task: Mutex<Option<TaskId>>,
     pub(crate) relay_reconnect_active: AtomicBool,
+    /// 当前 Relay 凭据已被服务端判定过期/冲突；在 Dart 下发新的
+    /// ConfigureRelayCommand 前抑制所有自动重连。
+    pub(crate) relay_credential_stale: AtomicBool,
     pub(crate) relay_acceptances:
         RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
@@ -214,6 +217,7 @@ impl RuntimeState {
             relay_config: RwLock::new(None),
             relay_reconnect_task: Mutex::new(None),
             relay_reconnect_active: AtomicBool::new(false),
+            relay_credential_stale: AtomicBool::new(false),
             relay_acceptances: RwLock::new(HashMap::new()),
             relay_completions: RwLock::new(HashMap::new()),
             relay_lookups: RwLock::new(HashMap::new()),

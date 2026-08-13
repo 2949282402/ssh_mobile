@@ -157,6 +157,110 @@ final class JsonBootstrapClient implements BootstrapClient {
     }
   }
 
+  @override
+  Future<SdkResult<DeviceEnrollment>> refresh(
+    Uri endpoint,
+    RefreshRequest request,
+  ) async {
+    if (request.deviceId.isEmpty || request.deviceId.length > 128) {
+      return const SdkFailure(
+        NetworkError(
+          code: NetworkErrorCode.invalidArgument,
+          message: 'Refresh device identity is invalid.',
+          operation: NetworkOperation.refreshCredential,
+        ),
+      );
+    }
+    if (request.identityPublicKey.length != 32) {
+      return const SdkFailure(
+        NetworkError(
+          code: NetworkErrorCode.invalidArgument,
+          message: 'Refresh identity key is invalid.',
+          operation: NetworkOperation.refreshCredential,
+        ),
+      );
+    }
+    if (request.nonce.isEmpty || request.signature.isEmpty) {
+      return const SdkFailure(
+        NetworkError(
+          code: NetworkErrorCode.invalidArgument,
+          message: 'Refresh proof is invalid.',
+          operation: NetworkOperation.refreshCredential,
+        ),
+      );
+    }
+    try {
+      final payload = <String, dynamic>{
+        'device_id': request.deviceId,
+        'public_key': _base64Url(request.identityPublicKey),
+        'nonce': request.nonce,
+        'signature': request.signature,
+      };
+      final response = await _send(
+        SdkRequest(
+          method: 'POST',
+          uri: _resolve(endpoint, '/v1/devices/refresh'),
+          headers: const <String, String>{
+            'content-type': 'application/json',
+            'accept': 'application/json',
+          },
+          body: _encodeJson(payload),
+        ),
+      );
+      if (!response.isSuccessful) {
+        final error = _httpError(response, NetworkOperation.refreshCredential);
+        // 404 表示设备未 enrollment（例如 relay 重启丢失状态），需要重新 enroll。
+        // 共享映射将其归为 relayError；这里收敛为 noRoute 作为稳定的 typed
+        // 重-enroll 信号，供 Feature 区分，而不解析错误消息字符串。
+        if (response.statusCode == 404) {
+          return SdkFailure(error.copyWith(code: NetworkErrorCode.noRoute));
+        }
+        return SdkFailure(error);
+      }
+      final body = _decodeMap(response.body);
+      if (body == null) {
+        return const SdkFailure(
+          NetworkError(
+            code: NetworkErrorCode.relayError,
+            message: 'Refresh response is invalid.',
+            operation: NetworkOperation.refreshCredential,
+          ),
+        );
+      }
+      final credential = body['credential'];
+      final responseVersion = _readInt(body['protocol_version']);
+      final expiresAt = _readUnixTime(body['expires_at']);
+      final serverTime = _readUnixTime(body['server_time']);
+      if (credential is! String ||
+          credential.isEmpty ||
+          responseVersion != protocolVersion ||
+          expiresAt == null ||
+          serverTime == null ||
+          !expiresAt.isAfter(serverTime)) {
+        return const SdkFailure(
+          NetworkError(
+            code: NetworkErrorCode.relayError,
+            message: 'Refresh response is invalid.',
+            operation: NetworkOperation.refreshCredential,
+          ),
+        );
+      }
+      return SdkSuccess(
+        DeviceEnrollment(
+          deviceId: request.deviceId,
+          relayCredential: credential,
+          expiresAt: expiresAt,
+          serverTime: serverTime,
+          protocolVersion: responseVersion!,
+        ),
+      );
+    } on Object catch (error) {
+      return SdkFailure(
+        _transportError(error, NetworkOperation.refreshCredential),
+      );
+    }
+  }
+
   Future<SdkResponse> _send(SdkRequest request) =>
       executor.execute(request).timeout(requestTimeout);
 }
@@ -326,15 +430,25 @@ ConnectionTicket _parseConnectionTicket(SdkResponse response, String peerId) {
 }
 
 NetworkError _httpError(SdkResponse response, NetworkOperation operation) {
+  final errorBody = _decodeMap(response.body);
+  final deviceCode = _readInt(errorBody?['code']);
   final code = switch (response.statusCode) {
-    401 || 403 => NetworkErrorCode.authenticationFailed,
+    409 => NetworkErrorCode.identityConflict,
+    401 || 403 =>
+      deviceCode == NetworkErrorCode.credentialExpired.wireValue
+          ? NetworkErrorCode.credentialExpired
+          : NetworkErrorCode.authenticationFailed,
     408 || 429 || >= 500 => NetworkErrorCode.timeout,
     _ => NetworkErrorCode.relayError,
   };
   return NetworkError(
     code: code,
-    message: _safeMessageFor(code),
+    message: errorBody?['message'] is String
+        ? errorBody!['message'] as String
+        : _safeMessageFor(code),
     operation: operation,
+    retryDisposition: _readRetryDisposition(errorBody?['retry_disposition']),
+    retryAfterSeconds: _readInt(errorBody?['retry_after_seconds']) ?? 0,
   );
 }
 
@@ -396,6 +510,10 @@ String _base64Url(Uint8List value) =>
     base64UrlEncode(value).replaceAll('=', '');
 
 int? _readInt(Object? value) => value is num ? value.toInt() : null;
+
+RetryDisposition _readRetryDisposition(Object? value) => value is num
+    ? RetryDisposition.fromWire(value.toInt())
+    : RetryDisposition.unspecified;
 
 DateTime? _readUnixTime(Object? value) {
   final seconds = _readInt(value);

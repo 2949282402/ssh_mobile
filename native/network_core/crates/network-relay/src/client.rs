@@ -43,6 +43,12 @@ pub enum RelayError {
     /// Relay 设备认证失败。
     #[error("Relay authentication failed: {0}")]
     Authentication(String),
+    /// Relay 凭据已过期；重连必须等待新的 ConfigureRelayCommand。
+    #[error("Relay credential expired: {0}")]
+    CredentialExpired(String),
+    /// Relay 设备身份冲突；该错误是终态的，不应盲目重连。
+    #[error("Relay identity conflict: {0}")]
+    IdentityConflict(String),
     /// Relay v1 帧或控制字段不符合协议。
     #[error("Relay protocol error: {0}")]
     Protocol(String),
@@ -182,7 +188,7 @@ impl RelayClient {
         let (socket, _) = tokio::time::timeout(SOCKET_OPERATION_TIMEOUT, connect_async(request))
             .await
             .map_err(|_| RelayError::Socket("connection timed out".into()))?
-            .map_err(|error| RelayError::Socket(error.to_string()))?;
+            .map_err(map_connect_error)?;
         let (mut writer, mut reader) = socket.split();
         let ready = tokio::time::timeout(std::time::Duration::from_secs(8), reader.next())
             .await
@@ -684,6 +690,36 @@ fn normalize_relay_url(value: &str) -> Result<Url, RelayError> {
     Ok(url)
 }
 
+/// 将 v1 WebSocket 升级失败映射为类型化 Relay 错误。HTTP 层错误携带设备面
+/// JSON `code`（12=凭据过期，13=身份冲突）；其余传输错误保持 `Socket`。
+fn map_connect_error(error: tokio_tungstenite::tungstenite::Error) -> RelayError {
+    match error {
+        tokio_tungstenite::tungstenite::Error::Http(response) => {
+            let status = response.status();
+            let device_code = response
+                .body()
+                .as_ref()
+                .and_then(|body| serde_json::from_slice::<Value>(body).ok())
+                .and_then(|value| value.get("code").and_then(Value::as_u64));
+            match device_code {
+                Some(12) => RelayError::CredentialExpired(format!(
+                    "Relay rejected the connection (HTTP {status}, code 12)"
+                )),
+                Some(13) => RelayError::IdentityConflict(format!(
+                    "Relay rejected the connection (HTTP {status}, code 13)"
+                )),
+                Some(code) => RelayError::Authentication(format!(
+                    "Relay rejected the connection (HTTP {status}, code {code})"
+                )),
+                None => RelayError::Authentication(format!(
+                    "Relay rejected the connection with HTTP {status}"
+                )),
+            }
+        }
+        other => RelayError::Socket(other.to_string()),
+    }
+}
+
 /// 校验 Relay v1 ready 帧的设备绑定和协议版本。
 fn validate_ready(message: Message, expected_device_id: &str) -> Result<(), RelayError> {
     let Message::Text(text) = message else {
@@ -978,5 +1014,40 @@ mod tests {
         assert!(validate_session_id("00112233445566778899aabbccddeeff").is_ok());
         assert!(validate_session_id("00112233445566778899AABBCCDDEEFF").is_err());
         assert!(validate_session_id("00112233445566778899aabbccddeef").is_err());
+    }
+
+    #[test]
+    fn connect_error_maps_device_json_code_to_typed_variants() {
+        fn http_error(status: u16, body: &str) -> RelayError {
+            let response = tokio_tungstenite::tungstenite::http::Response::builder()
+                .status(status)
+                .body(Some(body.as_bytes().to_vec()))
+                .expect("response");
+            map_connect_error(tokio_tungstenite::tungstenite::Error::Http(Box::new(
+                response,
+            )))
+        }
+        assert!(matches!(
+            http_error(401, r#"{"code":12,"message":"expired"}"#),
+            RelayError::CredentialExpired(_)
+        ));
+        assert!(matches!(
+            http_error(409, r#"{"code":13,"message":"conflict"}"#),
+            RelayError::IdentityConflict(_)
+        ));
+        assert!(matches!(
+            http_error(401, r#"{"code":2,"message":"bad signature"}"#),
+            RelayError::Authentication(_)
+        ));
+        assert!(matches!(
+            http_error(403, "plain body"),
+            RelayError::Authentication(_)
+        ));
+        assert!(matches!(
+            map_connect_error(tokio_tungstenite::tungstenite::Error::Io(
+                std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset"),
+            )),
+            RelayError::Socket(_)
+        ));
     }
 }

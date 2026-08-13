@@ -1,4 +1,4 @@
-> Last updated: 2026-08-12
+> Last updated: 2026-08-13
 
 # SSH Mobile Control and Relay Server
 
@@ -33,6 +33,23 @@ port, limit, duration, and image value to be present in that file.
 | `RELAY_SESSION_TTL` | Relay session lifetime, using Go duration syntax |
 | `RELAY_ADMIN_SESSION_TTL` | Dashboard administrator session lifetime, using Go duration syntax |
 | `RELAY_MAX_CONNECTIONS` | Positive maximum number of Relay connections |
+| `RELAY_MAX_ENROLLED_DEVICES` | Maximum number of enrolled devices held in memory |
+| `RELAY_MAX_REVOKED_DEVICES` | Maximum number of revocation tombstones held in memory; new revocations fail closed at capacity |
+| `RELAY_MAX_TRANSFER_SESSIONS` | Maximum number of active transfer sessions held in memory |
+| `RELAY_MAX_PENDING_FRAMES_PER_DEVICE` | Maximum queued outbound frames per device |
+| `RELAY_MAX_PENDING_BYTES_PER_DEVICE` | Maximum queued outbound bytes per device |
+| `RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE` | Maximum inbound frames per device per second |
+| `RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE` | Maximum inbound bytes per device per second |
+| `RELAY_MAX_ADMIN_SESSIONS` | Maximum active administrator sessions held in memory |
+| `RELAY_ADMIN_LOGIN_MAX_ATTEMPTS` | Login attempts allowed per IP and username window |
+| `RELAY_ADMIN_LOGIN_WINDOW` | Administrator login limiter window, using Go duration syntax |
+| `RELAY_ADMIN_LOGIN_BLOCK` | Administrator login block duration, using Go duration syntax |
+| `RELAY_MAX_ADMIN_LOGIN_ENTRIES` | Maximum IP/username limiter entries held in memory |
+| `RELAY_HTTP_READ_TIMEOUT` | HTTP request read timeout, using Go duration syntax |
+| `RELAY_HTTP_WRITE_TIMEOUT` | HTTP response write timeout, using Go duration syntax |
+| `RELAY_HTTP_IDLE_TIMEOUT` | HTTP keep-alive idle timeout, using Go duration syntax |
+| `RELAY_HTTP_MAX_HEADER_BYTES` | Maximum HTTP request header bytes |
+| `RELAY_TRUSTED_PROXY_CIDRS` | Comma-separated trusted-proxy CIDRs; empty (default) never honors `X-Forwarded-For`/`X-Real-IP` for the login limiter |
 | `RELAY_ENROLLMENT_TOKEN` | Random enrollment secret, at least 16 characters |
 | `RELAY_CREDENTIAL_KEY` | Base64url-encoded random key containing at least 32 bytes |
 | `RELAY_ADMIN_USER` | Dashboard administrator username |
@@ -73,6 +90,15 @@ uses Caddy for HTTPS/WSS termination and same-origin routing.
 Caddy persists certificate state only. Do not add a relay data volume or
 publish the internal Go port directly to the public internet.
 
+Caddy terminates HTTPS/WSS and reverse-proxies to the Relay on the internal
+network. The bundled Compose file gives the Caddy container a static internal
+address (`172.30.0.10`) and `RELAY_TRUSTED_PROXY_CIDRS` defaults to that
+address so the Relay honors Caddy's forwarded headers for per-client login
+rate limiting. If you change the internal subnet, update
+`RELAY_TRUSTED_PROXY_CIDRS` to match. To run the Relay without a trusted proxy
+in front, set `RELAY_TRUSTED_PROXY_CIDRS=` (empty); forwarded headers are then
+ignored entirely.
+
 ## Security model
 
 - Enrollment accepts protocol version 1 and binds a credential to the device
@@ -83,9 +109,18 @@ publish the internal Go port directly to the public internet.
   the current process. Revocation closes an active socket immediately.
 - Browser WebSocket upgrades use the standard same-origin policy. Native
   clients without an `Origin` header remain supported.
-- Dashboard API routes require an authenticated HttpOnly-cookie session. The
-  front-end renders dynamic device data through React text nodes and loads no
-  external scripts or fonts.
+- Dashboard API routes require an authenticated HttpOnly-cookie session. Every
+  state-changing administrator request rejects cross-site Origin or Fetch
+  Metadata values; requests carrying a body must use `application/json`. Login
+  attempts are rate-limited per client IP and username and return a generic
+  response with a bounded `Retry-After` hint.
+- The login limiter trusts the immediate peer's `RemoteAddr` by default and
+  ignores `X-Forwarded-For`/`X-Real-IP`. Forwarding headers are honored only
+  when that peer is inside an explicitly configured `RELAY_TRUSTED_PROXY_CIDRS`
+  boundary, which prevents a direct deployment from rotating headers to evade
+  the limiter.
+- The front-end renders dynamic device data through React text nodes and loads
+  no external scripts or fonts.
 - Caddy applies restrictive framing, content-type, referrer, and content
   security headers.
 
@@ -105,6 +140,8 @@ boundary: all clients must enroll again.
 - `POST /api/admin/v1/access/enrollment-token/rotate`: authenticated token rotation
 - Legacy `/api/*` dashboard routes are removed; they are not compatibility aliases.
 - `POST /v1/devices/enroll`: protocol-v1 device enrollment
+- `POST /v1/devices/refresh`: re-issue a short-lived credential for an
+  enrolled device, without requiring the enrollment token
 - `GET /v1/connect`: authenticated relay WebSocket
 - No separate control WebSocket route is exposed; device traffic uses the v1
   authenticated Relay connection.
@@ -122,6 +159,31 @@ raw server errors:
 }
 ```
 
+Device-plane errors may optionally carry a retry policy:
+`retry_disposition` is one of `0` unspecified, `1` no_retry, `2`
+retry_with_backoff, `3` retry_after, `4` refresh_credential_then_retry; when
+`retry_disposition=3`, `retry_after_seconds` carries the delay. Both fields are
+omitted when unspecified so existing clients remain backward-compatible.
+
+Stable codes beyond the base set are:
+- `12` credential expired. The connect path returns `401` with
+  `retry_disposition=4` (refresh the credential, then retry); all other auth
+  failures remain `2`.
+- `13` device identity conflict. Enrolling an existing `device_id` with a
+  different public key returns `409` and leaves the existing enrollment (and
+  any active socket) untouched; same-key re-enrollment still succeeds and
+  refreshes the credential TTL.
+- Enroll `429` (device capacity) sets the HTTP `Retry-After: 30` header and
+  emits `retry_disposition=3` with `retry_after_seconds=30`.
+
+`POST /v1/devices/refresh` accepts `{device_id, public_key, nonce, signature}`
+and returns the same shape as enroll (`{credential, expires_at, server_time,
+protocol_version}`). The Ed25519 signature covers the exact transcript
+`"POST\n/v1/devices/refresh\n" + nonce`; the nonce is 32 bytes and is consumed
+with the same per-device replay protection (max 128 live nonces, 5-minute TTL).
+An unknown `device_id` returns `404` with code `1` and tells the client to
+re-enroll; the refresh endpoint never issues the enrollment token.
+
 Admin HTTP failures use a separate versioned error shape:
 
 ```json
@@ -133,9 +195,23 @@ Admin HTTP failures use a separate versioned error shape:
 }
 ```
 
-The admin API currently uses an in-memory HttpOnly session. CSRF header
-binding, origin/fetch-metadata validation, and login rate limiting are planned
-for the next security phase.
+The admin API uses an in-memory HttpOnly session. Administrator sessions,
+enrolled devices, revocation tombstones, transfer sessions, pending per-device
+output, and login limiter entries are all bounded by the `RELAY_MAX_*` settings
+above. Revocation tombstones are also credential-expiry-aware: a tombstone is
+kept only while the revoked device's current credential could still be
+presented, and once the bounded store is saturated with still-in-force
+tombstones, new revocations fail closed instead of evicting an older one. No
+limit introduces persistence: process restart clears every in-memory entry,
+while the configured enrollment secret remains the process configuration
+value.
+
+The Go HTTP server applies read, write, and idle timeouts plus a bounded
+request-header size. Shutdown is signal-driven: HTTP graceful shutdown (up to
+15s) is followed by closing the in-memory Hub and waiting for its peer and
+pruning goroutines to converge, bounded by a 5s hub-close budget. The Compose
+relay service sets `stop_grace_period: 30s`, which exceeds the full 20s
+shutdown budget so Docker does not SIGKILL the process mid-sequence.
 
 The service rejects unsupported protocol versions and does not provide a v1
 compatibility fallback, a `/v1/control` route, or a Dart-side Relay data path.
@@ -165,6 +241,8 @@ compatibility fallback, a `/v1/control` route, or a Dart-side Relay data path.
 
 ```sh
 go fmt ./...
-go vet ./...
 go test ./...
+go test -race ./...
+go vet ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```

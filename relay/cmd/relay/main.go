@@ -3,9 +3,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/ssh-mobile/relay/internal/relay"
@@ -22,14 +25,48 @@ func main() {
 
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
-	httpServer := &http.Server{
-		Addr:              config.Address,
-		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	httpServer := newHTTPServer(config, mux)
 	log.Printf("relay listening on %s", config.Address)
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Printf("relay stopped: %v", err)
-		os.Exit(1)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- httpServer.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErrors:
+		if err != nil && err != http.ErrServerClosed {
+			log.Printf("relay stopped: %v", err)
+			os.Exit(1)
+		}
+	case <-ctx.Done():
+		// Bounded shutdown: HTTP graceful shutdown (15s) is followed by a hub
+		// close that is itself bounded (hubCloseTimeout). The Compose
+		// stop_grace_period must exceed this full 15s + 5s budget so Docker
+		// does not SIGKILL the process mid-sequence.
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := httpServer.Shutdown(shutdownContext); err != nil {
+			log.Printf("relay HTTP shutdown failed: %v", err)
+			_ = httpServer.Close()
+		}
+		cancel()
+		server.Close()
+	}
+}
+
+// newHTTPServer builds the HTTP server with bounded read, write, header and
+// idle limits. It is separated so the write deadline wiring is directly
+// testable.
+func newHTTPServer(config relay.Config, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              config.Address,
+		Handler:           handler,
+		ReadTimeout:       config.HTTPReadTimeout,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      config.HTTPWriteTimeout,
+		IdleTimeout:       config.HTTPIdleTimeout,
+		MaxHeaderBytes:    config.HTTPMaxHeaderBytes,
 	}
 }

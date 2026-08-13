@@ -6,6 +6,17 @@ Choose the smallest set that exercises the changed owner and its public
 consumers. Run broader gates when ownership, dependency, lifecycle, protocol,
 generated artifacts, or shared behavior changes.
 
+## Environment
+
+This repository is developed and validated inside the WSL Linux environment.
+Run every build, test, analyze, format, lint, and validation command with the
+Linux toolchain inside WSL — never with Windows-hosted toolchains or launchers:
+Windows `dart`/`flutter`/`go`/`cargo`/`node`, `.bat`/`.cmd` launchers,
+`powershell.exe`, `cmd.exe`, or any Windows binary reached through a mounted
+Windows drive. Prefer the Linux `go`/`cargo`/`flutter`/`dart`/`node` on the WSL
+PATH. When a required check cannot run under the WSL Linux toolchain, report the
+exact command and reason instead of falling back to a Windows binary.
+
 ## Always
 
 ```bash
@@ -15,6 +26,31 @@ git status --short
 
 Review the final diff for unrelated work, secrets, generated noise, stale
 documentation, and accidental public API/dependency changes.
+
+## Formatting
+
+All changed code must be formatted before completion; the CI pipeline enforces
+the same gates, so submitting unformatted code fails the build. Run the owning
+package's format gate (its README/AGENTS lists the exact command) and the
+CI-mirrored checks below:
+
+```bash
+# Dart/Flutter workspace — format the changed lib/test/tool dirs (CI mirrors
+# this in apps/ssh_mobile_full and via melos on the SDK packages):
+dart format --output=none --set-exit-if-changed <changed dirs>
+dart run melos run format   # repo-wide Dart workspace formatting
+# Rust:
+cargo fmt --all -- --check
+# Go:
+gofmt -l <changed dirs>   # fix any listed files with gofmt -w
+# Front (TypeScript/React):
+npm run lint   # plus the package's prettier/format command if present
+```
+
+If a changed file is not formatted, fix it with the formatter (`dart format`,
+`cargo fmt`, `gofmt -w`, the front prettier command) and re-run the gate until
+clean. Do not commit unformatted code, and never bypass the gate with a
+no-op/`--set-exit-if-changed` false pass.
 
 ## Agent knowledge and documentation
 

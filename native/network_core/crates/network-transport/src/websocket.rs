@@ -15,6 +15,11 @@ pub struct WebSocketTransport {
     socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
 }
 
+pub(crate) type WebSocketReader =
+    futures_util::stream::SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
+pub(crate) type WebSocketWriter =
+    futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
+
 impl WebSocketTransport {
     pub async fn connect(url: &str) -> Result<Self, TransportError> {
         let parsed = Url::parse(url).map_err(|_| TransportError::InvalidUrl)?;
@@ -69,10 +74,54 @@ impl WebSocketTransport {
         Err(TransportError::Closed)
     }
 
+    pub(crate) fn into_split(self) -> (WebSocketReader, WebSocketWriter) {
+        let (writer, reader) = self.socket.split();
+        (reader, writer)
+    }
+
     pub async fn close(&mut self) -> Result<(), TransportError> {
         self.socket
             .close(None)
             .await
             .map_err(|error| TransportError::WebSocket(error.to_string()))
     }
+}
+
+pub(crate) async fn recv_binary(socket: &mut WebSocketReader) -> Result<Vec<u8>, TransportError> {
+    while let Some(message) = socket.next().await {
+        let message = message.map_err(|error| TransportError::WebSocket(error.to_string()))?;
+        match message {
+            Message::Binary(payload) if payload.len() <= MAX_WEBSOCKET_MESSAGE_BYTES => {
+                return Ok(payload.to_vec());
+            }
+            Message::Binary(_) => return Err(TransportError::FrameTooLarge),
+            Message::Close(_) => return Err(TransportError::Closed),
+            Message::Ping(_) | Message::Pong(_) => {}
+            Message::Text(_) | Message::Frame(_) => {
+                return Err(TransportError::InvalidFrame);
+            }
+        }
+    }
+    Err(TransportError::Closed)
+}
+
+pub(crate) async fn send_binary(
+    socket: &mut WebSocketWriter,
+    payload: &[u8],
+) -> Result<usize, TransportError> {
+    if payload.is_empty() || payload.len() > MAX_WEBSOCKET_MESSAGE_BYTES {
+        return Err(TransportError::FrameTooLarge);
+    }
+    socket
+        .send(Message::Binary(payload.to_vec().into()))
+        .await
+        .map_err(|error| TransportError::WebSocket(error.to_string()))?;
+    Ok(payload.len())
+}
+
+pub(crate) async fn close(socket: &mut WebSocketWriter) -> Result<(), TransportError> {
+    socket
+        .close()
+        .await
+        .map_err(|error| TransportError::WebSocket(error.to_string()))
 }

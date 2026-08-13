@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use network_nat::{Candidate, CandidateSignal, CandidateSignalKind, DEFAULT_CONNECT_WINDOW_MS};
 use network_protocol::{
     ConfigureRelayCommand, DataMessage, DeliveryAck, NetworkError as ProtocolError,
-    NetworkErrorCode, RouteType,
+    NetworkErrorCode, RetryDisposition, RouteType,
 };
 use network_relay::{RelayClient, RelayError, RelayEvent};
 use network_transfer::{
@@ -25,7 +25,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::crypto::{self, CryptoMode, APPLICATION_CRYPTO_SUITE};
 use crate::events::{
     emit_incoming_offer, emit_transfer_completed, emit_transfer_error, emit_transfer_progress,
-    protocol_error, protocol_error_with_context,
+    protocol_error, protocol_error_with_context, protocol_error_with_retry,
 };
 use crate::runtime::{
     PeerConfig, RuntimeState, INCOMING_APPROVAL_TIMEOUT, MAX_PENDING_INCOMING_TRANSFERS,
@@ -93,6 +93,10 @@ pub(crate) async fn configure_relay_for_state(
     command: ConfigureRelayCommand,
 ) -> Result<(), ProtocolError> {
     stop_relay_reconnect_task(&state).await;
+    // 新的 ConfigureRelayCommand 携带新凭据，重置过期标记并清空旧配置。
+    state
+        .relay_credential_stale
+        .store(false, std::sync::atomic::Ordering::Release);
     state.relay_config.write().await.take();
     let previous = state.relay.write().await.take();
     if let Some(previous) = previous {
@@ -124,7 +128,7 @@ pub(crate) async fn configure_relay_for_state(
     };
     let (relay, events) = connect_relay_client(&device_id, &config)
         .await
-        .map_err(|error| protocol_error(NetworkErrorCode::RelayError, error.to_string()))?;
+        .map_err(|error| relay_connect_protocol_error(&error, "configure_relay"))?;
     *state.relay_config.write().await = Some(config);
     *state.relay.write().await = Some(Arc::clone(&relay));
     state
@@ -172,6 +176,35 @@ async fn connect_relay_client(
     Ok((Arc::new(relay), events))
 }
 
+/// 将 Relay connect 失败映射为类型化协议错误。凭据过期/身份冲突是终态错误，
+/// 其余仍走通用的 Relay 传输错误，保持既有退避重连行为。
+fn relay_connect_protocol_error(error: &RelayError, operation: &str) -> ProtocolError {
+    match error {
+        RelayError::CredentialExpired(_) => protocol_error_with_retry(
+            NetworkErrorCode::CredentialExpired,
+            error.to_string(),
+            operation,
+            None,
+            RetryDisposition::RefreshCredentialThenRetry,
+            0,
+        ),
+        RelayError::IdentityConflict(_) => protocol_error_with_retry(
+            NetworkErrorCode::IdentityConflict,
+            error.to_string(),
+            operation,
+            None,
+            RetryDisposition::NoRetry,
+            0,
+        ),
+        _ => protocol_error_with_context(
+            NetworkErrorCode::RelayError,
+            error.to_string(),
+            operation,
+            None,
+        ),
+    }
+}
+
 /// 只在 socket 意外结束时启动一个共享重连任务；显式 DisconnectRelay 会先清除配置，
 /// 因此不会被这个后台任务重新拉起。
 fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
@@ -181,6 +214,17 @@ fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
     {
         return;
     }
+    if state
+        .relay_credential_stale
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        // 凭据已被判定过期/冲突，盲目重连只会复用失效凭据；等待 Dart 下发新的
+        // ConfigureRelayCommand 后再恢复。
+        state
+            .relay_reconnect_active
+            .store(false, std::sync::atomic::Ordering::Release);
+        return;
+    }
     let reconnect_state = Arc::clone(&state);
     let task_id = state
         .task_supervisor
@@ -188,6 +232,12 @@ fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
             let mut backoff = crate::runtime::RECONNECT_INITIAL_BACKOFF;
             loop {
                 tokio::time::sleep(backoff).await;
+                if reconnect_state
+                    .relay_credential_stale
+                    .load(std::sync::atomic::Ordering::Acquire)
+                {
+                    break;
+                }
                 let Some(config) = reconnect_state.relay_config.read().await.clone() else {
                     break;
                 };
@@ -217,6 +267,23 @@ fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
                             ),
                         );
                         crate::transfer::resume_relay_transfers(Arc::clone(&reconnect_state)).await;
+                        break;
+                    }
+                    Err(error)
+                        if matches!(
+                            &error,
+                            RelayError::CredentialExpired(_) | RelayError::IdentityConflict(_)
+                        ) =>
+                    {
+                        // 终态认证错误：标记凭据失效、发布类型化 Failed，并停止重连。
+                        reconnect_state
+                            .relay_credential_stale
+                            .store(true, std::sync::atomic::Ordering::Release);
+                        crate::events::emit_relay_state(
+                            &reconnect_state.event_tx,
+                            network_protocol::RelayConnectionState::Failed,
+                            Some(relay_connect_protocol_error(&error, "reconnect_relay")),
+                        );
                         break;
                     }
                     Err(error) => {
@@ -895,7 +962,11 @@ async fn handle_relay_disconnect(
             None,
         )),
     );
-    if state.relay_config.read().await.is_some() {
+    if state.relay_config.read().await.is_some()
+        && !state
+            .relay_credential_stale
+            .load(std::sync::atomic::Ordering::Acquire)
+    {
         crate::events::emit_relay_state(
             &state.event_tx,
             network_protocol::RelayConnectionState::Connecting,
@@ -2086,6 +2157,51 @@ mod tests {
             relay_manifest_hash(&manifest),
             relay_manifest_hash(&changed)
         );
+    }
+
+    #[test]
+    fn relay_connect_error_maps_credential_expired_and_identity_conflict_as_terminal() {
+        let expired = relay_connect_protocol_error(
+            &RelayError::CredentialExpired("expired".into()),
+            "configure_relay",
+        );
+        assert_eq!(expired.code, NetworkErrorCode::CredentialExpired as i32);
+        assert_eq!(
+            expired.retry_disposition,
+            RetryDisposition::RefreshCredentialThenRetry as i32
+        );
+
+        let conflict = relay_connect_protocol_error(
+            &RelayError::IdentityConflict("conflict".into()),
+            "configure_relay",
+        );
+        assert_eq!(conflict.code, NetworkErrorCode::IdentityConflict as i32);
+        assert_eq!(conflict.retry_disposition, RetryDisposition::NoRetry as i32);
+
+        let transient =
+            relay_connect_protocol_error(&RelayError::Socket("boom".into()), "configure_relay");
+        assert_eq!(transient.code, NetworkErrorCode::RelayError as i32);
+        assert_eq!(
+            transient.retry_disposition,
+            RetryDisposition::Unspecified as i32
+        );
+    }
+
+    #[test]
+    fn relay_reconnect_is_suppressed_when_credential_is_stale() {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        state
+            .relay_credential_stale
+            .store(true, std::sync::atomic::Ordering::Release);
+        schedule_relay_reconnect(Arc::clone(&state));
+        assert!(!state
+            .relay_reconnect_active
+            .load(std::sync::atomic::Ordering::Acquire));
+        assert!(state.relay_reconnect_task.lock().unwrap().is_none());
     }
 
     #[test]

@@ -67,6 +67,14 @@ void main() {
     architectureCheck.contains('dart run test/tool/agent_docs_check_test.dart'),
     'architecture-check 必须运行 Agent 文档检查器回归测试',
   );
+  _expect(
+    architectureCheck.contains('dart run tool/check_module_dependencies.dart'),
+    'architecture-check 必须运行模块依赖检查器',
+  );
+  _expect(
+    architectureCheck.contains('dart run tool/check_resource_owners.dart'),
+    'architecture-check 必须运行资源 Owner 检查器',
+  );
 
   final clientQuality = _jobSection(workflow, 'analyze-and-test');
   _expect(
@@ -183,6 +191,8 @@ const _requiredWorkflowMarkers = <String>[
   'dart run tool/architecture_check.dart',
   'dart run tool/check_agent_docs.dart',
   'dart run test/tool/agent_docs_check_test.dart',
+  'dart run tool/check_module_dependencies.dart',
+  'dart run tool/check_resource_owners.dart',
   './scripts/sync_agent_skills.ps1 -Mode Check',
   'dart run tool/compatibility_check.dart',
   'dart run tool/duplicate_implementation_check.dart',

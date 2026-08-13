@@ -801,6 +801,9 @@ extension LanTransferClientApi on LanTransferService {
   }
 
   /// 使用指数退避重试暂时性失败，最多重试 3 次。
+  ///
+  /// 尊重服务端建议的 [RetryDisposition]：`noRetry` 立即停止；`retryAfter` 使用
+  /// 服务端建议秒数（上限 60s）作为延迟；其余保持既有 `retryable` 指数退避行为。
   Future<NetworkResult<T>> _executeWithRetry<T>(
     Future<NetworkResult<T>> Function() action, {
     int maxAttempts = 3,
@@ -814,19 +817,19 @@ extension LanTransferClientApi on LanTransferService {
         if (result is NetworkSuccess<T>) return result;
         final failure = result as NetworkFailure<T>;
         lastFailure = failure;
-        if (!failure.error.code.retryable || attempt == maxAttempts) {
+        if (!failure.error.retryable || attempt == maxAttempts) {
           return failure;
         }
       } catch (e) {
         lastFailure = NetworkFailure(
           lanNetworkError(e, operation: operation, peerId: peerId),
         );
-        if (attempt == maxAttempts || !lastFailure.error.code.retryable) {
+        if (attempt == maxAttempts || !lastFailure.error.retryable) {
           return lastFailure;
         }
       }
       if (attempt < maxAttempts) {
-        await Future.delayed(Duration(milliseconds: 500 * attempt));
+        await Future.delayed(_retryDelay(lastFailure.error, attempt));
       }
     }
     return lastFailure ??
@@ -838,5 +841,14 @@ extension LanTransferClientApi on LanTransferService {
             peerId: peerId,
           ),
         );
+  }
+
+  /// 根据服务端建议选择重试延迟；未建议时使用既有指数退避。
+  Duration _retryDelay(NetworkError error, int attempt) {
+    if (error.retryDisposition == RetryDisposition.retryAfter &&
+        error.retryAfterSeconds > 0) {
+      return Duration(seconds: error.retryAfterSeconds.clamp(1, 60));
+    }
+    return Duration(milliseconds: 500 * attempt);
   }
 }

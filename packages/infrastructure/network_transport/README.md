@@ -10,6 +10,11 @@
 
 - `NetworkRuntime` 由 AppRuntime 创建和释放，Feature 只能通过依赖注入使用；
 - Capability 初始化按需进行，支持并发共享、失败重试和 dispose 后拒绝使用；
+  `NetworkCapability.runtime` 只表示 native command-worker handle 存在，与
+  QUIC、WSS Relay 和 Realtime 等具体 transport capability 分离；
+- Wave 1 中唯一的数据面配置仍走现有 `ConfigureRuntime`，该入口会无条件初始化
+  直接 QUIC/TCP 基础设施；真正的 QUIC-free WSS-only 数据面路径推迟到 v1 协议
+  切换（Wave 2），当前并不存在。`runtime` 就绪并不代表 WSS 数据面已独立配置；
 - `NetworkRuntime.diagnostics` 只报告 Facade 自己拥有的 ready Capability、native
   handle 和已登记连接；当前具体协议连接仍由各协议 Service Owner 管理，因此
   `activeConnections` 在尚未登记连接时为零；
@@ -20,6 +25,7 @@
   基础合约；具体 LAN、SSH、SFTP 业务协议不归本包所有；
 - `NetworkCommandGateway` 是连接 App Scope Runtime 与现有 v1 命令/事件服务的
   非拥有型桥接；它可以被 App Shell adapter 借用，但不会复制或关闭 native handle；
+  `openCommandGateway()` 只要求 `runtime` capability，不会隐式启用 QUIC；
 - `openRealtimeGateway()` 返回同一 Runtime-owned native handle 上的非拥有型 typed
   Realtime gateway；start/stop 返回带 `commandId` 和 queue status 的
   `NativeCommandTicket`，App Shell 负责关联 `NativeCommandResultEvent` 和映射状态，

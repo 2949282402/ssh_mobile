@@ -4,14 +4,25 @@
 //! framed streams, UDP provides connected datagrams, and WebSocket provides
 //! binary messages. Session identity, Delivery/Recovery, application E2EE, and
 //! route selection remain owned by higher layers.
+//!
+//! [`Transport::into_split`] is available for every transport, including UDP.
+//! UDP remains a datagram primitive only: it is not eligible for acknowledged,
+//! ordered, or file-delivery (reliable-message) generic routes.
 
 mod tcp;
 mod udp;
 mod websocket;
 
+#[cfg(feature = "testkit")]
+pub mod testkit;
+
 pub use tcp::{TcpTransport, MAX_STREAM_FRAME_BYTES};
 pub use udp::{UdpTransport, MAX_DATAGRAM_BYTES};
 pub use websocket::{WebSocketTransport, MAX_WEBSOCKET_MESSAGE_BYTES};
+
+use tcp::{TcpReader, TcpWriter};
+use udp::{UdpReader, UdpWriter};
+use websocket::{WebSocketReader, WebSocketWriter};
 
 use std::net::SocketAddr;
 
@@ -45,6 +56,35 @@ pub enum Transport {
     Tcp(TcpTransport),
     Udp(UdpTransport),
     WebSocket(Box<WebSocketTransport>),
+    /// Test-only deterministic write gate. Compiled only with `testkit`.
+    #[cfg(feature = "testkit")]
+    Gated(Box<testkit::GatedTransport>),
+}
+
+enum TransportReaderKind {
+    Tcp(TcpReader),
+    Udp(UdpReader),
+    WebSocket(WebSocketReader),
+}
+
+/// Read half of a generic transport. It owns no write-side state, so a
+/// blocked writer cannot prevent the carrier from receiving ACK/Data frames.
+pub struct TransportReader {
+    inner: TransportReaderKind,
+}
+
+enum TransportWriterKind {
+    Tcp(TcpWriter),
+    Udp(UdpWriter),
+    WebSocket(WebSocketWriter),
+    #[cfg(feature = "testkit")]
+    Gated(testkit::GatedWriter),
+}
+
+/// Write half of a generic transport. Dropping it cancels an in-flight write
+/// by dropping the underlying Tokio/Futures I/O future and socket half.
+pub struct TransportWriter {
+    inner: TransportWriterKind,
 }
 
 impl Transport {
@@ -67,6 +107,75 @@ impl Transport {
             Self::Tcp(_) => TransportKind::Tcp,
             Self::Udp(_) => TransportKind::Udp,
             Self::WebSocket(_) => TransportKind::WebSocket,
+            #[cfg(feature = "testkit")]
+            Self::Gated(transport) => transport.kind(),
+        }
+    }
+
+    /// Wraps any transport writer with a deterministic write gate for tests.
+    ///
+    /// Compiled only with the `testkit` feature and never used in production.
+    /// The returned transport keeps a real reader half and parks the first
+    /// `send` on the supplied gate, so a test can prove an in-flight write does
+    /// not stall the read half and that cancellation preempts it.
+    #[cfg(feature = "testkit")]
+    pub fn with_gated_writer(self, gate: testkit::WriterGate) -> Self {
+        let kind = self.kind();
+        let (reader, writer) = self.into_split();
+        Self::Gated(Box::new(testkit::GatedTransport {
+            kind,
+            reader,
+            writer: testkit::GatedWriter {
+                inner: Box::new(writer.inner),
+                gate,
+            },
+        }))
+    }
+
+    /// Splits the carrier into independently polled read and write halves.
+    /// Framing and size limits remain identical to the unsplit surface.
+    ///
+    /// For UDP the two halves share the connected socket, so closing one half
+    /// releases only that half's reference; the other half keeps delivering
+    /// datagrams until it is dropped. UDP is a datagram primitive only and is
+    /// not eligible for reliable-message generic routes.
+    pub fn into_split(self) -> (TransportReader, TransportWriter) {
+        match self {
+            Self::Tcp(transport) => {
+                let (reader, writer) = transport.into_split();
+                (
+                    TransportReader {
+                        inner: TransportReaderKind::Tcp(reader),
+                    },
+                    TransportWriter {
+                        inner: TransportWriterKind::Tcp(writer),
+                    },
+                )
+            }
+            Self::Udp(transport) => {
+                let (reader, writer) = transport.into_split();
+                (
+                    TransportReader {
+                        inner: TransportReaderKind::Udp(reader),
+                    },
+                    TransportWriter {
+                        inner: TransportWriterKind::Udp(writer),
+                    },
+                )
+            }
+            Self::WebSocket(transport) => {
+                let (reader, writer) = transport.into_split();
+                (
+                    TransportReader {
+                        inner: TransportReaderKind::WebSocket(reader),
+                    },
+                    TransportWriter {
+                        inner: TransportWriterKind::WebSocket(writer),
+                    },
+                )
+            }
+            #[cfg(feature = "testkit")]
+            Self::Gated(transport) => transport.into_split(),
         }
     }
 
@@ -76,6 +185,8 @@ impl Transport {
             Self::Tcp(transport) => transport.send_frame(payload).await,
             Self::Udp(transport) => transport.send_datagram(payload).await,
             Self::WebSocket(transport) => transport.send_binary(payload).await,
+            #[cfg(feature = "testkit")]
+            Self::Gated(transport) => transport.send(payload).await,
         }
     }
 
@@ -85,6 +196,8 @@ impl Transport {
             Self::Tcp(transport) => transport.recv_frame().await,
             Self::Udp(transport) => transport.recv_datagram().await,
             Self::WebSocket(transport) => transport.recv_binary().await,
+            #[cfg(feature = "testkit")]
+            Self::Gated(transport) => transport.recv().await,
         }
     }
 
@@ -93,6 +206,40 @@ impl Transport {
             Self::Tcp(transport) => transport.close().await,
             Self::Udp(transport) => transport.close().await,
             Self::WebSocket(transport) => transport.close().await,
+            #[cfg(feature = "testkit")]
+            Self::Gated(transport) => transport.close().await,
+        }
+    }
+}
+
+impl TransportReader {
+    pub async fn recv(&mut self) -> Result<Vec<u8>, TransportError> {
+        match &mut self.inner {
+            TransportReaderKind::Tcp(reader) => reader.recv_frame().await,
+            TransportReaderKind::Udp(reader) => reader.recv_datagram().await,
+            TransportReaderKind::WebSocket(reader) => websocket::recv_binary(reader).await,
+        }
+    }
+}
+
+impl TransportWriter {
+    pub async fn send(&mut self, payload: &[u8]) -> Result<usize, TransportError> {
+        match &mut self.inner {
+            TransportWriterKind::Tcp(writer) => writer.send_frame(payload).await,
+            TransportWriterKind::Udp(writer) => writer.send_datagram(payload).await,
+            TransportWriterKind::WebSocket(writer) => websocket::send_binary(writer, payload).await,
+            #[cfg(feature = "testkit")]
+            TransportWriterKind::Gated(writer) => writer.send(payload).await,
+        }
+    }
+
+    pub async fn close(&mut self) -> Result<(), TransportError> {
+        match &mut self.inner {
+            TransportWriterKind::Tcp(writer) => writer.close().await,
+            TransportWriterKind::Udp(writer) => writer.close().await,
+            TransportWriterKind::WebSocket(writer) => websocket::close(writer).await,
+            #[cfg(feature = "testkit")]
+            TransportWriterKind::Gated(writer) => writer.close().await,
         }
     }
 }
@@ -100,6 +247,7 @@ impl Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
@@ -184,5 +332,131 @@ mod tests {
             .unwrap();
         assert_eq!(transport.kind(), TransportKind::Tcp);
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn websocket_split_halves_deliver_duplex_binary_frames() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket: WebSocketStream<_> = accept_async(stream).await.unwrap();
+            // Echo the first binary message back to the client.
+            if let Some(Ok(Message::Binary(payload))) =
+                futures_util::StreamExt::next(&mut socket).await
+            {
+                futures_util::SinkExt::send(&mut socket, Message::Binary(payload))
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let transport = Transport::connect_websocket(&format!("ws://{peer}/v1/transport"))
+            .await
+            .unwrap();
+        let (mut reader, mut writer) = transport.into_split();
+        // The halves are independent: send and receive concurrently (duplex).
+        let write = tokio::spawn(async move { writer.send(b"websocket-split").await });
+        let received = tokio::time::timeout(Duration::from_secs(2), reader.recv())
+            .await
+            .expect("split reader did not receive the echo")
+            .unwrap();
+        assert_eq!(received, b"websocket-split");
+        assert_eq!(
+            write.await.expect("split writer task panicked").unwrap(),
+            b"websocket-split".len()
+        );
+        server.await.unwrap();
+    }
+
+    /// A gated WebSocket write parks inside `send` without blocking the read
+    /// half, and cancelling the in-flight write (dropping the send future)
+    /// does not disturb the reader's independent delivery.
+    #[cfg(feature = "testkit")]
+    #[tokio::test]
+    async fn websocket_cancelled_write_keeps_the_reader_half_live() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket: WebSocketStream<_> = accept_async(stream).await.unwrap();
+            // Push an independent frame, then hold the socket open until the
+            // test ends so the reader has a deterministic delivery target.
+            futures_util::SinkExt::send(
+                &mut socket,
+                Message::Binary(b"server-push".to_vec().into()),
+            )
+            .await
+            .unwrap();
+            let _ = futures_util::StreamExt::next(&mut socket).await;
+        });
+
+        let gate = crate::testkit::WriterGate::new();
+        let transport = Transport::connect_websocket(&format!("ws://{peer}/v1/transport"))
+            .await
+            .unwrap();
+        let (mut reader, mut writer) = transport.with_gated_writer(gate.clone()).into_split();
+
+        // Provably park a write inside TransportWriter::send.
+        let write_task = tokio::spawn(async move { writer.send(b"parked").await });
+        gate.entered().await;
+        assert!(
+            !write_task.is_finished(),
+            "gated WebSocket write is not blocked in-flight"
+        );
+
+        // Cancelling the in-flight write does not disturb the read half.
+        write_task.abort();
+        let pushed = tokio::time::timeout(Duration::from_secs(2), reader.recv())
+            .await
+            .expect("reader was blocked after the write was cancelled")
+            .unwrap();
+        assert_eq!(pushed, b"server-push");
+
+        // Releasing the reader half drops the last shared stream reference, so
+        // the socket closes and the server task can observe the connection end.
+        drop(reader);
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .expect("server did not observe the client release")
+            .expect("server task panicked");
+    }
+
+    #[tokio::test]
+    async fn udp_split_halves_share_the_connected_datagram_socket() {
+        let left_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let right_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let left_addr = left_socket.local_addr().unwrap();
+        let right_addr = right_socket.local_addr().unwrap();
+        left_socket.connect(right_addr).await.unwrap();
+        right_socket.connect(left_addr).await.unwrap();
+        let left = Transport::Udp(UdpTransport::from_socket(left_socket, right_addr));
+        let right = Transport::Udp(UdpTransport::from_socket(right_socket, left_addr));
+
+        let (mut left_reader, mut left_writer) = left.into_split();
+        let (mut right_reader, mut right_writer) = right.into_split();
+
+        // Split halves preserve datagram boundaries and full-duplex flow.
+        assert_eq!(
+            left_writer.send(b"split-datagram").await.unwrap(),
+            b"split-datagram".len()
+        );
+        assert_eq!(right_reader.recv().await.unwrap(), b"split-datagram");
+        assert_eq!(right_writer.send(b"reply").await.unwrap(), b"reply".len());
+        assert_eq!(left_reader.recv().await.unwrap(), b"reply");
+
+        // Closing the writer half releases only that half's Arc reference; the
+        // reader half keeps delivering until it is also dropped.
+        left_writer.close().await.unwrap();
+        assert!(matches!(
+            left_writer.send(b"after-close").await,
+            Err(TransportError::Closed)
+        ));
+        assert_eq!(
+            right_writer.send(b"still-live").await.unwrap(),
+            b"still-live".len()
+        );
+        assert_eq!(left_reader.recv().await.unwrap(), b"still-live");
+        right_writer.close().await.unwrap();
     }
 }

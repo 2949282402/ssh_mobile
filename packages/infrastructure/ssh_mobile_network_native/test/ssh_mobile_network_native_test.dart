@@ -158,4 +158,163 @@ void main() {
       throwsA(isA<FormatException>()),
     );
   });
+
+  test('Realtime snapshot event round-trips state and revision (tag 23)', () {
+    final nested = <int>[
+      0x0a,
+      0x20,
+      ...'00112233445566778899aabbccddeeff'.codeUnits,
+      0x12,
+      0x06,
+      ...'peer-a'.codeUnits,
+      0x18,
+      NativeRealtimeSessionState.connected.wireValue,
+      0x20,
+      0x07,
+    ];
+    final frame = Uint8List.fromList(<int>[
+      0x0a,
+      0x03,
+      ...'evt'.codeUnits,
+      0x10,
+      0x7b,
+      0x18,
+      0x01,
+      0xba,
+      0x01,
+      nested.length,
+      ...nested,
+    ]);
+
+    final event = NativeNetworkProtocol.decodeEvent(frame);
+    expect(event, isA<NativeRealtimeSnapshotEvent>());
+    final snapshot = event! as NativeRealtimeSnapshotEvent;
+    expect(snapshot.realtimeId, equals('00112233445566778899aabbccddeeff'));
+    expect(snapshot.peerId, equals('peer-a'));
+    expect(snapshot.state, NativeRealtimeSessionState.connected);
+    expect(snapshot.revision, 7);
+    expect(snapshot.error, isNull);
+  });
+
+  test('Realtime snapshot decodes nested NetworkError with retry fields', () {
+    final errorNested = <int>[
+      0x08,
+      12,
+      0x12,
+      0x03,
+      ...'exp'.codeUnits,
+      0x28,
+      4,
+      0x30,
+      30,
+    ];
+    final nested = <int>[
+      0x0a,
+      0x20,
+      ...'00112233445566778899aabbccddeeff'.codeUnits,
+      0x12,
+      0x06,
+      ...'peer-a'.codeUnits,
+      0x18,
+      NativeRealtimeSessionState.failed.wireValue,
+      0x20,
+      0x03,
+      0x2a,
+      errorNested.length,
+      ...errorNested,
+    ];
+    final frame = Uint8List.fromList(<int>[
+      0x0a,
+      0x03,
+      ...'evt'.codeUnits,
+      0x10,
+      0x7b,
+      0x18,
+      0x01,
+      0xba,
+      0x01,
+      nested.length,
+      ...nested,
+    ]);
+
+    final event = NativeNetworkProtocol.decodeEvent(frame);
+    final snapshot = event! as NativeRealtimeSnapshotEvent;
+    expect(snapshot.state, NativeRealtimeSessionState.failed);
+    expect(snapshot.revision, 3);
+    expect(snapshot.error, isNotNull);
+    expect(snapshot.error!.code, 12);
+    expect(
+      snapshot.error!.retryDisposition,
+      NativeRetryDisposition.refreshCredentialThenRetry,
+    );
+    expect(snapshot.error!.retryAfterSeconds, 30);
+  });
+
+  test('NetworkError decode preserves retry disposition and retry-after', () {
+    final errorNested = <int>[
+      0x08,
+      12,
+      0x12,
+      0x03,
+      ...'exp'.codeUnits,
+      0x28,
+      4,
+      0x30,
+      30,
+    ];
+    final nested = <int>[
+      0x0a,
+      0x03,
+      ...'cmd'.codeUnits,
+      0x10,
+      0x00,
+      0x1a,
+      errorNested.length,
+      ...errorNested,
+    ];
+    final frame = Uint8List.fromList(<int>[
+      0x0a,
+      0x03,
+      ...'evt'.codeUnits,
+      0x10,
+      0x7b,
+      0x18,
+      0x01,
+      0x6a,
+      nested.length,
+      ...nested,
+    ]);
+
+    final event = NativeNetworkProtocol.decodeEvent(frame);
+    expect(event, isA<NativeCommandResultEvent>());
+    final result = event! as NativeCommandResultEvent;
+    expect(result.accepted, isFalse);
+    expect(result.error, isNotNull);
+    expect(result.error!.code, 12);
+    expect(
+      result.error!.retryDisposition,
+      NativeRetryDisposition.refreshCredentialThenRetry,
+    );
+    expect(result.error!.retryAfterSeconds, 30);
+  });
+
+  test('unknown future realtime event tag is ignored', () {
+    final frame = Uint8List.fromList(<int>[
+      0x0a,
+      0x03,
+      ...'evt'.codeUnits,
+      0x10,
+      0x7b,
+      0x18,
+      0x01,
+      0xc2,
+      0x01,
+      0x02,
+      0x08,
+      0x01,
+    ]);
+
+    final event = NativeNetworkProtocol.decodeEvent(frame);
+    expect(event, isNull);
+  });
 }

@@ -26,3 +26,23 @@ export function parseApiError(body: unknown): ApiError | null {
   const parsed = apiErrorSchema.safeParse(body);
   return parsed.success ? parsed.data.error : null;
 }
+
+/**
+ * True when a request was cancelled via an AbortSignal, whether the DOM's
+ * fetch rejected with a DOMException('AbortError') or the caller aborted.
+ * Used to skip spurious error toasts when a page-owned mutation is cancelled
+ * by an unmount.
+ */
+export function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === 'object'
+    && error !== null
+    && 'name' in error
+    && (error as { name?: unknown }).name === 'AbortError'
+  );
+}
+
+export function shouldRetryApiRequest(failureCount: number, error: unknown) {
+  if (error instanceof ApiRequestError && error.status === 401) return false;
+  return failureCount < 1;
+}

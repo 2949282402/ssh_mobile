@@ -2,10 +2,13 @@ import { request } from './client';
 import { enrollmentTokenResponseSchema } from '../schemas/access';
 
 export const accessApi = {
-  token: () => request('/api/admin/v1/access/enrollment-token', enrollmentTokenResponseSchema),
+  token: (signal?: AbortSignal) => request('/api/admin/v1/access/enrollment-token', enrollmentTokenResponseSchema, {
+    ...(signal ? { signal } : {}),
+  }),
 
-  rotateToken: () =>
+  rotateToken: (signal?: AbortSignal) =>
     request('/api/admin/v1/access/enrollment-token/rotate', enrollmentTokenResponseSchema, {
       method: 'POST',
+      ...(signal ? { signal } : {}),
     }),
 };

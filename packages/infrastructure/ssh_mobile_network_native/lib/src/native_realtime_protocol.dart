@@ -61,6 +61,27 @@ enum NativeRealtimeSignalKind {
       );
 }
 
+/// Native `RetryDisposition` wire values mirrored from Rust.
+enum NativeRetryDisposition {
+  unspecified(0),
+  noRetry(1),
+  retryWithBackoff(2),
+  retryAfter(3),
+  refreshCredentialThenRetry(4);
+
+  const NativeRetryDisposition(this.wireValue);
+
+  /// Protobuf enumeration value used by Rust.
+  final int wireValue;
+
+  /// Converts an unknown wire value to [unspecified].
+  static NativeRetryDisposition fromWire(int value) =>
+      NativeRetryDisposition.values.firstWhere(
+        (disposition) => disposition.wireValue == value,
+        orElse: () => NativeRetryDisposition.unspecified,
+      );
+}
+
 /// A redacted, typed native network error.
 final class NativeNetworkError {
   /// Creates a native network error value.
@@ -69,6 +90,8 @@ final class NativeNetworkError {
     required this.message,
     this.operation,
     this.peerId,
+    this.retryDisposition = NativeRetryDisposition.unspecified,
+    this.retryAfterSeconds = 0,
   });
 
   /// Rust `NetworkErrorCode` wire value.
@@ -82,6 +105,13 @@ final class NativeNetworkError {
 
   /// Related peer identifier, when present.
   final String? peerId;
+
+  /// Server-suggested retry policy; [NativeRetryDisposition.unspecified] means
+  /// unspecified.
+  final NativeRetryDisposition retryDisposition;
+
+  /// Server-suggested `RetryAfter` seconds; 0 means unspecified.
+  final int retryAfterSeconds;
 }
 
 /// Base class for typed events emitted by [NativeNetworkRuntime.events].
@@ -149,6 +179,36 @@ final class NativeRealtimeStateChangedEvent extends NativeNetworkEvent {
   final NativeRealtimeSessionState state;
 
   /// Signaling revision associated with this state.
+  final int revision;
+
+  /// Structured failure, when [state] is failed.
+  final NativeNetworkError? error;
+}
+
+/// Realtime session state snapshot published once the session is stable.
+final class NativeRealtimeSnapshotEvent extends NativeNetworkEvent {
+  /// Creates a realtime snapshot event.
+  const NativeRealtimeSnapshotEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.realtimeId,
+    required this.peerId,
+    required this.state,
+    required this.revision,
+    this.error,
+  });
+
+  /// Stable 16-byte lowercase hexadecimal realtime session identifier.
+  final String realtimeId;
+
+  /// Remote peer identifier.
+  final String peerId;
+
+  /// Current native realtime state.
+  final NativeRealtimeSessionState state;
+
+  /// Signaling revision associated with this snapshot.
   final int revision;
 
   /// Structured failure, when [state] is failed.
@@ -285,6 +345,7 @@ final class NativeNetworkProtocol {
         case 13:
         case 21:
         case 22:
+        case 23:
           payloadField = field.number;
           payload = reader.bytes(field.wireType);
         default:
@@ -316,6 +377,12 @@ final class NativeNetworkProtocol {
         eventPayload,
       ),
       22 => _decodeRealtimeSignal(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      23 => _decodeRealtimeSnapshot(
         eventId,
         timestampMs,
         protocolVersion,
@@ -462,12 +529,57 @@ final class NativeNetworkProtocol {
     );
   }
 
+  static NativeRealtimeSnapshotEvent _decodeRealtimeSnapshot(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var realtimeId = '';
+    var peerId = '';
+    var state = 0;
+    var revision = 0;
+    NativeNetworkError? error;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          realtimeId = reader.string(field.wireType, _realtimeIdBytes);
+        case 2:
+          peerId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 3:
+          state = reader.varint(field.wireType);
+        case 4:
+          revision = reader.varint(field.wireType);
+        case 5:
+          error = _decodeError(reader.bytes(field.wireType));
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedRealtimeId(realtimeId);
+    _validateDecodedPeerId(peerId);
+    return NativeRealtimeSnapshotEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      realtimeId: realtimeId,
+      peerId: peerId,
+      state: NativeRealtimeSessionState.fromWire(state),
+      revision: revision,
+      error: error,
+    );
+  }
+
   static NativeNetworkError _decodeError(Uint8List bytes) {
     final reader = _ProtoReader(bytes);
     var code = 0;
     var message = '';
     String? operation;
     String? peerId;
+    var retryDisposition = NativeRetryDisposition.unspecified;
+    var retryAfterSeconds = 0;
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
@@ -479,6 +591,12 @@ final class NativeNetworkProtocol {
           operation = reader.string(field.wireType, _maxCommandIdBytes);
         case 4:
           peerId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 5:
+          retryDisposition = NativeRetryDisposition.fromWire(
+            reader.varint(field.wireType),
+          );
+        case 6:
+          retryAfterSeconds = reader.varint(field.wireType);
         default:
           reader.skip(field.wireType);
       }
@@ -488,6 +606,8 @@ final class NativeNetworkProtocol {
       message: message,
       operation: operation?.isEmpty == true ? null : operation,
       peerId: peerId?.isEmpty == true ? null : peerId,
+      retryDisposition: retryDisposition,
+      retryAfterSeconds: retryAfterSeconds,
     );
   }
 

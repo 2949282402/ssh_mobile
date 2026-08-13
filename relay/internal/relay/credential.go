@@ -20,6 +20,10 @@ type credentialClaims struct {
 	ExpiresAt int64  `json:"expires_at"`
 }
 
+// errCredentialExpired 区分“凭据已过期”与其他认证失败，使连接路径能返回
+// relayErrorCredentialExpired 而不会把过期与非法凭据混为一谈。
+var errCredentialExpired = errors.New("credential is expired")
+
 // issueCredential 为指定设备签发带 HMAC 的短期 v1 凭据。
 func issueCredential(key []byte, deviceID string, publicKey []byte, ttl time.Duration) (string, error) {
 	claims, err := json.Marshal(credentialClaims{
@@ -55,8 +59,11 @@ func verifyCredential(key []byte, token string) (credentialClaims, []byte, error
 		return credentialClaims{}, nil, errors.New("credential signature is invalid")
 	}
 	var claims credentialClaims
-	if err := json.Unmarshal(payload, &claims); err != nil || claims.DeviceID == "" || time.Now().Unix() >= claims.ExpiresAt {
-		return credentialClaims{}, nil, errors.New("credential is invalid or expired")
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.DeviceID == "" {
+		return credentialClaims{}, nil, errors.New("credential is invalid")
+	}
+	if claims.ExpiresAt <= time.Now().Unix() {
+		return credentialClaims{}, nil, errCredentialExpired
 	}
 	publicKey, err := base64.RawURLEncoding.DecodeString(claims.PublicKey)
 	if err != nil || len(publicKey) != ed25519.PublicKeySize {

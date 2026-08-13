@@ -3,9 +3,9 @@
 use network_protocol::{
     network_event, CommandResultEvent, NetworkError as ProtocolError, NetworkErrorCode,
     NetworkEvent, PeerConnectionState, PeerStateChangedEvent, RealtimeSignalEvent,
-    RealtimeStateChangedEvent, RelayConnectionState, RouteTopology as ProtocolRouteTopology,
-    RouteTransport as ProtocolRouteTransport, RouteType, TransferCompletedEvent,
-    TransferFailedEvent, TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
+    RealtimeSnapshotEvent, RealtimeStateChangedEvent, RelayConnectionState, RetryDisposition,
+    RouteTopology as ProtocolRouteTopology, RouteTransport as ProtocolRouteTransport, RouteType,
+    TransferCompletedEvent, TransferFailedEvent, TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -220,6 +220,32 @@ pub(crate) fn emit_realtime_signal(
     });
 }
 
+/// 发布 Realtime Session 稳定后的完整状态快照。该事件在对应的状态 delta 之后
+/// 发布，携带 RealtimeManager 中权威的 `session_id`/`peer_id`/`revision`。
+pub(crate) fn emit_realtime_snapshot(
+    event_tx: &UnboundedSender<NetworkEvent>,
+    realtime_id: &str,
+    peer_id: &str,
+    state: i32,
+    revision: u64,
+    error: Option<ProtocolError>,
+) {
+    let _ = event_tx.send(NetworkEvent {
+        event_id: format!("realtime/{realtime_id}/snapshot/{}", unix_timestamp_ms()),
+        timestamp_ms: unix_timestamp_ms(),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_event::Payload::RealtimeSnapshot(
+            RealtimeSnapshotEvent {
+                realtime_id: realtime_id.to_string(),
+                peer_id: peer_id.to_string(),
+                state,
+                revision,
+                error,
+            },
+        )),
+    });
+}
+
 /// 发布带可选安全错误的类型化 Relay 生命周期事件。
 pub(crate) fn emit_relay_state(
     event_tx: &UnboundedSender<NetworkEvent>,
@@ -312,6 +338,8 @@ pub(crate) fn protocol_error(code: NetworkErrorCode, message: impl Into<String>)
         message: message.into(),
         operation: String::new(),
         peer_id: String::new(),
+        retry_disposition: RetryDisposition::Unspecified as i32,
+        retry_after_seconds: 0,
     }
 }
 
@@ -327,6 +355,27 @@ pub(crate) fn protocol_error_with_context(
         message: message.into(),
         operation: operation.to_string(),
         peer_id: peer_id.unwrap_or_default().to_string(),
+        retry_disposition: RetryDisposition::Unspecified as i32,
+        retry_after_seconds: 0,
+    }
+}
+
+/// 构建带重试策略的协议错误；服务端设备面错误用其覆盖默认的重试行为。
+pub(crate) fn protocol_error_with_retry(
+    code: NetworkErrorCode,
+    message: impl Into<String>,
+    operation: &str,
+    peer_id: Option<&str>,
+    retry_disposition: RetryDisposition,
+    retry_after_seconds: u32,
+) -> ProtocolError {
+    ProtocolError {
+        code: code as i32,
+        message: message.into(),
+        operation: operation.to_string(),
+        peer_id: peer_id.unwrap_or_default().to_string(),
+        retry_disposition: retry_disposition as i32,
+        retry_after_seconds,
     }
 }
 

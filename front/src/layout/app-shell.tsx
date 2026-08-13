@@ -33,7 +33,7 @@ export function AppShell({ username }: { username: string }) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const logoutMutation = useMutation({
-    mutationFn: authApi.logout,
+    mutationFn: () => authApi.logout(),
     onSuccess: () => {
       queryClient.clear();
       void queryClient.invalidateQueries({ queryKey: queryKeys.auth });

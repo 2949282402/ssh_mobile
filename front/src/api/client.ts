@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { ApiRequestError, parseApiError } from './errors';
 
+export const REQUEST_TIMEOUT_MS = 10_000;
+
 async function parseResponse(response: Response): Promise<unknown> {
   const contentType = response.headers.get('content-type') ?? '';
   if (!contentType.includes('application/json')) {
@@ -13,15 +15,41 @@ async function parseResponse(response: Response): Promise<unknown> {
     return null;
   }
 }
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
 export async function request<T>(
   path: string,
   schema: z.ZodType<T>,
   init?: RequestInit,
 ): Promise<T> {
-  let response: Response;
+  const requestController = new AbortController();
+  const callerSignal = init?.signal;
+  let timedOut = false;
+
+  const abortRequest = () => {
+    requestController.abort(callerSignal?.reason);
+  };
+
+  if (callerSignal) {
+    if (callerSignal.aborted) {
+      abortRequest();
+    } else {
+      callerSignal.addEventListener('abort', abortRequest, { once: true });
+    }
+  }
+
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    requestController.abort();
+  }, REQUEST_TIMEOUT_MS);
+
   try {
-    response = await fetch(path, {
+    const response = await fetch(path, {
       ...init,
+      signal: requestController.signal,
       credentials: 'include',
       headers: {
         Accept: 'application/json',
@@ -29,27 +57,43 @@ export async function request<T>(
         ...init?.headers,
       },
     });
-  } catch {
-    throw new ApiRequestError('无法连接 Relay 服务。', 0);
-  }
 
-  const body = await parseResponse(response);
-  if (!response.ok) {
-    const parsedError = parseApiError(body);
-    const message = parsedError?.message ?? 'Relay 请求失败。';
-    if (response.status === 401 && !path.endsWith('/auth/login')) {
-      window.dispatchEvent(new Event('relay:unauthorized'));
+    const body = await parseResponse(response);
+    if (!response.ok) {
+      const parsedError = parseApiError(body);
+      const message = parsedError?.message ?? 'Relay 请求失败。';
+      if (
+        response.status === 401
+        && !path.endsWith('/auth/login')
+        && !path.endsWith('/auth/session')
+      ) {
+        window.dispatchEvent(new Event('relay:unauthorized'));
+      }
+      throw new ApiRequestError(message, response.status, parsedError);
     }
-    throw new ApiRequestError(message, response.status, parsedError);
-  }
 
-  if (response.status === 204) {
-    return undefined as T;
-  }
+    if (response.status === 204) {
+      return undefined as T;
+    }
 
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
-    throw new ApiRequestError('Relay 返回的数据格式无效。', response.status);
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiRequestError('Relay 返回的数据格式无效。', response.status);
+    }
+    return parsed.data;
+  } catch (error) {
+    if (timedOut) {
+      throw new ApiRequestError('Relay 请求超时，请稍后重试。', 0);
+    }
+    if (callerSignal?.aborted || isAbortError(error)) {
+      throw error;
+    }
+    if (error instanceof ApiRequestError) {
+      throw error;
+    }
+    throw new ApiRequestError('无法连接 Relay 服务。', 0);
+  } finally {
+    clearTimeout(timeoutId);
+    callerSignal?.removeEventListener('abort', abortRequest);
   }
-  return parsed.data;
 }

@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-13
 
 # SSH Mobile 控制与中继服务器
 
@@ -30,6 +30,23 @@ Compose 部署的所有参数都来自 `relay/.env`。缺少必填密钥或密�
 | `RELAY_SESSION_TTL` | Relay 会话有效期，使用 Go duration 格式 |
 | `RELAY_ADMIN_SESSION_TTL` | 管理员会话有效期，使用 Go duration 格式 |
 | `RELAY_MAX_CONNECTIONS` | Relay 最大连接数，必须为正整数 |
+| `RELAY_MAX_ENROLLED_DEVICES` | 内存中允许保留的最大设备注册数 |
+| `RELAY_MAX_REVOKED_DEVICES` | 内存中允许保留的最大撤销墓碑数；容量满时新的撤销请求会 fail-closed |
+| `RELAY_MAX_TRANSFER_SESSIONS` | 内存中允许保留的最大活动传输会话数 |
+| `RELAY_MAX_PENDING_FRAMES_PER_DEVICE` | 每个设备允许排队的最大出站帧数 |
+| `RELAY_MAX_PENDING_BYTES_PER_DEVICE` | 每个设备允许排队的最大出站字节数 |
+| `RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE` | 每个设备每秒允许的最大入站帧数 |
+| `RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE` | 每个设备每秒允许的最大入站字节数 |
+| `RELAY_MAX_ADMIN_SESSIONS` | 内存中允许保留的最大管理员会话数 |
+| `RELAY_ADMIN_LOGIN_MAX_ATTEMPTS` | 每个 IP+用户名窗口允许的登录次数 |
+| `RELAY_ADMIN_LOGIN_WINDOW` | 管理员登录限流窗口，使用 Go duration 格式 |
+| `RELAY_ADMIN_LOGIN_BLOCK` | 管理员登录封禁时长，使用 Go duration 格式 |
+| `RELAY_MAX_ADMIN_LOGIN_ENTRIES` | 内存中允许保留的最大 IP/用户名限流条目数 |
+| `RELAY_HTTP_READ_TIMEOUT` | HTTP 请求读取超时，使用 Go duration 格式 |
+| `RELAY_HTTP_WRITE_TIMEOUT` | HTTP 响应写入超时，使用 Go duration 格式 |
+| `RELAY_HTTP_IDLE_TIMEOUT` | HTTP keep-alive 空闲超时，使用 Go duration 格式 |
+| `RELAY_HTTP_MAX_HEADER_BYTES` | HTTP 请求头最大字节数 |
+| `RELAY_TRUSTED_PROXY_CIDRS` | 逗号分隔的可信代理 CIDR 列表；默认空值表示登录限流从不信任 `X-Forwarded-For`/`X-Real-IP` |
 | `RELAY_ENROLLMENT_TOKEN` | 随机注册口令，至少 16 个字符 |
 | `RELAY_CREDENTIAL_KEY` | Base64URL 编码的随机密钥，解码后至少 32 字节 |
 | `RELAY_ADMIN_USER` | Web 管理面板管理员账号 |
@@ -71,6 +88,12 @@ Go 服务和前端容器保留在内部网络，由 Caddy 负责 HTTPS/WSS 证�
 Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不要把内部 Go 端口直接
 暴露到公网。
 
+Caddy 在内网终止 HTTPS/WSS 并反向代理到 Relay。仓库自带的 Compose 文件为 Caddy
+容器分配了固定内网地址（`172.30.0.10`），`RELAY_TRUSTED_PROXY_CIDRS` 默认即指向
+该地址，使 Relay 信任 Caddy 的转发头以按真实客户端 IP 做登录限流。若修改内网子网，
+请同步更新 `RELAY_TRUSTED_PROXY_CIDRS`。如果不使用可信代理直接运行 Relay，
+请将 `RELAY_TRUSTED_PROXY_CIDRS` 置空；此时转发头会被完全忽略。
+
 ## 安全模型
 
 - 注册只接受协议版本 1，并将凭据绑定到设备 ID 与 Ed25519 公钥。
@@ -78,8 +101,13 @@ Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不�
   拒绝。
 - 凭据仅在当前进程中存在匹配设备注册时有效；撤销设备会立即关闭活动连接。
 - 浏览器 WebSocket 使用标准同源校验；不携带 `Origin` 的原生客户端仍受支持。
-- 管理 API 必须具有 HttpOnly Cookie 会话，前端动态设备数据通过 React 文本节点
-  渲染，不加载外部脚本或字体。
+- 管理 API 必须具有 HttpOnly Cookie 会话。所有改变状态的管理员请求都会拒绝跨站
+  Origin 或 Fetch Metadata；携带请求体时必须使用 `application/json`。登录按客户端
+  IP+用户名限流，并返回不泄露认证状态的通用响应和有界 `Retry-After` 提示。
+- 登录限流默认以直连对端 `RemoteAddr` 为准，忽略 `X-Forwarded-For`/`X-Real-IP`；
+  仅当对端位于显式配置的 `RELAY_TRUSTED_PROXY_CIDRS` 边界内时才信任转发头，
+  防止直连部署通过伪造头字段绕过按客户端 IP 的限流。
+- 前端动态设备数据通过 React 文本节点渲染，不加载外部脚本或字体。
 - Caddy 设置内容安全、禁止嵌入、内容类型与引用来源等限制响应头。
 
 设备状态完全驻留内存，因此服务重启本身就是安全边界：全部客户端需要重新注册。
@@ -123,8 +151,17 @@ Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不�
 }
 ```
 
-当前管理员 API 使用内存态 HttpOnly 会话；CSRF Header、Origin/Fetch
-Metadata 校验和登录限流留待下一阶段安全增强。
+当前管理员 API 使用内存态 HttpOnly 会话。管理员会话、设备注册、撤销墓碑、传输会话、
+每个设备的待发送数据以及登录限流条目都受上述 `RELAY_MAX_*` 配置限制。撤销墓碑还具备
+凭据过期感知：墓碑只在被撤销设备的当前凭据仍可能被出示的时段内保留；当有界存储被仍然
+有效的墓碑占满时，新的撤销请求会 fail-closed 拒绝，而不是淘汰旧的墓碑。所有限制都不引入
+持久化：进程重启会清空这些内存状态，而配置中的注册口令仍由进程配置提供。
+
+Go HTTP 服务启用了请求读取超时、响应写入超时、空闲超时和请求头大小上限。收到
+终止信号后先执行 HTTP graceful shutdown（最长 15s），再关闭内存 Hub 并等待 peer
+与清理 goroutine 收敛，Hub 关闭受 5s 预算约束。Compose 的 relay 服务设置了
+`stop_grace_period: 30s`，大于完整的 20s 关停预算，避免 Docker 在关停流程中途
+SIGKILL 进程。
 
 服务会拒绝不支持的协议版本，不提供 v1 兼容降级、`/v1/control` 路由或
 Dart 侧 Relay 数据面。
@@ -152,6 +189,8 @@ Dart 侧 Relay 数据面。
 
 ```sh
 go fmt ./...
-go vet ./...
 go test ./...
+go test -race ./...
+go vet ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```

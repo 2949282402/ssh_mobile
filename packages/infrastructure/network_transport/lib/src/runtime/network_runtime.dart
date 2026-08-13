@@ -50,7 +50,8 @@ final class NetworkRuntimeDiagnostics {
   /// 当前由 Runtime 持有的 native handle 数量。
   final int nativeHandles;
 
-  /// 已成功初始化的 Capability。
+  /// 已成功初始化的 Capability。`runtime` 表示 App Scope native handle 已可用，
+  /// 其余枚举值表示对应的具体传输/Realtime 能力已获准初始化。
   final List<NetworkCapability> readyCapabilities;
 }
 

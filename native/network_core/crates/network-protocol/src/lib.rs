@@ -21,6 +21,18 @@ pub enum NetworkErrorCode {
     RelayError = 8,
     IoError = 10,
     Cancelled = 11,
+    CredentialExpired = 12,
+    IdentityConflict = 13,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum RetryDisposition {
+    Unspecified = 0,
+    NoRetry = 1,
+    RetryWithBackoff = 2,
+    RetryAfter = 3,
+    RefreshCredentialThenRetry = 4,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
@@ -114,6 +126,12 @@ pub struct NetworkError {
     pub operation: String,
     #[prost(string, tag = "4")]
     pub peer_id: String,
+    /// 服务端建议的重试策略；默认 Unspecified 表示未指定。
+    #[prost(enumeration = "RetryDisposition", tag = "5")]
+    pub retry_disposition: i32,
+    /// 服务端建议的 `RetryAfter` 秒数；0 表示未指定。
+    #[prost(uint32, tag = "6")]
+    pub retry_after_seconds: u32,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -468,6 +486,21 @@ pub struct RealtimeSignalEvent {
     pub payload: Vec<u8>,
 }
 
+/// Realtime Session 稳定后发布的完整状态快照；携带当前 revision 与最近错误。
+#[derive(Clone, PartialEq, Message)]
+pub struct RealtimeSnapshotEvent {
+    #[prost(string, tag = "1")]
+    pub realtime_id: String,
+    #[prost(string, tag = "2")]
+    pub peer_id: String,
+    #[prost(enumeration = "RealtimeSessionState", tag = "3")]
+    pub state: i32,
+    #[prost(uint64, tag = "4")]
+    pub revision: u64,
+    #[prost(message, optional, tag = "5")]
+    pub error: Option<NetworkError>,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct ChannelMessageEvent {
     #[prost(string, tag = "1")]
@@ -508,7 +541,7 @@ pub struct NetworkEvent {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_event::Payload",
-        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22"
+        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23"
     )]
     pub payload: Option<network_event::Payload>,
 }
@@ -542,5 +575,98 @@ pub mod network_event {
         RealtimeState(RealtimeStateChangedEvent),
         #[prost(message, tag = "22")]
         RealtimeSignal(RealtimeSignalEvent),
+        #[prost(message, tag = "23")]
+        RealtimeSnapshot(RealtimeSnapshotEvent),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_error_code_additions_preserve_existing_values() {
+        assert_eq!(NetworkErrorCode::IoError as i32, 10);
+        assert_eq!(NetworkErrorCode::Cancelled as i32, 11);
+        assert_eq!(NetworkErrorCode::CredentialExpired as i32, 12);
+        assert_eq!(NetworkErrorCode::IdentityConflict as i32, 13);
+    }
+
+    #[test]
+    fn retry_disposition_round_trips_as_wire_values() {
+        assert_eq!(RetryDisposition::Unspecified as i32, 0);
+        assert_eq!(RetryDisposition::NoRetry as i32, 1);
+        assert_eq!(RetryDisposition::RetryWithBackoff as i32, 2);
+        assert_eq!(RetryDisposition::RetryAfter as i32, 3);
+        assert_eq!(RetryDisposition::RefreshCredentialThenRetry as i32, 4);
+        assert_eq!(
+            RetryDisposition::try_from(4),
+            Ok(RetryDisposition::RefreshCredentialThenRetry)
+        );
+        assert!(RetryDisposition::try_from(99).is_err());
+    }
+
+    #[test]
+    fn network_error_new_retry_fields_default_to_zero() {
+        let error = NetworkError {
+            code: NetworkErrorCode::CredentialExpired as i32,
+            message: "credential expired".into(),
+            operation: "connect".into(),
+            peer_id: String::new(),
+            retry_disposition: RetryDisposition::Unspecified as i32,
+            retry_after_seconds: 0,
+        };
+        let encoded = error.encode_to_vec();
+        let decoded = NetworkError::decode(encoded.as_slice()).expect("decode");
+        assert_eq!(decoded.code, NetworkErrorCode::CredentialExpired as i32);
+        assert_eq!(decoded.retry_disposition, 0);
+        assert_eq!(decoded.retry_after_seconds, 0);
+    }
+
+    #[test]
+    fn network_error_retry_fields_round_trip() {
+        let error = NetworkError {
+            code: NetworkErrorCode::CredentialExpired as i32,
+            message: "credential expired".into(),
+            operation: "connect".into(),
+            peer_id: "peer-a".into(),
+            retry_disposition: RetryDisposition::RefreshCredentialThenRetry as i32,
+            retry_after_seconds: 30,
+        };
+        let encoded = error.encode_to_vec();
+        let decoded = NetworkError::decode(encoded.as_slice()).expect("decode");
+        assert_eq!(
+            decoded.retry_disposition,
+            RetryDisposition::RefreshCredentialThenRetry as i32
+        );
+        assert_eq!(decoded.retry_after_seconds, 30);
+        assert_eq!(decoded.peer_id, "peer-a");
+    }
+
+    #[test]
+    fn realtime_snapshot_event_round_trips_state_and_revision() {
+        let event = RealtimeSnapshotEvent {
+            realtime_id: "00112233445566778899aabbccddeeff".into(),
+            peer_id: "peer-a".into(),
+            state: RealtimeSessionState::Connected as i32,
+            revision: 7,
+            error: Some(NetworkError {
+                code: NetworkErrorCode::IdentityConflict as i32,
+                message: "identity conflict".into(),
+                operation: "connect".into(),
+                peer_id: "peer-a".into(),
+                retry_disposition: RetryDisposition::NoRetry as i32,
+                retry_after_seconds: 0,
+            }),
+        };
+        let encoded = event.encode_to_vec();
+        let decoded = RealtimeSnapshotEvent::decode(encoded.as_slice()).expect("decode");
+        assert_eq!(decoded.realtime_id, "00112233445566778899aabbccddeeff");
+        assert_eq!(decoded.peer_id, "peer-a");
+        assert_eq!(decoded.state, RealtimeSessionState::Connected as i32);
+        assert_eq!(decoded.revision, 7);
+        let error = decoded.error.expect("snapshot error");
+        assert_eq!(error.code, NetworkErrorCode::IdentityConflict as i32);
+        assert_eq!(error.retry_disposition, RetryDisposition::NoRetry as i32);
     }
 }

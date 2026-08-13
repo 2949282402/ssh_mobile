@@ -124,8 +124,12 @@ jobs:
           git diff --exit-code -- .
       - name: Test relay
         run: go test ./...
+      - name: Test relay with race detector
+        run: go test -race ./...
       - name: Vet relay
         run: go vet ./...
+      - name: Scan relay vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
   architecture-check:
     runs-on: ubuntu-latest
@@ -149,6 +153,10 @@ jobs:
         run: dart run test/tool/agent_docs_check_test.dart
       - name: Check architecture guard
         run: dart run tool/architecture_check.dart
+      - name: Check module dependencies
+        run: dart run tool/check_module_dependencies.dart
+      - name: Check resource owners
+        run: dart run tool/check_resource_owners.dart
       - name: Check compatibility import inventory
         run: dart run tool/compatibility_check.dart
       - name: Check duplicate implementations

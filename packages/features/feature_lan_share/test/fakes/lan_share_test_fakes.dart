@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_lan_share/feature_lan_share.dart';
@@ -19,9 +21,13 @@ final class FakeLanShareStrings extends Fake implements LanShareStrings {
 
 final class FakeLanShareSettings extends ChangeNotifier
     implements LanShareSettingsPort {
-  FakeLanShareSettings({this.english = false});
+  FakeLanShareSettings({this.english = false, this.relayEndpoint = ''});
 
   final bool english;
+
+  /// 已保存的 Relay origin；默认空字符串表示未配置。
+  @override
+  final String relayEndpoint;
   final FakeLanShareStrings _strings = FakeLanShareStrings();
 
   @override
@@ -39,9 +45,6 @@ final class FakeLanShareSettings extends ChangeNotifier
 
   @override
   String get lanDeviceAlias => 'Test Device';
-
-  @override
-  String get relayEndpoint => '';
 
   @override
   String get relayHost => '';
@@ -108,7 +111,12 @@ final class FakeLanShareIdentity implements LanShareNetworkIdentityPort {
 }
 
 final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
+  FakeLanShareNetworkFactory({this.networkService});
+
   int createCalls = 0;
+
+  /// 返回给协调器的 NetworkService；null 模拟 App Shell 未创建原生服务。
+  final NetworkService? networkService;
 
   @override
   Future<NetworkService?> create({
@@ -119,12 +127,20 @@ final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
     required String receiveDirectory,
   }) async {
     createCalls++;
-    return null;
+    return networkService;
   }
 }
 
 final class FakeLanShareNetworkRuntime implements NetworkRuntime {
+  FakeLanShareNetworkRuntime({this.refuseWebSocketRelay = false});
+
   int ensureCalls = 0;
+
+  /// 按请求顺序记录已请求的 Capability。
+  final List<NetworkCapability> requestedCapabilities = <NetworkCapability>[];
+
+  /// 为 true 时，`webSocketRelay` 请求抛出 `UnsupportedError`。
+  final bool refuseWebSocketRelay;
   bool disposed = false;
 
   @override
@@ -142,6 +158,13 @@ final class FakeLanShareNetworkRuntime implements NetworkRuntime {
   @override
   Future<void> ensureCapability(NetworkCapability capability) async {
     ensureCalls++;
+    requestedCapabilities.add(capability);
+    if (refuseWebSocketRelay &&
+        capability == NetworkCapability.webSocketRelay) {
+      throw UnsupportedError(
+        'Network capability is unavailable: ${capability.label}',
+      );
+    }
   }
 
   @override
@@ -161,7 +184,108 @@ final class FakeLanShareNetworkRuntime implements NetworkRuntime {
   }
 }
 
+/// 记录 Relay 配置调用且支持受控生命周期的 fake NetworkService。
+final class FakeLanShareNetworkService implements NetworkService {
+  final StreamController<NetworkEvent> _events =
+      StreamController<NetworkEvent>.broadcast();
+  int startCalls = 0;
+  int stopCalls = 0;
+  int configureRelayCalls = 0;
+  int disconnectRelayCalls = 0;
+  int _eventSequence = 0;
+  bool disposed = false;
+
+  @override
+  Stream<NetworkEvent> get events => _events.stream;
+
+  @override
+  Future<SdkResult<void>> start(SdkRuntimeConfig config) async {
+    startCalls++;
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> stop() async {
+    stopCalls++;
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> configureRelay(SdkRelayConfig config) async {
+    configureRelayCalls++;
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> disconnectRelay() async {
+    disconnectRelayCalls++;
+    return const SdkSuccess<void>(null);
+  }
+
+  /// 向协调器发布一个受控的 Relay 生命周期事件。
+  void emitRelayState(RelayConnectionState state, {NetworkError? error}) {
+    _events.add(
+      RelayStateChanged(
+        eventId: 'relay-event-${++_eventSequence}',
+        timestamp: DateTime.now(),
+        state: state,
+        error: error,
+      ),
+    );
+  }
+
+  @override
+  Future<SdkResult<void>> upsertPeer(SdkPeerConfig peer) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> connect(String peerId) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> disconnect(String peerId) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<SdkTransferSession>> send({
+    required String transferId,
+    required String peerId,
+    required String filePath,
+  }) => throw UnsupportedError('not used in this test');
+
+  @override
+  Future<SdkResult<void>> cancel(String transferId) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> respondToIncoming({
+    required String transferId,
+    required bool accept,
+  }) async => const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<SdkRouteSnapshot>> state(String peerId) async => SdkSuccess(
+    SdkRouteSnapshot(peerId: peerId, routeType: NetworkRouteType.lan),
+  );
+
+  @override
+  Future<void> dispose() async {
+    disposed = true;
+  }
+}
+
 final class FakeLanShareBootstrapClient implements BootstrapClient {
+  FakeLanShareBootstrapClient({this.onRefresh});
+
+  /// 可选的 refresh 处理器；缺省返回一个未来过期的假凭据。
+  final Future<SdkResult<DeviceEnrollment>> Function(
+    Uri endpoint,
+    RefreshRequest request,
+  )?
+  onRefresh;
+
+  int refreshCalls = 0;
+
   @override
   Future<SdkResult<BootstrapMetadata>> probe(Uri endpoint) async =>
       const SdkSuccess(BootstrapMetadata(protocolVersion: 1));
@@ -179,6 +303,25 @@ final class FakeLanShareBootstrapClient implements BootstrapClient {
       protocolVersion: 1,
     ),
   );
+
+  @override
+  Future<SdkResult<DeviceEnrollment>> refresh(
+    Uri endpoint,
+    RefreshRequest request,
+  ) async {
+    refreshCalls++;
+    final handler = onRefresh;
+    if (handler != null) return handler(endpoint, request);
+    return SdkSuccess(
+      DeviceEnrollment(
+        deviceId: request.deviceId,
+        relayCredential: 'fake-refreshed',
+        expiresAt: DateTime.utc(2030),
+        serverTime: DateTime.utc(2029),
+        protocolVersion: 1,
+      ),
+    );
+  }
 }
 
 final class FakeLanSecurityService extends Fake implements LanSecurityService {
@@ -226,6 +369,11 @@ final class FakeLanDiscoveryService extends Fake
       const NetworkSuccess<void>(null);
 
   @override
+  Future<NetworkResult<void>> startAdvertising({
+    int port = LanDiscoveryService.defaultPort,
+  }) async => const NetworkSuccess<void>(null);
+
+  @override
   Future<NetworkResult<void>> stopDiscovery() async =>
       const NetworkSuccess<void>(null);
 
@@ -241,7 +389,62 @@ final class FakeLanDiscoveryService extends Fake
   void dispose() {}
 }
 
-final class FakeLanTransferService extends Fake implements LanTransferService {}
+/// 支持受控监听端口和启停计数的 fake LAN 传输服务。
+///
+/// 默认模拟一个已可绑定端口（`LanTransferService.defaultHttpPort`）的服务，
+/// 让 Coordinator 在 `initializeNetwork: true` 时能走到 native runtime
+/// Capability 请求路径，而不会触发真实 HTTPS 绑定或 TLS 证书生成。
+final class FakeLanTransferService extends Fake implements LanTransferService {
+  final StreamController<LanPairingRequest> _pairingInviteController =
+      StreamController<LanPairingRequest>.broadcast();
+  final StreamController<LanDevice> _announcedDeviceController =
+      StreamController<LanDevice>.broadcast();
+  final StreamController<LanDevice> _handshakePendingController =
+      StreamController<LanDevice>.broadcast();
+  int _port = LanTransferService.defaultHttpPort;
+  bool _listening = false;
+  int stopListeningCalls = 0;
+  bool disposed = false;
+
+  @override
+  Stream<LanPairingRequest> get pairingInviteStream =>
+      _pairingInviteController.stream;
+
+  @override
+  Stream<LanDevice> get announcedDeviceStream =>
+      _announcedDeviceController.stream;
+
+  @override
+  Stream<LanDevice> get handshakePendingStream =>
+      _handshakePendingController.stream;
+
+  @override
+  bool get isListening => _listening;
+
+  @override
+  int get activePort => _port;
+
+  @override
+  Future<NetworkResult<int>> startListening({
+    int port = LanTransferService.defaultHttpPort,
+  }) async {
+    _listening = true;
+    _port = port;
+    return NetworkSuccess<int>(port);
+  }
+
+  @override
+  Future<NetworkResult<void>> stopListening() async {
+    _listening = false;
+    stopListeningCalls++;
+    return const NetworkSuccess<void>(null);
+  }
+
+  @override
+  void dispose() {
+    disposed = true;
+  }
+}
 
 final class FakeLanStorageService extends Fake implements LanStorageService {}
 

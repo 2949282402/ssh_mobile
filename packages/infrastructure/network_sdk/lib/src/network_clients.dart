@@ -3,13 +3,24 @@ import 'dart:typed_data';
 import 'network_models.dart';
 import 'realtime.dart';
 
-/// 公开服务能力和 enrollment 的非鉴权客户端。
+/// 公开服务能力、enrollment 与凭据刷新的非鉴权客户端。
 abstract interface class BootstrapClient {
   Future<SdkResult<BootstrapMetadata>> probe(Uri endpoint);
 
   Future<SdkResult<DeviceEnrollment>> enroll(
     Uri endpoint,
     EnrollmentRequest request,
+  );
+
+  /// 为已 enrolled 设备签发新的短期凭据，无需 enrollment token。
+  ///
+  /// 请求由设备签名种子对 `POST\n/v1/devices/refresh\n<nonce>` 的 Ed25519 签名
+  /// 证明身份；成功后返回与 enroll 相同的 [DeviceEnrollment] 形状。失败时按共享
+  /// 错误映射返回：409 → identityConflict、401 code 12 → credentialExpired、
+  /// 404 → noRoute（设备未 enrollment，需要重新 enroll）。
+  Future<SdkResult<DeviceEnrollment>> refresh(
+    Uri endpoint,
+    RefreshRequest request,
   );
 }
 
@@ -141,6 +152,25 @@ final class EnrollmentRequest {
   final String? enrollmentToken;
   final int protocolVersion;
   final String? platform;
+}
+
+/// `/v1/devices/refresh` 请求；签名证明由 App/Feature 使用设备种子生成。
+final class RefreshRequest {
+  const RefreshRequest({
+    required this.deviceId,
+    required this.identityPublicKey,
+    required this.nonce,
+    required this.signature,
+  });
+
+  final String deviceId;
+  final Uint8List identityPublicKey;
+
+  /// 32 字节随机 nonce 的 base64url 编码（无 padding）。
+  final String nonce;
+
+  /// 对 `POST\n/v1/devices/refresh\n<nonce>` 的 Ed25519 签名的 base64url 编码。
+  final String signature;
 }
 
 /// enrollment 返回的敏感材料只交给 App Shell 安全存储。

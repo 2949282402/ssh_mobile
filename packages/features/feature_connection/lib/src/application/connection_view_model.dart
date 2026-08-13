@@ -34,6 +34,8 @@ class ConnectionViewModel extends ChangeNotifier {
   bool _isSaving = false;
   bool _isVerifying = false;
   String? _errorMessage;
+  bool _disposed = false;
+  int _operationGeneration = 0;
 
   List<ConnectionConfig> get connections => _connections;
   bool get isLoading => _isLoading;
@@ -43,59 +45,81 @@ class ConnectionViewModel extends ChangeNotifier {
 
   /// 从 Repository 重新加载结构快照，避免首屏只看到尚未初始化的空列表。
   Future<void> fetchConnections() async {
+    final generation = _beginOperation();
+    if (generation == null) return;
     _isLoading = true;
     _errorMessage = null;
-    notifyListeners();
+    _notifyIfCurrent(generation);
+    if (!_isCurrent(generation)) return;
     try {
-      _connections = List.unmodifiable(
-        await _connectionRepository.loadConnections(),
-      );
+      final connections = await _connectionRepository.loadConnections();
+      if (!_isCurrent(generation)) return;
+      _connections = List.unmodifiable(connections);
     } catch (error) {
+      if (!_isCurrent(generation)) return;
       _errorMessage = error.toString();
     } finally {
-      _isLoading = false;
-      notifyListeners();
+      if (_isCurrent(generation)) {
+        _isLoading = false;
+        _notifyIfCurrent(generation);
+      }
     }
   }
 
   /// 删除单个连接并清理 SSH/SFTP/监控资源及凭据。
   Future<void> deleteConnectionWithCleanup(String connectionId) async {
+    final generation = _beginOperation();
+    if (generation == null) return;
     _errorMessage = null;
-    notifyListeners();
+    _notifyIfCurrent(generation);
+    if (!_isCurrent(generation)) return;
     try {
       await _runtimePort.cleanupConnectionResources(connectionId);
+      if (!_isCurrent(generation)) return;
       await _connectionRepository.deleteConnection(connectionId);
+      if (!_isCurrent(generation)) return;
       await _credentialRepository.deleteCredentials(connectionId);
+      if (!_isCurrent(generation)) return;
       _connections = List.unmodifiable(_connectionRepository.connections);
     } catch (error) {
+      if (!_isCurrent(generation)) return;
       _errorMessage = error.toString();
     } finally {
-      notifyListeners();
+      _notifyIfCurrent(generation);
     }
   }
 
   /// 批量删除连接，保持用户选择的顺序完成资源清理。
   Future<void> deleteConnectionsWithCleanup(List<String> connectionIds) async {
+    final generation = _beginOperation();
+    if (generation == null) return;
     _errorMessage = null;
-    notifyListeners();
+    _notifyIfCurrent(generation);
+    if (!_isCurrent(generation)) return;
     try {
       for (final id in connectionIds) {
         await _runtimePort.cleanupConnectionResources(id);
+        if (!_isCurrent(generation)) return;
       }
       await _connectionRepository.deleteConnections(connectionIds);
+      if (!_isCurrent(generation)) return;
       for (final id in connectionIds) {
         await _credentialRepository.deleteCredentials(id);
+        if (!_isCurrent(generation)) return;
       }
       _connections = List.unmodifiable(_connectionRepository.connections);
     } catch (error) {
+      if (!_isCurrent(generation)) return;
       _errorMessage = error.toString();
     } finally {
-      notifyListeners();
+      _notifyIfCurrent(generation);
     }
   }
 
   /// 只改变连接列表顺序，UI 先乐观更新，Repository 负责最终持久化。
   Future<void> reorderConnections(int oldIndex, int newIndex) async {
+    final generation = _beginOperation();
+    if (generation == null) return;
     if (oldIndex >= 0 &&
         oldIndex < _connections.length &&
         newIndex >= 0 &&
@@ -104,13 +128,16 @@ class ConnectionViewModel extends ChangeNotifier {
       final item = mutable.removeAt(oldIndex);
       mutable.insert(newIndex, item);
       _connections = List.unmodifiable(mutable);
-      notifyListeners();
+      _notifyIfCurrent(generation);
     }
+    if (!_isCurrent(generation)) return;
     try {
       await _connectionRepository.reorderConnections(oldIndex, newIndex);
+      if (!_isCurrent(generation)) return;
     } catch (error) {
+      if (!_isCurrent(generation)) return;
       _errorMessage = error.toString();
-      notifyListeners();
+      _notifyIfCurrent(generation);
     }
   }
 
@@ -123,10 +150,13 @@ class ConnectionViewModel extends ChangeNotifier {
     required Future<bool> Function(int activeWindows) confirmDisconnectCallback,
     ConnectionHostKeyConfirmation? onUnknownHostKey,
   }) async {
+    final generation = _beginOperation();
+    if (generation == null) return false;
     _isSaving = true;
     _isVerifying = true;
     _errorMessage = null;
-    notifyListeners();
+    _notifyIfCurrent(generation);
+    if (!_isCurrent(generation)) return false;
 
     try {
       if (!kIsWeb) {
@@ -141,58 +171,79 @@ class ConnectionViewModel extends ChangeNotifier {
           privateKey: rawPrivateKey,
           onUnknownHostKey: onUnknownHostKey,
         );
+        if (!_isCurrent(generation)) return false;
         config.hostKeyAlgorithm = result.algorithm ?? config.hostKeyAlgorithm;
         config.hostKeyFingerprint =
             result.fingerprint ?? config.hostKeyFingerprint;
         config.hostKeyTrustedAt = result.trustedAt ?? config.hostKeyTrustedAt;
         if (config.hostKeyFingerprint?.isNotEmpty == true) {
+          if (!_isCurrent(generation)) return false;
           await _hostKeyRepository.trustHostKey(
             config.id,
             algorithm: config.hostKeyAlgorithm,
             fingerprint: config.hostKeyFingerprint,
             trustedAt: config.hostKeyTrustedAt,
           );
+          if (!_isCurrent(generation)) return false;
         }
       }
 
+      if (!_isCurrent(generation)) return false;
       _isVerifying = false;
-      notifyListeners();
+      _notifyIfCurrent(generation);
+      if (!_isCurrent(generation)) return false;
 
       final activeWindowCount = isEditing
           ? await _runtimePort.activeWindowCount(config.id)
           : 0;
+      if (!_isCurrent(generation)) return false;
       if (activeWindowCount > 0) {
         _isSaving = false;
-        notifyListeners();
+        _notifyIfCurrent(generation);
+        if (!_isCurrent(generation)) return false;
         final confirmed = await confirmDisconnectCallback(activeWindowCount);
+        if (!_isCurrent(generation)) return false;
         if (!confirmed) return false;
         _isSaving = true;
-        notifyListeners();
+        _notifyIfCurrent(generation);
+        if (!_isCurrent(generation)) return false;
       }
 
       if (isEditing) {
+        if (!_isCurrent(generation)) return false;
         await _connectionRepository.updateConnection(config);
+        if (!_isCurrent(generation)) return false;
         if (activeWindowCount > 0) {
+          if (!_isCurrent(generation)) return false;
           await _runtimePort.disconnectSessionsForConnection(config.id);
+          if (!_isCurrent(generation)) return false;
         }
       } else {
+        if (!_isCurrent(generation)) return false;
         await _connectionRepository.addConnection(config);
+        if (!_isCurrent(generation)) return false;
       }
+      if (!_isCurrent(generation)) return false;
       await _credentialRepository.saveCredentials(
         connectionId: config.id,
         password: rawPassword,
         privateKey: rawPrivateKey,
       );
+      if (!_isCurrent(generation)) return false;
 
       _connections = List.unmodifiable(_connectionRepository.connections);
       return true;
     } catch (error) {
-      _errorMessage = error.toString();
+      if (_isCurrent(generation)) {
+        _errorMessage = error.toString();
+      }
       rethrow;
     } finally {
-      _isVerifying = false;
-      _isSaving = false;
-      notifyListeners();
+      if (_isCurrent(generation)) {
+        _isVerifying = false;
+        _isSaving = false;
+        _notifyIfCurrent(generation);
+      }
     }
   }
 
@@ -211,22 +262,52 @@ class ConnectionViewModel extends ChangeNotifier {
     String windowName, {
     ConnectionHostKeyConfirmation? onUnknownHostKey,
   }) async {
+    final generation = _beginOperation();
+    if (generation == null) return null;
     _errorMessage = null;
-    notifyListeners();
+    _notifyIfCurrent(generation);
+    if (!_isCurrent(generation)) return null;
     try {
       final sessionId = await _runtimePort.openTerminalSession(
         connectionId,
         windowName,
         onUnknownHostKey: onUnknownHostKey,
       );
+      if (!_isCurrent(generation)) return null;
       if (sessionId == null) _errorMessage = _runtimePort.errorMessage;
       return sessionId;
     } catch (error) {
+      if (!_isCurrent(generation)) return null;
       _errorMessage = error.toString();
       return null;
     } finally {
-      notifyListeners();
+      _notifyIfCurrent(generation);
     }
+  }
+
+  int? _beginOperation() {
+    if (_disposed) return null;
+    _operationGeneration++;
+    // 新操作接管 Route 状态，旧操作的 finally 不能再清理这些标志。
+    _isLoading = false;
+    _isSaving = false;
+    _isVerifying = false;
+    return _operationGeneration;
+  }
+
+  bool _isCurrent(int generation) =>
+      !_disposed && generation == _operationGeneration;
+
+  void _notifyIfCurrent(int generation) {
+    if (_isCurrent(generation)) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _operationGeneration++;
+    super.dispose();
   }
 
   ConnectionConfig _copyForVerification(

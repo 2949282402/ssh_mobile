@@ -19,6 +19,16 @@ void main() {
       final runtime = NetworkRuntimeImpl(nativeAdapter: adapter);
 
       expect(adapter.createCalls, 0);
+      final runtimeInitialization = runtime.ensureCapability(
+        NetworkCapability.runtime,
+      );
+      final duplicateRuntimeInitialization = runtime.ensureCapability(
+        NetworkCapability.runtime,
+      );
+      expect(
+        identical(runtimeInitialization, duplicateRuntimeInitialization),
+        isTrue,
+      );
       final quicInitialization = runtime.ensureCapability(
         NetworkCapability.quic,
       );
@@ -32,6 +42,7 @@ void main() {
       final handle = _FakeNativeNetworkHandle();
       creation.complete(handle);
       await Future.wait<void>(<Future<void>>[
+        runtimeInitialization,
         quicInitialization,
         relayInitialization,
       ]);
@@ -39,6 +50,15 @@ void main() {
       expect(runtime.state, NetworkRuntimeState.ready);
       expect(runtime.diagnostics.nativeHandles, 1);
       expect(runtime.diagnostics.activeConnections, 0);
+      expect(
+        runtime.diagnostics.readyCapabilities,
+        containsAll(<NetworkCapability>[
+          NetworkCapability.runtime,
+          NetworkCapability.quic,
+          NetworkCapability.webSocketRelay,
+        ]),
+      );
+      expect(runtime.isCapabilityReady(NetworkCapability.runtime), isTrue);
       expect(runtime.isCapabilityReady(NetworkCapability.quic), isTrue);
       expect(
         runtime.isCapabilityReady(NetworkCapability.webSocketRelay),
@@ -93,6 +113,49 @@ void main() {
     expect(adapter.createCalls, 0);
   });
 
+  test(
+    'Disabled transport capabilities fail without creating native resources',
+    () {
+      final adapter = _FakeNativeNetworkAdapter(
+        () async => _FakeNativeNetworkHandle(),
+      );
+      final runtime = NetworkRuntimeImpl(
+        config: const NetworkConfig(enableQuic: false),
+        nativeAdapter: adapter,
+      );
+
+      expect(
+        () => runtime.ensureCapability(NetworkCapability.quic),
+        throwsUnsupportedError,
+      );
+      expect(adapter.createCalls, 0);
+    },
+  );
+
+  test(
+    'Disabled runtime rejects command gateway without creating native resources',
+    () async {
+      final adapter = _FakeNativeNetworkAdapter(
+        () async => _FakeNativeNetworkHandle(),
+      );
+      final runtime = NetworkRuntimeImpl(
+        config: const NetworkConfig(enableRuntime: false),
+        nativeAdapter: adapter,
+      );
+
+      expect(
+        () => runtime.ensureCapability(NetworkCapability.runtime),
+        throwsUnsupportedError,
+      );
+      await expectLater(
+        runtime.openCommandGateway(),
+        throwsA(isA<UnsupportedError>()),
+      );
+      expect(adapter.createCalls, 0);
+      await runtime.dispose();
+    },
+  );
+
   test('Command gateway shares the Runtime-owned native handle', () async {
     final handle = _FakeNativeNetworkHandle();
     final runtime = NetworkRuntimeImpl(
@@ -110,7 +173,59 @@ void main() {
       gateway.sendCommand(Uint8List.fromList(<int>[1])),
       TransportOperationStatus.stopped,
     );
+    await expectLater(runtime.openCommandGateway(), throwsA(isA<StateError>()));
   });
+
+  test(
+    'Command gateway initializes the runtime without requiring QUIC',
+    () async {
+      final handle = _FakeNativeNetworkHandle();
+      final runtime = NetworkRuntimeImpl(
+        config: const NetworkConfig(
+          enableQuic: false,
+          enableWebSocketRelay: true,
+        ),
+        nativeAdapter: _FakeNativeNetworkAdapter(() async => handle),
+      );
+
+      final gateway = await runtime.openCommandGateway();
+      await runtime.ensureCapability(NetworkCapability.webSocketRelay);
+
+      expect(runtime.isCapabilityReady(NetworkCapability.runtime), isTrue);
+      expect(runtime.isCapabilityReady(NetworkCapability.quic), isFalse);
+      expect(
+        gateway.sendCommand(Uint8List.fromList(<int>[1])),
+        TransportOperationStatus.success,
+      );
+      expect(
+        runtime.diagnostics.readyCapabilities,
+        containsAll(<NetworkCapability>[
+          NetworkCapability.runtime,
+          NetworkCapability.webSocketRelay,
+        ]),
+      );
+      await runtime.dispose();
+      expect(handle.closeCalls, 1);
+    },
+  );
+
+  test('Realtime gateway remains gated by the realtime capability', () async {
+    final adapter = _FakeNativeNetworkAdapter(
+      () async => _FakeNativeNetworkHandle(),
+    );
+    final runtime = NetworkRuntimeImpl(
+      config: const NetworkConfig(enableRealtime: false),
+      nativeAdapter: adapter,
+    );
+
+    await expectLater(
+      runtime.openRealtimeGateway(),
+      throwsA(isA<UnsupportedError>()),
+    );
+    expect(adapter.createCalls, 0);
+    await runtime.dispose();
+  });
+
   test('Realtime gateway shares the Runtime-owned native handle', () async {
     final handle = _FakeNativeNetworkHandle();
     final runtime = NetworkRuntimeImpl(

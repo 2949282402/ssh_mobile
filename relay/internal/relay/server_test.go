@@ -185,10 +185,10 @@ func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 	}
 
 	first := authenticatedRequest(1)
-	if _, _, ok := server.authenticatedRequest(first); !ok {
+	if _, _, _, ok := server.authenticatedRequest(first); !ok {
 		t.Fatal("valid device proof was rejected")
 	}
-	if _, _, ok := server.authenticatedRequest(first); ok {
+	if _, _, _, ok := server.authenticatedRequest(first); ok {
 		t.Fatal("replayed device proof was accepted")
 	}
 
@@ -207,7 +207,7 @@ func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 	if revokeResponse.Code != http.StatusNoContent {
 		t.Fatalf("expected revoke status 204, got %d", revokeResponse.Code)
 	}
-	if _, _, ok := server.authenticatedRequest(authenticatedRequest(2)); ok {
+	if _, _, _, ok := server.authenticatedRequest(authenticatedRequest(2)); ok {
 		t.Fatal("revoked device credential was accepted")
 	}
 	server.hub.mutex.Lock()
@@ -248,7 +248,7 @@ func TestCredentialRequiresCurrentEnrollment(t *testing.T) {
 			ed25519.Sign(privateKey, []byte("GET\n/v1/connect\n"+nonce)),
 		),
 	)
-	if _, _, ok := server.authenticatedRequest(request); ok {
+	if _, _, _, ok := server.authenticatedRequest(request); ok {
 		t.Fatal("credential from an unregistered relay process was accepted")
 	}
 }
@@ -296,6 +296,7 @@ func TestAdminApiContract(t *testing.T) {
 		"password": "test-password-123",
 	})
 	loginRequest := httptest.NewRequest("POST", "/api/admin/v1/auth/login", bytes.NewReader(loginBody))
+	loginRequest.Header.Set("Content-Type", "application/json")
 	loginResponse := httptest.NewRecorder()
 	mux.ServeHTTP(loginResponse, loginRequest)
 	if loginResponse.Code != http.StatusOK {

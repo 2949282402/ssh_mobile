@@ -1,8 +1,8 @@
 // 网络能力枚举及其静态语义。
 //
-// Capability 只描述可按需启用的传输能力，不在这里实现任何协议。
+// Capability 只描述可按需启用的运行时或传输能力，不在这里实现任何协议。
 
-/// App 网络运行时可以声明或按需初始化的传输能力。
+/// App 网络运行时可以声明或按需初始化的运行时/传输能力。
 enum NetworkCapability {
   /// 面向传统流式连接的 TCP 能力；当前 Facade 尚未提供实现。
   tcp,
@@ -16,6 +16,9 @@ enum NetworkCapability {
   /// 当前 native v1 使用的 WSS Relay 数据面。
   webSocketRelay,
 
+  /// 当前 App Scope native runtime 本身，不绑定具体数据面协议。
+  runtime,
+
   /// Session-owned native WebRTC Realtime data plane.
   realtime,
 }
@@ -28,6 +31,7 @@ extension NetworkCapabilityDescription on NetworkCapability {
     NetworkCapability.udp => 'udp',
     NetworkCapability.quic => 'quic',
     NetworkCapability.webSocketRelay => 'webSocketRelay',
+    NetworkCapability.runtime => 'runtime',
     NetworkCapability.realtime => 'realtime',
   };
 }

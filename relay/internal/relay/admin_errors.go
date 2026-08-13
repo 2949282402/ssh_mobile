@@ -21,11 +21,15 @@ const (
 	adminErrorDeviceNotFound = "device_not_found"
 	adminErrorConflict       = "conflict"
 	adminErrorInternal       = "internal_error"
+	adminErrorForbidden      = "forbidden"
+	adminErrorRateLimited    = "rate_limited"
+	adminErrorResourceLimit  = "resource_limit"
 )
 
 func writeAdminError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(adminErrorResponse{
 		Error: adminErrorDetail{Code: code, Message: message},
