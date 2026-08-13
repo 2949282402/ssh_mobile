@@ -1221,7 +1221,7 @@ async fn connect_tcp_route(
         let scope = supervise_generic_route(
             Arc::clone(&state),
             &peer_id,
-            expected_session_id,
+            admission.session_id,
             prepare_generic_route(connection),
         )
         .await?;
@@ -1309,7 +1309,7 @@ async fn connect_websocket_route(
         let scope = supervise_generic_route(
             Arc::clone(&state),
             &peer_id,
-            expected_session_id,
+            admission.session_id,
             prepare_generic_route(connection),
         )
         .await?;
@@ -2958,6 +2958,7 @@ async fn reconnect_loop(state: Arc<RuntimeState>, peer_id: String, session_id: S
 mod tests {
     use super::*;
     use network_transport::{TcpTransport, Transport};
+    use std::collections::HashMap;
     use std::sync::atomic::AtomicU16;
     use tokio::io::AsyncReadExt;
     use tokio::net::{TcpListener, TcpStream};
@@ -3005,6 +3006,22 @@ mod tests {
             ConnectDecision::Started(session_id) => session_id,
             decision => panic!("unexpected Session decision: {decision:?}"),
         }
+    }
+
+    async fn wait_for_active_task_count(
+        supervisor: &crate::task_supervisor::RuntimeTaskSupervisor,
+        expected: usize,
+    ) {
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if supervisor.active_count() == expected {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("supervisor did not reach {expected} active tasks"));
     }
 
     #[tokio::test]
@@ -3174,6 +3191,114 @@ mod tests {
                 .expect("replacement GenericRoute socket should close")
                 .expect("read replacement server-side socket");
         assert_eq!(second_read, 0);
+    }
+
+    #[tokio::test]
+    async fn outbound_generic_peer_restart_binds_tasks_to_new_session() {
+        let state = new_test_state().await;
+        let peer_id = "generic-outbound-restart-peer";
+        let local_peer_id = "generic-outbound-local";
+        let old_session_id = started_session(&state, peer_id).await;
+        let old_remote_binding = "11".repeat(16);
+        let new_remote_binding = "22".repeat(16);
+        state
+            .sessions
+            .admit_authenticated_session(peer_id, Some(old_session_id), &old_remote_binding)
+            .await
+            .expect("seed the old remote Session binding");
+
+        let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+            local_peer_id.to_string(),
+            [201u8; 32],
+            [211u8; 32],
+        ));
+        let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+            peer_id.to_string(),
+            [202u8; 32],
+            [212u8; 32],
+        ));
+        let local_public_key = local_identity.public_identity_key().to_bytes();
+        let remote_public_key = remote_identity.public_identity_key().to_bytes();
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind outbound GenericRoute test listener");
+        let endpoint = listener
+            .local_addr()
+            .expect("outbound GenericRoute test endpoint");
+        let (release_tx, release_rx) = oneshot::channel();
+        let expected_old_binding = old_session_id.wire_key();
+        let expected_local_peer_id = local_peer_id.to_string();
+        let responder_task = tokio::spawn(async move {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("accept outbound GenericRoute test connection");
+            let mut connection = GenericConnection::from_transport(Transport::Tcp(
+                TcpTransport::from_stream(stream),
+            ));
+            let trusted_peer_keys = tokio::sync::RwLock::new(HashMap::from([(
+                expected_local_peer_id.clone(),
+                local_public_key,
+            )]));
+            let authenticated = authenticate_responder(
+                &mut connection,
+                remote_identity,
+                &trusted_peer_keys,
+                move |authenticated_peer_id, remote_session_binding| {
+                    assert_eq!(authenticated_peer_id, expected_local_peer_id);
+                    assert_eq!(remote_session_binding, expected_old_binding);
+                    async move { Ok((new_remote_binding, ())) }
+                },
+            )
+            .await
+            .expect("complete outbound GenericRoute authentication");
+            assert_eq!(authenticated.peer_id, local_peer_id);
+            release_rx.await.expect("release responder connection");
+        });
+
+        let route = connect_tcp_route(
+            endpoint,
+            local_identity,
+            remote_public_key,
+            peer_id.to_string(),
+            old_session_id.wire_key(),
+            Arc::clone(&state),
+            old_session_id,
+        )
+        .await
+        .expect("outbound TCP GenericRoute should authenticate");
+        let AuthenticatedGenericRoute {
+            mut scope,
+            admission,
+            ..
+        } = route;
+        let new_session_id = admission.session_id;
+        assert_ne!(new_session_id, old_session_id);
+
+        state
+            .sessions
+            .attach_generic_route_for_session(peer_id, Some(new_session_id), &mut scope, false)
+            .await
+            .expect("attach outbound GenericRoute to replacement Session");
+        state.finish_session_replacement(admission);
+
+        wait_for_active_task_count(&state.task_supervisor, 2).await;
+        assert_eq!(
+            state.sessions.current_session_id(peer_id).await,
+            Some(new_session_id)
+        );
+
+        let current_route = state
+            .sessions
+            .close(peer_id)
+            .await
+            .expect("close replacement GenericRoute");
+        current_route.close().await;
+        let _ = release_tx.send(());
+        responder_task
+            .await
+            .expect("outbound GenericRoute responder should exit");
+        assert_eq!(state.task_supervisor.active_count(), 0);
     }
 
     #[tokio::test]
