@@ -596,7 +596,7 @@ GPT-5.6 实现阶段开始时，项目使用 Flutter 3.44.2 和 Dart 3.12.2 完�
 - Claude Code 生成镜像：`.claude/skills/ssh-mobile-maintenance/SKILL.md`
 - 任务路由：`.agents/skills/ssh-mobile-maintenance/references/memory-map.md`
 - Scoped 项目 Memory：`memory_docs/`
-- 临时旧兼容入口（待退役）：`AGENT_MEMORY.md`
+- 知识治理规范：`docs/agent/skill-memory-maintenance.md`
 
 修改 canonical Skill 后，生成并校验镜像：
 

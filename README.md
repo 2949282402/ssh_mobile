@@ -712,7 +712,7 @@ See [docs/VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md) for the original vali
 - Generated Claude Code mirror: `.claude/skills/ssh-mobile-maintenance/SKILL.md`
 - Task routing: `.agents/skills/ssh-mobile-maintenance/references/memory-map.md`
 - Scoped project memory: `memory_docs/`
-- Temporary legacy compatibility entry (pending retirement): `AGENT_MEMORY.md`
+- Knowledge governance: `docs/agent/skill-memory-maintenance.md`
 
 After modifying a canonical skill, generate and verify the mirror:
 
