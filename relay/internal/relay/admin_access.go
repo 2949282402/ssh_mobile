@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 func (s *Server) adminToken(w http.ResponseWriter, _ *http.Request) {
@@ -39,13 +40,26 @@ func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.devicesMutex.Lock()
-	if _, enrolled := s.enrolledDevices[deviceID]; !enrolled {
+	enrolled, exists := s.enrolledDevices[deviceID]
+	if !exists {
 		s.devicesMutex.Unlock()
 		writeAdminError(w, http.StatusNotFound, adminErrorDeviceNotFound, "The requested device was not found.")
 		return
 	}
+	// The revoked device's current credential was issued at enrollment and
+	// expires CredentialTTL later; the tombstone only needs to outlive that.
+	// Guard the degenerate zero EnrolledAt so a fresh, conservative bound is
+	// used instead of a tombstone that is already expired.
+	credentialExpiry := enrolled.EnrolledAt.Add(s.config.CredentialTTL)
+	if enrolled.EnrolledAt.IsZero() {
+		credentialExpiry = time.Now().Add(s.config.CredentialTTL)
+	}
+	if !s.recordRevocationLocked(deviceID, credentialExpiry) {
+		s.devicesMutex.Unlock()
+		writeAdminError(w, http.StatusTooManyRequests, adminErrorResourceLimit, "Revocation store is at capacity; retry after existing revocations expire.")
+		return
+	}
 	delete(s.enrolledDevices, deviceID)
-	s.revokedDevices[deviceID] = struct{}{}
 	delete(s.proofNonces, deviceID)
 	s.devicesMutex.Unlock()
 

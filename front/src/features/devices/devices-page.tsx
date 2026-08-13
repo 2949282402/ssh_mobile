@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Check, Filter, Search, Server, ShieldOff, SlidersHorizontal, Wifi, X } from 'lucide-react';
 import { devicesApi } from '../../api/devices';
-import { ApiRequestError } from '../../api/errors';
+import { ApiRequestError, isAbortError } from '../../api/errors';
 import { queryKeys } from '../../api/query-keys';
 import type { EnrolledDevice } from '../../schemas/devices';
 import { ConfirmDialog } from '../../components/confirm-dialog';
@@ -28,14 +28,26 @@ export function DevicesPage() {
   const [selectedDevice, setSelectedDevice] = useState<EnrolledDevice | null>(null);
   const queryClient = useQueryClient();
   const toast = useToast();
+  const revokeAbortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => {
+    revokeAbortRef.current?.abort();
+  }, []);
+
   const revokeMutation = useMutation({
-    mutationFn: (deviceId: string) => devicesApi.revoke(deviceId),
+    mutationFn: (deviceId: string) => {
+      revokeAbortRef.current?.abort();
+      const controller = new AbortController();
+      revokeAbortRef.current = controller;
+      return devicesApi.revoke(deviceId, controller.signal);
+    },
     onSuccess: (_result, deviceId) => {
       setSelectedDevice(null);
       toast.push(`设备 ${deviceId} 已撤销注册。`, 'success');
       void queryClient.invalidateQueries({ queryKey: queryKeys.devices });
     },
     onError: (error) => {
+      if (isAbortError(error)) return;
       toast.push(error instanceof ApiRequestError ? error.message : '设备撤销失败。', 'error');
     },
   });

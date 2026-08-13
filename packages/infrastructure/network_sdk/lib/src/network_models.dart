@@ -12,7 +12,9 @@ enum NetworkErrorCode {
   natError(7),
   relayError(8),
   ioError(10),
-  cancelled(11);
+  cancelled(11),
+  credentialExpired(12),
+  identityConflict(13);
 
   const NetworkErrorCode(this.wireValue);
 
@@ -30,6 +32,25 @@ extension NetworkErrorCodePolicy on NetworkErrorCode {
     NetworkErrorCode.relayError => true,
     _ => false,
   };
+}
+
+/// 服务端建议的重试策略；默认 Unspecified 表示未指定。
+enum RetryDisposition {
+  unspecified(0),
+  noRetry(1),
+  retryWithBackoff(2),
+  retryAfter(3),
+  refreshCredentialThenRetry(4);
+
+  const RetryDisposition(this.wireValue);
+
+  final int wireValue;
+
+  static RetryDisposition fromWire(int value) =>
+      RetryDisposition.values.firstWhere(
+        (disposition) => disposition.wireValue == value,
+        orElse: () => unspecified,
+      );
 }
 
 /// v1 网络操作的稳定标识。
@@ -70,6 +91,7 @@ enum NetworkOperation {
   startWebShare('start_webshare'),
   stopWebShare('stop_webshare'),
   enrollRelay('enroll_relay'),
+  refreshCredential('refresh_credential'),
   connectRelay('connect_relay'),
   bootstrapProbe('bootstrap_probe'),
   listPeers('list_peers'),
@@ -95,6 +117,8 @@ final class NetworkError {
     required this.message,
     this.operation,
     this.peerId,
+    this.retryDisposition = RetryDisposition.unspecified,
+    this.retryAfterSeconds = 0,
   });
 
   final NetworkErrorCode code;
@@ -102,17 +126,36 @@ final class NetworkError {
   final NetworkOperation? operation;
   final String? peerId;
 
+  /// 服务端建议的重试策略；[RetryDisposition.unspecified] 表示未指定。
+  final RetryDisposition retryDisposition;
+
+  /// 服务端建议的 `RetryAfter` 秒数；0 表示未指定。
+  final int retryAfterSeconds;
+
   NetworkError copyWith({
     NetworkErrorCode? code,
     String? message,
     NetworkOperation? operation,
     String? peerId,
+    RetryDisposition? retryDisposition,
+    int? retryAfterSeconds,
   }) => NetworkError(
     code: code ?? this.code,
     message: message ?? this.message,
     operation: operation ?? this.operation,
     peerId: peerId ?? this.peerId,
+    retryDisposition: retryDisposition ?? this.retryDisposition,
+    retryAfterSeconds: retryAfterSeconds ?? this.retryAfterSeconds,
   );
+
+  /// 服务端携带重试策略时以其为准；未指定时回退到 [NetworkErrorCode.retryable]。
+  bool get retryable => switch (retryDisposition) {
+    RetryDisposition.unspecified => code.retryable,
+    RetryDisposition.noRetry => false,
+    RetryDisposition.retryWithBackoff ||
+    RetryDisposition.retryAfter ||
+    RetryDisposition.refreshCredentialThenRetry => true,
+  };
 
   @override
   String toString() =>

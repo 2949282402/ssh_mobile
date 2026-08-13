@@ -18,6 +18,17 @@ enum NetworkErrorCode {
   reserved 9;
   ERROR_CODE_IO_ERROR = 10;
   ERROR_CODE_CANCELLED = 11;
+  ERROR_CODE_CREDENTIAL_EXPIRED = 12;
+  ERROR_CODE_IDENTITY_CONFLICT = 13;
+}
+
+// 服务端建议的重试策略；默认 Unspecified 表示未指定。
+enum RetryDisposition {
+  RETRY_DISPOSITION_UNSPECIFIED = 0;
+  RETRY_DISPOSITION_NO_RETRY = 1;
+  RETRY_DISPOSITION_RETRY_WITH_BACKOFF = 2;
+  RETRY_DISPOSITION_RETRY_AFTER = 3;
+  RETRY_DISPOSITION_REFRESH_CREDENTIAL_THEN_RETRY = 4;
 }
 
 enum PeerConnectionState {
@@ -60,11 +71,31 @@ enum RelayConnectionState {
   RELAY_CONNECTION_STATE_FAILED = 4;
 }
 
+enum RealtimeSessionState {
+  REALTIME_SESSION_STATE_UNSPECIFIED = 0;
+  REALTIME_SESSION_STATE_NEGOTIATING = 1;
+  REALTIME_SESSION_STATE_CONNECTED = 2;
+  REALTIME_SESSION_STATE_RESTARTING = 3;
+  REALTIME_SESSION_STATE_CLOSED = 4;
+  REALTIME_SESSION_STATE_FAILED = 5;
+}
+
+enum RealtimeSignalKind {
+  REALTIME_SIGNAL_KIND_UNSPECIFIED = 0;
+  REALTIME_SIGNAL_KIND_WEBRTC_OFFER = 1;
+  REALTIME_SIGNAL_KIND_WEBRTC_ANSWER = 2;
+  REALTIME_SIGNAL_KIND_ICE_CANDIDATE = 3;
+  REALTIME_SIGNAL_KIND_ICE_RESTART = 4;
+  REALTIME_SIGNAL_KIND_WEBRTC_CLOSE = 5;
+}
+
 message NetworkError {
   NetworkErrorCode code = 1;
   string message = 2;
   string operation = 3;
   string peer_id = 4;
+  RetryDisposition retry_disposition = 5;
+  uint32 retry_after_seconds = 6;
 }
 
 message ConnectPeerCommand {
@@ -114,6 +145,23 @@ message ConfigureRelayCommand {
 
 message DisconnectRelayCommand {}
 
+message StartRealtimeSessionCommand {
+  string realtime_id = 1;
+  string peer_id = 2;
+}
+
+message StopRealtimeSessionCommand {
+  string realtime_id = 1;
+}
+
+message SendRealtimeSignalCommand {
+  string realtime_id = 1;
+  string peer_id = 2;
+  RealtimeSignalKind kind = 3;
+  uint64 revision = 4;
+  bytes payload = 5;
+}
+
 message NetworkCommand {
   string command_id = 1;
   uint32 protocol_version = 2;
@@ -127,6 +175,9 @@ message NetworkCommand {
     ConfigureRelayCommand configure_relay = 16;
     DisconnectPeerCommand disconnect_peer = 17;
     DisconnectRelayCommand disconnect_relay = 18;
+    StartRealtimeSessionCommand start_realtime_session = 21;
+    StopRealtimeSessionCommand stop_realtime_session = 22;
+    SendRealtimeSignalCommand send_realtime_signal = 23;
   }
 }
 
@@ -184,6 +235,31 @@ message RelayStateChangedEvent {
   NetworkError error = 2;
 }
 
+message RealtimeStateChangedEvent {
+  string realtime_id = 1;
+  string peer_id = 2;
+  RealtimeSessionState state = 3;
+  uint64 revision = 4;
+  NetworkError error = 5;
+}
+
+message RealtimeSignalEvent {
+  string realtime_id = 1;
+  string peer_id = 2;
+  RealtimeSignalKind kind = 3;
+  uint64 revision = 4;
+  bytes payload = 5;
+}
+
+// Realtime Session 稳定后发布的完整状态快照。
+message RealtimeSnapshotEvent {
+  string realtime_id = 1;
+  string peer_id = 2;
+  RealtimeSessionState state = 3;
+  uint64 revision = 4;
+  NetworkError error = 5;
+}
+
 message NetworkEvent {
   string event_id = 1;
   int64 timestamp_ms = 2;
@@ -197,5 +273,8 @@ message NetworkEvent {
     TransferFailedEvent transfer_failed = 16;
     RouteChangedEvent route_changed = 17;
     RelayStateChangedEvent relay_state_changed = 18;
+    RealtimeStateChangedEvent realtime_state = 21;
+    RealtimeSignalEvent realtime_signal = 22;
+    RealtimeSnapshotEvent realtime_snapshot = 23;
   }
 }

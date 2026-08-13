@@ -139,6 +139,7 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
         :final realtimeId,
         :final peerId,
         :final state,
+        :final revision,
         :final error,
       ):
         _events.add(
@@ -146,14 +147,34 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
             realtimeId: realtimeId,
             peerId: peerId,
             state: _mapState(state),
+            revision: revision,
             error: error == null ? null : _mapError(error),
+          ),
+        );
+      case NativeRealtimeSnapshotEvent(
+        :final realtimeId,
+        :final peerId,
+        :final state,
+        :final revision,
+        :final error,
+      ):
+        // 快照在 session 存在前到达时由 SDK coordinator 忽略；这里只做类型映射。
+        _events.add(
+          RealtimeSnapshotBackendEvent(
+            RealtimeSnapshot(
+              realtimeId: realtimeId,
+              peerId: peerId,
+              state: _mapState(state),
+              revision: revision,
+              error: error == null ? null : _mapError(error),
+            ),
           ),
         );
       case NativeCommandResultEvent event:
         _completeCommand(event);
       case NativeRealtimeSignalEvent():
       // Command acceptance and SDP/ICE signaling are native concerns. The
-      // session state event is the only lifecycle source for Features.
+      // session state and snapshot events are the only lifecycle sources.
     }
   }
 
@@ -174,6 +195,12 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
             event.error?.message ?? 'Native Realtime command was rejected.',
         operation: pending.operation,
         peerId: event.error?.peerId ?? pending.peerId,
+        retryDisposition: event.error == null
+            ? RetryDisposition.unspecified
+            : RetryDisposition.fromWire(
+                event.error!.retryDisposition.wireValue,
+              ),
+        retryAfterSeconds: event.error?.retryAfterSeconds ?? 0,
       ),
     );
   }
@@ -257,12 +284,16 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
     required String message,
     required NetworkOperation operation,
     String? peerId,
+    RetryDisposition retryDisposition = RetryDisposition.unspecified,
+    int retryAfterSeconds = 0,
   }) => SdkFailure<void>(
     NetworkError(
       code: code,
       message: message,
       operation: operation,
       peerId: peerId,
+      retryDisposition: retryDisposition,
+      retryAfterSeconds: retryAfterSeconds,
     ),
   );
 
@@ -281,6 +312,10 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
     code: NetworkErrorCode.fromWire(error.code),
     message: error.message,
     peerId: error.peerId,
+    retryDisposition: RetryDisposition.fromWire(
+      error.retryDisposition.wireValue,
+    ),
+    retryAfterSeconds: error.retryAfterSeconds,
   );
 }
 

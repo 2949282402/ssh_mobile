@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-13
 
 # feature_lan_share
 
@@ -19,7 +19,13 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
 - Relay 设置页只接收当前会话的 enrollment Token；Token 不进入偏好设置、数据库、
   日志或导出。Relay origin 可持久化，但更换 origin 会先断开旧 socket 并清除旧
   enrollment。原生层只保持一个 Relay socket，直连优先、Relay 兜底；断线按
-  `1/2/4/8/16/30` 秒最多自动重连六次，传输历史记录实际的 Direct/Relay 路线。
+  服务端 `retry_disposition` 重连（`retryAfter` 用建议秒数、`credentialExpired`
+  静默刷新凭据、`noRetry`/`identityConflict` 终止），默认 `1/2/4/8/16/30` 秒
+  指数退避最多六次，传输历史记录实际的 Direct/Relay 路线。
+- Wave 1 中唯一的数据面配置仍走现有 `ConfigureRuntime`，该入口会无条件初始化直接
+  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到 v1 协议切换（Wave 2），
+  当前并不存在。`NetworkCapability.runtime` 只表示 native command-worker handle
+  存在，不代表 WSS 数据面已独立配置。
 
 旧 `apps/ssh_mobile_full/lib/features/lan_share/**`、
 `apps/ssh_mobile_full/lib/services/lan_share/**` 和 Relay facade 已删除；
@@ -37,7 +43,8 @@ App Shell 只保留 `lan_share_feature_adapters.dart` 以及 native v1 network
 - 数据库：`LanShareModule` 独占 `lan_share.db`，只存历史和非秘密配对 metadata。
 - 生命周期与资源 Owner：Module 负责数据库、历史 Repository、Receiver、Timer、
   WebSocket/HTTPS 资源；AppRuntime/NetworkRuntime 负责注入的 App Scope 资源。
-  App Shell adapter 将 Runtime-owned `NetworkCommandGateway` 适配为
+  Receiver 初始化只请求 `NetworkCapability.runtime`；App Shell adapter 将
+  Runtime-owned `NetworkCommandGateway`（因此不隐式要求 QUIC）适配为
   `network_sdk.SessionClient`，并将控制面请求执行器组装为
   `network_sdk.BootstrapClient`；Feature 只能释放自己的订阅和 Session 使用状态。
 - 测试命令：`dart format --output=none --set-exit-if-changed lib test`、

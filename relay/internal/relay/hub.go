@@ -14,14 +14,22 @@ type outboundFrame struct {
 }
 
 type peer struct {
-	deviceID        string
-	socket          *websocket.Conn
-	outbound        chan outboundFrame
-	done            chan struct{}
-	once            sync.Once
-	windowStartedAt time.Time
-	framesInWindow  int
-	lastSeen        time.Time
+	deviceID           string
+	socket             *websocket.Conn
+	outbound           chan outboundFrame
+	done               chan struct{}
+	once               sync.Once
+	stateMutex         sync.Mutex
+	pendingFrames      int
+	pendingBytes       int64
+	maxPendingFrames   int
+	maxPendingBytes    int64
+	maxFramesPerSecond int
+	maxBytesPerSecond  int64
+	windowStartedAt    time.Time
+	framesInWindow     int
+	bytesInWindow      int64
+	lastSeen           time.Time
 }
 
 type session struct {
@@ -50,37 +58,70 @@ type hub struct {
 	peers            map[string]*peer
 	transferSessions map[string]session
 	stop             chan struct{}
+	closeOnce        sync.Once
+	waitGroup        sync.WaitGroup
+	closed           bool
 }
 
 func newHub(config Config) *hub {
+	config = withConfigDefaults(config)
 	h := &hub{config: config, peers: map[string]*peer{}, transferSessions: map[string]session{}, stop: make(chan struct{})}
-	go h.prune()
+	h.waitGroup.Add(1)
+	go func() {
+		defer h.waitGroup.Done()
+		h.prune()
+	}()
 	return h
 }
 
+// hubCloseTimeout bounds the peer/pruner convergence wait during close. Peer
+// sockets are closed before waiting, so this normally returns immediately; the
+// bound exists so a wedged goroutine cannot stall the whole shutdown path
+// beyond the Compose stop_grace_period.
+const hubCloseTimeout = 5 * time.Second
+
 func (h *hub) close() {
-	close(h.stop)
-	h.mutex.Lock()
-	peers := make([]*peer, 0, len(h.peers))
-	for _, value := range h.peers {
-		peers = append(peers, value)
-	}
-	h.peers = map[string]*peer{}
-	h.transferSessions = map[string]session{}
-	h.mutex.Unlock()
-	for _, peer := range peers {
-		closePeer(peer)
-	}
+	h.closeOnce.Do(func() {
+		h.mutex.Lock()
+		h.closed = true
+		close(h.stop)
+		peers := make([]*peer, 0, len(h.peers))
+		for _, value := range h.peers {
+			peers = append(peers, value)
+		}
+		h.peers = map[string]*peer{}
+		h.transferSessions = map[string]session{}
+		h.mutex.Unlock()
+		for _, peer := range peers {
+			closePeer(peer)
+		}
+		done := make(chan struct{})
+		go func() {
+			h.waitGroup.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(hubCloseTimeout):
+			// Sockets were already closed above; proceed even if a goroutine
+			// is stuck, keeping the process exit path bounded.
+		}
+	})
 }
 func (h *hub) add(peer *peer) bool {
 	peer.lastSeen = time.Now()
 	h.mutex.Lock()
+	if h.closed {
+		h.mutex.Unlock()
+		return false
+	}
 	previous := h.peers[peer.deviceID]
 	if previous == nil && len(h.peers) >= h.config.MaxConnections {
 		h.mutex.Unlock()
 		return false
 	}
 	h.peers[peer.deviceID] = peer
+	h.waitGroup.Add(2)
 	h.mutex.Unlock()
 	if previous != nil {
 		closePeer(previous)
@@ -100,9 +141,13 @@ func (h *hub) remove(peer *peer) {
 }
 
 func closePeer(peer *peer) {
+	peer.stateMutex.Lock()
+	defer peer.stateMutex.Unlock()
 	peer.once.Do(func() {
 		close(peer.done)
-		_ = peer.socket.Close()
+		if peer.socket != nil {
+			_ = peer.socket.Close()
+		}
 	})
 }
 
@@ -124,12 +169,14 @@ func (h *hub) disconnectDevice(deviceID string) {
 }
 
 func (h *hub) write(peer *peer) {
+	defer h.waitGroup.Done()
 	defer h.remove(peer)
 	for {
 		select {
 		case <-peer.done:
 			return
 		case frame := <-peer.outbound:
+			peer.dequeue(frame)
 			_ = peer.socket.SetWriteDeadline(time.Now().Add(15 * time.Second))
 			if err := peer.socket.WriteMessage(frame.messageType, frame.data); err != nil {
 				return
@@ -139,6 +186,7 @@ func (h *hub) write(peer *peer) {
 }
 
 func (h *hub) read(peer *peer) {
+	defer h.waitGroup.Done()
 	defer h.remove(peer)
 	peer.socket.SetReadLimit(maxBinaryFrameBytes)
 	for {
@@ -160,23 +208,46 @@ func (h *hub) read(peer *peer) {
 }
 
 func (p *peer) enqueue(frame outboundFrame) bool {
+	p.stateMutex.Lock()
+	defer p.stateMutex.Unlock()
 	select {
 	case <-p.done:
 		return false
 	default:
 	}
-	select {
-	case <-p.done:
+	if p.maxPendingFrames > 0 && p.pendingFrames >= p.maxPendingFrames {
 		return false
+	}
+	frameBytes := int64(len(frame.data))
+	if p.maxPendingBytes > 0 && frameBytes > p.maxPendingBytes-p.pendingBytes {
+		return false
+	}
+	select {
 	case p.outbound <- frame:
+		p.pendingFrames++
+		p.pendingBytes += frameBytes
 		return true
 	default:
 		return false
 	}
 }
 
+func (p *peer) dequeue(frame outboundFrame) {
+	p.stateMutex.Lock()
+	if p.pendingFrames > 0 {
+		p.pendingFrames--
+	}
+	frameBytes := int64(len(frame.data))
+	if frameBytes >= p.pendingBytes {
+		p.pendingBytes = 0
+	} else {
+		p.pendingBytes -= frameBytes
+	}
+	p.stateMutex.Unlock()
+}
+
 func (h *hub) routeBinary(sender *peer, data []byte) {
-	if !sender.allowFrame() || len(data) < 25 || len(data) > maxBinaryFrameBytes || data[0] != 0x10 {
+	if !sender.allowFrame(len(data)) || len(data) < 25 || len(data) > maxBinaryFrameBytes || data[0] != 0x10 {
 		return
 	}
 	h.mutex.Lock()
@@ -208,14 +279,29 @@ func (h *hub) routeBinary(sender *peer, data []byte) {
 	}
 }
 
-func (p *peer) allowFrame() bool {
+func (p *peer) allowFrame(size int) bool {
+	p.stateMutex.Lock()
+	defer p.stateMutex.Unlock()
 	now := time.Now()
 	if now.Sub(p.windowStartedAt) >= time.Second {
 		p.windowStartedAt = now
 		p.framesInWindow = 0
+		p.bytesInWindow = 0
+	}
+	maxFrames := p.maxFramesPerSecond
+	if maxFrames <= 0 {
+		maxFrames = defaultMaxFramesPerSecondPerDevice
+	}
+	maxBytes := p.maxBytesPerSecond
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxBytesPerSecondPerDevice
+	}
+	if p.framesInWindow >= maxFrames || int64(size) > maxBytes-p.bytesInWindow {
+		return false
 	}
 	p.framesInWindow++
-	return p.framesInWindow <= 256
+	p.bytesInWindow += int64(size)
+	return true
 }
 
 func (h *hub) prune() {

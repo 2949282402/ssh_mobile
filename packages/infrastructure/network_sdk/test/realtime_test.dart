@@ -124,6 +124,89 @@ void main() {
       );
     },
   );
+
+  test('session applies a snapshot and records its revision', () async {
+    final backend = _FakeRealtimeBackend();
+    final client = RealtimeClientImpl(backend: backend);
+    final session = client.createSession(
+      realtimeId: '00112233445566778899aabbccddeeff',
+      peerId: 'peer-a',
+    );
+    addTearDown(() => client.dispose());
+
+    backend.emit(
+      const RealtimeSnapshotBackendEvent(
+        RealtimeSnapshot(
+          realtimeId: '00112233445566778899aabbccddeeff',
+          peerId: 'peer-a',
+          state: RealtimeSessionState.connected,
+          revision: 7,
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.state, RealtimeSessionState.connected);
+    expect(session.revision, 7);
+  });
+
+  test('client dispatches snapshot and revision to the matching session', () async {
+    final backend = _FakeRealtimeBackend();
+    final client = RealtimeClientImpl(backend: backend);
+    final session = client.createSession(
+      realtimeId: '00112233445566778899aabbccddeeff',
+      peerId: 'peer-a',
+    );
+    addTearDown(() => client.dispose());
+
+    backend.emit(
+      const RealtimeSnapshotBackendEvent(
+        RealtimeSnapshot(
+          realtimeId: '00112233445566778899aabbccddeeff',
+          peerId: 'peer-a',
+          state: RealtimeSessionState.connected,
+          revision: 5,
+        ),
+      ),
+    );
+    backend.emit(
+      const RealtimeSessionStateChangedEvent(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+        state: RealtimeSessionState.connected,
+        revision: 6,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.state, RealtimeSessionState.connected);
+    expect(session.revision, 6);
+  });
+
+  test('client ignores snapshots for a different session peer', () async {
+    final backend = _FakeRealtimeBackend();
+    final client = RealtimeClientImpl(backend: backend);
+    final session = client.createSession(
+      realtimeId: '00112233445566778899aabbccddeeff',
+      peerId: 'peer-a',
+    );
+    addTearDown(() => client.dispose());
+
+    backend.emit(
+      const RealtimeSnapshotBackendEvent(
+        RealtimeSnapshot(
+          realtimeId: '00112233445566778899aabbccddeeff',
+          peerId: 'other-peer',
+          state: RealtimeSessionState.connected,
+          revision: 9,
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.state, RealtimeSessionState.idle);
+    expect(session.revision, 0);
+  });
 }
 
 final class _FakeRealtimeBackend implements RealtimeSessionBackend {

@@ -24,7 +24,7 @@ function AuthGate() {
   const queryClient = useQueryClient();
   const authQuery = useQuery({
     queryKey: queryKeys.auth,
-    queryFn: authApi.session,
+    queryFn: ({ signal }) => authApi.session(signal),
     retry: false,
     staleTime: 0,
   });

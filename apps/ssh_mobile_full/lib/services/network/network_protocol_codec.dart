@@ -522,6 +522,8 @@ final class NetworkProtocolCodec {
     var message = '';
     NetworkOperation? operation;
     String? peerId;
+    var retryDisposition = RetryDisposition.unspecified;
+    var retryAfterSeconds = 0;
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
@@ -535,6 +537,12 @@ final class NetworkProtocolCodec {
           );
         case 4:
           peerId = utf8.decode(reader.bytes(field.wireType));
+        case 5:
+          retryDisposition = RetryDisposition.fromWire(
+            reader.varint(field.wireType),
+          );
+        case 6:
+          retryAfterSeconds = reader.varint(field.wireType);
         default:
           reader.skip(field.wireType);
       }
@@ -544,6 +552,8 @@ final class NetworkProtocolCodec {
       message: message,
       operation: operation,
       peerId: peerId?.isEmpty == true ? null : peerId,
+      retryDisposition: retryDisposition,
+      retryAfterSeconds: retryAfterSeconds,
     );
   }
 }

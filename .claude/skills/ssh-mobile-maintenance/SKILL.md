@@ -95,6 +95,11 @@ Skill and Memory ownership is governed by
   fixtures; tests must not require real SSH credentials or API keys.
 - Follow local format and naming conventions. Do not split cohesive code merely
   to satisfy a line-count report.
+- Develop and validate inside the WSL Linux environment: run every build, test,
+  analyze, and validation command with the Linux toolchain inside WSL; never
+  invoke Windows-hosted toolchains (Windows `dart`/`flutter`/`go`/`cargo`/`node`,
+  `.bat`/`.cmd` launchers, `powershell.exe`, `cmd.exe`). See the Environment
+  note in `references/validation.md`.
 
 ## Documentation ownership
 

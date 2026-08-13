@@ -1,0 +1,62 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+import { ToastProvider } from '../../components/toast';
+import { OverviewPage } from './overview-page';
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+const overview = {
+  server_time: 1_700_000_000,
+  uptime_seconds: 21,
+  devices: { enrolled: 2, online: 1 },
+  relay: { active_transfers: 0 },
+  runtime: { allocated_mem_mb: 12.34, goroutines: 7 },
+};
+
+function renderOverview() {
+  // retryDelay 0 keeps the single React Query retry for recoverable errors
+  // deterministic instead of racing the default 1s backoff against waitFor.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <OverviewPage />
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+}
+
+describe('OverviewPage', () => {
+  it('renders the current snapshot after polling data arrives', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(overview));
+    vi.stubGlobal('fetch', fetchMock);
+    renderOverview();
+
+    await waitFor(() => expect(screen.getByText('1 台设备在线')).toBeInTheDocument());
+    // The memory figure appears both in the metric tile and the runtime panel.
+    expect(screen.getAllByText('12.34 MB').length).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it('shows a recoverable schema error and succeeds after retry', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ invalid: true }))
+      .mockResolvedValueOnce(jsonResponse({ invalid: true }))
+      .mockResolvedValueOnce(jsonResponse(overview));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    renderOverview();
+
+    await waitFor(() => expect(screen.getByText('Relay 返回的数据格式无效。')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(screen.getByText('1 台设备在线')).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});

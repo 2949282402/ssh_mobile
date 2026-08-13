@@ -101,7 +101,7 @@ final class NetworkRuntimeImpl implements NetworkRuntime {
   @override
   Future<NetworkCommandGateway> openCommandGateway() async {
     _ensureUsable();
-    await ensureCapability(NetworkCapability.quic);
+    await ensureCapability(NetworkCapability.runtime);
     final handle = _nativeHandle;
     if (handle == null) {
       throw StateError('Network native handle is unavailable.');
@@ -125,6 +125,7 @@ final class NetworkRuntimeImpl implements NetworkRuntime {
     switch (capability) {
       case NetworkCapability.quic:
       case NetworkCapability.webSocketRelay:
+      case NetworkCapability.runtime:
       case NetworkCapability.realtime:
         await _ensureNativeHandle();
       case NetworkCapability.tcp:

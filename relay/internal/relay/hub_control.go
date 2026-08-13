@@ -16,7 +16,7 @@ import (
 
 // routeControl 校验并转发一个 JSON 控制信封。
 func (h *hub) routeControl(sender *peer, data []byte) {
-	if !sender.allowFrame() || len(data) > maxControlFrameBytes {
+	if !sender.allowFrame(len(data)) || len(data) > maxControlFrameBytes {
 		return
 	}
 	h.mutex.Lock()
@@ -100,6 +100,9 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 			return
 		}
 		if _, exists := h.transferSessions[frame.SessionID]; exists {
+			return
+		}
+		if len(h.transferSessions) >= h.config.MaxTransferSessions {
 			return
 		}
 		h.transferSessions[frame.SessionID] = session{

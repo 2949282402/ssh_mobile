@@ -130,6 +130,261 @@ void main() {
       expect(executor.requests, isEmpty);
     },
   );
+
+  test('NetworkErrorCode.fromWire resolves credential and identity codes', () {
+    expect(NetworkErrorCode.credentialExpired.wireValue, 12);
+    expect(NetworkErrorCode.identityConflict.wireValue, 13);
+    expect(NetworkErrorCode.fromWire(12), NetworkErrorCode.credentialExpired);
+    expect(NetworkErrorCode.fromWire(13), NetworkErrorCode.identityConflict);
+    expect(NetworkErrorCode.fromWire(99), NetworkErrorCode.unspecified);
+    expect(NetworkErrorCode.credentialExpired.retryable, isFalse);
+    expect(NetworkErrorCode.identityConflict.retryable, isFalse);
+  });
+
+  test('RetryDisposition mirrors wire values and rejects unknown values', () {
+    expect(RetryDisposition.unspecified.wireValue, 0);
+    expect(RetryDisposition.noRetry.wireValue, 1);
+    expect(RetryDisposition.retryWithBackoff.wireValue, 2);
+    expect(RetryDisposition.retryAfter.wireValue, 3);
+    expect(RetryDisposition.refreshCredentialThenRetry.wireValue, 4);
+    expect(
+      RetryDisposition.fromWire(4),
+      RetryDisposition.refreshCredentialThenRetry,
+    );
+    expect(RetryDisposition.fromWire(99), RetryDisposition.unspecified);
+  });
+
+  test('NetworkError carries retry fields with safe defaults', () {
+    const error = NetworkError(
+      code: NetworkErrorCode.timeout,
+      message: 'safe message',
+    );
+    expect(error.retryDisposition, RetryDisposition.unspecified);
+    expect(error.retryAfterSeconds, 0);
+    expect(error.retryable, isTrue);
+
+    const withRetry = NetworkError(
+      code: NetworkErrorCode.credentialExpired,
+      message: 'expired',
+      retryDisposition: RetryDisposition.refreshCredentialThenRetry,
+      retryAfterSeconds: 30,
+    );
+    expect(
+      withRetry.retryDisposition,
+      RetryDisposition.refreshCredentialThenRetry,
+    );
+    expect(withRetry.retryAfterSeconds, 30);
+    expect(withRetry.retryable, isTrue);
+
+    const noRetry = NetworkError(
+      code: NetworkErrorCode.timeout,
+      message: 'no retry',
+      retryDisposition: RetryDisposition.noRetry,
+    );
+    expect(noRetry.retryable, isFalse);
+  });
+
+  test(
+    'bootstrap client maps relay identity conflict into typed code',
+    () async {
+      final executor = _FakeExecutor([
+        _response(409, <String, dynamic>{
+          'code': 13,
+          'message':
+              'Relay device identity conflicts with an existing enrollment.',
+          'operation': 'enroll_relay',
+          'peer_id': 'device-1',
+        }),
+      ]);
+      final client = JsonBootstrapClient(executor: executor);
+      final result = await client.enroll(
+        Uri.parse('https://relay.example'),
+        EnrollmentRequest(
+          deviceId: 'device-1',
+          identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
+        ),
+      );
+
+      expect(result, isA<SdkFailure<DeviceEnrollment>>());
+      final error = (result as SdkFailure<DeviceEnrollment>).error;
+      expect(error.code, NetworkErrorCode.identityConflict);
+      expect(error.retryDisposition, RetryDisposition.unspecified);
+      expect(error.retryAfterSeconds, 0);
+    },
+  );
+
+  test(
+    'bootstrap client maps expired relay credential with retry fields',
+    () async {
+      final executor = _FakeExecutor([
+        _response(401, <String, dynamic>{
+          'code': 12,
+          'message': 'Relay device authentication failed.',
+          'operation': 'connect_relay',
+          'retry_disposition': 4,
+          'retry_after_seconds': 30,
+        }),
+      ]);
+      final client = JsonBootstrapClient(executor: executor);
+      final result = await client.enroll(
+        Uri.parse('https://relay.example'),
+        EnrollmentRequest(
+          deviceId: 'device-1',
+          identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
+        ),
+      );
+
+      expect(result, isA<SdkFailure<DeviceEnrollment>>());
+      final error = (result as SdkFailure<DeviceEnrollment>).error;
+      expect(error.code, NetworkErrorCode.credentialExpired);
+      expect(
+        error.retryDisposition,
+        RetryDisposition.refreshCredentialThenRetry,
+      );
+      expect(error.retryAfterSeconds, 30);
+    },
+  );
+
+  test('bootstrap client keeps other 401s as authenticationFailed', () async {
+    final executor = _FakeExecutor([
+      _response(401, <String, dynamic>{
+        'code': 2,
+        'message': 'Relay enrollment authentication failed.',
+      }),
+    ]);
+    final client = JsonBootstrapClient(executor: executor);
+    final result = await client.enroll(
+      Uri.parse('https://relay.example'),
+      EnrollmentRequest(
+        deviceId: 'device-1',
+        identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
+      ),
+    );
+
+    expect(result, isA<SdkFailure<DeviceEnrollment>>());
+    final error = (result as SdkFailure<DeviceEnrollment>).error;
+    expect(error.code, NetworkErrorCode.authenticationFailed);
+    expect(error.retryDisposition, RetryDisposition.unspecified);
+    expect(error.retryAfterSeconds, 0);
+  });
+
+  test('bootstrap client refresh signs a device refresh request', () async {
+    final executor = _FakeExecutor([
+      _response(200, <String, dynamic>{
+        'credential': 'refreshed-credential',
+        'expires_at': 200,
+        'server_time': 100,
+        'protocol_version': 1,
+      }),
+    ]);
+    final client = JsonBootstrapClient(executor: executor);
+    final result = await client.refresh(
+      Uri.parse('https://relay.example'),
+      RefreshRequest(
+        deviceId: 'device-1',
+        identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
+        nonce: 'abc',
+        signature: 'sig',
+      ),
+    );
+
+    expect(result, isA<SdkSuccess<DeviceEnrollment>>());
+    expect(
+      (result as SdkSuccess<DeviceEnrollment>).data.relayCredential,
+      'refreshed-credential',
+    );
+    final request = executor.requests.single;
+    expect(request.method, 'POST');
+    expect(request.uri.path, '/v1/devices/refresh');
+    expect(request.headers.containsKey('authorization'), isFalse);
+    final body = jsonDecode(utf8.decode(request.body!)) as Map<String, dynamic>;
+    expect(body['device_id'], 'device-1');
+    expect(body['nonce'], 'abc');
+    expect(body['signature'], 'sig');
+  });
+
+  test(
+    'bootstrap client refresh maps 404 to noRoute re-enroll signal',
+    () async {
+      final executor = _FakeExecutor([
+        _response(404, <String, dynamic>{
+          'code': 1,
+          'message': 'Relay device is not enrolled; re-enroll with a token.',
+          'operation': 'refresh_credential',
+          'peer_id': 'device-1',
+        }),
+      ]);
+      final client = JsonBootstrapClient(executor: executor);
+      final result = await client.refresh(
+        Uri.parse('https://relay.example'),
+        RefreshRequest(
+          deviceId: 'device-1',
+          identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
+          nonce: 'abc',
+          signature: 'sig',
+        ),
+      );
+
+      expect(result, isA<SdkFailure<DeviceEnrollment>>());
+      final error = (result as SdkFailure<DeviceEnrollment>).error;
+      expect(error.code, NetworkErrorCode.noRoute);
+      expect(error.operation, NetworkOperation.refreshCredential);
+    },
+  );
+
+  test('bootstrap client refresh maps 409 to identityConflict', () async {
+    final executor = _FakeExecutor([
+      _response(409, <String, dynamic>{
+        'code': 13,
+        'message': 'Relay device identity conflicts.',
+        'operation': 'refresh_credential',
+        'peer_id': 'device-1',
+      }),
+    ]);
+    final client = JsonBootstrapClient(executor: executor);
+    final result = await client.refresh(
+      Uri.parse('https://relay.example'),
+      RefreshRequest(
+        deviceId: 'device-1',
+        identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
+        nonce: 'abc',
+        signature: 'sig',
+      ),
+    );
+
+    expect(result, isA<SdkFailure<DeviceEnrollment>>());
+    final error = (result as SdkFailure<DeviceEnrollment>).error;
+    expect(error.code, NetworkErrorCode.identityConflict);
+  });
+
+  test('bootstrap client refresh maps 401 code 12 with retry fields', () async {
+    final executor = _FakeExecutor([
+      _response(401, <String, dynamic>{
+        'code': 12,
+        'message': 'Relay device authentication failed.',
+        'operation': 'refresh_credential',
+        'peer_id': 'device-1',
+        'retry_disposition': 4,
+        'retry_after_seconds': 30,
+      }),
+    ]);
+    final client = JsonBootstrapClient(executor: executor);
+    final result = await client.refresh(
+      Uri.parse('https://relay.example'),
+      RefreshRequest(
+        deviceId: 'device-1',
+        identityPublicKey: Uint8List.fromList(List<int>.filled(32, 7)),
+        nonce: 'abc',
+        signature: 'sig',
+      ),
+    );
+
+    expect(result, isA<SdkFailure<DeviceEnrollment>>());
+    final error = (result as SdkFailure<DeviceEnrollment>).error;
+    expect(error.code, NetworkErrorCode.credentialExpired);
+    expect(error.retryDisposition, RetryDisposition.refreshCredentialThenRetry);
+    expect(error.retryAfterSeconds, 30);
+  });
 }
 
 SdkResponse _response(int statusCode, [Map<String, dynamic>? body]) =>
@@ -186,6 +441,20 @@ final class _FakeBootstrapClient implements BootstrapClient {
   Future<SdkResult<DeviceEnrollment>> enroll(
     Uri endpoint,
     EnrollmentRequest request,
+  ) async => SdkSuccess(
+    DeviceEnrollment(
+      deviceId: request.deviceId,
+      relayCredential: 'fake',
+      expiresAt: DateTime.utc(2030),
+      serverTime: DateTime.utc(2029),
+      protocolVersion: 1,
+    ),
+  );
+
+  @override
+  Future<SdkResult<DeviceEnrollment>> refresh(
+    Uri endpoint,
+    RefreshRequest request,
   ) async => SdkSuccess(
     DeviceEnrollment(
       deviceId: request.deviceId,

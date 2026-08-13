@@ -31,9 +31,15 @@ Feature UI、SSH 会话或 LAN 业务规则。
 
 - Capability 首次使用时才创建 native handle；相同 Capability 的并发初始化共享同一
   Future；失败会清除 in-flight 状态并允许重试；
+- `NetworkCapability.runtime` 只表示 native command-worker handle 存在；它与 QUIC、
+  WSS Relay、Realtime 等具体 transport capability 独立配置和观察；
+- Wave 1 中唯一的数据面配置仍走现有 `ConfigureRuntime`，该入口会无条件初始化直接
+  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到 v1 协议切换（Wave 2），
+  当前并不存在；
 - Runtime dispose 会等待未完成的 handle 创建，然后显式 close；dispose 后所有新的
   Capability 请求必须失败；
-- `openCommandGateway()` 返回的 gateway 由 Runtime 绑定，调用方只负责取消自己的
+- `openCommandGateway()` 只 ensure `runtime`，不得隐式要求或启用 QUIC；返回的 gateway
+  由 Runtime 绑定，调用方只负责取消自己的
   事件订阅；AppRuntime/NetworkRuntime 仍是 native handle 的唯一释放 Owner；
 - `openRealtimeGateway()` 返回的 gateway 不拥有 native handle；App Shell adapter
   负责事件订阅和 SDK session 映射，必须在 Runtime dispose 前取消订阅。

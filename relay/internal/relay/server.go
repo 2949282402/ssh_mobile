@@ -20,7 +20,7 @@ type Server struct {
 	hub             *hub
 	upgrader        websocket.Upgrader
 	enrolledDevices map[string]*EnrolledDevice
-	revokedDevices  map[string]struct{}
+	revokedDevices  map[string]revokedDevice
 	proofNonces     map[string]map[string]time.Time
 	devicesMutex    sync.Mutex
 	admin           adminAuthState
@@ -29,26 +29,12 @@ type Server struct {
 
 // NewServer 根据给定配置创建仅驻留内存的 Relay 服务。
 func NewServer(config Config) *Server {
-	if config.Address == "" {
-		config.Address = ":8080"
-	}
+	config = withConfigDefaults(config)
 	if config.EnrollmentToken == "" {
 		config.EnrollmentToken = hex.EncodeToString(randomBytes(16))
 	}
 	if len(config.CredentialKey) == 0 {
 		config.CredentialKey = randomBytes(32)
-	}
-	if config.CredentialTTL <= 0 {
-		config.CredentialTTL = 24 * time.Hour
-	}
-	if config.SessionTTL <= 0 {
-		config.SessionTTL = 15 * time.Minute
-	}
-	if config.AdminSessionTTL <= 0 {
-		config.AdminSessionTTL = 24 * time.Hour
-	}
-	if config.MaxConnections <= 0 {
-		config.MaxConnections = 2048
 	}
 
 	adminPasswordHash := passwordDigest(config.CredentialKey, config.AdminPassword)
@@ -60,13 +46,14 @@ func NewServer(config Config) *Server {
 		hub:             newHub(config),
 		upgrader:        websocket.Upgrader{},
 		enrolledDevices: make(map[string]*EnrolledDevice),
-		revokedDevices:  make(map[string]struct{}),
+		revokedDevices:  make(map[string]revokedDevice),
 		proofNonces:     make(map[string]map[string]time.Time),
 		admin: adminAuthState{
-			user:         config.AdminUser,
-			passwordHash: adminPasswordHash,
-			configured:   adminConfigured,
-			sessions:     make(map[string]time.Time),
+			user:          config.AdminUser,
+			passwordHash:  adminPasswordHash,
+			configured:    adminConfigured,
+			sessions:      make(map[string]time.Time),
+			loginAttempts: make(map[string]adminLoginAttempt),
 		},
 		startedAt: time.Now(),
 	}
@@ -79,18 +66,32 @@ func (s *Server) Close() { s.hub.close() }
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", s.health)
 
+	admin := func(next http.HandlerFunc) http.HandlerFunc {
+		return adminResponseHeaders(next)
+	}
+	adminStateChange := func(next http.HandlerFunc) http.HandlerFunc {
+		return adminResponseHeaders(adminStateChangeMiddleware(next))
+	}
+	adminAuth := func(next http.HandlerFunc) http.HandlerFunc {
+		return adminResponseHeaders(s.adminAuthMiddleware(next))
+	}
+	adminAuthStateChange := func(next http.HandlerFunc) http.HandlerFunc {
+		return adminResponseHeaders(adminStateChangeMiddleware(s.adminAuthMiddleware(next)))
+	}
+
 	// Admin Control Plane。
-	mux.HandleFunc("POST /api/admin/v1/auth/login", s.adminLoginHandler)
-	mux.HandleFunc("POST /api/admin/v1/auth/logout", s.adminLogoutHandler)
-	mux.HandleFunc("GET /api/admin/v1/auth/session", s.adminSessionHandler)
-	mux.HandleFunc("GET /api/admin/v1/overview", s.adminAuthMiddleware(s.adminOverview))
-	mux.HandleFunc("GET /api/admin/v1/devices", s.adminAuthMiddleware(s.adminDevices))
-	mux.HandleFunc("POST /api/admin/v1/devices/{deviceId}/revoke", s.adminAuthMiddleware(s.adminRevokeDevice))
-	mux.HandleFunc("GET /api/admin/v1/access/enrollment-token", s.adminAuthMiddleware(s.adminToken))
-	mux.HandleFunc("POST /api/admin/v1/access/enrollment-token/rotate", s.adminAuthMiddleware(s.adminRotateToken))
+	mux.HandleFunc("POST /api/admin/v1/auth/login", adminStateChange(s.adminLoginHandler))
+	mux.HandleFunc("POST /api/admin/v1/auth/logout", adminStateChange(s.adminLogoutHandler))
+	mux.HandleFunc("GET /api/admin/v1/auth/session", admin(s.adminSessionHandler))
+	mux.HandleFunc("GET /api/admin/v1/overview", adminAuth(s.adminOverview))
+	mux.HandleFunc("GET /api/admin/v1/devices", adminAuth(s.adminDevices))
+	mux.HandleFunc("POST /api/admin/v1/devices/{deviceId}/revoke", adminAuthStateChange(s.adminRevokeDevice))
+	mux.HandleFunc("GET /api/admin/v1/access/enrollment-token", adminAuth(s.adminToken))
+	mux.HandleFunc("POST /api/admin/v1/access/enrollment-token/rotate", adminAuthStateChange(s.adminRotateToken))
 
 	// Device Plane。
 	mux.HandleFunc("POST /v1/devices/enroll", s.enroll)
+	mux.HandleFunc("POST /v1/devices/refresh", s.refresh)
 	mux.HandleFunc("GET /v1/connect", s.connect)
 }
 

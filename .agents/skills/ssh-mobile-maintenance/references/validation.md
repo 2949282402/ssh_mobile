@@ -6,6 +6,17 @@ Choose the smallest set that exercises the changed owner and its public
 consumers. Run broader gates when ownership, dependency, lifecycle, protocol,
 generated artifacts, or shared behavior changes.
 
+## Environment
+
+This repository is developed and validated inside the WSL Linux environment.
+Run every build, test, analyze, format, lint, and validation command with the
+Linux toolchain inside WSL — never with Windows-hosted toolchains or launchers:
+Windows `dart`/`flutter`/`go`/`cargo`/`node`, `.bat`/`.cmd` launchers,
+`powershell.exe`, `cmd.exe`, or any Windows binary reached through a mounted
+Windows drive. Prefer the Linux `go`/`cargo`/`flutter`/`dart`/`node` on the WSL
+PATH. When a required check cannot run under the WSL Linux toolchain, report the
+exact command and reason instead of falling back to a Windows binary.
+
 ## Always
 
 ```bash

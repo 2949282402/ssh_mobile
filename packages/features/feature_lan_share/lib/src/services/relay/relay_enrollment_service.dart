@@ -2,6 +2,7 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
@@ -130,6 +131,91 @@ final class RelayEnrollmentService {
     }
   }
 
+  /// 为已 enrollment 设备签发新的短期凭据，无需 enrollment token。
+  ///
+  /// 使用设备签名种子对 refresh 请求签名；成功后以与 [enroll] 相同的安全存储
+  /// 写入形状保存新凭据。失败时以 [NetworkFailure] 返回；404 被 SDK 映射为
+  /// [NetworkErrorCode.noRoute]，表示设备未 enrollment，需要重新 enroll。
+  Future<NetworkResult<void>> refreshCredential(RelaySettings settings) async {
+    late final Uri endpoint;
+    try {
+      endpoint = _validatedEndpoint(settings.endpoint);
+    } on ArgumentError {
+      return _failure(
+        code: NetworkErrorCode.invalidArgument,
+        message: 'Relay refresh endpoint is invalid.',
+      );
+    }
+    if (currentDeviceId.isEmpty || currentDeviceId.length > 128) {
+      return _failure(
+        code: NetworkErrorCode.invalidArgument,
+        message: 'Relay device identity is invalid.',
+      );
+    }
+    try {
+      final pair = await _signingKeyPair();
+      final publicKey = await pair.extractPublicKey();
+      final nonce = _randomRefreshNonce();
+      final transcript = 'POST\n/v1/devices/refresh\n$nonce';
+      final signatureBytes = (await Ed25519().sign(
+        utf8.encode(transcript),
+        keyPair: pair,
+      )).bytes;
+      final refresh = await _bootstrapClient.refresh(
+        endpoint,
+        RefreshRequest(
+          deviceId: currentDeviceId,
+          identityPublicKey: Uint8List.fromList(publicKey.bytes),
+          nonce: nonce,
+          signature: base64UrlEncode(signatureBytes).replaceAll('=', ''),
+        ),
+      );
+      if (refresh is SdkFailure<DeviceEnrollment>) {
+        return NetworkFailure<void>(refresh.error);
+      }
+      final data = (refresh as SdkSuccess<DeviceEnrollment>).data;
+      if (data.protocolVersion != protocolVersion) {
+        return _failure(
+          code: NetworkErrorCode.relayError,
+          message: 'Relay refresh protocol version is unsupported.',
+        );
+      }
+      final nowSeconds = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final localExpiresAt =
+          nowSeconds + data.expiresAt.difference(data.serverTime).inSeconds;
+      await _secureStorage.write(
+        key: _credentialKey,
+        value: jsonEncode({
+          'endpoint': _credentialEndpoint(endpoint),
+          'device_id': currentDeviceId,
+          'credential': data.relayCredential,
+          'expires_at': localExpiresAt,
+          'protocol_version': data.protocolVersion,
+        }),
+      );
+      return const NetworkSuccess<void>(null);
+    } on Object {
+      return _failure(
+        code: NetworkErrorCode.relayError,
+        message: 'Relay credential refresh failed.',
+      );
+    }
+  }
+
+  /// 当前端点和设备是否保存过 enrollment 凭据记录（无论是否已过期）。
+  Future<bool> hasStoredCredential(RelaySettings settings) async {
+    final endpoint = _validatedEndpoint(settings.endpoint);
+    final stored = await _secureStorage.read(key: _credentialKey);
+    if (stored == null || stored.isEmpty) return false;
+    try {
+      final decoded = jsonDecode(stored) as Map<String, dynamic>;
+      return decoded['endpoint'] == _credentialEndpoint(endpoint) &&
+          decoded['device_id'] == currentDeviceId;
+    } on Object {
+      return false;
+    }
+  }
+
   /// 仅当当前端点和设备范围内存在有效凭据时返回 true。
   Future<bool> isEnrolled(RelaySettings settings) async =>
       (await _credentialFor(settings)) != null;
@@ -200,6 +286,15 @@ final class RelayEnrollmentService {
       ).replaceAll('=', ''),
     );
     return pair;
+  }
+
+  /// 生成 32 字节随机 nonce 的 base64url 编码（无 padding）。
+  String _randomRefreshNonce() {
+    final random = Random.secure();
+    final bytes = Uint8List.fromList(
+      List<int>.generate(32, (_) => random.nextInt(256)),
+    );
+    return base64UrlEncode(bytes).replaceAll('=', '');
   }
 }
 

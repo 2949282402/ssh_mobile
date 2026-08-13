@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::events::{
     emit_command_result, emit_peer_state, emit_relay_state, protocol_error,
-    protocol_error_with_context, protocol_error_with_peer,
+    protocol_error_with_peer,
 };
 use crate::peer;
 use crate::relay;
@@ -185,16 +185,9 @@ async fn start_configure_relay(
     let task_started = supervisor.spawn_runtime("relay-configure", async move {
         match relay::configure_relay_for_state(Arc::clone(&state), command).await {
             Ok(()) => emit_relay_state(&state.event_tx, RelayConnectionState::Connected, None),
-            Err(error) => emit_relay_state(
-                &state.event_tx,
-                RelayConnectionState::Failed,
-                Some(protocol_error_with_context(
-                    NetworkErrorCode::RelayError,
-                    error.message,
-                    "configure_relay",
-                    None,
-                )),
-            ),
+            Err(error) => {
+                emit_relay_state(&state.event_tx, RelayConnectionState::Failed, Some(error))
+            }
         }
     });
     if task_started.is_none() {

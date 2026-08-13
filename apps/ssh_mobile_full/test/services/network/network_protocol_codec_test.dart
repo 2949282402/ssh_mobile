@@ -97,6 +97,31 @@ void main() {
     );
   });
 
+  test('error payload decodes retry disposition and retry-after seconds', () {
+    final frame = codec.decodeEvent(
+      Uint8List.fromList(<int>[
+        0x0a, 0x01, 0x66, // event_id = f
+        0x10, 0x64, // timestamp_ms = 100
+        0x18, 0x01, // protocol_version = 1
+        0x82, 0x01, 0x14, // transfer failed message (len 20)
+        0x0a, 0x01, 0x74, // transfer_id = t
+        0x12, 0x0f, // error message (len 15)
+        0x08, 0x0c, // code = 12 (credentialExpired)
+        0x12, 0x07, 0x65, 0x78, 0x70, 0x69, 0x72, 0x65, 0x64, // 'expired'
+        0x28, 0x04, // retry_disposition = 4 (refreshCredentialThenRetry)
+        0x30, 0x1e, // retry_after_seconds = 30
+      ]),
+    );
+    final event = frame.event! as TransferFailed;
+    expect(event.error.code, NetworkErrorCode.credentialExpired);
+    expect(event.error.message, 'expired');
+    expect(
+      event.error.retryDisposition,
+      RetryDisposition.refreshCredentialThenRetry,
+    );
+    expect(event.error.retryAfterSeconds, 30);
+  });
+
   test('peer and route events decode composed topology and transport', () {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[

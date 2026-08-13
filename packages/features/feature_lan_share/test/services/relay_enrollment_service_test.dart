@@ -1,5 +1,8 @@
 // Relay enrollment 的 Feature contract 测试；Dart 不承载 Relay 数据面。
 
+import 'dart:convert';
+
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_lan_share/feature_lan_share.dart';
@@ -99,13 +102,141 @@ void main() {
       NetworkErrorCode.relayError,
     );
   });
+
+  test(
+    'refreshCredential signs the transcript and stores a new credential',
+    () async {
+      final endpoint = Uri.parse('https://relay.example.test');
+      RefreshRequest? captured;
+      final service = RelayEnrollmentService(
+        currentDeviceId: 'device-a',
+        bootstrapClient: _FakeBootstrapClient(
+          onEnroll: (requestEndpoint, request) => DeviceEnrollment(
+            deviceId: request.deviceId,
+            relayCredential: 'signed-credential',
+            expiresAt: DateTime.now().add(const Duration(hours: 1)),
+            serverTime: DateTime.now(),
+            protocolVersion: 1,
+          ),
+          onRefresh: (requestEndpoint, request) {
+            expect(requestEndpoint, endpoint);
+            captured = request;
+            return SdkSuccess(
+              DeviceEnrollment(
+                deviceId: request.deviceId,
+                relayCredential: 'refreshed-credential',
+                expiresAt: DateTime.now().add(const Duration(hours: 1)),
+                serverTime: DateTime.now(),
+                protocolVersion: 1,
+              ),
+            );
+          },
+        ),
+      );
+      addTearDown(service.dispose);
+
+      await service.enroll(
+        RelaySettings(endpoint: endpoint),
+        '0123456789abcdef',
+      );
+      final refresh = await service.refreshCredential(
+        RelaySettings(endpoint: endpoint),
+      );
+      expect(refresh, isA<NetworkSuccess<void>>());
+      expect(captured, isNotNull);
+      final request = captured!;
+      expect(request.deviceId, 'device-a');
+      expect(request.identityPublicKey, hasLength(32));
+      expect(
+        base64Url.decode(base64Url.normalize(request.nonce)),
+        hasLength(32),
+      );
+      final signatureBytes = base64Url.decode(
+        base64Url.normalize(request.signature),
+      );
+      expect(signatureBytes, hasLength(64));
+      final valid = await Ed25519().verify(
+        utf8.encode('POST\n/v1/devices/refresh\n${request.nonce}'),
+        signature: Signature(
+          signatureBytes,
+          publicKey: SimplePublicKey(
+            request.identityPublicKey,
+            type: KeyPairType.ed25519,
+          ),
+        ),
+      );
+      expect(valid, isTrue);
+
+      expect(
+        await service.isEnrolled(RelaySettings(endpoint: endpoint)),
+        isTrue,
+      );
+      final native = await service.nativeConfiguration(
+        RelaySettings(endpoint: endpoint),
+      );
+      expect(native, isNotNull);
+      expect(native!.credential, 'refreshed-credential');
+    },
+  );
+
+  test(
+    'refreshCredential maps SDK failures without clobbering the credential',
+    () async {
+      final endpoint = Uri.parse('https://relay.example.test');
+      final service = RelayEnrollmentService(
+        currentDeviceId: 'device-a',
+        bootstrapClient: _FakeBootstrapClient(
+          onEnroll: (requestEndpoint, request) => DeviceEnrollment(
+            deviceId: request.deviceId,
+            relayCredential: 'original-credential',
+            expiresAt: DateTime.now().add(const Duration(hours: 1)),
+            serverTime: DateTime.now(),
+            protocolVersion: 1,
+          ),
+          onRefresh: (requestEndpoint, request) => const SdkFailure(
+            NetworkError(
+              code: NetworkErrorCode.noRoute,
+              message: 'Relay device is not enrolled.',
+              operation: NetworkOperation.refreshCredential,
+            ),
+          ),
+        ),
+      );
+      addTearDown(service.dispose);
+
+      await service.enroll(
+        RelaySettings(endpoint: endpoint),
+        '0123456789abcdef',
+      );
+      final refresh = await service.refreshCredential(
+        RelaySettings(endpoint: endpoint),
+      );
+      expect(refresh, isA<NetworkFailure<void>>());
+      expect(
+        (refresh as NetworkFailure<void>).error.code,
+        NetworkErrorCode.noRoute,
+      );
+      expect(refresh.error.operation, NetworkOperation.refreshCredential);
+      // 刷新失败不得覆盖既有凭据。
+      final native = await service.nativeConfiguration(
+        RelaySettings(endpoint: endpoint),
+      );
+      expect(native, isNotNull);
+      expect(native!.credential, 'original-credential');
+    },
+  );
 }
 
 final class _FakeBootstrapClient implements BootstrapClient {
-  const _FakeBootstrapClient({required this.onEnroll});
+  const _FakeBootstrapClient({required this.onEnroll, this.onRefresh});
 
   final DeviceEnrollment Function(Uri endpoint, EnrollmentRequest request)
   onEnroll;
+  final SdkResult<DeviceEnrollment> Function(
+    Uri endpoint,
+    RefreshRequest request,
+  )?
+  onRefresh;
 
   @override
   Future<SdkResult<BootstrapMetadata>> probe(Uri endpoint) async =>
@@ -116,4 +247,24 @@ final class _FakeBootstrapClient implements BootstrapClient {
     Uri endpoint,
     EnrollmentRequest request,
   ) async => SdkSuccess(onEnroll(endpoint, request));
+
+  @override
+  Future<SdkResult<DeviceEnrollment>> refresh(
+    Uri endpoint,
+    RefreshRequest request,
+  ) async {
+    final handler = onRefresh;
+    if (handler == null) {
+      return SdkSuccess(
+        DeviceEnrollment(
+          deviceId: request.deviceId,
+          relayCredential: 'refreshed-credential',
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+          serverTime: DateTime.now(),
+          protocolVersion: 1,
+        ),
+      );
+    }
+    return handler(endpoint, request);
+  }
 }

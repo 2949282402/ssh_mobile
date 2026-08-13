@@ -28,6 +28,7 @@ import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
+import '../services/terminal_session_metadata_store.dart';
 
 /// 应用生命周期运行时，持有 App Scope 的基础设施和长期服务。
 ///
@@ -47,6 +48,7 @@ final class AppRuntime implements Disposable {
     required this.realtimeClient,
     required this.bootstrapCoordinator,
     required this.shortcutCommandService,
+    required this.terminalSessionMetadataStore,
     required this.sshSessionManager,
     required this.sshService,
     required this.sftpService,
@@ -78,7 +80,11 @@ final class AppRuntime implements Disposable {
     required this.aiServerCatalogAdapter,
     required this.aiServerDiagnosticsAdapter,
     required this.aiChatRuntimeFactory,
-  });
+    Future<void> Function()? awaitPendingInitialization,
+    this.lifecycleObserver,
+    this.disposeLogger = true,
+  }) : _awaitPendingInitialization =
+           awaitPendingInitialization ?? _completedFuture;
 
   /// App Scope 唯一的日志实现；当前由 AppLogService 适配 Core Contract。
   final AppLogService appLogService;
@@ -112,6 +118,9 @@ final class AppRuntime implements Disposable {
 
   // TODO(refactor-step-18): 将快捷键配置迁移到 settings 模块。
   final ShortcutCommandService shortcutCommandService;
+
+  /// SSH 关闭后排空并释放的 App Scope 偏好/终端元数据 Owner。
+  final TerminalSessionMetadataStore terminalSessionMetadataStore;
 
   // 旧 API 兼容视图；实际 App Scope Owner 由下方的 SshSessionManager 字段表达。
   final SshService sshService;
@@ -208,13 +217,28 @@ final class AppRuntime implements Disposable {
   feature_lan_share.LanReceiverCoordinator get lanReceiverCoordinator =>
       lanShareModule.coordinator;
 
+  /// AppRuntimeFactory 追踪的非阻塞首帧初始化屏障。
+  ///
+  /// 该屏障只等待已经启动的任务，不会在关闭阶段重新调用任何初始化入口。
+  final Future<void> Function() _awaitPendingInitialization;
+
+  /// 仅供生命周期回归测试观察 Owner 释放顺序；观察器异常不能改变释放行为。
+  final void Function(String event)? lifecycleObserver;
+
+  /// 是否在释放阶段关闭 AppLogService。
+  ///
+  /// 默认 [true]，保持生产行为（Logger 最后释放）。AppLogService 是全局单例，
+  /// dispose 后无法再次使用；回归测试可以关闭该开关，避免销毁跨用例共享的
+  /// 单例日志实例。
+  final bool disposeLogger;
+
   Future<void>? _disposeFuture;
   bool _disposed = false;
 
   /// 当前 Runtime 是否已经开始释放资源。
   bool get isDisposed => _disposed;
 
-  /// 按“模块 → SSH → 网络 → 数据库/Repository → Logger”顺序释放资源。
+  /// 按“适配器 → Module → Realtime → SFTP → SSH → Network → 数据库/设置 → Logger”顺序释放资源。
   ///
   /// 每个资源组即使释放失败也会继续执行后续释放，最后重新抛出第一个
   /// 错误，避免一个异常导致其他连接、Timer 或数据库句柄永久泄漏。
@@ -233,114 +257,152 @@ final class AppRuntime implements Disposable {
     Object? firstError;
     StackTrace? firstStackTrace;
 
-    Future<void> attempt(FutureOr<void> Function() action) async {
+    Future<void> attempt(String name, FutureOr<void> Function() action) async {
+      _observe('$name.start');
       try {
         await action();
       } catch (error, stackTrace) {
         firstError ??= error;
         firstStackTrace ??= stackTrace;
+      } finally {
+        _observe('$name.end');
       }
     }
 
-    // App Scope 模块先停止对外提供服务，避免释放基础设施时仍有新请求进入。
-    await attempt(() async {
-      await mcpModule.dispose();
-      _debugAssertModuleDisposed(mcpModule);
-      mcpSettingsAdapter.dispose();
-    });
-    await attempt(() async {
-      await lanShareModule.dispose();
-      _debugAssertModuleDisposed(lanShareModule);
-    });
-    await attempt(lanShareSettingsAdapter.dispose);
-    await attempt(() async {
-      await aiStorageAdapter.shutdown();
-      aiStorageAdapter.dispose();
-    });
-    await attempt(() async {
-      await aiModule.dispose();
-      _debugAssertModuleDisposed(aiModule);
-    });
-    // AI 停止后再关闭 WebView，确保运行中的客户端工具不会继续访问
-    // 已经释放的 Controller；设置适配器先解除 AppSettings 监听。
-    await attempt(webViewSettingsAdapter.dispose);
-    await attempt(webViewService.dispose);
-    // 先解除 Developer Feature 对底层服务的观察，再关闭被观察资源。
-    await attempt(developerDiagnosticsAdapter.dispose);
-    developerDiagnosticsAdapter.debugAssertReleased();
-    await attempt(developerLogAdapter.dispose);
-    await attempt(developerSettingsAdapter.dispose);
-    await attempt(aiSettingsAdapter.dispose);
-    await attempt(() async {
-      await playbookModule.dispose();
-      _debugAssertModuleDisposed(playbookModule);
-    });
-    await attempt(playbookSettingsAdapter.dispose);
-    await attempt(playbookConnectionCatalogAdapter.dispose);
+    // 所有仍可能消费 App Scope 资源的异步初始化必须先完成；这里不能
+    // 再调用 ensureBootstrap() 或 Repository.initialize()，否则关闭流程会
+    // 在已释放的设置/数据库上重新启动一次初始化。
+    await attempt('pending-initialization', _awaitPendingInitialization);
 
-    // 等待启动中的 Storage 初始化完成，再关闭数据库，避免异步初始化在
-    // shutdown 之后重新打开数据库或继续触发通知。
-    await attempt(() async {
-      try {
-        await bootstrapCoordinator.ensureBootstrap();
-      } finally {
-        bootstrapCoordinator.dispose();
-      }
-    });
+    // 先解除所有适配器订阅和设置入口，再停止它们背后的 Module。
+    await attempt(
+      'developer-diagnostics.dispose',
+      developerDiagnosticsAdapter.dispose,
+    );
+    await attempt(
+      'developer-diagnostics.assert-released',
+      developerDiagnosticsAdapter.debugAssertReleased,
+    );
+    await attempt('developer-log.dispose', developerLogAdapter.dispose);
+    await attempt(
+      'developer-settings.dispose',
+      developerSettingsAdapter.dispose,
+    );
+    await attempt('bootstrap.dispose', bootstrapCoordinator.dispose);
+    await attempt('ai-settings.dispose', aiSettingsAdapter.dispose);
+    await attempt('ai-storage.shutdown', aiStorageAdapter.shutdown);
+    await attempt('ai-storage.dispose', aiStorageAdapter.dispose);
+    await attempt('webview-settings.dispose', webViewSettingsAdapter.dispose);
+    await attempt('webview.dispose', webViewService.dispose);
+    await attempt('mcp-settings.dispose', mcpSettingsAdapter.dispose);
+    await attempt(
+      'lan-share-settings.dispose',
+      lanShareSettingsAdapter.dispose,
+    );
+    await attempt('rag-settings.dispose', ragSettingsAdapter.dispose);
+    await attempt('playbook-settings.dispose', playbookSettingsAdapter.dispose);
+    await attempt(
+      'playbook-connection-catalog.dispose',
+      playbookConnectionCatalogAdapter.dispose,
+    );
 
-    // SSH Manager 统一关闭共享 Session Pool、Runtime 和旧 API 兼容资源。
-    await attempt(sshSessionManager.close);
-    assert(() {
-      if (sshService.activeSubscriptionCount != 0 ||
-          sshService.activeTimerCount != 0 ||
-          sshService.leaseCount != 0) {
-        throw StateError('SSH resources were not released.');
-      }
-      return true;
-    }());
-
-    // 当前 SFTP 实现仍直接持有 SSH 客户端，这里作为网络资源组释放。
-    await attempt(sftpService.dispose);
-    // Realtime sessions/backend subscriptions must stop before native Runtime.
-    await attempt(realtimeClient.dispose);
-    // SSH/SFTP 停止后再关闭网络 Runtime，避免仍有会话向 native handle 发命令。
-    await attempt(networkRuntime.dispose);
-    assert(() {
-      if (networkRuntime.diagnostics.nativeHandles != 0) {
-        throw StateError('Network native handles were not released.');
-      }
-      return true;
-    }());
-
-    // 业务 Module 的 Timer/监听器先释放，再关闭其共享数据库。
-    await attempt(() async {
-      await monitoringModule.dispose();
-      _debugAssertModuleDisposed(monitoringModule);
+    // App Scope Module 先停止对外提供服务，避免释放基础设施时仍有新请求进入。
+    await attempt('mcp-module.dispose', mcpModule.dispose);
+    await attempt(
+      'mcp-module.assert-disposed',
+      () => _debugAssertModuleDisposed(mcpModule),
+    );
+    await attempt('lan-share-module.dispose', lanShareModule.dispose);
+    await attempt(
+      'lan-share-module.assert-disposed',
+      () => _debugAssertModuleDisposed(lanShareModule),
+    );
+    await attempt('ai-module.dispose', aiModule.dispose);
+    await attempt(
+      'ai-module.assert-disposed',
+      () => _debugAssertModuleDisposed(aiModule),
+    );
+    await attempt('playbook-module.dispose', playbookModule.dispose);
+    await attempt(
+      'playbook-module.assert-disposed',
+      () => _debugAssertModuleDisposed(playbookModule),
+    );
+    await attempt('rag-module.dispose', ragModule.dispose);
+    await attempt(
+      'rag-module.assert-disposed',
+      () => _debugAssertModuleDisposed(ragModule),
+    );
+    await attempt('monitoring-module.dispose', monitoringModule.dispose);
+    await attempt(
+      'monitoring-module.assert-disposed',
+      () => _debugAssertModuleDisposed(monitoringModule),
+    );
+    await attempt('monitoring-service.assert-stopped', () {
       assert(!monitoringService.isRunning);
     });
-    await attempt(() async {
-      await ragModule.dispose();
-      _debugAssertModuleDisposed(ragModule);
-    });
-    await attempt(ragSettingsAdapter.dispose);
-    await attempt(shortcutCommandService.dispose);
-    await attempt(appSettings.dispose);
-    await attempt(() async {
-      try {
-        // 等待异步首载完成，避免关闭数据库后初始化任务再次访问句柄。
-        await connectionRepository.initialize();
-      } finally {
-        await connectionDatabase.dispose();
-      }
+
+    // Realtime adapter 先取消命令和事件订阅；它只借用 NetworkRuntime。
+    await attempt('realtime.dispose', realtimeClient.dispose);
+
+    // SFTP 仍是 App Shell 兼容服务，必须在 SSH Manager 释放前停止自己的工作。
+    await attempt('sftp.dispose', sftpService.dispose);
+
+    // SSH Manager 统一关闭共享 Session Pool、Runtime 和旧 API 兼容资源。
+    await attempt('ssh.close', sshSessionManager.close);
+    await attempt('ssh.assert-released', () {
+      assert(() {
+        if (sshService.activeSubscriptionCount != 0 ||
+            sshService.activeTimerCount != 0 ||
+            sshService.leaseCount != 0) {
+          throw StateError('SSH resources were not released.');
+        }
+        return true;
+      }());
     });
 
+    await attempt(
+      'terminal-metadata.dispose',
+      terminalSessionMetadataStore.dispose,
+    );
+
+    // SSH/SFTP 停止后再关闭网络 Runtime，避免仍有会话向 native handle 发命令。
+    await attempt('network.dispose', networkRuntime.dispose);
+    await attempt('network.assert-native-handles-released', () {
+      assert(() {
+        if (networkRuntime.diagnostics.nativeHandles != 0) {
+          throw StateError('Network native handles were not released.');
+        }
+        return true;
+      }());
+    });
+
+    // 关闭数据库前不再重试 Repository 初始化；pending barrier 已经等待了
+    // 原有首载任务，避免 shutdown 后重新打开 Drift 句柄。
+    await attempt('shortcut-command.dispose', shortcutCommandService.dispose);
+    await attempt('connection-database.dispose', connectionDatabase.dispose);
+    await attempt('app-settings.dispose', appSettings.dispose);
+
     // Logger 必须最后释放，因为上面的资源可能仍需记录关闭失败。
-    await attempt(appLogService.dispose);
-    assert(appLogService.activeTimerCount == 0);
+    if (disposeLogger) {
+      await attempt('app-log.dispose', appLogService.dispose);
+      await attempt('app-log.assert-released', () {
+        assert(appLogService.activeTimerCount == 0);
+      });
+    }
 
     final error = firstError;
     if (error != null) {
       Error.throwWithStackTrace(error, firstStackTrace ?? StackTrace.current);
+    }
+  }
+
+  static Future<void> _completedFuture() async {}
+
+  void _observe(String event) {
+    try {
+      lifecycleObserver?.call(event);
+    } catch (_) {
+      // 生命周期观察仅用于诊断/测试，不能改变资源释放结果。
     }
   }
 

@@ -67,6 +67,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     required this.historyRepository,
     required this.networkRuntime,
     this.initializeNetwork = true,
+    this.transferServiceOverride,
+    this.discoveryServiceOverride,
   });
 
   /// App Scope 的 LAN 设置和身份配置。
@@ -90,11 +92,20 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   /// Module 所有的历史 Repository。
   final LanShareHistoryRepository historyRepository;
 
-  /// App Scope 唯一网络运行时，用于按需准备 QUIC Capability。
+  /// App Scope 唯一网络运行时，用于按需准备 native runtime Capability。
   final NetworkRuntime networkRuntime;
 
   /// 测试中可关闭监听器和原生网络初始化，但仍保留服务装配流程。
   final bool initializeNetwork;
+
+  /// 可选的 LAN 传输服务覆盖；缺省时由初始化流程内部构造真实服务。
+  ///
+  /// 供测试注入 fake，避免在测试环境触发真实 HTTPS 绑定、TLS 证书 isolate
+  /// 生成或 multicast 网络路径。
+  final LanTransferService? transferServiceOverride;
+
+  /// 可选的 LAN 发现服务覆盖；缺省时由初始化流程内部构造真实服务。
+  final LanDiscoveryService? discoveryServiceOverride;
 
   LanDiscoveryService? _discoveryService;
   LanSecurityService? _securityService;
@@ -111,6 +122,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   int _relayReconnectAttempt = 0;
   Timer? _relayReconnectTimer;
   Future<NetworkResult<void>>? _relayConnectFuture;
+  Future<void>? _relayRefreshFuture;
   bool _relayReconnectEnabled = true;
   bool _relayExplicitlyDisconnected = false;
   bool _applyingRelayEndpoint = false;
@@ -411,7 +423,26 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     }
   }
 
+  /// 请求 WSS Relay 数据面 Capability；失败时返回 connectRelay 的统一失败结果。
+  ///
+  /// 在 `enableWebSocketRelay: false` 时，任何 Relay 配置都必须在此快速失败，
+  /// 而不会向 native 发出 disconnectRelay/configureRelay 等 Relay 命令。
+  Future<NetworkResult<void>> _requireRelayCapability() async {
+    try {
+      await networkRuntime.ensureCapability(NetworkCapability.webSocketRelay);
+      return const NetworkSuccess<void>(null);
+    } on Object {
+      return _networkFailure(
+        NetworkErrorCode.relayError,
+        'WebSocket Relay capability is unavailable',
+        NetworkOperation.connectRelay,
+      );
+    }
+  }
+
   Future<NetworkResult<void>> _doConnectRelay(RelaySettings settings) async {
+    final relayCapability = await _requireRelayCapability();
+    if (relayCapability is NetworkFailure<void>) return relayCapability;
     final client = _relayEnrollmentService;
     final network = _networkService;
     if (client == null || network == null) {
@@ -423,6 +454,16 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     }
     final configuration = await client.nativeConfiguration(settings);
     if (configuration == null) {
+      // 曾 enrollment 但本地凭据已过期：交给上层按 credentialExpired 触发 refresh，
+      // 而非立即要求用户重新输入 enrollment token。
+      if (await client.hasStoredCredential(settings)) {
+        _relayEnrolled = true;
+        return _networkFailure(
+          NetworkErrorCode.credentialExpired,
+          'Relay credential expired; refreshing.',
+          NetworkOperation.connectRelay,
+        );
+      }
       _relayEnrolled = false;
       return _networkFailure(
         NetworkErrorCode.authenticationFailed,
@@ -449,6 +490,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   }
 
   Future<NetworkResult<void>> _connectConfiguredRelay() async {
+    final relayCapability = await _requireRelayCapability();
+    if (relayCapability is NetworkFailure<void>) return relayCapability;
     final endpoint = Uri.tryParse(appSettings.relayEndpoint);
     final client = _relayEnrollmentService;
     if (endpoint == null ||
@@ -463,6 +506,22 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     final settings = RelaySettings(endpoint: endpoint);
     _relayEnrolled = await client.isEnrolled(settings);
     if (!_relayEnrolled) {
+      // 本地凭据过期但曾成功 enrollment：先尝试静默 refresh，而非要求 token。
+      if (await client.hasStoredCredential(settings)) {
+        _relayEnrolled = true;
+        _relayError = NetworkError(
+          code: NetworkErrorCode.credentialExpired,
+          message: 'Relay credential expired; refreshing.',
+          operation: NetworkOperation.connectRelay,
+        );
+        _scheduleRelayReconnect();
+        _notifyIfActive();
+        return _networkFailure(
+          NetworkErrorCode.credentialExpired,
+          'Relay credential expired; refreshing.',
+          NetworkOperation.connectRelay,
+        );
+      }
       final failure = _networkFailure(
         NetworkErrorCode.authenticationFailed,
         'Relay enrollment is required',
@@ -550,7 +609,12 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  /// 安排 1/2/4/8/16/30 秒退避，最多尝试六次。
+  /// 按最后一次失败的 [NetworkError] 重试策略安排自动重连。
+  ///
+  /// - `retryAfter`：使用服务端建议秒数（上限 60s；`<=0` 时回退指数退避）。
+  /// - `retryWithBackoff`/`unspecified`：保持 1/2/4/8/16/30 秒指数退避，最多六次。
+  /// - `refreshCredentialThenRetry`/`credentialExpired`：走 refresh 路径，不盲目重连。
+  /// - `noRetry`/`identityConflict`：停止自动重连并保留 typed 错误。
   void _scheduleRelayReconnect() {
     const delays = <Duration>[
       Duration(seconds: 1),
@@ -564,12 +628,32 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         !_relayReconnectEnabled ||
         _relayExplicitlyDisconnected ||
         !_relayEnrolled ||
-        _relayReconnectAttempt >= delays.length ||
         _relayConnectionState == RelayConnectionState.connected ||
         _relayConnectionState == RelayConnectionState.connecting) {
       return;
     }
-    final delay = delays[_relayReconnectAttempt];
+    final error = _relayError;
+    final disposition = error?.retryDisposition ?? RetryDisposition.unspecified;
+    if (disposition == RetryDisposition.noRetry ||
+        error?.code == NetworkErrorCode.identityConflict) {
+      _stopRelayReconnect();
+      _relayReconnectEnabled = false;
+      if (!_disposed) notifyListeners();
+      return;
+    }
+    if (disposition == RetryDisposition.refreshCredentialThenRetry ||
+        error?.code == NetworkErrorCode.credentialExpired) {
+      _stopRelayReconnect();
+      unawaited(_refreshAndReconnectRelay());
+      if (!_disposed) notifyListeners();
+      return;
+    }
+    if (_relayReconnectAttempt >= delays.length) return;
+    var delay = delays[_relayReconnectAttempt];
+    if (disposition == RetryDisposition.retryAfter &&
+        (error?.retryAfterSeconds ?? 0) > 0) {
+      delay = Duration(seconds: error!.retryAfterSeconds.clamp(1, 60));
+    }
     _relayReconnectAttempt++;
     _relayReconnectTimer = Timer(delay, () {
       _relayReconnectTimer = null;
@@ -578,6 +662,82 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       }
     });
     if (!_disposed) notifyListeners();
+  }
+
+  /// 合并并发 refresh，镜像 [_relayConnectFuture] 的 coalescing 模式。
+  Future<void> _refreshAndReconnectRelay() {
+    final existing = _relayRefreshFuture;
+    if (existing != null) return existing;
+    final operation = _refreshAndReconnectRelayInternal();
+    _relayRefreshFuture = operation;
+    try {
+      return operation;
+    } finally {
+      if (identical(_relayRefreshFuture, operation)) {
+        _relayRefreshFuture = null;
+      }
+    }
+  }
+
+  /// 刷新已过期的 Relay 凭据，成功后重新配置原生数据面。
+  ///
+  /// 刷新失败且 [NetworkErrorCode.noRoute]（relay 重启丢失 enrollment）时停止自动
+  /// 重试并标记未 enrollment；auth/credentialExpired 失败只展示错误，不循环重试。
+  Future<void> _refreshAndReconnectRelayInternal() async {
+    try {
+      final client = _relayEnrollmentService;
+      final endpoint = Uri.tryParse(appSettings.relayEndpoint);
+      if (client == null ||
+          endpoint == null ||
+          !_isValidRelayEndpoint(endpoint)) {
+        _relayError = _networkFailure(
+          NetworkErrorCode.relayError,
+          'Relay configuration is unavailable',
+          NetworkOperation.connectRelay,
+        ).error;
+        _notifyIfActive();
+        return;
+      }
+      final settings = RelaySettings(endpoint: endpoint);
+      final refresh = await client.refreshCredential(settings);
+      if (refresh is NetworkFailure<void>) {
+        final error = refresh.error;
+        if (error.code == NetworkErrorCode.noRoute) {
+          // relay 重启丢失 enrollment：停止自动重试，标记未 enrollment，交由 UI 提示。
+          _stopRelayReconnect();
+          _relayReconnectEnabled = false;
+          _relayEnrolled = false;
+          _relayError = error;
+          _notifyIfActive();
+          return;
+        }
+        // auth / credentialExpired / identityConflict：展示错误，不循环重试。
+        _stopRelayReconnect();
+        _relayError = error;
+        _notifyIfActive();
+        return;
+      }
+      // refresh 成功：新凭据已由 service 写入安全存储，重新配置原生数据面。
+      _relayEnrolled = true;
+      _relayError = null;
+      final result = await _connectRelay(settings);
+      if (result is NetworkFailure<void>) {
+        _relayError = result.error;
+        _scheduleRelayReconnect();
+      }
+      _notifyIfActive();
+    } on Object catch (error, stackTrace) {
+      logger.warning(
+        'Relay credential refresh failed',
+        details: '$error\n$stackTrace',
+      );
+      _relayError = _networkFailure(
+        NetworkErrorCode.relayError,
+        'Relay credential refresh failed.',
+        NetworkOperation.connectRelay,
+      ).error;
+      _notifyIfActive();
+    }
   }
 
   /// 取消自动重连并重置退避计数。
@@ -722,10 +882,12 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       await appSettings.ensureLanIdentity();
       final deviceId = appSettings.lanDeviceId;
       final deviceAlias = appSettings.lanDeviceAlias;
-      discovery = LanDiscoveryService(
-        currentDeviceId: deviceId,
-        currentDeviceAlias: deviceAlias,
-      );
+      discovery =
+          discoveryServiceOverride ??
+          LanDiscoveryService(
+            currentDeviceId: deviceId,
+            currentDeviceAlias: deviceAlias,
+          );
       final security = LanSecurityService();
       final lanStorage = LanStorageService(logger: logger);
       final identity = initializeNetwork
@@ -735,14 +897,16 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         currentDeviceId: deviceId,
         bootstrapClient: bootstrapClient,
       );
-      transfer = LanTransferService(
-        currentDeviceId: deviceId,
-        securityService: security,
-        storageService: lanStorage,
-        networkIdentityPublicKeyProvider: identity == null
-            ? null
-            : () async => identity.publicKey,
-      );
+      transfer =
+          transferServiceOverride ??
+          LanTransferService(
+            currentDeviceId: deviceId,
+            securityService: security,
+            storageService: lanStorage,
+            networkIdentityPublicKeyProvider: identity == null
+                ? null
+                : () async => identity.publicKey,
+          );
 
       _discoveryService = discovery;
       _securityService = security;
@@ -832,7 +996,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     if (identity == null || security == null || storage == null) return;
 
     try {
-      await networkRuntime.ensureCapability(NetworkCapability.quic);
+      await networkRuntime.ensureCapability(NetworkCapability.runtime);
       final network = await networkFactory.create(
         deviceId: appSettings.lanDeviceId,
         identityPrivateKey: identity.privateSeed,
@@ -863,7 +1027,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       _connectConfiguredRelayInBackground();
     } on Object catch (error, stackTrace) {
       logger.warning(
-        'Native QUIC runtime initialization failed',
+        'Native network runtime initialization failed',
         details: '$error\n$stackTrace',
       );
     }

@@ -34,5 +34,6 @@ zeroize = "1.8"
 [dev-dependencies]
 futures-util = "0.3"
 network-relay = { path = "../network-relay", features = ["test-support"] }
+network-transport = { path = "../network-transport", features = ["testkit"] }
 rand = "0.8"
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }

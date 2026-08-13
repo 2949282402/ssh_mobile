@@ -13,9 +13,13 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) upgradeDevice(w http.ResponseWriter, r *http.Request) {
-	claims, _, ok := s.authenticatedRequest(r)
+	claims, _, code, ok := s.authenticatedRequest(r)
 	if !ok {
-		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "connect_relay", "")
+		retry := retryUnspecified
+		if code == relayErrorCredentialExpired {
+			retry = retryRefreshCredentialThenRetry
+		}
+		writeNetworkErrorRetry(w, http.StatusUnauthorized, code, "Relay device authentication failed.", "connect_relay", "", retry, 0)
 		return
 	}
 	connection, err := s.upgrader.Upgrade(w, r, nil)
@@ -23,10 +27,14 @@ func (s *Server) upgradeDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	peer := &peer{
-		deviceID: claims.DeviceID,
-		socket:   connection,
-		outbound: make(chan outboundFrame, 32),
-		done:     make(chan struct{}),
+		deviceID:           claims.DeviceID,
+		socket:             connection,
+		outbound:           make(chan outboundFrame, s.config.MaxPendingFramesPerDevice),
+		done:               make(chan struct{}),
+		maxPendingFrames:   s.config.MaxPendingFramesPerDevice,
+		maxPendingBytes:    s.config.MaxPendingBytesPerDevice,
+		maxFramesPerSecond: s.config.MaxFramesPerSecondPerDevice,
+		maxBytesPerSecond:  s.config.MaxBytesPerSecondPerDevice,
 	}
 	if !s.hub.add(peer) {
 		_ = connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "connection limit"), time.Now().Add(time.Second))

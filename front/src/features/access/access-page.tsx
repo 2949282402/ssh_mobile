@@ -1,40 +1,104 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Eye, EyeOff, KeyRound, RotateCcw, ShieldCheck } from 'lucide-react';
 import { accessApi } from '../../api/access';
-import { ApiRequestError } from '../../api/errors';
+import { ApiRequestError, isAbortError, shouldRetryApiRequest } from '../../api/errors';
 import { queryKeys } from '../../api/query-keys';
 import { ConfirmDialog } from '../../components/confirm-dialog';
 import { useToast } from '../../components/toast';
-import { Badge, Button, ErrorState, InlineNotice, PageHeader, Skeleton } from '../../components/ui';
+import { Badge, Button, ErrorState, InlineNotice, PageHeader } from '../../components/ui';
 import { copyToClipboard } from '../../utils/format';
+
+const TOKEN_CACHE_TTL_MS = 30_000;
 
 export function AccessPage() {
   const [revealed, setRevealed] = useState(false);
+  const [tokenRequested, setTokenRequested] = useState(false);
   const [showRotateDialog, setShowRotateDialog] = useState(false);
   const queryClient = useQueryClient();
   const toast = useToast();
   const tokenQuery = useQuery({
     queryKey: queryKeys.token,
-    queryFn: accessApi.token,
-    staleTime: Number.POSITIVE_INFINITY,
-    retry: 1,
+    queryFn: ({ signal }) => accessApi.token(signal),
+    enabled: false,
+    staleTime: TOKEN_CACHE_TTL_MS,
+    gcTime: TOKEN_CACHE_TTL_MS,
+    retry: shouldRetryApiRequest,
   });
+  const tokenRequestRef = useRef<Promise<string> | null>(null);
+  const rotateAbortRef = useRef<AbortController | null>(null);
+
+  const clearTokenCache = useCallback(() => {
+    queryClient.removeQueries({ queryKey: queryKeys.token, exact: true });
+    setRevealed(false);
+  }, [queryClient]);
+
+  useEffect(() => {
+    if (!tokenQuery.data) return undefined;
+    const timeoutId = window.setTimeout(clearTokenCache, TOKEN_CACHE_TTL_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [clearTokenCache, tokenQuery.data]);
+
+  useEffect(() => () => {
+    rotateAbortRef.current?.abort();
+    queryClient.removeQueries({ queryKey: queryKeys.token, exact: true });
+  }, [queryClient]);
+
+  const ensureToken = async () => {
+    const cachedToken = tokenQuery.data?.enrollment_token;
+    if (cachedToken) return cachedToken;
+
+    setTokenRequested(true);
+    const pendingRequest = tokenRequestRef.current;
+    if (pendingRequest) return pendingRequest;
+
+    const requestPromise = tokenQuery.refetch()
+      .then((result) => {
+        if (result.data?.enrollment_token) return result.data.enrollment_token;
+        throw result.error instanceof Error ? result.error : new Error('无法读取 Enrollment Token。');
+      })
+      .finally(() => {
+        tokenRequestRef.current = null;
+      });
+    tokenRequestRef.current = requestPromise;
+    return requestPromise;
+  };
+
   const rotateMutation = useMutation({
-    mutationFn: accessApi.rotateToken,
+    mutationFn: () => {
+      rotateAbortRef.current?.abort();
+      const controller = new AbortController();
+      rotateAbortRef.current = controller;
+      return accessApi.rotateToken(controller.signal);
+    },
     onSuccess: (result) => {
       queryClient.setQueryData(queryKeys.token, result);
       setRevealed(true);
       setShowRotateDialog(false);
       toast.push('Enrollment Token 已重新生成。', 'success');
     },
-    onError: (error) => toast.push(error instanceof ApiRequestError ? error.message : 'Token 轮换失败。', 'error'),
+    onError: (error) => {
+      if (isAbortError(error)) return;
+      toast.push(error instanceof ApiRequestError ? error.message : 'Token 轮换失败。', 'error');
+    },
   });
 
-  const handleCopy = async () => {
-    const token = tokenQuery.data?.enrollment_token;
-    if (!token) return;
+  const handleReveal = async () => {
+    if (revealed) {
+      setRevealed(false);
+      return;
+    }
     try {
+      await ensureToken();
+      setRevealed(true);
+    } catch {
+      // The query error is rendered below without exposing the token or error details.
+    }
+  };
+
+  const handleCopy = async () => {
+    try {
+      const token = await ensureToken();
       await copyToClipboard(token);
       toast.push('Enrollment Token 已复制到剪贴板。', 'success');
     } catch (error) {
@@ -42,28 +106,20 @@ export function AccessPage() {
     }
   };
 
-  if (tokenQuery.isPending) {
-    return (
-      <div className="page">
-        <PageHeader eyebrow="Relay / Access" title="注册授权" description="管理新设备加入 Relay 所需的授权口令。" />
-        <section className="access-layout"><Skeleton className="skeleton-token-card" /><Skeleton className="skeleton-info-card" /></section>
-      </div>
-    );
-  }
-
-  if (tokenQuery.isError || !tokenQuery.data) {
+  if (tokenRequested && tokenQuery.isError && !tokenQuery.data) {
     return (
       <div className="page page--narrow">
         <PageHeader eyebrow="Relay / Access" title="注册授权" description="管理新设备加入 Relay 所需的授权口令。" />
         <ErrorState
           description={tokenQuery.error instanceof ApiRequestError ? tokenQuery.error.message : '无法读取 Enrollment Token。'}
-          onRetry={() => void tokenQuery.refetch()}
+          onRetry={() => void ensureToken()}
         />
       </div>
     );
   }
 
-  const token = tokenQuery.data.enrollment_token;
+  const token = tokenQuery.data?.enrollment_token;
+  const tokenLoading = tokenQuery.isFetching && !token;
 
   return (
     <div className="page">
@@ -88,14 +144,14 @@ export function AccessPage() {
           </div>
           <p className="token-card__description">新设备首次注册 Relay 时需要使用此 Token。默认遮罩，仅在明确操作后显示。</p>
           <div className="token-field">
-            <code>{revealed ? token : maskToken(token)}</code>
-            <Button variant="quiet" onClick={() => setRevealed((value) => !value)}>
+            <code aria-live="polite">{token && revealed ? token : token ? maskToken(token) : '••••••••'}</code>
+            <Button variant="quiet" loading={tokenLoading} onClick={() => void handleReveal()}>
               {revealed ? <EyeOff size={15} /> : <Eye size={15} />}
-              {revealed ? '隐藏' : '显示'}
+              {revealed ? '隐藏' : tokenLoading ? '读取中' : '显示'}
             </Button>
           </div>
           <div className="token-actions">
-            <Button variant="outline" onClick={() => void handleCopy()}>
+            <Button variant="outline" loading={tokenLoading} onClick={() => void handleCopy()}>
               <Copy size={15} />
               复制 Token
             </Button>

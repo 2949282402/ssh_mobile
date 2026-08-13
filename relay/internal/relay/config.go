@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -22,19 +24,58 @@ const (
 	maxCandidatePayloadBytes = 32 * 1024
 	// maxRealtimeSignalPayloadBytes 限制 WebRTC SDP/ICE 信令正文大小。
 	maxRealtimeSignalPayloadBytes = 256 * 1024
+
+	defaultAddress                           = ":8080"
+	defaultCredentialTTL                     = 24 * time.Hour
+	defaultSessionTTL                        = 15 * time.Minute
+	defaultAdminSessionTTL                   = 24 * time.Hour
+	defaultMaxConnections                    = 2048
+	defaultMaxEnrolledDevices                = 4096
+	defaultMaxRevokedDevices                 = 4096
+	defaultMaxTransferSessions               = 4096
+	defaultMaxPendingFramesPerDevice         = 64
+	defaultMaxPendingBytesPerDevice    int64 = 16 * 1024 * 1024
+	defaultMaxFramesPerSecondPerDevice       = 256
+	defaultMaxBytesPerSecondPerDevice  int64 = 64 * 1024 * 1024
+	defaultMaxAdminSessions                  = 32
+	defaultAdminLoginMaxAttempts             = 5
+	defaultAdminLoginWindow                  = time.Minute
+	defaultAdminLoginBlockDuration           = 5 * time.Minute
+	defaultMaxAdminLoginEntries              = 4096
+	defaultHTTPReadTimeout                   = 15 * time.Second
+	defaultHTTPWriteTimeout                  = 15 * time.Second
+	defaultHTTPIdleTimeout                   = 60 * time.Second
+	defaultHTTPMaxHeaderBytes                = 16 * 1024
 )
 
 // Config 保存 Relay 服务器的监听、认证和资源边界。
 type Config struct {
-	Address         string
-	EnrollmentToken string
-	CredentialKey   []byte
-	CredentialTTL   time.Duration
-	SessionTTL      time.Duration
-	AdminSessionTTL time.Duration
-	MaxConnections  int
-	AdminUser       string
-	AdminPassword   string
+	Address                     string
+	EnrollmentToken             string
+	CredentialKey               []byte
+	CredentialTTL               time.Duration
+	SessionTTL                  time.Duration
+	AdminSessionTTL             time.Duration
+	MaxConnections              int
+	MaxEnrolledDevices          int
+	MaxRevokedDevices           int
+	MaxTransferSessions         int
+	MaxPendingFramesPerDevice   int
+	MaxPendingBytesPerDevice    int64
+	MaxFramesPerSecondPerDevice int
+	MaxBytesPerSecondPerDevice  int64
+	MaxAdminSessions            int
+	AdminLoginMaxAttempts       int
+	AdminLoginWindow            time.Duration
+	AdminLoginBlockDuration     time.Duration
+	MaxAdminLoginEntries        int
+	HTTPReadTimeout             time.Duration
+	HTTPWriteTimeout            time.Duration
+	HTTPIdleTimeout             time.Duration
+	HTTPMaxHeaderBytes          int
+	TrustedProxyCIDRs           []netip.Prefix
+	AdminUser                   string
+	AdminPassword               string
 }
 
 // ConfigFromEnvironment 从环境变量加载并校验生产 Relay 配置。
@@ -70,16 +111,130 @@ func ConfigFromEnvironment() (Config, error) {
 	}
 
 	return Config{
-		Address:         address,
-		EnrollmentToken: enrollment,
-		CredentialKey:   decoded,
-		CredentialTTL:   durationEnv("RELAY_CREDENTIAL_TTL", 24*time.Hour),
-		SessionTTL:      durationEnv("RELAY_SESSION_TTL", 15*time.Minute),
-		AdminSessionTTL: durationEnv("RELAY_ADMIN_SESSION_TTL", 24*time.Hour),
-		MaxConnections:  intEnv("RELAY_MAX_CONNECTIONS", 2048),
-		AdminUser:       adminUser,
-		AdminPassword:   adminPassword,
+		Address:                     address,
+		EnrollmentToken:             enrollment,
+		CredentialKey:               decoded,
+		CredentialTTL:               durationEnv("RELAY_CREDENTIAL_TTL", defaultCredentialTTL),
+		SessionTTL:                  durationEnv("RELAY_SESSION_TTL", defaultSessionTTL),
+		AdminSessionTTL:             durationEnv("RELAY_ADMIN_SESSION_TTL", defaultAdminSessionTTL),
+		MaxConnections:              intEnv("RELAY_MAX_CONNECTIONS", defaultMaxConnections),
+		MaxEnrolledDevices:          intEnv("RELAY_MAX_ENROLLED_DEVICES", defaultMaxEnrolledDevices),
+		MaxRevokedDevices:           intEnv("RELAY_MAX_REVOKED_DEVICES", defaultMaxRevokedDevices),
+		MaxTransferSessions:         intEnv("RELAY_MAX_TRANSFER_SESSIONS", defaultMaxTransferSessions),
+		MaxPendingFramesPerDevice:   intEnv("RELAY_MAX_PENDING_FRAMES_PER_DEVICE", defaultMaxPendingFramesPerDevice),
+		MaxPendingBytesPerDevice:    int64Env("RELAY_MAX_PENDING_BYTES_PER_DEVICE", defaultMaxPendingBytesPerDevice),
+		MaxFramesPerSecondPerDevice: intEnv("RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE", defaultMaxFramesPerSecondPerDevice),
+		MaxBytesPerSecondPerDevice:  int64Env("RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE", defaultMaxBytesPerSecondPerDevice),
+		MaxAdminSessions:            intEnv("RELAY_MAX_ADMIN_SESSIONS", defaultMaxAdminSessions),
+		AdminLoginMaxAttempts:       intEnv("RELAY_ADMIN_LOGIN_MAX_ATTEMPTS", defaultAdminLoginMaxAttempts),
+		AdminLoginWindow:            durationEnv("RELAY_ADMIN_LOGIN_WINDOW", defaultAdminLoginWindow),
+		AdminLoginBlockDuration:     durationEnv("RELAY_ADMIN_LOGIN_BLOCK", defaultAdminLoginBlockDuration),
+		MaxAdminLoginEntries:        intEnv("RELAY_MAX_ADMIN_LOGIN_ENTRIES", defaultMaxAdminLoginEntries),
+		HTTPReadTimeout:             durationEnv("RELAY_HTTP_READ_TIMEOUT", defaultHTTPReadTimeout),
+		HTTPWriteTimeout:            durationEnv("RELAY_HTTP_WRITE_TIMEOUT", defaultHTTPWriteTimeout),
+		HTTPIdleTimeout:             durationEnv("RELAY_HTTP_IDLE_TIMEOUT", defaultHTTPIdleTimeout),
+		HTTPMaxHeaderBytes:          intEnv("RELAY_HTTP_MAX_HEADER_BYTES", defaultHTTPMaxHeaderBytes),
+		TrustedProxyCIDRs:           cidrListEnv("RELAY_TRUSTED_PROXY_CIDRS"),
+		AdminUser:                   adminUser,
+		AdminPassword:               adminPassword,
 	}, nil
+}
+
+// cidrListEnv parses a comma-separated list of CIDRs (or bare IP addresses)
+// into prefixes. An empty or unset variable yields no trusted proxies, which is
+// the secure default: the relay never honors forwarding headers in that case.
+// Malformed entries are ignored, degrading toward the secure no-proxy default
+// rather than silently trusting a misconfigured boundary.
+func cidrListEnv(name string) []netip.Prefix {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	var prefixes []netip.Prefix
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if prefix, err := netip.ParsePrefix(part); err == nil {
+			prefixes = append(prefixes, prefix)
+			continue
+		}
+		if addr, err := netip.ParseAddr(part); err == nil {
+			prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+		}
+	}
+	return prefixes
+}
+
+// withConfigDefaults supplies safe finite defaults for programmatic callers as
+// well as environment-backed production configuration. Secrets are intentionally
+// not generated here because NewServer owns their process-local initialization.
+func withConfigDefaults(config Config) Config {
+	if config.Address == "" {
+		config.Address = defaultAddress
+	}
+	if config.CredentialTTL <= 0 {
+		config.CredentialTTL = defaultCredentialTTL
+	}
+	if config.SessionTTL <= 0 {
+		config.SessionTTL = defaultSessionTTL
+	}
+	if config.AdminSessionTTL <= 0 {
+		config.AdminSessionTTL = defaultAdminSessionTTL
+	}
+	if config.MaxConnections <= 0 {
+		config.MaxConnections = defaultMaxConnections
+	}
+	if config.MaxEnrolledDevices <= 0 {
+		config.MaxEnrolledDevices = defaultMaxEnrolledDevices
+	}
+	if config.MaxRevokedDevices <= 0 {
+		config.MaxRevokedDevices = defaultMaxRevokedDevices
+	}
+	if config.MaxTransferSessions <= 0 {
+		config.MaxTransferSessions = defaultMaxTransferSessions
+	}
+	if config.MaxPendingFramesPerDevice <= 0 {
+		config.MaxPendingFramesPerDevice = defaultMaxPendingFramesPerDevice
+	}
+	if config.MaxPendingBytesPerDevice <= 0 {
+		config.MaxPendingBytesPerDevice = defaultMaxPendingBytesPerDevice
+	}
+	if config.MaxFramesPerSecondPerDevice <= 0 {
+		config.MaxFramesPerSecondPerDevice = defaultMaxFramesPerSecondPerDevice
+	}
+	if config.MaxBytesPerSecondPerDevice <= 0 {
+		config.MaxBytesPerSecondPerDevice = defaultMaxBytesPerSecondPerDevice
+	}
+	if config.MaxAdminSessions <= 0 {
+		config.MaxAdminSessions = defaultMaxAdminSessions
+	}
+	if config.AdminLoginMaxAttempts <= 0 {
+		config.AdminLoginMaxAttempts = defaultAdminLoginMaxAttempts
+	}
+	if config.AdminLoginWindow <= 0 {
+		config.AdminLoginWindow = defaultAdminLoginWindow
+	}
+	if config.AdminLoginBlockDuration <= 0 {
+		config.AdminLoginBlockDuration = defaultAdminLoginBlockDuration
+	}
+	if config.MaxAdminLoginEntries <= 0 {
+		config.MaxAdminLoginEntries = defaultMaxAdminLoginEntries
+	}
+	if config.HTTPReadTimeout <= 0 {
+		config.HTTPReadTimeout = defaultHTTPReadTimeout
+	}
+	if config.HTTPWriteTimeout <= 0 {
+		config.HTTPWriteTimeout = defaultHTTPWriteTimeout
+	}
+	if config.HTTPIdleTimeout <= 0 {
+		config.HTTPIdleTimeout = defaultHTTPIdleTimeout
+	}
+	if config.HTTPMaxHeaderBytes <= 0 {
+		config.HTTPMaxHeaderBytes = defaultHTTPMaxHeaderBytes
+	}
+	return config
 }
 
 // durationEnv 读取正的时间间隔，异常时返回指定默认值。
@@ -93,6 +248,14 @@ func durationEnv(name string, fallback time.Duration) time.Duration {
 // intEnv 读取正整数资源配置，异常时返回指定默认值。
 func intEnv(name string, fallback int) int {
 	if value, err := strconv.Atoi(os.Getenv(name)); err == nil && value > 0 {
+		return value
+	}
+	return fallback
+}
+
+// int64Env 读取正的 int64 资源配置，异常时返回指定默认值。
+func int64Env(name string, fallback int64) int64 {
+	if value, err := strconv.ParseInt(os.Getenv(name), 10, 64); err == nil && value > 0 {
 		return value
 	}
 	return fallback

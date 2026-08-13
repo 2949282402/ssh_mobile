@@ -224,6 +224,112 @@ void main() {
       expect(session.state, RealtimeSessionState.stopped);
     },
   );
+
+  test('native snapshot maps to SDK snapshot with revision', () async {
+    final gateway = _FakeRealtimeGateway();
+    final backend = AppRealtimeSessionBackend(
+      networkRuntime: _FakeNetworkRuntime(gateway),
+      commandResultTimeout: const Duration(seconds: 1),
+    );
+    final client = RealtimeClientImpl(backend: backend);
+    final session = client.createSession(
+      realtimeId: realtimeId,
+      peerId: 'peer-a',
+    );
+
+    // start() 打开 gateway 并订阅原生事件，之后快照才能被路由。
+    final startFuture = session.start();
+    await _pump();
+    gateway.emitCommandResult(commandId: gateway.lastStartCommandId!);
+    await startFuture;
+
+    gateway.emitSnapshot(NativeRealtimeSessionState.connected, revision: 7);
+    await _pump();
+
+    expect(session.state, RealtimeSessionState.connected);
+    expect(session.revision, 7);
+    await client.dispose();
+  });
+
+  test('native state event carries signaling revision', () async {
+    final gateway = _FakeRealtimeGateway();
+    final backend = AppRealtimeSessionBackend(
+      networkRuntime: _FakeNetworkRuntime(gateway),
+      commandResultTimeout: const Duration(seconds: 1),
+    );
+    final client = RealtimeClientImpl(backend: backend);
+    final session = client.createSession(
+      realtimeId: realtimeId,
+      peerId: 'peer-a',
+    );
+
+    final startFuture = session.start();
+    await _pump();
+    gateway.emitCommandResult(commandId: gateway.lastStartCommandId!);
+    await startFuture;
+
+    gateway.emitState(NativeRealtimeSessionState.connected, revision: 3);
+    await _pump();
+
+    expect(session.state, RealtimeSessionState.connected);
+    expect(session.revision, 3);
+    await client.dispose();
+  });
+
+  test('native error maps retry disposition and retry-after seconds', () async {
+    final gateway = _FakeRealtimeGateway();
+    final backend = AppRealtimeSessionBackend(
+      networkRuntime: _FakeNetworkRuntime(gateway),
+      commandResultTimeout: const Duration(seconds: 1),
+    );
+    final client = RealtimeClientImpl(backend: backend);
+    final session = client.createSession(
+      realtimeId: realtimeId,
+      peerId: 'peer-a',
+    );
+
+    final startFuture = session.start();
+    await _pump();
+    gateway.emitCommandResult(
+      commandId: gateway.lastStartCommandId!,
+      accepted: false,
+      error: const NativeNetworkError(
+        code: 12,
+        message: 'credential expired',
+        operation: 'start_realtime_session',
+        retryDisposition: NativeRetryDisposition.refreshCredentialThenRetry,
+        retryAfterSeconds: 30,
+      ),
+    );
+
+    final result = await startFuture;
+    expect(result, isA<SdkFailure<void>>());
+    final error = (result as SdkFailure<void>).error;
+    expect(error.code, NetworkErrorCode.credentialExpired);
+    expect(error.retryDisposition, RetryDisposition.refreshCredentialThenRetry);
+    expect(error.retryAfterSeconds, 30);
+    await client.dispose();
+  });
+
+  test('snapshot before session exists is ignored', () async {
+    final gateway = _FakeRealtimeGateway();
+    final backend = AppRealtimeSessionBackend(
+      networkRuntime: _FakeNetworkRuntime(gateway),
+      commandResultTimeout: const Duration(seconds: 1),
+    );
+    final client = RealtimeClientImpl(backend: backend);
+    // 快照先于 session 创建到达：SDK coordinator 忽略未知 session 事件。
+    gateway.emitSnapshot(NativeRealtimeSessionState.connected, revision: 1);
+    await _pump();
+
+    final session = client.createSession(
+      realtimeId: realtimeId,
+      peerId: 'peer-a',
+    );
+    expect(session.state, RealtimeSessionState.idle);
+    expect(session.revision, 0);
+    await client.dispose();
+  });
 }
 
 Future<void> _pump() => Future<void>.delayed(Duration.zero);
@@ -311,7 +417,7 @@ final class _FakeRealtimeGateway implements NetworkRealtimeGateway {
     );
   }
 
-  void emitState(NativeRealtimeSessionState state) {
+  void emitState(NativeRealtimeSessionState state, {int? revision}) {
     _events.add(
       NativeRealtimeStateChangedEvent(
         eventId: 'state-${++_sequence}',
@@ -320,7 +426,26 @@ final class _FakeRealtimeGateway implements NetworkRealtimeGateway {
         realtimeId: '00112233445566778899aabbccddeeff',
         peerId: 'peer-a',
         state: state,
-        revision: _sequence,
+        revision: revision ?? _sequence,
+      ),
+    );
+  }
+
+  void emitSnapshot(
+    NativeRealtimeSessionState state, {
+    required int revision,
+    NativeNetworkError? error,
+  }) {
+    _events.add(
+      NativeRealtimeSnapshotEvent(
+        eventId: 'snapshot-${++_sequence}',
+        timestampMs: 1,
+        protocolVersion: 1,
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+        state: state,
+        revision: revision,
+        error: error,
       ),
     );
   }

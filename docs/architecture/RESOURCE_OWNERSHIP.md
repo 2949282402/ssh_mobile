@@ -1,4 +1,4 @@
-最新更新时间：2026-08-12
+最新更新时间：2026-08-13
 
 # 资源 Owner 审计
 
@@ -8,8 +8,8 @@
 
 | Resource | Owner | Scope | Release |
 | --- | --- | --- | --- |
-| AppLogger | `AppRuntime` → `AppLogService` | App | `dispose` last; flush and close log DB |
-| AppLogDatabase | `AppLogService` / `AppRuntime` | App | `dispose` closes Drift handle |
+| AppLogger | `AppRuntime` → `AppLogService` | App | `dispose` last; cancels UI notification timer; does not close the log DB |
+| AppLogDatabase | binder via `AppLogService.setDatabase` (not closed by `AppLogService.dispose`) | App | `detachDatabase` drains writes, then `dispose` closes Drift handle (idempotent) |
 | AppSettings | `AppRuntime` | App | `dispose` cancels listeners and pending work |
 | ConnectionDatabase | `AppRuntime` / Connection Core | App | await repository init, then `close` |
 | NetworkRuntime | `AppRuntime` | App | `dispose` after SSH/SFTP stop |
@@ -43,8 +43,9 @@
 
 ## 审计结论
 
-- AppRuntime 的释放顺序是 Module → SSH → SFTP → Network → database/repository →
-  Logger；每组释放失败仍继续后续组，并重新抛出第一个错误。
+- AppRuntime 的释放顺序是 Module → Realtime → SFTP → SSH → Network →
+  database/repository → Logger；Realtime adapter 只借用 NetworkRuntime handle，
+  必须在其之前释放；每组释放失败仍继续后续组，并重新抛出第一个错误。
 - Feature 不创建或关闭 App Scope SSH/Network；SSH 通过 Lease，网络通过
   `NetworkRuntime` Capability，Route Module 只关闭自己的数据库和 Service。
 - Drift Repository 不关闭数据库；数据库只由表中对应 Module 或 AppRuntime 关闭。

@@ -41,12 +41,40 @@ final class RealtimeSessionStateChangedEvent extends RealtimeBackendEvent {
     required this.peerId,
     required this.state,
     this.error,
+    this.revision = 0,
   });
 
   final String realtimeId;
   final String peerId;
   final RealtimeSessionState state;
   final NetworkError? error;
+
+  /// Signaling revision associated with this state; 0 when unspecified.
+  final int revision;
+}
+
+/// A complete Realtime session state snapshot published by native.
+final class RealtimeSnapshot {
+  const RealtimeSnapshot({
+    required this.realtimeId,
+    required this.peerId,
+    required this.state,
+    required this.revision,
+    this.error,
+  });
+
+  final String realtimeId;
+  final String peerId;
+  final RealtimeSessionState state;
+  final int revision;
+  final NetworkError? error;
+}
+
+/// A backend snapshot event consumed by the SDK session coordinator.
+final class RealtimeSnapshotBackendEvent extends RealtimeBackendEvent {
+  const RealtimeSnapshotBackendEvent(this.snapshot);
+
+  final RealtimeSnapshot snapshot;
 }
 
 /// A backend video event consumed by the SDK session coordinator.
@@ -102,6 +130,9 @@ abstract interface class RealtimeSession {
   String get peerId;
 
   RealtimeSessionState get state;
+
+  /// Latest signaling revision observed from state/snapshot backend events.
+  int get revision;
 
   Stream<RealtimeVideoFrame> get remoteVideo;
 
@@ -182,7 +213,15 @@ final class RealtimeClientImpl implements RealtimeClient {
       case RealtimeSessionStateChangedEvent(:final realtimeId, :final peerId):
         final session = _sessions[realtimeId];
         if (session == null || session.peerId != peerId) return;
-        session._applyState(event.state, event.error);
+        session._applyState(
+          event.state,
+          event.error,
+          revision: event.revision,
+        );
+      case RealtimeSnapshotBackendEvent(:final snapshot):
+        final session = _sessions[snapshot.realtimeId];
+        if (session == null || session.peerId != snapshot.peerId) return;
+        session._applySnapshot(snapshot);
       case RealtimeRemoteVideoFrameEvent(:final realtimeId, :final peerId):
         final session = _sessions[realtimeId];
         if (session == null || session.peerId != peerId) return;
@@ -235,6 +274,7 @@ final class _RealtimeSession implements RealtimeSession {
       StreamController<RealtimeVideoFrame>.broadcast();
   RealtimeSessionState _state = RealtimeSessionState.idle;
   RealtimeAudioState _audioState = RealtimeAudioState.unavailable;
+  int _revision = 0;
   Future<SdkResult<void>>? _startFuture;
   Future<SdkResult<void>>? _stopFuture;
   bool _stopCommandCompleted = false;
@@ -248,6 +288,9 @@ final class _RealtimeSession implements RealtimeSession {
 
   @override
   RealtimeSessionState get state => _state;
+
+  @override
+  int get revision => _revision;
 
   @override
   Stream<RealtimeVideoFrame> get remoteVideo => _videoController.stream;
@@ -328,13 +371,27 @@ final class _RealtimeSession implements RealtimeSession {
     return result;
   }
 
-  void _applyState(RealtimeSessionState state, NetworkError? error) {
+  void _applyState(
+    RealtimeSessionState state,
+    NetworkError? error, {
+    int revision = 0,
+  }) {
     if (_disposed) return;
     _state = error == null ? state : RealtimeSessionState.failed;
+    if (revision > 0) _revision = revision;
     if (_state == RealtimeSessionState.stopped ||
         _state == RealtimeSessionState.failed) {
       _stopCommandCompleted = false;
     }
+  }
+
+  void _applySnapshot(RealtimeSnapshot snapshot) {
+    if (_disposed) return;
+    _applyState(
+      snapshot.state,
+      snapshot.error,
+      revision: snapshot.revision,
+    );
   }
 
   void _addVideoFrame(RealtimeVideoFrame frame) {
