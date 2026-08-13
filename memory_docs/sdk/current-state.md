@@ -1,0 +1,24 @@
+> Last updated: 2026-08-13
+
+# SDK Current State
+
+The maintained network contract is development-stage v1.
+
+- `network_sdk` provides typed bootstrap, authenticated API, Session, event,
+  and Feature-safe Realtime contracts.
+- `network_transport` provides the single App-scoped native runtime and
+  borrowed command/Realtime gateways.
+- `ssh_mobile_network_native` runs native event polling on a helper isolate and
+  exposes typed Protobuf commands and events.
+- Rust owns authenticated QUIC, generic TCP/WebSocket carriers, UDP datagrams,
+  WSS Relay integration, native WebRTC, Session routing, Delivery/Recovery,
+  application E2EE, and resumable file-transfer state.
+- Queue acceptance, native command completion, transport acknowledgement, and
+  application acknowledgement remain distinct.
+- Generic reliable carriers support Session Delivery. File streaming continues
+  through its current QUIC/Relay dispatcher until a separate stream-carrier migration.
+- Feature-facing Realtime does not expose native signaling or media resources;
+  decoded media availability remains defined by the public package contract.
+
+Do not copy test-run results here. Automated and device-dependent coverage is
+tracked in the [network fault matrix](../../docs/NETWORK_FAULT_MATRIX.md).

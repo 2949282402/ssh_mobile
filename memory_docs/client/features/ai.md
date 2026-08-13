@@ -1,0 +1,47 @@
+> Last updated: 2026-08-13
+
+# AI Feature Memory
+
+## Ownership and state
+
+`packages/features/feature_ai/` owns AI chat, Agent, Skills, LLM
+provider/runtime code, tool orchestration, and `ai.db`. `AiModule` lazily owns
+the database, repositories, provider/runtime creation, and tool registry.
+Route Scope owns AI ViewModels, streams, timers, and controllers. App Shell
+adapters inject settings, logging, text protection, SSH/SFTP, monitoring,
+Playbook, RAG, MCP, and WebView capabilities without transferring ownership.
+
+Chat, metrics, trace, attachments, context, and other sensitive fields are
+encrypted before Drift writes. Database-open failures surface; they do not
+fall back to an in-memory production store.
+
+## Execution boundaries
+
+- Tool visibility is an execution boundary, not only a model hint. A hidden or
+  unexposed tool never reaches approval, execution, cache, loop guard, or budget paths.
+- Remote writes and sensitive reads require approval bound to immutable target
+  and action snapshots. Stale snapshots are rejected before execution.
+- Tool arguments, results, approvals, and persisted traces pass through
+  `ToolSecretPolicy`; environment dumps, metadata endpoints, and secret-bearing
+  paths remain restricted.
+- Shell commands use one-shot SSH execution, respect the target platform, and
+  keep destructive deletion blocked.
+- Default request planning uses chat-bound `todoSteps`. A persisted Playbook is
+  created or executed only when the user explicitly requests a reusable Playbook.
+- Helper agents do not receive tool definitions or execute client/SSH/SFTP
+  tools; the primary runtime retains tool, approval, cancellation, and redaction ownership.
+
+## Cross-feature routing
+
+- AI reaches RAG through `RagCapability`, Playbook through
+  `PlaybookAutomationPort`, and client WebView through `AiWebViewPort`.
+- MCP consumes an injected AI Tool Runtime Port; AI does not import the MCP implementation.
+- Add [MCP Memory](mcp.md), [SFTP Memory](sftp.md), or
+  [LAN Share Memory](lan-share.md) only when that boundary changes.
+
+Package-local contracts and focused design:
+
+- [AI README](../../../packages/features/feature_ai/README.md)
+- [AI AGENTS](../../../packages/features/feature_ai/AGENTS.md)
+- [Agent Trace design](../../../docs/AGENT_RUN_TRACE.md)
+- [Security regression guide](../../../docs/security_manual_regression.md)

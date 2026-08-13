@@ -1,9 +1,9 @@
-最新更新时间：2026-08-12
+最新更新时间：2026-08-13
 
 # network_transport
 
-`network_transport` 是 App Scope 唯一网络运行时的稳定 Facade。当前版本只包装
-`ssh_mobile_network_native` 已存在的原生运行时，不在本 Step 新增 TCP、UDP、QUIC
+`network_transport` 是 App Scope 唯一网络运行时的稳定 Facade。它包装
+`ssh_mobile_network_native` 提供的原生运行时，不在 Dart 层复制 TCP、UDP、QUIC
 或 WebRTC 协议实现。
 
 ## 边界
@@ -16,16 +16,16 @@
 - 原生 handle 的 `create -> start -> stop -> destroy` 由底层 adapter 明确拥有；
 - native 实际绑定端口的查询仅属于 `ssh_mobile_network_native` 的受控测试/诊断能力，
   不进入 `NetworkRuntime`、Feature 或客户端业务合约；
-- `TransportEndpoint`、`TransportConnection` 和 metrics 是后续 SSH/SFTP/LAN 模块
-  使用的稳定合约，本 Step 不把旧网络业务协议搬入本包；
+- `TransportEndpoint`、`TransportConnection` 和 metrics 是供上层模块使用的稳定
+  基础合约；具体 LAN、SSH、SFTP 业务协议不归本包所有；
 - `NetworkCommandGateway` 是连接 App Scope Runtime 与现有 v1 命令/事件服务的
   非拥有型桥接；它可以被 App Shell adapter 借用，但不会复制或关闭 native handle；
 - `openRealtimeGateway()` 返回同一 Runtime-owned native handle 上的非拥有型 typed
   Realtime gateway；start/stop 返回带 `commandId` 和 queue status 的
   `NativeCommandTicket`，App Shell 负责关联 `NativeCommandResultEvent` 和映射状态，
   Feature 不得直接消费该 gateway。
-- 旧 LAN Share 仍暂时保留自己的协议适配，以保持本 Step 的行为范围；后续 LAN
-  Step 会通过本 Facade 收敛运行时 Owner。
+- LAN Share 通过公共合约消费注入的 Runtime/Gateway；配对、传输和 Feature
+  生命周期仍由 `feature_lan_share` 拥有，本 Facade 不复制其业务协议。
 
 ## 验证
 
