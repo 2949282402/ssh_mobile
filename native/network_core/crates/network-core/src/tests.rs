@@ -1593,7 +1593,7 @@ fn tcp_fallback_authenticates_delivery_and_keeps_session_id() {
             .await
             .expect("active TCP route")
     });
-    runtime_a.handle().block_on(route.close());
+    runtime_a.handle().block_on(route.close_for_test());
     assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
         matches!(
             &event.payload,

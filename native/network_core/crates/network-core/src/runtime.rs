@@ -21,7 +21,8 @@ use crate::crypto_handshake::{
 use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
 use crate::session::{
-    SessionAdmission, SessionAdmissionError, SessionCryptoDecision, SessionId, SessionManager,
+    SessionAdmission, SessionAdmissionError, SessionAdmissionOutcome, SessionCryptoDecision,
+    SessionId, SessionManager,
 };
 use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
 use network_identity::DeviceIdentity;
@@ -52,6 +53,61 @@ pub(crate) const RUNTIME_CREATED: u8 = 0;
 pub(crate) const RUNTIME_RUNNING: u8 = 1;
 pub(crate) const RUNTIME_STOPPING: u8 = 2;
 pub(crate) const RUNTIME_STOPPED: u8 = 3;
+
+/// Non-Copy cleanup lease for an authenticated Session admission.  A replaced
+/// Session's task group is canceled only after the new route commits.  If the
+/// handshake or attach path drops this lease first, the fallback cancellation
+/// is scheduled as a runtime-scoped task so an old Session task never awaits
+/// its own group.
+pub(crate) struct SessionAdmissionLease {
+    admission: SessionAdmission,
+    supervisor: Arc<RuntimeTaskSupervisor>,
+    armed: bool,
+}
+
+impl SessionAdmissionLease {
+    fn new(admission: SessionAdmission, supervisor: Arc<RuntimeTaskSupervisor>) -> Self {
+        Self {
+            admission,
+            supervisor,
+            armed: true,
+        }
+    }
+
+    /// Disarm the failure cleanup after the new route is fully attached and
+    /// all post-attach initialization has succeeded.
+    pub(crate) fn finalize(mut self) {
+        self.armed = false;
+    }
+
+    fn schedule_abort(&self) {
+        let Some(replaced_session_id) = self.admission.replaced_session_id else {
+            return;
+        };
+        let spawn_supervisor = Arc::clone(&self.supervisor);
+        let cancel_supervisor = Arc::clone(&self.supervisor);
+        let session_key = replaced_session_id.wire_key();
+        let _ = spawn_supervisor.spawn_runtime("abort-session-admission", async move {
+            cancel_supervisor.cancel_session(&session_key).await;
+        });
+    }
+}
+
+impl std::ops::Deref for SessionAdmissionLease {
+    type Target = SessionAdmission;
+
+    fn deref(&self) -> &Self::Target {
+        &self.admission
+    }
+}
+
+impl Drop for SessionAdmissionLease {
+    fn drop(&mut self) {
+        if self.armed {
+            self.schedule_abort();
+        }
+    }
+}
 
 pub(crate) type RelayCryptoMessage = (u8, Vec<u8>);
 type RelayCryptoSender = mpsc::Sender<RelayCryptoMessage>;
@@ -118,7 +174,7 @@ pub(crate) struct RuntimeState {
     pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
     pub(crate) relay_crypto_confirmers:
-        AsyncMutex<HashMap<String, RelayResponderConfirmation<SessionAdmission>>>,
+        AsyncMutex<HashMap<String, RelayResponderConfirmation<SessionAdmissionLease>>>,
     pub(crate) candidate_signal_notify: Notify,
     pub(crate) relay_sessions: RwLock<HashMap<String, String>>,
     pub(crate) relay_pending_incoming: RwLock<HashMap<String, crate::relay::PendingRelayIncoming>>,
@@ -237,28 +293,40 @@ impl RuntimeState {
         peer_id: &str,
         expected_session_id: Option<SessionId>,
         remote_session_binding: &str,
-    ) -> Result<SessionAdmission, SessionAdmissionError> {
-        let admission = self
+    ) -> Result<SessionAdmissionLease, SessionAdmissionError> {
+        let outcome: SessionAdmissionOutcome = self
             .sessions
             .admit_authenticated_session(peer_id, expected_session_id, remote_session_binding)
             .await?;
+        let SessionAdmissionOutcome {
+            admission,
+            detached_route,
+        } = outcome;
+        if let Some(detached_route) = detached_route {
+            detached_route.close().await;
+        }
         if let Some(replaced_session_id) = admission.replaced_session_id {
             self.retire_session_resources(peer_id, replaced_session_id)
                 .await;
         }
-        Ok(admission)
+        Ok(SessionAdmissionLease::new(
+            admission,
+            Arc::clone(&self.task_supervisor),
+        ))
     }
 
     /// Finish cancellation only after the winning replacement route has been
     /// attached. A reconnect task can itself be the handshake that discovers
     /// the peer restart; canceling its old Session group before it installs the
     /// new route would abort the successful handshake midway.
-    pub(crate) fn finish_session_replacement(&self, admission: SessionAdmission) {
+    pub(crate) fn finish_session_replacement(&self, admission: SessionAdmissionLease) {
         let Some(replaced_session_id) = admission.replaced_session_id else {
+            admission.finalize();
             return;
         };
         let supervisor = Arc::clone(&self.task_supervisor);
         let session_key = replaced_session_id.wire_key();
+        admission.finalize();
         let _ = self
             .task_supervisor
             .spawn_runtime("cancel-replaced-session", async move {

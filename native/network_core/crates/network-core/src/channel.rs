@@ -729,7 +729,7 @@ mod tests {
         } = test_blocking_generic_route();
         state
             .sessions
-            .attach_generic_connection_for_session(peer_id, Some(session_id), handle, false)
+            .attach_test_generic_route(peer_id, session_id, handle)
             .await
             .expect("attach test route");
 

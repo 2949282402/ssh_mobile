@@ -15,6 +15,51 @@ use tokio::task::JoinHandle;
 
 pub(crate) type TaskId = u64;
 
+/// An owning capability for one supervised task.
+///
+/// Most runtime tasks only need the supervisor's group cancellation and keep
+/// using `TaskId` as a lookup key.  A composed resource such as a GenericRoute
+/// also needs to hand its driver and receiver to another owner after startup,
+/// so it keeps this lease until that handoff.  Dropping a live lease is a
+/// synchronous last-resort abort; normal teardown should call `cancel` so the
+/// task has a chance to release its async resources and be joined.
+pub(crate) struct TaskLease {
+    supervisor: Arc<RuntimeTaskSupervisor>,
+    task_id: Option<TaskId>,
+}
+
+impl TaskLease {
+    fn new(supervisor: Arc<RuntimeTaskSupervisor>, task_id: TaskId) -> Self {
+        Self {
+            supervisor,
+            task_id: Some(task_id),
+        }
+    }
+
+    /// Cancel and join the task.  This is idempotent so a natural task exit or
+    /// a prior group cancellation can race with explicit route teardown.
+    pub(crate) async fn cancel(&mut self) {
+        let Some(task_id) = self.task_id.take() else {
+            return;
+        };
+        self.supervisor.cancel_task(task_id).await;
+    }
+
+    /// Abort the task synchronously for a Drop path where awaiting is not
+    /// possible.
+    pub(crate) fn abort_now(&mut self) {
+        if let Some(task_id) = self.task_id.take() {
+            let _ = self.supervisor.cancel_task_sync(task_id);
+        }
+    }
+}
+
+impl Drop for TaskLease {
+    fn drop(&mut self) {
+        self.abort_now();
+    }
+}
+
 /// A clonable cancellation signal that wakes every waiter exactly when the
 /// owner cancels it.  It is intentionally tiny and does not expose Tokio
 /// handles outside this module.
@@ -127,6 +172,22 @@ impl RuntimeTaskSupervisor {
             task_ids.push(task_id);
         }
         Some(task_id)
+    }
+
+    /// Spawn a Session-scoped task and return an owning lease.  This is kept
+    /// separate from `spawn_session` because existing task callers only need
+    /// an index id and must not accidentally receive a Drop-aborting owner.
+    pub(crate) fn spawn_session_controlled<F>(
+        self: &Arc<Self>,
+        session_key: impl Into<String>,
+        name: impl Into<String>,
+        future: F,
+    ) -> Option<TaskLease>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let task_id = self.spawn_session(session_key, name, future)?;
+        Some(TaskLease::new(Arc::clone(self), task_id))
     }
 
     /// Mark the root as stopping before closing the underlying I/O owners.

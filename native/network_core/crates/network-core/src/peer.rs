@@ -22,8 +22,8 @@ use tokio::task::JoinSet;
 use tokio::time::timeout;
 
 use crate::connection::{
-    spawn_generic_route, GenericConnection, GenericFrameKind, GenericInboundFrame,
-    GenericRouteHandle, RouteTopology, RouteTransport,
+    prepare_generic_route, GenericConnection, GenericFrameKind, GenericInboundFrame,
+    GenericRouteHandle, GenericRouteRuntime, RouteTopology, RouteTransport,
 };
 use crate::crypto_handshake::SessionCryptoMaterial;
 use crate::events::{
@@ -32,11 +32,11 @@ use crate::events::{
 };
 use crate::generic_auth::{authenticate_initiator, authenticate_responder};
 use crate::runtime::{
-    CandidateAttempt, PeerConfig, RuntimeState, DEFAULT_CANDIDATE_CONNECT_WINDOW,
-    MAX_PENDING_RELAY_CRYPTO_HANDSHAKES, PEER_CONNECT_TIMEOUT, RECONNECT_INITIAL_BACKOFF,
-    RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF, RELAY_RACE_DELAY,
+    CandidateAttempt, PeerConfig, RuntimeState, SessionAdmissionLease,
+    DEFAULT_CANDIDATE_CONNECT_WINDOW, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES, PEER_CONNECT_TIMEOUT,
+    RECONNECT_INITIAL_BACKOFF, RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF, RELAY_RACE_DELAY,
 };
-use crate::session::{ConnectDecision, SessionAdmission, SessionId};
+use crate::session::{ConnectDecision, GenericRouteScope, SessionId};
 
 const STUN_SERVERS_ENV: &str = "SSH_MOBILE_STUN_SERVERS";
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
@@ -45,20 +45,20 @@ const CANDIDATE_SIGNAL_WAIT: Duration = Duration::from_millis(300);
 const DIRECT_UPGRADE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const DIRECT_UPGRADE_STABLE_DURATION: Duration = Duration::from_millis(750);
 const GENERIC_ROUTE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+const GENERIC_ROUTE_TASK_START_TIMEOUT: Duration = Duration::from_secs(1);
 
 struct AuthenticatedGenericRoute {
-    handle: GenericRouteHandle,
-    inbound: mpsc::Receiver<GenericInboundFrame>,
+    scope: GenericRouteScope,
     endpoint: SocketAddr,
     crypto: SessionCryptoMaterial,
-    admission: SessionAdmission,
+    admission: SessionAdmissionLease,
 }
 
 enum ConnectedRoute {
     Quic {
         connection: Connection,
         crypto: SessionCryptoMaterial,
-        admission: SessionAdmission,
+        admission: SessionAdmissionLease,
     },
     Generic(AuthenticatedGenericRoute),
 }
@@ -82,7 +82,7 @@ struct DirectRouteAttempt {
 pub(crate) async fn install_admitted_crypto(
     state: &RuntimeState,
     peer_id: &str,
-    admission: SessionAdmission,
+    admission: &SessionAdmissionLease,
     crypto: &SessionCryptoMaterial,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if state
@@ -352,7 +352,9 @@ pub(crate) async fn disconnect_peer(
         ));
     }
     let session_id = state.sessions.current_session_id(&peer_id).await;
-    state.sessions.close(&peer_id).await;
+    if let Some(route) = state.sessions.close(&peer_id).await {
+        route.close().await;
+    }
     if let Some(session_id) = session_id {
         state.cancel_session_tasks(&peer_id, session_id).await;
         // Explicit Session close releases receive-side active handlers and
@@ -535,7 +537,7 @@ pub(crate) async fn connect_peer(
             admission,
         })) => {
             let session_id = admission.session_id;
-            if install_admitted_crypto(&state, &peer_id, admission, &crypto)
+            if install_admitted_crypto(&state, &peer_id, &admission, &crypto)
                 .await
                 .is_err()
             {
@@ -600,14 +602,18 @@ pub(crate) async fn connect_peer(
             Ok(())
         }
         Ok(ReadyRoute::Direct(ConnectedRoute::Generic(generic))) => {
-            let profile = generic.handle.profile();
+            let mut scope = generic.scope;
+            let profile = scope
+                .profile()
+                .expect("supervised GenericRoute scope has a profile");
             let admission = generic.admission;
             let session_id = admission.session_id;
-            if install_admitted_crypto(&state, &peer_id, admission, &generic.crypto)
+            if install_admitted_crypto(&state, &peer_id, &admission, &generic.crypto)
                 .await
                 .is_err()
             {
-                let _ = generic.handle.close().await;
+                scope.close().await;
+                state.sessions.mark_failed(&peer_id, session_id).await;
                 return Err(protocol_error_with_peer(
                     NetworkErrorCode::AuthenticationFailed,
                     "application E2EE handshake was not accepted",
@@ -615,23 +621,28 @@ pub(crate) async fn connect_peer(
                     &peer_id,
                 ));
             }
-            let previous_route = state
+            let previous_route = match state
                 .sessions
-                .attach_generic_connection_for_session(
+                .attach_generic_route_for_session(
                     &peer_id,
                     Some(session_id),
-                    generic.handle.clone(),
+                    &mut scope,
                     admission.decision == crate::session::SessionCryptoDecision::ContinueExisting,
                 )
                 .await
-                .map_err(|_| {
-                    protocol_error_with_peer(
+            {
+                Ok(previous_route) => previous_route,
+                Err(_) => {
+                    scope.close().await;
+                    state.sessions.mark_failed(&peer_id, session_id).await;
+                    return Err(protocol_error_with_peer(
                         NetworkErrorCode::Cancelled,
                         "generic connection completed after Session was closed",
                         "connect",
                         &peer_id,
-                    )
-                })?;
+                    ));
+                }
+            };
             if let Some(previous_route) = previous_route {
                 previous_route.close().await;
             }
@@ -651,13 +662,6 @@ pub(crate) async fn connect_peer(
                 0.0,
             );
             crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-            spawn_generic_receivers(
-                Arc::clone(&state),
-                peer_id,
-                generic.handle,
-                generic.inbound,
-                session_id,
-            );
             state.finish_session_replacement(admission);
             Ok(())
         }
@@ -694,7 +698,7 @@ pub(crate) async fn connect_peer(
                     return Err(error);
                 }
             };
-            if install_admitted_crypto(&state, &peer_id, admission, &crypto)
+            if install_admitted_crypto(&state, &peer_id, &admission, &crypto)
                 .await
                 .is_err()
             {
@@ -820,7 +824,7 @@ pub(crate) async fn connect_direct_with_crypto(
     session_binding: &str,
     state: Arc<RuntimeState>,
     expected_session_id: SessionId,
-) -> Result<(Connection, SessionCryptoMaterial, SessionAdmission), ProtocolError> {
+) -> Result<(Connection, SessionCryptoMaterial, SessionAdmissionLease), ProtocolError> {
     let started = Instant::now();
     let connection = connect_direct(
         endpoint,
@@ -897,7 +901,7 @@ async fn connect_direct_candidates_with_crypto(
     session_binding: String,
     state: Arc<RuntimeState>,
     expected_session_id: SessionId,
-) -> Result<(Connection, SessionCryptoMaterial, SessionAdmission), ProtocolError> {
+) -> Result<(Connection, SessionCryptoMaterial, SessionAdmissionLease), ProtocolError> {
     let mut attempts = JoinSet::new();
     for candidate in candidates.into_iter().take(MAX_CANDIDATES_PER_SIGNAL) {
         let endpoint = endpoint.clone();
@@ -1055,6 +1059,102 @@ async fn connect_generic_candidates(
     }))
 }
 
+/// Register both halves of one GenericRoute with the Session supervisor and
+/// wait for their deterministic startup barriers. The returned scope remains
+/// staged until SessionManager sends its atomic commit signal.
+pub(crate) async fn supervise_generic_route(
+    state: Arc<RuntimeState>,
+    peer_id: &str,
+    session_id: SessionId,
+    runtime: GenericRouteRuntime,
+) -> Result<GenericRouteScope, ProtocolError> {
+    let GenericRouteRuntime {
+        handle,
+        inbound,
+        driver,
+        ready,
+        commit,
+        stop,
+        stopping,
+    } = runtime;
+    let session_key = session_id.wire_key();
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let mut driver_task = supervisor
+        .spawn_session_controlled(session_key.clone(), "generic-route-io", driver)
+        .ok_or_else(|| {
+            protocol_error_with_peer(
+                NetworkErrorCode::Cancelled,
+                "generic-route-io could not be registered",
+                "generic-route_start",
+                peer_id,
+            )
+        })?;
+    if timeout(GENERIC_ROUTE_TASK_START_TIMEOUT, ready)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .is_none()
+    {
+        driver_task.cancel().await;
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::Timeout,
+            "generic-route-io did not become ready",
+            "generic-route_start",
+            peer_id,
+        ));
+    }
+
+    let (receiver, receiver_ready) = generic_route_receiver_task(
+        Arc::clone(&state),
+        peer_id.to_string(),
+        handle.clone(),
+        inbound,
+        session_id,
+        stop.clone(),
+        Arc::clone(&stopping),
+    );
+    let mut receiver_task = match supervisor.spawn_session_controlled(
+        session_key,
+        "generic-route-receiver",
+        receiver,
+    ) {
+        Some(task) => task,
+        None => {
+            driver_task.cancel().await;
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::Cancelled,
+                "generic-route-receiver could not be registered",
+                "generic-route_start",
+                peer_id,
+            ));
+        }
+    };
+    if timeout(GENERIC_ROUTE_TASK_START_TIMEOUT, receiver_ready)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .is_none()
+    {
+        receiver_task.cancel().await;
+        driver_task.cancel().await;
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::Timeout,
+            "generic-route-receiver did not become ready",
+            "generic-route_start",
+            peer_id,
+        ));
+    }
+
+    Ok(GenericRouteScope::new(
+        handle,
+        driver_task,
+        receiver_task,
+        stop,
+        stopping,
+        commit,
+    ))
+}
+
 async fn connect_tcp_route(
     endpoint: SocketAddr,
     identity: Arc<DeviceIdentity>,
@@ -1118,11 +1218,16 @@ async fn connect_tcp_route(
             )
         })?;
         let transport = connection.route().transport();
-        let (handle, inbound) = spawn_generic_route(connection);
+        let scope = supervise_generic_route(
+            Arc::clone(&state),
+            &peer_id,
+            expected_session_id,
+            prepare_generic_route(connection),
+        )
+        .await?;
         debug_assert_eq!(transport, RouteTransport::Tcp);
         Ok(AuthenticatedGenericRoute {
-            handle,
-            inbound,
+            scope,
             endpoint,
             crypto,
             admission,
@@ -1201,10 +1306,15 @@ async fn connect_websocket_route(
                 &peer_id,
             )
         })?;
-        let (handle, inbound) = spawn_generic_route(connection);
+        let scope = supervise_generic_route(
+            Arc::clone(&state),
+            &peer_id,
+            expected_session_id,
+            prepare_generic_route(connection),
+        )
+        .await?;
         Ok(AuthenticatedGenericRoute {
-            handle,
-            inbound,
+            scope,
             endpoint,
             crypto,
             admission,
@@ -1323,7 +1433,7 @@ async fn run_candidate_punch(
             return;
         }
     };
-    if install_admitted_crypto(&state, &peer_id, admission, &crypto)
+    if install_admitted_crypto(&state, &peer_id, &admission, &crypto)
         .await
         .is_err()
     {
@@ -1568,7 +1678,7 @@ async fn direct_upgrade_loop(state: Arc<RuntimeState>, peer_id: String, session_
             .await
             {
                 Ok((connection, crypto, admission)) => {
-                    if install_admitted_crypto(&state, &peer_id, admission, &crypto)
+                    if install_admitted_crypto(&state, &peer_id, &admission, &crypto)
                         .await
                         .is_err()
                     {
@@ -1872,7 +1982,7 @@ async fn migrate_direct_path(
             return false;
         }
     };
-    if install_admitted_crypto(&state, &peer_id, admission, &crypto)
+    if install_admitted_crypto(&state, &peer_id, &admission, &crypto)
         .await
         .is_err()
     {
@@ -1997,7 +2107,7 @@ async fn establish_relay_crypto(
     session_id: SessionId,
     identity: Arc<DeviceIdentity>,
     expected_peer_public_key: [u8; 32],
-) -> Result<(SessionCryptoMaterial, SessionAdmission), ProtocolError> {
+) -> Result<(SessionCryptoMaterial, SessionAdmissionLease), ProtocolError> {
     let session_token = session_id.wire_key();
     let (mut handshake, hello) =
         crate::crypto_handshake::RelayInitiatorHandshake::start(identity, &session_token).map_err(
@@ -2333,7 +2443,7 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     )
                     .await
                     .map_err(|_| std::io::Error::other("Session was replaced during handshake"))?;
-                install_admitted_crypto(&state, &peer_id, admission, &crypto).await?;
+                install_admitted_crypto(&state, &peer_id, &admission, &crypto).await?;
                 let previous_route = state
                     .sessions
                     .attach_connection_for_session(
@@ -2491,21 +2601,37 @@ async fn accept_authenticated_generic(
         .finalize_authenticated_session(&peer_id, session_id, &crypto.remote_session_binding)
         .await
         .map_err(|_| std::io::Error::other("Session was replaced during handshake"))?;
-    install_admitted_crypto(&state, &peer_id, admission, &crypto).await?;
+    install_admitted_crypto(&state, &peer_id, &admission, &crypto).await?;
     let attempted_peer_id = peer_id.clone();
     let result = async {
-        let (handle, inbound) = spawn_generic_route(connection);
-        let previous_route = state
+        let mut scope = supervise_generic_route(
+            Arc::clone(&state),
+            &peer_id,
+            session_id,
+            prepare_generic_route(connection),
+        )
+        .await
+        .map_err(|error| std::io::Error::other(error.message.clone()))?;
+        let profile = scope
+            .profile()
+            .expect("supervised GenericRoute scope has a profile");
+        let previous_route = match state
             .sessions
-            .attach_generic_connection_for_session(
+            .attach_generic_route_for_session(
                 &peer_id,
                 Some(session_id),
-                handle.clone(),
+                &mut scope,
                 admission.decision
                     == crate::session::SessionCryptoDecision::ContinueExisting,
             )
             .await
-            .map_err(|_| std::io::Error::other("TCP route lost its Session race"))?;
+        {
+            Ok(previous_route) => previous_route,
+            Err(_) => {
+                scope.close().await;
+                return Err(std::io::Error::other("TCP route lost its Session race").into());
+            }
+        };
         if let Some(previous_route) = previous_route {
             previous_route.close().await;
         }
@@ -2513,11 +2639,10 @@ async fn accept_authenticated_generic(
             &state.event_tx,
             &peer_id,
             PeerConnectionState::Connected,
-            Some(handle.profile()),
+            Some(profile),
             None,
         );
         crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-        spawn_generic_receivers(Arc::clone(&state), peer_id, handle, inbound, session_id);
         state.finish_session_replacement(admission);
         tracing::debug!(%peer_address, session_id = %session_id.wire_key(), "authenticated TCP fallback route attached");
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
@@ -2635,49 +2760,96 @@ pub(crate) fn spawn_session_receivers(
     );
 }
 
-fn spawn_generic_receivers(
+struct GenericReceiverStopGuard {
+    route_stop: crate::task_supervisor::CancellationToken,
+    stopping: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for GenericReceiverStopGuard {
+    fn drop(&mut self) {
+        if !self.stopping.load(Ordering::Acquire) {
+            self.route_stop.cancel();
+        }
+    }
+}
+
+fn generic_route_receiver_task(
     state: Arc<RuntimeState>,
     peer_id: String,
     handle: GenericRouteHandle,
     mut inbound: mpsc::Receiver<GenericInboundFrame>,
     session_id: SessionId,
+    route_stop: crate::task_supervisor::CancellationToken,
+    stopping: Arc<std::sync::atomic::AtomicBool>,
+) -> (
+    impl Future<Output = ()> + Send + 'static,
+    oneshot::Receiver<()>,
 ) {
+    let (ready_tx, ready_rx) = oneshot::channel();
     let route_id = handle.id();
-    let supervisor = Arc::clone(&state.task_supervisor);
-    let _ = supervisor.spawn_session(
-        session_id.wire_key(),
-        "generic-route-receiver",
-        async move {
-            while let Some(frame) = inbound.recv().await {
-                let result = match frame.kind {
-                    GenericFrameKind::DataMessage => {
-                        crate::channel::handle_data_message(&state, &peer_id, &frame.payload).await
+    let task = async move {
+        let _stop_guard = GenericReceiverStopGuard {
+            route_stop: route_stop.clone(),
+            stopping: Arc::clone(&stopping),
+        };
+        if ready_tx.send(()).is_err() {
+            return;
+        }
+        loop {
+            tokio::select! {
+                _ = route_stop.cancelled() => {
+                    if !stopping.load(Ordering::Acquire) {
+                        notify_generic_route_loss(&state, &peer_id, route_id, session_id).await;
                     }
-                    GenericFrameKind::DeliveryAck => {
-                        crate::channel::handle_delivery_ack(&state, &peer_id, &frame.payload).await
+                    return;
+                }
+                frame = inbound.recv() => {
+                    let Some(frame) = frame else {
+                        route_stop.cancel();
+                        if !stopping.load(Ordering::Acquire) {
+                            notify_generic_route_loss(&state, &peer_id, route_id, session_id).await;
+                        }
+                        return;
+                    };
+                    let result = match frame.kind {
+                        GenericFrameKind::DataMessage => {
+                            crate::channel::handle_data_message(&state, &peer_id, &frame.payload).await
+                        }
+                        GenericFrameKind::DeliveryAck => {
+                            crate::channel::handle_delivery_ack(&state, &peer_id, &frame.payload).await
+                        }
+                    };
+                    if let Err(error) = result {
+                        tracing::debug!(peer_id = %peer_id, error = %error, "rejected generic channel frame");
                     }
-                };
-                if let Err(error) = result {
-                    tracing::debug!(peer_id = %peer_id, error = %error, "rejected generic channel frame");
                 }
             }
-            if state
-                .sessions
-                .mark_generic_disconnected_if_current(&peer_id, route_id)
-                .await
-                .is_some()
-            {
-                emit_peer_state(
-                    &state.event_tx,
-                    &peer_id,
-                    PeerConnectionState::Disconnected,
-                    RouteType::Unspecified,
-                    None,
-                );
-                schedule_reconnect(Arc::clone(&state), peer_id, session_id);
-            }
-        },
-    );
+        }
+    };
+    (task, ready_rx)
+}
+
+async fn notify_generic_route_loss(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    route_id: u64,
+    session_id: SessionId,
+) {
+    if state
+        .sessions
+        .mark_generic_disconnected_if_current(peer_id, route_id)
+        .await
+        .is_some()
+    {
+        emit_peer_state(
+            &state.event_tx,
+            peer_id,
+            PeerConnectionState::Disconnected,
+            RouteType::Unspecified,
+            None,
+        );
+        schedule_reconnect(Arc::clone(state), peer_id.to_string(), session_id);
+    }
 }
 
 async fn handle_connection_disconnect(
@@ -2785,6 +2957,55 @@ async fn reconnect_loop(state: Arc<RuntimeState>, peer_id: String, session_id: S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use network_transport::{TcpTransport, Transport};
+    use std::sync::atomic::AtomicU16;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::{TcpListener, TcpStream};
+
+    async fn generic_connection_pair() -> (GenericConnection, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind generic route test listener");
+        let address = listener
+            .local_addr()
+            .expect("generic route listener address");
+        let (server_result, client_result) =
+            tokio::join!(listener.accept(), TcpStream::connect(address));
+        let server = server_result.expect("accept generic route test socket").0;
+        let client = client_result.expect("connect generic route test socket");
+        (
+            GenericConnection::from_transport(Transport::Tcp(TcpTransport::from_stream(client))),
+            server,
+        )
+    }
+
+    async fn new_test_state() -> Arc<RuntimeState> {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))))
+    }
+
+    async fn started_generic_scope(
+        state: &Arc<RuntimeState>,
+        peer_id: &str,
+        session_id: SessionId,
+        connection: GenericConnection,
+    ) -> GenericRouteScope {
+        supervise_generic_route(
+            Arc::clone(state),
+            peer_id,
+            session_id,
+            prepare_generic_route(connection),
+        )
+        .await
+        .expect("generic route tasks should start")
+    }
+
+    async fn started_session(state: &RuntimeState, peer_id: &str) -> SessionId {
+        match state.sessions.begin_connect(peer_id).await {
+            ConnectDecision::Started(session_id) => session_id,
+            decision => panic!("unexpected Session decision: {decision:?}"),
+        }
+    }
 
     #[tokio::test]
     async fn relay_wins_when_direct_is_still_connecting() {
@@ -2854,6 +3075,177 @@ mod tests {
         .expect("Relay must remain available after direct auth failure");
 
         assert!(matches!(route, ReadyRoute::Relay));
+    }
+
+    #[tokio::test]
+    async fn session_close_stops_and_joins_generic_route_tasks() {
+        let state = new_test_state().await;
+        let session_id = started_session(&state, "generic-close-peer").await;
+        let (connection, mut server) = generic_connection_pair().await;
+        let mut scope =
+            started_generic_scope(&state, "generic-close-peer", session_id, connection).await;
+        assert_eq!(state.task_supervisor.active_count(), 2);
+        state
+            .sessions
+            .attach_generic_route_for_session(
+                "generic-close-peer",
+                Some(session_id),
+                &mut scope,
+                false,
+            )
+            .await
+            .expect("attach GenericRoute");
+
+        let route = state
+            .sessions
+            .close("generic-close-peer")
+            .await
+            .expect("Session close should detach GenericRoute owner");
+        route.close().await;
+        assert_eq!(state.task_supervisor.active_count(), 0);
+
+        let mut buffer = [0u8; 1];
+        let read = tokio::time::timeout(Duration::from_secs(1), server.read(&mut buffer))
+            .await
+            .expect("underlying TCP socket should close")
+            .expect("read server-side socket");
+        assert_eq!(read, 0);
+    }
+
+    #[tokio::test]
+    async fn generic_route_replacement_closes_old_owner_before_new_owner_remains() {
+        let state = new_test_state().await;
+        let session_id = started_session(&state, "generic-replace-peer").await;
+        let (first_connection, mut first_server) = generic_connection_pair().await;
+        let mut first_scope =
+            started_generic_scope(&state, "generic-replace-peer", session_id, first_connection)
+                .await;
+        state
+            .sessions
+            .attach_generic_route_for_session(
+                "generic-replace-peer",
+                Some(session_id),
+                &mut first_scope,
+                false,
+            )
+            .await
+            .expect("attach first GenericRoute");
+
+        let (second_connection, mut second_server) = generic_connection_pair().await;
+        let mut second_scope = started_generic_scope(
+            &state,
+            "generic-replace-peer",
+            session_id,
+            second_connection,
+        )
+        .await;
+        let old_route = state
+            .sessions
+            .attach_generic_route_for_session(
+                "generic-replace-peer",
+                Some(session_id),
+                &mut second_scope,
+                true,
+            )
+            .await
+            .expect("replace GenericRoute")
+            .expect("old GenericRoute owner");
+        old_route.close().await;
+        assert_eq!(state.task_supervisor.active_count(), 2);
+
+        let mut buffer = [0u8; 1];
+        let first_read =
+            tokio::time::timeout(Duration::from_secs(1), first_server.read(&mut buffer))
+                .await
+                .expect("old GenericRoute socket should close")
+                .expect("read old server-side socket");
+        assert_eq!(first_read, 0);
+
+        let current_route = state
+            .sessions
+            .close("generic-replace-peer")
+            .await
+            .expect("close should detach replacement owner");
+        current_route.close().await;
+        assert_eq!(state.task_supervisor.active_count(), 0);
+        let second_read =
+            tokio::time::timeout(Duration::from_secs(1), second_server.read(&mut buffer))
+                .await
+                .expect("replacement GenericRoute socket should close")
+                .expect("read replacement server-side socket");
+        assert_eq!(second_read, 0);
+    }
+
+    #[tokio::test]
+    async fn failed_generic_attach_drops_staged_scope_without_orphan_tasks() {
+        let state = new_test_state().await;
+        let session_id = started_session(&state, "generic-failed-attach-peer").await;
+        let (connection, mut server) = generic_connection_pair().await;
+        let mut scope =
+            started_generic_scope(&state, "generic-failed-attach-peer", session_id, connection)
+                .await;
+        state.sessions.close("generic-failed-attach-peer").await;
+        assert!(state
+            .sessions
+            .attach_generic_route_for_session(
+                "generic-failed-attach-peer",
+                Some(session_id),
+                &mut scope,
+                false,
+            )
+            .await
+            .is_err());
+        scope.close().await;
+        assert_eq!(state.task_supervisor.active_count(), 0);
+
+        let mut buffer = [0u8; 1];
+        let read = tokio::time::timeout(Duration::from_secs(2), server.read(&mut buffer))
+            .await
+            .expect("failed attach should close staged socket")
+            .expect("read failed attach socket");
+        assert_eq!(read, 0);
+    }
+
+    #[test]
+    fn runtime_stop_joins_generic_route_tasks() {
+        let runtime = crate::runtime::NetworkRuntime::new().expect("create runtime");
+        runtime.start().expect("start runtime");
+        let state = runtime
+            .state
+            .lock()
+            .expect("runtime state lock")
+            .clone()
+            .expect("runtime state");
+        let (server, scope) = runtime.handle().block_on(async {
+            let session_id = started_session(&state, "generic-runtime-stop-peer").await;
+            let (connection, server) = generic_connection_pair().await;
+            let mut scope =
+                started_generic_scope(&state, "generic-runtime-stop-peer", session_id, connection)
+                    .await;
+            state
+                .sessions
+                .attach_generic_route_for_session(
+                    "generic-runtime-stop-peer",
+                    Some(session_id),
+                    &mut scope,
+                    false,
+                )
+                .await
+                .expect("attach runtime GenericRoute");
+            (server, scope)
+        });
+        drop(scope);
+        runtime.stop().expect("stop runtime");
+        assert_eq!(state.task_supervisor.active_count(), 0);
+        runtime.handle().block_on(async {
+            let mut server = server;
+            let mut buffer = [0u8; 1];
+            let read = tokio::time::timeout(Duration::from_secs(1), server.read(&mut buffer))
+                .await
+                .expect("runtime stop should close GenericRoute socket")
+                .expect("read runtime-stop socket");
+            assert_eq!(read, 0);
+        });
     }
 
     #[test]

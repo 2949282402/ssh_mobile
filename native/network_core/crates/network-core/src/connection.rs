@@ -8,9 +8,16 @@
 
 use network_protocol::RouteType;
 use network_transport::{Transport, TransportError, TransportKind};
+use std::future::Future;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::pin::Pin;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
 use tokio::sync::{mpsc, oneshot};
+
+use crate::task_supervisor::CancellationToken;
 
 const GENERIC_FRAME_MAGIC: &[u8; 4] = b"SMGF";
 const GENERIC_FRAME_HEADER_BYTES: usize = 4 + 4 + 1 + 4;
@@ -207,8 +214,9 @@ impl ConnectionRouteSelector {
 }
 
 /// Owns one generic primitive connection until identity authentication has
-/// completed. After authentication, [`spawn_generic_route`] moves the
-/// primitive into a bounded I/O owner and returns a clonable Session carrier.
+/// completed. After authentication, [`prepare_generic_route`] moves the
+/// primitive into a staged I/O driver. The driver is intentionally returned as
+/// a Future; the Session/Runtime owner decides when and where it is spawned.
 pub struct GenericConnection {
     transport: Transport,
     profile: ConnectionProfile,
@@ -363,6 +371,32 @@ impl GenericRouteHandle {
     }
 }
 
+/// A prepared GenericRoute whose driver has not been started by the runtime
+/// owner yet. The driver reports readiness before waiting for `commit`, which
+/// lets the Session attach atomically without a pre-attach socket race.
+pub(crate) struct GenericRouteRuntime {
+    pub(crate) handle: GenericRouteHandle,
+    pub(crate) inbound: mpsc::Receiver<GenericInboundFrame>,
+    pub(crate) driver: Pin<Box<dyn Future<Output = ()> + Send>>,
+    pub(crate) ready: oneshot::Receiver<()>,
+    pub(crate) commit: oneshot::Sender<()>,
+    pub(crate) stop: CancellationToken,
+    pub(crate) stopping: Arc<AtomicBool>,
+}
+
+struct GenericRouteStopGuard {
+    stop: CancellationToken,
+    stopping: Arc<AtomicBool>,
+}
+
+impl Drop for GenericRouteStopGuard {
+    fn drop(&mut self) {
+        if !self.stopping.load(Ordering::Acquire) {
+            self.stop.cancel();
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) struct TestBlockingGenericRoute {
     pub(crate) handle: GenericRouteHandle,
@@ -412,12 +446,18 @@ pub(crate) fn test_blocking_generic_route() -> TestBlockingGenericRoute {
     }
 }
 
-/// Moves an authenticated primitive into its single bounded I/O owner.
-pub(crate) fn spawn_generic_route(
-    connection: GenericConnection,
-) -> (GenericRouteHandle, mpsc::Receiver<GenericInboundFrame>) {
+/// Moves an authenticated primitive into one staged, bounded I/O driver.
+///
+/// This function constructs channels and the driver only. It never starts a
+/// long-lived task; the caller must register `driver` with the
+/// `RuntimeTaskSupervisor` before handing the route to a Session.
+pub(crate) fn prepare_generic_route(connection: GenericConnection) -> GenericRouteRuntime {
     let (command_tx, mut command_rx) = mpsc::channel(GENERIC_ROUTE_CHANNEL_CAPACITY);
     let (inbound_tx, inbound_rx) = mpsc::channel(GENERIC_ROUTE_CHANNEL_CAPACITY);
+    let (ready_tx, ready_rx) = oneshot::channel();
+    let (commit_tx, mut commit_rx) = oneshot::channel();
+    let stop = CancellationToken::default();
+    let stopping = Arc::new(AtomicBool::new(false));
     let profile = connection.profile;
     let handle = GenericRouteHandle {
         id: NEXT_GENERIC_ROUTE_ID.fetch_add(1, Ordering::Relaxed),
@@ -425,10 +465,32 @@ pub(crate) fn spawn_generic_route(
         commands: command_tx,
     };
 
-    tokio::spawn(async move {
+    let stop_for_driver = stop.clone();
+    let stopping_for_driver = Arc::clone(&stopping);
+    let driver = Box::pin(async move {
         let mut connection = connection;
+        let _stop_guard = GenericRouteStopGuard {
+            stop: stop_for_driver.clone(),
+            stopping: stopping_for_driver,
+        };
+        if ready_tx.send(()).is_err() {
+            let _ = connection.close().await;
+            return;
+        }
+        let committed = tokio::select! {
+            _ = stop_for_driver.cancelled() => false,
+            result = &mut commit_rx => result.is_ok(),
+        };
+        if !committed {
+            let _ = connection.close().await;
+            return;
+        }
         loop {
             tokio::select! {
+                _ = stop_for_driver.cancelled() => {
+                    let _ = connection.close().await;
+                    return;
+                }
                 command = command_rx.recv() => {
                     let Some(command) = command else {
                         let _ = connection.close().await;
@@ -485,7 +547,15 @@ pub(crate) fn spawn_generic_route(
             }
         }
     });
-    (handle, inbound_rx)
+    GenericRouteRuntime {
+        handle,
+        inbound: inbound_rx,
+        driver,
+        ready: ready_rx,
+        commit: commit_tx,
+        stop,
+        stopping,
+    }
 }
 
 fn encode_generic_frame(

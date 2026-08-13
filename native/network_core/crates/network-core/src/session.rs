@@ -6,13 +6,20 @@ use network_relay::RelayClient;
 use quinn::{Connection, VarInt};
 use rand::{rngs::OsRng, RngCore};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::ops::Deref;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
+use tokio::sync::{oneshot, RwLock};
+use tokio::time::timeout;
 
 use crate::connection::{
     ConnectionCapability, ConnectionProfile, GenericFrameKind, GenericRouteHandle, Route,
     RouteTransport,
 };
+use crate::task_supervisor::{CancellationToken, TaskLease};
 
 /// 标识一次跨 Connection 的业务会话。
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -64,11 +71,28 @@ pub(crate) fn evaluate_remote_session(
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SessionAdmission {
     pub(crate) session_id: SessionId,
     pub(crate) decision: SessionCryptoDecision,
     pub(crate) replaced_session_id: Option<SessionId>,
+}
+
+/// Result of the Session continuity decision.  The old route is detached but
+/// deliberately not closed here: closing a carrier is the Runtime/Session
+/// lifecycle owner's job, and GenericRoute carries supervised task leases that
+/// must be stopped outside the Session lock.
+pub(crate) struct SessionAdmissionOutcome {
+    pub(crate) admission: SessionAdmission,
+    pub(crate) detached_route: Option<ActiveRoute>,
+}
+
+impl Deref for SessionAdmissionOutcome {
+    type Target = SessionAdmission;
+
+    fn deref(&self) -> &Self::Target {
+        &self.admission
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,17 +110,156 @@ struct Session {
     route: Option<ActiveRoute>,
 }
 
+const GENERIC_ROUTE_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Owns the GenericRoute driver and receiver task leases as one route-local
+/// resource.  The Session owns this value after atomic attach/commit.
+pub(crate) struct GenericRouteOwner {
+    handle: GenericRouteHandle,
+    driver_task: TaskLease,
+    receiver_task: TaskLease,
+    route_stop: CancellationToken,
+    stopping: Arc<AtomicBool>,
+    committed: bool,
+}
+
+impl GenericRouteOwner {
+    pub(crate) fn new(
+        handle: GenericRouteHandle,
+        driver_task: TaskLease,
+        receiver_task: TaskLease,
+        route_stop: CancellationToken,
+        stopping: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            handle,
+            driver_task,
+            receiver_task,
+            route_stop,
+            stopping,
+            committed: false,
+        }
+    }
+
+    fn handle(&self) -> &GenericRouteHandle {
+        &self.handle
+    }
+
+    async fn close(mut self) {
+        self.stopping.store(true, Ordering::Release);
+        if !self.committed {
+            self.route_stop.cancel();
+            self.receiver_task.cancel().await;
+            self.driver_task.cancel().await;
+            return;
+        }
+        // Stop the consumer first. Its drop guard observes `stopping` and
+        // therefore does not race a graceful command-channel close.
+        self.receiver_task.cancel().await;
+
+        let close_result = timeout(GENERIC_ROUTE_CLOSE_TIMEOUT, self.handle.close()).await;
+        match close_result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::debug!(route_id = self.handle.id(), %error, "generic route graceful close failed");
+            }
+            Err(_) => {
+                tracing::debug!(
+                    route_id = self.handle.id(),
+                    "generic route graceful close timed out"
+                );
+            }
+        }
+        self.route_stop.cancel();
+        self.driver_task.cancel().await;
+    }
+}
+
+impl Drop for GenericRouteOwner {
+    fn drop(&mut self) {
+        self.stopping.store(true, Ordering::Release);
+        self.route_stop.cancel();
+        self.receiver_task.abort_now();
+        self.driver_task.abort_now();
+    }
+}
+
+/// Staged GenericRoute owner used between task startup and Session attach.
+/// `commit_and_take_owner` is called while the Session write lock is held, so
+/// no caller can observe a current route before the driver has been released
+/// from its paused pre-attach state.
+pub(crate) struct GenericRouteScope {
+    owner: Option<GenericRouteOwner>,
+    commit: Option<oneshot::Sender<()>>,
+}
+
+impl GenericRouteScope {
+    pub(crate) fn new(
+        handle: GenericRouteHandle,
+        driver_task: TaskLease,
+        receiver_task: TaskLease,
+        route_stop: CancellationToken,
+        stopping: Arc<AtomicBool>,
+        commit: oneshot::Sender<()>,
+    ) -> Self {
+        Self {
+            owner: Some(GenericRouteOwner::new(
+                handle,
+                driver_task,
+                receiver_task,
+                route_stop,
+                stopping,
+            )),
+            commit: Some(commit),
+        }
+    }
+
+    pub(crate) fn profile(&self) -> Option<ConnectionProfile> {
+        self.owner.as_ref().map(|owner| owner.handle.profile())
+    }
+
+    pub(crate) fn commit_and_take_owner(&mut self) -> Result<GenericRouteOwner, ()> {
+        let commit = self.commit.take().ok_or(())?;
+        commit.send(()).map_err(|_| ())?;
+        let mut owner = self.owner.take().ok_or(())?;
+        owner.committed = true;
+        Ok(owner)
+    }
+
+    pub(crate) async fn close(mut self) {
+        if let Some(owner) = self.owner.take() {
+            owner.close().await;
+        }
+    }
+}
+
 /// A route is a composed profile plus its authenticated carrier. The legacy
 /// `RouteType` remains only as a compatibility projection for old transfer and
 /// UI consumers; generic routes are represented by `profile` directly.
-#[derive(Clone)]
 pub(crate) struct ActiveRoute {
     profile: ConnectionProfile,
     carrier: ActiveConnection,
 }
 
-#[derive(Clone)]
 enum ActiveConnection {
+    Quic(Connection),
+    Generic(GenericRouteOwner),
+    #[cfg(test)]
+    GenericTest(GenericRouteHandle),
+    Relay(Option<Arc<RelayClient>>),
+}
+
+/// Cloneable non-owning view used by Delivery and route-selection observers.
+/// It never carries a GenericRoute task lease and therefore cannot close or
+/// outlive the Session's unique ActiveRoute owner.
+#[derive(Clone)]
+pub(crate) struct RouteView {
+    profile: ConnectionProfile,
+    carrier: RouteViewCarrier,
+}
+
+#[derive(Clone)]
+enum RouteViewCarrier {
     Quic(Connection),
     Generic(GenericRouteHandle),
     Relay(Option<Arc<RelayClient>>),
@@ -112,10 +275,18 @@ impl ActiveRoute {
         }
     }
 
-    fn generic(handle: GenericRouteHandle) -> Self {
+    fn generic(owner: GenericRouteOwner) -> Self {
+        Self {
+            profile: owner.handle().profile(),
+            carrier: ActiveConnection::Generic(owner),
+        }
+    }
+
+    #[cfg(test)]
+    fn generic_test(handle: GenericRouteHandle) -> Self {
         Self {
             profile: handle.profile(),
-            carrier: ActiveConnection::Generic(handle),
+            carrier: ActiveConnection::GenericTest(handle),
         }
     }
 
@@ -130,15 +301,33 @@ impl ActiveRoute {
         self.profile
     }
 
-    fn same_carrier(&self, other: &Self) -> bool {
+    fn view(&self) -> RouteView {
+        let carrier = match &self.carrier {
+            ActiveConnection::Quic(connection) => RouteViewCarrier::Quic(connection.clone()),
+            ActiveConnection::Generic(owner) => RouteViewCarrier::Generic(owner.handle().clone()),
+            #[cfg(test)]
+            ActiveConnection::GenericTest(handle) => RouteViewCarrier::Generic(handle.clone()),
+            ActiveConnection::Relay(client) => RouteViewCarrier::Relay(client.clone()),
+        };
+        RouteView {
+            profile: self.profile,
+            carrier,
+        }
+    }
+
+    fn same_carrier(&self, other: &RouteView) -> bool {
         match (&self.carrier, &other.carrier) {
-            (ActiveConnection::Quic(left), ActiveConnection::Quic(right)) => {
+            (ActiveConnection::Quic(left), RouteViewCarrier::Quic(right)) => {
                 left.stable_id() == right.stable_id()
             }
-            (ActiveConnection::Generic(left), ActiveConnection::Generic(right)) => {
+            (ActiveConnection::Generic(left), RouteViewCarrier::Generic(right)) => {
+                left.handle().id() == right.id()
+            }
+            #[cfg(test)]
+            (ActiveConnection::GenericTest(left), RouteViewCarrier::Generic(right)) => {
                 left.id() == right.id()
             }
-            (ActiveConnection::Relay(left), ActiveConnection::Relay(right)) => {
+            (ActiveConnection::Relay(left), RouteViewCarrier::Relay(right)) => {
                 match (left, right) {
                     (Some(left), Some(right)) => Arc::ptr_eq(left, right),
                     (None, None) => true,
@@ -149,15 +338,36 @@ impl ActiveRoute {
         }
     }
 
-    pub(crate) async fn close(&self) {
-        match &self.carrier {
+    pub(crate) async fn close(self) {
+        match self.carrier {
             ActiveConnection::Quic(connection) => {
                 connection.close(VarInt::from_u32(0), b"session route closed");
             }
-            ActiveConnection::Generic(handle) => {
+            ActiveConnection::Generic(owner) => {
+                owner.close().await;
+            }
+            #[cfg(test)]
+            ActiveConnection::GenericTest(handle) => {
                 let _ = handle.close().await;
             }
             ActiveConnection::Relay(_) => {}
+        }
+    }
+}
+
+#[cfg(test)]
+impl RouteView {
+    /// Test-only transport interruption helper. Production callers can only
+    /// close the unique ActiveRoute owner through Session teardown.
+    pub(crate) async fn close_for_test(&self) {
+        match &self.carrier {
+            RouteViewCarrier::Quic(connection) => {
+                connection.close(VarInt::from_u32(0), b"test route interruption");
+            }
+            RouteViewCarrier::Generic(handle) => {
+                let _ = handle.close().await;
+            }
+            RouteViewCarrier::Relay(_) => {}
         }
     }
 }
@@ -220,7 +430,7 @@ impl SessionManager {
         peer_id: &str,
         expected_session_id: Option<SessionId>,
         new_remote_binding: &str,
-    ) -> Result<SessionAdmission, SessionAdmissionError> {
+    ) -> Result<SessionAdmissionOutcome, SessionAdmissionError> {
         if new_remote_binding.is_empty() {
             return Err(SessionAdmissionError::InvalidRemoteBinding);
         }
@@ -240,7 +450,10 @@ impl SessionManager {
                     replaced_session_id: None,
                 };
                 sessions.insert(peer_id.to_string(), session);
-                return Ok(admission);
+                return Ok(SessionAdmissionOutcome {
+                    admission,
+                    detached_route: None,
+                });
             };
 
             if expected_session_id.is_some_and(|expected| expected != current.id) {
@@ -295,10 +508,10 @@ impl SessionManager {
             }
         };
 
-        if let Some(old_route) = old_route {
-            old_route.close().await;
-        }
-        Ok(admission)
+        Ok(SessionAdmissionOutcome {
+            admission,
+            detached_route: old_route,
+        })
     }
 
     /// Completes the responder side of one authenticated handshake after the
@@ -377,20 +590,18 @@ impl SessionManager {
         Ok(session.route.replace(ActiveRoute::quic(connection, route)))
     }
 
-    /// Attaches an authenticated generic route, optionally replacing the
-    /// active carrier for the same logical Session.
-    pub(crate) async fn attach_generic_connection_for_session(
+    /// Atomically commits an authenticated GenericRoute scope. The driver is
+    /// released from its paused pre-attach state while the Session write lock
+    /// is held; only then is its unique owner installed as the current route.
+    pub(crate) async fn attach_generic_route_for_session(
         &self,
         peer_id: &str,
         expected_session_id: Option<SessionId>,
-        connection: GenericRouteHandle,
+        scope: &mut GenericRouteScope,
         replace_current: bool,
     ) -> Result<Option<ActiveRoute>, ()> {
-        if !connection
-            .profile()
-            .supports(ConnectionCapability::ReliableMessage)
-        {
-            let _ = connection.close().await;
+        let profile = scope.profile().ok_or(())?;
+        if !profile.supports(ConnectionCapability::ReliableMessage) {
             return Err(());
         }
         let mut sessions = self.sessions.write().await;
@@ -400,8 +611,6 @@ impl SessionManager {
                 .entry(peer_id.to_string())
                 .or_insert_with(Self::new_session),
             None => {
-                drop(sessions);
-                let _ = connection.close().await;
                 return Err(());
             }
         };
@@ -411,12 +620,28 @@ impl SessionManager {
                 && session.route.is_some()
                 && !replace_current)
         {
-            drop(sessions);
-            let _ = connection.close().await;
+            return Err(());
+        }
+        let owner = scope.commit_and_take_owner()?;
+        session.state = SessionState::Connected;
+        Ok(session.route.replace(ActiveRoute::generic(owner)))
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn attach_test_generic_route(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        handle: GenericRouteHandle,
+    ) -> Result<(), ()> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(peer_id).ok_or(())?;
+        if session.id != expected_session_id || session.state == SessionState::Closed {
             return Err(());
         }
         session.state = SessionState::Connected;
-        Ok(session.route.replace(ActiveRoute::generic(connection)))
+        session.route = Some(ActiveRoute::generic_test(handle));
+        Ok(())
     }
 
     /// Atomically replaces the current Connection for a Session after a new
@@ -536,15 +761,11 @@ impl SessionManager {
         &self,
         peer_id: &str,
         expected_session_id: SessionId,
-        expected_route: &ActiveRoute,
+        expected_route: &RouteView,
         replacement: ActiveRoute,
     ) -> Option<ActiveRoute> {
         let mut sessions = self.sessions.write().await;
-        let Some(session) = sessions.get_mut(peer_id) else {
-            drop(sessions);
-            replacement.close().await;
-            return None;
-        };
+        let session = sessions.get_mut(peer_id)?;
         let matches_current = session
             .route
             .as_ref()
@@ -553,8 +774,6 @@ impl SessionManager {
             || session.state != SessionState::Connected
             || !matches_current
         {
-            drop(sessions);
-            replacement.close().await;
             return None;
         }
         session.state = SessionState::Connected;
@@ -574,8 +793,8 @@ impl SessionManager {
             .get(peer_id)
             .filter(|session| session.state == SessionState::Connected)
             .and_then(|session| session.route.as_ref())
-            .and_then(|route| match &route.carrier {
-                ActiveConnection::Quic(connection) => Some(connection.clone()),
+            .and_then(|route| match route.view().carrier {
+                RouteViewCarrier::Quic(connection) => Some(connection),
                 _ => None,
             })
     }
@@ -608,13 +827,13 @@ impl SessionManager {
             .map(ActiveRoute::profile)
     }
 
-    pub(crate) async fn current_active_route(&self, peer_id: &str) -> Option<ActiveRoute> {
+    pub(crate) async fn current_active_route(&self, peer_id: &str) -> Option<RouteView> {
         self.sessions
             .read()
             .await
             .get(peer_id)
             .filter(|session| session.state == SessionState::Connected)
-            .and_then(|session| session.route.clone())
+            .and_then(|session| session.route.as_ref().map(ActiveRoute::view))
     }
 
     /// Returns the old flat projection for compatibility surfaces. Generic
@@ -656,18 +875,18 @@ impl SessionManager {
             return Err(std::io::Error::other("route does not support reliable messages").into());
         }
         match route.carrier {
-            ActiveConnection::Quic(connection) => {
+            RouteViewCarrier::Quic(connection) => {
                 let kind = match kind {
                     GenericFrameKind::DataMessage => ChannelFrameKind::DataMessage,
                     GenericFrameKind::DeliveryAck => ChannelFrameKind::DeliveryAck,
                 };
                 send_channel_frame(&connection, kind, payload).await
             }
-            ActiveConnection::Generic(connection) => connection
+            RouteViewCarrier::Generic(connection) => connection
                 .send(kind, payload)
                 .await
                 .map_err(|error| std::io::Error::other(error.to_string()).into()),
-            ActiveConnection::Relay(Some(relay)) => match kind {
+            RouteViewCarrier::Relay(Some(relay)) => match kind {
                 GenericFrameKind::DataMessage => relay
                     .send_channel_message(relay_token, peer_id, payload)
                     .await
@@ -677,7 +896,7 @@ impl SessionManager {
                     .await
                     .map_err(|error| std::io::Error::other(error.to_string()).into()),
             },
-            ActiveConnection::Relay(None) => Err(std::io::Error::new(
+            RouteViewCarrier::Relay(None) => Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
                 "Relay route unavailable",
             )
@@ -727,9 +946,22 @@ impl SessionManager {
     ) -> Option<SessionId> {
         let mut sessions = self.sessions.write().await;
         let session = sessions.get_mut(peer_id)?;
-        let is_current = session.route.as_ref().is_some_and(|route| {
-            matches!(&route.carrier, ActiveConnection::Generic(handle) if handle.id() == route_id)
+        let current_generic = session.route.as_ref().is_some_and(|route| {
+            matches!(&route.carrier, ActiveConnection::Generic(owner) if owner.handle().id() == route_id)
         });
+        let is_current = {
+            #[cfg(test)]
+            {
+                current_generic
+                    || session.route.as_ref().is_some_and(|route| {
+                        matches!(&route.carrier, ActiveConnection::GenericTest(handle) if handle.id() == route_id)
+                    })
+            }
+            #[cfg(not(test))]
+            {
+                current_generic
+            }
+        };
         if !is_current {
             return None;
         }
@@ -767,18 +999,14 @@ impl SessionManager {
         }
     }
 
-    /// 显式断开结束 Session，并关闭仍绑定的 route carrier。
-    pub(crate) async fn close(&self, peer_id: &str) {
-        let route = {
+    /// 显式断开结束 Session，并把绑定的 route owner 返回给 Runtime 做
+    /// 有界关闭与 supervised task join。
+    pub(crate) async fn close(&self, peer_id: &str) -> Option<ActiveRoute> {
+        {
             let mut sessions = self.sessions.write().await;
-            let Some(session) = sessions.get_mut(peer_id) else {
-                return;
-            };
+            let session = sessions.get_mut(peer_id)?;
             session.state = SessionState::Closed;
             session.route.take()
-        };
-        if let Some(route) = route {
-            route.close().await;
         }
     }
 

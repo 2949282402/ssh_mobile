@@ -694,7 +694,7 @@ async fn handle_relay_crypto_handshake(
                 .map_err(|_| {
                     std::io::Error::other("Relay Session was replaced during handshake")
                 })?;
-            crate::peer::install_admitted_crypto(state, peer_id, admission, &material).await?;
+            crate::peer::install_admitted_crypto(state, peer_id, &admission, &material).await?;
             let session_id = admission.session_id;
             if !state
                 .sessions
