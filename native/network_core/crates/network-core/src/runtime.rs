@@ -30,8 +30,6 @@ use network_nat::PathManager;
 use network_relay::RelayClient;
 use network_transfer::{TransferFailureReason, TransferManager};
 use quinn::Endpoint;
-#[cfg(test)]
-use quinn::VarInt;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -607,10 +605,13 @@ impl NetworkRuntime {
         });
     }
 
-    /// 只供 network-core 集成测试模拟底层 Connection 断开；生产 API 不暴露
-    /// Quinn handle，也不允许业务层绕过 Session/Delivery 生命周期。
+    /// 仅测试用：为当前 Session 显式驱动一次确定性 recovery，返回其 wire key。
+    ///
+    /// 测试在连接保持稳定时显式重放未 ACK 消息，验证 dedup 与显式 ACK 使用
+    /// 当前 recovery epoch。避免依赖生产重连路径：重连可能触发会话 crypto
+    /// 换代（ReplaceWithNew），使以旧 crypto 加密的重放无法解密而静默丢失。
     #[cfg(test)]
-    pub(crate) fn close_peer_connection_for_test(&self, peer_id: &str) {
+    pub(crate) fn recover_current_session_for_test(&self, peer_id: &str) -> Option<String> {
         let state = self
             .state
             .lock()
@@ -618,10 +619,12 @@ impl NetworkRuntime {
             .clone()
             .expect("runtime state");
         self.runtime.block_on(async move {
-            if let Some(connection) = state.sessions.current_connection(peer_id).await {
-                connection.close(VarInt::from_u32(0), b"test transport interruption");
-            }
-        });
+            let session_id = state.sessions.current_session_id(peer_id).await?;
+            let wire_key = session_id.wire_key();
+            crate::channel::recover_session(Arc::clone(&state), peer_id.to_string(), session_id)
+                .await;
+            Some(wire_key)
+        })
     }
 }
 

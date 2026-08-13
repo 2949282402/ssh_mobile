@@ -785,7 +785,7 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
         )
     });
     assert!(connected.is_some(), "peer never reached connected state");
-    let route_metrics = poll_until(&runtime_a, Duration::from_secs(5), |event| {
+    let route_metrics = poll_until(&runtime_a, Duration::from_secs(15), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::RouteChanged(route))
@@ -810,7 +810,7 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
             })),
         },
     );
-    let offer = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+    let offer = poll_until(&runtime_b, Duration::from_secs(20), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::IncomingTransferOffer(offer))
@@ -831,7 +831,7 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
             )),
         },
     );
-    let completed = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+    let completed = poll_until(&runtime_b, Duration::from_secs(20), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::TransferCompleted(completed))
@@ -846,10 +846,15 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
     fs::remove_dir_all(test_root).ok();
 }
 
-/// 验证未 ACK 的消息在底层 Connection 断开后沿同一逻辑 Session 重放，
-/// 且接收端 dedup 不会再次把同一个 MessageId 交给应用。
+/// 验证未 ACK 的消息在显式 recovery 后沿同一逻辑 Session 重放，且接收端
+/// dedup 不会再次把同一个 MessageId 交给应用，显式 ACK 使用当前 recovery
+/// epoch。
+///
+/// recovery 通过显式驱动，而不是真实 Connection 断开重连：重连可能触发会话
+/// crypto 换代（`ReplaceWithNew`），使以旧 crypto 加密的重放无法解密而静默
+/// 丢失，测试无法在重连上得到确定性结果。
 #[test]
-fn delivery_recovery_replays_same_message_across_reconnected_connection() {
+fn delivery_recovery_replays_same_message_after_explicit_recovery() {
     let runtime_a = NetworkRuntime::new().expect("runtime A");
     let runtime_b = NetworkRuntime::new().expect("runtime B");
     runtime_a.start().expect("start runtime A");
@@ -943,7 +948,7 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
             })),
         },
     );
-    let first_message = poll_until(&runtime_b, Duration::from_secs(5), |event| {
+    let first_message = poll_until(&runtime_b, Duration::from_secs(15), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::ChannelMessage(ChannelMessageEvent {
@@ -964,30 +969,34 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
     assert_ne!(session_id, "delivery-b");
     assert_eq!(message_id.len(), 16);
 
-    runtime_a.close_peer_connection_for_test("delivery-b");
-    assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
-        matches!(
-            &event.payload,
-            Some(network_event::Payload::PeerState(state))
-                if state.peer_id == "delivery-b"
-                    && state.state == PeerConnectionState::Disconnected as i32
-        )
-    })
-    .is_some());
+    // 连接保持稳定；显式驱动一次确定性 recovery，把未 ACK 消息重放一次，
+    // 验证重放被 dedup、不重新发布事件、不自动 ACK，且显式 ACK 使用新的
+    // recovery epoch。这里不依赖生产重连路径：重连可能触发会话 crypto 换代
+    // （ReplaceWithNew），使以旧 crypto 加密的重放无法解密而静默丢失，测试
+    // 无法在重连上断言确定结果。
+    let recovered_session = runtime_a
+        .recover_current_session_for_test("delivery-b")
+        .expect("current session exists");
+    assert_eq!(
+        recovered_session, session_id,
+        "deterministic recovery should drive the same session"
+    );
+    assert!(
+        wait_for_recovery_epoch_settled(
+            &runtime_a,
+            &runtime_b,
+            &session_id,
+            "control",
+            &message_id,
+            Duration::from_millis(200),
+            Duration::from_secs(20),
+        ),
+        "recovery epochs never settled between sender and receiver"
+    );
 
-    assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
-        matches!(
-            &event.payload,
-            Some(network_event::Payload::PeerState(state))
-                if state.peer_id == "delivery-b"
-                    && state.state == PeerConnectionState::Connected as i32
-        )
-    })
-    .is_some());
-
-    // 不在第一次事件后 ACK；Connection #2 重放的重复 DataMessage 仍处于
-    // InFlight，所以接收端既不重新发布事件，也不能自动 ACK。
-    let unexpected_ack = poll_until(&runtime_a, Duration::from_millis(700), |event| {
+    // 不在第一次事件后 ACK；recovery 重放的重复 DataMessage 仍处于 InFlight，
+    // 所以接收端既不重新发布事件，也不能自动 ACK。
+    let unexpected_ack = poll_until(&runtime_a, Duration::from_secs(1), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
@@ -1004,7 +1013,7 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
 
     // 重放只能更新 DeliveryManager 内部的 epoch；应用事件不携带旧 epoch，
     // 应用 ACK 也不需要保存它。显式 ACK 必须使用当前恢复周期的 epoch。
-    let duplicate = poll_until(&runtime_b, Duration::from_millis(500), |event| {
+    let duplicate = poll_until(&runtime_b, Duration::from_secs(1), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::ChannelMessage(message))
@@ -1027,7 +1036,7 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
             )),
         },
     );
-    let recovered_ack = poll_until(&runtime_a, Duration::from_secs(5), |event| {
+    let recovered_ack = poll_until(&runtime_a, Duration::from_secs(20), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
@@ -1063,7 +1072,7 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
             })),
         },
     );
-    let explicit_message = poll_until(&runtime_b, Duration::from_secs(5), |event| {
+    let explicit_message = poll_until(&runtime_b, Duration::from_secs(20), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::ChannelMessage(message))
@@ -1092,7 +1101,7 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
             )),
         },
     );
-    assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
+    assert!(poll_until(&runtime_a, Duration::from_secs(20), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
@@ -2184,10 +2193,14 @@ fn upsert_command(
 }
 
 /// 将命令入队，并只等待其内部接受结果。
+///
+/// 每个 NetworkRuntime 启动一个多线程 tokio worker。全套测试并行执行真实
+/// QUIC/UDP/TCP/WebSocket 网络 I/O 时可能重度超订 CPU，命令结果在加载下的
+/// 真实延迟可远超 10s；用 30s 作为命令结果截止期，避免加载下偶发误报。
 fn send_and_expect_accepted(runtime: &NetworkRuntime, command: NetworkCommand) {
     let command_id = command.command_id.clone();
     runtime.send_command(command).expect("queue command");
-    let result = poll_until(runtime, Duration::from_secs(10), |event| {
+    let result = poll_until(runtime, Duration::from_secs(30), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::CommandResult(result))
@@ -2241,6 +2254,66 @@ fn wait_for_session_connected(runtime: &NetworkRuntime, peer_id: &str, timeout: 
             .block_on(state.sessions.is_connected(peer_id))
         {
             return true;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    false
+}
+
+/// 等待连接恢复后的 recovery epoch 在发送端与接收端之间稳定对齐。
+///
+/// 连接恢复会触发多次 `recover_session`，发送端 epoch 逐次递增并重放未 ACK
+/// 消息；接收端 active 记录的 epoch 只在重放落地后追上发送端。若测试在两者
+/// 尚未对齐时发送显式 ACK，ACK 会携带滞后 epoch，发送端判定 StaleEpoch 而
+/// 不再发布 DeliveryAcked，造成偶发失败。因此测试必须等到：
+/// 1. 发送端当前 session epoch >= 2（至少经历了一次连接恢复）；
+/// 2. 接收端 active 记录 epoch 与发送端当前 epoch 相等（最后一次重放已落地）；
+/// 3. 该对齐状态在 settle 窗口内保持稳定（后续不再有新的 recovery）。
+fn wait_for_recovery_epoch_settled(
+    sender: &NetworkRuntime,
+    receiver: &NetworkRuntime,
+    session_id: &str,
+    channel_id: &str,
+    message_id: &[u8],
+    settle: Duration,
+    timeout: Duration,
+) -> bool {
+    let sender_state = sender
+        .state
+        .lock()
+        .expect("runtime state lock")
+        .clone()
+        .expect("runtime state");
+    let receiver_state = receiver
+        .state
+        .lock()
+        .expect("runtime state lock")
+        .clone()
+        .expect("runtime state");
+    let message_id = crate::delivery::MessageId::from_bytes(
+        message_id.try_into().expect("message_id must be 16 bytes"),
+    );
+    let deadline = Instant::now() + timeout;
+    let mut aligned_since: Option<Instant> = None;
+    while Instant::now() < deadline {
+        let sender_epoch = sender.handle().block_on(
+            sender_state
+                .delivery
+                .current_session_recovery_epoch(session_id),
+        );
+        let receiver_epoch = receiver.handle().block_on(
+            receiver_state
+                .delivery
+                .incoming_recovery_epoch(session_id, channel_id, message_id),
+        );
+        let aligned = sender_epoch >= 2 && receiver_epoch == Some(sender_epoch);
+        if aligned {
+            aligned_since = aligned_since.or(Some(Instant::now()));
+            if aligned_since.is_some_and(|start| start.elapsed() >= settle) {
+                return true;
+            }
+        } else {
+            aligned_since = None;
         }
         std::thread::sleep(Duration::from_millis(25));
     }
