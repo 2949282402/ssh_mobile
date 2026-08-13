@@ -3008,20 +3008,17 @@ mod tests {
         }
     }
 
-    async fn wait_for_active_task_count(
-        supervisor: &crate::task_supervisor::RuntimeTaskSupervisor,
-        expected: usize,
-    ) {
-        timeout(Duration::from_secs(1), async {
-            loop {
-                if supervisor.active_count() == expected {
-                    return;
-                }
-                tokio::task::yield_now().await;
+    struct CancellationSignal {
+        started: Option<oneshot::Sender<()>>,
+        cancelled: Option<oneshot::Sender<()>>,
+    }
+
+    impl Drop for CancellationSignal {
+        fn drop(&mut self) {
+            if let Some(sender) = self.cancelled.take() {
+                let _ = sender.send(());
             }
-        })
-        .await
-        .unwrap_or_else(|_| panic!("supervisor did not reach {expected} active tasks"));
+        }
     }
 
     #[tokio::test]
@@ -3280,9 +3277,36 @@ mod tests {
             .attach_generic_route_for_session(peer_id, Some(new_session_id), &mut scope, false)
             .await
             .expect("attach outbound GenericRoute to replacement Session");
+
+        let (sentinel_started_tx, sentinel_started_rx) = oneshot::channel();
+        let (sentinel_cancelled_tx, sentinel_cancelled_rx) = oneshot::channel();
+        let sentinel_task = state.task_supervisor.spawn_session(
+            old_session_id.wire_key(),
+            "old-session-sentinel",
+            async move {
+                let mut signal = CancellationSignal {
+                    started: Some(sentinel_started_tx),
+                    cancelled: Some(sentinel_cancelled_tx),
+                };
+                if let Some(sender) = signal.started.take() {
+                    let _ = sender.send(());
+                }
+                std::future::pending::<()>().await;
+            },
+        );
+        assert!(sentinel_task.is_some(), "old Session sentinel should start");
+        timeout(Duration::from_secs(1), sentinel_started_rx)
+            .await
+            .expect("old Session sentinel did not start")
+            .expect("old Session sentinel start signal was dropped");
+
         state.finish_session_replacement(admission);
 
-        wait_for_active_task_count(&state.task_supervisor, 2).await;
+        timeout(Duration::from_secs(1), sentinel_cancelled_rx)
+            .await
+            .expect("old Session cancellation did not complete")
+            .expect("old Session sentinel signal was dropped");
+        assert_eq!(state.task_supervisor.active_count(), 2);
         assert_eq!(
             state.sessions.current_session_id(peer_id).await,
             Some(new_session_id)
