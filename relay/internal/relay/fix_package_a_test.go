@@ -176,11 +176,11 @@ func TestAdminDeviceSnapshotSourcesRemoteAddrFromLease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := server.adminDeviceSnapshot()
+	items, presenceAvailable, err := server.adminDeviceSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || !items[0].Online || items[0].RemoteAddr != "203.0.113.9:9000" {
+	if !presenceAvailable || len(items) != 1 || !items[0].Online || items[0].RemoteAddr != "203.0.113.9:9000" {
 		t.Fatalf("admin snapshot should show the cross-instance device online with the lease address: %+v", items)
 	}
 }

@@ -19,6 +19,9 @@ type adminOverviewResponse struct {
 	Devices       adminDeviceStat  `json:"devices"`
 	Relay         adminRelayStat   `json:"relay"`
 	Runtime       adminRuntimeStat `json:"runtime"`
+	// PresenceAvailable 为 false 表示 presence 查询失败（Redis 不可用）：此时
+	// online 字段不能当作"全部离线"，而是"在线状态未知"。
+	PresenceAvailable bool `json:"presence_available"`
 }
 
 type adminDeviceStat struct {
@@ -36,8 +39,9 @@ type adminRuntimeStat struct {
 }
 
 type adminDevicesResponse struct {
-	Items []adminDevice `json:"items"`
-	Total int           `json:"total"`
+	Items             []adminDevice `json:"items"`
+	Total             int           `json:"total"`
+	PresenceAvailable bool          `json:"presence_available"`
 }
 
 type adminDevice struct {
@@ -88,46 +92,45 @@ func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 	for _, device := range enrolledList {
 		deviceIDs = append(deviceIDs, device.DeviceID)
 	}
-	presences, _ := s.cache.GetPresences(context.Background(), deviceIDs)
+	presences, presenceErr := s.cache.GetPresences(context.Background(), deviceIDs)
+	presenceAvailable := presenceErr == nil
+	if presenceErr != nil {
+		// Redis presence 不可用：online 不能当作"全部离线"解读，给前端显式标志
+		// 表明在线状态是未知的。
+		s.logger.Warn("presence cache unavailable; online status is unknown", "error", presenceErr)
+	}
 	online := len(presences)
 
 	var memory runtime.MemStats
 	runtime.ReadMemStats(&memory)
 
 	return adminOverviewResponse{
-		ServerTime:    time.Now().Unix(),
-		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
-		Devices: adminDeviceStat{
-			Enrolled: enrolled,
-			Online:   online,
-		},
-		Relay: adminRelayStat{
-			ActiveTransfers: hubState.ActiveSessions,
-		},
-		Runtime: adminRuntimeStat{
-			AllocatedMemMB: float64(memory.Alloc) / 1024 / 1024,
-			Goroutines:     runtime.NumGoroutine(),
-		},
+		ServerTime:        time.Now().Unix(),
+		UptimeSeconds:     int64(time.Since(s.startedAt).Seconds()),
+		Devices:           adminDeviceStat{Enrolled: enrolled, Online: online},
+		Relay:             adminRelayStat{ActiveTransfers: hubState.ActiveSessions},
+		Runtime:           adminRuntimeStat{AllocatedMemMB: float64(memory.Alloc) / 1024 / 1024, Goroutines: runtime.NumGoroutine()},
+		PresenceAvailable: presenceAvailable,
 	}, nil
 }
 
 func (s *Server) adminDevices(w http.ResponseWriter, _ *http.Request) {
-	items, err := s.adminDeviceSnapshot()
+	items, presenceAvailable, err := s.adminDeviceSnapshot()
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, adminErrorInternal, "Device storage is unavailable.")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(adminDevicesResponse{Items: items, Total: len(items)})
+	_ = json.NewEncoder(w).Encode(adminDevicesResponse{Items: items, Total: len(items), PresenceAvailable: presenceAvailable})
 }
 
-func (s *Server) adminDeviceSnapshot() ([]adminDevice, error) {
+func (s *Server) adminDeviceSnapshot() ([]adminDevice, bool, error) {
 	s.devicesMutex.Lock()
 	enrolledList, err := s.store.ListEnrollments(context.Background())
 	s.devicesMutex.Unlock()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// 一次批量查询替代逐设备 GetPresence（N+1 → 1）。Online 与 RemoteAddr 都取
 	// 自 presence 租约：跨实例部署下设备连在其它实例时，租约里的地址才是它真实
@@ -136,7 +139,11 @@ func (s *Server) adminDeviceSnapshot() ([]adminDevice, error) {
 	for _, enrolled := range enrolledList {
 		deviceIDs = append(deviceIDs, enrolled.DeviceID)
 	}
-	presences, _ := s.cache.GetPresences(context.Background(), deviceIDs)
+	presences, presenceErr := s.cache.GetPresences(context.Background(), deviceIDs)
+	presenceAvailable := presenceErr == nil
+	if presenceErr != nil {
+		s.logger.Warn("presence cache unavailable; online status is unknown", "error", presenceErr)
+	}
 	items := make([]adminDevice, 0, len(enrolledList))
 	for _, enrolled := range enrolledList {
 		presence, online := presences[enrolled.DeviceID]
@@ -153,7 +160,7 @@ func (s *Server) adminDeviceSnapshot() ([]adminDevice, error) {
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].DeviceID < items[j].DeviceID
 	})
-	return items, nil
+	return items, presenceAvailable, nil
 }
 
 func publicKeyFingerprint(encodedPublicKey string) string {

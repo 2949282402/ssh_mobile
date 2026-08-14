@@ -408,8 +408,8 @@ func TestAdminOverviewCountsOnlineDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overview.Devices.Enrolled != 1 || overview.Devices.Online != 1 {
-		t.Fatalf("overview should count the online device: %+v", overview.Devices)
+	if overview.Devices.Enrolled != 1 || overview.Devices.Online != 1 || !overview.PresenceAvailable {
+		t.Fatalf("overview should count the online device with presence available: %+v", overview.Devices)
 	}
 }
 

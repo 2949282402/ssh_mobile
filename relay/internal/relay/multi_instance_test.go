@@ -362,9 +362,12 @@ func TestMultiInstanceAdminSnapshotShowsRemoteAddrFromLease(t *testing.T) {
 	}
 
 	// A's admin snapshot must show the device online with B's connection address.
-	items, err := serverA.adminDeviceSnapshot()
+	items, presenceAvailable, err := serverA.adminDeviceSnapshot()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !presenceAvailable {
+		t.Fatal("cross-instance snapshot should have presence available")
 	}
 	if len(items) != 1 || !items[0].Online || items[0].RemoteAddr == "" {
 		t.Fatalf("A's admin snapshot should show device-x online with B's remote address: %+v", items)
