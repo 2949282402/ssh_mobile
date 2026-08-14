@@ -973,8 +973,10 @@ impl DeliveryManager {
     /// 当前 Session 的 recovery epoch（每次新 Connection Ready 递增一次）。
     ///
     /// 集成测试用：验证发送端 epoch 与接收端 active 记录对齐后再发送显式 ACK，
-    /// 避免 ACK 携带滞后 epoch 被发送端判为 StaleEpoch。
-    pub async fn current_session_recovery_epoch(&self, session_id: &str) -> u64 {
+    /// 避免 ACK 携带滞后 epoch 被发送端判为 StaleEpoch。仅测试构建暴露；
+    /// 生产代码不使用该只读访问器。
+    #[cfg(test)]
+    pub(crate) async fn current_session_recovery_epoch(&self, session_id: &str) -> u64 {
         let store = self.store.lock().await;
         store
             .recovery_epochs
@@ -1046,6 +1048,27 @@ impl DeliveryManager {
         store
             .failed_ordered
             .retain(|(session, _)| session != session_id);
+        assert_delivery_invariants(&store);
+    }
+
+    /// 显式丢弃已 retire Session 的 sender 侧 pending，并同步扣减字节预算。
+    ///
+    /// 仅用于 `ReplaceWithNew`（peer runtime restart）清理：旧 Session 的
+    /// pending 永远不可能在替换 Session 上投递，必须显式清理而不是等到
+    /// TTL/预算耗尽。显式 close 不调用本方法，保持原契约（pending 由调用方
+    /// 决定重试/取消策略）。
+    pub(crate) async fn retire_pending_for_session(&self, session_id: &str) {
+        let mut store = self.store.lock().await;
+        let dropped_bytes: usize = store
+            .pending
+            .values()
+            .filter(|message| message.session_id == session_id)
+            .map(|message| message.payload.len())
+            .sum();
+        store
+            .pending
+            .retain(|_, message| message.session_id != session_id);
+        store.pending_bytes = store.pending_bytes.saturating_sub(dropped_bytes);
         assert_delivery_invariants(&store);
     }
 

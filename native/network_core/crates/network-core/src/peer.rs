@@ -2875,6 +2875,17 @@ async fn handle_connection_disconnect(
 
 /// 为一个 Session 建立唯一的自动重连任务。
 fn schedule_reconnect(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
+    #[cfg(test)]
+    {
+        if state
+            .reconnect_disabled_peers
+            .lock()
+            .expect("reconnect disabled peers lock")
+            .contains(&peer_id)
+        {
+            return;
+        }
+    }
     let supervisor = Arc::clone(&state.task_supervisor);
     let _ = supervisor.spawn_session(session_id.wire_key(), "session-reconnect", async move {
         let should_start = {

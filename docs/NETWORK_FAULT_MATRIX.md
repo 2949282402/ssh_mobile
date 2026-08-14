@@ -3,7 +3,7 @@
 # Network Fault Matrix
 
 本矩阵是 SSH Mobile 网络 SDK 下一阶段 Step 9 的固定验收入口。当前固定场景覆盖
-A–Q；每次网络核心、
+A–S；每次网络核心、
 Relay、Native Realtime、Delivery 或文件 Resume 变更后，按同一场景编号记录证据，
 不得只以“连接恢复”判定成功。
 
@@ -46,6 +46,8 @@ Relay、Native Realtime、Delivery 或文件 Resume 变更后，按同一场景�
 | O | TCP active；QUIC becomes available and replaces it | `cargo test -p network-core tcp_to_quic_migration_preserves_pending_delivery_and_session_id -- --nocapture` | new QUIC route authenticates before atomic swap, pending Delivery is recovered once, SessionId、existing `CryptoContext` Arc、KeyEpoch unchanged, and the old generic carrier is closed after replacement | native integration test passed with pointer/epoch assertions |
 | P | Wrong pinned identity, unsupported v2, incomplete/tampered v3 E2EE exchange on QUIC/generic/Relay | `cargo test -p network-core crypto_handshake -- --nocapture`；`cargo test -p network-core session_root_source_requires_noise_transport_secret_export -- --nocapture` | handshake hash 不作为 secret IKM；wrong identity 不发送 RootSeed；v2、tampered RootSeed、wrong RootConfirm、missing Accept 均无 `CryptoContext`、无 Connected、无 plaintext fallback | native v3 security and structural tests passed |
 | Q | High-volume nonce use, epoch rotation, authenticated Delivery replay | `cargo test -p network-core crypto::tests::structured_nonce_is_unique_across_one_hundred_thousand_messages -- --nocapture`; `cargo test -p network-core crypto::tests::key_rotation_accepts_one_new_epoch_and_rejects_large_jump -- --nocapture` | 100k nonce values are unique, current/recent epoch messages are accepted, large epoch jumps and unauthenticated replay are rejected, while authenticated Delivery duplicates retain dedup semantics | native crypto tests passed |
+| R | Direct transport forced-close → auto-reconnect to the same route; un-ACKed Delivery replayed once | `cargo test -p network-core --locked delivery_recovery_replays_same_message_across_reconnected_connection -- --nocapture`（被动端禁用自动重连以隔离单侧重连路径；重复 10 次确定性通过） | SessionId 不变、同一 `CryptoContext` Arc（`Arc::ptr_eq` = `ContinueExisting`）、pending Delivery 保留且只重放一次（dedup、无自动 ACK）、sender recovery epoch ≥ 2、显式 ACK 用当前 epoch 完成。**单侧重连路径证明普通断网重连为 `ContinueExisting`**；两端并发重连的 connection churn / 并发 `recover_session` 竞态未在本场景覆盖，单独列为生产 follow-up | native 集成测试已通过（10/10 确定性） |
+| S | Peer runtime restart → `ReplaceWithNew`；旧 Session 的 pending Delivery 被显式清理、绝不错误恢复进新 Session | `cargo test -p network-core --locked peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery -- --nocapture` | 新 SessionId ≠ 旧 SessionId、旧 `CryptoContext` alias 被 retire（`get` 报错）、旧 Session pending 快照为空（`close_session` 显式清理 sender 侧 pending）、新 Session 恢复快照不含旧消息、孤儿 transfer 终止、新 E2EE 消息正常送达并 ACK | native 集成测试已通过 |
 
 ## Docker Relay 故障运行约定
 

@@ -298,7 +298,7 @@ final class JsonAuthenticatedApiClient implements AuthenticatedApiClient {
   @override
   Future<SdkResult<List<PeerDescriptor>>> listPeers() => _authorized(
     operation: NetworkOperation.listPeers,
-    request: SdkRequest(method: 'GET', uri: routes.listPeers),
+    buildRequest: () => SdkRequest(method: 'GET', uri: routes.listPeers),
     parse: _parsePeers,
   );
 
@@ -317,7 +317,10 @@ final class JsonAuthenticatedApiClient implements AuthenticatedApiClient {
     }
     return _authorized(
       operation: NetworkOperation.requestConnection,
-      request: SdkRequest(
+      // Route resolution and body encoding run lazily inside the unified
+      // exception boundary, so a resolver/encoder error becomes SdkFailure
+      // instead of a raw throw to the caller.
+      buildRequest: () => SdkRequest(
         method: 'POST',
         uri: routes.requestConnection(peerId),
         headers: const <String, String>{
@@ -332,23 +335,30 @@ final class JsonAuthenticatedApiClient implements AuthenticatedApiClient {
 
   Future<SdkResult<T>> _authorized<T>({
     required NetworkOperation operation,
-    required SdkRequest request,
+    required SdkRequest Function() buildRequest,
     required T Function(SdkResponse response) parse,
   }) async {
-    final initialToken = await authSession.readAccessToken();
-    if (initialToken == null || initialToken.trim().isEmpty) {
-      return SdkFailure(
-        _authError(operation, 'Authenticated network session is unavailable.'),
-      );
-    }
-
-    var token = initialToken;
     try {
+      // Route resolution and body encoding run lazily inside the boundary so a
+      // resolver/encoder error becomes SdkFailure rather than a raw throw.
+      final request = buildRequest();
+      // The token read is inside the boundary too: a Secure Storage / Keychain /
+      // Windows Credential Manager provider failure maps to SdkFailure (ioError).
+      final initialToken = await authSession.readAccessToken();
+      if (initialToken == null || initialToken.trim().isEmpty) {
+        return SdkFailure(
+          _authError(
+            operation,
+            'Authenticated network session is unavailable.',
+          ),
+        );
+      }
+
+      var token = initialToken;
       var response = await _send(_withBearer(request, token));
       if (response.statusCode == 401) {
-        final refreshed = await authSession.refreshAccessToken();
-        if (refreshed == null || refreshed.trim().isEmpty) {
-          await authSession.invalidate();
+        final refreshed = await _refreshCredential();
+        if (refreshed == null) {
           return SdkFailure(
             _authError(operation, 'Authenticated network session expired.'),
           );
@@ -357,7 +367,7 @@ final class JsonAuthenticatedApiClient implements AuthenticatedApiClient {
         response = await _send(_withBearer(request, token));
       }
       if (response.statusCode == 401) {
-        await authSession.invalidate();
+        await _invalidateSafely();
         return SdkFailure(
           _authError(operation, 'Authenticated network session expired.'),
         );
@@ -378,6 +388,33 @@ final class JsonAuthenticatedApiClient implements AuthenticatedApiClient {
       }
     } on Object catch (error) {
       return SdkFailure(_transportError(error, operation));
+    }
+  }
+
+  /// 401 后刷新凭据。Provider 抛异常或返回空时，先安全失效会话再返回 null，
+  /// 满足 "最多刷新一次、失败必须失效会话" 的契约；失败绝不把清理阶段的
+  /// 异常覆盖到调用方。
+  Future<String?> _refreshCredential() async {
+    final String? refreshed;
+    try {
+      refreshed = await authSession.refreshAccessToken();
+    } on Object {
+      await _invalidateSafely();
+      return null;
+    }
+    if (refreshed == null || refreshed.trim().isEmpty) {
+      await _invalidateSafely();
+      return null;
+    }
+    return refreshed;
+  }
+
+  /// 清理阶段失败不得掩盖原始网络错误：忽略 invalidate 自身抛出的异常。
+  Future<void> _invalidateSafely() async {
+    try {
+      await authSession.invalidate();
+    } on Object {
+      // Session cleanup is best-effort; the original failure is authoritative.
     }
   }
 

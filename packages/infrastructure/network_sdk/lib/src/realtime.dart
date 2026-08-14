@@ -305,6 +305,11 @@ final class _RealtimeSession implements RealtimeSession {
         _state == RealtimeSessionState.connected) {
       return Future<SdkResult<void>>.value(const SdkSuccess<void>(null));
     }
+    // A fresh start() begins a new native connection generation whose
+    // signaling revision restarts from a low value (native creates a new
+    // WebRTC peer). Reset the recorded revision so the new generation's low
+    // revisions are not mistaken for stale events from the previous session.
+    _revision = 0;
     _stopCommandCompleted = false;
     _state = RealtimeSessionState.starting;
     final future = _startInternal();
@@ -373,8 +378,14 @@ final class _RealtimeSession implements RealtimeSession {
     int revision = 0,
   }) {
     if (_disposed) return;
+    // Revision reconciliation (ADR-029): a strictly lower revision is a stale
+    // snapshot/event and must not roll back a newer state — including a stale
+    // `failed`/error event. Equal revisions are idempotent reapplications and
+    // never advance the revision. revision == 0 is the legacy/unspecified
+    // marker: it always applies its state but never advances `_revision`.
+    if (revision > 0 && _revision > 0 && revision < _revision) return;
     _state = error == null ? state : RealtimeSessionState.failed;
-    if (revision > 0) _revision = revision;
+    if (revision > _revision) _revision = revision;
     if (_state == RealtimeSessionState.stopped ||
         _state == RealtimeSessionState.failed) {
       _stopCommandCompleted = false;

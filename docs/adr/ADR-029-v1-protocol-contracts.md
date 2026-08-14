@@ -49,6 +49,25 @@ behavior and no layer invents wire values.
    `{credential, expires_at, server_time, protocol_version}`. 404 means the
    device is not enrolled and must re-enroll; 401 means auth failed.
 
+### Realtime revision comparison rules
+
+The client (`_RealtimeSession._applyState`) reconciles every incoming
+`revision` against its current recorded revision before mutating state:
+
+- `revision == 0` (legacy/unspecified): the event **always applies** its state
+  but **never advances** the recorded revision. Pre-revision backends keep
+  working unchanged.
+- `0 < incoming < current`: the event is **stale**; ignore it entirely — the
+  state, the revision, and any `failed`/error marker are left untouched. A
+  stale failure snapshot must not roll a `connected` session back to `failed`.
+- `incoming == current`: **idempotent** re-application; state is applied, the
+  recorded revision is not advanced.
+- `incoming > current`: **apply** the state and advance the recorded revision
+  to the incoming value.
+
+State events and snapshots are published concurrently; the guard ensures a
+late-arriving older snapshot never overrides a newer state.
+
 ### Four-layer sync
 
 The Go Relay writes the error and refresh shapes; the Rust native codec mirrors
@@ -92,7 +111,13 @@ retry fields continues to see `unspecified` dispositions and unchanged behavior.
 ## Verification
 
 - `network_sdk`: `flutter analyze --no-pub` and `flutter test --no-pub`
-  (includes `BootstrapClient.refresh` success/404/409/401 mapping tests).
+  (includes `BootstrapClient.refresh` success/404/409/401 mapping tests and the
+  Realtime revision-guard scenarios in `realtime_test.dart`: stale lower
+  revision ignored, stale `failed` snapshot ignored, equal-revision idempotent,
+  newer revision applied, legacy `revision == 0` applies without advancing).
+- `apps/ssh_mobile_full`: `flutter analyze --no-pub` and `flutter test --no-pub`
+  (out-of-order revisioned snapshot/state through the Realtime adapter keeps the
+  newer state).
 - `feature_lan_share`: `flutter analyze --no-pub` and `flutter test --no-pub`
   (coordinator auto-refresh, disposition-driven backoff, `noRetry`/
   `identityConflict` terminal behavior, `RelayEnrollmentService.refreshCredential`
