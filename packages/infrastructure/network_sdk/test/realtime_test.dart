@@ -210,6 +210,210 @@ void main() {
     expect(session.state, RealtimeSessionState.idle);
     expect(session.revision, 0);
   });
+
+  test(
+    'stale revisioned state event is ignored and keeps the newer state',
+    () async {
+      final backend = _FakeRealtimeBackend();
+      final client = RealtimeClientImpl(backend: backend);
+      final session = client.createSession(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+      );
+      addTearDown(() => client.dispose());
+
+      backend.emit(
+        const RealtimeSessionStateChangedEvent(
+          realtimeId: '00112233445566778899aabbccddeeff',
+          peerId: 'peer-a',
+          state: RealtimeSessionState.connected,
+          revision: 10,
+        ),
+      );
+      backend.emit(
+        const RealtimeSessionStateChangedEvent(
+          realtimeId: '00112233445566778899aabbccddeeff',
+          peerId: 'peer-a',
+          state: RealtimeSessionState.negotiating,
+          revision: 9,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(session.state, RealtimeSessionState.connected);
+      expect(session.revision, 10);
+    },
+  );
+
+  test(
+    'stale revisioned failure snapshot does not override a connected session',
+    () async {
+      final backend = _FakeRealtimeBackend();
+      final client = RealtimeClientImpl(backend: backend);
+      final session = client.createSession(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+      );
+      addTearDown(() => client.dispose());
+
+      backend.emit(
+        const RealtimeSessionStateChangedEvent(
+          realtimeId: '00112233445566778899aabbccddeeff',
+          peerId: 'peer-a',
+          state: RealtimeSessionState.connected,
+          revision: 10,
+        ),
+      );
+      backend.emit(
+        const RealtimeSnapshotBackendEvent(
+          RealtimeSnapshot(
+            realtimeId: '00112233445566778899aabbccddeeff',
+            peerId: 'peer-a',
+            state: RealtimeSessionState.failed,
+            revision: 9,
+            error: NetworkError(
+              code: NetworkErrorCode.relayError,
+              message: 'stale failure',
+            ),
+          ),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(session.state, RealtimeSessionState.connected);
+      expect(session.revision, 10);
+    },
+  );
+
+  test('equal revision is applied idempotently without advancing', () async {
+    final backend = _FakeRealtimeBackend();
+    final client = RealtimeClientImpl(backend: backend);
+    final session = client.createSession(
+      realtimeId: '00112233445566778899aabbccddeeff',
+      peerId: 'peer-a',
+    );
+    addTearDown(() => client.dispose());
+
+    backend.emit(
+      const RealtimeSessionStateChangedEvent(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+        state: RealtimeSessionState.connected,
+        revision: 10,
+      ),
+    );
+    backend.emit(
+      const RealtimeSnapshotBackendEvent(
+        RealtimeSnapshot(
+          realtimeId: '00112233445566778899aabbccddeeff',
+          peerId: 'peer-a',
+          state: RealtimeSessionState.connected,
+          revision: 10,
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.state, RealtimeSessionState.connected);
+    expect(session.revision, 10);
+  });
+
+  test('newer revision applies and advances', () async {
+    final backend = _FakeRealtimeBackend();
+    final client = RealtimeClientImpl(backend: backend);
+    final session = client.createSession(
+      realtimeId: '00112233445566778899aabbccddeeff',
+      peerId: 'peer-a',
+    );
+    addTearDown(() => client.dispose());
+
+    backend.emit(
+      const RealtimeSessionStateChangedEvent(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+        state: RealtimeSessionState.connected,
+        revision: 10,
+      ),
+    );
+    backend.emit(
+      const RealtimeSessionStateChangedEvent(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+        state: RealtimeSessionState.restarting,
+        revision: 11,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.state, RealtimeSessionState.restarting);
+    expect(session.revision, 11);
+  });
+
+  test('stale revisioned state after stopped is ignored', () async {
+    final backend = _FakeRealtimeBackend();
+    final client = RealtimeClientImpl(backend: backend);
+    final session = client.createSession(
+      realtimeId: '00112233445566778899aabbccddeeff',
+      peerId: 'peer-a',
+    );
+    addTearDown(() => client.dispose());
+
+    backend.emit(
+      const RealtimeSessionStateChangedEvent(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+        state: RealtimeSessionState.stopped,
+        revision: 12,
+      ),
+    );
+    backend.emit(
+      const RealtimeSessionStateChangedEvent(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+        state: RealtimeSessionState.connected,
+        revision: 11,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.state, RealtimeSessionState.stopped);
+    expect(session.revision, 12);
+  });
+
+  test(
+    'legacy zero-revision event applies without advancing revision',
+    () async {
+      final backend = _FakeRealtimeBackend();
+      final client = RealtimeClientImpl(backend: backend);
+      final session = client.createSession(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+      );
+      addTearDown(() => client.dispose());
+
+      backend.emit(
+        const RealtimeSessionStateChangedEvent(
+          realtimeId: '00112233445566778899aabbccddeeff',
+          peerId: 'peer-a',
+          state: RealtimeSessionState.connected,
+          revision: 10,
+        ),
+      );
+      // A legacy/unspecified event (revision omitted -> 0) still applies its
+      // state but must never advance the recorded revision.
+      backend.emit(
+        const RealtimeSessionStateChangedEvent(
+          realtimeId: '00112233445566778899aabbccddeeff',
+          peerId: 'peer-a',
+          state: RealtimeSessionState.negotiating,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(session.state, RealtimeSessionState.negotiating);
+      expect(session.revision, 10);
+    },
+  );
 }
 
 final class _FakeRealtimeBackend implements RealtimeSessionBackend {

@@ -330,6 +330,39 @@ void main() {
     expect(session.revision, 0);
     await client.dispose();
   });
+
+  test(
+    'out-of-order revisioned snapshot through the adapter keeps the newer state',
+    () async {
+      final gateway = _FakeRealtimeGateway();
+      final backend = AppRealtimeSessionBackend(
+        networkRuntime: _FakeNetworkRuntime(gateway),
+        commandResultTimeout: const Duration(seconds: 1),
+      );
+      final client = RealtimeClientImpl(backend: backend);
+      final session = client.createSession(
+        realtimeId: realtimeId,
+        peerId: 'peer-a',
+      );
+
+      final startFuture = session.start();
+      await _pump();
+      gateway.emitCommandResult(commandId: gateway.lastStartCommandId!);
+      await startFuture;
+
+      // A newer revisioned snapshot lands first, then an older revisioned
+      // state event arrives late: the stale event must not roll the session
+      // back to negotiating (ADR-029 reconciliation).
+      gateway.emitSnapshot(NativeRealtimeSessionState.connected, revision: 6);
+      await _pump();
+      gateway.emitState(NativeRealtimeSessionState.negotiating, revision: 4);
+      await _pump();
+
+      expect(session.state, RealtimeSessionState.connected);
+      expect(session.revision, 6);
+      await client.dispose();
+    },
+  );
 }
 
 Future<void> _pump() => Future<void>.delayed(Duration.zero);
