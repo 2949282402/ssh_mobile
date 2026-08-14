@@ -20,12 +20,14 @@ describe('admin API client', () => {
       devices: { enrolled: 2, online: 1 },
       relay: { active_transfers: 0 },
       runtime: { allocated_mem_mb: 12.34, goroutines: 7 },
+      presence_available: true,
     }));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await overviewApi.get();
 
     expect(result.devices.online).toBe(1);
+    expect(result.presence_available).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith('/api/admin/v1/overview', expect.objectContaining({
       credentials: 'include',
       headers: expect.objectContaining({ Accept: 'application/json' }),
@@ -45,6 +47,7 @@ describe('admin API client', () => {
           public_key_fingerprint: 'SHA256:fingerprint',
         }],
         total: 1,
+        presence_available: true,
       }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
@@ -243,6 +246,27 @@ describe('admin API client', () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ server_time: 'not-a-number' }));
     vi.stubGlobal('fetch', fetchMock);
 
+    await expect(overviewApi.get()).rejects.toMatchObject({
+      status: 200,
+      message: 'Relay 返回的数据格式无效。',
+    });
+  });
+
+  it('parses presence_available and rejects when the relay omits it', async () => {
+    const base = {
+      server_time: 1_700_000_000,
+      uptime_seconds: 21,
+      devices: { enrolled: 2, online: 0 },
+      relay: { active_transfers: 0 },
+      runtime: { allocated_mem_mb: 12.34, goroutines: 7 },
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ ...base, presence_available: false }))
+      .mockResolvedValueOnce(jsonResponse(base));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(overviewApi.get()).resolves.toMatchObject({ presence_available: false });
+    // 旧 relay 不返回该字段：schema 收紧后视为数据格式无效，而不是静默当作"全部离线"。
     await expect(overviewApi.get()).rejects.toMatchObject({
       status: 200,
       message: 'Relay 返回的数据格式无效。',

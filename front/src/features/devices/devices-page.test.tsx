@@ -23,6 +23,7 @@ const devices = {
     public_key_fingerprint: 'SHA256:fingerprint',
   }],
   total: 1,
+  presence_available: true,
 };
 
 function renderDevices() {
@@ -41,7 +42,7 @@ describe('DevicesPage', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(devices))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValue(jsonResponse({ items: [], total: 0 }));
+      .mockResolvedValue(jsonResponse({ items: [], total: 0, presence_available: true }));
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     renderDevices();
@@ -58,6 +59,23 @@ describe('DevicesPage', () => {
       signal: expect.any(AbortSignal),
     }));
     await waitFor(() => expect(screen.getByText('还没有注册设备')).toBeInTheDocument());
+  });
+
+  it('shows unknown status and disables the online/offline filter when presence is unavailable', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      ...devices,
+      presence_available: false,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    renderDevices();
+
+    await waitFor(() => expect(screen.getByText('presence 服务异常，设备的在线状态暂不可用。')).toBeInTheDocument());
+    // 设备状态显示"未知"；"离线"只应出现在被禁用的筛选按钮上（1 处），而不是设备 badge。
+    expect(screen.getByText('未知')).toBeInTheDocument();
+    expect(screen.getAllByText('离线')).toHaveLength(1);
+    // 在线/离线筛选按钮禁用。
+    expect(screen.getByRole('button', { name: '在线' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '离线' })).toBeDisabled();
   });
 
   it('aborts a pending revoke when the page unmounts', async () => {

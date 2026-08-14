@@ -126,7 +126,7 @@ export function MetricTile({
 export function SignalRail({
   nodes,
 }: {
-  nodes: Array<{ label: string; value: number; tone?: 'teal' | 'amber' | 'coral' }>;
+  nodes: Array<{ label: string; value: number | string; tone?: 'teal' | 'amber' | 'coral' }>;
 }) {
   return (
     <div className="signal-rail" aria-label="Relay 连接链路">
@@ -222,7 +222,11 @@ export function InlineNotice({
   );
 }
 
-export function ConnectionBadge({ online }: { online: boolean }) {
+export function ConnectionBadge({ online, available = true }: { online: boolean; available?: boolean }) {
+  if (!available) {
+    // presence 查询失败：在线状态是"未知"，不能当作"离线"。
+    return <Badge tone="neutral" dot>未知</Badge>;
+  }
   return online ? (
     <Badge tone="online" dot><Wifi size={13} aria-hidden="true" />在线</Badge>
   ) : (

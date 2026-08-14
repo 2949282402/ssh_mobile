@@ -13,6 +13,7 @@ import {
   ConnectionBadge,
   EmptyState,
   ErrorState,
+  InlineNotice,
   PageHeader,
   Skeleton,
 } from '../../components/ui';
@@ -53,6 +54,10 @@ export function DevicesPage() {
   });
 
   const devicesResponse = devicesQuery.data;
+  // presence_available === false：presence 查询失败，每台设备的 online 是"未知"而非
+  // "离线"，在线/离线筛选无意义，收敛为"全部"。
+  const presenceAvailable = devicesResponse?.presence_available ?? true;
+  const effectiveFilter = presenceAvailable ? filter : 'all';
   const devices = useMemo(() => {
     if (!devicesResponse) return [];
     const normalizedSearch = search.trim().toLowerCase();
@@ -60,10 +65,10 @@ export function DevicesPage() {
       const matchesSearch = !normalizedSearch
         || device.device_id.toLowerCase().includes(normalizedSearch)
         || device.platform.toLowerCase().includes(normalizedSearch);
-      const matchesFilter = filter === 'all' || (filter === 'online' ? device.online : !device.online);
+      const matchesFilter = effectiveFilter === 'all' || (effectiveFilter === 'online' ? device.online : !device.online);
       return matchesSearch && matchesFilter;
     });
-  }, [devicesResponse, filter, search]);
+  }, [devicesResponse, effectiveFilter, search]);
 
   if (devicesQuery.isPending && !devicesResponse) return <DevicesSkeleton />;
   if (devicesQuery.isError && !devicesResponse) {
@@ -93,6 +98,10 @@ export function DevicesPage() {
         )}
       />
 
+      {!presenceAvailable ? (
+        <InlineNotice tone="warning">presence 服务异常，设备的在线状态暂不可用。</InlineNotice>
+      ) : null}
+
       <div className="list-toolbar">
         <label className="search-box">
           <Search size={17} aria-hidden="true" />
@@ -114,9 +123,11 @@ export function DevicesPage() {
             <button
               type="button"
               key={value}
-              className={`filter-button${filter === value ? ' filter-button--active' : ''}`}
+              className={`filter-button${effectiveFilter === value ? ' filter-button--active' : ''}`}
               onClick={() => setFilter(value)}
-              aria-pressed={filter === value}
+              aria-pressed={effectiveFilter === value}
+              disabled={!presenceAvailable && value !== 'all'}
+              title={!presenceAvailable && value !== 'all' ? '在线状态暂不可用' : undefined}
             >
               {value === 'all' ? '全部' : value === 'online' ? '在线' : '离线'}
             </button>
@@ -168,7 +179,7 @@ export function DevicesPage() {
                       <td data-label="平台"><Badge tone="neutral">{device.platform || 'unknown'}</Badge></td>
                       <td data-label="协议"><span className="protocol-label"><Check size={14} /> v{device.protocol_version}</span></td>
                       <td data-label="注册时间"><span className="muted-value">{formatDate(device.enrolled_at)}</span></td>
-                      <td data-label="当前状态"><ConnectionBadge online={online} /></td>
+                      <td data-label="当前状态"><ConnectionBadge online={online} available={presenceAvailable} /></td>
                       <td data-label="操作" className="device-table__action">
                         <Button variant="danger" onClick={() => setSelectedDevice(device)}>
                           <ShieldOff size={14} />
