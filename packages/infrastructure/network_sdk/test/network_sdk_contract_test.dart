@@ -131,6 +131,109 @@ void main() {
     },
   );
 
+  test('authenticated client maps token read failure to SdkFailure', () async {
+    final executor = _FakeExecutor(const <SdkResponse>[]);
+    final auth = _FakeAuthSession()
+      ..readTokenError = StateError('secure storage unavailable');
+    final client = JsonAuthenticatedApiClient(
+      executor: executor,
+      authSession: auth,
+      routes: AuthenticatedApiRoutes(
+        listPeers: Uri.parse('https://control.example/v1/peers'),
+        requestConnection: (peerId) =>
+            Uri.parse('https://control.example/$peerId'),
+      ),
+    );
+
+    final result = await client.listPeers();
+
+    expect(result, isA<SdkFailure<List<PeerDescriptor>>>());
+    expect(
+      (result as SdkFailure<List<PeerDescriptor>>).error.code,
+      NetworkErrorCode.ioError,
+    );
+    expect(executor.requests, isEmpty);
+  });
+
+  test(
+    'authenticated client invalidates on refresh failure and returns authenticationFailed',
+    () async {
+      final executor = _FakeExecutor([_response(401)]);
+      final auth = _FakeAuthSession()
+        ..refreshTokenError = StateError('refresh failed');
+      final client = JsonAuthenticatedApiClient(
+        executor: executor,
+        authSession: auth,
+        routes: AuthenticatedApiRoutes(
+          listPeers: Uri.parse('https://control.example/v1/peers'),
+          requestConnection: (peerId) =>
+              Uri.parse('https://control.example/$peerId'),
+        ),
+      );
+
+      final result = await client.listPeers();
+
+      expect(result, isA<SdkFailure<List<PeerDescriptor>>>());
+      expect(
+        (result as SdkFailure<List<PeerDescriptor>>).error.code,
+        NetworkErrorCode.authenticationFailed,
+      );
+      expect(auth.invalidated, isTrue);
+    },
+  );
+
+  test(
+    'authenticated client maps route resolver failure to SdkFailure',
+    () async {
+      final executor = _FakeExecutor(const <SdkResponse>[]);
+      final auth = _FakeAuthSession();
+      final client = JsonAuthenticatedApiClient(
+        executor: executor,
+        authSession: auth,
+        routes: AuthenticatedApiRoutes(
+          listPeers: Uri.parse('https://control.example/v1/peers'),
+          requestConnection: (peerId) =>
+              throw ArgumentError.value(peerId, 'peerId', 'bad route'),
+        ),
+      );
+
+      final result = await client.requestConnection('peer-1');
+
+      expect(result, isA<SdkFailure<ConnectionTicket>>());
+      expect(
+        (result as SdkFailure<ConnectionTicket>).error.code,
+        NetworkErrorCode.invalidArgument,
+      );
+      expect(executor.requests, isEmpty);
+    },
+  );
+
+  test(
+    'authenticated client preserves authenticationFailed when invalidate fails',
+    () async {
+      final executor = _FakeExecutor([_response(401), _response(401)]);
+      final auth = _FakeAuthSession()
+        ..invalidateError = StateError('invalidate failed');
+      final client = JsonAuthenticatedApiClient(
+        executor: executor,
+        authSession: auth,
+        routes: AuthenticatedApiRoutes(
+          listPeers: Uri.parse('https://control.example/v1/peers'),
+          requestConnection: (peerId) =>
+              Uri.parse('https://control.example/$peerId'),
+        ),
+      );
+
+      final result = await client.listPeers();
+
+      expect(result, isA<SdkFailure<List<PeerDescriptor>>>());
+      expect(
+        (result as SdkFailure<List<PeerDescriptor>>).error.code,
+        NetworkErrorCode.authenticationFailed,
+      );
+    },
+  );
+
   test('NetworkErrorCode.fromWire resolves credential and identity codes', () {
     expect(NetworkErrorCode.credentialExpired.wireValue, 12);
     expect(NetworkErrorCode.identityConflict.wireValue, 13);
@@ -414,19 +517,27 @@ final class _FakeAuthSession implements AuthSessionProvider {
   String? token = 'old-token';
   int refreshCount = 0;
   bool invalidated = false;
+  Object? readTokenError;
+  Object? refreshTokenError;
+  Object? invalidateError;
 
   @override
-  Future<String?> readAccessToken() async => token;
+  Future<String?> readAccessToken() async {
+    if (readTokenError != null) throw readTokenError!;
+    return token;
+  }
 
   @override
   Future<String?> refreshAccessToken() async {
     refreshCount++;
+    if (refreshTokenError != null) throw refreshTokenError!;
     token = 'new-token';
     return token;
   }
 
   @override
   Future<void> invalidate() async {
+    if (invalidateError != null) throw invalidateError!;
     invalidated = true;
     token = null;
   }
