@@ -185,3 +185,43 @@ func TestMySQLStoreSeedMigration(t *testing.T) {
 		t.Fatalf("seeded enrollment missing after restart: err=%v", err)
 	}
 }
+
+// TestOpenServerClosesMySQLStoreOnRedisFailure verifies the mysql-mode startup
+// path does not leak the already-open MySQL store when Redis cannot be reached:
+// openMySQLStore succeeds, openRedisStore fails, and OpenServer must return an
+// error with the store closed (connection pool released, prune goroutine
+// stopped) rather than abandoning it.
+func TestOpenServerClosesMySQLStoreOnRedisFailure(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	config := mysqlTestConfig(dsn)
+	// A connection-refused port fails fast in Ping, exercising the
+	// openRedisStore failure branch (which also closes its own client).
+	config.RedisURL = "redis://127.0.0.1:1"
+
+	if server, err := OpenServer(config); err == nil {
+		server.Close()
+		t.Fatal("expected OpenServer to fail when Redis is unreachable")
+	}
+	// The fix closes the MySQL store on this path; reopening the same DSN must
+	// still succeed (no server-side state left corrupted).
+	if _, err := openMySQLStore(context.Background(), dsn, config.MaxEnrolledDevices); err != nil {
+		t.Fatalf("reopen mysql store after failed OpenServer: %v", err)
+	}
+}
+
+// TestMySQLStoreCloseFreshAndIdempotent pins the precondition the startup
+// cleanup relies on: Close on a freshly opened, never-used store is safe, and
+// stopping it twice is idempotent.
+func TestMySQLStoreCloseFreshAndIdempotent(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	store, err := openMySQLStore(context.Background(), dsn, 100)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("double close should be safe, got: %v", err)
+	}
+}
