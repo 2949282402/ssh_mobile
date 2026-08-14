@@ -31,6 +31,8 @@ use network_relay::RelayClient;
 use network_transfer::{TransferFailureReason, TransferManager};
 use quinn::Endpoint;
 use std::collections::HashMap;
+#[cfg(test)]
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -160,6 +162,8 @@ pub(crate) struct RuntimeState {
     pub(crate) realtime: AsyncMutex<crate::realtime::RealtimeManager>,
     pub(crate) delivery_tasks: RwLock<HashMap<String, SessionId>>,
     pub(crate) reconnect_tasks: RwLock<HashMap<String, SessionId>>,
+    #[cfg(test)]
+    pub(crate) reconnect_disabled_peers: Mutex<HashSet<String>>,
     pub(crate) direct_upgrade_tasks: RwLock<HashMap<String, SessionId>>,
     pub(crate) relay: RwLock<Option<Arc<RelayClient>>>,
     pub(crate) relay_config: RwLock<Option<crate::relay::RelayReconnectConfig>>,
@@ -210,6 +214,8 @@ impl RuntimeState {
             realtime: AsyncMutex::new(crate::realtime::RealtimeManager::default()),
             delivery_tasks: RwLock::new(HashMap::new()),
             reconnect_tasks: RwLock::new(HashMap::new()),
+            #[cfg(test)]
+            reconnect_disabled_peers: Mutex::new(HashSet::new()),
             direct_upgrade_tasks: RwLock::new(HashMap::new()),
             relay: RwLock::new(None),
             relay_config: RwLock::new(None),
@@ -603,6 +609,49 @@ impl NetworkRuntime {
             }
             state.task_supervisor.shutdown().await;
         });
+    }
+
+    /// 仅测试用：强制关闭当前 peer 的 active transport Connection/route，
+    /// 但不关闭逻辑 Session，从而驱动生产自动重连路径。
+    ///
+    /// 与 `disconnect_peer` 不同（那会 `SessionManager::close` + 清空接收态），
+    /// 这里只中断底层 transport，让 `handle_connection_disconnect` →
+    /// `schedule_reconnect` → `reconnect_loop` 走真实的重连 + Delivery Recovery。
+    #[cfg(test)]
+    pub(crate) fn close_peer_connection_for_test(&self, peer_id: &str) {
+        let state = self
+            .state
+            .lock()
+            .expect("runtime state lock")
+            .clone()
+            .expect("runtime state");
+        self.runtime.block_on(async move {
+            if let Some(route) = state.sessions.current_active_route(peer_id).await {
+                route.close_for_test().await;
+            }
+        });
+    }
+
+    /// 仅测试用：禁用指定 peer 的自动重连。
+    ///
+    /// 断网时两端会各自触发自动重连；若两端都重连，新建连接会互相替换，
+    /// 替换会再次关闭对端连接并重新调度重连，形成连接 ping-pong 与并发
+    /// `recover_session` epoch 风暴，使测试无法确定收敛。需要隔离单侧重连
+    /// 路径的测试（如 delivery-recovery 集成测试）可对被动端禁用自动重连，
+    /// 让主动端单独走真实 `reconnect_loop`。
+    #[cfg(test)]
+    pub(crate) fn disable_peer_reconnect_for_test(&self, peer_id: &str) {
+        let state = self
+            .state
+            .lock()
+            .expect("runtime state lock")
+            .clone()
+            .expect("runtime state");
+        state
+            .reconnect_disabled_peers
+            .lock()
+            .expect("reconnect disabled peers lock")
+            .insert(peer_id.to_string());
     }
 
     /// 仅测试用：为当前 Session 显式驱动一次确定性 recovery，返回其 wire key。
