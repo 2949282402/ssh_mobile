@@ -255,6 +255,50 @@ func TestHubAddSerializesConcurrentSameDeviceClaims(t *testing.T) {
 	}
 }
 
+// TestHubAddAfterCloseRegistersNoWorkers pins the shutdown lifecycle race: if
+// the hub closes while a connection's lease claim is still in flight, the claim
+// must complete to a rejected admission (add returns false) WITHOUT registering
+// write/read workers — otherwise close()'s Wait() could return before the
+// workers exist, and the server would tear down Redis/MySQL underneath live
+// goroutines. The nil socket is safe because a correct add() never starts
+// workers on a peer that was closed mid-claim.
+func TestHubAddAfterCloseRegistersNoWorkers(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	gate := newGatePresenceStore(server.cache)
+	server.cache = gate
+	server.hub.presence = gate
+
+	peer := &peer{
+		deviceID:     "device-a",
+		connectionID: "conn-a",
+		outbound:     make(chan outboundFrame, 8),
+		done:         make(chan struct{}),
+	}
+
+	addDone := make(chan bool, 1)
+	go func() { addDone <- server.hub.add(peer) }()
+	<-gate.blocked // the claim is in flight; the peer is in the map
+
+	server.hub.close() // closed=true, peers cleared, peer closed
+
+	close(gate.release) // release the in-flight claim
+
+	if result := <-addDone; result {
+		t.Fatal("add succeeded after hub close (workers would outlive shutdown)")
+	}
+	select {
+	case <-peer.done:
+	default:
+		t.Fatal("peer was not closed after rejected admission")
+	}
+	// A regressed add() would have started write/read on the nil socket here and
+	// panicked; reaching this line means no workers were registered.
+}
+
 // TestDisconnectConnectionTargetsSpecificConnection verifies the directed
 // disconnect used by connection.replaced: only the exact connection ID is
 // closed and released; a stale/delayed ID is a no-op and cannot kick a newer

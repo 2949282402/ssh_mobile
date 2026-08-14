@@ -234,17 +234,23 @@ func (h *hub) add(peer *peer) bool {
 			})
 		}
 	}
-	// Re-check currency: the peer may have been kicked (revoke/disconnect or a
-	// shutdown sweep) while the lease claim was in flight. Do not start a dead
-	// peer's goroutines or count it in the wait group.
+	// Atomically re-check currency/closed and register the worker goroutines in
+	// the same h.mutex critical section that close() uses, so shutdown cannot
+	// race: if close() won the mutex first, isCurrent is false and no workers are
+	// registered (close()'s Wait() has nothing to wait for); if this wins first,
+	// the Add(2) happens-before close()'s Wait(), which must then see both
+	// workers' Done. The peer may also have been kicked (revoke/disconnect)
+	// while the lease claim was in flight.
 	h.mutex.Lock()
-	isCurrent := h.peers[peer.deviceID] == peer
+	isCurrent := !h.closed && h.peers[peer.deviceID] == peer
+	if isCurrent {
+		h.waitGroup.Add(2)
+	}
 	h.mutex.Unlock()
 	if !isCurrent {
 		closePeer(peer)
 		return false
 	}
-	h.waitGroup.Add(2)
 	go h.write(peer)
 	go h.read(peer)
 	return true
