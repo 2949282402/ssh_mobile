@@ -48,6 +48,11 @@ const enrollmentCounterKey = "enrollment_count"
 // errEnrollmentCapacity 表示容量检查命中上限；调用方映射为 enrollmentResourceLimit。
 var errEnrollmentCapacity = errors.New("enrollment capacity reached")
 
+// testAfterCounterCountHook 是测试专用缝隙：在 ensureEnrollmentCounter 的
+// `SELECT COUNT(*)` 之后、`INSERT IGNORE` 之前调用，用于确定性构造「懒初始化基准
+// 与并发 Remove 交错」的时序。生产环境始终为 nil。
+var testAfterCounterCountHook func()
+
 // revocationPruneInterval bounds the growth of the durable revocations table:
 // rows whose protected credentials have expired are swept periodically.
 const revocationPruneInterval = time.Hour
@@ -93,6 +98,25 @@ func openMySQLStore(ctx context.Context, dsn string, maxEnrolled int) (*mysqlSto
 			_ = db.Close()
 			return nil, err
 		}
+	}
+	// 启动时初始化容量计数器：serving 前该行必存在，使 RemoveEnrollment 的递减与
+	// putEnrollment 的 FOR UPDATE 都作用于 record lock（而非缺失行 gap lock），且
+	// 升级库（已有设备、无 counter 行）在首个 enroll/remove 前即拿到正确基准。
+	// openMySQLStore 在本 store 对外服务前执行，无并发 cardinality 变更；多实例
+	// 并发 open 由 INSERT IGNORE 幂等。
+	initTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureEnrollmentCounter(ctx, initTx); err != nil {
+		_ = initTx.Rollback()
+		_ = db.Close()
+		return nil, err
+	}
+	if err := initTx.Commit(); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	store := &mysqlStore{db: db, maxEnrolled: maxEnrolled, closeCh: make(chan struct{})}
 	store.wg.Add(1)
@@ -238,14 +262,20 @@ func (m *mysqlStore) putEnrollment(ctx context.Context, device *EnrolledDevice) 
 	return enrollmentOK, nil
 }
 
-// reserveEnrollmentCapacity allocates one slot from the singleton enrollment
-// counter inside tx. The counter row is locked FOR UPDATE, so concurrent
-// new-device enrollments (different deviceIDs, possibly from other instances)
-// serialize here and the MaxEnrolledDevices bound stays a hard limit instead of
-// degrading to a soft one under the per-device lock stripes. A missing counter
-// row (fresh DB or pre-upgrade) is initialized from the current device count
-// before the check; the increment itself happens after the device insert.
-func (m *mysqlStore) reserveEnrollmentCapacity(ctx context.Context, tx *sql.Tx) error {
+// ensureEnrollmentCounter 确保 relay_meta.enrollment_count 计数器行存在；缺失时以
+// 调用时刻 devices 表的当前行数为基准幂等初始化（INSERT IGNORE，字面量值）。
+//
+// 基准取自调用方事务的 consistent-read 快照：putEnrollment 在插入新设备前调用
+// （快照含既有设备），RemoveEnrollment 在删除前调用（快照仍含待删行）——两者基准
+// 都是"变更前"计数，随后各自的 +1/−1 在 counter 行锁下与其它 cardinality 变更
+// 串行，最终收敛到 COUNT(devices)。多实例并发初始化时 INSERT IGNORE 保证只存活
+// 一个基准。
+//
+// 不能用 `INSERT ... SELECT COUNT(*)` 初始化：InnoDB 会对其源表 devices 取共享
+// next-key 锁，与其它事务对 devices 的 FOR UPDATE gap 锁（X）冲突，两个并发新设备
+// enroll 会在 devices 表上互相等待形成死锁（1213）。故先无锁一致读 COUNT（MVCC
+// 快照，不取锁），再以字面值 INSERT IGNORE。
+func ensureEnrollmentCounter(ctx context.Context, tx *sql.Tx) error {
 	// 先无锁普通读探测计数器行（consistent read，不取任何锁）。不能用 FOR UPDATE
 	// 探测缺失行：InnoDB 对不存在主键会取 gap lock（事务间互相兼容），随后
 	// INSERT IGNORE 需要的 insert-intention lock 与对方 gap lock 冲突——两个并发
@@ -254,23 +284,37 @@ func (m *mysqlStore) reserveEnrollmentCapacity(ctx context.Context, tx *sql.Tx) 
 	err := tx.QueryRowContext(ctx,
 		`SELECT meta_value FROM relay_meta WHERE meta_key = ?`, enrollmentCounterKey,
 	).Scan(&probe)
-	if errors.Is(err, sql.ErrNoRows) {
-		// 计数器未初始化（新库/升级前/reset 后）：以 devices 表当前行数为基准幂等
-		// 初始化。先无锁一致读 COUNT（MVCC 快照，不取锁），再以字面值 INSERT
-		// IGNORE。不能用 `INSERT ... SELECT COUNT(*)`：InnoDB 会对其源表 devices 取
-		// 共享 next-key 锁，与其它事务对 devices 的 FOR UPDATE gap 锁（X）冲突——
-		// 两个并发新设备 enroll 会在 devices 表上互相等待形成死锁（1213）。
-		var initialCount int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices`).Scan(&initialCount); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT IGNORE INTO relay_meta (meta_key, meta_value) VALUES (?, ?)`,
-			enrollmentCounterKey, initialCount,
-		); err != nil {
-			return err
-		}
-	} else if err != nil {
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	var initialCount int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices`).Scan(&initialCount); err != nil {
+		return err
+	}
+	if testAfterCounterCountHook != nil {
+		testAfterCounterCountHook()
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT IGNORE INTO relay_meta (meta_key, meta_value) VALUES (?, ?)`,
+		enrollmentCounterKey, initialCount,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+// reserveEnrollmentCapacity allocates one slot from the singleton enrollment
+// counter inside tx. The counter row is locked FOR UPDATE, so concurrent
+// new-device enrollments (different deviceIDs, possibly from other instances)
+// serialize here and the MaxEnrolledDevices bound stays a hard limit instead of
+// degrading to a soft one under the per-device lock stripes. A missing counter
+// row (fresh DB or pre-upgrade) is initialized from the current device count
+// before the check; the increment itself happens after the device insert.
+func (m *mysqlStore) reserveEnrollmentCapacity(ctx context.Context, tx *sql.Tx) error {
+	if err := ensureEnrollmentCounter(ctx, tx); err != nil {
 		return err
 	}
 	// FOR UPDATE 锁住计数器行做容量分配（此时行必存在，取 record lock，串行正确）。
@@ -293,20 +337,33 @@ func (m *mysqlStore) RemoveEnrollment(ctx context.Context, deviceID string) erro
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE device_id = ?`, deviceID)
+	// 与 putEnrollment 保持相同锁序（device → counter）：先锁设备行确认存在，再
+	// ensure 计数器（缺失时以「删除前」的 COUNT 为基准初始化，避免懒初始化基准与
+	// 并发 Remove 交错造成永久 drift），随后删除并递减。设备不存在则无 cardinality
+	// 变化，直接提交。
+	var present int
+	err = tx.QueryRowContext(ctx,
+		`SELECT 1 FROM devices WHERE device_id = ? FOR UPDATE`, deviceID,
+	).Scan(&present)
+	if errors.Is(err, sql.ErrNoRows) {
+		return tx.Commit()
+	}
 	if err != nil {
 		return err
 	}
-	if affected, err := result.RowsAffected(); err != nil {
+	if err := ensureEnrollmentCounter(ctx, tx); err != nil {
 		return err
-	} else if affected > 0 {
-		// 同步递减计数器（下限 0），避免容量上限随删除长期漂移而越变越严。
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE relay_meta SET meta_value = GREATEST(meta_value - 1, 0) WHERE meta_key = ?`,
-			enrollmentCounterKey,
-		); err != nil {
-			return err
-		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE device_id = ?`, deviceID); err != nil {
+		return err
+	}
+	// 同步递减计数器（下限 0），避免容量上限随删除长期漂移而越变越严。设备行已由
+	// FOR UPDATE 锁定，DELETE 必然删除该行，无需再检查 RowsAffected。
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE relay_meta SET meta_value = GREATEST(meta_value - 1, 0) WHERE meta_key = ?`,
+		enrollmentCounterKey,
+	); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
