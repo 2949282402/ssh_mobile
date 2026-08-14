@@ -104,7 +104,7 @@ func TestAdminRevokeReturnsErrorWhenEnrollmentDeleteFails(t *testing.T) {
 }
 
 // TestDisconnectDeviceClearsPresence verifies the revoke/kick disconnect path
-// removes the device's presence instead of leaving a stale online entry.
+// removes the device's own lease instead of leaving a stale online entry.
 func TestDisconnectDeviceClearsPresence(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
@@ -113,14 +113,43 @@ func TestDisconnectDeviceClearsPresence(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	if err := server.cache.SetPresence(ctx, "device-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	peer := injectPeer(server.hub, "device-a")
+	if err := server.cache.TakePresence(ctx, "device-a", peer.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	injectPeer(server.hub, "device-a")
 	server.hub.disconnectDevice("device-a")
 
 	if _, present, _ := server.cache.GetPresence(ctx, "device-a"); present {
 		t.Fatal("presence retained after disconnectDevice")
+	}
+}
+
+// TestDisconnectDeviceDoesNotClearForeignPresence verifies the disconnect path
+// releases only the lease owned by the local connection: a lease already taken
+// over by another connection (e.g. on another instance) survives, so an old
+// connection can never erase a newer one's presence (P0 cross-instance bug).
+func TestDisconnectDeviceDoesNotClearForeignPresence(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	// A foreign connection owns the lease (simulates another instance).
+	if err := server.cache.TakePresence(ctx, "device-a", "foreign-conn", Presence{InstanceID: "i2"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// The local hub still has its own (superseded) peer for the device.
+	injectPeer(server.hub, "device-a")
+	server.hub.disconnectDevice("device-a")
+
+	presence, present, err := server.cache.GetPresence(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("foreign-owned presence was erased by the local disconnect: present=%v err=%v", present, err)
+	}
+	if presence.ConnectionID != "foreign-conn" {
+		t.Fatalf("presence owner changed: %q", presence.ConnectionID)
 	}
 }
 

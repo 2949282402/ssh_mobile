@@ -23,11 +23,14 @@ func multiInstanceConfig(mysqlDSN, redisURL string) Config {
 
 // injectPeer places a peer in the hub without starting read/write goroutines,
 // simulating a connected device whose connection the hub can later disconnect.
+// The peer carries a stable connectionID so lease operations are well-formed
+// (a zero owner would make every take/renew/release miss).
 func injectPeer(h *hub, deviceID string) *peer {
 	peer := &peer{
-		deviceID: deviceID,
-		outbound: make(chan outboundFrame, 8),
-		done:     make(chan struct{}),
+		deviceID:     deviceID,
+		connectionID: "conn-" + deviceID,
+		outbound:     make(chan outboundFrame, 8),
+		done:         make(chan struct{}),
 	}
 	h.mutex.Lock()
 	h.peers[deviceID] = peer

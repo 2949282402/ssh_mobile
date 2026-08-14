@@ -691,3 +691,38 @@ func TestDartWireContractEndToEnd(t *testing.T) {
 		t.Fatal(fmt.Errorf("invalid heartbeat acknowledgement: %+v (%v)", heartbeat, err))
 	}
 }
+
+// TestHeartbeatRenewLost verifies the heartbeat-ownership contract: when a
+// foreign connection (e.g. on another instance) takes over the device's
+// presence lease, the superseded local connection discovers it on its next
+// heartbeat renew and self-heals by closing, instead of keeping a zombie socket
+// or flapping the presence identity. It also pins that presenceFor must write
+// the peer's connectionID (an empty owner would renew against the foreign lease
+// and fail closed on every heartbeat).
+func TestHeartbeatRenewLost(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+
+	ctx := context.Background()
+	peer := injectPeer(server.hub, "device-a")
+	// A foreign connection owns the lease (cross-instance takeover).
+	if err := server.cache.TakePresence(ctx, "device-a", "foreign-conn", Presence{InstanceID: "i2"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	frame, _ := json.Marshal(controlFrame{Type: "heartbeat", Timestamp: time.Now().UnixMilli()})
+	server.hub.routeControl(peer, frame)
+
+	select {
+	case <-peer.done:
+	default:
+		t.Fatal("superseded connection was not closed after losing the lease")
+	}
+	presence, present, err := server.cache.GetPresence(ctx, "device-a")
+	if err != nil || !present || presence.ConnectionID != "foreign-conn" {
+		t.Fatalf("foreign lease should survive the superseded heartbeat: %+v present=%v err=%v", presence, present, err)
+	}
+}

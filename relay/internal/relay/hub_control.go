@@ -33,15 +33,34 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 
 	// 处理 heartbeat ping。
 	if frame.Type == "heartbeat" {
+		if h.presence != nil {
+			ok, err := h.presence.RenewPresence(context.Background(), sender.deviceID, sender.connectionID, h.presenceFor(sender), h.presenceTTL)
+			if err != nil {
+				// Redis 抖动：不中断连接，presence 下次心跳再对齐。
+			} else if !ok {
+				// 租约已被其它连接抢占（通常是另一实例的新连接）：本连接已被
+				// 取代，自愈关闭且不回 ack，让设备重连收敛到唯一的在线连接。
+				closePeer(sender)
+				return
+			}
+			// Renew 可能与该 peer 的 remove/disconnect 竞态：续租落在已死亡
+			// peer 上会复生它的租约。重新核对本地 currency，非 current 则撤销
+			// 这次续租并关闭（否则残留在线状态最多一个 presence TTL）。
+			h.mutex.Lock()
+			isCurrent := h.peers[sender.deviceID] == sender
+			h.mutex.Unlock()
+			if !isCurrent {
+				_, _ = h.presence.ReleasePresence(context.Background(), sender.deviceID, sender.connectionID)
+				closePeer(sender)
+				return
+			}
+		}
 		resp, _ := json.Marshal(controlFrame{
 			Type:      "heartbeat_ack",
 			Timestamp: time.Now().UnixMilli(),
 		})
 		if !sender.enqueue(outboundFrame{websocket.TextMessage, resp}) {
 			go sender.socket.Close()
-		}
-		if h.presence != nil {
-			_ = h.presence.SetPresence(context.Background(), sender.deviceID, h.presenceFor(sender), h.presenceTTL)
 		}
 		return
 	}

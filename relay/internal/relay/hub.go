@@ -16,6 +16,7 @@ type outboundFrame struct {
 
 type peer struct {
 	deviceID           string
+	connectionID       string
 	socket             *websocket.Conn
 	outbound           chan outboundFrame
 	done               chan struct{}
@@ -53,10 +54,14 @@ type controlFrame struct {
 	Online          *bool  `json:"online,omitempty"`
 }
 
-// presenceStore reports device connection state to the shared presence layer.
+// presenceStore reports device connection state to the shared presence layer as
+// a per-connection lease. Every take/renew/release carries the owning
+// connection's ConnectionID so a superseded connection can never erase or renew
+// a newer one.
 type presenceStore interface {
-	SetPresence(ctx context.Context, deviceID string, p Presence, ttl time.Duration) error
-	DeletePresence(ctx context.Context, deviceID string) error
+	TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) error
+	RenewPresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (bool, error)
+	ReleasePresence(ctx context.Context, deviceID, connID string) (bool, error)
 }
 
 type hub struct {
@@ -91,9 +96,13 @@ func newHub(config Config) *hub {
 	return h
 }
 
-// presenceFor builds the shared presence value for a connected peer.
+// presenceFor builds the shared presence value for a connected peer. The
+// ConnectionID is this connection's lease-ownership identity; every
+// take/renew/release for the device must carry it. Writing it is mandatory: an
+// empty owner in the stored lease would make the peer's first heartbeat renew
+// fail (empty != real connID) and self-close every connection.
 func (h *hub) presenceFor(peer *peer) Presence {
-	value := Presence{InstanceID: h.instanceID, LastSeen: time.Now()}
+	value := Presence{InstanceID: h.instanceID, ConnectionID: peer.connectionID, LastSeen: time.Now()}
 	if peer.socket != nil && peer.socket.RemoteAddr() != nil {
 		value.RemoteAddr = peer.socket.RemoteAddr().String()
 	}
@@ -123,16 +132,18 @@ func (h *hub) close() {
 		}
 		if h.presence != nil && len(peers) > 0 {
 			// Bound the presence sweep: a wedged Redis must not blow the
-			// shutdown budget (one blocking DEL per peer), so run all deletions
-			// concurrently under a 2s context deadline.
+			// shutdown budget (one blocking release per peer), so run all
+			// releases concurrently under a 2s context deadline. Each release is
+			// CAS'd to the peer's own connection, so a lease already taken over
+			// by another instance is left untouched.
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			var sweep sync.WaitGroup
-			for _, peer := range peers {
+			for _, p := range peers {
 				sweep.Add(1)
-				go func(deviceID string) {
+				go func(peer *peer) {
 					defer sweep.Done()
-					_ = h.presence.DeletePresence(ctx, deviceID)
-				}(peer.deviceID)
+					_, _ = h.presence.ReleasePresence(ctx, peer.deviceID, peer.connectionID)
+				}(p)
 			}
 			sweep.Wait()
 			cancel()
@@ -168,11 +179,12 @@ func (h *hub) add(peer *peer) bool {
 	if previous != nil {
 		closePeer(previous)
 	}
-	// Write presence before starting the read/write goroutines: if the socket
-	// fails immediately, remove() clears presence after this point, so no
-	// phantom online entry can be left behind by a delayed SetPresence.
+	// Take the presence lease before starting the read/write goroutines: if the
+	// socket fails immediately, remove() releases it after this point, so no
+	// phantom online entry can be left behind by a delayed TakePresence. The new
+	// connection takes over any existing lease (newest connect wins).
 	if h.presence != nil {
-		_ = h.presence.SetPresence(context.Background(), peer.deviceID, h.presenceFor(peer), h.presenceTTL)
+		_ = h.presence.TakePresence(context.Background(), peer.deviceID, peer.connectionID, h.presenceFor(peer), h.presenceTTL)
 	}
 	go h.write(peer)
 	go h.read(peer)
@@ -181,16 +193,17 @@ func (h *hub) add(peer *peer) bool {
 
 func (h *hub) remove(peer *peer) {
 	h.mutex.Lock()
-	// Only the current peer clears presence: a replaced peer's read goroutine
+	// Only the current peer releases the lease: a replaced peer's read goroutine
 	// may still exit after a duplicate connect, and must not erase the new
-	// peer's presence.
+	// peer's presence. The CAS ReleasePresence additionally guards the
+	// cross-instance case where a foreign connection now owns the lease.
 	isCurrent := h.peers[peer.deviceID] == peer
 	if isCurrent {
 		delete(h.peers, peer.deviceID)
 	}
 	h.mutex.Unlock()
 	if isCurrent && h.presence != nil {
-		_ = h.presence.DeletePresence(context.Background(), peer.deviceID)
+		_, _ = h.presence.ReleasePresence(context.Background(), peer.deviceID, peer.connectionID)
 	}
 	closePeer(peer)
 }
@@ -219,10 +232,14 @@ func (h *hub) disconnectDevice(deviceID string) {
 	}
 	h.mutex.Unlock()
 	if peer != nil {
-		// The peer's deferred remove() runs with isCurrent==false once we already
-		// deleted it, so it would never clear presence; clear it here explicitly.
+		// Release only this instance's current lease (CAS): the peer's deferred
+		// remove() would see isCurrent==false and never release it, so do it
+		// here. If a newer connection replaced this peer or took over the lease
+		// from another instance, the release is a no-op instead of wiping the
+		// live presence. A device connected on another instance is released
+		// there when it receives the revoke/kick event, or by reconcileRevocations.
 		if h.presence != nil {
-			_ = h.presence.DeletePresence(context.Background(), deviceID)
+			_, _ = h.presence.ReleasePresence(context.Background(), deviceID, peer.connectionID)
 		}
 		closePeer(peer)
 	}
