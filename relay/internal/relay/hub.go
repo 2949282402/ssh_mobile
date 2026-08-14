@@ -217,8 +217,12 @@ func (h *hub) add(peer *peer) bool {
 	// socket fails immediately, remove() releases it after this point, so no
 	// phantom online entry can be left behind by a delayed TakePresence. The new
 	// connection takes over any existing lease (newest connect wins).
+	leaseTaken := false
 	if h.presence != nil {
 		old, replaced, err := h.presence.TakePresence(context.Background(), peer.deviceID, peer.connectionID, h.presenceFor(peer), h.presenceTTL)
+		if err == nil {
+			leaseTaken = true
+		}
 		if err == nil && replaced && old.ConnectionID != "" && old.InstanceID != "" && old.InstanceID != h.instanceID {
 			// Cross-instance takeover: tell the superseded connection's instance
 			// to close it now, so the dual-connection window collapses
@@ -248,6 +252,15 @@ func (h *hub) add(peer *peer) bool {
 	}
 	h.mutex.Unlock()
 	if !isCurrent {
+		// The lease was just taken but this admission was rejected (the hub closed
+		// or the peer was kicked while the claim was in flight): release the lease
+		// we wrote so a rejected connection cannot leave a phantom "online" entry.
+		// The release is CAS'd to this connection, so if a newer connection has
+		// since taken the lease over it is left untouched — the same lifecycle
+		// rule the heartbeat path applies after a post-renew currency re-check.
+		if leaseTaken && h.presence != nil {
+			_, _ = h.presence.ReleasePresence(context.Background(), peer.deviceID, peer.connectionID)
+		}
 		closePeer(peer)
 		return false
 	}
