@@ -80,9 +80,7 @@ func (s *Server) adminOverview(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 	hubState := s.hub.snapshot()
-	s.devicesMutex.Lock()
 	enrolledList, err := s.store.ListEnrollments(context.Background())
-	s.devicesMutex.Unlock()
 	if err != nil {
 		return adminOverviewResponse{}, err
 	}
@@ -126,9 +124,7 @@ func (s *Server) adminDevices(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) adminDeviceSnapshot() ([]adminDevice, bool, error) {
-	s.devicesMutex.Lock()
 	enrolledList, err := s.store.ListEnrollments(context.Background())
-	s.devicesMutex.Unlock()
 	if err != nil {
 		return nil, false, err
 	}

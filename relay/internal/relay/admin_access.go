@@ -9,9 +9,9 @@ import (
 )
 
 func (s *Server) adminToken(w http.ResponseWriter, _ *http.Request) {
-	s.devicesMutex.Lock()
+	s.tokenMutex.Lock()
 	token := s.config.EnrollmentToken
-	s.devicesMutex.Unlock()
+	s.tokenMutex.Unlock()
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
@@ -22,9 +22,9 @@ func (s *Server) adminToken(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) adminRotateToken(w http.ResponseWriter, _ *http.Request) {
 	newToken := hex.EncodeToString(randomBytes(16))
-	s.devicesMutex.Lock()
+	s.tokenMutex.Lock()
 	s.config.EnrollmentToken = newToken
-	s.devicesMutex.Unlock()
+	s.tokenMutex.Unlock()
 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
@@ -41,10 +41,12 @@ func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	s.devicesMutex.Lock()
+	// 吊销是跨 store/cache 调用的复合单元，用该设备的 per-device 分片锁串行化，
+	// 避免与并发 re-enroll 交错（读取后删除会误删新 enrollment）。
+	unlock := s.lockDevice(deviceID)
+	defer unlock()
 	enrolled, getErr := s.store.GetEnrollment(ctx, deviceID)
 	if getErr != nil || enrolled == nil {
-		s.devicesMutex.Unlock()
 		writeAdminError(w, http.StatusNotFound, adminErrorDeviceNotFound, "The requested device was not found.")
 		return
 	}
@@ -58,24 +60,20 @@ func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	recorded, revokeErr := s.store.RecordRevocation(ctx, deviceID, credentialExpiry)
 	if revokeErr != nil {
-		s.devicesMutex.Unlock()
 		writeAdminError(w, http.StatusInternalServerError, adminErrorInternal, "Revocation store is unavailable.")
 		return
 	}
 	if !recorded {
-		s.devicesMutex.Unlock()
 		writeAdminError(w, http.StatusTooManyRequests, adminErrorResourceLimit, "Revocation store is at capacity; retry after existing revocations expire.")
 		return
 	}
 	if err := s.store.RemoveEnrollment(ctx, deviceID); err != nil {
 		// 墓碑已落但 enrollment 删除失败：设备仍在 devices 表，refresh 会续发凭据。
 		// 返回 500 让操作员知道吊销未完整落地，而不是假 204。
-		s.devicesMutex.Unlock()
 		writeAdminError(w, http.StatusInternalServerError, adminErrorInternal, "Revocation could not remove the device enrollment.")
 		return
 	}
 	_ = s.cache.ClearDeviceNonces(ctx, deviceID)
-	s.devicesMutex.Unlock()
 
 	s.hub.disconnectDevice(deviceID)
 	// 广播吊销事件：本实例已直接断开，其它实例据此断开该设备（Phase 4 多实例）。

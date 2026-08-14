@@ -89,13 +89,20 @@ type hub struct {
 // connection. Different devices rarely collide on a stripe and only wait briefly.
 const admissionStripeCount = 128
 
+// deviceLockStripe maps a deviceID to a lock stripe via fnv-1a, so per-device
+// lock arrays (the hub's admission stripes and the Server's device stripes)
+// stay balanced and same-device operations always hit the same stripe.
+func deviceLockStripe(deviceID string) uint64 {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(deviceID))
+	return hasher.Sum64()
+}
+
 // lockAdmission serializes connection admission for deviceID (via a hash stripe)
 // so the lease claim for a newer connection runs after any in-flight claim for
 // the same device has fully landed.
 func (h *hub) lockAdmission(deviceID string) func() {
-	hasher := fnv.New64a()
-	_, _ = hasher.Write([]byte(deviceID))
-	stripe := hasher.Sum64() % admissionStripeCount
+	stripe := deviceLockStripe(deviceID) % admissionStripeCount
 	h.admission[stripe].Lock()
 	return h.admission[stripe].Unlock
 }

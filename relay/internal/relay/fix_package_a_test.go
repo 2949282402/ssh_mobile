@@ -38,15 +38,11 @@ func TestRefreshRejectsRevokedButStillEnrolledDevice(t *testing.T) {
 	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
-	server.devicesMutex.Lock()
 	recorded, err := server.store.RecordRevocation(context.Background(), "device-a", time.Now().Add(time.Hour))
-	server.devicesMutex.Unlock()
 	if err != nil || !recorded {
 		t.Fatalf("revoke failed: recorded=%v err=%v", recorded, err)
 	}
-	server.devicesMutex.Lock()
 	device, _ := server.store.GetEnrollment(context.Background(), "device-a")
-	server.devicesMutex.Unlock()
 	if device == nil {
 		t.Fatal("enrollment unexpectedly missing")
 	}

@@ -155,7 +155,10 @@ const (
 // 公钥时返回 enrollmentIdentityConflict 且不覆盖、不断开；相同公钥的重复注册刷新
 // EnrolledAt（即刷新凭据 TTL 上界）。MaxEnrolledDevices 仅约束新 device_id。
 func (s *Server) replaceEnrollment(deviceID, publicKey, platform string, protocolVersion uint32, enrolledAt time.Time) enrollmentResult {
-	s.devicesMutex.Lock()
+	// 写入 enrollment + 清 nonce 是同设备复合单元，用 per-device 分片锁串行化，
+	// 避免与并发 revoke 交错。
+	unlock := s.lockDevice(deviceID)
+	defer unlock()
 	result, err := s.store.PutEnrollment(context.Background(), &EnrolledDevice{
 		DeviceID:        deviceID,
 		PublicKey:       publicKey,
@@ -166,7 +169,6 @@ func (s *Server) replaceEnrollment(deviceID, publicKey, platform string, protoco
 	if err == nil && result == enrollmentOK {
 		_ = s.cache.ClearDeviceNonces(context.Background(), deviceID)
 	}
-	s.devicesMutex.Unlock()
 	if err != nil {
 		// 内存实现永不返回错误；Phase 1 落库失败时在此收敛为拒绝写入。
 		return enrollmentResourceLimit
@@ -216,7 +218,10 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 		return credentialClaims{}, nil, relayErrorAuthenticationFailed, false
 	}
 	ctx := r.Context()
-	s.devicesMutex.Lock()
+	// 认证是「吊销检查 + enrollment 读取 + nonce 消费」的复合单元，用该设备的
+	// per-device 分片锁串行化，避免认证与并发 revoke/re-enroll 交错（比如吊销与
+	// 认证竞态放行已吊销设备）。
+	unlock := s.lockDevice(claims.DeviceID)
 	revoked, storeErr := s.store.IsRevoked(ctx, claims.DeviceID, time.Now())
 	device, getErr := s.store.GetEnrollment(ctx, claims.DeviceID)
 	keyMatches := device != nil && device.PublicKey == base64.RawURLEncoding.EncodeToString(publicKey)
@@ -225,7 +230,7 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 	if storeErr == nil && getErr == nil && !revoked && keyMatches {
 		replayed, nonceErr = s.cache.ConsumeNonce(ctx, claims.DeviceID, nonce, time.Unix(claims.ExpiresAt, 0))
 	}
-	s.devicesMutex.Unlock()
+	unlock()
 	if nonceErr != nil {
 		// fail-open：防重放降级但不阻断连接，日志告警（Redis 故障时的既定行为）。
 		s.logger.Warn("replay-protection cache unavailable during connect; degraded",
@@ -239,8 +244,8 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 }
 
 func (s *Server) validEnrollmentToken(token string) bool {
-	s.devicesMutex.Lock()
+	s.tokenMutex.Lock()
 	expected := s.config.EnrollmentToken
-	s.devicesMutex.Unlock()
+	s.tokenMutex.Unlock()
 	return token != "" && hmac.Equal([]byte(token), []byte(expected))
 }

@@ -207,11 +207,9 @@ func TestRevokeFailsClosedWhenTombstoneStoreSaturated(t *testing.T) {
 		t.Fatalf("second revocation should fail closed at capacity, got %d", code)
 	}
 
-	server.devicesMutex.Lock()
 	deviceB, _ := server.store.GetEnrollment(context.Background(), "device-b")
 	stillEnrolled := deviceB != nil
 	_, revokedA, _ := server.store.RevocationExpiry(context.Background(), "device-a")
-	server.devicesMutex.Unlock()
 	if !stillEnrolled {
 		t.Fatal("failed-closed revocation must leave the target device enrolled")
 	}
@@ -232,7 +230,6 @@ func TestRevokedDeviceStorePrunesExpiredTombstones(t *testing.T) {
 	defer server.Close()
 
 	now := time.Now()
-	server.devicesMutex.Lock()
 	// device-a's credential was issued more than one CredentialTTL ago, so its
 	// tombstone is stale the moment it is recorded.
 	if recorded, _ := server.store.RecordRevocation(context.Background(), "device-a", now.Add(-time.Hour)); !recorded {
@@ -247,7 +244,6 @@ func TestRevokedDeviceStorePrunesExpiredTombstones(t *testing.T) {
 	if _, present, _ := server.store.RevocationExpiry(context.Background(), "device-b"); !present {
 		t.Fatal("new revocation tombstone was not stored")
 	}
-	server.devicesMutex.Unlock()
 }
 
 // TestExpiredRevocationTombstoneDoesNotBlockValidCredential verifies the
@@ -272,11 +268,9 @@ func TestExpiredRevocationTombstoneDoesNotBlockValidCredential(t *testing.T) {
 	if server.replaceEnrollment("device-a", base64.RawURLEncoding.EncodeToString(publicKey), "test", 1, now) != enrollmentOK {
 		t.Fatal("device enrollment was rejected")
 	}
-	server.devicesMutex.Lock()
 	if recorded, _ := server.store.RecordRevocation(context.Background(), "device-a", now.Add(-time.Minute)); !recorded {
 		t.Fatal("stale tombstone insertion was rejected")
 	}
-	server.devicesMutex.Unlock()
 
 	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, time.Hour)
 	if err != nil {
@@ -293,9 +287,7 @@ func TestExpiredRevocationTombstoneDoesNotBlockValidCredential(t *testing.T) {
 	if _, _, _, ok := server.authenticatedRequest(request); !ok {
 		t.Fatal("expired revocation tombstone incorrectly blocked a valid credential")
 	}
-	server.devicesMutex.Lock()
 	_, retained, _ := server.store.RevocationExpiry(context.Background(), "device-a")
-	server.devicesMutex.Unlock()
 	if retained {
 		t.Fatal("expired revocation tombstone was not pruned during authentication")
 	}

@@ -41,9 +41,10 @@ var mysqlSchemaStatements = []string{
 // rows whose protected credentials have expired are swept periodically.
 const revocationPruneInterval = time.Hour
 
-// mysqlStore implements Storage against a MySQL database. It is not internally
-// synchronized: callers hold s.devicesMutex, which serializes database access —
-// acceptable for a control plane with a bounded device count.
+// mysqlStore implements Storage against a MySQL database. database/sql's
+// connection pool is concurrent-safe, so individual methods need no caller-held
+// lock; composite device operations are serialized per device by the caller's
+// lock stripe, letting different devices use the pool in parallel.
 type mysqlStore struct {
 	db          *sql.DB
 	maxEnrolled int
