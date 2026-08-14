@@ -258,3 +258,27 @@ go test -race ./...
 go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```
+
+### Storage integration tests
+
+The MySQL/Redis integration tests (`TestMySQLStore*`, `TestRedisStore*`,
+`TestMultiInstance*`) skip unless `RELAY_TEST_MYSQL_DSN` and
+`RELAY_TEST_REDIS_URL` are set. Start throwaway stores and run them with:
+
+```sh
+docker run -d --rm --name relay-test-mysql -p 3306:3306 \
+  -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=relay \
+  -e MYSQL_USER=relay -e MYSQL_PASSWORD=relay mysql:8.4
+docker run -d --rm --name relay-test-redis -p 6379:6379 redis:7-alpine
+
+RELAY_TEST_MYSQL_DSN='relay:relay@tcp(127.0.0.1:3306)/relay?parseTime=true&loc=UTC' \
+RELAY_TEST_REDIS_URL='redis://127.0.0.1:6379/0' \
+go test ./...
+```
+
+go-sql-driver handles MySQL 8's default `caching_sha2_password` auth (RSA
+exchange) automatically, so the DSN needs no extra auth parameter. Note that
+`compose.yaml`'s storage profile uses `expose:` only and does not publish the
+ports, so a test process dialing `127.0.0.1` cannot reach those services — use
+the `docker run -p` one-liners above or a dev compose override that adds
+`ports:`.

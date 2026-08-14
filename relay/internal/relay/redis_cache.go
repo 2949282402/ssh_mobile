@@ -47,10 +47,7 @@ func (r *redisStore) Close() error { return r.client.Close() }
 func (r *redisStore) presenceKey(deviceID string) string {
 	return redisKeyPrefix + "presence:" + deviceID
 }
-func (r *redisStore) nonceKey(deviceID, nonce string) string {
-	return redisKeyPrefix + "nonce:" + deviceID + ":" + nonce
-}
-func (r *redisStore) noncesSetKey(deviceID string) string {
+func (r *redisStore) noncesKey(deviceID string) string {
 	return redisKeyPrefix + "nonces:" + deviceID
 }
 func (r *redisStore) adminSessionKey(token string) string {
@@ -58,34 +55,46 @@ func (r *redisStore) adminSessionKey(token string) string {
 }
 
 // consumeNonceScript atomically records a nonce and enforces the per-device
-// active-nonce cap. KEYS[1]=device nonce SET, KEYS[2]=the nonce key;
-// ARGV[1]=TTL(ms), ARGV[2]=cap. Returns 1 when replayed or over the cap.
-//
-// The SET member set is bounded by the cap (128), matching the in-memory
-// behavior where a device that exceeds 128 active nonces is rejected until
-// re-enrollment. Members expire with the credential but still count toward the
-// cap — identical to the memory store, which prunes only on credential expiry.
+// active-nonce cap using one ZSET per device. KEYS[1]=relay:nonces:<deviceID>;
+// ARGV[1]=now(ms), ARGV[2]=expiresAt(ms), ARGV[3]=cap, ARGV[4]=nonce.
+// Returns 1 when replayed or over the cap, else 0. Members expire with the
+// credential (score = expiry ms) and are pruned by score on each call, matching
+// the memory store's lazy pruning — so the cap counts only *active* nonces, not
+// cumulative ones since the last ClearDeviceNonces. The key-level TTL tracks the
+// longest-lived member so a later long-lived nonce is never dropped by an
+// earlier shorter TTL. A stale SET from the pre-ZSET version is cleared inline
+// so an upgrade recovers without waiting for a re-enroll.
 const consumeNonceScript = `
-if redis.call('SISMEMBER', KEYS[1], KEYS[2]) == 1 then
+local ttl = tonumber(ARGV[2]) - tonumber(ARGV[1])
+if ttl <= 0 then
+  return 0
+end
+if redis.call('TYPE', KEYS[1]).ok == 'set' then
+  redis.call('DEL', KEYS[1])
+end
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+if redis.call('ZSCORE', KEYS[1], ARGV[4]) ~= false then
   return 1
 end
-if redis.call('SCARD', KEYS[1]) >= tonumber(ARGV[2]) then
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[3]) then
   return 1
 end
-redis.call('SADD', KEYS[1], KEYS[2])
-redis.call('SET', KEYS[2], '1', 'PX', ARGV[1])
+redis.call('ZADD', KEYS[1], ARGV[2], ARGV[4])
+local remaining = redis.call('PTTL', KEYS[1])
+if remaining > ttl then ttl = remaining end
+redis.call('PEXPIRE', KEYS[1], ttl)
 return 0
 `
 
 func (r *redisStore) ConsumeNonce(ctx context.Context, deviceID, nonce string, expiresAt time.Time) (bool, error) {
-	ttl := time.Until(expiresAt)
-	if ttl <= 0 {
+	now := time.Now()
+	if !expiresAt.After(now) {
 		// Already expired: accept without recording (fail open on the edge).
 		return false, nil
 	}
 	result, err := r.client.Eval(ctx, consumeNonceScript,
-		[]string{r.noncesSetKey(deviceID), r.nonceKey(deviceID, nonce)},
-		ttl.Milliseconds(), maxProofNoncesPerDevice,
+		[]string{r.noncesKey(deviceID)},
+		now.UnixMilli(), expiresAt.UnixMilli(), maxProofNoncesPerDevice, nonce,
 	).Int()
 	if err != nil {
 		return false, err
@@ -94,17 +103,7 @@ func (r *redisStore) ConsumeNonce(ctx context.Context, deviceID, nonce string, e
 }
 
 func (r *redisStore) ClearDeviceNonces(ctx context.Context, deviceID string) error {
-	setKey := r.noncesSetKey(deviceID)
-	members, err := r.client.SMembers(ctx, setKey).Result()
-	if err != nil {
-		return err
-	}
-	if len(members) > 0 {
-		if err := r.client.Del(ctx, members...).Err(); err != nil {
-			return err
-		}
-	}
-	return r.client.Del(ctx, setKey).Err()
+	return r.client.Del(ctx, r.noncesKey(deviceID)).Err()
 }
 
 func (r *redisStore) SetPresence(ctx context.Context, deviceID string, p Presence, ttl time.Duration) error {

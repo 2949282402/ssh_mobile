@@ -205,3 +205,26 @@ go test -race ./...
 go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```
+
+### 存储集成测试
+
+MySQL/Redis 集成测试（`TestMySQLStore*`、`TestRedisStore*`、
+`TestMultiInstance*`）在未设置 `RELAY_TEST_MYSQL_DSN` 与 `RELAY_TEST_REDIS_URL`
+时会跳过。可用一次性容器起存储并运行：
+
+```sh
+docker run -d --rm --name relay-test-mysql -p 3306:3306 \
+  -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=relay \
+  -e MYSQL_USER=relay -e MYSQL_PASSWORD=relay mysql:8.4
+docker run -d --rm --name relay-test-redis -p 6379:6379 redis:7-alpine
+
+RELAY_TEST_MYSQL_DSN='relay:relay@tcp(127.0.0.1:3306)/relay?parseTime=true&loc=UTC' \
+RELAY_TEST_REDIS_URL='redis://127.0.0.1:6379/0' \
+go test ./...
+```
+
+go-sql-driver 会自动处理 MySQL 8 默认的 `caching_sha2_password` 认证（RSA
+交换），因此 DSN 无需额外认证参数。注意 `compose.yaml` 的 storage profile
+只声明 `expose:` 而不发布端口，测试进程（连 `127.0.0.1`）够不到这些服务——
+请用上面的 `docker run -p` 一次性起存储，或加一个带 `ports:` 的 dev compose
+override。

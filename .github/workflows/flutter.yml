@@ -112,6 +112,34 @@ jobs:
     defaults:
       run:
         working-directory: relay
+    env:
+      # Without these the MySQL/Redis integration tests and the multi-instance
+      # tests silently t.Skip; the services below make them actually run.
+      # go-sql-driver handles MySQL 8's default caching_sha2_password auth (RSA
+      # exchange) automatically, so the DSN needs no extra auth parameter.
+      RELAY_TEST_MYSQL_DSN: "relay:relay@tcp(127.0.0.1:3306)/relay?parseTime=true&loc=UTC"
+      RELAY_TEST_REDIS_URL: "redis://127.0.0.1:6379/0"
+    services:
+      # Mirrors relay/compose.yaml storage profile (mysql:8.4, redis:7-alpine).
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: relay
+          MYSQL_USER: relay
+          MYSQL_PASSWORD: relay
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -urelay -prelay"
+          --health-interval=10s --health-timeout=5s --health-retries=15
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s --health-timeout=5s --health-retries=10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

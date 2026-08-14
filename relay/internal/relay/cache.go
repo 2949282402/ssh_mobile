@@ -45,7 +45,8 @@ type presenceEntry struct {
 // hub goroutine 与管理端处理器在设备平面锁之外调用。
 type Cache interface {
 	// ConsumeNonce 原子记录 deviceID 的 nonce；若该 nonce 已存在（重放）返回 true。
-	// expiresAt 是 nonce 的有效上界；内存实现同时遵守每设备活跃 nonce 上限。
+	// expiresAt 是 nonce 的有效上界；内存与 Redis 实现均遵守每设备活跃 nonce 上限
+	// （已过期 nonce 惰性清理，上限只统计活跃 nonce）。
 	ConsumeNonce(ctx context.Context, deviceID, nonce string, expiresAt time.Time) (bool, error)
 	// ClearDeviceNonces 清除 deviceID 的全部 nonce（重新 enroll / 吊销时调用）。
 	ClearDeviceNonces(ctx context.Context, deviceID string) error
