@@ -1520,6 +1520,22 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
                 .await
         );
     });
+    // 在旧 Session 下 enqueue 一条未 ACK 的 pending 消息：peer restart 后
+    // ReplaceWithNew 必须显式清理这条旧 Session 的 pending，且绝不能把它
+    // 错误恢复进新的替换 Session。
+    let old_pending = runtime_b
+        .handle()
+        .block_on(state_b.delivery.enqueue_with_crypto(
+            &old_b_session_id.wire_key(),
+            "control",
+            b"old-session-pending".to_vec(),
+            crate::delivery::DeliveryPolicy::AckedDeduplicated,
+            crate::crypto::CryptoMode::E2ee,
+            Default::default(),
+        ))
+        .expect("enqueue old-session pending");
+    let old_pending_message_id = old_pending.message_id;
+
     let a_port = address_a.port();
     runtime_a1.stop().expect("stop runtime A1");
     drop(runtime_a1);
@@ -1584,6 +1600,33 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             .expect("B2 Session ID")
     });
     assert_ne!(old_b_session_id, new_b_session_id);
+    // 旧 Session 的 pending 必须被 retire_session_resources 显式清理：恢复
+    // 旧 session 得到空快照；新 session 的快照不含旧消息（不跨 session 恢复）。
+    let old_snapshot = runtime_b.handle().block_on(
+        state_b
+            .delivery
+            .recover_session(&old_b_session_id.wire_key()),
+    );
+    assert!(
+        old_snapshot.messages.is_empty(),
+        "retired Session's pending Delivery must be explicitly cleared"
+    );
+    let new_snapshot = runtime_b.handle().block_on(
+        state_b
+            .delivery
+            .recover_session(&new_b_session_id.wire_key()),
+    );
+    assert!(
+        new_snapshot
+            .messages
+            .iter()
+            .all(|message| message.session_id == new_b_session_id.wire_key())
+            && !new_snapshot
+                .messages
+                .iter()
+                .any(|message| message.message_id == old_pending_message_id),
+        "replacement Session must never restore the old Session's pending Delivery"
+    );
     let stale_context = state_b
         .crypto
         .get("restart-a", &old_b_session_id.wire_key());

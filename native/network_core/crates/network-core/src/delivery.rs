@@ -1046,6 +1046,13 @@ impl DeliveryManager {
         store
             .failed_ordered
             .retain(|(session, _)| session != session_id);
+        // Sender-side pending is Session-bound: on explicit close or
+        // ReplaceWithNew retirement, pending messages of the retired Session
+        // must be explicitly dropped rather than linger until TTL/budget
+        // expiry. They can never be delivered on the replacement Session.
+        store
+            .pending
+            .retain(|_, message| message.session_id != session_id);
         assert_delivery_invariants(&store);
     }
 
