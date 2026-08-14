@@ -146,6 +146,34 @@ func (m *mysqlStore) GetEnrollment(ctx context.Context, deviceID string) (*Enrol
 }
 
 func (m *mysqlStore) PutEnrollment(ctx context.Context, device *EnrolledDevice) (enrollmentResult, error) {
+	// InnoDB 并发插入同一索引 gap（空表首批新设备共享一个 gap、或计数器懒初始化
+	// 期间的锁交互）会偶发死锁（1213）。死锁是瞬态事务冲突，MySQL 标准做法是重试
+	// 整个事务；重试时计数器行已存在，串行化新设备入册，不再触发。容量命中
+	// （errEnrollmentCapacity）不是死锁，直接返回。
+	for attempt := 0; ; attempt++ {
+		result, err := m.putEnrollment(ctx, device)
+		if err == nil || !isDeadlockError(err) {
+			return result, err
+		}
+		if attempt >= 2 {
+			return enrollmentResourceLimit, fmt.Errorf("enrollment deadlocked after %d attempts: %w", attempt+1, err)
+		}
+		select {
+		case <-ctx.Done():
+			return enrollmentResourceLimit, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 5 * time.Millisecond):
+		}
+	}
+}
+
+// isDeadlockError reports whether err is an InnoDB deadlock (ER_LOCK_DEADLOCK,
+// MySQL error 1213), which is transient and safe to retry.
+func isDeadlockError(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1213
+}
+
+func (m *mysqlStore) putEnrollment(ctx context.Context, device *EnrolledDevice) (enrollmentResult, error) {
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return enrollmentResourceLimit, err
@@ -218,28 +246,39 @@ func (m *mysqlStore) PutEnrollment(ctx context.Context, device *EnrolledDevice) 
 // row (fresh DB or pre-upgrade) is initialized from the current device count
 // before the check; the increment itself happens after the device insert.
 func (m *mysqlStore) reserveEnrollmentCapacity(ctx context.Context, tx *sql.Tx) error {
-	var count int
+	// 先无锁普通读探测计数器行（consistent read，不取任何锁）。不能用 FOR UPDATE
+	// 探测缺失行：InnoDB 对不存在主键会取 gap lock（事务间互相兼容），随后
+	// INSERT IGNORE 需要的 insert-intention lock 与对方 gap lock 冲突——两个并发
+	// 新设备 enroll 在计数器缺失时会形成等待环死锁（1213）。
+	var probe int
 	err := tx.QueryRowContext(ctx,
-		`SELECT meta_value FROM relay_meta WHERE meta_key = ? FOR UPDATE`,
-		enrollmentCounterKey,
-	).Scan(&count)
+		`SELECT meta_value FROM relay_meta WHERE meta_key = ?`, enrollmentCounterKey,
+	).Scan(&probe)
 	if errors.Is(err, sql.ErrNoRows) {
-		// 计数器未初始化：以 devices 表当前行数为基准初始化。INSERT IGNORE 让并发
-		// 初始化只落一次；随后的 FOR UPDATE 读到已提交值。
+		// 计数器未初始化（新库/升级前/reset 后）：以 devices 表当前行数为基准幂等
+		// 初始化。先无锁一致读 COUNT（MVCC 快照，不取锁），再以字面值 INSERT
+		// IGNORE。不能用 `INSERT ... SELECT COUNT(*)`：InnoDB 会对其源表 devices 取
+		// 共享 next-key 锁，与其它事务对 devices 的 FOR UPDATE gap 锁（X）冲突——
+		// 两个并发新设备 enroll 会在 devices 表上互相等待形成死锁（1213）。
+		var initialCount int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices`).Scan(&initialCount); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT IGNORE INTO relay_meta (meta_key, meta_value)
-			 VALUES (?, (SELECT COUNT(*) FROM devices))`,
-			enrollmentCounterKey,
+			`INSERT IGNORE INTO relay_meta (meta_key, meta_value) VALUES (?, ?)`,
+			enrollmentCounterKey, initialCount,
 		); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx,
-			`SELECT meta_value FROM relay_meta WHERE meta_key = ? FOR UPDATE`,
-			enrollmentCounterKey,
-		).Scan(&count); err != nil {
-			return err
-		}
 	} else if err != nil {
+		return err
+	}
+	// FOR UPDATE 锁住计数器行做容量分配（此时行必存在，取 record lock，串行正确）。
+	var count int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT meta_value FROM relay_meta WHERE meta_key = ? FOR UPDATE`,
+		enrollmentCounterKey,
+	).Scan(&count); err != nil {
 		return err
 	}
 	if count >= m.maxEnrolled {

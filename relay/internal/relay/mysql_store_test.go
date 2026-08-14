@@ -344,3 +344,47 @@ func TestMySQLStoreRemoveFreesCapacitySlot(t *testing.T) {
 		t.Fatalf("slot was not freed after removal: %v", result)
 	}
 }
+
+// TestMySQLStoreConcurrentLazyInitNoDeadlock pins the counter lazy-init path
+// under concurrency: two NEW devices enrolling concurrently when the counter
+// row is absent (fresh DB / reset) must both succeed. The pre-fix code took a
+// gap lock with SELECT ... FOR UPDATE on the missing row and then deadlocked on
+// INSERT IGNORE (InnoDB 1213), rolling one enroll back into a spurious resource
+// limit.
+func TestMySQLStoreConcurrentLazyInitNoDeadlock(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 10)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn) // counter row deleted: both enrolls race the lazy init
+
+	type outcome struct {
+		result enrollmentResult
+		err    error
+	}
+	results := make(chan outcome, 2)
+	var wg sync.WaitGroup
+	for _, id := range []string{"device-a", "device-b"} {
+		wg.Add(1)
+		go func(deviceID string) {
+			defer wg.Done()
+			result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: deviceID, PublicKey: "key-" + deviceID, EnrolledAt: time.Now()})
+			results <- outcome{result: result, err: err}
+		}(id)
+	}
+	wg.Wait()
+	close(results)
+	okCount := 0
+	for o := range results {
+		if o.err != nil || o.result != enrollmentOK {
+			t.Fatalf("enroll failed under concurrent lazy init: result=%v err=%v", o.result, o.err)
+		}
+		okCount++
+	}
+	if okCount != 2 {
+		t.Fatalf("both new-device enrolls should succeed, ok=%d", okCount)
+	}
+}
