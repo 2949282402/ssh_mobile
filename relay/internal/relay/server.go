@@ -107,6 +107,11 @@ func OpenServer(config Config) (*Server, error) {
 		}
 		redis, err := openRedisStore(context.Background(), config.RedisURL)
 		if err != nil {
+			// The MySQL store is already open; without this close its connection
+			// pool (and the prune goroutine started by openMySQLStore) would be
+			// leaked. mysqlStore.Close is idempotent, so this is safe even if the
+			// store was never used.
+			_ = store.Close()
 			return nil, fmt.Errorf("open redis store: %w", err)
 		}
 		server := NewServer(config)

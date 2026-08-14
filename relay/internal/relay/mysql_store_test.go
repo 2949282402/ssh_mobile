@@ -17,8 +17,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 const mysqlTestCredentialKey = "01234567890123456789012345678901"
@@ -183,5 +186,81 @@ func TestMySQLStoreSeedMigration(t *testing.T) {
 	device, err := restarted.store.GetEnrollment(ctx, "device-a")
 	if err != nil || device == nil {
 		t.Fatalf("seeded enrollment missing after restart: err=%v", err)
+	}
+}
+
+// TestOpenServerClosesMySQLStoreOnRedisFailure verifies the mysql-mode startup
+// path does not leak the already-open MySQL store when Redis cannot be reached:
+// openMySQLStore succeeds, openRedisStore fails, and OpenServer must return an
+// error with the store closed (connection pool released, prune goroutine
+// stopped) rather than abandoning it. The idle-connection count is a
+// deterministic red-green assertion: without the fix the leaked pool holds its
+// connections (Sleep state) and the count grows; with it, Close reclaims them
+// before OpenServer returns.
+func TestOpenServerClosesMySQLStoreOnRedisFailure(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	config := mysqlTestConfig(dsn)
+	// A connection-refused port fails fast in Ping, exercising the
+	// openRedisStore failure branch (which also closes its own client).
+	config.RedisURL = "redis://127.0.0.1:1"
+
+	dbName, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer probe.Close()
+	baseline := countIdleConnections(t, probe, dbName.DBName)
+
+	if server, err := OpenServer(config); err == nil {
+		server.Close()
+		t.Fatal("expected OpenServer to fail when Redis is unreachable")
+	} else if !strings.Contains(err.Error(), "open redis store") {
+		t.Fatalf("error should surface the redis open failure, got: %v", err)
+	}
+	if after := countIdleConnections(t, probe, dbName.DBName); after > baseline {
+		t.Fatalf("failed OpenServer leaked %d idle MySQL connection(s) (before=%d after=%d)", after-baseline, baseline, after)
+	}
+
+	// Reopening the same DSN must still succeed (no server-side state corrupted).
+	reopened, err := openMySQLStore(context.Background(), dsn, config.MaxEnrolledDevices)
+	if err != nil {
+		t.Fatalf("reopen mysql store after failed OpenServer: %v", err)
+	}
+	_ = reopened.Close()
+}
+
+// countIdleConnections returns the number of idle (Sleep) connections to the
+// given database. A leaked sql.DB pool keeps its pooled connections in Sleep
+// state until Close reclaims them, so a rising count across a failed OpenServer
+// is a deterministic leak detector. The probe handle's own idle connections are
+// present in both counts, so they cancel out of the delta.
+func countIdleConnections(t *testing.T, probe *sql.DB, dbName string) int {
+	t.Helper()
+	var count int
+	query := "SELECT COUNT(*) FROM information_schema.processlist WHERE db = ? AND command = 'Sleep'"
+	if err := probe.QueryRow(query, dbName).Scan(&count); err != nil {
+		t.Fatalf("count idle connections: %v", err)
+	}
+	return count
+}
+
+// TestMySQLStoreCloseFreshAndIdempotent pins the precondition the startup
+// cleanup relies on: Close on a freshly opened, never-used store is safe, and
+// stopping it twice is idempotent.
+func TestMySQLStoreCloseFreshAndIdempotent(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	store, err := openMySQLStore(context.Background(), dsn, 100)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("double close should be safe, got: %v", err)
 	}
 }
