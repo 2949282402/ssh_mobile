@@ -49,6 +49,12 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// refresh 的「读 enrollment → 查吊销 → 消费 nonce」是同设备复合单元：与
+	// revoke/enroll 在同一条 per-device 分片锁上串行，避免吊销与 refresh 竞态
+	// （IsRevoked 通过后、凭据签发前被 revoke 抢先，向已吊销设备续发新凭据）。
+	unlock := s.lockDevice(request.DeviceID)
+	defer unlock()
+
 	device, err := s.store.GetEnrollment(r.Context(), request.DeviceID)
 	if err != nil {
 		// 存储故障：fail closed，客户端可稍后重试 refresh（内存实现永不返回错误）。

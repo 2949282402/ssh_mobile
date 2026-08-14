@@ -351,6 +351,8 @@ func TestMemoryStoreInternallySafeConcurrentAccess(t *testing.T) {
 				id := fmt.Sprintf("device-%d", j%200)
 				_, _ = store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: id, PublicKey: "key-" + id})
 				_, _ = store.ConsumeNonce(ctx, id, fmt.Sprintf("n-%d", j), time.Now().Add(time.Minute))
+				_, _ = store.RecordRevocation(ctx, id, time.Now().Add(time.Minute))
+				_ = store.RemoveEnrollment(ctx, id)
 			}
 		}()
 	}
