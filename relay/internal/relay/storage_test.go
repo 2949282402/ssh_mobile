@@ -6,6 +6,7 @@ package relay
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -94,6 +95,39 @@ func TestMemoryStoreNonceReplayAndClear(t *testing.T) {
 	_ = store.ClearDeviceNonces(ctx, "device-a")
 	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "nonce-1", expiry); replayed {
 		t.Fatal("nonce still present after ClearDeviceNonces")
+	}
+}
+
+// TestMemoryStoreNonceExpiryFreesCap pins the P0 contract that the Redis ZSET
+// refactor mirrors: expired nonces are pruned lazily, so the 128-cap counts only
+// *live* nonces and the 129th succeeds once earlier ones have expired.
+func TestMemoryStoreNonceExpiryFreesCap(t *testing.T) {
+	store := newMemoryStore(Config{MaxEnrolledDevices: 1, MaxRevokedDevices: 1})
+	ctx := context.Background()
+
+	for i := 0; i < maxProofNoncesPerDevice; i++ {
+		if replayed, _ := store.ConsumeNonce(ctx, "device-a", fmt.Sprintf("t-%d", i), time.Now().Add(time.Second)); replayed {
+			t.Fatalf("nonce %d unexpectedly rejected before the cap", i)
+		}
+	}
+	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "t-over", time.Now().Add(time.Hour)); !replayed {
+		t.Fatal("nonce beyond the cap was accepted while all nonces are live")
+	}
+
+	// Poll rather than sleep: the over-cap rejection does not record the nonce,
+	// so retrying the same fresh nonce is safe and never flakes on timing.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if replayed, _ := store.ConsumeNonce(ctx, "device-a", "t-fresh", time.Now().Add(time.Hour)); !replayed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("expired nonces were not pruned; cap never freed (P0 regression)")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "t-0", time.Now().Add(time.Hour)); replayed {
+		t.Fatal("expired nonce still treated as replay (P0 regression)")
 	}
 }
 
