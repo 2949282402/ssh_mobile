@@ -34,9 +34,14 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 	// 处理 heartbeat ping。
 	if frame.Type == "heartbeat" {
 		if h.presence != nil {
-			ok, err := h.presence.RenewPresence(context.Background(), sender.deviceID, sender.connectionID, h.presenceFor(sender), h.presenceTTL)
+			// 给 lease I/O 一个短 deadline：Redis 卡顿时不能无限阻塞 read
+			// goroutine（它还负责数据帧转发）。超时视为 ownership 未知，
+			// fail-open 保持连接，下次心跳重试。
+			leaseCtx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+			ok, err := h.presence.RenewPresence(leaseCtx, sender.deviceID, sender.connectionID, h.presenceFor(sender), h.presenceTTL)
+			cancel()
 			if err != nil {
-				// Redis 抖动：不中断连接，presence 下次心跳再对齐。
+				// Redis 抖动或超时：不中断连接，presence 下次心跳再对齐。
 			} else if !ok {
 				// 租约已被其它连接抢占（通常是另一实例的新连接）：本连接已被
 				// 取代，自愈关闭且不回 ack，让设备重连收敛到唯一的在线连接。

@@ -138,10 +138,10 @@ func TestMemoryStorePresenceLeaseSemantics(t *testing.T) {
 	store := newMemoryStore(Config{MaxEnrolledDevices: 1, MaxRevokedDevices: 1})
 	ctx := context.Background()
 
-	if err := store.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i-a"}, time.Minute); err != nil {
+	if _, _, err := store.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i-a"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.TakePresence(ctx, "device-a", "conn-b", Presence{InstanceID: "i-b"}, time.Minute); err != nil {
+	if _, _, err := store.TakePresence(ctx, "device-a", "conn-b", Presence{InstanceID: "i-b"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	presence, present, err := store.GetPresence(ctx, "device-a")
@@ -184,7 +184,7 @@ func TestPresenceLeaseSemanticsMemoryMatchesRedis(t *testing.T) {
 	defer func() { _ = redisStore.forceDeletePresence(ctx, "equiv-device") }()
 
 	type presenceAPI interface {
-		TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) error
+		TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (Presence, bool, error)
 		RenewPresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (bool, error)
 		ReleasePresence(ctx context.Context, deviceID, connID string) (bool, error)
 	}
@@ -206,7 +206,8 @@ func TestPresenceLeaseSemanticsMemoryMatchesRedis(t *testing.T) {
 	}
 
 	run("take-a", func(s presenceAPI) (bool, error) {
-		return true, s.TakePresence(ctx, "equiv-device", "a", Presence{InstanceID: "i"}, time.Minute)
+		_, _, err := s.TakePresence(ctx, "equiv-device", "a", Presence{InstanceID: "i"}, time.Minute)
+		return true, err
 	})
 	run("renew-owner", func(s presenceAPI) (bool, error) {
 		return s.RenewPresence(ctx, "equiv-device", "a", Presence{InstanceID: "i"}, time.Minute)

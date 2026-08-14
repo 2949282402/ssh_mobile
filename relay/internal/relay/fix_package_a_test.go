@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -114,7 +115,7 @@ func TestDisconnectDeviceClearsPresence(t *testing.T) {
 
 	ctx := context.Background()
 	peer := injectPeer(server.hub, "device-a")
-	if err := server.cache.TakePresence(ctx, "device-a", peer.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", peer.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	server.hub.disconnectDevice("device-a")
@@ -137,7 +138,7 @@ func TestDisconnectDeviceDoesNotClearForeignPresence(t *testing.T) {
 
 	ctx := context.Background()
 	// A foreign connection owns the lease (simulates another instance).
-	if err := server.cache.TakePresence(ctx, "device-a", "foreign-conn", Presence{InstanceID: "i2"}, time.Minute); err != nil {
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "foreign-conn", Presence{InstanceID: "i2"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	// The local hub still has its own (superseded) peer for the device.
@@ -150,6 +151,185 @@ func TestDisconnectDeviceDoesNotClearForeignPresence(t *testing.T) {
 	}
 	if presence.ConnectionID != "foreign-conn" {
 		t.Fatalf("presence owner changed: %q", presence.ConnectionID)
+	}
+}
+
+// gatePresenceStore blocks the first TakePresence until released, to
+// deterministically interleave concurrent same-device lease claims.
+type gatePresenceStore struct {
+	Cache
+	once    sync.Once
+	blocked chan struct{}
+	release chan struct{}
+}
+
+func newGatePresenceStore(cache Cache) *gatePresenceStore {
+	return &gatePresenceStore{Cache: cache, blocked: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (g *gatePresenceStore) TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (Presence, bool, error) {
+	g.once.Do(func() {
+		close(g.blocked)
+		<-g.release
+	})
+	return g.Cache.TakePresence(ctx, deviceID, connID, p, ttl)
+}
+
+// TestHubAddSerializesConcurrentSameDeviceClaims pins the admission-ordering
+// race: two connections for the same device claiming concurrently must land
+// their lease in establishment order, so the newer connection can never be
+// kicked by a stale, slower claim from the older (already replaced) one. The
+// first claim is gated; the second must wait at the admission lock, not race it.
+func TestHubAddSerializesConcurrentSameDeviceClaims(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+		MaxConnections:  10,
+	})
+	defer server.Close()
+
+	gate := newGatePresenceStore(server.cache)
+	server.cache = gate
+	server.hub.presence = gate
+	ctx := context.Background()
+
+	mux := http.NewServeMux()
+	server.RegisterRoutes(mux)
+	httpServer := httptest.NewServer(mux)
+	defer httpServer.Close()
+
+	credential, _, privateKey := enrollViaHTTP(t, httpServer.URL, "device-a", "test-token")
+
+	// A1 connects; its lease claim is gated (blocks before the ready frame).
+	connA1 := dialDeviceNoReady(t, httpServer.URL, credential, "device-a", 0x10, privateKey)
+	defer connA1.Close()
+	<-gate.blocked
+
+	// A2 connects while A1's claim is in flight: it must block at the admission
+	// lock (not reach the map or Redis) until A1's claim completes.
+	connA2 := dialDeviceNoReady(t, httpServer.URL, credential, "device-a", 0x11, privateKey)
+	defer connA2.Close()
+	time.Sleep(100 * time.Millisecond)
+	server.hub.mutex.Lock()
+	current := server.hub.peers["device-a"]
+	server.hub.mutex.Unlock()
+	if current == nil || current.connectionID == "" {
+		t.Fatal("A1 is not in the hub map while its claim is in flight")
+	}
+
+	close(gate.release)
+
+	// A2's admission completes only after A1's claim; read A2's ready frame.
+	var ready controlFrame
+	_ = connA2.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := connA2.ReadJSON(&ready); err != nil || ready.Type != "ready" || ready.DeviceID != "device-a" {
+		t.Fatalf("A2 was not admitted after serialized claim: %+v (%v)", ready, err)
+	}
+	_ = connA2.SetReadDeadline(time.Time{})
+
+	// Final state: A2 is the hub's current peer and owns the lease; A1 is closed.
+	server.hub.mutex.Lock()
+	current = server.hub.peers["device-a"]
+	server.hub.mutex.Unlock()
+	presence, present, err := gate.GetPresence(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("presence missing: present=%v err=%v", present, err)
+	}
+	if current == nil || presence.ConnectionID != current.connectionID {
+		t.Fatalf("lease owner should be the newest connection (current peer %v), got %q", current, presence.ConnectionID)
+	}
+
+	// A1's superseded socket must be closed (replaced by A2).
+	deadline := time.Now().Add(3 * time.Second)
+	closed := false
+	for time.Now().Before(deadline) {
+		_ = connA1.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		if _, _, err := connA1.ReadMessage(); err != nil {
+			closed = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !closed {
+		t.Fatal("A1 was not closed after being replaced by A2")
+	}
+}
+
+// TestDisconnectConnectionTargetsSpecificConnection verifies the directed
+// disconnect used by connection.replaced: only the exact connection ID is
+// closed and released; a stale/delayed ID is a no-op and cannot kick a newer
+// connection or erase its lease.
+func TestDisconnectConnectionTargetsSpecificConnection(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	peer := injectPeer(server.hub, "device-a") // connID "conn-device-a"
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", peer.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	server.hub.disconnectConnection("device-a", "stale-conn")
+	server.hub.mutex.Lock()
+	_, present := server.hub.peers["device-a"]
+	server.hub.mutex.Unlock()
+	if !present {
+		t.Fatal("stale directed disconnect removed the current peer")
+	}
+	if _, present, _ := server.cache.GetPresence(ctx, "device-a"); !present {
+		t.Fatal("stale directed disconnect released the lease")
+	}
+
+	server.hub.disconnectConnection("device-a", peer.connectionID)
+	server.hub.mutex.Lock()
+	_, present = server.hub.peers["device-a"]
+	server.hub.mutex.Unlock()
+	if present {
+		t.Fatal("directed disconnect did not remove the matching peer")
+	}
+	if _, present, _ := server.cache.GetPresence(ctx, "device-a"); present {
+		t.Fatal("directed disconnect did not release the lease")
+	}
+	select {
+	case <-peer.done:
+	default:
+		t.Fatal("matching peer was not closed")
+	}
+}
+
+// TestConnectionReplacedEventDisconnectsTargetedConnection verifies
+// handleRelayEvent routes connection.replaced to a directed disconnect: the
+// event for a stale connection ID is ignored; the matching one disconnects.
+func TestConnectionReplacedEventDisconnectsTargetedConnection(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	peer := injectPeer(server.hub, "device-a")
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", peer.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	server.handleRelayEvent(RelayEvent{Type: eventConnectionReplaced, DeviceID: "device-a", OldConnectionID: "stale"})
+	server.hub.mutex.Lock()
+	_, present := server.hub.peers["device-a"]
+	server.hub.mutex.Unlock()
+	if !present {
+		t.Fatal("replaced event for a stale connection ID disconnected the current peer")
+	}
+
+	server.handleRelayEvent(RelayEvent{Type: eventConnectionReplaced, DeviceID: "device-a", OldConnectionID: peer.connectionID})
+	server.hub.mutex.Lock()
+	_, present = server.hub.peers["device-a"]
+	server.hub.mutex.Unlock()
+	if present {
+		t.Fatal("replaced event did not disconnect the matching peer")
 	}
 }
 

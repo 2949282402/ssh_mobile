@@ -54,8 +54,10 @@ type Cache interface {
 	// ClearDeviceNonces 清除 deviceID 的全部 nonce（重新 enroll / 吊销时调用）。
 	ClearDeviceNonces(ctx context.Context, deviceID string) error
 	// TakePresence 让 connID 无条件取得 deviceID 的 presence 租约：新连接抢占，
-	// 最新落盘者成为在线所有者（最后写者胜），ttl 后租约自动过期。
-	TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) error
+	// 最新落盘者成为在线所有者（最后写者胜），ttl 后租约自动过期。返回被取代的
+	// 上一份租约（replaced=true 表示存在上一 owner），调用方据此向旧实例发布
+	// connection.replaced 事件，定向断开被取代的连接（立即替换而非等心跳收敛）。
+	TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (Presence, bool, error)
 	// RenewPresence 仅当 connID 仍是租约所有者（或租约不存在/已过期）时续期并返回
 	// true；返回 false 表示所有权已被其它连接抢走，调用方（本连接）已被取代、
 	// 应自愈关闭。
@@ -105,12 +107,24 @@ func (m *memoryStore) ClearDeviceNonces(_ context.Context, deviceID string) erro
 	return nil
 }
 
-func (m *memoryStore) TakePresence(_ context.Context, deviceID, connID string, p Presence, ttl time.Duration) error {
+func (m *memoryStore) TakePresence(_ context.Context, deviceID, connID string, p Presence, ttl time.Duration) (Presence, bool, error) {
 	p.ConnectionID = connID
 	m.mu.Lock()
-	m.presence[deviceID] = presenceEntry{presence: p, expiresAt: time.Now().Add(ttl)}
-	m.mu.Unlock()
-	return nil
+	defer m.mu.Unlock()
+	now := time.Now()
+	var previous Presence
+	replaced := false
+	if entry, present := m.presence[deviceID]; present {
+		if now.Before(entry.expiresAt) {
+			previous = entry.presence
+			replaced = true
+		} else {
+			// 过期租约视为缺失（与 Redis GET 对过期 key 返回 nil 等价）。
+			delete(m.presence, deviceID)
+		}
+	}
+	m.presence[deviceID] = presenceEntry{presence: p, expiresAt: now.Add(ttl)}
+	return previous, replaced, nil
 }
 
 // RenewPresence 在 m.mu 下复刻 Redis 的 CAS 语义：存在的活跃租约只允许所有者续期，

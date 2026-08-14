@@ -47,7 +47,7 @@ func TestRedisStorePresenceNonceAndAdmin(t *testing.T) {
 	defer store.Close()
 	cleanupRedisTestKeys(t, store)
 
-	if err := store.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1", RemoteAddr: "1.2.3.4"}, time.Minute); err != nil {
+	if _, _, err := store.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1", RemoteAddr: "1.2.3.4"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	presence, present, err := store.GetPresence(ctx, "device-a")
@@ -110,11 +110,11 @@ func TestRedisStorePresenceLeaseSemantics(t *testing.T) {
 	}
 	defer func() { _ = store.forceDeletePresence(ctx, "lease-device") }()
 
-	if err := store.TakePresence(ctx, "lease-device", "conn-a", Presence{InstanceID: "i-a"}, time.Minute); err != nil {
+	if _, _, err := store.TakePresence(ctx, "lease-device", "conn-a", Presence{InstanceID: "i-a"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	// A second connection takes the lease over (cross-instance reconnect).
-	if err := store.TakePresence(ctx, "lease-device", "conn-b", Presence{InstanceID: "i-b"}, time.Minute); err != nil {
+	if _, _, err := store.TakePresence(ctx, "lease-device", "conn-b", Presence{InstanceID: "i-b"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	presence, present, err := store.GetPresence(ctx, "lease-device")
@@ -165,7 +165,7 @@ func TestRedisStorePresenceLegacyEntryNotRenewed(t *testing.T) {
 	if ok, _ := store.RenewPresence(ctx, "legacy-device", "conn-x", Presence{InstanceID: "new"}, time.Minute); ok {
 		t.Fatal("legacy entry without an owner was renewed as if owned")
 	}
-	if err := store.TakePresence(ctx, "legacy-device", "conn-x", Presence{InstanceID: "new"}, time.Minute); err != nil {
+	if _, _, err := store.TakePresence(ctx, "legacy-device", "conn-x", Presence{InstanceID: "new"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	presence, present, err := store.GetPresence(ctx, "legacy-device")
@@ -245,8 +245,8 @@ type erroringCache struct {
 func (erroringCache) ConsumeNonce(context.Context, string, string, time.Time) (bool, error) {
 	return false, errors.New("cache unavailable")
 }
-func (erroringCache) TakePresence(context.Context, string, string, Presence, time.Duration) error {
-	return errors.New("cache unavailable")
+func (erroringCache) TakePresence(context.Context, string, string, Presence, time.Duration) (Presence, bool, error) {
+	return Presence{}, false, errors.New("cache unavailable")
 }
 func (erroringCache) RenewPresence(context.Context, string, string, Presence, time.Duration) (bool, error) {
 	return false, errors.New("cache unavailable")
@@ -321,7 +321,7 @@ func TestMySQLRedisFullStackOnlineStats(t *testing.T) {
 		t.Fatal("server cache is not the redis store")
 	}
 	// Simulate a connected device: presence lease written to Redis.
-	if err := server.cache.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	items, err := server.adminDeviceSnapshot()

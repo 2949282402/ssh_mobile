@@ -709,7 +709,7 @@ func TestHeartbeatRenewLost(t *testing.T) {
 	ctx := context.Background()
 	peer := injectPeer(server.hub, "device-a")
 	// A foreign connection owns the lease (cross-instance takeover).
-	if err := server.cache.TakePresence(ctx, "device-a", "foreign-conn", Presence{InstanceID: "i2"}, time.Minute); err != nil {
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "foreign-conn", Presence{InstanceID: "i2"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 
