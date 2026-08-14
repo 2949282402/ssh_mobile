@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gorilla/websocket v1.5.3
-	github.com/redis/go-redis/v9 v9.7.0
+	github.com/redis/go-redis/v9 v9.7.3
 )
 
 require (
