@@ -973,8 +973,10 @@ impl DeliveryManager {
     /// 当前 Session 的 recovery epoch（每次新 Connection Ready 递增一次）。
     ///
     /// 集成测试用：验证发送端 epoch 与接收端 active 记录对齐后再发送显式 ACK，
-    /// 避免 ACK 携带滞后 epoch 被发送端判为 StaleEpoch。
-    pub async fn current_session_recovery_epoch(&self, session_id: &str) -> u64 {
+    /// 避免 ACK 携带滞后 epoch 被发送端判为 StaleEpoch。仅测试构建暴露；
+    /// 生产代码不使用该只读访问器。
+    #[cfg(test)]
+    pub(crate) async fn current_session_recovery_epoch(&self, session_id: &str) -> u64 {
         let store = self.store.lock().await;
         store
             .recovery_epochs
