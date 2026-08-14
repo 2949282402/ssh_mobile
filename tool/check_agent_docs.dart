@@ -6,7 +6,6 @@ const maxDefaultAgentContextBytes = 40 * 1024;
 const allowedMemoryDomains = <String>{'front', 'backend', 'client', 'sdk'};
 
 const _canonicalSkill = '.agents/skills/ssh-mobile-maintenance/SKILL.md';
-const _claudeMirrorSkill = '.claude/skills/ssh-mobile-maintenance/SKILL.md';
 const _memoryMap =
     '.agents/skills/ssh-mobile-maintenance/references/memory-map.md';
 const _workflow =
@@ -16,7 +15,6 @@ const _validation =
 const _maintenanceDocument = 'docs/agent/skill-memory-maintenance.md';
 const _migrationAudit = 'docs/agent/skill-memory-refactor-audit.md';
 const _memoryReadme = 'memory_docs/README.md';
-const _syncScript = 'scripts/sync_agent_skills.ps1';
 
 const _requiredFiles = <String>{
   'AGENTS.md',
@@ -28,7 +26,6 @@ const _requiredFiles = <String>{
   _maintenanceDocument,
   _migrationAudit,
   _memoryReadme,
-  _syncScript,
   'memory_docs/client/overview.md',
   'memory_docs/client/architecture.md',
   'memory_docs/client/current-state.md',
@@ -64,13 +61,7 @@ const _historicalReferenceAllowlist = <String, Set<String>>{
 
 const _defaultProfiles = <String, List<String>>{
   'Codex': <String>['AGENTS.md', _canonicalSkill, _memoryMap, _workflow],
-  'Claude': <String>[
-    'CLAUDE.md',
-    'AGENTS.md',
-    _claudeMirrorSkill,
-    _memoryMap,
-    _workflow,
-  ],
+  'Claude': <String>['CLAUDE.md', 'AGENTS.md', _memoryMap, _workflow],
 };
 
 const _requiredReferences = <_RequiredReference>[
@@ -78,8 +69,6 @@ const _requiredReferences = <_RequiredReference>[
   _RequiredReference('AGENTS.md', _memoryMap),
   _RequiredReference('AGENTS.md', _maintenanceDocument),
   _RequiredReference('CLAUDE.md', 'AGENTS.md'),
-  _RequiredReference('CLAUDE.md', _canonicalSkill),
-  _RequiredReference('CLAUDE.md', _memoryMap),
   _RequiredReference(_canonicalSkill, _maintenanceDocument),
   _RequiredReference(_canonicalSkill, _memoryMap),
   _RequiredReference(_canonicalSkill, _workflow),
@@ -183,8 +172,6 @@ final class AgentDocAuditor {
     _checkDateMarkers(markdownPaths, violations);
     _checkRetiredReferences(markdownPaths, violations);
     final profiles = _checkDefaultProfileSizes(violations);
-    _checkSkillMirrors(violations);
-    _checkSyncScriptContract(violations);
 
     violations.sort((left, right) {
       final path = left.path.compareTo(right.path);
@@ -365,20 +352,6 @@ final class AgentDocAuditor {
         );
       }
     }
-
-    final claude = _readText('CLAUDE.md', violations);
-    if (claude != null &&
-        RegExp(r'''\.claude/skills/[^\s`"'\)]+/SKILL\.md''').hasMatch(claude)) {
-      violations.add(
-        const AgentDocViolation(
-          rule: 'noncanonical-skill-reference',
-          path: 'CLAUDE.md',
-          line: 1,
-          message:
-              'Claude bootstrap must point to the canonical .agents Skill.',
-        ),
-      );
-    }
   }
 
   void _checkMemoryMapTargets(List<AgentDocViolation> violations) {
@@ -523,154 +496,6 @@ final class AgentDocAuditor {
       }
     }
     return profiles;
-  }
-
-  void _checkSkillMirrors(List<AgentDocViolation> violations) {
-    final canonicalSkills = _skillFilesUnder('.agents/skills');
-    final claudeSkills = _skillFilesUnder('.claude/skills');
-    if (canonicalSkills.isEmpty) {
-      violations.add(
-        const AgentDocViolation(
-          rule: 'mirror-missing',
-          path: '.agents/skills',
-          line: 1,
-          message: 'At least one canonical Skill must exist.',
-        ),
-      );
-    }
-
-    for (final name in canonicalSkills.keys) {
-      final mirror = claudeSkills[name];
-      if (mirror == null) {
-        violations.add(
-          AgentDocViolation(
-            rule: 'mirror-missing',
-            path: '.claude/skills/$name/SKILL.md',
-            line: 1,
-            message: 'Generated Claude Skill mirror is missing.',
-          ),
-        );
-        continue;
-      }
-      final canonicalBytes = _file(canonicalSkills[name]!).readAsBytesSync();
-      final mirrorBytes = _file(mirror).readAsBytesSync();
-      if (!_bytesEqual(canonicalBytes, mirrorBytes)) {
-        violations.add(
-          AgentDocViolation(
-            rule: 'mirror-divergent',
-            path: mirror,
-            line: 1,
-            message:
-                'Claude Skill mirror differs from canonical .agents source.',
-          ),
-        );
-      }
-    }
-    for (final name in claudeSkills.keys) {
-      if (!canonicalSkills.containsKey(name)) {
-        violations.add(
-          AgentDocViolation(
-            rule: 'mirror-orphan',
-            path: claudeSkills[name]!,
-            line: 1,
-            message: 'Claude-only Skill is not a generated canonical mirror.',
-          ),
-        );
-      }
-    }
-
-    for (final directory in _index.directories) {
-      if (RegExp(
-        r'^\.claude/skills/[^/]+/references(?:/|$)',
-      ).hasMatch(directory)) {
-        violations.add(
-          AgentDocViolation(
-            rule: 'duplicate-claude-reference',
-            path: directory,
-            line: 1,
-            message: 'Skill references belong only under canonical .agents.',
-          ),
-        );
-      }
-    }
-  }
-
-  void _checkSyncScriptContract(List<AgentDocViolation> violations) {
-    final text = _readText(_syncScript, violations);
-    if (text == null) return;
-    final validateSet = RegExp(
-      r'\[ValidateSet\(([\s\S]*?)\)\]',
-    ).firstMatch(text);
-    final modes = <String>{};
-    if (validateSet != null) {
-      for (final match in RegExp(
-        r'''['"]([^'"]+)['"]''',
-      ).allMatches(validateSet.group(1)!)) {
-        modes.add(match.group(1)!);
-      }
-    }
-    if (validateSet == null ||
-        modes.length != 2 ||
-        !modes.containsAll(const <String>{'Check', 'SyncFromAgents'})) {
-      violations.add(
-        const AgentDocViolation(
-          rule: 'sync-mode',
-          path: _syncScript,
-          line: 1,
-          message:
-              'Sync script modes must be exactly Check and SyncFromAgents.',
-        ),
-      );
-    }
-
-    final branchLabels = RegExp(
-      r'''^\s*['"]([^'"]+)['"]\s*\{''',
-      multiLine: true,
-    ).allMatches(text).map((match) => match.group(1)!).toSet();
-    const legacyModes = <String>{'Link', 'CopyFromAgents', 'CopyFromClaude'};
-    if (branchLabels.any(legacyModes.contains)) {
-      violations.add(
-        const AgentDocViolation(
-          rule: 'sync-mode',
-          path: _syncScript,
-          line: 1,
-          message:
-              'Sync script contains a retired reverse or link mode branch.',
-        ),
-      );
-    }
-
-    final forward = RegExp(
-      r'Copy-Skill\s+-From\s+\$agentsSkill\s+-To\s+\$claudeSkill',
-    ).hasMatch(text);
-    final reverse = RegExp(
-      r'Copy-Skill\s+-From\s+\$claudeSkill\s+-To\s+\$agentsSkill',
-    ).hasMatch(text);
-    if (!forward || reverse) {
-      violations.add(
-        const AgentDocViolation(
-          rule: 'sync-direction',
-          path: _syncScript,
-          line: 1,
-          message:
-              'Skill synchronization must flow only from .agents to .claude.',
-        ),
-      );
-    }
-  }
-
-  Map<String, String> _skillFilesUnder(String root) {
-    final result = <String, String>{};
-    final prefix = '$root/';
-    for (final path in _index.files) {
-      if (!path.startsWith(prefix)) continue;
-      final remainder = path.substring(prefix.length);
-      final segments = remainder.split('/');
-      if (segments.length == 2 && segments[1] == 'SKILL.md') {
-        result[segments[0]] = path;
-      }
-    }
-    return result;
   }
 
   String? _readText(String relativePath, List<AgentDocViolation> violations) {
@@ -1170,7 +995,6 @@ bool _requiresDateMarker(String path) {
       path == 'CLAUDE.md' ||
       path == _canonicalSkill ||
       path.startsWith('.agents/skills/ssh-mobile-maintenance/references/') ||
-      path == _claudeMirrorSkill ||
       path.startsWith('docs/agent/') ||
       path.startsWith('memory_docs/');
 }
@@ -1181,14 +1005,6 @@ bool _isValidDate(RegExpMatch match) {
   final day = int.parse(match.group(3)!);
   final date = DateTime.utc(year, month, day);
   return date.year == year && date.month == month && date.day == day;
-}
-
-bool _bytesEqual(List<int> left, List<int> right) {
-  if (left.length != right.length) return false;
-  for (var index = 0; index < left.length; index++) {
-    if (left[index] != right[index]) return false;
-  }
-  return true;
 }
 
 _RepositoryIndex _buildRepositoryIndex(Directory root) {

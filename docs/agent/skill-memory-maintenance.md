@@ -1,4 +1,4 @@
-最新更新时间：2026-08-13
+最新更新时间：2026-08-14
 
 # Skill 与 Memory 维护规范
 
@@ -48,7 +48,7 @@ Skill 不保存：
 - `workflow.md`：通用执行流程；
 - `validation.md`：按变更类型选择验证。
 
-`.claude/skills/*/SKILL.md` 是 generated mirror，不是第二个 Owner。Claude 一侧不复制 references。
+`.agents/skills/*/SKILL.md` 是唯一 Skill source of truth，没有 `.claude` mirror；Claude Code 直接从 `.agents/skills/` 加载。
 
 ## 3. Project Memory
 
@@ -129,7 +129,7 @@ Architecture Docs 负责完整、系统性设计。Memory 仅保留高频摘要�
 - 受维护 Markdown 必须在 YAML front matter 后的首个非空位置放置日期标记；English-first 使用 `Last updated`，中文治理/审计使用 `最新更新时间`。
 - 项目引用使用仓库内相对路径，不记录机器本地、`file:`、绝对或逃出仓库的路径。
 - 密码、私钥、API Key、Token、服务器凭据与用户私密数据不得进入 Skill、Memory、日志、测试、截图或文档。
-- 文档链路、Skill mirror、retired references 与默认上下文体积由轻量 Agent documentation checker 守卫；内容真实性和是否应该进入 Memory 仍需要人工审查。
+- 文档链路、retired references 与默认上下文体积由轻量 Agent documentation checker 守卫；内容真实性和是否应该进入 Memory 仍需要人工审查。
 
 ## 9. 禁止事项
 

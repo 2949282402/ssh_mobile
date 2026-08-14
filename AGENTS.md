@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-14
 
 # Repository Bootstrap
 
@@ -10,6 +10,10 @@ This file is the repository entry point, not a complete architecture guide or
 command catalog.
 
 ## Required reading chain
+
+Memory routing always begins here: before loading any scoped Memory (Domain or
+Feature), local `AGENTS.md` contract, ADR, or Architecture document, read this
+bootstrap file first — it is the required entry for memory discovery.
 
 For every non-trivial task:
 
@@ -84,15 +88,10 @@ proportional to the touched owner and risk. Package-local commands remain in the
 owning README/AGENTS. Always run `git diff --check`, inspect the final status and
 diff, report checks actually run, and state exact environmental or scope gaps.
 
-When a canonical Skill changes, generate Claude mirrors only from `.agents`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\sync_agent_skills.ps1 -Mode SyncFromAgents
-powershell -ExecutionPolicy Bypass -File .\scripts\sync_agent_skills.ps1 -Mode Check
-```
-
-`.claude/skills/*/SKILL.md` is a generated compatibility mirror, never a second
-source of truth. Do not copy Skill references into `.claude`.
+`CLAUDE.md` is the Claude-specific thin bootstrap entry. It delegates repository
+entry and memory routing to this `AGENTS.md` and the canonical `.agents` Skill,
+and is not a second source of truth: do not hand-edit repository bootstrap
+content into `CLAUDE.md` — keep canonical entry-point content in this file.
 
 Stage and commit only when requested or explicitly required by an approved plan.
 Stage explicit paths, keep commits coherent, and never include unrelated user work.

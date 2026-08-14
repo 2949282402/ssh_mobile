@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-14
 
 # Maintenance Workflow
 
@@ -61,9 +61,8 @@ local responsibility and required checks; Memory records scoped current
 knowledge; ADRs record reasons; Architecture documents record complete design;
 Git records execution history.
 
-When changing the canonical Skill, update `.agents` first, generate the Claude
-mirror with `SyncFromAgents`, and verify with `Check`. Do not copy references to
-`.claude` and do not edit a Claude Skill as input.
+When changing the canonical Skill, update `.agents` first; there is no Claude
+mirror to regenerate — Claude Code loads Skills directly from `.agents/skills/`.
 
 ## 6. Handoff or commit
 

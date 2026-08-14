@@ -13,8 +13,6 @@ void main() {
   _testRetiredPhysicalPaths();
   _testPathSpecificDateMarkers();
   _testDefaultProfilesAndLimits();
-  _testSkillMirrors();
-  _testSyncScriptContract();
   _testCurrentRepositoryPasses();
   stdout.writeln('Agent documentation checker tests passed.');
 }
@@ -301,9 +299,8 @@ void _testDefaultProfilesAndLimits() {
       'Codex default profile must include workflow.md.',
     );
     _expect(
-      claude.bytesByPath.containsKey(_workflowPath) &&
-          claude.bytesByPath.containsKey(_claudeSkillPath),
-      'Claude default profile must include workflow.md and the mirror Skill.',
+      claude.bytesByPath.containsKey(_workflowPath),
+      'Claude default profile must include workflow.md.',
     );
 
     final claudeFile = _file(root, 'CLAUDE.md');
@@ -338,79 +335,6 @@ void _testDefaultProfilesAndLimits() {
     );
     final report = _audit(root);
     _expectRule(report, 'default-context-size', path: 'Codex');
-  });
-}
-
-void _testSkillMirrors() {
-  _withFixture((root) {
-    _file(root, _claudeSkillPath).deleteSync();
-    final report = _audit(root);
-    _expectRule(report, 'mirror-missing', path: _claudeSkillPath);
-  });
-
-  _withFixture((root) {
-    _append(root, _claudeSkillPath, '\nDivergent\n');
-    final report = _audit(root);
-    _expectRule(report, 'mirror-divergent', path: _claudeSkillPath);
-  });
-
-  _withFixture((root) {
-    _write(root, '.claude/skills/orphan/SKILL.md', _englishDoc('# Orphan\n'));
-    final report = _audit(root);
-    _expectRule(
-      report,
-      'mirror-orphan',
-      path: '.claude/skills/orphan/SKILL.md',
-    );
-  });
-
-  _withFixture((root) {
-    _write(
-      root,
-      '.claude/skills/ssh-mobile-maintenance/references/copy.txt',
-      'duplicate',
-    );
-    final report = _audit(root);
-    _expectRule(
-      report,
-      'duplicate-claude-reference',
-      path: '.claude/skills/ssh-mobile-maintenance/references',
-    );
-  });
-}
-
-void _testSyncScriptContract() {
-  _withFixture((root) {
-    _write(
-      root,
-      _syncScriptPath,
-      _validSyncScript.replaceFirst(
-        "'Check', 'SyncFromAgents'",
-        "'Check', 'SyncFromAgents', 'Link'",
-      ),
-    );
-    final report = _audit(root);
-    _expectRule(report, 'sync-mode', path: _syncScriptPath);
-  });
-
-  _withFixture((root) {
-    _append(
-      root,
-      _syncScriptPath,
-      "\nswitch (\u0024Mode) {\n  'CopyFromClaude' { }\n}\n",
-    );
-    final report = _audit(root);
-    _expectRule(report, 'sync-mode', path: _syncScriptPath);
-  });
-
-  _withFixture((root) {
-    _append(
-      root,
-      _syncScriptPath,
-      '\nCopy-Skill -From \u0024claudeSkill -To \u0024agentsSkill\n',
-    );
-    final report = _audit(root);
-    _expectRule(report, 'sync-direction', path: _syncScriptPath);
   });
 }
 
@@ -474,7 +398,6 @@ Canonical references:
 '''
           .trimLeft();
   _write(root, _canonicalSkillPath, skill);
-  _write(root, _claudeSkillPath, skill);
 
   final mapLinks = _selectedMemoryPaths
       .map((path) => '- [$path](../../../../$path)')
@@ -515,7 +438,6 @@ Canonical references:
   for (final path in _selectedMemoryPaths) {
     _write(root, path, _englishDoc('# ${path.split('/').last}\n'));
   }
-  _write(root, _syncScriptPath, _validSyncScript);
 }
 
 AgentDocReport _audit(Directory root) {
@@ -566,7 +488,6 @@ void _expect(bool condition, String message) {
 }
 
 const _canonicalSkillPath = '.agents/skills/ssh-mobile-maintenance/SKILL.md';
-const _claudeSkillPath = '.claude/skills/ssh-mobile-maintenance/SKILL.md';
 const _memoryMapPath =
     '.agents/skills/ssh-mobile-maintenance/references/memory-map.md';
 const _workflowPath =
@@ -575,7 +496,6 @@ const _validationPath =
     '.agents/skills/ssh-mobile-maintenance/references/validation.md';
 const _maintenancePath = 'docs/agent/skill-memory-maintenance.md';
 const _auditPath = 'docs/agent/skill-memory-refactor-audit.md';
-const _syncScriptPath = 'scripts/sync_agent_skills.ps1';
 
 const _selectedMemoryPaths = <String>[
   'memory_docs/client/overview.md',
@@ -595,18 +515,3 @@ const _selectedMemoryPaths = <String>[
   'memory_docs/backend/current-state.md',
   'memory_docs/front/overview.md',
 ];
-
-const _validSyncScript = r'''
-param(
-  [ValidateSet('Check', 'SyncFromAgents')]
-  [string] $Mode = 'Check'
-)
-
-function Copy-Skill {
-  param([string] $From, [string] $To)
-}
-
-$agentsSkill = '.agents/skills/example/SKILL.md'
-$claudeSkill = '.claude/skills/example/SKILL.md'
-Copy-Skill -From $agentsSkill -To $claudeSkill
-''';

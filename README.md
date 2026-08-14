@@ -338,10 +338,6 @@ git diff --exit-code -- apps/ssh_mobile_full/assets apps/ssh_mobile_full/android
 git diff --exit-code -- apps/ssh_mobile_full/lib/services/app_log_database.g.dart
 ```
 
-```powershell
-.\scripts\sync_agent_skills.ps1 -Mode Check
-```
-
 ### Platform build verification
 
 ```bash
@@ -709,17 +705,11 @@ See [docs/VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md) for the original vali
 ## Agent Collaboration Files
 
 - Canonical maintenance skill: `.agents/skills/ssh-mobile-maintenance/SKILL.md`
-- Generated Claude Code mirror: `.claude/skills/ssh-mobile-maintenance/SKILL.md`
 - Task routing: `.agents/skills/ssh-mobile-maintenance/references/memory-map.md`
 - Scoped project memory: `memory_docs/`
 - Knowledge governance: `docs/agent/skill-memory-maintenance.md`
 
-After modifying a canonical skill, generate and verify the mirror:
-
-```powershell
-.\scripts\sync_agent_skills.ps1 -Mode SyncFromAgents
-.\scripts\sync_agent_skills.ps1 -Mode Check
-```
+Canonical skills live in `.agents/skills/` and are loaded directly by Claude Code; there is no mirror to regenerate.
 
 Never store passwords, private keys, API keys, tokens, or server credentials in agent skills, project memory, logs, tests, screenshots, or documentation.
 

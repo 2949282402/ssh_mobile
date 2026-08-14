@@ -53,7 +53,6 @@ app.*.map.json
 
 # Antigravity Exclusive Memory
 .agents/skills/apk-publish/
-.claude/skills/apk-publish/
 scripts/build_and_publish.sh
 scripts/nginx_ssh_mobile.conf
 .env
