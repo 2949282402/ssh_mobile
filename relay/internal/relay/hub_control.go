@@ -5,6 +5,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -38,6 +39,9 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 		})
 		if !sender.enqueue(outboundFrame{websocket.TextMessage, resp}) {
 			go sender.socket.Close()
+		}
+		if h.presence != nil {
+			_ = h.presence.SetPresence(context.Background(), sender.deviceID, h.presenceFor(sender), h.presenceTTL)
 		}
 		return
 	}

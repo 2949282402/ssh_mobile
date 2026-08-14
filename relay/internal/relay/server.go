@@ -7,7 +7,10 @@
 package relay
 
 import (
+	"context"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -16,15 +19,18 @@ import (
 )
 
 type Server struct {
-	config          Config
-	hub             *hub
-	upgrader        websocket.Upgrader
-	enrolledDevices map[string]*EnrolledDevice
-	revokedDevices  map[string]revokedDevice
-	proofNonces     map[string]map[string]time.Time
-	devicesMutex    sync.Mutex
-	admin           adminAuthState
-	startedAt       time.Time
+	config       Config
+	hub          *hub
+	upgrader     websocket.Upgrader
+	store        Storage
+	cache        Cache
+	devicesMutex sync.Mutex
+	admin        adminAuthState
+	startedAt    time.Time
+	eventsCtx    context.Context
+	eventsCancel context.CancelFunc
+	eventsWG     sync.WaitGroup
+	logger       *slog.Logger
 }
 
 // NewServer 根据给定配置创建仅驻留内存的 Relay 服务。
@@ -36,31 +42,83 @@ func NewServer(config Config) *Server {
 	if len(config.CredentialKey) == 0 {
 		config.CredentialKey = randomBytes(32)
 	}
+	if config.InstanceID == "" {
+		config.InstanceID = "relay-" + hex.EncodeToString(randomBytes(6))
+	}
 
 	adminPasswordHash := passwordDigest(config.CredentialKey, config.AdminPassword)
 	adminConfigured := config.AdminUser != "" && len(config.AdminPassword) >= 12
 	config.AdminPassword = ""
 
-	return &Server{
-		config:          config,
-		hub:             newHub(config),
-		upgrader:        websocket.Upgrader{},
-		enrolledDevices: make(map[string]*EnrolledDevice),
-		revokedDevices:  make(map[string]revokedDevice),
-		proofNonces:     make(map[string]map[string]time.Time),
+	// Phase 0 ships the in-memory store only; RELAY_STORAGE_MODE selects it and
+	// Phase 1/2 add the MySQL/Redis implementations behind the same contract.
+	memory := newMemoryStore(config)
+	eventsCtx, eventsCancel := context.WithCancel(context.Background())
+
+	server := &Server{
+		config:   config,
+		hub:      newHub(config),
+		upgrader: websocket.Upgrader{},
+		store:    memory,
+		cache:    memory,
 		admin: adminAuthState{
 			user:          config.AdminUser,
 			passwordHash:  adminPasswordHash,
 			configured:    adminConfigured,
-			sessions:      make(map[string]time.Time),
 			loginAttempts: make(map[string]adminLoginAttempt),
 		},
-		startedAt: time.Now(),
+		startedAt:    time.Now(),
+		eventsCtx:    eventsCtx,
+		eventsCancel: eventsCancel,
+		logger:       slog.Default(),
 	}
+	server.hub.presence = server.cache
+	return server
 }
 
-// Close 停止 Relay hub，并释放活跃设备连接。
-func (s *Server) Close() { s.hub.close() }
+// Close 停止 Relay hub，释放活跃设备连接与底层存储。
+func (s *Server) Close() {
+	s.eventsCancel()
+	s.hub.close()
+	s.eventsWG.Wait()
+	_ = s.cache.Close()
+	_ = s.store.Close()
+}
+
+// OpenServer 根据 config.StorageMode 构建 Relay 服务：memory 模式与 NewServer
+// 等价；mysql 模式额外打开数据库（并在配置 RELAY_REDIS_URL 时激活 Redis 缓存层）。
+func OpenServer(config Config) (*Server, error) {
+	config = withConfigDefaults(config)
+	switch config.StorageMode {
+	case "", "memory":
+		return NewServer(config), nil
+	case "mysql":
+		if config.DatabaseURL == "" {
+			return nil, fmt.Errorf("RELAY_DATABASE_URL must be set when RELAY_STORAGE_MODE=mysql")
+		}
+		if config.RedisURL == "" {
+			// Required: durable enrollment with a process-local nonce cache would
+			// reopen the replay window on restart (see config validation).
+			return nil, fmt.Errorf("RELAY_REDIS_URL must be set when RELAY_STORAGE_MODE=mysql")
+		}
+		store, err := openMySQLStore(context.Background(), config.DatabaseURL, config.MaxEnrolledDevices)
+		if err != nil {
+			return nil, fmt.Errorf("open mysql store: %w", err)
+		}
+		redis, err := openRedisStore(context.Background(), config.RedisURL)
+		if err != nil {
+			return nil, fmt.Errorf("open redis store: %w", err)
+		}
+		server := NewServer(config)
+		server.store = store
+		server.cache = redis
+		server.hub.presence = redis
+		server.startEventSubscribers()
+		return server, nil
+	default:
+		return nil, fmt.Errorf("unsupported storage mode %q", config.StorageMode)
+	}
+}
 
 // RegisterRoutes 注册公开、管理端和 v1 设备端点。
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {

@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/hmac"
 	"encoding/base64"
@@ -155,27 +156,34 @@ const (
 // EnrolledAt（即刷新凭据 TTL 上界）。MaxEnrolledDevices 仅约束新 device_id。
 func (s *Server) replaceEnrollment(deviceID, publicKey, platform string, protocolVersion uint32, enrolledAt time.Time) enrollmentResult {
 	s.devicesMutex.Lock()
-	if existing, exists := s.enrolledDevices[deviceID]; exists {
-		if existing.PublicKey != publicKey {
-			s.devicesMutex.Unlock()
-			return enrollmentIdentityConflict
-		}
-	} else if len(s.enrolledDevices) >= s.config.MaxEnrolledDevices {
-		s.devicesMutex.Unlock()
-		return enrollmentResourceLimit
-	}
-	s.enrolledDevices[deviceID] = &EnrolledDevice{
+	result, err := s.store.PutEnrollment(context.Background(), &EnrolledDevice{
 		DeviceID:        deviceID,
 		PublicKey:       publicKey,
 		Platform:        platform,
 		ProtocolVersion: protocolVersion,
 		EnrolledAt:      enrolledAt,
+	})
+	if err == nil && result == enrollmentOK {
+		_ = s.cache.ClearDeviceNonces(context.Background(), deviceID)
 	}
-	delete(s.revokedDevices, deviceID)
-	delete(s.proofNonces, deviceID)
 	s.devicesMutex.Unlock()
-	s.hub.disconnectDevice(deviceID)
-	return enrollmentOK
+	if err != nil {
+		// 内存实现永不返回错误；Phase 1 落库失败时在此收敛为拒绝写入。
+		return enrollmentResourceLimit
+	}
+	if result == enrollmentOK {
+		s.hub.disconnectDevice(deviceID)
+		// 重新 enroll 抢占旧连接：本实例直接断开，其它实例据此踢掉旧连接。
+		if err := s.cache.Publish(context.Background(), RelayEvent{
+			Type:     eventDeviceKicked,
+			DeviceID: deviceID,
+			Time:     time.Now().UnixMilli(),
+		}); err != nil {
+			s.logger.Warn("failed to publish re-enroll event; other instances may keep the old connection",
+				"device_id", deviceID, "error", err)
+		}
+	}
+	return result
 }
 
 func writeEnrollmentResponse(w http.ResponseWriter, credential string, serverTime time.Time, ttl time.Duration, protocolVersion uint32) {
@@ -207,52 +215,27 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 	if err := verifyDeviceProof(publicKey, proofPayload, signature); err != nil {
 		return credentialClaims{}, nil, relayErrorAuthenticationFailed, false
 	}
+	ctx := r.Context()
 	s.devicesMutex.Lock()
-	revoked := false
-	if entry, isRevoked := s.revokedDevices[claims.DeviceID]; isRevoked {
-		if time.Now().Before(entry.expiresAt) {
-			revoked = true
-		} else {
-			// The tombstone's recorded expiry is an upper bound on the
-			// credential expiry, so once it has passed the credential is
-			// already rejected by verifyCredential; dropping the stale
-			// tombstone cannot reauthorize a still-revoked credential.
-			delete(s.revokedDevices, claims.DeviceID)
-		}
-	}
-	device, enrolled := s.enrolledDevices[claims.DeviceID]
-	keyMatches := enrolled && device.PublicKey == base64.RawURLEncoding.EncodeToString(publicKey)
+	revoked, storeErr := s.store.IsRevoked(ctx, claims.DeviceID, time.Now())
+	device, getErr := s.store.GetEnrollment(ctx, claims.DeviceID)
+	keyMatches := device != nil && device.PublicKey == base64.RawURLEncoding.EncodeToString(publicKey)
 	replayed := false
-	if !revoked && keyMatches {
-		replayed = s.consumeProofNonceLocked(claims.DeviceID, nonce, time.Unix(claims.ExpiresAt, 0))
+	var nonceErr error
+	if storeErr == nil && getErr == nil && !revoked && keyMatches {
+		replayed, nonceErr = s.cache.ConsumeNonce(ctx, claims.DeviceID, nonce, time.Unix(claims.ExpiresAt, 0))
 	}
 	s.devicesMutex.Unlock()
-	if revoked || !keyMatches || replayed {
+	if nonceErr != nil {
+		// fail-open：防重放降级但不阻断连接，日志告警（Redis 故障时的既定行为）。
+		s.logger.Warn("replay-protection cache unavailable during connect; degraded",
+			"device_id", claims.DeviceID, "error", nonceErr)
+	}
+	if storeErr != nil || getErr != nil || revoked || !keyMatches || replayed {
+		// 内存实现不返回错误；存储故障时在此 fail closed，与吊销/不匹配同等拒绝。
 		return credentialClaims{}, nil, relayErrorAuthenticationFailed, false
 	}
 	return claims, publicKey, relayErrorUnspecified, true
-}
-
-func (s *Server) consumeProofNonceLocked(deviceID, nonce string, expiresAt time.Time) bool {
-	now := time.Now()
-	deviceNonces := s.proofNonces[deviceID]
-	if deviceNonces == nil {
-		deviceNonces = make(map[string]time.Time)
-		s.proofNonces[deviceID] = deviceNonces
-	}
-	for value, expiry := range deviceNonces {
-		if now.After(expiry) {
-			delete(deviceNonces, value)
-		}
-	}
-	if _, exists := deviceNonces[nonce]; exists {
-		return true
-	}
-	if len(deviceNonces) >= 128 {
-		return true
-	}
-	deviceNonces[nonce] = expiresAt
-	return false
 }
 
 func (s *Server) validEnrollmentToken(token string) bool {

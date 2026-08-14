@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/hex"
 	"sync"
 	"time"
@@ -52,11 +53,20 @@ type controlFrame struct {
 	Online          *bool  `json:"online,omitempty"`
 }
 
+// presenceStore reports device connection state to the shared presence layer.
+type presenceStore interface {
+	SetPresence(ctx context.Context, deviceID string, p Presence, ttl time.Duration) error
+	DeletePresence(ctx context.Context, deviceID string) error
+}
+
 type hub struct {
 	config           Config
 	mutex            sync.Mutex
 	peers            map[string]*peer
 	transferSessions map[string]session
+	presence         presenceStore
+	instanceID       string
+	presenceTTL      time.Duration
 	stop             chan struct{}
 	closeOnce        sync.Once
 	waitGroup        sync.WaitGroup
@@ -65,13 +75,29 @@ type hub struct {
 
 func newHub(config Config) *hub {
 	config = withConfigDefaults(config)
-	h := &hub{config: config, peers: map[string]*peer{}, transferSessions: map[string]session{}, stop: make(chan struct{})}
+	h := &hub{
+		config:           config,
+		peers:            map[string]*peer{},
+		transferSessions: map[string]session{},
+		instanceID:       config.InstanceID,
+		presenceTTL:      config.PresenceTTL,
+		stop:             make(chan struct{}),
+	}
 	h.waitGroup.Add(1)
 	go func() {
 		defer h.waitGroup.Done()
 		h.prune()
 	}()
 	return h
+}
+
+// presenceFor builds the shared presence value for a connected peer.
+func (h *hub) presenceFor(peer *peer) Presence {
+	value := Presence{InstanceID: h.instanceID, LastSeen: time.Now()}
+	if peer.socket != nil && peer.socket.RemoteAddr() != nil {
+		value.RemoteAddr = peer.socket.RemoteAddr().String()
+	}
+	return value
 }
 
 // hubCloseTimeout bounds the peer/pruner convergence wait during close. Peer
@@ -94,6 +120,22 @@ func (h *hub) close() {
 		h.mutex.Unlock()
 		for _, peer := range peers {
 			closePeer(peer)
+		}
+		if h.presence != nil && len(peers) > 0 {
+			// Bound the presence sweep: a wedged Redis must not blow the
+			// shutdown budget (one blocking DEL per peer), so run all deletions
+			// concurrently under a 2s context deadline.
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			var sweep sync.WaitGroup
+			for _, peer := range peers {
+				sweep.Add(1)
+				go func(deviceID string) {
+					defer sweep.Done()
+					_ = h.presence.DeletePresence(ctx, deviceID)
+				}(peer.deviceID)
+			}
+			sweep.Wait()
+			cancel()
 		}
 		done := make(chan struct{})
 		go func() {
@@ -126,6 +168,12 @@ func (h *hub) add(peer *peer) bool {
 	if previous != nil {
 		closePeer(previous)
 	}
+	// Write presence before starting the read/write goroutines: if the socket
+	// fails immediately, remove() clears presence after this point, so no
+	// phantom online entry can be left behind by a delayed SetPresence.
+	if h.presence != nil {
+		_ = h.presence.SetPresence(context.Background(), peer.deviceID, h.presenceFor(peer), h.presenceTTL)
+	}
 	go h.write(peer)
 	go h.read(peer)
 	return true
@@ -133,10 +181,17 @@ func (h *hub) add(peer *peer) bool {
 
 func (h *hub) remove(peer *peer) {
 	h.mutex.Lock()
-	if h.peers[peer.deviceID] == peer {
+	// Only the current peer clears presence: a replaced peer's read goroutine
+	// may still exit after a duplicate connect, and must not erase the new
+	// peer's presence.
+	isCurrent := h.peers[peer.deviceID] == peer
+	if isCurrent {
 		delete(h.peers, peer.deviceID)
 	}
 	h.mutex.Unlock()
+	if isCurrent && h.presence != nil {
+		_ = h.presence.DeletePresence(context.Background(), peer.deviceID)
+	}
 	closePeer(peer)
 }
 
@@ -164,6 +219,11 @@ func (h *hub) disconnectDevice(deviceID string) {
 	}
 	h.mutex.Unlock()
 	if peer != nil {
+		// The peer's deferred remove() runs with isCurrent==false once we already
+		// deleted it, so it would never clear presence; clear it here explicitly.
+		if h.presence != nil {
+			_ = h.presence.DeletePresence(context.Background(), deviceID)
+		}
 		closePeer(peer)
 	}
 }

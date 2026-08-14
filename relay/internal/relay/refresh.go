@@ -16,7 +16,7 @@ import (
 )
 
 // refreshNonceTTL 限制 refresh 证明 nonce 的存活时间，与 authenticatedRequest 的
-// 重放防护共用同一 nonce 存储（proofNonces）与上限（每设备 128 个活跃 nonce）。
+// 重放防护共用同一 nonce 存储（Cache，当前为 memoryStore）与上限（每设备 128 个活跃 nonce）。
 const refreshNonceTTL = 5 * time.Minute
 
 type refreshRequest struct {
@@ -50,11 +50,29 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.devicesMutex.Lock()
-	device, enrolled := s.enrolledDevices[request.DeviceID]
+	device, err := s.store.GetEnrollment(r.Context(), request.DeviceID)
 	s.devicesMutex.Unlock()
-	if !enrolled {
+	if err != nil {
+		// 存储故障：fail closed，客户端可稍后重试 refresh（内存实现永不返回错误）。
+		writeNetworkError(w, http.StatusInternalServerError, relayErrorRelayError, "Relay storage is unavailable.", "refresh_credential", request.DeviceID)
+		return
+	}
+	if device == nil {
 		// relay 重启后 enrollment 丢失：客户端必须重新 enroll，而不是静默循环。
 		writeNetworkError(w, http.StatusNotFound, relayErrorInvalidArgument, "Relay device is not enrolled; re-enroll with an enrollment token.", "refresh_credential", request.DeviceID)
+		return
+	}
+	// 纵深防御：即使 enrollment 因并发/删除失败而残留，只要吊销 tombstone 在有效期
+	// 内就不得续发新凭据（否则被吊销设备可通过 refresh 重新取得有效凭据）。
+	s.devicesMutex.Lock()
+	revoked, revokeErr := s.store.IsRevoked(r.Context(), request.DeviceID, time.Now())
+	s.devicesMutex.Unlock()
+	if revokeErr != nil {
+		writeNetworkError(w, http.StatusInternalServerError, relayErrorRelayError, "Relay storage is unavailable.", "refresh_credential", request.DeviceID)
+		return
+	}
+	if revoked {
+		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
 		return
 	}
 	storedKey, err := base64.RawURLEncoding.DecodeString(device.PublicKey)
@@ -73,9 +91,14 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.devicesMutex.Lock()
-	replayed := s.consumeProofNonceLocked(request.DeviceID, request.Nonce, time.Now().Add(refreshNonceTTL))
+	replayed, nonceErr := s.cache.ConsumeNonce(r.Context(), request.DeviceID, request.Nonce, time.Now().Add(refreshNonceTTL))
 	s.devicesMutex.Unlock()
-	if replayed {
+	if nonceErr != nil {
+		// fail-open：与 /v1/connect 一致——nonce 防重放降级不阻断 refresh，
+		// Ed25519 签名仍是真正的鉴权；仅日志告警。
+		s.logger.Warn("replay-protection cache unavailable during refresh; degraded",
+			"device_id", request.DeviceID, "error", nonceErr)
+	} else if replayed {
 		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
 		return
 	}

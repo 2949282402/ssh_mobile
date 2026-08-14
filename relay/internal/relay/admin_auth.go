@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -27,7 +28,6 @@ type adminAuthState struct {
 	user          string
 	passwordHash  [sha256.Size]byte
 	configured    bool
-	sessions      map[string]time.Time
 	loginAttempts map[string]adminLoginAttempt
 	mutex         sync.Mutex
 }
@@ -42,32 +42,18 @@ type adminSessionResponse struct {
 	Username      string `json:"username"`
 }
 
-func (s *Server) createAdminSession() string {
-	token, _ := s.tryCreateAdminSession()
-	return token
-}
-
 func (s *Server) tryCreateAdminSession() (string, bool) {
 	token := hex.EncodeToString(randomBytes(32))
-	s.admin.mutex.Lock()
-	defer s.admin.mutex.Unlock()
-	now := time.Now()
-	for current, expiresAt := range s.admin.sessions {
-		if !now.Before(expiresAt) {
-			delete(s.admin.sessions, current)
-		}
-	}
-	if len(s.admin.sessions) >= s.config.MaxAdminSessions {
+	if err := s.cache.SetAdminSession(context.Background(), token, s.config.AdminSessionTTL); err != nil {
+		// 内存模式容量耗尽返回 errAdminSessionCapacity；其余错误（如 Redis 故障）
+		// 一律 fail closed，管理端登录失败。
 		return "", false
 	}
-	s.admin.sessions[token] = now.Add(s.config.AdminSessionTTL)
 	return token, true
 }
 
 func (s *Server) destroyAdminSession(token string) {
-	s.admin.mutex.Lock()
-	defer s.admin.mutex.Unlock()
-	delete(s.admin.sessions, token)
+	_ = s.cache.DeleteAdminSession(context.Background(), token)
 }
 
 func (s *Server) isAdminAuthorized(r *http.Request) bool {
@@ -80,17 +66,12 @@ func (s *Server) isAdminAuthorized(r *http.Request) bool {
 	if token == "" {
 		return false
 	}
-
-	s.admin.mutex.Lock()
-	defer s.admin.mutex.Unlock()
-	expiresAt, found := s.admin.sessions[token]
-	if !found || time.Now().After(expiresAt) {
-		if found {
-			delete(s.admin.sessions, token)
-		}
+	valid, err := s.cache.AdminSessionExists(context.Background(), token)
+	if err != nil {
+		// Redis 故障时管理端鉴权 fail closed（管理面非设备核心面）。
 		return false
 	}
-	return true
+	return valid
 }
 
 func (s *Server) adminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
