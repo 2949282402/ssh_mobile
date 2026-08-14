@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,7 +66,7 @@ func resetMySQLTestDB(t *testing.T, dsn string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for _, stmt := range []string{"DELETE FROM revocations", "DELETE FROM devices"} {
+	for _, stmt := range []string{"DELETE FROM relay_meta", "DELETE FROM revocations", "DELETE FROM devices"} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("reset test database: %v", err)
 		}
@@ -262,5 +263,84 @@ func TestMySQLStoreCloseFreshAndIdempotent(t *testing.T) {
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("double close should be safe, got: %v", err)
+	}
+}
+
+// TestMySQLStoreEnrollmentCapacityHardUnderConcurrency pins the #40 capacity
+// regression: two different devices enrolling concurrently must not both slip
+// past the MaxEnrolledDevices bound. The singleton relay_meta counter row
+// (locked FOR UPDATE) serializes the capacity allocation, so with one slot left
+// exactly one concurrent enroll succeeds and the other hits the bound — the
+// bound stays a hard limit instead of degrading to a soft one under the
+// per-device lock stripes.
+func TestMySQLStoreEnrollmentCapacityHardUnderConcurrency(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 3)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	// Two devices take two of the three slots.
+	for _, id := range []string{"device-a", "device-b"} {
+		if result, _ := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: id, PublicKey: "key-" + id, EnrolledAt: time.Now()}); result != enrollmentOK {
+			t.Fatalf("enroll %s failed: %v", id, result)
+		}
+	}
+
+	// Two different devices race for the one remaining slot; the counter row
+	// serializes them so exactly one succeeds.
+	results := make(chan enrollmentResult, 2)
+	var wg sync.WaitGroup
+	for _, id := range []string{"device-c", "device-d"} {
+		wg.Add(1)
+		go func(deviceID string) {
+			defer wg.Done()
+			result, _ := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: deviceID, PublicKey: "key-" + deviceID, EnrolledAt: time.Now()})
+			results <- result
+		}(id)
+	}
+	wg.Wait()
+	close(results)
+	okCount, limitCount := 0, 0
+	for result := range results {
+		switch result {
+		case enrollmentOK:
+			okCount++
+		case enrollmentResourceLimit:
+			limitCount++
+		}
+	}
+	if okCount != 1 || limitCount != 1 {
+		t.Fatalf("capacity bound should be a hard limit under concurrency: ok=%d limit=%d", okCount, limitCount)
+	}
+	count, err := store.CountEnrollments(ctx)
+	if err != nil || count != 3 {
+		t.Fatalf("enrollment count should stay at the bound, got %d err=%v", count, err)
+	}
+}
+
+// TestMySQLStoreRemoveFreesCapacitySlot verifies RemoveEnrollment decrements the
+// capacity counter, so a removed device's slot can be taken by a new one.
+func TestMySQLStoreRemoveFreesCapacitySlot(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 1)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	if result, _ := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: "device-a", PublicKey: "key-a", EnrolledAt: time.Now()}); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	if err := store.RemoveEnrollment(ctx, "device-a"); err != nil {
+		t.Fatalf("remove failed: %v", err)
+	}
+	if result, _ := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: "device-b", PublicKey: "key-b", EnrolledAt: time.Now()}); result != enrollmentOK {
+		t.Fatalf("slot was not freed after removal: %v", result)
 	}
 }

@@ -35,7 +35,18 @@ var mysqlSchemaStatements = []string{
   revoked_at  DATETIME(6)  NOT NULL,
   valid_until DATETIME(6)  NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	`CREATE TABLE IF NOT EXISTS relay_meta (
+  meta_key   VARCHAR(64) NOT NULL PRIMARY KEY,
+  meta_value BIGINT      NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 }
+
+// enrollmentCounterKey 是 relay_meta 里记录当前设备数的 singleton 行。新设备入册的
+// 容量分配通过它串行化（FOR UPDATE），MaxEnrolledDevices 在并发下保持硬上限。
+const enrollmentCounterKey = "enrollment_count"
+
+// errEnrollmentCapacity 表示容量检查命中上限；调用方映射为 enrollmentResourceLimit。
+var errEnrollmentCapacity = errors.New("enrollment capacity reached")
 
 // revocationPruneInterval bounds the growth of the durable revocations table:
 // rows whose protected credentials have expired are swept periodically.
@@ -145,24 +156,24 @@ func (m *mysqlStore) PutEnrollment(ctx context.Context, device *EnrolledDevice) 
 	// enrolls of the same device_id across instances, so the identity-conflict
 	// invariant is enforced atomically: a second transaction either blocks on
 	// the gap/row lock and then sees the committed key, or it blocks on the
-	// inserted row. The capacity count is a soft resource bound under
-	// multi-instance concurrency, not a security invariant.
+	// inserted row.
 	var storedKey string
 	err = tx.QueryRowContext(ctx,
 		`SELECT public_key FROM devices WHERE device_id = ? FOR UPDATE`, device.DeviceID,
 	).Scan(&storedKey)
+	isNewDevice := false
 	switch {
 	case err == nil:
 		if storedKey != device.PublicKey {
 			return enrollmentIdentityConflict, nil
 		}
 	case errors.Is(err, sql.ErrNoRows):
-		var count int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices`).Scan(&count); err != nil {
+		isNewDevice = true
+		if err := m.reserveEnrollmentCapacity(ctx, tx); err != nil {
+			if errors.Is(err, errEnrollmentCapacity) {
+				return enrollmentResourceLimit, nil
+			}
 			return enrollmentResourceLimit, err
-		}
-		if count >= m.maxEnrolled {
-			return enrollmentResourceLimit, nil
 		}
 	default:
 		return enrollmentResourceLimit, err
@@ -185,15 +196,80 @@ func (m *mysqlStore) PutEnrollment(ctx context.Context, device *EnrolledDevice) 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM revocations WHERE device_id = ?`, device.DeviceID); err != nil {
 		return enrollmentResourceLimit, err
 	}
+	if isNewDevice {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE relay_meta SET meta_value = meta_value + 1 WHERE meta_key = ?`,
+			enrollmentCounterKey,
+		); err != nil {
+			return enrollmentResourceLimit, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return enrollmentResourceLimit, err
 	}
 	return enrollmentOK, nil
 }
 
+// reserveEnrollmentCapacity allocates one slot from the singleton enrollment
+// counter inside tx. The counter row is locked FOR UPDATE, so concurrent
+// new-device enrollments (different deviceIDs, possibly from other instances)
+// serialize here and the MaxEnrolledDevices bound stays a hard limit instead of
+// degrading to a soft one under the per-device lock stripes. A missing counter
+// row (fresh DB or pre-upgrade) is initialized from the current device count
+// before the check; the increment itself happens after the device insert.
+func (m *mysqlStore) reserveEnrollmentCapacity(ctx context.Context, tx *sql.Tx) error {
+	var count int
+	err := tx.QueryRowContext(ctx,
+		`SELECT meta_value FROM relay_meta WHERE meta_key = ? FOR UPDATE`,
+		enrollmentCounterKey,
+	).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		// 计数器未初始化：以 devices 表当前行数为基准初始化。INSERT IGNORE 让并发
+		// 初始化只落一次；随后的 FOR UPDATE 读到已提交值。
+		if _, err := tx.ExecContext(ctx,
+			`INSERT IGNORE INTO relay_meta (meta_key, meta_value)
+			 VALUES (?, (SELECT COUNT(*) FROM devices))`,
+			enrollmentCounterKey,
+		); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx,
+			`SELECT meta_value FROM relay_meta WHERE meta_key = ? FOR UPDATE`,
+			enrollmentCounterKey,
+		).Scan(&count); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	if count >= m.maxEnrolled {
+		return errEnrollmentCapacity
+	}
+	return nil
+}
+
 func (m *mysqlStore) RemoveEnrollment(ctx context.Context, deviceID string) error {
-	_, err := m.db.ExecContext(ctx, `DELETE FROM devices WHERE device_id = ?`, deviceID)
-	return err
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE device_id = ?`, deviceID)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected > 0 {
+		// 同步递减计数器（下限 0），避免容量上限随删除长期漂移而越变越严。
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE relay_meta SET meta_value = GREATEST(meta_value - 1, 0) WHERE meta_key = ?`,
+			enrollmentCounterKey,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (m *mysqlStore) RecordRevocation(ctx context.Context, deviceID string, validUntil time.Time) (bool, error) {
