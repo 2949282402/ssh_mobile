@@ -67,6 +67,10 @@ type Cache interface {
 	ReleasePresence(ctx context.Context, deviceID, connID string) (bool, error)
 	// GetPresence 返回 deviceID 的在线状态与存在性。
 	GetPresence(ctx context.Context, deviceID string) (Presence, bool, error)
+	// GetPresences 批量返回多个 deviceID 的在线租约：结果 map 中存在的 key 即在线，
+	// 缺失/已过期的设备不在 map 中；空列表返回空 map。admin 快照用它把 N 次
+	// GetPresence 收敛成一次往返。
+	GetPresences(ctx context.Context, deviceIDs []string) (map[string]Presence, error)
 	// SetAdminSession 创建 TTL 管理的管理端会话。内存实现在容量耗尽时返回
 	// errAdminSessionCapacity（fail closed）。
 	SetAdminSession(ctx context.Context, token string, ttl time.Duration) error
@@ -177,6 +181,26 @@ func (m *memoryStore) GetPresence(_ context.Context, deviceID string) (Presence,
 		return Presence{}, false, nil
 	}
 	return entry.presence, true, nil
+}
+
+func (m *memoryStore) GetPresences(_ context.Context, deviceIDs []string) (map[string]Presence, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	result := make(map[string]Presence, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		entry, present := m.presence[deviceID]
+		if !present {
+			continue
+		}
+		if now.After(entry.expiresAt) {
+			// 过期视为缺失，顺手剪除（与 GetPresence 的惰性清理一致）。
+			delete(m.presence, deviceID)
+			continue
+		}
+		result[deviceID] = entry.presence
+	}
+	return result, nil
 }
 
 func (m *memoryStore) SetAdminSession(_ context.Context, token string, ttl time.Duration) error {

@@ -50,29 +50,17 @@ type adminDevice struct {
 	PublicKeyFingerprint string `json:"public_key_fingerprint"`
 }
 
+// hubSnapshot 只带管理端消费的本地 hub 数据。在线状态与 RemoteAddr 一律来自
+// presence 租约（GetPresences），本地 peer 表不参与 admin 视图——它在多实例部署
+// 下只反映本实例，跨实例设备会显示为空白地址。
 type hubSnapshot struct {
-	ActivePeers    int
 	ActiveSessions int
-	Online         map[string]string
 }
 
 func (h *hub) snapshot() hubSnapshot {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
-
-	online := make(map[string]string, len(h.peers))
-	for deviceID, peer := range h.peers {
-		remoteAddr := ""
-		if peer.socket != nil && peer.socket.RemoteAddr() != nil {
-			remoteAddr = peer.socket.RemoteAddr().String()
-		}
-		online[deviceID] = remoteAddr
-	}
-	return hubSnapshot{
-		ActivePeers:    len(h.peers),
-		ActiveSessions: len(h.transferSessions),
-		Online:         online,
-	}
+	return hubSnapshot{ActiveSessions: len(h.transferSessions)}
 }
 
 func (s *Server) adminOverview(w http.ResponseWriter, _ *http.Request) {
@@ -95,12 +83,13 @@ func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 		return adminOverviewResponse{}, err
 	}
 	enrolled := len(enrolledList)
-	online := 0
+	// 一次批量查询替代逐设备 GetPresence（N+1 → 1）。
+	deviceIDs := make([]string, 0, enrolled)
 	for _, device := range enrolledList {
-		if _, present, _ := s.cache.GetPresence(context.Background(), device.DeviceID); present {
-			online++
-		}
+		deviceIDs = append(deviceIDs, device.DeviceID)
 	}
+	presences, _ := s.cache.GetPresences(context.Background(), deviceIDs)
+	online := len(presences)
 
 	var memory runtime.MemStats
 	runtime.ReadMemStats(&memory)
@@ -134,23 +123,30 @@ func (s *Server) adminDevices(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) adminDeviceSnapshot() ([]adminDevice, error) {
-	hubState := s.hub.snapshot()
 	s.devicesMutex.Lock()
 	enrolledList, err := s.store.ListEnrollments(context.Background())
 	s.devicesMutex.Unlock()
 	if err != nil {
 		return nil, err
 	}
+	// 一次批量查询替代逐设备 GetPresence（N+1 → 1）。Online 与 RemoteAddr 都取
+	// 自 presence 租约：跨实例部署下设备连在其它实例时，租约里的地址才是它真实
+	// 所在连接的地址（本地 peer 表只反映本实例，会显示为空）。
+	deviceIDs := make([]string, 0, len(enrolledList))
+	for _, enrolled := range enrolledList {
+		deviceIDs = append(deviceIDs, enrolled.DeviceID)
+	}
+	presences, _ := s.cache.GetPresences(context.Background(), deviceIDs)
 	items := make([]adminDevice, 0, len(enrolledList))
 	for _, enrolled := range enrolledList {
-		_, online, _ := s.cache.GetPresence(context.Background(), enrolled.DeviceID)
+		presence, online := presences[enrolled.DeviceID]
 		items = append(items, adminDevice{
 			DeviceID:             enrolled.DeviceID,
 			Platform:             enrolled.Platform,
 			ProtocolVersion:      enrolled.ProtocolVersion,
 			EnrolledAt:           enrolled.EnrolledAt.UTC().Format(time.RFC3339Nano),
 			Online:               online,
-			RemoteAddr:           hubState.Online[enrolled.DeviceID],
+			RemoteAddr:           presence.RemoteAddr,
 			PublicKeyFingerprint: publicKeyFingerprint(enrolled.PublicKey),
 		})
 	}

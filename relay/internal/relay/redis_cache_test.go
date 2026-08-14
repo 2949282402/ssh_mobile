@@ -257,6 +257,9 @@ func (erroringCache) ReleasePresence(context.Context, string, string) (bool, err
 func (erroringCache) GetPresence(context.Context, string) (Presence, bool, error) {
 	return Presence{}, false, errors.New("cache unavailable")
 }
+func (erroringCache) GetPresences(context.Context, []string) (map[string]Presence, error) {
+	return nil, errors.New("cache unavailable")
+}
 func (erroringCache) Publish(context.Context, RelayEvent) error {
 	return errors.New("cache unavailable")
 }
@@ -321,12 +324,12 @@ func TestMySQLRedisFullStackOnlineStats(t *testing.T) {
 		t.Fatal("server cache is not the redis store")
 	}
 	// Simulate a connected device: presence lease written to Redis.
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1", RemoteAddr: "203.0.113.5:9000"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	items, err := server.adminDeviceSnapshot()
-	if err != nil || len(items) != 1 || !items[0].Online {
-		t.Fatalf("admin snapshot should show the device online: err=%v items=%+v", err, items)
+	if err != nil || len(items) != 1 || !items[0].Online || items[0].RemoteAddr != "203.0.113.5:9000" {
+		t.Fatalf("admin snapshot should show the device online with its lease address: err=%v items=%+v", err, items)
 	}
 	if released, err := server.cache.ReleasePresence(ctx, "device-a", "conn-1"); err != nil || !released {
 		t.Fatalf("release presence: released=%v err=%v", released, err)
