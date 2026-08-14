@@ -363,6 +363,61 @@ void main() {
       await client.dispose();
     },
   );
+
+  test(
+    'start-stop-start resets the revision baseline so a fresh connection applies',
+    () async {
+      final gateway = _FakeRealtimeGateway();
+      final backend = AppRealtimeSessionBackend(
+        networkRuntime: _FakeNetworkRuntime(gateway),
+        commandResultTimeout: const Duration(seconds: 1),
+      );
+      final client = RealtimeClientImpl(backend: backend);
+      final session = client.createSession(
+        realtimeId: realtimeId,
+        peerId: 'peer-a',
+      );
+
+      // First generation reaches connected at revision 2.
+      final firstStart = session.start();
+      await _pump();
+      gateway.emitCommandResult(commandId: gateway.lastStartCommandId!);
+      await firstStart;
+      gateway.emitState(NativeRealtimeSessionState.negotiating, revision: 1);
+      gateway.emitState(NativeRealtimeSessionState.connected, revision: 2);
+      await _pump();
+      expect(session.state, RealtimeSessionState.connected);
+      expect(session.revision, 2);
+
+      // Stop -> native closed at revision 3.
+      final stopFuture = session.stop();
+      await _pump();
+      gateway.emitCommandResult(commandId: gateway.lastStopCommandId!);
+      await stopFuture;
+      gateway.emitState(NativeRealtimeSessionState.closed, revision: 3);
+      await _pump();
+      expect(session.state, RealtimeSessionState.stopped);
+      expect(session.revision, 3);
+
+      // Fresh start() begins a new native connection generation whose
+      // signaling revision restarts from a low value: the client must reset
+      // its revision baseline, otherwise revisions 1/2 are mistaken for stale
+      // events against the previous 3 and the session never reconnects.
+      final secondStart = session.start();
+      await _pump();
+      gateway.emitCommandResult(commandId: gateway.lastStartCommandId!);
+      await secondStart;
+      gateway.emitState(NativeRealtimeSessionState.negotiating, revision: 1);
+      await _pump();
+      expect(session.state, RealtimeSessionState.negotiating);
+      expect(session.revision, 1);
+      gateway.emitState(NativeRealtimeSessionState.connected, revision: 2);
+      await _pump();
+      expect(session.state, RealtimeSessionState.connected);
+      expect(session.revision, 2);
+      await client.dispose();
+    },
+  );
 }
 
 Future<void> _pump() => Future<void>.delayed(Duration.zero);

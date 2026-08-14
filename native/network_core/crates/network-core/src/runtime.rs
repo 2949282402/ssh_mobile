@@ -316,6 +316,12 @@ impl RuntimeState {
         if let Some(replaced_session_id) = admission.replaced_session_id {
             self.retire_session_resources(peer_id, replaced_session_id)
                 .await;
+            // The retired Session's sender-side pending can never be delivered
+            // on the replacement Session; clear it (with byte-budget
+            // accounting) so it does not linger or leak the delivery budget.
+            self.delivery
+                .retire_pending_for_session(&replaced_session_id.wire_key())
+                .await;
         }
         Ok(SessionAdmissionLease::new(
             admission,

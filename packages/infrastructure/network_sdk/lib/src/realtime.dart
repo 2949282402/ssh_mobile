@@ -305,6 +305,11 @@ final class _RealtimeSession implements RealtimeSession {
         _state == RealtimeSessionState.connected) {
       return Future<SdkResult<void>>.value(const SdkSuccess<void>(null));
     }
+    // A fresh start() begins a new native connection generation whose
+    // signaling revision restarts from a low value (native creates a new
+    // WebRTC peer). Reset the recorded revision so the new generation's low
+    // revisions are not mistaken for stale events from the previous session.
+    _revision = 0;
     _stopCommandCompleted = false;
     _state = RealtimeSessionState.starting;
     final future = _startInternal();

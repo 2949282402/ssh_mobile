@@ -1357,6 +1357,10 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
             )),
         },
     );
+    // 该 ACK 只有在 ACK epoch 与 sender 当前 message epoch 完全相等时才被接受
+    // （delivery.rs acknowledge 返回 StaleEpoch）。当前单侧重连路径下 epoch 固定
+    // 为 2，故稳定；若未来恢复两端并发重连，任何新增的 recover_session 都会再次
+    // bump sender epoch 并使此处超时——改动隔离假设时必须回归此断言。
     let recovered_ack = poll_until(&runtime_a, Duration::from_secs(20), |event| {
         matches!(
             &event.payload,
