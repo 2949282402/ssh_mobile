@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-14
 
 # SSH Mobile Control and Relay Server
 
@@ -6,12 +6,16 @@
   <strong>English</strong> | <a href="./README.zh-CN.md">简体中文</a>
 </p>
 
-This Go service provides SSH Mobile's memory-only device control plane and
-WebSocket relay. The standalone React + Vite + TypeScript administration UI is
-in `../front/` and is served by the `front` Compose service. Relay does not
-embed or serve the dashboard UI. It does not persist transfer frames,
-filenames, credentials, or device state. Restarting the process disconnects all
-peers and requires devices to enroll again.
+This Go service provides SSH Mobile's device control plane and WebSocket
+relay. By default it is memory-only: no external storage, and restarting the
+process disconnects all peers and requires devices to enroll again. With
+`RELAY_STORAGE_MODE=mysql` (which requires `RELAY_REDIS_URL`) enrollment and
+revocation are durable across a restart, and the shared presence/nonce/
+administrator-session/event layer is active for the multi-instance design. The
+standalone React + Vite + TypeScript administration UI is in `../front/` and is
+served by the `front` Compose service. Relay does not embed or serve the
+dashboard UI. It does not persist transfer frames or filenames, and never reads
+device private keys or credential plaintext.
 
 ## `.env` configuration
 
@@ -29,6 +33,11 @@ port, limit, duration, and image value to be present in that file.
 | `CADDY_HTTPS_PORT` | Caddy's internal HTTPS listener port |
 | `RELAY_INTERNAL_PORT` | Internal Go Relay listener port |
 | `FRONT_INTERNAL_PORT` | Internal Nginx front-end listener port |
+| `RELAY_STORAGE_MODE` | Device-plane storage backend: `memory` (default, process-local) or `mysql` (durable enrollment/revocation; requires Redis) |
+| `RELAY_DATABASE_URL` | MySQL DSN (requires `parseTime=true&loc=UTC`), required when `RELAY_STORAGE_MODE=mysql` |
+| `RELAY_REDIS_URL` | Redis URL for the shared state layer (presence, nonce, admin sessions, cross-instance events); required when `RELAY_STORAGE_MODE=mysql` |
+| `RELAY_INSTANCE_ID` | Stable per-instance identity recorded in presence; defaults to a random value per process |
+| `RELAY_PRESENCE_TTL` | Presence key lifetime (device heartbeat renews it); default `60s` |
 | `RELAY_CREDENTIAL_TTL` | Device credential lifetime, using Go duration syntax |
 | `RELAY_SESSION_TTL` | Relay session lifetime, using Go duration syntax |
 | `RELAY_ADMIN_SESSION_TTL` | Dashboard administrator session lifetime, using Go duration syntax |
@@ -124,8 +133,10 @@ ignored entirely.
 - Caddy applies restrictive framing, content-type, referrer, and content
   security headers.
 
-Because device state is intentionally memory-only, restart is a security
-boundary: all clients must enroll again.
+In the default `memory` mode, device state is intentionally process-local, so
+restart is a security boundary: all clients must enroll again. In `mysql` mode
+enrollment and revocation persist, so a restart no longer clears them; treat the
+database credentials and the durable enrollment data as sensitive state.
 
 ## Endpoints
 
@@ -195,16 +206,17 @@ Admin HTTP failures use a separate versioned error shape:
 }
 ```
 
-The admin API uses an in-memory HttpOnly session. Administrator sessions,
-enrolled devices, revocation tombstones, transfer sessions, pending per-device
-output, and login limiter entries are all bounded by the `RELAY_MAX_*` settings
-above. Revocation tombstones are also credential-expiry-aware: a tombstone is
-kept only while the revoked device's current credential could still be
-presented, and once the bounded store is saturated with still-in-force
-tombstones, new revocations fail closed instead of evicting an older one. No
-limit introduces persistence: process restart clears every in-memory entry,
-while the configured enrollment secret remains the process configuration
-value.
+The admin API uses an HttpOnly session stored in the cache layer (memory by
+default, Redis when `RELAY_REDIS_URL` is set). Administrator sessions, enrolled
+devices, revocation tombstones, transfer sessions, pending per-device output,
+and login limiter entries are all bounded by the `RELAY_MAX_*` settings above.
+Revocation tombstones are also credential-expiry-aware: a tombstone is kept only
+while the revoked device's current credential could still be presented, and once
+the bounded memory store is saturated with still-in-force tombstones, new
+revocations fail closed instead of evicting an older one. In `memory` mode every
+entry is cleared on restart; in `mysql` mode enrolled devices and revocation
+tombstones are durable. The configured enrollment secret always remains the
+process configuration value.
 
 The Go HTTP server applies read, write, and idle timeouts plus a bounded
 request-header size. Shutdown is signal-driven: HTTP graceful shutdown (up to

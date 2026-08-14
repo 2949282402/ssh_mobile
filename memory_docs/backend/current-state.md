@@ -1,21 +1,36 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-14
 
 # Backend Current State
 
-The maintained backend is the v1 Go control plane and memory-only WSS Relay in
-`relay/`.
+The maintained backend is the v1 Go control plane and WSS Relay in `relay/`.
+Device-plane durable state (enrollment, revocation) is behind a `Storage`
+interface: the default `memory` mode is process-local and restart clears it;
+`mysql` mode persists it and requires `RedisURL` for the shared state layer
+(presence, replay-protection nonce, administrator sessions, cross-instance
+events). Non-redundant single-instance data plane stays in the hub
+(`hub.peers`, `hub.transferSessions`).
 
 Current boundaries:
 
-- Device enrollment binds an in-memory credential to a device identity.
-- Device WebSocket connections are authenticated before hub admission.
-- The administrator API uses a separate versioned contract and an in-memory,
-  HttpOnly-cookie session.
+- Device enrollment binds a signed (HMAC) credential to a device identity;
+  the durable enrollment record (device ID + public key) lives in `Storage`.
+- Device WebSocket connections are authenticated before hub admission through a
+  single `authenticatedRequest` path: credential signature/expiry, Ed25519
+  proof, anti-replay nonce, enrollment key match, and revocation check.
+- The administrator API uses a separate versioned contract and an HttpOnly
+  cookie session; sessions live in the `Cache` layer (memory by default, Redis
+  when configured).
+- Administrator online statistics are derived from the `Cache` presence layer;
+  device-to-device `lookup` still answers from the local hub, matching the
+  single-instance data plane (cross-instance lookup is deferred to the
+  cross-instance forwarding milestone).
 - Relay payloads and Session crypto-handshake stages are forwarded opaquely.
   The backend does not own Application Root material or plaintext.
-- Process restart clears device, administrator-session, and Relay-session state;
-  clients must enroll again.
-- Docker Compose with Caddy is the supported production topology.
+- Process restart clears device, administrator-session, and Relay-session state
+  **in memory mode**; `mysql` mode keeps enrollment and revocation durable and
+  devices keep working across a restart.
+- Docker Compose with Caddy is the supported production topology; a `storage`
+  compose profile adds MySQL and Redis for the durable/multi-instance stack.
 
 Endpoint definitions, environment variables, deployment instructions, and the
 current hardening backlog remain owned by the [Relay README](../../relay/README.md).
