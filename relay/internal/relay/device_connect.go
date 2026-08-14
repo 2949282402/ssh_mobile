@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -28,6 +29,7 @@ func (s *Server) upgradeDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	peer := &peer{
 		deviceID:           claims.DeviceID,
+		connectionID:       hex.EncodeToString(randomBytes(12)),
 		socket:             connection,
 		outbound:           make(chan outboundFrame, s.config.MaxPendingFramesPerDevice),
 		done:               make(chan struct{}),

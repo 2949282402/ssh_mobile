@@ -14,10 +14,15 @@ import (
 )
 
 // RelayEvent 是经 relayEventsChannel 广播的跨实例生命周期事件。
+// connection.replaced 额外携带新旧连接的实例/连接 ID，供旧实例定向断开被取代的
+// 那条连接（而非整个 device，避免延迟事件误踢更新一代）。
 type RelayEvent struct {
-	Type     string `json:"type"`
-	DeviceID string `json:"device_id"`
-	Time     int64  `json:"ts"`
+	Type            string `json:"type"`
+	DeviceID        string `json:"device_id"`
+	Time            int64  `json:"ts"`
+	OldInstanceID   string `json:"old_instance_id,omitempty"`
+	OldConnectionID string `json:"old_connection_id,omitempty"`
+	NewConnectionID string `json:"new_connection_id,omitempty"`
 }
 
 const (
@@ -25,6 +30,10 @@ const (
 	eventDeviceRevoked = "device.revoked"
 	// eventDeviceKicked 表示设备被重新 enroll/抢占，所有实例应断开旧连接。
 	eventDeviceKicked = "device.kicked"
+	// eventConnectionReplaced 表示设备在线租约已被另一实例的新连接接管；旧实例
+	// 据此定向断开指定的 old_connection_id，让跨实例替换立即收敛（而非等旧连接
+	// 下一次心跳续租失败才自愈）。heartbeat CAS renew 保留作事件丢失的兜底。
+	eventConnectionReplaced = "connection.replaced"
 
 	// reconcileInterval 是吊销对账周期：封顶 Redis 抖动期间丢失事件的窗口。
 	reconcileInterval = 15 * time.Second
@@ -36,6 +45,8 @@ func (s *Server) handleRelayEvent(event RelayEvent) {
 	switch event.Type {
 	case eventDeviceRevoked, eventDeviceKicked:
 		s.hub.disconnectDevice(event.DeviceID)
+	case eventConnectionReplaced:
+		s.hub.disconnectConnection(event.DeviceID, event.OldConnectionID)
 	}
 }
 

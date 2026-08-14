@@ -131,6 +131,105 @@ func TestMemoryStoreNonceExpiryFreesCap(t *testing.T) {
 	}
 }
 
+// TestMemoryStorePresenceLeaseSemantics pins the same lease contract as the
+// Redis store (TestRedisStorePresenceLeaseSemantics): newest Take wins, only the
+// owner renews, release is CAS'd against the owner.
+func TestMemoryStorePresenceLeaseSemantics(t *testing.T) {
+	store := newMemoryStore(Config{MaxEnrolledDevices: 1, MaxRevokedDevices: 1})
+	ctx := context.Background()
+
+	if _, _, err := store.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i-a"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.TakePresence(ctx, "device-a", "conn-b", Presence{InstanceID: "i-b"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	presence, present, err := store.GetPresence(ctx, "device-a")
+	if err != nil || !present || presence.ConnectionID != "conn-b" || presence.InstanceID != "i-b" {
+		t.Fatalf("newest connection should own the lease: %+v present=%v err=%v", presence, present, err)
+	}
+	if ok, _ := store.RenewPresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i-a"}, time.Minute); ok {
+		t.Fatal("superseded connection renewed a foreign lease")
+	}
+	if released, _ := store.ReleasePresence(ctx, "device-a", "conn-a"); released {
+		t.Fatal("superseded connection released a foreign lease")
+	}
+	if _, present, _ := store.GetPresence(ctx, "device-a"); !present {
+		t.Fatal("foreign lease was erased by a non-owner release")
+	}
+	if ok, _ := store.RenewPresence(ctx, "device-a", "conn-b", presence, time.Minute); !ok {
+		t.Fatal("owner could not renew its own lease")
+	}
+	if released, _ := store.ReleasePresence(ctx, "device-a", "conn-b"); !released {
+		t.Fatal("owner could not release its own lease")
+	}
+	if _, present, _ := store.GetPresence(ctx, "device-a"); present {
+		t.Fatal("lease still present after owner release")
+	}
+}
+
+// TestPresenceLeaseSemanticsMemoryMatchesRedis runs one operation sequence
+// against both the memory and Redis stores and asserts every renewal/release
+// outcome agrees. This pins the Step-2 contract that the two backends are
+// interchangeable (it requires RELAY_TEST_REDIS_URL; it skips when absent).
+func TestPresenceLeaseSemanticsMemoryMatchesRedis(t *testing.T) {
+	memory := newMemoryStore(Config{MaxEnrolledDevices: 1, MaxRevokedDevices: 1})
+	ctx := context.Background()
+	redisStore, err := openRedisStore(ctx, requireRedisURL(t))
+	if err != nil {
+		t.Fatalf("open redis: %v", err)
+	}
+	defer redisStore.Close()
+	_ = redisStore.forceDeletePresence(ctx, "equiv-device")
+	defer func() { _ = redisStore.forceDeletePresence(ctx, "equiv-device") }()
+
+	type presenceAPI interface {
+		TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (Presence, bool, error)
+		RenewPresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (bool, error)
+		ReleasePresence(ctx context.Context, deviceID, connID string) (bool, error)
+	}
+	stores := map[string]presenceAPI{"memory": memory, "redis": redisStore}
+
+	run := func(step string, op func(presenceAPI) (bool, error)) {
+		t.Helper()
+		results := make(map[string]bool)
+		for name, store := range stores {
+			got, err := op(store)
+			if err != nil {
+				t.Fatalf("%s: %s errored: %v", step, name, err)
+			}
+			results[name] = got
+		}
+		if results["memory"] != results["redis"] {
+			t.Fatalf("%s: memory=%v redis=%v diverged", step, results["memory"], results["redis"])
+		}
+	}
+
+	run("take-a", func(s presenceAPI) (bool, error) {
+		_, _, err := s.TakePresence(ctx, "equiv-device", "a", Presence{InstanceID: "i"}, time.Minute)
+		return true, err
+	})
+	run("renew-owner", func(s presenceAPI) (bool, error) {
+		return s.RenewPresence(ctx, "equiv-device", "a", Presence{InstanceID: "i"}, time.Minute)
+	})
+	run("renew-foreign", func(s presenceAPI) (bool, error) {
+		return s.RenewPresence(ctx, "equiv-device", "b", Presence{InstanceID: "i"}, time.Minute)
+	})
+	run("release-foreign", func(s presenceAPI) (bool, error) {
+		return s.ReleasePresence(ctx, "equiv-device", "b")
+	})
+	run("release-owner", func(s presenceAPI) (bool, error) {
+		return s.ReleasePresence(ctx, "equiv-device", "a")
+	})
+	run("renew-after-release", func(s presenceAPI) (bool, error) {
+		// Absent key: renew acquires and succeeds on both backends.
+		return s.RenewPresence(ctx, "equiv-device", "a", Presence{InstanceID: "i"}, time.Minute)
+	})
+	run("release-new-owner", func(s presenceAPI) (bool, error) {
+		return s.ReleasePresence(ctx, "equiv-device", "a")
+	})
+}
+
 func TestMemoryStoreEnrollmentListingAndRemoval(t *testing.T) {
 	store := newMemoryStore(Config{MaxEnrolledDevices: 4, MaxRevokedDevices: 1})
 	ctx := context.Background()

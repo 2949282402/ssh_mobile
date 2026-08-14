@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"encoding/hex"
+	"hash/fnv"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ type outboundFrame struct {
 
 type peer struct {
 	deviceID           string
+	connectionID       string
 	socket             *websocket.Conn
 	outbound           chan outboundFrame
 	done               chan struct{}
@@ -53,10 +55,16 @@ type controlFrame struct {
 	Online          *bool  `json:"online,omitempty"`
 }
 
-// presenceStore reports device connection state to the shared presence layer.
+// presenceStore reports device connection state to the shared presence layer as
+// a per-connection lease. Every take/renew/release carries the owning
+// connection's ConnectionID so a superseded connection can never erase or renew
+// a newer one. Publish broadcasts a cross-instance lifecycle event (used for
+// the targeted connection.replaced disconnect).
 type presenceStore interface {
-	SetPresence(ctx context.Context, deviceID string, p Presence, ttl time.Duration) error
-	DeletePresence(ctx context.Context, deviceID string) error
+	TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (Presence, bool, error)
+	RenewPresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (bool, error)
+	ReleasePresence(ctx context.Context, deviceID, connID string) (bool, error)
+	Publish(ctx context.Context, event RelayEvent) error
 }
 
 type hub struct {
@@ -67,10 +75,29 @@ type hub struct {
 	presence         presenceStore
 	instanceID       string
 	presenceTTL      time.Duration
+	admission        [admissionStripeCount]sync.Mutex
 	stop             chan struct{}
 	closeOnce        sync.Once
 	waitGroup        sync.WaitGroup
 	closed           bool
+}
+
+// admissionStripeCount is the number of per-device admission lock stripes.
+// Connections for the same device are serialized on the same stripe so their
+// Redis lease claim (TakePresence) lands in connection-establishment order — a
+// stale, slower claim can never overwrite a newer one and kick the valid
+// connection. Different devices rarely collide on a stripe and only wait briefly.
+const admissionStripeCount = 128
+
+// lockAdmission serializes connection admission for deviceID (via a hash stripe)
+// so the lease claim for a newer connection runs after any in-flight claim for
+// the same device has fully landed.
+func (h *hub) lockAdmission(deviceID string) func() {
+	hasher := fnv.New64a()
+	_, _ = hasher.Write([]byte(deviceID))
+	stripe := hasher.Sum64() % admissionStripeCount
+	h.admission[stripe].Lock()
+	return h.admission[stripe].Unlock
 }
 
 func newHub(config Config) *hub {
@@ -91,9 +118,13 @@ func newHub(config Config) *hub {
 	return h
 }
 
-// presenceFor builds the shared presence value for a connected peer.
+// presenceFor builds the shared presence value for a connected peer. The
+// ConnectionID is this connection's lease-ownership identity; every
+// take/renew/release for the device must carry it. Writing it is mandatory: an
+// empty owner in the stored lease would make the peer's first heartbeat renew
+// fail (empty != real connID) and self-close every connection.
 func (h *hub) presenceFor(peer *peer) Presence {
-	value := Presence{InstanceID: h.instanceID, LastSeen: time.Now()}
+	value := Presence{InstanceID: h.instanceID, ConnectionID: peer.connectionID, LastSeen: time.Now()}
 	if peer.socket != nil && peer.socket.RemoteAddr() != nil {
 		value.RemoteAddr = peer.socket.RemoteAddr().String()
 	}
@@ -105,6 +136,12 @@ func (h *hub) presenceFor(peer *peer) Presence {
 // bound exists so a wedged goroutine cannot stall the whole shutdown path
 // beyond the Compose stop_grace_period.
 const hubCloseTimeout = 5 * time.Second
+
+// presenceLeaseTimeout bounds each heartbeat's presence lease I/O so a slow or
+// hung Redis cannot stall the WebSocket read goroutine (which also routes data
+// frames). On timeout the ownership is unknown and the connection is kept
+// (fail-open); the next heartbeat retries.
+const presenceLeaseTimeout = 500 * time.Millisecond
 
 func (h *hub) close() {
 	h.closeOnce.Do(func() {
@@ -123,16 +160,18 @@ func (h *hub) close() {
 		}
 		if h.presence != nil && len(peers) > 0 {
 			// Bound the presence sweep: a wedged Redis must not blow the
-			// shutdown budget (one blocking DEL per peer), so run all deletions
-			// concurrently under a 2s context deadline.
+			// shutdown budget (one blocking release per peer), so run all
+			// releases concurrently under a 2s context deadline. Each release is
+			// CAS'd to the peer's own connection, so a lease already taken over
+			// by another instance is left untouched.
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			var sweep sync.WaitGroup
-			for _, peer := range peers {
+			for _, p := range peers {
 				sweep.Add(1)
-				go func(deviceID string) {
+				go func(peer *peer) {
 					defer sweep.Done()
-					_ = h.presence.DeletePresence(ctx, deviceID)
-				}(peer.deviceID)
+					_, _ = h.presence.ReleasePresence(ctx, peer.deviceID, peer.connectionID)
+				}(p)
 			}
 			sweep.Wait()
 			cancel()
@@ -152,6 +191,13 @@ func (h *hub) close() {
 }
 func (h *hub) add(peer *peer) bool {
 	peer.lastSeen = time.Now()
+	// Serialize admission per device so the Redis lease claim lands in
+	// connection-establishment order: a newer connection's TakePresence runs only
+	// after any in-flight claim for the same device completed, so a stale claim
+	// can never overwrite it and kick the valid connection.
+	unlockAdmission := h.lockAdmission(peer.deviceID)
+	defer unlockAdmission()
+
 	h.mutex.Lock()
 	if h.closed {
 		h.mutex.Unlock()
@@ -163,34 +209,106 @@ func (h *hub) add(peer *peer) bool {
 		return false
 	}
 	h.peers[peer.deviceID] = peer
-	h.waitGroup.Add(2)
 	h.mutex.Unlock()
 	if previous != nil {
 		closePeer(previous)
 	}
-	// Write presence before starting the read/write goroutines: if the socket
-	// fails immediately, remove() clears presence after this point, so no
-	// phantom online entry can be left behind by a delayed SetPresence.
+	// Take the presence lease before starting the read/write goroutines: if the
+	// socket fails immediately, remove() releases it after this point, so no
+	// phantom online entry can be left behind by a delayed TakePresence. The new
+	// connection takes over any existing lease (newest connect wins).
+	leaseTaken := false
 	if h.presence != nil {
-		_ = h.presence.SetPresence(context.Background(), peer.deviceID, h.presenceFor(peer), h.presenceTTL)
+		old, replaced, err := h.presence.TakePresence(context.Background(), peer.deviceID, peer.connectionID, h.presenceFor(peer), h.presenceTTL)
+		if err == nil {
+			leaseTaken = true
+		}
+		if err == nil && replaced && old.ConnectionID != "" && old.InstanceID != "" && old.InstanceID != h.instanceID {
+			// Cross-instance takeover: tell the superseded connection's instance
+			// to close it now, so the dual-connection window collapses
+			// immediately instead of waiting up to a heartbeat cycle. A lost
+			// event is covered by the heartbeat CAS renew fallback.
+			_ = h.presence.Publish(context.Background(), RelayEvent{
+				Type:            eventConnectionReplaced,
+				DeviceID:        peer.deviceID,
+				OldInstanceID:   old.InstanceID,
+				OldConnectionID: old.ConnectionID,
+				NewConnectionID: peer.connectionID,
+				Time:            time.Now().UnixMilli(),
+			})
+		}
+	}
+	// Atomically re-check currency/closed and register the worker goroutines in
+	// the same h.mutex critical section that close() uses, so shutdown cannot
+	// race: if close() won the mutex first, isCurrent is false and no workers are
+	// registered (close()'s Wait() has nothing to wait for); if this wins first,
+	// the Add(2) happens-before close()'s Wait(), which must then see both
+	// workers' Done. The peer may also have been kicked (revoke/disconnect)
+	// while the lease claim was in flight.
+	h.mutex.Lock()
+	isCurrent := !h.closed && h.peers[peer.deviceID] == peer
+	if isCurrent {
+		h.waitGroup.Add(2)
+	}
+	h.mutex.Unlock()
+	if !isCurrent {
+		// The lease was just taken but this admission was rejected (the hub closed
+		// or the peer was kicked while the claim was in flight): release the lease
+		// we wrote so a rejected connection cannot leave a phantom "online" entry.
+		// The release is CAS'd to this connection, so if a newer connection has
+		// since taken the lease over it is left untouched — the same lifecycle
+		// rule the heartbeat path applies after a post-renew currency re-check.
+		if leaseTaken && h.presence != nil {
+			_, _ = h.presence.ReleasePresence(context.Background(), peer.deviceID, peer.connectionID)
+		}
+		closePeer(peer)
+		return false
 	}
 	go h.write(peer)
 	go h.read(peer)
 	return true
 }
 
+// disconnectConnection closes only the connection whose connectionID matches — a
+// directed disconnect for a connection.replaced event. A delayed event must not
+// kick a newer connection that has since taken the device, so the current peer's
+// connectionID must match exactly; otherwise this is a no-op.
+func (h *hub) disconnectConnection(deviceID, connectionID string) {
+	if connectionID == "" {
+		return
+	}
+	h.mutex.Lock()
+	current := h.peers[deviceID]
+	if current == nil || current.connectionID != connectionID {
+		h.mutex.Unlock()
+		return
+	}
+	delete(h.peers, deviceID)
+	for sessionID, s := range h.transferSessions {
+		if s.sender == deviceID || s.receiver == deviceID {
+			delete(h.transferSessions, sessionID)
+		}
+	}
+	h.mutex.Unlock()
+	if h.presence != nil {
+		_, _ = h.presence.ReleasePresence(context.Background(), deviceID, connectionID)
+	}
+	closePeer(current)
+}
+
 func (h *hub) remove(peer *peer) {
 	h.mutex.Lock()
-	// Only the current peer clears presence: a replaced peer's read goroutine
+	// Only the current peer releases the lease: a replaced peer's read goroutine
 	// may still exit after a duplicate connect, and must not erase the new
-	// peer's presence.
+	// peer's presence. The CAS ReleasePresence additionally guards the
+	// cross-instance case where a foreign connection now owns the lease.
 	isCurrent := h.peers[peer.deviceID] == peer
 	if isCurrent {
 		delete(h.peers, peer.deviceID)
 	}
 	h.mutex.Unlock()
 	if isCurrent && h.presence != nil {
-		_ = h.presence.DeletePresence(context.Background(), peer.deviceID)
+		_, _ = h.presence.ReleasePresence(context.Background(), peer.deviceID, peer.connectionID)
 	}
 	closePeer(peer)
 }
@@ -219,10 +337,14 @@ func (h *hub) disconnectDevice(deviceID string) {
 	}
 	h.mutex.Unlock()
 	if peer != nil {
-		// The peer's deferred remove() runs with isCurrent==false once we already
-		// deleted it, so it would never clear presence; clear it here explicitly.
+		// Release only this instance's current lease (CAS): the peer's deferred
+		// remove() would see isCurrent==false and never release it, so do it
+		// here. If a newer connection replaced this peer or took over the lease
+		// from another instance, the release is a no-op instead of wiping the
+		// live presence. A device connected on another instance is released
+		// there when it receives the revoke/kick event, or by reconcileRevocations.
 		if h.presence != nil {
-			_ = h.presence.DeletePresence(context.Background(), deviceID)
+			_, _ = h.presence.ReleasePresence(context.Background(), deviceID, peer.connectionID)
 		}
 		closePeer(peer)
 	}

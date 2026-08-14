@@ -28,10 +28,12 @@ func requireRedisURL(t *testing.T) string {
 }
 
 // cleanupRedisTestKeys removes keys this test file may have left behind.
+// Presence uses the unconditional force-delete helper because tests may leave a
+// lease owned by an arbitrary connection; the CAS ReleasePresence would miss.
 func cleanupRedisTestKeys(t *testing.T, store *redisStore) {
 	t.Helper()
 	ctx := context.Background()
-	_ = store.DeletePresence(ctx, "device-a")
+	_ = store.forceDeletePresence(ctx, "device-a")
 	_ = store.ClearDeviceNonces(ctx, "device-a")
 	_ = store.DeleteAdminSession(ctx, "tok-1")
 }
@@ -45,15 +47,18 @@ func TestRedisStorePresenceNonceAndAdmin(t *testing.T) {
 	defer store.Close()
 	cleanupRedisTestKeys(t, store)
 
-	if err := store.SetPresence(ctx, "device-a", Presence{InstanceID: "i1", RemoteAddr: "1.2.3.4"}, time.Minute); err != nil {
+	if _, _, err := store.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1", RemoteAddr: "1.2.3.4"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	presence, present, err := store.GetPresence(ctx, "device-a")
-	if err != nil || !present || presence.InstanceID != "i1" {
+	if err != nil || !present || presence.InstanceID != "i1" || presence.ConnectionID != "conn-1" {
 		t.Fatalf("presence round-trip failed: %+v present=%v err=%v", presence, present, err)
 	}
-	if err := store.DeletePresence(ctx, "device-a"); err != nil {
-		t.Fatal(err)
+	if ok, _ := store.RenewPresence(ctx, "device-a", "conn-1", presence, time.Minute); !ok {
+		t.Fatal("owner could not renew its own lease")
+	}
+	if released, _ := store.ReleasePresence(ctx, "device-a", "conn-1"); !released {
+		t.Fatal("owner could not release its own lease")
 	}
 	if _, present, _ := store.GetPresence(ctx, "device-a"); present {
 		t.Fatal("presence not deleted")
@@ -84,6 +89,103 @@ func TestRedisStorePresenceNonceAndAdmin(t *testing.T) {
 	}
 	if ok, _ := store.AdminSessionExists(ctx, "tok-1"); ok {
 		t.Fatal("admin session not deleted")
+	}
+}
+
+// TestRedisStorePresenceLeaseSemantics pins the three Step-2 contracts at the
+// store level: (1) the newest TakePresence wins and becomes the sole owner, so a
+// dual connection does not flap the presence identity; (2) only the owner can
+// renew, so a superseded connection's heartbeat cannot keep it "online";
+// (3) ReleasePresence is CAS'd, so an old connection can never erase a newer
+// one's lease.
+func TestRedisStorePresenceLeaseSemantics(t *testing.T) {
+	ctx := context.Background()
+	store, err := openRedisStore(ctx, requireRedisURL(t))
+	if err != nil {
+		t.Fatalf("open redis: %v", err)
+	}
+	defer store.Close()
+	if err := store.forceDeletePresence(ctx, "lease-device"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.forceDeletePresence(ctx, "lease-device") }()
+
+	if _, _, err := store.TakePresence(ctx, "lease-device", "conn-a", Presence{InstanceID: "i-a"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// A second connection takes the lease over (cross-instance reconnect).
+	if _, _, err := store.TakePresence(ctx, "lease-device", "conn-b", Presence{InstanceID: "i-b"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	presence, present, err := store.GetPresence(ctx, "lease-device")
+	if err != nil || !present || presence.ConnectionID != "conn-b" || presence.InstanceID != "i-b" {
+		t.Fatalf("newest connection should own the lease: %+v present=%v err=%v", presence, present, err)
+	}
+	// Superseded connection cannot renew or release.
+	if ok, _ := store.RenewPresence(ctx, "lease-device", "conn-a", Presence{InstanceID: "i-a"}, time.Minute); ok {
+		t.Fatal("superseded connection renewed a foreign lease")
+	}
+	if released, _ := store.ReleasePresence(ctx, "lease-device", "conn-a"); released {
+		t.Fatal("superseded connection released a foreign lease")
+	}
+	if _, present, _ := store.GetPresence(ctx, "lease-device"); !present {
+		t.Fatal("foreign lease was erased by a non-owner release")
+	}
+	// Current owner can renew and finally release.
+	if ok, _ := store.RenewPresence(ctx, "lease-device", "conn-b", presence, time.Minute); !ok {
+		t.Fatal("owner could not renew its own lease")
+	}
+	if released, _ := store.ReleasePresence(ctx, "lease-device", "conn-b"); !released {
+		t.Fatal("owner could not release its own lease")
+	}
+	if _, present, _ := store.GetPresence(ctx, "lease-device"); present {
+		t.Fatal("lease still present after owner release")
+	}
+}
+
+// TestRedisStorePresenceLegacyEntryNotRenewed verifies the upgrade path: a
+// legacy presence JSON without a connection_id is treated as foreign, so it is
+// not renewed (the pre-upgrade connection self-heals) and the next TakePresence
+// overwrites it with the lease format.
+func TestRedisStorePresenceLegacyEntryNotRenewed(t *testing.T) {
+	ctx := context.Background()
+	store, err := openRedisStore(ctx, requireRedisURL(t))
+	if err != nil {
+		t.Fatalf("open redis: %v", err)
+	}
+	defer store.Close()
+	if err := store.forceDeletePresence(ctx, "legacy-device"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.forceDeletePresence(ctx, "legacy-device") }()
+
+	if err := store.client.Set(ctx, store.presenceKey("legacy-device"), `{"instance_id":"old","last_seen":"2026-01-01T00:00:00Z"}`, time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := store.RenewPresence(ctx, "legacy-device", "conn-x", Presence{InstanceID: "new"}, time.Minute); ok {
+		t.Fatal("legacy entry without an owner was renewed as if owned")
+	}
+	if _, _, err := store.TakePresence(ctx, "legacy-device", "conn-x", Presence{InstanceID: "new"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	presence, present, err := store.GetPresence(ctx, "legacy-device")
+	if err != nil || !present || presence.ConnectionID != "conn-x" {
+		t.Fatalf("lease format not established over the legacy entry: %+v present=%v err=%v", presence, present, err)
+	}
+	if ok, _ := store.RenewPresence(ctx, "legacy-device", "conn-x", presence, time.Minute); !ok {
+		t.Fatal("owner could not renew after taking over a legacy entry")
+	}
+
+	// A non-object JSON value (here JSON null) is also treated as foreign rather
+	// than raising, and self-heals on the next TakePresence.
+	if err := store.forceDeletePresence(ctx, "legacy-device"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.client.Set(ctx, store.presenceKey("legacy-device"), "null", time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := store.RenewPresence(ctx, "legacy-device", "conn-x", Presence{InstanceID: "new"}, time.Minute); ok {
+		t.Fatal("non-object presence value was renewed as if owned")
 	}
 }
 
@@ -143,14 +245,17 @@ type erroringCache struct {
 func (erroringCache) ConsumeNonce(context.Context, string, string, time.Time) (bool, error) {
 	return false, errors.New("cache unavailable")
 }
-func (erroringCache) SetPresence(context.Context, string, Presence, time.Duration) error {
-	return errors.New("cache unavailable")
+func (erroringCache) TakePresence(context.Context, string, string, Presence, time.Duration) (Presence, bool, error) {
+	return Presence{}, false, errors.New("cache unavailable")
+}
+func (erroringCache) RenewPresence(context.Context, string, string, Presence, time.Duration) (bool, error) {
+	return false, errors.New("cache unavailable")
+}
+func (erroringCache) ReleasePresence(context.Context, string, string) (bool, error) {
+	return false, errors.New("cache unavailable")
 }
 func (erroringCache) GetPresence(context.Context, string) (Presence, bool, error) {
 	return Presence{}, false, errors.New("cache unavailable")
-}
-func (erroringCache) DeletePresence(context.Context, string) error {
-	return errors.New("cache unavailable")
 }
 func (erroringCache) Publish(context.Context, RelayEvent) error {
 	return errors.New("cache unavailable")
@@ -215,16 +320,16 @@ func TestMySQLRedisFullStackOnlineStats(t *testing.T) {
 	if server.cache.(*redisStore) == nil {
 		t.Fatal("server cache is not the redis store")
 	}
-	// Simulate a connected device: presence written to Redis.
-	if err := server.cache.SetPresence(ctx, "device-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	// Simulate a connected device: presence lease written to Redis.
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	items, err := server.adminDeviceSnapshot()
 	if err != nil || len(items) != 1 || !items[0].Online {
 		t.Fatalf("admin snapshot should show the device online: err=%v items=%+v", err, items)
 	}
-	if err := server.cache.DeletePresence(ctx, "device-a"); err != nil {
-		t.Fatal(err)
+	if released, err := server.cache.ReleasePresence(ctx, "device-a", "conn-1"); err != nil || !released {
+		t.Fatalf("release presence: released=%v err=%v", released, err)
 	}
 	items, err = server.adminDeviceSnapshot()
 	if err != nil || len(items) != 1 || items[0].Online {

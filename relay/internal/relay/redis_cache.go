@@ -106,12 +106,137 @@ func (r *redisStore) ClearDeviceNonces(ctx context.Context, deviceID string) err
 	return r.client.Del(ctx, r.noncesKey(deviceID)).Err()
 }
 
-func (r *redisStore) SetPresence(ctx context.Context, deviceID string, p Presence, ttl time.Duration) error {
+// renewPresenceScript renews the presence lease only while connID still owns it
+// (CAS). KEYS[1]=relay:presence:<deviceID>; ARGV[1]=connID, ARGV[2]=json,
+// ARGV[3]=ttl(ms). Returns 1 when the lease is now held by connID (renewed, or
+// acquired because the key was absent/expired), 0 when a different connection
+// owns it. A non-JSON value — or a legacy entry without connection_id — is
+// treated as foreign (return 0) so it self-heals on the next TakePresence
+// instead of being renewed by a non-owner. The GET→compare→SET is atomic inside
+// the single script, so concurrent takeovers cannot tear.
+const renewPresenceScript = `
+if tonumber(ARGV[3]) <= 0 then
+  return 1
+end
+local data = redis.call('GET', KEYS[1])
+if data then
+  local ok, obj = pcall(cjson.decode, data)
+  -- type(obj)=='table' excludes JSON null/primitives (cjson.null is userdata,
+  -- indexing it would raise) and treats any non-object value as foreign.
+  if ok and type(obj) == 'table' then
+    if obj['connection_id'] ~= ARGV[1] then
+      return 0
+    end
+  else
+    return 0
+  end
+end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+return 1
+`
+
+// takePresenceScript unconditionally establishes the new lease owner and returns
+// the previous value (nil when the lease was free), so the claimer can notify
+// the superseded owner's instance with a targeted connection.replaced event.
+// KEYS[1]=relay:presence:<deviceID>; ARGV[1]=json, ARGV[2]=ttl(ms). The GET→SET
+// is atomic inside the script, so the returned previous owner cannot be torn by
+// a concurrent claim.
+const takePresenceScript = `
+local previous = redis.call('GET', KEYS[1])
+if tonumber(ARGV[2]) <= 0 then
+  return previous
+end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return previous
+`
+
+// releasePresenceScript releases the presence lease only while connID still owns
+// it (CAS delete). KEYS[1]=relay:presence:<deviceID>; ARGV[1]=connID. Returns 1
+// when the lease was deleted, 0 when it was absent or owned by another
+// connection — so a superseded connection can never erase a newer one.
+const releasePresenceScript = `
+local data = redis.call('GET', KEYS[1])
+if not data then
+  return 0
+end
+local ok, obj = pcall(cjson.decode, data)
+-- type(obj)=='table' excludes JSON null/primitives (see renewPresenceScript).
+if ok and type(obj) == 'table' and obj['connection_id'] == ARGV[1] then
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+return 0
+`
+
+// TakePresence unconditionally establishes connID as the presence lease owner for
+// deviceID: the newest authenticated connection wins (last writer wins). The
+// stored ConnectionID is forced to connID so the persisted lease always carries
+// its owner (a missing owner would make every renewal treat it as foreign and
+// self-close the connection). It returns the superseded lease (replaced=true
+// when there was a live previous owner) so the claimer can publish a targeted
+// connection.replaced event to the old owner's instance.
+func (r *redisStore) TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (Presence, bool, error) {
+	p.ConnectionID = connID
 	data, err := json.Marshal(p)
 	if err != nil {
-		return err
+		return Presence{}, false, err
 	}
-	return r.client.Set(ctx, r.presenceKey(deviceID), data, ttl).Err()
+	previous, err := r.client.Eval(ctx, takePresenceScript,
+		[]string{r.presenceKey(deviceID)},
+		string(data), ttl.Milliseconds(),
+	).Result()
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			return Presence{}, false, err
+		}
+		// Lua returned nil: the lease was free, so there is no previous owner.
+		return Presence{}, false, nil
+	}
+	if s, ok := previous.(string); ok {
+		var prev Presence
+		if err := json.Unmarshal([]byte(s), &prev); err != nil {
+			// A corrupt/foreign previous value: still take over, but report no
+			// previous owner (we cannot target a replacement event at it).
+			return Presence{}, false, nil
+		}
+		return prev, true, nil
+	}
+	return Presence{}, false, nil
+}
+
+func (r *redisStore) RenewPresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (bool, error) {
+	p.ConnectionID = connID
+	data, err := json.Marshal(p)
+	if err != nil {
+		return false, err
+	}
+	result, err := r.client.Eval(ctx, renewPresenceScript,
+		[]string{r.presenceKey(deviceID)},
+		connID, string(data), ttl.Milliseconds(),
+	).Int()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
+}
+
+func (r *redisStore) ReleasePresence(ctx context.Context, deviceID, connID string) (bool, error) {
+	result, err := r.client.Eval(ctx, releasePresenceScript,
+		[]string{r.presenceKey(deviceID)},
+		connID,
+	).Int()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
+}
+
+// forceDeletePresence unconditionally removes a device's presence key, bypassing
+// the lease CAS. It exists for test isolation and operator troubleshooting only;
+// production disconnect paths always use ReleasePresence so a stale connection
+// cannot erase a newer one.
+func (r *redisStore) forceDeletePresence(ctx context.Context, deviceID string) error {
+	return r.client.Del(ctx, r.presenceKey(deviceID)).Err()
 }
 
 func (r *redisStore) GetPresence(ctx context.Context, deviceID string) (Presence, bool, error) {
@@ -127,10 +252,6 @@ func (r *redisStore) GetPresence(ctx context.Context, deviceID string) (Presence
 		return Presence{}, false, err
 	}
 	return p, true, nil
-}
-
-func (r *redisStore) DeletePresence(ctx context.Context, deviceID string) error {
-	return r.client.Del(ctx, r.presenceKey(deviceID)).Err()
 }
 
 func (r *redisStore) SetAdminSession(ctx context.Context, token string, ttl time.Duration) error {
