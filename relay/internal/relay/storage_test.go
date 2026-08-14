@@ -7,6 +7,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -323,4 +324,51 @@ func TestMemoryStoreEnrollmentListingAndRemoval(t *testing.T) {
 	if count, _ := store.CountEnrollments(ctx); count != 1 {
 		t.Fatalf("expected 1 enrollment after removal, got %d", count)
 	}
+}
+
+// TestMemoryStoreInternallySafeConcurrentAccess pins the devicesMutex → per-device
+// refactor: the memory store must be safe to access concurrently without any
+// caller-held lock, so global admin scans (ListEnrollments) and revocation
+// reconciliation (IsRevoked) no longer serialize behind a global mutex. Under
+// -race this fails on the old design, where concurrent map writes raced with
+// the ListEnrollments scan.
+func TestMemoryStoreInternallySafeConcurrentAccess(t *testing.T) {
+	store := newMemoryStore(Config{MaxEnrolledDevices: 1000, MaxRevokedDevices: 1000})
+	ctx := context.Background()
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	// Concurrent writers (enroll + nonce consume) racing with reader scans.
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; ; j++ {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				id := fmt.Sprintf("device-%d", j%200)
+				_, _ = store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: id, PublicKey: "key-" + id})
+				_, _ = store.ConsumeNonce(ctx, id, fmt.Sprintf("n-%d", j), time.Now().Add(time.Minute))
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_, _ = store.ListEnrollments(ctx)
+			_, _ = store.CountEnrollments(ctx)
+			_, _ = store.IsRevoked(ctx, "device-1", time.Now())
+		}
+	}()
+	time.Sleep(150 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }

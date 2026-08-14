@@ -94,9 +94,10 @@ func (s *Server) reconcileRevocationsOnce() {
 	}
 	s.hub.mutex.Unlock()
 	for _, deviceID := range peers {
-		s.devicesMutex.Lock()
+		// IsRevoked 是单个存储调用，store 内部并发安全，无需任何调用方锁——旧的全局
+		// devicesMutex 让每 15s 一次、对全部在线设备的吊销对账把所有 device-plane 请求
+		// 串行化（MySQL 模式一个 RTT 一锁，直接吃吞吐）。
 		revoked, err := s.store.IsRevoked(context.Background(), deviceID, time.Now())
-		s.devicesMutex.Unlock()
 		if err != nil {
 			s.logger.Warn("revocation reconciliation could not check device",
 				"device_id", deviceID, "error", err)

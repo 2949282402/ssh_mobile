@@ -63,9 +63,7 @@ func TestReconcileRevocationsDisconnectsRevokedDevice(t *testing.T) {
 	}
 	injectPeer(server.hub, "device-a")
 
-	server.devicesMutex.Lock()
 	recorded, err := server.store.RecordRevocation(ctx, "device-a", time.Now().Add(time.Hour))
-	server.devicesMutex.Unlock()
 	if err != nil || !recorded {
 		t.Fatalf("revoke failed: recorded=%v err=%v", recorded, err)
 	}

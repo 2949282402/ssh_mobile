@@ -49,9 +49,7 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.devicesMutex.Lock()
 	device, err := s.store.GetEnrollment(r.Context(), request.DeviceID)
-	s.devicesMutex.Unlock()
 	if err != nil {
 		// 存储故障：fail closed，客户端可稍后重试 refresh（内存实现永不返回错误）。
 		writeNetworkError(w, http.StatusInternalServerError, relayErrorRelayError, "Relay storage is unavailable.", "refresh_credential", request.DeviceID)
@@ -64,9 +62,7 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 	// 纵深防御：即使 enrollment 因并发/删除失败而残留，只要吊销 tombstone 在有效期
 	// 内就不得续发新凭据（否则被吊销设备可通过 refresh 重新取得有效凭据）。
-	s.devicesMutex.Lock()
 	revoked, revokeErr := s.store.IsRevoked(r.Context(), request.DeviceID, time.Now())
-	s.devicesMutex.Unlock()
 	if revokeErr != nil {
 		writeNetworkError(w, http.StatusInternalServerError, relayErrorRelayError, "Relay storage is unavailable.", "refresh_credential", request.DeviceID)
 		return
@@ -90,9 +86,7 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
 		return
 	}
-	s.devicesMutex.Lock()
 	replayed, nonceErr := s.cache.ConsumeNonce(r.Context(), request.DeviceID, request.Nonce, time.Now().Add(refreshNonceTTL))
-	s.devicesMutex.Unlock()
 	if nonceErr != nil {
 		// fail-open：与 /v1/connect 一致——nonce 防重放降级不阻断 refresh，
 		// Ed25519 签名仍是真正的鉴权；仅日志告警。

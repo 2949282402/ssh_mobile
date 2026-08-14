@@ -5,8 +5,9 @@
 // store behind the same contract so nonce state is shared across instances and
 // gained presence, admin-session and transfer-session keys.
 //
-// As with Storage, every method must be called while the caller holds
-// s.devicesMutex.
+// As with Storage, individual methods are internally synchronized; composite
+// device operations that span nonce consumption plus enrollment/revocation are
+// serialized by the caller's per-device lock stripe (s.lockDevice).
 
 package relay
 
@@ -43,9 +44,9 @@ type presenceEntry struct {
 
 // Cache 是短期、可重建状态的契约。
 //
-// 锁约定：ConsumeNonce/ClearDeviceNonces 必须在持有 s.devicesMutex 时调用（与
-// enrollment/吊销复合操作的原子性绑定）；presence 与 admin 会话方法自同步，可由
-// hub goroutine 与管理端处理器在设备平面锁之外调用。
+// 锁约定：非 nonce 方法内部自同步，可由 hub goroutine 与管理端处理器直接调用；
+// ConsumeNonce/ClearDeviceNonces 用 memoryStore 的 deviceMu 自同步（Redis 模式并发
+// 安全），同设备复合操作（enroll/吊销）的原子性由调用方的 per-device 分片锁保证。
 type Cache interface {
 	// ConsumeNonce 原子记录 deviceID 的 nonce；若该 nonce 已存在（重放）返回 true。
 	// expiresAt 是 nonce 的有效上界；内存与 Redis 实现均遵守每设备活跃 nonce 上限
@@ -85,6 +86,8 @@ type Cache interface {
 }
 
 func (m *memoryStore) ConsumeNonce(_ context.Context, deviceID, nonce string, expiresAt time.Time) (bool, error) {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
 	now := time.Now()
 	deviceNonces := m.proofNonces[deviceID]
 	if deviceNonces == nil {
@@ -107,6 +110,8 @@ func (m *memoryStore) ConsumeNonce(_ context.Context, deviceID, nonce string, ex
 }
 
 func (m *memoryStore) ClearDeviceNonces(_ context.Context, deviceID string) error {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
 	delete(m.proofNonces, deviceID)
 	return nil
 }
