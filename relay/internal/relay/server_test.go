@@ -4,6 +4,7 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -164,11 +165,13 @@ func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server.enrolledDevices["device-a"] = &EnrolledDevice{
+	if _, err := server.store.PutEnrollment(context.Background(), &EnrolledDevice{
 		DeviceID:        "device-a",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
 		ProtocolVersion: 1,
 		EnrolledAt:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
 	}
 	authenticatedRequest := func(nonceValue byte) *http.Request {
 		nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceValue}, 32))

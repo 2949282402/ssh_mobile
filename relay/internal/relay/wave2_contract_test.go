@@ -6,6 +6,7 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -26,14 +27,14 @@ func TestConnectExpiredCredentialReturnsCode12(t *testing.T) {
 		CredentialTTL: time.Hour,
 	})
 	defer server.Close()
-	server.devicesMutex.Lock()
-	server.enrolledDevices["device-a"] = &EnrolledDevice{
+	if _, err := server.store.PutEnrollment(context.Background(), &EnrolledDevice{
 		DeviceID:        "device-a",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
 		ProtocolVersion: 1,
 		EnrolledAt:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
 	}
-	server.devicesMutex.Unlock()
 
 	// A credential whose expiry is already in the past.
 	expired, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, -time.Hour)
@@ -78,14 +79,14 @@ func TestConnectGenericAuthFailureKeepsCode2(t *testing.T) {
 		CredentialTTL: time.Hour,
 	})
 	defer server.Close()
-	server.devicesMutex.Lock()
-	server.enrolledDevices["device-a"] = &EnrolledDevice{
+	if _, err := server.store.PutEnrollment(context.Background(), &EnrolledDevice{
 		DeviceID:        "device-a",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
 		ProtocolVersion: 1,
 		EnrolledAt:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
 	}
-	server.devicesMutex.Unlock()
 
 	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, time.Hour)
 	if err != nil {
@@ -177,7 +178,7 @@ func TestIdentityConflictAtEnrollRejectsDifferentKey(t *testing.T) {
 	}
 
 	server.devicesMutex.Lock()
-	stored := server.enrolledDevices["device-a"]
+	stored, _ := server.store.GetEnrollment(context.Background(), "device-a")
 	server.devicesMutex.Unlock()
 	if stored == nil || stored.PublicKey != base64.RawURLEncoding.EncodeToString(key1) {
 		t.Fatal("conflicting enroll overwrote the existing enrollment")
