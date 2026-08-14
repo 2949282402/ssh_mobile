@@ -243,9 +243,11 @@ func TestPresenceBatchMemoryMatchesRedis(t *testing.T) {
 	defer redisStore.Close()
 	_ = redisStore.forceDeletePresence(ctx, "batch-a")
 	_ = redisStore.forceDeletePresence(ctx, "batch-b")
+	_ = redisStore.forceDeletePresence(ctx, "batch-c")
 	defer func() {
 		_ = redisStore.forceDeletePresence(ctx, "batch-a")
 		_ = redisStore.forceDeletePresence(ctx, "batch-b")
+		_ = redisStore.forceDeletePresence(ctx, "batch-c")
 	}()
 
 	type batchAPI interface {
@@ -257,19 +259,32 @@ func TestPresenceBatchMemoryMatchesRedis(t *testing.T) {
 		if _, _, err := store.TakePresence(ctx, "batch-a", "conn-a", Presence{InstanceID: "i", RemoteAddr: "10.0.0.1:9000"}, time.Minute); err != nil {
 			t.Fatal(err)
 		}
+		// batch-c is written with a short TTL so it genuinely expires mid-test,
+		// exercising the memory lazy-prune branch and the Redis TTL path.
+		if _, _, err := store.TakePresence(ctx, "batch-c", "conn-c", Presence{InstanceID: "i"}, 50*time.Millisecond); err != nil {
+			t.Fatal(err)
+		}
 	}
+	time.Sleep(100 * time.Millisecond)
 
 	got := make(map[string]map[string]Presence, 2)
 	for name, store := range stores {
-		result, err := store.GetPresences(ctx, []string{"batch-a", "batch-b", "batch-missing"})
+		result, err := store.GetPresences(ctx, []string{"batch-a", "batch-b", "batch-c", "batch-missing"})
 		if err != nil {
 			t.Fatalf("%s: GetPresences errored: %v", name, err)
 		}
 		got[name] = result
 	}
-	// Only batch-a is live; the absent and expired devices must not appear.
+	// Only batch-a is live; the never-written (batch-b/batch-missing) and the
+	// expired (batch-c) devices must not appear.
 	if len(got["memory"]) != 1 || len(got["redis"]) != 1 {
 		t.Fatalf("expected exactly batch-a online in both backends: memory=%d redis=%d", len(got["memory"]), len(got["redis"]))
+	}
+	if _, ok := got["memory"]["batch-c"]; ok {
+		t.Fatal("memory GetPresences returned an expired lease")
+	}
+	if _, ok := got["redis"]["batch-c"]; ok {
+		t.Fatal("redis GetPresences returned an expired lease")
 	}
 	memA, redisA := got["memory"]["batch-a"], got["redis"]["batch-a"]
 	if memA.ConnectionID != "conn-a" || memA.RemoteAddr != "10.0.0.1:9000" || memA.InstanceID != "i" {

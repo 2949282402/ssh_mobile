@@ -386,6 +386,33 @@ func TestAdminApiContract(t *testing.T) {
 	}
 }
 
+// TestAdminOverviewCountsOnlineDevices pins the overview online count driven by
+// presence: a device with a live lease is counted online through the batch
+// GetPresences path, not just the enrolled count.
+func TestAdminOverviewCountsOnlineDevices(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-1", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	overview, err := server.adminOverviewSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Devices.Enrolled != 1 || overview.Devices.Online != 1 {
+		t.Fatalf("overview should count the online device: %+v", overview.Devices)
+	}
+}
+
 // TestDartWireContractEndToEnd 验证 Dart v1 Relay 控制帧和加密二进制帧端到端一致。
 func TestDartWireContractEndToEnd(t *testing.T) {
 	server := NewServer(Config{

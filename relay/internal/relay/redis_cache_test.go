@@ -189,6 +189,41 @@ func TestRedisStorePresenceLegacyEntryNotRenewed(t *testing.T) {
 	}
 }
 
+// TestRedisStoreGetPresencesSkipsCorruptEntry pins the batch fail-open
+// granularity: a corrupt (non-JSON) presence value must be skipped rather than
+// surfaced as an error, so one bad key cannot blank the whole admin batch.
+func TestRedisStoreGetPresencesSkipsCorruptEntry(t *testing.T) {
+	ctx := context.Background()
+	store, err := openRedisStore(ctx, requireRedisURL(t))
+	if err != nil {
+		t.Fatalf("open redis: %v", err)
+	}
+	defer store.Close()
+	_ = store.forceDeletePresence(ctx, "corrupt-a")
+	_ = store.forceDeletePresence(ctx, "corrupt-b")
+	defer func() {
+		_ = store.forceDeletePresence(ctx, "corrupt-a")
+		_ = store.forceDeletePresence(ctx, "corrupt-b")
+	}()
+
+	if _, _, err := store.TakePresence(ctx, "corrupt-a", "conn-a", Presence{InstanceID: "i"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.client.Set(ctx, store.presenceKey("corrupt-b"), "not-json{{", time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.GetPresences(ctx, []string{"corrupt-a", "corrupt-b"})
+	if err != nil {
+		t.Fatalf("GetPresences should skip a corrupt entry, got error: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected only the live device, got %d: %v", len(result), result)
+	}
+	if _, ok := result["corrupt-b"]; ok {
+		t.Fatal("corrupt entry was included in batch presence")
+	}
+}
+
 func TestRedisStoreEventBus(t *testing.T) {
 	ctx := context.Background()
 	store, err := openRedisStore(ctx, requireRedisURL(t))
@@ -297,6 +332,31 @@ func TestAuthFailsOpenWhenCacheUnavailable(t *testing.T) {
 	))
 	if _, _, _, ok := server.authenticatedRequest(request); !ok {
 		t.Fatal("authentication failed closed when the cache was unavailable")
+	}
+}
+
+// TestAdminSnapshotFailsOpenWhenPresenceUnavailable verifies the admin device
+// snapshot stays 200 (fail-open) with every device reported offline when the
+// presence cache is unavailable — the same degrade the old per-device
+// GetPresence loop had, now exercised through the batch path so a batch error
+// does not surface as a 500.
+func TestAdminSnapshotFailsOpenWhenPresenceUnavailable(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	server.cache = erroringCache{Cache: server.cache}
+
+	items, err := server.adminDeviceSnapshot()
+	if err != nil {
+		t.Fatalf("admin snapshot should fail open when presence is unavailable: %v", err)
+	}
+	if len(items) != 1 || items[0].Online {
+		t.Fatalf("devices should report offline when presence is unavailable: %+v", items)
 	}
 }
 
