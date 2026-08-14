@@ -318,10 +318,6 @@ git diff --exit-code -- apps/ssh_mobile_full/assets apps/ssh_mobile_full/android
 git diff --exit-code -- apps/ssh_mobile_full/lib/data/database/app_database.g.dart
 ```
 
-```powershell
-.\scripts\sync_agent_skills.ps1 -Mode Check
-```
-
 ### 平台构建验证
 
 ```bash
@@ -593,17 +589,11 @@ GPT-5.6 实现阶段开始时，项目使用 Flutter 3.44.2 和 Dart 3.12.2 完�
 ## Agent 协作文件
 
 - Canonical 维护 Skill：`.agents/skills/ssh-mobile-maintenance/SKILL.md`
-- Claude Code 生成镜像：`.claude/skills/ssh-mobile-maintenance/SKILL.md`
 - 任务路由：`.agents/skills/ssh-mobile-maintenance/references/memory-map.md`
 - Scoped 项目 Memory：`memory_docs/`
 - 知识治理规范：`docs/agent/skill-memory-maintenance.md`
 
-修改 canonical Skill 后，生成并校验镜像：
-
-```powershell
-.\scripts\sync_agent_skills.ps1 -Mode SyncFromAgents
-.\scripts\sync_agent_skills.ps1 -Mode Check
-```
+canonical Skill 位于 `.agents/skills/`，由 Claude Code 直接加载，无镜像需要重新生成。
 
 不要在 Agent Skill、项目记忆、日志、测试、截图或文档中保存密码、私钥、API Key、Token 或服务器凭据。
 

@@ -256,10 +256,6 @@ jobs:
         run: |
           dart run build_runner build
           git diff --exit-code -- lib/data/database/app_database.g.dart
-      - name: Check shared agent skills
-        working-directory: .
-        shell: pwsh
-        run: ./scripts/sync_agent_skills.ps1 -Mode Check
       - name: Security regression grep
         run: |
           if grep -R "SshIdentityCache" lib; then exit 1; fi

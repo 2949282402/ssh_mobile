@@ -193,7 +193,6 @@ const _requiredWorkflowMarkers = <String>[
   'dart run test/tool/agent_docs_check_test.dart',
   'dart run tool/check_module_dependencies.dart',
   'dart run tool/check_resource_owners.dart',
-  './scripts/sync_agent_skills.ps1 -Mode Check',
   'dart run tool/compatibility_check.dart',
   'dart run tool/duplicate_implementation_check.dart',
   'dart run melos run analyze',

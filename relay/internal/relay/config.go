@@ -46,11 +46,21 @@ const (
 	defaultHTTPWriteTimeout                  = 15 * time.Second
 	defaultHTTPIdleTimeout                   = 60 * time.Second
 	defaultHTTPMaxHeaderBytes                = 16 * 1024
+	defaultPresenceTTL                       = 60 * time.Second
 )
+
+// relayEventsChannel is the Redis Pub/Sub channel carrying cross-instance
+// device-lifecycle events.
+const relayEventsChannel = "relay:events"
 
 // Config 保存 Relay 服务器的监听、认证和资源边界。
 type Config struct {
 	Address                     string
+	StorageMode                 string
+	DatabaseURL                 string
+	RedisURL                    string
+	InstanceID                  string
+	PresenceTTL                 time.Duration
 	EnrollmentToken             string
 	CredentialKey               []byte
 	CredentialTTL               time.Duration
@@ -101,6 +111,26 @@ func ConfigFromEnvironment() (Config, error) {
 		}
 	}
 
+	storageMode := os.Getenv("RELAY_STORAGE_MODE")
+	if storageMode == "" {
+		storageMode = "memory"
+	}
+	if storageMode != "memory" && storageMode != "mysql" {
+		return Config{}, errors.New("RELAY_STORAGE_MODE must be \"memory\" or \"mysql\"")
+	}
+	databaseURL := os.Getenv("RELAY_DATABASE_URL")
+	redisURL := os.Getenv("RELAY_REDIS_URL")
+	instanceID := os.Getenv("RELAY_INSTANCE_ID")
+	if storageMode == "mysql" && databaseURL == "" {
+		return Config{}, errors.New("RELAY_DATABASE_URL must be set when RELAY_STORAGE_MODE=mysql")
+	}
+	if storageMode == "mysql" && redisURL == "" {
+		// Without Redis the nonce replay cache is process-local while enrollment
+		// is durable, so a restart silently reopens the replay window; require
+		// Redis so mysql mode always keeps the full shared state layer.
+		return Config{}, errors.New("RELAY_REDIS_URL must be set when RELAY_STORAGE_MODE=mysql")
+	}
+
 	adminUser := os.Getenv("RELAY_ADMIN_USER")
 	if adminUser == "" {
 		return Config{}, errors.New("RELAY_ADMIN_USER must be set")
@@ -112,6 +142,11 @@ func ConfigFromEnvironment() (Config, error) {
 
 	return Config{
 		Address:                     address,
+		StorageMode:                 storageMode,
+		DatabaseURL:                 databaseURL,
+		RedisURL:                    redisURL,
+		InstanceID:                  instanceID,
+		PresenceTTL:                 durationEnv("RELAY_PRESENCE_TTL", defaultPresenceTTL),
 		EnrollmentToken:             enrollment,
 		CredentialKey:               decoded,
 		CredentialTTL:               durationEnv("RELAY_CREDENTIAL_TTL", defaultCredentialTTL),
@@ -221,6 +256,9 @@ func withConfigDefaults(config Config) Config {
 	}
 	if config.MaxAdminLoginEntries <= 0 {
 		config.MaxAdminLoginEntries = defaultMaxAdminLoginEntries
+	}
+	if config.PresenceTTL <= 0 {
+		config.PresenceTTL = defaultPresenceTTL
 	}
 	if config.HTTPReadTimeout <= 0 {
 		config.HTTPReadTimeout = defaultHTTPReadTimeout

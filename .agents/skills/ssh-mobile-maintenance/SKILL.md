@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile repository, including Flutter, Dart packages, the Rust network SDK, Relay, Admin UI, tests, documentation, and shared Agent guidance. Use for any non-trivial implementation, diagnosis, validation, or documentation change in this repository.
 ---
 
-> Last updated: 2026-08-13
+> Last updated: 2026-08-14
 
 # SSH Mobile Maintenance
 
@@ -27,6 +27,13 @@ The longer execution sequence is in
 selection is in `.agents/skills/ssh-mobile-maintenance/references/validation.md`.
 Skill and Memory ownership is governed by
 `docs/agent/skill-memory-maintenance.md`.
+
+## Development phase
+
+The repository is in active development. Adding or refactoring code does not
+need to preserve compatibility with older versions: destructive refactoring is
+allowed, with callers migrated as part of the change. Where a contract or
+protocol carries a version number, use `V1`.
 
 ## Scope before implementation
 
@@ -93,11 +100,9 @@ Skill and Memory ownership is governed by
 - Keep user-visible text in the owning localization/string contract.
 - Add focused tests for changed behavior and regressions. Use fakes and bounded
   fixtures; tests must not require real SSH credentials or API keys.
-- Follow local format and naming conventions, and run the owning format gate
-  (`dart format`/`cargo fmt`/`gofmt`/the front prettier command, plus `dart run
-  melos run format` for the Dart workspace) on every changed file before
-  finishing. CI enforces formatting, so never submit unformatted code. Do not
-  split cohesive code merely to satisfy a line-count report.
+- Follow local format and naming conventions. Do not split cohesive code merely
+  to satisfy a line-count report. The format gate runs at commit time via the
+  `git-commit` Skill.
 - Develop and validate inside the WSL Linux environment: run every build, test,
   analyze, and validation command with the Linux toolchain inside WSL; never
   invoke Windows-hosted toolchains (Windows `dart`/`flutter`/`go`/`cargo`/`node`,
@@ -122,16 +127,19 @@ machine paths, or duplicated ADR/Architecture text to Memory. Follow
 `docs/agent/skill-memory-maintenance.md` when changing any Agent knowledge file.
 Every maintained Markdown change updates its leading date marker.
 
-`.agents/skills/*/SKILL.md` is canonical. `.claude/skills/*/SKILL.md` is a
-byte-identical generated mirror with no copied references. After a canonical
-Skill edit, run the one-way sync and then the read-only check defined in the
-validation reference. Never edit the Claude mirror as a source.
+`.agents/skills/*/SKILL.md` is canonical — there is no Claude mirror. Claude
+Code loads Skills directly from `.agents/skills/`; do not create a second
+`.claude` copy of any Skill.
 
 ## Validation and completion
 
 - Select checks from
   `.agents/skills/ssh-mobile-maintenance/references/validation.md` according to
   the actual touched owners and risk. Do not claim checks that were not run.
+- Tests, analyze, and vet run during implementation, per the checks below. The
+  `git-commit` Skill does not re-run them at commit time — it enforces only the
+  format gate on the changed files. Implementation validation gaps are reported
+  explicitly rather than deferred to the commit step.
 - Run `git diff --check` for every change. Review the final diff for unrelated
   files, generated noise, secrets, stale paths, and unintended API/ownership changes.
 - If a required check cannot run, report the exact command and environmental or

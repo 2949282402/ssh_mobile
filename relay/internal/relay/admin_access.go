@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -39,9 +40,10 @@ func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
 	s.devicesMutex.Lock()
-	enrolled, exists := s.enrolledDevices[deviceID]
-	if !exists {
+	enrolled, getErr := s.store.GetEnrollment(ctx, deviceID)
+	if getErr != nil || enrolled == nil {
 		s.devicesMutex.Unlock()
 		writeAdminError(w, http.StatusNotFound, adminErrorDeviceNotFound, "The requested device was not found.")
 		return
@@ -54,15 +56,36 @@ func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request) {
 	if enrolled.EnrolledAt.IsZero() {
 		credentialExpiry = time.Now().Add(s.config.CredentialTTL)
 	}
-	if !s.recordRevocationLocked(deviceID, credentialExpiry) {
+	recorded, revokeErr := s.store.RecordRevocation(ctx, deviceID, credentialExpiry)
+	if revokeErr != nil {
+		s.devicesMutex.Unlock()
+		writeAdminError(w, http.StatusInternalServerError, adminErrorInternal, "Revocation store is unavailable.")
+		return
+	}
+	if !recorded {
 		s.devicesMutex.Unlock()
 		writeAdminError(w, http.StatusTooManyRequests, adminErrorResourceLimit, "Revocation store is at capacity; retry after existing revocations expire.")
 		return
 	}
-	delete(s.enrolledDevices, deviceID)
-	delete(s.proofNonces, deviceID)
+	if err := s.store.RemoveEnrollment(ctx, deviceID); err != nil {
+		// 墓碑已落但 enrollment 删除失败：设备仍在 devices 表，refresh 会续发凭据。
+		// 返回 500 让操作员知道吊销未完整落地，而不是假 204。
+		s.devicesMutex.Unlock()
+		writeAdminError(w, http.StatusInternalServerError, adminErrorInternal, "Revocation could not remove the device enrollment.")
+		return
+	}
+	_ = s.cache.ClearDeviceNonces(ctx, deviceID)
 	s.devicesMutex.Unlock()
 
 	s.hub.disconnectDevice(deviceID)
+	// 广播吊销事件：本实例已直接断开，其它实例据此断开该设备（Phase 4 多实例）。
+	if err := s.cache.Publish(context.Background(), RelayEvent{
+		Type:     eventDeviceRevoked,
+		DeviceID: deviceID,
+		Time:     time.Now().UnixMilli(),
+	}); err != nil {
+		s.logger.Warn("failed to publish revocation event; other instances may not disconnect",
+			"device_id", deviceID, "error", err)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

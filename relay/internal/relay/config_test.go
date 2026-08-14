@@ -92,6 +92,57 @@ func TestConfigDefaultsAreFiniteAndProxyBoundaryIsClosed(t *testing.T) {
 	}
 }
 
+func TestConfigStorageModeDefaultsToMemoryAndRejectsUnknown(t *testing.T) {
+	t.Setenv("RELAY_ENROLLMENT_TOKEN", "0123456789abcdef")
+	t.Setenv(
+		"RELAY_CREDENTIAL_KEY",
+		"MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE",
+	)
+	t.Setenv("RELAY_ADMIN_USER", "admin")
+	t.Setenv("RELAY_ADMIN_PASSWORD", "long-random-password")
+
+	t.Setenv("RELAY_STORAGE_MODE", "")
+	config, err := ConfigFromEnvironment()
+	if err != nil {
+		t.Fatalf("valid relay configuration failed: %v", err)
+	}
+	if config.StorageMode != "memory" {
+		t.Fatalf("storage mode should default to memory, got %q", config.StorageMode)
+	}
+
+	t.Setenv("RELAY_STORAGE_MODE", "postgres")
+	if _, err := ConfigFromEnvironment(); err == nil {
+		t.Fatal("unsupported storage mode was accepted")
+	}
+
+	t.Setenv("RELAY_STORAGE_MODE", "mysql")
+	t.Setenv("RELAY_DATABASE_URL", "")
+	if _, err := ConfigFromEnvironment(); err == nil {
+		t.Fatal("mysql storage mode without a database URL was accepted")
+	}
+	t.Setenv("RELAY_DATABASE_URL", "user:pass@tcp(localhost:3306)/relay?parseTime=true&loc=UTC")
+	t.Setenv("RELAY_REDIS_URL", "")
+	if _, err := ConfigFromEnvironment(); err == nil {
+		t.Fatal("mysql storage mode without a redis URL was accepted")
+	}
+	t.Setenv("RELAY_REDIS_URL", "redis://localhost:6379/0")
+	t.Setenv("RELAY_INSTANCE_ID", "relay-test")
+	t.Setenv("RELAY_PRESENCE_TTL", "30s")
+	mysqlConfig, err := ConfigFromEnvironment()
+	if err != nil {
+		t.Fatalf("mysql storage configuration failed: %v", err)
+	}
+	if mysqlConfig.StorageMode != "mysql" || mysqlConfig.DatabaseURL == "" {
+		t.Fatalf("mysql storage configuration was not loaded: %+v", mysqlConfig)
+	}
+	if mysqlConfig.RedisURL != "redis://localhost:6379/0" || mysqlConfig.InstanceID != "relay-test" {
+		t.Fatalf("redis/instance configuration was not loaded: %+v", mysqlConfig)
+	}
+	if mysqlConfig.PresenceTTL != 30*time.Second {
+		t.Fatalf("presence TTL was not loaded: %s", mysqlConfig.PresenceTTL)
+	}
+}
+
 func TestTrustedProxyCIDRListParsing(t *testing.T) {
 	t.Setenv("RELAY_ENROLLMENT_TOKEN", "0123456789abcdef")
 	t.Setenv(

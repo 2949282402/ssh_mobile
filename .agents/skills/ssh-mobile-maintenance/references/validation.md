@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-14
 
 # Validation Matrix
 
@@ -53,13 +53,6 @@ clean. Do not commit unformatted code, and never bypass the gate with a
 no-op/`--set-exit-if-changed` false pass.
 
 ## Agent knowledge and documentation
-
-After a canonical Skill change:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\sync_agent_skills.ps1 -Mode SyncFromAgents
-powershell -ExecutionPolicy Bypass -File .\scripts\sync_agent_skills.ps1 -Mode Check
-```
 
 After the Agent documentation checker exists, run:
 

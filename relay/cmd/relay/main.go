@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -16,12 +18,24 @@ import (
 
 // main 加载环境配置并启动 Relay HTTP/WebSocket 服务。
 func main() {
+	seedFile := flag.String("seed-enrollments", "", "path to a JSON array of enrollments to seed into storage before serving")
+	flag.Parse()
+
 	config, err := relay.ConfigFromEnvironment()
 	if err != nil {
 		log.Fatal(err)
 	}
-	server := relay.NewServer(config)
+	server, err := relay.OpenServer(config)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer server.Close()
+
+	if *seedFile != "" {
+		if err := seedEnrollments(server, *seedFile); err != nil {
+			log.Fatalf("seed enrollments: %v", err)
+		}
+	}
 
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
@@ -54,6 +68,21 @@ func main() {
 		cancel()
 		server.Close()
 	}
+}
+
+// seedEnrollments loads a JSON array of EnrolledDevice records and seeds them
+// into the configured storage, for one-time migration from a memory-only
+// deployment to MySQL.
+func seedEnrollments(server *relay.Server, path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var enrollments []relay.EnrolledDevice
+	if err := json.Unmarshal(data, &enrollments); err != nil {
+		return err
+	}
+	return server.SeedEnrollments(context.Background(), enrollments)
 }
 
 // newHTTPServer builds the HTTP server with bounded read, write, header and

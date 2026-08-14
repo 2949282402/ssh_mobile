@@ -35,6 +35,49 @@ services:
       RELAY_TRUSTED_PROXY_CIDRS: ${RELAY_TRUSTED_PROXY_CIDRS:-}
       RELAY_ADMIN_USER: ${RELAY_ADMIN_USER:?set the dashboard administrator username}
       RELAY_ADMIN_PASSWORD: ${RELAY_ADMIN_PASSWORD:?set a dashboard password with at least 12 characters}
+      # Storage backend: "memory" (default) or "mysql". mysql requires the
+      # "storage" compose profile and RELAY_DATABASE_URL with parseTime=true.
+      # RELAY_REDIS_URL (also under the storage profile) activates the shared
+      # presence/nonce/admin-session/event layer.
+      RELAY_STORAGE_MODE: ${RELAY_STORAGE_MODE:-memory}
+      RELAY_DATABASE_URL: ${RELAY_DATABASE_URL:-}
+      RELAY_REDIS_URL: ${RELAY_REDIS_URL:-}
+      RELAY_INSTANCE_ID: ${RELAY_INSTANCE_ID:-}
+      RELAY_PRESENCE_TTL: ${RELAY_PRESENCE_TTL:-60s}
+    networks:
+      - relay_internal
+
+  # MySQL storage for durable enrollment/revocation (RELAY_STORAGE_MODE=mysql).
+  # Start with: docker compose --profile storage up -d
+  mysql:
+    image: mysql:8.4
+    profiles: ["storage"]
+    restart: unless-stopped
+    expose:
+      - "3306"
+    environment:
+      # Default empty keeps memory-mode `docker compose up` valid; the mysql
+      # image fails loudly at startup if no root password is provided.
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-relay}
+      TZ: UTC
+    volumes:
+      - relay_mysql_data:/var/lib/mysql
+    networks:
+      - relay_internal
+
+  # Redis state layer (shared presence, nonce, admin sessions, events).
+  redis:
+    image: redis:7-alpine
+    profiles: ["storage"]
+    restart: unless-stopped
+    expose:
+      - "6379"
+    # Bound memory so a nonce/presence key buildup can never OOM the instance;
+    # eviction under pressure degrades replay protection, never the process.
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - relay_redis_data:/data
     networks:
       - relay_internal
 
@@ -87,3 +130,5 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
+  relay_mysql_data:
+  relay_redis_data:

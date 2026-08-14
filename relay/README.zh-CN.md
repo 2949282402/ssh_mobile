@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-13
+> 最新更新时间：2026-08-14
 
 # SSH Mobile 控制与中继服务器
 
@@ -6,10 +6,13 @@
   <a href="./README.md">English</a> | <strong>简体中文</strong>
 </p>
 
-该 Go 服务提供 SSH Mobile 的内存设备控制平面和 WebSocket 中继。独立的
-React + Vite + TypeScript 管理端位于 `../front/`，由 Compose 的 `front` 服务
-提供静态文件；Relay 不再嵌入或提供管理端页面。它不持久化传输数据帧、文件名、
-凭据或设备状态。进程重启会断开全部连接，客户端必须重新注册。
+该 Go 服务提供 SSH Mobile 的设备控制平面和 WebSocket 中继。默认是纯内存模式：
+不依赖外部存储，进程重启会断开全部连接，客户端必须重新注册。当配置
+`RELAY_STORAGE_MODE=mysql`（需同时配置 `RELAY_REDIS_URL`）时，设备注册与吊销可跨
+重启持久化，并启用共享的在线状态/防重放/管理端会话/事件层以支撑多实例设计。
+独立的 React + Vite + TypeScript 管理端位于 `../front/`，由 Compose 的 `front`
+服务提供静态文件；Relay 不再嵌入或提供管理端页面。它不持久化传输数据帧或文件名，
+也绝不读取设备私钥或凭据明文。
 
 ## `.env` 配置
 
@@ -26,6 +29,11 @@ Compose 部署的所有参数都来自 `relay/.env`。缺少必填密钥或密�
 | `CADDY_HTTPS_PORT` | Caddy 容器内部 HTTPS 监听端口 |
 | `RELAY_INTERNAL_PORT` | Go Relay 容器内部监听端口 |
 | `FRONT_INTERNAL_PORT` | Nginx 前端容器内部监听端口 |
+| `RELAY_STORAGE_MODE` | 设备面存储后端：`memory`（默认，进程本地）或 `mysql`（注册/吊销持久化，需 Redis） |
+| `RELAY_DATABASE_URL` | MySQL DSN（需含 `parseTime=true&loc=UTC`），`RELAY_STORAGE_MODE=mysql` 时必填 |
+| `RELAY_REDIS_URL` | Redis URL，提供共享状态层（在线状态/防重放/管理端会话/跨实例事件），`RELAY_STORAGE_MODE=mysql` 时必填 |
+| `RELAY_INSTANCE_ID` | 实例稳定标识，写入在线状态；默认每次进程随机生成 |
+| `RELAY_PRESENCE_TTL` | 在线状态键有效期（设备心跳续期）；默认 `60s` |
 | `RELAY_CREDENTIAL_TTL` | 设备凭据有效期，使用 Go duration 格式 |
 | `RELAY_SESSION_TTL` | Relay 会话有效期，使用 Go duration 格式 |
 | `RELAY_ADMIN_SESSION_TTL` | 管理员会话有效期，使用 Go duration 格式 |
@@ -110,7 +118,9 @@ Caddy 在内网终止 HTTPS/WSS 并反向代理到 Relay。仓库自带的 Compo
 - 前端动态设备数据通过 React 文本节点渲染，不加载外部脚本或字体。
 - Caddy 设置内容安全、禁止嵌入、内容类型与引用来源等限制响应头。
 
-设备状态完全驻留内存，因此服务重启本身就是安全边界：全部客户端需要重新注册。
+在默认 `memory` 模式下，设备状态完全驻留内存，因此服务重启本身就是安全边界：全部
+客户端需要重新注册。在 `mysql` 模式下，设备注册与吊销会持久化，重启不再清空它们；
+请把数据库凭据与持久化的注册数据视为敏感状态。
 
 ## 接口
 
@@ -151,11 +161,12 @@ Caddy 在内网终止 HTTPS/WSS 并反向代理到 Relay。仓库自带的 Compo
 }
 ```
 
-当前管理员 API 使用内存态 HttpOnly 会话。管理员会话、设备注册、撤销墓碑、传输会话、
-每个设备的待发送数据以及登录限流条目都受上述 `RELAY_MAX_*` 配置限制。撤销墓碑还具备
-凭据过期感知：墓碑只在被撤销设备的当前凭据仍可能被出示的时段内保留；当有界存储被仍然
-有效的墓碑占满时，新的撤销请求会 fail-closed 拒绝，而不是淘汰旧的墓碑。所有限制都不引入
-持久化：进程重启会清空这些内存状态，而配置中的注册口令仍由进程配置提供。
+当前管理员 API 使用保存在缓存层的 HttpOnly 会话（默认内存，配置 `RELAY_REDIS_URL`
+时为 Redis）。管理员会话、设备注册、撤销墓碑、传输会话、每个设备的待发送数据以及登录
+限流条目都受上述 `RELAY_MAX_*` 配置限制。撤销墓碑还具备凭据过期感知：墓碑只在被撤销
+设备的当前凭据仍可能被出示的时段内保留；当有界内存存储被仍然有效的墓碑占满时，新的
+撤销请求会 fail-closed 拒绝，而不是淘汰旧的墓碑。`memory` 模式下所有状态在进程重启时
+清空；`mysql` 模式下设备注册与撤销墓碑持久化。配置中的注册口令始终是进程配置值。
 
 Go HTTP 服务启用了请求读取超时、响应写入超时、空闲超时和请求头大小上限。收到
 终止信号后先执行 HTTP graceful shutdown（最长 15s），再关闭内存 Hub 并等待 peer

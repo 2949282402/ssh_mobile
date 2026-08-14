@@ -1,16 +1,17 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-14
 
 # Backend Overview
 
 `relay/` is the Go control-plane and WebSocket Relay service. It owns device
-enrollment, authenticated device connections, the administrator API, in-memory
-device/session state, Relay routing, and the production Compose/Caddy topology.
+enrollment, authenticated device connections, the administrator API, device and
+session state (memory by default; `RELAY_STORAGE_MODE=mysql` persists enrollment
+and revocation), Relay routing, and the production Compose/Caddy topology.
 
 It does not own:
 
 - the React console in `front/`;
 - Flutter or Rust Session, Delivery, or cryptographic state;
-- persistent device or transfer storage;
+- persistent transfer storage;
 - interpretation of opaque application-E2EE payloads.
 
 Canonical operational and API documentation:

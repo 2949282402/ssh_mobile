@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -259,7 +260,7 @@ func TestAdminTokenRotationIsProcessLocalAndRestartClearsDevices(t *testing.T) {
 		t.Fatal("rotated enrollment token incorrectly survived process restart")
 	}
 	restarted.devicesMutex.Lock()
-	deviceCount := len(restarted.enrolledDevices)
+	deviceCount, _ := restarted.store.CountEnrollments(context.Background())
 	restarted.devicesMutex.Unlock()
 	if deviceCount != 0 {
 		t.Fatalf("device enrollment state survived process restart: %d", deviceCount)

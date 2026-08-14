@@ -1,4 +1,7 @@
 // Bounded, credential-expiry-aware revocation tombstone store.
+//
+// The tombstone semantics below are implemented by memoryStore.RecordRevocation
+// and memoryStore.IsRevoked in storage.go.
 
 package relay
 
@@ -25,34 +28,4 @@ import "time"
 // restart, which clears all in-memory state) before revoking again.
 type revokedDevice struct {
 	expiresAt time.Time
-}
-
-// recordRevocationLocked records deviceID as revoked until credentialExpiry.
-// The caller must hold s.devicesMutex. It returns false when the bounded store
-// is saturated with still-in-force tombstones (fail closed). Expired
-// tombstones are pruned first so capacity is reused as soon as it is safe.
-func (s *Server) recordRevocationLocked(deviceID string, credentialExpiry time.Time) bool {
-	now := time.Now()
-	s.pruneExpiredRevocationsLocked(now)
-	if existing, alreadyRevoked := s.revokedDevices[deviceID]; alreadyRevoked {
-		if credentialExpiry.After(existing.expiresAt) {
-			s.revokedDevices[deviceID] = revokedDevice{expiresAt: credentialExpiry}
-		}
-		return true
-	}
-	if len(s.revokedDevices) >= s.config.MaxRevokedDevices {
-		return false
-	}
-	s.revokedDevices[deviceID] = revokedDevice{expiresAt: credentialExpiry}
-	return true
-}
-
-// pruneExpiredRevocationsLocked removes tombstones whose protected credentials
-// have expired. The caller must hold s.devicesMutex.
-func (s *Server) pruneExpiredRevocationsLocked(now time.Time) {
-	for id, entry := range s.revokedDevices {
-		if !now.Before(entry.expiresAt) {
-			delete(s.revokedDevices, id)
-		}
-	}
 }

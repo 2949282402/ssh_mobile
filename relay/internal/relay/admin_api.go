@@ -3,6 +3,7 @@
 package relay
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -77,14 +78,29 @@ func (h *hub) snapshot() hubSnapshot {
 func (s *Server) adminOverview(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(s.adminOverviewSnapshot())
+	snapshot, err := s.adminOverviewSnapshot()
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, adminErrorInternal, "Device storage is unavailable.")
+		return
+	}
+	_ = json.NewEncoder(w).Encode(snapshot)
 }
 
-func (s *Server) adminOverviewSnapshot() adminOverviewResponse {
+func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 	hubState := s.hub.snapshot()
 	s.devicesMutex.Lock()
-	enrolled := len(s.enrolledDevices)
+	enrolledList, err := s.store.ListEnrollments(context.Background())
 	s.devicesMutex.Unlock()
+	if err != nil {
+		return adminOverviewResponse{}, err
+	}
+	enrolled := len(enrolledList)
+	online := 0
+	for _, device := range enrolledList {
+		if _, present, _ := s.cache.GetPresence(context.Background(), device.DeviceID); present {
+			online++
+		}
+	}
 
 	var memory runtime.MemStats
 	runtime.ReadMemStats(&memory)
@@ -94,7 +110,7 @@ func (s *Server) adminOverviewSnapshot() adminOverviewResponse {
 		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
 		Devices: adminDeviceStat{
 			Enrolled: enrolled,
-			Online:   hubState.ActivePeers,
+			Online:   online,
 		},
 		Relay: adminRelayStat{
 			ActiveTransfers: hubState.ActiveSessions,
@@ -103,41 +119,45 @@ func (s *Server) adminOverviewSnapshot() adminOverviewResponse {
 			AllocatedMemMB: float64(memory.Alloc) / 1024 / 1024,
 			Goroutines:     runtime.NumGoroutine(),
 		},
-	}
+	}, nil
 }
 
 func (s *Server) adminDevices(w http.ResponseWriter, _ *http.Request) {
-	items := s.adminDeviceSnapshot()
+	items, err := s.adminDeviceSnapshot()
+	if err != nil {
+		writeAdminError(w, http.StatusInternalServerError, adminErrorInternal, "Device storage is unavailable.")
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(adminDevicesResponse{Items: items, Total: len(items)})
 }
 
-func (s *Server) adminDeviceSnapshot() []adminDevice {
+func (s *Server) adminDeviceSnapshot() ([]adminDevice, error) {
 	hubState := s.hub.snapshot()
 	s.devicesMutex.Lock()
-	items := make([]adminDevice, 0, len(s.enrolledDevices))
-	for _, enrolled := range s.enrolledDevices {
+	enrolledList, err := s.store.ListEnrollments(context.Background())
+	s.devicesMutex.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	items := make([]adminDevice, 0, len(enrolledList))
+	for _, enrolled := range enrolledList {
+		_, online, _ := s.cache.GetPresence(context.Background(), enrolled.DeviceID)
 		items = append(items, adminDevice{
 			DeviceID:             enrolled.DeviceID,
 			Platform:             enrolled.Platform,
 			ProtocolVersion:      enrolled.ProtocolVersion,
 			EnrolledAt:           enrolled.EnrolledAt.UTC().Format(time.RFC3339Nano),
-			Online:               hasOnlinePeer(hubState, enrolled.DeviceID),
+			Online:               online,
 			RemoteAddr:           hubState.Online[enrolled.DeviceID],
 			PublicKeyFingerprint: publicKeyFingerprint(enrolled.PublicKey),
 		})
 	}
-	s.devicesMutex.Unlock()
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].DeviceID < items[j].DeviceID
 	})
-	return items
-}
-
-func hasOnlinePeer(snapshot hubSnapshot, deviceID string) bool {
-	_, online := snapshot.Online[deviceID]
-	return online
+	return items, nil
 }
 
 func publicKeyFingerprint(encodedPublicKey string) string {
