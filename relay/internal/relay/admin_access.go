@@ -63,7 +63,9 @@ func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request) {
 	_ = s.cache.ClearDeviceNonces(ctx, deviceID)
 
 	s.hub.disconnectDevice(deviceID)
-	// 广播吊销事件：本实例已直接断开，其它实例据此断开该设备（Phase 4 多实例）。
+	// 广播吊销事件：本实例已直接断开；事件总线是共享实时状态层，供其它连接本共享
+	// Redis 的实例收敛同一生命周期决策（设计 §26：本阶段 Relay Control/Data 单实例，
+	// 无 Global Control Routing）。
 	if err := s.cache.Publish(context.Background(), RelayEvent{
 		Type:     eventDeviceRevoked,
 		DeviceID: deviceID,

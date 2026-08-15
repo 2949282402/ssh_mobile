@@ -1,10 +1,13 @@
-// Cross-instance device-lifecycle events carried over Redis Pub/Sub, plus the
+// Device-lifecycle events carried over the Redis Pub/Sub event bus, plus the
 // periodic revocation reconciliation that bounds the missed-event window.
 //
-// In single-instance deployments the local hub already disconnects a device
-// directly; the event bus is the shared channel that lets every other instance
-// do the same. The memory store publishes nothing (events are handled locally),
-// so memory mode has no subscriber goroutine.
+// Relay Control and Relay Data are single-instance in this phase; there is no
+// Global Control Routing or Relay Data Node Selection (design §26). Redis is the
+// shared-live-state layer: the event bus is the shared channel that lets a
+// second instance (e.g. a future migration or a failover) converge on the same
+// lifecycle decisions while each instance handles its own local hub. The memory
+// store publishes nothing (events are handled locally), so memory mode has no
+// subscriber goroutine.
 
 package relay
 

@@ -23,6 +23,13 @@ import (
 // multiStatements=true is set in the DSN). DATETIME(6) preserves sub-second
 // enrollment/revocation precision so tombstone upper bounds computed from
 // EnrolledAt never understate the real credential expiry.
+//
+// Step 3 (design §27) adds the durable User / Credential / Audit tables. They are
+// strictly additive: existing enrollment/revocation rows and tables are
+// untouched, and the current stateless HMAC credential path keeps working as-is.
+// These tables exist so the auth path can be migrated onto durable records
+// without changing the v1 wire contract. MySQL remains the durable truth; Redis
+// stays the rebuildable live-state layer (presence/discovery/nonce).
 var mysqlSchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS devices (
   device_id        VARCHAR(128) NOT NULL PRIMARY KEY,
@@ -39,6 +46,43 @@ var mysqlSchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS relay_meta (
   meta_key   VARCHAR(64) NOT NULL PRIMARY KEY,
   meta_value BIGINT      NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	// User durable record (design §27 "MySQL = Durable Truth"). A user is the
+	// account that owns devices; this table is the migration target for a future
+	// device→user binding. Additive; not yet referenced by the auth path.
+	`CREATE TABLE IF NOT EXISTS users (
+  user_id      VARCHAR(128) NOT NULL PRIMARY KEY,
+  display_name VARCHAR(256) NOT NULL DEFAULT '',
+  created_at   DATETIME(6)  NOT NULL,
+  updated_at   DATETIME(6)  NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	// Credential durable record: the migration target for the stateless HMAC
+	// token path. Today credentials are signed statelessly (verifyCredential);
+	// this table lets a future auth path record issued credentials per device,
+	// revoke them durably, and enumerate them for audit/rotation — without
+	// changing the current stateless path.
+	`CREATE TABLE IF NOT EXISTS credentials (
+  credential_id VARCHAR(64)  NOT NULL PRIMARY KEY,
+  user_id       VARCHAR(128) NOT NULL,
+  device_id     VARCHAR(128) NOT NULL,
+  public_key    VARCHAR(128) NOT NULL,
+  issued_at     DATETIME(6)  NOT NULL,
+  expires_at    DATETIME(6)  NOT NULL,
+  revoked_at    DATETIME(6)  NULL,
+  KEY idx_credentials_user (user_id),
+  KEY idx_credentials_device (device_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+	// Audit durable record: append-only administrative/device lifecycle trail.
+	// Not yet written by handlers; the schema is the migration scaffold.
+	`CREATE TABLE IF NOT EXISTS audit_log (
+  audit_id   BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  actor      VARCHAR(128)  NOT NULL DEFAULT '',
+  action     VARCHAR(128)  NOT NULL,
+  resource   VARCHAR(256)  NOT NULL DEFAULT '',
+  detail     TEXT          NULL,
+  created_at DATETIME(6)   NOT NULL,
+  KEY idx_audit_actor (actor),
+  KEY idx_audit_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 }
 

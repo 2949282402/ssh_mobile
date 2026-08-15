@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/ssh-mobile/relay/internal/relay/v2"
 )
 
 // routeControl 校验并转发一个 JSON 控制信封。
@@ -35,6 +37,12 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 
 	// 处理 heartbeat ping。
 	if frame.Type == "heartbeat" {
+		// 记录服务端心跳时间：hub 心跳监视器（见 hub.go monitorHeartbeats）以此判定
+		// 是否连续错过 HEARTBEAT_INTERVAL_S（20s）内的心跳，超过
+		// SERVER_HEARTBEAT_MISSES_BEFORE_CLOSE（2 次）后关闭连接并释放 presence 租约。
+		h.mutex.Lock()
+		sender.lastHeartbeat = time.Now()
+		h.mutex.Unlock()
 		if h.presence != nil {
 			// 给 lease I/O 一个短 deadline：Redis 卡顿时不能无限阻塞 read
 			// goroutine（它还负责数据帧转发）。超时视为 ownership 未知，
@@ -315,54 +323,25 @@ func (h *hub) routeWebRTCControl(sender *peer, frame controlFrame) {
 	}
 }
 
-// lookupPeer 用 Redis 作为唯一事实来源（明确版 §13）判定 target 是否在线：presence
-// 与 discovery 均有效、discovery.Generation>0、且 presence 与 discovery 的所有者
-// ConnectionID 一致 → online=true，并携带该设备的 generation/capabilities/
-// candidates（候选只在在线时返回）。owner 不一致的条目（重连窗口内旧连接的残留
-// discovery）不算在线。租约读取出错时 fail-open 回退到本地 h.peers 判定（保留已确认
-// 的退化语义：本实例内有连接即在线），限时 presenceLeaseTimeout。
+// lookupPeer 用权威 4-state resolve（明确版 §10）判定 target 是否可连：只有 READY
+// （presence 与 discovery 均有效、owner 一致、revision>0）才 online=true，并携带该
+// 设备的 generation/capabilities/candidates（候选只在 READY 时返回）。读取故障判
+// UNKNOWN，绝不再 fail-open 回退本地 h.peers 或把 presence 在线伪装成 online
+// （明确版 §10 禁止「Redis 出错 → online=true generation=0」）。v1 线的响应形状
+// （online *bool + generation + candidates + capabilities）保持不变，Rust v1 客户端
+// 继续可解析。
 func (h *hub) lookupPeer(sender *peer, targetID string) {
-	isOnline := false
-	var disc Discovery
-	if h.presence != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
-		presence, presenceOK, presenceErr := h.presence.GetPresence(ctx, targetID)
-		found, discOK, discErr := h.presence.GetDiscovery(ctx, targetID)
-		cancel()
-		switch {
-		case presenceErr == nil && discErr == nil:
-			// 双租约可读：presence+discovery 均有效 + generation>0 + owner 一致才在线。
-			isOnline = presenceOK && discOK && found.Generation > 0 &&
-				presence.ConnectionID == found.ConnectionID
-			if isOnline {
-				disc = found
-			}
-		case presenceErr != nil:
-			// presence 读取本身故障：在线状态未知，fail-open 回退本地表，避免缓存
-			// 抖动误判在线设备离线。
-			h.mutex.Lock()
-			_, isOnline = h.peers[targetID]
-			h.mutex.Unlock()
-		default:
-			// presence 可读、discovery 读取出错：以 presence 权威为准。presence 有效
-			// 时在线但无候选（discovery 暂时不可读，报 online 而给不出候选，退化但
-			// 不误报离线）；presence 离线时权威判离线，不回退本地表（避免把僵尸连接
-			// 误报为在线）。
-			isOnline = presenceOK
-		}
-	} else {
-		h.mutex.Lock()
-		_, isOnline = h.peers[targetID]
-		h.mutex.Unlock()
-	}
-
+	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+	result := h.resolvePeer(ctx, targetID)
+	cancel()
+	isOnline := result.status == v2.ResolveStatus_RESOLVE_STATUS_READY
 	resp, _ := json.Marshal(controlFrame{
 		Type:         "lookup_response",
 		TargetID:     targetID,
 		Online:       &isOnline,
-		Generation:   disc.Generation,
-		Capabilities: disc.Capabilities,
-		Candidates:   disc.Candidates,
+		Generation:   result.discovery.Generation,
+		Capabilities: result.discovery.Capabilities,
+		Candidates:   result.discovery.Candidates,
 	})
 	if !sender.enqueue(outboundFrame{websocket.TextMessage, resp}) {
 		go sender.socket.Close()
@@ -448,12 +427,28 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 			cancel()
 			return
 		}
+		// v1 上传映射进 v2 模型：同一 owner（连接）沿用其 runtime_epoch；generation
+		// 变化时 revision 严格递增（明确版 §7 的 revision 单调约束），同 generation
+		// 刷新保持 revision 不变。新 owner（重连/跨实例接管）派生新的 epoch、revision
+		// 从 1 开始。
+		d.RuntimeEpochHigh = old.RuntimeEpochHigh
+		d.RuntimeEpochLow = old.RuntimeEpochLow
+		d.Revision = old.Revision
+		if old.Generation != d.Generation {
+			d.Revision = old.Revision + 1
+			if d.Revision == 0 {
+				d.Revision = 1 // uint32 回绕兜底，维持 READY 判据 revision>0。
+			}
+		}
+	} else {
+		d.RuntimeEpochHigh, d.RuntimeEpochLow = newRuntimeEpoch()
+		d.Revision = 1
 	}
 	// 落盘前判定设备此前是否已可连接（明确版 §13 收紧版）：presence+discovery 均有效、
-	// generation>0、且 presence 与 discovery 的 owner 一致。用于区分 peer_online（首次
-	// 可发现，含重连窗口内旧连接残留 discovery 的情况——owner 不一致视为新上线）与
-	// peer_updated（已在线仅换代）。
-	wasOnline := presenceOK && hadOld && old.Generation > 0 &&
+	// discovery 已可靠发布（ready()：revision>0，v1 由 generation 派生）、且 presence
+	// 与 discovery 的 owner 一致。用于区分 peer_online（首次可发现，含重连窗口内旧连接
+	// 残留 discovery 的情况——owner 不一致视为新上线）与 peer_updated（已在线仅换代）。
+	wasOnline := presenceOK && hadOld && old.ready() &&
 		presence.ConnectionID == old.ConnectionID
 	// CAS TakeDiscovery：存储层在 Redis Lua / 内存实现里原子校验「写者仍是当前
 	// presence owner」，杜绝 get-then-set 的 TOCTOU（被取代的旧连接无法把新连接的
