@@ -1,5 +1,9 @@
 //! v1 对端注册表、路由选择与异步连接任务。
 
+// v1 PathManager remote_* 桥接方法在 Step 11 前仍被 v1 代码使用（§38 Step 5 已将它们
+// 标记 deprecated）；保持 v1 行为不变，仅抑制 lint，additive-first。
+#![allow(deprecated)]
+
 use network_identity::DeviceIdentity;
 use network_nat::{
     Candidate, CandidateAdvertisement, CandidateKind, CandidateSignal, PathManager,
@@ -193,11 +197,13 @@ pub(crate) async fn configure_runtime(
         .ok_or_else(|| {
             protocol_error(NetworkErrorCode::Cancelled, "network runtime is stopping")
         })?;
-    let mut accept_task = state
-        .accept_task
-        .lock()
-        .map_err(|_| protocol_error(NetworkErrorCode::QuicError, "accept task lock poisoned"))?;
-    *accept_task = Some(task_id);
+    {
+        // 作用域限定 MutexGuard 生命周期，避免跨 await 持有非 Send 的 guard。
+        let mut accept_task = state.accept_task.lock().map_err(|_| {
+            protocol_error(NetworkErrorCode::QuicError, "accept task lock poisoned")
+        })?;
+        *accept_task = Some(task_id);
+    }
     let tcp_task_id = state
         .task_supervisor
         .spawn_runtime(
@@ -207,11 +213,16 @@ pub(crate) async fn configure_runtime(
         .ok_or_else(|| {
             protocol_error(NetworkErrorCode::Cancelled, "network runtime is stopping")
         })?;
-    let mut tcp_accept_task = state
-        .tcp_accept_task
-        .lock()
-        .map_err(|_| protocol_error(NetworkErrorCode::IoError, "TCP accept task lock poisoned"))?;
-    *tcp_accept_task = Some(tcp_task_id);
+    {
+        let mut tcp_accept_task = state.tcp_accept_task.lock().map_err(|_| {
+            protocol_error(NetworkErrorCode::IoError, "TCP accept task lock poisoned")
+        })?;
+        *tcp_accept_task = Some(tcp_task_id);
+    }
+    // transport-network v2：运行时配置完成（identity + 本地候选已就绪）后初始化本地
+    // Discovery 生命周期（新 runtime_epoch + revision=1）。additive-first：不触碰 v1
+    // upload_discovery / peer_presence。
+    crate::discovery::begin_epoch(&state).await;
     Ok(())
 }
 

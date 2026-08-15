@@ -9,6 +9,7 @@ pub mod connection;
 pub(crate) mod crypto;
 mod crypto_handshake;
 pub mod delivery;
+mod discovery;
 mod errors;
 mod events;
 mod generic_auth;

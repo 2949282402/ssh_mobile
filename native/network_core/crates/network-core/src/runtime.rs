@@ -196,6 +196,16 @@ pub(crate) struct RuntimeState {
     pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<LookupResult>>>,
     /// Relay Presence 控制面维护的在线设备表；presence_snapshot 填充，增量帧更新。
     pub(crate) peer_presence: RwLock<HashMap<String, PeerPresence>>,
+    /// transport-network v2：本地 Discovery 生命周期 owner（§9/§29）。
+    ///
+    /// forward path：`peer::configure_runtime` 成功后 `begin_epoch()` 初始化；
+    /// v1 的 `upload_discovery` / `peer_presence` 处理保持不动直到 Step 6。
+    pub(crate) local_discovery: RwLock<Option<Arc<crate::discovery::LocalDiscoveryManager>>>,
+    /// transport-network v2：v2 控制面客户端 sink（§31 `RelayControlClient` 抽象）。
+    ///
+    /// Step 6/7 接线前恒为 `None`；`discovery` 的 hooks 在无 sink 时是安全 no-op，
+    /// 接线后由 `discovery::on_control_connected` 消费。
+    pub(crate) relay_control: RwLock<Option<Arc<dyn crate::discovery::DiscoveryControlPlane>>>,
     pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
     pub(crate) relay_crypto_confirmers:
@@ -246,6 +256,8 @@ impl RuntimeState {
             relay_completions: RwLock::new(HashMap::new()),
             relay_lookups: RwLock::new(HashMap::new()),
             peer_presence: RwLock::new(HashMap::new()),
+            local_discovery: RwLock::new(None),
+            relay_control: RwLock::new(None),
             relay_crypto_waiters: RwLock::new(HashMap::new()),
             relay_crypto_responders: AsyncMutex::new(HashMap::new()),
             relay_crypto_confirmers: AsyncMutex::new(HashMap::new()),

@@ -1,5 +1,9 @@
 //! Relay v1 enrollment 运行时、透明传输路由与 E2E 处理。
 
+// v1 PathManager remote_* 桥接方法在 Step 11 前仍被 v1 代码使用（§38 Step 5 已将它们
+// 标记 deprecated）；保持 v1 行为不变，仅抑制 lint，additive-first。
+#![allow(deprecated)]
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use network_nat::{Candidate, CandidateSignal, CandidateSignalKind, DEFAULT_CONNECT_WINDOW_MS};
 use network_protocol::{
@@ -133,6 +137,10 @@ pub(crate) async fn configure_relay_for_state(
     *state.relay_config.write().await = Some(config);
     *state.relay.write().await = Some(Arc::clone(&relay));
     upload_local_discovery(&state).await;
+    // transport-network v2：控制连接建立后重新发布完整 Discovery Snapshot（§8/§9）。
+    // 当前 relay_control（v2 控制面 sink）未接线，hook 是安全 no-op；Step 6/7 接线后
+    // 由本调用触发发布。additive-first：v1 upload_local_discovery 原样保留。
+    crate::discovery::spawn_control_connected(&state);
     state
         .task_supervisor
         .spawn_runtime(
@@ -256,6 +264,9 @@ fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
                     Ok((relay, events)) => {
                         *reconnect_state.relay.write().await = Some(Arc::clone(&relay));
                         upload_local_discovery(&reconnect_state).await;
+                        // transport-network v2：重连（control_connection_id C1→C2，§8）
+                        // 后重新发布当前 revision 的完整 Snapshot（epoch 不变）。
+                        crate::discovery::spawn_control_connected(&reconnect_state);
                         crate::events::emit_relay_state(
                             &reconnect_state.event_tx,
                             network_protocol::RelayConnectionState::Connected,
