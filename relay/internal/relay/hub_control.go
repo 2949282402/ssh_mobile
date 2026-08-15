@@ -431,13 +431,23 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 		return
 	}
 	// generation 单调约束限定在同一 Discovery owner 内：同一连接（ConnectionID 相同）
-	// 重复上报更小的值 = 客户端 bug，拒绝（回退的旧值会在 presence TTL 内被下一次合法
+	// 重复上报更小值 = 客户端 bug，拒绝（回退的旧值会在 presence TTL 内被下一次合法
 	// 上传覆盖）。不同 owner（重连 / 升级后的新连接）视为新的可发现 epoch，允许任意正
 	// generation——否则旧版本随机大 generation 残留会拒绝升级客户端更小的 Unix-ms
 	// generation，导致设备一直不可发现。
-	if hadOld && old.ConnectionID == sender.connectionID && d.Generation < old.Generation {
-		cancel()
-		return
+	if hadOld && old.ConnectionID == sender.connectionID {
+		if d.Generation < old.Generation {
+			cancel()
+			return
+		}
+		// 同 generation 的 Discovery 不可变：同一 owner 下 generation 相同但候选/能力
+		// 内容变化 = 客户端 bug（候选变化必须 generation++）。拒绝，保证「同一个
+		// generation 永远对应同一份 Discovery 快照」，否则同 generation 静默覆盖且不
+		// 广播 peer_updated，会让其它设备持有与服务器不一致的缓存。
+		if d.Generation == old.Generation && !sameDiscoveryContent(old, d) {
+			cancel()
+			return
+		}
 	}
 	// 落盘前判定设备此前是否已可连接（明确版 §13 收紧版）：presence+discovery 均有效、
 	// generation>0、且 presence 与 discovery 的 owner 一致。用于区分 peer_online（首次
@@ -542,4 +552,28 @@ func (h *hub) broadcastPeerEvent(frameType, deviceID string, gen uint64) {
 		})
 		pcancel()
 	}
+}
+
+// sameDiscoveryContent 比较两份 discovery 快照的候选与能力集合是否一致（无序）。
+// 同 generation 必须对应同一份快照：集合比较允许候选顺序变化，但成员不能增删改。
+func sameDiscoveryContent(a, b Discovery) bool {
+	return sameStringSet(a.Candidates, b.Candidates) && sameStringSet(a.Capabilities, b.Capabilities)
+}
+
+// sameStringSet 无序比较两个字符串切片是否构成相同集合（允许顺序不同）。
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, value := range a {
+		counts[value]++
+	}
+	for _, value := range b {
+		if counts[value] == 0 {
+			return false
+		}
+		counts[value]--
+	}
+	return true
 }

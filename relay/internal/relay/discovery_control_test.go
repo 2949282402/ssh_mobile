@@ -398,6 +398,53 @@ func TestDiscoveryUpdateAcceptsCrossOwnerGeneration(t *testing.T) {
 	}
 }
 
+// TestDiscoveryUpdateRejectsSameGenerationContentChange 固定「同 generation 的 Discovery
+// 不可变」：同一 owner 用相同 generation 但不同候选/能力内容上传被拒绝（候选变化必须
+// generation++）；相同内容（含顺序变化）只刷新、静默不广播。
+func TestDiscoveryUpdateRejectsSameGenerationContentChange(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	sender := injectPeer(server.hub, "device-a")
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	other := injectPeer(server.hub, "device-b")
+	if _, _, err := server.cache.TakePresence(ctx, "device-b", other.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// 首次 gen 5 上传 → peer_online。
+	server.hub.handleDiscoveryUpdate(sender, controlFrame{
+		Type: "discovery_update", Generation: 5, Candidates: []string{"cand-a"}, Capabilities: []string{"cap-1"},
+	})
+	if frame := readControlFrame(t, other); frame.Type != framePeerOnline || frame.Generation != 5 {
+		t.Fatalf("first upload should broadcast peer_online, got %+v", frame)
+	}
+
+	// 同 generation 但内容变化 → 拒绝（不落盘、不广播）。
+	server.hub.handleDiscoveryUpdate(sender, controlFrame{
+		Type: "discovery_update", Generation: 5, Candidates: []string{"cand-b"}, Capabilities: []string{"cap-1"},
+	})
+	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("discovery missing: present=%v err=%v", present, err)
+	}
+	if len(d.Candidates) != 1 || d.Candidates[0] != "cand-a" {
+		t.Fatalf("same-generation content change must not overwrite: %+v", d.Candidates)
+	}
+	assertNoOutbound(t, other)
+
+	// 同 generation 相同内容（顺序变化）→ 刷新、静默。
+	server.hub.handleDiscoveryUpdate(sender, controlFrame{
+		Type: "discovery_update", Generation: 5, Candidates: []string{"cand-a"}, Capabilities: []string{"cap-1"},
+	})
+	assertNoOutbound(t, other)
+}
+
 // TestDiscoveryUpdateRejectsStaleOwner 固定 Discovery CAS：旧连接已被新连接取代
 // （presence 已易主）后，旧连接的 discovery_update 被拒绝——不覆盖新连接的 discovery，
 // 且旧连接自愈关闭（与心跳路径 RenewPresence=false 一致）。这封死跨实例重连竞态。
