@@ -326,17 +326,25 @@ func (h *hub) lookupPeer(sender *peer, targetID string) {
 		_, presenceOK, presenceErr := h.presence.GetPresence(ctx, targetID)
 		found, discOK, discErr := h.presence.GetDiscovery(ctx, targetID)
 		cancel()
-		if presenceErr == nil && discErr == nil {
-			// Redis 可读：以租约为准，presence+discovery 均有效才在线。
+		switch {
+		case presenceErr == nil && discErr == nil:
+			// 双租约可读：presence+discovery 均有效才在线（明确版 §13）。
 			isOnline = presenceOK && discOK
 			if isOnline {
 				disc = found
 			}
-		} else {
-			// 租约读取故障：fail-open 回退本地表，避免缓存抖动误判在线设备离线。
+		case presenceErr != nil:
+			// presence 读取本身故障：在线状态未知，fail-open 回退本地表，避免缓存
+			// 抖动误判在线设备离线。
 			h.mutex.Lock()
 			_, isOnline = h.peers[targetID]
 			h.mutex.Unlock()
+		default:
+			// presence 可读、discovery 读取出错：以 presence 权威为准。presence 有效
+			// 时在线但无候选（discovery 暂时不可读，报 online 而给不出候选，退化但
+			// 不误报离线）；presence 离线时权威判离线，不回退本地表（避免把僵尸连接
+			// 误报为在线）。
+			isOnline = presenceOK
 		}
 	} else {
 		h.mutex.Lock()
@@ -367,7 +375,28 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 	if h.presence == nil {
 		return
 	}
-	// 帧大小上限已由 routeControl 按 maxControlFrameBytes 校验。
+	// generation 必须为正：0 会被 omitempty 从广播帧里丢弃，客户端把缺失/为 0 的
+	// generation 当协议错误断连（单台误设备即可 DoS 全部在线客户端），因此直接拒绝。
+	if frame.Generation == 0 {
+		return
+	}
+	// 候选与 capabilities 加边界：设备端同一约束（candidates≤64×2048B、
+	// capabilities≤64×256B），服务端同样限制，避免单台上报撑爆后续 lookup_response
+	// 或 presence_snapshot 使查询客户端超限断连。
+	if len(frame.Candidates) > maxDiscoveryCandidates ||
+		len(frame.Capabilities) > maxDiscoveryCapabilities {
+		return
+	}
+	for _, candidate := range frame.Candidates {
+		if len(candidate) > maxDiscoveryCandidateBytes {
+			return
+		}
+	}
+	for _, capability := range frame.Capabilities {
+		if len(capability) > maxDiscoveryCapabilityBytes {
+			return
+		}
+	}
 	d := Discovery{
 		DeviceID:     sender.deviceID,
 		Generation:   frame.Generation,
@@ -384,10 +413,35 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 		return
 	}
 	err := h.presence.TakeDiscovery(ctx, sender.deviceID, sender.connectionID, d, h.presenceTTL)
-	cancel()
 	if err != nil {
+		cancel()
 		// 落盘失败 fail-open：保持连接，设备可随时重试上传。
 		return
+	}
+	// Take 后校验 owner：Get→Take 非原子，期间若本连接已被同设备的新连接取代
+	// （新连接 hub.add 覆盖 discovery owner），本次上传就会把新连接的 discovery
+	// 覆盖回本连接的陈旧 owner（TOCTOU）。落盘后立即复查 owner，被取代则撤销——
+	// 撤销用 CAS Release，若新连接已再次上传则安全跳过。
+	persisted, stillOwned, getErr := h.presence.GetDiscovery(ctx, sender.deviceID)
+	if getErr != nil {
+		cancel()
+		return
+	}
+	cancel()
+	if !stillOwned || persisted.ConnectionID != sender.connectionID {
+		_, _ = h.presence.ReleaseDiscovery(context.Background(), sender.deviceID, sender.connectionID)
+		return
+	}
+	// 广播 peer_online/peer_updated 前核对 presence 仍在有效期：与 lookup/snapshot/
+	// sweeper 的在线判定一致（presence+discovery 双有效），避免给对端推送一个
+	// presence 已失效设备的"上线"事件。
+	if h.presence != nil {
+		pctx, pcancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+		_, presenceOK, presenceErr := h.presence.GetPresence(pctx, sender.deviceID)
+		pcancel()
+		if presenceErr != nil || !presenceOK {
+			return
+		}
 	}
 	frameType := ""
 	if !hadOld || old.Generation == 0 {
@@ -451,12 +505,17 @@ func (h *hub) broadcastPeerEvent(frameType, deviceID string, gen uint64) {
 	h.broadcast(deviceID, outboundFrame{websocket.TextMessage, frame})
 	if eventType != "" && h.presence != nil {
 		// InstanceID 标记发布方，订阅侧据此跳过同实例回环（发布方已本地广播过）。
-		_ = h.presence.Publish(context.Background(), RelayEvent{
+		// Publish 加 presenceLeaseTimeout 限时：本方法从设备 read goroutine 调用
+		//（handleDiscoveryUpdate 路径），Redis 卡顿时不能像 connection.replaced
+		// 那样用无限 Background 阻塞帧转发。
+		pctx, pcancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+		_ = h.presence.Publish(pctx, RelayEvent{
 			Type:       eventType,
 			DeviceID:   deviceID,
 			Generation: gen,
 			InstanceID: h.instanceID,
 			Time:       time.Now().UnixMilli(),
 		})
+		pcancel()
 	}
 }

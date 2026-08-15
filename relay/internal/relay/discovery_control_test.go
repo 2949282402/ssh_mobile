@@ -180,9 +180,11 @@ func TestPresenceSweeperClosesZombies(t *testing.T) {
 	}
 	// device-b：本地表有 peer 但无任何租约 → 僵尸。
 	noLease := injectPeer(server.hub, "device-b")
-	// device-c：本地表有 peer 且 presence 有效，但 discovery 缺失 → 僵尸（§13 要求两者）。
-	noDiscovery := injectPeer(server.hub, "device-c")
-	if _, _, err := server.cache.TakePresence(ctx, "device-c", noDiscovery.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	// device-c：本地表有 peer 且 presence 有效，但 discovery 缺失。presence 才是在线
+	// 权威（§3）；discovery 可能被 Redis 逐出而与在线 presence 不同步，误判为僵尸会把
+	// 在线设备踢下线，因此 presence 有效即不 sweeping。
+	presenceOnly := injectPeer(server.hub, "device-c")
+	if _, _, err := server.cache.TakePresence(ctx, "device-c", presenceOnly.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 
@@ -199,22 +201,25 @@ func TestPresenceSweeperClosesZombies(t *testing.T) {
 	if bPresent {
 		t.Fatal("peer without any lease was not swept")
 	}
-	if cPresent {
-		t.Fatal("peer with presence but no discovery was not swept")
+	if !cPresent {
+		t.Fatal("peer with valid presence but no discovery was swept as zombie")
 	}
-	for _, zombie := range []*peer{noLease, noDiscovery} {
+	for _, zombie := range []*peer{noLease} {
 		select {
 		case <-zombie.done:
 		default:
 			t.Fatalf("zombie peer %s was not closed", zombie.deviceID)
 		}
 	}
-	// 健康的 device-a 收到 peer_offline 广播（其余 zombie 已被移除，不再是广播目标）。
-	for i := 0; i < 2; i++ {
-		frame := readControlFrame(t, healthy)
-		if frame.Type != framePeerOffline {
-			t.Fatalf("healthy peer expected peer_offline broadcast, got %+v", frame)
-		}
+	select {
+	case <-presenceOnly.done:
+		t.Fatal("presence-only peer was closed as a zombie")
+	default:
+	}
+	// 仅 device-b 被 sweeping：其 peer_offline 广播只发一次。
+	frame := readControlFrame(t, healthy)
+	if frame.Type != framePeerOffline || frame.DeviceID != "device-b" {
+		t.Fatalf("healthy peer expected device-b peer_offline, got %+v", frame)
 	}
 }
 

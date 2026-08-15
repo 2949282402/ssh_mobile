@@ -38,33 +38,46 @@ func (s *Server) startPresenceSweeper() {
 	}()
 }
 
-// sweepPresenceOnce 执行一次僵尸 peer 清扫。以共享缓存 ListOnlinePeers（presence+
-// discovery 均有效的设备，明确版 §13）为准：本地 hub 里不在该集合的设备视为僵尸——
-// 其租约已过期（60s 无心跳）或已被其它实例接管。本地表不权威：本实例只关闭并广播
-// 本地持有的连接，peer_offline 的跨实例通知走事件总线；同一设备只由持有其本地连接
-// 的实例发一次，避免重复推送。
+// sweepPresenceOnce 执行一次僵尸 peer 清扫。以共享缓存 presence 租约为准（presence
+// 才是"在线"权威，明确版 §3）：本地 hub 里 presence 已失效（60s 无心跳）的设备视为
+// 僵尸——无论其 discovery 键是否仍在。discovery 键可能被 Redis 逐出（maxmemory）而
+// 与在线的 presence 不同步，若以 ListOnlinePeers（presence+discovery 双有效）判僵尸，
+// 会把 discovery 丢失但仍在线的设备误杀。本地表不权威：本实例只关闭并广播本地持有
+// 的连接，peer_offline 的跨实例通知走事件总线；同一设备只由持有其本地连接的实例发
+// 一次，避免重复推送。
 func (s *Server) sweepPresenceOnce() {
+	s.hub.mutex.Lock()
+	localPeers := make([]*peer, 0, len(s.hub.peers))
+	for _, p := range s.hub.peers {
+		localPeers = append(localPeers, p)
+	}
+	s.hub.mutex.Unlock()
+	deviceIDs := make([]string, 0, len(localPeers))
+	for _, p := range localPeers {
+		deviceIDs = append(deviceIDs, p.deviceID)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
-	online, err := s.cache.ListOnlinePeers(ctx)
+	presences, err := s.cache.GetPresences(ctx, deviceIDs)
 	cancel()
 	if err != nil {
 		s.logger.Warn("presence sweep could not list online peers", "error", err)
 		return
 	}
-	s.hub.mutex.Lock()
 	var zombies []*peer
-	for deviceID, p := range s.hub.peers {
-		if _, ok := online[deviceID]; !ok {
+	for _, p := range localPeers {
+		if _, ok := presences[p.deviceID]; !ok {
 			zombies = append(zombies, p)
 		}
 	}
-	s.hub.mutex.Unlock()
 	for _, p := range zombies {
 		s.logger.Info("presence sweep closing zombie peer",
 			"device_id", p.deviceID, "connection_id", p.connectionID)
-		// 只关闭仍归本实例持有的连接；若连接在此期间已自愈或已被替换，disconnectDevice
-		// 的 CAS 释放会安全跳过，不会误删新连接。
-		s.hub.disconnectDevice(p.deviceID)
+		// 定向断开快照中的这条连接（disconnectConnection 只关闭 connectionID 匹配的
+		// peer）：若设备在快照与断开之间已重连为新的 connectionID，则定向断开是
+		// no-op，不会像 disconnectDevice(deviceID) 那样重读 h.peers 误踢新连接。
+		// 定向断开本身不广播（disconnectConnection 语义是"被新连接替换"，新连接
+		// 已接管、设备仍在线），僵尸的 peer_offline 由这里显式广播。
+		s.hub.disconnectConnection(p.deviceID, p.connectionID)
 		s.hub.broadcastPeerEvent(framePeerOffline, p.deviceID, 0)
 	}
 }

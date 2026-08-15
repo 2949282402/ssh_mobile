@@ -372,6 +372,10 @@ func (h *hub) remove(peer *peer) {
 	if isCurrent && h.presence != nil {
 		_, _ = h.presence.ReleasePresence(context.Background(), peer.deviceID, peer.connectionID)
 		_, _ = h.presence.ReleaseDiscovery(context.Background(), peer.deviceID, peer.connectionID)
+		// 设备真正下线（当前连接被移除且租约释放）：广播 peer_offline + 跨实例事件。
+		// 被取代连接的 teardown（isCurrent==false）或 revoke/kick 路径
+		// （disconnectDevice 已广播）不在此重复。
+		h.broadcastPeerEvent(framePeerOffline, peer.deviceID, 0)
 	}
 	closePeer(peer)
 }
@@ -410,6 +414,10 @@ func (h *hub) disconnectDevice(deviceID string) {
 			_, _ = h.presence.ReleasePresence(context.Background(), deviceID, peer.connectionID)
 			_, _ = h.presence.ReleaseDiscovery(context.Background(), deviceID, peer.connectionID)
 		}
+		// 设备被整机断开（revoke/kick/对账/重新 enroll 抢占）：广播 peer_offline。
+		// 关闭触发的 remove() 此时 isCurrent==false 不会重复广播。被新连接替换的
+		// 定向断开走 disconnectConnection（新连接已接管，不广播 offline）。
+		h.broadcastPeerEvent(framePeerOffline, deviceID, 0)
 		closePeer(peer)
 	}
 }
