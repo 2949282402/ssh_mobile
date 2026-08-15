@@ -123,7 +123,6 @@ pub(crate) struct RuntimeState {
     pub(crate) crypto: SessionCryptoManager,
     pub(crate) delivery: DeliveryManager,
     pub(crate) realtime: AsyncMutex<crate::realtime::RealtimeManager>,
-    pub(crate) delivery_tasks: RwLock<HashMap<String, SessionId>>,
     pub(crate) relay: RwLock<Option<Arc<RelayClient>>>,
     pub(crate) relay_config: RwLock<Option<crate::relay::RelayReconnectConfig>>,
     pub(crate) relay_reconnect_task: Mutex<Option<TaskId>>,
@@ -180,7 +179,6 @@ impl RuntimeState {
             crypto: SessionCryptoManager::new(),
             delivery: DeliveryManager::new(),
             realtime: AsyncMutex::new(crate::realtime::RealtimeManager::default()),
-            delivery_tasks: RwLock::new(HashMap::new()),
             relay: RwLock::new(None),
             relay_config: RwLock::new(None),
             relay_reconnect_task: Mutex::new(None),
@@ -208,21 +206,18 @@ impl RuntimeState {
 
     async fn retire_session_resources(&self, peer_id: &str, session_id: SessionId) {
         let session_key = session_id.wire_key();
-        // Retire aliases and task indexes before awaiting the old task group.
+        // Retire aliases before awaiting the old task group.
         // A receiver task may be inside a bounded I/O wait; the replacement
         // Session must become cryptographically isolated without waiting for
         // that transport task to finish unwinding.
         self.crypto.remove_session(peer_id, &session_key);
-        self.delivery_tasks
-            .write()
-            .await
-            .retain(|_, current| *current != session_id);
         // transport-network v2：Session 替换/关闭时同步注销连接登记（§34）。
         self.connection_registry
             .unregister_if_session(peer_id, session_id);
-        // §19 业务状态不属于 Session：Transfer / Delivery pending 由业务 manager
-        // 持有，Session 销毁不终止/清理它们（re-key 是 Step 9）。
-        self.delivery.close_session(&session_key).await;
+        // §19/§20 业务状态（pending / dedup / ordered）不属于 Session：transport
+        // 丢失或 Session 被替换时**不得**清理 Delivery 的接收端去重/有序状态，
+        // 否则新连接无法按 MessageId 去重、无法在有序通道上从断点继续。显式
+        // Disconnect 才清理（见 peer::disconnect_peer）。
     }
 
     pub(crate) async fn cancel_session_tasks(&self, peer_id: &str, session_id: SessionId) {
@@ -527,13 +522,12 @@ impl NetworkRuntime {
         });
     }
 
-    /// 仅测试用：为当前 Session 显式驱动一次确定性 recovery，返回其 wire key。
+    /// 仅测试用：为当前 Peer 显式驱动一次确定性 recovery，返回其 wire key。
     ///
-    /// 测试在连接保持稳定时显式重放未 ACK 消息，验证 dedup 与显式 ACK 使用
-    /// 当前 recovery epoch。避免依赖生产重连路径：重连可能触发会话 crypto
-    /// 换代（ReplaceWithNew），使以旧 crypto 加密的重放无法解密而静默丢失。
+    /// 测试在连接保持稳定时显式重放未 ACK 消息，验证接收端按 MessageId 去重。
+    /// 重放会以当前 ConnectionSession 重新编码发送（§20），不依赖生产重连路径。
     #[cfg(test)]
-    pub(crate) fn recover_current_session_for_test(&self, peer_id: &str) -> Option<String> {
+    pub(crate) fn recover_current_peer_for_test(&self, peer_id: &str) -> Option<String> {
         let state = self
             .state
             .lock()
@@ -543,8 +537,7 @@ impl NetworkRuntime {
         self.runtime.block_on(async move {
             let session_id = state.sessions.current_session_id(peer_id).await?;
             let wire_key = session_id.wire_key();
-            crate::channel::recover_session(Arc::clone(&state), peer_id.to_string(), session_id)
-                .await;
+            crate::channel::recover_session(Arc::clone(&state), peer_id.to_string()).await;
             Some(wire_key)
         })
     }

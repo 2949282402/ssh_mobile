@@ -93,10 +93,11 @@ pub(crate) async fn start_send_message(
             &command.peer_id,
         ));
     }
+    // §20：投递状态按 Peer 业务作用域保存，绝不使用每连接的 SessionId。
     let message = state
         .delivery
         .enqueue_with_crypto(
-            &session_id.wire_key(),
+            &command.peer_id,
             &command.channel_id,
             command.payload,
             policy,
@@ -105,13 +106,13 @@ pub(crate) async fn start_send_message(
         )
         .await
         .map_err(|error| delivery_error(&command.peer_id, error))?;
-    ensure_retry_worker(Arc::clone(&state), command.peer_id.clone(), session_id).await;
+    ensure_retry_worker(Arc::clone(&state), command.peer_id.clone()).await;
     let supervisor = Arc::clone(&state.task_supervisor);
     if supervisor
         .spawn_session(
             session_id.wire_key(),
             "delivery-send",
-            deliver_pending_message(state, command.peer_id.clone(), session_id, message),
+            deliver_pending_message(state, command.peer_id.clone(), message),
         )
         .is_none()
     {
@@ -126,15 +127,20 @@ pub(crate) async fn start_send_message(
 }
 
 /// 在当前 Route 上发送一个已由 DeliveryManager 领取的消息。
+///
+/// 发送时解析**当前** ConnectionSession（wire 信封与加密上下文必须属于当前
+/// connection；pending 消息在旧连接入队后，可能在新连接上以同一 MessageId
+/// 重发）。
 async fn deliver_pending_message(
     state: Arc<RuntimeState>,
     peer_id: String,
-    session_id: SessionId,
     message: PendingMessage,
 ) {
     if message.policy == DeliveryPolicy::BestEffort {
-        if let Err(error) = send_data_message(&state, &peer_id, &message).await {
-            tracing::debug!(peer_id = %peer_id, error = %error, "best-effort channel message was not sent");
+        if let Some(session_id) = state.sessions.current_session_id(&peer_id).await {
+            if let Err(error) = send_data_message(&state, &peer_id, session_id, &message).await {
+                tracing::debug!(peer_id = %peer_id, error = %error, "best-effort channel message was not sent");
+            }
         }
         return;
     }
@@ -151,7 +157,15 @@ async fn deliver_pending_message(
             return;
         }
     };
-    let result = send_data_message(&state, &peer_id, &sendable).await;
+    let Some(session_id) = state.sessions.current_session_id(&peer_id).await else {
+        // 连接在领取与发送之间丢失：退回重试队列，等待下一次 ConnectionSession。
+        let _ = state
+            .delivery
+            .mark_send_failed(sendable.message_id, Instant::now())
+            .await;
+        return;
+    };
+    let result = send_data_message(&state, &peer_id, session_id, &sendable).await;
     match result {
         Ok(()) => {
             let _ = state
@@ -175,64 +189,41 @@ async fn deliver_pending_message(
 }
 
 /// 将一个 RecoverySnapshot 逐条重新编码并发送；Snapshot 不再被静默丢弃。
-pub(crate) async fn recover_session(
-    state: Arc<RuntimeState>,
-    peer_id: String,
-    session_id: SessionId,
-) {
-    let session_key = session_id.wire_key();
-    let snapshot = state.delivery.recover_session(&session_key).await;
-    ensure_retry_worker(Arc::clone(&state), peer_id.clone(), session_id).await;
-    replay_snapshot(state, peer_id, session_id, snapshot).await;
+///
+/// 恢复按 Peer 业务作用域进行（§20）：新 Connection Ready 后，该 Peer 所有未
+/// ACK 的 pending 消息都会以**同一个 MessageId** 在**当前** transport 上重发，
+/// 由对端按 MessageId 去重。
+pub(crate) async fn recover_session(state: Arc<RuntimeState>, peer_id: String) {
+    let snapshot = state.delivery.recover_peer(&peer_id).await;
+    ensure_retry_worker(Arc::clone(&state), peer_id.clone()).await;
+    replay_snapshot(state, peer_id, snapshot).await;
 }
 
-async fn replay_snapshot(
-    state: Arc<RuntimeState>,
-    peer_id: String,
-    session_id: SessionId,
-    snapshot: RecoverySnapshot,
-) {
+async fn replay_snapshot(state: Arc<RuntimeState>, peer_id: String, snapshot: RecoverySnapshot) {
     for message in snapshot.messages {
-        deliver_pending_message(Arc::clone(&state), peer_id.clone(), session_id, message).await;
+        deliver_pending_message(Arc::clone(&state), peer_id.clone(), message).await;
     }
 }
 
-/// 每个逻辑 Session 只运行一个 ACK 超时扫描器；Connection 替换不会重复
-/// 创建扫描任务，Session 关闭或换代时旧任务会自然退出。
-async fn ensure_retry_worker(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
-    let should_start = {
-        let mut tasks = state.delivery_tasks.write().await;
-        match tasks.get(&peer_id).copied() {
-            Some(existing) if existing == session_id => false,
-            _ => {
-                tasks.insert(peer_id.clone(), session_id);
-                true
-            }
-        }
-    };
-    if !should_start {
+/// 每个 Peer 只运行一个重试循环；所有权（注册表）在 DeliveryManager 业务层，
+/// key 是 Peer 业务作用域——**不是** ConnectionSession 的 SessionId。
+///
+/// worker 无连接时暂停（只是休眠轮询），新 ConnectionSession 出现后自动恢复，
+/// 因此一次认领即可覆盖后续所有重连；transport 丢失不会取消它。
+async fn ensure_retry_worker(state: Arc<RuntimeState>, peer_id: String) {
+    if !state.delivery.try_start_retry_worker(&peer_id).await {
         return;
     }
     let retry_state = Arc::clone(&state);
     let retry_peer_id = peer_id.clone();
-    let task_started =
-        state
-            .task_supervisor
-            .spawn_session(session_id.wire_key(), "delivery-retry", async move {
-                let session_key = session_id.wire_key();
-                loop {
-                    if retry_state
-                        .sessions
-                        .current_session_id(&retry_peer_id)
-                        .await
-                        != Some(session_id)
-                        || !retry_state.sessions.is_connected(&retry_peer_id).await
-                    {
-                        break;
-                    }
+    let task_started = state
+        .task_supervisor
+        .spawn_runtime("delivery-retry", async move {
+            loop {
+                if retry_state.sessions.is_connected(&retry_peer_id).await {
                     let expired = retry_state
                         .delivery
-                        .expire_incoming(&session_key, Instant::now())
+                        .expire_incoming(&retry_peer_id, Instant::now())
                         .await;
                     if !expired.is_empty() {
                         let failed_ordered_channels = expired
@@ -240,7 +231,7 @@ async fn ensure_retry_worker(state: Arc<RuntimeState>, peer_id: String, session_
                             .filter(|timeout| timeout.ordered_channel_failed)
                             .count();
                         tracing::warn!(
-                            session_id = %session_key,
+                            peer_id = %retry_peer_id,
                             expired = expired.len(),
                             failed_ordered_channels,
                             "application delivery ACK timeout released receive state"
@@ -248,39 +239,36 @@ async fn ensure_retry_worker(state: Arc<RuntimeState>, peer_id: String, session_
                     }
                     for message in retry_state
                         .delivery
-                        .retryable_messages(&session_key, Instant::now())
+                        .retryable_messages(&retry_peer_id, Instant::now())
                         .await
                     {
                         deliver_pending_message(
                             Arc::clone(&retry_state),
                             retry_peer_id.clone(),
-                            session_id,
                             message,
                         )
                         .await;
                     }
-                    tokio::time::sleep(DELIVERY_RETRY_POLL_INTERVAL).await;
                 }
-                let mut tasks = retry_state.delivery_tasks.write().await;
-                if tasks.get(&retry_peer_id).copied() == Some(session_id) {
-                    tasks.remove(&retry_peer_id);
-                }
-            });
+                tokio::time::sleep(DELIVERY_RETRY_POLL_INTERVAL).await;
+            }
+        });
     if task_started.is_none() {
-        let mut tasks = state.delivery_tasks.write().await;
-        if tasks.get(&peer_id).copied() == Some(session_id) {
-            tasks.remove(&peer_id);
-        }
+        state.delivery.stop_retry_worker(&peer_id).await;
     }
 }
 
 async fn send_data_message(
     state: &RuntimeState,
     peer_id: &str,
+    session_id: SessionId,
     message: &PendingMessage,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // wire 信封与加密上下文必须使用当前 ConnectionSession（重放时 MessageId
+    // 不变，但 SessionId / Noise root 已经换代）。
+    let session_key = session_id.wire_key();
     let mut data = DataMessage {
-        session_id: message.session_id.clone(),
+        session_id: session_key.clone(),
         channel_id: message.channel_id.clone(),
         message_id: message.message_id.to_bytes().to_vec(),
         sequence: message.sequence,
@@ -301,7 +289,7 @@ async fn send_data_message(
     data.payload = state
         .encrypt_application_payload(
             peer_id,
-            &data.session_id,
+            &session_key,
             message.crypto_mode,
             &aad,
             &message.payload,
@@ -344,10 +332,12 @@ pub(crate) async fn acknowledge_message(
             "peer_id, session_id, and channel_id are required",
         ));
     }
+    // 应用 ACK 的关联 key 是 Peer + Channel + MessageId（§20）。`command.session_id`
+    // 只是事件里携带的 wire SessionId，仅用于回显，不参与关联。
     let Some(completion) = state
         .delivery
         .complete_incoming(
-            &command.session_id,
+            &command.peer_id,
             &command.channel_id,
             crate::delivery::MessageId::from_bytes(message_id),
         )
@@ -464,7 +454,7 @@ pub(crate) async fn handle_data_message(
         match state
             .delivery
             .begin_incoming(
-                &message.session_id,
+                peer_id,
                 &message.channel_id,
                 crate::delivery::MessageId::from_bytes(message_id),
                 message.recovery_epoch,
@@ -483,7 +473,7 @@ pub(crate) async fn handle_data_message(
                 let Some(recovery_epoch) = state
                     .delivery
                     .incoming_recovery_epoch(
-                        &message.session_id,
+                        peer_id,
                         &message.channel_id,
                         crate::delivery::MessageId::from_bytes(message_id),
                     )
@@ -502,13 +492,6 @@ pub(crate) async fn handle_data_message(
                 };
                 send_delivery_ack(state, peer_id, &ack).await?;
                 return Ok(());
-            }
-            DedupDecision::StaleEpoch => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "stale DataMessage recovery epoch",
-                )
-                .into());
             }
             DedupDecision::CapacityExceeded => {
                 return Err(std::io::Error::new(
@@ -533,7 +516,7 @@ pub(crate) async fn handle_data_message(
                             let _ = state
                                 .delivery
                                 .reject_incoming(
-                                    &message.session_id,
+                                    peer_id,
                                     &message.channel_id,
                                     crate::delivery::MessageId::from_bytes(message_id),
                                 )
@@ -544,7 +527,7 @@ pub(crate) async fn handle_data_message(
                             let _ = state
                                 .delivery
                                 .reject_incoming(
-                                    &message.session_id,
+                                    peer_id,
                                     &message.channel_id,
                                     crate::delivery::MessageId::from_bytes(message_id),
                                 )
@@ -589,7 +572,9 @@ fn emit_ordered_message(state: &RuntimeState, message: OrderedMessage) {
     });
 }
 
-/// 处理传输层收到的 ACK，并只接受当前 epoch 的 ACK。
+/// 处理传输层收到的 ACK。ACK 按 **MessageId** 关联（§20）：
+/// 只要该 MessageId 仍在 pending 中即完成；已完成消息的重复 ACK 是 no-op。
+/// `ack.session_id` / `ack.recovery_epoch` 只用于事件回显，不参与关联门控。
 pub(crate) async fn handle_delivery_ack(
     state: &RuntimeState,
     peer_id: &str,
@@ -601,16 +586,11 @@ pub(crate) async fn handle_delivery_ack(
         .as_slice()
         .try_into()
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid ACK ID"))?;
-    if !ack.session_id.is_empty()
-        && state
-            .delivery
-            .acknowledge(
-                &ack.session_id,
-                crate::delivery::MessageId::from_bytes(message_id),
-                ack.recovery_epoch,
-            )
-            .await
-            == AckResult::Acknowledged
+    if state
+        .delivery
+        .acknowledge(peer_id, crate::delivery::MessageId::from_bytes(message_id))
+        .await
+        == AckResult::Acknowledged
     {
         let _ = state.event_tx.send(NetworkEvent {
             event_id: format!(
@@ -748,10 +728,11 @@ mod tests {
                 OrderedInsertResult::Buffered,
             ),
         ] {
+            // 投递去重/有序状态按 Peer 业务作用域 key，不使用 session_key。
             assert_eq!(
                 state
                     .delivery
-                    .begin_incoming(&session_key, channel_id, message_id, 1, now)
+                    .begin_incoming(peer_id, channel_id, message_id, 1, now)
                     .await,
                 DedupDecision::New
             );

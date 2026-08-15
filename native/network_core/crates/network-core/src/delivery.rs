@@ -4,15 +4,20 @@
 //! handle。Connection 恢复后由上层取出 `RecoverySnapshot`，在当前 transport
 //! 上重新发送；因此 ACK、去重和重试不会绑定到某一条已失效的 Connection。
 //!
-//! transport-network v2（§19）：业务状态（pending / recovery epoch / dedup）
-//! 属于本 manager，**不属于** ConnectionSession。Session 被销毁（transport
-//! 丢失）时本 manager 不会清空这些状态；跨新 Session 的 re-key 是 Step 9 的职责。
+//! transport-network v2（§19/§20）：跨连接稳定的是业务身份 **MessageId +
+//! ChannelId**（以及其所属的 Peer），**不是** Transport Connection 或
+//! ConnectionSession。Step 8 之后 Session 与 connection 一一对应且可销毁：
+//! 新连接 = 新 SessionId + 新 Noise root。因此本 manager 的 pending / dedup /
+//! ordered 状态全部按 **Peer 业务作用域** 保存，绝不用每个连接的 SessionId
+//! 作 key；`MessageId` 是 ACK 与去重的稳定键。连接丢失时本 manager 不会清空
+//! 这些状态，未 ACK 的消息会在新连接上以**同一个 MessageId** 重新发送，
+//! 由接收端按 MessageId 去重（§20）。
 
 use rand::RngCore;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::crypto::CryptoMode;
 
@@ -98,10 +103,15 @@ impl RetryPolicy {
 }
 
 /// 等待 ACK 的逻辑消息。payload 保持为可在新 Connection 上重新编码的内容。
+///
+/// 稳定标识是 `message_id`；`peer_id` 是消息所属的**业务作用域**（对端
+/// 设备标识），`session_id` 已被移除——每条 Connection 都有新的 SessionId，
+/// 因此不在此保存会过期的 per-connection 标识。发送时由传输层传入当前
+/// `SessionId` 作为 wire 信封与加密上下文。
 #[derive(Clone, Debug)]
 pub struct PendingMessage {
     pub message_id: MessageId,
-    pub session_id: String,
+    pub peer_id: String,
     pub channel_id: String,
     pub sequence: u64,
     pub payload: Vec<u8>,
@@ -113,6 +123,8 @@ pub struct PendingMessage {
     pub attempts: u32,
     pub created_at: Instant,
     pub expires_at: Option<Instant>,
+    /// Peer 作用域的连接代数（每次 Connection Ready 递增一次）。只用于 wire
+    /// 信封 / AAD 与诊断，**不再作为 ACK 或去重的门控**。
     pub recovery_epoch: u64,
     retry_policy: RetryPolicy,
     next_retry_at: Instant,
@@ -120,6 +132,9 @@ pub struct PendingMessage {
 }
 
 /// 一次 Connection Ready 后交给传输层的恢复批次。
+///
+/// `recovery_epoch` 是该 Peer 作用域当前连接代数，仅用于 wire 信封；
+/// 恢复去重完全由 `MessageId` 驱动。
 #[derive(Clone, Debug)]
 pub struct RecoverySnapshot {
     pub recovery_epoch: u64,
@@ -128,9 +143,10 @@ pub struct RecoverySnapshot {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AckResult {
+    /// 该 MessageId 正在 pending 中，已从投递队列移除。
     Acknowledged,
+    /// 该 MessageId 未知（已完成、未入队或属于其它 Peer）；ACK 是无害的 no-op。
     Unknown,
-    StaleEpoch,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,7 +154,6 @@ pub enum DedupDecision {
     New,
     DuplicateInFlight,
     DuplicateProcessed,
-    StaleEpoch,
     /// Active 记录不能为了满足 history 上限而淘汰；调用方必须拒绝新消息，
     /// 等待现有应用 ACK 或显式 timeout。
     CapacityExceeded,
@@ -297,9 +312,13 @@ pub(crate) struct IncomingCompletion {
     pub(crate) next_ordered: Option<OrderedMessage>,
 }
 
+/// 接收端去重 key：Peer 业务作用域 + Channel + MessageId。
+///
+/// SessionId 被刻意排除——每条 Connection 都有新 SessionId，而 MessageId 在
+/// 新连接重放时保持不变，去重必须跨越 Session 换代（§20）。
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct DedupKey {
-    session_id: String,
+    peer_id: String,
     channel_id: String,
     message_id: MessageId,
 }
@@ -311,7 +330,8 @@ enum ActiveIncomingState {
     OrderedBuffered,
 }
 
-/// Active receive record 的生命周期与恢复 epoch；deadline 不是 dedup TTL。
+/// Active receive record。`recovery_epoch` 只记录最后一次观测到的 wire 连接
+/// 代数（用于 ACK 回显），deadline 不是 dedup TTL；不存在 epoch 门控。
 #[derive(Clone, Copy, Debug)]
 struct ActiveIncomingRecord {
     ack_deadline: Option<Instant>,
@@ -330,7 +350,7 @@ struct ProcessedDedupRecord {
 /// Application ACK 超时后的可观测摘要。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IncomingTimeout {
-    pub(crate) session_id: String,
+    pub(crate) peer_id: String,
     pub(crate) channel_id: String,
     pub(crate) message_id: MessageId,
     pub(crate) ordered_channel_failed: bool,
@@ -340,6 +360,7 @@ struct DeliveryStore {
     pending: HashMap<MessageId, PendingMessage>,
     pending_bytes: usize,
     next_sequences: HashMap<(String, String), u64>,
+    /// Peer 作用域连接代数（每次 Connection Ready 递增一次）。只用于 wire。
     recovery_epochs: HashMap<String, u64>,
     /// 未完成的应用处理状态。这里的记录不受 dedup TTL/LRU 影响。
     incoming_active: HashMap<DedupKey, ActiveIncomingRecord>,
@@ -365,9 +386,15 @@ impl DeliveryStore {
 }
 
 /// App Scope 内唯一的应用层投递状态 owner。
+///
+/// `retry_workers` 记录每个 Peer 是否已有重试任务在运行。重试任务本身由连接
+/// 层注入发送回调后运行（它需要 transport），但**所有权/注册表属于本业务
+/// manager**：key 是 Peer 业务作用域，绝不是 ConnectionSession 的 SessionId，
+/// 因此能跨越 transport 丢失继续存活（无连接时暂停、新连接到来后恢复）。
 pub struct DeliveryManager {
     config: DeliveryConfig,
     store: Mutex<DeliveryStore>,
+    retry_workers: RwLock<HashSet<String>>,
 }
 
 impl Default for DeliveryManager {
@@ -385,20 +412,39 @@ impl DeliveryManager {
         Self {
             config,
             store: Mutex::new(DeliveryStore::new()),
+            retry_workers: RwLock::new(HashSet::new()),
         }
     }
 
+    /// 尝试为 Peer 认领一个重试 worker。返回 `true` 表示调用方应当启动该
+    /// Peer 的循环（本调用首次认领）；返回 `false` 表示已有一个 worker 在跑。
+    ///
+    /// key 是 Peer 业务作用域；worker 在无连接时暂停、在新 ConnectionSession
+    /// 出现后恢复，因此一次认领即可覆盖后续所有重连。
+    pub async fn try_start_retry_worker(&self, peer_id: &str) -> bool {
+        self.retry_workers.write().await.insert(peer_id.to_string())
+    }
+
+    /// 释放 Peer 的重试 worker 注册。仅在 worker 启动失败（supervisor 已
+    /// stopping）时调用，允许下一次连接重新认领。
+    pub async fn stop_retry_worker(&self, peer_id: &str) {
+        self.retry_workers.write().await.remove(peer_id);
+    }
+
     /// 入队逻辑 payload，并分配永不随 Connection 重置的 Channel Sequence。
+    ///
+    /// `peer_id` 是业务作用域（对端设备标识），不是任何 Connection 的
+    /// SessionId；它跨 Connection 稳定，保证未 ACK 消息在新连接上恢复。
     pub async fn enqueue(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         payload: Vec<u8>,
         policy: DeliveryPolicy,
         retry_policy: RetryPolicy,
     ) -> Result<PendingMessage, DeliveryError> {
         self.enqueue_with_crypto(
-            session_id,
+            peer_id,
             channel_id,
             payload,
             policy,
@@ -412,7 +458,7 @@ impl DeliveryManager {
     /// Every later send derives a fresh ciphertext from this stored plaintext.
     pub(crate) async fn enqueue_with_crypto(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         payload: Vec<u8>,
         policy: DeliveryPolicy,
@@ -420,7 +466,7 @@ impl DeliveryManager {
         retry_policy: RetryPolicy,
     ) -> Result<PendingMessage, DeliveryError> {
         self.enqueue_at_with_crypto(
-            session_id,
+            peer_id,
             channel_id,
             payload,
             policy,
@@ -434,7 +480,7 @@ impl DeliveryManager {
     #[cfg(test)]
     async fn enqueue_at(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         payload: Vec<u8>,
         policy: DeliveryPolicy,
@@ -442,7 +488,7 @@ impl DeliveryManager {
         now: Instant,
     ) -> Result<PendingMessage, DeliveryError> {
         self.enqueue_at_with_crypto(
-            session_id,
+            peer_id,
             channel_id,
             payload,
             policy,
@@ -456,7 +502,7 @@ impl DeliveryManager {
     #[allow(clippy::too_many_arguments)]
     async fn enqueue_at_with_crypto(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         payload: Vec<u8>,
         policy: DeliveryPolicy,
@@ -464,9 +510,9 @@ impl DeliveryManager {
         retry_policy: RetryPolicy,
         now: Instant,
     ) -> Result<PendingMessage, DeliveryError> {
-        if session_id.is_empty()
+        if peer_id.is_empty()
             || channel_id.is_empty()
-            || session_id.len() > MAX_SCOPE_ID_BYTES
+            || peer_id.len() > MAX_SCOPE_ID_BYTES
             || channel_id.len() > MAX_SCOPE_ID_BYTES
         {
             return Err(DeliveryError::InvalidScope);
@@ -484,7 +530,7 @@ impl DeliveryManager {
                 .pending
                 .iter()
                 .filter(|(_, message)| {
-                    message.session_id == session_id
+                    message.peer_id == peer_id
                         && message.channel_id == channel_id
                         && message.policy == DeliveryPolicy::LatestState
                 })
@@ -502,19 +548,19 @@ impl DeliveryManager {
             return Err(DeliveryError::QueueFull);
         }
 
-        let sequence_key = (session_id.to_string(), channel_id.to_string());
+        let sequence_key = (peer_id.to_string(), channel_id.to_string());
         let sequence = store.next_sequences.entry(sequence_key).or_insert(0);
         let message_sequence = *sequence;
         *sequence = sequence.saturating_add(1);
         let recovery_epoch = store
             .recovery_epochs
-            .get(session_id)
+            .get(peer_id)
             .copied()
             .unwrap_or_default();
         let message_id = next_message_id(&store.pending);
         let message = PendingMessage {
             message_id,
-            session_id: session_id.to_string(),
+            peer_id: peer_id.to_string(),
             channel_id: channel_id.to_string(),
             sequence: message_sequence,
             payload,
@@ -550,11 +596,6 @@ impl DeliveryManager {
             remove_pending(&mut store, &message_id);
             return Err(DeliveryError::Expired);
         }
-        let current_epoch = store
-            .recovery_epochs
-            .get(&existing.session_id)
-            .copied()
-            .unwrap_or_default();
         let Some(message) = store.pending.get_mut(&message_id) else {
             return Err(DeliveryError::NotFound);
         };
@@ -590,7 +631,6 @@ impl DeliveryManager {
         }
         message.attempts = next_attempt;
         message.retry_bytes = retry_bytes;
-        message.recovery_epoch = current_epoch;
         message.state = DeliveryState::Sending;
         Ok(Some(message.clone()))
     }
@@ -642,41 +682,44 @@ impl DeliveryManager {
         RetryDecision::RetryAt(message.next_retry_at)
     }
 
-    /// 只接受匹配当前 Recovery Epoch 的应用 ACK，随后删除 Pending。
-    pub async fn acknowledge(
-        &self,
-        session_id: &str,
-        message_id: MessageId,
-        recovery_epoch: u64,
-    ) -> AckResult {
+    /// 按 MessageId 关联 ACK（§20）。一个 ACK 只要是当前作用域中已知的
+    /// in-flight MessageId 就有效；已完成 / 未知 MessageId 的 ACK 是 no-op。
+    ///
+    /// 不再携带 recovery_epoch 门控——连接换代后发送端以同一个 MessageId 重发，
+    /// ACK 只需按 MessageId 匹配即可完成。
+    pub async fn acknowledge(&self, peer_id: &str, message_id: MessageId) -> AckResult {
         let mut store = self.store.lock().await;
         let Some(message) = store.pending.get(&message_id) else {
             return AckResult::Unknown;
         };
-        if message.session_id != session_id || message.recovery_epoch != recovery_epoch {
-            return AckResult::StaleEpoch;
+        if message.peer_id != peer_id {
+            return AckResult::Unknown;
         }
         remove_pending(&mut store, &message_id);
         AckResult::Acknowledged
     }
 
-    /// 新 Connection Ready 后，重置当前 Session 的 in-flight 状态并返回恢复批次。
-    pub async fn recover_session(&self, session_id: &str) -> RecoverySnapshot {
-        self.recover_session_at(session_id, Instant::now()).await
+    /// 新 Connection Ready 后，重置 Peer 作用域的 in-flight 状态并返回恢复批次。
+    ///
+    /// `peer_id` 是业务作用域；所有该 Peer 未 ACK 的 pending 消息（无论它们在
+    /// 哪一条旧 Connection 上入队）都会以**同一个 MessageId** 返回，由上层在
+    /// 当前 transport 上重发。
+    pub async fn recover_peer(&self, peer_id: &str) -> RecoverySnapshot {
+        self.recover_peer_at(peer_id, Instant::now()).await
     }
 
-    async fn recover_session_at(&self, session_id: &str, now: Instant) -> RecoverySnapshot {
+    async fn recover_peer_at(&self, peer_id: &str, now: Instant) -> RecoverySnapshot {
         let mut store = self.store.lock().await;
         let epoch = store
             .recovery_epochs
-            .entry(session_id.to_string())
+            .entry(peer_id.to_string())
             .and_modify(|epoch| *epoch = epoch.saturating_add(1))
             .or_insert(1);
         let recovery_epoch = *epoch;
         let message_ids = store
             .pending
             .iter()
-            .filter(|(_, message)| message.session_id == session_id)
+            .filter(|(_, message)| message.peer_id == peer_id)
             .map(|(message_id, _)| *message_id)
             .collect::<Vec<_>>();
         let mut messages = Vec::new();
@@ -705,12 +748,12 @@ impl DeliveryManager {
     }
 
     /// 到达 ACK 超时点的消息重新进入可发送队列。
-    pub async fn retryable_messages(&self, session_id: &str, now: Instant) -> Vec<PendingMessage> {
+    pub async fn retryable_messages(&self, peer_id: &str, now: Instant) -> Vec<PendingMessage> {
         let mut store = self.store.lock().await;
         let message_ids = store
             .pending
             .iter()
-            .filter(|(_, message)| message.session_id == session_id)
+            .filter(|(_, message)| message.peer_id == peer_id)
             .map(|(message_id, _)| *message_id)
             .collect::<Vec<_>>();
         let mut retryable = Vec::new();
@@ -745,10 +788,15 @@ impl DeliveryManager {
         remove_pending(&mut store, &message_id).is_some()
     }
 
-    /// 接收端在业务 handler 前登记 MessageId，重复消息只需再次 ACK。
+    /// 接收端在业务 handler 前登记 MessageId（§20）。重复消息只需再次 ACK。
+    ///
+    /// 去重完全由 `DedupKey{ peer_id, channel_id, message_id }` 驱动；SessionId
+    /// 被排除——同一 MessageId 在新 Connection（新 SessionId）上重放时必须命中
+    /// 同一个记录。`recovery_epoch` 只记录最后一次观测到的 wire 连接代数，
+    /// **不做任何门控**。
     pub async fn begin_incoming(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         message_id: MessageId,
         recovery_epoch: u64,
@@ -757,34 +805,23 @@ impl DeliveryManager {
         let mut store = self.store.lock().await;
         // Application timeout 是独立且显式的生命周期决策；它可以清理超时
         // handler，但下面的普通 dedup TTL 只能淘汰已完成的历史。
-        let _ = expire_incoming_locked(&mut store, now, Some(session_id));
+        let _ = expire_incoming_locked(&mut store, now, Some(peer_id));
         prune_processed_dedup(&mut store, now);
-        let key = dedup_key(session_id, channel_id, message_id);
-        let scope = (session_id.to_string(), channel_id.to_string());
+        let key = dedup_key(peer_id, channel_id, message_id);
+        let scope = (peer_id.to_string(), channel_id.to_string());
         if store.failed_ordered.contains(&scope) {
             return DedupDecision::ChannelFailed;
         }
         if let Some(record) = store.incoming_active.get_mut(&key) {
-            if recovery_epoch < record.recovery_epoch {
-                return DedupDecision::StaleEpoch;
-            }
-            if recovery_epoch > record.recovery_epoch {
-                // 同一 MessageId 进入更高 RecoveryEpoch 代表 transport 重放。
-                // 只更新 ACK 绑定，保留业务处理状态，避免把尚未完成的
-                // handler 错误地当成已处理消息而提前 ACK。
-                record.recovery_epoch = recovery_epoch;
-            }
+            // 同一 MessageId 的重放：只更新 ACK 回显绑定的连接代数，保留业务
+            // 处理状态（绝不能把尚未完成 ACK 的 handler 当成已处理消息）。
+            record.recovery_epoch = recovery_epoch;
             return DedupDecision::DuplicateInFlight;
         }
         if let Some(record) = store.processed_dedup.get_mut(&key) {
-            if recovery_epoch < record.recovery_epoch {
-                return DedupDecision::StaleEpoch;
-            }
-            if recovery_epoch > record.recovery_epoch {
-                // Processed history 可以更新 ACK 所绑定的恢复周期，但不再
-                // 重新进入应用 handler。
-                record.recovery_epoch = recovery_epoch;
-            }
+            // 已完成消息的重复帧：更新回显代数并续期 processed history，但不再
+            // 重新进入应用 handler。
+            record.recovery_epoch = recovery_epoch;
             record.last_seen_at = now;
             record.expires_at = now + self.config.dedup_ttl;
             return DedupDecision::DuplicateProcessed;
@@ -822,11 +859,11 @@ impl DeliveryManager {
         now: Instant,
     ) -> OrderedInsertResult {
         let mut store = self.store.lock().await;
-        let key = (message.session_id.clone(), message.channel_id.clone());
+        let key = (message.peer_id.clone(), message.channel_id.clone());
         if store.failed_ordered.contains(&key) {
             return OrderedInsertResult::Rejected;
         }
-        let active_key = dedup_key(&message.session_id, &message.channel_id, message.message_id);
+        let active_key = dedup_key(&message.peer_id, &message.channel_id, message.message_id);
         if !store.incoming_active.contains_key(&active_key) {
             debug_assert!(
                 false,
@@ -861,25 +898,25 @@ impl DeliveryManager {
 
     pub(crate) async fn complete_incoming(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         message_id: MessageId,
     ) -> Option<IncomingCompletion> {
-        self.complete_incoming_at(session_id, channel_id, message_id, Instant::now())
+        self.complete_incoming_at(peer_id, channel_id, message_id, Instant::now())
             .await
     }
 
     async fn complete_incoming_at(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         message_id: MessageId,
         now: Instant,
     ) -> Option<IncomingCompletion> {
         let mut store = self.store.lock().await;
-        let key = dedup_key(session_id, channel_id, message_id);
+        let key = dedup_key(peer_id, channel_id, message_id);
         let active = *store.incoming_active.get(&key)?;
-        let scope = (session_id.to_string(), channel_id.to_string());
+        let scope = (peer_id.to_string(), channel_id.to_string());
 
         if let Some(ordered) = store.ordered.get(&scope) {
             match ordered.in_flight {
@@ -899,7 +936,7 @@ impl DeliveryManager {
             (ordered.in_flight == Some(message_id))
                 .then(|| ordered.expected_sequence.saturating_add(1))
                 .and_then(|sequence| ordered.reorder_buffer.get(&sequence))
-                .map(|next| dedup_key(&next.session_id, &next.channel_id, next.message_id))
+                .map(|next| dedup_key(&next.peer_id, &next.channel_id, next.message_id))
         });
         if let Some(next_key) = next_key.as_ref() {
             let next_active = store.incoming_active.get(next_key);
@@ -923,7 +960,7 @@ impl DeliveryManager {
         };
         store.incoming_active.remove(&key)?;
         if let Some(next) = next_ordered.as_ref() {
-            let next_key = dedup_key(&next.session_id, &next.channel_id, next.message_id);
+            let next_key = dedup_key(&next.peer_id, &next.channel_id, next.message_id);
             if let Some(record) = store.incoming_active.get_mut(&next_key) {
                 record.state = ActiveIncomingState::InFlight;
                 record.ack_deadline = Some(now + self.config.application_ack_timeout);
@@ -949,19 +986,18 @@ impl DeliveryManager {
         })
     }
 
-    /// Return the latest transport recovery epoch for a received message.
+    /// Return the last observed wire connection generation for a received message.
     ///
-    /// The epoch is deliberately kept out of the application ACK command. It
-    /// belongs to Delivery recovery state and may change after the application
-    /// first observes a message but before it acknowledges that message.
+    /// Only used to echo the sender's generation inside a DeliveryAck; the
+    /// ACK correlation itself is MessageId-based and never gates on it.
     pub async fn incoming_recovery_epoch(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         message_id: MessageId,
     ) -> Option<u64> {
         let store = self.store.lock().await;
-        let key = dedup_key(session_id, channel_id, message_id);
+        let key = dedup_key(peer_id, channel_id, message_id);
         store
             .incoming_active
             .get(&key)
@@ -974,33 +1010,32 @@ impl DeliveryManager {
             })
     }
 
-    /// 当前 Session 的 recovery epoch（每次新 Connection Ready 递增一次）。
+    /// 当前 Peer 作用域的连接代数（每次 Connection Ready 递增一次）。
     ///
-    /// 集成测试用：验证发送端 epoch 与接收端 active 记录对齐后再发送显式 ACK，
-    /// 避免 ACK 携带滞后 epoch 被发送端判为 StaleEpoch。仅测试构建暴露；
-    /// 生产代码不使用该只读访问器。
+    /// 集成测试用：观察发送端在重连/显式 recovery 后递增了连接代数。仅测试
+    /// 构建暴露；生产代码不使用该只读访问器。
     #[cfg(test)]
-    pub(crate) async fn current_session_recovery_epoch(&self, session_id: &str) -> u64 {
+    pub(crate) async fn current_peer_recovery_epoch(&self, peer_id: &str) -> u64 {
         let store = self.store.lock().await;
         store
             .recovery_epochs
-            .get(session_id)
+            .get(peer_id)
             .copied()
             .unwrap_or_default()
     }
 
     pub async fn abandon_incoming(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         message_id: MessageId,
     ) -> bool {
         let mut store = self.store.lock().await;
-        let key = dedup_key(session_id, channel_id, message_id);
+        let key = dedup_key(peer_id, channel_id, message_id);
         if !store.incoming_active.contains_key(&key) {
             return false;
         }
-        let scope = (session_id.to_string(), channel_id.to_string());
+        let scope = (peer_id.to_string(), channel_id.to_string());
         let ordered = store.ordered.get(&scope).is_some_and(|state| {
             state.in_flight == Some(message_id)
                 || state
@@ -1021,37 +1056,34 @@ impl DeliveryManager {
     /// malformed/超限 packet 意外使健康的 ordered channel 进入 Failed。
     pub(crate) async fn reject_incoming(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         message_id: MessageId,
     ) -> bool {
         let mut store = self.store.lock().await;
         let removed = store
             .incoming_active
-            .remove(&dedup_key(session_id, channel_id, message_id))
+            .remove(&dedup_key(peer_id, channel_id, message_id))
             .is_some();
         assert_delivery_invariants(&store);
         removed
     }
 
-    /// Explicitly closes a logical Session's receive-side state. Outgoing
-    /// pending messages remain separate so a caller can decide their retry or
-    /// cancellation policy; active application work must never survive a closed
-    /// Session and leave an ordered gate permanently occupied.
-    pub(crate) async fn close_session(&self, session_id: &str) {
+    /// Explicitly closes a Peer's receive-side state (用户显式断开/清理)。
+    ///
+    /// 仅显式断开时调用；transport 丢失（Session 被销毁）**不会**调用它——接收端
+    /// 的 dedup/ordered 状态必须跨 Connection 存活，新连接才能按 MessageId 去重、
+    /// 并在有序通道上从上次断点继续。Outgoing pending 消息保持独立，不在此清理。
+    pub(crate) async fn close_peer(&self, peer_id: &str) {
         let mut store = self.store.lock().await;
         store
             .incoming_active
-            .retain(|key, _| key.session_id != session_id);
+            .retain(|key, _| key.peer_id != peer_id);
         store
             .processed_dedup
-            .retain(|key, _| key.session_id != session_id);
-        store
-            .ordered
-            .retain(|(session, _), _| session != session_id);
-        store
-            .failed_ordered
-            .retain(|(session, _)| session != session_id);
+            .retain(|key, _| key.peer_id != peer_id);
+        store.ordered.retain(|(peer, _), _| peer != peer_id);
+        store.failed_ordered.retain(|(peer, _)| peer != peer_id);
         assert_delivery_invariants(&store);
     }
 
@@ -1059,11 +1091,11 @@ impl DeliveryManager {
     /// 整体进入 Failed 并清空缓冲，绝不自动跳过缺失的 Sequence。
     pub(crate) async fn expire_incoming(
         &self,
-        session_id: &str,
+        peer_id: &str,
         now: Instant,
     ) -> Vec<IncomingTimeout> {
         let mut store = self.store.lock().await;
-        let expired = expire_incoming_locked(&mut store, now, Some(session_id));
+        let expired = expire_incoming_locked(&mut store, now, Some(peer_id));
         assert_delivery_invariants(&store);
         expired
     }
@@ -1086,14 +1118,14 @@ impl DeliveryManager {
     #[cfg(test)]
     async fn incoming_record_state(
         &self,
-        session_id: &str,
+        peer_id: &str,
         channel_id: &str,
         message_id: MessageId,
     ) -> Option<(ActiveIncomingState, Option<Instant>)> {
         let store = self.store.lock().await;
         store
             .incoming_active
-            .get(&dedup_key(session_id, channel_id, message_id))
+            .get(&dedup_key(peer_id, channel_id, message_id))
             .map(|record| (record.state, record.ack_deadline))
     }
 
@@ -1126,9 +1158,9 @@ fn remove_pending(store: &mut DeliveryStore, message_id: &MessageId) -> Option<P
     Some(message)
 }
 
-fn dedup_key(session_id: &str, channel_id: &str, message_id: MessageId) -> DedupKey {
+fn dedup_key(peer_id: &str, channel_id: &str, message_id: MessageId) -> DedupKey {
     DedupKey {
-        session_id: session_id.to_string(),
+        peer_id: peer_id.to_string(),
         channel_id: channel_id.to_string(),
         message_id,
     }
@@ -1176,7 +1208,7 @@ fn fail_ordered_channel(store: &mut DeliveryStore, scope: &(String, String)) -> 
         }
         for message in ordered.reorder_buffer.into_values() {
             affected.insert(dedup_key(
-                &message.session_id,
+                &message.peer_id,
                 &message.channel_id,
                 message.message_id,
             ));
@@ -1185,7 +1217,7 @@ fn fail_ordered_channel(store: &mut DeliveryStore, scope: &(String, String)) -> 
     for key in store
         .incoming_active
         .keys()
-        .filter(|key| key.session_id == scope.0 && key.channel_id == scope.1)
+        .filter(|key| key.peer_id == scope.0 && key.channel_id == scope.1)
         .cloned()
         .collect::<Vec<_>>()
     {
@@ -1201,13 +1233,13 @@ fn fail_ordered_channel(store: &mut DeliveryStore, scope: &(String, String)) -> 
 fn expire_incoming_locked(
     store: &mut DeliveryStore,
     now: Instant,
-    session_id: Option<&str>,
+    peer_id: Option<&str>,
 ) -> Vec<IncomingTimeout> {
     let timed_out = store
         .incoming_active
         .iter()
         .filter_map(|(key, record)| {
-            if !session_id.is_none_or(|session| key.session_id == session) {
+            if !peer_id.is_none_or(|peer| key.peer_id == peer) {
                 return None;
             }
             match record.state {
@@ -1234,7 +1266,7 @@ fn expire_incoming_locked(
     let mut ordered_scopes = HashSet::new();
     let mut expired = Vec::new();
     for (key, record) in timed_out {
-        let scope = (key.session_id.clone(), key.channel_id.clone());
+        let scope = (key.peer_id.clone(), key.channel_id.clone());
         let is_ordered = record.state == ActiveIncomingState::OrderedBuffered
             || store
                 .ordered
@@ -1244,7 +1276,7 @@ fn expire_incoming_locked(
             ordered_scopes.insert(scope);
         } else if store.incoming_active.remove(&key).is_some() {
             expired.push(IncomingTimeout {
-                session_id: key.session_id,
+                peer_id: key.peer_id,
                 channel_id: key.channel_id,
                 message_id: key.message_id,
                 ordered_channel_failed: false,
@@ -1255,7 +1287,7 @@ fn expire_incoming_locked(
         let affected = fail_ordered_channel(store, &scope);
         for key in affected {
             expired.push(IncomingTimeout {
-                session_id: key.session_id,
+                peer_id: key.peer_id,
                 channel_id: key.channel_id,
                 message_id: key.message_id,
                 ordered_channel_failed: true,
@@ -1286,7 +1318,7 @@ fn assert_delivery_invariants(store: &DeliveryStore) {
                 );
                 let ordered = store
                     .ordered
-                    .get(&(key.session_id.clone(), key.channel_id.clone()))
+                    .get(&(key.peer_id.clone(), key.channel_id.clone()))
                     .expect("ordered buffered record lost its channel state");
                 assert!(
                     ordered
@@ -1310,7 +1342,7 @@ fn assert_delivery_invariants(store: &DeliveryStore) {
             );
         }
         for message in ordered.reorder_buffer.values() {
-            let key = dedup_key(&message.session_id, &message.channel_id, message.message_id);
+            let key = dedup_key(&message.peer_id, &message.channel_id, message.message_id);
             assert!(
                 store
                     .incoming_active
@@ -1365,6 +1397,7 @@ mod tests {
     fn ordered_message(sequence: u64, message_id: u8) -> OrderedMessage {
         OrderedMessage {
             peer_id: "peer-a".into(),
+            // wire 信封的 SessionId：单测中仅随 OrderedMessage 传递，不做 key。
             session_id: "session-a".into(),
             channel_id: "control".into(),
             message_id: MessageId([message_id; MESSAGE_ID_BYTES]),
@@ -1442,7 +1475,7 @@ mod tests {
             assert_eq!(
                 manager
                     .begin_incoming(
-                        &message.session_id,
+                        &message.peer_id,
                         &message.channel_id,
                         message.message_id,
                         1,
@@ -1460,7 +1493,7 @@ mod tests {
         }
 
         let first = manager
-            .complete_incoming("session-a", "control", MessageId([0; MESSAGE_ID_BYTES]))
+            .complete_incoming("peer-a", "control", MessageId([0; MESSAGE_ID_BYTES]))
             .await
             .expect("first ordered message should be ACKable");
         assert_eq!(
@@ -1468,7 +1501,7 @@ mod tests {
             Some(1)
         );
         let second = manager
-            .complete_incoming("session-a", "control", MessageId([1; MESSAGE_ID_BYTES]))
+            .complete_incoming("peer-a", "control", MessageId([1; MESSAGE_ID_BYTES]))
             .await
             .expect("second ordered message should be ACKable after release");
         assert_eq!(
@@ -1486,7 +1519,7 @@ mod tests {
             assert_eq!(
                 manager
                     .begin_incoming(
-                        &message.session_id,
+                        &message.peer_id,
                         &message.channel_id,
                         message.message_id,
                         1,
@@ -1506,7 +1539,7 @@ mod tests {
         }
         assert_eq!(
             manager
-                .incoming_record_state("session-a", "control", MessageId([61; MESSAGE_ID_BYTES]))
+                .incoming_record_state("peer-a", "control", MessageId([61; MESSAGE_ID_BYTES]))
                 .await,
             Some((ActiveIncomingState::OrderedBuffered, None))
         );
@@ -1514,7 +1547,7 @@ mod tests {
         let head_ack_at = now + Duration::from_millis(25);
         let completion = manager
             .complete_incoming_at(
-                "session-a",
+                "peer-a",
                 "control",
                 MessageId([60; MESSAGE_ID_BYTES]),
                 head_ack_at,
@@ -1531,19 +1564,19 @@ mod tests {
         let promoted_deadline = head_ack_at + SHORT_ACK_TIMEOUT;
         assert_eq!(
             manager
-                .incoming_record_state("session-a", "control", MessageId([61; MESSAGE_ID_BYTES]))
+                .incoming_record_state("peer-a", "control", MessageId([61; MESSAGE_ID_BYTES]))
                 .await,
             Some((ActiveIncomingState::InFlight, Some(promoted_deadline)))
         );
 
         let old_deadline = now + SHORT_ACK_TIMEOUT;
         assert!(manager
-            .expire_incoming("session-a", old_deadline + Duration::from_millis(1))
+            .expire_incoming("peer-a", old_deadline + Duration::from_millis(1))
             .await
             .is_empty());
         assert!(manager
             .complete_incoming_at(
-                "session-a",
+                "peer-a",
                 "control",
                 MessageId([61; MESSAGE_ID_BYTES]),
                 old_deadline + Duration::from_millis(1),
@@ -1561,7 +1594,7 @@ mod tests {
             assert_eq!(
                 manager
                     .begin_incoming(
-                        &message.session_id,
+                        &message.peer_id,
                         &message.channel_id,
                         message.message_id,
                         1,
@@ -1583,7 +1616,7 @@ mod tests {
         let head_ack_at = now + Duration::from_millis(49);
         let completion = manager
             .complete_incoming_at(
-                "session-a",
+                "peer-a",
                 "control",
                 MessageId([62; MESSAGE_ID_BYTES]),
                 head_ack_at,
@@ -1600,17 +1633,17 @@ mod tests {
         let promoted_deadline = head_ack_at + SHORT_ACK_TIMEOUT;
         assert_eq!(
             manager
-                .incoming_record_state("session-a", "control", MessageId([63; MESSAGE_ID_BYTES]))
+                .incoming_record_state("peer-a", "control", MessageId([63; MESSAGE_ID_BYTES]))
                 .await,
             Some((ActiveIncomingState::InFlight, Some(promoted_deadline)))
         );
 
         assert!(manager
-            .expire_incoming("session-a", promoted_deadline - Duration::from_millis(1),)
+            .expire_incoming("peer-a", promoted_deadline - Duration::from_millis(1),)
             .await
             .is_empty());
         let expired = manager
-            .expire_incoming("session-a", promoted_deadline + Duration::from_millis(1))
+            .expire_incoming("peer-a", promoted_deadline + Duration::from_millis(1))
             .await;
         assert_eq!(expired.len(), 1);
         assert!(expired[0].ordered_channel_failed);
@@ -1626,7 +1659,7 @@ mod tests {
             assert_eq!(
                 manager
                     .begin_incoming(
-                        &message.session_id,
+                        &message.peer_id,
                         &message.channel_id,
                         message.message_id,
                         1,
@@ -1646,13 +1679,13 @@ mod tests {
         }
         assert_eq!(
             manager
-                .incoming_record_state("session-a", "control", MessageId([65; MESSAGE_ID_BYTES]))
+                .incoming_record_state("peer-a", "control", MessageId([65; MESSAGE_ID_BYTES]))
                 .await,
             Some((ActiveIncomingState::OrderedBuffered, None))
         );
         assert_eq!(
             manager
-                .incoming_record_state("session-a", "control", MessageId([66; MESSAGE_ID_BYTES]))
+                .incoming_record_state("peer-a", "control", MessageId([66; MESSAGE_ID_BYTES]))
                 .await,
             Some((ActiveIncomingState::OrderedBuffered, None))
         );
@@ -1660,7 +1693,7 @@ mod tests {
         let first_ack_at = now + Duration::from_millis(25);
         let first_completion = manager
             .complete_incoming_at(
-                "session-a",
+                "peer-a",
                 "control",
                 MessageId([64; MESSAGE_ID_BYTES]),
                 first_ack_at,
@@ -1676,7 +1709,7 @@ mod tests {
         );
         assert_eq!(
             manager
-                .incoming_record_state("session-a", "control", MessageId([65; MESSAGE_ID_BYTES]))
+                .incoming_record_state("peer-a", "control", MessageId([65; MESSAGE_ID_BYTES]))
                 .await,
             Some((
                 ActiveIncomingState::InFlight,
@@ -1684,14 +1717,14 @@ mod tests {
             ))
         );
         assert!(manager
-            .expire_incoming("session-a", now + Duration::from_millis(51))
+            .expire_incoming("peer-a", now + Duration::from_millis(51))
             .await
             .is_empty());
 
         let second_ack_at = now + Duration::from_millis(60);
         let second_completion = manager
             .complete_incoming_at(
-                "session-a",
+                "peer-a",
                 "control",
                 MessageId([65; MESSAGE_ID_BYTES]),
                 second_ack_at,
@@ -1707,7 +1740,7 @@ mod tests {
         );
         assert_eq!(
             manager
-                .incoming_record_state("session-a", "control", MessageId([66; MESSAGE_ID_BYTES]))
+                .incoming_record_state("peer-a", "control", MessageId([66; MESSAGE_ID_BYTES]))
                 .await,
             Some((
                 ActiveIncomingState::InFlight,
@@ -1715,13 +1748,13 @@ mod tests {
             ))
         );
         assert!(manager
-            .expire_incoming("session-a", now + Duration::from_millis(101))
+            .expire_incoming("peer-a", now + Duration::from_millis(101))
             .await
             .is_empty());
 
         let final_completion = manager
             .complete_incoming_at(
-                "session-a",
+                "peer-a",
                 "control",
                 MessageId([66; MESSAGE_ID_BYTES]),
                 now + Duration::from_millis(105),
@@ -1739,7 +1772,7 @@ mod tests {
         let message_id = MessageId([20; MESSAGE_ID_BYTES]);
         assert_eq!(
             manager
-                .begin_incoming("session-a", "control", message_id, 1, now)
+                .begin_incoming("peer-a", "control", message_id, 1, now)
                 .await,
             DedupDecision::New
         );
@@ -1750,7 +1783,7 @@ mod tests {
             assert_eq!(
                 manager
                     .begin_incoming(
-                        "session-a",
+                        "peer-a",
                         "control",
                         MessageId([id; MESSAGE_ID_BYTES]),
                         1,
@@ -1762,7 +1795,7 @@ mod tests {
         }
         assert_eq!(manager.incoming_state_counts().await.0, 3);
         assert!(manager
-            .complete_incoming("session-a", "control", message_id)
+            .complete_incoming("peer-a", "control", message_id)
             .await
             .is_some());
     }
@@ -1776,7 +1809,7 @@ mod tests {
             assert_eq!(
                 manager
                     .begin_incoming(
-                        &message.session_id,
+                        &message.peer_id,
                         &message.channel_id,
                         message.message_id,
                         1,
@@ -1795,7 +1828,7 @@ mod tests {
         assert_eq!(
             manager
                 .begin_incoming(
-                    &first.session_id,
+                    &first.peer_id,
                     &first.channel_id,
                     first.message_id,
                     1,
@@ -1813,7 +1846,7 @@ mod tests {
         for id in [0, 1, 2] {
             let completion = manager
                 .complete_incoming_at(
-                    "session-a",
+                    "peer-a",
                     "control",
                     MessageId([id; MESSAGE_ID_BYTES]),
                     now + Duration::from_secs(11),
@@ -1847,13 +1880,7 @@ mod tests {
         let first = ordered_message(0, 0);
         assert_eq!(
             manager
-                .begin_incoming(
-                    &first.session_id,
-                    &first.channel_id,
-                    first.message_id,
-                    1,
-                    now,
-                )
+                .begin_incoming(&first.peer_id, &first.channel_id, first.message_id, 1, now,)
                 .await,
             DedupDecision::New
         );
@@ -1865,7 +1892,7 @@ mod tests {
         assert_eq!(
             manager
                 .begin_incoming(
-                    &buffered.session_id,
+                    &buffered.peer_id,
                     &buffered.channel_id,
                     buffered.message_id,
                     1,
@@ -1884,12 +1911,12 @@ mod tests {
             let message_id = MessageId([id; MESSAGE_ID_BYTES]);
             assert_eq!(
                 manager
-                    .begin_incoming("session-a", "history", message_id, 1, at)
+                    .begin_incoming("peer-a", "history", message_id, 1, at)
                     .await,
                 DedupDecision::New
             );
             assert!(manager
-                .complete_incoming_at("session-a", "history", message_id, at)
+                .complete_incoming_at("peer-a", "history", message_id, at)
                 .await
                 .is_some());
         }
@@ -1897,7 +1924,7 @@ mod tests {
 
         assert!(manager
             .complete_incoming_at(
-                "session-a",
+                "peer-a",
                 "control",
                 MessageId([0; MESSAGE_ID_BYTES]),
                 now + Duration::from_secs(5),
@@ -1906,7 +1933,7 @@ mod tests {
             .is_some());
         assert!(manager
             .complete_incoming_at(
-                "session-a",
+                "peer-a",
                 "control",
                 MessageId([1; MESSAGE_ID_BYTES]),
                 now + Duration::from_secs(5),
@@ -1926,19 +1953,19 @@ mod tests {
             let message_id = MessageId([id; MESSAGE_ID_BYTES]);
             assert_eq!(
                 manager
-                    .begin_incoming("session-a", "control", message_id, 1, at)
+                    .begin_incoming("peer-a", "control", message_id, 1, at)
                     .await,
                 DedupDecision::New
             );
             assert!(manager
-                .complete_incoming_at("session-a", "control", message_id, at)
+                .complete_incoming_at("peer-a", "control", message_id, at)
                 .await
                 .is_some());
         }
         assert_eq!(
             manager
                 .begin_incoming(
-                    "session-a",
+                    "peer-a",
                     "control",
                     MessageId([30; MESSAGE_ID_BYTES]),
                     1,
@@ -1950,7 +1977,7 @@ mod tests {
         assert_eq!(
             manager
                 .begin_incoming(
-                    "session-a",
+                    "peer-a",
                     "control",
                     MessageId([31; MESSAGE_ID_BYTES]),
                     1,
@@ -1962,7 +1989,7 @@ mod tests {
         assert_eq!(
             manager
                 .begin_incoming(
-                    "session-a",
+                    "peer-a",
                     "control",
                     MessageId([32; MESSAGE_ID_BYTES]),
                     1,
@@ -1983,7 +2010,7 @@ mod tests {
             assert_eq!(
                 manager
                     .begin_incoming(
-                        &message.session_id,
+                        &message.peer_id,
                         &message.channel_id,
                         message.message_id,
                         1,
@@ -1997,14 +2024,14 @@ mod tests {
                 OrderedInsertResult::Ready | OrderedInsertResult::Buffered
             ));
         }
-        let expired = manager.expire_incoming("session-a", timeout_at).await;
+        let expired = manager.expire_incoming("peer-a", timeout_at).await;
         assert_eq!(expired.len(), 2);
         assert!(expired.iter().all(|timeout| timeout.ordered_channel_failed));
         assert_eq!(manager.incoming_state_counts().await, (0, 0, 0));
         assert_eq!(
             manager
                 .begin_incoming(
-                    "session-a",
+                    "peer-a",
                     "control",
                     MessageId([42; MESSAGE_ID_BYTES]),
                     1,
@@ -2013,11 +2040,11 @@ mod tests {
                 .await,
             DedupDecision::ChannelFailed
         );
-        manager.close_session("session-a").await;
+        manager.close_peer("peer-a").await;
         assert_eq!(
             manager
                 .begin_incoming(
-                    "session-a",
+                    "peer-a",
                     "control",
                     MessageId([42; MESSAGE_ID_BYTES]),
                     1,
@@ -2037,7 +2064,7 @@ mod tests {
             assert_eq!(
                 manager
                     .begin_incoming(
-                        &message.session_id,
+                        &message.peer_id,
                         &message.channel_id,
                         message.message_id,
                         1,
@@ -2052,12 +2079,12 @@ mod tests {
                 OrderedInsertResult::Ready | OrderedInsertResult::Buffered
             ));
         }
-        manager.close_session("session-a").await;
+        manager.close_peer("peer-a").await;
         assert_eq!(manager.incoming_state_counts().await, (0, 0, 0));
         assert_eq!(
             manager
                 .begin_incoming(
-                    "session-a",
+                    "peer-a",
                     "control",
                     MessageId([50; MESSAGE_ID_BYTES]),
                     1,
@@ -2074,7 +2101,7 @@ mod tests {
         let now = Instant::now();
         let first = manager
             .enqueue_at(
-                "session-a",
+                "peer-a",
                 "control",
                 b"one".to_vec(),
                 DeliveryPolicy::AckedDeduplicated,
@@ -2085,7 +2112,7 @@ mod tests {
             .expect("enqueue first");
         let second = manager
             .enqueue_at(
-                "session-a",
+                "peer-a",
                 "control",
                 b"two".to_vec(),
                 DeliveryPolicy::SessionBoundOrdered,
@@ -2108,7 +2135,7 @@ mod tests {
         assert!(manager.mark_sent(first.message_id, now).await);
 
         let recovery = manager
-            .recover_session_at("session-a", now + Duration::from_secs(1))
+            .recover_peer_at("peer-a", now + Duration::from_secs(1))
             .await;
         assert_eq!(recovery.recovery_epoch, 1);
         assert_eq!(
@@ -2119,10 +2146,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 1]
         );
-        assert_eq!(
-            manager.acknowledge("session-a", first.message_id, 0).await,
-            AckResult::StaleEpoch
-        );
+        // §20：ACK 只按 MessageId 关联——即使携带了过时/未对齐的连接代数，
+        // 只要该 MessageId 仍在 pending 中就完成；recover 后以同一 MessageId
+        // 重发，ACK 不需要等待 epoch 对齐。
         let resent = manager
             .begin_send(first.message_id, now + Duration::from_secs(1))
             .await
@@ -2131,12 +2157,15 @@ mod tests {
         assert_eq!(resent.recovery_epoch, recovery.recovery_epoch);
         assert_eq!(resent.attempts, 2);
         assert_eq!(
-            manager
-                .acknowledge("session-a", first.message_id, recovery.recovery_epoch)
-                .await,
+            manager.acknowledge("peer-a", first.message_id).await,
             AckResult::Acknowledged
         );
         assert_eq!(manager.pending_len().await, 1);
+        // 已完成 MessageId 的重复 ACK 是无害的 no-op（不再报 StaleEpoch）。
+        assert_eq!(
+            manager.acknowledge("peer-a", first.message_id).await,
+            AckResult::Unknown
+        );
     }
 
     #[tokio::test]
@@ -2144,7 +2173,7 @@ mod tests {
         let manager = DeliveryManager::with_config(config());
         let message = manager
             .enqueue_with_crypto(
-                "session-a",
+                "peer-a",
                 "control",
                 b"plaintext".to_vec(),
                 DeliveryPolicy::Acked,
@@ -2170,7 +2199,7 @@ mod tests {
         let now = Instant::now();
         let message = manager
             .enqueue_at(
-                "session-a",
+                "peer-a",
                 "control",
                 b"payload".to_vec(),
                 DeliveryPolicy::Acked,
@@ -2186,12 +2215,12 @@ mod tests {
             .expect("sendable");
         assert!(manager.mark_sent(message.message_id, now).await);
         assert!(manager
-            .retryable_messages("session-a", now + Duration::from_millis(999))
+            .retryable_messages("peer-a", now + Duration::from_millis(999))
             .await
             .is_empty());
         assert_eq!(
             manager
-                .retryable_messages("session-a", now + Duration::from_secs(1))
+                .retryable_messages("peer-a", now + Duration::from_secs(1))
                 .await
                 .len(),
             1
@@ -2204,7 +2233,7 @@ mod tests {
         );
         assert_eq!(
             manager
-                .recover_session_at("session-a", now + Duration::from_secs(31))
+                .recover_peer_at("peer-a", now + Duration::from_secs(31))
                 .await
                 .messages
                 .len(),
@@ -2219,7 +2248,7 @@ mod tests {
         let now = Instant::now();
         let old = manager
             .enqueue_at(
-                "session-a",
+                "peer-a",
                 "mouse",
                 vec![1],
                 DeliveryPolicy::LatestState,
@@ -2230,7 +2259,7 @@ mod tests {
             .expect("enqueue old");
         let new = manager
             .enqueue_at(
-                "session-a",
+                "peer-a",
                 "mouse",
                 vec![2],
                 DeliveryPolicy::LatestState,
@@ -2262,58 +2291,60 @@ mod tests {
         let message_id = MessageId([7; MESSAGE_ID_BYTES]);
         assert_eq!(
             manager
-                .begin_incoming("session-a", "control", message_id, 1, now)
+                .begin_incoming("peer-a", "control", message_id, 1, now)
                 .await,
             DedupDecision::New
         );
         assert_eq!(
             manager
-                .begin_incoming("session-a", "control", message_id, 1, now)
+                .begin_incoming("peer-a", "control", message_id, 1, now)
                 .await,
             DedupDecision::DuplicateInFlight
         );
         assert!(manager
-            .complete_incoming("session-a", "control", message_id)
+            .complete_incoming("peer-a", "control", message_id)
             .await
             .is_some());
         assert_eq!(
             manager
-                .begin_incoming("session-a", "control", message_id, 1, now)
+                .begin_incoming("peer-a", "control", message_id, 1, now)
                 .await,
             DedupDecision::DuplicateProcessed
         );
         assert_eq!(
             manager
-                .begin_incoming("session-a", "control", message_id, 2, now)
+                .begin_incoming("peer-a", "control", message_id, 2, now)
                 .await,
             DedupDecision::DuplicateProcessed
         );
         assert_eq!(
             manager
-                .incoming_recovery_epoch("session-a", "control", message_id)
+                .incoming_recovery_epoch("peer-a", "control", message_id)
                 .await,
             Some(2)
         );
+        // §20：连接代数不再门控去重——携带较低代数的重放帧仍是 DuplicateProcessed，
+        // 只是不能再次进入应用 handler（对已完成消息的重复 ACK 是无害 no-op）。
         assert_eq!(
             manager
-                .begin_incoming("session-a", "control", message_id, 1, now)
+                .begin_incoming("peer-a", "control", message_id, 1, now)
                 .await,
-            DedupDecision::StaleEpoch
+            DedupDecision::DuplicateProcessed
         );
         assert!(manager
-            .complete_incoming("session-a", "control", message_id)
+            .complete_incoming("peer-a", "control", message_id)
             .await
             .is_none());
         assert_eq!(
             manager
-                .begin_incoming("session-b", "control", message_id, 1, now)
+                .begin_incoming("peer-b", "control", message_id, 1, now)
                 .await,
             DedupDecision::New
         );
         assert_eq!(
             manager
                 .begin_incoming(
-                    "session-a",
+                    "peer-a",
                     "control",
                     message_id,
                     1,
@@ -2332,14 +2363,14 @@ mod tests {
 
         assert_eq!(
             manager
-                .begin_incoming("session-a", "control", message_id, 1, now)
+                .begin_incoming("peer-a", "control", message_id, 1, now)
                 .await,
             DedupDecision::New
         );
         assert_eq!(
             manager
                 .begin_incoming(
-                    "session-a",
+                    "peer-a",
                     "control",
                     message_id,
                     2,
@@ -2350,13 +2381,13 @@ mod tests {
         );
         assert_eq!(
             manager
-                .incoming_recovery_epoch("session-a", "control", message_id)
+                .incoming_recovery_epoch("peer-a", "control", message_id)
                 .await,
             Some(2)
         );
         assert_eq!(
             manager
-                .complete_incoming("session-a", "control", message_id)
+                .complete_incoming("peer-a", "control", message_id)
                 .await,
             Some(IncomingCompletion {
                 recovery_epoch: 2,
@@ -2366,7 +2397,7 @@ mod tests {
         assert_eq!(
             manager
                 .begin_incoming(
-                    "session-a",
+                    "peer-a",
                     "control",
                     message_id,
                     2,
@@ -2393,7 +2424,7 @@ mod tests {
         let now = Instant::now();
         let best_effort = manager
             .enqueue_at(
-                "session-a",
+                "peer-a",
                 "video",
                 vec![1, 2, 3, 4],
                 DeliveryPolicy::BestEffort,
@@ -2410,7 +2441,7 @@ mod tests {
 
         manager
             .enqueue_at(
-                "session-a",
+                "peer-a",
                 "control",
                 vec![9, 9, 9, 9],
                 DeliveryPolicy::Acked,
@@ -2422,7 +2453,7 @@ mod tests {
         assert!(matches!(
             manager
                 .enqueue_at(
-                    "session-a",
+                    "peer-a",
                     "control",
                     vec![8],
                     DeliveryPolicy::Acked,

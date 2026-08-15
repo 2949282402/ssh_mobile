@@ -1065,41 +1065,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_close_does_not_recover_delivery_into_replacement_session() {
+    async fn explicit_close_preserves_peer_pending_delivery() {
         let manager = SessionManager::new();
         let delivery = crate::delivery::DeliveryManager::new();
         let first = match manager.begin_connect("peer-b").await {
             ConnectDecision::Started(id) => id,
             decision => panic!("unexpected decision: {decision:?}"),
         };
+        // §20：pending 属于 Peer 业务作用域，不使用每连接的 SessionId。
         delivery
             .enqueue(
-                &first.wire_key(),
+                "peer-b",
                 "control",
                 b"old-session".to_vec(),
                 crate::delivery::DeliveryPolicy::Acked,
                 Default::default(),
             )
             .await
-            .expect("enqueue old session message");
+            .expect("enqueue peer message");
         manager.close("peer-b").await;
         let second = match manager.begin_connect("peer-b").await {
             ConnectDecision::Started(id) => id,
             decision => panic!("unexpected decision: {decision:?}"),
         };
         assert_ne!(first, second);
-        assert!(delivery
-            .recover_session(&second.wire_key())
-            .await
-            .messages
-            .is_empty());
-        assert_eq!(
-            delivery
-                .recover_session(&first.wire_key())
-                .await
-                .messages
-                .len(),
-            1
-        );
+        // §19/§20：Session 关闭/换代不清理 pending；任何新连接（新 SessionId）
+        // 都能通过 Peer 作用域恢复并以同一个 MessageId 重发。
+        let snapshot = delivery.recover_peer("peer-b").await;
+        assert_eq!(snapshot.messages.len(), 1);
+        assert_eq!(snapshot.messages[0].payload, b"old-session");
     }
 }

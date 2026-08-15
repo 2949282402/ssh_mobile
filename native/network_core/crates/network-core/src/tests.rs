@@ -551,13 +551,13 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
             crate::session::ConnectDecision::Started(session_id) => session_id,
             decision => panic!("unexpected session decision: {decision:?}"),
         };
-        let session_key = session_id.wire_key();
         let first = crate::delivery::MessageId::from_bytes([90; 16]);
         let buffered = crate::delivery::MessageId::from_bytes([91; 16]);
+        // §20：投递状态按 Peer 业务作用域 key，不使用每连接的 SessionId。
         assert_eq!(
             state
                 .delivery
-                .begin_incoming(&session_key, "control", first, 1, Instant::now())
+                .begin_incoming("delivery-peer", "control", first, 1, Instant::now())
                 .await,
             crate::delivery::DedupDecision::New
         );
@@ -566,7 +566,7 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
                 .delivery
                 .accept_ordered(crate::delivery::OrderedMessage {
                     peer_id: "delivery-peer".into(),
-                    session_id: session_key.clone(),
+                    session_id: session_id.wire_key(),
                     channel_id: "control".into(),
                     message_id: first,
                     sequence: 0,
@@ -579,7 +579,7 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
         assert_eq!(
             state
                 .delivery
-                .begin_incoming(&session_key, "control", buffered, 1, Instant::now())
+                .begin_incoming("delivery-peer", "control", buffered, 1, Instant::now())
                 .await,
             crate::delivery::DedupDecision::New
         );
@@ -588,7 +588,7 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
                 .delivery
                 .accept_ordered(crate::delivery::OrderedMessage {
                     peer_id: "delivery-peer".into(),
-                    session_id: session_key.clone(),
+                    session_id: session_id.wire_key(),
                     channel_id: "control".into(),
                     message_id: buffered,
                     sequence: 1,
@@ -601,7 +601,7 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
         assert_eq!(state.delivery.incoming_state_counts().await, (2, 0, 1));
         let expired = state
             .delivery
-            .expire_incoming(&session_key, Instant::now() + Duration::from_secs(11))
+            .expire_incoming("delivery-peer", Instant::now() + Duration::from_secs(11))
             .await;
         assert!(expired.is_empty());
         assert_eq!(state.delivery.incoming_state_counts().await, (2, 0, 1));
@@ -846,13 +846,12 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
     fs::remove_dir_all(test_root).ok();
 }
 
-/// 验证未 ACK 的消息在显式 recovery 后沿同一逻辑 Session 重放，且接收端
-/// dedup 不会再次把同一个 MessageId 交给应用，显式 ACK 使用当前 recovery
-/// epoch。
+/// 验证未 ACK 的消息在显式 recovery 后以**同一个 MessageId** 重放，接收端
+/// dedup 不会再次把同一个 MessageId 交给应用（§20），显式 ACK 只按 MessageId
+/// 关联、不依赖连接代数对齐。
 ///
-/// recovery 通过显式驱动，而不是真实 Connection 断开重连：重连可能触发会话
-/// crypto 换代（`ReplaceWithNew`），使以旧 crypto 加密的重放无法解密而静默
-/// 丢失，测试无法在重连上得到确定性结果。
+/// recovery 通过显式驱动（连接保持稳定）；真实 Connection 断开重连场景由
+/// `delivery_reliable_message_resends_same_message_id_after_reconnect` 覆盖。
 #[test]
 fn delivery_recovery_replays_same_message_after_explicit_recovery() {
     let runtime_a = NetworkRuntime::new().expect("runtime A");
@@ -969,29 +968,15 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
     assert_ne!(session_id, "delivery-b");
     assert_eq!(message_id.len(), 16);
 
-    // 连接保持稳定；显式驱动一次确定性 recovery，把未 ACK 消息重放一次，
-    // 验证重放被 dedup、不重新发布事件、不自动 ACK，且显式 ACK 使用新的
-    // recovery epoch。这里不依赖生产重连路径：重连可能触发会话 crypto 换代
-    // （ReplaceWithNew），使以旧 crypto 加密的重放无法解密而静默丢失，测试
-    // 无法在重连上断言确定结果。
+    // 连接保持稳定；显式驱动一次确定性 recovery，把未 ACK 消息以同一个
+    // MessageId 重放一次（§20）。验证重放被按 MessageId 去重、不重新发布事件、
+    // 不自动 ACK。ACK 不再依赖 recovery epoch 对齐——关联只认 MessageId。
     let recovered_session = runtime_a
-        .recover_current_session_for_test("delivery-b")
+        .recover_current_peer_for_test("delivery-b")
         .expect("current session exists");
     assert_eq!(
         recovered_session, session_id,
         "deterministic recovery should drive the same session"
-    );
-    assert!(
-        wait_for_recovery_epoch_settled(
-            &runtime_a,
-            &runtime_b,
-            &session_id,
-            "control",
-            &message_id,
-            Duration::from_millis(200),
-            Duration::from_secs(20),
-        ),
-        "recovery epochs never settled between sender and receiver"
     );
 
     // 不在第一次事件后 ACK；recovery 重放的重复 DataMessage 仍处于 InFlight，
@@ -1011,8 +996,7 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
         "InFlight duplicate was incorrectly ACKed"
     );
 
-    // 重放只能更新 DeliveryManager 内部的 epoch；应用事件不携带旧 epoch，
-    // 应用 ACK 也不需要保存它。显式 ACK 必须使用当前恢复周期的 epoch。
+    // 重放不会让接收端再次进入应用 handler（MessageId 去重）。
     let duplicate = poll_until(&runtime_b, Duration::from_secs(1), |event| {
         matches!(
             &event.payload,
@@ -1036,22 +1020,20 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
             )),
         },
     );
+    // ACK 按 MessageId 完成，无论携带的连接代数是多少。
     let recovered_ack = poll_until(&runtime_a, Duration::from_secs(20), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
                 peer_id,
                 message_id: acknowledged_id,
-                recovery_epoch,
                 ..
-            })) if peer_id == "delivery-b"
-                && acknowledged_id == &message_id
-                && *recovery_epoch >= 2
+            })) if peer_id == "delivery-b" && acknowledged_id == &message_id
         )
     });
     assert!(
         recovered_ack.is_some(),
-        "explicit ACK did not use the latest recovery epoch"
+        "explicit ACK did not complete the recovered MessageId"
     );
 
     // 再发一条新消息，验证应用在收到事件后显式提交 AcknowledgeMessage，
@@ -1112,6 +1094,294 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
         )
     })
     .is_some());
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// §20 可靠消息恢复。消息未 ACK 时 Connection 丢失，随后建立新 Connection
+/// （新 SessionId 加新 Noise root），发送端以同一个 MessageId 重发，接收端按
+/// MessageId 去重而不重复执行业务，显式 ACK 跨新连接完成。
+///
+/// transport-network v2（§18）：新连接 = 新 SessionId；pending 属于 Peer 业务
+/// 作用域，连接丢失时保留。
+#[test]
+fn delivery_reliable_message_resends_same_message_id_after_reconnect() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root = std::env::temp_dir().join(format!(
+        "ssh-mobile-delivery-reconnect-{}",
+        rand::random::<u64>()
+    ));
+    fs::create_dir_all(&test_root).expect("test root");
+
+    let identity_seed_a = [161u8; 32];
+    let identity_seed_b = [162u8; 32];
+    let e2e_seed_a = [171u8; 32];
+    let e2e_seed_b = [172u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("reconnect-a".into(), identity_seed_a, e2e_seed_a)
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("reconnect-b".into(), identity_seed_b, e2e_seed_b)
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "reconnect-a",
+        identity_seed_a,
+        e2e_seed_a,
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "reconnect-b",
+        identity_seed_b,
+        e2e_seed_b,
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        upsert_command(
+            "reconnect-upsert-b",
+            "reconnect-b",
+            address_b,
+            public_key_b,
+            e2e_seed_b,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_b,
+        upsert_command(
+            "reconnect-upsert-a",
+            "reconnect-a",
+            address_a,
+            public_key_a,
+            e2e_seed_a,
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "reconnect-connect-1".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "reconnect-b".into(),
+                intent: 0,
+            })),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "reconnect-b"
+                    && state.state == PeerConnectionState::Connected as i32
+        )
+    })
+    .is_some());
+
+    // 发送可靠消息；接收端收到但**不 ACK**。
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "reconnect-send".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SendMessage(SendMessageCommand {
+                peer_id: "reconnect-b".into(),
+                channel_id: "control".into(),
+                payload: b"reconnect-me".to_vec(),
+                policy: DeliveryPolicyCode::AckedDeduplicated as i32,
+                crypto_mode: 0,
+            })),
+        },
+    );
+    let first_message = poll_until(&runtime_b, Duration::from_secs(15), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::ChannelMessage(ChannelMessageEvent {
+                peer_id,
+                channel_id,
+                payload,
+                ..
+            })) if peer_id == "reconnect-a" && channel_id == "control" && payload == b"reconnect-me"
+        )
+    })
+    .expect("receiver should observe the first delivery");
+    let (first_session_id, message_id) = match first_message.payload {
+        Some(network_event::Payload::ChannelMessage(message)) => {
+            (message.session_id, message.message_id)
+        }
+        _ => unreachable!("predicate already checked the event"),
+    };
+    assert_eq!(message_id.len(), 16);
+    let message_id_bytes: [u8; 16] = message_id.as_slice().try_into().expect("16 bytes");
+
+    let state_a = runtime_a
+        .state
+        .lock()
+        .expect("runtime A state lock")
+        .clone()
+        .expect("runtime A state");
+    let original_session_id = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_session_id("reconnect-b")
+            .await
+            .expect("A Session ID")
+    });
+
+    // 关闭 A→B 的当前 route：transport 丢失，A 侧 Session 被销毁；pending 保留。
+    let route = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_active_route("reconnect-b")
+            .await
+            .expect("active A route")
+    });
+    runtime_a.handle().block_on(route.close_for_test());
+    assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "reconnect-b"
+                    && state.state == PeerConnectionState::Disconnected as i32
+        )
+    })
+    .is_some());
+
+    // 业务显式重连（§35 不自动重连）；A 得到全新 SessionId + 新 Noise root。
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "reconnect-connect-2".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "reconnect-b".into(),
+                intent: 0,
+            })),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(20), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == "reconnect-b"
+                    && state.state == PeerConnectionState::Connected as i32
+        )
+    })
+    .is_some());
+    let reconnected_session_id = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_session_id("reconnect-b")
+            .await
+            .expect("reconnected A Session ID")
+    });
+    assert_ne!(original_session_id, reconnected_session_id);
+
+    // 重连后 A 以同一个 MessageId 重发；等接收端观测到该重放帧（active 记录
+    // 的 wire 代数被更新），证明重放已落地并被按 MessageId 去重。
+    let state_b = runtime_b
+        .state
+        .lock()
+        .expect("runtime B state lock")
+        .clone()
+        .expect("runtime B state");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut observed_replay_epoch = 0u64;
+    while Instant::now() < deadline {
+        observed_replay_epoch = runtime_b
+            .handle()
+            .block_on(state_b.delivery.incoming_recovery_epoch(
+                "reconnect-a",
+                "control",
+                crate::delivery::MessageId::from_bytes(message_id_bytes),
+            ))
+            .unwrap_or(0);
+        if observed_replay_epoch >= 2 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        observed_replay_epoch >= 2,
+        "receiver never observed the re-sent MessageId after reconnect"
+    );
+
+    // 接收端确认重放落地后，发送端 Peer 作用域连接代数必然已递增
+    // （每次 Connection Ready 的 recover_peer 递增一次）。
+    let peer_generation = runtime_a
+        .handle()
+        .block_on(state_a.delivery.current_peer_recovery_epoch("reconnect-b"));
+    assert!(
+        peer_generation >= 2,
+        "sender peer generation should advance after reconnect (got {peer_generation})"
+    );
+
+    // 去重：接收端不会再次把同一个 MessageId 交给应用。
+    let duplicate = poll_until(&runtime_b, Duration::from_secs(1), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::ChannelMessage(message))
+                if message.message_id == message_id
+        )
+    });
+    assert!(
+        duplicate.is_none(),
+        "receiver double-delivered the same MessageId after reconnect"
+    );
+
+    // InFlight 重放不自动 ACK。
+    let unexpected_ack = poll_until(&runtime_a, Duration::from_secs(1), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id,
+                message_id: acknowledged_id,
+                ..
+            })) if peer_id == "reconnect-b" && acknowledged_id == &message_id
+        )
+    });
+    assert!(
+        unexpected_ack.is_none(),
+        "InFlight duplicate was incorrectly ACKed"
+    );
+
+    // 显式 ACK（携带第一次事件看到的 wire session_id；关联只认 MessageId）
+    // 跨新连接完成。
+    send_and_expect_accepted(
+        &runtime_b,
+        NetworkCommand {
+            command_id: "reconnect-ack".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::AcknowledgeMessage(
+                AcknowledgeMessageCommand {
+                    peer_id: "reconnect-a".into(),
+                    session_id: first_session_id,
+                    channel_id: "control".into(),
+                    message_id: message_id.clone(),
+                },
+            )),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(20), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id,
+                message_id: acknowledged_id,
+                ..
+            })) if peer_id == "reconnect-b" && acknowledged_id == &message_id
+        )
+    })
+    .is_some());
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();
 }
 
@@ -1258,13 +1528,13 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
                 .await
         );
     });
-    // 在旧 Session 下 enqueue 一条未 ACK 的 pending 消息：peer restart 后
-    // ReplaceWithNew 必须显式清理这条旧 Session 的 pending，且绝不能把它
-    // 错误恢复进新的替换 Session。
+    // 在 Peer 业务作用域下 enqueue 一条未 ACK 的 pending 消息（§20）：peer
+    // restart 后 ReplaceWithNew 不得清理它；新连接通过 Peer 作用域以同一个
+    // MessageId 恢复重发。
     let old_pending = runtime_b
         .handle()
         .block_on(state_b.delivery.enqueue_with_crypto(
-            &old_b_session_id.wire_key(),
+            "restart-a",
             "control",
             b"old-session-pending".to_vec(),
             crate::delivery::DeliveryPolicy::AckedDeduplicated,
@@ -1338,32 +1608,19 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             .expect("B2 Session ID")
     });
     assert_ne!(old_b_session_id, new_b_session_id);
-    // §19：业务状态（pending Delivery / paused Transfer）不属于 Session，必须
-    // 在 Session 替换/销毁后保留。旧 Session 的 pending 不会被 retire 清理；新
-    // session 的快照不含旧消息（不跨 session 恢复，re-key 是 Step 9）。
-    let old_snapshot = runtime_b.handle().block_on(
-        state_b
-            .delivery
-            .recover_session(&old_b_session_id.wire_key()),
-    );
+    // §19/§20：业务状态（pending Delivery / paused Transfer）属于 Peer 业务
+    // 作用域，Session 替换/销毁后必须保留。新连接（新 SessionId）通过 Peer
+    // 作用域恢复该 pending，并以同一个 MessageId 重发——不再是旧 Session 专属、
+    // 不跨 Session 恢复的模型。
+    let peer_snapshot = runtime_b
+        .handle()
+        .block_on(state_b.delivery.recover_peer("restart-a"));
     assert!(
-        old_snapshot
+        peer_snapshot
             .messages
             .iter()
             .any(|message| message.message_id == old_pending_message_id),
-        "old Session's pending Delivery must be preserved (business state is not owned by the Session)"
-    );
-    let new_snapshot = runtime_b.handle().block_on(
-        state_b
-            .delivery
-            .recover_session(&new_b_session_id.wire_key()),
-    );
-    assert!(
-        !new_snapshot
-            .messages
-            .iter()
-            .any(|message| message.message_id == old_pending_message_id),
-        "replacement Session must never restore the old Session's pending Delivery"
+        "Peer-scoped pending Delivery must survive Session replacement and be recoverable on the next connection"
     );
     let stale_context = state_b
         .crypto
@@ -1948,66 +2205,6 @@ fn wait_for_session_connected(runtime: &NetworkRuntime, peer_id: &str, timeout: 
             .block_on(state.sessions.is_connected(peer_id))
         {
             return true;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    false
-}
-
-/// 等待连接恢复后的 recovery epoch 在发送端与接收端之间稳定对齐。
-///
-/// 连接恢复会触发多次 `recover_session`，发送端 epoch 逐次递增并重放未 ACK
-/// 消息；接收端 active 记录的 epoch 只在重放落地后追上发送端。若测试在两者
-/// 尚未对齐时发送显式 ACK，ACK 会携带滞后 epoch，发送端判定 StaleEpoch 而
-/// 不再发布 DeliveryAcked，造成偶发失败。因此测试必须等到：
-/// 1. 发送端当前 session epoch >= 2（至少经历了一次连接恢复）；
-/// 2. 接收端 active 记录 epoch 与发送端当前 epoch 相等（最后一次重放已落地）；
-/// 3. 该对齐状态在 settle 窗口内保持稳定（后续不再有新的 recovery）。
-fn wait_for_recovery_epoch_settled(
-    sender: &NetworkRuntime,
-    receiver: &NetworkRuntime,
-    session_id: &str,
-    channel_id: &str,
-    message_id: &[u8],
-    settle: Duration,
-    timeout: Duration,
-) -> bool {
-    let sender_state = sender
-        .state
-        .lock()
-        .expect("runtime state lock")
-        .clone()
-        .expect("runtime state");
-    let receiver_state = receiver
-        .state
-        .lock()
-        .expect("runtime state lock")
-        .clone()
-        .expect("runtime state");
-    let message_id = crate::delivery::MessageId::from_bytes(
-        message_id.try_into().expect("message_id must be 16 bytes"),
-    );
-    let deadline = Instant::now() + timeout;
-    let mut aligned_since: Option<Instant> = None;
-    while Instant::now() < deadline {
-        let sender_epoch = sender.handle().block_on(
-            sender_state
-                .delivery
-                .current_session_recovery_epoch(session_id),
-        );
-        let receiver_epoch = receiver.handle().block_on(
-            receiver_state
-                .delivery
-                .incoming_recovery_epoch(session_id, channel_id, message_id),
-        );
-        let aligned = sender_epoch >= 2 && receiver_epoch == Some(sender_epoch);
-        if aligned {
-            aligned_since = aligned_since.or(Some(Instant::now()));
-            if aligned_since.is_some_and(|start| start.elapsed() >= settle) {
-                return true;
-            }
-        } else {
-            aligned_since = None;
         }
         std::thread::sleep(Duration::from_millis(25));
     }
