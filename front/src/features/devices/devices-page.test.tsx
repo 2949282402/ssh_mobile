@@ -78,6 +78,26 @@ describe('DevicesPage', () => {
     expect(screen.getByRole('button', { name: '离线' })).toBeDisabled();
   });
 
+  it('resets the online/offline filter when presence becomes unavailable', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(devices))
+      .mockResolvedValueOnce(jsonResponse({ ...devices, presence_available: false }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    renderDevices();
+
+    await waitFor(() => expect(screen.getByText('device-a')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '在线' }));
+    expect(screen.getByRole('button', { name: '在线' })).toHaveAttribute('aria-pressed', 'true');
+
+    // 下一次拉取 presence 变为不可用 → 筛选重置为"全部"，不再静默保留旧筛选。
+    await user.click(screen.getByRole('button', { name: '刷新设备' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '全部' })).toHaveAttribute('aria-pressed', 'true'));
+    expect(screen.getByRole('button', { name: '在线' })).toBeDisabled();
+    // device-a（online=false）不再被"在线"筛选过滤掉。
+    expect(screen.getByText('device-a')).toBeInTheDocument();
+  });
+
   it('aborts a pending revoke when the page unmounts', async () => {
     let capturedSignal: AbortSignal | null | undefined;
     const fetchMock = vi.fn()

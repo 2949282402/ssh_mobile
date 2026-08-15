@@ -55,11 +55,12 @@ export function DevicesPage() {
 
   const devicesResponse = devicesQuery.data;
   // presence_available === false：presence 查询失败，每台设备的 online 是"未知"而非
-  // "离线"，在线/离线筛选无意义，收敛为"全部"。
-  const presenceAvailable = devicesResponse?.presence_available ?? true;
-  const effectiveFilter = presenceAvailable ? filter : 'all';
+  // "离线"，在线/离线筛选无意义，收敛为"全部"。schema 保证字段存在，数据就绪后不再
+  // 用默认值兜底（避免把缺失字段默认成"presence 可用"的误导方向）。
   const devices = useMemo(() => {
     if (!devicesResponse) return [];
+    const presenceAvailable = devicesResponse.presence_available;
+    const effectiveFilter = presenceAvailable ? filter : 'all';
     const normalizedSearch = search.trim().toLowerCase();
     return devicesResponse.items.filter((device) => {
       const matchesSearch = !normalizedSearch
@@ -68,7 +69,15 @@ export function DevicesPage() {
       const matchesFilter = effectiveFilter === 'all' || (effectiveFilter === 'online' ? device.online : !device.online);
       return matchesSearch && matchesFilter;
     });
-  }, [devicesResponse, effectiveFilter, search]);
+  }, [devicesResponse, filter, search]);
+
+  // presence 不可用时把已选的在线/离线筛选重置为"全部"，presence 恢复后不会静默回套
+  // 旧筛选（disabled 的按钮在故障期间也无法清除）。
+  useEffect(() => {
+    if (devicesResponse && !devicesResponse.presence_available && filter !== 'all') {
+      setFilter('all');
+    }
+  }, [devicesResponse, filter]);
 
   if (devicesQuery.isPending && !devicesResponse) return <DevicesSkeleton />;
   if (devicesQuery.isError && !devicesResponse) {
@@ -83,6 +92,10 @@ export function DevicesPage() {
     );
   }
   if (!devicesResponse) return null;
+
+  // schema 保证 presence_available 存在；数据就绪后直接取原始值（与 Overview 页一致）。
+  const presenceAvailable = devicesResponse.presence_available;
+  const effectiveFilter = presenceAvailable ? filter : 'all';
 
   return (
     <div className="page">
@@ -163,15 +176,17 @@ export function DevicesPage() {
               </thead>
               <tbody>
                 {devices.map((device) => {
-                  const online = device.online;
+                  // presence 故障时后端把 online 置 false，但状态是"未知"：图标/地址
+                  // 不得按"确定离线"渲染（badge 已显示"未知"），否则同一行自相矛盾。
+                  const knownOnline = presenceAvailable && device.online;
                   return (
                     <tr key={device.device_id}>
                       <td data-label="设备">
                         <div className="device-cell">
-                          <span className={`device-cell__icon${online ? ' device-cell__icon--online' : ''}`}><ServerIcon /></span>
+                          <span className={`device-cell__icon${knownOnline ? ' device-cell__icon--online' : ''}`}><ServerIcon /></span>
                           <div>
                             <strong className="type-mono">{device.device_id}</strong>
-                            {online && device.remote_addr ? <span>{device.remote_addr}</span> : null}
+                            {knownOnline && device.remote_addr ? <span>{device.remote_addr}</span> : null}
                             {device.public_key_fingerprint ? <span className="type-mono device-cell__fingerprint">{device.public_key_fingerprint}</span> : null}
                           </div>
                         </div>
@@ -179,7 +194,7 @@ export function DevicesPage() {
                       <td data-label="平台"><Badge tone="neutral">{device.platform || 'unknown'}</Badge></td>
                       <td data-label="协议"><span className="protocol-label"><Check size={14} /> v{device.protocol_version}</span></td>
                       <td data-label="注册时间"><span className="muted-value">{formatDate(device.enrolled_at)}</span></td>
-                      <td data-label="当前状态"><ConnectionBadge online={online} available={presenceAvailable} /></td>
+                      <td data-label="当前状态"><ConnectionBadge online={knownOnline} available={presenceAvailable} /></td>
                       <td data-label="操作" className="device-table__action">
                         <Button variant="danger" onClick={() => setSelectedDevice(device)}>
                           <ShieldOff size={14} />
