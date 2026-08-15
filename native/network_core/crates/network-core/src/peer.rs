@@ -2,7 +2,8 @@
 
 use network_identity::DeviceIdentity;
 use network_nat::{
-    Candidate, CandidateKind, CandidateSignal, PathManager, MAX_CANDIDATES_PER_SIGNAL,
+    Candidate, CandidateAdvertisement, CandidateKind, CandidateSignal, PathManager,
+    MAX_CANDIDATES_PER_SIGNAL,
 };
 use network_protocol::{
     NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState, RouteType,
@@ -2068,19 +2069,40 @@ async fn connect_relay(
             &peer_id,
         ));
     }
-    let online = tokio::time::timeout(PEER_CONNECT_TIMEOUT, lookup_rx)
+    let result = tokio::time::timeout(PEER_CONNECT_TIMEOUT, lookup_rx)
         .await
         .ok()
         .and_then(Result::ok)
-        .unwrap_or(false);
+        .unwrap_or_default();
     state.relay_lookups.write().await.remove(&peer_id);
-    if !online {
+    if !result.online {
         return Err(protocol_error_with_peer(
             NetworkErrorCode::PeerOffline,
             "Relay peer is offline or did not answer lookup",
             "connect",
             &peer_id,
         ));
+    }
+    // lookup 携带对端当前 Discovery（明确版 §13）：把候选解码并作为 remote 候选
+    // 基线加入 path_manager，供后续 connectivity check 直接使用。候选是不透明
+    // base64 JSON 字符串（CandidateAdvertisement 序列化）；解码失败逐条跳过，
+    // 不因此中断连接（候选仅增强，信令路径仍会提供）。
+    if !result.candidates.is_empty() {
+        let candidates = result
+            .candidates
+            .iter()
+            .filter_map(|encoded| {
+                serde_json::from_str::<CandidateAdvertisement>(encoded)
+                    .ok()
+                    .and_then(|advertisement| Candidate::from_advertisement(advertisement).ok())
+            })
+            .filter(|candidate| result.generation == 0 || candidate.generation == result.generation)
+            .collect::<Vec<_>>();
+        if !candidates.is_empty() {
+            if let Some(manager) = state.path_managers.read().await.get(&peer_id).cloned() {
+                manager.add_candidates(candidates).await;
+            }
+        }
     }
     Ok(())
 }

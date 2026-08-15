@@ -77,25 +77,21 @@ pub enum RelayEvent {
     Lookup {
         peer_id: String,
         online: bool,
+        /// 对端当前 Discovery generation；仅在线时有效。
+        generation: u64,
+        /// 对端候选（不透明 base64 JSON 序列化的 CandidateAdvertisement）；仅在线时有效。
+        candidates: Vec<String>,
+        /// 对端 capabilities（不透明字符串）；仅在线时有效。
+        capabilities: Vec<String>,
     },
     /// Relay 控制面推送的在线设备快照；该帧不携带 session_id。
-    PresenceSnapshot {
-        peers: Vec<PeerSummary>,
-    },
+    PresenceSnapshot { peers: Vec<PeerSummary> },
     /// 一个对端上线，携带其当前 Discovery generation。
-    PeerOnline {
-        device_id: String,
-        generation: u64,
-    },
+    PeerOnline { device_id: String, generation: u64 },
     /// 一个对端的 Discovery generation 更新。
-    PeerUpdated {
-        device_id: String,
-        generation: u64,
-    },
+    PeerUpdated { device_id: String, generation: u64 },
     /// 一个对端下线。
-    PeerOffline {
-        device_id: String,
-    },
+    PeerOffline { device_id: String },
     Control {
         kind: String,
         session_id: String,
@@ -109,9 +105,7 @@ pub enum RelayEvent {
         payload: Vec<u8>,
     },
     /// Relay socket 或后台 worker 意外结束。
-    Disconnected {
-        reason: String,
-    },
+    Disconnected { reason: String },
 }
 
 /// 连接驻留内存的 Go Relay，并只转发不透明的 E2E 信封。
@@ -842,9 +836,36 @@ fn decode_event(message: Message) -> Result<Option<RelayEvent>, RelayError> {
                     .get("online")
                     .and_then(Value::as_bool)
                     .ok_or_else(|| RelayError::Protocol("lookup status is missing".into()))?;
+                // 在线时携带 generation/capabilities/candidates（明确版 §13：lookup 返回
+                // 完整 Discovery）。离线时这些字段缺失，保持默认空值。候选是不透明
+                // base64 JSON 字符串，这里只透传不解析。
+                let generation = value.get("generation").and_then(Value::as_u64).unwrap_or(0);
+                let candidates = value
+                    .get("candidates")
+                    .and_then(Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|value| value.as_str().map(str::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let capabilities = value
+                    .get("capabilities")
+                    .and_then(Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|value| value.as_str().map(str::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
                 return Ok(Some(RelayEvent::Lookup {
                     peer_id: peer_id.to_string(),
                     online,
+                    generation,
+                    candidates,
+                    capabilities,
                 }));
             }
             if kind == "presence_snapshot" {
@@ -1039,6 +1060,9 @@ mod tests {
             Some(RelayEvent::Lookup {
                 peer_id: "offline-peer".into(),
                 online: false,
+                generation: 0,
+                candidates: vec![],
+                capabilities: vec![],
             })
         );
         assert!(decode_event(Message::Text(

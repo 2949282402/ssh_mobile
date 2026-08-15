@@ -138,6 +138,17 @@ pub(crate) struct PeerPresence {
     pub(crate) last_online: Instant,
 }
 
+/// Relay lookup 的完整结果：在线状态 + 该设备的 Discovery（generation/candidates/
+/// capabilities）。候选是不透明 base64 JSON 字符串（CandidateAdvertisement 序列化），
+/// 消费端负责解码。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LookupResult {
+    pub(crate) online: bool,
+    pub(crate) generation: u64,
+    pub(crate) candidates: Vec<String>,
+    pub(crate) capabilities: Vec<String>,
+}
+
 pub(crate) struct RuntimeState {
     /// Native bind 完成后发布实际 UDP 端口，供受控 FFI 诊断读取。
     ///
@@ -183,7 +194,7 @@ pub(crate) struct RuntimeState {
     pub(crate) relay_acceptances:
         RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
-    pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<bool>>>,
+    pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<LookupResult>>>,
     /// Relay Presence 控制面维护的在线设备表；presence_snapshot 填充，增量帧更新。
     pub(crate) peer_presence: RwLock<HashMap<String, PeerPresence>>,
     pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
