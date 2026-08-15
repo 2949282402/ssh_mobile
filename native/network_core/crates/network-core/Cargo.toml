@@ -37,3 +37,5 @@ network-relay = { path = "../network-relay", features = ["test-support"] }
 network-transport = { path = "../network-transport", features = ["testkit"] }
 rand = "0.8"
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+# discovery publisher 测试用 paused time（tokio::time::advance / start_paused）验证退避调度。
+tokio = { version = "1.38", features = ["test-util"] }
