@@ -855,6 +855,13 @@ impl SessionId {
         Self(bytes)
     }
 
+    /// 测试专用：从固定字节构造可预测的 SessionId（用于断言新 ConnectionSession
+    /// 生成全新 SessionId、旧 RealtimeSession 绑定随之销毁）。
+    #[cfg(test)]
+    pub(crate) fn from_bytes(bytes: [u8; SESSION_ID_BYTES]) -> Self {
+        Self(bytes)
+    }
+
     /// Delivery 使用独立的 Session key，避免把 peer_id 错当成 SessionId。
     pub(crate) fn wire_key(self) -> String {
         hex::encode(self.0)

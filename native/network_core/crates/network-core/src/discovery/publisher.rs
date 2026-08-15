@@ -88,6 +88,22 @@ pub(crate) trait DiscoveryControlPlane: Send + Sync {
         Box::pin(async move { Err(RelayError::NotConnected) })
     }
 
+    /// 发送一个受限的 WebRTC 信令帧（§17/§22：信令经 Relay Control Plane，fire-and-forget）。
+    ///
+    /// 默认实现：未接线的 mock 返回 NotConnected。`RelayControlClient` 把它路由到
+    /// v2 控制面 `RealtimeSignal` 帧；v1 Relay 数据面路径（deprecated，Step 11 删除）
+    /// 是 network-core 内部的回退，不经过本 trait。
+    fn signal_webrtc(
+        &self,
+        _realtime_id: &str,
+        _target_device_id: &str,
+        _kind: network_relay::v2::RealtimeSignalKind,
+        _revision: u64,
+        _payload: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<(), RelayError>> + Send + '_>> {
+        Box::pin(async move { Err(RelayError::NotConnected) })
+    }
+
     /// 该 sink 是否把发布者分配的 request_id 原样带回 ACK。
     ///
     /// `RelayControlClient` 内部自行分配 wire request_id（`next_request_id`），故返回
@@ -156,6 +172,31 @@ impl DiscoveryControlPlane for RelayControlClient {
                 &attempt_id,
                 &target_device_id,
                 desired_lifetime_s,
+            )
+            .await
+        })
+    }
+
+    fn signal_webrtc(
+        &self,
+        realtime_id: &str,
+        target_device_id: &str,
+        kind: network_relay::v2::RealtimeSignalKind,
+        revision: u64,
+        payload: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<(), RelayError>> + Send + '_>> {
+        // 克隆输入，使返回的 future 只借用 `self`（lifetime 与 `&self` 一致）。
+        let realtime_id = realtime_id.to_string();
+        let target_device_id = target_device_id.to_string();
+        let payload = payload.to_vec();
+        Box::pin(async move {
+            RelayControlClient::signal_webrtc(
+                self,
+                &realtime_id,
+                &target_device_id,
+                kind,
+                revision,
+                &payload,
             )
             .await
         })
