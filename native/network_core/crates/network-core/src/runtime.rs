@@ -223,6 +223,10 @@ impl RuntimeState {
     pub(crate) async fn cancel_session_tasks(&self, peer_id: &str, session_id: SessionId) {
         let session_key = session_id.wire_key();
         self.retire_session_resources(peer_id, session_id).await;
+        // §19：ConnectionSession 销毁（transport 丢失 / 显式断开 / 被新连接替换）
+        // 时把该 Peer 的非终态 TransferOperation 置为 Paused。业务状态保留在
+        // TransferManager，等待下一次连接上的 ResumeTransfer(transfer_id) 恢复。
+        self.transfers.pause_peer_transfers(peer_id).await;
         self.task_supervisor.cancel_session(&session_key).await;
     }
 
