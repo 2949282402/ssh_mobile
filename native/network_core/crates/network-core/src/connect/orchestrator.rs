@@ -725,6 +725,10 @@ impl ConnectionOrchestrator {
                     0.0,
                 );
                 crate::channel::recover_session(Arc::clone(&state), peer_id.to_string()).await;
+                // §19：业务状态（Transfer）不属于 Session；每条新连接都尝试恢复暂停传输
+                // （ResumeTransfer(transfer_id)，按 transfer_id + peer_id 领取）。
+                crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.to_string())
+                    .await;
                 crate::peer::spawn_session_receivers(
                     Arc::clone(&state),
                     peer_id.to_string(),

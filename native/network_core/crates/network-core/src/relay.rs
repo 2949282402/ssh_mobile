@@ -1330,12 +1330,6 @@ async fn receive_relay_offer(
         )
         .into());
     }
-    let logical_session_id = state
-        .sessions
-        .current_session_id(&sender_id)
-        .await
-        .ok_or_else(|| std::io::Error::other("logical Session is unavailable"))?
-        .wire_key();
     let pending = PendingRelayIncoming {
         transfer_id: transfer_id.clone(),
         session_id: session_id.clone(),
@@ -1384,7 +1378,7 @@ async fn receive_relay_offer(
 
     let resume_offset = state
         .transfers
-        .claim_incoming_resume(&manifest, &sender_id, &logical_session_id)
+        .claim_incoming_resume(&manifest, &sender_id)
         .await;
     let receive_directory = state.receive_directory.read().await.clone();
     let completed_path = if let Some(directory) = receive_directory.as_ref() {
@@ -1395,11 +1389,7 @@ async fn receive_relay_offer(
     if is_new_offer && resume_offset.is_none() {
         if !state
             .transfers
-            .register_incoming(
-                manifest.clone(),
-                sender_id.clone(),
-                logical_session_id.clone(),
-            )
+            .register_incoming(manifest.clone(), sender_id.clone())
             .await
         {
             state
@@ -1568,7 +1558,7 @@ async fn accept_pending_relay_incoming(
         .snapshot(transfer_id)
         .await
         .filter(|snapshot| snapshot.state == network_transfer::TransferState::Resuming)
-        .map(|snapshot| snapshot.bytes_transferred);
+        .map(|snapshot| snapshot.confirmed_offset);
     if expected_offset.is_some_and(|expected| expected != offset) {
         drop(file);
         return Err(std::io::Error::new(

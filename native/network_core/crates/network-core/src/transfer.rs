@@ -241,14 +241,12 @@ pub(crate) async fn start_file_send(
             &command.peer_id,
         )
     })?;
+    // §19：TransferOperation 按 transfer_id + peer_id 注册，SessionId 不进入
+    // 持久化的业务状态；`ResumableTransfer.session_id` 在派发时从当前
+    // ConnectionSession 附加（用于 Relay E2EE 与任务分组）。
     if !state
         .transfers
-        .register_outgoing(
-            manifest.clone(),
-            path.clone(),
-            command.peer_id.clone(),
-            session_id.wire_key(),
-        )
+        .register_outgoing(manifest.clone(), path.clone(), command.peer_id.clone())
         .await
     {
         return Err(protocol_error_with_peer(
@@ -387,17 +385,22 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
     }
 }
 
-/// Connection/Route Ready 后领取同一逻辑 Session 的暂停传输。
+/// 新 ConnectionSession 建立后领取同一 Peer 的暂停传输（§19 ResumeTransfer）。
+///
+/// 领取按 transfer_id + peer_id 进行；当前 ConnectionSession 的 wire key 作为
+/// `session_id` 附加到每个 ResumableTransfer（Relay E2EE / 任务分组），并在新的
+/// QUIC/Relay 连接上重新协商 confirmed_offset。
 pub(crate) async fn resume_transfers_for_peer(state: Arc<RuntimeState>, peer_id: String) {
     let dispatcher = TransferDispatcher::new(Arc::clone(&state));
     let Some(session_id) = state.sessions.current_session_id(&peer_id).await else {
         return;
     };
+    let session_key = session_id.wire_key();
     match dispatcher.current_route(&peer_id).await {
         Ok(TransferRoute::QuicDirect(connection)) => {
             for transfer in state
                 .transfers
-                .take_resumable_for_session(&peer_id, &session_id.wire_key())
+                .take_resumable_for_peer(&peer_id, &session_key)
                 .await
             {
                 let _ = state.task_supervisor.spawn_session(
@@ -410,7 +413,7 @@ pub(crate) async fn resume_transfers_for_peer(state: Arc<RuntimeState>, peer_id:
         Ok(TransferRoute::Relay) => {
             for transfer in state
                 .transfers
-                .take_resumable_for_session(&peer_id, &session_id.wire_key())
+                .take_resumable_for_peer(&peer_id, &session_key)
                 .await
             {
                 if dispatcher
@@ -455,9 +458,10 @@ pub(crate) async fn handle_incoming_file(
             .await
             .ok_or_else(|| std::io::Error::other("logical Session is unavailable"))?;
         let session_key = session_id.wire_key();
+        // §19：注册按 transfer_id + peer_id；SessionId 只用于本地任务分组键。
         if !state
             .transfers
-            .register_incoming(manifest.clone(), peer_id.clone(), session_id.wire_key())
+            .register_incoming(manifest.clone(), peer_id.clone())
             .await
         {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
