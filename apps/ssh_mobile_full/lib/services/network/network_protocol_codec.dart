@@ -144,8 +144,7 @@ final class NetworkProtocolCodec {
     List<String> candidates = const <String>[],
     List<String> capabilities = const <String>[],
   }) {
-    final payload = _ProtoWriter()
-      ..varint(1, generation);
+    final payload = _ProtoWriter()..varint(1, generation);
     for (final candidate in candidates) {
       payload.string(2, candidate);
     }

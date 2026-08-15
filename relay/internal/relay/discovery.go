@@ -37,8 +37,8 @@ type discoveryEntry struct {
 // candidates≤64 条 ×2048B、capabilities≤64 条 ×256B。服务端同样限制，防止单台
 // 设备的上报撑爆后续 lookup_response / presence_snapshot，使查询客户端超限断连。
 const (
-	maxDiscoveryCandidates       = 64
-	maxDiscoveryCandidateBytes   = 2048
-	maxDiscoveryCapabilities     = 64
-	maxDiscoveryCapabilityBytes  = 256
+	maxDiscoveryCandidates      = 64
+	maxDiscoveryCandidateBytes  = 2048
+	maxDiscoveryCapabilities    = 64
+	maxDiscoveryCapabilityBytes = 256
 )

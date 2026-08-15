@@ -22,10 +22,10 @@ import (
 // peer_online/peer_updated/peer_offline 携带该设备的 discovery generation，供
 // 其它实例重建推送发现帧。
 type RelayEvent struct {
-	Type            string `json:"type"`
-	DeviceID        string `json:"device_id"`
-	Time            int64  `json:"ts"`
-	Generation      uint64 `json:"generation,omitempty"`
+	Type       string `json:"type"`
+	DeviceID   string `json:"device_id"`
+	Time       int64  `json:"ts"`
+	Generation uint64 `json:"generation,omitempty"`
 	// InstanceID 是发布事件实例的标识：推送发现事件由发布方先本地广播再 Publish，
 	// 订阅方（含发布方自身的订阅连接）据此跳过同实例回环，避免对本地 peer 重复推送。
 	InstanceID      string `json:"instance_id,omitempty"`
