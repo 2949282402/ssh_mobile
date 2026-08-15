@@ -1,6 +1,12 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-15
 
 # ADR-011：TransferSession 与 Connection 解耦
+
+## Status
+
+Accepted（2026-08-15 消歧：本 ADR 是唯一的 ADR-011。原先重复编号的
+[ADR-030-file-resume.md](ADR-030-file-resume.md)（直连文件 checkpoint 与 Resume，
+原 ADR-011-file-resume）已重编号为 ADR-030。内容不变。）
 
 ## 背景
 

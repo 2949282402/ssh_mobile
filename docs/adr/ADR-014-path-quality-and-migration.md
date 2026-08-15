@@ -1,8 +1,21 @@
-最新更新时间：2026-08-11
+> 最新更新时间：2026-08-15
 
 # ADR-014: Path Quality Sampling and Native Route Migration
 
-状态：Accepted
+## Status
+
+Superseded on 2026-08-15：transport-network v2（[ADR-CONNECTION-LIFECYCLE-V2](ADR-CONNECTION-LIFECYCLE-V2.md)）
+把 `PathManager` 收敛为 **metrics-only**（`ConnectionPathMetrics` /
+`HistoricalPathMetrics`），并**删除 route migration**（`migrate_direct_path` /
+`monitor_direct_path` / 更优候选原子替换 Connection）。v2 中 Connection 建立时
+选定 Direct 或 Relay，之后直到连接结束 Route 不变；历史性能只作为提示、永远不能
+决定 Candidate 是否有效，也不再驱动迁移。
+
+## Historical note
+
+本 ADR 记录 v1 的路径质量采样（EWMA RTT / jitter / loss）与原子路由迁移决策，
+保留仅供决策历史参考。`ConnectionPathMetrics` 的采样思想在 v2 中保留给已建立
+连接的性能观测；`HistoricalPathMetrics` 只作为性能提示。
 
 ## 背景
 

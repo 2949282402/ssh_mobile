@@ -129,6 +129,12 @@ presence 推送事件只带 `device_id` + `generation`；候选一律由设备�
 
 ### 4.3 多实例边界（明确版 §…现状）
 
+> 2026-08-15 修订：transport-network v2 第一阶段明确 **单 Relay Control + 单
+> Relay Data 实例**；Redis 仍为外部共享 live state（跨实例 presence/discovery
+> 同步）。`Global Control Routing` / `Relay Data Node Selection` 未实现前不得宣称
+> 多实例（见 §5 与 ADR-TRANSPORT-NETWORK-V2、ADR-RELAY-DATA-PLANE-V2）。本节的
+> 跨实例信令 / Relay Data 能力边界作为 v2 单实例范围之外的后续里程碑保留。
+
 presence / discovery / 事件总线均落在共享状态层（Redis，全 TTL），MySQL 仍
 是 enrollment / 吊销 / 审计的唯一 source of truth。跨实例生命周期事件
 （`device.revoked` / `device.kicked` / `connection.replaced` 与
@@ -196,7 +202,37 @@ discovery 键可能被 Redis 逐出而与在线 presence 不同步，不以双�
   下次 Relay 连接重传；可加 server ACK + 有限重试。
 - **跨实例 P2P Signaling / Relay Data**（见 4.3）：多实例部署的前置工作。
 
-## 5. 引用
+## 5. transport-network v2 部分取代（superseded-in-part，2026-08-15）
+
+本文档描述的是 **v1 控制面基线（network-v1-final）**。2026-08-15 起，
+transport-network v2（Main 基线版设计）以五个新 ADR 对本文档**部分取代**：
+
+| 本文档边界 | v2 取代 |
+|---|---|
+| §3.1 / §3.2 用 `generation`（Unix-ms 种子）表达 discovery 版本 | 改为 `runtime_epoch + revision`（跨 Runtime 重启不可比、同 epoch 严格递增），并删除跨进程 generation 单调约束（见 ADR-DISCOVERY-V2） |
+| §3.2 的 `discovery_update` 静默存储、无 ACK | `DiscoveryPublish` + Redis CAS + `DiscoveryAck` + 有界重试（500ms/1s/2s/4s/4s，最多 5 次）→ DEGRADED（ADR-DISCOVERY-V2） |
+| §3.1 的 lookup `online` 布尔 + fail-open | `ResolvePeer` 四态 `READY / OFFLINE / NOT_READY / UNKNOWN`，禁止 fail-open 假在线（ADR-DISCOVERY-V2） |
+| §2 的「2s 探针 / 后台 direct-upgrade」（ADR-018） | 从主链移除；Route 建立后不变（ADR-CONNECTION-LIFECYCLE-V2） |
+| §2 的「presence 作为在线权威」 | presence 只更新 `PresenceHintCache`（UI hint），在线判定以 `ResolvePeer` 权威（ADR-DISCOVERY-V2） |
+| §4.3 多实例边界 | 第一阶段**单 Relay Control + 单 Relay Data 实例**；Redis 为外部共享 live state（跨实例 presence/discovery 同步）。`Global Control Routing` / `Relay Data Node Selection` 未实现前不得宣称多实例（ADR-TRANSPORT-NETWORK-V2、ADR-RELAY-DATA-PLANE-V2） |
+| 单 `/v1/connect` 复用 socket（控制 JSON + 0x10 binary） | `/v2/control` 与 `/v2/relay` 物理分离 + Reservation 模型 + Relay Protocol V2（protobuf，`request_id` + `attempt_id` 关联）（ADR-RELAY-DATA-PLANE-V2） |
+
+### §4.6 的 follow-up 与 v2 Step 的映射
+
+- **Native 自动 Discovery 生命周期**（接口/NAT/STUN 变化自动 gather、`revision++`、
+  自动 publish）→ **Step 3 / Step 4**（`refactor(relay): rebuild presence and
+  discovery lifecycle` / `refactor(network-core): centralize discovery lifecycle`），
+  由 ADR-DISCOVERY-V2 定义。
+- **discovery_update server ACK + 有界重试** → **Step 3** 的
+  `DiscoveryPublish / DiscoveryAck / retry`（ADR-DISCOVERY-V2 §Discovery publish
+  必须可靠）。
+- **generation 严格跨进程单调** → v2 以 `runtime_epoch + revision` 取代该需求：
+  不再需要跨进程 generation 单调（ADR-DISCOVERY-V2）。
+- **跨实例 P2P Signaling / Relay Data** → **不在第一阶段范围**。第一阶段单实例；
+  跨实例信令与 Relay Data 迁移需在 `Global Control Routing` + `Relay Data Node
+  Selection` 完整实现后才开放（ADR-TRANSPORT-NETWORK-V2、ADR-RELAY-DATA-PLANE-V2）。
+
+## 6. 引用
 
 - [ADR-004：NAT Traversal and Path Selection](../adr/ADR-004-nat-traversal.md)
 - [ADR-017：Peer Candidate Exchange（2026-08-15 修订：存储发现不解析信令）](../adr/ADR-017-candidate-exchange.md)
