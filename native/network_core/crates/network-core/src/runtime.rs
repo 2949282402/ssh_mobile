@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering},
     Arc, Mutex,
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::{
     mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -31,15 +31,10 @@ use network_relay::RelayClient;
 use network_transfer::{TransferFailureReason, TransferManager};
 use quinn::Endpoint;
 use std::collections::HashMap;
-#[cfg(test)]
-use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 pub(crate) const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
-pub(crate) const DEFAULT_CANDIDATE_CONNECT_WINDOW: Duration =
-    Duration::from_millis(network_nat::DEFAULT_CONNECT_WINDOW_MS as u64);
-pub(crate) const RECONNECT_MAX_ATTEMPTS: usize = 5;
 pub(crate) const RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 pub(crate) const RECONNECT_MAX_BACKOFF: Duration = Duration::from_secs(5);
 pub(crate) const INCOMING_APPROVAL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -118,28 +113,12 @@ pub(crate) struct PeerConfig {
     pub(crate) e2e_public_key: [u8; 32],
 }
 
-/// One locally initiated candidate-exchange window. The attempt ID is kept
-/// outside PathManager so an old Relay answer cannot authorize a new QUIC
-/// connectivity check.
-#[derive(Clone, Debug)]
-pub(crate) struct CandidateAttempt {
-    pub(crate) attempt_id: String,
-    pub(crate) generation: u64,
-    pub(crate) connect_window: Duration,
-    pub(crate) expires_at: Instant,
-}
-
-/// Relay Presence 控制面维护的在线设备摘要（Discovery Cache）。客户端不自行用固定
-/// TTL 推断远端下线（review P2-4）：peer_offline 是权威增量事件、presence_snapshot
-/// 做全量对账，因此只保留 generation。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PeerPresence {
-    pub(crate) generation: u64,
-}
-
 /// Relay lookup 的完整结果：在线状态 + 该设备的 Discovery（generation/candidates/
 /// capabilities）。候选是不透明 base64 JSON 字符串（CandidateAdvertisement 序列化），
 /// 消费端负责解码。
+///
+/// 仅 v1 Relay 数据路径（deprecated，Step 11 删除）使用；v2 控制面的 Resolve 走
+/// `DiscoveryResolver`，不依赖本类型。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LookupResult {
     pub(crate) online: bool,
@@ -169,8 +148,6 @@ pub(crate) struct RuntimeState {
     pub(crate) receive_directory: RwLock<Option<PathBuf>>,
     pub(crate) local_path_manager: RwLock<Option<Arc<PathManager>>>,
     pub(crate) peers: RwLock<HashMap<String, PeerConfig>>,
-    pub(crate) path_managers: RwLock<HashMap<String, Arc<PathManager>>>,
-    pub(crate) candidate_attempts: RwLock<HashMap<String, CandidateAttempt>>,
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
     pub(crate) sessions: SessionManager,
     /// Session-owned application crypto. Route changes do not replace this
@@ -179,10 +156,6 @@ pub(crate) struct RuntimeState {
     pub(crate) delivery: DeliveryManager,
     pub(crate) realtime: AsyncMutex<crate::realtime::RealtimeManager>,
     pub(crate) delivery_tasks: RwLock<HashMap<String, SessionId>>,
-    pub(crate) reconnect_tasks: RwLock<HashMap<String, SessionId>>,
-    #[cfg(test)]
-    pub(crate) reconnect_disabled_peers: Mutex<HashSet<String>>,
-    pub(crate) direct_upgrade_tasks: RwLock<HashMap<String, SessionId>>,
     pub(crate) relay: RwLock<Option<Arc<RelayClient>>>,
     pub(crate) relay_config: RwLock<Option<crate::relay::RelayReconnectConfig>>,
     pub(crate) relay_reconnect_task: Mutex<Option<TaskId>>,
@@ -194,23 +167,22 @@ pub(crate) struct RuntimeState {
         RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<LookupResult>>>,
-    /// Relay Presence 控制面维护的在线设备表；presence_snapshot 填充，增量帧更新。
-    pub(crate) peer_presence: RwLock<HashMap<String, PeerPresence>>,
     /// transport-network v2：本地 Discovery 生命周期 owner（§9/§29）。
-    ///
-    /// forward path：`peer::configure_runtime` 成功后 `begin_epoch()` 初始化；
-    /// v1 的 `upload_discovery` / `peer_presence` 处理保持不动直到 Step 6。
     pub(crate) local_discovery: RwLock<Option<Arc<crate::discovery::LocalDiscoveryManager>>>,
     /// transport-network v2：v2 控制面客户端 sink（§31 `RelayControlClient` 抽象）。
     ///
-    /// Step 6/7 接线前恒为 `None`；`discovery` 的 hooks 在无 sink 时是安全 no-op，
-    /// 接线后由 `discovery::on_control_connected` 消费。
+    /// resolve / publish / signaling / reserve 均经此 trait 对象路由。Step 6 接线后由
+    /// `relay::configure_relay_for_state` 填充。
     pub(crate) relay_control: RwLock<Option<Arc<dyn crate::discovery::DiscoveryControlPlane>>>,
+    /// transport-network v2：连接重用注册表（§34/§29）。
+    pub(crate) connection_registry: crate::connect::registry::ConnectionRegistry,
+    /// transport-network v2：Presence → UI-only 提示缓存（§23/§29）。Presence 事件
+    /// 只更新本缓存，绝不修改 ConnectivityAttempt / CandidateSet / ConnectionSession。
+    pub(crate) presence_hints: crate::connect::presence::PresenceHintCache,
     pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
     pub(crate) relay_crypto_confirmers:
         AsyncMutex<HashMap<String, RelayResponderConfirmation<SessionAdmissionLease>>>,
-    pub(crate) candidate_signal_notify: Notify,
     pub(crate) relay_sessions: RwLock<HashMap<String, String>>,
     pub(crate) relay_pending_incoming: RwLock<HashMap<String, crate::relay::PendingRelayIncoming>>,
     pub(crate) relay_active_incoming:
@@ -235,18 +207,12 @@ impl RuntimeState {
             receive_directory: RwLock::new(None),
             local_path_manager: RwLock::new(None),
             peers: RwLock::new(HashMap::new()),
-            path_managers: RwLock::new(HashMap::new()),
-            candidate_attempts: RwLock::new(HashMap::new()),
             trusted_peer_keys: RwLock::new(HashMap::new()),
             sessions: SessionManager::new(),
             crypto: SessionCryptoManager::new(),
             delivery: DeliveryManager::new(),
             realtime: AsyncMutex::new(crate::realtime::RealtimeManager::default()),
             delivery_tasks: RwLock::new(HashMap::new()),
-            reconnect_tasks: RwLock::new(HashMap::new()),
-            #[cfg(test)]
-            reconnect_disabled_peers: Mutex::new(HashSet::new()),
-            direct_upgrade_tasks: RwLock::new(HashMap::new()),
             relay: RwLock::new(None),
             relay_config: RwLock::new(None),
             relay_reconnect_task: Mutex::new(None),
@@ -255,13 +221,13 @@ impl RuntimeState {
             relay_acceptances: RwLock::new(HashMap::new()),
             relay_completions: RwLock::new(HashMap::new()),
             relay_lookups: RwLock::new(HashMap::new()),
-            peer_presence: RwLock::new(HashMap::new()),
             local_discovery: RwLock::new(None),
             relay_control: RwLock::new(None),
+            connection_registry: crate::connect::registry::ConnectionRegistry::new(),
+            presence_hints: crate::connect::presence::PresenceHintCache::new(),
             relay_crypto_waiters: RwLock::new(HashMap::new()),
             relay_crypto_responders: AsyncMutex::new(HashMap::new()),
             relay_crypto_confirmers: AsyncMutex::new(HashMap::new()),
-            candidate_signal_notify: Notify::new(),
             relay_sessions: RwLock::new(HashMap::new()),
             relay_pending_incoming: RwLock::new(HashMap::new()),
             relay_active_incoming: AsyncMutex::new(HashMap::new()),
@@ -283,15 +249,9 @@ impl RuntimeState {
             .write()
             .await
             .retain(|_, current| *current != session_id);
-        self.reconnect_tasks
-            .write()
-            .await
-            .retain(|_, current| *current != session_id);
-        self.direct_upgrade_tasks
-            .write()
-            .await
-            .retain(|_, current| *current != session_id);
-        self.candidate_attempts.write().await.remove(peer_id);
+        // transport-network v2：Session 替换/关闭时同步注销连接登记（§34）。
+        self.connection_registry
+            .unregister_if_session(peer_id, session_id);
         let terminated_transfers = self
             .transfers
             .terminate_session_transfers(
@@ -648,49 +608,6 @@ impl NetworkRuntime {
             }
             state.task_supervisor.shutdown().await;
         });
-    }
-
-    /// 仅测试用：强制关闭当前 peer 的 active transport Connection/route，
-    /// 但不关闭逻辑 Session，从而驱动生产自动重连路径。
-    ///
-    /// 与 `disconnect_peer` 不同（那会 `SessionManager::close` + 清空接收态），
-    /// 这里只中断底层 transport，让 `handle_connection_disconnect` →
-    /// `schedule_reconnect` → `reconnect_loop` 走真实的重连 + Delivery Recovery。
-    #[cfg(test)]
-    pub(crate) fn close_peer_connection_for_test(&self, peer_id: &str) {
-        let state = self
-            .state
-            .lock()
-            .expect("runtime state lock")
-            .clone()
-            .expect("runtime state");
-        self.runtime.block_on(async move {
-            if let Some(route) = state.sessions.current_active_route(peer_id).await {
-                route.close_for_test().await;
-            }
-        });
-    }
-
-    /// 仅测试用：禁用指定 peer 的自动重连。
-    ///
-    /// 断网时两端会各自触发自动重连；若两端都重连，新建连接会互相替换，
-    /// 替换会再次关闭对端连接并重新调度重连，形成连接 ping-pong 与并发
-    /// `recover_session` epoch 风暴，使测试无法确定收敛。需要隔离单侧重连
-    /// 路径的测试（如 delivery-recovery 集成测试）可对被动端禁用自动重连，
-    /// 让主动端单独走真实 `reconnect_loop`。
-    #[cfg(test)]
-    pub(crate) fn disable_peer_reconnect_for_test(&self, peer_id: &str) {
-        let state = self
-            .state
-            .lock()
-            .expect("runtime state lock")
-            .clone()
-            .expect("runtime state");
-        state
-            .reconnect_disabled_peers
-            .lock()
-            .expect("reconnect disabled peers lock")
-            .insert(peer_id.to_string());
     }
 
     /// 仅测试用：为当前 Session 显式驱动一次确定性 recovery，返回其 wire key。

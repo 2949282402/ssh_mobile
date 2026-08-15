@@ -134,7 +134,9 @@ async fn start_connect_peer(
     );
     let supervisor = Arc::clone(&state.task_supervisor);
     let task_started = supervisor.spawn_runtime("peer-connect", async move {
-        if let Err(error) = peer::connect_peer(Arc::clone(&state), peer_id.clone()).await {
+        // transport-network v2（§11/§37）：唯一建连入口 ConnectionOrchestrator。
+        let orchestrator = crate::connect::ConnectionOrchestrator::new(Arc::clone(&state));
+        if let Err(error) = orchestrator.connect(&peer_id).await {
             let code =
                 NetworkErrorCode::try_from(error.code).unwrap_or(NetworkErrorCode::Unspecified);
             emit_peer_state(

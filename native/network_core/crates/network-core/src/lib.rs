@@ -5,6 +5,7 @@
 
 mod channel;
 mod commands;
+pub(crate) mod connect;
 pub mod connection;
 pub(crate) mod crypto;
 mod crypto_handshake;

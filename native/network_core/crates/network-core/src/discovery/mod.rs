@@ -17,7 +17,7 @@
 
 mod local_discovery;
 mod publisher;
-mod resolver;
+pub(crate) mod resolver;
 mod snapshot;
 
 use std::sync::Arc;

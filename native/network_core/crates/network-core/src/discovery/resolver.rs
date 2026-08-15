@@ -21,7 +21,6 @@ use super::publisher::DiscoveryControlPlane;
 /// | `NotReady` | Presence 在线，但 Discovery 尚未可靠发布 | 可短暂重试 Resolve |
 /// | `Unknown` | Redis / Backend 状态无法可靠判断 | 返回 ControlUnavailable |
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)] // forward path：Step 6 ConnectionOrchestrator 使用
 pub(crate) enum ResolvedPeer {
     /// `READY`：唯一允许生成 ConnectivityAttempt 的状态。
     Ready {
@@ -43,7 +42,6 @@ pub(crate) enum ResolvedPeer {
 }
 
 /// 按目标设备解析对端 Discovery 的类型化 resolver。
-#[allow(dead_code)] // forward path：Step 6 ConnectionOrchestrator 使用
 pub(crate) struct DiscoveryResolver {
     control: Arc<dyn DiscoveryControlPlane>,
 }
