@@ -159,6 +159,45 @@ jobs:
       - name: Scan relay vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
+  protocol-v2-contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Install protoc (best-effort)
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        continue-on-error: true
+      - name: Compile-check relay v2 proto
+        run: |
+          if command -v protoc >/dev/null 2>&1; then
+            protoc --proto_path=protocol --descriptor_set_out=/dev/null protocol/proto/relay/v2/relay_v2.proto
+            echo "proto compile-check: OK"
+          else
+            echo "protoc unavailable; skipping proto compile-check"
+          fi
+      - name: Run relay v2 contract check
+        run: bash scripts/relay_v2_contract.sh
+      - name: Install buf (best-effort)
+        run: go install github.com/bufbuild/buf/cmd/buf@v1.47.2
+        continue-on-error: true
+      - name: buf lint
+        run: |
+          BUF="$(command -v buf 2>/dev/null || echo "$HOME/go/bin/buf")"
+          if [ -x "$BUF" ] && [ -f protocol/buf.yaml ]; then
+            (cd protocol && "$BUF" lint)
+            echo "buf lint: OK"
+          else
+            echo "buf not available; skipping buf lint"
+          fi
+
   architecture-check:
     runs-on: ubuntu-latest
     defaults:
