@@ -420,25 +420,18 @@ pub(crate) async fn handle_relay_events(
                 device_id,
                 generation,
             } => {
-                // 上线时的 generation 若高于本地已缓存值，说明对端经历了一次网络/
-                // Discovery 换代（可能曾在 offline 期间重连）——旧 path_manager 与
-                // candidate_attempts 里的 direct 候选来自上一代，必须清除，否则后续
-                // connect_peer 会复用陈旧的 direct 候选。与 PeerUpdated 的处理一致。
-                let higher_generation = state
-                    .peer_presence
-                    .read()
-                    .await
-                    .get(&device_id)
-                    .is_none_or(|prev| prev.generation < generation);
+                // peer_online 是新的可发现 epoch：无论 generation 是否比本地缓存更高，
+                // 旧 path_manager / candidate_attempts 里的 direct 候选都属于对端上一
+                // 次可见会话（可能来自已丢失的 offline/updated 事件之前的旧代），必须
+                // 无条件清除，否则 connect_peer 会复用陈旧候选。后续 connect 经 lookup
+                // 重新获取权威候选（lookup 是连接前权威对账）。
                 state
                     .peer_presence
                     .write()
                     .await
                     .insert(device_id.clone(), PeerPresence { generation });
-                if higher_generation {
-                    state.path_managers.write().await.remove(&device_id);
-                    state.candidate_attempts.write().await.remove(&device_id);
-                }
+                state.path_managers.write().await.remove(&device_id);
+                state.candidate_attempts.write().await.remove(&device_id);
                 emit_peer_presence_changed(
                     &state.event_tx,
                     &device_id,
@@ -2753,9 +2746,10 @@ mod tests {
     }
 
     #[tokio::test]
-    /// peer_online 携带更高 generation 时必须清掉该对端的 discovery cache：对端可能在
-    /// offline 期间经历了网络/Discovery 换代，旧 direct 候选不能复用。
-    async fn peer_online_with_higher_generation_clears_discovery_cache() {
+    /// peer_online 是新的可发现 epoch：无论 generation 比本地缓存更高还是更低，都必须
+    /// 无条件清掉该对端的 discovery cache——旧 direct 候选属于对端上一次可见会话，不能
+    /// 复用（对端可能在 offline 期间换代，或事件丢失导致本地缓存落后于权威状态）。
+    async fn peer_online_clears_discovery_cache_unconditionally() {
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
@@ -2788,10 +2782,11 @@ mod tests {
             handle_relay_events(events_rx, handler_state, unconnected_relay_client()).await;
         });
 
+        // 用比缓存更低的 generation（1 < 2）触发：无条件清缓存的关键断言。
         events_tx
             .send(RelayEvent::PeerOnline {
                 device_id: "peer-a".into(),
-                generation: 5,
+                generation: 1,
             })
             .await
             .expect("send online");
@@ -2800,7 +2795,7 @@ mod tests {
 
         assert!(
             state.path_managers.read().await.get("peer-a").is_none(),
-            "peer_online with higher generation must clear the stale path_manager"
+            "peer_online must clear the stale path_manager regardless of generation"
         );
         assert!(
             state
@@ -2809,12 +2804,12 @@ mod tests {
                 .await
                 .get("peer-a")
                 .is_none(),
-            "peer_online with higher generation must clear the stale candidate attempt"
+            "peer_online must clear the stale candidate attempt regardless of generation"
         );
         let presence = state.peer_presence.read().await;
         assert_eq!(
             presence.get("peer-a").map(|entry| entry.generation),
-            Some(5)
+            Some(1)
         );
         drop(presence);
 

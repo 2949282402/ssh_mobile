@@ -33,7 +33,7 @@ use crate::events::{
 };
 use crate::generic_auth::{authenticate_initiator, authenticate_responder};
 use crate::runtime::{
-    CandidateAttempt, PeerConfig, RuntimeState, SessionAdmissionLease,
+    CandidateAttempt, LookupResult, PeerConfig, PeerPresence, RuntimeState, SessionAdmissionLease,
     DEFAULT_CANDIDATE_CONNECT_WINDOW, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES, PEER_CONNECT_TIMEOUT,
     RECONNECT_INITIAL_BACKOFF, RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF,
 };
@@ -2101,13 +2101,17 @@ async fn connect_relay_data() -> Result<(), ProtocolError> {
     Ok(())
 }
 
-/// 通过 Relay 控制面解析对端 Discovery（明确版 §13）：lookup 返回对端是否在线及其
-/// generation/capabilities/candidates。在线时把候选解码并作为 remote 候选基线加入
-/// path_manager（无则新建），供后续 Direct connectivity check 直接使用；候选是不透明
-/// base64 JSON 字符串（CandidateAdvertisement 序列化），解码失败逐条跳过，候选仅
-/// 增强、不因失败中断连接。
+/// 通过 Relay 控制面解析对端 Discovery（明确版 §13）并把结果作为连接前的**权威对账**
+/// 应用到本地缓存：lookup 返回对端是否在线及其 generation/capabilities/candidates。
 ///
-/// 返回 Ok(true)=在线（候选已安装）、Ok(false)=对端不在 Relay 上（无 Relay 数据面
+/// - 在线：按返回的 generation 替换/刷新 path_manager（generation 变化或首见 → 删旧
+///   重建、只装该 generation 候选；相同 → 合并），并同步 peer_presence.generation。
+///   候选是不透明 base64 JSON（CandidateAdvertisement 序列化），解码失败逐条跳过，
+///   候选仅增强、不因失败中断连接。
+/// - 离线：删除 discovery-derived path_manager（保留配置 endpoint），避免拿旧代候选
+///   白试 Direct 窗口。
+///
+/// 返回 Ok(true)=在线（候选已对账）、Ok(false)=对端不在 Relay 上（无 Relay 数据面
 /// 回退，但仍可尝试本地 Direct）、Err=lookup 本身故障（fail-open：调用方保留 Relay
 /// 回退并用本地候选继续，控制面抖动不阻断连接）。
 async fn resolve_peer_discovery(
@@ -2142,8 +2146,41 @@ async fn resolve_peer_discovery(
         tracing::debug!(peer_id = %peer_id, "Relay peer lookup timed out; continuing without discovery");
         return Ok(true);
     };
+    reconcile_peer_discovery(state, peer_id, &result).await;
+    Ok(result.online)
+}
+
+/// 把一次权威 lookup 结果应用到本地缓存（cache reconciliation）。lookup 是连接前的
+/// 权威对账：peer_online/updated/offline 是低延迟增量通知，可能因 Redis Pub/Sub 瞬时
+/// 丢失，而 lookup_response 反映服务器当前权威状态。
+///
+/// - 离线：删除 discovery-derived path_manager，避免 connect_peer 拿旧代候选白试
+///   Direct 窗口。保留 PeerConfig.endpoint——手工配置 / LAN Direct 仍允许尝试。
+/// - 在线：generation 变化或首见 → 旧代 path_manager 里的 direct 候选全部失效，删掉
+///   重建，只安装该 generation 候选；generation 相同 → 在既有 manager 上合并刷新。
+///   同步 peer_presence.generation。
+///
+/// 注意：不在此删除 candidate_attempts——它是本次 connect 刚插入的当前 attempt，信令
+/// answer 校验依赖它，且由 clear_candidate_attempt 在 connect 末尾统一清理。
+async fn reconcile_peer_discovery(state: &RuntimeState, peer_id: &str, result: &LookupResult) {
     if !result.online {
-        return Ok(false);
+        state.path_managers.write().await.remove(peer_id);
+        return;
+    }
+    let cache_generation = state
+        .peer_presence
+        .read()
+        .await
+        .get(peer_id)
+        .map(|entry| entry.generation);
+    if cache_generation != Some(result.generation) {
+        state.path_managers.write().await.remove(peer_id);
+        state.peer_presence.write().await.insert(
+            peer_id.to_string(),
+            PeerPresence {
+                generation: result.generation,
+            },
+        );
     }
     if !result.candidates.is_empty() {
         let candidates = result
@@ -2157,8 +2194,8 @@ async fn resolve_peer_discovery(
             .filter(|candidate| result.generation == 0 || candidate.generation == result.generation)
             .collect::<Vec<_>>();
         if !candidates.is_empty() {
-            // 对端尚无 path_manager（如只有配置 endpoint 或纯凭 discovery 发现）时新建，
-            // 保证 discovery 候选进入 Direct 候选集。
+            // 对端尚无 path_manager（generation 变化时已被删除，或纯凭 discovery 发现）
+            // 则新建，保证该 generation 候选进入 Direct 候选集。
             let manager = state
                 .path_managers
                 .write()
@@ -2169,7 +2206,6 @@ async fn resolve_peer_discovery(
             manager.add_candidates(candidates).await;
         }
     }
-    Ok(true)
 }
 
 async fn establish_relay_crypto(
@@ -3072,6 +3108,155 @@ mod tests {
     async fn new_test_state() -> Arc<RuntimeState> {
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))))
+    }
+
+    /// lookup 返回新 generation 时，旧代 path_manager 候选必须全部失效重建，只保留新
+    /// generation 候选（review P2：add_candidates 是合并语义，事件丢失会让新旧两代候选
+    /// 共存）。
+    #[tokio::test]
+    async fn reconcile_peer_discovery_replaces_stale_generation_cache() {
+        let state = new_test_state().await;
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 10 });
+        let old_manager = Arc::new(PathManager::new());
+        old_manager
+            .add_candidates(vec![Candidate::new(
+                "192.168.1.20:50000".parse().unwrap(),
+                CandidateKind::Lan,
+                "eth0".into(),
+            )
+            .with_generation(10)])
+            .await;
+        state
+            .path_managers
+            .write()
+            .await
+            .insert("peer-a".into(), old_manager);
+
+        let new_candidate = Candidate::new(
+            "5.6.7.8:60000".parse().unwrap(),
+            CandidateKind::ServerReflexive,
+            "eth0".into(),
+        )
+        .with_generation(11);
+        let lookup = LookupResult {
+            online: true,
+            generation: 11,
+            candidates: vec![serde_json::to_string(&new_candidate.advertisement()).unwrap()],
+            capabilities: vec![],
+        };
+
+        reconcile_peer_discovery(&state, "peer-a", &lookup).await;
+
+        let manager = state
+            .path_managers
+            .read()
+            .await
+            .get("peer-a")
+            .cloned()
+            .expect("path_manager must be recreated");
+        let ranked = manager.ranked_candidates().await;
+        assert_eq!(
+            ranked.len(),
+            1,
+            "stale generation candidates must be replaced"
+        );
+        assert_eq!(ranked[0].generation, 11);
+        assert_eq!(
+            ranked[0].endpoint,
+            "5.6.7.8:60000".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            state
+                .peer_presence
+                .read()
+                .await
+                .get("peer-a")
+                .map(|entry| entry.generation),
+            Some(11)
+        );
+    }
+
+    /// lookup 明确 offline 时删除 discovery-derived path_manager（保留配置 endpoint
+    /// 走 LAN Direct 的语义由 connect_peer 的 direct_candidates 组装负责）。
+    #[tokio::test]
+    async fn reconcile_peer_discovery_offline_clears_cached_direct() {
+        let state = new_test_state().await;
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 10 });
+        state
+            .path_managers
+            .write()
+            .await
+            .insert("peer-a".into(), Arc::new(PathManager::new()));
+
+        let lookup = LookupResult {
+            online: false,
+            generation: 0,
+            candidates: vec![],
+            capabilities: vec![],
+        };
+        reconcile_peer_discovery(&state, "peer-a", &lookup).await;
+
+        assert!(
+            state.path_managers.read().await.get("peer-a").is_none(),
+            "offline lookup must clear the cached path_manager"
+        );
+    }
+
+    /// generation 相同时合并刷新（不重建），避免丢掉已采样的质量数据。
+    #[tokio::test]
+    async fn reconcile_peer_discovery_same_generation_merges() {
+        let state = new_test_state().await;
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 10 });
+        let manager = Arc::new(PathManager::new());
+        manager
+            .add_candidates(vec![Candidate::new(
+                "192.168.1.20:50000".parse().unwrap(),
+                CandidateKind::Lan,
+                "eth0".into(),
+            )
+            .with_generation(10)])
+            .await;
+        state
+            .path_managers
+            .write()
+            .await
+            .insert("peer-a".into(), manager);
+
+        let extra = Candidate::new(
+            "192.168.1.21:50001".parse().unwrap(),
+            CandidateKind::Lan,
+            "eth0".into(),
+        )
+        .with_generation(10);
+        let lookup = LookupResult {
+            online: true,
+            generation: 10,
+            candidates: vec![serde_json::to_string(&extra.advertisement()).unwrap()],
+            capabilities: vec![],
+        };
+        reconcile_peer_discovery(&state, "peer-a", &lookup).await;
+
+        let manager = state
+            .path_managers
+            .read()
+            .await
+            .get("peer-a")
+            .cloned()
+            .expect("path_manager must be retained");
+        let ranked = manager.ranked_candidates().await;
+        assert_eq!(ranked.len(), 2, "same generation should merge candidates");
     }
 
     async fn started_generic_scope(
