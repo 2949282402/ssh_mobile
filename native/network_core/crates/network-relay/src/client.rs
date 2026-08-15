@@ -880,7 +880,12 @@ fn decode_event(message: Message) -> Result<Option<RelayEvent>, RelayError> {
                     .filter_map(|peer| {
                         let device_id = peer.get("device_id").and_then(Value::as_str)?;
                         let generation = peer.get("generation").and_then(Value::as_u64)?;
-                        if device_id.is_empty() || device_id.len() > 128 || generation == 0 {
+                        // 快照是当前在线设备基线：不过滤 generation 0——服务端对刚连接、
+                        // 尚未上传 discovery 的设备以占位（gen 0）计入在线集合。若在此
+                        // 过滤，Rust 的 snapshot 对账会把 gen-0 占位设备误判为离线并 emit
+                        // Offline、清其 discovery cache，与服务端视图矛盾。增量事件
+                        // （peer_online/updated）仍严格要求 generation 非 0。
+                        if device_id.is_empty() || device_id.len() > 128 {
                             return None;
                         }
                         Some(PeerSummary {
@@ -1241,6 +1246,27 @@ mod tests {
             r#"{"type":"presence_snapshot","peers":[{"device_id":"peer-a"}]}"#.into(),
         ))
         .is_ok());
+    }
+
+    #[test]
+    fn presence_snapshot_accepts_generation_zero_placeholder() {
+        // 服务端对刚连接、尚未上传 discovery 的设备以占位（gen 0）计入快照；客户端
+        // 必须接受 gen-0 条目，否则快照对账会把占位设备误判为离线并 emit Offline。
+        let event = decode_event(Message::Text(
+            r#"{"type":"presence_snapshot","peers":[{"device_id":"peer-a","generation":0}]}"#
+                .into(),
+        ))
+        .expect("decode")
+        .expect("presence snapshot event");
+        assert_eq!(
+            event,
+            RelayEvent::PresenceSnapshot {
+                peers: vec![PeerSummary {
+                    device_id: "peer-a".into(),
+                    generation: 0,
+                }],
+            }
+        );
     }
 
     #[test]
