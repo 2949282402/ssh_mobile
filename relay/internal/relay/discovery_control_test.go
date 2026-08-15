@@ -308,8 +308,9 @@ func TestDiscoveryUpdatePersistsAndBroadcasts(t *testing.T) {
 	}
 }
 
-// TestDiscoveryUpdateRejectsGenerationRegression 固定 generation 单调：同一设备上报
-// 更小的 generation 被拒绝（不落盘、不广播），已落盘的更高值保持不变。
+// TestDiscoveryUpdateRejectsGenerationRegression 固定 generation 单调约束限定在同一
+// Discovery owner 内：同一连接上报更小的 generation 被拒绝（不落盘、不广播），已落盘
+// 的更高值保持不变。
 func TestDiscoveryUpdateRejectsGenerationRegression(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
@@ -347,6 +348,54 @@ func TestDiscoveryUpdateRejectsGenerationRegression(t *testing.T) {
 		t.Fatalf("expected single peer_online for gen 10, got %+v", frame)
 	}
 	assertNoOutbound(t, other)
+}
+
+// TestDiscoveryUpdateAcceptsCrossOwnerGeneration 固定升级迁移：旧版本客户端（PR #44
+// 随机 u64 generation，通常远大于 unix-ms）的 discovery 残留时，升级后的新连接上传
+// 较小的 unix-ms generation 必须被接受（跨 owner 视为新 epoch，不做回退拒绝）——
+// 否则设备会一直不可发现。
+func TestDiscoveryUpdateAcceptsCrossOwnerGeneration(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	other := injectPeer(server.hub, "device-b")
+
+	// 旧连接（PR #44 随机大 generation）拥有 presence + discovery。
+	old := injectPeer(server.hub, "device-a")
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", old.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.cache.TakeDiscovery(ctx, "device-a", old.connectionID, Discovery{DeviceID: "device-a", Generation: 14829384729384729384, Candidates: []string{"cand-old"}}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// 升级后新连接接管 presence，上传 unix-ms 级的小 generation。
+	newConn := &peer{deviceID: "device-a", connectionID: "conn-a-upgraded", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", newConn.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	server.hub.handleDiscoveryUpdate(newConn, controlFrame{Type: "discovery_update", Generation: 1786790000000, Candidates: []string{"cand-new"}})
+
+	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("discovery missing after cross-owner upload: present=%v err=%v", present, err)
+	}
+	if d.Generation != 1786790000000 || d.ConnectionID != newConn.connectionID {
+		t.Fatalf("cross-owner smaller generation must be accepted: %+v", d)
+	}
+	// 新连接首次可发现 → peer_online 广播。
+	frame := readControlFrame(t, other)
+	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 1786790000000 {
+		t.Fatalf("cross-owner upload should broadcast peer_online, got %+v", frame)
+	}
+	online, err := server.cache.ListOnlinePeers(ctx)
+	if err != nil || online["device-a"].Generation != 1786790000000 {
+		t.Fatalf("device-a should be online after cross-owner upload: %+v err=%v", online, err)
+	}
 }
 
 // TestDiscoveryUpdateRejectsStaleOwner 固定 Discovery CAS：旧连接已被新连接取代

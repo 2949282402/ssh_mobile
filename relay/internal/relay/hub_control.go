@@ -430,9 +430,12 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 		cancel()
 		return
 	}
-	// generation 是单调版本号：拒绝回退（同连接重复上报更小值 = 客户端 bug，直接丢弃）。
-	// 回退的旧值会在 presence TTL 内被下一次合法上传覆盖，因此 fail-closed 不误伤。
-	if hadOld && d.Generation < old.Generation {
+	// generation 单调约束限定在同一 Discovery owner 内：同一连接（ConnectionID 相同）
+	// 重复上报更小的值 = 客户端 bug，拒绝（回退的旧值会在 presence TTL 内被下一次合法
+	// 上传覆盖）。不同 owner（重连 / 升级后的新连接）视为新的可发现 epoch，允许任意正
+	// generation——否则旧版本随机大 generation 残留会拒绝升级客户端更小的 Unix-ms
+	// generation，导致设备一直不可发现。
+	if hadOld && old.ConnectionID == sender.connectionID && d.Generation < old.Generation {
 		cancel()
 		return
 	}
