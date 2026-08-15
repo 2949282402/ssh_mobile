@@ -275,6 +275,9 @@ func (r *redisStore) GetPresences(ctx context.Context, deviceIDs []string) (map[
 		}
 		data, ok := value.(string)
 		if !ok {
+			// 值不是字符串（如误用 INCR 产生的整数）：跳过并记日志，否则在线数
+			// 异常时无从排查。
+			r.logger.Warn("skipped non-string presence value in batch query", "device_id", deviceIDs[i])
 			continue
 		}
 		var p Presence

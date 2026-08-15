@@ -97,6 +97,11 @@ func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 		// 表明在线状态是未知的。
 		s.logger.Warn("presence cache unavailable; online status is unknown", "error", presenceErr)
 	}
+	if presenceErr == nil && presences == nil {
+		// Cache 契约：成功时返回非 nil map（空集为空 map）。防御未来实现返回
+		// (nil, nil)，避免把"无 presence"混同于"全离线"。
+		presences = map[string]Presence{}
+	}
 	online := len(presences)
 
 	var memory runtime.MemStats
@@ -139,6 +144,11 @@ func (s *Server) adminDeviceSnapshot() ([]adminDevice, bool, error) {
 	presenceAvailable := presenceErr == nil
 	if presenceErr != nil {
 		s.logger.Warn("presence cache unavailable; online status is unknown", "error", presenceErr)
+	}
+	if presenceErr == nil && presences == nil {
+		// Cache 契约：成功时返回非 nil map（空集为空 map）。防御未来实现返回
+		// (nil, nil)，避免把"无 presence"混同于"全离线"。
+		presences = map[string]Presence{}
 	}
 	items := make([]adminDevice, 0, len(enrolledList))
 	for _, enrolled := range enrolledList {
