@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/ssh-mobile/relay/internal/relay/v2"
 )
 
 // readOutbound 从 peer.outbound 读一帧，超时则测试失败。
@@ -127,31 +130,100 @@ func TestLookupLeaseBasedOnline(t *testing.T) {
 	}
 }
 
-// TestLookupFailsOpenToLocalPeers 固定租约读取出错时的 fail-open 退化语义：回退到
-// 本地 h.peers 判定，本实例有连接即在线。
-func TestLookupFailsOpenToLocalPeers(t *testing.T) {
+// TestLookupResolveFourStates 固定 4-state resolve（明确版 §10）：READY 才
+// online=true；OFFLINE/NOT_READY/UNKNOWN 都判离线；UNKNOWN 绝不当 online（移除
+// 原 fail-open 回退本地表语义）。
+func TestLookupResolveFourStates(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
 	})
 	defer server.Close()
+	ctx := context.Background()
 	caller := injectPeer(server.hub, "caller")
-	injectPeer(server.hub, "device-x") // 本地表有连接，但缓存不可读
+	// 本地表有连接但缓存不可读：UNKNOWN 必须判离线，不再 fail-open 到 h.peers。
+	injectPeer(server.hub, "device-x")
 
-	// 缓存故障：任何 GetPresence/GetDiscovery 都返回错误。
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{
+		DeviceID: "device-a", Generation: 7, Capabilities: []string{"cap-a"}, Candidates: []string{"cand-a"},
+	}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// 缓存故障：任何 GetPresence/GetDiscovery 都返回错误 → UNKNOWN → offline。
 	server.hub.presence = erroringCache{}
 
 	server.hub.lookupPeer(caller, "device-x")
 	frame := readControlFrame(t, caller)
-	if frame.Online == nil || !*frame.Online {
-		t.Fatalf("cache failure should fail open to local peer table: %+v", frame)
+	if frame.Online == nil || *frame.Online {
+		t.Fatalf("cache failure must resolve UNKNOWN (offline), not fail open: %+v", frame)
 	}
 
-	server.hub.lookupPeer(caller, "device-y")
+	// 恢复可读缓存后：READY 的设备应在线。
+	server.hub.presence = server.cache
+	server.hub.lookupPeer(caller, "device-a")
 	frame = readControlFrame(t, caller)
-	if frame.Online == nil || *frame.Online {
-		t.Fatalf("cache failure should not report a device absent from local table as online: %+v", frame)
+	if frame.Online == nil || !*frame.Online || frame.Generation != 7 {
+		t.Fatalf("READY device should be online with generation: %+v", frame)
 	}
+}
+
+// TestResolvePeerStatusMatrix 固定 resolvePeer 的四种状态判定。
+func TestResolvePeerStatusMatrix(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	// device-a：READY（presence+discovery 有效、owner 一致、revision>0）。
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{DeviceID: "device-a", Generation: 3}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.hub.resolvePeer(ctx, "device-a"); got.status != v2.ResolveStatus_RESOLVE_STATUS_READY {
+		t.Fatalf("device-a should be READY, got %v", got.status)
+	}
+
+	// device-b：无 presence → OFFLINE。
+	if got := server.hub.resolvePeer(ctx, "device-b"); got.status != v2.ResolveStatus_RESOLVE_STATUS_OFFLINE {
+		t.Fatalf("device-b should be OFFLINE, got %v", got.status)
+	}
+
+	// device-c：presence 在线但无 discovery → NOT_READY。
+	if _, _, err := server.cache.TakePresence(ctx, "device-c", "conn-c", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.hub.resolvePeer(ctx, "device-c"); got.status != v2.ResolveStatus_RESOLVE_STATUS_NOT_READY {
+		t.Fatalf("device-c (presence only) should be NOT_READY, got %v", got.status)
+	}
+
+	// device-d：presence+discovery 双有效但 owner 不一致（重连窗口旧连接残留）→ NOT_READY。
+	// 先以 conn-d1 为 presence owner 写 discovery，再让 conn-d2 接管 presence。
+	if _, _, err := server.cache.TakePresence(ctx, "device-d", "conn-d1", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.cache.TakeDiscovery(ctx, "device-d", "conn-d1", Discovery{DeviceID: "device-d", Generation: 5}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := server.cache.TakePresence(ctx, "device-d", "conn-d2", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if got := server.hub.resolvePeer(ctx, "device-d"); got.status != v2.ResolveStatus_RESOLVE_STATUS_NOT_READY {
+		t.Fatalf("device-d (owner mismatch) should be NOT_READY, got %v", got.status)
+	}
+
+	// device-e：缓存读取故障 → UNKNOWN（绝不当 online）。
+	server.hub.presence = erroringCache{}
+	if got := server.hub.resolvePeer(ctx, "device-e"); got.status != v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN {
+		t.Fatalf("cache failure should be UNKNOWN, got %v", got.status)
+	}
+	server.hub.presence = server.cache
 }
 
 // TestHubBroadcastExcludesExcept 固定 broadcast 的「锁内快照、锁外 enqueue」语义：
@@ -725,6 +797,194 @@ func TestMultiInstancePeerEventPropagation(t *testing.T) {
 	}
 	_ = connB.SetReadDeadline(time.Time{})
 	t.Fatal("instance B peer did not receive peer_online published by instance A")
+}
+
+// TestPublishDiscoveryV2AcksAndPersists 固定 v2 可靠发布原语：publishDiscoveryV2
+// 落盘 discovery、返回 DiscoveryAck（runtime_epoch + revision）、广播 peer_online，
+// 且同 epoch 的 revision 严格递增、同 revision 内容不可变。
+func TestPublishDiscoveryV2AcksAndPersists(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	sender := injectPeer(server.hub, "device-a")
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	other := injectPeer(server.hub, "device-b")
+	if _, _, err := server.cache.TakePresence(ctx, "device-b", other.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	epoch := &v2.RuntimeEpoch{High: 0x0102030405060708, Low: 0x090a0b0c0d0e0f10}
+	snapshot := &v2.DiscoverySnapshot{
+		RuntimeEpoch:          epoch,
+		Revision:              1,
+		TransportCapabilities: []v2.TransportCapability{v2.TransportCapability_TRANSPORT_CAPABILITY_WEBRTC},
+		CandidateBundle:       &v2.CandidateBundle{Candidates: [][]byte{[]byte("cand-a-blob")}},
+	}
+
+	ack, err := server.hub.publishDiscoveryV2(42, "device-a", sender.connectionID, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ack == nil || ack.RequestId != 42 || ack.Revision != 1 || ack.RuntimeEpoch.High != epoch.High || ack.RuntimeEpoch.Low != epoch.Low {
+		t.Fatalf("ack should echo request_id 42 and epoch+revision 1: %+v", ack)
+	}
+	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("discovery not persisted: present=%v err=%v", present, err)
+	}
+	if d.Revision != 1 || d.Generation != 1 || d.RuntimeEpochHigh != epoch.High || d.RuntimeEpochLow != epoch.Low {
+		t.Fatalf("stored discovery mismatch: %+v", d)
+	}
+	if len(d.Candidates) != 1 || d.Candidates[0] != "Y2FuZC1hLWJsb2I=" { // base64("cand-a-blob")
+		t.Fatalf("v2 candidate should round-trip as base64: %+v", d.Candidates)
+	}
+	// peer_online 广播到其它 peer。
+	frame := readControlFrame(t, other)
+	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 1 {
+		t.Fatalf("expected peer_online for v2 publish, got %+v", frame)
+	}
+
+	// 同 epoch 更高 revision → 接受，广播 peer_updated。
+	ack2, err := server.hub.publishDiscoveryV2(43, "device-a", sender.connectionID, &v2.DiscoverySnapshot{
+		RuntimeEpoch: epoch, Revision: 2, CandidateBundle: &v2.CandidateBundle{Candidates: [][]byte{[]byte("new-blob")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ack2.Revision != 2 {
+		t.Fatalf("ack revision should be 2, got %d", ack2.Revision)
+	}
+	frame = readControlFrame(t, other)
+	if frame.Type != framePeerUpdated || frame.DeviceID != "device-a" || frame.Generation != 2 {
+		t.Fatalf("expected peer_updated, got %+v", frame)
+	}
+
+	// 同 epoch 更低 revision → 拒绝（revision 必须严格递增）。
+	if _, err := server.hub.publishDiscoveryV2(44, "device-a", sender.connectionID, &v2.DiscoverySnapshot{
+		RuntimeEpoch: epoch, Revision: 1, CandidateBundle: &v2.CandidateBundle{Candidates: [][]byte{[]byte("stale")}},
+	}); !errors.Is(err, errDiscoveryRevisionStale) {
+		t.Fatalf("stale revision should be rejected with errDiscoveryRevisionStale, got %v", err)
+	}
+
+	// 同 epoch 同 revision 不同内容 → 拒绝（不可变）。
+	if _, err := server.hub.publishDiscoveryV2(45, "device-a", sender.connectionID, &v2.DiscoverySnapshot{
+		RuntimeEpoch: epoch, Revision: 2, CandidateBundle: &v2.CandidateBundle{Candidates: [][]byte{[]byte("different")}},
+	}); !errors.Is(err, errDiscoveryRevisionImmutable) {
+		t.Fatalf("immutable revision content change should be rejected, got %v", err)
+	}
+
+	// 跨 epoch 的任意 revision → 接受（不可比较）。
+	if _, err := server.hub.publishDiscoveryV2(46, "device-a", sender.connectionID, &v2.DiscoverySnapshot{
+		RuntimeEpoch: &v2.RuntimeEpoch{High: 2, Low: 3}, Revision: 1,
+		CandidateBundle: &v2.CandidateBundle{Candidates: [][]byte{[]byte("fresh")}},
+	}); err != nil {
+		t.Fatalf("cross-epoch publish should be accepted: %v", err)
+	}
+}
+
+// TestDiscoveryUpdateStoresEpochRevision 固定 v1 discovery_update 的 epoch+revision
+// 映射：新 owner 派生新 epoch、revision=1；同 owner generation 变化 revision 递增；
+// 同 generation 刷新 revision 不变。
+func TestDiscoveryUpdateStoresEpochRevision(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	sender := injectPeer(server.hub, "device-a")
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 5, Candidates: []string{"cand"}})
+	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("discovery missing: present=%v err=%v", present, err)
+	}
+	if d.Generation != 5 || d.Revision != 1 {
+		t.Fatalf("first upload should be gen 5 revision 1: %+v", d)
+	}
+	epochHigh, epochLow := d.RuntimeEpochHigh, d.RuntimeEpochLow
+	if epochHigh == 0 && epochLow == 0 {
+		t.Fatal("new owner should get a non-zero runtime_epoch")
+	}
+
+	// 同 owner generation 递增 → revision 递增，epoch 不变。
+	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 6, Candidates: []string{"cand"}})
+	d, present, err = server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("discovery missing after gen 6: present=%v err=%v", present, err)
+	}
+	if d.Generation != 6 || d.Revision != 2 || d.RuntimeEpochHigh != epochHigh || d.RuntimeEpochLow != epochLow {
+		t.Fatalf("gen bump should increment revision within the same epoch: %+v", d)
+	}
+
+	// 同 owner 同 generation 刷新 → revision 不变。
+	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 6, Candidates: []string{"cand"}})
+	d, present, err = server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("discovery missing after refresh: present=%v err=%v", present, err)
+	}
+	if d.Revision != 2 {
+		t.Fatalf("same-generation refresh should keep revision 2: %+v", d)
+	}
+}
+
+// TestServerHeartbeatMonitorClosesStalePeer 固定服务端心跳租约定时器：超过
+// ServerHeartbeatMisses×ServerHeartbeatInterval 未收到 heartbeat 帧的连接被关闭；
+// 持续心跳的连接不受影响。客户端驱动的续期路径保持不变。
+func TestServerHeartbeatMonitorClosesStalePeer(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:           []byte(mysqlTestCredentialKey),
+		EnrollmentToken:         "test-token",
+		ServerHeartbeatInterval: 50 * time.Millisecond,
+		ServerHeartbeatMisses:   2,
+	})
+	defer server.Close()
+
+	stale := injectPeer(server.hub, "device-a")
+	server.hub.mutex.Lock()
+	stale.lastHeartbeat = time.Now().Add(-5 * time.Second) // 已错过多个心跳周期。
+	server.hub.mutex.Unlock()
+
+	alive := injectPeer(server.hub, "device-b")
+	server.hub.mutex.Lock()
+	alive.lastHeartbeat = time.Now()
+	server.hub.mutex.Unlock()
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		ticker := time.NewTicker(25 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				server.hub.mutex.Lock()
+				alive.lastHeartbeat = time.Now()
+				server.hub.mutex.Unlock()
+			}
+		}
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-stale.done:
+	default:
+		t.Fatal("stale peer should be closed by the server heartbeat monitor")
+	}
+	select {
+	case <-alive.done:
+		t.Fatal("heartbeating peer should not be closed by the server heartbeat monitor")
+	default:
+	}
 }
 
 // TestSendPresenceSnapshotEmptyAlwaysIncludesPeers 固定空快照也必须输出 "peers":[]

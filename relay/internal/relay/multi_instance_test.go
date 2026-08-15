@@ -1,6 +1,10 @@
-// Multi-instance validation: two Relay instances sharing one MySQL + Redis
-// backend must agree on enrollment and propagate revocations across instances.
-// Requires RELAY_TEST_MYSQL_DSN and RELAY_TEST_REDIS_URL; otherwise they skip.
+// Shared-live-state validation across two Relay instances: two instances sharing
+// one MySQL + Redis backend must agree on enrollment and propagate revocations
+// over the shared event bus. Relay Control and Relay Data are single-instance in
+// this phase; these tests pin the shared-state mechanism (Redis CAS presence,
+// event bus, targeted connection.replaced disconnect) that a future second
+// Control instance would rely on. Requires RELAY_TEST_MYSQL_DSN and
+// RELAY_TEST_REDIS_URL; otherwise they skip.
 
 package relay
 

@@ -33,6 +33,10 @@ type peer struct {
 	framesInWindow     int
 	bytesInWindow      int64
 	lastSeen           time.Time
+	// lastHeartbeat 是服务端最后一次收到该连接 heartbeat 帧的时间（服务端心跳监视器
+	// monitorHeartbeats 以此判定僵尸）。区别于 lastSeen（任何帧都更新），它只被
+	// heartbeat 帧刷新，与 presence 租约的续期语义一致。
+	lastHeartbeat time.Time
 }
 
 type session struct {
@@ -158,7 +162,49 @@ func newHub(config Config) *hub {
 		defer h.waitGroup.Done()
 		h.prune()
 	}()
+	h.waitGroup.Add(1)
+	go func() {
+		defer h.waitGroup.Done()
+		h.monitorHeartbeats()
+	}()
 	return h
+}
+
+// monitorHeartbeats 是服务端心跳租约定时器（在客户端驱动的续期之外）：每
+// ServerHeartbeatInterval 扫描一次本地 peer，超过
+// ServerHeartbeatMisses×ServerHeartbeatInterval 未收到 heartbeat 帧的连接视为僵尸，
+// 定向关闭。关闭会解除 read goroutine 对 socket 的阻塞，其 deferred remove() 随后
+// 释放 presence/discovery 租约并广播 peer_offline——与 sweeper 收敛路径一致。
+func (h *hub) monitorHeartbeats() {
+	interval := h.config.ServerHeartbeatInterval
+	if interval <= 0 {
+		interval = defaultServerHeartbeatInterval
+	}
+	misses := h.config.ServerHeartbeatMisses
+	if misses <= 0 {
+		misses = defaultServerHeartbeatMisses
+	}
+	threshold := time.Duration(misses) * interval
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.stop:
+			return
+		case now := <-ticker.C:
+			h.mutex.Lock()
+			stale := make([]*peer, 0)
+			for _, p := range h.peers {
+				if now.Sub(p.lastHeartbeat) > threshold {
+					stale = append(stale, p)
+				}
+			}
+			h.mutex.Unlock()
+			for _, p := range stale {
+				closePeer(p)
+			}
+		}
+	}
 }
 
 // presenceFor builds the shared presence value for a connected peer. The
@@ -235,6 +281,9 @@ func (h *hub) close() {
 }
 func (h *hub) add(peer *peer) bool {
 	peer.lastSeen = time.Now()
+	// 服务端心跳监视器从连接建立开始计时，给新连接最多 2 个心跳周期（40s）发送首个
+	// heartbeat；尚未上传首个 heartbeat 的连接不会被误杀。
+	peer.lastHeartbeat = time.Now()
 	// Serialize admission per device so the Redis lease claim lands in
 	// connection-establishment order: a newer connection's TakePresence runs only
 	// after any in-flight claim for the same device completed, so a stale claim

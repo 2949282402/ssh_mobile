@@ -55,8 +55,9 @@ type adminDevice struct {
 }
 
 // hubSnapshot 只带管理端消费的本地 hub 数据。在线状态与 RemoteAddr 一律来自
-// presence 租约（GetPresences），本地 peer 表不参与 admin 视图——它在多实例部署
-// 下只反映本实例，跨实例设备会显示为空白地址。
+// presence 租约（GetPresences），本地 peer 表不参与 admin 视图——它只反映本实例
+// 持有的连接，其它实例连接同一共享 Redis 的设备在 admin 视图里显示为空白地址
+// （设计 §26：Relay Control/Data 单实例，Redis 为共享实时状态层）。
 type hubSnapshot struct {
 	ActiveSessions int
 }

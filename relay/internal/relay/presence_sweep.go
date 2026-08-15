@@ -1,8 +1,9 @@
-// Cross-instance presence sweeper: closes local hub peers whose presence or
-// discovery leases have lapsed (zombies) and broadcasts peer_offline so every
-// instance converges on the same online set. The shared cache is the
-// authoritative source of truth (明确版 §13); the local hub peer table is never
-// authoritative on its own.
+// Presence sweeper over the shared-live-state layer: closes local hub peers
+// whose presence or discovery leases have lapsed (zombies) and broadcasts
+// peer_offline so every connected instance converges on the same online set.
+// Relay Control and Relay Data are single-instance in this phase; the shared
+// cache is the authoritative source of truth (明确版 §13) and the local hub peer
+// table is never authoritative on its own.
 
 package relay
 

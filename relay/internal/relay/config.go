@@ -47,6 +47,10 @@ const (
 	defaultHTTPIdleTimeout                   = 60 * time.Second
 	defaultHTTPMaxHeaderBytes                = 16 * 1024
 	defaultPresenceTTL                       = 60 * time.Second
+	// 服务端心跳监视器默认值镜像冻结契约常量：HEARTBEAT_INTERVAL_S=20、
+	// SERVER_HEARTBEAT_MISSES_BEFORE_CLOSE=2（配合 PRESENCE_TTL_S=60：60/20）。
+	defaultServerHeartbeatInterval = 20 * time.Second
+	defaultServerHeartbeatMisses   = 2
 )
 
 // relayEventsChannel is the Redis Pub/Sub channel carrying cross-instance
@@ -55,12 +59,17 @@ const relayEventsChannel = "relay:events"
 
 // Config 保存 Relay 服务器的监听、认证和资源边界。
 type Config struct {
-	Address                     string
-	StorageMode                 string
-	DatabaseURL                 string
-	RedisURL                    string
-	InstanceID                  string
-	PresenceTTL                 time.Duration
+	Address     string
+	StorageMode string
+	DatabaseURL string
+	RedisURL    string
+	InstanceID  string
+	PresenceTTL time.Duration
+	// ServerHeartbeatInterval 是服务端心跳监视器的检查周期：连续
+	// ServerHeartbeatMisses 个周期未收到该连接的心跳帧即关闭连接并释放 presence 租约。
+	// 客户端驱动的续期（心跳路径的 RenewPresence）不受影响。
+	ServerHeartbeatInterval     time.Duration
+	ServerHeartbeatMisses       int
 	EnrollmentToken             string
 	CredentialKey               []byte
 	CredentialTTL               time.Duration
@@ -147,6 +156,8 @@ func ConfigFromEnvironment() (Config, error) {
 		RedisURL:                    redisURL,
 		InstanceID:                  instanceID,
 		PresenceTTL:                 durationEnv("RELAY_PRESENCE_TTL", defaultPresenceTTL),
+		ServerHeartbeatInterval:     durationEnv("RELAY_SERVER_HEARTBEAT_INTERVAL", defaultServerHeartbeatInterval),
+		ServerHeartbeatMisses:       intEnv("RELAY_SERVER_HEARTBEAT_MISSES", defaultServerHeartbeatMisses),
 		EnrollmentToken:             enrollment,
 		CredentialKey:               decoded,
 		CredentialTTL:               durationEnv("RELAY_CREDENTIAL_TTL", defaultCredentialTTL),
@@ -259,6 +270,12 @@ func withConfigDefaults(config Config) Config {
 	}
 	if config.PresenceTTL <= 0 {
 		config.PresenceTTL = defaultPresenceTTL
+	}
+	if config.ServerHeartbeatInterval <= 0 {
+		config.ServerHeartbeatInterval = defaultServerHeartbeatInterval
+	}
+	if config.ServerHeartbeatMisses <= 0 {
+		config.ServerHeartbeatMisses = defaultServerHeartbeatMisses
 	}
 	if config.HTTPReadTimeout <= 0 {
 		config.HTTPReadTimeout = defaultHTTPReadTimeout
