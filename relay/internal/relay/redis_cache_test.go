@@ -398,6 +398,15 @@ func (erroringCache) GetDiscoveries(context.Context, []string) (map[string]Disco
 func (erroringCache) ListOnlinePeers(context.Context) (map[string]Discovery, error) {
 	return nil, errors.New("cache unavailable")
 }
+func (erroringCache) CreateReservation(context.Context, Reservation) error {
+	return errors.New("cache unavailable")
+}
+func (erroringCache) GetReservation(context.Context, string) (Reservation, bool, error) {
+	return Reservation{}, false, errors.New("cache unavailable")
+}
+func (erroringCache) DeleteReservation(context.Context, string) error {
+	return errors.New("cache unavailable")
+}
 func (erroringCache) Publish(context.Context, RelayEvent) error {
 	return errors.New("cache unavailable")
 }

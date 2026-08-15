@@ -79,7 +79,7 @@ func (s *Server) sweepPresenceOnce() {
 		// 仅当真断开了匹配连接（返回 true）才广播 peer_offline——若重连的新连接已
 		// 接管（no-op），设备实际在线，广播 offline 会误报。
 		if s.hub.disconnectConnection(p.deviceID, p.connectionID) {
-			s.hub.broadcastPeerEvent(framePeerOffline, p.deviceID, 0)
+			s.hub.broadcastPeerEvent(framePeerOffline, p.deviceID, Discovery{})
 		}
 	}
 }

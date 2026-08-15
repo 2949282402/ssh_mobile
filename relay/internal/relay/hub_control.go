@@ -474,7 +474,7 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 		frameType = framePeerUpdated
 	}
 	if frameType != "" {
-		h.broadcastPeerEvent(frameType, sender.deviceID, d.Generation)
+		h.broadcastPeerEvent(frameType, sender.deviceID, d)
 	}
 	if frameType == framePeerOnline {
 		// 首次可发现：把当前在线设备快照回给上报设备，作为其本地设备列表基线。
@@ -516,8 +516,10 @@ func (h *hub) sendPresenceSnapshot(sender *peer) {
 }
 
 // broadcastPeerEvent 向本实例其余 peer 广播一个推送发现帧，并 Publish 跨实例事件，
-// 让其它实例在 handleRelayEvent 里做同样的本地广播。
-func (h *hub) broadcastPeerEvent(frameType, deviceID string, gen uint64) {
+// 让其它实例在 handleRelayEvent 里做同样的本地广播。d 是该设备的 discovery 快照：
+// v1 线用它取 generation 回显，v2 /v2/control peer 用它构造 PeerAvailableHint 的
+// runtime_epoch/revision（offline 事件传零值 Discovery，走 PeerUnavailableHint）。
+func (h *hub) broadcastPeerEvent(frameType, deviceID string, d Discovery) {
 	eventType := ""
 	switch frameType {
 	case framePeerOnline:
@@ -527,11 +529,14 @@ func (h *hub) broadcastPeerEvent(frameType, deviceID string, gen uint64) {
 	case framePeerOffline:
 		eventType = eventPeerOffline
 	}
-	frame, err := json.Marshal(controlFrame{Type: frameType, DeviceID: deviceID, Generation: gen})
+	frame, err := json.Marshal(controlFrame{Type: frameType, DeviceID: deviceID, Generation: d.Generation})
 	if err != nil {
 		return
 	}
 	h.broadcast(deviceID, outboundFrame{websocket.TextMessage, frame})
+	// v2 控制面 peer 收到同一事件的 protobuf 提示帧（设计 §23：presence 推送降级为
+	// advisory hint）。
+	h.broadcastPeerHintV2(frameType, deviceID, d)
 	if eventType != "" && h.presence != nil {
 		// InstanceID 标记发布方，订阅侧据此跳过同实例回环（发布方已本地广播过）。
 		// Publish 加 presenceLeaseTimeout 限时：本方法从设备 read goroutine 调用
@@ -541,11 +546,44 @@ func (h *hub) broadcastPeerEvent(frameType, deviceID string, gen uint64) {
 		_ = h.presence.Publish(pctx, RelayEvent{
 			Type:       eventType,
 			DeviceID:   deviceID,
-			Generation: gen,
+			Generation: d.Generation,
 			InstanceID: h.instanceID,
 			Time:       time.Now().UnixMilli(),
 		})
 		pcancel()
+	}
+}
+
+// broadcastPeerHintV2 向所有 /v2/control peer（除事件归属设备外）推送一条 advisory
+// 的 protobuf presence 提示帧（设计 §23）：online/updated 走 PeerAvailableHint 携带
+// runtime_epoch/revision，offline 走 PeerUnavailableHint。v1 JSON peer 由调用方用
+// broadcast() 单独通知，本方法只处理 v2 控制面。hint 是 best-effort 的——编码失败或
+// 对端积压时静默丢弃，不影响任何生命周期。
+func (h *hub) broadcastPeerHintV2(frameType, deviceID string, d Discovery) {
+	var hint *v2.RelayFrame
+	switch frameType {
+	case framePeerOnline, framePeerUpdated:
+		if d.ready() {
+			hint = &v2.RelayFrame{
+				Version: v2.RELAY_V2_VERSION,
+				Kind: &v2.RelayFrame_PeerAvailableHint{PeerAvailableHint: &v2.PeerAvailableHint{
+					DeviceId:     deviceID,
+					RuntimeEpoch: &v2.RuntimeEpoch{High: d.RuntimeEpochHigh, Low: d.RuntimeEpochLow},
+					Revision:     d.Revision,
+				}},
+			}
+		}
+	case framePeerOffline:
+		hint = &v2.RelayFrame{
+			Version: v2.RELAY_V2_VERSION,
+			Kind: &v2.RelayFrame_PeerUnavailableHint{PeerUnavailableHint: &v2.PeerUnavailableHint{
+				DeviceId: deviceID,
+				Reason:   "offline",
+			}},
+		}
+	}
+	if hint != nil {
+		h.broadcastV2(deviceID, hint)
 	}
 }
 

@@ -81,6 +81,17 @@ func (s *Server) handleRelayEvent(event RelayEvent) {
 		}[event.Type]
 		frame, _ := json.Marshal(controlFrame{Type: frameType, DeviceID: event.DeviceID, Generation: event.Generation})
 		s.hub.broadcast(event.DeviceID, outboundFrame{websocket.TextMessage, frame})
+		// v2 控制面 peer 的同一提示帧：跨实例事件只携带 generation，online/updated 的
+		// epoch/revision 需回查共享 discovery（best-effort，advisory）。
+		d := Discovery{}
+		if frameType != framePeerOffline && s.hub.presence != nil {
+			dctx, dcancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+			if dd, ok, err := s.hub.presence.GetDiscovery(dctx, event.DeviceID); err == nil && ok {
+				d = dd
+			}
+			dcancel()
+		}
+		s.hub.broadcastPeerHintV2(frameType, event.DeviceID, d)
 	}
 }
 
