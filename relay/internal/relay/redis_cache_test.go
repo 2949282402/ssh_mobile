@@ -297,6 +297,24 @@ func (erroringCache) GetPresence(context.Context, string) (Presence, bool, error
 func (erroringCache) GetPresences(context.Context, []string) (map[string]Presence, error) {
 	return nil, errors.New("cache unavailable")
 }
+func (erroringCache) TakeDiscovery(context.Context, string, string, Discovery, time.Duration) error {
+	return errors.New("cache unavailable")
+}
+func (erroringCache) RenewDiscovery(context.Context, string, string, time.Duration) (bool, error) {
+	return false, errors.New("cache unavailable")
+}
+func (erroringCache) ReleaseDiscovery(context.Context, string, string) (bool, error) {
+	return false, errors.New("cache unavailable")
+}
+func (erroringCache) GetDiscovery(context.Context, string) (Discovery, bool, error) {
+	return Discovery{}, false, errors.New("cache unavailable")
+}
+func (erroringCache) GetDiscoveries(context.Context, []string) (map[string]Discovery, error) {
+	return nil, errors.New("cache unavailable")
+}
+func (erroringCache) ListOnlinePeers(context.Context) (map[string]Discovery, error) {
+	return nil, errors.New("cache unavailable")
+}
 func (erroringCache) Publish(context.Context, RelayEvent) error {
 	return errors.New("cache unavailable")
 }

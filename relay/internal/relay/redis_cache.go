@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -48,6 +49,9 @@ func (r *redisStore) Close() error { return r.client.Close() }
 
 func (r *redisStore) presenceKey(deviceID string) string {
 	return redisKeyPrefix + "presence:" + deviceID
+}
+func (r *redisStore) discoveryKey(deviceID string) string {
+	return redisKeyPrefix + "discovery:" + deviceID
 }
 func (r *redisStore) noncesKey(deviceID string) string {
 	return redisKeyPrefix + "nonces:" + deviceID
@@ -288,6 +292,180 @@ func (r *redisStore) GetPresences(ctx context.Context, deviceIDs []string) (map[
 			continue
 		}
 		result[deviceIDs[i]] = p
+	}
+	return result, nil
+}
+
+// takeDiscoveryScript unconditionally stores the discovery for a device
+// (newest upload wins). KEYS[1]=relay:discovery:<deviceID>; ARGV[1]=json,
+// ARGV[2]=ttl(ms). No previous-value return is needed: a takeover is already
+// signalled by the presence lease's connection.replaced event, and discovery
+// rides the same lifecycle.
+const takeDiscoveryScript = `
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return 1
+`
+
+// renewDiscoveryScript renews the discovery TTL only while connID still owns it
+// (CAS), and only extends TTL — it does not rewrite the stored candidates. An
+// absent/expired key is treated as "owned but nothing to renew" (return 1), so a
+// device that has not uploaded discovery yet is never self-closed by the
+// heartbeat path; the discovery appears once the device uploads it. A foreign
+// owner (or a non-object legacy value) returns 0 so a superseded connection
+// cannot keep a newer one's discovery alive.
+const renewDiscoveryScript = `
+local data = redis.call('GET', KEYS[1])
+if not data then
+  return 1
+end
+local ok, obj = pcall(cjson.decode, data)
+if ok and type(obj) == 'table' and obj['connection_id'] == ARGV[1] then
+  redis.call('PEXPIRE', KEYS[1], ARGV[2])
+  return 1
+end
+return 0
+`
+
+// releaseDiscoveryScript releases the discovery only while connID owns it (CAS
+// delete), so a superseded connection can never erase a newer one's discovery.
+const releaseDiscoveryScript = `
+local data = redis.call('GET', KEYS[1])
+if not data then
+  return 0
+end
+local ok, obj = pcall(cjson.decode, data)
+if ok and type(obj) == 'table' and obj['connection_id'] == ARGV[1] then
+  redis.call('DEL', KEYS[1])
+  return 1
+end
+return 0
+`
+
+func (r *redisStore) TakeDiscovery(ctx context.Context, deviceID, connID string, d Discovery, ttl time.Duration) error {
+	d.ConnectionID = connID
+	data, err := json.Marshal(d)
+	if err != nil {
+		return err
+	}
+	_, err = r.client.Eval(ctx, takeDiscoveryScript,
+		[]string{r.discoveryKey(deviceID)},
+		string(data), ttl.Milliseconds(),
+	).Result()
+	return err
+}
+
+func (r *redisStore) RenewDiscovery(ctx context.Context, deviceID, connID string, ttl time.Duration) (bool, error) {
+	result, err := r.client.Eval(ctx, renewDiscoveryScript,
+		[]string{r.discoveryKey(deviceID)},
+		connID, ttl.Milliseconds(),
+	).Int()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
+}
+
+func (r *redisStore) ReleaseDiscovery(ctx context.Context, deviceID, connID string) (bool, error) {
+	result, err := r.client.Eval(ctx, releaseDiscoveryScript,
+		[]string{r.discoveryKey(deviceID)},
+		connID,
+	).Int()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
+}
+
+func (r *redisStore) GetDiscovery(ctx context.Context, deviceID string) (Discovery, bool, error) {
+	data, err := r.client.Get(ctx, r.discoveryKey(deviceID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return Discovery{}, false, nil
+	}
+	if err != nil {
+		return Discovery{}, false, err
+	}
+	var d Discovery
+	if err := json.Unmarshal(data, &d); err != nil {
+		return Discovery{}, false, err
+	}
+	return d, true, nil
+}
+
+func (r *redisStore) GetDiscoveries(ctx context.Context, deviceIDs []string) (map[string]Discovery, error) {
+	if len(deviceIDs) == 0 {
+		return map[string]Discovery{}, nil
+	}
+	keys := make([]string, 0, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		keys = append(keys, r.discoveryKey(deviceID))
+	}
+	values, err := r.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]Discovery, len(deviceIDs))
+	for i, value := range values {
+		if value == nil {
+			continue
+		}
+		data, ok := value.(string)
+		if !ok {
+			r.logger.Warn("skipped non-string discovery value in batch query", "device_id", deviceIDs[i])
+			continue
+		}
+		var d Discovery
+		if err := json.Unmarshal([]byte(data), &d); err != nil {
+			r.logger.Warn("skipped corrupt discovery value in batch query", "device_id", deviceIDs[i], "error", err)
+			continue
+		}
+		result[deviceIDs[i]] = d
+	}
+	return result, nil
+}
+
+// ListOnlinePeers 返回 presence 与 discovery 均有效的设备（明确版 §13 的在线判定）。
+// 用 SCAN 枚举 presence 键（活跃租约的键即在线），再批量取 discovery；presence 键
+// 的 TTL 由 Redis 主动过期，故 SCAN 到的即未过期，discovery 以 MGET 结果为准。
+func (r *redisStore) ListOnlinePeers(ctx context.Context) (map[string]Discovery, error) {
+	result := make(map[string]Discovery)
+	var cursor uint64
+	for {
+		keys, next, err := r.client.Scan(ctx, cursor, redisKeyPrefix+"presence:*", 100).Result()
+		if err != nil {
+			return nil, err
+		}
+		if len(keys) > 0 {
+			deviceIDs := make([]string, 0, len(keys))
+			discoveryKeys := make([]string, 0, len(keys))
+			for _, key := range keys {
+				deviceID := strings.TrimPrefix(key, redisKeyPrefix+"presence:")
+				deviceIDs = append(deviceIDs, deviceID)
+				discoveryKeys = append(discoveryKeys, r.discoveryKey(deviceID))
+			}
+			values, err := r.client.MGet(ctx, discoveryKeys...).Result()
+			if err != nil {
+				return nil, err
+			}
+			for i, value := range values {
+				if value == nil {
+					continue // presence 在、discovery 缺失/已过期：不算在线。
+				}
+				data, ok := value.(string)
+				if !ok {
+					continue
+				}
+				var d Discovery
+				if err := json.Unmarshal([]byte(data), &d); err != nil {
+					r.logger.Warn("skipped corrupt discovery value in online peers", "device_id", deviceIDs[i], "error", err)
+					continue
+				}
+				result[deviceIDs[i]] = d
+			}
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
 	}
 	return result, nil
 }

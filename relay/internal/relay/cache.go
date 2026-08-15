@@ -72,6 +72,25 @@ type Cache interface {
 	// 缺失/已过期的设备不在 map 中；空列表返回空 map。admin 快照用它把 N 次
 	// GetPresence 收敛成一次往返。
 	GetPresences(ctx context.Context, deviceIDs []string) (map[string]Presence, error)
+	// TakeDiscovery 让 connID 无条件取得 deviceID 的 discovery 租约（新连接上传
+	// 覆盖旧值，最后写者胜），ttl 后自动过期。与 presence 生命周期绑定：TTL 相同、
+	// 心跳同时续期、断开同时释放。ConnectionID 是所有权标识（强制写入），跨实例时
+	// 旧连接不会误删新连接的 discovery。
+	TakeDiscovery(ctx context.Context, deviceID, connID string, d Discovery, ttl time.Duration) error
+	// RenewDiscovery 仅当 connID 仍是 discovery 所有者时续期（CAS，只续 TTL 不覆写
+	// 内容），返回 false 表示所有权已被其它连接抢走。
+	RenewDiscovery(ctx context.Context, deviceID, connID string, ttl time.Duration) (bool, error)
+	// ReleaseDiscovery 仅当 connID 仍是所有者时释放 discovery（CAS 删除），返回是否
+	// 真的释放；不存在或归其它连接所有时返回 false。
+	ReleaseDiscovery(ctx context.Context, deviceID, connID string) (bool, error)
+	// GetDiscovery 返回 deviceID 的 discovery 状态与存在性。
+	GetDiscovery(ctx context.Context, deviceID string) (Discovery, bool, error)
+	// GetDiscoveries 批量返回多个 deviceID 的 discovery：结果 map 中存在的 key 即
+	// 有效，缺失/已过期的设备不在 map 中；空列表返回空 map。
+	GetDiscoveries(ctx context.Context, deviceIDs []string) (map[string]Discovery, error)
+	// ListOnlinePeers 返回全部在线设备的 discovery（按明确版 §13，presence 与
+	// discovery 均有效的设备才计入）。用于 presence_snapshot 构建与 sweeper 判活。
+	ListOnlinePeers(ctx context.Context) (map[string]Discovery, error)
 	// SetAdminSession 创建 TTL 管理的管理端会话。内存实现在容量耗尽时返回
 	// errAdminSessionCapacity（fail closed）。
 	SetAdminSession(ctx context.Context, token string, ttl time.Duration) error
@@ -204,6 +223,113 @@ func (m *memoryStore) GetPresences(_ context.Context, deviceIDs []string) (map[s
 			continue
 		}
 		result[deviceID] = entry.presence
+	}
+	return result, nil
+}
+
+// TakeDiscovery 在 m.mu 下复刻 Redis 的无条件 SET：新连接上传覆盖旧值（最后写者胜）。
+// 落盘的 ConnectionID 一律强制为 connID——connID 是所有权权威，与 presence 租约
+// 同一规则，保证存储层从不产生 owner 为空的 discovery。
+func (m *memoryStore) TakeDiscovery(_ context.Context, deviceID, connID string, d Discovery, ttl time.Duration) error {
+	d.ConnectionID = connID
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.discovery[deviceID] = discoveryEntry{discovery: d, expiresAt: time.Now().Add(ttl)}
+	return nil
+}
+
+// RenewDiscovery 在 m.mu 下复刻 Redis 的 CAS 续期：只续 TTL、不覆写内容，且仅当
+// connID 仍是所有者（或条目不存在/已过期，视为缺失可重新获取）。返回 false 表示
+// 所有权已被其它连接抢走。
+func (m *memoryStore) RenewDiscovery(_ context.Context, deviceID, connID string, ttl time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	entry, present := m.discovery[deviceID]
+	if present && now.Before(entry.expiresAt) && entry.discovery.ConnectionID != connID {
+		return false, nil
+	}
+	if present {
+		if now.After(entry.expiresAt) {
+			// 过期视为缺失，顺手剪除。
+			delete(m.discovery, deviceID)
+		} else {
+			entry.expiresAt = now.Add(ttl)
+			m.discovery[deviceID] = entry
+		}
+	}
+	return true, nil
+}
+
+// ReleaseDiscovery 在 m.mu 下复刻 Redis 的 CAS 删除：只释放归 connID 所有的活跃
+// 条目；不存在或已过期（视为缺失）或归其它连接所有时返回 false 且不删除。
+func (m *memoryStore) ReleaseDiscovery(_ context.Context, deviceID, connID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	entry, present := m.discovery[deviceID]
+	if !present || !now.Before(entry.expiresAt) {
+		if present {
+			delete(m.discovery, deviceID)
+		}
+		return false, nil
+	}
+	if entry.discovery.ConnectionID != connID {
+		return false, nil
+	}
+	delete(m.discovery, deviceID)
+	return true, nil
+}
+
+func (m *memoryStore) GetDiscovery(_ context.Context, deviceID string) (Discovery, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, present := m.discovery[deviceID]
+	if !present {
+		return Discovery{}, false, nil
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(m.discovery, deviceID)
+		return Discovery{}, false, nil
+	}
+	return entry.discovery, true, nil
+}
+
+func (m *memoryStore) GetDiscoveries(_ context.Context, deviceIDs []string) (map[string]Discovery, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	result := make(map[string]Discovery, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		entry, present := m.discovery[deviceID]
+		if !present {
+			continue
+		}
+		if now.After(entry.expiresAt) {
+			delete(m.discovery, deviceID)
+			continue
+		}
+		result[deviceID] = entry.discovery
+	}
+	return result, nil
+}
+
+// ListOnlinePeers 返回 presence 与 discovery 均有效的设备（明确版 §13 的在线判定）。
+func (m *memoryStore) ListOnlinePeers(_ context.Context) (map[string]Discovery, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	result := make(map[string]Discovery)
+	for deviceID, entry := range m.discovery {
+		if now.After(entry.expiresAt) {
+			delete(m.discovery, deviceID)
+			continue
+		}
+		presence, present := m.presence[deviceID]
+		if !present || now.After(presence.expiresAt) {
+			continue
+		}
+		result[deviceID] = entry.discovery
 	}
 	return result, nil
 }
