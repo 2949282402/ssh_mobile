@@ -1082,8 +1082,7 @@ async fn handle_relay_crypto_handshake(
                 RouteType::Relay,
                 None,
             );
-            crate::channel::recover_session(Arc::clone(state), peer_id.to_string(), session_id)
-                .await;
+            crate::channel::recover_session(Arc::clone(state), peer_id.to_string()).await;
             // §19：业务状态（Transfer）不属于 Session；每条新连接都尝试恢复暂停传输。
             crate::transfer::resume_transfers_for_peer(Arc::clone(state), peer_id.to_string())
                 .await;

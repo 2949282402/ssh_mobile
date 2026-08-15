@@ -343,10 +343,11 @@ pub(crate) async fn disconnect_peer(
     }
     if let Some(session_id) = session_id {
         state.cancel_session_tasks(&peer_id, session_id).await;
-        // Explicit Session close releases receive-side active handlers and
-        // ordered buffers. A transient Connection loss takes a different
-        // path and keeps them for Delivery recovery.
-        state.delivery.close_session(&session_id.wire_key()).await;
+        // Explicit Peer disconnect releases receive-side active handlers and
+        // ordered buffers. A transient Connection loss takes a different path
+        // (Session destroyed) and must keep them for Delivery recovery（§20）——
+        // 因此清理只发生在用户显式断开时，transport 丢失不清理。
+        state.delivery.close_peer(&peer_id).await;
     }
     // transport-network v2：断开时注销连接登记（§34）。
     state.connection_registry.unregister(&peer_id);
@@ -1293,8 +1294,7 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     connection.rtt().as_millis().min(u32::MAX as u128) as u32,
                     0.0,
                 );
-                crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id)
-                    .await;
+                crate::channel::recover_session(Arc::clone(&state), peer_id.clone()).await;
                 // §19：业务状态（Transfer）不属于 Session；每条新连接都尝试恢复暂停传输。
                 crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
                     .await;
@@ -1452,7 +1452,7 @@ async fn accept_authenticated_generic(
             Some(profile),
             None,
         );
-        crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
+        crate::channel::recover_session(Arc::clone(&state), peer_id.clone()).await;
         crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
         tracing::debug!(%peer_address, session_id = %session_id.wire_key(), "authenticated TCP fallback route attached");
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())

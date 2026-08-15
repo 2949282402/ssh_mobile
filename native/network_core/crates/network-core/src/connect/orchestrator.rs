@@ -648,7 +648,7 @@ impl ConnectionOrchestrator {
             RouteType::Relay,
             None,
         );
-        crate::channel::recover_session(Arc::clone(&state), peer_id.to_string(), session_id).await;
+        crate::channel::recover_session(Arc::clone(&state), peer_id.to_string()).await;
         // §19：业务状态（Transfer）不属于 Session；每条新连接都尝试恢复暂停传输。
         crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.to_string()).await;
         Ok(admission)
@@ -724,12 +724,7 @@ impl ConnectionOrchestrator {
                     connection.rtt().as_millis().min(u32::MAX as u128) as u32,
                     0.0,
                 );
-                crate::channel::recover_session(
-                    Arc::clone(&state),
-                    peer_id.to_string(),
-                    session_id,
-                )
-                .await;
+                crate::channel::recover_session(Arc::clone(&state), peer_id.to_string()).await;
                 crate::peer::spawn_session_receivers(
                     Arc::clone(&state),
                     peer_id.to_string(),
@@ -793,12 +788,7 @@ impl ConnectionOrchestrator {
                     0,
                     0.0,
                 );
-                crate::channel::recover_session(
-                    Arc::clone(&state),
-                    peer_id.to_string(),
-                    session_id,
-                )
-                .await;
+                crate::channel::recover_session(Arc::clone(&state), peer_id.to_string()).await;
                 crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.to_string())
                     .await;
                 Ok(admission)
@@ -820,7 +810,9 @@ pub(crate) async fn close_session_and_registry(
     state
         .connection_registry
         .unregister_if_session(&peer_id, session_id);
-    state.delivery.close_session(&session_id.wire_key()).await;
+    // 显式关闭连接（§34 Close old）时清理接收端 dedup/ordered 状态；transport
+    // 丢失路径不清理（§20 需要跨连接去重）。
+    state.delivery.close_peer(&peer_id).await;
 }
 
 /// 生成一次独立的 attempt_id（§12：每次建连独立 attempt）。
