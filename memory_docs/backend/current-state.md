@@ -6,9 +6,9 @@ The maintained backend is the v1 Go control plane and WSS Relay in `relay/`.
 Device-plane durable state (enrollment, revocation) is behind a `Storage`
 interface: the default `memory` mode is process-local and restart clears it;
 `mysql` mode persists it and requires `RedisURL` for the shared state layer
-(presence, replay-protection nonce, administrator sessions, cross-instance
-events). Non-redundant single-instance data plane stays in the hub
-(`hub.peers`, `hub.transferSessions`).
+(presence, discovery, replay-protection nonce, administrator sessions,
+cross-instance events). Non-redundant single-instance data plane stays in the
+hub (`hub.peers`, `hub.transferSessions`).
 
 Current boundaries:
 
@@ -25,12 +25,29 @@ Current boundaries:
 - The administrator API uses a separate versioned contract and an HttpOnly
   cookie session; sessions live in the `Cache` layer (memory by default, Redis
   when configured).
-- Administrator online statistics are derived from the `Cache` presence layer;
-  device-to-device `lookup` still answers from the local hub, matching the
-  single-instance data plane (cross-instance lookup is deferred to the
-  cross-instance forwarding milestone).
+- Administrator online statistics are derived from the `Cache` presence layer.
+- Device-to-device `lookup` reports a peer online only when its presence lease
+  is valid **and** a `discovery:{device_id}` snapshot exists, and returns the
+  stored opaque candidates; a peer with only one of the two is not treated as
+  connectable.
+- The server stores a bounded discovery snapshot per online device
+  (`discovery:{device_id}` = device_id + generation + opaque candidates +
+  capabilities), filled from the device's own candidate reporting. The snapshot
+  is removed when the connection is replaced or goes offline, with TTL /
+  sweeper as a backstop.
+- The server pushes four presence events over each authenticated device
+  connection: `presence_snapshot`, `peer_online`, `peer_updated`, and
+  `peer_offline`. Events are light: they carry only `device_id` + `generation`;
+  candidate details are fetched via `lookup` (event-light / lookup-heavy model).
+- A presence sweeper marks a device offline when its presence lease expires
+  (TTL 60s, renewed by the 20s heartbeat), cleaning its discovery snapshot and
+  feeding `peer_offline` and the admin presence view.
+- `GET /v1/peers` exposes the online device view backed by the presence +
+  discovery model.
 - Relay payloads and Session crypto-handshake stages are forwarded opaquely.
-  The backend does not own Application Root material or plaintext.
+  The backend does not own Application Root material or plaintext; discovery
+  storage keeps opaque candidates without parsing their endpoint semantics
+  (ADR-017 revision boundary).
 - Process restart clears device, administrator-session, and Relay-session state
   **in memory mode**; `mysql` mode keeps enrollment and revocation durable and
   devices keep working across a restart.
@@ -42,6 +59,9 @@ current hardening backlog remain owned by the [Relay README](../../relay/README.
 
 For route and cryptographic semantics, read:
 
+- [Relay control-plane architecture](../../docs/architecture/RELAY_CONTROL_PLANE.md)
 - [SDK transport routing](../sdk/features/transport-routing.md)
 - [Relay direct upgrade ADR](../../docs/adr/ADR-018-relay-direct-upgrade.md)
+- [Candidate exchange ADR](../../docs/adr/ADR-017-candidate-exchange.md)
+- [Direct First ADR](../../docs/adr/ADR-008-direct-relay-race.md)
 - [Forward-secret Session E2EE ADR](../../docs/adr/ADR-028-forward-secret-session-e2ee.md)

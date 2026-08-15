@@ -1,10 +1,14 @@
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-15
 
 # ADR-017：Peer Candidate Exchange and Connectivity Checks
 
 ## Status
 
 Accepted for the native network v1 runtime.
+
+2026-08-15 修订：新增 Relay 控制面对 discovery 的**存储**决策——存储发现
+（discovery 快照）但不解析信令 payload；`lookup` 与 `presence_snapshot` 由此
+获得候选数据，信令转发仍保持不解析。其余原决策不变。
 
 ## Context
 
@@ -40,6 +44,27 @@ identity-bound QUIC handshake succeeds.
 - Candidate lists are bounded to 32 entries and 32 KiB per signaling payload.
   Quality metrics are sampled after authentication and affect ranking only;
   they are not trusted when received from a peer.
+
+### 2026-08-15 修订：Relay 存储 discovery，但转发信令仍不解析 payload
+
+对齐《明确版》的 Relay 控制面语义，本轮在「Relay 只做 opaque 转发」的既有
+边界内增加**存储发现**能力，并保持**存储与转发分离**：
+
+- Relay 为每个在线设备维护一份 discovery 快照（`discovery:{device_id}`），
+  内容为 `{device_id, generation, opaque_candidates, capabilities}`。
+  `opaque_candidates` 与 `capabilities` 由设备经 candidate_offer / 连接期
+  上报，Relay 只整体保存，不解析 endpoint、priority 或 generation 的语义。
+- discovery 快照供两类消费：`lookup` 返回候选，以及构建 `presence_snapshot`
+  推送事件。
+- `lookup` 只有在 **presence 租约有效且 discovery 快照存在**时才判定对端
+  online，并随 `lookup_response` 返回候选；否则视为 offline。
+- 信令转发（`candidate_offer` / `candidate_answer`）**仍然不解析 payload**：
+  存储层的读写与转发路径语义解耦，Relay 只校验信封边界与在线路由。
+- discovery 快照随连接生命周期管理：连接被新连接替换或离线时清理，TTL /
+  sweeper 兜底，避免残留死设备候选。
+
+（原 ADR-017 的候选模型、attempt/generation 语义、connect window、STUN、
+有界列表等决策不变。）
 
 ## Consequences
 
