@@ -56,8 +56,18 @@ identity-bound QUIC handshake succeeds.
   上报，Relay 只整体保存，不解析 endpoint、priority 或 generation 的语义。
 - discovery 快照供两类消费：`lookup` 返回候选，以及构建 `presence_snapshot`
   推送事件。
-- `lookup` 只有在 **presence 租约有效且 discovery 快照存在**时才判定对端
-  online，并随 `lookup_response` 返回候选；否则视为 offline。
+- `lookup` 只有在 **presence 租约有效 且 discovery 快照存在 且
+  discovery.Generation > 0 且 presence 与 discovery 的所有者 ConnectionID
+  一致**时才判定对端 online，并随 `lookup_response` 返回候选；否则视为
+  offline。owner 不一致的条目（重连窗口内旧连接残留的 discovery）不算在线。
+- **占位 discovery 已移除**：连接建立本身不再写 discovery，设备在真正上传
+  `discovery_update` 之前不可被发现（对齐 §8「上传 discovery 后才广播
+  online」）。
+- **discovery 写入是 CAS**：只有当前 presence 租约 owner 才能写入 discovery
+  （Redis Lua 原子 + 内存实现同构），被取代的旧连接无法把新连接的 discovery
+  覆盖回自身（跨实例重连竞态封死）。
+- **generation 单调**：服务端拒绝 `generation` 回退；客户端用单调时间种子
+  初始化 generation，跨重启不回退。
 - 信令转发（`candidate_offer` / `candidate_answer`）**仍然不解析 payload**：
   存储层的读写与转发路径语义解耦，Relay 只校验信封边界与在线路由。
 - discovery 快照随连接生命周期管理：连接被新连接替换或离线时清理，TTL /
