@@ -190,7 +190,7 @@ final class _FakeNetworkFactory implements LanShareNetworkFactory {
   int createCalls = 0;
 
   @override
-  Future<NetworkService?> create({
+  Future<NetworkFacade?> create({
     required String deviceId,
     required Uint8List identityPrivateKey,
     required Uint8List e2ePrivateKey,

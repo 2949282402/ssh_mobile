@@ -51,8 +51,9 @@ abstract interface class EventStreamClient {
 
 /// 设备业务 Session 和传输操作客户端。
 ///
-/// 该接口保留当前开发阶段 v1 的粗粒度命令边界。具体 Transport、Route、
-/// reconnect 和 transfer recovery 不暴露给 Flutter。
+/// 该接口是 [NetworkFacade] 的低层内部实现边界，不作为 Feature 直接消费的
+/// 公共 API。具体 Transport、Route、reconnect 和 transfer recovery 不暴露给
+/// Flutter。
 abstract interface class SessionClient implements EventStreamClient {
   Future<SdkResult<void>> start(SdkRuntimeConfig config);
 
@@ -67,14 +68,6 @@ abstract interface class SessionClient implements EventStreamClient {
   Future<SdkResult<void>> configureRelay(SdkRelayConfig config);
 
   Future<SdkResult<void>> disconnectRelay();
-
-  /// 显式向 Relay 控制面重传设备 Discovery（generation/candidates/capabilities）。
-  /// native 侧在 Relay 认证连接成功后也会自动上传首份。
-  Future<SdkResult<void>> uploadDiscovery({
-    required int generation,
-    required List<String> candidates,
-    required List<String> capabilities,
-  });
 
   Future<SdkResult<SdkTransferSession>> send({
     required String transferId,

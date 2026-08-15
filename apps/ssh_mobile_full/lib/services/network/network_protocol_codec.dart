@@ -134,26 +134,6 @@ final class NetworkProtocolCodec {
   Uint8List disconnectRelayCommand({required String commandId}) =>
       _command(commandId, 18, Uint8List(0));
 
-  /// 编码 Discovery 上传命令。
-  ///
-  /// 载荷镜像 network_protocol UploadDiscoveryCommand：generation(1)、
-  /// candidates(2)、capabilities(3)。命令信封字段 tag 24 与 Rust 侧 oneof 对齐。
-  Uint8List uploadDiscoveryCommand({
-    required String commandId,
-    required int generation,
-    List<String> candidates = const <String>[],
-    List<String> capabilities = const <String>[],
-  }) {
-    final payload = _ProtoWriter()..varint(1, generation);
-    for (final candidate in candidates) {
-      payload.string(2, candidate);
-    }
-    for (final capability in capabilities) {
-      payload.string(3, capability);
-    }
-    return _command(commandId, 24, payload.takeBytes());
-  }
-
   /// 从 v1 命令信封读取命令标识。
   String commandId(Uint8List command) {
     final reader = _ProtoReader(command);

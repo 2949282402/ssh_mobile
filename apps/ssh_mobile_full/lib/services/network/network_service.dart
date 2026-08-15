@@ -269,39 +269,6 @@ final class NativeNetworkService implements NetworkService {
     );
   }
 
-  /// 上传本机 Discovery（generation + opaque candidates/capabilities）到 Relay。
-  ///
-  /// Relay 认证连接后由 Native 侧自动上传首份；此方法用于网络/candidate 变化后
-  /// 由调用方显式重传（明确版 §7/§8）。候选是不透明字符串，SDK 不做语义解释。
-  @override
-  Future<NetworkResult<void>> uploadDiscovery({
-    required int generation,
-    required List<String> candidates,
-    required List<String> capabilities,
-  }) {
-    _ensureUsable();
-    if (generation <= 0) {
-      return Future.value(
-        _failure(
-          const NetworkError(
-            code: NetworkErrorCode.invalidArgument,
-            message: 'generation must be positive',
-            operation: NetworkOperation.uploadDiscovery,
-          ),
-        ),
-      );
-    }
-    return _submit(
-      _codec.uploadDiscoveryCommand(
-        commandId: const Uuid().v4(),
-        generation: generation,
-        candidates: candidates,
-        capabilities: capabilities,
-      ),
-      operation: NetworkOperation.uploadDiscovery,
-    );
-  }
-
   /// 注册源文件传输，并返回已接受的传输会话。
   @override
   Future<NetworkResult<TransferSession>> send({

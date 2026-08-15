@@ -25,7 +25,10 @@
 - `AuthenticatedApiClient` 只表达控制面请求；
 - `JsonAuthenticatedApiClient` 最多在 401 后刷新并重试一次，失败必须失效会话，
   不得把 Token 放入错误、事件或日志；
-- `SessionClient` 只表达业务 Session/Transfer 操作；
+- `NetworkFacade` 是 Feature 唯一的业务网络门面；暴露高层连接/传输/实时操作，
+  隐藏 Candidate/Resolve/PathManager/RelayClient，不新增 native tag；
+- `CommunicationClass` 固定五种业务类别，映射到现有 native command/event；
+- `SessionClient` 只表达业务 Session/Transfer 操作，作为 `NetworkFacade` 的低层内部实现；
 - `RealtimeSession` 是 Feature 唯一的实时会话接口；只允许读取 `state`、
   `remoteVideo`、`audioState` 并调用 `start()`/`stop()`，不得增加 SDP、ICE、
   PeerConnection、socket 或 native handle 参数。

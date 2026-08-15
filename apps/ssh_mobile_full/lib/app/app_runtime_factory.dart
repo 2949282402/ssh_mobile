@@ -385,6 +385,7 @@ final class AppRuntimeFactory {
               AppLanShareNetworkIdentityAdapter(NetworkIdentityService()),
           feature_lan_share.LanShareNetworkFactory: AppLanShareNetworkFactory(
             runtimeNetworkRuntime,
+            runtimeRealtimeClient,
           ),
           BootstrapClient: bootstrapClient,
           NetworkRuntime: runtimeNetworkRuntime,

@@ -29,7 +29,7 @@ class LanShareViewModel extends ChangeNotifier {
   final LanSecurityService securityService;
   final LanStorageService storageService;
   final LanTransferService transferService;
-  final NetworkService? networkService;
+  final NetworkFacade? networkFacade;
   final LanHistoryDao historyDao;
   final AppSettings appSettings;
   final LanShareDataProtectionPort dataProtection;
@@ -93,7 +93,7 @@ class LanShareViewModel extends ChangeNotifier {
     required this.securityService,
     required this.storageService,
     required this.transferService,
-    this.networkService,
+    this.networkFacade,
     required this.historyDao,
     required this.appSettings,
     required this.dataProtection,
@@ -226,7 +226,7 @@ class LanShareViewModel extends ChangeNotifier {
         ),
       );
     });
-    _networkProgressSubscription = networkService?.events.listen(
+    _networkProgressSubscription = networkFacade?.events.listen(
       _handleNetworkEvent,
     );
     _recallSubscription = transferService.recalledMessageIdStream.listen((
@@ -511,13 +511,13 @@ class LanShareViewModel extends ChangeNotifier {
       );
     }
 
-    final network = networkService;
-    if (network == null) {
+    final facade = networkFacade;
+    if (facade == null) {
       return _recordNetworkFailure(
         msg.id,
         NetworkError(
           code: NetworkErrorCode.noRoute,
-          message: 'Native network service is unavailable.',
+          message: 'Native network facade is unavailable.',
           operation: NetworkOperation.sendFile,
           peerId: device.id,
         ),
@@ -539,22 +539,20 @@ class LanShareViewModel extends ChangeNotifier {
     final endpoint = device.ip.contains(':')
         ? '[${device.ip}]:${device.port}'
         : '${device.ip}:${device.port}';
-    final upsertResult = await network.upsertPeer(
-      PeerConfig(
+    final connectResult = await facade.connectPeer(
+      device.id,
+      peer: PeerConfig(
         peerId: device.id,
         endpointAddress: endpoint,
         identityPublicKey: identityKey,
         e2ePublicKey: recipientE2eKey,
       ),
+      communicationClass: CommunicationClass.bulkTransfer,
     );
-    if (upsertResult is NetworkFailure) {
-      return _recordNetworkFailure(msg.id, upsertResult.error);
-    }
-    final connectResult = await network.connect(device.id);
     if (connectResult is NetworkFailure) {
       return _recordNetworkFailure(msg.id, connectResult.error);
     }
-    final sendResult = await network.send(
+    final sendResult = await facade.transferFile(
       transferId: msg.id,
       peerId: device.id,
       filePath: file.absolute.path,
@@ -695,8 +693,8 @@ class LanShareViewModel extends ChangeNotifier {
 
   /// 为原生 QUIC 文件传输准备已配对对端。
   Future<void> _prepareFileTransferPeer(LanDevice device) async {
-    final network = networkService;
-    if (network == null) return;
+    final facade = networkFacade;
+    if (facade == null) return;
     final e2eResult = await fetchRecipientE2ECapabilities(device);
     if (e2eResult is NetworkFailure<Uint8List>) {
       logger.warning(
@@ -711,22 +709,16 @@ class LanShareViewModel extends ChangeNotifier {
     final endpoint = device.ip.contains(':')
         ? '[${device.ip}]:${device.port}'
         : '${device.ip}:${device.port}';
-    final upsert = await network.upsertPeer(
-      PeerConfig(
+    final connect = await facade.connectPeer(
+      device.id,
+      peer: PeerConfig(
         peerId: device.id,
         endpointAddress: endpoint,
         identityPublicKey: identityKey,
         e2ePublicKey: e2eKey,
       ),
+      communicationClass: CommunicationClass.bulkTransfer,
     );
-    if (upsert is NetworkFailure) {
-      logger.warning(
-        'Native peer preparation failed',
-        details: upsert.error.toString(),
-      );
-      return;
-    }
-    final connect = await network.connect(device.id);
     if (connect is NetworkFailure) {
       logger.warning(
         'Native peer connection failed',

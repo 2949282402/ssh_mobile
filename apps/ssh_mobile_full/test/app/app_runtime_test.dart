@@ -207,6 +207,8 @@ void main() {
         expect(runtime.hostKeyRepository, same(runtime.connectionRepository));
         expect(runtime.networkRuntime, isNotNull);
         expect(runtime.realtimeClient, isA<RealtimeClient>());
+        // 接收器未激活时 Facade 不可用；激活后由 App 组合根装配的工厂创建。
+        expect(runtime.networkFacade, isNull);
         expect(runtime.sshService, isNotNull);
         expect(runtime.sshSessionManager, isA<AppTerminalSshSessionManager>());
         final terminalManager =

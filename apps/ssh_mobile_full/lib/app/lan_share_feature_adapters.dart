@@ -367,15 +367,19 @@ final class AppLanShareNetworkIdentityAdapter
   }
 }
 
-/// 在 App Shell 创建 native v1 NetworkService，并隐藏 FFI 具体类型。
+/// 在 App Shell 创建 [sdk.NetworkFacade]，并隐藏底层 FFI/gateway 具体类型。
+///
+/// Facade 包装一个基于共享 [NetworkRuntime] gateway 的 [NativeNetworkService]
+/// 和 App Scope [RealtimeClient]；业务只消费 [sdk.NetworkFacade] 高层操作。
 final class AppLanShareNetworkFactory implements lan.LanShareNetworkFactory {
-  /// 创建只使用 AppRuntime-owned NetworkRuntime 的网络工厂。
-  const AppLanShareNetworkFactory(this._networkRuntime);
+  /// 创建只使用 AppRuntime-owned NetworkRuntime 与 RealtimeClient 的网络工厂。
+  const AppLanShareNetworkFactory(this._networkRuntime, this._realtimeClient);
 
   final NetworkRuntime _networkRuntime;
+  final sdk.RealtimeClient _realtimeClient;
 
   @override
-  Future<sdk.NetworkService?> create({
+  Future<sdk.NetworkFacade?> create({
     required String deviceId,
     required Uint8List identityPrivateKey,
     required Uint8List e2ePrivateKey,
@@ -383,6 +387,7 @@ final class AppLanShareNetworkFactory implements lan.LanShareNetworkFactory {
     required String receiveDirectory,
   }) async {
     final gateway = await _networkRuntime.openCommandGateway();
-    return NativeNetworkService.fromGateway(gateway);
+    final sessions = NativeNetworkService.fromGateway(gateway);
+    return sdk.NetworkFacadeImpl(sessions: sessions, realtime: _realtimeClient);
   }
 }
