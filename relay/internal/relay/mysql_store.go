@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -180,20 +181,34 @@ func (m *mysqlStore) PutEnrollment(ctx context.Context, device *EnrolledDevice) 
 	// 期间的锁交互）会偶发死锁（1213）。死锁是瞬态事务冲突，MySQL 标准做法是重试
 	// 整个事务；重试时计数器行已存在，串行化新设备入册，不再触发。容量命中
 	// （errEnrollmentCapacity）不是死锁，直接返回。
+	//
+	// 退避用指数 + 抖动：并发新设备入册全部挤在同一 gap 时，线性短退避（5ms 起步）让
+	// 重试仍落在其它事务持有 gap 锁的窗口内，自相碰撞、3 次预算在几路并发下即耗尽。
+	// 指数退避把重试错开到首批事务提交之后（gap 随已有键细分），抖动避免同一批重试
+	// 同步再撞。耗尽仍映射 enrollmentResourceLimit（enrollmentResult 枚举没有"瞬态
+	// 失败"值，客户端语义不变）。
 	for attempt := 0; ; attempt++ {
 		result, err := m.putEnrollment(ctx, device)
 		if err == nil || !isDeadlockError(err) {
 			return result, err
 		}
-		if attempt >= 2 {
+		if attempt >= 4 {
 			return enrollmentResourceLimit, fmt.Errorf("enrollment deadlocked after %d attempts: %w", attempt+1, err)
 		}
 		select {
 		case <-ctx.Done():
 			return enrollmentResourceLimit, ctx.Err()
-		case <-time.After(time.Duration(attempt+1) * 5 * time.Millisecond):
+		case <-time.After(enrollmentDeadlockBackoff(attempt)):
 		}
 	}
+}
+
+// enrollmentDeadlockBackoff 返回第 attempt 次死锁重试前的退避：指数退避（10ms 起每次
+// 翻倍：10/20/40/80ms）+ ±50% 随机抖动。抖动让同一批并发入册的重试错开，避免同步
+// 重试再次撞上同一 gap（retry storm）。
+func enrollmentDeadlockBackoff(attempt int) time.Duration {
+	base := 10 * time.Millisecond * time.Duration(1<<uint(attempt))
+	return base/2 + time.Duration(rand.Int63n(int64(base)))
 }
 
 // isDeadlockError reports whether err is an InnoDB deadlock (ER_LOCK_DEADLOCK,
