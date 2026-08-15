@@ -166,7 +166,7 @@ func (h *hub) publishDiscoveryV2(requestID uint64, deviceID, connID string, snap
 	if frameType != "" {
 		// 广播推送发现事件给其它（v1/v2）peer 与跨实例事件总线；发布客户端自身由
 		// Step 7 的 /v2/control handler 以 v2 帧（DiscoveryAck / PresenceHint）通知。
-		h.broadcastPeerEvent(frameType, deviceID, d.Generation)
+		h.broadcastPeerEvent(frameType, deviceID, d)
 	}
 	return &v2.DiscoveryAck{
 		RequestId:    requestID,

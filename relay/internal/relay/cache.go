@@ -107,6 +107,13 @@ type Cache interface {
 	AdminSessionExists(ctx context.Context, token string) (bool, error)
 	// DeleteAdminSession 删除管理端会话。
 	DeleteAdminSession(ctx context.Context, token string) error
+	// CreateReservation 原子存储一条 relay-data reservation（设计 §25，Redis
+	// relay:reservation:{id}），TTL 到 expires_at_ms。
+	CreateReservation(ctx context.Context, r Reservation) error
+	// GetReservation 返回 reservation；不存在或已过期返回 (zero, false, nil)。
+	GetReservation(ctx context.Context, reservationID string) (Reservation, bool, error)
+	// DeleteReservation 删除 reservation（双方关闭后清理）。
+	DeleteReservation(ctx context.Context, reservationID string) error
 	// Publish 广播一个跨实例事件。内存实现为空操作（事件在本地直接处理）。
 	Publish(ctx context.Context, event RelayEvent) error
 	// Close 释放缓存持有的外部资源（Redis 连接等）；内存实现为空操作。
