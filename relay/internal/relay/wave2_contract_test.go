@@ -177,9 +177,7 @@ func TestIdentityConflictAtEnrollRejectsDifferentKey(t *testing.T) {
 		t.Fatalf("unexpected conflict message: %q", body.Message)
 	}
 
-	server.devicesMutex.Lock()
 	stored, _ := server.store.GetEnrollment(context.Background(), "device-a")
-	server.devicesMutex.Unlock()
 	if stored == nil || stored.PublicKey != base64.RawURLEncoding.EncodeToString(key1) {
 		t.Fatal("conflicting enroll overwrote the existing enrollment")
 	}

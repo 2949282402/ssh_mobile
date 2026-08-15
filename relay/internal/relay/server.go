@@ -24,13 +24,32 @@ type Server struct {
 	upgrader     websocket.Upgrader
 	store        Storage
 	cache        Cache
-	devicesMutex sync.Mutex
 	admin        adminAuthState
 	startedAt    time.Time
 	eventsCtx    context.Context
 	eventsCancel context.CancelFunc
 	eventsWG     sync.WaitGroup
 	logger       *slog.Logger
+
+	// deviceLocks 是 per-device 分片锁（与 hub 的 admission 条纹同构）：同设备复合
+	// 操作（enroll/revoke/authenticate）在同一条纹上串行以保留原子性，不同设备
+	// 并行访问存储——MySQL 模式不再被全局 devicesMutex 退化成单并发。tokenMutex
+	// 单独保护无 deviceID 可锁的 EnrollmentToken 标量。
+	deviceLocks [deviceLockStripeCount]sync.Mutex
+	tokenMutex  sync.Mutex
+}
+
+// deviceLockStripeCount 是 per-device 分片锁的条纹数。同一设备的操作经 fnv-1a
+// 哈希落到同一条纹上串行（保留复合原子性），不同设备极少碰撞且只短暂等待。
+const deviceLockStripeCount = 128
+
+// lockDevice 为 deviceID 串行化复合设备操作并返回解锁函数。单个存储调用不需要
+// 它——memoryStore 与 mysqlStore 均已内部并发安全；它只保护跨多个 store/cache
+// 调用的原子单元（revoke/enroll/authenticate）。
+func (s *Server) lockDevice(deviceID string) func() {
+	stripe := deviceLockStripe(deviceID) % deviceLockStripeCount
+	s.deviceLocks[stripe].Lock()
+	return s.deviceLocks[stripe].Unlock
 }
 
 // NewServer 根据给定配置创建仅驻留内存的 Relay 服务。

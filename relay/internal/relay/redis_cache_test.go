@@ -391,6 +391,39 @@ func TestAdminSnapshotFailsOpenWhenPresenceUnavailable(t *testing.T) {
 	}
 }
 
+// TestAdminOverviewSnapshotFailsOpenWhenPresenceUnavailable mirrors the devices
+// snapshot test for the overview endpoint: under a failing presence cache the
+// snapshot still returns 200 (fail-open) with presence_available=false and
+// online=0 — the flag distinguishes "unknown" from "all offline" in the overview
+// path too, not just the devices list.
+func TestAdminOverviewSnapshotFailsOpenWhenPresenceUnavailable(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+		AdminUser:       "test-admin",
+		AdminPassword:   "test-password-123",
+	})
+	defer server.Close()
+	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	server.cache = erroringCache{Cache: server.cache}
+
+	snapshot, err := server.adminOverviewSnapshot()
+	if err != nil {
+		t.Fatalf("admin overview should fail open when presence is unavailable: %v", err)
+	}
+	if snapshot.PresenceAvailable {
+		t.Fatal("overview must flag presence as unavailable when the cache errors")
+	}
+	if snapshot.Devices.Online != 0 {
+		t.Fatalf("overview should report online=0 with presence_available=false, got %d", snapshot.Devices.Online)
+	}
+	if snapshot.Devices.Enrolled != 1 {
+		t.Fatalf("enrolled count must stay accurate, got %d", snapshot.Devices.Enrolled)
+	}
+}
+
 // TestMySQLRedisFullStackOnlineStats exercises the mysql+redis wiring end to
 // end: enrollment is durable in MySQL, presence lives in Redis, and the admin
 // online stats are driven by presence.

@@ -259,9 +259,7 @@ func TestAdminTokenRotationIsProcessLocalAndRestartClearsDevices(t *testing.T) {
 	if !restarted.validEnrollmentToken(originalToken) || restarted.validEnrollmentToken(rotatedToken) {
 		t.Fatal("rotated enrollment token incorrectly survived process restart")
 	}
-	restarted.devicesMutex.Lock()
 	deviceCount, _ := restarted.store.CountEnrollments(context.Background())
-	restarted.devicesMutex.Unlock()
 	if deviceCount != 0 {
 		t.Fatalf("device enrollment state survived process restart: %d", deviceCount)
 	}

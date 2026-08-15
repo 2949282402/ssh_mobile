@@ -80,9 +80,7 @@ func (s *Server) adminOverview(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 	hubState := s.hub.snapshot()
-	s.devicesMutex.Lock()
 	enrolledList, err := s.store.ListEnrollments(context.Background())
-	s.devicesMutex.Unlock()
 	if err != nil {
 		return adminOverviewResponse{}, err
 	}
@@ -98,6 +96,11 @@ func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 		// Redis presence 不可用：online 不能当作"全部离线"解读，给前端显式标志
 		// 表明在线状态是未知的。
 		s.logger.Warn("presence cache unavailable; online status is unknown", "error", presenceErr)
+	}
+	if presenceErr == nil && presences == nil {
+		// Cache 契约：成功时返回非 nil map（空集为空 map）。防御未来实现返回
+		// (nil, nil)，避免把"无 presence"混同于"全离线"。
+		presences = map[string]Presence{}
 	}
 	online := len(presences)
 
@@ -126,9 +129,7 @@ func (s *Server) adminDevices(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) adminDeviceSnapshot() ([]adminDevice, bool, error) {
-	s.devicesMutex.Lock()
 	enrolledList, err := s.store.ListEnrollments(context.Background())
-	s.devicesMutex.Unlock()
 	if err != nil {
 		return nil, false, err
 	}
@@ -143,6 +144,11 @@ func (s *Server) adminDeviceSnapshot() ([]adminDevice, bool, error) {
 	presenceAvailable := presenceErr == nil
 	if presenceErr != nil {
 		s.logger.Warn("presence cache unavailable; online status is unknown", "error", presenceErr)
+	}
+	if presenceErr == nil && presences == nil {
+		// Cache 契约：成功时返回非 nil map（空集为空 map）。防御未来实现返回
+		// (nil, nil)，避免把"无 presence"混同于"全离线"。
+		presences = map[string]Presence{}
 	}
 	items := make([]adminDevice, 0, len(enrolledList))
 	for _, enrolled := range enrolledList {

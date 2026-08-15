@@ -18,6 +18,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,7 +67,7 @@ func resetMySQLTestDB(t *testing.T, dsn string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for _, stmt := range []string{"DELETE FROM revocations", "DELETE FROM devices"} {
+	for _, stmt := range []string{"DELETE FROM relay_meta", "DELETE FROM revocations", "DELETE FROM devices"} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("reset test database: %v", err)
 		}
@@ -263,4 +265,315 @@ func TestMySQLStoreCloseFreshAndIdempotent(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatalf("double close should be safe, got: %v", err)
 	}
+}
+
+// TestMySQLStoreEnrollmentCapacityHardUnderConcurrency pins the #40 capacity
+// regression: two different devices enrolling concurrently must not both slip
+// past the MaxEnrolledDevices bound. The singleton relay_meta counter row
+// (locked FOR UPDATE) serializes the capacity allocation, so with one slot left
+// exactly one concurrent enroll succeeds and the other hits the bound — the
+// bound stays a hard limit instead of degrading to a soft one under the
+// per-device lock stripes.
+func TestMySQLStoreEnrollmentCapacityHardUnderConcurrency(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 3)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	// Two devices take two of the three slots.
+	for _, id := range []string{"device-a", "device-b"} {
+		if result, _ := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: id, PublicKey: "key-" + id, EnrolledAt: time.Now()}); result != enrollmentOK {
+			t.Fatalf("enroll %s failed: %v", id, result)
+		}
+	}
+
+	// Two different devices race for the one remaining slot; the counter row
+	// serializes them so exactly one succeeds. err 必须为 nil：PutEnrollment 在连续
+	// 3 次 deadlock 后会返回 enrollmentResourceLimit + error，绝不能把真实的数据库
+	// 故障误判为"正确命中容量"。
+	type outcome struct {
+		result enrollmentResult
+		err    error
+	}
+	results := make(chan outcome, 2)
+	var wg sync.WaitGroup
+	for _, id := range []string{"device-c", "device-d"} {
+		wg.Add(1)
+		go func(deviceID string) {
+			defer wg.Done()
+			result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: deviceID, PublicKey: "key-" + deviceID, EnrolledAt: time.Now()})
+			results <- outcome{result: result, err: err}
+		}(id)
+	}
+	wg.Wait()
+	close(results)
+	okCount, limitCount := 0, 0
+	for o := range results {
+		if o.err != nil {
+			t.Fatalf("unexpected database error during capacity race: %v", o.err)
+		}
+		switch o.result {
+		case enrollmentOK:
+			okCount++
+		case enrollmentResourceLimit:
+			limitCount++
+		default:
+			t.Fatalf("unexpected enrollment result %v", o.result)
+		}
+	}
+	if okCount != 1 || limitCount != 1 {
+		t.Fatalf("capacity bound should be a hard limit under concurrency: ok=%d limit=%d", okCount, limitCount)
+	}
+	count, err := store.CountEnrollments(ctx)
+	if err != nil || count != 3 {
+		t.Fatalf("enrollment count should stay at the bound, got %d err=%v", count, err)
+	}
+}
+
+// TestMySQLStoreRemoveFreesCapacitySlot verifies RemoveEnrollment decrements the
+// capacity counter, so a removed device's slot can be taken by a new one.
+func TestMySQLStoreRemoveFreesCapacitySlot(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 1)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	if result, _ := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: "device-a", PublicKey: "key-a", EnrolledAt: time.Now()}); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	if err := store.RemoveEnrollment(ctx, "device-a"); err != nil {
+		t.Fatalf("remove failed: %v", err)
+	}
+	if result, _ := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: "device-b", PublicKey: "key-b", EnrolledAt: time.Now()}); result != enrollmentOK {
+		t.Fatalf("slot was not freed after removal: %v", result)
+	}
+}
+
+// TestMySQLStoreConcurrentLazyInitNoDeadlock pins the counter lazy-init path
+// under concurrency: two NEW devices enrolling concurrently when the counter
+// row is absent (fresh DB / reset) must both succeed. The pre-fix code took a
+// gap lock with SELECT ... FOR UPDATE on the missing row and then deadlocked on
+// INSERT IGNORE (InnoDB 1213), rolling one enroll back into a spurious resource
+// limit.
+func TestMySQLStoreConcurrentLazyInitNoDeadlock(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 10)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn) // counter row deleted: both enrolls race the lazy init
+
+	type outcome struct {
+		result enrollmentResult
+		err    error
+	}
+	results := make(chan outcome, 2)
+	var wg sync.WaitGroup
+	for _, id := range []string{"device-a", "device-b"} {
+		wg.Add(1)
+		go func(deviceID string) {
+			defer wg.Done()
+			result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: deviceID, PublicKey: "key-" + deviceID, EnrolledAt: time.Now()})
+			results <- outcome{result: result, err: err}
+		}(id)
+	}
+	wg.Wait()
+	close(results)
+	okCount := 0
+	for o := range results {
+		if o.err != nil || o.result != enrollmentOK {
+			t.Fatalf("enroll failed under concurrent lazy init: result=%v err=%v", o.result, o.err)
+		}
+		okCount++
+	}
+	if okCount != 2 {
+		t.Fatalf("both new-device enrolls should succeed, ok=%d", okCount)
+	}
+}
+
+// TestMySQLStoreRemoveDuringCounterInitNoDrift pins the #41 P1 regression:
+// lazy-init of the enrollment counter racing a concurrent RemoveEnrollment must
+// not leave the counter permanently ahead of COUNT(devices). T1 enrolls a new
+// device and is paused (via the test hook) after its baseline `SELECT COUNT(*)`
+// but before `INSERT IGNORE`; T2 removes an existing device in between. The
+// remove must initialize the counter from its pre-delete snapshot (or decrement
+// the already-present row) so the final counter equals the device count.
+// Pre-fix the remove left the missing row untouched and the counter was seeded
+// from a stale baseline → permanent overcount (capacity exhausted early).
+func TestMySQLStoreRemoveDuringCounterInitNoDrift(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 10)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	for _, id := range []string{"device-a", "device-b"} {
+		if result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: id, PublicKey: "key-" + id, EnrolledAt: time.Now()}); err != nil || result != enrollmentOK {
+			t.Fatalf("enroll %s failed: result=%v err=%v", id, result, err)
+		}
+	}
+	// 删除计数器行，强制下一次 cardinality 操作走懒初始化。
+	deleteEnrollmentCounterRow(t, dsn)
+
+	// T1 卡在 ensure 的 COUNT 之后、INSERT IGNORE 之前。用 atomic 而非 sync.Once：
+	// Once.Do 在第一个 Do 阻塞时会让后续调用者也阻塞等待，T2 会被同钩子卡死；CAS
+	// 保证只有第一个命中钩子的调用（T1 的 enroll）阻塞，T2 的 remove 正常推进。
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var hookFired atomic.Bool
+	testAfterCounterCountHook = func() {
+		if !hookFired.CompareAndSwap(false, true) {
+			return
+		}
+		close(started)
+		<-release
+	}
+	defer func() { testAfterCounterCountHook = nil }()
+
+	var t1Result enrollmentResult
+	var t1Err error
+	t1Done := make(chan struct{})
+	go func() {
+		defer close(t1Done)
+		t1Result, t1Err = store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: "device-c", PublicKey: "key-c", EnrolledAt: time.Now()})
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("enroll did not reach the counter-count hook")
+	}
+
+	if err := store.RemoveEnrollment(ctx, "device-a"); err != nil {
+		t.Fatalf("remove device-a: %v", err)
+	}
+
+	close(release)
+	<-t1Done
+	if t1Err != nil || t1Result != enrollmentOK {
+		t.Fatalf("enroll device-c: result=%v err=%v", t1Result, t1Err)
+	}
+
+	count, err := store.CountEnrollments(ctx)
+	if err != nil {
+		t.Fatalf("count enrollments: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected device-b + device-c = 2, got %d", count)
+	}
+	counter, err := readEnrollmentCounter(t, dsn)
+	if err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	if counter != count {
+		t.Fatalf("counter drift: relay_meta.enrollment_count=%d but COUNT(devices)=%d", counter, count)
+	}
+}
+
+// TestMySQLStoreRemoveInitializesCounterWhenMissing verifies that a remove of an
+// existing device initializes a missing counter row from its pre-delete count
+// (no double-decrement), so the invariant counter == COUNT(devices) holds even
+// when the counter row is absent (upgrade DB / reset).
+func TestMySQLStoreRemoveInitializesCounterWhenMissing(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 10)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	for _, id := range []string{"device-a", "device-b"} {
+		if result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: id, PublicKey: "key-" + id, EnrolledAt: time.Now()}); err != nil || result != enrollmentOK {
+			t.Fatalf("enroll %s failed: result=%v err=%v", id, result, err)
+		}
+	}
+	deleteEnrollmentCounterRow(t, dsn)
+
+	if err := store.RemoveEnrollment(ctx, "device-a"); err != nil {
+		t.Fatalf("remove device-a: %v", err)
+	}
+	count, err := store.CountEnrollments(ctx)
+	if err != nil || count != 1 {
+		t.Fatalf("expected 1 device after remove, got %d err=%v", count, err)
+	}
+	counter, err := readEnrollmentCounter(t, dsn)
+	if err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	if counter != 1 {
+		t.Fatalf("remove should initialize counter to post-remove count, got %d", counter)
+	}
+}
+
+// TestMySQLStoreOpenInitializesCounterFromExistingDevices pins the openMySQLStore
+// startup init: opening a store over a DB that already has devices but no
+// counter row (upgrade) seeds the counter from the current count, so serving
+// never starts without the row.
+func TestMySQLStoreOpenInitializesCounterFromExistingDevices(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+
+	store, err := openMySQLStore(ctx, dsn, 10)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	for _, id := range []string{"device-a", "device-b"} {
+		if result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: id, PublicKey: "key-" + id, EnrolledAt: time.Now()}); err != nil || result != enrollmentOK {
+			t.Fatalf("enroll %s failed: result=%v err=%v", id, result, err)
+		}
+	}
+	store.Close()
+	deleteEnrollmentCounterRow(t, dsn)
+
+	reopened, err := openMySQLStore(ctx, dsn, 10)
+	if err != nil {
+		t.Fatalf("reopen mysql store: %v", err)
+	}
+	defer reopened.Close()
+	counter, err := readEnrollmentCounter(t, dsn)
+	if err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	if counter != 2 {
+		t.Fatalf("open should initialize counter from existing devices, got %d", counter)
+	}
+}
+
+func deleteEnrollmentCounterRow(t *testing.T, dsn string) {
+	t.Helper()
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`DELETE FROM relay_meta WHERE meta_key = ?`, enrollmentCounterKey); err != nil {
+		t.Fatalf("delete counter row: %v", err)
+	}
+}
+
+func readEnrollmentCounter(t *testing.T, dsn string) (int, error) {
+	t.Helper()
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	var value int
+	err = db.QueryRow(`SELECT meta_value FROM relay_meta WHERE meta_key = ?`, enrollmentCounterKey).Scan(&value)
+	return value, err
 }

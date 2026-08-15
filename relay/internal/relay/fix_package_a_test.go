@@ -38,15 +38,11 @@ func TestRefreshRejectsRevokedButStillEnrolledDevice(t *testing.T) {
 	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
-	server.devicesMutex.Lock()
 	recorded, err := server.store.RecordRevocation(context.Background(), "device-a", time.Now().Add(time.Hour))
-	server.devicesMutex.Unlock()
 	if err != nil || !recorded {
 		t.Fatalf("revoke failed: recorded=%v err=%v", recorded, err)
 	}
-	server.devicesMutex.Lock()
 	device, _ := server.store.GetEnrollment(context.Background(), "device-a")
-	server.devicesMutex.Unlock()
 	if device == nil {
 		t.Fatal("enrollment unexpectedly missing")
 	}
@@ -466,6 +462,58 @@ func TestConnectionReplacedEventDisconnectsTargetedConnection(t *testing.T) {
 	server.hub.mutex.Unlock()
 	if present {
 		t.Fatal("replaced event did not disconnect the matching peer")
+	}
+}
+
+// TestSameDeviceRevokeReEnrollSerialized pins the per-device stripe's core
+// guarantee: a concurrent re-enroll and revoke for the same device must
+// serialize, so the final state is always a valid linearization — never the
+// lost-enrollment middle state where the revoke reads the old enrollment, the
+// re-enroll lands, and the revoke deletes a never-revoked new enrollment (the
+// exact race the lockDevice comments warn about).
+func TestSameDeviceRevokeReEnrollSerialized(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+
+	if result := server.replaceEnrollment("device-a", "key-original", "test", 1, time.Now()); result != enrollmentOK {
+		t.Fatalf("initial enroll failed: %v", result)
+	}
+
+	ctx := context.Background()
+	for i := 0; i < 50; i++ {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			request := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
+			request.SetPathValue("deviceId", "device-a")
+			server.adminRevokeDevice(httptest.NewRecorder(), request)
+		}()
+		go func() {
+			defer wg.Done()
+			server.replaceEnrollment("device-a", fmt.Sprintf("key-new-%d", i), "test", 1, time.Now())
+		}()
+		wg.Wait()
+
+		device, _ := server.store.GetEnrollment(ctx, "device-a")
+		revoked, _ := server.store.IsRevoked(ctx, "device-a", time.Now())
+		// Valid linearizations: re-enroll won (enrolled, not revoked — the
+		// re-enroll wiped the revoke's tombstone) or revoke won (removed,
+		// tombstone present). The lost-enrollment state (removed AND not
+		// revoked) and the both-on state (enrolled AND revoked) must never
+		// appear: that is exactly the un-serialized interleaving.
+		if (device == nil) != revoked {
+			t.Fatalf("iteration %d: invalid linearization: enrolled=%v revoked=%v", i, device != nil, revoked)
+		}
+
+		// Reset to a clean enrolled state for the next iteration.
+		_ = server.store.RemoveEnrollment(ctx, "device-a")
+		if result := server.replaceEnrollment("device-a", "key-original", "test", 1, time.Now()); result != enrollmentOK {
+			t.Fatalf("reset enroll failed: %v", result)
+		}
 	}
 }
 

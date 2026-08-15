@@ -4,12 +4,12 @@
 // process-local maps exactly. Phase 1 adds the MySQL-backed store behind the
 // same contract so enrollment and revocation survive a restart.
 //
-// Locking note: every method here must be called while the caller holds
-// s.devicesMutex. The memory store is not internally synchronized because the
-// current device-plane critical sections span enrollment, revocation and nonce
-// state as one unit; a single external lock keeps that atomicity. The MySQL
-// store (Phase 1) executes database access under the same lock, which is
-// acceptable for a control plane whose device count is bounded by configuration.
+// Locking note: the memory and MySQL stores are internally synchronized, so an
+// individual method may be called without any caller-held lock. Composite
+// operations that must be atomic across several store/cache calls (enroll,
+// revoke, authenticate) additionally take the Server's per-device lock stripe
+// (s.lockDevice), so the same device's operations serialize while different
+// devices proceed in parallel.
 
 package relay
 
@@ -47,12 +47,11 @@ type Storage interface {
 }
 
 // memoryStore 是 Storage 与 Cache 的内存实现，进程重启即清空，与重构前的 Relay
-// 行为一致。它同时实现两个契约：非隔离场景下共享同一份内存与同一把调用方锁，
-// 从而保留 enrollment/吊销/nonce 在既有实现中的原子性。
+// 行为一致。
 //
-// 锁约定：device-plane 方法（enrollment/吊销/nonce）要求调用方持有 devicesMutex，
-// 以保留复合操作的原子性；presence 与 admin 会话方法使用内部 m.mu 自同步，因为
-// 它们由 hub goroutine 与管理端处理器在设备平面锁之外调用。
+// 锁约定：device-plane 方法（enrollment/吊销/nonce）用内部 deviceMu 自同步，可无
+// 调用方锁直接调用；presence 与 admin 会话方法用内部 mu 自同步。同设备复合操作
+// 的原子性由调用方的 per-device 分片锁（s.lockDevice）保证。
 type memoryStore struct {
 	enrolledDevices map[string]*EnrolledDevice
 	revokedDevices  map[string]revokedDevice
@@ -63,6 +62,9 @@ type memoryStore struct {
 	maxRevoked      int
 	maxAdminSession int
 	mu              sync.Mutex
+	// deviceMu 保护 device-plane 三张 map（enrolledDevices/revokedDevices/
+	// proofNonces）。presence 与 adminSessions 由 mu 保护。两者从不嵌套持有。
+	deviceMu sync.Mutex
 }
 
 // newMemoryStore 构造以给定配置容量为边界的内存存储。
@@ -80,10 +82,14 @@ func newMemoryStore(config Config) *memoryStore {
 }
 
 func (m *memoryStore) GetEnrollment(_ context.Context, deviceID string) (*EnrolledDevice, error) {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
 	return m.enrolledDevices[deviceID], nil
 }
 
 func (m *memoryStore) PutEnrollment(_ context.Context, device *EnrolledDevice) (enrollmentResult, error) {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
 	existing, exists := m.enrolledDevices[device.DeviceID]
 	if exists {
 		if existing.PublicKey != device.PublicKey {
@@ -98,11 +104,15 @@ func (m *memoryStore) PutEnrollment(_ context.Context, device *EnrolledDevice) (
 }
 
 func (m *memoryStore) RemoveEnrollment(_ context.Context, deviceID string) error {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
 	delete(m.enrolledDevices, deviceID)
 	return nil
 }
 
 func (m *memoryStore) RecordRevocation(_ context.Context, deviceID string, validUntil time.Time) (bool, error) {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
 	now := time.Now()
 	m.pruneExpiredRevocations(now)
 	if existing, alreadyRevoked := m.revokedDevices[deviceID]; alreadyRevoked {
@@ -119,6 +129,8 @@ func (m *memoryStore) RecordRevocation(_ context.Context, deviceID string, valid
 }
 
 func (m *memoryStore) RevocationExpiry(_ context.Context, deviceID string) (time.Time, bool, error) {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
 	entry, present := m.revokedDevices[deviceID]
 	if !present {
 		return time.Time{}, false, nil
@@ -127,6 +139,8 @@ func (m *memoryStore) RevocationExpiry(_ context.Context, deviceID string) (time
 }
 
 func (m *memoryStore) IsRevoked(_ context.Context, deviceID string, now time.Time) (bool, error) {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
 	entry, present := m.revokedDevices[deviceID]
 	if !present {
 		return false, nil
@@ -143,10 +157,14 @@ func (m *memoryStore) IsRevoked(_ context.Context, deviceID string, now time.Tim
 }
 
 func (m *memoryStore) CountEnrollments(_ context.Context) (int, error) {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
 	return len(m.enrolledDevices), nil
 }
 
 func (m *memoryStore) ListEnrollments(_ context.Context) ([]*EnrolledDevice, error) {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
 	items := make([]*EnrolledDevice, 0, len(m.enrolledDevices))
 	for _, device := range m.enrolledDevices {
 		items = append(items, device)
