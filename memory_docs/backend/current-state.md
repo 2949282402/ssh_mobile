@@ -7,18 +7,20 @@ Device-plane durable state (enrollment, revocation) is behind a `Storage`
 interface: the default `memory` mode is process-local and restart clears it;
 `mysql` mode persists it and requires `RedisURL` for the shared state layer
 (presence, discovery, replay-protection nonce, administrator sessions,
-cross-instance events). Non-redundant single-instance data plane stays in the
-hub (`hub.peers`, `hub.transferSessions`).
+shared live-state events). The first-phase topology is a single Relay Control
+instance and a single Relay Data instance; Redis is the external shared live
+state. Non-redundant single-instance data plane stays in the hub
+(`hub.peers`, `hub.transferSessions`).
 
 Current boundaries:
 
 - Device enrollment binds a signed (HMAC) credential to a device identity;
   the durable enrollment record (device ID + public key) lives in `Storage`.
 - Device revocation is one atomic store transaction (MySQL: device-row lock +
-  tombstone + removal), so a revoke and a concurrent cross-instance re-enroll
-  serialize on the device row instead of tearing into a "removed but not
-  revoked" state; the admin handler keeps the per-device lock stripe for the
-  local nonce/hub/event side effects.
+  tombstone + removal), so a revoke and a concurrent re-enroll serialize on the
+  device row instead of tearing into a "removed but not revoked" state; the
+  admin handler keeps the per-device lock stripe for the local nonce/hub/event
+  side effects.
 - Device WebSocket connections are authenticated before hub admission through a
   single `authenticatedRequest` path: credential signature/expiry, Ed25519
   proof, anti-replay nonce, enrollment key match, and revocation check.
@@ -52,7 +54,8 @@ Current boundaries:
   **in memory mode**; `mysql` mode keeps enrollment and revocation durable and
   devices keep working across a restart.
 - Docker Compose with Caddy is the supported production topology; a `storage`
-  compose profile adds MySQL and Redis for the durable/multi-instance stack.
+  compose profile adds MySQL and Redis for the durable/Redis shared-state stack
+  (single Relay Control instance + single Relay Data instance).
 
 Endpoint definitions, environment variables, deployment instructions, and the
 current hardening backlog remain owned by the [Relay README](../../relay/README.md).

@@ -1,10 +1,18 @@
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-15
 
 # ADR-028：Forward-secret Session E2EE Key Agreement
 
 ## Status
 
-Accepted for native network v1 Step 4.
+Accepted for native network v1 Step 4. transport-network v2 retains this ADR's
+v3 Root exchange, `KeyEpoch`, and structured-nonce model unchanged.
+
+> **2026-08-15 名称澄清（transport-network v2 碰撞）**：本 ADR 中的 "v2 is
+> rejected" 指 **crypto-handshake 版本**——v2 手写 Root 推导被拒绝，当前采用 v3
+> Root exchange。它与 [ADR-TRANSPORT-NETWORK-V2](ADR-TRANSPORT-NETWORK-V2.md)
+> 定义的 **transport-network v2（协议代际）** 是**两个正交概念**：transport-network
+> v2 保留本 ADR 的 v3 `KeyEpoch` / 结构化 nonce / 前向保密，不降级、不复用被拒绝
+> 的 crypto v2。见 ADR-TRANSPORT-NETWORK-V2 的命名方案。
 
 ## Context
 

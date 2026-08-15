@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-15
 
 # Memory Map
 
@@ -160,10 +160,11 @@ is a conditional architecture reference, not a default Feature-task input.
 Read a precise ADR when changing wire/API semantics, Session/Connection/Route
 lifetime, transport/path selection, reconnect/resume/recovery, Delivery ordering,
 crypto/key lifecycle, Relay/direct selection, WebRTC media/data plane, or native
-task ownership. Do not scan the whole ADR directory. Because two Accepted files
-currently use ADR-011, always cite the complete filename:
+task ownership. Do not scan the whole ADR directory. ADR-011 was duplicated
+between two Accepted files; it was disambiguated on 2026-08-15 by renumbering
+file resume to ADR-030. Always cite the complete filename:
 
-- [File resume ADR](../../../../docs/adr/ADR-011-file-resume.md)
+- [File resume ADR](../../../../docs/adr/ADR-030-file-resume.md)
 - [Transfer Session route dispatch ADR](../../../../docs/adr/ADR-011-transfer-session-route-dispatch.md)
 
 ## Common task simulations

@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-10
+> 最新更新时间：2026-08-15
 
 # 网络传输 SDK 架构设计
 
@@ -1297,6 +1297,16 @@ Direct 默认有偏好，但不是绝对优先。
 ---
 
 ## 15. Direct → Relay 自动切换策略
+
+> **2026-08-15 修订（对齐 Main 基线版，权威为准）**：本节原文的 300~800ms
+> Happy Eyeballs 并行竞速**不再作为权威**。以 Main 基线版
+> 《SSH_Mobile 传输网络架构重构设计 Main 基线版》§15 与
+> [ADR-008](adr/ADR-008-direct-relay-race.md) 修订为准：**顺序 Direct First**——
+> 连接前先 `ResolvePeer`（2s 上限），再 Direct 建连窗口固定 **4s**；4s 内
+> Direct Ready 用 Direct，超时（`DIRECT_FAILED`）后才启动 Relay Data。**Relay
+> 不再和 Direct 并行抢跑**，也不存在 Relay→Direct 后台迁移（v2 见
+> [ADR-CONNECTION-LIFECYCLE-V2](adr/ADR-CONNECTION-LIFECYCLE-V2.md)）。以下原文
+> 保留为历史设计描述，不代表当前实施语义。
 
 不要采用：
 
