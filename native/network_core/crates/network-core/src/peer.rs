@@ -6,8 +6,8 @@ use network_nat::{
     MAX_CANDIDATES_PER_SIGNAL,
 };
 use network_protocol::{
-    NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState, RouteType,
-    UpsertPeerCommand,
+    NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState, PeerPresenceState,
+    RouteType, UpsertPeerCommand,
 };
 use network_quic::{read_channel_frame, ChannelFrameKind, QuicEndpointManager, QuicPeerSession};
 use network_relay::RelayClient;
@@ -28,8 +28,8 @@ use crate::connection::{
 };
 use crate::crypto_handshake::SessionCryptoMaterial;
 use crate::events::{
-    emit_peer_state, emit_peer_state_profile, emit_route_changed, emit_route_changed_profile,
-    protocol_error, protocol_error_with_peer,
+    emit_peer_presence_changed, emit_peer_state, emit_peer_state_profile, emit_route_changed,
+    emit_route_changed_profile, protocol_error, protocol_error_with_peer,
 };
 use crate::generic_auth::{authenticate_initiator, authenticate_responder};
 use crate::runtime::{
@@ -2154,17 +2154,23 @@ async fn resolve_peer_discovery(
 /// 权威对账：peer_online/updated/offline 是低延迟增量通知，可能因 Redis Pub/Sub 瞬时
 /// 丢失，而 lookup_response 反映服务器当前权威状态。
 ///
-/// - 离线：删除 discovery-derived path_manager，避免 connect_peer 拿旧代候选白试
-///   Direct 窗口。保留 PeerConfig.endpoint——手工配置 / LAN Direct 仍允许尝试。
+/// - 离线：删除 discovery-derived path_manager / candidate_attempts，避免 connect_peer
+///   拿旧代候选白试 Direct 窗口；同步移除 peer_presence 条目，若此前有缓存则 emit
+///   Offline（避免设备列表与连接状态分裂）。保留 PeerConfig.endpoint——手工配置 /
+///   LAN Direct 仍允许尝试。
 /// - 在线：generation 变化或首见 → 旧代 path_manager 里的 direct 候选全部失效，删掉
 ///   重建，只安装该 generation 候选；generation 相同 → 在既有 manager 上合并刷新。
 ///   同步 peer_presence.generation。
-///
-/// 注意：不在此删除 candidate_attempts——它是本次 connect 刚插入的当前 attempt，信令
-/// answer 校验依赖它，且由 clear_candidate_attempt 在 connect 末尾统一清理。
 async fn reconcile_peer_discovery(state: &RuntimeState, peer_id: &str, result: &LookupResult) {
     if !result.online {
         state.path_managers.write().await.remove(peer_id);
+        state.candidate_attempts.write().await.remove(peer_id);
+        // lookup 是连接前权威状态：明确 offline 时移除 peer_presence 缓存条目；若此前
+        // 有缓存（UI 认为在线），emit Offline 避免 UI 与连接状态分裂。
+        let was_cached = state.peer_presence.write().await.remove(peer_id).is_some();
+        if was_cached {
+            emit_peer_presence_changed(&state.event_tx, peer_id, 0, PeerPresenceState::Offline);
+        }
         return;
     }
     let cache_generation = state
@@ -3181,10 +3187,15 @@ mod tests {
     }
 
     /// lookup 明确 offline 时删除 discovery-derived path_manager（保留配置 endpoint
-    /// 走 LAN Direct 的语义由 connect_peer 的 direct_candidates 组装负责）。
+    /// 走 LAN Direct 的语义由 connect_peer 的 direct_candidates 组装负责），并同步
+    /// peer_presence——此前有缓存时 emit Offline，避免设备列表与连接状态分裂。
     #[tokio::test]
-    async fn reconcile_peer_discovery_offline_clears_cached_direct() {
-        let state = new_test_state().await;
+    async fn reconcile_peer_discovery_offline_clears_cached_direct_and_syncs_presence() {
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
         state
             .peer_presence
             .write()
@@ -3195,6 +3206,15 @@ mod tests {
             .write()
             .await
             .insert("peer-a".into(), Arc::new(PathManager::new()));
+        state.candidate_attempts.write().await.insert(
+            "peer-a".into(),
+            CandidateAttempt {
+                attempt_id: "attempt-old".into(),
+                generation: 10,
+                connect_window: Duration::from_secs(1),
+                expires_at: Instant::now() + Duration::from_secs(1),
+            },
+        );
 
         let lookup = LookupResult {
             online: false,
@@ -3207,6 +3227,34 @@ mod tests {
         assert!(
             state.path_managers.read().await.get("peer-a").is_none(),
             "offline lookup must clear the cached path_manager"
+        );
+        assert!(
+            state
+                .candidate_attempts
+                .read()
+                .await
+                .get("peer-a")
+                .is_none(),
+            "offline lookup must clear the cached candidate attempt"
+        );
+        assert!(
+            state.peer_presence.read().await.get("peer-a").is_none(),
+            "offline lookup must remove the peer_presence entry"
+        );
+        // 此前有缓存 → 应 emit Offline。
+        let mut offline_emitted = false;
+        while let Ok(event) = event_rx.try_recv() {
+            if let Some(network_protocol::network_event::Payload::PeerPresenceChanged(entry)) =
+                event.payload
+            {
+                if entry.peer_id == "peer-a" && entry.state == PeerPresenceState::Offline as i32 {
+                    offline_emitted = true;
+                }
+            }
+        }
+        assert!(
+            offline_emitted,
+            "offline lookup must emit PeerPresenceState::Offline"
         );
     }
 
