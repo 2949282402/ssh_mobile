@@ -636,6 +636,13 @@ final class _FakeSessionClient implements SessionClient {
   Future<SdkResult<void>> disconnectRelay() async => const SdkSuccess(null);
 
   @override
+  Future<SdkResult<void>> uploadDiscovery({
+    required int generation,
+    required List<String> candidates,
+    required List<String> capabilities,
+  }) async => const SdkSuccess(null);
+
+  @override
   Future<SdkResult<SdkTransferSession>> send({
     required String transferId,
     required String peerId,

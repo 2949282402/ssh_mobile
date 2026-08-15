@@ -34,7 +34,7 @@ use crate::generic_auth::{authenticate_initiator, authenticate_responder};
 use crate::runtime::{
     CandidateAttempt, PeerConfig, RuntimeState, SessionAdmissionLease,
     DEFAULT_CANDIDATE_CONNECT_WINDOW, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES, PEER_CONNECT_TIMEOUT,
-    RECONNECT_INITIAL_BACKOFF, RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF, RELAY_RACE_DELAY,
+    RECONNECT_INITIAL_BACKOFF, RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF,
 };
 use crate::session::{ConnectDecision, GenericRouteScope, SessionId};
 
@@ -481,27 +481,8 @@ pub(crate) async fn connect_peer(
         None => local_attempt.connect_window,
     };
 
-    let route = match (!direct_candidates.is_empty(), relay) {
-        (true, Some(relay)) => {
-            let direct = connect_direct_or_generic(DirectRouteAttempt {
-                state: Arc::clone(&state),
-                endpoint,
-                candidates: direct_candidates,
-                identity,
-                expected_peer_public_key: peer.identity_public_key,
-                peer_id: peer_id.clone(),
-                session_binding: session_id.wire_key(),
-                session_id,
-                attempt_id: attempt_id.clone(),
-                connect_window,
-            });
-            let relay_attempt =
-                connect_relay(Arc::clone(&state), relay, peer_id.clone(), RELAY_RACE_DELAY);
-            let route = race_first_ready(direct, relay_attempt).await;
-            state.relay_lookups.write().await.remove(&peer_id);
-            route
-        }
-        (true, None) => connect_direct_or_generic(DirectRouteAttempt {
+    let route = if !direct_candidates.is_empty() {
+        let direct = connect_direct_or_generic(DirectRouteAttempt {
             state: Arc::clone(&state),
             endpoint,
             candidates: direct_candidates,
@@ -512,20 +493,26 @@ pub(crate) async fn connect_peer(
             session_id,
             attempt_id: attempt_id.clone(),
             connect_window,
-        })
-        .await
-        .map(ReadyRoute::Direct),
-        (false, Some(relay)) => {
-            connect_relay(Arc::clone(&state), relay, peer_id.clone(), Duration::ZERO)
-                .await
-                .map(|_| ReadyRoute::Relay)
+        });
+        match relay {
+            Some(relay) => {
+                let relay_attempt = connect_relay(Arc::clone(&state), relay, peer_id.clone());
+                connect_direct_first(direct, Some(relay_attempt), connect_window, &peer_id).await
+            }
+            None => direct.await.map(ReadyRoute::Direct),
         }
-        (false, None) => Err(protocol_error_with_peer(
-            NetworkErrorCode::NoRoute,
-            "peer has no usable direct or Relay route",
-            "connect",
-            &peer_id,
-        )),
+    } else {
+        match relay {
+            Some(relay) => connect_relay(Arc::clone(&state), relay, peer_id.clone())
+                .await
+                .map(|_| ReadyRoute::Relay),
+            None => Err(protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "peer has no usable direct or Relay route",
+                "connect",
+                &peer_id,
+            )),
+        }
     };
 
     clear_candidate_attempt(&state, &peer_id, &attempt_id).await;
@@ -2059,15 +2046,13 @@ async fn migrate_direct_path(
     true
 }
 
-/// Relay lookup 在 Direct 启动后延迟 500ms，避免 UDP 被封锁时先浪费完整
-/// Direct timeout；没有 Direct candidate 时由调用方传入零延迟。
+/// 顺序 Direct First 模型下，Relay 只在 Direct 窗口耗尽或快速失败后才启动，
+/// 因此不再需要延迟；没有 Direct candidate 时由调用方直接进入 Relay lookup。
 async fn connect_relay(
     state: Arc<RuntimeState>,
     relay: Arc<RelayClient>,
     peer_id: String,
-    delay: Duration,
 ) -> Result<(), ProtocolError> {
-    tokio::time::sleep(delay).await;
     let (lookup_tx, lookup_rx) = oneshot::channel();
     state
         .relay_lookups
@@ -2303,32 +2288,38 @@ enum ReadyRoute<T> {
     Relay,
 }
 
-/// 两条路线都必须以成功为胜出条件；一条路线快速失败时仍等待另一条
-/// 路线，只有全部失败才返回错误。
-async fn race_first_ready<Direct, Relay, ConnectionT>(
+/// 顺序 Direct First：先只等待 Direct 在 connect_window 内 ready。
+///
+/// 窗口内 Direct 成功 → 用 Direct；窗口内快速失败或超时后再顺序尝试 Relay
+/// （零延迟）。Direct 候选内部仍可并行竞速，但不再与 Relay 并行竞速，因此
+/// Direct 胜出时不会留下未清理的 Relay lookup waiter。
+async fn connect_direct_first<Direct, Relay, ConnectionT>(
     direct: Direct,
-    relay: Relay,
+    relay: Option<Relay>,
+    connect_window: Duration,
+    peer_id: &str,
 ) -> Result<ReadyRoute<ConnectionT>, ProtocolError>
 where
     Direct: Future<Output = Result<ConnectionT, ProtocolError>>,
     Relay: Future<Output = Result<(), ProtocolError>>,
 {
-    tokio::pin!(direct);
-    tokio::pin!(relay);
-    tokio::select! {
-        direct_result = &mut direct => match direct_result {
-            Ok(connection) => Ok(ReadyRoute::Direct(connection)),
-            Err(direct_error) => relay
+    match timeout(connect_window, direct).await {
+        Ok(Ok(connection)) => Ok(ReadyRoute::Direct(connection)),
+        Ok(Err(direct_error)) => match relay {
+            Some(relay) => relay
                 .await
                 .map(|_| ReadyRoute::Relay)
                 .map_err(|_| direct_error),
+            None => Err(direct_error),
         },
-        relay_result = &mut relay => match relay_result {
-            Ok(()) => Ok(ReadyRoute::Relay),
-            Err(relay_error) => direct
-                .await
-                .map(ReadyRoute::Direct)
-                .map_err(|_| relay_error),
+        Err(_) => match relay {
+            Some(relay) => relay.await.map(|_| ReadyRoute::Relay),
+            None => Err(protocol_error_with_peer(
+                NetworkErrorCode::Timeout,
+                "Direct connection window expired before a route was ready",
+                "connect",
+                peer_id,
+            )),
         },
     }
 }
@@ -3049,73 +3040,167 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn relay_wins_when_direct_is_still_connecting() {
-        let route = race_first_ready(
-            async {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                Ok::<(), ProtocolError>(())
-            },
-            async {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-                Ok::<(), ProtocolError>(())
-            },
+    async fn direct_ready_within_window_wins_and_relay_is_never_polled() {
+        let route = connect_direct_first(
+            async { Ok::<(), ProtocolError>(()) },
+            Some(async {
+                panic!("Relay must not be polled when Direct wins the window");
+            }),
+            Duration::from_millis(50),
+            "direct-first-peer",
         )
         .await
-        .expect("route should become ready");
-
-        assert!(matches!(route, ReadyRoute::Relay));
-    }
-
-    #[tokio::test]
-    async fn direct_wins_when_relay_is_still_starting() {
-        let route = race_first_ready(
-            async {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-                Ok::<(), ProtocolError>(())
-            },
-            async {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                Ok::<(), ProtocolError>(())
-            },
-        )
-        .await
-        .expect("route should become ready");
+        .expect("Direct should win within the window");
 
         assert!(matches!(route, ReadyRoute::Direct(())));
     }
 
     #[tokio::test]
-    async fn a_failed_route_does_not_prevent_the_other_route() {
-        let route = race_first_ready(
+    async fn direct_timeout_then_relay_wins() {
+        let route = connect_direct_first(
+            async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok::<(), ProtocolError>(())
+            },
+            Some(async {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                Ok::<(), ProtocolError>(())
+            }),
+            Duration::from_millis(10),
+            "direct-timeout-peer",
+        )
+        .await
+        .expect("Relay should win after the Direct window");
+
+        assert!(matches!(route, ReadyRoute::Relay));
+    }
+
+    #[tokio::test]
+    async fn direct_fast_failure_falls_back_to_relay() {
+        let route = connect_direct_first(
             async {
                 Err::<(), ProtocolError>(protocol_error(
                     NetworkErrorCode::QuicError,
                     "direct failed",
                 ))
             },
-            async { Ok::<(), ProtocolError>(()) },
+            Some(async { Ok::<(), ProtocolError>(()) }),
+            Duration::from_millis(50),
+            "direct-fail-peer",
         )
         .await
-        .expect("relay should remain eligible");
+        .expect("Relay should remain eligible after a fast Direct failure");
 
         assert!(matches!(route, ReadyRoute::Relay));
     }
 
     #[tokio::test]
     async fn failed_authenticated_direct_probe_keeps_relay_eligible() {
-        let route = race_first_ready(
+        let route = connect_direct_first(
             async {
                 Err::<(), ProtocolError>(protocol_error(
                     NetworkErrorCode::AuthenticationFailed,
                     "candidate identity rejected",
                 ))
             },
-            async { Ok::<(), ProtocolError>(()) },
+            Some(async { Ok::<(), ProtocolError>(()) }),
+            Duration::from_millis(50),
+            "auth-fail-peer",
         )
         .await
         .expect("Relay must remain available after direct auth failure");
 
         assert!(matches!(route, ReadyRoute::Relay));
+    }
+
+    #[tokio::test]
+    async fn relay_failure_after_direct_timeout_is_reported() {
+        let route = connect_direct_first(
+            async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok::<(), ProtocolError>(())
+            },
+            Some(async {
+                Err::<(), ProtocolError>(protocol_error(
+                    NetworkErrorCode::PeerOffline,
+                    "Relay peer is offline",
+                ))
+            }),
+            Duration::from_millis(10),
+            "relay-fail-peer",
+        )
+        .await;
+
+        assert!(matches!(
+            route,
+            Err(error) if error.code == NetworkErrorCode::PeerOffline as i32
+        ));
+    }
+
+    #[tokio::test]
+    async fn relay_failure_after_direct_fast_failure_prefers_direct_error() {
+        let route = connect_direct_first(
+            async {
+                Err::<(), ProtocolError>(protocol_error(
+                    NetworkErrorCode::AuthenticationFailed,
+                    "candidate identity rejected",
+                ))
+            },
+            Some(async {
+                Err::<(), ProtocolError>(protocol_error(
+                    NetworkErrorCode::PeerOffline,
+                    "Relay peer is offline",
+                ))
+            }),
+            Duration::from_millis(50),
+            "both-fail-peer",
+        )
+        .await;
+
+        assert!(matches!(
+            route,
+            Err(error) if error.code == NetworkErrorCode::AuthenticationFailed as i32
+        ));
+    }
+
+    #[tokio::test]
+    async fn direct_timeout_without_relay_returns_timeout() {
+        let route = connect_direct_first(
+            async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok::<(), ProtocolError>(())
+            },
+            None::<std::future::Ready<Result<(), ProtocolError>>>,
+            Duration::from_millis(10),
+            "no-relay-peer",
+        )
+        .await;
+
+        assert!(matches!(
+            route,
+            Err(error) if error.code == NetworkErrorCode::Timeout as i32
+        ));
+    }
+
+    #[tokio::test]
+    async fn direct_failure_without_relay_returns_direct_error() {
+        let route = connect_direct_first(
+            async {
+                Err::<(), ProtocolError>(protocol_error(
+                    NetworkErrorCode::QuicError,
+                    "direct failed",
+                ))
+            },
+            None::<std::future::Ready<Result<(), ProtocolError>>>,
+            Duration::from_millis(50),
+            "no-relay-fail-peer",
+        )
+        .await;
+
+        assert!(matches!(
+            route,
+            Err(error) if error.code == NetworkErrorCode::QuicError as i32
+        ));
     }
 
     #[tokio::test]

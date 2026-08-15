@@ -68,6 +68,14 @@ abstract interface class SessionClient implements EventStreamClient {
 
   Future<SdkResult<void>> disconnectRelay();
 
+  /// 显式向 Relay 控制面重传设备 Discovery（generation/candidates/capabilities）。
+  /// native 侧在 Relay 认证连接成功后也会自动上传首份。
+  Future<SdkResult<void>> uploadDiscovery({
+    required int generation,
+    required List<String> candidates,
+    required List<String> capabilities,
+  });
+
   Future<SdkResult<SdkTransferSession>> send({
     required String transferId,
     required String peerId,

@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use network_nat::{Candidate, CandidateSignal, CandidateSignalKind, DEFAULT_CONNECT_WINDOW_MS};
 use network_protocol::{
     ConfigureRelayCommand, DataMessage, DeliveryAck, NetworkError as ProtocolError,
-    NetworkErrorCode, RetryDisposition, RouteType,
+    NetworkErrorCode, PeerPresenceChangedEvent, PeerPresenceState, RetryDisposition, RouteType,
 };
 use network_relay::{RelayClient, RelayError, RelayEvent};
 use network_transfer::{
@@ -24,12 +24,13 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::crypto::{self, CryptoMode, APPLICATION_CRYPTO_SUITE};
 use crate::events::{
-    emit_incoming_offer, emit_transfer_completed, emit_transfer_error, emit_transfer_progress,
-    protocol_error, protocol_error_with_context, protocol_error_with_retry,
+    emit_incoming_offer, emit_peer_presence_changed, emit_peer_presence_snapshot,
+    emit_transfer_completed, emit_transfer_error, emit_transfer_progress, protocol_error,
+    protocol_error_with_context, protocol_error_with_retry,
 };
 use crate::runtime::{
-    PeerConfig, RuntimeState, INCOMING_APPROVAL_TIMEOUT, MAX_PENDING_INCOMING_TRANSFERS,
-    MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
+    PeerConfig, PeerPresence, RuntimeState, INCOMING_APPROVAL_TIMEOUT,
+    MAX_PENDING_INCOMING_TRANSFERS, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES, PRESENCE_TTL,
 };
 
 /// Relay 配置只存在 native runtime 内存中，用于 socket 意外断开后的指数退避重连。
@@ -131,6 +132,7 @@ pub(crate) async fn configure_relay_for_state(
         .map_err(|error| relay_connect_protocol_error(&error, "configure_relay"))?;
     *state.relay_config.write().await = Some(config);
     *state.relay.write().await = Some(Arc::clone(&relay));
+    upload_local_discovery(&state).await;
     state
         .task_supervisor
         .spawn_runtime(
@@ -253,6 +255,7 @@ fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
                 match connect_relay_client(&device_id, &config).await {
                     Ok((relay, events)) => {
                         *reconnect_state.relay.write().await = Some(Arc::clone(&relay));
+                        upload_local_discovery(&reconnect_state).await;
                         crate::events::emit_relay_state(
                             &reconnect_state.event_tx,
                             network_protocol::RelayConnectionState::Connected,
@@ -339,6 +342,121 @@ pub(crate) async fn handle_relay_events(
                 if let Some(sender) = state.relay_lookups.write().await.remove(&peer_id) {
                     let _ = sender.send(online);
                 }
+            }
+            RelayEvent::PresenceSnapshot { peers } => {
+                prune_expired_presence(&state).await;
+                {
+                    let mut presence = state.peer_presence.write().await;
+                    presence
+                        .retain(|peer_id, _| peers.iter().any(|peer| peer.device_id == *peer_id));
+                    for peer in &peers {
+                        presence.insert(
+                            peer.device_id.clone(),
+                            PeerPresence {
+                                generation: peer.generation,
+                                last_online: Instant::now(),
+                            },
+                        );
+                    }
+                }
+                emit_peer_presence_snapshot(
+                    &state.event_tx,
+                    peers
+                        .iter()
+                        .map(|peer| PeerPresenceChangedEvent {
+                            peer_id: peer.device_id.clone(),
+                            generation: peer.generation,
+                            state: PeerPresenceState::Online as i32,
+                        })
+                        .collect(),
+                );
+            }
+            RelayEvent::PeerOnline {
+                device_id,
+                generation,
+            } => {
+                prune_expired_presence(&state).await;
+                state.peer_presence.write().await.insert(
+                    device_id.clone(),
+                    PeerPresence {
+                        generation,
+                        last_online: Instant::now(),
+                    },
+                );
+                emit_peer_presence_changed(
+                    &state.event_tx,
+                    &device_id,
+                    generation,
+                    PeerPresenceState::Online,
+                );
+            }
+            RelayEvent::PeerUpdated {
+                device_id,
+                generation,
+            } => {
+                prune_expired_presence(&state).await;
+                let invalidates_cache = {
+                    let mut presence = state.peer_presence.write().await;
+                    let previous = presence.get(&device_id).copied();
+                    match previous {
+                        // 更高 generation 说明对端 Discovery 已换代，旧缓存必须删除。
+                        Some(prev) if prev.generation < generation => {
+                            presence.insert(
+                                device_id.clone(),
+                                PeerPresence {
+                                    generation,
+                                    last_online: Instant::now(),
+                                },
+                            );
+                            true
+                        }
+                        Some(prev) if prev.generation == generation => {
+                            presence.insert(
+                                device_id.clone(),
+                                PeerPresence {
+                                    generation,
+                                    last_online: Instant::now(),
+                                },
+                            );
+                            false
+                        }
+                        // 首次发现该对端的 Discovery 换代：本地缓存的 candidates
+                        // 可能来自更早的 generation，按 §10 视为必须删除的旧缓存。
+                        None => {
+                            presence.insert(
+                                device_id.clone(),
+                                PeerPresence {
+                                    generation,
+                                    last_online: Instant::now(),
+                                },
+                            );
+                            true
+                        }
+                        // 过期帧：对端已声明更高的 generation，忽略本次更新。
+                        Some(_) => false,
+                    }
+                };
+                if invalidates_cache {
+                    state.path_managers.write().await.remove(&device_id);
+                    state.candidate_attempts.write().await.remove(&device_id);
+                }
+                emit_peer_presence_changed(
+                    &state.event_tx,
+                    &device_id,
+                    generation,
+                    PeerPresenceState::Updated,
+                );
+            }
+            RelayEvent::PeerOffline { device_id } => {
+                state.peer_presence.write().await.remove(&device_id);
+                state.path_managers.write().await.remove(&device_id);
+                state.candidate_attempts.write().await.remove(&device_id);
+                emit_peer_presence_changed(
+                    &state.event_tx,
+                    &device_id,
+                    0,
+                    PeerPresenceState::Offline,
+                );
             }
             RelayEvent::Control {
                 kind,
@@ -559,6 +677,88 @@ pub(crate) async fn handle_relay_events(
         }
     }
     handle_relay_disconnect(state, relay, "Relay event stream ended".to_string()).await;
+}
+
+/// 删除超过 `PRESENCE_TTL` 的在线状态条目；Relay 重连失败时避免缓存无限增长。
+async fn prune_expired_presence(state: &RuntimeState) {
+    let mut presence = state.peer_presence.write().await;
+    let now = Instant::now();
+    presence.retain(|_, entry| now.duration_since(entry.last_online) <= PRESENCE_TTL);
+}
+
+/// 向已连接的 Relay 上传当前设备的 Discovery（generation + 本地 candidates）。
+///
+/// Relay 只按设备 ID 存最新一代摘要；首份在认证连接成功后上传，后续由
+/// Dart 显式 UploadDiscoveryCommand 重传。失败只记日志，不阻断数据面。
+async fn upload_local_discovery(state: &RuntimeState) {
+    let Some(relay) = state.relay.read().await.clone() else {
+        return;
+    };
+    let Some(manager) = state.local_path_manager.read().await.clone() else {
+        return;
+    };
+    let generation = manager.generation().await.max(1);
+    let candidates = manager
+        .ranked_candidates()
+        .await
+        .into_iter()
+        .map(|candidate| serde_json::to_string(&candidate.advertisement()))
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    if let Err(error) = relay
+        .send_discovery_update(generation, &candidates, &[])
+        .await
+    {
+        tracing::debug!(error = %error, "Relay discovery upload failed");
+    }
+}
+
+/// 显式重传设备 Discovery；由 Dart 的 UploadDiscoveryCommand 触发。
+pub(crate) async fn upload_discovery(
+    state: &RuntimeState,
+    command: network_protocol::UploadDiscoveryCommand,
+) -> Result<(), ProtocolError> {
+    if command.generation == 0 {
+        return Err(protocol_error(
+            NetworkErrorCode::InvalidArgument,
+            "discovery generation must be nonzero",
+        ));
+    }
+    if command.candidates.len() > 64
+        || command.capabilities.len() > 64
+        || command
+            .candidates
+            .iter()
+            .any(|candidate| candidate.is_empty() || candidate.len() > 2048)
+        || command
+            .capabilities
+            .iter()
+            .any(|capability| capability.is_empty() || capability.len() > 256)
+    {
+        return Err(protocol_error(
+            NetworkErrorCode::InvalidArgument,
+            "discovery candidates or capabilities are outside protocol bounds",
+        ));
+    }
+    let relay =
+        state.relay.read().await.clone().ok_or_else(|| {
+            protocol_error(NetworkErrorCode::RelayError, "Relay is not connected")
+        })?;
+    relay
+        .send_discovery_update(
+            command.generation,
+            &command.candidates,
+            &command.capabilities,
+        )
+        .await
+        .map_err(|error| {
+            protocol_error_with_context(
+                NetworkErrorCode::RelayError,
+                error.to_string(),
+                "upload_discovery",
+                None,
+            )
+        })
 }
 
 fn relay_crypto_key(peer_id: &str, session_token: &str) -> String {
@@ -2246,5 +2446,224 @@ mod tests {
                 &ciphertext,
             )
             .is_err());
+    }
+
+    fn unconnected_relay_client() -> Arc<RelayClient> {
+        Arc::new(
+            RelayClient::new(
+                "https://relay.example.test".into(),
+                "device-a".into(),
+                "credential".into(),
+                [0u8; 32],
+            )
+            .expect("relay client"),
+        )
+    }
+
+    async fn converge_presence(state: &Arc<RuntimeState>, peer_id: &str, generation: u64) {
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let presence = state.peer_presence.read().await;
+                let converged = presence
+                    .get(peer_id)
+                    .is_some_and(|entry| entry.generation == generation);
+                drop(presence);
+                if converged {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("presence table should converge");
+    }
+
+    #[tokio::test]
+    async fn presence_events_update_the_peer_presence_table_and_emit() {
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        let (events_tx, events_rx) = mpsc::channel(16);
+        let handler_state = Arc::clone(&state);
+        let handler = tokio::spawn(async move {
+            handle_relay_events(events_rx, handler_state, unconnected_relay_client()).await;
+        });
+
+        events_tx
+            .send(RelayEvent::PresenceSnapshot {
+                peers: vec![
+                    network_relay::PeerSummary {
+                        device_id: "peer-a".into(),
+                        generation: 3,
+                    },
+                    network_relay::PeerSummary {
+                        device_id: "peer-b".into(),
+                        generation: 5,
+                    },
+                ],
+            })
+            .await
+            .expect("send snapshot");
+        events_tx
+            .send(RelayEvent::PeerUpdated {
+                device_id: "peer-a".into(),
+                generation: 4,
+            })
+            .await
+            .expect("send updated");
+        events_tx
+            .send(RelayEvent::PeerOffline {
+                device_id: "peer-b".into(),
+            })
+            .await
+            .expect("send offline");
+
+        converge_presence(&state, "peer-a", 4).await;
+        let presence = state.peer_presence.read().await;
+        assert!(!presence.contains_key("peer-b"));
+        drop(presence);
+
+        drop(events_tx);
+        handler.await.expect("relay handler should exit");
+
+        let mut changed = Vec::new();
+        let mut snapshot_peers = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            match event.payload {
+                Some(network_protocol::network_event::Payload::PeerPresenceChanged(entry)) => {
+                    changed.push(entry);
+                }
+                Some(network_protocol::network_event::Payload::PeerPresenceSnapshot(snapshot)) => {
+                    snapshot_peers.extend(snapshot.peers);
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            snapshot_peers.iter().any(|entry| entry.peer_id == "peer-a"
+                && entry.generation == 3
+                && entry.state == PeerPresenceState::Online as i32),
+            "snapshot should emit an Online entry for peer-a"
+        );
+        assert!(
+            changed.iter().any(|entry| entry.peer_id == "peer-a"
+                && entry.generation == 4
+                && entry.state == PeerPresenceState::Updated as i32),
+            "peer_updated should emit an Updated event"
+        );
+        assert!(
+            changed.iter().any(|entry| entry.peer_id == "peer-b"
+                && entry.generation == 0
+                && entry.state == PeerPresenceState::Offline as i32),
+            "peer_offline should emit an Offline event"
+        );
+    }
+
+    #[tokio::test]
+    async fn peer_updated_with_higher_generation_clears_stale_discovery_cache() {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        state
+            .path_managers
+            .write()
+            .await
+            .insert("peer-a".into(), Arc::new(network_nat::PathManager::new()));
+        state.candidate_attempts.write().await.insert(
+            "peer-a".into(),
+            crate::runtime::CandidateAttempt {
+                attempt_id: "attempt-1".into(),
+                generation: 1,
+                connect_window: std::time::Duration::from_secs(1),
+                expires_at: Instant::now() + std::time::Duration::from_secs(1),
+            },
+        );
+
+        let (events_tx, events_rx) = mpsc::channel(16);
+        let handler_state = Arc::clone(&state);
+        let handler = tokio::spawn(async move {
+            handle_relay_events(events_rx, handler_state, unconnected_relay_client()).await;
+        });
+
+        events_tx
+            .send(RelayEvent::PeerUpdated {
+                device_id: "peer-a".into(),
+                generation: 2,
+            })
+            .await
+            .expect("send updated");
+
+        converge_presence(&state, "peer-a", 2).await;
+        assert!(
+            state.path_managers.read().await.get("peer-a").is_none(),
+            "higher generation must clear the remote discovery cache"
+        );
+        assert!(
+            state
+                .candidate_attempts
+                .read()
+                .await
+                .get("peer-a")
+                .is_none(),
+            "higher generation must stop pending connection attempts"
+        );
+
+        drop(events_tx);
+        handler.await.expect("relay handler should exit");
+    }
+
+    #[tokio::test]
+    async fn peer_updated_with_stale_or_equal_generation_keeps_the_discovery_cache() {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        state.peer_presence.write().await.insert(
+            "peer-a".into(),
+            PeerPresence {
+                generation: 5,
+                last_online: Instant::now(),
+            },
+        );
+        state
+            .path_managers
+            .write()
+            .await
+            .insert("peer-a".into(), Arc::new(network_nat::PathManager::new()));
+
+        let (events_tx, events_rx) = mpsc::channel(16);
+        let handler_state = Arc::clone(&state);
+        let handler = tokio::spawn(async move {
+            handle_relay_events(events_rx, handler_state, unconnected_relay_client()).await;
+        });
+
+        events_tx
+            .send(RelayEvent::PeerUpdated {
+                device_id: "peer-a".into(),
+                generation: 2,
+            })
+            .await
+            .expect("send stale update");
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let presence = state.peer_presence.read().await;
+        assert_eq!(
+            presence.get("peer-a").map(|entry| entry.generation),
+            Some(5)
+        );
+        drop(presence);
+        assert!(
+            state.path_managers.read().await.get("peer-a").is_some(),
+            "stale generation must not clear the discovery cache"
+        );
+
+        drop(events_tx);
+        handler.await.expect("relay handler should exit");
     }
 }

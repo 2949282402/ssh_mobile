@@ -32,6 +32,10 @@ const MAX_BINARY_PAYLOAD_BYTES: usize = 512 * 1024 + 16;
 const MAX_CHANNEL_PAYLOAD_BYTES: usize = 48 * 1024;
 const MAX_CANDIDATE_PAYLOAD_BYTES: usize = 32 * 1024;
 const MAX_REALTIME_SIGNAL_PAYLOAD_BYTES: usize = 256 * 1024;
+const MAX_DISCOVERY_CANDIDATES: usize = 64;
+const MAX_DISCOVERY_CAPABILITIES: usize = 64;
+const MAX_DISCOVERY_CANDIDATE_BYTES: usize = 2048;
+const MAX_DISCOVERY_CAPABILITY_BYTES: usize = 256;
 const SOCKET_OPERATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
 
 /// 描述 Relay v1 连接、认证和帧校验失败。
@@ -60,12 +64,37 @@ pub enum RelayError {
     Socket(String),
 }
 
+/// Relay 推送给客户端的对端 Presence 摘要。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerSummary {
+    pub device_id: String,
+    pub generation: u64,
+}
+
 /// 表示从 Relay v1 收到的透明事件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayEvent {
     Lookup {
         peer_id: String,
         online: bool,
+    },
+    /// Relay 控制面推送的在线设备快照；该帧不携带 session_id。
+    PresenceSnapshot {
+        peers: Vec<PeerSummary>,
+    },
+    /// 一个对端上线，携带其当前 Discovery generation。
+    PeerOnline {
+        device_id: String,
+        generation: u64,
+    },
+    /// 一个对端的 Discovery generation 更新。
+    PeerUpdated {
+        device_id: String,
+        generation: u64,
+    },
+    /// 一个对端下线。
+    PeerOffline {
+        device_id: String,
     },
     Control {
         kind: String,
@@ -438,6 +467,38 @@ impl RelayClient {
         .await
     }
 
+    /// 向 Relay 控制面发布当前设备的 Discovery 元数据。
+    ///
+    /// Relay 只按设备 ID 存最新一代的 Discovery 摘要，不解析 candidates 内容；
+    /// 该帧不带 session_id，仅用于让其他在线设备感知本设备的存在与能力。
+    pub async fn send_discovery_update(
+        &self,
+        generation: u64,
+        candidates: &[String],
+        capabilities: &[String],
+    ) -> Result<(), RelayError> {
+        if generation == 0 {
+            return Err(RelayError::InvalidConfiguration(
+                "discovery generation must be nonzero".into(),
+            ));
+        }
+        if candidates.len() > MAX_DISCOVERY_CANDIDATES
+            || capabilities.len() > MAX_DISCOVERY_CAPABILITIES
+            || candidates.iter().any(|candidate| {
+                candidate.is_empty() || candidate.len() > MAX_DISCOVERY_CANDIDATE_BYTES
+            })
+            || capabilities.iter().any(|capability| {
+                capability.is_empty() || capability.len() > MAX_DISCOVERY_CAPABILITY_BYTES
+            })
+        {
+            return Err(RelayError::InvalidConfiguration(
+                "discovery candidates or capabilities are outside protocol bounds".into(),
+            ));
+        }
+        self.send_control(discovery_update_frame(generation, candidates, capabilities))
+            .await
+    }
+
     /// 发送一个受限的 v1 会话控制帧。
     pub async fn send_session_control(
         &self,
@@ -741,6 +802,20 @@ fn validate_ready(message: Message, expected_device_id: &str) -> Result<(), Rela
     Ok(())
 }
 
+/// 构建受边界约束的 Discovery 上传帧。
+fn discovery_update_frame(
+    generation: u64,
+    candidates: &[String],
+    capabilities: &[String],
+) -> Value {
+    json!({
+        "type": "discovery_update",
+        "generation": generation,
+        "candidates": candidates,
+        "capabilities": capabilities,
+    })
+}
+
 /// 解码并校验 Relay 控制帧或不透明二进制分块。
 fn decode_event(message: Message) -> Result<Option<RelayEvent>, RelayError> {
     match message {
@@ -770,6 +845,65 @@ fn decode_event(message: Message) -> Result<Option<RelayEvent>, RelayError> {
                 return Ok(Some(RelayEvent::Lookup {
                     peer_id: peer_id.to_string(),
                     online,
+                }));
+            }
+            if kind == "presence_snapshot" {
+                // Presence 帧不携带 session_id，不能走下方的 Control allow-list。
+                let peers = value
+                    .get("peers")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| {
+                        RelayError::Protocol("presence snapshot is missing peers".into())
+                    })?
+                    .iter()
+                    .filter_map(|peer| {
+                        let device_id = peer.get("device_id").and_then(Value::as_str)?;
+                        let generation = peer.get("generation").and_then(Value::as_u64)?;
+                        if device_id.is_empty() || device_id.len() > 128 || generation == 0 {
+                            return None;
+                        }
+                        Some(PeerSummary {
+                            device_id: device_id.to_string(),
+                            generation,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                return Ok(Some(RelayEvent::PresenceSnapshot { peers }));
+            }
+            if kind == "peer_online" || kind == "peer_updated" {
+                let device_id = value
+                    .get("device_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty() && value.len() <= 128)
+                    .ok_or_else(|| RelayError::Protocol("peer device ID is missing".into()))?;
+                let generation = value
+                    .get("generation")
+                    .and_then(Value::as_u64)
+                    .filter(|generation| *generation != 0)
+                    .ok_or_else(|| {
+                        RelayError::Protocol("peer generation is missing or zero".into())
+                    })?;
+                let device_id = device_id.to_string();
+                return Ok(Some(if kind == "peer_online" {
+                    RelayEvent::PeerOnline {
+                        device_id,
+                        generation,
+                    }
+                } else {
+                    RelayEvent::PeerUpdated {
+                        device_id,
+                        generation,
+                    }
+                }));
+            }
+            if kind == "peer_offline" {
+                let device_id = value
+                    .get("device_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty() && value.len() <= 128)
+                    .ok_or_else(|| RelayError::Protocol("peer device ID is missing".into()))?;
+                return Ok(Some(RelayEvent::PeerOffline {
+                    device_id: device_id.to_string(),
                 }));
             }
             if !matches!(
@@ -1048,6 +1182,131 @@ mod tests {
                 std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset"),
             )),
             RelayError::Socket(_)
+        ));
+    }
+
+    #[test]
+    fn presence_snapshot_decodes_without_session_id() {
+        let event = decode_event(Message::Text(
+            r#"{"type":"presence_snapshot","peers":[{"device_id":"peer-a","generation":3},{"device_id":"peer-b","generation":5}]}"#.into(),
+        ))
+        .expect("decode")
+        .expect("presence snapshot event");
+        assert_eq!(
+            event,
+            RelayEvent::PresenceSnapshot {
+                peers: vec![
+                    PeerSummary {
+                        device_id: "peer-a".into(),
+                        generation: 3,
+                    },
+                    PeerSummary {
+                        device_id: "peer-b".into(),
+                        generation: 5,
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn presence_snapshot_requires_a_peers_array() {
+        assert!(decode_event(Message::Text(r#"{"type":"presence_snapshot"}"#.into(),)).is_err());
+        // 快照中的单个畸形条目被过滤，不使整帧失败。
+        assert!(decode_event(Message::Text(
+            r#"{"type":"presence_snapshot","peers":[{"device_id":"peer-a"}]}"#.into(),
+        ))
+        .is_ok());
+    }
+
+    #[test]
+    fn peer_presence_events_decode_without_session_id() {
+        assert_eq!(
+            decode_event(Message::Text(
+                r#"{"type":"peer_online","device_id":"peer-a","generation":4}"#.into(),
+            ))
+            .expect("decode")
+            .expect("online event"),
+            RelayEvent::PeerOnline {
+                device_id: "peer-a".into(),
+                generation: 4,
+            }
+        );
+        assert_eq!(
+            decode_event(Message::Text(
+                r#"{"type":"peer_updated","device_id":"peer-a","generation":5}"#.into(),
+            ))
+            .expect("decode")
+            .expect("updated event"),
+            RelayEvent::PeerUpdated {
+                device_id: "peer-a".into(),
+                generation: 5,
+            }
+        );
+        assert_eq!(
+            decode_event(Message::Text(
+                r#"{"type":"peer_offline","device_id":"peer-a"}"#.into(),
+            ))
+            .expect("decode")
+            .expect("offline event"),
+            RelayEvent::PeerOffline {
+                device_id: "peer-a".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn peer_presence_events_require_device_id_and_generation() {
+        assert!(decode_event(Message::Text(
+            r#"{"type":"peer_online","device_id":"peer-a"}"#.into(),
+        ))
+        .is_err());
+        assert!(decode_event(Message::Text(
+            r#"{"type":"peer_online","generation":4}"#.into(),
+        ))
+        .is_err());
+        assert!(decode_event(Message::Text(
+            r#"{"type":"peer_online","device_id":"peer-a","generation":0}"#.into(),
+        ))
+        .is_err());
+        assert!(decode_event(Message::Text(r#"{"type":"peer_offline"}"#.into(),)).is_err());
+    }
+
+    #[test]
+    fn discovery_update_frame_matches_the_wire_contract() {
+        let frame = discovery_update_frame(
+            3,
+            &["wifi@192.168.1.10:41020".into()],
+            &["file-transfer".into()],
+        );
+        assert_eq!(frame["type"], "discovery_update");
+        assert_eq!(frame["generation"], 3);
+        assert_eq!(frame["candidates"][0], "wifi@192.168.1.10:41020");
+        assert_eq!(frame["capabilities"][0], "file-transfer");
+    }
+
+    #[tokio::test]
+    async fn discovery_update_validates_bounds_before_sending() {
+        let client = RelayClient::new(
+            "https://relay.example.test".into(),
+            "device-a".into(),
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("client");
+        assert!(matches!(
+            client.send_discovery_update(0, &[], &[]).await,
+            Err(RelayError::InvalidConfiguration(_))
+        ));
+        let oversized = vec!["x".repeat(MAX_DISCOVERY_CANDIDATE_BYTES + 1)];
+        assert!(matches!(
+            client.send_discovery_update(1, &oversized, &[]).await,
+            Err(RelayError::InvalidConfiguration(_))
+        ));
+        // 未连接时在出站队列阶段报 NotConnected。
+        assert!(matches!(
+            client.send_discovery_update(1, &[], &[]).await,
+            Err(RelayError::NotConnected)
         ));
     }
 }

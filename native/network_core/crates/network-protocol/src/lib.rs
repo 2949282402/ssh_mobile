@@ -267,6 +267,17 @@ pub struct SendRealtimeSignalCommand {
     pub payload: Vec<u8>,
 }
 
+/// 显式重传设备 Discovery 元数据；native 侧在 Relay 认证连接后也会自动上传首份。
+#[derive(Clone, PartialEq, Message)]
+pub struct UploadDiscoveryCommand {
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+    #[prost(string, repeated, tag = "2")]
+    pub candidates: Vec<String>,
+    #[prost(string, repeated, tag = "3")]
+    pub capabilities: Vec<String>,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct NetworkCommand {
     #[prost(string, tag = "1")]
@@ -275,7 +286,7 @@ pub struct NetworkCommand {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_command::Payload",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24"
     )]
     pub payload: Option<network_command::Payload>,
 }
@@ -313,6 +324,8 @@ pub mod network_command {
         StopRealtimeSession(StopRealtimeSessionCommand),
         #[prost(message, tag = "23")]
         SendRealtimeSignal(SendRealtimeSignalCommand),
+        #[prost(message, tag = "24")]
+        UploadDiscovery(UploadDiscoveryCommand),
     }
 }
 
@@ -458,6 +471,34 @@ pub struct RelayStateChangedEvent {
     pub error: Option<NetworkError>,
 }
 
+/// Relay Presence 控制面推送给客户端的对端在线状态。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum PeerPresenceState {
+    Unspecified = 0,
+    Online = 1,
+    Updated = 2,
+    Offline = 3,
+}
+
+/// 单个对端的 Presence 变化。
+#[derive(Clone, PartialEq, Message)]
+pub struct PeerPresenceChangedEvent {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(uint64, tag = "2")]
+    pub generation: u64,
+    #[prost(enumeration = "PeerPresenceState", tag = "3")]
+    pub state: i32,
+}
+
+/// Relay 认证连接后推送的完整在线设备快照。
+#[derive(Clone, PartialEq, Message)]
+pub struct PeerPresenceSnapshotEvent {
+    #[prost(message, repeated, tag = "1")]
+    pub peers: Vec<PeerPresenceChangedEvent>,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct RealtimeStateChangedEvent {
     #[prost(string, tag = "1")]
@@ -541,7 +582,7 @@ pub struct NetworkEvent {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_event::Payload",
-        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23"
+        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25"
     )]
     pub payload: Option<network_event::Payload>,
 }
@@ -577,6 +618,10 @@ pub mod network_event {
         RealtimeSignal(RealtimeSignalEvent),
         #[prost(message, tag = "23")]
         RealtimeSnapshot(RealtimeSnapshotEvent),
+        #[prost(message, tag = "24")]
+        PeerPresenceChanged(PeerPresenceChangedEvent),
+        #[prost(message, tag = "25")]
+        PeerPresenceSnapshot(PeerPresenceSnapshotEvent),
     }
 }
 
@@ -668,5 +713,67 @@ mod tests {
         let error = decoded.error.expect("snapshot error");
         assert_eq!(error.code, NetworkErrorCode::IdentityConflict as i32);
         assert_eq!(error.retry_disposition, RetryDisposition::NoRetry as i32);
+    }
+
+    #[test]
+    fn peer_presence_snapshot_round_trips_peers_and_state() {
+        let event = NetworkEvent {
+            event_id: "presence-event".into(),
+            timestamp_ms: 123,
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_event::Payload::PeerPresenceSnapshot(
+                PeerPresenceSnapshotEvent {
+                    peers: vec![
+                        PeerPresenceChangedEvent {
+                            peer_id: "peer-a".into(),
+                            generation: 3,
+                            state: PeerPresenceState::Online as i32,
+                        },
+                        PeerPresenceChangedEvent {
+                            peer_id: "peer-b".into(),
+                            generation: 0,
+                            state: PeerPresenceState::Offline as i32,
+                        },
+                    ],
+                },
+            )),
+        };
+        let encoded = event.encode_to_vec();
+        let decoded = NetworkEvent::decode(encoded.as_slice()).expect("decode");
+        match decoded.payload {
+            Some(network_event::Payload::PeerPresenceSnapshot(snapshot)) => {
+                assert_eq!(snapshot.peers.len(), 2);
+                assert_eq!(snapshot.peers[0].peer_id, "peer-a");
+                assert_eq!(snapshot.peers[0].generation, 3);
+                assert_eq!(snapshot.peers[0].state, PeerPresenceState::Online as i32);
+                assert_eq!(snapshot.peers[1].state, PeerPresenceState::Offline as i32);
+            }
+            other => panic!("unexpected event payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn upload_discovery_command_round_trips_through_the_wire() {
+        let command = NetworkCommand {
+            command_id: "upload-discovery".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::UploadDiscovery(
+                UploadDiscoveryCommand {
+                    generation: 7,
+                    candidates: vec!["candidate-1".into()],
+                    capabilities: vec!["file-transfer".into()],
+                },
+            )),
+        };
+        let encoded = command.encode_to_vec();
+        let decoded = NetworkCommand::decode(encoded.as_slice()).expect("decode");
+        match decoded.payload {
+            Some(network_command::Payload::UploadDiscovery(upload)) => {
+                assert_eq!(upload.generation, 7);
+                assert_eq!(upload.candidates, vec!["candidate-1".to_string()]);
+                assert_eq!(upload.capabilities, vec!["file-transfer".to_string()]);
+            }
+            other => panic!("unexpected command payload: {other:?}"),
+        }
     }
 }
