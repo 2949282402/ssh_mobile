@@ -66,8 +66,20 @@ identity-bound QUIC handshake succeeds.
 - **discovery 写入是 CAS**：只有当前 presence 租约 owner 才能写入 discovery
   （Redis Lua 原子 + 内存实现同构），被取代的旧连接无法把新连接的 discovery
   覆盖回自身（跨实例重连竞态封死）。
-- **generation 单调**：服务端拒绝 `generation` 回退；客户端用单调时间种子
-  初始化 generation，跨重启不回退。
+- **generation 单调约束限定在同一 Discovery owner 内**：同一连接上报更小的
+  generation 才被拒绝；跨 owner（重连 / 升级后的新连接）视为新的可发现 epoch，
+  允许任意正 generation——否则旧版本随机大 generation 残留会拒绝升级客户端
+  更小的 Unix-ms generation，导致设备一直不可发现。客户端用 Unix-ms 时间种子
+  初始化 generation（进程内单调；严格跨进程单调需持久化
+  `generation = max(persisted + 1, unix_ms)`，是后续项）。
+- **lookup 是连接前的权威对账**：`lookup_response` 反映服务器权威状态，按返回
+  generation 替换/刷新本地 path_manager（新 generation → 删旧代候选重建；同
+  generation → 合并），并同步 `peer_presence.generation`；明确 offline 时删除
+  discovery-derived path_manager（保留配置 endpoint 供 LAN Direct）。增量事件
+  （peer_online/updated/offline）是低延迟通知，可能因 Pub/Sub 瞬时丢失，最终
+  正确性由连接前 lookup 兜底。
+- **peer_online 无条件清缓存**：收到 `peer_online` 视为新的可发现 epoch，无论
+  generation 高低都清掉该对端的旧 path_manager / candidate_attempts。
 - 信令转发（`candidate_offer` / `candidate_answer`）**仍然不解析 payload**：
   存储层的读写与转发路径语义解耦，Relay 只校验信封边界与在线路由。
 - discovery 快照随连接生命周期管理：连接被新连接替换或离线时清理，TTL /

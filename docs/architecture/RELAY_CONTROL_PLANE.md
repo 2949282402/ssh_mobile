@@ -77,8 +77,11 @@ candidate_offer / 连接期上报，Relay 只整体保存、不解析其语义�
 - **discovery 写入是 CAS**：只有当前 presence 租约 owner 才能写入 discovery
   （Redis Lua 原子 + 内存实现同构），封死跨实例重连竞态——被取代的旧连接
   无法把新连接的 discovery 覆盖回自身。
-- **generation 单调**：服务端拒绝 generation 回退；客户端用单调时间种子
-  初始化 generation，跨重启不回退。
+- **generation 单调约束限定在同一 owner 内**：同一连接上报更小的 generation
+  才拒绝；跨 owner（重连 / 升级后的新连接）视为新的可发现 epoch，允许任意正
+  generation——否则旧版本随机大 generation 残留会拒绝升级客户端更小的
+  Unix-ms generation，导致设备一直不可发现。客户端用 Unix-ms 时间种子初始化
+  generation（进程内单调；严格跨进程单调需持久化，见 §4.6）。
 
 ### 3.3 推送事件：presence_snapshot / peer_online / peer_updated / peer_offline
 
@@ -158,15 +161,21 @@ discovery 键可能被 Redis 逐出而与在线 presence 不同步，不以双�
 
 一次集中修正 review 发现的连接正确性问题，不扩功能：
 
-- **lookup 前移**（见 3.4）：Discovery 解析先于 Direct，候选先于路径选择。
+- **lookup 前移 + generation-aware 权威对账**（见 3.4/ADR-017）：Discovery 解析
+  先于 Direct；`lookup_response` 是连接前权威状态——新 generation 删旧代候选
+  重建、同 generation 合并、明确 offline 删 discovery-derived path_manager，
+  增量事件（peer_online/updated/offline）丢失也不影响最终连接正确性。
 - **占位 discovery 移除 + 在线判定收紧**（见 3.1/3.2）：presence+discovery+
   gen>0+owner 一致四元判定。
 - **Discovery CAS 原子化**（见 3.2）：Redis Lua 原子校验 presence owner。
+- **peer_online 无条件清缓存**：新可发现 epoch，无论 generation 高低都清旧
+  path_manager / candidate_attempts。
 - **客户端不再用固定 TTL 推断远端下线**：native `peer_presence` 缓存只由
   `peer_offline`（权威增量）与 `presence_snapshot`（全量对账）增删，不再按
   300s 裁剪在线设备（心跳不广播，长在线设备的 last_online 不会刷新，固定
   TTL 会误删）。
-- **generation 单调**（见 3.2）：服务端拒绝回退；native 初始化用单调时间种子。
+- **generation 单调限定同一 owner**（见 3.2）：同一连接回退才拒绝；跨 owner
+  允许任意正 generation，保证旧版本随机大 generation 不阻断升级客户端上传。
 
 ### 4.6 后续 follow-up（非本修正 PR）
 
@@ -174,6 +183,11 @@ discovery 键可能被 Redis 逐出而与在线 presence 不同步，不以双�
   结果变化时自动 `generation++`、重新 gather 候选、自动 `discovery_update`
   （当前只在 Relay 连接/重连时自动上传一次，候选变化后的再上传仍由上层显式
   触发，旧候选可能被心跳持续续 TTL）。
+- **generation 严格跨进程单调**：当前用 Unix-ms 时间种子（进程内单调、系统
+  时钟回拨时可能回退，但服务端 owner 限定 + 重连新 epoch 已兜底）；如需绝对
+  单调应持久化 `generation = max(persisted + 1, unix_ms)`。
+- **上传失败的可靠重试 / ACK**：当前 `discovery_update` 失败只记 debug，依赖
+  下次 Relay 连接重传；可加 server ACK + 有限重试。
 - **跨实例 P2P Signaling / Relay Data**（见 4.3）：多实例部署的前置工作。
 
 ## 5. 引用
