@@ -34,6 +34,8 @@ export function OverviewPage() {
   }
   if (!stats) return null;
 
+  const presenceAvailable = stats.presence_available;
+
   return (
     <div className="page">
       <PageHeader
@@ -55,6 +57,10 @@ export function OverviewPage() {
         <span>每 3 秒自动更新</span>
       </div>
 
+      {!presenceAvailable ? (
+        <InlineNotice tone="warning">在线状态暂不可用（presence 服务异常），以下在线数为未知。</InlineNotice>
+      ) : null}
+
       <section className="signal-card">
         <div className="section-heading">
           <div>
@@ -66,7 +72,7 @@ export function OverviewPage() {
         <SignalRail
           nodes={[
             { label: 'Registered devices', value: stats.devices.enrolled },
-            { label: 'Online peers', value: stats.devices.online },
+            { label: 'Online peers', value: presenceAvailable ? stats.devices.online : '未知' },
             { label: 'Active sessions', value: stats.relay.active_transfers, tone: stats.relay.active_transfers > 0 ? 'amber' : 'teal' },
           ]}
         />
@@ -74,7 +80,7 @@ export function OverviewPage() {
 
       <section className="metric-grid" aria-label="Relay 核心指标">
         <MetricTile label="Registered devices" value={stats.devices.enrolled} detail="当前进程已注册" accent="teal" />
-        <MetricTile label="Online peers" value={stats.devices.online} detail="已建立 WebSocket 连接" accent="teal" />
+        <MetricTile label="Online peers" value={presenceAvailable ? stats.devices.online : '未知'} detail={presenceAvailable ? '已建立 WebSocket 连接' : 'presence 暂不可用'} accent="teal" />
         <MetricTile label="Active sessions" value={stats.relay.active_transfers} detail="内存中的传输会话" accent={stats.relay.active_transfers > 0 ? 'amber' : 'ink'} />
         <MetricTile label="Memory alloc" value={`${stats.runtime.allocated_mem_mb.toFixed(2)} MB`} detail={`${stats.runtime.goroutines} goroutines`} accent="coral" mono />
       </section>
@@ -86,10 +92,14 @@ export function OverviewPage() {
               <p className="eyebrow">Registry snapshot</p>
               <h2>设备状态</h2>
             </div>
-            <Badge tone="neutral">{stats.devices.online} online</Badge>
+            {presenceAvailable ? <Badge tone="neutral">{stats.devices.online} online</Badge> : <Badge tone="neutral">在线状态未知</Badge>}
           </div>
           <div className="overview-summary">
-            <strong>{stats.devices.online === 0 ? '当前没有在线设备' : `${stats.devices.online} 台设备在线`}</strong>
+            {presenceAvailable ? (
+              <strong>{stats.devices.online === 0 ? '当前没有在线设备' : `${stats.devices.online} 台设备在线`}</strong>
+            ) : (
+              <strong>在线状态暂不可用，无法确认当前在线设备数。</strong>
+            )}
             <p>设备详情、远端地址和公钥指纹请在 Devices 页面查看。</p>
           </div>
         </section>
@@ -113,7 +123,9 @@ export function OverviewPage() {
       </div>
 
       <div className="sr-only" aria-live="polite">
-        当前在线设备 {stats.devices.online} 台，活动会话 {stats.relay.active_transfers} 个。
+        {presenceAvailable
+          ? `当前在线设备 ${stats.devices.online} 台，活动会话 ${stats.relay.active_transfers} 个。`
+          : `在线状态暂不可用，活动会话 ${stats.relay.active_transfers} 个。`}
       </div>
     </div>
   );

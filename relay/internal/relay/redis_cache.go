@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -21,6 +22,7 @@ const redisKeyPrefix = "relay:"
 // semantics that the memory store tracks explicitly.
 type redisStore struct {
 	client *redis.Client
+	logger *slog.Logger
 }
 
 // openRedisStore parses RELAY_REDIS_URL (accepting either a redis:// URL or a
@@ -38,7 +40,7 @@ func openRedisStore(ctx context.Context, url string) (*redisStore, error) {
 		_ = client.Close()
 		return nil, err
 	}
-	return &redisStore{client: client}, nil
+	return &redisStore{client: client, logger: slog.Default()}, nil
 }
 
 // Close 释放 Redis 连接。
@@ -252,6 +254,39 @@ func (r *redisStore) GetPresence(ctx context.Context, deviceID string) (Presence
 		return Presence{}, false, err
 	}
 	return p, true, nil
+}
+
+func (r *redisStore) GetPresences(ctx context.Context, deviceIDs []string) (map[string]Presence, error) {
+	if len(deviceIDs) == 0 {
+		return map[string]Presence{}, nil
+	}
+	keys := make([]string, 0, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		keys = append(keys, r.presenceKey(deviceID))
+	}
+	values, err := r.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]Presence, len(deviceIDs))
+	for i, value := range values {
+		if value == nil {
+			continue // 缺失/已过期：不在结果中。
+		}
+		data, ok := value.(string)
+		if !ok {
+			continue
+		}
+		var p Presence
+		if err := json.Unmarshal([]byte(data), &p); err != nil {
+			// 与单 key GetPresence 不同，损坏条目跳过而非返回 error：admin 调用方
+			// 忽略错误，单条损坏不应让全部设备显示离线（保持逐设备 fail-open 粒度）。
+			r.logger.Warn("skipped corrupt presence value in batch query", "device_id", deviceIDs[i], "error", err)
+			continue
+		}
+		result[deviceIDs[i]] = p
+	}
+	return result, nil
 }
 
 func (r *redisStore) SetAdminSession(ctx context.Context, token string, ttl time.Duration) error {

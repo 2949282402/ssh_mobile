@@ -19,6 +19,9 @@ type adminOverviewResponse struct {
 	Devices       adminDeviceStat  `json:"devices"`
 	Relay         adminRelayStat   `json:"relay"`
 	Runtime       adminRuntimeStat `json:"runtime"`
+	// PresenceAvailable 为 false 表示 presence 查询失败（Redis 不可用）：此时
+	// online 字段不能当作"全部离线"，而是"在线状态未知"。
+	PresenceAvailable bool `json:"presence_available"`
 }
 
 type adminDeviceStat struct {
@@ -36,8 +39,9 @@ type adminRuntimeStat struct {
 }
 
 type adminDevicesResponse struct {
-	Items []adminDevice `json:"items"`
-	Total int           `json:"total"`
+	Items             []adminDevice `json:"items"`
+	Total             int           `json:"total"`
+	PresenceAvailable bool          `json:"presence_available"`
 }
 
 type adminDevice struct {
@@ -50,29 +54,17 @@ type adminDevice struct {
 	PublicKeyFingerprint string `json:"public_key_fingerprint"`
 }
 
+// hubSnapshot 只带管理端消费的本地 hub 数据。在线状态与 RemoteAddr 一律来自
+// presence 租约（GetPresences），本地 peer 表不参与 admin 视图——它在多实例部署
+// 下只反映本实例，跨实例设备会显示为空白地址。
 type hubSnapshot struct {
-	ActivePeers    int
 	ActiveSessions int
-	Online         map[string]string
 }
 
 func (h *hub) snapshot() hubSnapshot {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
-
-	online := make(map[string]string, len(h.peers))
-	for deviceID, peer := range h.peers {
-		remoteAddr := ""
-		if peer.socket != nil && peer.socket.RemoteAddr() != nil {
-			remoteAddr = peer.socket.RemoteAddr().String()
-		}
-		online[deviceID] = remoteAddr
-	}
-	return hubSnapshot{
-		ActivePeers:    len(h.peers),
-		ActiveSessions: len(h.transferSessions),
-		Online:         online,
-	}
+	return hubSnapshot{ActiveSessions: len(h.transferSessions)}
 }
 
 func (s *Server) adminOverview(w http.ResponseWriter, _ *http.Request) {
@@ -95,69 +87,80 @@ func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 		return adminOverviewResponse{}, err
 	}
 	enrolled := len(enrolledList)
-	online := 0
+	// 一次批量查询替代逐设备 GetPresence（N+1 → 1）。
+	deviceIDs := make([]string, 0, enrolled)
 	for _, device := range enrolledList {
-		if _, present, _ := s.cache.GetPresence(context.Background(), device.DeviceID); present {
-			online++
-		}
+		deviceIDs = append(deviceIDs, device.DeviceID)
 	}
+	presences, presenceErr := s.cache.GetPresences(context.Background(), deviceIDs)
+	presenceAvailable := presenceErr == nil
+	if presenceErr != nil {
+		// Redis presence 不可用：online 不能当作"全部离线"解读，给前端显式标志
+		// 表明在线状态是未知的。
+		s.logger.Warn("presence cache unavailable; online status is unknown", "error", presenceErr)
+	}
+	online := len(presences)
 
 	var memory runtime.MemStats
 	runtime.ReadMemStats(&memory)
 
 	return adminOverviewResponse{
-		ServerTime:    time.Now().Unix(),
-		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
-		Devices: adminDeviceStat{
-			Enrolled: enrolled,
-			Online:   online,
-		},
-		Relay: adminRelayStat{
-			ActiveTransfers: hubState.ActiveSessions,
-		},
-		Runtime: adminRuntimeStat{
-			AllocatedMemMB: float64(memory.Alloc) / 1024 / 1024,
-			Goroutines:     runtime.NumGoroutine(),
-		},
+		ServerTime:        time.Now().Unix(),
+		UptimeSeconds:     int64(time.Since(s.startedAt).Seconds()),
+		Devices:           adminDeviceStat{Enrolled: enrolled, Online: online},
+		Relay:             adminRelayStat{ActiveTransfers: hubState.ActiveSessions},
+		Runtime:           adminRuntimeStat{AllocatedMemMB: float64(memory.Alloc) / 1024 / 1024, Goroutines: runtime.NumGoroutine()},
+		PresenceAvailable: presenceAvailable,
 	}, nil
 }
 
 func (s *Server) adminDevices(w http.ResponseWriter, _ *http.Request) {
-	items, err := s.adminDeviceSnapshot()
+	items, presenceAvailable, err := s.adminDeviceSnapshot()
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, adminErrorInternal, "Device storage is unavailable.")
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(adminDevicesResponse{Items: items, Total: len(items)})
+	_ = json.NewEncoder(w).Encode(adminDevicesResponse{Items: items, Total: len(items), PresenceAvailable: presenceAvailable})
 }
 
-func (s *Server) adminDeviceSnapshot() ([]adminDevice, error) {
-	hubState := s.hub.snapshot()
+func (s *Server) adminDeviceSnapshot() ([]adminDevice, bool, error) {
 	s.devicesMutex.Lock()
 	enrolledList, err := s.store.ListEnrollments(context.Background())
 	s.devicesMutex.Unlock()
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	// 一次批量查询替代逐设备 GetPresence（N+1 → 1）。Online 与 RemoteAddr 都取
+	// 自 presence 租约：跨实例部署下设备连在其它实例时，租约里的地址才是它真实
+	// 所在连接的地址（本地 peer 表只反映本实例，会显示为空）。
+	deviceIDs := make([]string, 0, len(enrolledList))
+	for _, enrolled := range enrolledList {
+		deviceIDs = append(deviceIDs, enrolled.DeviceID)
+	}
+	presences, presenceErr := s.cache.GetPresences(context.Background(), deviceIDs)
+	presenceAvailable := presenceErr == nil
+	if presenceErr != nil {
+		s.logger.Warn("presence cache unavailable; online status is unknown", "error", presenceErr)
 	}
 	items := make([]adminDevice, 0, len(enrolledList))
 	for _, enrolled := range enrolledList {
-		_, online, _ := s.cache.GetPresence(context.Background(), enrolled.DeviceID)
+		presence, online := presences[enrolled.DeviceID]
 		items = append(items, adminDevice{
 			DeviceID:             enrolled.DeviceID,
 			Platform:             enrolled.Platform,
 			ProtocolVersion:      enrolled.ProtocolVersion,
 			EnrolledAt:           enrolled.EnrolledAt.UTC().Format(time.RFC3339Nano),
 			Online:               online,
-			RemoteAddr:           hubState.Online[enrolled.DeviceID],
+			RemoteAddr:           presence.RemoteAddr,
 			PublicKeyFingerprint: publicKeyFingerprint(enrolled.PublicKey),
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].DeviceID < items[j].DeviceID
 	})
-	return items, nil
+	return items, presenceAvailable, nil
 }
 
 func publicKeyFingerprint(encodedPublicKey string) string {

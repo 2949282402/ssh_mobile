@@ -154,6 +154,37 @@ func TestDisconnectDeviceDoesNotClearForeignPresence(t *testing.T) {
 	}
 }
 
+// TestAdminDeviceSnapshotSourcesRemoteAddrFromLease pins the cross-instance admin
+// fix: a device whose presence lease was written by another instance (no local
+// peer in this hub) must still show online with the lease's RemoteAddr — the old
+// code read the local hub peer table, which is empty for a cross-instance device,
+// and reported an empty address.
+func TestAdminDeviceSnapshotSourcesRemoteAddrFromLease(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	// The device is connected on another instance: only the lease exists, no
+	// local peer. The lease carries the address of its owning connection.
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "foreign-conn", Presence{InstanceID: "i2", RemoteAddr: "203.0.113.9:9000"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	items, presenceAvailable, err := server.adminDeviceSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !presenceAvailable || len(items) != 1 || !items[0].Online || items[0].RemoteAddr != "203.0.113.9:9000" {
+		t.Fatalf("admin snapshot should show the cross-instance device online with the lease address: %+v", items)
+	}
+}
+
 // gatePresenceStore blocks the first TakePresence until released, to
 // deterministically interleave concurrent same-device lease claims.
 type gatePresenceStore struct {

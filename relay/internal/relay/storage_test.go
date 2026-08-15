@@ -230,6 +230,78 @@ func TestPresenceLeaseSemanticsMemoryMatchesRedis(t *testing.T) {
 	})
 }
 
+// TestPresenceBatchMemoryMatchesRedis pins the batch GetPresences contract across
+// backends: for a mix of live/absent/expired devices both stores return the same
+// result map, so the admin snapshot behaves identically in memory and Redis modes.
+func TestPresenceBatchMemoryMatchesRedis(t *testing.T) {
+	memory := newMemoryStore(Config{MaxEnrolledDevices: 1, MaxRevokedDevices: 1})
+	ctx := context.Background()
+	redisStore, err := openRedisStore(ctx, requireRedisURL(t))
+	if err != nil {
+		t.Fatalf("open redis: %v", err)
+	}
+	defer redisStore.Close()
+	_ = redisStore.forceDeletePresence(ctx, "batch-a")
+	_ = redisStore.forceDeletePresence(ctx, "batch-b")
+	_ = redisStore.forceDeletePresence(ctx, "batch-c")
+	defer func() {
+		_ = redisStore.forceDeletePresence(ctx, "batch-a")
+		_ = redisStore.forceDeletePresence(ctx, "batch-b")
+		_ = redisStore.forceDeletePresence(ctx, "batch-c")
+	}()
+
+	type batchAPI interface {
+		TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (Presence, bool, error)
+		GetPresences(ctx context.Context, deviceIDs []string) (map[string]Presence, error)
+	}
+	stores := map[string]batchAPI{"memory": memory, "redis": redisStore}
+	for _, store := range stores {
+		if _, _, err := store.TakePresence(ctx, "batch-a", "conn-a", Presence{InstanceID: "i", RemoteAddr: "10.0.0.1:9000"}, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+		// batch-c is written with a short TTL so it genuinely expires mid-test,
+		// exercising the memory lazy-prune branch and the Redis TTL path.
+		if _, _, err := store.TakePresence(ctx, "batch-c", "conn-c", Presence{InstanceID: "i"}, 50*time.Millisecond); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	got := make(map[string]map[string]Presence, 2)
+	for name, store := range stores {
+		result, err := store.GetPresences(ctx, []string{"batch-a", "batch-b", "batch-c", "batch-missing"})
+		if err != nil {
+			t.Fatalf("%s: GetPresences errored: %v", name, err)
+		}
+		got[name] = result
+	}
+	// Only batch-a is live; the never-written (batch-b/batch-missing) and the
+	// expired (batch-c) devices must not appear.
+	if len(got["memory"]) != 1 || len(got["redis"]) != 1 {
+		t.Fatalf("expected exactly batch-a online in both backends: memory=%d redis=%d", len(got["memory"]), len(got["redis"]))
+	}
+	if _, ok := got["memory"]["batch-c"]; ok {
+		t.Fatal("memory GetPresences returned an expired lease")
+	}
+	if _, ok := got["redis"]["batch-c"]; ok {
+		t.Fatal("redis GetPresences returned an expired lease")
+	}
+	memA, redisA := got["memory"]["batch-a"], got["redis"]["batch-a"]
+	if memA.ConnectionID != "conn-a" || memA.RemoteAddr != "10.0.0.1:9000" || memA.InstanceID != "i" {
+		t.Fatalf("memory batch presence wrong: %+v", memA)
+	}
+	if memA.ConnectionID != redisA.ConnectionID || memA.RemoteAddr != redisA.RemoteAddr || memA.InstanceID != redisA.InstanceID {
+		t.Fatalf("batch presence diverged: memory=%+v redis=%+v", memA, redisA)
+	}
+	// Empty input returns an empty, non-nil map on both.
+	for name, store := range stores {
+		result, err := store.GetPresences(ctx, nil)
+		if err != nil || result == nil || len(result) != 0 {
+			t.Fatalf("%s: empty GetPresences should return an empty map: result=%v err=%v", name, result, err)
+		}
+	}
+}
+
 func TestMemoryStoreEnrollmentListingAndRemoval(t *testing.T) {
 	store := newMemoryStore(Config{MaxEnrolledDevices: 4, MaxRevokedDevices: 1})
 	ctx := context.Background()

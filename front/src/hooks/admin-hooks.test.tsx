@@ -36,6 +36,7 @@ describe('admin polling hooks', () => {
       devices: { enrolled: 2, online: 1 },
       relay: { active_transfers: 0 },
       runtime: { allocated_mem_mb: 12.34, goroutines: 7 },
+      presence_available: true,
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -61,7 +62,7 @@ describe('admin polling hooks', () => {
 
   it('polls the devices request every fifteen seconds', async () => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [], total: 0 }));
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [], total: 0, presence_available: true }));
     vi.stubGlobal('fetch', fetchMock);
 
     const { result, unmount } = renderHook(() => useAdminDevices(), { wrapper: createWrapper() });

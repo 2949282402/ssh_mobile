@@ -312,3 +312,68 @@ func TestMultiInstanceConnectionReplacement(t *testing.T) {
 		t.Fatalf("lease owner should be B's connection, got %q (want %q)", presence.ConnectionID, peerB.connectionID)
 	}
 }
+
+// TestMultiInstanceAdminSnapshotShowsRemoteAddrFromLease verifies the admin
+// device snapshot reports the remote address of the instance that actually holds
+// the lease: a device connected to instance B appears in A's admin snapshot as
+// online with B's connection address, not an empty local-hub address.
+func TestMultiInstanceAdminSnapshotShowsRemoteAddrFromLease(t *testing.T) {
+	mysqlDSN := requireMySQLDSN(t)
+	redisURL := requireRedisURL(t)
+	ctx := context.Background()
+
+	configA := multiInstanceConfig(mysqlDSN, redisURL)
+	configA.InstanceID = "instance-a"
+	serverA, err := OpenServer(configA)
+	if err != nil {
+		t.Fatalf("open instance A: %v", err)
+	}
+	defer serverA.Close()
+	configB := multiInstanceConfig(mysqlDSN, redisURL)
+	configB.InstanceID = "instance-b"
+	serverB, err := OpenServer(configB)
+	if err != nil {
+		t.Fatalf("open instance B: %v", err)
+	}
+	defer serverB.Close()
+	resetMySQLTestDB(t, mysqlDSN)
+
+	muxA, muxB := http.NewServeMux(), http.NewServeMux()
+	serverA.RegisterRoutes(muxA)
+	serverB.RegisterRoutes(muxB)
+	httpA := httptest.NewServer(muxA)
+	defer httpA.Close()
+	httpB := httptest.NewServer(muxB)
+	defer httpB.Close()
+
+	credential, _, privateKey := enrollViaHTTP(t, httpA.URL, "device-x", "test-token")
+
+	connB := dialDevice(t, httpB.URL, credential, "device-x", 0x12, privateKey)
+	defer connB.Close()
+
+	// Wait until B holds the lease for device-x.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		presence, present, _ := serverB.cache.GetPresence(ctx, "device-x")
+		if present && presence.InstanceID == "instance-b" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// A's admin snapshot must show the device online with B's connection address.
+	items, presenceAvailable, err := serverA.adminDeviceSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !presenceAvailable {
+		t.Fatal("cross-instance snapshot should have presence available")
+	}
+	if len(items) != 1 || !items[0].Online || items[0].RemoteAddr == "" {
+		t.Fatalf("A's admin snapshot should show device-x online with B's remote address: %+v", items)
+	}
+	presence, present, _ := serverB.cache.GetPresence(ctx, "device-x")
+	if !present || items[0].RemoteAddr != presence.RemoteAddr {
+		t.Fatalf("A's snapshot address (%q) should equal the lease holder's address (%q)", items[0].RemoteAddr, presence.RemoteAddr)
+	}
+}

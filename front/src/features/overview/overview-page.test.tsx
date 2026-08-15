@@ -18,6 +18,7 @@ const overview = {
   devices: { enrolled: 2, online: 1 },
   relay: { active_transfers: 0 },
   runtime: { allocated_mem_mb: 12.34, goroutines: 7 },
+  presence_available: true,
 };
 
 function renderOverview() {
@@ -43,6 +44,22 @@ describe('OverviewPage', () => {
     // The memory figure appears both in the metric tile and the runtime panel.
     expect(screen.getAllByText('12.34 MB').length).toBeGreaterThan(0);
     expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it('shows an unknown state instead of offline when presence is unavailable', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      ...overview,
+      devices: { enrolled: 2, online: 0 },
+      presence_available: false,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    renderOverview();
+
+    await waitFor(() => expect(screen.getByText('在线状态暂不可用，无法确认当前在线设备数。')).toBeInTheDocument());
+    expect(screen.getByText('在线状态未知')).toBeInTheDocument();
+    // online=0 且 presence 不可用时，绝不能把它当作"全部离线"。
+    expect(screen.queryByText('当前没有在线设备')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 台设备在线')).not.toBeInTheDocument();
   });
 
   it('shows a recoverable schema error and succeeds after retry', async () => {
