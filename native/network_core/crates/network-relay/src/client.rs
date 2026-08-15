@@ -59,6 +59,9 @@ pub enum RelayError {
     /// Relay 尚未建立连接。
     #[error("Relay is not connected")]
     NotConnected,
+    /// Relay 请求在超时时间内未收到应答。
+    #[error("Relay request timed out: {0}")]
+    Timeout(String),
     /// WebSocket 操作失败。
     #[error("Relay socket error: {0}")]
     Socket(String),
@@ -154,7 +157,7 @@ impl RelayClient {
                 "Relay URL, device ID, or credential is outside protocol bounds".into(),
             ));
         }
-        let relay_url = normalize_relay_url(&relay_url)?;
+        let relay_url = normalize_relay_url(&relay_url, RELAY_CONNECT_PATH)?;
         let (inbound_tx, inbound) = mpsc::channel(16);
         Ok(Self {
             relay_url,
@@ -182,32 +185,12 @@ impl RelayClient {
         }
         self.disconnect_notified.store(false, Ordering::Release);
         self.intentional_disconnect.store(false, Ordering::Release);
-        let mut nonce_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
-        let nonce = URL_SAFE_NO_PAD.encode(nonce_bytes);
-        let transcript = format!("{}\n{}\n{}", Method::GET, RELAY_CONNECT_PATH, nonce);
-        let signature =
-            URL_SAFE_NO_PAD.encode(self.signing_key.sign(transcript.as_bytes()).to_bytes());
-        let mut request = self
-            .relay_url
-            .as_str()
-            .into_client_request()
-            .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?;
-        request.headers_mut().insert(
-            "Authorization",
-            HeaderValue::from_str(&format!("Bearer {}", self.credential))
-                .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?,
-        );
-        request.headers_mut().insert(
-            "X-Relay-Nonce",
-            HeaderValue::from_str(&nonce)
-                .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?,
-        );
-        request.headers_mut().insert(
-            "X-Relay-Signature",
-            HeaderValue::from_str(&signature)
-                .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?,
-        );
+        let request = authenticated_ws_request(
+            &self.relay_url,
+            RELAY_CONNECT_PATH,
+            &self.credential,
+            &self.signing_key,
+        )?;
         let (socket, _) = tokio::time::timeout(SOCKET_OPERATION_TIMEOUT, connect_async(request))
             .await
             .map_err(|_| RelayError::Socket("connection timed out".into()))?
@@ -686,15 +669,49 @@ async fn mark_disconnected(
 }
 
 /// 返回当前 Unix 毫秒时间戳。
-fn unix_timestamp_ms() -> u128 {
+pub(crate) fn unix_timestamp_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
 }
 
-/// 将 HTTPS/WSS 源站规范化为固定的 v1 WebSocket 路径。
-fn normalize_relay_url(value: &str) -> Result<Url, RelayError> {
+/// 将 HTTPS/WSS 源站规范化为固定 WebSocket 路径，并返回带设备认证头的请求。
+pub(crate) fn authenticated_ws_request(
+    relay_url: &Url,
+    path: &str,
+    credential: &str,
+    signing_key: &SigningKey,
+) -> Result<tokio_tungstenite::tungstenite::handshake::client::Request, RelayError> {
+    let mut nonce_bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = URL_SAFE_NO_PAD.encode(nonce_bytes);
+    let transcript = format!("{}\n{}\n{}", Method::GET, path, nonce);
+    let signature = URL_SAFE_NO_PAD.encode(signing_key.sign(transcript.as_bytes()).to_bytes());
+    let mut request = relay_url
+        .as_str()
+        .into_client_request()
+        .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?;
+    request.headers_mut().insert(
+        "Authorization",
+        HeaderValue::from_str(&format!("Bearer {credential}"))
+            .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?,
+    );
+    request.headers_mut().insert(
+        "X-Relay-Nonce",
+        HeaderValue::from_str(&nonce)
+            .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?,
+    );
+    request.headers_mut().insert(
+        "X-Relay-Signature",
+        HeaderValue::from_str(&signature)
+            .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?,
+    );
+    Ok(request)
+}
+
+/// 将 HTTPS/WSS 源站规范化为指定 WebSocket 路径。
+pub(crate) fn normalize_relay_url(value: &str, path: &str) -> Result<Url, RelayError> {
     let mut url =
         Url::parse(value).map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?;
     if !url.username().is_empty()
@@ -739,7 +756,7 @@ fn normalize_relay_url(value: &str) -> Result<Url, RelayError> {
             ));
         }
     }
-    url.set_path(RELAY_CONNECT_PATH);
+    url.set_path(path);
     url.set_query(None);
     url.set_fragment(None);
     Ok(url)
@@ -747,7 +764,7 @@ fn normalize_relay_url(value: &str) -> Result<Url, RelayError> {
 
 /// 将 v1 WebSocket 升级失败映射为类型化 Relay 错误。HTTP 层错误携带设备面
 /// JSON `code`（12=凭据过期，13=身份冲突）；其余传输错误保持 `Socket`。
-fn map_connect_error(error: tokio_tungstenite::tungstenite::Error) -> RelayError {
+pub(crate) fn map_connect_error(error: tokio_tungstenite::tungstenite::Error) -> RelayError {
     match error {
         tokio_tungstenite::tungstenite::Error::Http(response) => {
             let status = response.status();

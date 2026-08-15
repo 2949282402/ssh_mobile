@@ -1378,6 +1378,7 @@ dependencies = [
  "futures-util",
  "hex",
  "network-protocol",
+ "prost",
  "rand 0.8.7",
  "serde_json",
  "thiserror 1.0.69",
