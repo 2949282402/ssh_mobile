@@ -72,14 +72,21 @@ identity-bound QUIC handshake succeeds.
   更小的 Unix-ms generation，导致设备一直不可发现。客户端用 Unix-ms 时间种子
   初始化 generation（进程内单调；严格跨进程单调需持久化
   `generation = max(persisted + 1, unix_ms)`，是后续项）。
+- **同 generation 的 Discovery 不可变**：同一 owner 内，generation 相同但候选/
+  能力内容变化 → 拒绝（候选变化必须 `generation++`），保证「同一个 generation
+  永远对应同一份 Discovery 快照」；内容相同 → 仅刷新、不广播。
 - **lookup 是连接前的权威对账**：`lookup_response` 反映服务器权威状态，按返回
   generation 替换/刷新本地 path_manager（新 generation → 删旧代候选重建；同
   generation → 合并），并同步 `peer_presence.generation`；明确 offline 时删除
-  discovery-derived path_manager（保留配置 endpoint 供 LAN Direct）。增量事件
+  discovery-derived path_manager / candidate_attempts、移除 `peer_presence` 条目
+  （此前有缓存则 emit Offline），保留配置 endpoint 供 LAN Direct。增量事件
   （peer_online/updated/offline）是低延迟通知，可能因 Pub/Sub 瞬时丢失，最终
   正确性由连接前 lookup 兜底。
-- **peer_online 无条件清缓存**：收到 `peer_online` 视为新的可发现 epoch，无论
-  generation 高低都清掉该对端的旧 path_manager / candidate_attempts。
+- **peer_online / presence_snapshot 无条件清缓存**：`peer_online` 视为新的可发现
+  epoch，无论 generation 高低都清掉该对端的旧 path_manager / candidate_attempts；
+  `presence_snapshot` 是一次 Control Plane 全量重新对账，对快照中所有 peer 无条件
+  清旧 discovery-derived 缓存（owner-scoped generation 下重连可产生 new < old，
+  仅比较 generation 无法识别 epoch），后续 connect 经 lookup 重新获取权威候选。
 - 信令转发（`candidate_offer` / `candidate_answer`）**仍然不解析 payload**：
   存储层的读写与转发路径语义解耦，Relay 只校验信封边界与在线路由。
 - discovery 快照随连接生命周期管理：连接被新连接替换或离线时清理，TTL /

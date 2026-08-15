@@ -163,13 +163,19 @@ discovery 键可能被 Redis 逐出而与在线 presence 不同步，不以双�
 
 - **lookup 前移 + generation-aware 权威对账**（见 3.4/ADR-017）：Discovery 解析
   先于 Direct；`lookup_response` 是连接前权威状态——新 generation 删旧代候选
-  重建、同 generation 合并、明确 offline 删 discovery-derived path_manager，
+  重建、同 generation 合并、明确 offline 删 discovery-derived path_manager /
+  candidate_attempts 并移除 peer_presence 条目（此前有缓存则 emit Offline），
   增量事件（peer_online/updated/offline）丢失也不影响最终连接正确性。
 - **占位 discovery 移除 + 在线判定收紧**（见 3.1/3.2）：presence+discovery+
   gen>0+owner 一致四元判定。
 - **Discovery CAS 原子化**（见 3.2）：Redis Lua 原子校验 presence owner。
-- **peer_online 无条件清缓存**：新可发现 epoch，无论 generation 高低都清旧
-  path_manager / candidate_attempts。
+- **peer_online / presence_snapshot 无条件清缓存**：二者都是「重新对账」语义——
+  `peer_online` 新可发现 epoch 无条件清旧缓存；`presence_snapshot` 是 Control
+  Plane 全量对账，对快照中所有 peer 无条件清 discovery-derived 缓存（owner-scoped
+  generation 下重连可产生 new < old，仅比较 generation 无法识别 epoch）。
+- **同 generation 的 Discovery 不可变**：同一 owner 内 generation 相同但候选/能力
+  内容变化 → 拒绝（候选变化必须 `generation++`），保证同一个 generation 永远对应
+  同一份快照。
 - **客户端不再用固定 TTL 推断远端下线**：native `peer_presence` 缓存只由
   `peer_offline`（权威增量）与 `presence_snapshot`（全量对账）增删，不再按
   300s 裁剪在线设备（心跳不广播，长在线设备的 last_online 不会刷新，固定
