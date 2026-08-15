@@ -37,7 +37,7 @@ use crate::runtime::{
     PeerConfig, RuntimeState, SessionAdmissionLease, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
     PEER_CONNECT_TIMEOUT,
 };
-use crate::session::{GenericRouteScope, SessionId};
+use crate::session::{ActiveRoute, GenericRouteScope, SessionId};
 
 const STUN_SERVERS_ENV: &str = "SSH_MOBILE_STUN_SERVERS";
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
@@ -73,9 +73,10 @@ pub(crate) struct DirectRouteAttempt {
     pub(crate) connect_window: Duration,
 }
 
-/// Installs material for a Session reservation that was already admitted by
-/// the continuity gate. Responder handshakes use this after selecting the
-/// final local binding before sending the RootSeed.
+/// Installs the fresh Noise root for a Session admission（§18 1:1）. The root is
+/// always new per connection; there is no ContinueExisting path. Responder
+/// handshakes use this after selecting the final local binding before sending
+/// the RootSeed.
 pub(crate) async fn install_admitted_crypto(
     state: &RuntimeState,
     peer_id: &str,
@@ -83,12 +84,7 @@ pub(crate) async fn install_admitted_crypto(
     crypto: &SessionCryptoMaterial,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if state
-        .install_crypto_material(
-            peer_id,
-            &admission.session_id.wire_key(),
-            crypto,
-            admission.decision,
-        )
+        .install_crypto_material(peer_id, &admission.session_id.wire_key(), crypto)
         .is_err()
     {
         state
@@ -1272,8 +1268,6 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                         Some(session_id),
                         connection.clone(),
                         RouteType::QuicDirect,
-                        admission.decision
-                            == crate::session::SessionCryptoDecision::ContinueExisting,
                     )
                     .await
                     .map_err(|_| std::io::Error::other("Session was closed"))?;
@@ -1301,12 +1295,10 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                 );
                 crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id)
                     .await;
-                if admission.decision != crate::session::SessionCryptoDecision::ReplaceWithNew {
-                    crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
-                        .await;
-                }
+                // §19：业务状态（Transfer）不属于 Session；每条新连接都尝试恢复暂停传输。
+                crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
+                    .await;
                 spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
-                state.finish_session_replacement(admission);
                 Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
             }
             .await;
@@ -1441,13 +1433,7 @@ async fn accept_authenticated_generic(
             .expect("supervised GenericRoute scope has a profile");
         let previous_route = match state
             .sessions
-            .attach_generic_route_for_session(
-                &peer_id,
-                Some(session_id),
-                &mut scope,
-                admission.decision
-                    == crate::session::SessionCryptoDecision::ContinueExisting,
-            )
+            .attach_generic_route_for_session(&peer_id, Some(session_id), &mut scope)
             .await
         {
             Ok(previous_route) => previous_route,
@@ -1467,7 +1453,7 @@ async fn accept_authenticated_generic(
             None,
         );
         crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-        state.finish_session_replacement(admission);
+        crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
         tracing::debug!(%peer_address, session_id = %session_id.wire_key(), "authenticated TCP fallback route attached");
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     }
@@ -1659,12 +1645,12 @@ async fn notify_generic_route_loss(
     route_id: u64,
     _session_id: SessionId,
 ) {
-    if state
+    let destroyed = state
         .sessions
-        .mark_generic_disconnected_if_current(peer_id, route_id)
-        .await
-        .is_some()
-    {
+        .destroy_generic_session_if_current(peer_id, route_id)
+        .await;
+    if let Some((session_id, route)) = destroyed {
+        spawn_session_teardown(Arc::clone(state), peer_id.to_string(), session_id, route);
         emit_peer_state(
             &state.event_tx,
             peer_id,
@@ -1672,8 +1658,9 @@ async fn notify_generic_route_loss(
             RouteType::Unspecified,
             None,
         );
-        // transport-network v2：连接丢失后不自动重连（§35/§11 无 RECONNECTING）。
-        // 业务下次 `connect()` 会重新 Resolve 并按需新建连接。
+        // transport-network v2（§18/§35）：transport 丢失即销毁 ConnectionSession，
+        // 不自动重连（无 RECONNECTING）。业务下次 `connect()` 会重新 Resolve 并按需
+        // 新建连接（新 SessionId + 新 Noise root）。
     }
 }
 
@@ -1682,11 +1669,12 @@ async fn handle_connection_disconnect(
     peer_id: &str,
     connection: &Connection,
 ) {
-    let disconnected_session = state
+    let destroyed = state
         .sessions
-        .mark_disconnected_if_current(peer_id, connection)
+        .destroy_quic_session_if_current(peer_id, connection)
         .await;
-    if let Some(_session_id) = disconnected_session {
+    if let Some((session_id, route)) = destroyed {
+        spawn_session_teardown(Arc::clone(state), peer_id.to_string(), session_id, route);
         emit_peer_state(
             &state.event_tx,
             peer_id,
@@ -1694,9 +1682,25 @@ async fn handle_connection_disconnect(
             RouteType::Unspecified,
             None,
         );
-        // transport-network v2：连接丢失后不自动重连（§35/§11 无 RECONNECTING）。
-        // 业务下次 `connect()` 会重新 Resolve 并按需新建连接。
+        // transport-network v2（§18/§35）：transport 丢失即销毁 ConnectionSession，
+        // 不自动重连。业务下次 `connect()` 会重新 Resolve 并按需新建连接。
     }
+}
+
+/// 在 Session 组外调度一次完整的 session 销毁：关闭 detached route、retire
+/// 资源并取消 supervised task group。调用方通常是 Session 组内的 receiver 任务，
+/// 不能在此处自等 join，因此拆到 runtime task 执行。
+fn spawn_session_teardown(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    session_id: SessionId,
+    route: ActiveRoute,
+) {
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let _ = supervisor.spawn_runtime("session-teardown", async move {
+        route.close().await;
+        state.cancel_session_tasks(&peer_id, session_id).await;
+    });
 }
 
 #[cfg(test)]
@@ -1793,12 +1797,7 @@ mod tests {
         assert_eq!(state.task_supervisor.active_count(), 2);
         state
             .sessions
-            .attach_generic_route_for_session(
-                "generic-close-peer",
-                Some(session_id),
-                &mut scope,
-                false,
-            )
+            .attach_generic_route_for_session("generic-close-peer", Some(session_id), &mut scope)
             .await
             .expect("attach GenericRoute");
 
@@ -1819,71 +1818,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generic_route_replacement_closes_old_owner_before_new_owner_remains() {
+    async fn connected_session_rejects_a_second_route_to_enforce_one_to_one() {
+        // §18 1:1：Session 已 Connected 且持有 route 时，拒绝再挂第二条 route。
         let state = new_test_state().await;
-        let session_id = started_session(&state, "generic-replace-peer").await;
-        let (first_connection, mut first_server) = generic_connection_pair().await;
+        let peer_id = "generic-one-to-one-peer";
+        let session_id = started_session(&state, peer_id).await;
+        let (first_connection, _server) = generic_connection_pair().await;
         let mut first_scope =
-            started_generic_scope(&state, "generic-replace-peer", session_id, first_connection)
-                .await;
+            started_generic_scope(&state, peer_id, session_id, first_connection).await;
         state
             .sessions
-            .attach_generic_route_for_session(
-                "generic-replace-peer",
-                Some(session_id),
-                &mut first_scope,
-                false,
-            )
+            .attach_generic_route_for_session(peer_id, Some(session_id), &mut first_scope)
             .await
             .expect("attach first GenericRoute");
 
-        let (second_connection, mut second_server) = generic_connection_pair().await;
-        let mut second_scope = started_generic_scope(
-            &state,
-            "generic-replace-peer",
-            session_id,
-            second_connection,
-        )
-        .await;
-        let old_route = state
+        let (second_connection, _second_server) = generic_connection_pair().await;
+        let mut second_scope =
+            started_generic_scope(&state, peer_id, session_id, second_connection).await;
+        assert!(state
             .sessions
-            .attach_generic_route_for_session(
-                "generic-replace-peer",
-                Some(session_id),
-                &mut second_scope,
-                true,
-            )
+            .attach_generic_route_for_session(peer_id, Some(session_id), &mut second_scope)
             .await
-            .expect("replace GenericRoute")
-            .expect("old GenericRoute owner");
-        old_route.close().await;
-        assert_eq!(state.task_supervisor.active_count(), 2);
+            .is_err());
+        second_scope.close().await;
 
-        let mut buffer = [0u8; 1];
-        let first_read =
-            tokio::time::timeout(Duration::from_secs(1), first_server.read(&mut buffer))
-                .await
-                .expect("old GenericRoute socket should close")
-                .expect("read old server-side socket");
-        assert_eq!(first_read, 0);
-
-        let current_route = state
-            .sessions
-            .close("generic-replace-peer")
-            .await
-            .expect("close should detach replacement owner");
+        let current_route = state.sessions.close(peer_id).await.expect("close Session");
         current_route.close().await;
         assert_eq!(state.task_supervisor.active_count(), 0);
-        let second_read =
-            tokio::time::timeout(Duration::from_secs(1), second_server.read(&mut buffer))
-                .await
-                .expect("replacement GenericRoute socket should close")
-                .expect("read replacement server-side socket");
-        assert_eq!(second_read, 0);
     }
 
     #[tokio::test]
-    async fn outbound_generic_peer_restart_binds_tasks_to_new_session() {
+    async fn outbound_generic_peer_restart_replaces_session_and_cancels_old_tasks() {
+        // §18：peer restart（新 remote binding）会让新连接整体替换旧 Session（新
+        // SessionId + 新 root），并且旧 Session 的 task group 在 admission 时立即取消。
         let state = new_test_state().await;
         let peer_id = "generic-outbound-restart-peer";
         let local_peer_id = "generic-outbound-local";
@@ -1895,6 +1862,29 @@ mod tests {
             .admit_authenticated_session(peer_id, Some(old_session_id), &old_remote_binding)
             .await
             .expect("seed the old remote Session binding");
+
+        // 在握手前把哨兵放进旧 Session 组，验证被替换后立即取消。
+        let (sentinel_started_tx, sentinel_started_rx) = oneshot::channel();
+        let (sentinel_cancelled_tx, sentinel_cancelled_rx) = oneshot::channel();
+        let sentinel_task = state.task_supervisor.spawn_session(
+            old_session_id.wire_key(),
+            "old-session-sentinel",
+            async move {
+                let mut signal = CancellationSignal {
+                    started: Some(sentinel_started_tx),
+                    cancelled: Some(sentinel_cancelled_tx),
+                };
+                if let Some(sender) = signal.started.take() {
+                    let _ = sender.send(());
+                }
+                std::future::pending::<()>().await;
+            },
+        );
+        assert!(sentinel_task.is_some(), "old Session sentinel should start");
+        timeout(Duration::from_secs(1), sentinel_started_rx)
+            .await
+            .expect("old Session sentinel did not start")
+            .expect("old Session sentinel start signal was dropped");
 
         let local_identity = Arc::new(DeviceIdentity::from_private_keys(
             local_peer_id.to_string(),
@@ -1964,6 +1954,12 @@ mod tests {
         )
         .await
         .expect("outbound TCP GenericRoute should authenticate");
+        // 握手期间 admission 已经取消了旧 Session 组（含哨兵）。
+        timeout(Duration::from_secs(1), sentinel_cancelled_rx)
+            .await
+            .expect("old Session cancellation did not complete during admission")
+            .expect("old Session sentinel signal was dropped");
+
         let AuthenticatedGenericRoute {
             mut scope,
             admission,
@@ -1974,38 +1970,10 @@ mod tests {
 
         state
             .sessions
-            .attach_generic_route_for_session(peer_id, Some(new_session_id), &mut scope, false)
+            .attach_generic_route_for_session(peer_id, Some(new_session_id), &mut scope)
             .await
             .expect("attach outbound GenericRoute to replacement Session");
 
-        let (sentinel_started_tx, sentinel_started_rx) = oneshot::channel();
-        let (sentinel_cancelled_tx, sentinel_cancelled_rx) = oneshot::channel();
-        let sentinel_task = state.task_supervisor.spawn_session(
-            old_session_id.wire_key(),
-            "old-session-sentinel",
-            async move {
-                let mut signal = CancellationSignal {
-                    started: Some(sentinel_started_tx),
-                    cancelled: Some(sentinel_cancelled_tx),
-                };
-                if let Some(sender) = signal.started.take() {
-                    let _ = sender.send(());
-                }
-                std::future::pending::<()>().await;
-            },
-        );
-        assert!(sentinel_task.is_some(), "old Session sentinel should start");
-        timeout(Duration::from_secs(1), sentinel_started_rx)
-            .await
-            .expect("old Session sentinel did not start")
-            .expect("old Session sentinel start signal was dropped");
-
-        state.finish_session_replacement(admission);
-
-        timeout(Duration::from_secs(1), sentinel_cancelled_rx)
-            .await
-            .expect("old Session cancellation did not complete")
-            .expect("old Session sentinel signal was dropped");
         wait_for_active_task_count(&state.task_supervisor, 2).await;
         assert_eq!(
             state.sessions.current_session_id(peer_id).await,
@@ -2061,7 +2029,6 @@ mod tests {
                 "generic-failed-attach-peer",
                 Some(session_id),
                 &mut scope,
-                false,
             )
             .await
             .is_err());
@@ -2098,7 +2065,6 @@ mod tests {
                     "generic-runtime-stop-peer",
                     Some(session_id),
                     &mut scope,
-                    false,
                 )
                 .await
                 .expect("attach runtime GenericRoute");
