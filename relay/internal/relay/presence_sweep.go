@@ -75,9 +75,10 @@ func (s *Server) sweepPresenceOnce() {
 		// 定向断开快照中的这条连接（disconnectConnection 只关闭 connectionID 匹配的
 		// peer）：若设备在快照与断开之间已重连为新的 connectionID，则定向断开是
 		// no-op，不会像 disconnectDevice(deviceID) 那样重读 h.peers 误踢新连接。
-		// 定向断开本身不广播（disconnectConnection 语义是"被新连接替换"，新连接
-		// 已接管、设备仍在线），僵尸的 peer_offline 由这里显式广播。
-		s.hub.disconnectConnection(p.deviceID, p.connectionID)
-		s.hub.broadcastPeerEvent(framePeerOffline, p.deviceID, 0)
+		// 仅当真断开了匹配连接（返回 true）才广播 peer_offline——若重连的新连接已
+		// 接管（no-op），设备实际在线，广播 offline 会误报。
+		if s.hub.disconnectConnection(p.deviceID, p.connectionID) {
+			s.hub.broadcastPeerEvent(framePeerOffline, p.deviceID, 0)
+		}
 	}
 }

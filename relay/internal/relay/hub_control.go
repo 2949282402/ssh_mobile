@@ -404,9 +404,23 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 		Candidates:   append([]string(nil), frame.Candidates...),
 		UpdatedAt:    time.Now(),
 	}
+	// 先核对 presence 仍在有效期：与 lookup/snapshot/sweeper 的在线判定一致
+	// （presence+discovery 双有效），且必须发生在落盘之前——若 presence 已失效
+	// （僵尸连接心跳停了），此时不应刷新 discovery 的 TTL（否则陈旧 discovery 残留
+	// 并继续被 ListOnlinePeers 计入，直到 sweeper 30s 后清理）。presence 读取故障
+	// fail-open：不拒绝上传，让设备下次心跳重试。
+	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+	_, presenceOK, presenceErr := h.presence.GetPresence(ctx, sender.deviceID)
+	if presenceErr != nil {
+		cancel()
+		return
+	}
+	if !presenceOK {
+		cancel()
+		return
+	}
 	// 先读旧值再落盘：比较 generation 需要旧值，而 TakeDiscovery 会覆盖，顺序不能反。
 	// 读失败 fail-open——不拒绝上传，静默返回让设备下次重试覆盖。
-	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
 	old, hadOld, getErr := h.presence.GetDiscovery(ctx, sender.deviceID)
 	if getErr != nil {
 		cancel()
@@ -431,17 +445,6 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 	if !stillOwned || persisted.ConnectionID != sender.connectionID {
 		_, _ = h.presence.ReleaseDiscovery(context.Background(), sender.deviceID, sender.connectionID)
 		return
-	}
-	// 广播 peer_online/peer_updated 前核对 presence 仍在有效期：与 lookup/snapshot/
-	// sweeper 的在线判定一致（presence+discovery 双有效），避免给对端推送一个
-	// presence 已失效设备的"上线"事件。
-	if h.presence != nil {
-		pctx, pcancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
-		_, presenceOK, presenceErr := h.presence.GetPresence(pctx, sender.deviceID)
-		pcancel()
-		if presenceErr != nil || !presenceOK {
-			return
-		}
 	}
 	frameType := ""
 	if !hadOld || old.Generation == 0 {
@@ -480,7 +483,13 @@ func (h *hub) sendPresenceSnapshot(sender *peer) {
 		peers = append(peers, peerSummary{DeviceID: deviceID, Generation: d.Generation})
 	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i].DeviceID < peers[j].DeviceID })
-	frame, _ := json.Marshal(controlFrame{Type: framePresenceSnapshot, Peers: peers})
+	// 快照帧单独 marshal：Peers 字段不带 omitempty——空快照也必须输出 "peers":[]。
+	// 若沿用 controlFrame 的 omitempty，空列表会被省略成 {"type":"presence_snapshot"}，
+	// Rust 客户端 decode_event 把缺失 peers 当协议错误断连，单设备中继即陷入重连循环。
+	frame, _ := json.Marshal(struct {
+		Type  string        `json:"type"`
+		Peers []peerSummary `json:"peers"`
+	}{Type: framePresenceSnapshot, Peers: peers})
 	if !sender.enqueue(outboundFrame{websocket.TextMessage, frame}) {
 		go sender.socket.Close()
 	}

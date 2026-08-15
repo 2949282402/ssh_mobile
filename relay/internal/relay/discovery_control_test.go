@@ -523,3 +523,88 @@ func TestMultiInstancePeerEventPropagation(t *testing.T) {
 	_ = connB.SetReadDeadline(time.Time{})
 	t.Fatal("instance B peer did not receive peer_online published by instance A")
 }
+
+// TestSendPresenceSnapshotEmptyAlwaysIncludesPeers 固定空快照也必须输出 "peers":[]
+// （不能因 omitempty 省略成 {"type":"presence_snapshot"}）：Rust 客户端 decode_event
+// 把缺失 peers 当协议错误断连，单设备中继即陷入无限重连。
+func TestSendPresenceSnapshotEmptyAlwaysIncludesPeers(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	sender := injectPeer(server.hub, "device-a")
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	server.hub.sendPresenceSnapshot(sender)
+	frame := readControlFrame(t, sender)
+	if frame.Type != framePresenceSnapshot {
+		t.Fatalf("expected presence_snapshot, got %+v", frame)
+	}
+	if frame.Peers == nil {
+		t.Fatal("snapshot peers must be present (non-nil) even when empty")
+	}
+	if len(frame.Peers) != 0 {
+		t.Fatalf("snapshot should be empty, got %+v", frame.Peers)
+	}
+}
+
+// TestDiscoveryPlaceholderInheritsPreviousGeneration 固定占位 discovery 继承重连前的
+// 真实 generation 而非固定 0：重连窗口内 lookup 不丢失候选，且 handleDiscoveryUpdate
+// 不会把占位误判为首次上传而重复广播 peer_online。
+func TestDiscoveryPlaceholderInheritsPreviousGeneration(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	// 首次连接：占位 gen 0（无旧值可继承）。直接模拟 hub.add 的占位写入路径
+	// （injectPeer 不走 hub.add，需手动 TakeDiscovery 占位）。
+	first := &peer{deviceID: "device-a", connectionID: "conn-a-1", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", first.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.cache.TakeDiscovery(ctx, "device-a", first.connectionID, Discovery{DeviceID: "device-a", Generation: 0, UpdatedAt: time.Now()}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("placeholder discovery missing: present=%v err=%v", present, err)
+	}
+	if d.Generation != 0 {
+		t.Fatalf("first-connect placeholder should be gen 0, got %d", d.Generation)
+	}
+
+	// 模拟真实上传 gen 5，然后重连（新连接走 hub.add：TakeDiscovery 应继承旧 gen 5）。
+	if err := server.cache.TakeDiscovery(ctx, "device-a", first.connectionID, Discovery{DeviceID: "device-a", Generation: 5, Candidates: []string{"cand"}, UpdatedAt: time.Now()}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	second := &peer{deviceID: "device-a", connectionID: "conn-a-2", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", second.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// 复刻 hub.add 的占位写入：重连时保留旧 generation。
+	placeholderGeneration := uint64(0)
+	if old, ok, derr := server.cache.GetDiscovery(ctx, "device-a"); derr == nil && ok {
+		placeholderGeneration = old.Generation
+	}
+	if err := server.cache.TakeDiscovery(ctx, "device-a", second.connectionID, Discovery{DeviceID: "device-a", Generation: placeholderGeneration, UpdatedAt: time.Now()}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	d, present, err = server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("placeholder after reconnect missing: present=%v err=%v", present, err)
+	}
+	if d.Generation != 5 {
+		t.Fatalf("reconnect placeholder should inherit gen 5, got %d", d.Generation)
+	}
+	if d.ConnectionID != second.connectionID {
+		t.Fatalf("reconnect placeholder owner should be the new connection: %q", d.ConnectionID)
+	}
+}
