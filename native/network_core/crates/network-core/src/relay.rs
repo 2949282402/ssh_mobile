@@ -1084,12 +1084,11 @@ async fn handle_relay_crypto_handshake(
             );
             crate::channel::recover_session(Arc::clone(state), peer_id.to_string(), session_id)
                 .await;
-            if admission.decision != crate::session::SessionCryptoDecision::ReplaceWithNew {
-                crate::transfer::resume_transfers_for_peer(Arc::clone(state), peer_id.to_string())
-                    .await;
-            }
+            // §19：业务状态（Transfer）不属于 Session；每条新连接都尝试恢复暂停传输。
+            crate::transfer::resume_transfers_for_peer(Arc::clone(state), peer_id.to_string())
+                .await;
             // transport-network v2：Relay → Direct 后台升级已删除（§35）；路由建立后不变。
-            state.finish_session_replacement(admission);
+            // 被替换的旧 Session 已在 admission 时销毁（§18），无需延迟取消。
         }
         _ => {
             return Err(std::io::Error::new(

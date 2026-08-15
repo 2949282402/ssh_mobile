@@ -1,10 +1,11 @@
 //! Session-owned application cryptography.
 //!
 //! The transport only carries opaque bytes.  A `CryptoContext` is created for
-//! one logical `(peer, SessionId)` pair and survives QUIC/Relay route changes.
-//! Its traffic root is installed only after the authenticated Noise XX
-//! handshake in `crypto_handshake.rs`; long-lived DeviceIdentity keys do not
-//! directly become application traffic keys.
+//! one logical `(peer, SessionId)` pair and does **not** survive transport loss
+//! (transport-network v2 §18): every new connection derives a fresh Noise root
+//! and installs a fresh context.  The traffic root is installed only after the
+//! authenticated Noise XX handshake in `crypto_handshake.rs`; long-lived
+//! DeviceIdentity keys do not directly become application traffic keys.
 
 use aes_gcm::{
     aead::{Aead, Payload},
@@ -19,8 +20,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
-
-use crate::session::SessionCryptoDecision;
 
 /// The application crypto suite carried by encrypted Relay offer metadata.
 /// Data messages carry the numeric suite marker inside their envelope.
@@ -477,37 +476,19 @@ impl SessionCryptoManager {
         session_ids: &[&str],
         root_key: [u8; 32],
         initiator: bool,
-        decision: SessionCryptoDecision,
     ) -> Result<Arc<Mutex<CryptoContext>>, CryptoError> {
-        let reuse_existing = decision == SessionCryptoDecision::ContinueExisting;
         let mut contexts = self
             .contexts
             .lock()
             .map_err(|_| CryptoError::StateUnavailable)?;
-        let existing = if reuse_existing {
-            session_ids.iter().find_map(|session_id| {
-                contexts
-                    .get(&CryptoContextKey {
-                        peer_id: peer_id.to_string(),
-                        session_id: (*session_id).to_string(),
-                    })
-                    .cloned()
-            })
-        } else {
-            None
-        };
-        if !reuse_existing {
-            // A peer owns one logical Session at a time.  A changed remote
-            // binding therefore retires every alias for that peer before the
-            // new root is installed; a new alias must never discover an older
-            // context by collision.
-            contexts.retain(|key, _| key.peer_id != peer_id);
-        }
-        let context = existing.unwrap_or_else(|| {
-            Arc::new(Mutex::new(CryptoContext::from_session_root(
-                root_key, initiator,
-            )))
-        });
+        // §18 1:1：每次连接都安装**全新** root。A peer owns one logical Session
+        // at a time, so every alias for that peer is retired before the new root
+        // is installed; a new alias must never discover an older context by
+        // collision. There is no ContinueExisting reuse path.
+        contexts.retain(|key, _| key.peer_id != peer_id);
+        let context = Arc::new(Mutex::new(CryptoContext::from_session_root(
+            root_key, initiator,
+        )));
         for session_id in session_ids {
             contexts.insert(
                 CryptoContextKey {
@@ -927,38 +908,22 @@ mod tests {
     }
 
     #[test]
-    fn replacing_remote_session_binding_installs_a_fresh_crypto_context() {
+    fn every_install_is_a_fresh_root_never_reused_across_connections() {
+        // §18：每次连接安装全新 root。即使同一 (peer, alias) 再次安装，也绝不复用
+        // 旧 context（ContinueExisting 已删除）。
         let manager = SessionCryptoManager::new();
         let first = manager
-            .install_material_aliases(
-                "peer",
-                &["local-a", "remote-a"],
-                [1u8; 32],
-                true,
-                SessionCryptoDecision::Initialize,
-            )
+            .install_material_aliases("peer", &["local-a", "remote-a"], [1u8; 32], true)
             .unwrap();
-        let continued = manager
-            .install_material_aliases(
-                "peer",
-                &["local-a", "remote-a"],
-                [2u8; 32],
-                true,
-                SessionCryptoDecision::ContinueExisting,
-            )
+        let second = manager
+            .install_material_aliases("peer", &["local-a", "remote-a"], [2u8; 32], true)
             .unwrap();
-        assert!(Arc::ptr_eq(&first, &continued));
-
-        let replaced = manager
-            .install_material_aliases(
-                "peer",
-                &["local-b", "remote-b"],
-                [3u8; 32],
-                true,
-                SessionCryptoDecision::ReplaceWithNew,
-            )
+        assert!(!Arc::ptr_eq(&first, &second));
+        // 安装新 root 会 retire 该 peer 的所有旧 alias。
+        let third = manager
+            .install_material_aliases("peer", &["local-b", "remote-b"], [3u8; 32], true)
             .unwrap();
-        assert!(!Arc::ptr_eq(&first, &replaced));
+        assert!(!Arc::ptr_eq(&first, &third));
         assert!(manager.get("peer", "local-a").is_err());
         assert!(manager.get("peer", "remote-a").is_err());
         assert!(manager.get("peer", "local-b").is_ok());

@@ -318,7 +318,6 @@ impl ConnectionOrchestrator {
                     admission.session_id,
                 )
                 .await;
-                state.finish_session_replacement(admission);
                 self.set_stage(OrchestratorState::ConnectedDirect);
                 Ok(())
             }
@@ -338,7 +337,6 @@ impl ConnectionOrchestrator {
                             admission.session_id,
                         )
                         .await;
-                        state.finish_session_replacement(admission);
                         self.set_stage(OrchestratorState::ConnectedRelay);
                         Ok(())
                     }
@@ -651,10 +649,8 @@ impl ConnectionOrchestrator {
             None,
         );
         crate::channel::recover_session(Arc::clone(&state), peer_id.to_string(), session_id).await;
-        if admission.decision != crate::session::SessionCryptoDecision::ReplaceWithNew {
-            crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.to_string())
-                .await;
-        }
+        // §19：业务状态（Transfer）不属于 Session；每条新连接都尝试恢复暂停传输。
+        crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.to_string()).await;
         Ok(admission)
     }
 
@@ -691,8 +687,6 @@ impl ConnectionOrchestrator {
                         Some(session_id),
                         connection.clone(),
                         RouteType::QuicDirect,
-                        admission.decision
-                            == crate::session::SessionCryptoDecision::ContinueExisting,
                     )
                     .await
                     .map_err(|_| {
@@ -736,13 +730,6 @@ impl ConnectionOrchestrator {
                     session_id,
                 )
                 .await;
-                if admission.decision != crate::session::SessionCryptoDecision::ReplaceWithNew {
-                    crate::transfer::resume_transfers_for_peer(
-                        Arc::clone(&state),
-                        peer_id.to_string(),
-                    )
-                    .await;
-                }
                 crate::peer::spawn_session_receivers(
                     Arc::clone(&state),
                     peer_id.to_string(),
@@ -773,13 +760,7 @@ impl ConnectionOrchestrator {
                 }
                 let previous_route = match state
                     .sessions
-                    .attach_generic_route_for_session(
-                        peer_id,
-                        Some(session_id),
-                        &mut scope,
-                        admission.decision
-                            == crate::session::SessionCryptoDecision::ContinueExisting,
-                    )
+                    .attach_generic_route_for_session(peer_id, Some(session_id), &mut scope)
                     .await
                 {
                     Ok(previous_route) => previous_route,
@@ -818,6 +799,8 @@ impl ConnectionOrchestrator {
                     session_id,
                 )
                 .await;
+                crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.to_string())
+                    .await;
                 Ok(admission)
             }
         }

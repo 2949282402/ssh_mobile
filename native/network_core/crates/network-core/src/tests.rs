@@ -1338,16 +1338,20 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             .expect("B2 Session ID")
     });
     assert_ne!(old_b_session_id, new_b_session_id);
-    // 旧 Session 的 pending 必须被 retire_session_resources 显式清理：恢复
-    // 旧 session 得到空快照；新 session 的快照不含旧消息（不跨 session 恢复）。
+    // §19：业务状态（pending Delivery / paused Transfer）不属于 Session，必须
+    // 在 Session 替换/销毁后保留。旧 Session 的 pending 不会被 retire 清理；新
+    // session 的快照不含旧消息（不跨 session 恢复，re-key 是 Step 9）。
     let old_snapshot = runtime_b.handle().block_on(
         state_b
             .delivery
             .recover_session(&old_b_session_id.wire_key()),
     );
     assert!(
-        old_snapshot.messages.is_empty(),
-        "retired Session's pending Delivery must be explicitly cleared"
+        old_snapshot
+            .messages
+            .iter()
+            .any(|message| message.message_id == old_pending_message_id),
+        "old Session's pending Delivery must be preserved (business state is not owned by the Session)"
     );
     let new_snapshot = runtime_b.handle().block_on(
         state_b
@@ -1355,14 +1359,10 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             .recover_session(&new_b_session_id.wire_key()),
     );
     assert!(
-        new_snapshot
+        !new_snapshot
             .messages
             .iter()
-            .all(|message| message.session_id == new_b_session_id.wire_key())
-            && !new_snapshot
-                .messages
-                .iter()
-                .any(|message| message.message_id == old_pending_message_id),
+            .any(|message| message.message_id == old_pending_message_id),
         "replacement Session must never restore the old Session's pending Delivery"
     );
     let stale_context = state_b
@@ -1400,16 +1400,8 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             .transfers
             .snapshot(orphaned_transfer_id)
             .await
-            .is_none()
+            .is_some()
     }));
-    assert!(poll_until(&runtime_b, Duration::from_secs(5), |event| {
-        matches!(
-            &event.payload,
-            Some(network_event::Payload::TransferFailed(transfer))
-                if transfer.transfer_id == orphaned_transfer_id
-        )
-    })
-    .is_some());
 
     send_and_expect_accepted(
         &runtime_a2,
@@ -1475,8 +1467,11 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
 /// numeric port still accepts TCP, proving that fallback is a real authenticated
 /// Session route rather than a capability-only wrapper. The test also sends a
 /// Delivery message and completes the application ACK through that route.
+///
+/// transport-network v2（§18）：transport 丢失即销毁 ConnectionSession，重新
+/// connect() 必须得到**全新** SessionId（绝不复用旧 id）。
 #[test]
-fn tcp_fallback_authenticates_delivery_and_keeps_session_id() {
+fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
     let runtime_a = NetworkRuntime::new().expect("runtime A");
     let runtime_b = NetworkRuntime::new().expect("runtime B");
     runtime_a.start().expect("start runtime A");
@@ -1684,7 +1679,8 @@ fn tcp_fallback_authenticates_delivery_and_keeps_session_id() {
             .await
             .expect("reconnected TCP Session ID")
     });
-    assert_eq!(original_session_id, reconnected_session_id);
+    // §18 1:1：新连接 = 新 ConnectionSession = 新 SessionId。
+    assert_ne!(original_session_id, reconnected_session_id);
     runtime_a.stop().expect("stop runtime A");
     runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();

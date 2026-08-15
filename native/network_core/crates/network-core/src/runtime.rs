@@ -1,6 +1,6 @@
 //! v1 网络运行时生命周期、共享状态与命令/事件通道。
 
-use network_protocol::{NetworkCommand, NetworkErrorCode, NetworkEvent};
+use network_protocol::{NetworkCommand, NetworkEvent};
 use std::sync::{
     atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering},
     Arc, Mutex,
@@ -21,14 +21,13 @@ use crate::crypto_handshake::{
 use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
 use crate::session::{
-    SessionAdmission, SessionAdmissionError, SessionAdmissionOutcome, SessionCryptoDecision,
-    SessionId, SessionManager,
+    SessionAdmission, SessionAdmissionError, SessionAdmissionOutcome, SessionId, SessionManager,
 };
 use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
 use network_identity::DeviceIdentity;
 use network_nat::PathManager;
 use network_relay::RelayClient;
-use network_transfer::{TransferFailureReason, TransferManager};
+use network_transfer::TransferManager;
 use quinn::Endpoint;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -48,42 +47,19 @@ pub(crate) const RUNTIME_RUNNING: u8 = 1;
 pub(crate) const RUNTIME_STOPPING: u8 = 2;
 pub(crate) const RUNTIME_STOPPED: u8 = 3;
 
-/// Non-Copy cleanup lease for an authenticated Session admission.  A replaced
-/// Session's task group is canceled only after the new route commits.  If the
-/// handshake or attach path drops this lease first, the fallback cancellation
-/// is scheduled as a runtime-scoped task so an old Session task never awaits
-/// its own group.
+/// 一次 authenticated Session admission 的不可变载体。
+///
+/// transport-network v2（§18）：Session 与 connection 一一对应，被替换的旧 Session
+/// 会在 admission 时立即整体销毁（route 关闭 + task group 取消 + 资源 retire），
+/// 因此不需要 drop 时机的延迟取消。
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SessionAdmissionLease {
     admission: SessionAdmission,
-    supervisor: Arc<RuntimeTaskSupervisor>,
-    armed: bool,
 }
 
 impl SessionAdmissionLease {
-    fn new(admission: SessionAdmission, supervisor: Arc<RuntimeTaskSupervisor>) -> Self {
-        Self {
-            admission,
-            supervisor,
-            armed: true,
-        }
-    }
-
-    /// Disarm the failure cleanup after the new route is fully attached and
-    /// all post-attach initialization has succeeded.
-    pub(crate) fn finalize(mut self) {
-        self.armed = false;
-    }
-
-    fn schedule_abort(&self) {
-        let Some(replaced_session_id) = self.admission.replaced_session_id else {
-            return;
-        };
-        let spawn_supervisor = Arc::clone(&self.supervisor);
-        let cancel_supervisor = Arc::clone(&self.supervisor);
-        let session_key = replaced_session_id.wire_key();
-        let _ = spawn_supervisor.spawn_runtime("abort-session-admission", async move {
-            cancel_supervisor.cancel_session(&session_key).await;
-        });
+    pub(crate) fn new(admission: SessionAdmission) -> Self {
+        Self { admission }
     }
 }
 
@@ -92,14 +68,6 @@ impl std::ops::Deref for SessionAdmissionLease {
 
     fn deref(&self) -> &Self::Target {
         &self.admission
-    }
-}
-
-impl Drop for SessionAdmissionLease {
-    fn drop(&mut self) {
-        if self.armed {
-            self.schedule_abort();
-        }
     }
 }
 
@@ -241,9 +209,9 @@ impl RuntimeState {
     async fn retire_session_resources(&self, peer_id: &str, session_id: SessionId) {
         let session_key = session_id.wire_key();
         // Retire aliases and task indexes before awaiting the old task group.
-        // A reconnect/receiver task may be inside a bounded I/O wait; the
-        // replacement Session must become cryptographically isolated without
-        // waiting for that transport task to finish unwinding.
+        // A receiver task may be inside a bounded I/O wait; the replacement
+        // Session must become cryptographically isolated without waiting for
+        // that transport task to finish unwinding.
         self.crypto.remove_session(peer_id, &session_key);
         self.delivery_tasks
             .write()
@@ -252,29 +220,8 @@ impl RuntimeState {
         // transport-network v2：Session 替换/关闭时同步注销连接登记（§34）。
         self.connection_registry
             .unregister_if_session(peer_id, session_id);
-        let terminated_transfers = self
-            .transfers
-            .terminate_session_transfers(
-                peer_id,
-                &session_key,
-                TransferFailureReason::SessionReplaced,
-            )
-            .await;
-        for transfer in terminated_transfers {
-            self.incoming_decisions
-                .write()
-                .await
-                .remove(&transfer.transfer_id);
-            crate::relay::cancel_transfer(self, &transfer.transfer_id).await;
-            crate::events::emit_transfer_error(
-                &self.event_tx,
-                &transfer.transfer_id,
-                NetworkErrorCode::Cancelled,
-                "transfer terminated because the peer Session was replaced".to_string(),
-                "session_replace",
-                Some(peer_id),
-            );
-        }
+        // §19 业务状态不属于 Session：Transfer / Delivery pending 由业务 manager
+        // 持有，Session 销毁不终止/清理它们（re-key 是 Step 9）。
         self.delivery.close_session(&session_key).await;
     }
 
@@ -284,11 +231,11 @@ impl RuntimeState {
         self.task_supervisor.cancel_session(&session_key).await;
     }
 
-    /// Admit authenticated Noise material only after Session continuity has
-    /// been evaluated. A changed remote binding retires the old Session's
-    /// aliases and receive-side Delivery state before the new crypto context
-    /// is installed; task cancellation is deferred until the replacement
-    /// route has attached.
+    /// Admit authenticated Noise material for a 1:1 ConnectionSession（§18）。
+    ///
+    /// 被替换的旧 Session 在这里立即整体销毁（关闭 detached route + retire 资源 +
+    /// 取消其 task group）。因为 Session 与 connection 一一对应，旧 Session 属于另一条
+    /// connection，取消其任务组不会中断当前新连接的握手。
     pub(crate) async fn admit_authenticated_session(
         &self,
         peer_id: &str,
@@ -307,38 +254,10 @@ impl RuntimeState {
             detached_route.close().await;
         }
         if let Some(replaced_session_id) = admission.replaced_session_id {
-            self.retire_session_resources(peer_id, replaced_session_id)
-                .await;
-            // The retired Session's sender-side pending can never be delivered
-            // on the replacement Session; clear it (with byte-budget
-            // accounting) so it does not linger or leak the delivery budget.
-            self.delivery
-                .retire_pending_for_session(&replaced_session_id.wire_key())
+            self.cancel_session_tasks(peer_id, replaced_session_id)
                 .await;
         }
-        Ok(SessionAdmissionLease::new(
-            admission,
-            Arc::clone(&self.task_supervisor),
-        ))
-    }
-
-    /// Finish cancellation only after the winning replacement route has been
-    /// attached. A reconnect task can itself be the handshake that discovers
-    /// the peer restart; canceling its old Session group before it installs the
-    /// new route would abort the successful handshake midway.
-    pub(crate) fn finish_session_replacement(&self, admission: SessionAdmissionLease) {
-        let Some(replaced_session_id) = admission.replaced_session_id else {
-            admission.finalize();
-            return;
-        };
-        let supervisor = Arc::clone(&self.task_supervisor);
-        let session_key = replaced_session_id.wire_key();
-        admission.finalize();
-        let _ = self
-            .task_supervisor
-            .spawn_runtime("cancel-replaced-session", async move {
-                supervisor.cancel_session(&session_key).await;
-            });
+        Ok(SessionAdmissionLease::new(admission))
     }
 
     pub(crate) async fn crypto_context(
@@ -358,7 +277,6 @@ impl RuntimeState {
         peer_id: &str,
         session_id: &str,
         material: &SessionCryptoMaterial,
-        decision: SessionCryptoDecision,
     ) -> Result<(), CryptoError> {
         self.crypto
             .install_material_aliases(
@@ -366,7 +284,6 @@ impl RuntimeState {
                 &[session_id, material.remote_session_binding.as_str()],
                 material.root_key,
                 material.initiator,
-                decision,
             )
             .map(|_| ())
     }
