@@ -280,9 +280,19 @@ async fn consume_control_events(
                 // §25 reservation 数据面（Step 11 迁移到 RelayDataClient）。
                 tracing::debug!("incoming relay reservation (data plane migration pending)");
             }
-            ControlEvent::RealtimeSignal(_) => {
-                // v1 Realtime 信令仍走 v1 Relay 控制帧（deprecated）；v2 接线在 Step 11。
-                tracing::debug!("v2 realtime signal (routed via v1 relay in this step)");
+            ControlEvent::RealtimeSignal(signal) => {
+                // §17/§22：WebRTC 信令经 v2 Relay Control Plane；入站帧路由到
+                // RealtimeManager 做 Offer/Answer/ICE 协商。v1 Relay 数据面信令
+                // （`RelayEvent::Control { webrtc_* }`）在 handle_relay_events 中仍处理。
+                if let Err(error) =
+                    crate::realtime::handle_v2_realtime_signal(&state, &signal).await
+                {
+                    tracing::debug!(
+                        peer_id = %signal.target_device_id,
+                        error = %error,
+                        "rejected v2 WebRTC signaling control"
+                    );
+                }
             }
             ControlEvent::Disconnected { reason } => {
                 tracing::debug!(reason, "Relay v2 control disconnected");
@@ -649,7 +659,6 @@ pub(crate) async fn handle_relay_events(
                 if let (Some(peer_id), Some(payload)) = (peer_id, payload) {
                     if let Err(error) = crate::realtime::handle_relay_signal(
                         &state,
-                        &relay,
                         &kind,
                         &session_id,
                         &peer_id,

@@ -227,6 +227,9 @@ impl RuntimeState {
         // 时把该 Peer 的非终态 TransferOperation 置为 Paused。业务状态保留在
         // TransferManager，等待下一次连接上的 ResumeTransfer(transfer_id) 恢复。
         self.transfers.pause_peer_transfers(peer_id).await;
+        // §22：RealtimeSession 绑定在 ConnectionSession 上，transport 丢失即随
+        // ConnectionSession 销毁（发出 Closed、销毁 PeerConnection）；不做透明恢复。
+        crate::realtime::close_realtime_sessions_for_session(self, peer_id, session_id).await;
         self.task_supervisor.cancel_session(&session_key).await;
     }
 
