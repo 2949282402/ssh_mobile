@@ -824,3 +824,64 @@ func TestMySQLStoreRevokeInitializesCounterWhenMissing(t *testing.T) {
 		t.Fatal("tombstone missing after revoke initialized the counter")
 	}
 }
+
+// TestMySQLStoreConcurrentNewDeviceEnrollBurstNoDeadlock verifies the enrollment
+// deadlock retry survives a burst of concurrent NEW-device enrollments into an
+// initially empty devices table (fresh DB: counter row also absent, so the
+// lazy-init gap interaction is exercised too). Every new key lands in one shared
+// gap, so the SELECT FOR UPDATE gap locks + INSERT insert-intention locks
+// deadlock (1213) and must be absorbed by the retry's exponential + jitter
+// backoff — a thin linear budget exhausts under this concurrency and misreports
+// transient contention as a capacity limit. All enrolls must succeed and the
+// counter must end exactly at COUNT(devices).
+func TestMySQLStoreConcurrentNewDeviceEnrollBurstNoDeadlock(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 100)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	// 校准：N 路并发全部挤进空表同一 gap，足以让旧预算（3 次线性短退避）必红，新预算
+	// （5 次指数+抖动）稳绿。
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(round int) {
+			defer wg.Done()
+			id := fmt.Sprintf("device-%02d", round)
+			result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: id, PublicKey: "key-" + id, EnrolledAt: time.Now()})
+			if err != nil || result != enrollmentOK {
+				errs <- fmt.Errorf("enroll %s: result=%v err=%v", id, result, err)
+				return
+			}
+			errs <- nil
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	count, err := store.CountEnrollments(ctx)
+	if err != nil {
+		t.Fatalf("count enrollments: %v", err)
+	}
+	if count != n {
+		t.Fatalf("expected %d devices enrolled, got %d", n, count)
+	}
+	counter, err := readEnrollmentCounter(t, dsn)
+	if err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	if counter != count {
+		t.Fatalf("counter drift: relay_meta.enrollment_count=%d COUNT(devices)=%d", counter, count)
+	}
+}
