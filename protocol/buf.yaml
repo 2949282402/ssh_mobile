@@ -1,0 +1,14 @@
+# buf configuration for the frozen relay v2 contract.
+#
+# The relay.v2 protos are locked. `buf lint` and `buf breaking` give the
+# frozen-contract guarantee: any field/tag change after freeze fails CI.
+# Run from protocol/:  buf lint  /  buf breaking --against <ref>
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

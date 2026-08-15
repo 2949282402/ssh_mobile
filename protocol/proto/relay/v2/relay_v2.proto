@@ -1,0 +1,328 @@
+// Relay control protocol v2 — FROZEN wire contract.
+//
+// This file is the single source of truth for the transport-network v2 relay
+// control plane and relay data plane. Field tags and semantics below are
+// FROZEN: do not renumber, do not repurpose a reserved tag, do not silently
+// change semantics. Downstream codecs (Rust prost in native/network_core,
+// Go protobuf in relay/internal/relay/v2) and the golden fixtures in
+// protocol/relay_v2_testdata/ are locked to this file.
+//
+// Centralized constants (mirrored in protocol/relay_v2_testdata/manifest.json
+// and in each codec; no magic numbers anywhere else):
+//   RELAY_V2_VERSION                       = 2
+//   FRAME_LENGTH_PREFIX_BYTES              = 4           // [u32 big-endian length][protobuf]
+//   MAX_RELAY_FRAME_BYTES                  = 4 + 512 * 1024
+//   MAX_RELAY_DATA_FRAME_BYTES             = 4 + 512 * 1024
+//   MAX_DEVICE_ID_BYTES                    = 128
+//   MAX_ATTEMPT_ID_BYTES                   = 128
+//   MAX_REALTIME_ID_BYTES                  = 128
+//   MAX_REALTIME_SIGNAL_PAYLOAD_BYTES      = 256 * 1024
+//   MAX_DISCOVERY_CANDIDATES               = 64
+//   MAX_DISCOVERY_CANDIDATE_BYTES          = 4096
+//   MAX_DISCOVERY_CAPABILITIES             = 64
+//   RESERVATION_ID_BYTES                   = 16          // 32 hex chars
+//   RESERVATION_TOKEN_BYTES                = 32
+//   HEARTBEAT_INTERVAL_S                   = 20
+//   PRESENCE_TTL_S                         = 60
+//   SERVER_HEARTBEAT_MISSES_BEFORE_CLOSE   = 2           // 60s TTL / 20s
+//   RESERVATION_LIFETIME_S_DEFAULT         = 60          // server clamps [15, 120]
+//   RESERVATION_EXPIRY_GRACE_S             = 5
+//   RESOLVE_RETRY_HINT_NOT_READY_MS        = 2000
+//   RESOLVE_RETRY_HINT_UNKNOWN_MS          = 5000
+//   DIRECT_CONNECT_WINDOW_MS               = 4000        // fixed; not carried on the wire
+//
+// Frame envelope (both routes):
+//   WS Binary payload == [4-byte big-endian length][protobuf RelayFrame]
+//   or                == [4-byte big-endian length][protobuf RelayDataFrame]
+//   Exactly ONE message per WS frame; length MUST equal frame.len() - 4.
+//   A RelayDataFrame on /v2/control (or a RelayFrame on /v2/relay) is a
+//   protocol violation and closes the connection.
+//
+// Route semantics:
+//   GET /v2/control               — long-lived control plane; ONLY RelayFrame.
+//   GET /v2/relay/{reservation_id} — reservation-scoped opaque data plane; ONLY RelayDataFrame.
+//
+// Correlation model:
+//   Every request carries request_id (uint64). Every async attempt carries
+//   attempt_id (string <= 128 bytes). Responses echo request_id; async
+//   attempts correlate by attempt_id. No global Notify.
+//
+// The v1->v2 mapping table and the message inventory are maintained in
+// protocol/RELAY_V2_CONTRACT.md (lockstep authority).
+
+syntax = "proto3";
+
+package relay.v2;
+
+option go_package = "github.com/ssh-mobile/relay/internal/relay/v2;v2";
+
+// Transport capability a peer advertises in its DiscoverySnapshot.
+// Value numbers are frozen; the enum-name prefix follows the network.v1
+// convention so value identifiers stay unique within the package.
+enum TransportCapability {
+  TRANSPORT_CAPABILITY_UNSPECIFIED = 0;
+  TRANSPORT_CAPABILITY_QUIC = 1;
+  TRANSPORT_CAPABILITY_TCP = 2;
+  TRANSPORT_CAPABILITY_UDP_DATAGRAM = 3;
+  TRANSPORT_CAPABILITY_WEBSOCKET = 4;
+  TRANSPORT_CAPABILITY_WEBRTC = 5;
+  TRANSPORT_CAPABILITY_RELAY_DATA = 6;
+}
+
+// Result of a peer lookup. There is no fail-open "online=true default".
+enum ResolveStatus {
+  RESOLVE_STATUS_UNSPECIFIED = 0;
+  RESOLVE_STATUS_READY = 1;
+  RESOLVE_STATUS_OFFLINE = 2;
+  RESOLVE_STATUS_NOT_READY = 3;
+  RESOLVE_STATUS_UNKNOWN = 4;
+}
+
+// Real-time media signal kind. Values 1..5 intentionally mirror
+// network.v1.RealtimeSignalKind (a unit test asserts they stay in sync).
+enum RealtimeSignalKind {
+  REALTIME_SIGNAL_KIND_UNSPECIFIED = 0;
+  REALTIME_SIGNAL_KIND_OFFER = 1;
+  REALTIME_SIGNAL_KIND_ANSWER = 2;
+  REALTIME_SIGNAL_KIND_ICE_CANDIDATE = 3;
+  REALTIME_SIGNAL_KIND_ICE_RESTART = 4;
+  REALTIME_SIGNAL_KIND_CLOSE = 5;
+}
+
+// Unified protocol error model (§33). No generic RelayError/IoError
+// fallthrough on the wire.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_CONTROL_UNAVAILABLE = 1;
+  ERROR_CODE_AUTHENTICATION_FAILED = 2;
+  ERROR_CODE_PEER_OFFLINE = 3;
+  ERROR_CODE_PEER_NOT_READY = 4;
+  ERROR_CODE_RESOLVE_TIMEOUT = 5;
+  ERROR_CODE_PROTOCOL = 6;
+  ERROR_CODE_EPOCH_CONFLICT = 7;
+  ERROR_CODE_REVISION_STALE = 8;
+  ERROR_CODE_RESERVATION_FAILED = 9;
+  ERROR_CODE_RESERVATION_EXPIRED = 10;
+  ERROR_CODE_RELAY_UNAVAILABLE = 11;
+  ERROR_CODE_RATE_LIMITED = 12;
+  ERROR_CODE_MALFORMED_FRAME = 13;
+  ERROR_CODE_FRAME_TOO_LARGE = 14;
+}
+
+// ---------------------------------------------------------------------------
+// Common messages
+// ---------------------------------------------------------------------------
+
+// 128-bit random runtime identity, big-endian (high, low). Two fixed64 keep
+// the value byte-stable and unambiguous across Go (no u128), Rust (u128 from
+// (high<<64)|low) and the golden fixtures.
+message RuntimeEpoch {
+  fixed64 high = 1;
+  fixed64 low = 2;
+}
+
+// Opaque native-encoded candidate blobs; the relay NEVER parses them.
+message CandidateBundle {
+  repeated bytes candidates = 1;
+}
+
+// A peer's published discovery. revision is the ONLY ordering signal and is
+// meaningful only within a single runtime_epoch (cross-epoch revisions are
+// incomparable).
+message DiscoverySnapshot {
+  RuntimeEpoch runtime_epoch = 1;
+  uint32 revision = 2;                       // monotonic within epoch, >= 1
+  repeated TransportCapability transport_capabilities = 3;
+  CandidateBundle candidate_bundle = 4;
+  int64 published_at_ms = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Control messages (ONLY on /v2/control)
+// ---------------------------------------------------------------------------
+
+message Ready {
+  uint32 protocol_version = 1;               // always 2
+  string device_id = 2;
+  int64 server_time_ms = 3;
+  uint32 heartbeat_interval_s = 4;           // fixed 20, server-confirmed
+  uint32 presence_ttl_s = 5;                 // fixed 60, server-confirmed
+}
+
+message Heartbeat {
+  uint64 request_id = 1;
+  int64 sent_at_ms = 2;
+}
+
+message HeartbeatAck {
+  uint64 request_id = 1;
+  int64 server_time_ms = 2;
+}
+
+message DiscoveryPublish {
+  uint64 request_id = 1;
+  DiscoverySnapshot snapshot = 2;
+}
+
+message DiscoveryAck {
+  uint64 request_id = 1;
+  RuntimeEpoch runtime_epoch = 2;
+  uint32 revision = 3;
+}
+
+message ResolvePeerRequest {
+  uint64 request_id = 1;
+  string target_device_id = 2;
+}
+
+message ResolvePeerResponse {
+  uint64 request_id = 1;
+  ResolveStatus status = 2;                  // READY/OFFLINE/NOT_READY/UNKNOWN
+  DiscoverySnapshot discovery = 3;           // present iff READY
+  uint32 retry_after_ms = 4;                 // NOT_READY: 2000; UNKNOWN: 5000 (hint)
+}
+
+message ConnectivityOffer {
+  uint64 request_id = 1;                     // initiator's control-connection request id
+  string attempt_id = 2;                     // async attempt correlation key
+  string initiator_device_id = 3;
+  RuntimeEpoch initiator_runtime_epoch = 4;
+  uint32 initiator_revision = 5;
+  DiscoverySnapshot initiator_snapshot = 6;  // client may omit; server overwrites with stored discovery before forwarding
+}
+
+message ConnectivityAnswer {
+  uint64 request_id = 1;                     // responder's own request id
+  string attempt_id = 2;                     // echoes the offer's attempt_id
+  bool accepted = 3;
+  string responder_device_id = 4;
+  RuntimeEpoch responder_runtime_epoch = 5;
+  uint32 responder_revision = 6;
+  DiscoverySnapshot responder_snapshot = 7;  // so the initiator learns B's candidates
+}
+
+message PresenceHintSnapshot {
+  repeated PeerPresenceHint peers = 1;       // advisory only; UI cache
+  int64 published_at_ms = 2;
+}
+
+message PeerPresenceHint {
+  string device_id = 1;
+  bool online = 2;
+  RuntimeEpoch runtime_epoch = 3;
+  uint32 revision = 4;
+}
+
+message PeerAvailableHint {
+  string device_id = 1;
+  RuntimeEpoch runtime_epoch = 2;
+  uint32 revision = 3;
+}
+
+message PeerUnavailableHint {
+  string device_id = 1;
+  string reason = 2;
+}
+
+message RelayReserveRequest {
+  uint64 request_id = 1;
+  string attempt_id = 2;
+  string target_device_id = 3;
+  uint32 desired_lifetime_s = 4;
+}
+
+message RelayReserveResponse {
+  uint64 request_id = 1;
+  string attempt_id = 2;
+  string reservation_id = 3;                 // 16-byte hex, 32 chars
+  string relay_data_endpoint = 4;            // self-contained wss://<host>/v2/relay/<reservation_id>
+  int64 expires_at_ms = 5;
+  bytes local_token = 6;                     // 32-byte random, THIS side's connect credential
+}
+
+message IncomingRelayReservation {
+  string attempt_id = 1;
+  string reservation_id = 2;
+  string initiator_device_id = 3;
+  string relay_data_endpoint = 4;
+  int64 expires_at_ms = 5;
+  bytes local_token = 6;                     // receiver-specific token (different from initiator's)
+}
+
+message RealtimeSignal {
+  uint64 request_id = 1;
+  string realtime_id = 2;
+  string target_device_id = 3;
+  RealtimeSignalKind kind = 4;
+  uint64 revision = 5;
+  bytes payload = 6;                         // <= 256 KiB
+}
+
+message ProtocolError {
+  uint64 request_id = 1;                     // echoes the failing request; 0 = server-initiated
+  string attempt_id = 2;                     // set when the error belongs to an async attempt
+  ErrorCode code = 3;
+  string message = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Envelope: control
+// ---------------------------------------------------------------------------
+
+message RelayFrame {
+  uint32 version = 1;                        // must be 2
+  oneof kind {
+    Ready ready = 10;
+    Heartbeat heartbeat = 11;
+    HeartbeatAck heartbeat_ack = 12;
+    DiscoveryPublish discovery_publish = 13;
+    DiscoveryAck discovery_ack = 14;
+    ResolvePeerRequest resolve_peer_request = 15;
+    ResolvePeerResponse resolve_peer_response = 16;
+    ConnectivityOffer connectivity_offer = 17;
+    ConnectivityAnswer connectivity_answer = 18;
+    PresenceHintSnapshot presence_hint_snapshot = 19;
+    PeerAvailableHint peer_available_hint = 20;
+    PeerUnavailableHint peer_unavailable_hint = 21;
+    RelayReserveRequest relay_reserve_request = 22;
+    RelayReserveResponse relay_reserve_response = 23;
+    IncomingRelayReservation incoming_relay_reservation = 24;
+    RealtimeSignal realtime_signal = 25;
+    ProtocolError protocol_error = 26;
+  }
+  reserved 30 to 63;                         // future control messages; 64+ experimental
+}
+
+// ---------------------------------------------------------------------------
+// Relay-data messages (ONLY on /v2/relay/{reservation_id})
+// ---------------------------------------------------------------------------
+
+message RelayDataFrame {
+  uint32 version = 1;                        // must be 2
+  oneof kind {
+    RelayDataConnect connect = 10;
+    RelayDataPayload payload = 11;
+    RelayDataAck ack = 12;
+    RelayDataClose close = 13;
+  }
+  reserved 30 to 63;                         // future data messages; 64+ experimental
+}
+
+message RelayDataConnect {
+  string reservation_id = 1;                 // must equal the path segment
+  bytes local_token = 2;                     // must match the reservation-side token
+}
+
+message RelayDataPayload {
+  uint64 sequence = 1;                       // monotonic per direction
+  bytes encrypted_payload = 2;               // opaque; relay never decrypts or parses
+}
+
+message RelayDataAck {
+  uint64 sequence = 1;                       // receipt / flow-control echo
+}
+
+message RelayDataClose {
+  uint32 reason = 1;                         // 0 normal, 1 expiry, 2 error
+  string detail = 2;
+}
