@@ -27,7 +27,10 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use network_relay::v2::{DiscoveryAck, DiscoverySnapshot, ResolvePeerResponse};
+use network_relay::v2::{
+    ConnectivityAnswer, DiscoveryAck, DiscoverySnapshot, RelayReserveResponse, ResolvePeerResponse,
+    RuntimeEpoch,
+};
 use network_relay::{RelayControlClient, RelayError};
 
 use crate::runtime::RuntimeState;
@@ -59,6 +62,31 @@ pub(crate) trait DiscoveryControlPlane: Send + Sync {
 
     /// 控制面 socket 是否仍可发送新帧。
     fn is_usable(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>>;
+
+    /// 开启一个异步 connectivity attempt，按 `attempt_id` 关联应答（§14/§31）。
+    ///
+    /// 默认实现：未接线的 mock 返回 NotConnected。
+    fn start_connectivity_attempt(
+        &self,
+        _attempt_id: String,
+        _initiator_device_id: String,
+        _initiator_runtime_epoch: RuntimeEpoch,
+        _initiator_revision: u32,
+        _initiator_snapshot: Option<DiscoverySnapshot>,
+    ) -> Pin<Box<dyn Future<Output = Result<ConnectivityAnswer, RelayError>> + Send + '_>> {
+        Box::pin(async move { Err(RelayError::NotConnected) })
+    }
+
+    /// 请求 Relay 分配数据面 reservation（§25/§31）。默认实现：未接线的 mock 返回
+    /// NotConnected。
+    fn reserve_relay(
+        &self,
+        _attempt_id: String,
+        _target_device_id: String,
+        _desired_lifetime_s: u32,
+    ) -> Pin<Box<dyn Future<Output = Result<RelayReserveResponse, RelayError>> + Send + '_>> {
+        Box::pin(async move { Err(RelayError::NotConnected) })
+    }
 
     /// 该 sink 是否把发布者分配的 request_id 原样带回 ACK。
     ///
@@ -93,6 +121,44 @@ impl DiscoveryControlPlane for RelayControlClient {
 
     fn is_usable(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
         Box::pin(async move { RelayControlClient::is_usable(self).await })
+    }
+
+    fn start_connectivity_attempt(
+        &self,
+        attempt_id: String,
+        initiator_device_id: String,
+        initiator_runtime_epoch: RuntimeEpoch,
+        initiator_revision: u32,
+        initiator_snapshot: Option<DiscoverySnapshot>,
+    ) -> Pin<Box<dyn Future<Output = Result<ConnectivityAnswer, RelayError>> + Send + '_>> {
+        Box::pin(async move {
+            RelayControlClient::start_connectivity_attempt(
+                self,
+                attempt_id,
+                initiator_device_id,
+                initiator_runtime_epoch,
+                initiator_revision,
+                initiator_snapshot,
+            )
+            .await
+        })
+    }
+
+    fn reserve_relay(
+        &self,
+        attempt_id: String,
+        target_device_id: String,
+        desired_lifetime_s: u32,
+    ) -> Pin<Box<dyn Future<Output = Result<RelayReserveResponse, RelayError>> + Send + '_>> {
+        Box::pin(async move {
+            RelayControlClient::reserve_relay(
+                self,
+                &attempt_id,
+                &target_device_id,
+                desired_lifetime_s,
+            )
+            .await
+        })
     }
 }
 
