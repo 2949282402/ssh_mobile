@@ -2,16 +2,22 @@
 
 # network_sdk
 
-`network_sdk` 是 Flutter 层的网络业务客户端契约与纯适配包。它按鉴权策略和
-生命周期区分 `BootstrapClient`、`AuthenticatedApiClient`、`SessionClient`
-和 `EventStreamClient`，但不按 QUIC、TCP 或 WebSocket 暴露传输客户端。
+`network_sdk` 是 Flutter 层的网络业务客户端契约与纯适配包。业务通过
+`NetworkFacade` 消费高层操作（连接/断开对端、批量文件传输、可靠消息、实时会话、
+Presence 提示事件流），并通过 `CommunicationClass` 表达通信语义，不按 QUIC、
+TCP 或 WebSocket 暴露传输客户端。底层 `BootstrapClient`、`AuthenticatedApiClient`、
+`SessionClient` 和 `EventStreamClient` 是 Facade 或 App Shell 的内部边界。
 
 ## 边界
 
 - 定义可注入的客户端、结果、错误、Session、Route、Transfer、事件和请求执行器契约；
+- `NetworkFacade` 是业务唯一门面，隐藏 Candidate/Resolve/PathManager/RelayClient
+  状态机；`CommunicationClass` 固定五种业务类别（ReliableStream/ReliableMessage/
+  BulkTransfer/UnreliableDatagram/RealtimeMedia），映射到现有 native tag；
 - 提供不持有 HTTP 资源的 `JsonBootstrapClient` 与
   `JsonAuthenticatedApiClient`，统一 JSON 编解码、Bearer 注入、刷新重试和错误映射；
-- `SessionClient` 只提交业务意图，数据面连接由 Rust/native runtime 持有；
+- `SessionClient` 只提交业务意图，作为 `NetworkFacade` 的低层内部实现，
+  数据面连接由 Rust/native runtime 持有；
 - `RealtimeClient` 只提供 Feature-facing `RealtimeSession`，包括
   `start()`、`stop()`、`state`、`remoteVideo` 和 `audioState`；PeerConnection、
   ICE、SDP、signaling、socket 和 native media resource 全部由 App/native Owner 持有；

@@ -99,7 +99,7 @@ void main() {
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
         networkFactory: FakeLanShareNetworkFactory(
-          networkService: networkService,
+          networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
         historyRepository: LanShareHistoryRepository(database),
@@ -139,7 +139,7 @@ void main() {
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
         networkFactory: FakeLanShareNetworkFactory(
-          networkService: networkService,
+          networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
         historyRepository: LanShareHistoryRepository(database),
@@ -188,7 +188,7 @@ void main() {
         dataProtection: FakeLanShareDataProtection(),
         networkIdentity: FakeLanShareIdentity(),
         networkFactory: FakeLanShareNetworkFactory(
-          networkService: networkService,
+          networkFacade: networkService,
         ),
         bootstrapClient: FakeLanShareBootstrapClient(),
         historyRepository: LanShareHistoryRepository(database),
@@ -451,7 +451,7 @@ LanReceiverCoordinator _buildRelayCoordinator(
     logger: FakeLanShareLogger(),
     dataProtection: FakeLanShareDataProtection(),
     networkIdentity: FakeLanShareIdentity(),
-    networkFactory: FakeLanShareNetworkFactory(networkService: networkService),
+    networkFactory: FakeLanShareNetworkFactory(networkFacade: networkService),
     bootstrapClient: bootstrapClient,
     historyRepository: LanShareHistoryRepository(database),
     networkRuntime: FakeLanShareNetworkRuntime(),

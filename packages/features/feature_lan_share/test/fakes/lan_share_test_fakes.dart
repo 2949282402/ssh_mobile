@@ -111,15 +111,15 @@ final class FakeLanShareIdentity implements LanShareNetworkIdentityPort {
 }
 
 final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
-  FakeLanShareNetworkFactory({this.networkService});
+  FakeLanShareNetworkFactory({this.networkFacade});
 
   int createCalls = 0;
 
-  /// 返回给协调器的 NetworkService；null 模拟 App Shell 未创建原生服务。
-  final NetworkService? networkService;
+  /// 返回给协调器的 NetworkFacade；null 模拟 App Shell 未创建原生门面。
+  final NetworkFacade? networkFacade;
 
   @override
-  Future<NetworkService?> create({
+  Future<NetworkFacade?> create({
     required String deviceId,
     required Uint8List identityPrivateKey,
     required Uint8List e2ePrivateKey,
@@ -127,7 +127,7 @@ final class FakeLanShareNetworkFactory implements LanShareNetworkFactory {
     required String receiveDirectory,
   }) async {
     createCalls++;
-    return networkService;
+    return networkFacade;
   }
 }
 
@@ -184,14 +184,16 @@ final class FakeLanShareNetworkRuntime implements NetworkRuntime {
   }
 }
 
-/// 记录 Relay 配置调用且支持受控生命周期的 fake NetworkService。
-final class FakeLanShareNetworkService implements NetworkService {
+/// 记录 Relay 配置调用且支持受控生命周期的 fake NetworkFacade。
+final class FakeLanShareNetworkService implements NetworkFacade {
   final StreamController<NetworkEvent> _events =
       StreamController<NetworkEvent>.broadcast();
   int startCalls = 0;
   int stopCalls = 0;
   int configureRelayCalls = 0;
   int disconnectRelayCalls = 0;
+  int connectPeerCalls = 0;
+  int transferFileCalls = 0;
   int _eventSequence = 0;
   bool disposed = false;
 
@@ -222,13 +224,6 @@ final class FakeLanShareNetworkService implements NetworkService {
     return const SdkSuccess<void>(null);
   }
 
-  @override
-  Future<SdkResult<void>> uploadDiscovery({
-    required int generation,
-    required List<String> candidates,
-    required List<String> capabilities,
-  }) async => const SdkSuccess<void>(null);
-
   /// 向协调器发布一个受控的 Relay 生命周期事件。
   void emitRelayState(RelayConnectionState state, {NetworkError? error}) {
     _events.add(
@@ -242,38 +237,65 @@ final class FakeLanShareNetworkService implements NetworkService {
   }
 
   @override
-  Future<SdkResult<void>> upsertPeer(SdkPeerConfig peer) async =>
+  Future<SdkResult<void>> connectPeer(
+    String peerId, {
+    SdkPeerConfig? peer,
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
+  }) async {
+    connectPeerCalls++;
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> disconnectPeer(String peerId) async =>
       const SdkSuccess<void>(null);
 
   @override
-  Future<SdkResult<void>> connect(String peerId) async =>
-      const SdkSuccess<void>(null);
-
-  @override
-  Future<SdkResult<void>> disconnect(String peerId) async =>
-      const SdkSuccess<void>(null);
-
-  @override
-  Future<SdkResult<SdkTransferSession>> send({
+  Future<SdkResult<SdkTransferSession>> transferFile({
     required String transferId,
     required String peerId,
     required String filePath,
-  }) => throw UnsupportedError('not used in this test');
+    CommunicationClass communicationClass = CommunicationClass.bulkTransfer,
+  }) async {
+    transferFileCalls++;
+    return SdkSuccess(
+      SdkTransferSession(
+        transferId: transferId,
+        peerId: peerId,
+        filePath: filePath,
+        routeType: NetworkRouteType.lan,
+      ),
+    );
+  }
 
   @override
-  Future<SdkResult<void>> cancel(String transferId) async =>
+  Future<SdkResult<void>> cancelTransfer(String transferId) async =>
       const SdkSuccess<void>(null);
 
   @override
-  Future<SdkResult<void>> respondToIncoming({
+  Future<SdkResult<void>> respondToIncomingTransfer({
     required String transferId,
     required bool accept,
   }) async => const SdkSuccess<void>(null);
 
   @override
-  Future<SdkResult<SdkRouteSnapshot>> state(String peerId) async => SdkSuccess(
-    SdkRouteSnapshot(peerId: peerId, routeType: NetworkRouteType.lan),
-  );
+  Future<SdkResult<void>> sendMessage({
+    required String peerId,
+    required Uint8List payload,
+    CommunicationClass communicationClass = CommunicationClass.reliableMessage,
+  }) async => const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<SdkRouteSnapshot>> peerState(String peerId) async =>
+      SdkSuccess(
+        SdkRouteSnapshot(peerId: peerId, routeType: NetworkRouteType.lan),
+      );
+
+  @override
+  RealtimeSession createRealtimeSession({
+    required String realtimeId,
+    required String peerId,
+  }) => throw UnimplementedError('not used in this test');
 
   @override
   Future<void> dispose() async {

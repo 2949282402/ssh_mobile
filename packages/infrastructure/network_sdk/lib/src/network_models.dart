@@ -95,8 +95,7 @@ enum NetworkOperation {
   connectRelay('connect_relay'),
   bootstrapProbe('bootstrap_probe'),
   listPeers('list_peers'),
-  requestConnection('request_connection'),
-  uploadDiscovery('upload_discovery');
+  requestConnection('request_connection');
 
   const NetworkOperation(this.wireName);
 

@@ -113,6 +113,12 @@ final class AppRuntime implements Disposable {
   /// App Scope Realtime SDK owner; its backend borrows the NetworkRuntime handle.
   final RealtimeClient realtimeClient;
 
+  /// 当前业务网络门面；由 App 组合根装配并在 LAN 接收器激活后可用。
+  ///
+  /// 未激活时为 null；激活后返回包装共享 NetworkRuntime/RealtimeClient 的
+  /// [NetworkFacade]。业务只消费该门面，不直接操作底层 Session/Runtime。
+  NetworkFacade? get networkFacade => lanShareModule.coordinator.networkFacade;
+
   /// 启动协调器属于 App Shell，负责首帧前后的核心初始化状态。
   final AppBootstrapCoordinator bootstrapCoordinator;
 
