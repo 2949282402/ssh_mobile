@@ -51,5 +51,10 @@ func (s *Server) upgradeDevice(w http.ResponseWriter, r *http.Request) {
 	})
 	if !peer.enqueue(outboundFrame{websocket.TextMessage, ready}) {
 		s.hub.remove(peer)
+		return
 	}
+	// presence_snapshot 不在连接路径下发：按明确版 §8，设备需先上传 discovery_update
+	// 证明就绪才被纳入推送发现；快照在 handleDiscoveryUpdate 首次真实上报时发给该设备
+	// （见 hub_control.go sendPresenceSnapshot），同时把 peer_online 广播给其它在线设备。
+	// 这样 ready 之后的帧序列保持最小（仅后续推送帧），不打断既有设备端帧序假设。
 }

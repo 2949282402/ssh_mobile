@@ -10,16 +10,25 @@ package relay
 
 import (
 	"context"
+	"encoding/json"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // RelayEvent 是经 relayEventsChannel 广播的跨实例生命周期事件。
 // connection.replaced 额外携带新旧连接的实例/连接 ID，供旧实例定向断开被取代的
 // 那条连接（而非整个 device，避免延迟事件误踢更新一代）。
+// peer_online/peer_updated/peer_offline 携带该设备的 discovery generation，供
+// 其它实例重建推送发现帧。
 type RelayEvent struct {
-	Type            string `json:"type"`
-	DeviceID        string `json:"device_id"`
-	Time            int64  `json:"ts"`
+	Type       string `json:"type"`
+	DeviceID   string `json:"device_id"`
+	Time       int64  `json:"ts"`
+	Generation uint64 `json:"generation,omitempty"`
+	// InstanceID 是发布事件实例的标识：推送发现事件由发布方先本地广播再 Publish，
+	// 订阅方（含发布方自身的订阅连接）据此跳过同实例回环，避免对本地 peer 重复推送。
+	InstanceID      string `json:"instance_id,omitempty"`
 	OldInstanceID   string `json:"old_instance_id,omitempty"`
 	OldConnectionID string `json:"old_connection_id,omitempty"`
 	NewConnectionID string `json:"new_connection_id,omitempty"`
@@ -34,6 +43,13 @@ const (
 	// 据此定向断开指定的 old_connection_id，让跨实例替换立即收敛（而非等旧连接
 	// 下一次心跳续租失败才自愈）。heartbeat CAS renew 保留作事件丢失的兜底。
 	eventConnectionReplaced = "connection.replaced"
+	// eventPeerOnline 表示设备首次上报 discovery，所有实例向本实例其余 peer
+	// 广播 peer_online 帧。
+	eventPeerOnline = "peer.online"
+	// eventPeerUpdated 表示设备 discovery generation 变化，所有实例广播 peer_updated。
+	eventPeerUpdated = "peer.updated"
+	// eventPeerOffline 表示设备离线（sweeper 清理僵尸连接），所有实例广播 peer_offline。
+	eventPeerOffline = "peer.offline"
 
 	// reconcileInterval 是吊销对账周期：封顶 Redis 抖动期间丢失事件的窗口。
 	reconcileInterval = 15 * time.Second
@@ -47,6 +63,21 @@ func (s *Server) handleRelayEvent(event RelayEvent) {
 		s.hub.disconnectDevice(event.DeviceID)
 	case eventConnectionReplaced:
 		s.hub.disconnectConnection(event.DeviceID, event.OldConnectionID)
+	case eventPeerOnline, eventPeerUpdated, eventPeerOffline:
+		// 发布方（含本实例自己的订阅连接）会收到自己发布的事件；发布方已在本地
+		// 广播过，这里跳过同实例回环，避免对本地 peer 重复推送。
+		if event.InstanceID == s.hub.instanceID {
+			return
+		}
+		// 其它实例发布的推送发现事件：本实例把对应帧广播给所有本地 peer（排除事件
+		// 归属设备自身，它所在的实例负责直接通知它）。
+		frameType := map[string]string{
+			eventPeerOnline:  framePeerOnline,
+			eventPeerUpdated: framePeerUpdated,
+			eventPeerOffline: framePeerOffline,
+		}[event.Type]
+		frame, _ := json.Marshal(controlFrame{Type: frameType, DeviceID: event.DeviceID, Generation: event.Generation})
+		s.hub.broadcast(event.DeviceID, outboundFrame{websocket.TextMessage, frame})
 	}
 }
 

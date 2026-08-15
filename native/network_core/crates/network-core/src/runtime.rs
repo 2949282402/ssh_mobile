@@ -39,7 +39,8 @@ use std::path::PathBuf;
 pub(crate) const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 pub(crate) const DEFAULT_CANDIDATE_CONNECT_WINDOW: Duration =
     Duration::from_millis(network_nat::DEFAULT_CONNECT_WINDOW_MS as u64);
-pub(crate) const RELAY_RACE_DELAY: Duration = Duration::from_millis(500);
+/// Relay Presence 表中未刷新条目的过期时间；peer_offline 或 TTL 到期都会清理缓存。
+pub(crate) const PRESENCE_TTL: Duration = Duration::from_secs(300);
 pub(crate) const RECONNECT_MAX_ATTEMPTS: usize = 5;
 pub(crate) const RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 pub(crate) const RECONNECT_MAX_BACKOFF: Duration = Duration::from_secs(5);
@@ -130,6 +131,24 @@ pub(crate) struct CandidateAttempt {
     pub(crate) expires_at: Instant,
 }
 
+/// Relay Presence 控制面维护的在线设备摘要（Discovery Cache）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PeerPresence {
+    pub(crate) generation: u64,
+    pub(crate) last_online: Instant,
+}
+
+/// Relay lookup 的完整结果：在线状态 + 该设备的 Discovery（generation/candidates/
+/// capabilities）。候选是不透明 base64 JSON 字符串（CandidateAdvertisement 序列化），
+/// 消费端负责解码。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LookupResult {
+    pub(crate) online: bool,
+    pub(crate) generation: u64,
+    pub(crate) candidates: Vec<String>,
+    pub(crate) capabilities: Vec<String>,
+}
+
 pub(crate) struct RuntimeState {
     /// Native bind 完成后发布实际 UDP 端口，供受控 FFI 诊断读取。
     ///
@@ -175,7 +194,9 @@ pub(crate) struct RuntimeState {
     pub(crate) relay_acceptances:
         RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
-    pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<bool>>>,
+    pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<LookupResult>>>,
+    /// Relay Presence 控制面维护的在线设备表；presence_snapshot 填充，增量帧更新。
+    pub(crate) peer_presence: RwLock<HashMap<String, PeerPresence>>,
     pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
     pub(crate) relay_crypto_confirmers:
@@ -225,6 +246,7 @@ impl RuntimeState {
             relay_acceptances: RwLock::new(HashMap::new()),
             relay_completions: RwLock::new(HashMap::new()),
             relay_lookups: RwLock::new(HashMap::new()),
+            peer_presence: RwLock::new(HashMap::new()),
             relay_crypto_waiters: RwLock::new(HashMap::new()),
             relay_crypto_responders: AsyncMutex::new(HashMap::new()),
             relay_crypto_confirmers: AsyncMutex::new(HashMap::new()),

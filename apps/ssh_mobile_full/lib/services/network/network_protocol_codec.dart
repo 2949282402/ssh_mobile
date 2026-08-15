@@ -134,6 +134,26 @@ final class NetworkProtocolCodec {
   Uint8List disconnectRelayCommand({required String commandId}) =>
       _command(commandId, 18, Uint8List(0));
 
+  /// 编码 Discovery 上传命令。
+  ///
+  /// 载荷镜像 network_protocol UploadDiscoveryCommand：generation(1)、
+  /// candidates(2)、capabilities(3)。命令信封字段 tag 24 与 Rust 侧 oneof 对齐。
+  Uint8List uploadDiscoveryCommand({
+    required String commandId,
+    required int generation,
+    List<String> candidates = const <String>[],
+    List<String> capabilities = const <String>[],
+  }) {
+    final payload = _ProtoWriter()..varint(1, generation);
+    for (final candidate in candidates) {
+      payload.string(2, candidate);
+    }
+    for (final capability in capabilities) {
+      payload.string(3, capability);
+    }
+    return _command(commandId, 24, payload.takeBytes());
+  }
+
   /// 从 v1 命令信封读取命令标识。
   String commandId(Uint8List command) {
     final reader = _ProtoReader(command);
@@ -208,6 +228,18 @@ final class NetworkProtocolCodec {
           );
         case 18:
           event = _decodeRelayStateChanged(
+            eventId,
+            timestampMs,
+            reader.bytes(field.wireType),
+          );
+        case 24:
+          event = _decodePeerPresence(
+            eventId,
+            timestampMs,
+            reader.bytes(field.wireType),
+          );
+        case 25:
+          event = _decodePeerPresenceSnapshot(
             eventId,
             timestampMs,
             reader.bytes(field.wireType),
@@ -484,6 +516,93 @@ final class NetworkProtocolCodec {
         rtt: rtt == null ? null : Duration(milliseconds: rtt),
         loss: loss == null ? null : loss / 1000,
       ),
+    );
+  }
+
+  /// 解码 Relay Presence 推送的对端状态载荷（tag 24）。
+  ///
+  /// 字段镜像 network_protocol PeerPresenceChangedEvent：peer_id(1)、
+  /// generation(2)、state(3)。单个事件表示一台设备的 online/updated/offline 变化。
+  PeerPresenceChanged _decodePeerPresence(
+    String eventId,
+    int timestampMs,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var generation = 0;
+    var state = 0;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = utf8.decode(reader.bytes(field.wireType));
+        case 2:
+          generation = reader.varint(field.wireType);
+        case 3:
+          state = reader.varint(field.wireType);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    return PeerPresenceChanged(
+      eventId: eventId,
+      timestamp: _timestamp(timestampMs),
+      peerId: peerId,
+      generation: generation,
+      state: PeerPresenceState.fromWire(state),
+    );
+  }
+
+  /// 解码 Relay Presence 完整在线设备快照（tag 25）。
+  ///
+  /// 字段镜像 network_protocol PeerPresenceSnapshotEvent：peers(1) 是重复的
+  /// PeerPresenceChangedEvent 消息。快照在设备认证连接后推送一次，作为其本地
+  /// 设备列表基线。
+  PeerPresenceSnapshot _decodePeerPresenceSnapshot(
+    String eventId,
+    int timestampMs,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    final peers = <PeerPresenceChanged>[];
+    while (!reader.isDone) {
+      final field = reader.field();
+      if (field.number == 1) {
+        final peerReader = _ProtoReader(reader.bytes(field.wireType));
+        var peerId = '';
+        var generation = 0;
+        var state = 0;
+        while (!peerReader.isDone) {
+          final peerField = peerReader.field();
+          switch (peerField.number) {
+            case 1:
+              peerId = utf8.decode(peerReader.bytes(peerField.wireType));
+            case 2:
+              generation = peerReader.varint(peerField.wireType);
+            case 3:
+              state = peerReader.varint(peerField.wireType);
+            default:
+              peerReader.skip(peerField.wireType);
+          }
+        }
+        peers.add(
+          PeerPresenceChanged(
+            eventId: eventId,
+            timestamp: _timestamp(timestampMs),
+            peerId: peerId,
+            generation: generation,
+            state: PeerPresenceState.fromWire(state),
+          ),
+        );
+      } else {
+        reader.skip(field.wireType);
+      }
+    }
+    return PeerPresenceSnapshot(
+      eventId: eventId,
+      timestamp: _timestamp(timestampMs),
+      peers: peers,
     );
   }
 

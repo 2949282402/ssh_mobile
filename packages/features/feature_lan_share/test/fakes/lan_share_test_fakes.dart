@@ -222,6 +222,13 @@ final class FakeLanShareNetworkService implements NetworkService {
     return const SdkSuccess<void>(null);
   }
 
+  @override
+  Future<SdkResult<void>> uploadDiscovery({
+    required int generation,
+    required List<String> candidates,
+    required List<String> capabilities,
+  }) async => const SdkSuccess<void>(null);
+
   /// 向协调器发布一个受控的 Relay 生命周期事件。
   void emitRelayState(RelayConnectionState state, {NetworkError? error}) {
     _events.add(

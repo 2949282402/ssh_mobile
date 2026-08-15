@@ -140,4 +140,46 @@ void main() {
     expect(event.routeTopology, NetworkRouteTopology.direct);
     expect(event.routeTransport, NetworkRouteTransport.tcp);
   });
+
+  test('peer presence change event decodes from v1 bytes', () {
+    final frame = codec.decodeEvent(
+      Uint8List.fromList(<int>[
+        0x0a, 0x01, 0x65, // event_id = e
+        0x18, 0x01, // protocol_version = 1
+        0xc2, 0x01, 0x07, // field 24 (peer presence change), length 7
+        0x0a, 0x01, 0x70, // peer_id = p
+        0x10, 0x02, // generation = 2
+        0x18, 0x01, // state = online
+      ]),
+    );
+    final event = frame.event! as PeerPresenceChanged;
+    expect(event.peerId, 'p');
+    expect(event.generation, 2);
+    expect(event.state, PeerPresenceState.online);
+  });
+
+  test('peer presence snapshot event decodes a peer list', () {
+    final frame = codec.decodeEvent(
+      Uint8List.fromList(<int>[
+        0x0a, 0x01, 0x65, // event_id = e
+        0x18, 0x01, // protocol_version = 1
+        0xca, 0x01, 0x12, // field 25 (peer presence snapshot), length 18
+        0x0a, 0x07, // peers[0] message, length 7
+        0x0a, 0x01, 0x70, // peer_id = p
+        0x10, 0x01, // generation = 1
+        0x18, 0x01, // state = online
+        0x0a, 0x07, // peers[1] message, length 7
+        0x0a, 0x01, 0x71, // peer_id = q
+        0x10, 0x03, // generation = 3
+        0x18, 0x02, // state = updated
+      ]),
+    );
+    final event = frame.event! as PeerPresenceSnapshot;
+    expect(event.peers, hasLength(2));
+    expect(event.peers.first.peerId, 'p');
+    expect(event.peers.first.state, PeerPresenceState.online);
+    expect(event.peers.last.peerId, 'q');
+    expect(event.peers.last.generation, 3);
+    expect(event.peers.last.state, PeerPresenceState.updated);
+  });
 }

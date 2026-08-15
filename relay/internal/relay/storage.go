@@ -78,13 +78,14 @@ type memoryStore struct {
 	revokedDevices  map[string]revokedDevice
 	proofNonces     map[string]map[string]time.Time
 	presence        map[string]presenceEntry
+	discovery       map[string]discoveryEntry
 	adminSessions   map[string]time.Time
 	maxEnrolled     int
 	maxRevoked      int
 	maxAdminSession int
 	mu              sync.Mutex
 	// deviceMu 保护 device-plane 三张 map（enrolledDevices/revokedDevices/
-	// proofNonces）。presence 与 adminSessions 由 mu 保护。两者从不嵌套持有。
+	// proofNonces）。presence、discovery 与 adminSessions 由 mu 保护。两者从不嵌套持有。
 	deviceMu sync.Mutex
 }
 
@@ -95,6 +96,7 @@ func newMemoryStore(config Config) *memoryStore {
 		revokedDevices:  make(map[string]revokedDevice),
 		proofNonces:     make(map[string]map[string]time.Time),
 		presence:        make(map[string]presenceEntry),
+		discovery:       make(map[string]discoveryEntry),
 		adminSessions:   make(map[string]time.Time),
 		maxEnrolled:     config.MaxEnrolledDevices,
 		maxRevoked:      config.MaxRevokedDevices,

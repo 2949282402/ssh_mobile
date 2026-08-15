@@ -95,7 +95,8 @@ enum NetworkOperation {
   connectRelay('connect_relay'),
   bootstrapProbe('bootstrap_probe'),
   listPeers('list_peers'),
-  requestConnection('request_connection');
+  requestConnection('request_connection'),
+  uploadDiscovery('upload_discovery');
 
   const NetworkOperation(this.wireName);
 
@@ -273,6 +274,24 @@ enum RelayConnectionState {
 
   static RelayConnectionState fromWire(int value) =>
       RelayConnectionState.values.firstWhere(
+        (state) => state.wireValue == value,
+        orElse: () => unspecified,
+      );
+}
+
+/// Relay Presence 控制面推送的对端在线状态。
+enum PeerPresenceState {
+  unspecified(0),
+  online(1),
+  updated(2),
+  offline(3);
+
+  const PeerPresenceState(this.wireValue);
+
+  final int wireValue;
+
+  static PeerPresenceState fromWire(int value) =>
+      PeerPresenceState.values.firstWhere(
         (state) => state.wireValue == value,
         orElse: () => unspecified,
       );
@@ -458,4 +477,30 @@ final class RelayStateChanged extends SdkEvent {
 
   final RelayConnectionState state;
   final NetworkError? error;
+}
+
+/// 单个对端的 Relay Presence 变化（online/updated/offline）。
+final class PeerPresenceChanged extends SdkEvent {
+  const PeerPresenceChanged({
+    required super.eventId,
+    required super.timestamp,
+    required this.peerId,
+    required this.generation,
+    required this.state,
+  });
+
+  final String peerId;
+  final int generation;
+  final PeerPresenceState state;
+}
+
+/// Relay 认证连接后推送的完整在线设备快照。
+final class PeerPresenceSnapshot extends SdkEvent {
+  const PeerPresenceSnapshot({
+    required super.eventId,
+    required super.timestamp,
+    required this.peers,
+  });
+
+  final List<PeerPresenceChanged> peers;
 }
