@@ -296,13 +296,25 @@ func (r *redisStore) GetPresences(ctx context.Context, deviceIDs []string) (map[
 	return result, nil
 }
 
-// takeDiscoveryScript unconditionally stores the discovery for a device
-// (newest upload wins). KEYS[1]=relay:discovery:<deviceID>; ARGV[1]=json,
-// ARGV[2]=ttl(ms). No previous-value return is needed: a takeover is already
-// signalled by the presence lease's connection.replaced event, and discovery
-// rides the same lifecycle.
+// takeDiscoveryScript stores a device's discovery only while the writer still
+// owns the presence lease (CAS). Presence ownership is the single authority for
+// "which connection may publish discovery": a superseded connection whose
+// presence has been taken over by a newer connection cannot overwrite the newer
+// connection's discovery back to itself (cross-instance reconnect race).
+// KEYS[1]=relay:presence:<deviceID>, KEYS[2]=relay:discovery:<deviceID>;
+// ARGV[1]=connID, ARGV[2]=discovery json, ARGV[3]=ttl(ms). Returns 1 when the
+// discovery was written, 0 when connID is not the presence owner (rejected).
 const takeDiscoveryScript = `
-redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+local pdata = redis.call('GET', KEYS[1])
+if not pdata then
+  return 0
+end
+local pok, pobj = pcall(cjson.decode, pdata)
+-- type(pobj)=='table' excludes JSON null/primitives (see renewPresenceScript).
+if not (pok and type(pobj) == 'table' and pobj['connection_id'] == ARGV[1]) then
+  return 0
+end
+redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[3])
 return 1
 `
 
@@ -347,11 +359,19 @@ func (r *redisStore) TakeDiscovery(ctx context.Context, deviceID, connID string,
 	if err != nil {
 		return err
 	}
-	_, err = r.client.Eval(ctx, takeDiscoveryScript,
-		[]string{r.discoveryKey(deviceID)},
-		string(data), ttl.Milliseconds(),
-	).Result()
-	return err
+	// 脚本同时读 presence（KEYS[1]）与 discovery（KEYS[2]），GET→校验→SET 原子，
+	// 不存在 handleDiscoveryUpdate 里的 get-then-set TOCTOU 窗口。
+	result, err := r.client.Eval(ctx, takeDiscoveryScript,
+		[]string{r.presenceKey(deviceID), r.discoveryKey(deviceID)},
+		connID, string(data), ttl.Milliseconds(),
+	).Int()
+	if err != nil {
+		return err
+	}
+	if result != 1 {
+		return errDiscoveryNotOwner
+	}
+	return nil
 }
 
 func (r *redisStore) RenewDiscovery(ctx context.Context, deviceID, connID string, ttl time.Duration) (bool, error) {
@@ -423,9 +443,12 @@ func (r *redisStore) GetDiscoveries(ctx context.Context, deviceIDs []string) (ma
 	return result, nil
 }
 
-// ListOnlinePeers 返回 presence 与 discovery 均有效的设备（明确版 §13 的在线判定）。
-// 用 SCAN 枚举 presence 键（活跃租约的键即在线），再批量取 discovery；presence 键
-// 的 TTL 由 Redis 主动过期，故 SCAN 到的即未过期，discovery 以 MGET 结果为准。
+// ListOnlinePeers 返回可在线判定的设备（明确版 §13）：presence 与 discovery 均有效、
+// discovery.Generation>0、且 presence 与 discovery 的所有者 ConnectionID 一致。
+// 用 SCAN 枚举 presence 键，再批量取 presence 值与 discovery；presence 键的 TTL 由
+// Redis 主动过期，故 SCAN 到的键未过期，但 SCAN 与 MGET 之间仍可能被过期清除
+// （MGET 返回 nil 即跳过）。owner 不匹配的条目（重连窗口内旧连接的残留 discovery）
+// 不算在线。
 func (r *redisStore) ListOnlinePeers(ctx context.Context) (map[string]Discovery, error) {
 	result := make(map[string]Discovery)
 	var cursor uint64
@@ -436,27 +459,49 @@ func (r *redisStore) ListOnlinePeers(ctx context.Context) (map[string]Discovery,
 		}
 		if len(keys) > 0 {
 			deviceIDs := make([]string, 0, len(keys))
+			presenceKeys := make([]string, 0, len(keys))
 			discoveryKeys := make([]string, 0, len(keys))
 			for _, key := range keys {
 				deviceID := strings.TrimPrefix(key, redisKeyPrefix+"presence:")
 				deviceIDs = append(deviceIDs, deviceID)
+				presenceKeys = append(presenceKeys, key)
 				discoveryKeys = append(discoveryKeys, r.discoveryKey(deviceID))
 			}
-			values, err := r.client.MGet(ctx, discoveryKeys...).Result()
+			presenceValues, err := r.client.MGet(ctx, presenceKeys...).Result()
 			if err != nil {
 				return nil, err
 			}
-			for i, value := range values {
+			discoveryValues, err := r.client.MGet(ctx, discoveryKeys...).Result()
+			if err != nil {
+				return nil, err
+			}
+			for i, value := range discoveryValues {
 				if value == nil {
 					continue // presence 在、discovery 缺失/已过期：不算在线。
 				}
-				data, ok := value.(string)
+				presenceValue := presenceValues[i]
+				if presenceValue == nil {
+					continue // SCAN 与 MGET 之间 presence 已过期。
+				}
+				pdata, ok := presenceValue.(string)
+				if !ok {
+					continue
+				}
+				var p Presence
+				if err := json.Unmarshal([]byte(pdata), &p); err != nil {
+					r.logger.Warn("skipped corrupt presence value in online peers", "device_id", deviceIDs[i], "error", err)
+					continue
+				}
+				ddata, ok := value.(string)
 				if !ok {
 					continue
 				}
 				var d Discovery
-				if err := json.Unmarshal([]byte(data), &d); err != nil {
+				if err := json.Unmarshal([]byte(ddata), &d); err != nil {
 					r.logger.Warn("skipped corrupt discovery value in online peers", "device_id", deviceIDs[i], "error", err)
+					continue
+				}
+				if d.Generation == 0 || p.ConnectionID != d.ConnectionID {
 					continue
 				}
 				result[deviceIDs[i]] = d

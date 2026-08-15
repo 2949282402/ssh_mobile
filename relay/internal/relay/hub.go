@@ -262,7 +262,6 @@ func (h *hub) add(peer *peer) bool {
 	// phantom online entry can be left behind by a delayed TakePresence. The new
 	// connection takes over any existing lease (newest connect wins).
 	leaseTaken := false
-	discoveryTaken := false
 	if h.presence != nil {
 		old, replaced, err := h.presence.TakePresence(context.Background(), peer.deviceID, peer.connectionID, h.presenceFor(peer), h.presenceTTL)
 		if err == nil {
@@ -282,25 +281,12 @@ func (h *hub) add(peer *peer) bool {
 				Time:            time.Now().UnixMilli(),
 			})
 		}
-		// 连接建立即写一个占位 discovery，使设备在完成 discovery_update 上传之前也
-		// 满足「presence+discovery 均有效」的在线判定（明确版 §13），保持既有 lookup
-		// 契约（连接即在线，TestDartWireContract 依赖此语义）。占位 discovery 继承旧的
-		// generation（若重连前有真实 discovery）而非固定 0——重连窗口内 lookup 不丢失
-		// 真实候选，且 handleDiscoveryUpdate 不会把「占位 gen-0 → 真实 gen」误判为首次
-		// 上传而重复广播 peer_online。owner 更新为新连接，heartbeat 续期正常。
-		// 真正的 discovery 由 discovery_update 覆盖；peer_online 广播仍等 discovery_update
-		// 才触发，满足明确版 §8「上传 discovery 之前不广播为 online」。占位与 presence
-		// 同生命周期：心跳同时续期、断开同时释放。
-		if err == nil {
-			placeholderGeneration := uint64(0)
-			if old, ok, derr := h.presence.GetDiscovery(context.Background(), peer.deviceID); derr == nil && ok {
-				placeholderGeneration = old.Generation
-			}
-			placeholder := Discovery{DeviceID: peer.deviceID, Generation: placeholderGeneration, UpdatedAt: time.Now()}
-			if derr := h.presence.TakeDiscovery(context.Background(), peer.deviceID, peer.connectionID, placeholder, h.presenceTTL); derr == nil {
-				discoveryTaken = true
-			}
-		}
+		// 不再写占位 discovery：在线判定要求 presence 与 discovery 双有效 + 真实
+		// generation（>0）+ owner 一致（明确版 §13 收紧版）。连接建立后、设备真正
+		// 上传 discovery_update 之前，该设备不被 lookup/snapshot 视为可连接——§8
+		// 「上传 discovery 后才广播为 online」由此自然成立。discovery 只在设备上传
+		// discovery_update 时由 handleDiscoveryUpdate 写入（CAS 要求当前 presence
+		// owner）。
 	}
 	// Atomically re-check currency/closed and register the worker goroutines in
 	// the same h.mutex critical section that close() uses, so shutdown cannot
@@ -324,10 +310,6 @@ func (h *hub) add(peer *peer) bool {
 		// rule the heartbeat path applies after a post-renew currency re-check.
 		if leaseTaken && h.presence != nil {
 			_, _ = h.presence.ReleasePresence(context.Background(), peer.deviceID, peer.connectionID)
-		}
-		// 占位 discovery 与 presence 同生命周期，被拒连接一并释放，不留可发现的残留。
-		if discoveryTaken && h.presence != nil {
-			_, _ = h.presence.ReleaseDiscovery(context.Background(), peer.deviceID, peer.connectionID)
 		}
 		closePeer(peer)
 		return false

@@ -71,11 +71,27 @@ func TestLookupLeaseBasedOnline(t *testing.T) {
 	}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	// device-b 只有 presence，device-c 只有 discovery：都不在线。
+	// device-b 只有 presence（offline）；device-c 先以 owner 写 discovery 再释放 presence
+	// → 只残留 discovery（offline）；device-d presence+discovery 双有效但 generation 0
+	// （offline，占位/遗留 gen-0 不算在线）。
 	if _, _, err := server.cache.TakePresence(ctx, "device-b", "conn-b", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := server.cache.TakePresence(ctx, "device-c", "conn-c", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
 	if err := server.cache.TakeDiscovery(ctx, "device-c", "conn-c", Discovery{DeviceID: "device-c", Generation: 3, Candidates: []string{"cand-c"}}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// TakeDiscovery 的 CAS 要求 presence owner；写入成功后释放 presence 构造
+	// discovery-only 的离线态。
+	if released, _ := server.cache.ReleasePresence(ctx, "device-c", "conn-c"); !released {
+		t.Fatal("device-c presence could not be released")
+	}
+	if _, _, err := server.cache.TakePresence(ctx, "device-d", "conn-d", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.cache.TakeDiscovery(ctx, "device-d", "conn-d", Discovery{DeviceID: "device-d", Generation: 0}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,6 +118,12 @@ func TestLookupLeaseBasedOnline(t *testing.T) {
 	}
 	if len(frame.Candidates) != 0 {
 		t.Fatalf("offline lookup must not return candidates: %+v", frame)
+	}
+
+	server.hub.lookupPeer(caller, "device-d")
+	frame = readControlFrame(t, caller)
+	if frame.Type != "lookup_response" || frame.Online == nil || *frame.Online {
+		t.Fatalf("device-d (generation 0) should be offline: %+v", frame)
 	}
 }
 
@@ -286,9 +308,9 @@ func TestDiscoveryUpdatePersistsAndBroadcasts(t *testing.T) {
 	}
 }
 
-// TestDiscoveryUpdatePlaceholderToOnline 固定连接建立时的占位 discovery（generation 0）
-// 被真实上传覆盖后按首次上报广播 peer_online（§8：上传 discovery 后才广播 online）。
-func TestDiscoveryUpdatePlaceholderToOnline(t *testing.T) {
+// TestDiscoveryUpdateRejectsGenerationRegression 固定 generation 单调：同一设备上报
+// 更小的 generation 被拒绝（不落盘、不广播），已落盘的更高值保持不变。
+func TestDiscoveryUpdateRejectsGenerationRegression(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -300,7 +322,91 @@ func TestDiscoveryUpdatePlaceholderToOnline(t *testing.T) {
 	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	// 模拟 hub.add 写入的占位 discovery。
+	other := injectPeer(server.hub, "device-b")
+	if _, _, err := server.cache.TakePresence(ctx, "device-b", other.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 10, Candidates: []string{"cand-10"}})
+	// 回退：10 → 8 必须被拒绝。
+	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 8, Candidates: []string{"cand-8"}})
+
+	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("discovery missing: present=%v err=%v", present, err)
+	}
+	if d.Generation != 10 {
+		t.Fatalf("regression must not overwrite persisted generation: got %d", d.Generation)
+	}
+	if len(d.Candidates) != 1 || d.Candidates[0] != "cand-10" {
+		t.Fatalf("regression must not overwrite persisted candidates: %+v", d.Candidates)
+	}
+	// 只广播过一次（首次 gen 10 的 peer_online），回退上传不产生任何帧。
+	frame := readControlFrame(t, other)
+	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 10 {
+		t.Fatalf("expected single peer_online for gen 10, got %+v", frame)
+	}
+	assertNoOutbound(t, other)
+}
+
+// TestDiscoveryUpdateRejectsStaleOwner 固定 Discovery CAS：旧连接已被新连接取代
+// （presence 已易主）后，旧连接的 discovery_update 被拒绝——不覆盖新连接的 discovery，
+// 且旧连接自愈关闭（与心跳路径 RenewPresence=false 一致）。这封死跨实例重连竞态。
+func TestDiscoveryUpdateRejectsStaleOwner(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	old := injectPeer(server.hub, "device-a") // connectionID "conn-device-a"
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", old.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.cache.TakeDiscovery(ctx, "device-a", old.connectionID, Discovery{DeviceID: "device-a", Generation: 1, Candidates: []string{"cand-1"}}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// 新连接接管 presence（跨实例/重连）：presence owner 变为 conn-a-2。
+	newConn := &peer{deviceID: "device-a", connectionID: "conn-a-2", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", newConn.connectionID, Presence{InstanceID: "i2"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	// 旧连接尝试覆盖 discovery（即用户描述的竞态：connection.replaced 事件尚未到达时
+	// 旧连接的 discovery_update）。CAS 拒绝：不落盘，旧连接被关闭。
+	server.hub.handleDiscoveryUpdate(old, controlFrame{Type: "discovery_update", Generation: 2, Candidates: []string{"cand-2"}})
+
+	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("discovery missing: present=%v err=%v", present, err)
+	}
+	if d.Generation != 1 || d.ConnectionID != old.connectionID {
+		t.Fatalf("stale owner must not overwrite discovery: %+v", d)
+	}
+	select {
+	case <-old.done:
+	default:
+		t.Fatal("superseded connection should have been closed by the rejected discovery write")
+	}
+}
+
+// TestDiscoveryUpdateLegacyGen0ToOnline 固定遗留 gen-0 discovery 键（占位时代/旧版本
+// 残留）被真实上传覆盖后按首次可发现广播 peer_online（§8：上传 discovery 后才广播
+// online）。在线判定要求 generation>0，gen-0 残留不算在线。
+func TestDiscoveryUpdateLegacyGen0ToOnline(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	sender := injectPeer(server.hub, "device-a")
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// 遗留 gen-0 discovery（TakeDiscovery 仍要求 presence owner，此处满足）。
 	if err := server.cache.TakeDiscovery(ctx, "device-a", sender.connectionID, Discovery{DeviceID: "device-a", Generation: 0}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +418,7 @@ func TestDiscoveryUpdatePlaceholderToOnline(t *testing.T) {
 	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 5, Candidates: []string{"cand"}})
 	frame := readControlFrame(t, other)
 	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 5 {
-		t.Fatalf("placeholder->real upload should broadcast peer_online, got %+v", frame)
+		t.Fatalf("gen-0 leftover -> real upload should broadcast peer_online, got %+v", frame)
 	}
 }
 
@@ -489,7 +595,8 @@ func TestMultiInstancePeerEventPropagation(t *testing.T) {
 	connB := dialDevice(t, httpB.URL, credB, "device-b", 0x31, privB)
 	defer connB.Close()
 
-	// 等待两个实例的 presence/discovery 占位落盘。
+	// 等待两个实例的 presence 租约落盘（占位 discovery 已移除，设备上传 discovery_update
+	// 前不算在线）。
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		_, presentA, _ := serverA.cache.GetPresence(ctx, "device-a")
@@ -553,10 +660,11 @@ func TestSendPresenceSnapshotEmptyAlwaysIncludesPeers(t *testing.T) {
 	}
 }
 
-// TestDiscoveryPlaceholderInheritsPreviousGeneration 固定占位 discovery 继承重连前的
-// 真实 generation 而非固定 0：重连窗口内 lookup 不丢失候选，且 handleDiscoveryUpdate
-// 不会把占位误判为首次上传而重复广播 peer_online。
-func TestDiscoveryPlaceholderInheritsPreviousGeneration(t *testing.T) {
+// TestDiscoveryReconnectStaleOwnerWindowNotOnline 固定重连窗口的在线语义：新连接
+// TakePresence 接管后、尚未重新上传 discovery 前，旧连接残留的 discovery（owner 仍是
+// 旧连接）不满足「presence 与 discovery owner 一致」，因此设备不算在线；新连接的真实
+// 上传（owner 一致）才按首次可发现广播 peer_online。
+func TestDiscoveryReconnectStaleOwnerWindowNotOnline(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -564,47 +672,50 @@ func TestDiscoveryPlaceholderInheritsPreviousGeneration(t *testing.T) {
 	defer server.Close()
 	ctx := context.Background()
 
-	// 首次连接：占位 gen 0（无旧值可继承）。直接模拟 hub.add 的占位写入路径
-	// （injectPeer 不走 hub.add，需手动 TakeDiscovery 占位）。
+	other := injectPeer(server.hub, "device-b")
+
+	// 首次连接：presence + discovery（gen 5）均为 conn-a-1 所有 → 在线。
 	first := &peer{deviceID: "device-a", connectionID: "conn-a-1", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
 	if _, _, err := server.cache.TakePresence(ctx, "device-a", first.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.cache.TakeDiscovery(ctx, "device-a", first.connectionID, Discovery{DeviceID: "device-a", Generation: 0, UpdatedAt: time.Now()}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
-	if err != nil || !present {
-		t.Fatalf("placeholder discovery missing: present=%v err=%v", present, err)
-	}
-	if d.Generation != 0 {
-		t.Fatalf("first-connect placeholder should be gen 0, got %d", d.Generation)
-	}
-
-	// 模拟真实上传 gen 5，然后重连（新连接走 hub.add：TakeDiscovery 应继承旧 gen 5）。
 	if err := server.cache.TakeDiscovery(ctx, "device-a", first.connectionID, Discovery{DeviceID: "device-a", Generation: 5, Candidates: []string{"cand"}, UpdatedAt: time.Now()}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	online, err := server.cache.ListOnlinePeers(ctx)
+	if err != nil || online["device-a"].Generation != 5 {
+		t.Fatalf("device-a should be online before reconnect: %+v err=%v", online, err)
+	}
+
+	// 重连：新连接接管 presence，但旧 discovery（owner conn-a-1）仍在 TTL 内。
 	second := &peer{deviceID: "device-a", connectionID: "conn-a-2", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
 	if _, _, err := server.cache.TakePresence(ctx, "device-a", second.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	// 复刻 hub.add 的占位写入：重连时保留旧 generation。
-	placeholderGeneration := uint64(0)
-	if old, ok, derr := server.cache.GetDiscovery(ctx, "device-a"); derr == nil && ok {
-		placeholderGeneration = old.Generation
-	}
-	if err := server.cache.TakeDiscovery(ctx, "device-a", second.connectionID, Discovery{DeviceID: "device-a", Generation: placeholderGeneration, UpdatedAt: time.Now()}, time.Minute); err != nil {
+	online, err = server.cache.ListOnlinePeers(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	d, present, err = server.cache.GetDiscovery(ctx, "device-a")
+	if _, present := online["device-a"]; present {
+		t.Fatalf("device-a must not be online in the stale-owner window: %+v", online)
+	}
+
+	// 新连接上传真实 discovery（gen 6，owner conn-a-2）→ owner 一致、非此前在线
+	// （旧 discovery owner 不匹配）→ 首次可发现广播 peer_online。
+	server.hub.handleDiscoveryUpdate(second, controlFrame{Type: "discovery_update", Generation: 6, Candidates: []string{"cand"}})
+	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
 	if err != nil || !present {
-		t.Fatalf("placeholder after reconnect missing: present=%v err=%v", present, err)
+		t.Fatalf("discovery after reconnect missing: present=%v err=%v", present, err)
 	}
-	if d.Generation != 5 {
-		t.Fatalf("reconnect placeholder should inherit gen 5, got %d", d.Generation)
+	if d.Generation != 6 || d.ConnectionID != second.connectionID {
+		t.Fatalf("reconnect discovery should be gen 6 owned by conn-a-2: %+v", d)
 	}
-	if d.ConnectionID != second.connectionID {
-		t.Fatalf("reconnect placeholder owner should be the new connection: %q", d.ConnectionID)
+	frame := readControlFrame(t, other)
+	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 6 {
+		t.Fatalf("reconnect real upload should broadcast peer_online, got %+v", frame)
+	}
+	online, err = server.cache.ListOnlinePeers(ctx)
+	if err != nil || online["device-a"].Generation != 6 {
+		t.Fatalf("device-a should be online after reconnect upload: %+v err=%v", online, err)
 	}
 }

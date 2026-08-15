@@ -26,6 +26,13 @@ const maxProofNoncesPerDevice = 128
 // it instead), so only the memory implementation returns this error.
 var errAdminSessionCapacity = errors.New("administrator session capacity reached")
 
+// errDiscoveryNotOwner reports that a discovery write was rejected because the
+// writer is not the device's current presence lease owner. Presence ownership
+// is the single source of truth for which connection may publish discovery
+// (Redis Lua + memory store share this CAS contract), so a superseded
+// connection can never overwrite the newer connection's discovery.
+var errDiscoveryNotOwner = errors.New("discovery write rejected: connection is not the presence owner")
+
 // Presence 是跨实例共享的设备在线状态。它同时是一份带所有权的租约：
 // ConnectionID 唯一标识当前持有该设备在线租约的那条连接，后续续租（心跳）与
 // 释放（断连）都必须携带它做 CAS，跨实例时旧连接不会误删新连接的在线状态。
@@ -72,10 +79,12 @@ type Cache interface {
 	// 缺失/已过期的设备不在 map 中；空列表返回空 map。admin 快照用它把 N 次
 	// GetPresence 收敛成一次往返。
 	GetPresences(ctx context.Context, deviceIDs []string) (map[string]Presence, error)
-	// TakeDiscovery 让 connID 无条件取得 deviceID 的 discovery 租约（新连接上传
-	// 覆盖旧值，最后写者胜），ttl 后自动过期。与 presence 生命周期绑定：TTL 相同、
-	// 心跳同时续期、断开同时释放。ConnectionID 是所有权标识（强制写入），跨实例时
-	// 旧连接不会误删新连接的 discovery。
+	// TakeDiscovery 仅当 connID 仍是该设备 presence 租约的当前 owner 时写入
+	// discovery（CAS，Redis Lua 原子 + 内存实现同构）：presence 所有权是"哪条连接
+	// 有权发布 discovery"的唯一权威，被取代的旧连接不可能把新连接的 discovery 覆盖
+	// 回自身。ttl 后自动过期，与 presence 生命周期绑定（TTL 相同、心跳同时续期、
+	// 断开同时释放）。落盘的 ConnectionID 强制为 connID。返回 errDiscoveryNotOwner
+	// 表示 connID 不是当前 presence owner（已被同设备的新连接取代）。
 	TakeDiscovery(ctx context.Context, deviceID, connID string, d Discovery, ttl time.Duration) error
 	// RenewDiscovery 仅当 connID 仍是 discovery 所有者时续期（CAS，只续 TTL 不覆写
 	// 内容），返回 false 表示所有权已被其它连接抢走。
@@ -227,14 +236,24 @@ func (m *memoryStore) GetPresences(_ context.Context, deviceIDs []string) (map[s
 	return result, nil
 }
 
-// TakeDiscovery 在 m.mu 下复刻 Redis 的无条件 SET：新连接上传覆盖旧值（最后写者胜）。
-// 落盘的 ConnectionID 一律强制为 connID——connID 是所有权权威，与 presence 租约
-// 同一规则，保证存储层从不产生 owner 为空的 discovery。
+// TakeDiscovery 在 m.mu 下复刻 Redis 的 CAS 写入：仅当 connID 仍是该设备当前
+// presence 租约的 owner 时才落盘（否则返回 errDiscoveryNotOwner）。presence 所有权
+// 是"哪条连接有权发布 discovery"的唯一权威——被取代的旧连接（新连接已 TakePresence
+// 接管）不可能把新连接的 discovery 覆盖回自身。落盘的 ConnectionID 强制为 connID。
 func (m *memoryStore) TakeDiscovery(_ context.Context, deviceID, connID string, d Discovery, ttl time.Duration) error {
 	d.ConnectionID = connID
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.discovery[deviceID] = discoveryEntry{discovery: d, expiresAt: time.Now().Add(ttl)}
+	now := time.Now()
+	entry, present := m.presence[deviceID]
+	if !present || !now.Before(entry.expiresAt) || entry.presence.ConnectionID != connID {
+		if present && !now.Before(entry.expiresAt) {
+			// 过期租约顺手剪除（与 GetPresence 的惰性清理一致）。
+			delete(m.presence, deviceID)
+		}
+		return errDiscoveryNotOwner
+	}
+	m.discovery[deviceID] = discoveryEntry{discovery: d, expiresAt: now.Add(ttl)}
 	return nil
 }
 
@@ -314,7 +333,10 @@ func (m *memoryStore) GetDiscoveries(_ context.Context, deviceIDs []string) (map
 	return result, nil
 }
 
-// ListOnlinePeers 返回 presence 与 discovery 均有效的设备（明确版 §13 的在线判定）。
+// ListOnlinePeers 返回可在线判定的设备（明确版 §13）：presence 与 discovery 均有效、
+// discovery.Generation>0、且 presence 与 discovery 的所有者 ConnectionID 一致。占位
+// discovery 已移除后，gen-0 或 owner 不匹配的条目（重连窗口内旧连接的残留 discovery）
+// 都不算在线。
 func (m *memoryStore) ListOnlinePeers(_ context.Context) (map[string]Discovery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -326,7 +348,10 @@ func (m *memoryStore) ListOnlinePeers(_ context.Context) (map[string]Discovery, 
 			continue
 		}
 		presence, present := m.presence[deviceID]
-		if !present || now.After(presence.expiresAt) {
+		if !present || now.After(presence.expiresAt) || presence.presence.ConnectionID != entry.discovery.ConnectionID {
+			continue
+		}
+		if entry.discovery.Generation == 0 {
 			continue
 		}
 		result[deviceID] = entry.discovery
