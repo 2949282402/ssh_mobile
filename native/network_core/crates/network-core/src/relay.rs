@@ -30,7 +30,7 @@ use crate::events::{
 };
 use crate::runtime::{
     LookupResult, PeerConfig, PeerPresence, RuntimeState, INCOMING_APPROVAL_TIMEOUT,
-    MAX_PENDING_INCOMING_TRANSFERS, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES, PRESENCE_TTL,
+    MAX_PENDING_INCOMING_TRANSFERS, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
 };
 
 /// Relay 配置只存在 native runtime 内存中，用于 socket 意外断开后的指数退避重连。
@@ -355,7 +355,6 @@ pub(crate) async fn handle_relay_events(
                 }
             }
             RelayEvent::PresenceSnapshot { peers } => {
-                prune_expired_presence(&state).await;
                 let snapshot_ids = peers
                     .iter()
                     .map(|peer| peer.device_id.clone())
@@ -381,7 +380,6 @@ pub(crate) async fn handle_relay_events(
                             peer.device_id.clone(),
                             PeerPresence {
                                 generation: peer.generation,
-                                last_online: Instant::now(),
                             },
                         );
                     }
@@ -422,7 +420,6 @@ pub(crate) async fn handle_relay_events(
                 device_id,
                 generation,
             } => {
-                prune_expired_presence(&state).await;
                 // 上线时的 generation 若高于本地已缓存值，说明对端经历了一次网络/
                 // Discovery 换代（可能曾在 offline 期间重连）——旧 path_manager 与
                 // candidate_attempts 里的 direct 候选来自上一代，必须清除，否则后续
@@ -433,13 +430,11 @@ pub(crate) async fn handle_relay_events(
                     .await
                     .get(&device_id)
                     .is_none_or(|prev| prev.generation < generation);
-                state.peer_presence.write().await.insert(
-                    device_id.clone(),
-                    PeerPresence {
-                        generation,
-                        last_online: Instant::now(),
-                    },
-                );
+                state
+                    .peer_presence
+                    .write()
+                    .await
+                    .insert(device_id.clone(), PeerPresence { generation });
                 if higher_generation {
                     state.path_managers.write().await.remove(&device_id);
                     state.candidate_attempts.write().await.remove(&device_id);
@@ -455,7 +450,6 @@ pub(crate) async fn handle_relay_events(
                 device_id,
                 generation,
             } => {
-                prune_expired_presence(&state).await;
                 // invalidates_cache 记录是否应清除该对端的 discovery cache（更高或
                 // 首见 generation）；stale 标记 peer_updated 帧是过期 generation（对端
                 // 已声明更高值），此时不删缓存也不向上 emit，避免把更低 generation
@@ -468,34 +462,16 @@ pub(crate) async fn handle_relay_events(
                     match previous {
                         // 更高 generation 说明对端 Discovery 已换代，旧缓存必须删除。
                         Some(prev) if prev.generation < generation => {
-                            presence.insert(
-                                device_id.clone(),
-                                PeerPresence {
-                                    generation,
-                                    last_online: Instant::now(),
-                                },
-                            );
+                            presence.insert(device_id.clone(), PeerPresence { generation });
                             invalidates_cache = true;
                         }
                         Some(prev) if prev.generation == generation => {
-                            presence.insert(
-                                device_id.clone(),
-                                PeerPresence {
-                                    generation,
-                                    last_online: Instant::now(),
-                                },
-                            );
+                            presence.insert(device_id.clone(), PeerPresence { generation });
                         }
                         // 首次发现该对端的 Discovery 换代：本地缓存的 candidates
                         // 可能来自更早的 generation，按 §10 视为必须删除的旧缓存。
                         None => {
-                            presence.insert(
-                                device_id.clone(),
-                                PeerPresence {
-                                    generation,
-                                    last_online: Instant::now(),
-                                },
-                            );
+                            presence.insert(device_id.clone(), PeerPresence { generation });
                             invalidates_cache = true;
                         }
                         // 过期帧：对端已声明更高的 generation，忽略本次更新。
@@ -746,13 +722,6 @@ pub(crate) async fn handle_relay_events(
         }
     }
     handle_relay_disconnect(state, relay, "Relay event stream ended".to_string()).await;
-}
-
-/// 删除超过 `PRESENCE_TTL` 的在线状态条目；Relay 重连失败时避免缓存无限增长。
-async fn prune_expired_presence(state: &RuntimeState) {
-    let mut presence = state.peer_presence.write().await;
-    let now = Instant::now();
-    presence.retain(|_, entry| now.duration_since(entry.last_online) <= PRESENCE_TTL);
 }
 
 /// 向已连接的 Relay 上传当前设备的 Discovery（generation + 本地 candidates）。
@@ -2692,13 +2661,11 @@ mod tests {
             event_tx,
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
-        state.peer_presence.write().await.insert(
-            "peer-a".into(),
-            PeerPresence {
-                generation: 5,
-                last_online: Instant::now(),
-            },
-        );
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 5 });
         state
             .path_managers
             .write()
@@ -2745,13 +2712,11 @@ mod tests {
             event_tx,
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
-        state.peer_presence.write().await.insert(
-            "peer-a".into(),
-            PeerPresence {
-                generation: 7,
-                last_online: Instant::now(),
-            },
-        );
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 7 });
 
         let (events_tx, events_rx) = mpsc::channel(16);
         let handler_state = Arc::clone(&state);
@@ -2797,13 +2762,11 @@ mod tests {
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
         // 上一代缓存：peer-a 之前在线（generation 2）且已有 path_manager。
-        state.peer_presence.write().await.insert(
-            "peer-a".into(),
-            PeerPresence {
-                generation: 2,
-                last_online: Instant::now(),
-            },
-        );
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 2 });
         state
             .path_managers
             .write()
@@ -2870,13 +2833,11 @@ mod tests {
         ));
         // 快照前已缓存 peer-b（生成 2）且有 path_manager；快照只含 peer-a → peer-b 应
         // 被判下线。
-        state.peer_presence.write().await.insert(
-            "peer-b".into(),
-            PeerPresence {
-                generation: 2,
-                last_online: Instant::now(),
-            },
-        );
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-b".into(), PeerPresence { generation: 2 });
         state
             .path_managers
             .write()
@@ -2939,13 +2900,11 @@ mod tests {
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
         // 本地缓存 peer-a 的上一代（gen 2）且有 path_manager/candidate_attempts。
-        state.peer_presence.write().await.insert(
-            "peer-a".into(),
-            PeerPresence {
-                generation: 2,
-                last_online: Instant::now(),
-            },
-        );
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 2 });
         state
             .path_managers
             .write()
