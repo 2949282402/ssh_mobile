@@ -66,20 +66,22 @@ func TestRefreshRejectsRevokedButStillEnrolledDevice(t *testing.T) {
 	}
 }
 
-// failingRemoveStore wraps a working store whose enrollment deletion fails,
-// modeling a transient MySQL DELETE failure during revocation.
-type failingRemoveStore struct {
+// failingRevokeStore wraps a working store whose atomic revoke fails, modeling a
+// transient MySQL failure during revocation. The revoke is now one store call,
+// so the injected failure overrides RevokeEnrollment rather than the old
+// RemoveEnrollment step.
+type failingRevokeStore struct {
 	Storage
 }
 
-func (failingRemoveStore) RemoveEnrollment(context.Context, string) error {
-	return errors.New("injected delete failure")
+func (failingRevokeStore) RevokeEnrollment(context.Context, string, time.Duration) (revokeResult, error) {
+	return revokeNotEnrolled, errors.New("injected revoke failure")
 }
 
-// TestAdminRevokeReturnsErrorWhenEnrollmentDeleteFails verifies the revoke
-// handler reports 500 instead of a false 204 when the enrollment row cannot be
-// removed, so the operator knows the revocation did not fully land.
-func TestAdminRevokeReturnsErrorWhenEnrollmentDeleteFails(t *testing.T) {
+// TestAdminRevokeReturnsErrorWhenRevokeFails verifies the revoke handler reports
+// 500 instead of a false 204 when the atomic revoke fails, so the operator knows
+// the revocation did not fully land.
+func TestAdminRevokeReturnsErrorWhenRevokeFails(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -89,7 +91,7 @@ func TestAdminRevokeReturnsErrorWhenEnrollmentDeleteFails(t *testing.T) {
 	if result := server.replaceEnrollment("device-a", "key-a", "test", 1, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
-	server.store = failingRemoveStore{Storage: server.store}
+	server.store = failingRevokeStore{Storage: server.store}
 
 	request := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
 	request.SetPathValue("deviceId", "device-a")

@@ -78,6 +78,58 @@ func TestMemoryStoreRevocationCapacityFailsClosed(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreRevokeEnrollment(t *testing.T) {
+	store := newMemoryStore(Config{MaxEnrolledDevices: 4, MaxRevokedDevices: 4})
+	ctx := context.Background()
+
+	if outcome, err := store.RevokeEnrollment(ctx, "device-a", time.Hour); err != nil || outcome != revokeNotEnrolled {
+		t.Fatalf("revoke of an unenrolled device should report not enrolled: outcome=%v err=%v", outcome, err)
+	}
+
+	enrolledAt := time.Now().Add(-time.Hour)
+	if result, _ := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: "device-a", PublicKey: "key-a", EnrolledAt: enrolledAt}); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	outcome, err := store.RevokeEnrollment(ctx, "device-a", time.Hour)
+	if err != nil || outcome != revokeOK {
+		t.Fatalf("revoke failed: outcome=%v err=%v", outcome, err)
+	}
+	if device, _ := store.GetEnrollment(ctx, "device-a"); device != nil {
+		t.Fatal("enrollment should be removed after revoke")
+	}
+	expiry, present, _ := store.RevocationExpiry(ctx, "device-a")
+	if !present {
+		t.Fatal("tombstone should be present after revoke")
+	}
+	if want := enrolledAt.Add(time.Hour); !expiry.Equal(want) {
+		t.Fatalf("tombstone bound = %v, want %v", expiry, want)
+	}
+}
+
+// TestMemoryStoreRevokeCapacityFailsClosedWithoutDeleting verifies a capacity
+// failure inside RevokeEnrollment keeps the enrollment intact (fail closed), so
+// the admin 429 path never half-revokes a device — matching RecordRevocation's
+// saturate behavior.
+func TestMemoryStoreRevokeCapacityFailsClosedWithoutDeleting(t *testing.T) {
+	store := newMemoryStore(Config{MaxEnrolledDevices: 4, MaxRevokedDevices: 1})
+	ctx := context.Background()
+	// 先占满墓碑容量（in-force）。
+	if recorded, _ := store.RecordRevocation(ctx, "device-other", time.Now().Add(time.Hour)); !recorded {
+		t.Fatal("seed revocation rejected")
+	}
+	if result, _ := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: "device-a", PublicKey: "key-a", EnrolledAt: time.Now()}); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+
+	outcome, err := store.RevokeEnrollment(ctx, "device-a", time.Hour)
+	if err != nil || outcome != revokeCapacity {
+		t.Fatalf("expected capacity outcome, got outcome=%v err=%v", outcome, err)
+	}
+	if device, _ := store.GetEnrollment(ctx, "device-a"); device == nil {
+		t.Fatal("enrollment must survive a capacity-failed revoke (fail closed)")
+	}
+}
+
 func TestMemoryStoreNonceReplayAndClear(t *testing.T) {
 	store := newMemoryStore(Config{MaxEnrolledDevices: 1, MaxRevokedDevices: 1})
 	ctx := context.Background()

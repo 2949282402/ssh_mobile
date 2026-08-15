@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -576,4 +577,250 @@ func readEnrollmentCounter(t *testing.T, dsn string) (int, error) {
 	var value int
 	err = db.QueryRow(`SELECT meta_value FROM relay_meta WHERE meta_key = ?`, enrollmentCounterKey).Scan(&value)
 	return value, err
+}
+
+// TestMySQLStoreRevokeEnrollmentAtomic verifies RevokeEnrollment is a durable
+// atomic unit: after revokeOK the device row is gone, the revocation tombstone
+// is present with the credential-bound expiry computed inside the transaction,
+// and the capacity counter is decremented. A second revoke of the same device
+// and a revoke of a never-enrolled device both report revokeNotEnrolled.
+func TestMySQLStoreRevokeEnrollmentAtomic(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 10)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	enrolledAt := time.Now().Add(-time.Hour).Truncate(time.Microsecond) // DATETIME(6) 精度
+	if result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: "device-a", PublicKey: "key-a", EnrolledAt: enrolledAt}); err != nil || result != enrollmentOK {
+		t.Fatalf("enroll failed: result=%v err=%v", result, err)
+	}
+
+	outcome, err := store.RevokeEnrollment(ctx, "device-a", time.Hour)
+	if err != nil || outcome != revokeOK {
+		t.Fatalf("revoke failed: outcome=%v err=%v", outcome, err)
+	}
+	if device, err := store.GetEnrollment(ctx, "device-a"); err != nil || device != nil {
+		t.Fatalf("device should be removed after revoke: %+v err=%v", device, err)
+	}
+	expiry, present, err := store.RevocationExpiry(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("tombstone should be present after revoke: present=%v err=%v", present, err)
+	}
+	if want := enrolledAt.Add(time.Hour); !expiry.Equal(want) {
+		t.Fatalf("tombstone bound = %v, want %v", expiry, want)
+	}
+	if count, _ := store.CountEnrollments(ctx); count != 0 {
+		t.Fatalf("enrollment count should be 0 after revoke, got %d", count)
+	}
+	if counter, err := readEnrollmentCounter(t, dsn); err != nil || counter != 0 {
+		t.Fatalf("counter should be 0 after revoke, got %d err=%v", counter, err)
+	}
+
+	if outcome, err := store.RevokeEnrollment(ctx, "device-a", time.Hour); err != nil || outcome != revokeNotEnrolled {
+		t.Fatalf("double revoke should report not enrolled: outcome=%v err=%v", outcome, err)
+	}
+	if outcome, err := store.RevokeEnrollment(ctx, "device-never", time.Hour); err != nil || outcome != revokeNotEnrolled {
+		t.Fatalf("revoke of a never-enrolled device should report not enrolled: outcome=%v err=%v", outcome, err)
+	}
+}
+
+// TestMySQLStoreRevokeReenrollLinearizesCrossInstance verifies the atomic revoke
+// closes the cross-instance tear window. Two store calls on one shared database
+// (no process-local shard lock) race: RevokeEnrollment vs PutEnrollment with a
+// new key, exactly the multi-instance interleaving the per-device lock stripe
+// cannot serialize. The outcome must always be a valid linearization — either
+// the re-enroll won (enrolled, not revoked) or the revoke won (removed,
+// tombstone in force). The lost-enrollment state (removed AND not revoked) and
+// the both-on state (enrolled AND revoked) must never appear, and the capacity
+// counter must track COUNT(devices). The old compound flow (RecordRevocation +
+// RemoveEnrollment as separate transactions) let the revoke's delete run after
+// the re-enroll cleared the tombstone → removed AND not revoked.
+func TestMySQLStoreRevokeReenrollLinearizesCrossInstance(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 10)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	const deviceID = "device-a"
+	for i := 0; i < 30; i++ {
+		if result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: deviceID, PublicKey: "key-original", EnrolledAt: time.Now()}); err != nil || result != enrollmentOK {
+			t.Fatalf("iteration %d: seed enroll failed: result=%v err=%v", i, result, err)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func(round int) {
+			defer wg.Done()
+			_, _ = store.RevokeEnrollment(ctx, deviceID, time.Hour)
+		}(i)
+		go func(round int) {
+			defer wg.Done()
+			_, _ = store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: deviceID, PublicKey: fmt.Sprintf("key-new-%d", round), EnrolledAt: time.Now()})
+		}(i)
+		wg.Wait()
+
+		device, _ := store.GetEnrollment(ctx, deviceID)
+		revoked, _ := store.IsRevoked(ctx, deviceID, time.Now())
+		// 有效线性化只有两种：(注册, 未吊销) 或 (未注册, 已吊销)。撕裂态
+		// (未注册, 未吊销) 与 (注册, 已吊销) 必须永不出现。
+		if (device == nil) != revoked {
+			t.Fatalf("iteration %d: invalid linearization: enrolled=%v revoked=%v", i, device != nil, revoked)
+		}
+		count, err := store.CountEnrollments(ctx)
+		if err != nil {
+			t.Fatalf("iteration %d: count enrollments: %v", i, err)
+		}
+		counter, err := readEnrollmentCounter(t, dsn)
+		if err != nil {
+			t.Fatalf("iteration %d: read counter: %v", i, err)
+		}
+		if counter != count {
+			t.Fatalf("iteration %d: counter drift: relay_meta.enrollment_count=%d but COUNT(devices)=%d", i, counter, count)
+		}
+
+		// Reset 到干净注册态供下一轮：device 存在则先删（重新入册新 key 否则冲突），
+		// 墓碑若在则被下一轮 PutEnrollment 清除。
+		if device != nil {
+			if err := store.RemoveEnrollment(ctx, deviceID); err != nil {
+				t.Fatalf("iteration %d: reset remove: %v", i, err)
+			}
+		}
+	}
+}
+
+// TestMySQLStoreRevokeHoldsDeviceLockThroughTombstone pins, deterministically,
+// the serialization the single-transaction revoke provides: while a revoke is
+// paused after writing the tombstone but before deleting the device (test hook,
+// device row lock still held), a concurrent re-enroll cannot interleave — its
+// device-row FOR UPDATE blocks until the revoke commits, so it cannot slip in,
+// clear the tombstone, and then have the revoke delete the NEW enrollment
+// (the lost-enrollment tear). Under the old compound flow (RecordRevocation +
+// RemoveEnrollment as separate transactions) the pause point held no lock, the
+// re-enroll completed during the pause, and this test fails at that assertion.
+func TestMySQLStoreRevokeHoldsDeviceLockThroughTombstone(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 10)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	const deviceID = "device-a"
+	if result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: deviceID, PublicKey: "key-original", EnrolledAt: time.Now()}); err != nil || result != enrollmentOK {
+		t.Fatalf("seed enroll failed: result=%v err=%v", result, err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var hookFired atomic.Bool
+	testBeforeRevokeDeleteHook = func() {
+		if !hookFired.CompareAndSwap(false, true) {
+			return
+		}
+		close(started)
+		<-release
+	}
+	defer func() { testBeforeRevokeDeleteHook = nil }()
+
+	revokeDone := make(chan struct{})
+	var revokeOutcome revokeResult
+	var revokeErr error
+	go func() {
+		defer close(revokeDone)
+		revokeOutcome, revokeErr = store.RevokeEnrollment(ctx, deviceID, time.Hour)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("revoke did not reach the tombstone-write seam")
+	}
+
+	// 单事务实现：revoke 在此点持有 device 行锁，re-enroll 的 FOR UPDATE 阻塞、不应
+	// 完成。旧复合实现在此点不持锁，re-enroll 会立刻完成并清掉刚写的墓碑 → 本断言红。
+	reenrollDone := make(chan struct{})
+	go func() {
+		defer close(reenrollDone)
+		_, _ = store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: deviceID, PublicKey: "key-new", EnrolledAt: time.Now()})
+	}()
+	select {
+	case <-reenrollDone:
+		t.Fatal("re-enroll completed while the revoke was mid-flight (torn window)")
+	case <-time.After(2 * time.Second):
+		// 阻塞在 device 行锁上：序列化有效。
+	}
+
+	close(release)
+	<-revokeDone
+	if revokeErr != nil || revokeOutcome != revokeOK {
+		t.Fatalf("revoke failed: outcome=%v err=%v", revokeOutcome, revokeErr)
+	}
+
+	// revoke 提交后 re-enroll 拿到锁，重新注册新 key 并清墓碑 → 有效线性化：已注册未吊销。
+	<-reenrollDone
+	device, _ := store.GetEnrollment(ctx, deviceID)
+	revoked, _ := store.IsRevoked(ctx, deviceID, time.Now())
+	if device == nil || device.PublicKey != "key-new" || revoked {
+		t.Fatalf("expected re-enroll to win after revoke commits: device=%+v revoked=%v", device, revoked)
+	}
+	count, err := store.CountEnrollments(ctx)
+	if err != nil {
+		t.Fatalf("count enrollments: %v", err)
+	}
+	counter, err := readEnrollmentCounter(t, dsn)
+	if err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	if counter != count || counter != 1 {
+		t.Fatalf("counter drift: relay_meta.enrollment_count=%d COUNT(devices)=%d", counter, count)
+	}
+}
+
+// TestMySQLStoreRevokeInitializesCounterWhenMissing verifies a revoke over an
+// upgrade DB (devices present, counter row absent) initializes the counter from
+// its pre-delete snapshot — no double-decrement — while still writing the
+// tombstone, so the invariant counter == COUNT(devices) holds.
+func TestMySQLStoreRevokeInitializesCounterWhenMissing(t *testing.T) {
+	dsn := requireMySQLDSN(t)
+	ctx := context.Background()
+	store, err := openMySQLStore(ctx, dsn, 10)
+	if err != nil {
+		t.Fatalf("open mysql store: %v", err)
+	}
+	defer store.Close()
+	resetMySQLTestDB(t, dsn)
+
+	for _, id := range []string{"device-a", "device-b"} {
+		if result, err := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: id, PublicKey: "key-" + id, EnrolledAt: time.Now()}); err != nil || result != enrollmentOK {
+			t.Fatalf("enroll %s failed: result=%v err=%v", id, result, err)
+		}
+	}
+	deleteEnrollmentCounterRow(t, dsn)
+
+	if outcome, err := store.RevokeEnrollment(ctx, "device-a", time.Hour); err != nil || outcome != revokeOK {
+		t.Fatalf("revoke failed: outcome=%v err=%v", outcome, err)
+	}
+	count, err := store.CountEnrollments(ctx)
+	if err != nil || count != 1 {
+		t.Fatalf("expected 1 device after revoke, got %d err=%v", count, err)
+	}
+	counter, err := readEnrollmentCounter(t, dsn)
+	if err != nil {
+		t.Fatalf("read counter: %v", err)
+	}
+	if counter != 1 {
+		t.Fatalf("revoke should initialize counter to post-revoke count, got %d", counter)
+	}
+	if _, present, _ := store.RevocationExpiry(ctx, "device-a"); !present {
+		t.Fatal("tombstone missing after revoke initialized the counter")
+	}
 }

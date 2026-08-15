@@ -53,6 +53,12 @@ var errEnrollmentCapacity = errors.New("enrollment capacity reached")
 // 与并发 Remove 交错」的时序。生产环境始终为 nil。
 var testAfterCounterCountHook func()
 
+// testBeforeRevokeDeleteHook 是测试专用缝隙：在 RevokeEnrollment 已写墓碑、仍持有
+// device 行锁、尚未删除设备行时调用。旧复合实现（RecordRevocation + RemoveEnrollment
+// 两个独立事务）在该点不持有任何锁，并发 re-enroll 可穿插进去，确定性复现跨实例撕裂；
+// 单事务实现中并发 re-enroll 的 device FOR UPDATE 在此阻塞。生产环境始终为 nil。
+var testBeforeRevokeDeleteHook func()
+
 // revocationPruneInterval bounds the growth of the durable revocations table:
 // rows whose protected credentials have expired are swept periodically.
 const revocationPruneInterval = time.Hour
@@ -366,6 +372,88 @@ func (m *mysqlStore) RemoveEnrollment(ctx context.Context, deviceID string) erro
 		return err
 	}
 	return tx.Commit()
+}
+
+// RevokeEnrollment 以单事务原子地完成吊销：先对 devices 行 FOR UPDATE（与
+// putEnrollment 的首锁一致，跨实例与并发 re-enroll 严格串行），再写 tombstone、删
+// enrollment、递减容量计数器。这消除旧复合流程（adminRevokeDevice 的 RecordRevocation
+// + RemoveEnrollment 两个独立事务，仅靠进程内分片锁串行）在多实例下的撕裂窗口：实例 A
+// 写墓碑后、删设备前，实例 B 的 re-enroll 曾可覆盖新行并清墓碑，随后 A 误删新 enrollment
+// → "设备没了 + 墓碑也没了"。锁序 device → counter 与 putEnrollment/RemoveEnrollment
+// 一致，无锁序反转。revocations 表上的 gap 锁交互（本事务的 INSERT 墓碑 vs 并发新设备
+// 入册的 DELETE 清墓碑 + relay_meta 行锁）可偶发 1213 死锁，与入册路径一致做有限重试。
+func (m *mysqlStore) RevokeEnrollment(ctx context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, error) {
+	for attempt := 0; ; attempt++ {
+		result, err := m.revokeEnrollment(ctx, deviceID, credentialTTL)
+		if err == nil || !isDeadlockError(err) {
+			return result, err
+		}
+		if attempt >= 2 {
+			return revokeNotEnrolled, fmt.Errorf("revocation deadlocked after %d attempts: %w", attempt+1, err)
+		}
+		select {
+		case <-ctx.Done():
+			return revokeNotEnrolled, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 5 * time.Millisecond):
+		}
+	}
+}
+
+// revokeEnrollment 是 RevokeEnrollment 的单个事务本体；1213 死锁重试由外层包装处理。
+func (m *mysqlStore) revokeEnrollment(ctx context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, error) {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return revokeNotEnrolled, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 首锁 device 行（与 putEnrollment 的 FOR UPDATE 相同）：并发 re-enroll 在此排队。
+	// 行不存在 → 无 cardinality 变化，直接提交返回未注册。
+	var enrolledAt time.Time
+	err = tx.QueryRowContext(ctx,
+		`SELECT enrolled_at FROM devices WHERE device_id = ? FOR UPDATE`, deviceID,
+	).Scan(&enrolledAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return revokeNotEnrolled, tx.Commit()
+	}
+	if err != nil {
+		return revokeNotEnrolled, err
+	}
+	// 在 device 行锁内计算墓碑上界（与 adminRevokeDevice 旧逻辑一致：EnrolledAt + TTL，
+	// 零值兜底 now+TTL），不再依赖事务外的 enrollment 快照。
+	validUntil := enrolledAt.Add(credentialTTL)
+	if enrolledAt.IsZero() {
+		validUntil = time.Now().Add(credentialTTL)
+	}
+	// 墓碑与删除同一事务：要么都落地，要么都不落地。ensure 在删除前执行，其 COUNT 基准
+	// 仍含待删行，随后递减 1 → 净结果 = 删除后正确计数（与 RemoveEnrollment 相同防漂移）。
+	if err := ensureEnrollmentCounter(ctx, tx); err != nil {
+		return revokeNotEnrolled, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO revocations (device_id, revoked_at, valid_until)
+		VALUES (?, ?, ?)
+		ON DUPLICATE KEY UPDATE valid_until = GREATEST(valid_until, VALUES(valid_until))`,
+		deviceID, time.Now(), validUntil,
+	); err != nil {
+		return revokeNotEnrolled, err
+	}
+	if testBeforeRevokeDeleteHook != nil {
+		// 测试缝隙：墓碑已写、device 行锁仍持有、设备尚未删除。旧复合实现在这里不持有
+		// 任何锁（RecordRevocation 与 RemoveEnrollment 是两个独立事务），确定性复现
+		// 跨实例撕裂；单事务实现中并发 re-enroll 的 FOR UPDATE 在此阻塞。
+		testBeforeRevokeDeleteHook()
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE device_id = ?`, deviceID); err != nil {
+		return revokeNotEnrolled, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE relay_meta SET meta_value = GREATEST(meta_value - 1, 0) WHERE meta_key = ?`,
+		enrollmentCounterKey,
+	); err != nil {
+		return revokeNotEnrolled, err
+	}
+	return revokeOK, tx.Commit()
 }
 
 func (m *mysqlStore) RecordRevocation(ctx context.Context, deviceID string, validUntil time.Time) (bool, error) {
