@@ -5,11 +5,15 @@
 // same contract so enrollment and revocation survive a restart.
 //
 // Locking note: the memory and MySQL stores are internally synchronized, so an
-// individual method may be called without any caller-held lock. Composite
-// operations that must be atomic across several store/cache calls (enroll,
-// revoke, authenticate) additionally take the Server's per-device lock stripe
-// (s.lockDevice), so the same device's operations serialize while different
-// devices proceed in parallel.
+// individual method may be called without any caller-held lock. Device-plane
+// composites that must be atomic across several store/cache calls additionally
+// take the Server's per-device lock stripe (s.lockDevice) so the same device's
+// operations serialize while different devices proceed in parallel. The
+// store-side core of enroll and revoke is itself atomic — PutEnrollment upserts
+// the device and clears the tombstone in one transaction; RevokeEnrollment
+// writes the tombstone and removes the enrollment in one transaction — so the
+// lock stripe carries the remaining local side effects (nonce clear, hub
+// disconnect, event publish) rather than the durable state transition.
 
 package relay
 
@@ -17,6 +21,16 @@ import (
 	"context"
 	"sync"
 	"time"
+)
+
+// revokeResult 描述 RevokeEnrollment 的结局，供 admin 处理器区分未注册（404）与
+// 墓碑容量饱和（429，仅内存实现）两种失败路径。
+type revokeResult int
+
+const (
+	revokeNotEnrolled revokeResult = iota
+	revokeCapacity
+	revokeOK
 )
 
 // Storage 是设备长期状态（enrollment 与吊销）的持久化契约。
@@ -28,6 +42,13 @@ type Storage interface {
 	PutEnrollment(ctx context.Context, device *EnrolledDevice) (enrollmentResult, error)
 	// RemoveEnrollment 删除 deviceID 的 enrollment。
 	RemoveEnrollment(ctx context.Context, deviceID string) error
+	// RevokeEnrollment 原子地撤销 deviceID 的注册：写入吊销 tombstone 并删除其
+	// enrollment。MySQL 实现为单事务（先对 devices 行 FOR UPDATE，与 PutEnrollment
+	// 首锁一致），跨实例与并发 re-enroll 严格串行，杜绝"读到旧 enrollment 后误删
+	// 新行"的撕裂窗口；内存实现等价于 deviceMu 下复合 RecordRevocation +
+	// RemoveEnrollment。validUntil = EnrolledAt + credentialTTL（零值 EnrolledAt 兜底
+	// 用 now+TTL），在 device 行锁内计算，避免使用旧 enrollment 的快照。
+	RevokeEnrollment(ctx context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, error)
 	// RecordRevocation 记录 deviceID 在 validUntil 之前保持吊销。内存实现遵守
 	// MaxRevokedDevices 容量边界：饱和且 tombstone 仍有效时拒绝（fail closed），
 	// 返回 (false, nil)。
@@ -110,22 +131,51 @@ func (m *memoryStore) RemoveEnrollment(_ context.Context, deviceID string) error
 	return nil
 }
 
+// RevokeEnrollment 在 deviceMu 一个临界区内原子地完成内存实现的 revoke 复合：写墓碑
+// 并删除 enrollment（等价于 adminRevokeDevice 旧流程的 GetEnrollment +
+// RecordRevocation + RemoveEnrollment，但三者不再可能被并发 PutEnrollment 拆开）。
+// 墓碑容量饱和时 fail closed 返回 revokeCapacity 且不删除 enrollment（与 RecordRevocation
+// 饱和时不返回删除一致）。
+func (m *memoryStore) RevokeEnrollment(_ context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, error) {
+	m.deviceMu.Lock()
+	defer m.deviceMu.Unlock()
+	enrolled, ok := m.enrolledDevices[deviceID]
+	if !ok {
+		return revokeNotEnrolled, nil
+	}
+	validUntil := enrolled.EnrolledAt.Add(credentialTTL)
+	if enrolled.EnrolledAt.IsZero() {
+		validUntil = time.Now().Add(credentialTTL)
+	}
+	if !m.writeRevocationLocked(deviceID, validUntil) {
+		return revokeCapacity, nil
+	}
+	delete(m.enrolledDevices, deviceID)
+	return revokeOK, nil
+}
+
 func (m *memoryStore) RecordRevocation(_ context.Context, deviceID string, validUntil time.Time) (bool, error) {
 	m.deviceMu.Lock()
 	defer m.deviceMu.Unlock()
-	now := time.Now()
-	m.pruneExpiredRevocations(now)
+	return m.writeRevocationLocked(deviceID, validUntil), nil
+}
+
+// writeRevocationLocked 在已持有 deviceMu 的前提下写入（或延长）deviceID 的吊销
+// tombstone：先惰性清理过期墓碑释放容量；已吊销时取更晚的上界；容量饱和且该设备尚
+// 无墓碑时 fail closed 返回 false（调用方据此不删除 enrollment）。
+func (m *memoryStore) writeRevocationLocked(deviceID string, validUntil time.Time) bool {
+	m.pruneExpiredRevocations(time.Now())
 	if existing, alreadyRevoked := m.revokedDevices[deviceID]; alreadyRevoked {
 		if validUntil.After(existing.expiresAt) {
 			m.revokedDevices[deviceID] = revokedDevice{expiresAt: validUntil}
 		}
-		return true, nil
+		return true
 	}
 	if len(m.revokedDevices) >= m.maxRevoked {
-		return false, nil
+		return false
 	}
 	m.revokedDevices[deviceID] = revokedDevice{expiresAt: validUntil}
-	return true, nil
+	return true
 }
 
 func (m *memoryStore) RevocationExpiry(_ context.Context, deviceID string) (time.Time, bool, error) {

@@ -1,7 +1,11 @@
 // Bounded, credential-expiry-aware revocation tombstone store.
 //
-// The tombstone semantics below are implemented by memoryStore.RecordRevocation
-// and memoryStore.IsRevoked in storage.go.
+// The tombstone semantics below are implemented by memoryStore.RecordRevocation,
+// memoryStore.RevokeEnrollment and memoryStore.IsRevoked in storage.go.
+// RevokeEnrollment is the atomic composite (tombstone + enrollment removal)
+// behind the admin revoke path: the memory store runs it inside one deviceMu
+// critical section, and the MySQL store runs it as a single transaction (device
+// row FOR UPDATE first) so a cross-instance re-enroll serializes against it.
 
 package relay
 

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-14
+> Last updated: 2026-08-15
 
 # Backend Current State
 
@@ -14,6 +14,11 @@ Current boundaries:
 
 - Device enrollment binds a signed (HMAC) credential to a device identity;
   the durable enrollment record (device ID + public key) lives in `Storage`.
+- Device revocation is one atomic store transaction (MySQL: device-row lock +
+  tombstone + removal), so a revoke and a concurrent cross-instance re-enroll
+  serialize on the device row instead of tearing into a "removed but not
+  revoked" state; the admin handler keeps the per-device lock stripe for the
+  local nonce/hub/event side effects.
 - Device WebSocket connections are authenticated before hub admission through a
   single `authenticatedRequest` path: credential signature/expiry, Ed25519
   proof, anti-replay nonce, enrollment key match, and revocation check.
