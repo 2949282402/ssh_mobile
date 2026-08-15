@@ -494,6 +494,27 @@ func TestDartWireContractEndToEnd(t *testing.T) {
 	deviceB := connectDevice("device-b", 2)
 	defer deviceB.Close()
 
+	// §8：设备上传 discovery_update 后才可发现（占位 discovery 已移除，连接本身不
+	// 在线）。device-b 上传使其 online；device-a 收到 peer_online 广播，device-b 收到
+	// 自己的 presence_snapshot。
+	if err := deviceB.WriteJSON(controlFrame{
+		Type: "discovery_update", Generation: 1, Candidates: []string{"cand-b"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var peerOnline controlFrame
+	if err := deviceA.ReadJSON(&peerOnline); err != nil ||
+		peerOnline.Type != framePeerOnline ||
+		peerOnline.DeviceID != "device-b" ||
+		peerOnline.Generation != 1 {
+		t.Fatalf("invalid peer_online broadcast for device-b: %+v (%v)", peerOnline, err)
+	}
+	var snapshot controlFrame
+	if err := deviceB.ReadJSON(&snapshot); err != nil ||
+		snapshot.Type != framePresenceSnapshot {
+		t.Fatalf("device-b expected presence_snapshot after first upload: %+v (%v)", snapshot, err)
+	}
+
 	if err := deviceA.WriteJSON(controlFrame{
 		Type:     "lookup",
 		TargetID: "offline-device",

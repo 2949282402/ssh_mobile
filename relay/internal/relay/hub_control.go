@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -315,21 +316,24 @@ func (h *hub) routeWebRTCControl(sender *peer, frame controlFrame) {
 }
 
 // lookupPeer 用 Redis 作为唯一事实来源（明确版 §13）判定 target 是否在线：presence
-// 与 discovery 均有效 → online=true，并携带该设备的 generation/capabilities/
-// candidates（候选只在在线时返回）。租约读取出错时 fail-open 回退到本地 h.peers
-// 判定（保留已确认的退化语义：本实例内有连接即在线），限时 presenceLeaseTimeout。
+// 与 discovery 均有效、discovery.Generation>0、且 presence 与 discovery 的所有者
+// ConnectionID 一致 → online=true，并携带该设备的 generation/capabilities/
+// candidates（候选只在在线时返回）。owner 不一致的条目（重连窗口内旧连接的残留
+// discovery）不算在线。租约读取出错时 fail-open 回退到本地 h.peers 判定（保留已确认
+// 的退化语义：本实例内有连接即在线），限时 presenceLeaseTimeout。
 func (h *hub) lookupPeer(sender *peer, targetID string) {
 	isOnline := false
 	var disc Discovery
 	if h.presence != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
-		_, presenceOK, presenceErr := h.presence.GetPresence(ctx, targetID)
+		presence, presenceOK, presenceErr := h.presence.GetPresence(ctx, targetID)
 		found, discOK, discErr := h.presence.GetDiscovery(ctx, targetID)
 		cancel()
 		switch {
 		case presenceErr == nil && discErr == nil:
-			// 双租约可读：presence+discovery 均有效才在线（明确版 §13）。
-			isOnline = presenceOK && discOK
+			// 双租约可读：presence+discovery 均有效 + generation>0 + owner 一致才在线。
+			isOnline = presenceOK && discOK && found.Generation > 0 &&
+				presence.ConnectionID == found.ConnectionID
 			if isOnline {
 				disc = found
 			}
@@ -368,9 +372,9 @@ func (h *hub) lookupPeer(sender *peer, targetID string) {
 // handleDiscoveryUpdate 处理设备的 discovery_update：把 generation/capabilities/
 // candidates 落盘到 discovery 租约（候选是设备端序列化的不透明 base64 字符串列表，
 // relay 只按 maxControlFrameBytes 校验帧大小，不解析其语义——ADR-017 边界）。
-// generation 相对上一份有效值有变化时，向本实例其余 peer 广播 peer_online（首次真实
-// 上报，此前仅为连接建立时的占位 discovery）或 peer_updated，并 Publish 跨实例事件；
-// 无变化时静默刷新（仅续期内容，不广播，避免推送给没有变化的设备）。
+// 设备首次可发现（此前无 discovery、或旧连接 owner 不一致的残留）广播 peer_online
+// 并回发 presence_snapshot；同一连接上报新的 generation 广播 peer_updated；无变化静默
+// 刷新；generation 回退拒绝。跨实例经 Publish 广播事件总线。
 func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 	if h.presence == nil {
 		return
@@ -410,7 +414,7 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 	// 并继续被 ListOnlinePeers 计入，直到 sweeper 30s 后清理）。presence 读取故障
 	// fail-open：不拒绝上传，让设备下次心跳重试。
 	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
-	_, presenceOK, presenceErr := h.presence.GetPresence(ctx, sender.deviceID)
+	presence, presenceOK, presenceErr := h.presence.GetPresence(ctx, sender.deviceID)
 	if presenceErr != nil {
 		cancel()
 		return
@@ -426,29 +430,50 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 		cancel()
 		return
 	}
+	// generation 单调约束限定在同一 Discovery owner 内：同一连接（ConnectionID 相同）
+	// 重复上报更小值 = 客户端 bug，拒绝（回退的旧值会在 presence TTL 内被下一次合法
+	// 上传覆盖）。不同 owner（重连 / 升级后的新连接）视为新的可发现 epoch，允许任意正
+	// generation——否则旧版本随机大 generation 残留会拒绝升级客户端更小的 Unix-ms
+	// generation，导致设备一直不可发现。
+	if hadOld && old.ConnectionID == sender.connectionID {
+		if d.Generation < old.Generation {
+			cancel()
+			return
+		}
+		// 同 generation 的 Discovery 不可变：同一 owner 下 generation 相同但候选/能力
+		// 内容变化 = 客户端 bug（候选变化必须 generation++）。拒绝，保证「同一个
+		// generation 永远对应同一份 Discovery 快照」，否则同 generation 静默覆盖且不
+		// 广播 peer_updated，会让其它设备持有与服务器不一致的缓存。
+		if d.Generation == old.Generation && !sameDiscoveryContent(old, d) {
+			cancel()
+			return
+		}
+	}
+	// 落盘前判定设备此前是否已可连接（明确版 §13 收紧版）：presence+discovery 均有效、
+	// generation>0、且 presence 与 discovery 的 owner 一致。用于区分 peer_online（首次
+	// 可发现，含重连窗口内旧连接残留 discovery 的情况——owner 不一致视为新上线）与
+	// peer_updated（已在线仅换代）。
+	wasOnline := presenceOK && hadOld && old.Generation > 0 &&
+		presence.ConnectionID == old.ConnectionID
+	// CAS TakeDiscovery：存储层在 Redis Lua / 内存实现里原子校验「写者仍是当前
+	// presence owner」，杜绝 get-then-set 的 TOCTOU（被取代的旧连接无法把新连接的
+	// discovery 覆盖回自身）。
 	err := h.presence.TakeDiscovery(ctx, sender.deviceID, sender.connectionID, d, h.presenceTTL)
 	if err != nil {
 		cancel()
-		// 落盘失败 fail-open：保持连接，设备可随时重试上传。
-		return
-	}
-	// Take 后校验 owner：Get→Take 非原子，期间若本连接已被同设备的新连接取代
-	// （新连接 hub.add 覆盖 discovery owner），本次上传就会把新连接的 discovery
-	// 覆盖回本连接的陈旧 owner（TOCTOU）。落盘后立即复查 owner，被取代则撤销——
-	// 撤销用 CAS Release，若新连接已再次上传则安全跳过。
-	persisted, stillOwned, getErr := h.presence.GetDiscovery(ctx, sender.deviceID)
-	if getErr != nil {
-		cancel()
+		if errors.Is(err, errDiscoveryNotOwner) {
+			// 已被同设备的新连接取代（presence 已易主）：本连接是僵尸，自愈关闭，
+			// 让设备重连收敛到唯一在线连接（与心跳路径 RenewPresence=false 一致）。
+			closePeer(sender)
+		}
+		// 其它落盘失败 fail-open：保持连接，设备可随时重试上传。
 		return
 	}
 	cancel()
-	if !stillOwned || persisted.ConnectionID != sender.connectionID {
-		_, _ = h.presence.ReleaseDiscovery(context.Background(), sender.deviceID, sender.connectionID)
-		return
-	}
 	frameType := ""
-	if !hadOld || old.Generation == 0 {
-		// 首次真实上报：此前只有连接建立时的占位 discovery（generation 0）。
+	if !wasOnline {
+		// 首次可发现（此前无 discovery、或只有旧连接 owner 不一致/占位的残留）：广播
+		// peer_online。占位 discovery 已移除，首次上报即首次可发现，§8 由此自然成立。
 		frameType = framePeerOnline
 	} else if old.Generation != d.Generation {
 		frameType = framePeerUpdated
@@ -457,7 +482,7 @@ func (h *hub) handleDiscoveryUpdate(sender *peer, frame controlFrame) {
 		h.broadcastPeerEvent(frameType, sender.deviceID, d.Generation)
 	}
 	if frameType == framePeerOnline {
-		// 首次真实上报：把当前在线设备快照回给上报设备，作为其本地设备列表基线。
+		// 首次可发现：把当前在线设备快照回给上报设备，作为其本地设备列表基线。
 		// 放在 discovery_update 之后（而非连接建立时）下发，与 §8 一致：设备上传
 		// discovery 证明就绪后才纳入推送发现。
 		h.sendPresenceSnapshot(sender)
@@ -527,4 +552,28 @@ func (h *hub) broadcastPeerEvent(frameType, deviceID string, gen uint64) {
 		})
 		pcancel()
 	}
+}
+
+// sameDiscoveryContent 比较两份 discovery 快照的候选与能力集合是否一致（无序）。
+// 同 generation 必须对应同一份快照：集合比较允许候选顺序变化，但成员不能增删改。
+func sameDiscoveryContent(a, b Discovery) bool {
+	return sameStringSet(a.Candidates, b.Candidates) && sameStringSet(a.Capabilities, b.Capabilities)
+}
+
+// sameStringSet 无序比较两个字符串切片是否构成相同集合（允许顺序不同）。
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, value := range a {
+		counts[value]++
+	}
+	for _, value := range b {
+		if counts[value] == 0 {
+			return false
+		}
+		counts[value]--
+	}
+	return true
 }

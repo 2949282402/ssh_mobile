@@ -30,7 +30,7 @@ use crate::events::{
 };
 use crate::runtime::{
     LookupResult, PeerConfig, PeerPresence, RuntimeState, INCOMING_APPROVAL_TIMEOUT,
-    MAX_PENDING_INCOMING_TRANSFERS, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES, PRESENCE_TTL,
+    MAX_PENDING_INCOMING_TRANSFERS, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
 };
 
 /// Relay 配置只存在 native runtime 内存中，用于 socket 意外断开后的指数退避重连。
@@ -355,12 +355,26 @@ pub(crate) async fn handle_relay_events(
                 }
             }
             RelayEvent::PresenceSnapshot { peers } => {
-                prune_expired_presence(&state).await;
                 let snapshot_ids = peers
                     .iter()
                     .map(|peer| peer.device_id.clone())
                     .collect::<std::collections::HashSet<_>>();
-                let (dropped, generation_upgraded): (Vec<String>, Vec<String>) = {
+                // snapshot 是一次 Control Plane 全量重新对账：对快照中所有 peer 无条件
+                // 清除旧 discovery-derived path_manager / candidate_attempts。generation
+                // 只保证同 owner 内单调，重连/升级可产生 new < old，仅比较 generation
+                // 无法识别可发现 epoch 变化；统一在收到 snapshot 时清空，后续 connect 经
+                // lookup 重新获取权威候选。
+                for peer in &peers {
+                    state.path_managers.write().await.remove(&peer.device_id);
+                    state
+                        .candidate_attempts
+                        .write()
+                        .await
+                        .remove(&peer.device_id);
+                }
+                // 快照缺席的已缓存 peer 应视为下线：显式 emit Offline 并清其 discovery
+                // cache，避免静默残留（否则应用保留陈旧条目）。
+                let dropped: Vec<String> = {
                     let mut presence = state.peer_presence.write().await;
                     let dropped = presence
                         .keys()
@@ -368,28 +382,16 @@ pub(crate) async fn handle_relay_events(
                         .cloned()
                         .collect::<Vec<_>>();
                     presence.retain(|peer_id, _| snapshot_ids.contains(peer_id));
-                    let mut upgraded = Vec::new();
                     for peer in &peers {
-                        let previous = presence.get(&peer.device_id).map(|entry| entry.generation);
-                        if previous.is_some_and(|gen| gen < peer.generation) {
-                            // 对端在本地离线期间换代：旧 path_manager/candidate_attempts
-                            // 里的 direct 候选来自上一代，必须清除，与 PeerUpdated 的
-                            // 更高 generation 分支一致。
-                            upgraded.push(peer.device_id.clone());
-                        }
                         presence.insert(
                             peer.device_id.clone(),
                             PeerPresence {
                                 generation: peer.generation,
-                                last_online: Instant::now(),
                             },
                         );
                     }
-                    (dropped, upgraded)
+                    dropped
                 };
-                // snapshot 是完整在线集合：快照里缺席的已缓存 peer 应视为下线。
-                // 显式 emit Offline 并清其 discovery cache，避免静默残留（否则应用
-                // 保留陈旧条目、后续 connect 复用上一代的 path_manager 候选）。
                 for device_id in &dropped {
                     state.path_managers.write().await.remove(device_id);
                     state.candidate_attempts.write().await.remove(device_id);
@@ -399,12 +401,6 @@ pub(crate) async fn handle_relay_events(
                         0,
                         PeerPresenceState::Offline,
                     );
-                }
-                // 快照中 generation 升高的 peer：换代但仍在在线集合，清其旧 direct
-                // 缓存（不 emit Offline，它仍在线）。
-                for device_id in &generation_upgraded {
-                    state.path_managers.write().await.remove(device_id);
-                    state.candidate_attempts.write().await.remove(device_id);
                 }
                 emit_peer_presence_snapshot(
                     &state.event_tx,
@@ -422,28 +418,18 @@ pub(crate) async fn handle_relay_events(
                 device_id,
                 generation,
             } => {
-                prune_expired_presence(&state).await;
-                // 上线时的 generation 若高于本地已缓存值，说明对端经历了一次网络/
-                // Discovery 换代（可能曾在 offline 期间重连）——旧 path_manager 与
-                // candidate_attempts 里的 direct 候选来自上一代，必须清除，否则后续
-                // connect_peer 会复用陈旧的 direct 候选。与 PeerUpdated 的处理一致。
-                let higher_generation = state
+                // peer_online 是新的可发现 epoch：无论 generation 是否比本地缓存更高，
+                // 旧 path_manager / candidate_attempts 里的 direct 候选都属于对端上一
+                // 次可见会话（可能来自已丢失的 offline/updated 事件之前的旧代），必须
+                // 无条件清除，否则 connect_peer 会复用陈旧候选。后续 connect 经 lookup
+                // 重新获取权威候选（lookup 是连接前权威对账）。
+                state
                     .peer_presence
-                    .read()
+                    .write()
                     .await
-                    .get(&device_id)
-                    .is_none_or(|prev| prev.generation < generation);
-                state.peer_presence.write().await.insert(
-                    device_id.clone(),
-                    PeerPresence {
-                        generation,
-                        last_online: Instant::now(),
-                    },
-                );
-                if higher_generation {
-                    state.path_managers.write().await.remove(&device_id);
-                    state.candidate_attempts.write().await.remove(&device_id);
-                }
+                    .insert(device_id.clone(), PeerPresence { generation });
+                state.path_managers.write().await.remove(&device_id);
+                state.candidate_attempts.write().await.remove(&device_id);
                 emit_peer_presence_changed(
                     &state.event_tx,
                     &device_id,
@@ -455,7 +441,6 @@ pub(crate) async fn handle_relay_events(
                 device_id,
                 generation,
             } => {
-                prune_expired_presence(&state).await;
                 // invalidates_cache 记录是否应清除该对端的 discovery cache（更高或
                 // 首见 generation）；stale 标记 peer_updated 帧是过期 generation（对端
                 // 已声明更高值），此时不删缓存也不向上 emit，避免把更低 generation
@@ -468,34 +453,16 @@ pub(crate) async fn handle_relay_events(
                     match previous {
                         // 更高 generation 说明对端 Discovery 已换代，旧缓存必须删除。
                         Some(prev) if prev.generation < generation => {
-                            presence.insert(
-                                device_id.clone(),
-                                PeerPresence {
-                                    generation,
-                                    last_online: Instant::now(),
-                                },
-                            );
+                            presence.insert(device_id.clone(), PeerPresence { generation });
                             invalidates_cache = true;
                         }
                         Some(prev) if prev.generation == generation => {
-                            presence.insert(
-                                device_id.clone(),
-                                PeerPresence {
-                                    generation,
-                                    last_online: Instant::now(),
-                                },
-                            );
+                            presence.insert(device_id.clone(), PeerPresence { generation });
                         }
                         // 首次发现该对端的 Discovery 换代：本地缓存的 candidates
                         // 可能来自更早的 generation，按 §10 视为必须删除的旧缓存。
                         None => {
-                            presence.insert(
-                                device_id.clone(),
-                                PeerPresence {
-                                    generation,
-                                    last_online: Instant::now(),
-                                },
-                            );
+                            presence.insert(device_id.clone(), PeerPresence { generation });
                             invalidates_cache = true;
                         }
                         // 过期帧：对端已声明更高的 generation，忽略本次更新。
@@ -746,13 +713,6 @@ pub(crate) async fn handle_relay_events(
         }
     }
     handle_relay_disconnect(state, relay, "Relay event stream ended".to_string()).await;
-}
-
-/// 删除超过 `PRESENCE_TTL` 的在线状态条目；Relay 重连失败时避免缓存无限增长。
-async fn prune_expired_presence(state: &RuntimeState) {
-    let mut presence = state.peer_presence.write().await;
-    let now = Instant::now();
-    presence.retain(|_, entry| now.duration_since(entry.last_online) <= PRESENCE_TTL);
 }
 
 /// 向已连接的 Relay 上传当前设备的 Discovery（generation + 本地 candidates）。
@@ -2692,13 +2652,11 @@ mod tests {
             event_tx,
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
-        state.peer_presence.write().await.insert(
-            "peer-a".into(),
-            PeerPresence {
-                generation: 5,
-                last_online: Instant::now(),
-            },
-        );
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 5 });
         state
             .path_managers
             .write()
@@ -2745,13 +2703,11 @@ mod tests {
             event_tx,
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
-        state.peer_presence.write().await.insert(
-            "peer-a".into(),
-            PeerPresence {
-                generation: 7,
-                last_online: Instant::now(),
-            },
-        );
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 7 });
 
         let (events_tx, events_rx) = mpsc::channel(16);
         let handler_state = Arc::clone(&state);
@@ -2788,22 +2744,21 @@ mod tests {
     }
 
     #[tokio::test]
-    /// peer_online 携带更高 generation 时必须清掉该对端的 discovery cache：对端可能在
-    /// offline 期间经历了网络/Discovery 换代，旧 direct 候选不能复用。
-    async fn peer_online_with_higher_generation_clears_discovery_cache() {
+    /// peer_online 是新的可发现 epoch：无论 generation 比本地缓存更高还是更低，都必须
+    /// 无条件清掉该对端的 discovery cache——旧 direct 候选属于对端上一次可见会话，不能
+    /// 复用（对端可能在 offline 期间换代，或事件丢失导致本地缓存落后于权威状态）。
+    async fn peer_online_clears_discovery_cache_unconditionally() {
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
         // 上一代缓存：peer-a 之前在线（generation 2）且已有 path_manager。
-        state.peer_presence.write().await.insert(
-            "peer-a".into(),
-            PeerPresence {
-                generation: 2,
-                last_online: Instant::now(),
-            },
-        );
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 2 });
         state
             .path_managers
             .write()
@@ -2825,10 +2780,11 @@ mod tests {
             handle_relay_events(events_rx, handler_state, unconnected_relay_client()).await;
         });
 
+        // 用比缓存更低的 generation（1 < 2）触发：无条件清缓存的关键断言。
         events_tx
             .send(RelayEvent::PeerOnline {
                 device_id: "peer-a".into(),
-                generation: 5,
+                generation: 1,
             })
             .await
             .expect("send online");
@@ -2837,7 +2793,7 @@ mod tests {
 
         assert!(
             state.path_managers.read().await.get("peer-a").is_none(),
-            "peer_online with higher generation must clear the stale path_manager"
+            "peer_online must clear the stale path_manager regardless of generation"
         );
         assert!(
             state
@@ -2846,12 +2802,12 @@ mod tests {
                 .await
                 .get("peer-a")
                 .is_none(),
-            "peer_online with higher generation must clear the stale candidate attempt"
+            "peer_online must clear the stale candidate attempt regardless of generation"
         );
         let presence = state.peer_presence.read().await;
         assert_eq!(
             presence.get("peer-a").map(|entry| entry.generation),
-            Some(5)
+            Some(1)
         );
         drop(presence);
 
@@ -2870,13 +2826,11 @@ mod tests {
         ));
         // 快照前已缓存 peer-b（生成 2）且有 path_manager；快照只含 peer-a → peer-b 应
         // 被判下线。
-        state.peer_presence.write().await.insert(
-            "peer-b".into(),
-            PeerPresence {
-                generation: 2,
-                last_online: Instant::now(),
-            },
-        );
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-b".into(), PeerPresence { generation: 2 });
         state
             .path_managers
             .write()
@@ -2932,18 +2886,21 @@ mod tests {
     #[tokio::test]
     /// presence_snapshot 中 generation 升高的 peer（仍在快照、未 dropped）必须清旧
     /// discovery cache：对端可能在本地离线期间换代，旧 direct 候选不能复用。
-    async fn presence_snapshot_generation_upgrade_clears_stale_discovery_cache() {
+    /// snapshot 是 Control Plane 全量重新对账：即使快照中的 generation 比本地缓存的
+    /// 旧值更小（owner-scoped generation 下重连/升级可产生 new < old），也必须无条件
+    /// 清除旧 discovery-derived 缓存——否则旧 owner 随机大 gen 的候选与升级后新 owner
+    /// 的候选会跨代共存。
+    async fn presence_snapshot_lower_generation_clears_stale_discovery_cache() {
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
-        // 本地缓存 peer-a 的上一代（gen 2）且有 path_manager/candidate_attempts。
+        // 本地缓存旧 owner 的随机大 generation 及其 path_manager/candidate_attempts。
         state.peer_presence.write().await.insert(
             "peer-a".into(),
             PeerPresence {
-                generation: 2,
-                last_online: Instant::now(),
+                generation: 14829384729384729384,
             },
         );
         state
@@ -2955,7 +2912,7 @@ mod tests {
             "peer-a".into(),
             crate::runtime::CandidateAttempt {
                 attempt_id: "attempt-old".into(),
-                generation: 2,
+                generation: 14829384729384729384,
                 connect_window: std::time::Duration::from_secs(1),
                 expires_at: Instant::now() + std::time::Duration::from_secs(1),
             },
@@ -2967,11 +2924,12 @@ mod tests {
             handle_relay_events(events_rx, handler_state, unconnected_relay_client()).await;
         });
 
+        // 升级后的新 owner 上传更小的 unix-ms generation：仍必须清旧缓存。
         events_tx
             .send(RelayEvent::PresenceSnapshot {
                 peers: vec![network_relay::PeerSummary {
                     device_id: "peer-a".into(),
-                    generation: 5,
+                    generation: 1786790000000,
                 }],
             })
             .await
@@ -2981,7 +2939,7 @@ mod tests {
 
         assert!(
             state.path_managers.read().await.get("peer-a").is_none(),
-            "snapshot generation upgrade must clear the stale path_manager"
+            "snapshot must clear the stale path_manager regardless of generation direction"
         );
         assert!(
             state
@@ -2990,12 +2948,12 @@ mod tests {
                 .await
                 .get("peer-a")
                 .is_none(),
-            "snapshot generation upgrade must clear the stale candidate attempt"
+            "snapshot must clear the stale candidate attempt regardless of generation direction"
         );
         let presence = state.peer_presence.read().await;
         assert_eq!(
             presence.get("peer-a").map(|entry| entry.generation),
-            Some(5)
+            Some(1786790000000)
         );
         drop(presence);
 

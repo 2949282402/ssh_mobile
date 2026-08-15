@@ -39,8 +39,6 @@ use std::path::PathBuf;
 pub(crate) const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 pub(crate) const DEFAULT_CANDIDATE_CONNECT_WINDOW: Duration =
     Duration::from_millis(network_nat::DEFAULT_CONNECT_WINDOW_MS as u64);
-/// Relay Presence 表中未刷新条目的过期时间；peer_offline 或 TTL 到期都会清理缓存。
-pub(crate) const PRESENCE_TTL: Duration = Duration::from_secs(300);
 pub(crate) const RECONNECT_MAX_ATTEMPTS: usize = 5;
 pub(crate) const RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 pub(crate) const RECONNECT_MAX_BACKOFF: Duration = Duration::from_secs(5);
@@ -131,11 +129,12 @@ pub(crate) struct CandidateAttempt {
     pub(crate) expires_at: Instant,
 }
 
-/// Relay Presence 控制面维护的在线设备摘要（Discovery Cache）。
+/// Relay Presence 控制面维护的在线设备摘要（Discovery Cache）。客户端不自行用固定
+/// TTL 推断远端下线（review P2-4）：peer_offline 是权威增量事件、presence_snapshot
+/// 做全量对账，因此只保留 generation。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PeerPresence {
     pub(crate) generation: u64,
-    pub(crate) last_online: Instant,
 }
 
 /// Relay lookup 的完整结果：在线状态 + 该设备的 Discovery（generation/candidates/

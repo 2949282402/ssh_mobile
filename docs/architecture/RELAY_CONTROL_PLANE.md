@@ -46,16 +46,18 @@
 本轮把控制面未对齐《明确版》的四处分叉一次收口，全部为 Relay 控制面边界内
 改动，native / 客户端侧随之消费。
 
-### 3.1 lookup：presence + discovery 均有效才 online，并返回候选
+### 3.1 lookup：presence + discovery 均有效 + owner 一致才 online，并返回候选
 
-旧 lookup 只按本地 hub 是否在线回答 `online` 布尔。新语义：
+旧 lookup 只按本地 hub 是否在线回答 `online` 布尔。新语义（在线判定收紧版）：
 
-- 对端 **presence 租约有效 且 discovery 快照存在** 时，才判定为 online 并
-  视为可连接；
+- 对端 **presence 租约有效 且 discovery 快照存在 且 discovery.Generation > 0
+  且 presence 与 discovery 的所有者 ConnectionID 一致** 时，才判定为 online
+  并视为可连接；
 - `lookup_response` 随 online 返回候选（来自 discovery 快照的 opaque
   candidates）；
-- 只有 presence 或只有 discovery 的一方不视为可连接，避免「在线但无候选」、
-  「有候选但已离线」两种半态被错误用于建连。
+- 只有 presence 或只有 discovery、gen-0 残留、或 owner 不一致（重连窗口内旧
+  连接残留的 discovery）的一方不视为可连接，避免「在线但无候选」、「有候选
+  但已离线」、以及「旧连接残留被误当在线」三种半态被错误用于建连。
 
 ### 3.2 服务端 discovery 存储（ADR-017 修订边界）
 
@@ -66,6 +68,20 @@ candidate_offer / 连接期上报，Relay 只整体保存、不解析其语义�
 生命周期管理：连接被替换或离线时清理，TTL / sweeper 兜底。权威边界见
 [ADR-017](../adr/ADR-017-candidate-exchange.md) 的 2026-08-15 修订段：
 **存储发现，但不解析信令**。
+
+三个加固点（2026-08-15 二次修订）：
+
+- **占位 discovery 已移除**：连接建立不再写占位 discovery，设备真正上传
+  `discovery_update` 之前不可被发现（§8 由此自然成立，且占位「只继承
+  generation、不继承候选」会误覆盖真实候选的缺陷一并消除）。
+- **discovery 写入是 CAS**：只有当前 presence 租约 owner 才能写入 discovery
+  （Redis Lua 原子 + 内存实现同构），封死跨实例重连竞态——被取代的旧连接
+  无法把新连接的 discovery 覆盖回自身。
+- **generation 单调约束限定在同一 owner 内**：同一连接上报更小的 generation
+  才拒绝；跨 owner（重连 / 升级后的新连接）视为新的可发现 epoch，允许任意正
+  generation——否则旧版本随机大 generation 残留会拒绝升级客户端更小的
+  Unix-ms generation，导致设备一直不可发现。客户端用 Unix-ms 时间种子初始化
+  generation（进程内单调；严格跨进程单调需持久化，见 §4.6）。
 
 ### 3.3 推送事件：presence_snapshot / peer_online / peer_updated / peer_offline
 
@@ -80,12 +96,16 @@ Relay 向每个已认证设备连接推送四类 presence 事件，让设备侧�
 候选。设备收到事件后按需发起 `lookup` 拉取候选，避免把大候选集高频推给所有
 在线设备。
 
-### 3.4 移除 500ms 并行竞速，改顺序 Direct First（ADR-008 修订）
+### 3.4 移除 500ms 并行竞速，改顺序 Direct First + lookup 前移（ADR-008 修订）
 
 原决策为「Direct 立即尝试 + 500ms 后启动 Relay lookup + 首个 ready 胜出」。
-本轮改为顺序 Direct First：先只跑 Direct，等待 connect_window（默认 4s），
-4s 内 `DIRECT_READY` 用 Direct，超时 `DIRECT_FAILED` 后再启动 Relay。Relay
-lookup 的 ready 语义与 8s 单路线预算保持不变。权威决策见
+第一轮改为顺序 Direct First：先只跑 Direct，等待 connect_window（默认 4s），
+4s 内 `DIRECT_READY` 用 Direct，超时 `DIRECT_FAILED` 后再启动 Relay。第二轮
+把 **Relay peer discovery lookup 前移到 Direct 之前**（`resolve_peer_discovery`，
+2s 上限）：先解析对端在线状态并安装候选，再候选信令，再 Direct First，失败
+才启动 Relay 数据面（不再重复 lookup）。修复「本地无对端候选时先走 Relay、
+明明有公网候选却不尝试 Direct」的缺陷。Relay 数据面的 ready 语义与 8s 单
+路线预算保持不变。权威决策见
 [ADR-008](../adr/ADR-008-direct-relay-race.md) 的 2026-08-15 修订。
 
 ## 4. 关键边界
@@ -107,20 +127,74 @@ presence 推送事件只带 `device_id` + `generation`；候选一律由设备�
 - 候选变更（generation 更新）由 `peer_updated` 提示，设备自取最新；
 - Relay 不把高价值候选数据广播给无关对端。
 
-### 4.3 多实例事件总线
+### 4.3 多实例边界（明确版 §…现状）
 
 presence / discovery / 事件总线均落在共享状态层（Redis，全 TTL），MySQL 仍
 是 enrollment / 吊销 / 审计的唯一 source of truth。跨实例生命周期事件
-（`device.revoked` / `device.kicked` / `connection.replaced`）经 Redis
-Pub/Sub 广播，数据面仍保持单实例 + 实例亲和路由；跨实例数据面转发是后续
-里程碑。
+（`device.revoked` / `device.kicked` / `connection.replaced` 与
+`peer_online` / `peer_updated` / `peer_offline`）经 Redis Pub/Sub 广播。
+
+当前多实例能力边界（单实例部署不受影响）：
+
+- **Presence / Discovery：跨实例 ✅**。租约在 Redis，带 ConnectionID 所有权
+  CAS（`TakeDiscovery` 原子校验 presence owner），跨实例重连竞态封死。
+- **P2P Signaling：本实例路由 ❌**。`candidate_offer` / `candidate_answer` /
+  `channel_message` / `channel_ack` / `crypto_handshake` / `webrtc_*` 仍按
+  `h.peers[frame.TargetID]` 本实例转发：A 在 Relay-1、B 在 Relay-2 时，A 能
+  lookup 到 B 的 discovery，但信令帧无法跨实例送达 B。
+- **Relay Data：单实例 + 实例亲和 ❌**。数据面帧依赖双方连接在同一实例。
+
+因此多实例下「A 知 B 在线 → lookup → 拿候选」成立，但「候选信令 → Direct →
+Relay fallback」的完整链路需要双方落在同一 Relay 实例（实例亲和），或先做
+跨实例信令转发。**短期约束：多 Relay 实例部署时，单台设备的控制连接与数据
+连接必须绑定同一实例**；跨实例信令转发与 Relay Data 迁移是后续里程碑。
 
 ### 4.4 sweeper 离线判定
 
 presence 租约 TTL 60s、心跳 20s 续租。sweeper 周期扫描租约，TTL 过期即判定
 设备离线：清理其 discovery 快照、关闭残留连接、触发 `peer_offline` 推送与
 admin 在线视图更新。sweeper 是事件丢失与心跳中断的兜底，保证不残留死设备
-的候选与在线态。
+的候选与在线态。sweeper 判活以 presence 为准（presence 才是在线权威），
+discovery 键可能被 Redis 逐出而与在线 presence 不同步，不以双有效判僵尸。
+
+### 4.5 修正一轮（2026-08-15 二次修订，code-review 收口）
+
+一次集中修正 review 发现的连接正确性问题，不扩功能：
+
+- **lookup 前移 + generation-aware 权威对账**（见 3.4/ADR-017）：Discovery 解析
+  先于 Direct；`lookup_response` 是连接前权威状态——新 generation 删旧代候选
+  重建、同 generation 合并、明确 offline 删 discovery-derived path_manager /
+  candidate_attempts 并移除 peer_presence 条目（此前有缓存则 emit Offline），
+  增量事件（peer_online/updated/offline）丢失也不影响最终连接正确性。
+- **占位 discovery 移除 + 在线判定收紧**（见 3.1/3.2）：presence+discovery+
+  gen>0+owner 一致四元判定。
+- **Discovery CAS 原子化**（见 3.2）：Redis Lua 原子校验 presence owner。
+- **peer_online / presence_snapshot 无条件清缓存**：二者都是「重新对账」语义——
+  `peer_online` 新可发现 epoch 无条件清旧缓存；`presence_snapshot` 是 Control
+  Plane 全量对账，对快照中所有 peer 无条件清 discovery-derived 缓存（owner-scoped
+  generation 下重连可产生 new < old，仅比较 generation 无法识别 epoch）。
+- **同 generation 的 Discovery 不可变**：同一 owner 内 generation 相同但候选/能力
+  内容变化 → 拒绝（候选变化必须 `generation++`），保证同一个 generation 永远对应
+  同一份快照。
+- **客户端不再用固定 TTL 推断远端下线**：native `peer_presence` 缓存只由
+  `peer_offline`（权威增量）与 `presence_snapshot`（全量对账）增删，不再按
+  300s 裁剪在线设备（心跳不广播，长在线设备的 last_online 不会刷新，固定
+  TTL 会误删）。
+- **generation 单调限定同一 owner**（见 3.2）：同一连接回退才拒绝；跨 owner
+  允许任意正 generation，保证旧版本随机大 generation 不阻断升级客户端上传。
+
+### 4.6 后续 follow-up（非本修正 PR）
+
+- **Native 自动 Discovery 生命周期**：网络接口变化 / NAT Mapping 变化 / STUN
+  结果变化时自动 `generation++`、重新 gather 候选、自动 `discovery_update`
+  （当前只在 Relay 连接/重连时自动上传一次，候选变化后的再上传仍由上层显式
+  触发，旧候选可能被心跳持续续 TTL）。
+- **generation 严格跨进程单调**：当前用 Unix-ms 时间种子（进程内单调、系统
+  时钟回拨时可能回退，但服务端 owner 限定 + 重连新 epoch 已兜底）；如需绝对
+  单调应持久化 `generation = max(persisted + 1, unix_ms)`。
+- **上传失败的可靠重试 / ACK**：当前 `discovery_update` 失败只记 debug，依赖
+  下次 Relay 连接重传；可加 server ACK + 有限重试。
+- **跨实例 P2P Signaling / Relay Data**（见 4.3）：多实例部署的前置工作。
 
 ## 5. 引用
 

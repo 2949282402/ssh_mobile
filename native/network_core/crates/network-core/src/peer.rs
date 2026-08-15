@@ -6,8 +6,8 @@ use network_nat::{
     MAX_CANDIDATES_PER_SIGNAL,
 };
 use network_protocol::{
-    NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState, RouteType,
-    UpsertPeerCommand,
+    NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState, PeerPresenceState,
+    RouteType, UpsertPeerCommand,
 };
 use network_quic::{read_channel_frame, ChannelFrameKind, QuicEndpointManager, QuicPeerSession};
 use network_relay::RelayClient;
@@ -28,12 +28,12 @@ use crate::connection::{
 };
 use crate::crypto_handshake::SessionCryptoMaterial;
 use crate::events::{
-    emit_peer_state, emit_peer_state_profile, emit_route_changed, emit_route_changed_profile,
-    protocol_error, protocol_error_with_peer,
+    emit_peer_presence_changed, emit_peer_state, emit_peer_state_profile, emit_route_changed,
+    emit_route_changed_profile, protocol_error, protocol_error_with_peer,
 };
 use crate::generic_auth::{authenticate_initiator, authenticate_responder};
 use crate::runtime::{
-    CandidateAttempt, PeerConfig, RuntimeState, SessionAdmissionLease,
+    CandidateAttempt, LookupResult, PeerConfig, PeerPresence, RuntimeState, SessionAdmissionLease,
     DEFAULT_CANDIDATE_CONNECT_WINDOW, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES, PEER_CONNECT_TIMEOUT,
     RECONNECT_INITIAL_BACKOFF, RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF,
 };
@@ -43,6 +43,9 @@ const STUN_SERVERS_ENV: &str = "SSH_MOBILE_STUN_SERVERS";
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
 const PATH_METRICS_INTERVAL: Duration = Duration::from_secs(2);
 const CANDIDATE_SIGNAL_WAIT: Duration = Duration::from_millis(300);
+/// Relay lookup 的解析等待上限：lookup 在 Direct 之前阻塞解析对端 Discovery，正常
+/// 部署下是毫秒级往返，超上限即 fail-open 用本地候选继续，避免控制面抖动拖延 Direct。
+const DISCOVERY_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
 const DIRECT_UPGRADE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const DIRECT_UPGRADE_STABLE_DURATION: Duration = Duration::from_millis(750);
 const GENERIC_ROUTE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -153,7 +156,7 @@ pub(crate) async fn configure_runtime(
         .await
         .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
     path_manager
-        .set_generation(rand::random::<u64>().max(1))
+        .set_generation(monotonic_candidate_generation())
         .await;
     let manager = QuicEndpointManager::from_bound_socket(socket, Arc::clone(&path_manager))
         .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
@@ -439,13 +442,39 @@ pub(crate) async fn connect_peer(
         .await
         .insert(peer_id.clone(), local_attempt.clone());
 
+    // 解析对端 Discovery（lookup）：Relay 控制面返回对端是否在线及其候选。放在
+    // Direct 之前——即使本地没有任何对端候选，也能先拿到公网候选走 Direct First，
+    // 而不是先选 Relay 再在内部补查（review P1-1：候选必须先于路径选择可用）。
+    let mut relay_fallback = relay.is_some();
+    // 对端被 Relay 明确判离线（无 presence+discovery）：无 Relay 数据面回退，但本地
+    // 配置的 endpoint 仍可尝试 Direct（LAN 对端可能未连 Relay）。区别于「本端根本没
+    // 有可用 Relay」——前者在无 Direct 候选时返回 PeerOffline，后者返回 NoRoute。
+    let mut peer_offline_on_relay = false;
     if let Some(relay) = relay.as_ref() {
-        let candidate_update = state.candidate_signal_notify.notified();
-        if send_candidate_offer(&state, relay, &peer_id, &local_attempt)
-            .await
-            .is_ok()
-        {
-            let _ = timeout(CANDIDATE_SIGNAL_WAIT, candidate_update).await;
+        match resolve_peer_discovery(&state, relay, &peer_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                relay_fallback = false;
+                peer_offline_on_relay = true;
+            }
+            // lookup 本身故障：fail-open，保留 Relay 回退，用本地候选继续。
+            Err(error) => tracing::debug!(
+                peer_id = %peer_id,
+                error = %error.message,
+                "Relay peer lookup failed; continuing with local candidates"
+            ),
+        }
+    }
+    // 候选信令：把本地候选经 Relay 发给对端，短窗口内等对端 answer 补充候选。
+    if relay_fallback {
+        if let Some(relay) = relay.as_ref() {
+            let candidate_update = state.candidate_signal_notify.notified();
+            if send_candidate_offer(&state, relay, &peer_id, &local_attempt)
+                .await
+                .is_ok()
+            {
+                let _ = timeout(CANDIDATE_SIGNAL_WAIT, candidate_update).await;
+            }
         }
     }
     let peer_manager = state.path_managers.read().await.get(&peer_id).cloned();
@@ -482,6 +511,9 @@ pub(crate) async fn connect_peer(
         None => local_attempt.connect_window,
     };
 
+    // 路由选择：Direct First（connect_window 内 Direct 胜出）→ 失败才 Relay 数据面。
+    // Relay 回退仅在 lookup 在线（或 fail-open 未知）时可用；对端明确离线则无 Relay
+    // 回退，直接用本地候选走 Direct。
     let route = if !direct_candidates.is_empty() {
         let direct = connect_direct_or_generic(DirectRouteAttempt {
             state: Arc::clone(&state),
@@ -495,25 +527,28 @@ pub(crate) async fn connect_peer(
             attempt_id: attempt_id.clone(),
             connect_window,
         });
-        match relay {
-            Some(relay) => {
-                let relay_attempt = connect_relay(Arc::clone(&state), relay, peer_id.clone());
-                connect_direct_first(direct, Some(relay_attempt), connect_window, &peer_id).await
-            }
-            None => direct.await.map(ReadyRoute::Direct),
+        if relay_fallback {
+            let relay_attempt = connect_relay_data();
+            connect_direct_first(direct, Some(relay_attempt), connect_window, &peer_id).await
+        } else {
+            direct.await.map(ReadyRoute::Direct)
         }
+    } else if relay_fallback {
+        connect_relay_data().await.map(|_| ReadyRoute::Relay)
+    } else if peer_offline_on_relay {
+        Err(protocol_error_with_peer(
+            NetworkErrorCode::PeerOffline,
+            "Relay peer is offline or did not answer lookup",
+            "connect",
+            &peer_id,
+        ))
     } else {
-        match relay {
-            Some(relay) => connect_relay(Arc::clone(&state), relay, peer_id.clone())
-                .await
-                .map(|_| ReadyRoute::Relay),
-            None => Err(protocol_error_with_peer(
-                NetworkErrorCode::NoRoute,
-                "peer has no usable direct or Relay route",
-                "connect",
-                &peer_id,
-            )),
-        }
+        Err(protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            "peer has no usable direct or Relay route",
+            "connect",
+            &peer_id,
+        ))
     };
 
     clear_candidate_attempt(&state, &peer_id, &attempt_id).await;
@@ -1544,6 +1579,17 @@ fn new_candidate_attempt_id() -> String {
     hex::encode(rand::random::<[u8; 16]>())
 }
 
+/// 生成单调的本地 Discovery generation 种子：用 unix 毫秒，重启/换代只会得到更大的
+/// 值。配合服务端「拒绝 generation 回退」（handleDiscoveryUpdate）不会把重启后的设备
+/// 误判为回退而卡离线——旧的随机种子跨进程重启有一半概率更小，会让服务端拒绝上传。
+fn monotonic_candidate_generation() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(1)
+        .max(1)
+}
+
 async fn clear_candidate_attempt(state: &RuntimeState, peer_id: &str, attempt_id: &str) {
     let mut attempts = state.candidate_attempts.write().await;
     if attempts
@@ -2047,46 +2093,101 @@ async fn migrate_direct_path(
     true
 }
 
-/// 顺序 Direct First 模型下，Relay 只在 Direct 窗口耗尽或快速失败后才启动，
-/// 因此不再需要延迟；没有 Direct candidate 时由调用方直接进入 Relay lookup。
-async fn connect_relay(
-    state: Arc<RuntimeState>,
-    relay: Arc<RelayClient>,
-    peer_id: String,
-) -> Result<(), ProtocolError> {
+/// 顺序 Direct First 模型下，Relay 数据面只在 Direct 窗口耗尽或快速失败后启动。
+/// Discovery 解析（lookup）已前移到 connect_peer 开头完成，这里只是返回「Relay
+/// 路由已选定」的标记；真正的 Relay Session 建立（establish_relay_crypto）在调用方
+/// 的 ReadyRoute::Relay 分支完成。
+async fn connect_relay_data() -> Result<(), ProtocolError> {
+    Ok(())
+}
+
+/// 通过 Relay 控制面解析对端 Discovery（明确版 §13）并把结果作为连接前的**权威对账**
+/// 应用到本地缓存：lookup 返回对端是否在线及其 generation/capabilities/candidates。
+///
+/// - 在线：按返回的 generation 替换/刷新 path_manager（generation 变化或首见 → 删旧
+///   重建、只装该 generation 候选；相同 → 合并），并同步 peer_presence.generation。
+///   候选是不透明 base64 JSON（CandidateAdvertisement 序列化），解码失败逐条跳过，
+///   候选仅增强、不因失败中断连接。
+/// - 离线：删除 discovery-derived path_manager（保留配置 endpoint），避免拿旧代候选
+///   白试 Direct 窗口。
+///
+/// 返回 Ok(true)=在线（候选已对账）、Ok(false)=对端不在 Relay 上（无 Relay 数据面
+/// 回退，但仍可尝试本地 Direct）、Err=lookup 本身故障（fail-open：调用方保留 Relay
+/// 回退并用本地候选继续，控制面抖动不阻断连接）。
+async fn resolve_peer_discovery(
+    state: &RuntimeState,
+    relay: &RelayClient,
+    peer_id: &str,
+) -> Result<bool, ProtocolError> {
     let (lookup_tx, lookup_rx) = oneshot::channel();
     state
         .relay_lookups
         .write()
         .await
-        .insert(peer_id.clone(), lookup_tx);
-    if relay.lookup_peer(&peer_id).await.is_err() {
-        state.relay_lookups.write().await.remove(&peer_id);
+        .insert(peer_id.to_string(), lookup_tx);
+    if relay.lookup_peer(peer_id).await.is_err() {
+        state.relay_lookups.write().await.remove(peer_id);
         return Err(protocol_error_with_peer(
             NetworkErrorCode::RelayError,
             "Relay peer lookup failed",
             "connect",
-            &peer_id,
+            peer_id,
         ));
     }
-    let result = tokio::time::timeout(PEER_CONNECT_TIMEOUT, lookup_rx)
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .unwrap_or_default();
-    state.relay_lookups.write().await.remove(&peer_id);
+    // lookup 在 Direct 之前阻塞解析，等待上限要短：正常部署下是毫秒级往返，超上限
+    // 即 fail-open（不判离线），避免控制面抖动拖延 Direct 路径。
+    let result = match timeout(DISCOVERY_LOOKUP_TIMEOUT, lookup_rx).await {
+        Ok(Ok(result)) => Some(result),
+        // 超时 / 通道关闭：在线状态未知，fail-open。
+        _ => None,
+    };
+    state.relay_lookups.write().await.remove(peer_id);
+    let Some(result) = result else {
+        tracing::debug!(peer_id = %peer_id, "Relay peer lookup timed out; continuing without discovery");
+        return Ok(true);
+    };
+    reconcile_peer_discovery(state, peer_id, &result).await;
+    Ok(result.online)
+}
+
+/// 把一次权威 lookup 结果应用到本地缓存（cache reconciliation）。lookup 是连接前的
+/// 权威对账：peer_online/updated/offline 是低延迟增量通知，可能因 Redis Pub/Sub 瞬时
+/// 丢失，而 lookup_response 反映服务器当前权威状态。
+///
+/// - 离线：删除 discovery-derived path_manager / candidate_attempts，避免 connect_peer
+///   拿旧代候选白试 Direct 窗口；同步移除 peer_presence 条目，若此前有缓存则 emit
+///   Offline（避免设备列表与连接状态分裂）。保留 PeerConfig.endpoint——手工配置 /
+///   LAN Direct 仍允许尝试。
+/// - 在线：generation 变化或首见 → 旧代 path_manager 里的 direct 候选全部失效，删掉
+///   重建，只安装该 generation 候选；generation 相同 → 在既有 manager 上合并刷新。
+///   同步 peer_presence.generation。
+async fn reconcile_peer_discovery(state: &RuntimeState, peer_id: &str, result: &LookupResult) {
     if !result.online {
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::PeerOffline,
-            "Relay peer is offline or did not answer lookup",
-            "connect",
-            &peer_id,
-        ));
+        state.path_managers.write().await.remove(peer_id);
+        state.candidate_attempts.write().await.remove(peer_id);
+        // lookup 是连接前权威状态：明确 offline 时移除 peer_presence 缓存条目；若此前
+        // 有缓存（UI 认为在线），emit Offline 避免 UI 与连接状态分裂。
+        let was_cached = state.peer_presence.write().await.remove(peer_id).is_some();
+        if was_cached {
+            emit_peer_presence_changed(&state.event_tx, peer_id, 0, PeerPresenceState::Offline);
+        }
+        return;
     }
-    // lookup 携带对端当前 Discovery（明确版 §13）：把候选解码并作为 remote 候选
-    // 基线加入 path_manager，供后续 connectivity check 直接使用。候选是不透明
-    // base64 JSON 字符串（CandidateAdvertisement 序列化）；解码失败逐条跳过，
-    // 不因此中断连接（候选仅增强，信令路径仍会提供）。
+    let cache_generation = state
+        .peer_presence
+        .read()
+        .await
+        .get(peer_id)
+        .map(|entry| entry.generation);
+    if cache_generation != Some(result.generation) {
+        state.path_managers.write().await.remove(peer_id);
+        state.peer_presence.write().await.insert(
+            peer_id.to_string(),
+            PeerPresence {
+                generation: result.generation,
+            },
+        );
+    }
     if !result.candidates.is_empty() {
         let candidates = result
             .candidates
@@ -2099,12 +2200,18 @@ async fn connect_relay(
             .filter(|candidate| result.generation == 0 || candidate.generation == result.generation)
             .collect::<Vec<_>>();
         if !candidates.is_empty() {
-            if let Some(manager) = state.path_managers.read().await.get(&peer_id).cloned() {
-                manager.add_candidates(candidates).await;
-            }
+            // 对端尚无 path_manager（generation 变化时已被删除，或纯凭 discovery 发现）
+            // 则新建，保证该 generation 候选进入 Direct 候选集。
+            let manager = state
+                .path_managers
+                .write()
+                .await
+                .entry(peer_id.to_string())
+                .or_insert_with(|| Arc::new(PathManager::new()))
+                .clone();
+            manager.add_candidates(candidates).await;
         }
     }
-    Ok(())
 }
 
 async fn establish_relay_crypto(
@@ -3007,6 +3114,197 @@ mod tests {
     async fn new_test_state() -> Arc<RuntimeState> {
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))))
+    }
+
+    /// lookup 返回新 generation 时，旧代 path_manager 候选必须全部失效重建，只保留新
+    /// generation 候选（review P2：add_candidates 是合并语义，事件丢失会让新旧两代候选
+    /// 共存）。
+    #[tokio::test]
+    async fn reconcile_peer_discovery_replaces_stale_generation_cache() {
+        let state = new_test_state().await;
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 10 });
+        let old_manager = Arc::new(PathManager::new());
+        old_manager
+            .add_candidates(vec![Candidate::new(
+                "192.168.1.20:50000".parse().unwrap(),
+                CandidateKind::Lan,
+                "eth0".into(),
+            )
+            .with_generation(10)])
+            .await;
+        state
+            .path_managers
+            .write()
+            .await
+            .insert("peer-a".into(), old_manager);
+
+        let new_candidate = Candidate::new(
+            "5.6.7.8:60000".parse().unwrap(),
+            CandidateKind::ServerReflexive,
+            "eth0".into(),
+        )
+        .with_generation(11);
+        let lookup = LookupResult {
+            online: true,
+            generation: 11,
+            candidates: vec![serde_json::to_string(&new_candidate.advertisement()).unwrap()],
+            capabilities: vec![],
+        };
+
+        reconcile_peer_discovery(&state, "peer-a", &lookup).await;
+
+        let manager = state
+            .path_managers
+            .read()
+            .await
+            .get("peer-a")
+            .cloned()
+            .expect("path_manager must be recreated");
+        let ranked = manager.ranked_candidates().await;
+        assert_eq!(
+            ranked.len(),
+            1,
+            "stale generation candidates must be replaced"
+        );
+        assert_eq!(ranked[0].generation, 11);
+        assert_eq!(
+            ranked[0].endpoint,
+            "5.6.7.8:60000".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(
+            state
+                .peer_presence
+                .read()
+                .await
+                .get("peer-a")
+                .map(|entry| entry.generation),
+            Some(11)
+        );
+    }
+
+    /// lookup 明确 offline 时删除 discovery-derived path_manager（保留配置 endpoint
+    /// 走 LAN Direct 的语义由 connect_peer 的 direct_candidates 组装负责），并同步
+    /// peer_presence——此前有缓存时 emit Offline，避免设备列表与连接状态分裂。
+    #[tokio::test]
+    async fn reconcile_peer_discovery_offline_clears_cached_direct_and_syncs_presence() {
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 10 });
+        state
+            .path_managers
+            .write()
+            .await
+            .insert("peer-a".into(), Arc::new(PathManager::new()));
+        state.candidate_attempts.write().await.insert(
+            "peer-a".into(),
+            CandidateAttempt {
+                attempt_id: "attempt-old".into(),
+                generation: 10,
+                connect_window: Duration::from_secs(1),
+                expires_at: Instant::now() + Duration::from_secs(1),
+            },
+        );
+
+        let lookup = LookupResult {
+            online: false,
+            generation: 0,
+            candidates: vec![],
+            capabilities: vec![],
+        };
+        reconcile_peer_discovery(&state, "peer-a", &lookup).await;
+
+        assert!(
+            state.path_managers.read().await.get("peer-a").is_none(),
+            "offline lookup must clear the cached path_manager"
+        );
+        assert!(
+            state
+                .candidate_attempts
+                .read()
+                .await
+                .get("peer-a")
+                .is_none(),
+            "offline lookup must clear the cached candidate attempt"
+        );
+        assert!(
+            state.peer_presence.read().await.get("peer-a").is_none(),
+            "offline lookup must remove the peer_presence entry"
+        );
+        // 此前有缓存 → 应 emit Offline。
+        let mut offline_emitted = false;
+        while let Ok(event) = event_rx.try_recv() {
+            if let Some(network_protocol::network_event::Payload::PeerPresenceChanged(entry)) =
+                event.payload
+            {
+                if entry.peer_id == "peer-a" && entry.state == PeerPresenceState::Offline as i32 {
+                    offline_emitted = true;
+                }
+            }
+        }
+        assert!(
+            offline_emitted,
+            "offline lookup must emit PeerPresenceState::Offline"
+        );
+    }
+
+    /// generation 相同时合并刷新（不重建），避免丢掉已采样的质量数据。
+    #[tokio::test]
+    async fn reconcile_peer_discovery_same_generation_merges() {
+        let state = new_test_state().await;
+        state
+            .peer_presence
+            .write()
+            .await
+            .insert("peer-a".into(), PeerPresence { generation: 10 });
+        let manager = Arc::new(PathManager::new());
+        manager
+            .add_candidates(vec![Candidate::new(
+                "192.168.1.20:50000".parse().unwrap(),
+                CandidateKind::Lan,
+                "eth0".into(),
+            )
+            .with_generation(10)])
+            .await;
+        state
+            .path_managers
+            .write()
+            .await
+            .insert("peer-a".into(), manager);
+
+        let extra = Candidate::new(
+            "192.168.1.21:50001".parse().unwrap(),
+            CandidateKind::Lan,
+            "eth0".into(),
+        )
+        .with_generation(10);
+        let lookup = LookupResult {
+            online: true,
+            generation: 10,
+            candidates: vec![serde_json::to_string(&extra.advertisement()).unwrap()],
+            capabilities: vec![],
+        };
+        reconcile_peer_discovery(&state, "peer-a", &lookup).await;
+
+        let manager = state
+            .path_managers
+            .read()
+            .await
+            .get("peer-a")
+            .cloned()
+            .expect("path_manager must be retained");
+        let ranked = manager.ranked_candidates().await;
+        assert_eq!(ranked.len(), 2, "same generation should merge candidates");
     }
 
     async fn started_generic_scope(

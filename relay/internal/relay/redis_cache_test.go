@@ -145,6 +145,89 @@ func TestRedisStorePresenceLeaseSemantics(t *testing.T) {
 	}
 }
 
+// TestRedisStoreDiscoveryOwnerCas verifies the cross-instance discovery CAS:
+// a discovery write requires the writer to still own the presence lease, so a
+// superseded connection cannot overwrite the newer connection's discovery
+// (Redis Lua atomic — the single-instance placeholder era had an unconditional
+// SET here). Also verifies ListOnlinePeers requires matching owners.
+func TestRedisStoreDiscoveryOwnerCas(t *testing.T) {
+	ctx := context.Background()
+	store, err := openRedisStore(ctx, requireRedisURL(t))
+	if err != nil {
+		t.Fatalf("open redis: %v", err)
+	}
+	defer store.Close()
+	deviceID := "discovery-cas-device"
+	if err := store.forceDeletePresence(ctx, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = store.ReleaseDiscovery(ctx, deviceID, "conn-a")
+		_, _ = store.ReleaseDiscovery(ctx, deviceID, "conn-b")
+		_ = store.forceDeletePresence(ctx, deviceID)
+	}()
+
+	// 无 presence 时不能写 discovery。
+	if err := store.TakeDiscovery(ctx, deviceID, "conn-a", Discovery{DeviceID: deviceID, Generation: 1}, time.Minute); !errors.Is(err, errDiscoveryNotOwner) {
+		t.Fatalf("discovery write without presence should be rejected, got %v", err)
+	}
+	// conn-a 拥有 presence：可写 discovery。
+	if _, _, err := store.TakePresence(ctx, deviceID, "conn-a", Presence{InstanceID: "i-a"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.TakeDiscovery(ctx, deviceID, "conn-a", Discovery{DeviceID: deviceID, Generation: 1}, time.Minute); err != nil {
+		t.Fatalf("owner discovery write failed: %v", err)
+	}
+	// 新连接接管 presence：旧连接 conn-a 的写入被拒绝（CAS）。
+	if _, _, err := store.TakePresence(ctx, deviceID, "conn-b", Presence{InstanceID: "i-b"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.TakeDiscovery(ctx, deviceID, "conn-a", Discovery{DeviceID: deviceID, Generation: 2}, time.Minute); !errors.Is(err, errDiscoveryNotOwner) {
+		t.Fatalf("superseded connection write must be rejected, got %v", err)
+	}
+	d, present, err := store.GetDiscovery(ctx, deviceID)
+	if err != nil || !present || d.Generation != 1 || d.ConnectionID != "conn-a" {
+		t.Fatalf("stale write must not overwrite discovery: %+v present=%v err=%v", d, present, err)
+	}
+	// 当前 owner conn-b 可以写入并覆盖。
+	if err := store.TakeDiscovery(ctx, deviceID, "conn-b", Discovery{DeviceID: deviceID, Generation: 3}, time.Minute); err != nil {
+		t.Fatalf("current owner write failed: %v", err)
+	}
+	// owner 不匹配（presence=conn-b、discovery 旧 owner conn-a）时 ListOnlinePeers 不
+	// 计入；owner 一致后才计入。
+	store.mustForceDiscoveryOwner(t, deviceID, "conn-a", 9)
+	online, err := store.ListOnlinePeers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := online[deviceID]; present {
+		t.Fatalf("owner-mismatched device must not be listed online: %+v", online)
+	}
+	if err := store.TakeDiscovery(ctx, deviceID, "conn-b", Discovery{DeviceID: deviceID, Generation: 9}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	online, err = store.ListOnlinePeers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := online[deviceID]; got.Generation != 9 || got.ConnectionID != "conn-b" {
+		t.Fatalf("owner-matched device should be online: %+v", online)
+	}
+}
+
+// mustForceDiscoveryOwner 直接写 Redis discovery 键（绕过 CAS），用于构造 owner 与
+// presence 不一致的离线态。仅测试隔离用。
+func (store *redisStore) mustForceDiscoveryOwner(t *testing.T, deviceID, connID string, generation uint64) {
+	t.Helper()
+	data, err := json.Marshal(Discovery{DeviceID: deviceID, ConnectionID: connID, Generation: generation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.client.Set(context.Background(), store.discoveryKey(deviceID), data, time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestRedisStorePresenceLegacyEntryNotRenewed verifies the upgrade path: a
 // legacy presence JSON without a connection_id is treated as foreign, so it is
 // not renewed (the pre-upgrade connection self-heals) and the next TakePresence
