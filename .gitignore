@@ -75,3 +75,6 @@ front/coverage/
 /ios/Runner/GeneratedPluginRegistrant.*
 /macos/Flutter/ephemeral/
 /windows/flutter/ephemeral/
+
+# Agent worktree scratch directories.
+/.claude/worktrees/

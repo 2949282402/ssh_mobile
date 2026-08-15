@@ -138,6 +138,8 @@ func OpenServer(config Config) (*Server, error) {
 		server.cache = redis
 		server.hub.presence = redis
 		server.startEventSubscribers()
+		// Redis 激活时额外启动僵尸 peer 清扫，与事件订阅共用生命周期。
+		server.startPresenceSweeper()
 		return server, nil
 	default:
 		return nil, fmt.Errorf("unsupported storage mode %q", config.StorageMode)
@@ -175,6 +177,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/devices/enroll", s.enroll)
 	mux.HandleFunc("POST /v1/devices/refresh", s.refresh)
 	mux.HandleFunc("GET /v1/connect", s.connect)
+	mux.HandleFunc("GET /v1/peers", s.listPeers)
 }
 
 // health 提供无需认证的存活检查端点。

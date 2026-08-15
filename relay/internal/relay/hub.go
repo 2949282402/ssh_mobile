@@ -44,26 +44,62 @@ type session struct {
 }
 
 type controlFrame struct {
-	Type            string `json:"type"`
-	SessionID       string `json:"session_id,omitempty"`
-	TargetID        string `json:"target_id,omitempty"`
-	SenderID        string `json:"sender_id,omitempty"`
-	DeviceID        string `json:"device_id,omitempty"`
-	Payload         string `json:"payload,omitempty"`
-	Timestamp       int64  `json:"timestamp,omitempty"`
-	ProtocolVersion uint32 `json:"protocol_version,omitempty"`
-	Online          *bool  `json:"online,omitempty"`
+	Type            string        `json:"type"`
+	SessionID       string        `json:"session_id,omitempty"`
+	TargetID        string        `json:"target_id,omitempty"`
+	SenderID        string        `json:"sender_id,omitempty"`
+	DeviceID        string        `json:"device_id,omitempty"`
+	Payload         string        `json:"payload,omitempty"`
+	Timestamp       int64         `json:"timestamp,omitempty"`
+	ProtocolVersion uint32        `json:"protocol_version,omitempty"`
+	Online          *bool         `json:"online,omitempty"`
+	Generation      uint64        `json:"generation,omitempty"`
+	Peers           []peerSummary `json:"peers,omitempty"`
+	Capabilities    []string      `json:"capabilities,omitempty"`
+	Candidates      []string      `json:"candidates,omitempty"`
 }
+
+// peerSummary 是 presence_snapshot 的条目：在线设备的 device_id 与其当前
+// discovery generation。客户端据此重建本地设备列表并决定是否拉取最新 discovery。
+type peerSummary struct {
+	DeviceID   string `json:"device_id"`
+	Generation uint64 `json:"generation"`
+}
+
+// 推送发现控制面的帧类型（均经 peer.enqueue 以 TextMessage 下发，同 ready 帧）。
+const (
+	// framePresenceSnapshot 在设备首次上传 discovery_update 后回发：包含当前全部
+	// 在线设备的 {device_id, generation} 快照，作为该设备本地设备列表基线。
+	framePresenceSnapshot = "presence_snapshot"
+	// framePeerOnline 在设备首次上传 discovery_update 后广播：表示该设备上线。
+	framePeerOnline = "peer_online"
+	// framePeerUpdated 在设备 generation 变化时广播：表示该设备的 discovery 已更新。
+	framePeerUpdated = "peer_updated"
+	// framePeerOffline 在设备离线（sweeper 清理僵尸连接）时广播。
+	framePeerOffline = "peer_offline"
+)
 
 // presenceStore reports device connection state to the shared presence layer as
 // a per-connection lease. Every take/renew/release carries the owning
 // connection's ConnectionID so a superseded connection can never erase or renew
 // a newer one. Publish broadcasts a cross-instance lifecycle event (used for
 // the targeted connection.replaced disconnect).
+//
+// Discovery 与 presence 同生命周期（TTL 相同、心跳同时续期、断开同时释放），
+// 所以 hub 侧的取/续/释放走同一契约；GetPresence/GetDiscovery 供 lookup 用
+// Redis 作为唯一事实来源（明确版 §13）。
 type presenceStore interface {
 	TakePresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (Presence, bool, error)
 	RenewPresence(ctx context.Context, deviceID, connID string, p Presence, ttl time.Duration) (bool, error)
 	ReleasePresence(ctx context.Context, deviceID, connID string) (bool, error)
+	GetPresence(ctx context.Context, deviceID string) (Presence, bool, error)
+	GetDiscovery(ctx context.Context, deviceID string) (Discovery, bool, error)
+	TakeDiscovery(ctx context.Context, deviceID, connID string, d Discovery, ttl time.Duration) error
+	RenewDiscovery(ctx context.Context, deviceID, connID string, ttl time.Duration) (bool, error)
+	ReleaseDiscovery(ctx context.Context, deviceID, connID string) (bool, error)
+	// ListOnlinePeers 返回 presence 与 discovery 均有效的设备（明确版 §13），
+	// presence_snapshot 构建与 sweeper 判活复用同一在线判定。
+	ListOnlinePeers(ctx context.Context) (map[string]Discovery, error)
 	Publish(ctx context.Context, event RelayEvent) error
 }
 
@@ -178,6 +214,7 @@ func (h *hub) close() {
 				go func(peer *peer) {
 					defer sweep.Done()
 					_, _ = h.presence.ReleasePresence(ctx, peer.deviceID, peer.connectionID)
+					_, _ = h.presence.ReleaseDiscovery(ctx, peer.deviceID, peer.connectionID)
 				}(p)
 			}
 			sweep.Wait()
@@ -225,6 +262,7 @@ func (h *hub) add(peer *peer) bool {
 	// phantom online entry can be left behind by a delayed TakePresence. The new
 	// connection takes over any existing lease (newest connect wins).
 	leaseTaken := false
+	discoveryTaken := false
 	if h.presence != nil {
 		old, replaced, err := h.presence.TakePresence(context.Background(), peer.deviceID, peer.connectionID, h.presenceFor(peer), h.presenceTTL)
 		if err == nil {
@@ -243,6 +281,18 @@ func (h *hub) add(peer *peer) bool {
 				NewConnectionID: peer.connectionID,
 				Time:            time.Now().UnixMilli(),
 			})
+		}
+		// 连接建立即写一个占位 discovery（generation 0、无候选），使设备在完成
+		// discovery_update 上传之前也满足「presence+discovery 均有效」的在线判定
+		// （明确版 §13），保持既有 lookup 契约（连接即在线，TestDartWireContract
+		// 依赖此语义）。真正的 discovery 由 discovery_update 覆盖；peer_online 广播
+		// 仍等 discovery_update 才触发，满足明确版 §8「上传 discovery 之前不广播为
+		// online」。占位 discovery 与 presence 同生命周期：心跳同时续期、断开同时释放。
+		if err == nil {
+			placeholder := Discovery{DeviceID: peer.deviceID, Generation: 0, UpdatedAt: time.Now()}
+			if derr := h.presence.TakeDiscovery(context.Background(), peer.deviceID, peer.connectionID, placeholder, h.presenceTTL); derr == nil {
+				discoveryTaken = true
+			}
 		}
 	}
 	// Atomically re-check currency/closed and register the worker goroutines in
@@ -267,6 +317,10 @@ func (h *hub) add(peer *peer) bool {
 		// rule the heartbeat path applies after a post-renew currency re-check.
 		if leaseTaken && h.presence != nil {
 			_, _ = h.presence.ReleasePresence(context.Background(), peer.deviceID, peer.connectionID)
+		}
+		// 占位 discovery 与 presence 同生命周期，被拒连接一并释放，不留可发现的残留。
+		if discoveryTaken && h.presence != nil {
+			_, _ = h.presence.ReleaseDiscovery(context.Background(), peer.deviceID, peer.connectionID)
 		}
 		closePeer(peer)
 		return false
@@ -299,6 +353,7 @@ func (h *hub) disconnectConnection(deviceID, connectionID string) {
 	h.mutex.Unlock()
 	if h.presence != nil {
 		_, _ = h.presence.ReleasePresence(context.Background(), deviceID, connectionID)
+		_, _ = h.presence.ReleaseDiscovery(context.Background(), deviceID, connectionID)
 	}
 	closePeer(current)
 }
@@ -316,6 +371,7 @@ func (h *hub) remove(peer *peer) {
 	h.mutex.Unlock()
 	if isCurrent && h.presence != nil {
 		_, _ = h.presence.ReleasePresence(context.Background(), peer.deviceID, peer.connectionID)
+		_, _ = h.presence.ReleaseDiscovery(context.Background(), peer.deviceID, peer.connectionID)
 	}
 	closePeer(peer)
 }
@@ -352,6 +408,7 @@ func (h *hub) disconnectDevice(deviceID string) {
 		// there when it receives the revoke/kick event, or by reconcileRevocations.
 		if h.presence != nil {
 			_, _ = h.presence.ReleasePresence(context.Background(), deviceID, peer.connectionID)
+			_, _ = h.presence.ReleaseDiscovery(context.Background(), deviceID, peer.connectionID)
 		}
 		closePeer(peer)
 	}
@@ -465,6 +522,27 @@ func (h *hub) routeBinary(sender *peer, data []byte) {
 	copyData := append([]byte(nil), data...)
 	if !target.enqueue(outboundFrame{websocket.BinaryMessage, copyData}) {
 		go target.socket.Close()
+	}
+}
+
+// broadcast 把 frame 推给除 exceptDeviceID 外的所有本地 peer。按 routeBinary 的
+// 「锁内快照、锁外 enqueue」模式：快照在 h.mutex 下完成、enqueue 在锁外逐个执行，
+// 避免长持有互斥锁阻塞 read goroutine。enqueue 失败（对端积压或已关闭）则定向关闭，
+// 与现有转发路径的处置一致。推送发现帧（presence_snapshot/peer_online/peer_updated/
+// peer_offline）与跨实例事件都在此聚合，供本地实例与 handleRelayEvent 复用。
+func (h *hub) broadcast(exceptDeviceID string, frame outboundFrame) {
+	h.mutex.Lock()
+	peers := make([]*peer, 0, len(h.peers))
+	for deviceID, p := range h.peers {
+		if deviceID != exceptDeviceID {
+			peers = append(peers, p)
+		}
+	}
+	h.mutex.Unlock()
+	for _, p := range peers {
+		if !p.enqueue(frame) {
+			go p.socket.Close()
+		}
 	}
 }
 
