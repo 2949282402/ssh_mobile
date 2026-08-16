@@ -1,23 +1,18 @@
-// 推送发现控制面测试：lookup 租约判定、broadcast 排除语义、discovery_update
-// 处理、presence sweeper、GET /v1/peers 与跨实例事件广播。
+// 推送发现控制面测试（v2 模型）：权威 resolve、broadcastV2 排除语义、presence
+// sweeper、跨实例事件广播、publishDiscoveryV2 的 epoch/revision 语义与 stale-owner
+// 拒绝。v1 JSON 控制面已随传输网络 v1 删除，所有帧断言都走 v2 protobuf codec。
 
 package relay
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
-
-	"github.com/gorilla/websocket"
 
 	"github.com/ssh-mobile/relay/internal/relay/v2"
 )
@@ -34,15 +29,37 @@ func readOutbound(t *testing.T, p *peer) outboundFrame {
 	}
 }
 
-// readControlFrame 读取一帧并解析为 controlFrame。
-func readControlFrame(t *testing.T, p *peer) controlFrame {
+// readV2ControlFrameFromPeer 读取一帧并解码为 v2 RelayFrame。
+func readV2ControlFrameFromPeer(t *testing.T, p *peer) *v2.RelayFrame {
 	t.Helper()
 	f := readOutbound(t, p)
-	var cf controlFrame
-	if err := json.Unmarshal(f.data, &cf); err != nil {
-		t.Fatalf("invalid control frame from %s: %v", p.deviceID, err)
+	frame, err := v2.DecodeControl(f.data)
+	if err != nil {
+		t.Fatalf("invalid v2 control frame from %s: %v", p.deviceID, err)
 	}
-	return cf
+	return frame
+}
+
+// readPeerAvailableHint 读取一帧并断言是 PeerAvailableHint。
+func readPeerAvailableHint(t *testing.T, p *peer) *v2.PeerAvailableHint {
+	t.Helper()
+	frame := readV2ControlFrameFromPeer(t, p)
+	hint := frame.GetPeerAvailableHint()
+	if hint == nil {
+		t.Fatalf("expected peer_available_hint from %s, got %s", p.deviceID, v2.KindName(frame))
+	}
+	return hint
+}
+
+// readPeerUnavailableHint 读取一帧并断言是 PeerUnavailableHint。
+func readPeerUnavailableHint(t *testing.T, p *peer) *v2.PeerUnavailableHint {
+	t.Helper()
+	frame := readV2ControlFrameFromPeer(t, p)
+	hint := frame.GetPeerUnavailableHint()
+	if hint == nil {
+		t.Fatalf("expected peer_unavailable_hint from %s, got %s", p.deviceID, v2.KindName(frame))
+	}
+	return hint
 }
 
 // assertNoOutbound 断言 peer 的 outbound 在短窗口内没有新帧。
@@ -55,9 +72,11 @@ func assertNoOutbound(t *testing.T, p *peer) {
 	}
 }
 
-// TestLookupLeaseBasedOnline 固定 lookup 的租约判定：presence+discovery 均有效才
-// online（明确版 §13），仅 presence 或仅 discovery 都算离线；在线时返回候选。
-func TestLookupLeaseBasedOnline(t *testing.T) {
+// TestResolveV2LeaseBasedOnline 固定 v2 ResolvePeerRequest 的 4-state 判定：
+// READY 只在 presence+discovery 双有效、owner 一致、revision>0 时返回；
+// NOT_READY（presence 在线但 discovery 未发布）、OFFLINE（presence 缺失）与
+// revision=0 的残留都不得判 READY。
+func TestResolveV2LeaseBasedOnline(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -66,74 +85,73 @@ func TestLookupLeaseBasedOnline(t *testing.T) {
 	ctx := context.Background()
 	caller := injectPeer(server.hub, "caller")
 
+	// device-a：READY（presence+discovery 均有效、owner 一致、revision>0）。
 	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{
-		DeviceID: "device-a", Generation: 7, Capabilities: []string{"cap-a"}, Candidates: []string{"cand-a"},
+		DeviceID: "device-a", Revision: 7, RuntimeEpochHigh: 0x1234, RuntimeEpochLow: 0x5678,
+		Capabilities: []string{"5"}, Candidates: []string{base64.StdEncoding.EncodeToString([]byte("cand-a"))},
 	}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	// device-b 只有 presence（offline）；device-c 先以 owner 写 discovery 再释放 presence
-	// → 只残留 discovery（offline）；device-d presence+discovery 双有效但 generation 0
-	// （offline，占位/遗留 gen-0 不算在线）。
+	// device-b：只有 presence（NOT_READY）。
 	if _, _, err := server.cache.TakePresence(ctx, "device-b", "conn-b", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	// device-c：先以 owner 写 discovery 再释放 presence → 只残留 discovery（OFFLINE）。
 	if _, _, err := server.cache.TakePresence(ctx, "device-c", "conn-c", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.cache.TakeDiscovery(ctx, "device-c", "conn-c", Discovery{DeviceID: "device-c", Generation: 3, Candidates: []string{"cand-c"}}, time.Minute); err != nil {
+	if err := server.cache.TakeDiscovery(ctx, "device-c", "conn-c", Discovery{DeviceID: "device-c", Revision: 3, Candidates: []string{"cand-c"}}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	// TakeDiscovery 的 CAS 要求 presence owner；写入成功后释放 presence 构造
-	// discovery-only 的离线态。
 	if released, _ := server.cache.ReleasePresence(ctx, "device-c", "conn-c"); !released {
 		t.Fatal("device-c presence could not be released")
 	}
+	// device-d：presence+discovery 双有效但 revision=0（残留）→ NOT_READY。
 	if _, _, err := server.cache.TakePresence(ctx, "device-d", "conn-d", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.cache.TakeDiscovery(ctx, "device-d", "conn-d", Discovery{DeviceID: "device-d", Generation: 0}, time.Minute); err != nil {
+	if err := server.cache.TakeDiscovery(ctx, "device-d", "conn-d", Discovery{DeviceID: "device-d"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 
-	server.hub.lookupPeer(caller, "device-a")
-	frame := readControlFrame(t, caller)
-	if frame.Type != "lookup_response" || frame.TargetID != "device-a" || frame.Online == nil || !*frame.Online {
-		t.Fatalf("device-a should be online: %+v", frame)
+	server.hub.handleResolvePeerRequestV2(caller, &v2.ResolvePeerRequest{RequestId: 1, TargetDeviceId: "device-a"})
+	frame := readV2ControlFrameFromPeer(t, caller)
+	rs := frame.GetResolvePeerResponse()
+	if rs == nil || rs.Status != v2.ResolveStatus_RESOLVE_STATUS_READY {
+		t.Fatalf("device-a should be READY: %+v", frame)
 	}
-	if frame.Generation != 7 || len(frame.Capabilities) != 1 || frame.Capabilities[0] != "cap-a" ||
-		len(frame.Candidates) != 1 || frame.Candidates[0] != "cand-a" {
-		t.Fatalf("lookup should carry generation/capabilities/candidates: %+v", frame)
-	}
-
-	server.hub.lookupPeer(caller, "device-b")
-	frame = readControlFrame(t, caller)
-	if frame.Type != "lookup_response" || frame.Online == nil || *frame.Online {
-		t.Fatalf("device-b (presence only) should be offline: %+v", frame)
+	if rs.Discovery == nil || rs.Discovery.Revision != 7 ||
+		len(rs.Discovery.TransportCapabilities) != 1 ||
+		len(rs.Discovery.CandidateBundle.Candidates) != 1 {
+		t.Fatalf("READY resolve should carry device-a discovery: %+v", rs.Discovery)
 	}
 
-	server.hub.lookupPeer(caller, "device-c")
-	frame = readControlFrame(t, caller)
-	if frame.Type != "lookup_response" || frame.Online == nil || *frame.Online {
-		t.Fatalf("device-c (discovery only) should be offline: %+v", frame)
-	}
-	if len(frame.Candidates) != 0 {
-		t.Fatalf("offline lookup must not return candidates: %+v", frame)
+	server.hub.handleResolvePeerRequestV2(caller, &v2.ResolvePeerRequest{RequestId: 2, TargetDeviceId: "device-b"})
+	frame = readV2ControlFrameFromPeer(t, caller)
+	if rs := frame.GetResolvePeerResponse(); rs == nil || rs.Status != v2.ResolveStatus_RESOLVE_STATUS_NOT_READY {
+		t.Fatalf("device-b (presence only) should be NOT_READY: %+v", frame)
 	}
 
-	server.hub.lookupPeer(caller, "device-d")
-	frame = readControlFrame(t, caller)
-	if frame.Type != "lookup_response" || frame.Online == nil || *frame.Online {
-		t.Fatalf("device-d (generation 0) should be offline: %+v", frame)
+	server.hub.handleResolvePeerRequestV2(caller, &v2.ResolvePeerRequest{RequestId: 3, TargetDeviceId: "device-c"})
+	frame = readV2ControlFrameFromPeer(t, caller)
+	if rs := frame.GetResolvePeerResponse(); rs == nil || rs.Status != v2.ResolveStatus_RESOLVE_STATUS_OFFLINE {
+		t.Fatalf("device-c (discovery only) should be OFFLINE: %+v", frame)
+	}
+
+	server.hub.handleResolvePeerRequestV2(caller, &v2.ResolvePeerRequest{RequestId: 4, TargetDeviceId: "device-d"})
+	frame = readV2ControlFrameFromPeer(t, caller)
+	if rs := frame.GetResolvePeerResponse(); rs == nil || rs.Status != v2.ResolveStatus_RESOLVE_STATUS_NOT_READY {
+		t.Fatalf("device-d (revision 0) should be NOT_READY: %+v", frame)
 	}
 }
 
-// TestLookupResolveFourStates 固定 4-state resolve（明确版 §10）：READY 才
-// online=true；OFFLINE/NOT_READY/UNKNOWN 都判离线；UNKNOWN 绝不当 online（移除
-// 原 fail-open 回退本地表语义）。
-func TestLookupResolveFourStates(t *testing.T) {
+// TestResolveV2FourStates 固定 v2 resolve 的 4-state：READY 才携带 discovery；
+// OFFLINE/NOT_READY/UNKNOWN 分别回状态；UNKNOWN 绝不当 READY（移除原 fail-open
+// 回退本地表语义）。
+func TestResolveV2FourStates(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -141,32 +159,32 @@ func TestLookupResolveFourStates(t *testing.T) {
 	defer server.Close()
 	ctx := context.Background()
 	caller := injectPeer(server.hub, "caller")
-	// 本地表有连接但缓存不可读：UNKNOWN 必须判离线，不再 fail-open 到 h.peers。
+	// 本地表有连接但缓存不可读：UNKNOWN 必须判 NOT READY，不再 fail-open 到 h.peers。
 	injectPeer(server.hub, "device-x")
 
 	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{
-		DeviceID: "device-a", Generation: 7, Capabilities: []string{"cap-a"}, Candidates: []string{"cand-a"},
+		DeviceID: "device-a", Revision: 7, Capabilities: []string{"cap-a"}, Candidates: []string{"cand-a"},
 	}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	// 缓存故障：任何 GetPresence/GetDiscovery 都返回错误 → UNKNOWN → offline。
+	// 缓存故障：任何 GetPresence/GetDiscovery 都返回错误 → UNKNOWN。
 	server.hub.presence = erroringCache{}
 
-	server.hub.lookupPeer(caller, "device-x")
-	frame := readControlFrame(t, caller)
-	if frame.Online == nil || *frame.Online {
-		t.Fatalf("cache failure must resolve UNKNOWN (offline), not fail open: %+v", frame)
+	server.hub.handleResolvePeerRequestV2(caller, &v2.ResolvePeerRequest{RequestId: 1, TargetDeviceId: "device-x"})
+	frame := readV2ControlFrameFromPeer(t, caller)
+	if rs := frame.GetResolvePeerResponse(); rs == nil || rs.Status != v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN {
+		t.Fatalf("cache failure must resolve UNKNOWN, not fail open: %+v", frame)
 	}
 
-	// 恢复可读缓存后：READY 的设备应在线。
+	// 恢复可读缓存后：READY 的设备应返回 READY + discovery。
 	server.hub.presence = server.cache
-	server.hub.lookupPeer(caller, "device-a")
-	frame = readControlFrame(t, caller)
-	if frame.Online == nil || !*frame.Online || frame.Generation != 7 {
-		t.Fatalf("READY device should be online with generation: %+v", frame)
+	server.hub.handleResolvePeerRequestV2(caller, &v2.ResolvePeerRequest{RequestId: 2, TargetDeviceId: "device-a"})
+	frame = readV2ControlFrameFromPeer(t, caller)
+	if rs := frame.GetResolvePeerResponse(); rs == nil || rs.Status != v2.ResolveStatus_RESOLVE_STATUS_READY || rs.Discovery == nil {
+		t.Fatalf("READY device should resolve READY with discovery: %+v", frame)
 	}
 }
 
@@ -183,7 +201,7 @@ func TestResolvePeerStatusMatrix(t *testing.T) {
 	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{DeviceID: "device-a", Generation: 3}, time.Minute); err != nil {
+	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{DeviceID: "device-a", Revision: 3}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if got := server.hub.resolvePeer(ctx, "device-a"); got.status != v2.ResolveStatus_RESOLVE_STATUS_READY {
@@ -204,11 +222,10 @@ func TestResolvePeerStatusMatrix(t *testing.T) {
 	}
 
 	// device-d：presence+discovery 双有效但 owner 不一致（重连窗口旧连接残留）→ NOT_READY。
-	// 先以 conn-d1 为 presence owner 写 discovery，再让 conn-d2 接管 presence。
 	if _, _, err := server.cache.TakePresence(ctx, "device-d", "conn-d1", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.cache.TakeDiscovery(ctx, "device-d", "conn-d1", Discovery{DeviceID: "device-d", Generation: 5}, time.Minute); err != nil {
+	if err := server.cache.TakeDiscovery(ctx, "device-d", "conn-d1", Discovery{DeviceID: "device-d", Revision: 5}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := server.cache.TakePresence(ctx, "device-d", "conn-d2", Presence{InstanceID: "i1"}, time.Minute); err != nil {
@@ -218,7 +235,7 @@ func TestResolvePeerStatusMatrix(t *testing.T) {
 		t.Fatalf("device-d (owner mismatch) should be NOT_READY, got %v", got.status)
 	}
 
-	// device-e：缓存读取故障 → UNKNOWN（绝不当 online）。
+	// device-e：缓存读取故障 → UNKNOWN（绝不当 READY）。
 	server.hub.presence = erroringCache{}
 	if got := server.hub.resolvePeer(ctx, "device-e"); got.status != v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN {
 		t.Fatalf("cache failure should be UNKNOWN, got %v", got.status)
@@ -226,9 +243,9 @@ func TestResolvePeerStatusMatrix(t *testing.T) {
 	server.hub.presence = server.cache
 }
 
-// TestHubBroadcastExcludesExcept 固定 broadcast 的「锁内快照、锁外 enqueue」语义：
-// except 设备不收帧，其余 peer 都收到。
-func TestHubBroadcastExcludesExcept(t *testing.T) {
+// TestHubBroadcastV2ExcludesExcept 固定 broadcastV2 的「锁内快照、锁外 enqueue」语义：
+// except 设备不收帧，其余 v2 控制面 peer 都收到。
+func TestHubBroadcastV2ExcludesExcept(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -238,12 +255,16 @@ func TestHubBroadcastExcludesExcept(t *testing.T) {
 	b := injectPeer(server.hub, "device-b")
 	c := injectPeer(server.hub, "device-c")
 
-	frame, _ := json.Marshal(controlFrame{Type: framePeerOnline, DeviceID: "device-a", Generation: 1})
-	server.hub.broadcast("device-a", outboundFrame{websocket.TextMessage, frame})
+	server.hub.broadcastV2("device-a", &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_PeerAvailableHint{PeerAvailableHint: &v2.PeerAvailableHint{
+			DeviceId: "device-a", RuntimeEpoch: &v2.RuntimeEpoch{High: 1}, Revision: 1,
+		}},
+	})
 
 	for _, p := range []*peer{b, c} {
-		got := readControlFrame(t, p)
-		if got.Type != framePeerOnline || got.DeviceID != "device-a" || got.Generation != 1 {
+		got := readPeerAvailableHint(t, p)
+		if got.DeviceId != "device-a" || got.Revision != 1 {
 			t.Fatalf("peer %s received wrong broadcast: %+v", p.deviceID, got)
 		}
 	}
@@ -256,7 +277,7 @@ func TestHubBroadcastExcludesExcept(t *testing.T) {
 }
 
 // TestPresenceSweeperClosesZombies 固定 sweeper 判活：presence+discovery 均有效的
-// 本地 peer 保留；租约缺失/不完整的视为僵尸关闭并广播 peer_offline。
+// 本地 peer 保留；租约缺失/不完整的视为僵尸关闭并广播 peer_unavailable_hint。
 func TestPresenceSweeperClosesZombies(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
@@ -269,7 +290,7 @@ func TestPresenceSweeperClosesZombies(t *testing.T) {
 	if _, _, err := server.cache.TakePresence(ctx, "device-a", healthy.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.cache.TakeDiscovery(ctx, "device-a", healthy.connectionID, Discovery{DeviceID: "device-a", Generation: 1}, time.Minute); err != nil {
+	if err := server.cache.TakeDiscovery(ctx, "device-a", healthy.connectionID, Discovery{DeviceID: "device-a", Revision: 1}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	// device-b：本地表有 peer 但无任何租约 → 僵尸。
@@ -310,498 +331,17 @@ func TestPresenceSweeperClosesZombies(t *testing.T) {
 		t.Fatal("presence-only peer was closed as a zombie")
 	default:
 	}
-	// 仅 device-b 被 sweeping：其 peer_offline 广播只发一次。
-	frame := readControlFrame(t, healthy)
-	if frame.Type != framePeerOffline || frame.DeviceID != "device-b" {
-		t.Fatalf("healthy peer expected device-b peer_offline, got %+v", frame)
+	// 仅 device-b 被 sweeping：healthy peer 收到一条 PeerUnavailableHint。
+	hint := readPeerUnavailableHint(t, healthy)
+	if hint.DeviceId != "device-b" {
+		t.Fatalf("healthy peer expected device-b peer_unavailable_hint, got %+v", hint)
 	}
-}
-
-// TestDiscoveryUpdatePersistsAndBroadcasts 固定 discovery_update 处理：落盘 discovery、
-// 首次上报广播 peer_online + 回发 presence_snapshot、同 generation 静默、变化广播
-// peer_updated。
-func TestDiscoveryUpdatePersistsAndBroadcasts(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte(mysqlTestCredentialKey),
-		EnrollmentToken: "test-token",
-	})
-	defer server.Close()
-	ctx := context.Background()
-
-	sender := injectPeer(server.hub, "device-a")
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	other := injectPeer(server.hub, "device-b")
-	if _, _, err := server.cache.TakePresence(ctx, "device-b", other.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if err := server.cache.TakeDiscovery(ctx, "device-b", other.connectionID, Discovery{DeviceID: "device-b", Generation: 1}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-
-	// 首次真实上报（injectPeer 不写占位 discovery）→ peer_online 广播 + 自身拿快照。
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{
-		Type: "discovery_update", Generation: 1,
-		Capabilities: []string{"cap-1"}, Candidates: []string{"cand-1"},
-	})
-	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
-	if err != nil || !present {
-		t.Fatalf("discovery not persisted: present=%v err=%v", present, err)
-	}
-	if d.Generation != 1 || len(d.Candidates) != 1 || d.Candidates[0] != "cand-1" || len(d.Capabilities) != 1 {
-		t.Fatalf("persisted discovery mismatch: %+v", d)
-	}
-	if d.ConnectionID != sender.connectionID {
-		t.Fatalf("discovery owner should be the sender connection: %q", d.ConnectionID)
-	}
-	frame := readControlFrame(t, other)
-	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 1 {
-		t.Fatalf("other peer expected peer_online, got %+v", frame)
-	}
-	snapshot := readControlFrame(t, sender)
-	if snapshot.Type != framePresenceSnapshot {
-		t.Fatalf("announcer expected presence_snapshot after first upload, got %+v", snapshot)
-	}
-	if len(snapshot.Peers) != 1 || snapshot.Peers[0].DeviceID != "device-b" {
-		t.Fatalf("snapshot should list other online peers only: %+v", snapshot.Peers)
-	}
-
-	// 同 generation 刷新 → 静默，无广播。
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 1, Candidates: []string{"cand-1"}})
-	assertNoOutbound(t, other)
-	assertNoOutbound(t, sender)
-
-	// generation 变化 → peer_updated 广播。
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 2, Candidates: []string{"cand-2"}})
-	frame = readControlFrame(t, other)
-	if frame.Type != framePeerUpdated || frame.DeviceID != "device-a" || frame.Generation != 2 {
-		t.Fatalf("other peer expected peer_updated, got %+v", frame)
-	}
-}
-
-// TestDiscoveryUpdateRejectsGenerationRegression 固定 generation 单调约束限定在同一
-// Discovery owner 内：同一连接上报更小的 generation 被拒绝（不落盘、不广播），已落盘
-// 的更高值保持不变。
-func TestDiscoveryUpdateRejectsGenerationRegression(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte(mysqlTestCredentialKey),
-		EnrollmentToken: "test-token",
-	})
-	defer server.Close()
-	ctx := context.Background()
-
-	sender := injectPeer(server.hub, "device-a")
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	other := injectPeer(server.hub, "device-b")
-	if _, _, err := server.cache.TakePresence(ctx, "device-b", other.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 10, Candidates: []string{"cand-10"}})
-	// 回退：10 → 8 必须被拒绝。
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 8, Candidates: []string{"cand-8"}})
-
-	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
-	if err != nil || !present {
-		t.Fatalf("discovery missing: present=%v err=%v", present, err)
-	}
-	if d.Generation != 10 {
-		t.Fatalf("regression must not overwrite persisted generation: got %d", d.Generation)
-	}
-	if len(d.Candidates) != 1 || d.Candidates[0] != "cand-10" {
-		t.Fatalf("regression must not overwrite persisted candidates: %+v", d.Candidates)
-	}
-	// 只广播过一次（首次 gen 10 的 peer_online），回退上传不产生任何帧。
-	frame := readControlFrame(t, other)
-	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 10 {
-		t.Fatalf("expected single peer_online for gen 10, got %+v", frame)
-	}
-	assertNoOutbound(t, other)
-}
-
-// TestDiscoveryUpdateAcceptsCrossOwnerGeneration 固定升级迁移：旧版本客户端（PR #44
-// 随机 u64 generation，通常远大于 unix-ms）的 discovery 残留时，升级后的新连接上传
-// 较小的 unix-ms generation 必须被接受（跨 owner 视为新 epoch，不做回退拒绝）——
-// 否则设备会一直不可发现。
-func TestDiscoveryUpdateAcceptsCrossOwnerGeneration(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte(mysqlTestCredentialKey),
-		EnrollmentToken: "test-token",
-	})
-	defer server.Close()
-	ctx := context.Background()
-
-	other := injectPeer(server.hub, "device-b")
-
-	// 旧连接（PR #44 随机大 generation）拥有 presence + discovery。
-	old := injectPeer(server.hub, "device-a")
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", old.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if err := server.cache.TakeDiscovery(ctx, "device-a", old.connectionID, Discovery{DeviceID: "device-a", Generation: 14829384729384729384, Candidates: []string{"cand-old"}}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	// 升级后新连接接管 presence，上传 unix-ms 级的小 generation。
-	newConn := &peer{deviceID: "device-a", connectionID: "conn-a-upgraded", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", newConn.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-
-	server.hub.handleDiscoveryUpdate(newConn, controlFrame{Type: "discovery_update", Generation: 1786790000000, Candidates: []string{"cand-new"}})
-
-	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
-	if err != nil || !present {
-		t.Fatalf("discovery missing after cross-owner upload: present=%v err=%v", present, err)
-	}
-	if d.Generation != 1786790000000 || d.ConnectionID != newConn.connectionID {
-		t.Fatalf("cross-owner smaller generation must be accepted: %+v", d)
-	}
-	// 新连接首次可发现 → peer_online 广播。
-	frame := readControlFrame(t, other)
-	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 1786790000000 {
-		t.Fatalf("cross-owner upload should broadcast peer_online, got %+v", frame)
-	}
-	online, err := server.cache.ListOnlinePeers(ctx)
-	if err != nil || online["device-a"].Generation != 1786790000000 {
-		t.Fatalf("device-a should be online after cross-owner upload: %+v err=%v", online, err)
-	}
-}
-
-// TestDiscoveryUpdateRejectsSameGenerationContentChange 固定「同 generation 的 Discovery
-// 不可变」：同一 owner 用相同 generation 但不同候选/能力内容上传被拒绝（候选变化必须
-// generation++）；相同内容（含顺序变化）只刷新、静默不广播。
-func TestDiscoveryUpdateRejectsSameGenerationContentChange(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte(mysqlTestCredentialKey),
-		EnrollmentToken: "test-token",
-	})
-	defer server.Close()
-	ctx := context.Background()
-
-	sender := injectPeer(server.hub, "device-a")
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	other := injectPeer(server.hub, "device-b")
-	if _, _, err := server.cache.TakePresence(ctx, "device-b", other.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	// 首次 gen 5 上传 → peer_online。
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{
-		Type: "discovery_update", Generation: 5, Candidates: []string{"cand-a"}, Capabilities: []string{"cap-1"},
-	})
-	if frame := readControlFrame(t, other); frame.Type != framePeerOnline || frame.Generation != 5 {
-		t.Fatalf("first upload should broadcast peer_online, got %+v", frame)
-	}
-
-	// 同 generation 但内容变化 → 拒绝（不落盘、不广播）。
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{
-		Type: "discovery_update", Generation: 5, Candidates: []string{"cand-b"}, Capabilities: []string{"cap-1"},
-	})
-	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
-	if err != nil || !present {
-		t.Fatalf("discovery missing: present=%v err=%v", present, err)
-	}
-	if len(d.Candidates) != 1 || d.Candidates[0] != "cand-a" {
-		t.Fatalf("same-generation content change must not overwrite: %+v", d.Candidates)
-	}
-	assertNoOutbound(t, other)
-
-	// 同 generation 相同内容（顺序变化）→ 刷新、静默。
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{
-		Type: "discovery_update", Generation: 5, Candidates: []string{"cand-a"}, Capabilities: []string{"cap-1"},
-	})
-	assertNoOutbound(t, other)
-}
-
-// TestDiscoveryUpdateRejectsStaleOwner 固定 Discovery CAS：旧连接已被新连接取代
-// （presence 已易主）后，旧连接的 discovery_update 被拒绝——不覆盖新连接的 discovery，
-// 且旧连接自愈关闭（与心跳路径 RenewPresence=false 一致）。这封死跨实例重连竞态。
-func TestDiscoveryUpdateRejectsStaleOwner(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte(mysqlTestCredentialKey),
-		EnrollmentToken: "test-token",
-	})
-	defer server.Close()
-	ctx := context.Background()
-
-	old := injectPeer(server.hub, "device-a") // connectionID "conn-device-a"
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", old.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if err := server.cache.TakeDiscovery(ctx, "device-a", old.connectionID, Discovery{DeviceID: "device-a", Generation: 1, Candidates: []string{"cand-1"}}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	// 新连接接管 presence（跨实例/重连）：presence owner 变为 conn-a-2。
-	newConn := &peer{deviceID: "device-a", connectionID: "conn-a-2", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", newConn.connectionID, Presence{InstanceID: "i2"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-
-	// 旧连接尝试覆盖 discovery（即用户描述的竞态：connection.replaced 事件尚未到达时
-	// 旧连接的 discovery_update）。CAS 拒绝：不落盘，旧连接被关闭。
-	server.hub.handleDiscoveryUpdate(old, controlFrame{Type: "discovery_update", Generation: 2, Candidates: []string{"cand-2"}})
-
-	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
-	if err != nil || !present {
-		t.Fatalf("discovery missing: present=%v err=%v", present, err)
-	}
-	if d.Generation != 1 || d.ConnectionID != old.connectionID {
-		t.Fatalf("stale owner must not overwrite discovery: %+v", d)
-	}
-	select {
-	case <-old.done:
-	default:
-		t.Fatal("superseded connection should have been closed by the rejected discovery write")
-	}
-}
-
-// TestDiscoveryUpdateLegacyGen0ToOnline 固定遗留 gen-0 discovery 键（占位时代/旧版本
-// 残留）被真实上传覆盖后按首次可发现广播 peer_online（§8：上传 discovery 后才广播
-// online）。在线判定要求 generation>0，gen-0 残留不算在线。
-func TestDiscoveryUpdateLegacyGen0ToOnline(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte(mysqlTestCredentialKey),
-		EnrollmentToken: "test-token",
-	})
-	defer server.Close()
-	ctx := context.Background()
-
-	sender := injectPeer(server.hub, "device-a")
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	// 遗留 gen-0 discovery（TakeDiscovery 仍要求 presence owner，此处满足）。
-	if err := server.cache.TakeDiscovery(ctx, "device-a", sender.connectionID, Discovery{DeviceID: "device-a", Generation: 0}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	other := injectPeer(server.hub, "device-b")
-	if _, _, err := server.cache.TakePresence(ctx, "device-b", other.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 5, Candidates: []string{"cand"}})
-	frame := readControlFrame(t, other)
-	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 5 {
-		t.Fatalf("gen-0 leftover -> real upload should broadcast peer_online, got %+v", frame)
-	}
-}
-
-// TestListPeersAuthAndContent 固定 GET /v1/peers 的认证与返回内容：无 token/坏
-// token/过期 credential/吊销均 401；成功时只返回在线设备、排除调用者、按 device_id
-// 排序。
-func TestListPeersAuthAndContent(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte(mysqlTestCredentialKey),
-		EnrollmentToken: "test-token",
-		CredentialTTL:   time.Hour,
-	})
-	defer server.Close()
-	ctx := context.Background()
-
-	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
-	if result := server.replaceEnrollment("caller", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
-		t.Fatalf("enroll caller failed: %v", result)
-	}
-	for _, id := range []string{"device-a", "device-b"} {
-		if result := server.replaceEnrollment(id, "key-"+id, "test", 1, time.Now()); result != enrollmentOK {
-			t.Fatalf("enroll %s failed: %v", id, result)
-		}
-	}
-	// device-a/device-b 在线（presence+discovery 均有效）；caller 也写了 presence+discovery
-	// 但应被排除；device-c 只有 presence，不算在线。
-	for _, id := range []string{"device-a", "device-b", "caller"} {
-		if _, _, err := server.cache.TakePresence(ctx, id, "conn-"+id, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, id := range []string{"device-a", "device-b", "caller"} {
-		if err := server.cache.TakeDiscovery(ctx, id, "conn-"+id, Discovery{DeviceID: id, Generation: 1}, time.Minute); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, _, err := server.cache.TakePresence(ctx, "device-c", "conn-device-c", Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-
-	credential, err := issueCredential([]byte(mysqlTestCredentialKey), "caller", publicKey, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	mux := http.NewServeMux()
-	server.RegisterRoutes(mux)
-	doGet := func(headerToken string) *httptest.ResponseRecorder {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/v1/peers", nil)
-		if headerToken != "" {
-			req.Header.Set("Authorization", "Bearer "+headerToken)
-		}
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		return rec
-	}
-
-	// 无 token → 401。
-	if rec := doGet(""); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("no token: expected 401, got %d", rec.Code)
-	}
-	// 坏 token → 401。
-	if rec := doGet("garbage"); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("bad token: expected 401, got %d", rec.Code)
-	}
-	// 过期 credential → 401 + code 12。
-	expired, err := issueCredential([]byte(mysqlTestCredentialKey), "caller", publicKey, -time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := doGet(expired)
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expired credential: expected 401, got %d", rec.Code)
-	}
-	var errResp networkErrorResponse
-	if err := json.NewDecoder(rec.Body).Decode(&errResp); err != nil || errResp.Code != relayErrorCredentialExpired {
-		t.Fatalf("expired credential should map to code 12: %+v (%v)", errResp, err)
-	}
-
-	// 成功：只含在线设备，排除 caller，按 device_id 排序。
-	rec = doGet(credential)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("successful list peers: expected 200, got %d", rec.Code)
-	}
-	var body peerListResponse
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatal(err)
-	}
-	got := make([]string, 0, len(body.Peers))
-	for _, p := range body.Peers {
-		got = append(got, p.PeerID)
-	}
-	if strings.Join(got, ",") != "device-a,device-b" {
-		t.Fatalf("list peers should be sorted online peers excluding caller: %v", got)
-	}
-
-	// 吊销 → 401（fail-closed）。
-	if recorded, err := server.store.RecordRevocation(ctx, "caller", time.Now().Add(time.Hour)); err != nil || !recorded {
-		t.Fatalf("record revocation failed: recorded=%v err=%v", recorded, err)
-	}
-	if rec := doGet(credential); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("revoked caller: expected 401, got %d", rec.Code)
-	}
-}
-
-// TestHandleRelayEventPeerEvents 固定 handleRelayEvent 对推送发现事件的处理：其它
-// 实例的事件广播到本地 peer；同实例回环事件被跳过（避免重复推送）。
-func TestHandleRelayEventPeerEvents(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte(mysqlTestCredentialKey),
-		EnrollmentToken: "test-token",
-	})
-	defer server.Close()
-	other := injectPeer(server.hub, "device-b")
-
-	server.handleRelayEvent(RelayEvent{Type: eventPeerOnline, DeviceID: "device-a", Generation: 3, InstanceID: "other-instance"})
-	frame := readControlFrame(t, other)
-	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 3 {
-		t.Fatalf("peer_online should broadcast locally, got %+v", frame)
-	}
-
-	// 同实例回环：发布方已本地广播过，订阅侧跳过。
-	server.handleRelayEvent(RelayEvent{Type: eventPeerUpdated, DeviceID: "device-a", Generation: 4, InstanceID: server.hub.instanceID})
-	assertNoOutbound(t, other)
-
-	server.handleRelayEvent(RelayEvent{Type: eventPeerOffline, DeviceID: "device-a", InstanceID: "other-instance"})
-	frame = readControlFrame(t, other)
-	if frame.Type != framePeerOffline || frame.DeviceID != "device-a" {
-		t.Fatalf("peer_offline should broadcast locally, got %+v", frame)
-	}
-}
-
-// TestMultiInstancePeerEventPropagation 验证 discovery_update 在实例 A 触发的事件经
-// Redis 总线传播到实例 B，B 将其广播给本地 peer。需要 MySQL+Redis，无环境时跳过。
-func TestMultiInstancePeerEventPropagation(t *testing.T) {
-	mysqlDSN, redisURL := requireMySQLFullStack(t)
-	ctx := context.Background()
-
-	configA := mysqlTestConfig(mysqlDSN)
-	configA.RedisURL = redisURL
-	configA.InstanceID = "instance-a"
-	serverA, err := OpenServer(configA)
-	if err != nil {
-		t.Fatalf("open instance A: %v", err)
-	}
-	defer serverA.Close()
-	configB := mysqlTestConfig(mysqlDSN)
-	configB.RedisURL = redisURL
-	configB.InstanceID = "instance-b"
-	serverB, err := OpenServer(configB)
-	if err != nil {
-		t.Fatalf("open instance B: %v", err)
-	}
-	defer serverB.Close()
-	resetMySQLTestDB(t, mysqlDSN)
-
-	muxA, muxB := http.NewServeMux(), http.NewServeMux()
-	serverA.RegisterRoutes(muxA)
-	serverB.RegisterRoutes(muxB)
-	httpA := httptest.NewServer(muxA)
-	defer httpA.Close()
-	httpB := httptest.NewServer(muxB)
-	defer httpB.Close()
-
-	credA, _, privA := enrollViaHTTP(t, httpA.URL, "device-a", "test-token")
-	connA := dialDevice(t, httpA.URL, credA, "device-a", 0x30, privA)
-	defer connA.Close()
-	credB, _, privB := enrollViaHTTP(t, httpB.URL, "device-b", "test-token")
-	connB := dialDevice(t, httpB.URL, credB, "device-b", 0x31, privB)
-	defer connB.Close()
-
-	// 等待两个实例的 presence 租约落盘（占位 discovery 已移除，设备上传 discovery_update
-	// 前不算在线）。
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		_, presentA, _ := serverA.cache.GetPresence(ctx, "device-a")
-		_, presentB, _ := serverB.cache.GetPresence(ctx, "device-b")
-		if presentA && presentB {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	// device-a 上传 discovery_update：A 本地广播 + Publish 跨实例事件，B 收到后广播。
-	if err := connA.WriteJSON(controlFrame{Type: "discovery_update", Generation: 1, Candidates: []string{"cand-a"}}); err != nil {
-		t.Fatal(err)
-	}
-	wait := time.Now().Add(5 * time.Second)
-	for time.Now().Before(wait) {
-		_ = connB.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-		var frame controlFrame
-		if err := connB.ReadJSON(&frame); err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				time.Sleep(50 * time.Millisecond)
-				continue
-			}
-			t.Fatalf("read from instance B: %v", err)
-		}
-		if frame.Type == framePeerOnline && frame.DeviceID == "device-a" && frame.Generation == 1 {
-			_ = connB.SetReadDeadline(time.Time{})
-			return
-		}
-	}
-	_ = connB.SetReadDeadline(time.Time{})
-	t.Fatal("instance B peer did not receive peer_online published by instance A")
 }
 
 // TestPublishDiscoveryV2AcksAndPersists 固定 v2 可靠发布原语：publishDiscoveryV2
-// 落盘 discovery、返回 DiscoveryAck（runtime_epoch + revision）、广播 peer_online，
-// 且同 epoch 的 revision 严格递增、同 revision 内容不可变。
+// 落盘 discovery、返回 DiscoveryAck（runtime_epoch + revision）、向其它 v2 控制面
+// peer 广播 PeerAvailableHint，且同 epoch 的 revision 严格递增、同 revision 内容
+// 不可变。
 func TestPublishDiscoveryV2AcksAndPersists(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
@@ -837,19 +377,19 @@ func TestPublishDiscoveryV2AcksAndPersists(t *testing.T) {
 	if err != nil || !present {
 		t.Fatalf("discovery not persisted: present=%v err=%v", present, err)
 	}
-	if d.Revision != 1 || d.Generation != 1 || d.RuntimeEpochHigh != epoch.High || d.RuntimeEpochLow != epoch.Low {
+	if d.Revision != 1 || d.RuntimeEpochHigh != epoch.High || d.RuntimeEpochLow != epoch.Low {
 		t.Fatalf("stored discovery mismatch: %+v", d)
 	}
 	if len(d.Candidates) != 1 || d.Candidates[0] != "Y2FuZC1hLWJsb2I=" { // base64("cand-a-blob")
 		t.Fatalf("v2 candidate should round-trip as base64: %+v", d.Candidates)
 	}
-	// peer_online 广播到其它 peer。
-	frame := readControlFrame(t, other)
-	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 1 {
-		t.Fatalf("expected peer_online for v2 publish, got %+v", frame)
+	// PeerAvailableHint 广播到其它 peer。
+	hint := readPeerAvailableHint(t, other)
+	if hint.DeviceId != "device-a" || hint.Revision != 1 {
+		t.Fatalf("expected peer_available_hint for device-a rev 1, got %+v", hint)
 	}
 
-	// 同 epoch 更高 revision → 接受，广播 peer_updated。
+	// 同 epoch 更高 revision → 接受，广播 peer_available_hint（revision 2）。
 	ack2, err := server.hub.publishDiscoveryV2(43, "device-a", sender.connectionID, &v2.DiscoverySnapshot{
 		RuntimeEpoch: epoch, Revision: 2, CandidateBundle: &v2.CandidateBundle{Candidates: [][]byte{[]byte("new-blob")}},
 	})
@@ -859,9 +399,9 @@ func TestPublishDiscoveryV2AcksAndPersists(t *testing.T) {
 	if ack2.Revision != 2 {
 		t.Fatalf("ack revision should be 2, got %d", ack2.Revision)
 	}
-	frame = readControlFrame(t, other)
-	if frame.Type != framePeerUpdated || frame.DeviceID != "device-a" || frame.Generation != 2 {
-		t.Fatalf("expected peer_updated, got %+v", frame)
+	hint = readPeerAvailableHint(t, other)
+	if hint.DeviceId != "device-a" || hint.Revision != 2 {
+		t.Fatalf("expected peer_available_hint for device-a rev 2, got %+v", hint)
 	}
 
 	// 同 epoch 更低 revision → 拒绝（revision 必须严格递增）。
@@ -887,10 +427,9 @@ func TestPublishDiscoveryV2AcksAndPersists(t *testing.T) {
 	}
 }
 
-// TestDiscoveryUpdateStoresEpochRevision 固定 v1 discovery_update 的 epoch+revision
-// 映射：新 owner 派生新 epoch、revision=1；同 owner generation 变化 revision 递增；
-// 同 generation 刷新 revision 不变。
-func TestDiscoveryUpdateStoresEpochRevision(t *testing.T) {
+// TestPublishDiscoveryV2RejectsStaleOwner 固定 Discovery CAS：旧连接已被新连接取代
+// （presence 已易主）后，旧连接的 v2 publish 被拒绝——不覆盖新连接的 discovery。
+func TestPublishDiscoveryV2RejectsStaleOwner(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
@@ -898,41 +437,131 @@ func TestDiscoveryUpdateStoresEpochRevision(t *testing.T) {
 	defer server.Close()
 	ctx := context.Background()
 
-	sender := injectPeer(server.hub, "device-a")
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	old := injectPeer(server.hub, "device-a") // connectionID "conn-device-a"
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", old.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 5, Candidates: []string{"cand"}})
+	if err := server.cache.TakeDiscovery(ctx, "device-a", old.connectionID, Discovery{DeviceID: "device-a", Revision: 1, Candidates: []string{"cand-1"}}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// 新连接接管 presence（跨实例/重连）。
+	newConn := &peer{deviceID: "device-a", connectionID: "conn-a-2", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", newConn.connectionID, Presence{InstanceID: "i2"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	// 旧连接尝试覆盖 discovery：CAS 拒绝，不落盘。
+	epoch := &v2.RuntimeEpoch{High: 1, Low: 2}
+	if _, err := server.hub.publishDiscoveryV2(1, "device-a", old.connectionID, &v2.DiscoverySnapshot{
+		RuntimeEpoch: epoch, Revision: 2, CandidateBundle: &v2.CandidateBundle{Candidates: [][]byte{[]byte("cand-2")}},
+	}); !errors.Is(err, errDiscoveryNotOwner) {
+		t.Fatalf("stale owner publish should be rejected with errDiscoveryNotOwner, got %v", err)
+	}
 	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
 	if err != nil || !present {
 		t.Fatalf("discovery missing: present=%v err=%v", present, err)
 	}
-	if d.Generation != 5 || d.Revision != 1 {
-		t.Fatalf("first upload should be gen 5 revision 1: %+v", d)
+	if d.Revision != 1 || d.ConnectionID != old.connectionID {
+		t.Fatalf("stale owner must not overwrite discovery: %+v", d)
 	}
-	epochHigh, epochLow := d.RuntimeEpochHigh, d.RuntimeEpochLow
-	if epochHigh == 0 && epochLow == 0 {
-		t.Fatal("new owner should get a non-zero runtime_epoch")
+}
+
+// TestHandleRelayEventPeerEvents 固定 handleRelayEvent 对推送发现事件的处理：其它
+// 实例的事件广播到本地 v2 控制面 peer；同实例回环事件被跳过（避免重复推送）。
+func TestHandleRelayEventPeerEvents(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+	other := injectPeer(server.hub, "device-b")
+	// device-a 有已发布的 discovery，online/updated 事件据此构造 PeerAvailableHint。
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{DeviceID: "device-a", Revision: 3}, time.Minute); err != nil {
+		t.Fatal(err)
 	}
 
-	// 同 owner generation 递增 → revision 递增，epoch 不变。
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 6, Candidates: []string{"cand"}})
-	d, present, err = server.cache.GetDiscovery(ctx, "device-a")
-	if err != nil || !present {
-		t.Fatalf("discovery missing after gen 6: present=%v err=%v", present, err)
-	}
-	if d.Generation != 6 || d.Revision != 2 || d.RuntimeEpochHigh != epochHigh || d.RuntimeEpochLow != epochLow {
-		t.Fatalf("gen bump should increment revision within the same epoch: %+v", d)
+	server.handleRelayEvent(RelayEvent{Type: eventPeerOnline, DeviceID: "device-a", InstanceID: "other-instance"})
+	hint := readPeerAvailableHint(t, other)
+	if hint.DeviceId != "device-a" || hint.Revision != 3 {
+		t.Fatalf("peer_online should broadcast locally as available hint, got %+v", hint)
 	}
 
-	// 同 owner 同 generation 刷新 → revision 不变。
-	server.hub.handleDiscoveryUpdate(sender, controlFrame{Type: "discovery_update", Generation: 6, Candidates: []string{"cand"}})
-	d, present, err = server.cache.GetDiscovery(ctx, "device-a")
-	if err != nil || !present {
-		t.Fatalf("discovery missing after refresh: present=%v err=%v", present, err)
+	// 同实例回环：发布方已本地广播过，订阅侧跳过。
+	server.handleRelayEvent(RelayEvent{Type: eventPeerUpdated, DeviceID: "device-a", InstanceID: server.hub.instanceID})
+	assertNoOutbound(t, other)
+
+	server.handleRelayEvent(RelayEvent{Type: eventPeerOffline, DeviceID: "device-a", InstanceID: "other-instance"})
+	h := readPeerUnavailableHint(t, other)
+	if h.DeviceId != "device-a" {
+		t.Fatalf("peer_offline should broadcast locally as unavailable hint, got %+v", h)
 	}
-	if d.Revision != 2 {
-		t.Fatalf("same-generation refresh should keep revision 2: %+v", d)
+}
+
+// TestDiscoveryReconnectStaleOwnerWindowNotOnline 固定重连窗口的在线语义：新连接
+// TakePresence 接管后、尚未重新发布 discovery 前，旧连接残留的 discovery（owner 仍
+// 是旧连接）不满足「presence 与 discovery owner 一致」，因此设备不算在线；新连接的
+// 真实发布（owner 一致）才按首次可发现广播 PeerAvailableHint。
+func TestDiscoveryReconnectStaleOwnerWindowNotOnline(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	ctx := context.Background()
+
+	other := injectPeer(server.hub, "device-b")
+
+	// 首次连接：presence + discovery（rev 5）均为 conn-a-1 所有 → 在线。
+	first := &peer{deviceID: "device-a", connectionID: "conn-a-1", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", first.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.cache.TakeDiscovery(ctx, "device-a", first.connectionID, Discovery{DeviceID: "device-a", Revision: 5, Candidates: []string{"cand"}, UpdatedAt: time.Now()}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	online, err := server.cache.ListOnlinePeers(ctx)
+	if err != nil || online["device-a"].Revision != 5 {
+		t.Fatalf("device-a should be online before reconnect: %+v err=%v", online, err)
+	}
+
+	// 重连：新连接接管 presence，但旧 discovery（owner conn-a-1）仍在 TTL 内。
+	second := &peer{deviceID: "device-a", connectionID: "conn-a-2", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", second.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	online, err = server.cache.ListOnlinePeers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, present := online["device-a"]; present {
+		t.Fatalf("device-a must not be online in the stale-owner window: %+v", online)
+	}
+
+	// 新连接发布真实 discovery（rev 6，owner conn-a-2）→ 首次可发现广播。
+	epoch := &v2.RuntimeEpoch{High: 0x11, Low: 0x22}
+	if _, err := server.hub.publishDiscoveryV2(1, "device-a", second.connectionID, &v2.DiscoverySnapshot{
+		RuntimeEpoch: epoch, Revision: 6, CandidateBundle: &v2.CandidateBundle{Candidates: [][]byte{[]byte("cand")}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
+	if err != nil || !present {
+		t.Fatalf("discovery after reconnect missing: present=%v err=%v", present, err)
+	}
+	if d.Revision != 6 || d.ConnectionID != second.connectionID {
+		t.Fatalf("reconnect discovery should be rev 6 owned by conn-a-2: %+v", d)
+	}
+	hint := readPeerAvailableHint(t, other)
+	if hint.DeviceId != "device-a" || hint.Revision != 6 {
+		t.Fatalf("reconnect real publish should broadcast peer_available_hint, got %+v", hint)
+	}
+	online, err = server.cache.ListOnlinePeers(ctx)
+	if err != nil || online["device-a"].Revision != 6 {
+		t.Fatalf("device-a should be online after reconnect publish: %+v err=%v", online, err)
 	}
 }
 
@@ -987,91 +616,93 @@ func TestServerHeartbeatMonitorClosesStalePeer(t *testing.T) {
 	}
 }
 
-// TestSendPresenceSnapshotEmptyAlwaysIncludesPeers 固定空快照也必须输出 "peers":[]
-// （不能因 omitempty 省略成 {"type":"presence_snapshot"}）：Rust 客户端 decode_event
-// 把缺失 peers 当协议错误断连，单设备中继即陷入无限重连。
-func TestSendPresenceSnapshotEmptyAlwaysIncludesPeers(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte(mysqlTestCredentialKey),
-		EnrollmentToken: "test-token",
-	})
-	defer server.Close()
+// TestMultiInstancePeerEventPropagation 验证 v2 DiscoveryPublish 在实例 A 触发的
+// 事件经 Redis 总线传播到实例 B，B 将其广播给本地 v2 控制面 peer。需要 MySQL+Redis，
+// 无环境时跳过。
+func TestMultiInstancePeerEventPropagation(t *testing.T) {
+	mysqlDSN, redisURL := requireMySQLFullStack(t)
 	ctx := context.Background()
 
-	sender := injectPeer(server.hub, "device-a")
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", sender.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-
-	server.hub.sendPresenceSnapshot(sender)
-	frame := readControlFrame(t, sender)
-	if frame.Type != framePresenceSnapshot {
-		t.Fatalf("expected presence_snapshot, got %+v", frame)
-	}
-	if frame.Peers == nil {
-		t.Fatal("snapshot peers must be present (non-nil) even when empty")
-	}
-	if len(frame.Peers) != 0 {
-		t.Fatalf("snapshot should be empty, got %+v", frame.Peers)
-	}
-}
-
-// TestDiscoveryReconnectStaleOwnerWindowNotOnline 固定重连窗口的在线语义：新连接
-// TakePresence 接管后、尚未重新上传 discovery 前，旧连接残留的 discovery（owner 仍是
-// 旧连接）不满足「presence 与 discovery owner 一致」，因此设备不算在线；新连接的真实
-// 上传（owner 一致）才按首次可发现广播 peer_online。
-func TestDiscoveryReconnectStaleOwnerWindowNotOnline(t *testing.T) {
-	server := NewServer(Config{
-		CredentialKey:   []byte(mysqlTestCredentialKey),
-		EnrollmentToken: "test-token",
-	})
-	defer server.Close()
-	ctx := context.Background()
-
-	other := injectPeer(server.hub, "device-b")
-
-	// 首次连接：presence + discovery（gen 5）均为 conn-a-1 所有 → 在线。
-	first := &peer{deviceID: "device-a", connectionID: "conn-a-1", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", first.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if err := server.cache.TakeDiscovery(ctx, "device-a", first.connectionID, Discovery{DeviceID: "device-a", Generation: 5, Candidates: []string{"cand"}, UpdatedAt: time.Now()}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	online, err := server.cache.ListOnlinePeers(ctx)
-	if err != nil || online["device-a"].Generation != 5 {
-		t.Fatalf("device-a should be online before reconnect: %+v err=%v", online, err)
-	}
-
-	// 重连：新连接接管 presence，但旧 discovery（owner conn-a-1）仍在 TTL 内。
-	second := &peer{deviceID: "device-a", connectionID: "conn-a-2", outbound: make(chan outboundFrame, 8), done: make(chan struct{})}
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", second.connectionID, Presence{InstanceID: "i1"}, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	online, err = server.cache.ListOnlinePeers(ctx)
+	configA := mysqlTestConfig(mysqlDSN)
+	configA.RedisURL = redisURL
+	configA.InstanceID = "instance-a"
+	serverA, err := OpenServer(configA)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open instance A: %v", err)
 	}
-	if _, present := online["device-a"]; present {
-		t.Fatalf("device-a must not be online in the stale-owner window: %+v", online)
+	defer serverA.Close()
+	configB := mysqlTestConfig(mysqlDSN)
+	configB.RedisURL = redisURL
+	configB.InstanceID = "instance-b"
+	serverB, err := OpenServer(configB)
+	if err != nil {
+		t.Fatalf("open instance B: %v", err)
+	}
+	defer serverB.Close()
+	resetMySQLTestDB(t, mysqlDSN)
+
+	muxA, muxB := http.NewServeMux(), http.NewServeMux()
+	serverA.RegisterRoutes(muxA)
+	serverB.RegisterRoutes(muxB)
+	httpA := httptest.NewServer(muxA)
+	defer httpA.Close()
+	httpB := httptest.NewServer(muxB)
+	defer httpB.Close()
+
+	credA, privA := enrollV2(t, httpA.URL, "device-a")
+	connA := dialControlV2(t, httpA.URL, credA, "device-a", 0x30, privA)
+	defer connA.Close()
+	credB, privB := enrollV2(t, httpB.URL, "device-b")
+	connB := dialControlV2(t, httpB.URL, credB, "device-b", 0x31, privB)
+	defer connB.Close()
+
+	// 等待两个实例的 presence 租约落盘。
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		_, presentA, _ := serverA.cache.GetPresence(ctx, "device-a")
+		_, presentB, _ := serverB.cache.GetPresence(ctx, "device-b")
+		if presentA && presentB {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 
-	// 新连接上传真实 discovery（gen 6，owner conn-a-2）→ owner 一致、非此前在线
-	// （旧 discovery owner 不匹配）→ 首次可发现广播 peer_online。
-	server.hub.handleDiscoveryUpdate(second, controlFrame{Type: "discovery_update", Generation: 6, Candidates: []string{"cand"}})
-	d, present, err := server.cache.GetDiscovery(ctx, "device-a")
-	if err != nil || !present {
-		t.Fatalf("discovery after reconnect missing: present=%v err=%v", present, err)
+	// device-a 发布 discovery：A 本地广播 + Publish 跨实例事件，B 收到后广播
+	// PeerAvailableHint 给本地 peer（connB）。
+	writeV2ControlFrame(t, connA, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_DiscoveryPublish{DiscoveryPublish: &v2.DiscoveryPublish{
+			RequestId: 1,
+			Snapshot: &v2.DiscoverySnapshot{
+				RuntimeEpoch:    &v2.RuntimeEpoch{High: 0x6a09e667, Low: 0xbb67ae85},
+				Revision:        1,
+				CandidateBundle: &v2.CandidateBundle{Candidates: [][]byte{[]byte("cand-a")}},
+				PublishedAtMs:   time.Now().UnixMilli(),
+			},
+		}},
+	})
+	// 先消费 A 自身的 DiscoveryAck（避免与 B 的 hint 混淆——不同连接互不干扰）。
+	ack := readV2ControlFrame(t, connA)
+	if ack.GetDiscoveryAck() == nil {
+		t.Fatalf("device-a expected discovery_ack, got %s", v2.KindName(ack))
 	}
-	if d.Generation != 6 || d.ConnectionID != second.connectionID {
-		t.Fatalf("reconnect discovery should be gen 6 owned by conn-a-2: %+v", d)
+
+	wait := time.Now().Add(5 * time.Second)
+	for time.Now().Before(wait) {
+		_ = connB.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		frame, err := readV2ControlFrameNoFatal(connB)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("read from instance B: %v", err)
+		}
+		if hint := frame.GetPeerAvailableHint(); hint != nil && hint.DeviceId == "device-a" && hint.Revision == 1 {
+			_ = connB.SetReadDeadline(time.Time{})
+			return
+		}
 	}
-	frame := readControlFrame(t, other)
-	if frame.Type != framePeerOnline || frame.DeviceID != "device-a" || frame.Generation != 6 {
-		t.Fatalf("reconnect real upload should broadcast peer_online, got %+v", frame)
-	}
-	online, err = server.cache.ListOnlinePeers(ctx)
-	if err != nil || online["device-a"].Generation != 6 {
-		t.Fatalf("device-a should be online after reconnect upload: %+v err=%v", online, err)
-	}
+	_ = connB.SetReadDeadline(time.Time{})
+	t.Fatal("instance B peer did not receive peer_available_hint published by instance A")
 }

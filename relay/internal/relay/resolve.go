@@ -3,12 +3,11 @@
 //
 // resolvePeer is the single authoritative entry for "is this peer reachable":
 // it never fail-opens to the local hub peer table, and it never reports
-// online=true from a presence read alone. The v1 lookup_response handler derives
-// its online *bool from this resolve so the v1 wire keeps its shape while the
-// underlying semantics are already the v2 four-state model.
+// online=true from a presence read alone. The v2 /v2/control ResolvePeerRequest
+// handler (and the reservation path) both go through this four-state model.
 //
-// publishDiscoveryV2 is the server-side reliable-publish primitive that Step 7's
-// /v2/control DiscoveryPublish handler will call; it performs the presence-owner
+// publishDiscoveryV2 is the server-side reliable-publish primitive that the
+// /v2/control DiscoveryPublish handler calls; it performs the presence-owner
 // CAS write and returns the DiscoveryAck payload (runtime_epoch + committed
 // revision) that the client needs to flip its local DiscoveryState to PUBLISHED.
 
@@ -55,8 +54,8 @@ type resolveResult struct {
 //	UNKNOWN  = Redis/后端读取失败，状态无法可靠判定（绝不当 online=true 伪装成功）。
 //	OFFLINE  = presence 确定不存在。
 //
-// 返回的 discovery 只在 READY 时携带（调用方据此回显 v1 的 generation/candidates/
-// capabilities）。
+// 返回的 discovery 只在 READY 时携带（调用方据此构造 ResolvePeerResponse 的
+// discovery 快照）。
 func (h *hub) resolvePeer(ctx context.Context, targetID string) resolveResult {
 	if h.presence == nil {
 		// 无共享状态层：没有 presence 租约可判定，权威判离线。
@@ -84,14 +83,12 @@ func (h *hub) resolvePeer(ctx context.Context, targetID string) resolveResult {
 
 // discoveryFromV2 converts a frozen v2 DiscoverySnapshot into the shared storage
 // Discovery. Candidate blobs are opaque bytes and are stored base64-encoded so
-// they round-trip through the existing []string v1 storage shape; transport
-// capabilities are stored as their numeric string so the v2 resolve path can
-// parse them back into the enum. Generation is derived from revision for the v1
-// wire (normalizeDiscovery fills the inverse direction at write time).
+// they round-trip through the []string storage shape; transport capabilities are
+// stored as their numeric string so the v2 resolve path can parse them back into
+// the enum.
 func discoveryFromV2(deviceID string, snapshot *v2.DiscoverySnapshot) Discovery {
 	d := Discovery{
 		DeviceID:         deviceID,
-		Generation:       uint64(snapshot.Revision),
 		RuntimeEpochHigh: snapshot.GetRuntimeEpoch().GetHigh(),
 		RuntimeEpochLow:  snapshot.GetRuntimeEpoch().GetLow(),
 		Revision:         snapshot.Revision,
@@ -115,10 +112,11 @@ func discoveryFromV2(deviceID string, snapshot *v2.DiscoverySnapshot) Discovery 
 
 // publishDiscoveryV2 是 v2 DiscoveryPublish 路径的服务端可靠发布原语：把冻结的
 // DiscoverySnapshot 转成存储模型、执行 presence-owner CAS 写入、按 v2 规则校验
-// revision 单调性、广播 peer_online/peer_updated，并返回 DiscoveryAck（回显
-// request_id、携带 runtime_epoch + 提交的 revision）。Step 7 的 /v2/control
-// handler 将调用本方法并把返回的 ack 发回发布客户端（只有收到 ack，客户端才把
-// DiscoveryState 置为 PUBLISHED，明确版 §9）。本方法不向发布客户端写任何 v1 JSON 帧。
+// revision 单调性、广播 peer_online/peer_updated（经 broadcastPeerEvent），并返回
+// DiscoveryAck（回显 request_id、携带 runtime_epoch + 提交的 revision）。
+// /v2/control handler 调用本方法并把返回的 ack 发回发布客户端（只有收到 ack，
+// 客户端才把 DiscoveryState 置为 PUBLISHED，明确版 §9）。本方法不直接向发布客户端
+// 写任何帧；推送发现帧由广播原语负责。
 func (h *hub) publishDiscoveryV2(requestID uint64, deviceID, connID string, snapshot *v2.DiscoverySnapshot) (*v2.DiscoveryAck, error) {
 	if h.presence == nil {
 		return nil, errDiscoveryNotOwner
@@ -164,8 +162,8 @@ func (h *hub) publishDiscoveryV2(requestID uint64, deviceID, connID string, snap
 		frameType = framePeerUpdated
 	}
 	if frameType != "" {
-		// 广播推送发现事件给其它（v1/v2）peer 与跨实例事件总线；发布客户端自身由
-		// Step 7 的 /v2/control handler 以 v2 帧（DiscoveryAck / PresenceHint）通知。
+		// 广播推送发现事件给其它 v2 控制面 peer 与跨实例事件总线；发布客户端自身由
+		// /v2/control handler 以 v2 帧（DiscoveryAck）通知。
 		h.broadcastPeerEvent(frameType, deviceID, d)
 	}
 	return &v2.DiscoveryAck{

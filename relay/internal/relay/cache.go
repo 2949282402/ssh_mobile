@@ -249,9 +249,6 @@ func (m *memoryStore) GetPresences(_ context.Context, deviceIDs []string) (map[s
 // 接管）不可能把新连接的 discovery 覆盖回自身。落盘的 ConnectionID 强制为 connID。
 func (m *memoryStore) TakeDiscovery(_ context.Context, deviceID, connID string, d Discovery, ttl time.Duration) error {
 	d.ConnectionID = connID
-	// 落盘前补齐排序字段：只带 generation（v1）或只带 revision（v2）的写入都产出
-	// 完整行，保证 READY 判据（revision>0）对两种来源一致成立。
-	normalizeDiscovery(&d)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
@@ -344,9 +341,9 @@ func (m *memoryStore) GetDiscoveries(_ context.Context, deviceIDs []string) (map
 }
 
 // ListOnlinePeers 返回可在线判定的设备（明确版 §13）：presence 与 discovery 均有效、
-// discovery 已可靠发布（ready()：revision>0，v1 由 generation 派生）、且 presence 与
-// discovery 的所有者 ConnectionID 一致。占位 discovery 已移除后，revision=0 或 owner
-// 不匹配的条目（重连窗口内旧连接的残留 discovery）都不算在线。
+// discovery 已可靠发布（ready()：revision>0）、且 presence 与 discovery 的所有者
+// ConnectionID 一致。revision=0 或 owner 不匹配的条目（重连窗口内旧连接的残留
+// discovery）都不算在线。
 func (m *memoryStore) ListOnlinePeers(_ context.Context) (map[string]Discovery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

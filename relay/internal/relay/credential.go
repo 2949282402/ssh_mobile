@@ -1,4 +1,4 @@
-// v1 Relay 凭据签发、校验和设备证明验证。
+// Relay 凭据签发、校验和设备证明验证。
 
 package relay
 
@@ -24,7 +24,7 @@ type credentialClaims struct {
 // relayErrorCredentialExpired 而不会把过期与非法凭据混为一谈。
 var errCredentialExpired = errors.New("credential is expired")
 
-// issueCredential 为指定设备签发带 HMAC 的短期 v1 凭据。
+// issueCredential 为指定设备签发带 HMAC 的短期凭据。
 func issueCredential(key []byte, deviceID string, publicKey []byte, ttl time.Duration) (string, error) {
 	claims, err := json.Marshal(credentialClaims{
 		DeviceID:  deviceID,

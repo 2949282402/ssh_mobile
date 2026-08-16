@@ -94,7 +94,7 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 	replayed, nonceErr := s.cache.ConsumeNonce(r.Context(), request.DeviceID, request.Nonce, time.Now().Add(refreshNonceTTL))
 	if nonceErr != nil {
-		// fail-open：与 /v1/connect 一致——nonce 防重放降级不阻断 refresh，
+		// fail-open：与 /v2/control 鉴权一致——nonce 防重放降级不阻断 refresh，
 		// Ed25519 签名仍是真正的鉴权；仅日志告警。
 		s.logger.Warn("replay-protection cache unavailable during refresh; degraded",
 			"device_id", request.DeviceID, "error", nonceErr)

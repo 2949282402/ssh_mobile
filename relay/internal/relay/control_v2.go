@@ -3,8 +3,8 @@
 // 控制面连接是一条长期存活的 WebSocket，只承载 protobuf 二进制 RelayFrame（每帧 =
 // [4-byte BE 长度][RelayFrame]，codec.DecodeControl）。它复用 hub 的 peer 表与
 // presence 租约：/v2/control 连接经 hub.add 入表、占据设备 presence 租约、受服务端
-// 心跳监视器与 sweeper 管辖，因此 v1 的租约/心跳/发现生命周期原样适用于 v2 控制面。
-// 控制面纯净性：RelayDataFrame（或空 kind 帧）在这条路由上是协议违规，直接关闭。
+// 心跳监视器与 sweeper 管辖。控制面纯净性：RelayDataFrame（或空 kind 帧）在这条
+// 路由上是协议违规，直接关闭。
 //
 // 每条控制面连接的帧分派见 routeControlV2。服务端→客户端的方向性消息（Ready/
 // HeartbeatAck/DiscoveryAck/ResolvePeerResponse/RelayReserveResponse/
@@ -42,7 +42,7 @@ type v2Attempt struct {
 // HTTP：GET /v2/control
 // ---------------------------------------------------------------------------
 
-// connectControlV2 处理 /v2/control 升级：与 v1 相同的 bearer 认证（authenticatedRequest），
+// connectControlV2 处理 /v2/control 升级：bearer 认证（authenticatedRequest），
 // 升级后服务端先发 Ready（protocol_version=2 + heartbeat/ttl 等），随后按 v2 控制面
 // 读循环运行。Ready 在 hub.add 之前入队，保证它是客户端收到的第一帧。
 func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +70,6 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 		maxPendingBytes:    s.config.MaxPendingBytesPerDevice,
 		maxFramesPerSecond: s.config.MaxFramesPerSecondPerDevice,
 		maxBytesPerSecond:  s.config.MaxBytesPerSecondPerDevice,
-		v2Control:          true,
 		relayHost:          r.Host,
 	}
 	ready, err := v2.EncodeFrame(&v2.RelayFrame{
@@ -167,8 +166,8 @@ func (h *hub) routeControlV2(sender *peer, data []byte) bool {
 // 消息处理
 // ---------------------------------------------------------------------------
 
-// handleHeartbeatV2 与 v1 heartbeat 路径同构：刷新服务端心跳监视器时间、CAS 续租
-// presence（并续 discovery TTL）、租约被抢时自愈关闭，最后回 HeartbeatAck。
+// handleHeartbeatV2 刷新服务端心跳监视器时间、CAS 续租 presence（并续 discovery
+// TTL）、租约被抢时自愈关闭，最后回 HeartbeatAck。
 func (h *hub) handleHeartbeatV2(sender *peer, hb *v2.Heartbeat) {
 	h.mutex.Lock()
 	sender.lastHeartbeat = time.Now()
@@ -286,7 +285,7 @@ func (h *hub) handleConnectivityOfferV2(sender *peer, offer *v2.ConnectivityOffe
 	h.v2Attempts[offer.AttemptId] = v2Attempt{initiator: sender.deviceID, expiresAt: time.Now().Add(v2AttemptLifetime)}
 	target := h.peers[targetID]
 	h.mutex.Unlock()
-	if target == nil || !target.v2Control {
+	if target == nil {
 		h.sendV2ProtocolError(sender, offer.RequestId, v2.ErrorCode_ERROR_CODE_PEER_OFFLINE,
 			"target peer is not connected on the v2 control plane")
 		return
@@ -310,7 +309,7 @@ func (h *hub) handleConnectivityAnswerV2(sender *peer, ans *v2.ConnectivityAnswe
 		initiator = h.peers[attempt.initiator]
 	}
 	h.mutex.Unlock()
-	if !ok || initiator == nil || !initiator.v2Control {
+	if !ok || initiator == nil {
 		h.sendV2ProtocolError(sender, ans.RequestId, v2.ErrorCode_ERROR_CODE_PROTOCOL, "unknown attempt_id")
 		return
 	}
@@ -330,7 +329,7 @@ func (h *hub) handleRealtimeSignalV2(sender *peer, sig *v2.RealtimeSignal) {
 	h.mutex.Lock()
 	target := h.peers[sig.TargetDeviceId]
 	h.mutex.Unlock()
-	if target == nil || !target.v2Control {
+	if target == nil {
 		h.sendV2ProtocolError(sender, sig.RequestId, v2.ErrorCode_ERROR_CODE_PEER_OFFLINE, "target peer is not connected on the v2 control plane")
 		return
 	}
@@ -354,7 +353,7 @@ func (h *hub) handleProtocolErrorV2(sender *peer, frame *v2.RelayFrame) {
 		target = h.peers[attempt.initiator]
 	}
 	h.mutex.Unlock()
-	if ok && target != nil && target != sender && target.v2Control {
+	if ok && target != nil && target != sender {
 		h.sendV2Frame(target, frame)
 	}
 }
@@ -363,9 +362,8 @@ func (h *hub) handleProtocolErrorV2(sender *peer, frame *v2.RelayFrame) {
 //  1. 目标必须 READY（权威 resolve，绝不 fail-open）。
 //  2. 生成 16-byte hex reservation_id、两个独立 32-byte local_token，存活秒数夹到
 //     [15,120]；落盘共享状态（Redis relay:reservation:{id}，TTL=expires_at）。
-//  3. 给 A 回 RelayReserveResponse（含自包含 relay_data_endpoint），并尝试给 B 推
-//     IncomingRelayReservation——B 必须在 v2 控制面才能收到；B 还在 v1 时推迟推送
-//     （additive-first，v1 线无 reservation 等价物）。
+//  3. 给 A 回 RelayReserveResponse（含自包含 relay_data_endpoint），并给 B 推
+//     IncomingRelayReservation——B 在 v2 控制面连接时才能收到。
 func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequest) {
 	if req.TargetDeviceId == "" || req.TargetDeviceId == sender.deviceID {
 		h.sendV2ProtocolError(sender, req.RequestId, v2.ErrorCode_ERROR_CODE_PEER_NOT_READY, "invalid reservation target")
@@ -422,11 +420,11 @@ func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequ
 			LocalToken:        initiatorToken,
 		}},
 	})
-	// 给 B 推 IncomingRelayReservation（B 在 v2 控制面时才推）。
+	// 给 B 推 IncomingRelayReservation（B 在线时才推）。
 	h.mutex.Lock()
 	responder := h.peers[req.TargetDeviceId]
 	h.mutex.Unlock()
-	if responder != nil && responder.v2Control {
+	if responder != nil {
 		h.sendV2Frame(responder, &v2.RelayFrame{
 			Version: v2.RELAY_V2_VERSION,
 			Kind: &v2.RelayFrame_IncomingRelayReservation{IncomingRelayReservation: &v2.IncomingRelayReservation{
@@ -439,8 +437,6 @@ func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequ
 			}},
 		})
 	}
-	// B 仍在 v1 控制面：无 v1 等价推送（additive-first）。reservation 在其存活期内保持
-	// 有效，B 升级到 v2 后可重新触发 reserve。
 }
 
 // ---------------------------------------------------------------------------
@@ -448,7 +444,7 @@ func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequ
 // ---------------------------------------------------------------------------
 
 // sendV2Frame 编码并投递一帧 v2 控制帧给指定 peer。编码失败或对端积压/已关闭时定向
-// 关闭对端（与 v1 转发路径的处置一致）。
+// 关闭对端。
 func (h *hub) sendV2Frame(peer *peer, frame *v2.RelayFrame) {
 	data, err := v2.EncodeFrame(frame)
 	if err != nil {
@@ -503,7 +499,7 @@ func (h *hub) broadcastV2(exceptDeviceID string, frame *v2.RelayFrame) {
 	h.mutex.Lock()
 	peers := make([]*peer, 0, len(h.peers))
 	for deviceID, p := range h.peers {
-		if p.v2Control && deviceID != exceptDeviceID {
+		if deviceID != exceptDeviceID {
 			peers = append(peers, p)
 		}
 	}

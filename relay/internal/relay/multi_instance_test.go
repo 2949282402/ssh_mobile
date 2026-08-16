@@ -18,11 +18,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
+	"github.com/ssh-mobile/relay/internal/relay/v2"
 )
 
 func multiInstanceConfig(mysqlDSN, redisURL string) Config {
@@ -50,7 +49,8 @@ func injectPeer(h *hub, deviceID string) *peer {
 
 // TestMultiInstanceSharedAuth verifies a device enrolled through instance A can
 // authenticate against instance B: enrollment is shared via MySQL and the
-// credential is verified with the shared CredentialKey.
+// credential is verified with the shared CredentialKey. It exercises the
+// /v2/control bearer+proof authentication path.
 func TestMultiInstanceSharedAuth(t *testing.T) {
 	mysqlDSN := requireMySQLDSN(t)
 	redisURL := requireRedisURL(t)
@@ -81,11 +81,11 @@ func TestMultiInstanceSharedAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32))
-	request := httptest.NewRequest("GET", "/v1/connect", nil)
+	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
 	request.Header.Set("X-Relay-Nonce", nonce)
 	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("GET\n/v1/connect\n"+nonce)),
+		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
 	))
 	if _, _, _, ok := serverB.authenticatedRequest(request); !ok {
 		t.Fatal("device could not authenticate against a different instance sharing the same backend")
@@ -166,48 +166,6 @@ func enrollViaHTTP(t *testing.T, baseURL, deviceID, token string) (string, ed255
 	return enrollment.Credential, publicKey, privateKey
 }
 
-// dialDevice connects a device WebSocket to baseURL using an already-issued
-// credential, signing the connect transcript with a fresh nonce, and waits for
-// the server's ready frame.
-func dialDevice(t *testing.T, baseURL, credential, deviceID string, nonceByte byte, privateKey ed25519.PrivateKey) *websocket.Conn {
-	t.Helper()
-	conn := dialDeviceNoReady(t, baseURL, credential, deviceID, nonceByte, privateKey)
-	var ready controlFrame
-	if conn.ReadJSON(&ready) != nil || ready.Type != "ready" || ready.DeviceID != deviceID || ready.ProtocolVersion != 1 {
-		t.Fatalf("invalid ready frame: %+v", ready)
-	}
-	return conn
-}
-
-// dialDeviceNoReady connects a device WebSocket without waiting for the ready
-// frame — used when the server's admission/lease claim is expected to block
-// (e.g. the admission-ordering test gates the first claim).
-func dialDeviceNoReady(t *testing.T, baseURL, credential, deviceID string, nonceByte byte, privateKey ed25519.PrivateKey) *websocket.Conn {
-	t.Helper()
-	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceByte}, 32))
-	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+credential)
-	headers.Set("X-Relay-Nonce", nonce)
-	headers.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("GET\n/v1/connect\n"+nonce)),
-	))
-	relayURL, err := url.Parse(baseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	relayURL.Scheme = "ws"
-	relayURL.Path = "/v1/connect"
-	conn, response, err := websocket.DefaultDialer.Dial(relayURL.String(), headers)
-	if err != nil {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		t.Fatalf("websocket connect failed with status %d: %v", status, err)
-	}
-	return conn
-}
-
 // TestMultiInstanceConnectionReplacement verifies the Step-2 replacement path
 // end to end over the shared backend: a device connected to instance A then
 // reconnecting to instance B makes B the lease owner immediately (via the
@@ -244,7 +202,7 @@ func TestMultiInstanceConnectionReplacement(t *testing.T) {
 
 	credential, _, privateKey := enrollViaHTTP(t, httpA.URL, "device-x", "test-token")
 
-	connA := dialDevice(t, httpA.URL, credential, "device-x", 0x10, privateKey)
+	connA := dialControlV2(t, httpA.URL, credential, "device-x", 0x10, privateKey)
 	defer connA.Close()
 
 	// Wait until A's connection holds the lease.
@@ -271,7 +229,7 @@ func TestMultiInstanceConnectionReplacement(t *testing.T) {
 	peerA := waitOwner(serverA, "A")
 
 	// Reconnect to B: B claims, publishes connection.replaced, A must close now.
-	connB := dialDevice(t, httpB.URL, credential, "device-x", 0x11, privateKey)
+	connB := dialControlV2(t, httpB.URL, credential, "device-x", 0x11, privateKey)
 	defer connB.Close()
 	peerB := waitOwner(serverB, "B")
 
@@ -297,13 +255,14 @@ func TestMultiInstanceConnectionReplacement(t *testing.T) {
 	}
 	_ = peerA // A's peer is closed by the event; keep the reference for clarity.
 
-	// B remains fully usable: heartbeat round-trip still answers.
-	if err := connB.WriteJSON(controlFrame{Type: "heartbeat", Timestamp: time.Now().UnixMilli()}); err != nil {
-		t.Fatal(err)
-	}
-	var ack controlFrame
-	if err := connB.ReadJSON(&ack); err != nil || ack.Type != "heartbeat_ack" {
-		t.Fatalf("B did not answer heartbeat after replacement: %+v (%v)", ack, err)
+	// B remains fully usable: v2 heartbeat round-trip still answers.
+	writeV2ControlFrame(t, connB, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind:    &v2.RelayFrame_Heartbeat{Heartbeat: &v2.Heartbeat{RequestId: 1, SentAtMs: time.Now().UnixMilli()}},
+	})
+	ack := readV2ControlFrame(t, connB)
+	if ack.GetHeartbeatAck() == nil || ack.GetHeartbeatAck().RequestId != 1 {
+		t.Fatalf("B did not answer heartbeat after replacement: %+v", ack)
 	}
 
 	// A's teardown must not erase B's presence.
@@ -352,7 +311,7 @@ func TestMultiInstanceAdminSnapshotShowsRemoteAddrFromLease(t *testing.T) {
 
 	credential, _, privateKey := enrollViaHTTP(t, httpA.URL, "device-x", "test-token")
 
-	connB := dialDevice(t, httpB.URL, credential, "device-x", 0x12, privateKey)
+	connB := dialControlV2(t, httpB.URL, credential, "device-x", 0x12, privateKey)
 	defer connB.Close()
 
 	// Wait until B holds the lease for device-x.

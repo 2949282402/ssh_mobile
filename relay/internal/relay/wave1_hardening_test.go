@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"net/url"
 	"testing"
 	"time"
 
@@ -277,12 +276,12 @@ func TestExpiredRevocationTombstoneDoesNotBlockValidCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
-	request := httptest.NewRequest("GET", "/v1/connect", nil)
+	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
 	request.Header.Set("X-Relay-Nonce", nonce)
 	request.Header.Set(
 		"X-Relay-Signature",
-		base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte("GET\n/v1/connect\n"+nonce))),
+		base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce))),
 	)
 	if _, _, _, ok := server.authenticatedRequest(request); !ok {
 		t.Fatal("expired revocation tombstone incorrectly blocked a valid credential")
@@ -334,56 +333,10 @@ func TestHubCloseClosesLiveWebSocketPeer(t *testing.T) {
 	}
 }
 
-// enrollAndConnectRelayDevice enrolls a device and dials the relay WebSocket,
-// returning the connection after the ready frame is received.
+// enrollAndConnectRelayDevice enrolls a device and dials the v2 control-plane
+// WebSocket, returning the connection after the Ready frame is received.
 func enrollAndConnectRelayDevice(t *testing.T, base, deviceID string, nonceByte byte, enrollmentToken string) *websocket.Conn {
 	t.Helper()
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	enrollmentBody, _ := json.Marshal(enrollRequest{
-		DeviceID:        deviceID,
-		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
-		EnrollmentToken: enrollmentToken,
-		ProtocolVersion: 1,
-		Platform:        "test",
-	})
-	response, err := http.Post(base+"/v1/devices/enroll", "application/json", bytes.NewReader(enrollmentBody))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	var enrollment enrollResponse
-	if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&enrollment) != nil {
-		t.Fatalf("device enrollment failed with status %d", response.StatusCode)
-	}
-
-	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceByte}, 32))
-	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+enrollment.Credential)
-	headers.Set("X-Relay-Nonce", nonce)
-	headers.Set(
-		"X-Relay-Signature",
-		base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte("GET\n/v1/connect\n"+nonce))),
-	)
-	relayURL, err := url.Parse(base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	relayURL.Scheme = "ws"
-	relayURL.Path = "/v1/connect"
-	connection, response, err := websocket.DefaultDialer.Dial(relayURL.String(), headers)
-	if err != nil {
-		status := 0
-		if response != nil {
-			status = response.StatusCode
-		}
-		t.Fatalf("websocket connect failed with status %d: %v", status, err)
-	}
-	var ready controlFrame
-	if connection.ReadJSON(&ready) != nil || ready.Type != "ready" || ready.DeviceID != deviceID {
-		t.Fatalf("invalid ready frame: %+v", ready)
-	}
-	return connection
+	credential, _, privateKey := enrollViaHTTP(t, base, deviceID, enrollmentToken)
+	return dialControlV2(t, base, credential, deviceID, nonceByte, privateKey)
 }

@@ -26,11 +26,9 @@ func TestConfigRequiresExplicitSecretsAndAdministrator(t *testing.T) {
 
 	t.Setenv("RELAY_ADMIN_PASSWORD", "long-random-password")
 	t.Setenv("RELAY_CREDENTIAL_TTL", "2h")
-	t.Setenv("RELAY_SESSION_TTL", "10m")
 	t.Setenv("RELAY_ADMIN_SESSION_TTL", "6h")
 	t.Setenv("RELAY_MAX_CONNECTIONS", "512")
 	t.Setenv("RELAY_MAX_ENROLLED_DEVICES", "1024")
-	t.Setenv("RELAY_MAX_TRANSFER_SESSIONS", "2048")
 	t.Setenv("RELAY_MAX_PENDING_FRAMES_PER_DEVICE", "48")
 	t.Setenv("RELAY_MAX_PENDING_BYTES_PER_DEVICE", "1048576")
 	t.Setenv("RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE", "128")
@@ -53,13 +51,13 @@ func TestConfigRequiresExplicitSecretsAndAdministrator(t *testing.T) {
 	if config.Address != ":9090" {
 		t.Fatalf("unexpected default address %q", config.Address)
 	}
-	if config.CredentialTTL != 2*time.Hour || config.SessionTTL != 10*time.Minute || config.AdminSessionTTL != 6*time.Hour {
-		t.Fatalf("duration environment values were not loaded: credential=%s session=%s admin=%s", config.CredentialTTL, config.SessionTTL, config.AdminSessionTTL)
+	if config.CredentialTTL != 2*time.Hour || config.AdminSessionTTL != 6*time.Hour {
+		t.Fatalf("duration environment values were not loaded: credential=%s admin=%s", config.CredentialTTL, config.AdminSessionTTL)
 	}
 	if config.MaxConnections != 512 {
 		t.Fatalf("max connection environment value was not loaded: %d", config.MaxConnections)
 	}
-	if config.MaxEnrolledDevices != 1024 || config.MaxTransferSessions != 2048 ||
+	if config.MaxEnrolledDevices != 1024 ||
 		config.MaxPendingFramesPerDevice != 48 || config.MaxPendingBytesPerDevice != 1048576 ||
 		config.MaxFramesPerSecondPerDevice != 128 || config.MaxBytesPerSecondPerDevice != 8388608 ||
 		config.MaxAdminSessions != 8 || config.AdminLoginMaxAttempts != 3 ||

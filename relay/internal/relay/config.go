@@ -1,4 +1,4 @@
-// v1 Relay 服务配置、环境变量解析和随机材料生成。
+// Relay 服务配置、环境变量解析和随机材料生成。
 
 package relay
 
@@ -14,25 +14,12 @@ import (
 )
 
 const (
-	// maxControlFrameBytes 限制单个 JSON 控制帧的大小。
-	maxControlFrameBytes = 384 * 1024
-	// maxBinaryFrameBytes 限制单个不透明二进制帧的大小。
-	maxBinaryFrameBytes = 1024*1024 + 25
-	// maxChannelPayloadBytes 限制 Delivery 控制信封携带的不透明正文大小。
-	maxChannelPayloadBytes = 48 * 1024
-	// maxCandidatePayloadBytes 限制 Candidate Offer/Answer 的信令正文大小。
-	maxCandidatePayloadBytes = 32 * 1024
-	// maxRealtimeSignalPayloadBytes 限制 WebRTC SDP/ICE 信令正文大小。
-	maxRealtimeSignalPayloadBytes = 256 * 1024
-
 	defaultAddress                           = ":8080"
 	defaultCredentialTTL                     = 24 * time.Hour
-	defaultSessionTTL                        = 15 * time.Minute
 	defaultAdminSessionTTL                   = 24 * time.Hour
 	defaultMaxConnections                    = 2048
 	defaultMaxEnrolledDevices                = 4096
 	defaultMaxRevokedDevices                 = 4096
-	defaultMaxTransferSessions               = 4096
 	defaultMaxPendingFramesPerDevice         = 64
 	defaultMaxPendingBytesPerDevice    int64 = 16 * 1024 * 1024
 	defaultMaxFramesPerSecondPerDevice       = 256
@@ -73,12 +60,10 @@ type Config struct {
 	EnrollmentToken             string
 	CredentialKey               []byte
 	CredentialTTL               time.Duration
-	SessionTTL                  time.Duration
 	AdminSessionTTL             time.Duration
 	MaxConnections              int
 	MaxEnrolledDevices          int
 	MaxRevokedDevices           int
-	MaxTransferSessions         int
 	MaxPendingFramesPerDevice   int
 	MaxPendingBytesPerDevice    int64
 	MaxFramesPerSecondPerDevice int
@@ -161,12 +146,10 @@ func ConfigFromEnvironment() (Config, error) {
 		EnrollmentToken:             enrollment,
 		CredentialKey:               decoded,
 		CredentialTTL:               durationEnv("RELAY_CREDENTIAL_TTL", defaultCredentialTTL),
-		SessionTTL:                  durationEnv("RELAY_SESSION_TTL", defaultSessionTTL),
 		AdminSessionTTL:             durationEnv("RELAY_ADMIN_SESSION_TTL", defaultAdminSessionTTL),
 		MaxConnections:              intEnv("RELAY_MAX_CONNECTIONS", defaultMaxConnections),
 		MaxEnrolledDevices:          intEnv("RELAY_MAX_ENROLLED_DEVICES", defaultMaxEnrolledDevices),
 		MaxRevokedDevices:           intEnv("RELAY_MAX_REVOKED_DEVICES", defaultMaxRevokedDevices),
-		MaxTransferSessions:         intEnv("RELAY_MAX_TRANSFER_SESSIONS", defaultMaxTransferSessions),
 		MaxPendingFramesPerDevice:   intEnv("RELAY_MAX_PENDING_FRAMES_PER_DEVICE", defaultMaxPendingFramesPerDevice),
 		MaxPendingBytesPerDevice:    int64Env("RELAY_MAX_PENDING_BYTES_PER_DEVICE", defaultMaxPendingBytesPerDevice),
 		MaxFramesPerSecondPerDevice: intEnv("RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE", defaultMaxFramesPerSecondPerDevice),
@@ -223,9 +206,6 @@ func withConfigDefaults(config Config) Config {
 	if config.CredentialTTL <= 0 {
 		config.CredentialTTL = defaultCredentialTTL
 	}
-	if config.SessionTTL <= 0 {
-		config.SessionTTL = defaultSessionTTL
-	}
 	if config.AdminSessionTTL <= 0 {
 		config.AdminSessionTTL = defaultAdminSessionTTL
 	}
@@ -237,9 +217,6 @@ func withConfigDefaults(config Config) Config {
 	}
 	if config.MaxRevokedDevices <= 0 {
 		config.MaxRevokedDevices = defaultMaxRevokedDevices
-	}
-	if config.MaxTransferSessions <= 0 {
-		config.MaxTransferSessions = defaultMaxTransferSessions
 	}
 	if config.MaxPendingFramesPerDevice <= 0 {
 		config.MaxPendingFramesPerDevice = defaultMaxPendingFramesPerDevice
