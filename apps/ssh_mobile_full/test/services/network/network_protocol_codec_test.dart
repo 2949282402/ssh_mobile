@@ -158,6 +158,74 @@ void main() {
     expect(event.state, PeerPresenceState.online);
   });
 
+  test('ssh stream commands encode native tags 25/26/27', () {
+    final open = codec.sshStreamOpenCommand(
+      commandId: 'open-1',
+      peerId: 'peer-a',
+      streamId: 7,
+      service: 'ssh',
+    );
+    expect(open, isNotEmpty);
+    expect(open, contains(0xca)); // field 25 key prefix
+    expect(open, contains(0x07)); // stream_id = 7
+
+    final data = codec.sshStreamDataCommand(
+      commandId: 'data-1',
+      peerId: 'peer-a',
+      streamId: 7,
+      data: Uint8List.fromList(<int>[0xde, 0xad, 0xbe, 0xef]),
+    );
+    expect(data, isNotEmpty);
+    expect(data, contains(0xd2)); // field 26 key prefix
+    expect(data, contains(0xde));
+    expect(data, contains(0xef));
+
+    final close = codec.sshStreamCloseCommand(
+      commandId: 'close-1',
+      peerId: 'peer-a',
+      streamId: 7,
+    );
+    expect(close, isNotEmpty);
+    expect(close, contains(0xda)); // field 27 key prefix
+  });
+
+  test('ssh stream data received event decodes from tag 26', () {
+    final frame = codec.decodeEvent(
+      Uint8List.fromList(<int>[
+        0x0a, 0x03, 0x65, 0x76, 0x74, // event_id = evt
+        0x18, 0x01, // protocol_version = 1
+        0xd2, 0x01, 0x10, // field 26 key + length 16
+        0x0a, 0x06, 0x70, 0x65, 0x65, 0x72, 0x2d, 0x61, // peer_id = peer-a
+        0x10, 0x07, // stream_id = 7
+        0x1a, 0x04, 0x01, 0x02, 0x03, 0x04, // data
+      ]),
+    );
+
+    expect(frame.sshStreamData, isNotNull);
+    expect(frame.event, isNull);
+    final stream = frame.sshStreamData!;
+    expect(stream.peerId, 'peer-a');
+    expect(stream.streamId, 7);
+    expect(stream.data, orderedEquals(<int>[1, 2, 3, 4]));
+  });
+
+  test('ssh stream closed event decodes from tag 27', () {
+    final frame = codec.decodeEvent(
+      Uint8List.fromList(<int>[
+        0x0a, 0x03, 0x65, 0x76, 0x74, // event_id = evt
+        0x18, 0x01, // protocol_version = 1
+        0xda, 0x01, 0x0a, // field 27 key + length 10
+        0x0a, 0x06, 0x70, 0x65, 0x65, 0x72, 0x2d, 0x61, // peer_id = peer-a
+        0x10, 0x07, // stream_id = 7
+      ]),
+    );
+
+    expect(frame.sshStreamClosed, isNotNull);
+    final closed = frame.sshStreamClosed!;
+    expect(closed.peerId, 'peer-a');
+    expect(closed.streamId, 7);
+  });
+
   test('peer presence snapshot event decodes a peer list', () {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[

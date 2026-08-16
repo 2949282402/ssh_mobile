@@ -11,6 +11,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
+
 import '../app_log_service.dart';
 import '../../core/services/ssh_client_factory.dart';
 import '../../core/services/data_protection_service.dart';
@@ -45,10 +47,14 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   final CredentialRepository _credentialRepository;
   final HostKeyRepository _hostKeyRepository;
   final SftpPathHistoryStore _pathHistoryStore;
+  final ssh_core.SshNativeStreamConnector? _nativeStreamConnector;
+  final ssh_core.SshPeerIdResolver? _peerIdResolver;
   late final SshClientFactory _clientFactory = SshClientFactory(
     credentialRepository: _credentialRepository,
     hostKeyRepository: _hostKeyRepository,
     logger: AppLogService.instance,
+    nativeStreamConnector: _nativeStreamConnector,
+    peerIdResolver: _peerIdResolver,
   );
 
   final Map<String, _SftpSession> _sessions = {};
@@ -71,10 +77,14 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required CredentialRepository credentialRepository,
     required HostKeyRepository hostKeyRepository,
     SftpPathHistoryStore? pathHistoryStore,
+    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
+    ssh_core.SshPeerIdResolver? peerIdResolver,
   }) : _connectionRepository = connectionRepository,
        _credentialRepository = credentialRepository,
        _hostKeyRepository = hostKeyRepository,
-       _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore();
+       _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
+       _nativeStreamConnector = nativeStreamConnector,
+       _peerIdResolver = peerIdResolver;
 
   @visibleForTesting
   SftpService.forTesting(
@@ -85,7 +95,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required SftpClient sftpClient,
     String currentPath = '.',
     SftpPathHistoryStore? pathHistoryStore,
-  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore() {
+    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
+    ssh_core.SshPeerIdResolver? peerIdResolver,
+  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
+       _nativeStreamConnector = nativeStreamConnector,
+       _peerIdResolver = peerIdResolver {
     final session =
         _SftpSession(
             connectionId: connection.id,

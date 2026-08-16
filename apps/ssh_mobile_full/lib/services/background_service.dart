@@ -10,8 +10,32 @@ import 'package:permission_handler/permission_handler.dart';
 import 'app_log_service.dart';
 
 import 'package:connection_core/connection_core.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
+
 import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
+
+/// 后台 isolate 可选的 native SSH 流连接器。
+///
+/// FFI `SshNetRuntimeHandle` 不是多 isolate 安全的，因此后台 isolate 默认不使用
+/// native 传输；启用 native 时 SSH 会改走 UI isolate 的本地路径（见
+/// `SshService._usesBackgroundService`）。该静态 hook 仅为显式后台 native 适配
+/// 预留，保持 socket 接缝可替换。
+ssh_core.SshNativeStreamConnector? sshBackgroundNativeStreamConnector;
+
+/// 打开后台 SSH socket：native ReliableStream 优先，原始 TCP 回退。
+Future<SSHSocket> _openBackgroundSshSocket({
+  required String host,
+  required int port,
+  String? peerId,
+}) async {
+  final connector = sshBackgroundNativeStreamConnector;
+  if (connector != null && peerId != null && peerId.trim().isNotEmpty) {
+    final stream = await connector.open(peerId: peerId, service: 'ssh');
+    return ssh_core.SshNativeSocket(stream: stream);
+  }
+  return SSHSocket.connect(host, port, timeout: const Duration(seconds: 15));
+}
 
 /// Android/iOS 前台服务管理。
 ///
@@ -623,10 +647,11 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
             30,
             86400,
           );
-      final socket = await SSHSocket.connect(
-        host,
-        port,
-        timeout: const Duration(seconds: 15),
+      final peerId = data['peerId'] as String?;
+      final socket = await _openBackgroundSshSocket(
+        host: host,
+        port: port,
+        peerId: peerId,
       );
       emitLog(
         'service',

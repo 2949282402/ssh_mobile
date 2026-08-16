@@ -239,11 +239,13 @@ final class AppSystemAdminSshAdapter implements admin.SystemAdminSshPort {
     required connection_core.CredentialRepository credentialRepository,
     required connection_core.HostKeyRepository hostKeyRepository,
     required AppLogService logger,
+    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
   }) : _connectionRepository = connectionRepository,
        _clientFactory = ssh_core.SshClientFactory(
          credentialRepository: credentialRepository,
          hostKeyRepository: hostKeyRepository,
          logger: logger,
+         nativeStreamConnector: nativeStreamConnector,
        );
 
   final connection_core.ConnectionRepository _connectionRepository;
@@ -642,6 +644,7 @@ final class _AppSystemAdminModuleScopeState
           credentialRepository: runtime.credentialRepository,
           hostKeyRepository: runtime.hostKeyRepository,
           logger: runtime.appLogService,
+          nativeStreamConnector: runtime.sshNativeStreamConnector,
         ),
         admin.SystemAdminLoggerPort: AppSystemAdminLoggerAdapter(
           runtime.appLogService,

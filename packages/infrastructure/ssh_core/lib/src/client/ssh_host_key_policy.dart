@@ -41,16 +41,19 @@ final class SshHostKeyPromptRequest {
 }
 
 /// SSH Host Key TOFU/固定指纹校验器。
-final class SshHostKeyPolicy {
+class SshHostKeyPolicy {
   /// 创建校验策略。
+  ///
+  /// [logger] 可省略；省略时内部使用静默 logger，便于 App 兼容层复用同一实现。
   SshHostKeyPolicy({
-    required this.logger,
+    AppLogger? logger,
     this.onUnknownHostKey,
     this.persistTrust,
     DateTime Function()? now,
-  }) : _now = now ?? DateTime.now;
+  }) : _logger = logger ?? _noopAppLogger,
+       _now = now ?? DateTime.now;
 
-  final AppLogger logger;
+  final AppLogger _logger;
   final DateTime Function() _now;
 
   /// 未知 Host Key 的确认回调。
@@ -165,7 +168,7 @@ final class SshHostKeyPolicy {
   }
 
   void _log(LogLevel level, String message, {String? details}) {
-    logger.log(
+    _logger.log(
       LogRecord(
         timestamp: DateTime.now(),
         level: level,
@@ -254,4 +257,17 @@ final class SshHostKeyMismatchException implements Exception, SSHError {
       'SSH host key changed for $connectionName ($host:$port). '
       'Expected ${expectedAlgorithm ?? 'unknown'} $expectedFingerprint, '
       'got $actualAlgorithm $actualFingerprint. Connection blocked.';
+}
+
+/// 默认静默 logger，避免把 AppLogger 依赖强加给 App 兼容层的 `SshHostKeyPolicy()`。
+final AppLogger _noopAppLogger = _NoopAppLogger();
+
+final class _NoopAppLogger implements AppLogger {
+  const _NoopAppLogger();
+
+  @override
+  void log(LogRecord record) {}
+
+  @override
+  AppLogger scope(String name) => this;
 }

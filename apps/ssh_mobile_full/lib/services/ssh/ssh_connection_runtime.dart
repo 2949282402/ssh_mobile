@@ -18,6 +18,7 @@ extension _SshConnectionRuntime on SshService {
       config,
       credentials: credentials,
       onUnknownHostKey: onUnknownHostKey,
+      peerId: _peerIdResolver?.call(config),
     );
     try {
       final result = await client.runWithResult(command).timeout(timeout);
@@ -47,6 +48,7 @@ extension _SshConnectionRuntime on SshService {
       credentials: credentials,
       timeout: const Duration(seconds: 12),
       onUnknownHostKey: onUnknownHostKey,
+      peerId: _peerIdResolver?.call(config),
     );
     try {
       await client.ping().timeout(const Duration(seconds: 8));
@@ -76,6 +78,7 @@ extension _SshConnectionRuntime on SshService {
       config,
       credentials: credentials,
       onUnknownHostKey: onUnknownHostKey,
+      peerId: _peerIdResolver?.call(config),
     );
     final isTmux = launchMode == TerminalLaunchMode.tmux;
     final termType = config.serverPlatform == ServerPlatform.windows
