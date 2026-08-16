@@ -6,7 +6,8 @@ use network_protocol::{
     PeerPresenceState, PeerStateChangedEvent, RealtimeSignalEvent, RealtimeSnapshotEvent,
     RealtimeStateChangedEvent, RelayConnectionState, RetryDisposition,
     RouteTopology as ProtocolRouteTopology, RouteTransport as ProtocolRouteTransport, RouteType,
-    TransferCompletedEvent, TransferFailedEvent, TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
+    SshStreamClosedEvent, SshStreamDataReceivedEvent, TransferCompletedEvent, TransferFailedEvent,
+    TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -242,6 +243,49 @@ pub(crate) fn emit_realtime_snapshot(
                 state,
                 revision,
                 error,
+            },
+        )),
+    });
+}
+
+/// 发布 ReliableStream 收到的对端字节（设计 §17）。
+pub(crate) fn emit_stream_data_received(
+    event_tx: &UnboundedSender<NetworkEvent>,
+    peer_id: &str,
+    stream_id: u16,
+    data: &[u8],
+) {
+    let _ = event_tx.send(NetworkEvent {
+        event_id: format!("{peer_id}/stream/{stream_id}/data/{}", unix_timestamp_ms()),
+        timestamp_ms: unix_timestamp_ms(),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_event::Payload::SshStreamDataReceived(
+            SshStreamDataReceivedEvent {
+                peer_id: peer_id.to_string(),
+                stream_id: stream_id as u32,
+                data: data.to_vec(),
+            },
+        )),
+    });
+}
+
+/// 发布 ReliableStream 关闭事件。
+pub(crate) fn emit_stream_closed(
+    event_tx: &UnboundedSender<NetworkEvent>,
+    peer_id: &str,
+    stream_id: u16,
+) {
+    let _ = event_tx.send(NetworkEvent {
+        event_id: format!(
+            "{peer_id}/stream/{stream_id}/closed/{}",
+            unix_timestamp_ms()
+        ),
+        timestamp_ms: unix_timestamp_ms(),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_event::Payload::SshStreamClosed(
+            SshStreamClosedEvent {
+                peer_id: peer_id.to_string(),
+                stream_id: stream_id as u32,
             },
         )),
     });

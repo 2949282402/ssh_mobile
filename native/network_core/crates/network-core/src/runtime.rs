@@ -23,6 +23,7 @@ use crate::errors::NetworkError;
 use crate::session::{
     SessionAdmission, SessionAdmissionError, SessionAdmissionOutcome, SessionId, SessionManager,
 };
+use crate::stream::ReliableStreamManager;
 use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
 use network_identity::DeviceIdentity;
 use network_nat::PathManager;
@@ -146,6 +147,12 @@ pub(crate) struct RuntimeState {
     /// transport-network v2：Presence → UI-only 提示缓存（§23/§29）。Presence 事件
     /// 只更新本缓存，绝不修改 ConnectivityAttempt / CandidateSet / ConnectionSession。
     pub(crate) presence_hints: crate::connect::presence::PresenceHintCache,
+    /// ReliableStream byte-stream managers, keyed by peer（§17）。每个 peer 的
+    /// receive buffer / QUIC send half / 网关桥都挂在这个 manager 上。
+    pub(crate) reliable_streams: RwLock<HashMap<String, ReliableStreamManager>>,
+    /// SSH 网关桥接的本地 sshd 端口（§21 option B）。生产默认 22；测试可覆盖指向
+    /// 本地 echo server。
+    pub(crate) stream_gateway_port: Arc<AtomicU16>,
     pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
     pub(crate) relay_crypto_confirmers:
@@ -191,6 +198,8 @@ impl RuntimeState {
             relay_control: RwLock::new(None),
             connection_registry: crate::connect::registry::ConnectionRegistry::new(),
             presence_hints: crate::connect::presence::PresenceHintCache::new(),
+            reliable_streams: RwLock::new(HashMap::new()),
+            stream_gateway_port: Arc::new(AtomicU16::new(crate::stream::STREAM_LOCAL_SSH_PORT)),
             relay_crypto_waiters: RwLock::new(HashMap::new()),
             relay_crypto_responders: AsyncMutex::new(HashMap::new()),
             relay_crypto_confirmers: AsyncMutex::new(HashMap::new()),
@@ -214,6 +223,11 @@ impl RuntimeState {
         // transport-network v2：Session 替换/关闭时同步注销连接登记（§34）。
         self.connection_registry
             .unregister_if_session(peer_id, session_id);
+        // §17/§21：ConnectionSession 销毁时关闭该 peer 的所有 ReliableStream，
+        // 并向应用发布 SshStreamClosed（SSH 不做透明恢复，客户端自行重连）。
+        if let Some(manager) = self.reliable_streams.write().await.remove(peer_id) {
+            manager.close_all(peer_id).await;
+        }
         // §19/§20 业务状态（pending / dedup / ordered）不属于 Session：transport
         // 丢失或 Session 被替换时**不得**清理 Delivery 的接收端去重/有序状态，
         // 否则新连接无法按 MessageId 去重、无法在有序通道上从断点继续。显式
@@ -342,6 +356,16 @@ impl RuntimeState {
             .map_err(|_| CryptoError::StateUnavailable)?
             .decrypt_for_delivery(aad, envelope);
         result
+    }
+
+    /// Returns the per-peer ReliableStream manager, creating it lazily. The
+    /// manager holds the receive buffers and QUIC send halves for every byte
+    /// stream to `peer_id` (§17).
+    pub(crate) async fn stream_manager(&self, peer_id: &str) -> ReliableStreamManager {
+        let mut map = self.reliable_streams.write().await;
+        map.entry(peer_id.to_string())
+            .or_insert_with(|| ReliableStreamManager::new(self.event_tx.clone()))
+            .clone()
     }
 }
 

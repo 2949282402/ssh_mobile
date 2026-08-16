@@ -71,14 +71,25 @@ impl Route {
 
     pub const fn supports(self, capability: ConnectionCapability) -> bool {
         matches!(
-            (self.transport, capability),
+            (self.topology, self.transport, capability),
+            // Direct TCP/QUIC carry both reliable messages and byte streams (§17).
             (
+                _,
                 RouteTransport::Tcp | RouteTransport::Quic,
                 ConnectionCapability::ReliableStream | ConnectionCapability::ReliableMessage
-            ) | (
+            ) | // WebSocket carries reliable messages only.
+            (
+                _,
                 RouteTransport::WebSocket,
                 ConnectionCapability::ReliableMessage
-            ) | (
+            ) | // Relay data plane forwards opaque bytes: Relay Stream fallback (§17).
+            (
+                RouteTopology::Relay,
+                RouteTransport::WebSocket,
+                ConnectionCapability::ReliableStream
+            ) | // UDP and QUIC datagrams.
+            (
+                _,
                 RouteTransport::Udp | RouteTransport::Quic,
                 ConnectionCapability::UnreliableDatagram
             )
@@ -279,13 +290,23 @@ impl GenericConnection {
     }
 }
 
-/// The two application channel frames supported by reliable generic routes.
+/// The application frames supported by reliable generic routes.
 /// UDP deliberately has no conversion into this type, so it cannot silently
 /// acquire Delivery semantics.
+///
+/// The byte-stream frames (`StreamOpen`/`StreamBytes`/`StreamClose`) are the
+/// ReliableStream carrier (§17): multiple byte streams multiplex over one
+/// framed ConnectionSession. `StreamBytes` payload is
+/// `stream_id(u16) + stream_seq(u64) + len(u32) + data`; the other two carry
+/// `stream_id(u16) [+ service]`. Their inner parsing lives in `crate::stream`
+/// so a malformed stream frame only fails that stream, never the route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GenericFrameKind {
     DataMessage = 1,
     DeliveryAck = 2,
+    StreamBytes = 3,
+    StreamOpen = 4,
+    StreamClose = 5,
 }
 
 impl TryFrom<u8> for GenericFrameKind {
@@ -295,6 +316,9 @@ impl TryFrom<u8> for GenericFrameKind {
         match value {
             1 => Ok(Self::DataMessage),
             2 => Ok(Self::DeliveryAck),
+            3 => Ok(Self::StreamBytes),
+            4 => Ok(Self::StreamOpen),
+            5 => Ok(Self::StreamClose),
             _ => Err(ConnectionError::InvalidFrame),
         }
     }
@@ -626,7 +650,7 @@ fn encode_generic_frame(
     Ok(encoded)
 }
 
-fn decode_generic_frame(encoded: &[u8]) -> Result<GenericInboundFrame, ConnectionError> {
+pub(crate) fn decode_generic_frame(encoded: &[u8]) -> Result<GenericInboundFrame, ConnectionError> {
     if encoded.len() < GENERIC_FRAME_HEADER_BYTES
         || &encoded[..4] != GENERIC_FRAME_MAGIC
         || u32::from_be_bytes(encoded[4..8].try_into().expect("version bytes"))

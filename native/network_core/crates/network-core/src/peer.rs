@@ -1467,7 +1467,11 @@ async fn accept_authenticated_generic(
     result
 }
 
-/// 接受一个已认证对端的双向流。
+/// 接受一个已认证对端的双向流。共享的 `accept_bi` 循环按首 4 字节路由：
+/// 文件 offer (`SMFT`) 走 `handle_incoming_file_after_offer`，ReliableStream
+/// 前导 (`SMSS`) 走 `crate::stream`（§17）。首 4 字节被消耗后，
+/// 文件 offer 的其余字段由 `read_file_offer_after_magic` 续读，因此文件数据
+/// 路径与原 `read_file_offer` 完全一致。
 pub(crate) async fn receive_file_streams(
     peer_id: String,
     connection: Connection,
@@ -1476,15 +1480,61 @@ pub(crate) async fn receive_file_streams(
 ) {
     loop {
         match connection.accept_bi().await {
-            Ok((send, receive)) => {
+            Ok((send, mut receive)) => {
                 let state = Arc::clone(&state);
                 let peer_id = peer_id.clone();
                 let supervisor = Arc::clone(&state.task_supervisor);
                 let _ = supervisor.spawn_session(
                     session_id.wire_key(),
-                    "file-stream-receiver",
+                    "bidi-stream-receiver",
                     async move {
-                        crate::transfer::handle_incoming_file(peer_id, send, receive, state).await;
+                        let mut magic = [0u8; 4];
+                        if tokio::time::timeout(
+                            GENERIC_ROUTE_CONNECT_TIMEOUT,
+                            receive.read_exact(&mut magic),
+                        )
+                        .await
+                        .ok()
+                        .and_then(Result::ok)
+                        .is_none()
+                        {
+                            return;
+                        }
+                        if magic == crate::stream::FILE_OFFER_MAGIC {
+                            match crate::transfer::read_file_offer_after_magic(&mut receive).await {
+                                Ok(manifest) => {
+                                    crate::transfer::handle_incoming_file_after_offer(
+                                        peer_id, send, receive, manifest, state,
+                                    )
+                                    .await;
+                                }
+                                Err(error) => {
+                                    tracing::debug!(
+                                        peer_id = %peer_id,
+                                        error = %error,
+                                        "rejected QUIC file offer"
+                                    );
+                                }
+                            }
+                        } else if magic == crate::stream::STREAM_QUIC_PREAMBLE_MAGIC {
+                            match crate::stream::read_quic_stream_preamble_after_magic(&mut receive)
+                                .await
+                            {
+                                Ok((stream_id, service)) => {
+                                    crate::stream::handle_incoming_quic_stream(
+                                        state, peer_id, stream_id, service, send, receive,
+                                    )
+                                    .await;
+                                }
+                                Err(error) => {
+                                    tracing::debug!(
+                                        peer_id = %peer_id,
+                                        error = %error,
+                                        "rejected QUIC reliable-stream preamble"
+                                    );
+                                }
+                            }
+                        }
                     },
                 );
             }
@@ -1622,14 +1672,34 @@ fn generic_route_receiver_task(
                         return;
                     };
                     let result = match frame.kind {
-                        GenericFrameKind::DataMessage => {
-                            crate::channel::handle_data_message(&state, &peer_id, &frame.payload).await
-                        }
-                        GenericFrameKind::DeliveryAck => {
-                            crate::channel::handle_delivery_ack(&state, &peer_id, &frame.payload).await
-                        }
+                        GenericFrameKind::DataMessage => crate::channel::handle_data_message(
+                            &state,
+                            &peer_id,
+                            &frame.payload,
+                        )
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string())),
+                        GenericFrameKind::DeliveryAck => crate::channel::handle_delivery_ack(
+                            &state,
+                            &peer_id,
+                            &frame.payload,
+                        )
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string())),
+                        GenericFrameKind::StreamBytes
+                        | GenericFrameKind::StreamOpen
+                        | GenericFrameKind::StreamClose => crate::stream::handle_inbound_stream_frame(
+                            &state,
+                            &peer_id,
+                            frame.kind,
+                            &frame.payload,
+                        )
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string())),
                     };
                     if let Err(error) = result {
+                        // StreamBytes is a data path: a malformed stream frame
+                        // fails that stream only, never the route (§17).
                         tracing::debug!(peer_id = %peer_id, error = %error, "rejected generic channel frame");
                     }
                 }

@@ -139,13 +139,11 @@ fn epochs_match(left: Option<&RuntimeEpoch>, right: Option<&RuntimeEpoch>) -> bo
     }
 }
 
-/// capability 覆盖判定：registered 覆盖 requested。本轮只有 QUIC 基线
-/// (`DEFAULT_CONNECTION_CAPABILITY`)；registered 为非空即视为覆盖基线。
+/// capability 覆盖判定（§34）：registered 覆盖 requested 当且仅当位包含。
+/// `requested == 0`（旧调用方未指定）恒被覆盖；QUIC 基线登记
+/// (`DEFAULT_CONNECTION_CAPABILITY = message|stream`) 覆盖任意单项请求。
 fn capability_covers(registered: u8, requested: u8) -> bool {
-    if requested == 0 {
-        return true;
-    }
-    registered == requested
+    (registered & requested) == requested
 }
 
 #[cfg(test)]

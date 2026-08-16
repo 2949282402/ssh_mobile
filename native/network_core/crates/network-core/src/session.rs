@@ -5,7 +5,7 @@
 //! 跨 connection 存活的 `SessionState::Disconnected`，也不存在复用旧 `SessionId`
 //! 的重连。业务状态（Delivery / Transfer）不属于 Session，由业务 manager 持有。
 
-use network_protocol::RouteType;
+use network_protocol::{CommunicationClass, RouteType};
 use network_quic::{send_channel_frame, ChannelFrameKind};
 use network_relay::RelayClient;
 use quinn::{Connection, VarInt};
@@ -98,6 +98,8 @@ struct Session {
     remote_session_binding: Option<String>,
     state: SessionState,
     route: Option<ActiveRoute>,
+    /// 建连时请求的 CommunicationClass（§17）。`Unspecified` 表示默认 ReliableMessage。
+    communication_class: Option<CommunicationClass>,
 }
 
 const GENERIC_ROUTE_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -246,6 +248,16 @@ enum ActiveConnection {
 pub(crate) struct RouteView {
     profile: ConnectionProfile,
     carrier: RouteViewCarrier,
+}
+
+/// The current route carrier projected for byte-stream I/O (ReliableStream §17).
+/// Owned handles (the QUIC `Connection`) are cloneable; the Generic route only
+/// needs its bounded send handle.
+#[derive(Clone)]
+pub(crate) enum StreamCarrier {
+    Quic(Connection),
+    Generic(GenericRouteHandle),
+    Relay(Option<Arc<RelayClient>>),
 }
 
 #[derive(Clone)]
@@ -542,7 +554,9 @@ impl SessionManager {
         scope: &mut GenericRouteScope,
     ) -> Result<Option<ActiveRoute>, ()> {
         let profile = scope.profile().ok_or(())?;
-        if !profile.supports(ConnectionCapability::ReliableMessage) {
+        if !profile.supports(ConnectionCapability::ReliableMessage)
+            && !profile.supports(ConnectionCapability::ReliableStream)
+        {
             return Err(());
         }
         let mut sessions = self.sessions.write().await;
@@ -656,6 +670,38 @@ impl SessionManager {
             .and_then(|session| session.route.as_ref().map(ActiveRoute::view))
     }
 
+    /// Returns the current route carrier for byte-stream I/O. This is a
+    /// separate projection so `RouteView`'s private carrier stays encapsulated.
+    pub(crate) async fn current_stream_carrier(&self, peer_id: &str) -> Option<StreamCarrier> {
+        self.current_active_route(peer_id)
+            .await
+            .map(|route| match route.carrier {
+                RouteViewCarrier::Quic(connection) => StreamCarrier::Quic(connection),
+                RouteViewCarrier::Generic(handle) => StreamCarrier::Generic(handle),
+                RouteViewCarrier::Relay(client) => StreamCarrier::Relay(client),
+            })
+    }
+
+    /// Records the CommunicationClass a connection was established for (§17).
+    pub(crate) async fn set_communication_class(&self, peer_id: &str, class: CommunicationClass) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(peer_id) {
+            session.communication_class = Some(class);
+        }
+    }
+
+    /// Returns the CommunicationClass the current session was established for.
+    pub(crate) async fn current_communication_class(
+        &self,
+        peer_id: &str,
+    ) -> Option<CommunicationClass> {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .and_then(|session| session.communication_class)
+    }
+
     /// Returns the old flat projection for compatibility surfaces. Generic
     /// routes intentionally return `Unspecified`; callers needing routing
     /// semantics must use `current_profile`.
@@ -675,9 +721,11 @@ impl SessionManager {
             })
     }
 
-    /// Sends one Delivery data/ACK frame through the current route capability.
-    /// The caller supplies the opaque token required by the Relay protocol;
-    /// no caller branches on QUIC, TCP, WebSocket, UDP, or Relay.
+    /// Sends one Delivery data/ACK frame or one byte-stream frame through the
+    /// current route capability. The caller supplies the opaque token required
+    /// by the Relay protocol; no caller branches on QUIC, TCP, WebSocket, UDP,
+    /// or Relay. Byte-stream frames use the framed generic/Relay carrier only;
+    /// the QUIC direct path uses real bidirectional streams (`crate::stream`).
     pub(crate) async fn send_channel_frame(
         &self,
         peer_id: &str,
@@ -688,17 +736,34 @@ impl SessionManager {
         let route = self.current_active_route(peer_id).await.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotConnected, "route unavailable")
         })?;
-        if !route
-            .profile
-            .supports(ConnectionCapability::ReliableMessage)
-        {
-            return Err(std::io::Error::other("route does not support reliable messages").into());
+        let is_stream_frame = matches!(
+            kind,
+            GenericFrameKind::StreamBytes
+                | GenericFrameKind::StreamOpen
+                | GenericFrameKind::StreamClose
+        );
+        let capability = if is_stream_frame {
+            ConnectionCapability::ReliableStream
+        } else {
+            ConnectionCapability::ReliableMessage
+        };
+        if !route.profile.supports(capability) {
+            return Err(std::io::Error::other(format!(
+                "route does not support the requested capability {capability:?}"
+            ))
+            .into());
         }
         match route.carrier {
             RouteViewCarrier::Quic(connection) => {
                 let kind = match kind {
                     GenericFrameKind::DataMessage => ChannelFrameKind::DataMessage,
                     GenericFrameKind::DeliveryAck => ChannelFrameKind::DeliveryAck,
+                    _ => {
+                        return Err(std::io::Error::other(
+                            "byte-stream frames do not use the QUIC channel; use open_bi",
+                        )
+                        .into());
+                    }
                 };
                 send_channel_frame(&connection, kind, payload).await
             }
@@ -713,6 +778,12 @@ impl SessionManager {
                     .map_err(|error| std::io::Error::other(error.to_string()).into()),
                 GenericFrameKind::DeliveryAck => relay
                     .send_channel_ack(relay_token, peer_id, payload)
+                    .await
+                    .map_err(|error| std::io::Error::other(error.to_string()).into()),
+                GenericFrameKind::StreamBytes
+                | GenericFrameKind::StreamOpen
+                | GenericFrameKind::StreamClose => relay
+                    .send_channel_message(relay_token, peer_id, payload)
                     .await
                     .map_err(|error| std::io::Error::other(error.to_string()).into()),
             },
@@ -844,6 +915,7 @@ impl SessionManager {
             remote_session_binding: None,
             state: SessionState::Idle,
             route: None,
+            communication_class: None,
         }
     }
 }
