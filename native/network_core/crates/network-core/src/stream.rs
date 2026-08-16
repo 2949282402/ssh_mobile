@@ -15,8 +15,12 @@
 //! Backpressure: the generic writer already blocks on the bounded route
 //! channel (`GENERIC_ROUTE_CHANNEL_CAPACITY`); a stream send therefore awaits
 //! the bounded native send and never drops. The receive path buffers per
-//! stream and blocks the reader while a bridge/API consumer drains, so an SSH
-//! burst cannot be silently discarded.
+//! stream (bounded at `MAX_PER_STREAM_BUFFER_CAPACITY`) and blocks the writer
+//! while a consumer drains, for every consumer mode: Bridge/Poll consumers
+//! drain through `receive_stream`, and Event-mode streams drain through a
+//! per-stream emitter task that turns the buffered bytes into
+//! `SshStreamDataReceived` events. An SSH burst therefore cannot grow memory
+//! without bound or be silently discarded.
 
 #[cfg(test)]
 use network_protocol::network_event;
@@ -404,9 +408,12 @@ impl ReliableStreamManager {
         Ok(())
     }
 
-    /// Inbound StreamBytes data. For Event consumers the bytes are emitted as
-    /// an event; for Bridge/Poll consumers they are buffered and the reader is
-    /// blocked (backpressure) while the buffer is full.
+    /// Inbound StreamBytes data. Every consumer mode buffers the bytes in a
+    /// per-stream buffer bounded at `MAX_PER_STREAM_BUFFER_CAPACITY` and blocks
+    /// the writer (backpressure) while the buffer is full, so a flooding peer
+    /// cannot grow memory without bound. Event-mode bytes are drained by the
+    /// per-stream emitter task into `SshStreamDataReceived` events; Bridge/Poll
+    /// bytes are drained by the reader.
     pub(crate) async fn handle_bytes(
         &self,
         peer_id: &str,
@@ -414,7 +421,10 @@ impl ReliableStreamManager {
         seq: u64,
         data: Vec<u8>,
     ) -> Result<(), StreamError> {
-        loop {
+        let _ = peer_id; // 事件由 drainer 发出；此处仅缓冲，不直接用 peer_id。
+        let data_len = data.len();
+        // 阶段一：有界缓冲 + 背压（所有消费者模式一致）。缓冲区满时阻塞 writer。
+        let after = loop {
             let wait: Option<Arc<Notify>> = {
                 let mut state = self.inner.lock().await;
                 let entry = state
@@ -431,23 +441,67 @@ impl ReliableStreamManager {
                     }
                     return Err(StreamError::InvalidFrame); // gap on an ordered carrier
                 }
-                match entry.consumer {
-                    StreamConsumer::Event => {
-                        emit_stream_data_received(&self.event_tx, peer_id, stream_id, &data);
-                        entry.next_recv_seq += 1;
-                        return Ok(());
-                    }
-                    StreamConsumer::Bridge | StreamConsumer::Poll => {
-                        if entry.recv_bytes + data.len() <= MAX_PER_STREAM_BUFFER_CAPACITY {
-                            entry.next_recv_seq += 1;
-                            entry.recv_bytes += data.len();
-                            entry.recv_chunks.push_back(data);
-                            entry.notify.notify_waiters();
-                            return Ok(());
-                        }
-                        Some(entry.notify.clone())
-                    }
+                if entry.recv_bytes + data_len <= MAX_PER_STREAM_BUFFER_CAPACITY {
+                    entry.next_recv_seq += 1;
+                    entry.recv_bytes += data_len;
+                    let after = entry.recv_bytes;
+                    entry.recv_chunks.push_back(data);
+                    entry.notify.notify_waiters();
+                    break after;
                 }
+                Some(entry.notify.clone())
+            };
+            if let Some(notify) = wait {
+                notify.notified().await;
+            }
+        };
+        // 阶段二（仅 Event 模式）：等待 drainer 把本块转成事件（缓冲降到
+        // appended 之后）。这样事件顺序与帧处理顺序一致，且 drainer 慢/停时
+        // writer 立即获得背压，而不是逐帧直接灌入无界事件通道。
+        loop {
+            let wait: Option<Arc<Notify>> = {
+                let mut state = self.inner.lock().await;
+                let Some(entry) = state.streams.get_mut(&stream_id) else {
+                    return Ok(());
+                };
+                if entry.consumer != StreamConsumer::Event || entry.recv_bytes < after {
+                    return Ok(());
+                }
+                Some(entry.notify.clone())
+            };
+            if let Some(notify) = wait {
+                notify.notified().await;
+            }
+        }
+    }
+
+    /// Event-mode drainer: pops buffered chunks and emits `SshStreamDataReceived`
+    /// events, then emits `SshStreamClosed` after the receive side is closed and
+    /// the buffer is empty (so data events always precede the close event). This
+    /// is the Event-mode consumer — without it the writer would block forever at
+    /// `MAX_PER_STREAM_BUFFER_CAPACITY`. 设计 §17：Event 流与 Bridge/Poll 共享
+    /// 同一有界缓冲区与背压；本任务把缓冲字节转成事件，而不是逐帧直接灌入
+    /// 无界事件通道。
+    pub(crate) async fn drain_events(self, peer_id: &str, stream_id: u16) {
+        loop {
+            let wait: Option<Arc<Notify>> = {
+                let mut state = self.inner.lock().await;
+                let Some(entry) = state.streams.get_mut(&stream_id) else {
+                    return;
+                };
+                if let Some(chunk) = entry.recv_chunks.pop_front() {
+                    entry.recv_bytes -= chunk.len();
+                    emit_stream_data_received(&self.event_tx, peer_id, stream_id, &chunk);
+                    entry.notify.notify_waiters();
+                    continue;
+                }
+                if entry.recv_closed {
+                    // 缓冲区已空且对端关闭：最后发出 close 事件，保证 data 先于 close。
+                    drop(state);
+                    emit_stream_closed(&self.event_tx, peer_id, stream_id);
+                    return;
+                }
+                Some(entry.notify.clone())
             };
             if let Some(notify) = wait {
                 notify.notified().await;
@@ -465,16 +519,17 @@ impl ReliableStreamManager {
         self.open(stream_id, service, consumer).await
     }
 
-    /// Inbound StreamClose / QUIC EOF: mark the receive side closed, wake
-    /// consumers, and emit the closed event for Event-mode streams (the app
-    /// learns the peer closed the stream). Bridge/Poll consumers observe EOF
-    /// through `receive` returning 0.
+    /// Inbound StreamClose / QUIC EOF: mark the receive side closed and wake
+    /// consumers. Bridge/Poll consumers observe EOF through `receive` returning
+    /// 0; the Event-mode `SshStreamClosed` event is emitted by the per-stream
+    /// drainer after the buffer is emptied, so data events always precede the
+    /// close event (设计 §17 顺序保证).
     pub(crate) async fn handle_close(
         &self,
         peer_id: &str,
         stream_id: u16,
     ) -> Result<(), StreamError> {
-        let emit = {
+        {
             let mut state = self.inner.lock().await;
             let Some(entry) = state.streams.get_mut(&stream_id) else {
                 return Ok(());
@@ -484,15 +539,11 @@ impl ReliableStreamManager {
             }
             entry.recv_closed = true;
             entry.notify.notify_waiters();
-            let emit = entry.consumer == StreamConsumer::Event;
             if entry.send_closed {
                 state.streams.remove(&stream_id);
             }
-            emit
-        };
-        if emit {
-            emit_stream_closed(&self.event_tx, peer_id, stream_id);
         }
+        let _ = peer_id;
         Ok(())
     }
 
@@ -586,6 +637,13 @@ impl ReliableStreamManager {
     pub(crate) async fn is_recv_closed(&self, stream_id: u16) -> bool {
         let state = self.inner.lock().await;
         state.streams.get(&stream_id).is_some_and(|e| e.recv_closed)
+    }
+
+    /// 诊断/测试查询面：返回该流当前缓冲的字节数，用于断言背压下有界性。
+    #[cfg(test)]
+    async fn buffered_bytes(&self, stream_id: u16) -> Option<usize> {
+        let state = self.inner.lock().await;
+        state.streams.get(&stream_id).map(|entry| entry.recv_bytes)
     }
 
     /// Session teardown: close every stream for the peer. Returns the ids so
@@ -683,7 +741,11 @@ pub(crate) async fn open_stream(
             Ok(())
         }
         StreamCarrier::Relay(None) => Err(StreamError::NotConnected),
+    }?;
+    if consumer == StreamConsumer::Event {
+        spawn_stream_event_emitter(state, peer_id, stream_id).await;
     }
+    Ok(())
 }
 
 /// Sends bytes on a byte stream. The generic route splits into bounded
@@ -849,6 +911,8 @@ async fn handle_inbound_open(
     }
     if consumer == StreamConsumer::Bridge {
         spawn_ssh_gateway(Arc::clone(state), peer_id.to_string(), stream_id);
+    } else {
+        spawn_stream_event_emitter(state, peer_id, stream_id).await;
     }
     Ok(())
 }
@@ -886,12 +950,38 @@ pub(crate) async fn handle_incoming_quic_stream(
     spawn_quic_stream_reader(&state, &peer_id, stream_id, receive).await;
     if consumer == StreamConsumer::Bridge {
         spawn_ssh_gateway(state, peer_id, stream_id);
+    } else {
+        spawn_stream_event_emitter(&state, &peer_id, stream_id).await;
     }
 }
 
 // ---------------------------------------------------------------------------
-// QUIC stream reader pump and the SSH gateway bridge
+// QUIC stream reader pump, Event-mode drainer and the SSH gateway bridge
 // ---------------------------------------------------------------------------
+
+/// 启动 Event-mode 流的 per-stream drainer 任务（设计 §17）：把有界缓冲区里
+/// 的入站字节转成 `SshStreamDataReceived` 事件。Event 流因此与 Bridge/Poll
+/// 共享同一有界缓冲区与背压——writer 在 `MAX_PER_STREAM_BUFFER_CAPACITY`
+/// 处阻塞，而不是逐帧直接灌入无界事件通道。
+async fn spawn_stream_event_emitter(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    stream_id: u16,
+) {
+    let manager = state.stream_manager(peer_id).await;
+    let peer_id = peer_id.to_string();
+    let session_key = state
+        .sessions
+        .current_session_id(&peer_id)
+        .await
+        .map(|id| id.wire_key())
+        .unwrap_or_default();
+    let _ = state.task_supervisor.spawn_session(
+        session_key,
+        "stream-event-emitter",
+        async move { manager.drain_events(&peer_id, stream_id).await },
+    );
+}
 
 /// Pumps a QUIC `RecvStream` (the peer's write half of a logical byte stream)
 /// into the per-stream reassembly buffer.
@@ -1145,6 +1235,11 @@ mod tests {
             .open(1, "custom", StreamConsumer::Event)
             .await
             .expect("open");
+        // Event-mode bytes are buffered and delivered by the drainer task.
+        let drainer = {
+            let manager = manager.clone();
+            tokio::spawn(async move { manager.drain_events("peer-a", 1).await })
+        };
         manager
             .handle_bytes("peer-a", 1, 0, b"ping".to_vec())
             .await
@@ -1161,6 +1256,11 @@ mod tests {
             event.payload,
             Some(network_event::Payload::SshStreamClosed(closed)) if closed.stream_id == 1
         ));
+        // The drainer exits after it emits the close event.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), drainer)
+            .await
+            .expect("drainer did not exit after close")
+            .expect("drainer panicked");
     }
 
     #[tokio::test]
@@ -1284,6 +1384,94 @@ mod tests {
             .expect("blocked writer did not complete after drain")
             .expect("blocked writer task panicked");
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn event_consumer_flood_stays_bounded_and_drains_in_order() {
+        let (manager, mut event_rx) = test_manager();
+        manager
+            .open(6, "custom", StreamConsumer::Event)
+            .await
+            .expect("open");
+
+        // 洪水超过有界缓冲区：Event 流也必须把 writer 阻塞在
+        // MAX_PER_STREAM_BUFFER_CAPACITY，而不是把每一帧直接灌入事件通道。
+        let chunk = vec![0x42u8; MAX_STREAM_FRAME_BYTES];
+        let total_chunks = MAX_PER_STREAM_BUFFER_CAPACITY / MAX_STREAM_FRAME_BYTES + 8;
+        let flood = {
+            let manager = manager.clone();
+            tokio::spawn(async move {
+                let mut pushed = 0u64;
+                while pushed < total_chunks as u64 {
+                    manager
+                        .handle_bytes("peer-a", 6, pushed, chunk.clone())
+                        .await
+                        .expect("handle_bytes");
+                    pushed += 1;
+                }
+                pushed
+            })
+        };
+        // drainer 未启动时，writer 必须被阻塞（背压），不得逐帧灌入事件通道。
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            !flood.is_finished(),
+            "flood must be blocked waiting for the Event drainer"
+        );
+        // 缓冲字节数不越过 cap，且尚未发出任何事件（事件只由 drainer 从缓冲吐出）。
+        let buffered = manager.buffered_bytes(6).await.expect("stream");
+        assert!(
+            buffered <= MAX_PER_STREAM_BUFFER_CAPACITY,
+            "buffered bytes must stay bounded: {buffered} > {MAX_PER_STREAM_BUFFER_CAPACITY}"
+        );
+        assert!(
+            event_rx.try_recv().is_err(),
+            "no event may be emitted while the drainer is paused"
+        );
+
+        // 启动 drainer：阻塞的 writer 随 drain 推进，全部字节最终按序以事件发出。
+        let drainer = {
+            let manager = manager.clone();
+            tokio::spawn(async move { manager.drain_events("peer-a", 6).await })
+        };
+        let pushed = tokio::time::timeout(std::time::Duration::from_secs(5), flood)
+            .await
+            .expect("flood did not complete after the drainer started")
+            .expect("flood panicked");
+        assert_eq!(pushed, total_chunks as u64);
+
+        let mut received = 0usize;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while received < pushed as usize * MAX_STREAM_FRAME_BYTES {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                panic!("not all flooded bytes were delivered; received {received} bytes");
+            }
+            let event = tokio::time::timeout(remaining, event_rx.recv())
+                .await
+                .expect("timed out waiting for stream data events")
+                .expect("event channel closed");
+            if let Some(network_event::Payload::SshStreamDataReceived(recv)) = event.payload {
+                assert_eq!(recv.stream_id, 6);
+                received += recv.data.len();
+            }
+        }
+        assert_eq!(received, pushed as usize * MAX_STREAM_FRAME_BYTES);
+
+        // 关闭后 drainer 发出 close 事件并退出。
+        manager.handle_close("peer-a", 6).await.expect("close");
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
+            .await
+            .expect("close event missing")
+            .expect("event channel closed");
+        assert!(matches!(
+            closed.payload,
+            Some(network_event::Payload::SshStreamClosed(c)) if c.stream_id == 6
+        ));
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), drainer)
+            .await
+            .expect("drainer did not exit after close")
+            .expect("drainer panicked");
     }
 
     #[tokio::test]

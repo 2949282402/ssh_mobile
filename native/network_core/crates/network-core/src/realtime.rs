@@ -129,6 +129,25 @@ pub(crate) async fn start_session(
     validate_realtime_id(&command.realtime_id)?;
     validate_peer(&state, &command.peer_id).await?;
 
+    // §22：重复启动同一 realtime session 必须在绑定任何 I/O 资源（UDP socket、
+    // data channel）之前拒绝——否则错误路径会丢弃一个已绑定 socket 的驱动而不
+    // 确定性关闭（泄漏）。这里先做快速检查；下面持锁插入前还会二次确认（并发
+    // 下两次 start_session 都可能通过本次检查）。
+    if state
+        .realtime
+        .lock()
+        .await
+        .sessions
+        .contains_key(&command.realtime_id)
+    {
+        return Err(realtime_error(
+            network_protocol::NetworkErrorCode::InvalidArgument,
+            "realtime session already exists",
+            "start_realtime",
+            &command.peer_id,
+        ));
+    }
+
     let mut driver = create_io_driver(&state, runtime_webrtc_config())
         .await
         .map_err(|error| {
@@ -167,6 +186,13 @@ pub(crate) async fn start_session(
     let connection_session_id = state.sessions.current_session_id(&peer_id).await;
     let mut sessions = state.realtime.lock().await;
     if sessions.sessions.contains_key(&realtime_id) {
+        // 并发下两次 start_session 都通过了开头的提前检查：这里在持锁下二次确认。
+        // 若已被并发调用占用，必须显式 close 刚创建/绑定的驱动，保证 socket 与
+        // peer 被确定性释放（绝不静默丢弃）。
+        if let Ok(mut driver) = driver.lock() {
+            let _ = driver.close();
+        }
+        drop(sessions);
         return Err(realtime_error(
             network_protocol::NetworkErrorCode::InvalidArgument,
             "realtime session already exists",
@@ -1935,5 +1961,77 @@ mod tests {
             .await
             .sessions
             .contains_key(realtime_id));
+    }
+
+    #[tokio::test]
+    async fn duplicate_start_realtime_rejects_without_retaining_a_bound_driver() {
+        let (state, _event_rx) = realtime_test_state().await;
+        let control = RecordingControl::new();
+        *state.relay_control.write().await = Some(control.clone());
+        register_realtime_peer(&state, "peer-a").await;
+        let realtime_id = "00112233445566778899aabbccddeeff";
+
+        start_session(
+            state.clone(),
+            StartRealtimeSessionCommand {
+                realtime_id: realtime_id.into(),
+                peer_id: "peer-a".into(),
+            },
+        )
+        .await
+        .expect("first start");
+        let first_driver = {
+            let sessions = state.realtime.lock().await;
+            assert_eq!(
+                sessions.sessions.len(),
+                1,
+                "exactly one session after the first start"
+            );
+            sessions.sessions[realtime_id]
+                .driver
+                .clone()
+                .expect("first driver")
+        };
+        // 基线：会话表 + 已 spawn 的 realtime-io 任务 + 本测试克隆各持有一份。
+        let baseline_refs = Arc::strong_count(&first_driver);
+        assert_eq!(
+            baseline_refs, 3,
+            "expected session map, io task and test clone to hold the driver"
+        );
+
+        // 同一 realtime_id 重复启动：必须在绑定任何 socket 之前拒绝，不得让
+        // 第二次调用创建并丢弃一个已绑定的驱动（泄漏）。
+        let error = start_session(
+            state.clone(),
+            StartRealtimeSessionCommand {
+                realtime_id: realtime_id.into(),
+                peer_id: "peer-a".into(),
+            },
+        )
+        .await
+        .expect_err("duplicate start must be rejected");
+        assert_eq!(error.code, NetworkErrorCode::InvalidArgument as i32);
+
+        // 没有泄漏：会话表未被覆盖或新增；原驱动的 Arc 未变，且引用计数与
+        // 基线一致——重复调用没有额外保留任何已绑定驱动。
+        let sessions = state.realtime.lock().await;
+        assert_eq!(
+            sessions.sessions.len(),
+            1,
+            "duplicate start must not add a session"
+        );
+        let still_driver = sessions.sessions[realtime_id]
+            .driver
+            .as_ref()
+            .expect("driver");
+        assert!(
+            Arc::ptr_eq(&first_driver, still_driver),
+            "duplicate start must not overwrite the existing session"
+        );
+        assert_eq!(
+            Arc::strong_count(&first_driver),
+            baseline_refs,
+            "no extra bound driver handle may be retained by the rejected start"
+        );
     }
 }
