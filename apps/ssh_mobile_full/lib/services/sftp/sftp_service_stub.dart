@@ -17,6 +17,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required CredentialRepository credentialRepository,
     required HostKeyRepository hostKeyRepository,
     SftpPathHistoryStore? pathHistoryStore,
+    dynamic nativeStreamConnector,
+    dynamic peerIdResolver,
   });
 
   String? _activeConnectionId;

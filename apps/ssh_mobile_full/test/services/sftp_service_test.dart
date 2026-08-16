@@ -1,4 +1,6 @@
+import 'package:connection_core/connection_core.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import 'package:ssh_mobile/app/sftp_backend_adapters.dart';
 import '../test_utils/test_storage_adapter.dart';
 
@@ -43,6 +45,72 @@ void main() {
 
     expect(sftp.state, SftpConnectionState.error);
     expect(sftp.errorMessage, 'Connection config not found');
+  });
+
+  test('connect opens a native stream when a peer binding resolves', () async {
+    final storage = TestStorageAdapter();
+    const connectionId = 'server-1';
+    await storage.connectionRepository.addConnection(
+      ConnectionConfig(
+        id: connectionId,
+        name: 'Server',
+        host: 'peer-a',
+        username: 'user',
+        authMethod: AuthMethod.password,
+      ),
+    );
+    await storage.credentialRepository.saveCredentials(
+      connectionId: connectionId,
+      password: 'pw',
+    );
+    final connector = _ThrowingSshConnector();
+    final nativeSftp = SftpService(
+      connectionRepository: storage.connectionRepository,
+      credentialRepository: storage.credentialRepository,
+      hostKeyRepository: storage.hostKeyRepository,
+      nativeStreamConnector: connector,
+      peerIdResolver: (config) => config.host,
+    );
+    addTearDown(nativeSftp.dispose);
+
+    await nativeSftp.connect(connectionId);
+
+    expect(connector.openedPeerIds, ['peer-a']);
+    expect(nativeSftp.state, SftpConnectionState.error);
+  });
+
+  test('connect falls back to tcp when no peer binding resolves', () async {
+    final storage = TestStorageAdapter();
+    const connectionId = 'server-1';
+    await storage.connectionRepository.addConnection(
+      ConnectionConfig(
+        id: connectionId,
+        name: 'Server',
+        host: '127.0.0.1',
+        port: 1,
+        username: 'user',
+        authMethod: AuthMethod.password,
+      ),
+    );
+    await storage.credentialRepository.saveCredentials(
+      connectionId: connectionId,
+      password: 'pw',
+    );
+    final connector = _ThrowingSshConnector();
+    final nativeSftp = SftpService(
+      connectionRepository: storage.connectionRepository,
+      credentialRepository: storage.credentialRepository,
+      hostKeyRepository: storage.hostKeyRepository,
+      nativeStreamConnector: connector,
+      // 解析器返回 null → 回退到原始 TCP，不打开 native 流。
+      peerIdResolver: (_) => null,
+    );
+    addTearDown(nativeSftp.dispose);
+
+    await nativeSftp.connect(connectionId);
+
+    expect(connector.openedPeerIds, isEmpty);
+    expect(nativeSftp.state, SftpConnectionState.error);
   });
 
   test('saving text without an active connection fails explicitly', () async {
@@ -109,3 +177,19 @@ const _textEntry = SftpEntry(
   isLink: false,
   sizeLabel: '6 B',
 );
+
+final class _ThrowingSshConnector implements ssh_core.SshNativeStreamConnector {
+  final List<String> openedPeerIds = <String>[];
+
+  @override
+  Future<ssh_core.SshNativeStream> open({
+    required String peerId,
+    String service = ssh_core.kSshNativeStreamService,
+  }) {
+    openedPeerIds.add(peerId);
+    throw StateError('native stream open failed');
+  }
+
+  @override
+  Future<void> closeAll() async {}
+}

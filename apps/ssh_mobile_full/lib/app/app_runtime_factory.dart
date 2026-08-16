@@ -281,6 +281,7 @@ final class AppRuntimeFactory {
         connectionRepository: runtimeConnectionRepository,
         credentialRepository: runtimeCredentialRepository,
         hostKeyRepository: runtimeHostKeyRepository,
+        nativeStreamConnector: sshNativeStreamConnector,
       );
       cleanup.add(sftpService.dispose, priority: _CleanupPriority.sftp);
       final monitoringModule = monitoring.MonitoringModule();

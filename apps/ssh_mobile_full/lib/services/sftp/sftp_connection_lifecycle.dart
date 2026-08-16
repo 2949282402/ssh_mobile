@@ -16,6 +16,7 @@ extension _SftpConnectionLifecycle on SftpService {
         config,
         credentials: credentials,
         onUnknownHostKey: onUnknownHostKey,
+        peerId: _peerIdResolver?.call(config),
       );
       if (!session.isCurrent(_sessions)) {
         client.close();
