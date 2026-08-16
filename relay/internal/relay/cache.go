@@ -112,6 +112,10 @@ type Cache interface {
 	CreateReservation(ctx context.Context, r Reservation) error
 	// GetReservation 返回 reservation；不存在或已过期返回 (zero, false, nil)。
 	GetReservation(ctx context.Context, reservationID string) (Reservation, bool, error)
+	// RenewReservation 把 reservation 的存活期限滑动到 now+ttl（数据面滑动窗口续期：
+	// 每次成功帧刷新 TTL，长会话不被一次性到期定时器中断）。条目不存在/已过期返回
+	// false，不复活。
+	RenewReservation(ctx context.Context, reservationID string, ttl time.Duration) (bool, error)
 	// DeleteReservation 删除 reservation（双方关闭后清理）。
 	DeleteReservation(ctx context.Context, reservationID string) error
 	// Publish 广播一个跨实例事件。内存实现为空操作（事件在本地直接处理）。

@@ -330,18 +330,8 @@ func TestControlV2DiscoveryPublishResolveAndHints(t *testing.T) {
 	if rs == nil || rs.Status != v2.ResolveStatus_RESOLVE_STATUS_OFFLINE {
 		t.Fatalf("offline target should resolve OFFLINE: %+v", resp)
 	}
-
-	// device-a 广播一条 advisory PeerAvailableHint → device-b 收到。
-	writeV2ControlFrame(t, connA, &v2.RelayFrame{
-		Version: v2.RELAY_V2_VERSION,
-		Kind: &v2.RelayFrame_PeerAvailableHint{PeerAvailableHint: &v2.PeerAvailableHint{
-			DeviceId: "device-a", RuntimeEpoch: &v2.RuntimeEpoch{High: 1}, Revision: 9,
-		}},
-	})
-	hint = readV2ControlFrame(t, connB)
-	if hint.GetPeerAvailableHint() == nil || hint.GetPeerAvailableHint().DeviceId != "device-a" {
-		t.Fatalf("device-b expected broadcast peer_available_hint, got %+v", hint)
-	}
+	// 注：presence hint 帧（PeerAvailableHint 等）是服务端→客户端方向，客户端反向发送
+	// 属协议违规，见 TestControlV2RejectsClientHintFrames。
 }
 
 // ---------------------------------------------------------------------------
@@ -793,5 +783,287 @@ func TestReservationLifetimeClamp(t *testing.T) {
 		if got := clampReservationLifetime(c.in); got != c.want {
 			t.Errorf("clampReservationLifetime(%d) = %d, want %d", c.in, got, c.want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 控制面纯净性：客户端反向发送服务端→客户端方向帧即违规
+// ---------------------------------------------------------------------------
+
+// TestControlV2RejectsClientHintFrames 固定 presence hint 帧（PeerAvailableHint/
+// PeerUnavailableHint/PresenceHintSnapshot）是服务端→客户端方向：服务端由
+// broadcastPeerHintV2 从权威状态构造。已认证客户端反向原样发送这些帧可伪装任意设备的
+// 在线/离线广播给整个 fleet，因此按控制面纯净性判违规：回一帧 ProtocolError 后关闭。
+func TestControlV2RejectsClientHintFrames(t *testing.T) {
+	_, httpServer := newV2TestServer(t)
+	frames := []struct {
+		deviceID string
+		frame    *v2.RelayFrame
+	}{
+		{"device-a", &v2.RelayFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayFrame_PeerAvailableHint{PeerAvailableHint: &v2.PeerAvailableHint{
+			DeviceId: "device-a", RuntimeEpoch: &v2.RuntimeEpoch{High: 1}, Revision: 1,
+		}}}},
+		{"device-b", &v2.RelayFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayFrame_PeerUnavailableHint{PeerUnavailableHint: &v2.PeerUnavailableHint{
+			DeviceId: "device-a", Reason: "spoofed-offline",
+		}}}},
+		{"device-c", &v2.RelayFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayFrame_PresenceHintSnapshot{PresenceHintSnapshot: &v2.PresenceHintSnapshot{
+			Peers: []*v2.PeerPresenceHint{{DeviceId: "device-a", Online: true}},
+		}}}},
+	}
+	for i, tc := range frames {
+		credential, privateKey := enrollV2(t, httpServer.URL, tc.deviceID)
+		conn := dialControlV2NoReady(t, httpServer.URL, credential, tc.deviceID, byte(0x70+i), privateKey)
+		if r := readV2ControlFrame(t, conn); r.GetReady() == nil {
+			t.Fatalf("expected ready, got %+v", r)
+		}
+		writeV2ControlFrame(t, conn, tc.frame)
+		pe := readV2ControlFrame(t, conn)
+		if pe.GetProtocolError() == nil {
+			t.Fatalf("client hint frame %d should be rejected with protocol_error, got %+v", i, pe)
+		}
+		waitForClose(t, conn)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 控制面：ConnectivityOffer 发起方身份强制为发送者
+// ---------------------------------------------------------------------------
+
+// TestControlV2OfferInitiatorForcedToSender 固定 ConnectivityOffer 的发起方身份以服务端
+// 认证为准：客户端可任意填 initiator_device_id（伪装成其它设备），服务端转发前必须强制
+// 覆盖为发送者，防止对端把被伪装的设备记录为协商发起方。
+func TestControlV2OfferInitiatorForcedToSender(t *testing.T) {
+	_, httpServer := newV2TestServer(t)
+	credA, privA := enrollV2(t, httpServer.URL, "device-a")
+	credB, privB := enrollV2(t, httpServer.URL, "device-b")
+	connA := dialControlV2(t, httpServer.URL, credA, "device-a", 0x81, privA)
+	defer connA.Close()
+	connB := dialControlV2(t, httpServer.URL, credB, "device-b", 0x82, privB)
+	defer connB.Close()
+
+	publishDiscoveryV2Test(t, connA, 1001)
+	if hint := readV2ControlFrame(t, connB); hint.GetPeerAvailableHint() == nil {
+		t.Fatalf("device-b expected peer_available_hint, got %+v", hint)
+	}
+	publishDiscoveryV2Test(t, connB, 2001)
+	if hint := readV2ControlFrame(t, connA); hint.GetPeerAvailableHint() == nil {
+		t.Fatalf("device-a expected peer_available_hint, got %+v", hint)
+	}
+	// A resolve B（记录 lastResolveTarget，offer 据此路由）。
+	writeV2ControlFrame(t, connA, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind:    &v2.RelayFrame_ResolvePeerRequest{ResolvePeerRequest: &v2.ResolvePeerRequest{RequestId: 1002, TargetDeviceId: "device-b"}},
+	})
+	if resp := readV2ControlFrame(t, connA); resp.GetResolvePeerResponse() == nil {
+		t.Fatalf("expected resolve response, got %+v", resp)
+	}
+
+	// A 伪造发起方为 "victim-device"：B 收到的 offer 里发起方必须是真实的 device-a。
+	attemptID := "f1a2b3c4d5e60718293a4b5c6d7e8f90"
+	writeV2ControlFrame(t, connA, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_ConnectivityOffer{ConnectivityOffer: &v2.ConnectivityOffer{
+			RequestId:         1003,
+			AttemptId:         attemptID,
+			InitiatorDeviceId: "victim-device",
+		}},
+	})
+	offer := readV2ControlFrame(t, connB)
+	of := offer.GetConnectivityOffer()
+	if of == nil || of.AttemptId != attemptID {
+		t.Fatalf("device-b expected connectivity_offer, got %+v", offer)
+	}
+	if of.InitiatorDeviceId != "device-a" {
+		t.Fatalf("offer initiator must be forced to the authenticated sender device-a, got %q", of.InitiatorDeviceId)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reservation：relay_data_endpoint 必须来自服务端配置的公共源
+// ---------------------------------------------------------------------------
+
+// TestRelayReserveEndpointFromServerOrigin 固定 relay_data_endpoint 从服务端配置的公共源
+// 构造（RELAY_PUBLIC_URL），而不是连接主机：RelayReserveResponse 与对端收到的
+// IncomingRelayReservation 都不得泄露 httptest 的连接主机。
+func TestRelayReserveEndpointFromServerOrigin(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	server.hub.config.PublicURL = "wss://relay.example.com"
+	credA, privA := enrollV2(t, httpServer.URL, "device-a")
+	credB, privB := enrollV2(t, httpServer.URL, "device-b")
+	connA := dialControlV2(t, httpServer.URL, credA, "device-a", 0x91, privA)
+	defer connA.Close()
+	connB := dialControlV2(t, httpServer.URL, credB, "device-b", 0x92, privB)
+	defer connB.Close()
+
+	publishDiscoveryV2Test(t, connB, 2001)
+	if hint := readV2ControlFrame(t, connA); hint.GetPeerAvailableHint() == nil {
+		t.Fatalf("device-a expected peer_available_hint, got %+v", hint)
+	}
+
+	attemptID := "e1f2a3b4c5d60718293a4b5c6d7e8f90"
+	writeV2ControlFrame(t, connA, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_RelayReserveRequest{RelayReserveRequest: &v2.RelayReserveRequest{
+			RequestId: 1001, AttemptId: attemptID, TargetDeviceId: "device-b", DesiredLifetimeS: 15,
+		}},
+	})
+	resp := readV2ControlFrame(t, connA)
+	rr := resp.GetRelayReserveResponse()
+	if rr == nil || rr.ReservationId == "" {
+		t.Fatalf("device-a expected relay_reserve_response, got %+v", resp)
+	}
+	wantEndpoint := "wss://relay.example.com/v2/relay/" + rr.ReservationId
+	if rr.RelayDataEndpoint != wantEndpoint {
+		t.Fatalf("relay_data_endpoint must use the configured public URL, got %q want %q", rr.RelayDataEndpoint, wantEndpoint)
+	}
+	if strings.Contains(rr.RelayDataEndpoint, "127.0.0.1") {
+		t.Fatalf("relay_data_endpoint must not leak the connection host: %q", rr.RelayDataEndpoint)
+	}
+	incoming := readV2ControlFrame(t, connB)
+	ir := incoming.GetIncomingRelayReservation()
+	if ir == nil || !strings.HasPrefix(ir.RelayDataEndpoint, "wss://relay.example.com/v2/relay/") {
+		t.Fatalf("incoming reservation must use the configured public URL too, got %+v", incoming)
+	}
+}
+
+// TestRelayReserveEndpointIgnoresClientHostHeader 固定 relay_data_endpoint 绝不使用客户端
+// 提供的 Host 头：peer.relayHost 是 /v2/control 升级时捕获的 Host 头（攻击者可控），即使
+// 被注入恶意值，端点也必须来自服务端配置/监听地址派生，否则会把对端 B 的 ResponderToken
+// 引导到攻击者选择的地址。
+func TestRelayReserveEndpointIgnoresClientHostHeader(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	credB, privB := enrollV2(t, httpServer.URL, "device-b")
+	connB := dialControlV2(t, httpServer.URL, credB, "device-b", 0x92, privB)
+	defer connB.Close()
+	publishDiscoveryV2Test(t, connB, 2001)
+
+	// 单元级：注入带恶意 relayHost 的 peer，直接走 handleRelayReserveRequestV2。
+	caller := injectPeer(server.hub, "device-x")
+	caller.relayHost = "evil.example.com"
+	server.hub.handleRelayReserveRequestV2(caller, &v2.RelayReserveRequest{
+		RequestId: 1002, AttemptId: "a1b2c3d4e5f60718293a4b5c6d7e8f90", TargetDeviceId: "device-b", DesiredLifetimeS: 15,
+	})
+	frame := readV2ControlFrameFromPeer(t, caller)
+	rr := frame.GetRelayReserveResponse()
+	if rr == nil || rr.ReservationId == "" {
+		t.Fatalf("expected relay_reserve_response, got %+v", frame)
+	}
+	if strings.Contains(rr.RelayDataEndpoint, "evil.example.com") {
+		t.Fatalf("relay_data_endpoint must not use the client Host header: %q", rr.RelayDataEndpoint)
+	}
+	// 未配置 PublicURL 时应从监听地址派生（默认 :8080 → localhost:8080），仍非客户端 Host。
+	if !strings.HasPrefix(rr.RelayDataEndpoint, "wss://localhost:8080/v2/relay/") {
+		t.Fatalf("unconfigured public URL should derive from the listen address, got %q", rr.RelayDataEndpoint)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// /v2/relay 数据面滑动窗口到期
+// ---------------------------------------------------------------------------
+
+// TestRelayDataSlidingExpiryKeepsActiveSessionAlive 固定数据面滑动窗口续期：reservation
+// 名义到期（ExpiresAtMs+grace）后，只要流量持续（每帧触发展期），连接就必须保持存活，
+// 不再被一次性定时器在 lifetime+grace 后强关。ExpiresAtMs=now、LifetimeS=1：无滑动窗口
+// 时硬到期≈5s，测试持续转发 8s，断言任何一侧都不中途关闭。
+func TestRelayDataSlidingExpiryKeepsActiveSessionAlive(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	ctx := context.Background()
+	reservationID := hex.EncodeToString(randomBytes(16))
+	initiatorToken := randomBytes(32)
+	responderToken := randomBytes(32)
+	if err := server.cache.CreateReservation(ctx, Reservation{
+		ReservationID:     reservationID,
+		InitiatorDeviceID: "device-a",
+		ResponderDeviceID: "device-b",
+		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		InitiatorToken:    initiatorToken,
+		ResponderToken:    responderToken,
+		ExpiresAtMs:       time.Now().UnixMilli(),
+		LifetimeS:         1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dataA := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(initiatorToken))
+	defer dataA.Close()
+	dataB := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(responderToken))
+	defer dataB.Close()
+	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: initiatorToken}}})
+	waitRelayPending(t, server, reservationID, true)
+	writeV2DataFrame(t, dataB, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: responderToken}}})
+	waitRelayPending(t, server, reservationID, false)
+
+	// 双向持续转发直到超过原始硬到期（≈now+5s）：任何一侧中途被强关都会让读帧失败。
+	seq := uint64(1)
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		writeV2DataFrame(t, dataA, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Payload{Payload: &v2.RelayDataPayload{Sequence: seq, EncryptedPayload: []byte("opaque")}}})
+		got := readV2DataFrameDeadline(t, dataB, 2*time.Second)
+		if got == nil || got.GetClose() != nil {
+			t.Fatalf("session closed mid-transfer at seq %d (past original expiry): %+v", seq, got)
+		}
+		if p := got.GetPayload(); p == nil || p.Sequence != seq {
+			t.Fatalf("unexpected frame at seq %d: %+v", seq, got)
+		}
+		writeV2DataFrame(t, dataB, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Ack{Ack: &v2.RelayDataAck{Sequence: seq}}})
+		got = readV2DataFrameDeadline(t, dataA, 2*time.Second)
+		if got == nil || got.GetClose() != nil {
+			t.Fatalf("session closed mid-transfer awaiting ack at seq %d: %+v", seq, got)
+		}
+		if a := got.GetAck(); a == nil || a.Sequence != seq {
+			t.Fatalf("unexpected frame awaiting ack at seq %d: %+v", seq, got)
+		}
+		seq++
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// TestRelayDataSlidingExpiryClosesIdleSession 固定滑动窗口下空闲会话仍会被关闭：活跃一段
+// 后停止流量，两端应在滑动到期（≈最后 touch + lifetime + grace）时收到 RelayDataClose
+// (reason 1)，而不是无限存活。
+func TestRelayDataSlidingExpiryClosesIdleSession(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	ctx := context.Background()
+	reservationID := hex.EncodeToString(randomBytes(16))
+	initiatorToken := randomBytes(32)
+	responderToken := randomBytes(32)
+	if err := server.cache.CreateReservation(ctx, Reservation{
+		ReservationID:     reservationID,
+		InitiatorDeviceID: "device-a",
+		ResponderDeviceID: "device-b",
+		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		InitiatorToken:    initiatorToken,
+		ResponderToken:    responderToken,
+		ExpiresAtMs:       time.Now().Add(time.Second).UnixMilli(),
+		LifetimeS:         1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dataA := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(initiatorToken))
+	defer dataA.Close()
+	dataB := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(responderToken))
+	defer dataB.Close()
+	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: initiatorToken}}})
+	waitRelayPending(t, server, reservationID, true)
+	writeV2DataFrame(t, dataB, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: responderToken}}})
+	waitRelayPending(t, server, reservationID, false)
+
+	// 先活跃一小段（触发滑动续期），然后彻底空闲。
+	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Payload{Payload: &v2.RelayDataPayload{Sequence: 1, EncryptedPayload: []byte("opaque")}}})
+	if got := readV2DataFrameDeadline(t, dataB, 2*time.Second); got == nil || got.GetPayload() == nil {
+		t.Fatalf("expected payload, got %+v", got)
+	}
+	writeV2DataFrame(t, dataB, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Ack{Ack: &v2.RelayDataAck{Sequence: 1}}})
+	if got := readV2DataFrameDeadline(t, dataA, 2*time.Second); got == nil || got.GetAck() == nil {
+		t.Fatalf("expected ack, got %+v", got)
+	}
+
+	// 空闲到滑动到期后：两端都应收到 reason 1（reservation expired）。
+	closeA := readV2DataFrameDeadline(t, dataA, 15*time.Second)
+	if closeA == nil || closeA.GetClose() == nil || closeA.GetClose().Reason != 1 {
+		t.Fatalf("idle session A should close with reason 1, got %+v", closeA)
+	}
+	closeB := readV2DataFrameDeadline(t, dataB, 5*time.Second)
+	if closeB == nil || closeB.GetClose() == nil || closeB.GetClose().Reason != 1 {
+		t.Fatalf("idle session B should also close with reason 1, got %+v", closeB)
 	}
 }

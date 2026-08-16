@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"net"
 	"net/netip"
 	"os"
 	"strconv"
@@ -51,6 +52,10 @@ type Config struct {
 	DatabaseURL string
 	RedisURL    string
 	InstanceID  string
+	// PublicURL 是服务端对外可达的公共源（wss://host[:port] 或 host[:port]），用于构造
+	// 自包含的 relay_data_endpoint。未配置时从监听地址派生 dev 默认；无论哪种情况都绝不
+	// 使用客户端提供的 Host 头（攻击者可控，会把对端 token 引导到任意地址）。
+	PublicURL   string
 	PresenceTTL time.Duration
 	// ServerHeartbeatInterval 是服务端心跳监视器的检查周期：连续
 	// ServerHeartbeatMisses 个周期未收到该连接的心跳帧即关闭连接并释放 presence 租约。
@@ -109,6 +114,7 @@ func ConfigFromEnvironment() (Config, error) {
 	if storageMode == "" {
 		storageMode = "memory"
 	}
+	publicURL := os.Getenv("RELAY_PUBLIC_URL")
 	if storageMode != "memory" && storageMode != "mysql" {
 		return Config{}, errors.New("RELAY_STORAGE_MODE must be \"memory\" or \"mysql\"")
 	}
@@ -140,6 +146,7 @@ func ConfigFromEnvironment() (Config, error) {
 		DatabaseURL:                 databaseURL,
 		RedisURL:                    redisURL,
 		InstanceID:                  instanceID,
+		PublicURL:                   publicURL,
 		PresenceTTL:                 durationEnv("RELAY_PRESENCE_TTL", defaultPresenceTTL),
 		ServerHeartbeatInterval:     durationEnv("RELAY_SERVER_HEARTBEAT_INTERVAL", defaultServerHeartbeatInterval),
 		ServerHeartbeatMisses:       intEnv("RELAY_SERVER_HEARTBEAT_MISSES", defaultServerHeartbeatMisses),
@@ -267,6 +274,34 @@ func withConfigDefaults(config Config) Config {
 		config.HTTPMaxHeaderBytes = defaultHTTPMaxHeaderBytes
 	}
 	return config
+}
+
+// relayDataEndpointOrigin 返回构造自包含 relay_data_endpoint 的公共源（wss://host[:port]）。
+// 优先使用显式配置的 PublicURL（RELAY_PUBLIC_URL，可带或不带 scheme）；未配置时从监听
+// 地址派生 dev 默认（通配主机退化到 localhost）。它绝不读取客户端提供的 Host 头——Host 头
+// 攻击者可控，用它构造端点会把对端 B 的 32-byte ResponderToken 引导到攻击者选择的地址。
+func relayDataEndpointOrigin(config Config) string {
+	if config.PublicURL != "" {
+		origin := strings.TrimSpace(config.PublicURL)
+		origin = strings.TrimSuffix(origin, "/")
+		if !strings.Contains(origin, "://") {
+			origin = "wss://" + origin
+		}
+		return origin
+	}
+	host, port, err := net.SplitHostPort(config.Address)
+	if err != nil {
+		// 异常监听地址：以 localhost 前缀兜底，保留原端口串。
+		if strings.HasPrefix(config.Address, ":") {
+			return "wss://localhost" + config.Address
+		}
+		return "wss://localhost:" + config.Address
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "localhost"
+	}
+	return "wss://" + net.JoinHostPort(host, port)
 }
 
 // durationEnv 读取正的时间间隔，异常时返回指定默认值。

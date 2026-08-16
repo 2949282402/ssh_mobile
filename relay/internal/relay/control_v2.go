@@ -8,7 +8,9 @@
 //
 // 每条控制面连接的帧分派见 routeControlV2。服务端→客户端的方向性消息（Ready/
 // HeartbeatAck/DiscoveryAck/ResolvePeerResponse/RelayReserveResponse/
-// IncomingRelayReservation）若由客户端反向发送，一律静默忽略。
+// IncomingRelayReservation，以及 PresenceHintSnapshot/PeerAvailableHint/
+// PeerUnavailableHint 三帧 presence 提示）若由客户端反向发送，一律按控制面纯净性判
+// 协议违规——回一帧 ProtocolError 后关闭连接，绝不原样广播。
 
 package relay
 
@@ -138,12 +140,14 @@ func (h *hub) routeControlV2(sender *peer, data []byte) bool {
 		h.handleConnectivityOfferV2(sender, kind.ConnectivityOffer)
 	case *v2.RelayFrame_ConnectivityAnswer:
 		h.handleConnectivityAnswerV2(sender, kind.ConnectivityAnswer)
-	case *v2.RelayFrame_PresenceHintSnapshot:
-		h.broadcastV2(sender.deviceID, frame)
-	case *v2.RelayFrame_PeerAvailableHint:
-		h.broadcastV2(sender.deviceID, frame)
-	case *v2.RelayFrame_PeerUnavailableHint:
-		h.broadcastV2(sender.deviceID, frame)
+	case *v2.RelayFrame_PresenceHintSnapshot, *v2.RelayFrame_PeerAvailableHint, *v2.RelayFrame_PeerUnavailableHint:
+		// PresenceHintSnapshot/PeerAvailableHint/PeerUnavailableHint 都是服务端→客户端
+		// 方向（服务端由 broadcastPeerHintV2 从权威 presence/discovery 状态构造）。
+		// 已认证的客户端反向原样发送这些帧，可伪装任意设备的在线/离线提示广播给整个
+		// fleet，因此按控制面纯净性同其它服务端方向帧一样判违规并关闭连接。
+		h.sendV2ProtocolErrorSync(sender, 0, v2.ErrorCode_ERROR_CODE_PROTOCOL,
+			"client must not send server-direction control frames")
+		return false
 	case *v2.RelayFrame_RelayReserveRequest:
 		h.handleRelayReserveRequestV2(sender, kind.RelayReserveRequest)
 	case *v2.RelayFrame_RealtimeSignal:
@@ -278,6 +282,9 @@ func (h *hub) handleConnectivityOfferV2(sender *peer, offer *v2.ConnectivityOffe
 			offer.InitiatorSnapshot = discoveryToV2(d)
 		}
 	}
+	// 发起方身份以服务端认证为准：客户端可任意填写 initiator_device_id（伪造为其它设备），
+	// 服务端在转发前强制覆盖为发送者，防止对端把被伪装的设备记为协商发起方。
+	offer.InitiatorDeviceId = sender.deviceID
 	h.mutex.Lock()
 	if h.v2Attempts == nil {
 		h.v2Attempts = make(map[string]v2Attempt)
@@ -390,7 +397,10 @@ func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequ
 	responderToken := randomBytes(v2.RESERVATION_TOKEN_BYTES)
 	now := time.Now()
 	expiresAtMs := now.Add(time.Duration(lifetime) * time.Second).UnixMilli()
-	endpoint := fmt.Sprintf("wss://%s/v2/relay/%s", sender.relayHost, reservationID)
+	// relay_data_endpoint 必须从服务端配置的公共源构造（RELAY_PUBLIC_URL，未配置时从
+	// 监听地址派生），绝不使用客户端提供的 Host 头：Host 头攻击者可控，用它构造端点会
+	// 把对端 B 的 32-byte ResponderToken 引导到攻击者选择的地址。
+	endpoint := fmt.Sprintf("%s/v2/relay/%s", relayDataEndpointOrigin(h.config), reservationID)
 	res := Reservation{
 		ReservationID:     reservationID,
 		AttemptID:         req.AttemptId,
@@ -400,6 +410,7 @@ func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequ
 		InitiatorToken:    initiatorToken,
 		ResponderToken:    responderToken,
 		ExpiresAtMs:       expiresAtMs,
+		LifetimeS:         lifetime,
 	}
 	cctx, ccancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
 	err := h.presence.CreateReservation(cctx, res)

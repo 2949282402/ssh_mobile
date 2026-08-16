@@ -90,6 +90,28 @@ func TestConfigDefaultsAreFiniteAndProxyBoundaryIsClosed(t *testing.T) {
 	}
 }
 
+// TestRelayDataEndpointOrigin 固定 relay_data_endpoint 公共源的构造：显式 PublicURL
+// 优先（可带或不带 scheme、容忍尾部斜杠）；未配置时从监听地址派生，通配主机退化到
+// localhost。该源永不读取客户端 Host 头。
+func TestRelayDataEndpointOrigin(t *testing.T) {
+	cases := []struct {
+		cfg  Config
+		want string
+	}{
+		{Config{PublicURL: "wss://relay.example.com"}, "wss://relay.example.com"},
+		{Config{PublicURL: "relay.example.com:9443"}, "wss://relay.example.com:9443"},
+		{Config{PublicURL: "https://relay.example.com/"}, "https://relay.example.com"},
+		{Config{Address: ":8080"}, "wss://localhost:8080"},
+		{Config{Address: "0.0.0.0:8080"}, "wss://localhost:8080"},
+		{Config{Address: "127.0.0.1:9090"}, "wss://127.0.0.1:9090"},
+	}
+	for _, c := range cases {
+		if got := relayDataEndpointOrigin(c.cfg); got != c.want {
+			t.Errorf("relayDataEndpointOrigin(%+v) = %q, want %q", c.cfg, got, c.want)
+		}
+	}
+}
+
 func TestConfigStorageModeDefaultsToMemoryAndRejectsUnknown(t *testing.T) {
 	t.Setenv("RELAY_ENROLLMENT_TOKEN", "0123456789abcdef")
 	t.Setenv(

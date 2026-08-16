@@ -404,6 +404,9 @@ func (erroringCache) CreateReservation(context.Context, Reservation) error {
 func (erroringCache) GetReservation(context.Context, string) (Reservation, bool, error) {
 	return Reservation{}, false, errors.New("cache unavailable")
 }
+func (erroringCache) RenewReservation(context.Context, string, time.Duration) (bool, error) {
+	return false, errors.New("cache unavailable")
+}
 func (erroringCache) DeleteReservation(context.Context, string) error {
 	return errors.New("cache unavailable")
 }

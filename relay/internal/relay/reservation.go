@@ -36,7 +36,8 @@ import (
 // 两个 local_token 各自独立：InitiatorToken 只给 A（RelayReserveResponse.local_token），
 // ResponderToken 只给 B（IncomingRelayReservation.local_token），这样 A 无法用 B 的
 // token 抢占 B 的端点。Redis 模式存 relay:reservation:{reservation_id}，TTL 到
-// expires_at_ms。
+// expires_at_ms。LifetimeS 是创建时夹取后的存活秒数（[15,120]），数据面用它做滑动
+// 窗口续期（每次成功帧把到期时刻重置为 now+lifetime+grace）。
 type Reservation struct {
 	ReservationID     string `json:"reservation_id"`            // 16-byte hex，32 chars
 	AttemptID         string `json:"attempt_id,omitempty"`      // 发起方异步 attempt 关联键
@@ -45,7 +46,8 @@ type Reservation struct {
 	RelayDataEndpoint string `json:"relay_data_endpoint"`       // 自包含 wss://<host>/v2/relay/<id>
 	InitiatorToken    []byte `json:"initiator_token,omitempty"` // A 的 32-byte 连接凭证
 	ResponderToken    []byte `json:"responder_token,omitempty"` // B 的 32-byte 连接凭证
-	ExpiresAtMs       int64  `json:"expires_at_ms"`             // Unix 毫秒
+	ExpiresAtMs       int64  `json:"expires_at_ms"`             // Unix 毫秒（滑动续期后更新）
+	LifetimeS         uint32 `json:"lifetime_s,omitempty"`      // 夹取后的存活秒数（滑动窗口续期基准）
 }
 
 // reservationEntry 是内存实现的 reservation 条目，带显式过期时间（内存模式无 Redis TTL）。
@@ -138,6 +140,25 @@ func (m *memoryStore) DeleteReservation(_ context.Context, reservationID string)
 	return nil
 }
 
+// RenewReservation 把 reservation 的存活期限滑动到 now+ttl（滑动窗口续期：数据面流量
+// 到来时由 relayDataConn.touch 调用）。条目不存在或已硬过期视为缺失，返回 false 不复活。
+func (m *memoryStore) RenewReservation(_ context.Context, reservationID string, ttl time.Duration) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, present := m.reservations[reservationID]
+	if !present {
+		return false, nil
+	}
+	if time.Now().After(entry.expiresAt) {
+		// 已硬过期视为缺失，顺手剪除（与 GetReservation 的惰性清理一致）。
+		delete(m.reservations, reservationID)
+		return false, nil
+	}
+	entry.expiresAt = time.Now().Add(ttl)
+	m.reservations[reservationID] = entry
+	return true, nil
+}
+
 // ---------------------------------------------------------------------------
 // Reservation 存储：redisStore（Redis relay:reservation:{id}，TTL=expires_at）
 // ---------------------------------------------------------------------------
@@ -176,6 +197,15 @@ func (r *redisStore) GetReservation(ctx context.Context, reservationID string) (
 
 func (r *redisStore) DeleteReservation(ctx context.Context, reservationID string) error {
 	return r.client.Del(ctx, r.reservationKey(reservationID)).Err()
+}
+
+// RenewReservation 把 reservation 键的 TTL 滑动到 now+ttl（滑动窗口续期，数据面流量
+// 到来时调用）。键不存在（已过期被 Redis 主动清除）时返回 false。
+func (r *redisStore) RenewReservation(ctx context.Context, reservationID string, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		return false, nil
+	}
+	return r.client.Expire(ctx, r.reservationKey(reservationID), ttl).Result()
 }
 
 // ---------------------------------------------------------------------------
@@ -232,6 +262,7 @@ type relayDataConn struct {
 	reservationID string
 	res           Reservation
 	registry      *relayDataRegistry
+	cache         Cache // 滑动窗口续期 reservation 存储 TTL 用
 	socket        *websocket.Conn
 	outbound      chan outboundFrame
 	done          chan struct{}
@@ -255,11 +286,12 @@ type relayDataConn struct {
 	bytesInWindow      int64
 }
 
-func newRelayDataConn(registry *relayDataRegistry, res Reservation, socket *websocket.Conn, config Config) *relayDataConn {
+func newRelayDataConn(registry *relayDataRegistry, res Reservation, socket *websocket.Conn, config Config, cache Cache) *relayDataConn {
 	return &relayDataConn{
 		reservationID:      res.ReservationID,
 		res:                res,
 		registry:           registry,
+		cache:              cache,
 		socket:             socket,
 		outbound:           make(chan outboundFrame, config.MaxPendingFramesPerDevice),
 		done:               make(chan struct{}),
@@ -309,7 +341,9 @@ func (rc *relayDataConn) read() {
 		<-rc.writeDone
 	}()
 	rc.socket.SetReadLimit(v2.MAX_RELAY_DATA_FRAME_BYTES)
-	// reservation 到期（含 5s 宽限）即强制关闭：即使对端空闲也会在到期时刻被踢。
+	// reservation 到期（含 5s 宽限）即强制关闭。到期定时器是滑动窗口：每次成功的数据面
+	// 帧（RelayDataConnect/Payload/Ack）都把窗口重置到 now+lifetime+grace（见 touch），
+	// 流量不断则连接不被一次性定时器中断；空闲到窗口末尾仍以 reason 1 强制关闭。
 	expiryDelay := time.Until(time.UnixMilli(rc.res.ExpiresAtMs).Add(rc.grace))
 	expiryTimer := time.AfterFunc(expiryDelay, func() {
 		rc.sendCloseAndShutdown(1, "reservation expired")
@@ -350,6 +384,8 @@ func (rc *relayDataConn) read() {
 				rc.sendCloseAndShutdown(2, "too many pending relay data connections")
 				return
 			}
+			// Connect 成功即活跃：续期滑动窗口。
+			rc.touch(expiryTimer)
 			continue
 		}
 		switch {
@@ -359,6 +395,8 @@ func (rc *relayDataConn) read() {
 				rc.sendCloseAndShutdown(2, "relay peer not connected")
 				return
 			}
+			// 数据帧即活跃证据：续期滑动窗口，否则长会话会在 lifetime+grace 后被强关。
+			rc.touch(expiryTimer)
 		case frame.GetClose() != nil:
 			// 正常关闭：把 Close 帧转发给对端，然后双向关闭（write goroutine 会先
 			// drain 对端的 outbound 再关 socket，保证 Close 帧到达对端）。
@@ -375,6 +413,38 @@ func (rc *relayDataConn) read() {
 			return
 		}
 	}
+}
+
+// touch 在每次成功的数据面帧后续期滑动窗口：(a) 本地到期定时器重置到
+// now+lifetime+grace；(b) 尽力续期共享存储里 reservation 的 TTL（失败静默——数据面
+// 连接仍由本地定时器兜底关闭）。Stop 返回 false 表示定时器已触发（回调正在运行）、
+// 连接正在关闭，此时不再续期。仅 read goroutine 调用 Stop/Reset，避免与回调并发。
+func (rc *relayDataConn) touch(expiryTimer *time.Timer) {
+	if !expiryTimer.Stop() {
+		return
+	}
+	ttl := rc.refreshTTL()
+	expiryTimer.Reset(ttl)
+	if rc.cache == nil {
+		return
+	}
+	rctx, rcancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+	_, _ = rc.cache.RenewReservation(rctx, rc.reservationID, ttl)
+	rcancel()
+}
+
+// refreshTTL 返回滑动窗口的存活时长：创建时夹取的 LifetimeS + grace。旧格式条目
+// （LifetimeS==0，例如直接构造/升级前创建的 reservation）用 nominal 到期前剩余时间 +
+// grace，保证窗口不早于原始硬到期时刻收窄。
+func (rc *relayDataConn) refreshTTL() time.Duration {
+	if rc.res.LifetimeS > 0 {
+		return time.Duration(rc.res.LifetimeS)*time.Second + rc.grace
+	}
+	remaining := time.Until(time.UnixMilli(rc.res.ExpiresAtMs))
+	if remaining < 0 {
+		remaining = 0
+	}
+	return remaining + rc.grace
 }
 
 // acceptConnect 校验首帧 RelayDataConnect：reservation_id 必须等于路径段，local_token
@@ -568,7 +638,7 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 	}
 	// 不在升级阶段登记：只有首帧 RelayDataConnect 通过校验后才进入 registry（避免
 	// 把自身当成等待对端）。未发 Connect 的已升级连接不占 pending 容量。
-	rc := newRelayDataConn(&s.relayData, res, connection, s.config)
+	rc := newRelayDataConn(&s.relayData, res, connection, s.config, s.cache)
 	go rc.write()
 	go rc.read()
 }
