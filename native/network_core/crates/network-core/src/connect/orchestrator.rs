@@ -198,6 +198,18 @@ impl ConnectionOrchestrator {
                 session = ?reused,
                 "reused existing healthy connection"
             );
+            // §17/§40：重用路径必须记录本次请求的 CommunicationClass——否则会话保留
+            // 先前建立时的类别，ReliableStream 请求重用 ReliableMessage 会话后，
+            // open_stream 的类别门禁会错误返回 UnsupportedTransport。
+            state.sessions.set_communication_class(peer_id, class).await;
+            // 重用成功同样发布 Connected 终态：Dart connect() 把该事件当作成功信号
+            // （失败才由命令面发 Failed），不发布会令其等待超时。
+            let route = state
+                .sessions
+                .current_route(peer_id)
+                .await
+                .unwrap_or(RouteType::Unspecified);
+            emit_peer_state(&state.event_tx, peer_id, PeerConnectionState::Connected, route, None);
             self.set_stage(OrchestratorState::ConnectedDirect);
             return Ok(());
         }
@@ -211,11 +223,21 @@ impl ConnectionOrchestrator {
                 state.sessions.set_communication_class(peer_id, class).await;
                 self.register_current(state.clone(), peer_id, &remote_epoch, session_id)
                     .await;
+                // 已连接会话满足一次新的 connect()：同样发布 Connected 终态，
+                // 否则 Dart connect() 的成功信号会缺失。
+                let route = state
+                    .sessions
+                    .current_route(peer_id)
+                    .await
+                    .unwrap_or(RouteType::Unspecified);
+                emit_peer_state(&state.event_tx, peer_id, PeerConnectionState::Connected, route, None);
                 self.set_stage(OrchestratorState::ConnectedDirect);
                 return Ok(());
             }
             ConnectDecision::InProgress(_) => {
-                // 已有连接任务在途：合并，不做重复建连。
+                // 已有连接任务在途：合并，不做重复建连。仍要记录本次请求的类别，
+                // in-flight 任务完成时发布的 Connected 事件即携带最新类别。
+                state.sessions.set_communication_class(peer_id, class).await;
                 return Ok(());
             }
             ConnectDecision::Started(session_id) => {
@@ -971,8 +993,42 @@ fn relay_resolve_error(error: &RelayError, peer_id: &str) -> ProtocolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use network_nat::PathManager;
     use network_relay::v2::ResolveStatus;
     use std::time::Duration;
+
+    /// 构造一个可跑通 `connect_with_class` 前段（配置校验 + Resolve + try_reuse）
+    /// 的 RuntimeState：配置了 endpoint/identity/peer，无控制面（本地直连，epoch=None）。
+    async fn configured_reuse_state() -> (Arc<RuntimeState>, tokio::sync::mpsc::UnboundedReceiver<network_protocol::NetworkEvent>) {
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        let path_manager = Arc::new(PathManager::new());
+        let manager = network_quic::QuicEndpointManager::new(
+            "127.0.0.1:0".parse().expect("test bind address"),
+            path_manager,
+        )
+        .expect("create test QUIC endpoint");
+        *state.endpoint.write().await = Some(manager.endpoint);
+        *state.identity.write().await = Some(Arc::new(
+            network_identity::DeviceIdentity::from_private_keys(
+                "device-a".into(),
+                [21u8; 32],
+                [31u8; 32],
+            ),
+        ));
+        state.peers.write().await.insert(
+            "peer-b".to_string(),
+            crate::runtime::PeerConfig {
+                endpoint: None,
+                identity_public_key: [7u8; 32],
+                e2e_public_key: [8u8; 32],
+            },
+        );
+        (state, event_rx)
+    }
 
     #[test]
     fn stage_machine_follows_the_design_skeleton() {
@@ -1154,6 +1210,79 @@ mod tests {
             .expect("not-ready with configured endpoint should fall back to local direct");
         assert_eq!(resolved_runtime_epoch(&resolved), None);
         assert!(matches!(resolved, ResolvedPeer::Ready { discovery: None }));
+    }
+
+    #[tokio::test]
+    async fn reused_session_records_requested_class_and_emits_connected() {
+        // §17/§40：Registry 重用路径必须记录本次请求的 CommunicationClass 并发布
+        // Connected 终态——否则 ReliableStream 请求复用 ReliableMessage 会话后，
+        // open_stream 的类别门禁会错误返回 UnsupportedTransport，且 Dart connect()
+        // 等不到成功信号而超时。
+        let (state, mut event_rx) = configured_reuse_state().await;
+        let peer_id = "peer-b";
+
+        // 预置一条健康连接：ReliableMessage 会话 + 已登记（模拟先前 connect 建立）。
+        let session_id = match state.sessions.begin_connect(peer_id).await {
+            crate::session::ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected Session decision: {decision:?}"),
+        };
+        assert!(
+            state
+                .sessions
+                .mark_relay_route_connected(peer_id, session_id, RouteType::Relay, None)
+                .await
+        );
+        state
+            .sessions
+            .set_communication_class(peer_id, CommunicationClass::ReliableMessage)
+            .await;
+        state
+            .connection_registry
+            .register(peer_id, None, DEFAULT_CONNECTION_CAPABILITY, session_id);
+
+        let orchestrator = ConnectionOrchestrator::new(Arc::clone(&state));
+        let result = orchestrator
+            .connect_with_class(peer_id, CommunicationClass::ReliableStream)
+            .await;
+        assert!(result.is_ok(), "reuse path should succeed: {result:?}");
+
+        // 重用的会话必须携带本次请求的类别，open_stream 不再被类别门禁拦成
+        // UnsupportedTransport（Relay(None) 载体只会因未连接而失败）。
+        assert_eq!(
+            state.sessions.current_communication_class(peer_id).await,
+            Some(CommunicationClass::ReliableStream)
+        );
+        let stream_result = crate::stream::open_stream(
+            &state,
+            peer_id,
+            1,
+            "shell",
+            crate::stream::StreamConsumer::Event,
+        )
+        .await;
+        assert!(
+            !matches!(
+                stream_result,
+                Err(crate::stream::StreamError::UnsupportedTransport)
+            ),
+            "reused ReliableStream session must not gate byte streams"
+        );
+
+        // 重用路径发布 Connected 终态（Dart connect() 的成功信号）。
+        let event = event_rx
+            .try_recv()
+            .expect("Connected event must be emitted on the reuse path");
+        match event.payload {
+            Some(network_protocol::network_event::Payload::PeerState(peer_state)) => {
+                assert_eq!(peer_state.peer_id, peer_id);
+                assert_eq!(
+                    peer_state.state,
+                    network_protocol::PeerConnectionState::Connected as i32
+                );
+                assert_eq!(peer_state.active_route, RouteType::Relay as i32);
+            }
+            other => panic!("unexpected event payload: {other:?}"),
+        }
     }
 
     /// 构造一个没有配置直连 endpoint 的 PeerConfig（测试 resolve 权威失败路径用）。

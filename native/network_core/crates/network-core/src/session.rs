@@ -433,6 +433,18 @@ impl SessionManager {
             return Err(SessionAdmissionError::StaleSession);
         }
 
+        // §18/§40 单赢者语义（写锁内的权威 guard）：期望的 Session 仍在 Connecting 时，
+        // 同一次 attempt 的 admit 走 Initialize；一旦 winner 已把 route 挂到它上面
+        // （Connected），或它已被显式关闭/失败，同一次 attempt 的迟到 admit 是 loser，
+        // 必须返回 StaleSession 而**绝不**整体替换——否则会拆掉 winner 刚挂载的 route，
+        // 双方都掉线。合法的替换只来自新 begin_connect（不同 expected id，已在上方拦截）
+        // 或 binding 变更（state 仍在 Connecting）。
+        if expected_session_id.is_some_and(|expected| {
+            expected == current.id && current.state != SessionState::Connecting
+        }) {
+            return Err(SessionAdmissionError::StaleSession);
+        }
+
         let binding_changed = current
             .remote_session_binding
             .as_deref()
@@ -1152,6 +1164,44 @@ mod tests {
                 .await,
             Err(SessionAdmissionError::StaleSession)
         ));
+    }
+
+    #[tokio::test]
+    async fn stale_admit_for_connected_session_is_rejected_without_detaching_route() {
+        // §18/§40 单赢者（写锁内权威 guard）：winner 已把 route 挂到 Session
+        // （Connected）后，同一次 attempt 的迟到 admit 必须返回 StaleSession，绝不
+        // 整体替换——否则会拆掉 winner 刚挂载的 route，双方掉线。
+        let manager = SessionManager::new();
+        let peer_id = "peer-stale-admit";
+        let session_id = match manager.begin_connect(peer_id).await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        let admitted = manager
+            .admit_authenticated_session(peer_id, Some(session_id), "remote-a")
+            .await
+            .expect("initial admit of the in-flight Session");
+        assert_eq!(admitted.decision, SessionCryptoDecision::Initialize);
+
+        // winner 挂载 route → Connected。
+        let TestBlockingGenericRoute { handle, worker, .. } =
+            crate::connection::test_blocking_generic_route();
+        manager
+            .attach_test_generic_route(peer_id, session_id, handle)
+            .await
+            .expect("attach winner route");
+        assert_eq!(manager.state(peer_id).await, Some(SessionState::Connected));
+
+        // loser：同一个 session id 的迟到 admit 必须被拒绝，且不拆掉 winner 的 route。
+        assert!(matches!(
+            manager
+                .admit_authenticated_session(peer_id, Some(session_id), "remote-a")
+                .await,
+            Err(SessionAdmissionError::StaleSession)
+        ));
+        assert_eq!(manager.state(peer_id).await, Some(SessionState::Connected));
+        assert_eq!(manager.session_id(peer_id).await, Some(session_id));
+        drop(worker);
     }
 
     #[tokio::test]

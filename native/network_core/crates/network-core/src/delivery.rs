@@ -1074,6 +1074,14 @@ impl DeliveryManager {
     /// 仅显式断开时调用；transport 丢失（Session 被销毁）**不会**调用它——接收端
     /// 的 dedup/ordered 状态必须跨 Connection 存活，新连接才能按 MessageId 去重、
     /// 并在有序通道上从上次断点继续。Outgoing pending 消息保持独立，不在此清理。
+    ///
+    /// 显式断开会放弃在途 dedup 记录（incoming_active）、已完成消息历史
+    /// （processed_dedup）与 Failed 通道标记（failed_ordered），但**保留**有序通道
+    /// 的健康断点（expected_sequence）——与发送端保留 `next_sequences` 计数器对称：
+    /// 两端在显式断开并重连后都从各自断点继续，有序投递无缝恢复，不会出现接收端
+    /// 从 0 重新计数而发送端继续 5、6、7 造成的永久空洞。仍待重发的 pending 消息会
+    /// 在重连后重建 dedup 记录并重新插入保留的 ordered 状态；已 ACK 消息不在发送端
+    /// pending 中，不会被重发。
     pub(crate) async fn close_peer(&self, peer_id: &str) {
         let mut store = self.store.lock().await;
         store
@@ -1082,7 +1090,15 @@ impl DeliveryManager {
         store
             .processed_dedup
             .retain(|key, _| key.peer_id != peer_id);
-        store.ordered.retain(|(peer, _), _| peer != peer_id);
+        // 保留有序断点：只丢弃尚未释放的 in-flight / reorder 消息（重连后由 pending
+        // 重放重建 dedup 记录），绝不重置 expected_sequence。
+        for (scope, ordered) in &mut store.ordered {
+            if scope.0 == peer_id {
+                ordered.in_flight = None;
+                ordered.reorder_buffer.clear();
+                ordered.reorder_bytes = 0;
+            }
+        }
         store.failed_ordered.retain(|(peer, _)| peer != peer_id);
         assert_delivery_invariants(&store);
     }
@@ -2093,6 +2109,163 @@ mod tests {
                 .await,
             DedupDecision::New
         );
+    }
+
+    /// 把发送端 pending 消息转换为接收端 OrderedMessage（message_id 必须一致，
+    /// 才能命中 begin_incoming 创建的 active dedup 记录）。
+    fn ordered_from_pending(message: &PendingMessage) -> OrderedMessage {
+        OrderedMessage {
+            peer_id: message.peer_id.clone(),
+            session_id: "session-a".into(),
+            channel_id: message.channel_id.clone(),
+            message_id: message.message_id,
+            sequence: message.sequence,
+            policy: message.policy,
+            payload: message.payload.clone(),
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_close_preserves_ordered_anchor_and_resumes_without_wedge() {
+        // §40 显式断开：close_peer 保留有序通道的 expected_sequence 断点，与发送端
+        // 保留 next_sequences 计数器对称——两端重连后从各自断点继续。修复前 close_peer
+        // 清空 ordered 状态，接收端从 expected_sequence=0 重新开始，而发送端继续发
+        // 5、6、7：seq5 因间隔超限被 Rejected，通道永久卡死且 expire_incoming 不失败
+        // （OrderedBuffered 无 ack_deadline），静默丢消息。
+        let manager = DeliveryManager::with_config(DeliveryConfig {
+            max_pending_messages: 16,
+            max_pending_bytes: 64,
+            ..config()
+        });
+        let now = Instant::now();
+
+        // 发送端入队有序消息 seq 0..5；seq5 是断线时仍 pending（未 ACK）的消息。
+        let mut pending = Vec::new();
+        for sequence in 0..6u64 {
+            pending.push(
+                manager
+                    .enqueue_at(
+                        "peer-a",
+                        "control",
+                        vec![sequence as u8],
+                        DeliveryPolicy::SessionBoundOrdered,
+                        retry_policy(),
+                        now,
+                    )
+                    .await
+                    .expect("enqueue ordered message"),
+            );
+        }
+
+        // 接收端投递 seq 0..4 → expected_sequence 推进到 5。
+        for message in pending.iter().take(5) {
+            assert_eq!(
+                manager
+                    .begin_incoming(
+                        &message.peer_id,
+                        &message.channel_id,
+                        message.message_id,
+                        1,
+                        now,
+                    )
+                    .await,
+                DedupDecision::New
+            );
+            assert_eq!(
+                manager.accept_ordered(ordered_from_pending(message)).await,
+                OrderedInsertResult::Ready
+            );
+            manager
+                .complete_incoming(&message.peer_id, &message.channel_id, message.message_id)
+                .await
+                .expect("delivered ordered message");
+        }
+
+        // 断线：seq5 仍 pending，可经 MessageId 重发（发送端 next_sequences 不受
+        // close_peer 影响，新的入队继续从 6 编号）。
+        assert_eq!(manager.pending_len().await, 6);
+        let resent = manager
+            .begin_send(pending[5].message_id, now)
+            .await
+            .expect("begin resend")
+            .expect("resendable");
+        assert_eq!(resent.message_id, pending[5].message_id);
+
+        // 双方显式断开：close_peer 放弃在途 dedup/历史/失败标记，但保留有序断点；
+        // 本单实例中一次调用同时模拟发送端（next_sequences 保留）与接收端
+        // （expected_sequence 保留）两侧的清理。
+        manager.close_peer("peer-a").await;
+
+        // 重连：发送端新入队 seq 6、7。
+        for sequence in 6..8u64 {
+            pending.push(
+                manager
+                    .enqueue_at(
+                        "peer-a",
+                        "control",
+                        vec![sequence as u8],
+                        DeliveryPolicy::SessionBoundOrdered,
+                        retry_policy(),
+                        now,
+                    )
+                    .await
+                    .expect("enqueue new ordered message"),
+            );
+        }
+
+        // 接收端重建 dedup 记录并把 seq5 重新插入保留的 ordered 状态 → 必须 Ready，
+        // 修复前因 expected_sequence 被重置为 0、间隔超限而被 Rejected，通道卡死。
+        let surviving = &pending[5];
+        assert_eq!(
+            manager
+                .begin_incoming(
+                    &surviving.peer_id,
+                    &surviving.channel_id,
+                    surviving.message_id,
+                    2,
+                    now,
+                )
+                .await,
+            DedupDecision::New
+        );
+        assert_eq!(
+            manager
+                .accept_ordered(ordered_from_pending(surviving))
+                .await,
+            OrderedInsertResult::Ready
+        );
+
+        // seq6、7 缓冲，seq5 ACK 后按序释放 5、6、7，无空洞。
+        for message in pending.iter().skip(6) {
+            assert_eq!(
+                manager
+                    .begin_incoming(
+                        &message.peer_id,
+                        &message.channel_id,
+                        message.message_id,
+                        2,
+                        now,
+                    )
+                    .await,
+                DedupDecision::New
+            );
+            assert_eq!(
+                manager.accept_ordered(ordered_from_pending(message)).await,
+                OrderedInsertResult::Buffered
+            );
+        }
+        let mut released = Vec::new();
+        for message in pending.iter().skip(5) {
+            let completion = manager
+                .complete_incoming(&message.peer_id, &message.channel_id, message.message_id)
+                .await
+                .expect("ordered message must be ACKable after reconnect");
+            released.push(message.sequence);
+            if let Some(next) = completion.next_ordered {
+                assert_eq!(next.sequence, message.sequence.saturating_add(1));
+            }
+        }
+        assert_eq!(released, vec![5, 6, 7]);
     }
 
     #[tokio::test]
