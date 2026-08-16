@@ -1067,3 +1067,178 @@ func TestRelayDataSlidingExpiryClosesIdleSession(t *testing.T) {
 		t.Fatalf("idle session B should also close with reason 1, got %+v", closeB)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 数据面：对端异常关闭必须通知存活端点
+// ---------------------------------------------------------------------------
+
+// TestRelayDataPeerNotifiedOnAbnormalClose 固定对端异常关闭必须通知存活端点：A 在不发送
+// RelayDataClose 的情况下断开（异常关闭），B 必须在短时间内收到 RelayDataClose(reason 2,
+// "relay peer disconnected")，而不是空等到自己滑动窗口到期（修复 #7：read 的 defer 在
+// unregister 之前先捕获对端，否则 clearPeer 把 rc.peer 置空后通知分支是死代码）。
+func TestRelayDataPeerNotifiedOnAbnormalClose(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	ctx := context.Background()
+	reservationID := hex.EncodeToString(randomBytes(16))
+	initiatorToken := randomBytes(32)
+	responderToken := randomBytes(32)
+	if err := server.cache.CreateReservation(ctx, Reservation{
+		ReservationID:     reservationID,
+		InitiatorDeviceID: "device-a",
+		ResponderDeviceID: "device-b",
+		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		InitiatorToken:    initiatorToken,
+		ResponderToken:    responderToken,
+		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
+		LifetimeS:         15,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dataA := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(initiatorToken))
+	defer dataA.Close()
+	dataB := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(responderToken))
+	defer dataB.Close()
+	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind:    &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: initiatorToken}},
+	})
+	waitRelayPending(t, server, reservationID, true)
+	writeV2DataFrame(t, dataB, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind:    &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: responderToken}},
+	})
+	waitRelayPending(t, server, reservationID, false)
+
+	// A 异常断开（不发送 RelayDataClose）：B 应在短时间内收到 reason 2 通知。
+	dataA.Close()
+	closeFrame := readV2DataFrameDeadline(t, dataB, 3*time.Second)
+	if closeFrame == nil || closeFrame.GetClose() == nil {
+		t.Fatalf("peer B should be notified on abnormal close of A, got %+v", closeFrame)
+	}
+	if closeFrame.GetClose().Reason != 2 || !strings.Contains(closeFrame.GetClose().Detail, "relay peer disconnected") {
+		t.Fatalf("expected relay_data_close reason 2 with peer-disconnected detail, got %+v", closeFrame)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 数据面：晚加入准入与初始窗口走滑动续期（而非名义 ExpiresAtMs）
+// ---------------------------------------------------------------------------
+
+// TestRelayDataLateJoinAfterSlidingRenewal 固定晚加入准入与初始到期定时器都走滑动窗口
+// （修复 #11）：reservation 被 RenewReservation 滑过名义到期（+宽限）后，晚加入的端点
+// 仍必须被 /v2/relay 升级接受（存储 TTL 存活，GetReservation ok），且数据连接拿到全新
+// 窗口（refreshTTL）——旧实现既在升级阶段按名义 ExpiresAtMs 拒绝（410），又用陈旧
+// ExpiresAtMs 初始化到期定时器把晚加入连接立即以 reason 1 强关。
+func TestRelayDataLateJoinAfterSlidingRenewal(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	ctx := context.Background()
+	reservationID := hex.EncodeToString(randomBytes(16))
+	initiatorToken := randomBytes(32)
+	responderToken := randomBytes(32)
+	// 名义到期 1s 后（+5s 宽限 ≈ 6s）；LifetimeS=15 给首个端点足够长的存活窗口。
+	if err := server.cache.CreateReservation(ctx, Reservation{
+		ReservationID:     reservationID,
+		InitiatorDeviceID: "device-a",
+		ResponderDeviceID: "device-b",
+		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		InitiatorToken:    initiatorToken,
+		ResponderToken:    responderToken,
+		ExpiresAtMs:       time.Now().Add(time.Second).UnixMilli(),
+		LifetimeS:         15,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 首个端点 A 连接并注册（保持 pending，供晚加入的 B 链接）。
+	dataA := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(initiatorToken))
+	defer dataA.Close()
+	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind:    &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: initiatorToken}},
+	})
+	waitRelayPending(t, server, reservationID, true)
+
+	// 把存储 TTL 滑到名义到期 + 宽限之后（滑动续期只滑存储 TTL，绝不回写 ExpiresAtMs）。
+	if ok, err := server.cache.RenewReservation(ctx, reservationID, 30*time.Second); err != nil || !ok {
+		t.Fatalf("renew reservation should slide the storage TTL: ok=%v err=%v", ok, err)
+	}
+
+	// 等到名义到期 + 宽限（≈6s）之后晚加入：旧 ExpiresAtMs 准入门此刻会拒绝（410 Gone），
+	// 但存储键仍存活，晚加入必须被接受。
+	time.Sleep(7 * time.Second)
+	dataB := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(responderToken))
+	defer dataB.Close()
+	writeV2DataFrame(t, dataB, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind:    &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: responderToken}},
+	})
+	waitRelayPending(t, server, reservationID, false)
+
+	// 晚加入的 B 拿到全新窗口：不被陈旧 ExpiresAtMs 的初始定时器立即 reason 1 强关，
+	// 数据面可正常转发。
+	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind:    &v2.RelayDataFrame_Payload{Payload: &v2.RelayDataPayload{Sequence: 1, EncryptedPayload: []byte("late-join-ok")}},
+	})
+	got := readV2DataFrameDeadline(t, dataB, 3*time.Second)
+	if got == nil || got.GetClose() != nil {
+		t.Fatalf("late-joined data connection must be accepted and functional, got %+v", got)
+	}
+	if p := got.GetPayload(); p == nil || p.Sequence != 1 || !bytes.Equal(p.EncryptedPayload, []byte("late-join-ok")) {
+		t.Fatalf("late-joined B should receive the forwarded payload, got %+v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 控制面：被取代的连接不得继续分派帧
+// ---------------------------------------------------------------------------
+
+// TestControlV2RouteRejectsSupersededPeer 固定 routeControlV2 每帧重核 currency（恢复 v1
+// routeControl 的 isCurrent 守卫，修复 #15）：被取代的控制连接在 closePeer 之后仍可能读到
+// 一帧在途数据，此时不得再分派 ConnectivityOffer/RelayReserveRequest 等帧——返回 false
+// 让 hub.read 关闭这条陈旧连接，而不是让陈旧身份继续对 fleet 施加影响。
+func TestControlV2RouteRejectsSupersededPeer(t *testing.T) {
+	server, _ := newV2TestServer(t)
+	h := server.hub
+
+	// 被取代的旧连接 + 已接管设备的新连接（h.peers 里只保留新连接）。
+	stale := injectPeer(h, "device-a")
+	injectPeer(h, "device-a")
+	// 目标 B 在线：旧连接曾 resolve 它（offer 会按 lastResolveTarget 路由到 B）。
+	target := injectPeer(h, "device-b")
+	stale.lastResolveTarget = "device-b"
+
+	cases := []struct {
+		name  string
+		frame *v2.RelayFrame
+	}{
+		{
+			name: "connectivity offer",
+			frame: &v2.RelayFrame{
+				Version: v2.RELAY_V2_VERSION,
+				Kind:    &v2.RelayFrame_ConnectivityOffer{ConnectivityOffer: &v2.ConnectivityOffer{RequestId: 1001, AttemptId: strings.Repeat("ab", 16), InitiatorDeviceId: "device-a"}},
+			},
+		},
+		{
+			name: "relay reserve request",
+			frame: &v2.RelayFrame{
+				Version: v2.RELAY_V2_VERSION,
+				Kind:    &v2.RelayFrame_RelayReserveRequest{RelayReserveRequest: &v2.RelayReserveRequest{RequestId: 1002, AttemptId: strings.Repeat("cd", 16), TargetDeviceId: "device-b"}},
+			},
+		},
+	}
+	for _, tc := range cases {
+		data, err := v2.EncodeFrame(tc.frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h.routeControlV2(stale, data) {
+			t.Fatalf("%s: routeControlV2 must reject a superseded peer frame", tc.name)
+		}
+		select {
+		case f := <-target.outbound:
+			decoded, derr := v2.DecodeControl(f.data)
+			t.Fatalf("%s: superseded peer frame must not be dispatched to the target, got %s (err=%v)", tc.name, v2.KindName(decoded), derr)
+		default:
+		}
+	}
+}

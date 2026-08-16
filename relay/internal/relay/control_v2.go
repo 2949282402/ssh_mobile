@@ -110,6 +110,16 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 // 不能走 outbound 异步队列，否则 read goroutine 的 defer closePeer 会在 write
 // goroutine 冲刷前关掉 socket，ProtocolError 丢失。
 func (h *hub) routeControlV2(sender *peer, data []byte) bool {
+	// 每帧重核 currency（v1 routeControl 的同款守卫）：被取代/撤销的控制连接，其 read
+	// goroutine 仍可能读到一帧在途数据（closePeer 之后、socket 关闭之前）。若不拦截，
+	// 这条陈旧连接仍能分派 ConnectivityOffer/RelayReserveRequest/RealtimeSignal。
+	// 返回 false 让 hub.read 关闭这条连接。速率限制检查在其后（两者都保留）。
+	h.mutex.Lock()
+	isCurrent := h.peers[sender.deviceID] == sender
+	h.mutex.Unlock()
+	if !isCurrent {
+		return false
+	}
 	if !sender.allowFrame(len(data)) {
 		h.sendV2ProtocolErrorSync(sender, 0, v2.ErrorCode_ERROR_CODE_RATE_LIMITED, "control frame rate limit exceeded")
 		return false

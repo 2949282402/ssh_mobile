@@ -46,8 +46,11 @@ type Reservation struct {
 	RelayDataEndpoint string `json:"relay_data_endpoint"`       // 自包含 wss://<host>/v2/relay/<id>
 	InitiatorToken    []byte `json:"initiator_token,omitempty"` // A 的 32-byte 连接凭证
 	ResponderToken    []byte `json:"responder_token,omitempty"` // B 的 32-byte 连接凭证
-	ExpiresAtMs       int64  `json:"expires_at_ms"`             // Unix 毫秒（滑动续期后更新）
-	LifetimeS         uint32 `json:"lifetime_s,omitempty"`      // 夹取后的存活秒数（滑动窗口续期基准）
+	// ExpiresAtMs 是创建时刻的「名义」到期（Unix 毫秒）。滑动窗口续期只滑动存储 TTL，
+	// 绝不回写本字段；升级准入与数据面到期定时器都用滑动窗口（GetReservation ok 结果 /
+	// refreshTTL/touch），本字段只作 nominal 展示与旧格式条目的兜底参考。
+	ExpiresAtMs int64  `json:"expires_at_ms"`
+	LifetimeS   uint32 `json:"lifetime_s,omitempty"` // 夹取后的存活秒数（滑动窗口续期基准）
 }
 
 // reservationEntry 是内存实现的 reservation 条目，带显式过期时间（内存模式无 Redis TTL）。
@@ -334,18 +337,24 @@ func (rc *relayDataConn) peerConn() *relayDataConn {
 func (rc *relayDataConn) read() {
 	defer func() {
 		rc.close()
+		// 先捕获对端再 unregister：unregister(rc) 会 clearPeer 把 rc.peer 置空，若在
+		// unregister 之后才读 peer，异常关闭时对端永远不会被通知（死代码）。捕获后
+		// 主动向对端投递 RelayDataClose(reason 2)，让它立即关闭而不是空等到自己的
+		// 滑动窗口到期定时器触发。
+		other := rc.peerConn()
 		rc.registry.unregister(rc)
-		if other := rc.peerConn(); other != nil {
+		if other != nil {
 			other.sendCloseAndShutdown(2, "relay peer disconnected")
 		}
 		<-rc.writeDone
 	}()
 	rc.socket.SetReadLimit(v2.MAX_RELAY_DATA_FRAME_BYTES)
-	// reservation 到期（含 5s 宽限）即强制关闭。到期定时器是滑动窗口：每次成功的数据面
-	// 帧（RelayDataConnect/Payload/Ack）都把窗口重置到 now+lifetime+grace（见 touch），
-	// 流量不断则连接不被一次性定时器中断；空闲到窗口末尾仍以 reason 1 强制关闭。
-	expiryDelay := time.Until(time.UnixMilli(rc.res.ExpiresAtMs).Add(rc.grace))
-	expiryTimer := time.AfterFunc(expiryDelay, func() {
+	// reservation 到期（含 5s 宽限）即强制关闭。到期定时器是滑动窗口：初始窗口用
+	// refreshTTL()（now+lifetime+grace，与 touch 的续期语义一致）而不是名义
+	// ExpiresAtMs——晚加入的端点拿到的是全新窗口；每次成功的数据面帧
+	// （RelayDataConnect/Payload/Ack）都重置窗口（见 touch），流量不断则连接不被
+	// 一次性定时器中断；空闲到窗口末尾仍以 reason 1 强制关闭。
+	expiryTimer := time.AfterFunc(rc.refreshTTL(), func() {
 		rc.sendCloseAndShutdown(1, "reservation expired")
 	})
 	defer expiryTimer.Stop()
@@ -623,11 +632,10 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "reservation not found", http.StatusNotFound)
 		return
 	}
-	grace := time.Duration(v2.RESERVATION_EXPIRY_GRACE_S) * time.Second
-	if time.Now().After(time.UnixMilli(res.ExpiresAtMs).Add(grace)) {
-		http.Error(w, "reservation expired", http.StatusGone)
-		return
-	}
+	// 不按名义 ExpiresAtMs 做升级准入：滑动窗口续期（RenewReservation/touch）只滑动
+	// 存储 TTL，从不回写 ExpiresAtMs，因此晚加入的端点即使名义到期已过、只要存储键仍
+	// 存活（GetReservation ok）就必须被接受。GetReservation 的 ok 结果已编码滑动窗口
+	// 活性（memoryStore 按滑动的 entry.expiresAt 剪除，redisStore 依赖滑动的 Redis TTL）。
 	if !validRelayToken(r, res) {
 		http.Error(w, "invalid reservation token", http.StatusUnauthorized)
 		return
