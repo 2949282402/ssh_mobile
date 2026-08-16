@@ -71,8 +71,18 @@ struct RelayAcceptancePayload {
     offset: u64,
 }
 
+/// Relay 文件分块信封的固定开销：数据面 kind 标签(1) + session_id(32) +
+/// sequence u64(8) + 应用 crypto 信封头(26，= crypto.rs ENVELOPE_HEADER_BYTES =
+/// magic 4 + version 1 + suite 1 + epoch u64 8 + nonce 12) + GCM 认证标签(16，=
+/// crypto.rs GCM_TAG_BYTES)。整块加密后包上 DATA_ENV_FILE_CHUNK 信封仍必须落在
+/// 数据面 MAX_DATA_PAYLOAD_BYTES(512 KiB) 之内，否则 RelayDataClient::send 会以
+/// InvalidConfiguration 拒绝，导致整份文件发送失败。
+const RELAY_FILE_CHUNK_ENVELOPE_OVERHEAD_BYTES: usize = 1 + 32 + 8 + 26 + 16;
+
 /// Relay 文件每个分块固定边界，确保断线时的 offset 能无歧义映射到 nonce 序号。
-const RELAY_FILE_CHUNK_BYTES: u64 = DEFAULT_TRANSFER_BUFFER as u64;
+/// 明文分块比 DEFAULT_TRANSFER_BUFFER 小一个信封开销，加密后的整封不超数据面上限。
+const RELAY_FILE_CHUNK_BYTES: u64 =
+    (DEFAULT_TRANSFER_BUFFER - RELAY_FILE_CHUNK_ENVELOPE_OVERHEAD_BYTES) as u64;
 
 /// 等待 UI 审批的待处理 Relay 申请。
 #[derive(Clone)]
@@ -470,7 +480,8 @@ async fn disconnect_relay_data(state: &RuntimeState) {
     for (_, data) in data {
         data.request_disconnect().await;
     }
-    cleanup_relay_state(state).await;
+    // 断开全部 reservation：清理所有对端的 Relay 状态。
+    cleanup_relay_state(state, None).await;
 }
 
 /// 只在控制面 socket 意外结束时启动一个共享重连任务；显式 DisconnectRelay 会先
@@ -841,7 +852,8 @@ async fn relay_data_disconnected(
         entries.remove(&peer_id);
     }
     drop(entries);
-    cleanup_relay_state(&state).await;
+    // 只清理断开对端的 Relay 状态；其他对端的在途传输原样保留。
+    cleanup_relay_state(&state, Some(&peer_id)).await;
     // §18/§35：transport 丢失即销毁 ConnectionSession（Relay route 由其数据客户端
     // 断开驱动）。显式 close 会 emit Disconnected。
     crate::peer::teardown_relay_route(&state, &peer_id, &data).await;
@@ -1246,24 +1258,90 @@ async fn receive_relay_delivery_ack(
 ///
 /// `TransferManager` 和稳定 `.part` 属于 TransferSession，不属于 Relay 数据面；这里
 /// 只丢弃等待中的 oneshot 和打开的文件句柄，绝不取消传输或删除 checkpoint。
-async fn cleanup_relay_state(state: &RuntimeState) {
-    let active = {
-        let mut active = state.relay_active_incoming.lock().await;
-        std::mem::take(&mut *active)
+/// `peer` 为 `Some` 时只清理该对端的条目（单条 reservation 断开），`None` 表示全部
+/// （disconnect_relay_data 断开所有 reservation）。
+async fn cleanup_relay_state(state: &RuntimeState, peer: Option<&str>) {
+    // relay_active_incoming：按 offer.sender_id 只暂停断开对端的接收传输，其余对端
+    // 的活跃接收保持原样。
+    let active_ids = {
+        let active = state.relay_active_incoming.lock().await;
+        match peer {
+            Some(peer) => active
+                .iter()
+                .filter(|(_, incoming)| incoming.offer.sender_id == peer)
+                .map(|(transfer_id, _)| transfer_id.clone())
+                .collect::<Vec<_>>(),
+            None => active.keys().cloned().collect::<Vec<_>>(),
+        }
     };
-    state.relay_acceptances.write().await.clear();
-    state.relay_completions.write().await.clear();
-    state.relay_crypto_waiters.write().await.clear();
-    state.relay_crypto_responders.lock().await.clear();
-    state.relay_crypto_confirmers.lock().await.clear();
+    for transfer_id in active_ids {
+        let incoming = state.relay_active_incoming.lock().await.remove(&transfer_id);
+        if let Some(incoming) = incoming {
+            drop(incoming.file);
+            if state.transfers.pause_for_network(&transfer_id).await {
+                tracing::debug!(
+                    transfer_id = %transfer_id,
+                    "Relay incoming transfer paused; preserving checkpoint"
+                );
+            }
+        }
+    }
 
-    for (transfer_id, incoming) in active {
-        drop(incoming.file);
-        if state.transfers.pause_for_network(&transfer_id).await {
-            tracing::debug!(
-                transfer_id = %transfer_id,
-                "Relay incoming transfer paused; preserving checkpoint"
-            );
+    // acceptances/completions 以 transfer_id 为键；按 TransferManager 的 peer 归属
+    // 过滤，绝不清掉其他对端的等待者（None = 全部清空）。
+    let mut waiter_ids = {
+        let mut ids = Vec::new();
+        ids.extend(state.relay_acceptances.read().await.keys().cloned());
+        ids.extend(state.relay_completions.read().await.keys().cloned());
+        ids
+    };
+    waiter_ids.sort_unstable();
+    waiter_ids.dedup();
+    if let Some(peer) = peer {
+        // 逐条查询 TransferManager 的 peer 归属（snapshot 是 async，不能放在
+        // 同步 retain 闭包里）。
+        let mut scoped = Vec::new();
+        for transfer_id in &waiter_ids {
+            if state
+                .transfers
+                .snapshot(transfer_id)
+                .await
+                .is_some_and(|snapshot| snapshot.peer_id == peer)
+            {
+                scoped.push(transfer_id.clone());
+            }
+        }
+        waiter_ids = scoped;
+    }
+    for transfer_id in &waiter_ids {
+        state.relay_acceptances.write().await.remove(transfer_id);
+        state.relay_completions.write().await.remove(transfer_id);
+    }
+
+    // crypto waiters/responders/confirmers 的键是 "{peer_id}/{token}"：按对端前缀清理。
+    let crypto_prefix = peer.map(|peer| format!("{peer}/"));
+    {
+        let mut waiters = state.relay_crypto_waiters.write().await;
+        if let Some(prefix) = &crypto_prefix {
+            waiters.retain(|key, _| !key.starts_with(prefix.as_str()));
+        } else {
+            waiters.clear();
+        }
+    }
+    {
+        let mut responders = state.relay_crypto_responders.lock().await;
+        if let Some(prefix) = &crypto_prefix {
+            responders.retain(|key, _| !key.starts_with(prefix.as_str()));
+        } else {
+            responders.clear();
+        }
+    }
+    {
+        let mut confirmers = state.relay_crypto_confirmers.lock().await;
+        if let Some(prefix) = &crypto_prefix {
+            confirmers.retain(|key, _| !key.starts_with(prefix.as_str()));
+        } else {
+            confirmers.clear();
         }
     }
 }
@@ -1488,6 +1566,11 @@ async fn receive_relay_offer(
                     .transfers
                     .fail_transfer(&expiry_transfer_id, TransferFailureReason::UserRejected)
                     .await;
+                // 审批超时是终态失败：移除 TransferManager 条目，释放 transfer_id。
+                // 否则条目停留在 Failed，register_incoming/claim_incoming_resume 只接受
+                // Vacant 或 Paused，后续同一 transfer_id 的再 Offer 会被
+                // "TransferId is already active" 永久拒绝。
+                expiry_state.transfers.remove_transfer(&expiry_transfer_id).await;
                 // 取消只发到承载该 transfer 的对端 reservation 连接。
                 if let Some(sender_id) = sender_id {
                     if let Some(data) = expiry_state.relay_data.read().await.get(&sender_id).cloned()
@@ -1982,7 +2065,7 @@ async fn hash_partial_file(
     }
     let mut file = tokio::fs::File::open(path).await?;
     let mut remaining = offset;
-    let mut buffer = vec![0u8; DEFAULT_TRANSFER_BUFFER];
+    let mut buffer = vec![0u8; RELAY_FILE_CHUNK_BYTES as usize];
     while remaining > 0 {
         let to_read = std::cmp::min(remaining, buffer.len() as u64) as usize;
         let read = file.read(&mut buffer[..to_read]).await?;
@@ -2157,7 +2240,8 @@ pub(crate) async fn send_file_over_relay(
             .await;
         let mut file = tokio::fs::File::open(&path).await?;
         file.seek(SeekFrom::Start(acceptance.offset)).await?;
-        let mut buffer = vec![0u8; DEFAULT_TRANSFER_BUFFER];
+        // 缓冲区按明文分块大小分配：整块加密后 + 信封开销仍落在数据面载荷上限内。
+        let mut buffer = vec![0u8; RELAY_FILE_CHUNK_BYTES as usize];
         let mut sequence = acceptance.offset / RELAY_FILE_CHUNK_BYTES;
         let mut transferred = acceptance.offset;
         let cancellation = state.transfers.cancellation_token(&transfer_id).await;
@@ -2769,5 +2853,372 @@ mod tests {
                 &ciphertext,
             )
             .is_err());
+    }
+
+    /// 构造一个合法的 Relay 文件 Manifest（满足 validate / is_safe_file_name）。
+    fn relay_test_manifest(transfer_id: &str) -> FileManifest {
+        FileManifest {
+            transfer_id: transfer_id.into(),
+            file_name: "payload.bin".into(),
+            file_size: RELAY_FILE_CHUNK_BYTES * 2,
+            modified_at: 1,
+            content_hash: "a".repeat(64),
+            protocol_version: network_transfer::NETWORK_TRANSFER_PROTOCOL_VERSION,
+        }
+    }
+
+    fn relay_test_active(pending: PendingRelayIncoming) -> ActiveRelayIncoming {
+        ActiveRelayIncoming {
+            offer: pending,
+            file: None,
+            temporary_path: PathBuf::from("/tmp/relay-test.part"),
+            final_path: PathBuf::from("/tmp/relay-test.bin"),
+            next_sequence: 0,
+            received_bytes: 0,
+            hasher: Sha256::new(),
+            already_completed: false,
+        }
+    }
+
+    /// 构造一条可被 receive_relay_offer 接受的 Relay 文件 Offer 信封：
+    /// body = [session_id 32][URL_SAFE_NO_PAD base64(encrypted offer)]。
+    fn build_relay_offer_envelope(
+        sender: &network_identity::DeviceIdentity,
+        receiver: &network_identity::DeviceIdentity,
+        session_id: &str,
+        manifest: &FileManifest,
+        crypto_session_id: &str,
+    ) -> Vec<u8> {
+        use base64::Engine as _;
+        let offer = serde_json::to_vec(&serde_json::json!({
+            "v": 1,
+            "crypto_suite": APPLICATION_CRYPTO_SUITE,
+            "session_id": session_id,
+            "crypto_session_id": crypto_session_id,
+            "transfer_id": manifest.transfer_id,
+            "manifest_hash": relay_manifest_hash(manifest),
+            "sender_id": sender.device_id,
+            "receiver_id": receiver.device_id,
+            "file_name": manifest.file_name,
+            "file_size": manifest.file_size,
+            "modified_at": manifest.modified_at,
+            "content_hash": manifest.content_hash,
+        }))
+        .expect("serialize Relay offer");
+        let session_bytes: [u8; 16] = hex::decode(session_id)
+            .expect("hex session")
+            .try_into()
+            .expect("session must decode to 16 bytes");
+        let encrypted = crypto::encrypt_application_offer(
+            &offer,
+            *receiver.public_e2e_key().as_bytes(),
+            &session_bytes,
+        )
+        .expect("encrypt Relay offer");
+        let encoded = URL_SAFE_NO_PAD.encode(encrypted);
+        let mut envelope = Vec::with_capacity(32 + encoded.len());
+        envelope.extend_from_slice(session_id.as_bytes());
+        envelope.extend_from_slice(encoded.as_bytes());
+        envelope
+    }
+
+    /// 回归 #2：满块 Relay 分块（RELAY_FILE_CHUNK_BYTES 明文）加密并包上
+    /// DATA_ENV_FILE_CHUNK 信封后必须仍落在数据面载荷上限（512 KiB）之内；否则
+    /// RelayDataClient::send 会以 InvalidConfiguration 拒绝，导致整份文件发送失败。
+    #[tokio::test]
+    async fn relay_file_chunk_full_size_fits_data_plane_bound() {
+        let sender = network_identity::DeviceIdentity::from_private_keys(
+            "sender".into(),
+            [11u8; 32],
+            [21u8; 32],
+        );
+        let receiver = network_identity::DeviceIdentity::from_private_keys(
+            "receiver".into(),
+            [12u8; 32],
+            [22u8; 32],
+        );
+        let session_id = "0000000000000001";
+        let transfer_id = "relay-transfer";
+        let manifest_hash = "a".repeat(64);
+        let aad = crypto::file_chunk_aad(session_id, transfer_id, &manifest_hash, 3);
+        let mut sender_context = crate::crypto::CryptoContext::from_identity(
+            &sender,
+            *receiver.public_e2e_key().as_bytes(),
+            session_id,
+        )
+        .expect("sender Session crypto");
+        let plaintext = vec![0xABu8; RELAY_FILE_CHUNK_BYTES as usize];
+        let ciphertext = sender_context
+            .encrypt(&aad, &plaintext)
+            .expect("encrypt full Relay chunk");
+        // 数据面单帧载荷上限（network-relay v2 data_client MAX_DATA_PAYLOAD_BYTES）。
+        const DATA_PLANE_MAX_PAYLOAD_BYTES: usize = 512 * 1024;
+        // 明文分块 + 信封固定开销必须不超上限（旧的 512 KiB 明文会超限被 send 拒绝）。
+        assert!(
+            RELAY_FILE_CHUNK_BYTES as usize + RELAY_FILE_CHUNK_ENVELOPE_OVERHEAD_BYTES
+                <= DATA_PLANE_MAX_PAYLOAD_BYTES,
+            "full-size Relay chunk exceeds the data-plane payload bound"
+        );
+        // body = [session_id 32][sequence u64 BE][ciphertext]，信封再加 kind 标签(1)。
+        let mut body = Vec::with_capacity(40 + ciphertext.len());
+        body.extend_from_slice(session_id.as_bytes());
+        body.extend_from_slice(&0u64.to_be_bytes());
+        body.extend_from_slice(&ciphertext);
+        let envelope_len = 1 + body.len();
+        assert!(
+            envelope_len <= DATA_PLANE_MAX_PAYLOAD_BYTES,
+            "full-size Relay chunk envelope ({envelope_len} B) exceeds the 512 KiB data-plane bound"
+        );
+
+        let data = Arc::new(
+            RelayDataClient::new(
+                "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+                "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+                vec![0u8; 32],
+                "credential".into(),
+                [0u8; 32],
+            )
+            .expect("relay data client"),
+        );
+        // 满块信封必须通过尺寸校验：未连接客户端在出站阶段才报 NotConnected；若尺寸
+        // 超限则会在校验处直接报 InvalidConfiguration。
+        assert!(matches!(
+            send_data_envelope(&data, DATA_ENV_FILE_CHUNK, &body).await,
+            Err(RelayError::NotConnected)
+        ));
+    }
+
+    /// 回归 #6：单条 reservation 数据面断开（relay_data_disconnected →
+    /// cleanup_relay_state Some(peer)）只清理该对端的 Relay 状态；另一对端的在途
+    /// 接收/发送状态（active incoming、acceptance/completion waiter、crypto 握手
+    /// 队列）原样保留，而不是像旧的全量清理那样把其他对端一并清空。
+    #[tokio::test]
+    async fn relay_disconnect_cleanup_is_scoped_to_the_disconnecting_peer() {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+
+        // peer-b 与 peer-c 各自有在途接收传输 + 等待中的 accept/completion/crypto waiter。
+        let manifest_b = relay_test_manifest("relay-transfer-b");
+        let manifest_c = relay_test_manifest("relay-transfer-c");
+        assert!(
+            state
+                .transfers
+                .register_incoming(manifest_b.clone(), "peer-b".into())
+                .await
+        );
+        assert!(
+            state
+                .transfers
+                .register_incoming(manifest_c.clone(), "peer-c".into())
+                .await
+        );
+        state.relay_active_incoming.lock().await.insert(
+            "relay-transfer-b".into(),
+            relay_test_active(PendingRelayIncoming {
+                transfer_id: "relay-transfer-b".into(),
+                session_id: "000000000000000000000000000000bb".into(),
+                sender_id: "peer-b".into(),
+                manifest: manifest_b,
+                manifest_hash: "a".repeat(64),
+                crypto_session_id: "00000000000000bb".into(),
+            }),
+        );
+        state.relay_active_incoming.lock().await.insert(
+            "relay-transfer-c".into(),
+            relay_test_active(PendingRelayIncoming {
+                transfer_id: "relay-transfer-c".into(),
+                session_id: "000000000000000000000000000000cc".into(),
+                sender_id: "peer-c".into(),
+                manifest: manifest_c,
+                manifest_hash: "a".repeat(64),
+                crypto_session_id: "00000000000000cc".into(),
+            }),
+        );
+        state
+            .relay_acceptances
+            .write()
+            .await
+            .insert("relay-transfer-b".into(), oneshot::channel().0);
+        state
+            .relay_acceptances
+            .write()
+            .await
+            .insert("relay-transfer-c".into(), oneshot::channel().0);
+        state
+            .relay_completions
+            .write()
+            .await
+            .insert("relay-transfer-b".into(), oneshot::channel().0);
+        state
+            .relay_completions
+            .write()
+            .await
+            .insert("relay-transfer-c".into(), oneshot::channel().0);
+        let (wait_b, _) = mpsc::channel::<(u8, Vec<u8>)>(1);
+        let (wait_c, _) = mpsc::channel::<(u8, Vec<u8>)>(1);
+        state
+            .relay_crypto_waiters
+            .write()
+            .await
+            .insert(relay_crypto_key("peer-b", "token-b"), wait_b);
+        state
+            .relay_crypto_waiters
+            .write()
+            .await
+            .insert(relay_crypto_key("peer-c", "token-c"), wait_c);
+
+        // peer-b 断开：只清理 peer-b 的条目，peer-c 的全部保留。
+        cleanup_relay_state(&state, Some("peer-b")).await;
+
+        assert!(
+            state
+                .relay_active_incoming
+                .lock()
+                .await
+                .contains_key("relay-transfer-c"),
+            "peer-c active incoming must survive peer-b disconnecting"
+        );
+        assert!(!state.relay_active_incoming.lock().await.contains_key("relay-transfer-b"));
+        assert!(state.relay_acceptances.read().await.contains_key("relay-transfer-c"));
+        assert!(!state.relay_acceptances.read().await.contains_key("relay-transfer-b"));
+        assert!(state.relay_completions.read().await.contains_key("relay-transfer-c"));
+        assert!(!state.relay_completions.read().await.contains_key("relay-transfer-b"));
+        assert!(
+            state
+                .relay_crypto_waiters
+                .read()
+                .await
+                .contains_key(&relay_crypto_key("peer-c", "token-c")),
+            "peer-c crypto waiter must survive peer-b disconnecting"
+        );
+        assert!(
+            !state
+                .relay_crypto_waiters
+                .read()
+                .await
+                .contains_key(&relay_crypto_key("peer-b", "token-b"))
+        );
+        // peer-c 的接收传输未被暂停；peer-b 的被暂停（保留 checkpoint）。
+        assert_eq!(
+            state
+                .transfers
+                .snapshot("relay-transfer-c")
+                .await
+                .unwrap()
+                .state,
+            network_transfer::TransferState::WaitingApproval
+        );
+        assert_eq!(
+            state
+                .transfers
+                .snapshot("relay-transfer-b")
+                .await
+                .unwrap()
+                .state,
+            network_transfer::TransferState::Paused
+        );
+
+        // 全部断开（disconnect_relay_data 路径）仍清理所有对端的条目。
+        cleanup_relay_state(&state, None).await;
+        assert!(state.relay_active_incoming.lock().await.is_empty());
+        assert!(state.relay_acceptances.read().await.is_empty());
+        assert!(state.relay_completions.read().await.is_empty());
+        assert!(state.relay_crypto_waiters.read().await.is_empty());
+    }
+
+    /// 回归 #12：未获批的 Relay 传入 Offer 在审批超时后必须释放 transfer_id；随后
+    /// 同一 transfer_id 的再 Offer 必须能被 register_incoming 接受（不得报
+    /// "TransferId is already active"）。
+    #[tokio::test(start_paused = true)]
+    async fn relay_approval_timeout_releases_transfer_id_for_reoffer() {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        let sender = network_identity::DeviceIdentity::from_private_keys(
+            "sender".into(),
+            [11u8; 32],
+            [21u8; 32],
+        );
+        let receiver = network_identity::DeviceIdentity::from_private_keys(
+            "receiver".into(),
+            [12u8; 32],
+            [22u8; 32],
+        );
+        state.peers.write().await.insert(
+            "sender".into(),
+            PeerConfig {
+                endpoint: None,
+                identity_public_key: [0u8; 32],
+                e2e_public_key: *sender.public_e2e_key().as_bytes(),
+            },
+        );
+        let data = Arc::new(
+            RelayDataClient::new(
+                "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+                "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+                vec![0u8; 32],
+                "credential".into(),
+                [0u8; 32],
+            )
+            .expect("relay data client"),
+        );
+        let manifest = relay_test_manifest("relay-reoffer-transfer");
+        // 两个 Offer 都在把 receiver 移入 state 前构造（encrypt 需要借用其公钥）。
+        let first_envelope = build_relay_offer_envelope(
+            &sender,
+            &receiver,
+            "00000000000000000000000000000001",
+            &manifest,
+            "0000000000000001",
+        );
+        let second_envelope = build_relay_offer_envelope(
+            &sender,
+            &receiver,
+            "00000000000000000000000000000002",
+            &manifest,
+            "0000000000000002",
+        );
+        state.identity.write().await.replace(Arc::new(receiver));
+
+        receive_relay_offer(&state, &data, "sender", &first_envelope)
+            .await
+            .expect("first offer is accepted for approval");
+        assert_eq!(
+            state
+                .transfers
+                .snapshot("relay-reoffer-transfer")
+                .await
+                .unwrap()
+                .state,
+            network_transfer::TransferState::WaitingApproval
+        );
+        // 先让 timeout 任务被 poll 一次、注册 30s 睡眠定时器，再快进时钟。
+        tokio::task::yield_now().await;
+
+        // 快进超过审批超时，让 relay-approval-timeout 任务执行。
+        tokio::time::advance(INCOMING_APPROVAL_TIMEOUT + std::time::Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+
+        // 超时任务必须移除 TransferManager 条目并清空 pending，释放 transfer_id。
+        assert!(
+            state
+                .transfers
+                .snapshot("relay-reoffer-transfer")
+                .await
+                .is_none(),
+            "timed-out transfer must be removed so the transfer_id can be reused"
+        );
+        assert!(state.relay_pending_incoming.read().await.is_empty());
+
+        // 同一 transfer_id 的新 Offer（新 session_id）必须能被接受，不得报 already active。
+        receive_relay_offer(&state, &data, "sender", &second_envelope)
+            .await
+            .expect("second offer of the same transfer_id is accepted after timeout");
     }
 }
