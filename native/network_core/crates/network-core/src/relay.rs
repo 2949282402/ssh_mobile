@@ -25,6 +25,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::connection::{decode_generic_frame, GenericFrameKind};
 use crate::crypto::{self, CryptoMode, APPLICATION_CRYPTO_SUITE};
 use crate::events::{
     emit_incoming_offer, emit_peer_presence_changed, emit_peer_presence_snapshot,
@@ -1150,7 +1151,7 @@ async fn handle_relay_disconnect(
 
 /// Relay 只转发 Base64 包装的 opaque DataMessage，业务解码仍在 native core。
 async fn receive_relay_channel_message(
-    state: &RuntimeState,
+    state: &Arc<RuntimeState>,
     peer_id: &str,
     session_token: &str,
     payload: &str,
@@ -1163,6 +1164,41 @@ async fn receive_relay_channel_message(
         .into());
     }
     let encoded = URL_SAFE_NO_PAD.decode(payload)?;
+    // ReliableStream frames ride the same Relay `channel_message` control
+    // (design §17 Relay Stream): transparent forwarding, the Relay never parses
+    // business bytes. Detect the generic frame kind first.
+    if let Ok(frame) = decode_generic_frame(&encoded) {
+        match frame.kind {
+            GenericFrameKind::StreamOpen
+            | GenericFrameKind::StreamBytes
+            | GenericFrameKind::StreamClose => {
+                if !state.peers.read().await.contains_key(peer_id) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "Relay channel sender is not a registered peer",
+                    )
+                    .into());
+                }
+                let expected_token = format!("stream:{}", relay_stream_id(&frame));
+                if session_token != expected_token {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "Relay stream token does not match StreamId",
+                    )
+                    .into());
+                }
+                crate::stream::handle_inbound_stream_frame(
+                    state,
+                    peer_id,
+                    frame.kind,
+                    &frame.payload,
+                )
+                .await?;
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
     let message = DataMessage::decode(encoded.as_slice())?;
     if hex::encode(&message.message_id) != session_token {
         return Err(std::io::Error::new(
@@ -1174,8 +1210,18 @@ async fn receive_relay_channel_message(
     crate::channel::handle_data_message(state, peer_id, &encoded).await
 }
 
+/// Extracts the logical stream_id from a relayed stream frame payload (all
+/// three stream frames carry `stream_id` in their first two bytes).
+fn relay_stream_id(frame: &crate::connection::GenericInboundFrame) -> u16 {
+    if frame.payload.len() >= 2 {
+        u16::from_be_bytes([frame.payload[0], frame.payload[1]])
+    } else {
+        0
+    }
+}
+
 async fn receive_relay_delivery_ack(
-    state: &RuntimeState,
+    state: &Arc<RuntimeState>,
     peer_id: &str,
     session_token: &str,
     payload: &str,

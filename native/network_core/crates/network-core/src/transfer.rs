@@ -5,13 +5,13 @@ use network_protocol::{
     RespondIncomingTransferCommand, RouteType, SendFileCommand,
 };
 use network_quic::{
-    read_file_completion, read_file_decision, read_file_offer, write_file_completion,
-    write_file_decision, write_file_offer,
+    read_file_completion, read_file_decision, write_file_completion, write_file_decision,
+    write_file_offer,
 };
 use network_transfer::{
     build_file_manifest, existing_completed_file, existing_partial_offset,
-    stream_receive_file_cancellable, stream_send_file_cancellable, ResumableTransfer,
-    TransferFailureReason, TransferManager,
+    stream_receive_file_cancellable, stream_send_file_cancellable, FileManifest, ResumableTransfer,
+    TransferFailureReason, TransferManager, NETWORK_TRANSFER_PROTOCOL_VERSION,
 };
 use quinn::{Connection, RecvStream, SendStream};
 use std::collections::hash_map::Entry;
@@ -19,6 +19,7 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 use crate::events::{
@@ -441,16 +442,82 @@ pub(crate) async fn resume_relay_transfers(state: Arc<RuntimeState>) {
 }
 
 /// 校验传入申请，并等待接收方审批决定。
-pub(crate) async fn handle_incoming_file(
+/// Mirrors `network_quic::read_file_offer` for the shared bidi dispatcher: the
+/// first four magic bytes have already been consumed to route the stream, so
+/// the remaining offer fields are parsed here without re-touching the magic.
+/// Kept in network-core to avoid coupling the accept loop to a network-quic
+/// signature change; the wire format is identical to `read_file_offer`.
+pub(crate) async fn read_file_offer_after_magic(
+    receive: &mut RecvStream,
+) -> Result<FileManifest, Box<dyn Error + Send + Sync>> {
+    let protocol_version = receive.read_u32().await?;
+    if protocol_version != NETWORK_TRANSFER_PROTOCOL_VERSION {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "unsupported file protocol",
+        )
+        .into());
+    }
+    let transfer_id = read_bounded_utf8(receive, MAX_TRANSFER_ID_BYTES, "transfer ID").await?;
+    let file_name = read_bounded_utf8(receive, MAX_FILE_NAME_BYTES, "file name").await?;
+    let file_size = receive.read_u64().await?;
+    let modified_at = receive.read_i64().await?;
+    let mut hash = [0u8; 32];
+    receive.read_exact(&mut hash).await?;
+    let manifest = FileManifest {
+        transfer_id,
+        file_name,
+        file_size,
+        modified_at,
+        content_hash: hex::encode(hash),
+        protocol_version,
+    };
+    manifest
+        .validate()
+        .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
+    Ok(manifest)
+}
+
+async fn read_bounded_utf8(
+    receive: &mut RecvStream,
+    maximum: usize,
+    label: &str,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let length = receive.read_u16().await? as usize;
+    if length == 0 || length > maximum {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid {label} length"),
+        )
+        .into());
+    }
+    let mut value = vec![0u8; length];
+    receive.read_exact(&mut value).await?;
+    String::from_utf8(value).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{label} is not UTF-8"),
+        )
+        .into()
+    })
+}
+
+const MAX_TRANSFER_ID_BYTES: usize = 128;
+const MAX_FILE_NAME_BYTES: usize = 255;
+
+/// Processes an incoming transfer whose offer has already been parsed by the
+/// shared bidi dispatcher (`read_file_offer_after_magic`), so the file data
+/// path never duplicates the transfer lifecycle.
+pub(crate) async fn handle_incoming_file_after_offer(
     peer_id: String,
     mut send: SendStream,
     mut receive: RecvStream,
+    manifest: FileManifest,
     state: Arc<RuntimeState>,
 ) {
     let mut active_transfer_id = None;
     let mut registered_transfer = false;
     let result = async {
-        let manifest = read_file_offer(&mut receive).await?;
         active_transfer_id = Some(manifest.transfer_id.clone());
         let session_id = state
             .sessions

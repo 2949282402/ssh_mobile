@@ -10,10 +10,11 @@ use network_transfer::build_file_manifest;
 
 use network_protocol::{
     network_command, network_event, AcknowledgeMessageCommand, ChannelMessageEvent,
-    CommandResultEvent, ConfigureRuntimeCommand, ConnectPeerCommand, DeliveryAckedEvent,
-    DeliveryPolicyCode, NetworkCommand, NetworkError as ProtocolError, NetworkErrorCode,
-    PeerConnectionState, RespondIncomingTransferCommand, RouteTransport, RouteType,
-    SendFileCommand, SendMessageCommand, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
+    CommandResultEvent, CommunicationClass, ConfigureRuntimeCommand, ConnectPeerCommand,
+    DeliveryAckedEvent, DeliveryPolicyCode, NetworkCommand, NetworkError as ProtocolError,
+    NetworkErrorCode, PeerConnectionState, RespondIncomingTransferCommand, RouteTransport,
+    RouteType, SendFileCommand, SendMessageCommand, SshStreamCloseCommand, SshStreamDataCommand,
+    SshStreamOpenCommand, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -766,6 +767,7 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "device-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -928,6 +930,7 @@ fn file_transfer_resumes_across_a_fresh_connection() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "resume-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -1018,6 +1021,7 @@ fn file_transfer_resumes_across_a_fresh_connection() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "resume-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -1166,6 +1170,7 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "delivery-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -1417,6 +1422,7 @@ fn delivery_reliable_message_resends_same_message_id_after_reconnect() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "reconnect-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -1508,6 +1514,7 @@ fn delivery_reliable_message_resends_same_message_id_after_reconnect() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "reconnect-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -1701,6 +1708,7 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "restart-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -1832,6 +1840,7 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "restart-a".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -2050,6 +2059,7 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "tcp-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -2161,6 +2171,7 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "tcp-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -2262,6 +2273,7 @@ fn websocket_fallback_authenticates_delivery_and_ack() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "ws-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -2331,6 +2343,578 @@ fn websocket_fallback_authenticates_delivery_and_ack() {
     .is_some());
     runtime_a.stop().expect("stop runtime A");
     runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+// ---------------------------------------------------------------------------
+// ReliableStream byte-stream carrier (§17) integration tests
+// ---------------------------------------------------------------------------
+
+/// Peer/endpoint/key material shared by the ReliableStream integration tests.
+struct StreamTestPeers {
+    device_a: String,
+    device_b: String,
+    address_a: SocketAddr,
+    address_b: SocketAddr,
+    public_key_a: [u8; 32],
+    public_key_b: [u8; 32],
+    seed_a: [u8; 32],
+    seed_b: [u8; 32],
+}
+
+/// Connects two runtimes and waits for a peer state whose route transport
+/// matches `transport`.
+fn connect_runtimes_for_stream_test(
+    runtime_a: &NetworkRuntime,
+    runtime_b: &NetworkRuntime,
+    peers: &StreamTestPeers,
+    transport: RouteTransport,
+) {
+    send_and_expect_accepted(
+        runtime_a,
+        upsert_command(
+            &format!("{}-upsert-b", peers.device_a),
+            &peers.device_b,
+            peers.address_b,
+            peers.public_key_b,
+            peers.seed_b,
+        ),
+    );
+    send_and_expect_accepted(
+        runtime_b,
+        upsert_command(
+            &format!("{}-upsert-a", peers.device_b),
+            &peers.device_a,
+            peers.address_a,
+            peers.public_key_a,
+            peers.seed_a,
+        ),
+    );
+    send_and_expect_accepted(
+        runtime_a,
+        NetworkCommand {
+            command_id: format!("{}-connect-{}", peers.device_a, peers.device_b),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: peers.device_b.clone(),
+                intent: 0,
+                communication_class: CommunicationClass::ReliableStream as i32,
+            })),
+        },
+    );
+    let connected = poll_until(runtime_a, Duration::from_secs(25), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == peers.device_b
+                    && state.state == PeerConnectionState::Connected as i32
+                    && state.route_transport == transport as i32
+        )
+    });
+    assert!(
+        connected.is_some(),
+        "connection to {} never reached {transport:?}",
+        peers.device_b
+    );
+}
+
+/// Disables a runtime's QUIC endpoint so the orchestrator falls back to TCP.
+fn force_tcp_fallback(runtime: &NetworkRuntime) {
+    let state = runtime
+        .state
+        .lock()
+        .expect("runtime state lock")
+        .clone()
+        .expect("runtime state");
+    runtime.handle().block_on(async {
+        state
+            .endpoint
+            .read()
+            .await
+            .as_ref()
+            .expect("endpoint")
+            .close(quinn::VarInt::from_u32(0), b"TCP fallback test");
+    });
+}
+
+fn ssh_open_command(peer_id: &str, stream_id: u16, service: &str) -> NetworkCommand {
+    NetworkCommand {
+        command_id: format!("ssh-open-{stream_id}"),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_command::Payload::SshStreamOpen(
+            SshStreamOpenCommand {
+                peer_id: peer_id.into(),
+                stream_id: stream_id as u32,
+                service: service.into(),
+            },
+        )),
+    }
+}
+
+fn ssh_data_command(peer_id: &str, stream_id: u16, data: &[u8]) -> NetworkCommand {
+    NetworkCommand {
+        command_id: format!("ssh-data-{stream_id}"),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_command::Payload::SshStreamData(
+            SshStreamDataCommand {
+                peer_id: peer_id.into(),
+                stream_id: stream_id as u32,
+                data: data.to_vec(),
+            },
+        )),
+    }
+}
+
+fn ssh_close_command(peer_id: &str, stream_id: u16) -> NetworkCommand {
+    NetworkCommand {
+        command_id: format!("ssh-close-{stream_id}"),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_command::Payload::SshStreamClose(
+            SshStreamCloseCommand {
+                peer_id: peer_id.into(),
+                stream_id: stream_id as u32,
+            },
+        )),
+    }
+}
+
+/// QUIC bidi direct path (§17): open/send/recv/close round-trip over a real
+/// QUIC bidirectional stream (no re-framing).
+#[test]
+fn reliable_stream_round_trips_bytes_over_quic_bidi() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root =
+        std::env::temp_dir().join(format!("ssh-mobile-stream-{}", rand::random::<u64>()));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [201u8; 32];
+    let identity_seed_b = [202u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("stream-a".into(), identity_seed_a, [211u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("stream-b".into(), identity_seed_b, [212u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "stream-a",
+        identity_seed_a,
+        [211u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "stream-b",
+        identity_seed_b,
+        [212u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    connect_runtimes_for_stream_test(
+        &runtime_a,
+        &runtime_b,
+        &StreamTestPeers {
+            device_a: "stream-a".into(),
+            device_b: "stream-b".into(),
+            address_a,
+            address_b,
+            public_key_a,
+            public_key_b,
+            seed_a: [211u8; 32],
+            seed_b: [212u8; 32],
+        },
+        RouteTransport::Quic,
+    );
+
+    const STREAM_ID: u16 = 1;
+    send_and_expect_accepted(&runtime_a, ssh_open_command("stream-b", STREAM_ID, "test"));
+
+    // A -> B data (QUIC bidi stream bytes).
+    send_and_expect_accepted(&runtime_a, ssh_data_command("stream-b", STREAM_ID, b"ping"));
+    let received = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.peer_id == "stream-a" && recv.stream_id == STREAM_ID as u32 && recv.data == b"ping"
+        )
+    });
+    assert!(received.is_some(), "stream-b never received ping");
+
+    // B -> A data (the QUIC send half is registered on the responder side).
+    send_and_expect_accepted(&runtime_b, ssh_data_command("stream-a", STREAM_ID, b"pong"));
+    let echo = poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.peer_id == "stream-b" && recv.stream_id == STREAM_ID as u32 && recv.data == b"pong"
+        )
+    });
+    assert!(echo.is_some(), "stream-a never received pong");
+
+    // Teardown: A closes -> B sees SshStreamClosed.
+    send_and_expect_accepted(&runtime_a, ssh_close_command("stream-b", STREAM_ID));
+    let closed = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamClosed(closed))
+                if closed.peer_id == "stream-a" && closed.stream_id == STREAM_ID as u32
+        )
+    });
+    assert!(closed.is_some(), "stream-b never saw the stream close");
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// Generic-route carrier (§17): StreamBytes frames interleave with DataMessage
+/// frames on the same framed TCP route.
+#[test]
+fn stream_bytes_interleave_with_data_message_on_generic_route() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root =
+        std::env::temp_dir().join(format!("ssh-mobile-stream-tcp-{}", rand::random::<u64>()));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [221u8; 32];
+    let identity_seed_b = [222u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("stream-tcp-a".into(), identity_seed_a, [231u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("stream-tcp-b".into(), identity_seed_b, [232u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "stream-tcp-a",
+        identity_seed_a,
+        [231u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "stream-tcp-b",
+        identity_seed_b,
+        [232u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    force_tcp_fallback(&runtime_b);
+    connect_runtimes_for_stream_test(
+        &runtime_a,
+        &runtime_b,
+        &StreamTestPeers {
+            device_a: "stream-tcp-a".into(),
+            device_b: "stream-tcp-b".into(),
+            address_a,
+            address_b,
+            public_key_a,
+            public_key_b,
+            seed_a: [231u8; 32],
+            seed_b: [232u8; 32],
+        },
+        RouteTransport::Tcp,
+    );
+
+    const STREAM_ID: u16 = 2;
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_open_command("stream-tcp-b", STREAM_ID, "test"),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_data_command("stream-tcp-b", STREAM_ID, b"stream-bytes"),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "tcp-stream-message".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SendMessage(SendMessageCommand {
+                peer_id: "stream-tcp-b".into(),
+                channel_id: "control".into(),
+                payload: b"message-bytes".to_vec(),
+                policy: DeliveryPolicyCode::AckedDeduplicated as i32,
+                crypto_mode: 0,
+            })),
+        },
+    );
+
+    // Both a StreamBytes frame and a DataMessage frame survive on the same
+    // framed carrier, delivered to their independent handlers.
+    let stream = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.peer_id == "stream-tcp-a"
+                    && recv.stream_id == STREAM_ID as u32
+                    && recv.data == b"stream-bytes"
+        )
+    });
+    assert!(
+        stream.is_some(),
+        "generic route never delivered stream bytes"
+    );
+    let message = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::ChannelMessage(message))
+                if message.peer_id == "stream-tcp-a" && message.payload == b"message-bytes"
+        )
+    });
+    assert!(
+        message.is_some(),
+        "generic route never delivered the DataMessage"
+    );
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// Failure scenario: sending on a closed stream resolves to a clean command
+/// rejection (no teardown, no panic).
+#[test]
+fn ssh_stream_data_after_close_is_rejected_cleanly() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root =
+        std::env::temp_dir().join(format!("ssh-mobile-stream-fail-{}", rand::random::<u64>()));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [241u8; 32];
+    let identity_seed_b = [242u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("stream-fail-a".into(), identity_seed_a, [251u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("stream-fail-b".into(), identity_seed_b, [252u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "stream-fail-a",
+        identity_seed_a,
+        [251u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "stream-fail-b",
+        identity_seed_b,
+        [252u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    connect_runtimes_for_stream_test(
+        &runtime_a,
+        &runtime_b,
+        &StreamTestPeers {
+            device_a: "stream-fail-a".into(),
+            device_b: "stream-fail-b".into(),
+            address_a,
+            address_b,
+            public_key_a,
+            public_key_b,
+            seed_a: [251u8; 32],
+            seed_b: [252u8; 32],
+        },
+        RouteTransport::Quic,
+    );
+
+    const STREAM_ID: u16 = 3;
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_open_command("stream-fail-b", STREAM_ID, "test"),
+    );
+    // Establish the stream on B before tearing down (deterministic: the QUIC
+    // open and close could otherwise be coalesced before B's accept loop runs).
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_data_command("stream-fail-b", STREAM_ID, b"hello"),
+    );
+    let received = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.stream_id == STREAM_ID as u32 && recv.data == b"hello"
+        )
+    });
+    assert!(received.is_some(), "stream was not established on B");
+
+    // Tear down from both sides.
+    send_and_expect_accepted(&runtime_a, ssh_close_command("stream-fail-b", STREAM_ID));
+    let closed = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamClosed(closed))
+                if closed.stream_id == STREAM_ID as u32
+        )
+    });
+    assert!(closed.is_some(), "B never saw the stream close");
+    send_and_expect_accepted(&runtime_b, ssh_close_command("stream-fail-a", STREAM_ID));
+
+    // Sending on a closed stream must be a clean command rejection.
+    let late = NetworkCommand {
+        command_id: "ssh-data-after-close".into(),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_command::Payload::SshStreamData(
+            SshStreamDataCommand {
+                peer_id: "stream-fail-b".into(),
+                stream_id: STREAM_ID as u32,
+                data: b"late".to_vec(),
+            },
+        )),
+    };
+    runtime_a.send_command(late).expect("queue late data");
+    let rejected = poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::CommandResult(result))
+                if result.command_id == "ssh-data-after-close" && !result.accepted
+        )
+    });
+    assert!(
+        rejected.is_some(),
+        "late stream data was not rejected cleanly"
+    );
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// Peer SSH Server Service (design §21 option B): a stream whose service hint
+/// is `ssh` is bridged by the peer's native runtime to a local TCP socket.
+/// Tested against a local echo server instead of a real sshd.
+#[test]
+fn ssh_gateway_bridges_stream_to_a_local_tcp_echo_server() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root =
+        std::env::temp_dir().join(format!("ssh-mobile-stream-gw-{}", rand::random::<u64>()));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [61u8; 32];
+    let identity_seed_b = [62u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("stream-gw-a".into(), identity_seed_a, [71u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("stream-gw-b".into(), identity_seed_b, [72u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "stream-gw-a",
+        identity_seed_a,
+        [71u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "stream-gw-b",
+        identity_seed_b,
+        [72u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    connect_runtimes_for_stream_test(
+        &runtime_a,
+        &runtime_b,
+        &StreamTestPeers {
+            device_a: "stream-gw-a".into(),
+            device_b: "stream-gw-b".into(),
+            address_a,
+            address_b,
+            public_key_a,
+            public_key_b,
+            seed_a: [71u8; 32],
+            seed_b: [72u8; 32],
+        },
+        RouteTransport::Quic,
+    );
+
+    // Local TCP echo server on runtime B's worker threads; the peer gateway
+    // bridges to it. Tested against an echo server instead of a real sshd.
+    let (echo_port, echo_task) = runtime_b.handle().block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind echo server");
+        let port = listener.local_addr().expect("echo address").port();
+        let task = tokio::spawn(async move {
+            loop {
+                let (socket, _) = match listener.accept().await {
+                    Ok(connection) => connection,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    let (mut read_half, mut write_half) = socket.into_split();
+                    let _ = tokio::io::copy(&mut read_half, &mut write_half).await;
+                });
+            }
+        });
+        (port, task)
+    });
+
+    // Point the peer's SSH gateway at the echo server.
+    let state_b = runtime_b
+        .state
+        .lock()
+        .expect("runtime B state lock")
+        .clone()
+        .expect("runtime B state");
+    runtime_b.handle().block_on(async {
+        state_b
+            .stream_gateway_port
+            .store(echo_port, std::sync::atomic::Ordering::Release);
+    });
+
+    const STREAM_ID: u16 = 4;
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_open_command("stream-gw-b", STREAM_ID, crate::stream::STREAM_SERVICE_SSH),
+    );
+
+    // The bridge pumps A -> gateway -> echo server -> gateway -> A.
+    let payload = b"bridge-round-trip";
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_data_command("stream-gw-b", STREAM_ID, payload),
+    );
+    let echoed = poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.peer_id == "stream-gw-b"
+                    && recv.stream_id == STREAM_ID as u32
+                    && recv.data == payload
+        )
+    });
+    assert!(
+        echoed.is_some(),
+        "echoed bytes never returned to the initiator"
+    );
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    echo_task.abort();
     fs::remove_dir_all(test_root).ok();
 }
 

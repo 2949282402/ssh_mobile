@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use network_protocol::{
-    network_command, NetworkCommand, NetworkError as ProtocolError, NetworkErrorCode,
-    PeerConnectionState, RelayConnectionState, RouteType, NETWORK_PROTOCOL_VERSION,
+    network_command, CommunicationClass, NetworkCommand, NetworkError as ProtocolError,
+    NetworkErrorCode, PeerConnectionState, RelayConnectionState, RouteType,
+    NETWORK_PROTOCOL_VERSION,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -59,7 +60,8 @@ pub(crate) async fn dispatch_command(
             peer::upsert_peer(&state, peer_command).await
         }
         Some(network_command::Payload::ConnectPeer(connect)) => {
-            start_connect_peer(state, connect.peer_id).await
+            let class = decode_communication_class(connect.communication_class);
+            start_connect_peer(state, connect.peer_id, class).await
         }
         Some(network_command::Payload::SendFile(_))
         | Some(network_command::Payload::CancelTransfer(_))
@@ -91,6 +93,15 @@ pub(crate) async fn dispatch_command(
             peer::disconnect_peer(&state, disconnect.peer_id).await
         }
         Some(network_command::Payload::DisconnectRelay(_)) => relay::disconnect_relay(&state).await,
+        Some(network_command::Payload::SshStreamOpen(open)) => {
+            crate::stream::handle_ssh_stream_open(state, open).await
+        }
+        Some(network_command::Payload::SshStreamData(data)) => {
+            crate::stream::handle_ssh_stream_data(state, data).await
+        }
+        Some(network_command::Payload::SshStreamClose(close)) => {
+            crate::stream::handle_ssh_stream_close(state, close).await
+        }
         None => Err(protocol_error(
             NetworkErrorCode::InvalidArgument,
             "network command payload is required",
@@ -102,6 +113,7 @@ pub(crate) async fn dispatch_command(
 async fn start_connect_peer(
     state: Arc<RuntimeState>,
     peer_id: String,
+    class: CommunicationClass,
 ) -> Result<(), ProtocolError> {
     if peer_id.is_empty() {
         return Err(protocol_error(
@@ -136,7 +148,7 @@ async fn start_connect_peer(
     let task_started = supervisor.spawn_runtime("peer-connect", async move {
         // transport-network v2（§11/§37）：唯一建连入口 ConnectionOrchestrator。
         let orchestrator = crate::connect::ConnectionOrchestrator::new(Arc::clone(&state));
-        if let Err(error) = orchestrator.connect(&peer_id).await {
+        if let Err(error) = orchestrator.connect_with_class(&peer_id, class).await {
             let code =
                 NetworkErrorCode::try_from(error.code).unwrap_or(NetworkErrorCode::Unspecified);
             emit_peer_state(
@@ -202,6 +214,12 @@ async fn start_configure_relay(
         ));
     }
     Ok(())
+}
+
+/// 把 wire 上的 CommunicationClass 解码为内部值；未知值（非法）按默认
+/// ReliableMessage 处理，保证旧调用方（发送 0）行为不变。
+fn decode_communication_class(value: i32) -> CommunicationClass {
+    CommunicationClass::try_from(value).unwrap_or(CommunicationClass::ReliableMessage)
 }
 
 /// 显式重传设备 Discovery 元数据；native 侧在 Relay 认证连接后也会自动上传首份。

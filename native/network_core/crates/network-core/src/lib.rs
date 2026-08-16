@@ -19,6 +19,7 @@ mod realtime;
 mod relay;
 mod runtime;
 mod session;
+mod stream;
 mod task_supervisor;
 mod transfer;
 

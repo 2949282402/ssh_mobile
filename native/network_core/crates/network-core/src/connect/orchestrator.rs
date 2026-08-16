@@ -32,7 +32,8 @@ use network_nat::{
     Candidate, CandidateAdvertisement, ConnectivityAttempt, MAX_CANDIDATES_PER_SIGNAL,
 };
 use network_protocol::{
-    NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState, RouteType,
+    CommunicationClass, NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState,
+    RouteType,
 };
 use network_relay::v2::{DiscoverySnapshot, RuntimeEpoch};
 use network_relay::RelayError;
@@ -50,6 +51,7 @@ use crate::runtime::{RuntimeState, SessionAdmissionLease};
 use crate::session::{ConnectDecision, SessionId};
 
 use super::{
+    communication_class_capability, default_communication_class, profile_capability_mask,
     DEFAULT_CONNECTION_CAPABILITY, DIRECT_CONNECT_WINDOW, RELAY_RESERVE_TIMEOUT, RESOLVE_TIMEOUT,
 };
 
@@ -124,8 +126,26 @@ impl ConnectionOrchestrator {
             .store(value, std::sync::atomic::Ordering::Release);
     }
 
-    /// 建连唯一入口（§37）。成功后返回 `()`；失败返回类型化错误（§33）。
+    /// 建连唯一入口（§37），默认 CommunicationClass=ReliableMessage（§17）。
+    /// 成功后返回 `()`；失败返回类型化错误（§33）。
+    ///
+    /// 这是 FFI 默认路径的便捷入口（命令面经 `connect_with_class` 到达）；
+    /// 保留它以让默认调用保持工作。
+    #[allow(dead_code)]
     pub(crate) async fn connect(&self, peer_id: &str) -> Result<(), ProtocolError> {
+        self.connect_with_class(peer_id, CommunicationClass::ReliableMessage)
+            .await
+    }
+
+    /// 带 CommunicationClass 的建连入口（§17/§37）。这是 FFI 面向的连接表面：
+    /// 调用方指定业务通信类别，连接层映射为 transport capability + connection
+    /// shape，并把类别记录到建立的 ConnectionSession 上。
+    pub(crate) async fn connect_with_class(
+        &self,
+        peer_id: &str,
+        class: CommunicationClass,
+    ) -> Result<(), ProtocolError> {
+        let class = default_communication_class(class);
         let state = Arc::clone(&self.state);
         // 配置/身份/对端校验。
         let endpoint = state.endpoint.read().await.clone().ok_or_else(|| {
@@ -167,7 +187,7 @@ impl ConnectionOrchestrator {
         self.set_stage(OrchestratorState::Resolved);
 
         let remote_epoch = resolved_runtime_epoch(&resolved);
-        let capability = DEFAULT_CONNECTION_CAPABILITY;
+        let capability = communication_class_capability(class);
 
         // -----------------------------------------------------------------
         // 2. Registry 重用（§34）。
@@ -188,14 +208,9 @@ impl ConnectionOrchestrator {
         let session_id = match state.sessions.begin_connect(peer_id).await {
             ConnectDecision::AlreadyConnected(session_id) => {
                 // 有健康连接但未登记（例如被动端 accept 建立的 Session）→ 登记并重用。
-                self.register_current(
-                    state.clone(),
-                    peer_id,
-                    &remote_epoch,
-                    capability,
-                    session_id,
-                )
-                .await;
+                state.sessions.set_communication_class(peer_id, class).await;
+                self.register_current(state.clone(), peer_id, &remote_epoch, session_id)
+                    .await;
                 self.set_stage(OrchestratorState::ConnectedDirect);
                 return Ok(());
             }
@@ -203,7 +218,10 @@ impl ConnectionOrchestrator {
                 // 已有连接任务在途：合并，不做重复建连。
                 return Ok(());
             }
-            ConnectDecision::Started(session_id) => session_id,
+            ConnectDecision::Started(session_id) => {
+                state.sessions.set_communication_class(peer_id, class).await;
+                session_id
+            }
         };
 
         // -----------------------------------------------------------------
@@ -310,11 +328,11 @@ impl ConnectionOrchestrator {
             // Direct 成功：挂载 Session → CONNECTED_DIRECT。
             Ok(route) => {
                 let admission = self.attach_direct_route(peer_id, route).await?;
+                state.sessions.set_communication_class(peer_id, class).await;
                 self.register_current(
                     Arc::clone(&state),
                     peer_id,
                     &remote_epoch,
-                    capability,
                     admission.session_id,
                 )
                 .await;
@@ -329,11 +347,11 @@ impl ConnectionOrchestrator {
                     .await
                 {
                     Ok(admission) => {
+                        state.sessions.set_communication_class(peer_id, class).await;
                         self.register_current(
                             Arc::clone(&state),
                             peer_id,
                             &remote_epoch,
-                            capability,
                             admission.session_id,
                         )
                         .await;
@@ -446,15 +464,22 @@ impl ConnectionOrchestrator {
         Ok(None)
     }
 
-    /// 登记一条已建立的连接。
+    /// 登记一条已建立的连接（§34）。注册表记录连接**实际**能力（由 route profile
+    /// 推导），而不是请求时的 class，因此 QUIC/TCP 基线连接可被后续不同 class 的
+    /// 请求复用。
     async fn register_current(
         &self,
         state: Arc<RuntimeState>,
         peer_id: &str,
         remote_epoch: &Option<RuntimeEpoch>,
-        capability: u8,
         session_id: SessionId,
     ) {
+        let capability = state
+            .sessions
+            .current_profile(peer_id)
+            .await
+            .map(profile_capability_mask)
+            .unwrap_or(DEFAULT_CONNECTION_CAPABILITY);
         state
             .connection_registry
             .register(peer_id, remote_epoch.clone(), capability, session_id);
