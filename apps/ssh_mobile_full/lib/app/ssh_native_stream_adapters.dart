@@ -9,6 +9,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:connection_core/connection_core.dart';
 import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
@@ -16,6 +17,21 @@ import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
 /// 打开 AppRuntime-owned native command gateway 的提供者。
 typedef SshNativeGatewayProvider = Future<NetworkCommandGateway> Function();
+
+/// 从已登记的 native 对端为 SSH/SFTP [ConnectionConfig] 解析 peer 标识。
+///
+/// [enrolledPeerEndpoints] 是 native peer 目录的端点索引（endpoint → peer_id，
+/// endpoint 使用 `host:port`，兼容仅 host），由 App 在 upsertPeer 登记对端时
+/// 维护。config 的端点在索引中命中时返回对应 peer_id；未登记对端返回 null，
+/// SSH/SFTP 工厂会回退到原始 TCP Socket（保持任意主机 SSH 的既有行为）。
+String? resolveSshNativePeerId(
+  ConnectionConfig config, {
+  required Map<String, String> enrolledPeerEndpoints,
+}) {
+  if (enrolledPeerEndpoints.isEmpty) return null;
+  return enrolledPeerEndpoints['${config.host}:${config.port}'] ??
+      enrolledPeerEndpoints[config.host];
+}
 
 /// 基于 native ReliableStream 的 SSH 流连接器。
 final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
@@ -153,10 +169,12 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     }
   }
 
-  void _sendData(int streamId, String peerId, Uint8List data) {
+  /// 发送 SSH 流数据；gateway 不可用或 native 拒绝命令时返回 false，避免
+  /// 字节被静默丢弃导致 SSH/SFTP 会话挂起。
+  bool _sendData(int streamId, String peerId, Uint8List data) {
     final gateway = _gateway;
-    if (gateway == null || _closed) return;
-    gateway.sendCommand(
+    if (gateway == null || _closed) return false;
+    final status = gateway.sendCommand(
       NativeNetworkProtocol.sshStreamDataCommand(
         commandId: _nextCommandId('ssh-data'),
         peerId: peerId,
@@ -164,6 +182,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
         data: data,
       ),
     );
+    return status == TransportOperationStatus.success;
   }
 
   void _closeStream(int streamId, String peerId) {
@@ -226,7 +245,16 @@ final class _AppSshNativeStream implements SshNativeStream {
   @override
   Future<void> send(Uint8List data) async {
     if (_closed) throw StateError('SSH native stream is closed.');
-    connector._sendData(streamId, peerId, data);
+    if (!connector._sendData(streamId, peerId, data)) {
+      // 字节未被真正投递到 native 时，立即以错误终止流并向上抛出，
+      // 让 dartssh2 的 socket.done 拿到失败而不是永久挂起。
+      final error = StateError(
+        'SSH native stream send was dropped: the gateway is closed '
+        'or rejected the command.',
+      );
+      _fail(error);
+      throw error;
+    }
   }
 
   @override

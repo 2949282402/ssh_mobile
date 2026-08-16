@@ -157,6 +157,55 @@ void main() {
       await subscription.cancel();
       await connector.closeAll();
     });
+
+    test(
+      'send fails the stream when the gateway rejects the data command',
+      () async {
+        final gateway = _FakeGateway();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () async => gateway,
+        );
+        final stream = await connector.open(peerId: 'peer-a');
+        gateway.commands.clear();
+
+        final errors = <Object>[];
+        final doneErrors = <Object>[];
+        stream.done.then((_) {}, onError: doneErrors.add);
+        final incomingSubscription = stream.incoming.listen(
+          (_) {},
+          onError: (Object error, StackTrace _) => errors.add(error),
+        );
+
+        // native 拒绝 SshStreamData：send 必须抛错并让流失败，
+        // 而不是静默丢弃字节。
+        gateway.sendResult = TransportOperationStatus.failure;
+
+        await expectLater(
+          stream.send(Uint8List.fromList([0xde, 0xad])),
+          throwsA(isA<StateError>()),
+        );
+        expect(doneErrors, hasLength(1));
+        expect(errors, hasLength(1));
+
+        await incomingSubscription.cancel();
+        await connector.closeAll();
+      },
+    );
+
+    test('send throws after the connector is closed', () async {
+      final gateway = _FakeGateway();
+      final connector = AppSshNativeStreamConnector(
+        gatewayProvider: () async => gateway,
+      );
+      final stream = await connector.open(peerId: 'peer-a');
+
+      await connector.closeAll();
+
+      await expectLater(
+        stream.send(Uint8List.fromList([0xde, 0xad])),
+        throwsA(isA<StateError>()),
+      );
+    });
   });
 }
 
@@ -287,13 +336,16 @@ final class _FakeGateway implements NetworkCommandGateway {
       StreamController<Uint8List>.broadcast();
   final List<Uint8List> commands = <Uint8List>[];
 
+  /// 可配置的 sendCommand 返回结果；默认成功，测试失败路径时改为非 success。
+  TransportOperationStatus sendResult = TransportOperationStatus.success;
+
   @override
   Stream<Uint8List> get events => _events.stream;
 
   @override
   TransportOperationStatus sendCommand(Uint8List command) {
     commands.add(command);
-    return TransportOperationStatus.success;
+    return sendResult;
   }
 
   void push(Uint8List frame) => _events.add(frame);
