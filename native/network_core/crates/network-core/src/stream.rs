@@ -33,7 +33,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc::UnboundedSender, Mutex, Notify};
+use tokio::sync::{mpsc::UnboundedSender, watch, Mutex};
 
 use crate::connection::GenericFrameKind;
 use crate::events::{emit_stream_closed, emit_stream_data_received, protocol_error_with_peer};
@@ -218,6 +218,11 @@ pub(crate) async fn read_quic_stream_preamble_after_magic(
     Ok((stream_id, service))
 }
 
+/// Relay 路由的流令牌：仅含 stream_id，与发起方向无关（无 opener 维度）。
+///
+/// 已知局限（记录，不在本轮修复）：若两个对端各自用同一 stream_id 在 relay
+/// 上独立 open，令牌会碰撞导致字节交叉串扰。根治需要 opener 作用域的令牌 +
+/// 方向作用域的本地流键；当前保持现状，仅在此记录该设计债。
 fn stream_relay_token(stream_id: u16) -> String {
     format!("stream:{stream_id}")
 }
@@ -244,11 +249,34 @@ struct StreamEntry {
     recv_bytes: usize,
     recv_closed: bool,
     next_recv_seq: u64,
-    notify: Arc<Notify>,
+    /// 唤醒广播源（代次计数器）。watch 保存值：等待者必须在锁内订阅，
+    /// 这样「条件检查 + 订阅」与生产者改动是原子临界区，检查-等待间隙里
+    /// 的唤醒不会丢失（修复 `Notify` lost-wakeup 导致的背压 writer 永久
+    /// 阻塞）。`watch::Sender` 不可 Clone，故保存在 entry 上，等待者通过
+    /// `subscribe()` 派生 Receiver。
+    wake_tx: watch::Sender<u64>,
+    wake_gen: u64,
     quic_send: Option<SendStream>,
     next_send_seq: u64,
     send_closed: bool,
     send_lock: Arc<Mutex<()>>,
+}
+
+impl StreamEntry {
+    /// 唤醒所有等待者。必须持锁调用（生产者改动状态后）：自增代次并广播，
+    /// watch 保存最新代次，因此即使等待者尚未 poll，其 `changed()` 也会在
+    /// 下一次 poll 时立即返回，而不是像 `Notify::notify_waiters()` 那样不带
+    /// 许可地把唤醒丢掉。
+    fn wake(&mut self) {
+        self.wake_gen += 1;
+        let _ = self.wake_tx.send(self.wake_gen);
+    }
+
+    /// 在锁内订阅最新代次（与条件检查同属一个临界区，生产者无法插入），
+    /// 返回 Receiver 后即可在锁外 `changed().await` 等待下一次状态变化。
+    fn wait_rx(&self) -> watch::Receiver<u64> {
+        self.wake_tx.subscribe()
+    }
 }
 
 #[derive(Default)]
@@ -289,6 +317,7 @@ impl ReliableStreamManager {
         if state.streams.contains_key(&stream_id) {
             return Err(StreamError::AlreadyOpen);
         }
+        let (wake_tx, _) = watch::channel(0u64);
         state.streams.insert(
             stream_id,
             StreamEntry {
@@ -297,7 +326,8 @@ impl ReliableStreamManager {
                 recv_bytes: 0,
                 recv_closed: false,
                 next_recv_seq: 0,
-                notify: Arc::new(Notify::new()),
+                wake_tx,
+                wake_gen: 0,
                 quic_send: None,
                 next_send_seq: 0,
                 send_closed: false,
@@ -425,7 +455,7 @@ impl ReliableStreamManager {
         let data_len = data.len();
         // 阶段一：有界缓冲 + 背压（所有消费者模式一致）。缓冲区满时阻塞 writer。
         let after = loop {
-            let wait: Option<Arc<Notify>> = {
+            let wait: Option<watch::Receiver<u64>> = {
                 let mut state = self.inner.lock().await;
                 let entry = state
                     .streams
@@ -446,20 +476,23 @@ impl ReliableStreamManager {
                     entry.recv_bytes += data_len;
                     let after = entry.recv_bytes;
                     entry.recv_chunks.push_back(data);
-                    entry.notify.notify_waiters();
+                    entry.wake();
                     break after;
                 }
-                Some(entry.notify.clone())
+                Some(entry.wait_rx())
             };
-            if let Some(notify) = wait {
-                notify.notified().await;
+            // 订阅与条件检查同临界区：锁释放后即便生产者已 drain，watch 也
+            // 保存了最新代次，`changed()` 立即返回；错误（sender 已丢）则
+            // 重查，entry 已被移除时会得到 NotFound。
+            if let Some(mut rx) = wait {
+                let _ = rx.changed().await;
             }
         };
         // 阶段二（仅 Event 模式）：等待 drainer 把本块转成事件（缓冲降到
         // appended 之后）。这样事件顺序与帧处理顺序一致，且 drainer 慢/停时
         // writer 立即获得背压，而不是逐帧直接灌入无界事件通道。
         loop {
-            let wait: Option<Arc<Notify>> = {
+            let wait: Option<watch::Receiver<u64>> = {
                 let mut state = self.inner.lock().await;
                 let Some(entry) = state.streams.get_mut(&stream_id) else {
                     return Ok(());
@@ -467,10 +500,10 @@ impl ReliableStreamManager {
                 if entry.consumer != StreamConsumer::Event || entry.recv_bytes < after {
                     return Ok(());
                 }
-                Some(entry.notify.clone())
+                Some(entry.wait_rx())
             };
-            if let Some(notify) = wait {
-                notify.notified().await;
+            if let Some(mut rx) = wait {
+                let _ = rx.changed().await;
             }
         }
     }
@@ -484,7 +517,7 @@ impl ReliableStreamManager {
     /// 无界事件通道。
     pub(crate) async fn drain_events(self, peer_id: &str, stream_id: u16) {
         loop {
-            let wait: Option<Arc<Notify>> = {
+            let wait: Option<watch::Receiver<u64>> = {
                 let mut state = self.inner.lock().await;
                 let Some(entry) = state.streams.get_mut(&stream_id) else {
                     return;
@@ -492,7 +525,7 @@ impl ReliableStreamManager {
                 if let Some(chunk) = entry.recv_chunks.pop_front() {
                     entry.recv_bytes -= chunk.len();
                     emit_stream_data_received(&self.event_tx, peer_id, stream_id, &chunk);
-                    entry.notify.notify_waiters();
+                    entry.wake();
                     continue;
                 }
                 if entry.recv_closed {
@@ -501,10 +534,10 @@ impl ReliableStreamManager {
                     emit_stream_closed(&self.event_tx, peer_id, stream_id);
                     return;
                 }
-                Some(entry.notify.clone())
+                Some(entry.wait_rx())
             };
-            if let Some(notify) = wait {
-                notify.notified().await;
+            if let Some(mut rx) = wait {
+                let _ = rx.changed().await;
             }
         }
     }
@@ -538,7 +571,7 @@ impl ReliableStreamManager {
                 return Ok(());
             }
             entry.recv_closed = true;
-            entry.notify.notify_waiters();
+            entry.wake();
             if entry.send_closed {
                 state.streams.remove(&stream_id);
             }
@@ -565,7 +598,7 @@ impl ReliableStreamManager {
                 return Ok(());
             }
             entry.send_closed = true;
-            entry.notify.notify_waiters();
+            entry.wake();
             let removed = entry.recv_closed;
             if removed {
                 state.streams.remove(&stream_id);
@@ -613,16 +646,16 @@ impl ReliableStreamManager {
                 }
                 if filled > 0 {
                     entry.recv_bytes -= filled;
-                    entry.notify.notify_waiters();
+                    entry.wake();
                     return Ok(filled);
                 }
                 if entry.recv_closed {
                     return Ok(0);
                 }
-                Some(entry.notify.clone())
+                Some(entry.wait_rx())
             };
-            if let Some(notify) = wait {
-                notify.notified().await;
+            if let Some(mut rx) = wait {
+                let _ = rx.changed().await;
             }
         }
     }
@@ -903,8 +936,9 @@ async fn handle_inbound_open(
     match manager.handle_open(stream_id, service, consumer).await {
         Ok(()) => {}
         Err(StreamError::AlreadyOpen) => {
-            // Duplicate open for an existing stream: drop the new one.
-            let _ = manager.handle_close(peer_id, stream_id).await;
+            // 同一 stream_id 的重复 open：丢弃这个重复的 open，已存在的活动流
+            // 保持原样。绝不能调用 handle_close——那会把现有活动流的接收侧
+            // 标记关闭，拆掉一条活着的 SSH 会话（修复 #5）。
             return Ok(());
         }
         Err(error) => return Err(error),
@@ -938,7 +972,8 @@ pub(crate) async fn handle_incoming_quic_stream(
     match manager.handle_open(stream_id, &service, consumer).await {
         Ok(()) => {}
         Err(StreamError::AlreadyOpen) => {
-            let _ = manager.handle_close(&peer_id, stream_id).await;
+            // 重复 open：丢弃这个重复的 QUIC 流，已存在的活动流保持原样，
+            // 绝不能 handle_close 掉现有流（修复 #5）。
             return;
         }
         Err(_) => return,
@@ -1339,6 +1374,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn duplicate_inbound_open_ignored_keeps_existing_stream_live() {
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        let peer_id = "peer-a";
+        // 首次 open 注册一条活动流（Event 消费者，数据以事件形式交付）。
+        handle_inbound_open(&state, peer_id, 42, "custom")
+            .await
+            .expect("first open");
+        let manager = state.stream_manager(peer_id).await;
+        assert!(manager.is_open(42).await, "first stream must be open");
+
+        // 同一 stream_id 的重复 open：必须被忽略，绝不能把现有活动流当作
+        // 关闭处理（修复 #5：原先会 handle_close 关掉现有流的接收侧）。
+        handle_inbound_open(&state, peer_id, 42, "custom")
+            .await
+            .expect("duplicate open is ignored");
+        assert!(manager.is_open(42).await, "existing stream must stay open");
+        assert!(
+            !manager.is_recv_closed(42).await,
+            "existing stream receive side must stay open"
+        );
+
+        // 现有流在重复 open 之后仍然接收字节（以事件交付）。
+        manager
+            .handle_bytes(peer_id, 42, 0, b"still-live".to_vec())
+            .await
+            .expect("bytes after duplicate open");
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
+            .await
+            .expect("timed out waiting for data event after duplicate open")
+            .expect("event channel closed");
+        assert!(matches!(
+            event.payload,
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.stream_id == 42 && recv.data == b"still-live"
+        ));
+    }
+
+    #[tokio::test]
     async fn backpressure_blocks_until_consumer_drains() {
         let (manager, _event_rx) = test_manager();
         manager
@@ -1384,6 +1461,57 @@ mod tests {
             .expect("blocked writer did not complete after drain")
             .expect("blocked writer task panicked");
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn backpressure_wakeup_is_never_lost_under_repeated_races() {
+        let (manager, _event_rx) = test_manager();
+        manager
+            .open(9, "custom", StreamConsumer::Poll)
+            .await
+            .expect("open");
+        // 回归修复 #4：填满-阻塞-腾空-唤醒循环反复执行，暴露「检查条件后释放
+        // 锁、再注册等待」间隙里的 lost-wakeup。修复前用 `Notify`，该间隙中
+        // 生产者 drain 后 `notify_waiters()` 不带许可，writer 会永久阻塞。
+        let chunk = vec![0x42u8; MAX_STREAM_FRAME_BYTES];
+        let mut pushed = 0u64;
+        let mut sink = [0u8; MAX_STREAM_FRAME_BYTES];
+        for _ in 0..50 {
+            // 填满有界缓冲，使下一次写入必然阻塞（背压前提）。
+            while manager.buffered_bytes(9).await.unwrap() + chunk.len()
+                <= MAX_PER_STREAM_BUFFER_CAPACITY
+            {
+                manager
+                    .handle_bytes("peer-a", 9, pushed, chunk.clone())
+                    .await
+                    .expect("fill");
+                pushed += 1;
+            }
+            // 阻塞的 writer：缓冲已满，等待消费者腾出空间。
+            let blocked = {
+                let manager = manager.clone();
+                tokio::spawn(async move {
+                    manager
+                        .handle_bytes("peer-a", 9, pushed, vec![0x01; 1])
+                        .await
+                })
+            };
+            // 给 writer 机会进入等待点并注册，放大检查-等待竞态窗口。
+            tokio::task::yield_now().await;
+            // 从另一任务 drain 一块：阻塞的 writer 必须完成，唤醒绝不丢失。
+            let n = manager.receive(9, &mut sink).await.expect("drain");
+            assert_eq!(n, MAX_STREAM_FRAME_BYTES);
+            let result = tokio::time::timeout(std::time::Duration::from_secs(1), blocked)
+                .await
+                .expect("blocked writer deadlocked: backpressure wakeup was lost")
+                .expect("blocked writer task panicked");
+            assert!(result.is_ok());
+            pushed += 1;
+            // 清空残留，使下一轮从空缓冲开始（保持「缓冲满才阻塞」前提成立）。
+            while manager.buffered_bytes(9).await.unwrap() > 0 {
+                let _ = manager.receive(9, &mut sink).await;
+            }
+        }
     }
 
     #[tokio::test]
