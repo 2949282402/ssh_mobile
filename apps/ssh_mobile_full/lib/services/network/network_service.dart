@@ -112,7 +112,10 @@ final class NativeNetworkService implements NetworkService {
 
   /// 接受对端连接任务，并等待最终的 connected/failed 状态。
   @override
-  Future<NetworkResult<void>> connect(String peerId) async {
+  Future<NetworkResult<void>> connect(
+    String peerId, {
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
+  }) async {
     _ensureUsable();
     if (peerId.trim().isEmpty) {
       return _failure(
@@ -142,7 +145,11 @@ final class NativeNetworkService implements NetworkService {
           if (!terminalState.isCompleted) terminalState.complete(event);
         });
     final result = await _submit(
-      _codec.connectPeerCommand(commandId: const Uuid().v4(), peerId: peerId),
+      _codec.connectPeerCommand(
+        commandId: const Uuid().v4(),
+        peerId: peerId,
+        communicationClass: communicationClass,
+      ),
       operation: NetworkOperation.connect,
       timeout: const Duration(seconds: 12),
     );

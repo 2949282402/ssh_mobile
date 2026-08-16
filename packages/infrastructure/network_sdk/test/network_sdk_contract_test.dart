@@ -497,6 +497,12 @@ void main() {
     expect(CommunicationClass.bulkTransfer, isA<CommunicationClass>());
     expect(CommunicationClass.unreliableDatagram, isA<CommunicationClass>());
     expect(CommunicationClass.realtimeMedia, isA<CommunicationClass>());
+    // wireValue 必须镜像 network-protocol `CommunicationClass` 枚举（§17）。
+    expect(CommunicationClass.reliableStream.wireValue, 1);
+    expect(CommunicationClass.reliableMessage.wireValue, 2);
+    expect(CommunicationClass.bulkTransfer.wireValue, 3);
+    expect(CommunicationClass.unreliableDatagram.wireValue, 4);
+    expect(CommunicationClass.realtimeMedia.wireValue, 5);
   });
 
   test(
@@ -520,6 +526,33 @@ void main() {
       expect(sessions.connectedPeers, <String>['peer-1']);
     },
   );
+
+  test('facade connectPeer forwards the requested CommunicationClass', () async {
+    final sessions = _RecordingSessionClient();
+    final facade = NetworkFacadeImpl(sessions: sessions);
+
+    final result = await facade.connectPeer(
+      'peer-1',
+      communicationClass: CommunicationClass.bulkTransfer,
+    );
+
+    expect(result, isA<SdkSuccess<void>>());
+    expect(sessions.connectedPeers, <String>['peer-1']);
+    expect(sessions.connectClasses, <CommunicationClass>[CommunicationClass.bulkTransfer]);
+  });
+
+  test('facade connectPeer defaults to reliableStream class', () async {
+    final sessions = _RecordingSessionClient();
+    final facade = NetworkFacadeImpl(sessions: sessions);
+
+    final result = await facade.connectPeer('peer-1');
+
+    expect(result, isA<SdkSuccess<void>>());
+    expect(
+      sessions.connectClasses,
+      <CommunicationClass>[CommunicationClass.reliableStream],
+    );
+  });
 
   test('facade connectPeer rejects realtimeMedia class', () async {
     final sessions = _RecordingSessionClient();
@@ -817,6 +850,7 @@ final class _RecordingSessionClient implements SessionClient {
       StreamController<SdkEvent>.broadcast();
   SdkPeerConfig? upsertedPeer;
   final List<String> connectedPeers = <String>[];
+  final List<CommunicationClass> connectClasses = <CommunicationClass>[];
   String? sentTransferId;
   bool disposed = false;
 
@@ -837,8 +871,12 @@ final class _RecordingSessionClient implements SessionClient {
   }
 
   @override
-  Future<SdkResult<void>> connect(String peerId) async {
+  Future<SdkResult<void>> connect(
+    String peerId, {
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
+  }) async {
     connectedPeers.add(peerId);
+    connectClasses.add(communicationClass);
     return const SdkSuccess<void>(null);
   }
 
@@ -916,8 +954,10 @@ final class _FakeSessionClient implements SessionClient {
       const SdkSuccess(null);
 
   @override
-  Future<SdkResult<void>> connect(String peerId) async =>
-      const SdkSuccess(null);
+  Future<SdkResult<void>> connect(
+    String peerId, {
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
+  }) async => const SdkSuccess(null);
 
   @override
   Future<SdkResult<void>> disconnect(String peerId) async =>

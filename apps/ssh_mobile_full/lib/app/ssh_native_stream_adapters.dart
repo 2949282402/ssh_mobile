@@ -33,6 +33,8 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
   final NetworkFacade? _facade;
   final Map<String, bool> _connectedPeers = <String, bool>{};
   final Map<int, _AppSshNativeStream> _streams = <int, _AppSshNativeStream>{};
+  // 等待 native CommandResult 确认的 SshStreamOpen：commandId → streamId。
+  final Map<String, int> _pendingOpens = <String, int>{};
 
   NetworkCommandGateway? _gateway;
   Future<NetworkCommandGateway>? _gatewayFuture;
@@ -59,9 +61,11 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
       streamId: streamId,
     );
     _streams[streamId] = stream;
+    final commandId = _nextCommandId('ssh-open');
+    _pendingOpens[commandId] = streamId;
     final status = gateway.sendCommand(
       NativeNetworkProtocol.sshStreamOpenCommand(
-        commandId: _nextCommandId('ssh-open'),
+        commandId: commandId,
         peerId: peerId,
         streamId: streamId,
         service: service,
@@ -69,6 +73,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     );
     if (status != TransportOperationStatus.success) {
       _streams.remove(streamId);
+      _pendingOpens.remove(commandId);
       throw StateError(
         'Failed to queue native SSH stream open: ${status.name}.',
       );
@@ -127,6 +132,22 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
       case NativeSshStreamClosedEvent(:final streamId):
         final stream = _streams.remove(streamId);
         stream?._onClosed();
+      case NativeCommandResultEvent(:final commandId, :final accepted, :final error):
+        // SshStreamOpen 被 native 同步拒绝（例如对端未连接）时，CommandResult
+        // accepted=false；必须让 open 返回的流立即失败，而不是被 default 丢弃
+        // 导致 done 永久挂起。
+        final streamId = _pendingOpens.remove(commandId);
+        if (streamId == null) break;
+        final stream = _streams[streamId];
+        if (stream == null) break;
+        if (!accepted) {
+          _streams.remove(streamId);
+          stream._fail(
+            StateError(
+              error?.message ?? 'SSH stream open was rejected by native.',
+            ),
+          );
+        }
       default:
         break;
     }
@@ -167,6 +188,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     _nativeSubscription = null;
     final streams = _streams.values.toList();
     _streams.clear();
+    _pendingOpens.clear();
     for (final stream in streams) {
       stream._abort();
     }
@@ -237,6 +259,20 @@ final class _AppSshNativeStream implements SshNativeStream {
     _closed = true;
     if (!_incoming.isClosed) unawaited(_incoming.close());
     if (!_done.isCompleted) _done.complete();
+  }
+
+  /// native 拒绝打开（CommandResult accepted=false）时以错误终止流，
+  /// 让调用方立即拿到可操作失败而不是永久挂起。
+  void _fail(Object error, [StackTrace? stackTrace]) {
+    if (_closed) return;
+    _closed = true;
+    if (!_incoming.isClosed) {
+      _incoming.addError(error, stackTrace ?? StackTrace.current);
+      unawaited(_incoming.close());
+    }
+    if (!_done.isCompleted) {
+      _done.completeError(error, stackTrace ?? StackTrace.current);
+    }
   }
 
   void _abort() {

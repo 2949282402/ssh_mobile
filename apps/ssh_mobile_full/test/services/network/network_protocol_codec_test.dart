@@ -16,6 +16,35 @@ void main() {
     expect(codec.commandId(bytes), 'c');
   });
 
+  test('connect peer command carries the communication class (field 3)', () {
+    final reliableStream = codec.connectPeerCommand(
+      commandId: 'c',
+      peerId: 'p',
+      communicationClass: CommunicationClass.reliableStream,
+    );
+    // 载荷：peer_id(1)=p、intent(2)=0、communication_class(3)=ReliableStream(1)。
+    expect(
+      reliableStream,
+      <int>[
+        0x0a, 0x01, 0x63, // command_id = c
+        0x10, 0x01, // protocol_version = 1
+        0x52, 0x07, // connect peer (field 10), length 7
+        0x0a, 0x01, 0x70, // peer_id = p
+        0x10, 0x00, // intent = 0
+        0x18, 0x01, // communication_class = 1 (ReliableStream)
+      ],
+    );
+    expect(codec.commandId(reliableStream), 'c');
+
+    final bulk = codec.connectPeerCommand(
+      commandId: 'c',
+      peerId: 'p',
+      communicationClass: CommunicationClass.bulkTransfer,
+    );
+    expect(bulk, contains(0x18)); // communication_class key
+    expect(bulk, contains(0x03)); // BulkTransfer = 3
+  });
+
   test('command result event decodes from fixed v1 bytes', () {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[

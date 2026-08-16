@@ -1,37 +1,15 @@
-// 传输网络 v2 业务门面（NetworkFacade）与通信类别（CommunicationClass）。
+// 传输网络 v2 业务门面（NetworkFacade）。
 //
 // Flutter 只面对本文件定义的 Facade，不直接操作 Candidate/Resolve/PathManager/
 // RelayClient 状态机（设计文档 §5）。底层 [SessionClient]、Realtime 协调器和
-// native runtime 由 App 组合根注入，作为 Facade 的内部实现。
+// native runtime 由 App 组合根注入，作为 Facade 的内部实现。通信类别
+// [CommunicationClass] 定义在 network_models.dart。
 
 import 'dart:typed_data';
 
 import 'network_clients.dart';
 import 'network_models.dart';
 import 'realtime.dart';
-
-/// 传输网络 v2 的五种业务通信类别（设计文档 §16/§17）。
-///
-/// 业务只能通过 [CommunicationClass] 表达通信语义，不能直接指定 QUIC/TCP/UDP
-/// 等具体传输。每个类别映射到现有 native command/event tag；当前 native v1
-/// 契约不新增 tag（SSH 流与消息通道 tag 由 WS-E 在并行工作流落地）。
-enum CommunicationClass {
-  /// 可靠字节流（SSH 等连续流式通信）。当前 native 数据面由 ConfigureRuntime
-  /// 初始化；SSH 流式 FFI 由 WS-E 落地。
-  reliableStream,
-
-  /// 可靠消息。native 消息通道 tag 由 WS-E 落地，当前不发送。
-  reliableMessage,
-
-  /// 大文件批量传输。映射到 native `SendFile` 命令（codec tag 11）。
-  bulkTransfer,
-
-  /// 不可靠数据报。第一阶段 native 数据面不提供，当前不发送。
-  unreliableDatagram,
-
-  /// 实时媒体会话。映射到 native Realtime command/event（codec tag 21/22/23）。
-  realtimeMedia,
-}
 
 /// 业务侧唯一网络门面。
 ///
@@ -165,7 +143,7 @@ final class NetworkFacadeImpl implements NetworkFacade {
       final upsert = await _sessions.upsertPeer(peer);
       if (upsert is SdkFailure<void>) return upsert;
     }
-    return _sessions.connect(peerId);
+    return _sessions.connect(peerId, communicationClass: communicationClass);
   }
 
   @override

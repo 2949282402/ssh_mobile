@@ -469,8 +469,10 @@ final class _StubSessionClient implements SessionClient {
       const SdkSuccess<void>(null);
 
   @override
-  Future<SdkResult<void>> connect(String peerId) async =>
-      const SdkSuccess<void>(null);
+  Future<SdkResult<void>> connect(
+    String peerId, {
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
+  }) async => const SdkSuccess<void>(null);
 
   @override
   Future<SdkResult<void>> disconnect(String peerId) async =>

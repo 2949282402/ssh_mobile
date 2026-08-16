@@ -85,6 +85,78 @@ void main() {
       // 再次 closeAll 幂等。
       await connector.closeAll();
     });
+
+    test(
+      'rejected SshStreamOpen CommandResult fails the stream instead of hanging',
+      () async {
+        final gateway = _FakeGateway();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () async => gateway,
+        );
+        final stream = await connector.open(peerId: 'peer-a');
+        expect(connector.activeStreamCount, 1);
+        final openCommandId = _commandIdOf(gateway.commands.first);
+
+        final errors = <Object>[];
+        final doneErrors = <Object>[];
+        stream.done.then((_) {}, onError: doneErrors.add);
+        final incomingSubscription = stream.incoming.listen(
+          (_) {},
+          onError: (Object error, StackTrace _) => errors.add(error),
+        );
+
+        // native 以 CommandResult accepted=false 拒绝 SshStreamOpen。
+        gateway.push(
+          _commandResultFrame(
+            eventId: 'e3',
+            commandId: openCommandId,
+            accepted: false,
+            errorMessage: 'peer is not connected',
+          ),
+        );
+
+        await expectLater(stream.done, throwsA(isA<StateError>()));
+        expect(doneErrors, hasLength(1));
+        expect(
+          (doneErrors.single as StateError).message,
+          contains('peer is not connected'),
+        );
+        expect(errors, hasLength(1));
+        expect(connector.activeStreamCount, 0);
+
+        await incomingSubscription.cancel();
+        await connector.closeAll();
+      },
+    );
+
+    test('accepted SshStreamOpen CommandResult keeps the stream usable', () async {
+      final gateway = _FakeGateway();
+      final connector = AppSshNativeStreamConnector(
+        gatewayProvider: () async => gateway,
+      );
+      final stream = await connector.open(peerId: 'peer-a');
+      final openCommandId = _commandIdOf(gateway.commands.first);
+
+      gateway.push(
+        _commandResultFrame(
+          eventId: 'e3',
+          commandId: openCommandId,
+          accepted: true,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      // 流仍登记：后续数据事件照常路由。
+      expect(connector.activeStreamCount, 1);
+
+      final received = <Uint8List>[];
+      final subscription = stream.incoming.listen(received.add);
+      gateway.push(_dataFrame(eventId: 'e4', peerId: 'peer-a', streamId: 1));
+      await Future<void>.delayed(Duration.zero);
+      expect(received, hasLength(1));
+
+      await subscription.cancel();
+      await connector.closeAll();
+    });
   });
 }
 
@@ -104,6 +176,57 @@ Uint8List _dataFrame({
     0x03,
   ];
   return _eventFrame(eventId, 26, payload);
+}
+
+/// 构建 CommandResult 事件帧（tag 13）。
+Uint8List _commandResultFrame({
+  required String eventId,
+  required String commandId,
+  required bool accepted,
+  String? errorMessage,
+}) {
+  final payload = <int>[
+    ..._stringField(1, commandId),
+    ..._varintField(2, accepted ? 1 : 0),
+    if (errorMessage != null)
+      ..._messageField(3, _networkErrorField(7, errorMessage)),
+  ];
+  return _eventFrame(eventId, 13, payload);
+}
+
+/// 编码一个嵌套 message 字段（wire type 2）。
+List<int> _messageField(int field, List<int> payload) => <int>[
+  ..._varint(field << 3 | 2),
+  ..._varint(payload.length),
+  ...payload,
+];
+
+/// 编码一个 NetworkError 子消息：code(1) + message(2)。
+List<int> _networkErrorField(int code, String message) => <int>[
+  ..._varintField(1, code),
+  ..._stringField(2, message),
+];
+
+/// 从命令信封读取 command_id（field 1 字符串）。
+String _commandIdOf(Uint8List command) {
+  var offset = 0;
+  int readVarint() {
+    var value = 0;
+    var shift = 0;
+    while (true) {
+      final byte = command[offset++];
+      value |= (byte & 0x7f) << shift;
+      if ((byte & 0x80) == 0) return value;
+      shift += 7;
+    }
+  }
+
+  final key = readVarint();
+  if (key >> 3 != 1) {
+    throw StateError('expected command_id field (1)');
+  }
+  final length = readVarint();
+  return String.fromCharCodes(command.sublist(offset, offset + length));
 }
 
 /// 构建 SshStreamClosed 事件帧（tag 27）。

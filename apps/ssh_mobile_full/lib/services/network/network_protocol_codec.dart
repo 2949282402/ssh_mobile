@@ -105,13 +105,20 @@ final class NetworkProtocolCodec {
   }
 
   /// 编码异步对端连接命令。
+  ///
+  /// 载荷镜像 network_protocol ConnectPeerCommand：peer_id(1)、intent(2)、
+  /// communication_class(3)。communication_class 的取值与 Rust 侧
+  /// `CommunicationClass` 枚举一致（reliableStream=1 … realtimeMedia=5），
+  /// 由 [CommunicationClass.wireValue] 提供。
   Uint8List connectPeerCommand({
     required String commandId,
     required String peerId,
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
   }) {
     final payload = _ProtoWriter()
       ..string(1, peerId)
-      ..varint(2, 0);
+      ..varint(2, 0)
+      ..varint(3, communicationClass.wireValue);
     return _command(commandId, 10, payload.takeBytes());
   }
 
