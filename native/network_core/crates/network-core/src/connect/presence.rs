@@ -50,20 +50,6 @@ impl PresenceHintCache {
             .insert(peer_id.to_string(), PresenceHint::new(true, generation));
     }
 
-    /// 记录 peer 更新（generation 只用于 UI；不参与任何建连状态）。
-    pub(crate) fn mark_updated(&self, peer_id: &str, generation: u64) {
-        let mut inner = self.inner.write().expect("presence hint cache lock");
-        match inner.get_mut(peer_id) {
-            Some(hint) => {
-                hint.online = true;
-                hint.generation = generation;
-            }
-            None => {
-                inner.insert(peer_id.to_string(), PresenceHint::new(true, generation));
-            }
-        }
-    }
-
     /// 记录 peer 离线（v1 peer_offline / v2 PeerUnavailableHint）。
     pub(crate) fn mark_offline(&self, peer_id: &str) {
         self.inner
@@ -146,11 +132,11 @@ mod tests {
     }
 
     #[test]
-    fn updated_marks_online_with_new_generation() {
+    fn available_hint_marks_online_with_new_generation() {
         let cache = PresenceHintCache::new();
-        cache.mark_updated("device-b", 11);
+        cache.mark_online("device-b", 11);
         assert_eq!(cache.get("device-b"), Some(PresenceHint::new(true, 11)));
-        cache.mark_updated("device-b", 12);
+        cache.mark_online("device-b", 12);
         assert_eq!(cache.get("device-b"), Some(PresenceHint::new(true, 12)));
     }
 }

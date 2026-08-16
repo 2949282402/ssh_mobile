@@ -5,7 +5,6 @@
 //! clipboard, files, Delivery, and Relay recovery remain on their existing
 //! QUIC/Relay paths.
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use network_protocol::{
     RealtimeSessionState, RealtimeSignalKind, SendRealtimeSignalCommand,
     StartRealtimeSessionCommand, StopRealtimeSessionCommand,
@@ -18,7 +17,6 @@ use network_webrtc::{
     RealtimeIoDriverHandle, RealtimeIoEvent, SessionDescription, WebRtcConfig, WebRtcError,
     WebRtcPeer, MAX_ICE_CANDIDATE_BYTES, MAX_SDP_BYTES,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -31,15 +29,7 @@ use crate::events::{
 use crate::runtime::RuntimeState;
 use crate::session::SessionId;
 
-const REALTIME_SIGNAL_VERSION: u32 = 1;
 const MAX_REALTIME_SIGNAL_PAYLOAD_BYTES: usize = MAX_SDP_BYTES;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RealtimeSignalEnvelope {
-    v: u32,
-    revision: u64,
-    payload: String,
-}
 
 struct RealtimeSession {
     peer_id: String,
@@ -359,29 +349,6 @@ pub(crate) async fn send_signal_command(
         outbound.payload,
     );
     Ok(())
-}
-
-/// v1 Relay 数据面信令入口（deprecated，Step 11 迁移到 v2 控制面）。
-/// 解码 v1 base64 信封（revision 内嵌），再进入与 v2 共享的协商核心。
-pub(crate) async fn handle_relay_signal(
-    state: &Arc<RuntimeState>,
-    kind: &str,
-    realtime_id: &str,
-    peer_id: &str,
-    payload: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let kind = signal_kind_from_control(kind)
-        .ok_or_else(|| boxed_message("invalid WebRTC control type"))?;
-    let envelope = decode_envelope(payload)?;
-    handle_realtime_signal(
-        state,
-        kind,
-        realtime_id,
-        peer_id,
-        envelope.revision,
-        envelope.payload_bytes(),
-    )
-    .await
 }
 
 /// v2 控制面信令入口（§17/§22：WebRTC signaling 经 Relay Control Plane）。
@@ -1120,68 +1087,31 @@ fn validate_signal(
 }
 
 /// §22：WebRTC 信令经 v2 Relay Control Plane 路由（`signal_webrtc`），与媒体面
-/// (P2P/TURN) 分离。v2 控制面不可用时回退到 v1 Relay 数据面控制帧（deprecated，
-/// Step 11 删除），保证控制 socket 重连窗口内信令仍可达。
+/// (P2P/TURN) 分离。v1 Relay 数据面信令路径已在 Step 11 删除。
 async fn send_signal(
     state: &RuntimeState,
     signal: &OutboundSignal,
 ) -> Result<(), network_protocol::NetworkError> {
-    if let Some(control) = state.relay_control.read().await.clone() {
-        if control.is_usable().await {
-            let kind = to_v2_signal_kind(signal.kind);
-            let result = control
-                .signal_webrtc(
-                    &signal.realtime_id,
-                    &signal.peer_id,
-                    kind,
-                    signal.revision,
-                    &signal.payload,
-                )
-                .await;
-            if let Err(error) = result {
-                tracing::debug!(
-                    peer_id = %signal.peer_id,
-                    error = %error,
-                    "v2 control plane WebRTC signaling failed"
-                );
-            } else {
-                return Ok(());
-            }
-        }
-    }
-    send_signal_v1(state, signal).await
-}
-
-async fn send_signal_v1(
-    state: &RuntimeState,
-    signal: &OutboundSignal,
-) -> Result<(), network_protocol::NetworkError> {
-    let Some(relay) = state.relay.read().await.clone() else {
+    let Some(control) = state.relay_control.read().await.clone() else {
         return Err(protocol_error(
             network_protocol::NetworkErrorCode::RelayError,
             "Relay signaling route is unavailable",
         ));
     };
-    if !relay.is_usable().await {
+    if !control.is_usable().await {
         return Err(protocol_error(
             network_protocol::NetworkErrorCode::RelayError,
             "Relay signaling route is disconnected",
         ));
     }
-    let payload = encode_envelope(signal.revision, &signal.payload).map_err(|error| {
-        realtime_error(
-            network_protocol::NetworkErrorCode::InvalidArgument,
-            error.to_string(),
-            "encode_realtime_signal",
-            &signal.peer_id,
-        )
-    })?;
-    relay
-        .send_webrtc_signal(
-            control_type(signal.kind),
+    let kind = to_v2_signal_kind(signal.kind);
+    control
+        .signal_webrtc(
             &signal.realtime_id,
             &signal.peer_id,
-            &payload,
+            kind,
+            signal.revision,
+            &signal.payload,
         )
         .await
         .map_err(|error| {
@@ -1204,62 +1134,6 @@ fn to_v2_signal_kind(kind: RealtimeSignalKind) -> V2RealtimeSignalKind {
         RealtimeSignalKind::WebRtcClose => V2RealtimeSignalKind::Close,
         RealtimeSignalKind::Unspecified => V2RealtimeSignalKind::Unspecified,
     }
-}
-
-fn encode_envelope(revision: u64, payload: &[u8]) -> Result<Vec<u8>, serde_json::Error> {
-    serde_json::to_vec(&RealtimeSignalEnvelope {
-        v: REALTIME_SIGNAL_VERSION,
-        revision,
-        payload: URL_SAFE_NO_PAD.encode(payload),
-    })
-}
-
-fn decode_envelope(
-    payload: &str,
-) -> Result<DecodedEnvelope, Box<dyn std::error::Error + Send + Sync>> {
-    let bytes = URL_SAFE_NO_PAD.decode(payload)?;
-    let envelope: RealtimeSignalEnvelope = serde_json::from_slice(&bytes)?;
-    if envelope.v != REALTIME_SIGNAL_VERSION {
-        return Err(boxed_message("unsupported WebRTC signal version"));
-    }
-    let payload = URL_SAFE_NO_PAD.decode(envelope.payload)?;
-    Ok(DecodedEnvelope {
-        revision: envelope.revision,
-        payload,
-    })
-}
-
-struct DecodedEnvelope {
-    revision: u64,
-    payload: Vec<u8>,
-}
-
-impl DecodedEnvelope {
-    fn payload_bytes(&self) -> Vec<u8> {
-        self.payload.clone()
-    }
-}
-
-fn control_type(kind: RealtimeSignalKind) -> &'static str {
-    match kind {
-        RealtimeSignalKind::WebRtcOffer => "webrtc_offer",
-        RealtimeSignalKind::WebRtcAnswer => "webrtc_answer",
-        RealtimeSignalKind::IceCandidate => "webrtc_ice_candidate",
-        RealtimeSignalKind::IceRestart => "webrtc_ice_restart",
-        RealtimeSignalKind::WebRtcClose => "webrtc_close",
-        RealtimeSignalKind::Unspecified => "webrtc_unknown",
-    }
-}
-
-fn signal_kind_from_control(kind: &str) -> Option<RealtimeSignalKind> {
-    Some(match kind {
-        "webrtc_offer" => RealtimeSignalKind::WebRtcOffer,
-        "webrtc_answer" => RealtimeSignalKind::WebRtcAnswer,
-        "webrtc_ice_candidate" => RealtimeSignalKind::IceCandidate,
-        "webrtc_ice_restart" => RealtimeSignalKind::IceRestart,
-        "webrtc_close" => RealtimeSignalKind::WebRtcClose,
-        _ => return None,
-    })
 }
 
 fn realtime_error(
@@ -1349,15 +1223,6 @@ mod tests {
         assert_eq!(snapshots[0].state, RealtimeSessionState::Connected as i32);
         assert_eq!(snapshots[0].revision, 7);
         assert!(snapshots[0].error.is_none());
-    }
-
-    #[test]
-    fn signaling_envelope_round_trips_revision_and_binary_payload() {
-        let encoded = encode_envelope(3, b"sdp-bytes").expect("encode");
-        let outer = URL_SAFE_NO_PAD.encode(encoded);
-        let decoded = decode_envelope(&outer).expect("decode");
-        assert_eq!(decoded.revision, 3);
-        assert_eq!(decoded.payload, b"sdp-bytes");
     }
 
     #[tokio::test]
@@ -1453,20 +1318,6 @@ mod tests {
 
         supervisor.cancel_session("realtime:caller").await;
         supervisor.cancel_session("realtime:responder").await;
-    }
-
-    #[test]
-    fn signal_control_names_cover_the_complete_v1_set() {
-        for (kind, expected) in [
-            (RealtimeSignalKind::WebRtcOffer, "webrtc_offer"),
-            (RealtimeSignalKind::WebRtcAnswer, "webrtc_answer"),
-            (RealtimeSignalKind::IceCandidate, "webrtc_ice_candidate"),
-            (RealtimeSignalKind::IceRestart, "webrtc_ice_restart"),
-            (RealtimeSignalKind::WebRtcClose, "webrtc_close"),
-        ] {
-            assert_eq!(signal_kind_from_control(expected), Some(kind));
-            assert_eq!(control_type(kind), expected);
-        }
     }
 
     #[test]

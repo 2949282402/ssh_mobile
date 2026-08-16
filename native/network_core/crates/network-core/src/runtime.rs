@@ -27,7 +27,7 @@ use crate::stream::ReliableStreamManager;
 use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
 use network_identity::DeviceIdentity;
 use network_nat::PathManager;
-use network_relay::RelayClient;
+use network_relay::RelayDataClient;
 use network_transfer::TransferManager;
 use quinn::Endpoint;
 use std::collections::HashMap;
@@ -82,20 +82,6 @@ pub(crate) struct PeerConfig {
     pub(crate) e2e_public_key: [u8; 32],
 }
 
-/// Relay lookup 的完整结果：在线状态 + 该设备的 Discovery（generation/candidates/
-/// capabilities）。候选是不透明 base64 JSON 字符串（CandidateAdvertisement 序列化），
-/// 消费端负责解码。
-///
-/// 仅 v1 Relay 数据路径（deprecated，Step 11 删除）使用；v2 控制面的 Resolve 走
-/// `DiscoveryResolver`，不依赖本类型。
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct LookupResult {
-    pub(crate) online: bool,
-    pub(crate) generation: u64,
-    pub(crate) candidates: Vec<String>,
-    pub(crate) capabilities: Vec<String>,
-}
-
 pub(crate) struct RuntimeState {
     /// Native bind 完成后发布实际 UDP 端口，供受控 FFI 诊断读取。
     ///
@@ -124,17 +110,17 @@ pub(crate) struct RuntimeState {
     pub(crate) crypto: SessionCryptoManager,
     pub(crate) delivery: DeliveryManager,
     pub(crate) realtime: AsyncMutex<crate::realtime::RealtimeManager>,
-    pub(crate) relay: RwLock<Option<Arc<RelayClient>>>,
+    /// transport-network v2：reservation 作用域的 Relay v2 数据面客户端（§25/§31）。
+    ///
+    /// 由 `ConnectionOrchestrator::connect_relay_fallback`（发起方）或控制面
+    /// `IncomingRelayReservation`（应答方）建立；文件/流/消息数据经它转发。
+    pub(crate) relay_data: RwLock<Option<Arc<RelayDataClient>>>,
     pub(crate) relay_config: RwLock<Option<crate::relay::RelayReconnectConfig>>,
     pub(crate) relay_reconnect_task: Mutex<Option<TaskId>>,
     pub(crate) relay_reconnect_active: AtomicBool,
     /// 当前 Relay 凭据已被服务端判定过期/冲突；在 Dart 下发新的
     /// ConfigureRelayCommand 前抑制所有自动重连。
     pub(crate) relay_credential_stale: AtomicBool,
-    pub(crate) relay_acceptances:
-        RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
-    pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
-    pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<LookupResult>>>,
     /// transport-network v2：本地 Discovery 生命周期 owner（§9/§29）。
     pub(crate) local_discovery: RwLock<Option<Arc<crate::discovery::LocalDiscoveryManager>>>,
     /// transport-network v2：v2 控制面客户端 sink（§31 `RelayControlClient` 抽象）。
@@ -157,10 +143,17 @@ pub(crate) struct RuntimeState {
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
     pub(crate) relay_crypto_confirmers:
         AsyncMutex<HashMap<String, RelayResponderConfirmation<SessionAdmissionLease>>>,
-    pub(crate) relay_sessions: RwLock<HashMap<String, String>>,
+    /// reservation 数据面上的 Relay 文件传输业务状态（非 v1 会话协议）：
+    /// - `relay_pending_incoming`：等待 UI 审批的传入 offer（transfer_id → pending）。
+    /// - `relay_active_incoming`：正在接收的活跃传输（transfer_id → active）。
+    /// - `relay_acceptances` / `relay_completions`：发送方按 transfer_id 等待 accept/
+    ///   complete_ack 应答的 oneshot（由数据面事件循环投递）。
     pub(crate) relay_pending_incoming: RwLock<HashMap<String, crate::relay::PendingRelayIncoming>>,
     pub(crate) relay_active_incoming:
         AsyncMutex<HashMap<String, crate::relay::ActiveRelayIncoming>>,
+    pub(crate) relay_acceptances:
+        RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
+    pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) incoming_decisions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) transfers: TransferManager,
     pub(crate) event_tx: UnboundedSender<NetworkEvent>,
@@ -186,14 +179,11 @@ impl RuntimeState {
             crypto: SessionCryptoManager::new(),
             delivery: DeliveryManager::new(),
             realtime: AsyncMutex::new(crate::realtime::RealtimeManager::default()),
-            relay: RwLock::new(None),
+            relay_data: RwLock::new(None),
             relay_config: RwLock::new(None),
             relay_reconnect_task: Mutex::new(None),
             relay_reconnect_active: AtomicBool::new(false),
             relay_credential_stale: AtomicBool::new(false),
-            relay_acceptances: RwLock::new(HashMap::new()),
-            relay_completions: RwLock::new(HashMap::new()),
-            relay_lookups: RwLock::new(HashMap::new()),
             local_discovery: RwLock::new(None),
             relay_control: RwLock::new(None),
             connection_registry: crate::connect::registry::ConnectionRegistry::new(),
@@ -203,9 +193,10 @@ impl RuntimeState {
             relay_crypto_waiters: RwLock::new(HashMap::new()),
             relay_crypto_responders: AsyncMutex::new(HashMap::new()),
             relay_crypto_confirmers: AsyncMutex::new(HashMap::new()),
-            relay_sessions: RwLock::new(HashMap::new()),
             relay_pending_incoming: RwLock::new(HashMap::new()),
             relay_active_incoming: AsyncMutex::new(HashMap::new()),
+            relay_acceptances: RwLock::new(HashMap::new()),
+            relay_completions: RwLock::new(HashMap::new()),
             incoming_decisions: RwLock::new(HashMap::new()),
             transfers: TransferManager::new(),
             event_tx,
@@ -541,10 +532,13 @@ impl NetworkRuntime {
     fn shutdown_listener(&self, state: Arc<RuntimeState>) {
         self.runtime.block_on(async move {
             state.task_supervisor.cancel_root();
-            let relay = state.relay.write().await.take();
-            if let Some(relay) = relay {
-                relay.request_disconnect().await;
+            let relay_data = state.relay_data.write().await.take();
+            if let Some(relay_data) = relay_data {
+                relay_data.request_disconnect().await;
             }
+            // 控制面 Drop 会中止后台读写 worker（RelayControlClient::drop）；显式
+            // take 释放共享引用即可。
+            state.relay_control.write().await.take();
             state.realtime.lock().await.close_all();
             if let Some(endpoint) = state.endpoint.write().await.take() {
                 endpoint.close(quinn::VarInt::from_u32(0), b"runtime stopping");
@@ -588,8 +582,8 @@ impl Drop for NetworkRuntime {
                         endpoint.close(quinn::VarInt::from_u32(0), b"runtime dropped");
                     }
                 }
-                if let Ok(mut relay) = state.relay.try_write() {
-                    relay.take();
+                if let Ok(mut relay_data) = state.relay_data.try_write() {
+                    relay_data.take();
                 }
                 if let Ok(mut realtime) = state.realtime.try_lock() {
                     realtime.close_all();

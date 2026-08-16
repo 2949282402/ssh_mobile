@@ -676,8 +676,7 @@ pub(crate) async fn open_stream(
         }
         StreamCarrier::Relay(Some(relay)) => {
             let payload = encode_stream_open_frame(stream_id, service)?;
-            relay
-                .send_channel_message(&stream_relay_token(stream_id), peer_id, &payload)
+            crate::relay::send_relay_stream_frame(&relay, &stream_relay_token(stream_id), &payload)
                 .await
                 .map_err(|error| StreamError::Send(error.to_string()))?;
             manager.open(stream_id, service, consumer).await?;
@@ -728,10 +727,13 @@ pub(crate) async fn send_stream(
             let mut chunks = 0u64;
             for chunk in data.chunks(MAX_STREAM_FRAME_BYTES) {
                 let payload = encode_stream_bytes_frame(stream_id, seq + chunks, chunk);
-                relay
-                    .send_channel_message(&stream_relay_token(stream_id), peer_id, &payload)
-                    .await
-                    .map_err(|error| StreamError::Send(error.to_string()))?;
+                crate::relay::send_relay_stream_frame(
+                    &relay,
+                    &stream_relay_token(stream_id),
+                    &payload,
+                )
+                .await
+                .map_err(|error| StreamError::Send(error.to_string()))?;
                 chunks += 1;
             }
             manager.bump_send_seq(stream_id, chunks).await?;
@@ -781,8 +783,7 @@ pub(crate) async fn close_stream(
         }
         StreamCarrier::Relay(Some(relay)) => {
             let payload = encode_stream_close_frame(stream_id);
-            relay
-                .send_channel_message(&stream_relay_token(stream_id), peer_id, &payload)
+            crate::relay::send_relay_stream_frame(&relay, &stream_relay_token(stream_id), &payload)
                 .await
                 .map_err(|error| StreamError::Send(error.to_string()))?;
             manager.close_local(peer_id, stream_id).await?;

@@ -25,10 +25,9 @@ use tracing::info;
 use url::Url;
 
 use super::proto::*;
-use crate::client::{
-    authenticated_ws_request, map_connect_error, normalize_relay_url, unix_timestamp_ms,
+use super::shared::{
+    authenticated_ws_request, map_connect_error, normalize_relay_url, unix_timestamp_ms, RelayError,
 };
-use crate::RelayError;
 
 /// v2 控制面 WebSocket 路径。
 pub(crate) const RELAY_V2_CONTROL_PATH: &str = "/v2/control";

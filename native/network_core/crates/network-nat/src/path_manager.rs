@@ -1,6 +1,5 @@
 use crate::candidate::{Candidate, CandidateKind};
-use crate::exchange::CandidateSignalKind;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -73,9 +72,8 @@ pub struct HistoricalPathMetrics {
 /// V2 (§13): `PathManager` is metrics-only. Remote discovery truth (remote
 /// epoch, remote attempt id, remote connect window, and the remote candidate
 /// set) is owned by a one-shot [`crate::attempt::ConnectivityAttempt`] and must
-/// never live in this long-lived state. The only remote state that remains is
-/// a `#[deprecated]` bridge (`legacy_remote`) kept so v1 callers (network-core
-/// Step 5/6) still compile against the old API; Step 11 deletes it.
+/// never live in this long-lived state. The v1 legacy remote bridge was deleted
+/// in Step 11.
 pub struct PathManager {
     /// Local candidate pool with live quality samples (RTT/jitter/loss).
     candidates: Arc<RwLock<Vec<Candidate>>>,
@@ -85,35 +83,6 @@ pub struct PathManager {
     connection_path_metrics: Arc<RwLock<HashMap<SocketAddr, ConnectionPathMetrics>>>,
     /// Historical performance hints (forward-facing, never validity).
     historical_path_metrics: Arc<RwLock<HashMap<SocketAddr, HistoricalPathMetrics>>>,
-    /// DEPRECATED v1 remote discovery truth, kept only for additive-first
-    /// compatibility. Deleted in Step 11. Use `ConnectivityAttempt` instead.
-    #[deprecated(note = "v1 remote discovery truth on PathManager; use ConnectivityAttempt")]
-    legacy_remote: Arc<RwLock<LegacyRemoteState>>,
-}
-
-/// v1 remote discovery truth that used to live directly on `PathManager`.
-/// Kept behind a deprecated shim so Step 5 stays additive-first; Step 11
-/// deletes it in favor of `ConnectivityAttempt`. Do not add new code here.
-#[derive(Debug)]
-struct LegacyRemoteState {
-    remote_generation: u64,
-    remote_attempt_id: Option<String>,
-    remote_connect_window_ms: u32,
-    remote_candidates: Vec<Candidate>,
-}
-
-impl Default for LegacyRemoteState {
-    fn default() -> Self {
-        Self {
-            remote_generation: 0,
-            remote_attempt_id: None,
-            // Preserves the v1 default so legacy callers that read
-            // `remote_connect_window()` before any offer/answer still get the
-            // bounded direct window instead of a zero-length deadline.
-            remote_connect_window_ms: crate::exchange::DEFAULT_CONNECT_WINDOW_MS,
-            remote_candidates: Vec::new(),
-        }
-    }
 }
 
 impl Default for PathManager {
@@ -123,7 +92,6 @@ impl Default for PathManager {
 }
 
 impl PathManager {
-    #[allow(deprecated)]
     pub fn new() -> Self {
         Self {
             candidates: Arc::new(RwLock::new(Vec::new())),
@@ -131,7 +99,6 @@ impl PathManager {
             local_generation: Arc::new(RwLock::new(0)),
             connection_path_metrics: Arc::new(RwLock::new(HashMap::new())),
             historical_path_metrics: Arc::new(RwLock::new(HashMap::new())),
-            legacy_remote: Arc::new(RwLock::new(LegacyRemoteState::default())),
         }
     }
 
@@ -173,11 +140,10 @@ impl PathManager {
     }
 
     /// Returns all candidates for signaling or a multi-candidate connectivity
-    /// check, ordered by priority and observed quality. Local candidates come
-    /// from the forward-facing pool; v1 remote candidates are still merged in
-    /// from the deprecated bridge until Step 11.
+    /// check, ordered by priority and observed quality. Only the local candidate
+    /// pool is consulted; remote candidates live on `ConnectivityAttempt` (§13).
     pub async fn ranked_candidates(&self) -> Vec<Candidate> {
-        let mut candidates = self.candidate_pool().await;
+        let mut candidates = self.candidates.read().await.clone();
         candidates.sort_by(|left, right| {
             candidate_score(right)
                 .partial_cmp(&candidate_score(left))
@@ -205,25 +171,29 @@ impl PathManager {
             .unwrap_or_default()
             .as_secs();
 
-        // Update whichever pool owns the endpoint: the local candidate pool or
-        // the deprecated v1 remote pool (bridged until Step 11).
-        let updated = self
-            .update_candidate_quality(endpoint, rtt_ms, loss_rate, now)
-            .await;
-
-        let candidate = match updated {
-            Some(candidate) => candidate,
-            None => {
-                let mut guard = self.candidates.write().await;
-                guard.push(Candidate::new(
-                    endpoint,
-                    CandidateKind::ServerReflexive,
-                    "quic-observed".to_string(),
-                ));
-                let candidate = guard.last_mut().expect("candidate was just inserted");
-                candidate.record_quality(rtt_ms, loss_rate);
-                candidate.last_success_timestamp = now;
-                candidate.clone()
+        // Update only the local candidate pool (V2 §13: PathManager is metrics-only).
+        let candidate = {
+            let mut guard = self.candidates.write().await;
+            let found = guard
+                .iter_mut()
+                .find(|candidate| candidate.endpoint == endpoint);
+            match found {
+                Some(candidate) => {
+                    candidate.record_quality(rtt_ms, loss_rate);
+                    candidate.last_success_timestamp = now;
+                    candidate.clone()
+                }
+                None => {
+                    guard.push(Candidate::new(
+                        endpoint,
+                        CandidateKind::ServerReflexive,
+                        "quic-observed".to_string(),
+                    ));
+                    let candidate = guard.last_mut().expect("candidate was just inserted");
+                    candidate.record_quality(rtt_ms, loss_rate);
+                    candidate.last_success_timestamp = now;
+                    candidate.clone()
+                }
             }
         };
 
@@ -252,7 +222,7 @@ impl PathManager {
     /// Returns a materially better path without changing the active path yet.
     /// The caller must establish and authenticate the replacement first.
     pub async fn better_path_than_active(&self) -> Option<Candidate> {
-        let pool = self.candidate_pool().await;
+        let pool = self.candidates.read().await.clone();
         let active = self.active_candidate.read().await.clone()?;
         let active_score = candidate_score(&active);
         pool.iter()
@@ -271,10 +241,12 @@ impl PathManager {
     /// Commits a path after its replacement Connection is ready.
     pub async fn activate_path(&self, endpoint: SocketAddr) -> bool {
         let candidate = self
-            .candidate_pool()
+            .candidates
+            .read()
             .await
-            .into_iter()
-            .find(|candidate| candidate.endpoint == endpoint);
+            .iter()
+            .find(|candidate| candidate.endpoint == endpoint)
+            .cloned();
         let Some(candidate) = candidate else {
             return false;
         };
@@ -290,10 +262,12 @@ impl PathManager {
 
     /// Returns the latest metrics snapshot for one endpoint.
     pub async fn get_candidate(&self, endpoint: SocketAddr) -> Option<Candidate> {
-        self.candidate_pool()
+        self.candidates
+            .read()
             .await
-            .into_iter()
+            .iter()
             .find(|candidate| candidate.endpoint == endpoint)
+            .cloned()
     }
 
     /// Records an established-connection sample for the forward-facing
@@ -354,150 +328,6 @@ impl PathManager {
             .values()
             .cloned()
             .collect()
-    }
-
-    /// Merged candidate pool: local candidates plus any v1 remote candidates
-    /// still bridged through the deprecated legacy state.
-    #[allow(deprecated)]
-    async fn candidate_pool(&self) -> Vec<Candidate> {
-        let mut pool = self.candidates.read().await.clone();
-        pool.extend(
-            self.legacy_remote
-                .read()
-                .await
-                .remote_candidates
-                .iter()
-                .cloned(),
-        );
-        pool
-    }
-
-    #[allow(deprecated)]
-    async fn update_candidate_quality(
-        &self,
-        endpoint: SocketAddr,
-        rtt_ms: u32,
-        loss_rate: f32,
-        now: u64,
-    ) -> Option<Candidate> {
-        {
-            let mut guard = self.candidates.write().await;
-            if let Some(candidate) = guard.iter_mut().find(|c| c.endpoint == endpoint) {
-                candidate.record_quality(rtt_ms, loss_rate);
-                candidate.last_success_timestamp = now;
-                return Some(candidate.clone());
-            }
-        }
-        let mut legacy = self.legacy_remote.write().await;
-        if let Some(candidate) = legacy
-            .remote_candidates
-            .iter_mut()
-            .find(|c| c.endpoint == endpoint)
-        {
-            candidate.record_quality(rtt_ms, loss_rate);
-            candidate.last_success_timestamp = now;
-            return Some(candidate.clone());
-        }
-        None
-    }
-
-    /// DEPRECATED (Step 11): applies a complete remote Candidate Offer/Answer
-    /// into PathManager's legacy remote state. New code must use
-    /// [`crate::attempt::ConnectivityAttempt`].
-    #[deprecated(note = "v1 remote discovery truth on PathManager; use ConnectivityAttempt")]
-    #[allow(deprecated)]
-    pub async fn apply_remote_candidates(
-        &self,
-        signal_kind: CandidateSignalKind,
-        attempt_id: &str,
-        connect_window_ms: u32,
-        generation: u64,
-        list: Vec<Candidate>,
-    ) -> bool {
-        let incoming_ids = list
-            .iter()
-            .map(|candidate| candidate.candidate_id.clone())
-            .collect::<HashSet<_>>();
-        if generation == 0
-            || attempt_id.is_empty()
-            || attempt_id.len() > crate::exchange::MAX_ATTEMPT_ID_BYTES
-            || !attempt_id.bytes().all(|byte| byte.is_ascii_graphic())
-            || !(crate::exchange::MIN_CONNECT_WINDOW_MS..=crate::exchange::MAX_CONNECT_WINDOW_MS)
-                .contains(&connect_window_ms)
-            || list.len() > crate::exchange::MAX_CANDIDATES_PER_SIGNAL
-            || incoming_ids.len() != list.len()
-            || list
-                .iter()
-                .any(|candidate| candidate.generation != generation)
-        {
-            return false;
-        }
-        let mut legacy = self.legacy_remote.write().await;
-        if generation < legacy.remote_generation {
-            return false;
-        }
-        let is_new_attempt = legacy
-            .remote_attempt_id
-            .as_deref()
-            .is_some_and(|current| current != attempt_id);
-        if is_new_attempt && signal_kind == CandidateSignalKind::Answer {
-            return false;
-        }
-        if generation > legacy.remote_generation || is_new_attempt {
-            legacy.remote_candidates.clear();
-            legacy.remote_generation = generation;
-            legacy.remote_attempt_id = Some(attempt_id.to_string());
-            legacy.remote_connect_window_ms = connect_window_ms;
-        } else {
-            legacy
-                .remote_candidates
-                .retain(|candidate| incoming_ids.contains(&candidate.candidate_id));
-        }
-        if legacy.remote_attempt_id.is_none() {
-            legacy.remote_attempt_id = Some(attempt_id.to_string());
-        }
-        for candidate in list {
-            if let Some(existing) = legacy
-                .remote_candidates
-                .iter_mut()
-                .find(|existing| existing.candidate_id == candidate.candidate_id)
-            {
-                let sample_count = existing.sample_count;
-                let rtt_ms = existing.rtt_ms;
-                let jitter_ms = existing.jitter_ms;
-                let loss_rate = existing.loss_rate;
-                let last_success_timestamp = existing.last_success_timestamp;
-                *existing = candidate;
-                if sample_count > 0 {
-                    existing.sample_count = sample_count;
-                    existing.rtt_ms = rtt_ms;
-                    existing.jitter_ms = jitter_ms;
-                    existing.loss_rate = loss_rate;
-                    existing.last_success_timestamp = last_success_timestamp;
-                }
-            } else {
-                legacy.remote_candidates.push(candidate);
-            }
-        }
-        true
-    }
-
-    /// DEPRECATED (Step 11): returns the v1 remote attempt id. New code must
-    /// read it from the owning `ConnectivityAttempt`.
-    #[deprecated(note = "v1 remote attempt id on PathManager; use ConnectivityAttempt")]
-    #[allow(deprecated)]
-    pub async fn remote_attempt_id(&self) -> Option<String> {
-        self.legacy_remote.read().await.remote_attempt_id.clone()
-    }
-
-    /// DEPRECATED (Step 11): returns the v1 remote connect window. New code
-    /// must read it from the owning `ConnectivityAttempt`.
-    #[deprecated(note = "v1 remote connect window on PathManager; use ConnectivityAttempt")]
-    #[allow(deprecated)]
-    pub async fn remote_connect_window(&self) -> Duration {
-        Duration::from_millis(u64::from(
-            self.legacy_remote.read().await.remote_connect_window_ms,
-        ))
     }
 }
 
@@ -646,63 +476,5 @@ mod tests {
         assert_eq!(hints[0].sample_count, 100);
         // Historical hints must never affect the live candidate pool.
         assert!(manager.ranked_candidates().await.is_empty());
-    }
-
-    #[allow(deprecated)]
-    #[tokio::test]
-    async fn multiple_candidates_rank_and_replace_by_generation() {
-        let manager = PathManager::new();
-        let lan = candidate("192.168.1.10:41004", CandidateKind::Lan).with_generation(2);
-        let srflx =
-            candidate("203.0.113.10:41005", CandidateKind::ServerReflexive).with_generation(2);
-        assert!(
-            manager
-                .apply_remote_candidates(
-                    CandidateSignalKind::Answer,
-                    "attempt-a",
-                    crate::exchange::DEFAULT_CONNECT_WINDOW_MS,
-                    2,
-                    vec![srflx.clone(), lan.clone()],
-                )
-                .await
-        );
-
-        let ranked = manager.ranked_candidates().await;
-        assert_eq!(ranked.len(), 2);
-        assert_eq!(ranked[0].candidate_id, lan.candidate_id);
-
-        let stale = candidate("192.168.1.10:41006", CandidateKind::Lan).with_generation(1);
-        assert!(
-            !manager
-                .apply_remote_candidates(
-                    CandidateSignalKind::Answer,
-                    "attempt-a",
-                    crate::exchange::DEFAULT_CONNECT_WINDOW_MS,
-                    1,
-                    vec![stale]
-                )
-                .await
-        );
-        assert_eq!(manager.ranked_candidates().await.len(), 2);
-
-        let ipv6 = candidate("[2001:db8::10]:41007", CandidateKind::PublicIpv6).with_generation(3);
-        assert!(
-            manager
-                .apply_remote_candidates(
-                    CandidateSignalKind::Offer,
-                    "attempt-b",
-                    crate::exchange::DEFAULT_CONNECT_WINDOW_MS,
-                    3,
-                    vec![ipv6.clone()]
-                )
-                .await
-        );
-        let ranked = manager.ranked_candidates().await;
-        assert_eq!(ranked.len(), 1);
-        assert_eq!(ranked[0].candidate_id, ipv6.candidate_id);
-        assert_eq!(
-            manager.remote_attempt_id().await.as_deref(),
-            Some("attempt-b")
-        );
     }
 }
