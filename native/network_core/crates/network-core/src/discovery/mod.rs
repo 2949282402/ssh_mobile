@@ -10,10 +10,10 @@
 //!   的类型化映射。
 //! - [`snapshot`]：从本地传输 registry / 候选源构造 `DiscoverySnapshot`。
 //!
-//! Step 6 前保持 additive-first：v1 的 `upload_discovery` 命令、`peer_presence`
-//! 处理、`lookup` 路径全部保留；本模块只建立新生命周期。`state.relay_control`
-//! （v2 控制面 sink）在 Step 6/7 才接线，因此当前 hooks 在控制面未接线时是安全的
-//! no-op。
+//! transport-network v2 之后：v1 的 `upload_discovery` 命令、`peer_presence`
+//! 处理、`lookup` 路径已在 Step 11 删除；本模块是 Discovery 生命周期唯一实现。
+//! `state.relay_control`（v2 控制面 sink）承载 DiscoveryPublish/DiscoveryAck；
+//! 控制面未接线时 hooks 是安全的 no-op。
 
 mod local_discovery;
 mod publisher;

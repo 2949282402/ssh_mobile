@@ -201,8 +201,8 @@ pub(crate) async fn configure_runtime(
         *tcp_accept_task = Some(tcp_task_id);
     }
     // transport-network v2：运行时配置完成（identity + 本地候选已就绪）后初始化本地
-    // Discovery 生命周期（新 runtime_epoch + revision=1）。additive-first：不触碰 v1
-    // upload_discovery / peer_presence。
+    // Discovery 生命周期（新 runtime_epoch + revision=1）。v1 upload_discovery /
+    // peer_presence 已随 Step 11 删除。
     crate::discovery::begin_epoch(&state).await;
     Ok(())
 }
