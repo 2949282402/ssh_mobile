@@ -183,7 +183,7 @@ impl ConnectionOrchestrator {
         // 1. RESOLVING（§10）：Resolve 是每次建连前的权威入口。
         // -----------------------------------------------------------------
         self.set_stage(OrchestratorState::Resolving);
-        let resolved = self.resolve(peer_id).await?;
+        let resolved = self.resolve(peer_id, &peer).await?;
         self.set_stage(OrchestratorState::Resolved);
 
         let remote_epoch = resolved_runtime_epoch(&resolved);
@@ -374,7 +374,17 @@ impl ConnectionOrchestrator {
     }
 
     /// Resolve 阶段：控制面可用时走服务器权威解析（§10），否则退化为本地直连。
-    async fn resolve(&self, peer_id: &str) -> Result<ResolvedPeer, ProtocolError> {
+    ///
+    /// §13 v1 LAN 回退：Resolve 仍是 peer discovery/candidates 的权威入口，但
+    /// OFFLINE / NOT_READY / UNKNOWN 且本地 PeerConfig 配置了直连 endpoint 时，退化为
+    /// 一次有界本地直连（remote_epoch = None，候选 = 配置 endpoint，仍在同一个
+    /// DIRECT_CONNECT_WINDOW 内）；仅当既无控制面结果也无配置 endpoint 时才返回类型化
+    /// 错误（保持 fail-closed）。
+    async fn resolve(
+        &self,
+        peer_id: &str,
+        peer: &crate::runtime::PeerConfig,
+    ) -> Result<ResolvedPeer, ProtocolError> {
         let Some(control) = self.state.relay_control.read().await.clone() else {
             tracing::debug!(peer_id = %peer_id, "no control plane; using local direct mode");
             return Ok(ResolvedPeer::Ready { discovery: None });
@@ -386,30 +396,8 @@ impl ConnectionOrchestrator {
         let resolver = DiscoveryResolver::new(control);
         match tokio::time::timeout(RESOLVE_TIMEOUT, resolver.resolve(peer_id)).await {
             Ok(Ok(resolved)) => match resolved {
-                ResolvedPeer::Ready { .. } => Ok(resolved),
-                ResolvedPeer::Offline => Err(protocol_error_with_peer(
-                    NetworkErrorCode::PeerOffline,
-                    "Relay peer is offline",
-                    "connect",
-                    peer_id,
-                )),
-                // §33 错误模型（PeerNotReady / ControlUnavailable / RelayUnavailable）在
-                // 本轮 wire 协议（network-protocol）中尚不存在；映射到最接近的既有码：
-                // NotReady → Timeout + RetryAfter；Unknown → RelayError。
-                ResolvedPeer::NotReady { retry_after_ms } => Err(protocol_error_with_retry(
-                    NetworkErrorCode::Timeout,
-                    "Relay peer discovery is not ready",
-                    "connect",
-                    Some(peer_id),
-                    network_protocol::RetryDisposition::RetryAfter,
-                    retry_after_ms / 1000,
-                )),
-                ResolvedPeer::Unknown { .. } => Err(protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay peer resolution is unavailable",
-                    "connect",
-                    peer_id,
-                )),
+                resolved @ ResolvedPeer::Ready { .. } => Ok(resolved),
+                non_ready => self.local_endpoint_fallback(peer_id, peer, non_ready),
             },
             Ok(Err(error)) => Err(relay_resolve_error(&error, peer_id)),
             Err(_) => Err(protocol_error_with_peer(
@@ -418,6 +406,52 @@ impl ConnectionOrchestrator {
                 "connect",
                 peer_id,
             )),
+        }
+    }
+
+    /// §13：控制面返回 OFFLINE/NOT_READY/UNKNOWN 时的 v1 LAN 回退。对端配置了直连
+    /// endpoint → 退化为本地直连（Ready + discovery=None）；否则返回权威类型化错误。
+    fn local_endpoint_fallback(
+        &self,
+        peer_id: &str,
+        peer: &crate::runtime::PeerConfig,
+        resolved: ResolvedPeer,
+    ) -> Result<ResolvedPeer, ProtocolError> {
+        if peer.endpoint.is_some() {
+            tracing::debug!(
+                peer_id = %peer_id,
+                ?resolved,
+                "resolve is not READY but peer has a configured direct endpoint; attempting local direct"
+            );
+            return Ok(ResolvedPeer::Ready { discovery: None });
+        }
+        match resolved {
+            ResolvedPeer::Offline => Err(protocol_error_with_peer(
+                NetworkErrorCode::PeerOffline,
+                "Relay peer is offline",
+                "connect",
+                peer_id,
+            )),
+            // §33 错误模型（PeerNotReady / ControlUnavailable / RelayUnavailable）在
+            // 本轮 wire 协议（network-protocol）中尚不存在；映射到最接近的既有码：
+            // NotReady → Timeout + RetryAfter；Unknown → RelayError。
+            ResolvedPeer::NotReady { retry_after_ms } => Err(protocol_error_with_retry(
+                NetworkErrorCode::Timeout,
+                "Relay peer discovery is not ready",
+                "connect",
+                Some(peer_id),
+                network_protocol::RetryDisposition::RetryAfter,
+                retry_after_ms / 1000,
+            )),
+            ResolvedPeer::Unknown { .. } => Err(protocol_error_with_peer(
+                NetworkErrorCode::RelayError,
+                "Relay peer resolution is unavailable",
+                "connect",
+                peer_id,
+            )),
+            ResolvedPeer::Ready { .. } => {
+                unreachable!("local_endpoint_fallback is only invoked for non-READY statuses")
+            }
         }
     }
 
@@ -1016,7 +1050,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_is_the_authoritative_gate_before_connect() {
-        // §10/§40：每次 connect 前先 Resolve；OFFLINE 直接失败，不进入 Direct。
+        // §10/§40：每次 connect 前先 Resolve；OFFLINE 且无本地配置 endpoint 时直接
+        // 失败，不进入 Direct（fail-closed）。
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
@@ -1025,7 +1060,7 @@ mod tests {
         let control = StubControl::new(ResolveStatus::Offline, None);
         *state.relay_control.write().await = Some(control);
         let orchestrator = ConnectionOrchestrator::new(state);
-        let result = orchestrator.resolve("peer-b").await;
+        let result = orchestrator.resolve("peer-b", &peer_without_endpoint()).await;
         assert!(matches!(
             result,
             Err(error) if error.code == NetworkErrorCode::PeerOffline as i32
@@ -1041,14 +1076,17 @@ mod tests {
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
         let orchestrator = ConnectionOrchestrator::new(state);
-        let resolved = orchestrator.resolve("peer-b").await.expect("local direct");
+        let resolved = orchestrator
+            .resolve("peer-b", &peer_without_endpoint())
+            .await
+            .expect("local direct");
         assert_eq!(resolved_runtime_epoch(&resolved), None);
         assert!(matches!(resolved, ResolvedPeer::Ready { discovery: None }));
     }
 
     #[tokio::test]
     async fn resolve_not_ready_maps_to_retriable_timeout() {
-        // §10：NOT_READY → 可短暂重试（Timeout + RetryAfter）。
+        // §10：NOT_READY 且无本地配置 endpoint → 可短暂重试（Timeout + RetryAfter）。
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
@@ -1057,7 +1095,9 @@ mod tests {
         let control = StubControl::new(ResolveStatus::NotReady, None);
         *state.relay_control.write().await = Some(control);
         let orchestrator = ConnectionOrchestrator::new(state);
-        let result = orchestrator.resolve("peer-b").await;
+        let result = orchestrator
+            .resolve("peer-b", &peer_without_endpoint())
+            .await;
         assert!(matches!(
             result,
             Err(error)
@@ -1065,6 +1105,64 @@ mod tests {
                     && error.retry_disposition
                         == network_protocol::RetryDisposition::RetryAfter as i32
         ));
+    }
+
+    #[tokio::test]
+    async fn offline_resolve_with_configured_endpoint_falls_back_to_local_direct() {
+        // §13：Resolve 仍是权威入口，但 OFFLINE + 本地配置直连 endpoint → 退化为本地
+        // 直连（remote_epoch = None，候选 = 配置 endpoint），连接仍可经 Direct 成功。
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        let control = StubControl::new(ResolveStatus::Offline, None);
+        *state.relay_control.write().await = Some(control);
+        let orchestrator = ConnectionOrchestrator::new(state);
+        let peer = crate::runtime::PeerConfig {
+            endpoint: Some("192.168.1.20:41020".parse().expect("test endpoint")),
+            identity_public_key: [7u8; 32],
+            e2e_public_key: [8u8; 32],
+        };
+        let resolved = orchestrator
+            .resolve("peer-b", &peer)
+            .await
+            .expect("offline with configured endpoint should fall back to local direct");
+        assert_eq!(resolved_runtime_epoch(&resolved), None);
+        assert!(matches!(resolved, ResolvedPeer::Ready { discovery: None }));
+    }
+
+    #[tokio::test]
+    async fn not_ready_resolve_with_configured_endpoint_falls_back_to_local_direct() {
+        // §13：NOT_READY + 本地配置直连 endpoint → 同样退化为一次有界本地直连。
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        let control = StubControl::new(ResolveStatus::NotReady, None);
+        *state.relay_control.write().await = Some(control);
+        let orchestrator = ConnectionOrchestrator::new(state);
+        let peer = crate::runtime::PeerConfig {
+            endpoint: Some("127.0.0.1:40000".parse().expect("test endpoint")),
+            identity_public_key: [7u8; 32],
+            e2e_public_key: [8u8; 32],
+        };
+        let resolved = orchestrator
+            .resolve("peer-b", &peer)
+            .await
+            .expect("not-ready with configured endpoint should fall back to local direct");
+        assert_eq!(resolved_runtime_epoch(&resolved), None);
+        assert!(matches!(resolved, ResolvedPeer::Ready { discovery: None }));
+    }
+
+    /// 构造一个没有配置直连 endpoint 的 PeerConfig（测试 resolve 权威失败路径用）。
+    fn peer_without_endpoint() -> crate::runtime::PeerConfig {
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [0u8; 32],
+            e2e_public_key: [0u8; 32],
+        }
     }
 
     /// 预置 Resolve 状态的 mock 控制面（测试用）。

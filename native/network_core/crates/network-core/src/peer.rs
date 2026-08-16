@@ -12,6 +12,7 @@ use network_transport::{TcpTransport, Transport, WebSocketTransport};
 use quinn::{Connection, Endpoint};
 use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
@@ -33,12 +34,20 @@ use crate::runtime::{
     PeerConfig, RuntimeState, SessionAdmissionLease, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
     PEER_CONNECT_TIMEOUT,
 };
-use crate::session::{ActiveRoute, GenericRouteScope, SessionId};
+use crate::session::{ActiveRoute, GenericRouteScope, SessionAdmissionError, SessionId};
 
 const STUN_SERVERS_ENV: &str = "SSH_MOBILE_STUN_SERVERS";
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
 const GENERIC_ROUTE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const GENERIC_ROUTE_TASK_START_TIMEOUT: Duration = Duration::from_secs(1);
+/// Direct 阶段中 QUIC race 的领先预算（§15）：先给 QUIC 候选一个子预算，然后用窗口
+/// 剩余预算跑 generic（TCP/WebSocket）候选。避免 QUIC 候选被黑洞/超时耗尽整个 Direct
+/// 窗口时，仅 TCP/WS 可达的 peer 被饿死而错误回退 Relay。
+const QUIC_LEAD_BUDGET: Duration = Duration::from_millis(2500);
+/// TCP fallback accept 循环在瞬态错误（EMFILE/ENOBUFS/aborted）后的退避间隔，避免
+/// 热点重试（§40）。
+const TCP_ACCEPT_RETRY_BACKOFF: Duration = Duration::from_millis(50);
+const TCP_ACCEPT_RETRY_BACKOFF_MAX: Duration = Duration::from_millis(500);
 
 pub(crate) struct AuthenticatedGenericRoute {
     pub(crate) scope: GenericRouteScope,
@@ -462,14 +471,14 @@ pub(crate) async fn connect_direct_with_crypto(
                     if authenticated_peer_id != expected_peer_id_for_resolver {
                         return Err(crate::crypto_handshake::CryptoHandshakeError::Failed);
                     }
-                    let admission = state
-                        .admit_authenticated_session(
-                            &authenticated_peer_id,
-                            Some(expected_session_id),
-                            &remote_session_binding,
-                        )
-                        .await
-                        .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
+                    let admission = admit_single_winner(
+                        &state,
+                        &authenticated_peer_id,
+                        Some(expected_session_id),
+                        &remote_session_binding,
+                    )
+                    .await
+                    .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
                     Ok((admission.session_id.wire_key(), admission))
                 }
             },
@@ -493,6 +502,35 @@ pub(crate) async fn connect_direct_with_crypto(
         )
     })?;
     Ok((connection, crypto, admission))
+}
+
+/// Single-winner Session admission（§18/§40 Concurrency）。
+///
+/// `connect_direct_candidates_with_crypto` 并发 race 多个 candidate 时，每个 candidate
+/// 都会走到 `admit_authenticated_session`。若 winner 已把 route 挂到 Session（state →
+/// Connected），loser 迟到的 admit 会触发 `ReplaceWithNew`：拆掉刚挂载的 winning route，
+/// 双方都掉线。本 guard 在 admit 前重查当前 Session 状态——仍处于 in-flight（未挂载、
+/// 未被替换）才继续 admit，否则视为 loser 拒绝，绝不触发替换。只服务发起方候选
+/// （expected_session_id 已知）；应答方 simultaneous connect 的 Initialize 语义不受影响。
+async fn admit_single_winner(
+    state: &RuntimeState,
+    peer_id: &str,
+    expected_session_id: Option<SessionId>,
+    remote_session_binding: &str,
+) -> Result<SessionAdmissionLease, SessionAdmissionError> {
+    // Session 已 Connected（winner 已挂载 route）：后来的 candidate 是 loser，拒绝。
+    if state.sessions.is_connected(peer_id).await {
+        return Err(SessionAdmissionError::StaleSession);
+    }
+    // 期望的 Session 已被替换/销毁：同样是 loser。
+    if let Some(expected) = expected_session_id {
+        if state.sessions.current_session_id(peer_id).await != Some(expected) {
+            return Err(SessionAdmissionError::StaleSession);
+        }
+    }
+    state
+        .admit_authenticated_session(peer_id, expected_session_id, remote_session_binding)
+        .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -563,6 +601,10 @@ async fn connect_direct_candidates_with_crypto(
 /// Route selection keeps QUIC as the first direct candidate, then falls back
 /// to authenticated TCP and finally a binary WebSocket route. Each generic
 /// route is admitted only after the same identity proof used by QUIC.
+///
+/// §15/§37：Direct 窗口被切成两段——QUIC 候选并行竞争 `min(window, QUIC_LEAD_BUDGET)`，
+/// 然后用窗口**剩余**预算跑 generic（TCP/WebSocket）候选。这样 QUIC 被黑洞/超时
+/// 耗尽后，仅 TCP/WS 可达的 peer 仍能在窗口内走 generic 成功，而不是被饿死回退 Relay。
 pub(crate) async fn connect_direct_or_generic(
     attempt: DirectRouteAttempt,
 ) -> Result<ConnectedRoute, ProtocolError> {
@@ -579,37 +621,69 @@ pub(crate) async fn connect_direct_or_generic(
         connect_window,
     } = attempt;
     let generic_candidates = candidates.clone();
-    match connect_direct_candidates_with_crypto(
-        endpoint,
-        candidates,
-        Arc::clone(&identity),
-        expected_peer_public_key,
-        peer_id.clone(),
-        attempt_id,
-        connect_window,
-        session_binding.clone(),
-        Arc::clone(&state),
-        session_id,
+    let started = Instant::now();
+    // QUIC race 领先预算（不改变 DIRECT_CONNECT_WINDOW 的语义：它仍是整个 Direct 阶段
+    // 的总窗口）。
+    let quic_budget = connect_window.min(QUIC_LEAD_BUDGET);
+
+    // 1) QUIC 候选并行竞争（子预算内）。
+    let quic_result = tokio::time::timeout(
+        quic_budget,
+        connect_direct_candidates_with_crypto(
+            endpoint,
+            candidates,
+            Arc::clone(&identity),
+            expected_peer_public_key,
+            peer_id.clone(),
+            attempt_id,
+            quic_budget,
+            session_binding.clone(),
+            Arc::clone(&state),
+            session_id,
+        ),
     )
-    .await
-    {
-        Ok((connection, crypto, admission)) => Ok(ConnectedRoute::Quic {
-            connection,
-            crypto,
-            admission,
-        }),
-        Err(quic_error) => connect_generic_candidates(
+    .await;
+    let quic_fallback_error = match quic_result {
+        Ok(Ok((connection, crypto, admission))) => {
+            return Ok(ConnectedRoute::Quic {
+                connection,
+                crypto,
+                admission,
+            });
+        }
+        Ok(Err(error)) => error,
+        Err(_) => protocol_error_with_peer(
+            NetworkErrorCode::Timeout,
+            "Direct QUIC window elapsed",
+            "connect",
+            &peer_id,
+        ),
+    };
+
+    // 2) QUIC 未胜出：用窗口剩余预算跑 generic（TCP/WS）候选。
+    let remaining = connect_window.saturating_sub(started.elapsed());
+    let generic_result = tokio::time::timeout(
+        remaining,
+        connect_generic_candidates(
             generic_candidates,
             identity,
             expected_peer_public_key,
-            peer_id,
+            peer_id.clone(),
             session_binding,
             state,
             session_id,
-        )
-        .await
-        .map(ConnectedRoute::Generic)
-        .map_err(|_| quic_error),
+        ),
+    )
+    .await;
+    match generic_result {
+        Ok(Ok(route)) => Ok(ConnectedRoute::Generic(route)),
+        Ok(Err(_)) => Err(quic_fallback_error),
+        Err(_) => Err(protocol_error_with_peer(
+            NetworkErrorCode::Timeout,
+            "Direct connect window elapsed",
+            "connect",
+            &peer_id,
+        )),
     }
 }
 
@@ -802,14 +876,14 @@ async fn connect_tcp_route(
                     if authenticated_peer_id != resolver_peer_id {
                         return Err(crate::crypto_handshake::CryptoHandshakeError::Failed);
                     }
-                    let admission = resolver_state
-                        .admit_authenticated_session(
-                            &resolver_peer_id,
-                            Some(expected_session_id),
-                            &remote_session_binding,
-                        )
-                        .await
-                        .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
+                    let admission = admit_single_winner(
+                        &resolver_state,
+                        &resolver_peer_id,
+                        Some(expected_session_id),
+                        &remote_session_binding,
+                    )
+                    .await
+                    .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
                     Ok((admission.session_id.wire_key(), admission))
                 }
             },
@@ -891,14 +965,14 @@ async fn connect_websocket_route(
                     if authenticated_peer_id != resolver_peer_id {
                         return Err(crate::crypto_handshake::CryptoHandshakeError::Failed);
                     }
-                    let admission = resolver_state
-                        .admit_authenticated_session(
-                            &resolver_peer_id,
-                            Some(expected_session_id),
-                            &remote_session_binding,
-                        )
-                        .await
-                        .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
+                    let admission = admit_single_winner(
+                        &resolver_state,
+                        &resolver_peer_id,
+                        Some(expected_session_id),
+                        &remote_session_binding,
+                    )
+                    .await
+                    .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
                     Ok((admission.session_id.wire_key(), admission))
                 }
             },
@@ -1287,15 +1361,63 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
 /// Accepts TCP fallback sockets on the same numeric port as the QUIC UDP
 /// endpoint. A socket is not admitted into a Session until the generic
 /// Ed25519/Session-binding handshake succeeds.
+///
+/// §40：瞬态 accept 错误（EMFILE / ENOBUFS / aborted / reset 等）只记录并退避后继续，
+/// 绝不终止 inbound TCP/WS 回退；只有致命错误（listener 已关闭）或任务被取消才退出。
 pub(crate) async fn accept_tcp_connections(listener: TcpListener, state: Arc<RuntimeState>) {
+    accept_tcp_loop(listener, state, Box::new(ListenerAccept)).await;
+}
+
+/// TCP fallback accept 步骤抽象（§40 可注入，便于测试注入瞬态错误）。
+trait TcpAcceptStep: Send {
+    fn accept<'a>(
+        &'a mut self,
+        listener: &'a TcpListener,
+    ) -> Pin<
+        Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>,
+    >;
+}
+
+/// 生产 accept 步骤：直接委托给 tokio 的 `TcpListener::accept`。
+struct ListenerAccept;
+
+impl TcpAcceptStep for ListenerAccept {
+    fn accept<'a>(
+        &'a mut self,
+        listener: &'a TcpListener,
+    ) -> Pin<
+        Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>,
+    > {
+        Box::pin(listener.accept())
+    }
+}
+
+/// TCP fallback accept 核心循环。`accept` 步骤可注入，便于测试注入瞬态错误。
+async fn accept_tcp_loop(
+    listener: TcpListener,
+    state: Arc<RuntimeState>,
+    mut accept: Box<dyn TcpAcceptStep>,
+) {
+    let mut backoff = TCP_ACCEPT_RETRY_BACKOFF;
     loop {
-        let (stream, peer_address) = match listener.accept().await {
+        let (stream, peer_address) = match accept.accept(&listener).await {
             Ok(connection) => connection,
             Err(error) => {
-                tracing::debug!(%error, "TCP fallback accept loop stopped");
-                return;
+                if accept_error_is_fatal(&error) {
+                    tracing::debug!(%error, "TCP fallback accept loop stopped");
+                    return;
+                }
+                tracing::debug!(
+                    %error,
+                    "transient TCP fallback accept error; retrying after backoff"
+                );
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(TCP_ACCEPT_RETRY_BACKOFF_MAX);
+                continue;
             }
         };
+        // 一次成功 accept 说明瞬态资源压力已缓解：复位退避。
+        backoff = TCP_ACCEPT_RETRY_BACKOFF;
         let state = Arc::clone(&state);
         let supervisor = Arc::clone(&state.task_supervisor);
         let _ = supervisor.spawn_runtime("incoming-tcp-handshake", async move {
@@ -1330,6 +1452,15 @@ pub(crate) async fn accept_tcp_connections(listener: TcpListener, state: Arc<Run
             }
         });
     }
+}
+
+/// accept 错误是否致命：仅 listener 已关闭（fd 失效）视为致命；其余（EMFILE / ENOBUFS /
+/// aborted / reset / interrupted 等）都是瞬态错误，应退避重试。
+fn accept_error_is_fatal(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::InvalidInput | std::io::ErrorKind::Unsupported
+    )
 }
 
 async fn accept_authenticated_generic(
@@ -2150,6 +2281,272 @@ mod tests {
                 .expect("read runtime-stop socket");
             assert_eq!(read, 0);
         });
+    }
+
+    #[tokio::test]
+    async fn losing_candidate_admit_never_replaces_attached_winner_session() {
+        // §18/§40：race 两个 candidate 时，winner 已 attach route（Session Connected）后，
+        // loser 迟到的 admit 不得触发 ReplaceWithNew——否则拆掉刚挂载的 winning route，
+        // 双方都掉线。
+        let state = new_test_state().await;
+        let peer_id = "candidate-race-peer";
+        let session_id = started_session(&state, peer_id).await;
+        let binding = "11".repeat(16);
+
+        // winner：第一次 admit 成功，保持 in-flight Session（Initialize）。
+        let winner = admit_single_winner(&state, peer_id, Some(session_id), &binding)
+            .await
+            .expect("winner admission should succeed");
+        assert_eq!(winner.session_id, session_id);
+
+        // winner 挂载一条 generic route（Session → Connected）。
+        let (connection, _server) = generic_connection_pair().await;
+        let mut scope = started_generic_scope(&state, peer_id, session_id, connection).await;
+        state
+            .sessions
+            .attach_generic_route_for_session(peer_id, Some(session_id), &mut scope)
+            .await
+            .expect("attach winner generic route");
+        assert!(state.sessions.is_connected(peer_id).await);
+
+        // loser：同 (peer, expected_session_id) 的迟到 admit 必须被拒绝，绝不替换。
+        assert!(
+            admit_single_winner(&state, peer_id, Some(session_id), &binding)
+                .await
+                .is_err(),
+            "losing candidate must not trigger a Session replacement"
+        );
+
+        // winner 的 Session 与 route 仍然存活（无 disconnect）。
+        assert_eq!(
+            state.sessions.current_session_id(peer_id).await,
+            Some(session_id)
+        );
+        assert!(state.sessions.is_connected(peer_id).await);
+
+        let current_route = state.sessions.close(peer_id).await.expect("close Session");
+        current_route.close().await;
+        assert_eq!(state.task_supervisor.active_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn tcp_fallback_accept_loop_survives_transient_accept_errors() {
+        // §40：瞬态 accept 错误（EMFILE/aborted/reset 等）只退避重试，不得终止 inbound
+        // TCP/WS 回退；后续真实连接仍被接受。
+        let state = new_test_state().await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind accept listener");
+        let address = listener.local_addr().expect("accept listener address");
+        let loop_task = tokio::spawn(accept_tcp_loop(
+            listener,
+            Arc::clone(&state),
+            Box::new(InjectOnceTransientAcceptError { injected: true }),
+        ));
+        // 等循环处理注入的错误 + 退避。
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // 建立一条真实连接：循环必须继续 accept 并派生 handshake 任务。
+        let _client = TcpStream::connect(address)
+            .await
+            .expect("connect after transient accept error");
+        timeout(Duration::from_secs(2), async {
+            loop {
+                if state.task_supervisor.active_count() >= 1 {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("accept loop did not process the connection after the transient error");
+        loop_task.abort();
+    }
+
+    #[tokio::test]
+    async fn tcp_fallback_accept_loop_exits_on_fatal_listener_error() {
+        // §40：只有致命错误（listener 已关闭 / fd 失效）才终止 accept 循环。
+        let state = new_test_state().await;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind accept listener");
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(1),
+            accept_tcp_loop(listener, Arc::clone(&state), Box::new(FatalAcceptError)),
+        )
+        .await;
+        assert!(
+            outcome.is_ok(),
+            "fatal accept errors must terminate the TCP fallback accept loop"
+        );
+    }
+
+    /// 注入一次瞬态 accept 错误，之后委托真实 `TcpListener::accept` 的测试 accept 步骤。
+    struct InjectOnceTransientAcceptError {
+        injected: bool,
+    }
+
+    impl TcpAcceptStep for InjectOnceTransientAcceptError {
+        fn accept<'a>(
+            &'a mut self,
+            listener: &'a TcpListener,
+        ) -> Pin<
+            Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>,
+        > {
+            if self.injected {
+                self.injected = false;
+                Box::pin(async {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionAborted,
+                        "injected transient accept error",
+                    ))
+                })
+            } else {
+                Box::pin(listener.accept())
+            }
+        }
+    }
+
+    /// 始终返回致命 accept 错误的测试 accept 步骤（listener 已关闭）。
+    struct FatalAcceptError;
+
+    impl TcpAcceptStep for FatalAcceptError {
+        fn accept<'a>(
+            &'a mut self,
+            _listener: &'a TcpListener,
+        ) -> Pin<
+            Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>,
+        > {
+            Box::pin(async {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "listener closed",
+                ))
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generic_direct_route_gets_budget_when_quic_candidates_are_blackholed() {
+        // §15/§37：QUIC 候选被黑洞（UDP socket 收包但不响应）时不得耗尽整个 Direct 窗口——
+        // generic（TCP/WebSocket）候选应拿到自己的时间片；仅 TCP 可达的 peer 在窗口内走
+        // generic 成功，而不是直接超时回退 Relay。
+        let state = new_test_state().await;
+        let peer_id = "generic-budget-peer";
+        let local_peer_id = "generic-budget-local";
+
+        // QUIC 黑洞：绑定 UDP socket 但从不读取/响应 → QUIC candidate 挂到子预算超时。
+        let blackhole = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind UDP blackhole");
+        let blackhole_address = blackhole.local_addr().expect("blackhole address");
+
+        // 可用的 generic（TCP）路由。
+        let (responder_address, release_tx, responder_task) =
+            spawn_tcp_generic_responder(peer_id, local_peer_id).await;
+
+        // 发起方 QUIC endpoint（仅用于发起 candidate 连接）。
+        let endpoint_manager = network_quic::QuicEndpointManager::new(
+            "127.0.0.1:0".parse().expect("wildcard address"),
+            Arc::new(PathManager::new()),
+        )
+        .expect("create QUIC endpoint");
+        let endpoint = endpoint_manager.endpoint;
+        let endpoint_for_cleanup = endpoint.clone();
+
+        let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+            local_peer_id.to_string(),
+            [41u8; 32],
+            [51u8; 32],
+        ));
+        let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+            peer_id.to_string(),
+            [42u8; 32],
+            [52u8; 32],
+        ));
+        let remote_public_key = remote_identity.public_identity_key().to_bytes();
+        let session_id = started_session(&state, peer_id).await;
+
+        let candidates = vec![
+            Candidate::new(blackhole_address, CandidateKind::Lan, "test-blackhole".into()),
+            Candidate::new(responder_address, CandidateKind::Lan, "test-tcp".into()),
+        ];
+
+        let attempt = DirectRouteAttempt {
+            state: Arc::clone(&state),
+            endpoint,
+            candidates,
+            identity: local_identity,
+            expected_peer_public_key: remote_public_key,
+            peer_id: peer_id.to_string(),
+            session_binding: session_id.wire_key(),
+            session_id,
+            attempt_id: "generic-budget-test".into(),
+            connect_window: crate::connect::DIRECT_CONNECT_WINDOW,
+        };
+
+        // QUIC 被黑洞耗掉自己的子预算后，generic 用窗口剩余预算走 TCP 成功。
+        let route = tokio::time::timeout(
+            Duration::from_secs(5),
+            connect_direct_or_generic(attempt),
+        )
+        .await
+        .expect("direct phase must finish within the window")
+        .expect("peer reachable only via TCP must succeed via the generic path within the window");
+
+        let ConnectedRoute::Generic(generic) = route else {
+            panic!("expected a generic route for a TCP-only reachable peer");
+        };
+        generic.scope.close().await;
+
+        let _ = release_tx.send(());
+        responder_task
+            .await
+            .expect("generic responder should exit");
+        endpoint_for_cleanup.close(quinn::VarInt::from_u32(0), b"test complete");
+    }
+
+    /// 启动一个接受单条 TCP 连接并完成 generic responder 握手的测试对端。
+    async fn spawn_tcp_generic_responder(
+        peer_id: &str,
+        local_peer_id: &str,
+    ) -> (SocketAddr, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind generic responder");
+        let address = listener.local_addr().expect("responder address");
+        let peer_id = peer_id.to_string();
+        let local_peer_id = local_peer_id.to_string();
+        let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+            peer_id,
+            [42u8; 32],
+            [52u8; 32],
+        ));
+        let local_public_key = DeviceIdentity::from_private_keys(
+            local_peer_id.clone(),
+            [41u8; 32],
+            [51u8; 32],
+        )
+        .public_identity_key()
+        .to_bytes();
+        let (release_tx, release_rx) = oneshot::channel();
+        let responder_task = tokio::spawn(async move {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("accept generic responder connection");
+            let mut connection = GenericConnection::from_transport(Transport::Tcp(
+                TcpTransport::from_stream(stream),
+            ));
+            let trusted_peer_keys =
+                tokio::sync::RwLock::new(HashMap::from([(local_peer_id, local_public_key)]));
+            let _ = authenticate_responder(
+                &mut connection,
+                remote_identity,
+                &trusted_peer_keys,
+                move |_authenticated_peer_id, _remote_session_binding| {
+                    async move { Ok(("33".repeat(16), ())) }
+                },
+            )
+            .await;
+            // 保持连接存活直到测试释放。
+            let _ = release_rx.await;
+        });
+        (address, release_tx, responder_task)
     }
 
     #[test]
