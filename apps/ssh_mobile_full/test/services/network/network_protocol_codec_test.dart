@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import 'package:ssh_mobile/app/network_v1_adapters.dart';
+import 'package:ssh_mobile/services/network/network_protocol_codec.dart';
 
 /// 执行固定字节 v1 编解码和类型化事件往返测试。
 void main() {
