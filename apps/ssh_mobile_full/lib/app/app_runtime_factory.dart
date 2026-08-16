@@ -187,17 +187,6 @@ final class AppRuntimeFactory {
         sshNativeStreamConnector.closeAll,
         priority: _CleanupPriority.ssh,
       );
-      // 已登记 native 对端的端点索引（endpoint → peer_id）：由 App 在
-      // upsertPeer 登记对端时维护。未命中时 SSH/SFTP 工厂回退原始 TCP，
-      // 保持任意主机 SSH 的既有行为。
-      final enrolledPeerEndpoints = <String, String>{};
-      String? resolvePeerIdForConfig(connection_core.ConnectionConfig config) {
-        return resolveSshNativePeerId(
-          config,
-          enrolledPeerEndpoints: enrolledPeerEndpoints,
-        );
-      }
-
       final sshService = SshService(
         connectionRepository: runtimeConnectionRepository,
         credentialRepository: runtimeCredentialRepository,
@@ -205,7 +194,6 @@ final class AppRuntimeFactory {
         terminalMetadataStore: terminalMetadataStore,
         appSettings: appSettings,
         nativeStreamConnector: sshNativeStreamConnector,
-        peerIdResolver: resolvePeerIdForConfig,
       );
       final terminalSshManager = AppTerminalSshSessionManager(sshService);
       cleanup.add(terminalSshManager.close, priority: _CleanupPriority.ssh);
@@ -294,7 +282,6 @@ final class AppRuntimeFactory {
         credentialRepository: runtimeCredentialRepository,
         hostKeyRepository: runtimeHostKeyRepository,
         nativeStreamConnector: sshNativeStreamConnector,
-        peerIdResolver: resolvePeerIdForConfig,
       );
       cleanup.add(sftpService.dispose, priority: _CleanupPriority.sftp);
       final monitoringModule = monitoring.MonitoringModule();

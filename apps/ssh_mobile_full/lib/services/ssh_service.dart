@@ -181,10 +181,6 @@ class SshService extends ChangeNotifier
   bool get _canUseNativeTransport =>
       _nativeStreamConnector != null && _peerIdResolver != null;
 
-  /// 测试观测点：native ReliableStream 传输是否已接线。
-  @visibleForTesting
-  bool get canUseNativeTransport => _canUseNativeTransport;
-
   @override
   List<SshSession> get sessions => _sessionsView;
 

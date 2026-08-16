@@ -9,7 +9,6 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:connection_core/connection_core.dart';
 import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 import 'package:ssh_core/ssh_core.dart';
@@ -17,21 +16,6 @@ import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
 /// 打开 AppRuntime-owned native command gateway 的提供者。
 typedef SshNativeGatewayProvider = Future<NetworkCommandGateway> Function();
-
-/// 从已登记的 native 对端为 SSH/SFTP [ConnectionConfig] 解析 peer 标识。
-///
-/// [enrolledPeerEndpoints] 是 native peer 目录的端点索引（endpoint → peer_id，
-/// endpoint 使用 `host:port`，兼容仅 host），由 App 在 upsertPeer 登记对端时
-/// 维护。config 的端点在索引中命中时返回对应 peer_id；未登记对端返回 null，
-/// SSH/SFTP 工厂会回退到原始 TCP Socket（保持任意主机 SSH 的既有行为）。
-String? resolveSshNativePeerId(
-  ConnectionConfig config, {
-  required Map<String, String> enrolledPeerEndpoints,
-}) {
-  if (enrolledPeerEndpoints.isEmpty) return null;
-  return enrolledPeerEndpoints['${config.host}:${config.port}'] ??
-      enrolledPeerEndpoints[config.host];
-}
 
 /// 基于 native ReliableStream 的 SSH 流连接器。
 final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
