@@ -2,7 +2,6 @@ package relay
 
 import (
 	"context"
-	"encoding/hex"
 	"hash/fnv"
 	"sync"
 	"time"
@@ -42,10 +41,6 @@ type peer struct {
 	// monitorHeartbeats 以此判定僵尸）。区别于 lastSeen（任何帧都更新），它只被
 	// heartbeat 帧刷新，与 presence 租约的续期语义一致。
 	lastHeartbeat time.Time
-	// v2Control 标记该连接是 /v2/control（protobuf 二进制控制面，Step 7）而非 v1
-	// JSON 控制面。它决定 hub.read 的帧分派与 peer 事件推送到该连接的帧编码。连接
-	// 建立后不可变，因此无锁读取安全。
-	v2Control bool
 	// relayHost 是 /v2/control 升级请求的 Host 头，用于构造自包含的
 	// relay_data_endpoint（wss://<host>/v2/relay/<reservation_id>）。
 	relayHost string
@@ -55,45 +50,11 @@ type peer struct {
 	lastResolveTarget string
 }
 
-type session struct {
-	sender    string
-	receiver  string
-	expiresAt time.Time
-	accepted  bool
-	completed bool
-}
-
-type controlFrame struct {
-	Type            string        `json:"type"`
-	SessionID       string        `json:"session_id,omitempty"`
-	TargetID        string        `json:"target_id,omitempty"`
-	SenderID        string        `json:"sender_id,omitempty"`
-	DeviceID        string        `json:"device_id,omitempty"`
-	Payload         string        `json:"payload,omitempty"`
-	Timestamp       int64         `json:"timestamp,omitempty"`
-	ProtocolVersion uint32        `json:"protocol_version,omitempty"`
-	Online          *bool         `json:"online,omitempty"`
-	Generation      uint64        `json:"generation,omitempty"`
-	Peers           []peerSummary `json:"peers,omitempty"`
-	Capabilities    []string      `json:"capabilities,omitempty"`
-	Candidates      []string      `json:"candidates,omitempty"`
-}
-
-// peerSummary 是 presence_snapshot 的条目：在线设备的 device_id 与其当前
-// discovery generation。客户端据此重建本地设备列表并决定是否拉取最新 discovery。
-type peerSummary struct {
-	DeviceID   string `json:"device_id"`
-	Generation uint64 `json:"generation"`
-}
-
-// 推送发现控制面的帧类型（均经 peer.enqueue 以 TextMessage 下发，同 ready 帧）。
+// 推送发现控制面的帧类型（v2 控制面由 broadcastPeerHintV2 转成 protobuf hint）。
 const (
-	// framePresenceSnapshot 在设备首次上传 discovery_update 后回发：包含当前全部
-	// 在线设备的 {device_id, generation} 快照，作为该设备本地设备列表基线。
-	framePresenceSnapshot = "presence_snapshot"
-	// framePeerOnline 在设备首次上传 discovery_update 后广播：表示该设备上线。
+	// framePeerOnline 在设备首次发布 discovery 后广播：表示该设备上线。
 	framePeerOnline = "peer_online"
-	// framePeerUpdated 在设备 generation 变化时广播：表示该设备的 discovery 已更新。
+	// framePeerUpdated 在设备 discovery revision 变化时广播：表示该设备的 discovery 已更新。
 	framePeerUpdated = "peer_updated"
 	// framePeerOffline 在设备离线（sweeper 清理僵尸连接）时广播。
 	framePeerOffline = "peer_offline"
@@ -131,22 +92,21 @@ type presenceStore interface {
 }
 
 type hub struct {
-	config           Config
-	mutex            sync.Mutex
-	peers            map[string]*peer
-	transferSessions map[string]session
-	// v2Attempts 是 v2 异步 attempt（attempt_id → 发起设备）的路由注册表：服务端在
-	// 转发 ConnectivityOffer 时登记，ConnectivityAnswer/ProtocolError 据此回路由到
-	// 发起方。条目带过期时间，由 hub.prune 惰性清理。
-	v2Attempts  map[string]v2Attempt
+	config      Config
+	mutex       sync.Mutex
+	peers       map[string]*peer
 	presence    presenceStore
 	instanceID  string
 	presenceTTL time.Duration
-	admission   [admissionStripeCount]sync.Mutex
-	stop        chan struct{}
-	closeOnce   sync.Once
-	waitGroup   sync.WaitGroup
-	closed      bool
+	// v2Attempts 是 v2 异步 attempt（attempt_id → 发起设备）的路由注册表：服务端在
+	// 转发 ConnectivityOffer 时登记，ConnectivityAnswer/ProtocolError 据此回路由到
+	// 发起方。条目带过期时间，由 hub.prune 惰性清理。
+	v2Attempts map[string]v2Attempt
+	admission  [admissionStripeCount]sync.Mutex
+	stop       chan struct{}
+	closeOnce  sync.Once
+	waitGroup  sync.WaitGroup
+	closed     bool
 }
 
 // admissionStripeCount is the number of per-device admission lock stripes.
@@ -177,13 +137,12 @@ func (h *hub) lockAdmission(deviceID string) func() {
 func newHub(config Config) *hub {
 	config = withConfigDefaults(config)
 	h := &hub{
-		config:           config,
-		peers:            map[string]*peer{},
-		transferSessions: map[string]session{},
-		v2Attempts:       map[string]v2Attempt{},
-		instanceID:       config.InstanceID,
-		presenceTTL:      config.PresenceTTL,
-		stop:             make(chan struct{}),
+		config:      config,
+		peers:       map[string]*peer{},
+		v2Attempts:  map[string]v2Attempt{},
+		instanceID:  config.InstanceID,
+		presenceTTL: config.PresenceTTL,
+		stop:        make(chan struct{}),
 	}
 	h.waitGroup.Add(1)
 	go func() {
@@ -270,7 +229,6 @@ func (h *hub) close() {
 			peers = append(peers, value)
 		}
 		h.peers = map[string]*peer{}
-		h.transferSessions = map[string]session{}
 		h.mutex.Unlock()
 		for _, peer := range peers {
 			closePeer(peer)
@@ -359,11 +317,10 @@ func (h *hub) add(peer *peer) bool {
 			})
 		}
 		// 不再写占位 discovery：在线判定要求 presence 与 discovery 双有效 + 真实
-		// generation（>0）+ owner 一致（明确版 §13 收紧版）。连接建立后、设备真正
-		// 上传 discovery_update 之前，该设备不被 lookup/snapshot 视为可连接——§8
-		// 「上传 discovery 后才广播为 online」由此自然成立。discovery 只在设备上传
-		// discovery_update 时由 handleDiscoveryUpdate 写入（CAS 要求当前 presence
-		// owner）。
+		// revision（>0）+ owner 一致（明确版 §13 收紧版）。连接建立后、设备真正
+		// 发布 discovery 之前，该设备不被 resolve 视为可连接——§8「上传 discovery
+		// 后才广播为 online」由此自然成立。discovery 只在设备发布 DiscoveryPublish
+		// 时由 publishDiscoveryV2 写入（CAS 要求当前 presence owner）。
 	}
 	// Atomically re-check currency/closed and register the worker goroutines in
 	// the same h.mutex critical section that close() uses, so shutdown cannot
@@ -414,11 +371,6 @@ func (h *hub) disconnectConnection(deviceID, connectionID string) bool {
 		return false
 	}
 	delete(h.peers, deviceID)
-	for sessionID, s := range h.transferSessions {
-		if s.sender == deviceID || s.receiver == deviceID {
-			delete(h.transferSessions, sessionID)
-		}
-	}
 	h.mutex.Unlock()
 	if h.presence != nil {
 		_, _ = h.presence.ReleasePresence(context.Background(), deviceID, connectionID)
@@ -471,11 +423,6 @@ func (h *hub) disconnectDevice(deviceID string) {
 	if peer != nil {
 		delete(h.peers, deviceID)
 	}
-	for sessionID, current := range h.transferSessions {
-		if current.sender == deviceID || current.receiver == deviceID {
-			delete(h.transferSessions, sessionID)
-		}
-	}
 	h.mutex.Unlock()
 	if peer != nil {
 		// Release only this instance's current lease (CAS): the peer's deferred
@@ -524,12 +471,8 @@ func (h *hub) write(peer *peer) {
 func (h *hub) read(peer *peer) {
 	defer h.waitGroup.Done()
 	defer h.remove(peer)
-	if peer.v2Control {
-		// /v2/control 每帧最大为冻结契约的 MAX_RELAY_FRAME_BYTES（4+512KiB）。
-		peer.socket.SetReadLimit(v2.MAX_RELAY_FRAME_BYTES)
-	} else {
-		peer.socket.SetReadLimit(maxBinaryFrameBytes)
-	}
+	// /v2/control 每帧最大为冻结契约的 MAX_RELAY_FRAME_BYTES（4+512KiB）。
+	peer.socket.SetReadLimit(v2.MAX_RELAY_FRAME_BYTES)
 	for {
 		kind, data, err := peer.socket.ReadMessage()
 		if err != nil {
@@ -538,24 +481,14 @@ func (h *hub) read(peer *peer) {
 		h.mutex.Lock()
 		peer.lastSeen = time.Now()
 		h.mutex.Unlock()
-		if peer.v2Control {
-			// /v2/control 只接受 protobuf 二进制控制帧：一个 [4B BE 长度][RelayFrame]。
-			// Text 帧（v1 JSON）或 RelayDataFrame 都是协议违规 → 关闭连接。违规路径用
-			// 同步写冲刷 ProtocolError 再关闭（避免 closePeer 抢先丢帧）。
-			if kind != websocket.BinaryMessage {
-				h.sendV2ProtocolErrorSync(peer, 0, v2.ErrorCode_ERROR_CODE_PROTOCOL, "only binary control frames are allowed on /v2/control")
-				return
-			}
-			if !h.routeControlV2(peer, data) {
-				return
-			}
-			continue
+		// /v2/control 只接受 protobuf 二进制控制帧：一个 [4B BE 长度][RelayFrame]。
+		// Text 帧或 RelayDataFrame 都是协议违规 → 关闭连接。违规路径用同步写冲刷
+		// ProtocolError 再关闭（避免 closePeer 抢先丢帧）。
+		if kind != websocket.BinaryMessage {
+			h.sendV2ProtocolErrorSync(peer, 0, v2.ErrorCode_ERROR_CODE_PROTOCOL, "only binary control frames are allowed on /v2/control")
+			return
 		}
-		if kind == websocket.TextMessage {
-			h.routeControl(peer, data)
-		} else if kind == websocket.BinaryMessage {
-			h.routeBinary(peer, data)
-		} else {
+		if !h.routeControlV2(peer, data) {
 			return
 		}
 	}
@@ -600,64 +533,6 @@ func (p *peer) dequeue(frame outboundFrame) {
 	p.stateMutex.Unlock()
 }
 
-func (h *hub) routeBinary(sender *peer, data []byte) {
-	if !sender.allowFrame(len(data)) || len(data) < 25 || len(data) > maxBinaryFrameBytes || data[0] != 0x10 {
-		return
-	}
-	h.mutex.Lock()
-	isCurrent := h.peers[sender.deviceID] == sender
-	h.mutex.Unlock()
-	if !isCurrent {
-		return
-	}
-	sessionID := hex.EncodeToString(data[1:17])
-	h.mutex.Lock()
-	current, ok := h.transferSessions[sessionID]
-	if !ok || current.sender != sender.deviceID || !current.accepted || current.completed || time.Now().After(current.expiresAt) {
-		if ok && time.Now().After(current.expiresAt) {
-			delete(h.transferSessions, sessionID)
-		}
-		h.mutex.Unlock()
-		return
-	}
-	current.expiresAt = time.Now().Add(h.config.SessionTTL)
-	h.transferSessions[sessionID] = current
-	target := h.peers[current.receiver]
-	h.mutex.Unlock()
-	if target == nil {
-		return
-	}
-	copyData := append([]byte(nil), data...)
-	if !target.enqueue(outboundFrame{websocket.BinaryMessage, copyData}) {
-		go target.socket.Close()
-	}
-}
-
-// broadcast 把 frame 推给除 exceptDeviceID 外的所有本地 peer。按 routeBinary 的
-// 「锁内快照、锁外 enqueue」模式：快照在 h.mutex 下完成、enqueue 在锁外逐个执行，
-// 避免长持有互斥锁阻塞 read goroutine。enqueue 失败（对端积压或已关闭）则定向关闭，
-// 与现有转发路径的处置一致。推送发现帧（presence_snapshot/peer_online/peer_updated/
-// peer_offline）与跨实例事件都在此聚合，供本地实例与 handleRelayEvent 复用。
-//
-// 注意：本方法只承载 v1 JSON 控制帧（TextMessage）。v2 /v2/control peer 只接收
-// protobuf 二进制帧，因此一律跳过；它们的同事件提示帧由 broadcastPeerHintV2 /
-// broadcastV2 单独推送，避免向 v2 控制面混入 v1 JSON 造成协议违规断连。
-func (h *hub) broadcast(exceptDeviceID string, frame outboundFrame) {
-	h.mutex.Lock()
-	peers := make([]*peer, 0, len(h.peers))
-	for deviceID, p := range h.peers {
-		if !p.v2Control && deviceID != exceptDeviceID {
-			peers = append(peers, p)
-		}
-	}
-	h.mutex.Unlock()
-	for _, p := range peers {
-		if !p.enqueue(frame) {
-			go p.socket.Close()
-		}
-	}
-}
-
 func (p *peer) allowFrame(size int) bool {
 	p.stateMutex.Lock()
 	defer p.stateMutex.Unlock()
@@ -692,11 +567,6 @@ func (h *hub) prune() {
 			return
 		case now := <-ticker.C:
 			h.mutex.Lock()
-			for id, value := range h.transferSessions {
-				if now.After(value.expiresAt) {
-					delete(h.transferSessions, id)
-				}
-			}
 			for id, attempt := range h.v2Attempts {
 				if now.After(attempt.expiresAt) {
 					delete(h.v2Attempts, id)

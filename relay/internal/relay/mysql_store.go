@@ -28,7 +28,7 @@ import (
 // strictly additive: existing enrollment/revocation rows and tables are
 // untouched, and the current stateless HMAC credential path keeps working as-is.
 // These tables exist so the auth path can be migrated onto durable records
-// without changing the v1 wire contract. MySQL remains the durable truth; Redis
+// without changing the device-plane wire contract. MySQL remains the durable truth; Redis
 // stays the rebuildable live-state layer (presence/discovery/nonce).
 var mysqlSchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS devices (

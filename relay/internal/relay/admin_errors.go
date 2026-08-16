@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-// adminErrorResponse 是独立于设备 v1 协议的管理端错误结构。
+// adminErrorResponse 是独立于设备传输协议的管理端错误结构。
 type adminErrorResponse struct {
 	Error adminErrorDetail `json:"error"`
 }

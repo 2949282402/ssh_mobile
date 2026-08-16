@@ -11,6 +11,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -34,7 +35,6 @@ func newV2TestServer(t *testing.T) (*Server, *httptest.Server) {
 		CredentialKey:   []byte(mysqlTestCredentialKey),
 		EnrollmentToken: "test-token",
 		CredentialTTL:   time.Hour,
-		SessionTTL:      time.Minute,
 		MaxConnections:  16,
 	})
 	t.Cleanup(server.Close)
@@ -134,18 +134,28 @@ func writeV2ControlFrame(t *testing.T, conn *websocket.Conn, frame *v2.RelayFram
 func readV2ControlFrame(t *testing.T, conn *websocket.Conn) *v2.RelayFrame {
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	kind, data, err := conn.ReadMessage()
+	frame, err := readV2ControlFrameNoFatal(conn)
 	if err != nil {
 		t.Fatalf("read v2 control frame: %v", err)
 	}
+	return frame
+}
+
+// readV2ControlFrameNoFatal 读取一帧 v2 控制帧；失败（超时/关闭/解码错）返回 error
+// 而非 t.Fatalf，供轮询循环使用。调用方负责设置读 deadline。
+func readV2ControlFrameNoFatal(conn *websocket.Conn) (*v2.RelayFrame, error) {
+	kind, data, err := conn.ReadMessage()
+	if err != nil {
+		return nil, err
+	}
 	if kind != websocket.BinaryMessage {
-		t.Fatalf("expected binary control frame, got message type %d", kind)
+		return nil, fmt.Errorf("expected binary control frame, got message type %d", kind)
 	}
 	frame, err := v2.DecodeControl(data)
 	if err != nil {
-		t.Fatalf("decode v2 control frame: %v", err)
+		return nil, err
 	}
-	return frame
+	return frame, nil
 }
 
 func writeV2DataFrame(t *testing.T, conn *websocket.Conn, frame *v2.RelayDataFrame) {

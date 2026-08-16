@@ -358,15 +358,12 @@ return 0
 
 func (r *redisStore) TakeDiscovery(ctx context.Context, deviceID, connID string, d Discovery, ttl time.Duration) error {
 	d.ConnectionID = connID
-	// 落盘前补齐排序字段：只带 generation（v1）或只带 revision（v2）的写入都产出
-	// 完整行，保证 READY 判据（revision>0）对两种来源一致成立。
-	normalizeDiscovery(&d)
 	data, err := json.Marshal(d)
 	if err != nil {
 		return err
 	}
 	// 脚本同时读 presence（KEYS[1]）与 discovery（KEYS[2]），GET→校验→SET 原子，
-	// 不存在 handleDiscoveryUpdate 里的 get-then-set TOCTOU 窗口。
+	// 不存在 get-then-set 的 TOCTOU 窗口。
 	result, err := r.client.Eval(ctx, takeDiscoveryScript,
 		[]string{r.presenceKey(deviceID), r.discoveryKey(deviceID)},
 		connID, string(data), ttl.Milliseconds(),
@@ -450,11 +447,11 @@ func (r *redisStore) GetDiscoveries(ctx context.Context, deviceIDs []string) (ma
 }
 
 // ListOnlinePeers 返回可在线判定的设备（明确版 §13）：presence 与 discovery 均有效、
-// discovery 已可靠发布（ready()：revision>0，v1 由 generation 派生）、且 presence 与
-// discovery 的所有者 ConnectionID 一致。用 SCAN 枚举 presence 键，再批量取 presence
-// 值与 discovery；presence 键的 TTL 由 Redis 主动过期，故 SCAN 到的键未过期，但 SCAN
-// 与 MGET 之间仍可能被过期清除（MGET 返回 nil 即跳过）。owner 不匹配或 revision=0
-// 的条目（重连窗口内旧连接的残留 discovery）不算在线。
+// discovery 已可靠发布（ready()：revision>0）、且 presence 与 discovery 的所有者
+// ConnectionID 一致。用 SCAN 枚举 presence 键，再批量取 presence 值与 discovery；
+// presence 键的 TTL 由 Redis 主动过期，故 SCAN 到的键未过期，但 SCAN 与 MGET 之间仍
+// 可能被过期清除（MGET 返回 nil 即跳过）。owner 不匹配或 revision=0 的条目（重连
+// 窗口内旧连接的残留 discovery）不算在线。
 func (r *redisStore) ListOnlinePeers(ctx context.Context) (map[string]Discovery, error) {
 	result := make(map[string]Discovery)
 	var cursor uint64

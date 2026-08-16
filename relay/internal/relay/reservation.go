@@ -242,7 +242,7 @@ type relayDataConn struct {
 	peerMutex sync.Mutex
 	peer      *relayDataConn
 
-	// 与 peer 同构的速率/积压预算字段（v1 数据面同款语义）。
+	// 与 hub peer 同构的速率/积压预算字段。
 	stateMutex         sync.Mutex
 	pendingFrames      int
 	pendingBytes       int64
@@ -463,7 +463,7 @@ func (rc *relayDataConn) drainOutbound() {
 	}
 }
 
-// enqueue/dequeue/allowFrame 与 v1 peer 同构：outbound 积压与每秒帧/字节预算。
+// enqueue/dequeue/allowFrame 与 hub peer 同构：outbound 积压与每秒帧/字节预算。
 func (rc *relayDataConn) enqueue(frame outboundFrame) bool {
 	rc.stateMutex.Lock()
 	defer rc.stateMutex.Unlock()
