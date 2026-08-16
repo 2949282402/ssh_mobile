@@ -33,6 +33,7 @@ import 'mcp_feature_adapters.dart';
 import 'monitoring_feature_adapters.dart';
 import 'network_sdk_adapters.dart';
 import 'playbook_feature_adapters.dart';
+import 'ssh_native_stream_adapters.dart';
 import 'rag_feature_adapters.dart';
 import 'realtime_feature_adapters.dart';
 import 'terminal_ssh_capability_adapter.dart';
@@ -179,12 +180,20 @@ final class AppRuntimeFactory {
         priority: _CleanupPriority.adapter,
       );
 
+      final sshNativeStreamConnector = AppSshNativeStreamConnector(
+        gatewayProvider: () => runtimeNetworkRuntime.openCommandGateway(),
+      );
+      cleanup.add(
+        sshNativeStreamConnector.closeAll,
+        priority: _CleanupPriority.ssh,
+      );
       final sshService = SshService(
         connectionRepository: runtimeConnectionRepository,
         credentialRepository: runtimeCredentialRepository,
         hostKeyRepository: runtimeHostKeyRepository,
         terminalMetadataStore: terminalMetadataStore,
         appSettings: appSettings,
+        nativeStreamConnector: sshNativeStreamConnector,
       );
       final terminalSshManager = AppTerminalSshSessionManager(sshService);
       cleanup.add(terminalSshManager.close, priority: _CleanupPriority.ssh);
@@ -474,6 +483,7 @@ final class AppRuntimeFactory {
         terminalSessionMetadataStore: terminalMetadataStore,
         sshSessionManager: terminalSshManager,
         sshService: sshService,
+        sshNativeStreamConnector: sshNativeStreamConnector,
         sftpService: sftpService,
         monitoringModule: monitoringModule,
         monitoringService: monitoringService,

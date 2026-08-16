@@ -51,6 +51,7 @@ final class AppRuntime implements Disposable {
     required this.terminalSessionMetadataStore,
     required this.sshSessionManager,
     required this.sshService,
+    this.sshNativeStreamConnector,
     required this.sftpService,
     required this.monitoringModule,
     required this.monitoringService,
@@ -133,6 +134,9 @@ final class AppRuntime implements Disposable {
 
   /// App Scope 唯一 SSH Manager；旧 [sshService] 是同一实例的兼容类型视图。
   final SshSessionManager sshSessionManager;
+
+  /// App Scope 的 native SSH ReliableStream 连接器；null 表示未启用 native 传输。
+  final SshNativeStreamConnector? sshNativeStreamConnector;
 
   // TODO(refactor-step-10): 替换为 sftp feature 的公共运行时契约。
   final SftpService sftpService;

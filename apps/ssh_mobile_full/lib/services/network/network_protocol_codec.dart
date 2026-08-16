@@ -8,6 +8,40 @@ import 'dart:typed_data';
 
 import 'package:network_sdk/network_sdk.dart';
 
+/// ReliableStream 收到对端 SSH/SFTP 字节的事件（network-protocol tag 26）。
+final class SshStreamDataReceivedEvent {
+  /// 创建 SSH 流数据事件。
+  const SshStreamDataReceivedEvent({
+    required this.eventId,
+    required this.timestamp,
+    required this.peerId,
+    required this.streamId,
+    required this.data,
+  });
+
+  final String eventId;
+  final DateTime timestamp;
+  final String peerId;
+  final int streamId;
+  final Uint8List data;
+}
+
+/// ReliableStream 关闭事件（network-protocol tag 27）。
+final class SshStreamClosedEvent {
+  /// 创建 SSH 流关闭事件。
+  const SshStreamClosedEvent({
+    required this.eventId,
+    required this.timestamp,
+    required this.peerId,
+    required this.streamId,
+  });
+
+  final String eventId;
+  final DateTime timestamp;
+  final String peerId;
+  final int streamId;
+}
+
 /// 解码后的 v1 信封，包含内部命令结果或公开事件。
 final class NetworkProtocolFrame {
   /// 创建解码后的协议帧。
@@ -18,6 +52,8 @@ final class NetworkProtocolFrame {
     this.commandAccepted = false,
     this.commandError,
     this.event,
+    this.sshStreamData,
+    this.sshStreamClosed,
   });
 
   final String eventId;
@@ -26,6 +62,12 @@ final class NetworkProtocolFrame {
   final bool commandAccepted;
   final NetworkError? commandError;
   final NetworkEvent? event;
+
+  /// native SSH 流数据事件（tag 26），不进入业务 [event] 流。
+  final SshStreamDataReceivedEvent? sshStreamData;
+
+  /// native SSH 流关闭事件（tag 27），不进入业务 [event] 流。
+  final SshStreamClosedEvent? sshStreamClosed;
 }
 
 /// 当前 network.v1 线协议契约的手写编解码器。
@@ -134,6 +176,46 @@ final class NetworkProtocolCodec {
   Uint8List disconnectRelayCommand({required String commandId}) =>
       _command(commandId, 18, Uint8List(0));
 
+  /// 编码打开一条到对端的 ReliableStream（native tag 25）。
+  Uint8List sshStreamOpenCommand({
+    required String commandId,
+    required String peerId,
+    required int streamId,
+    String service = 'ssh',
+  }) {
+    final payload = _ProtoWriter()
+      ..string(1, peerId)
+      ..varint(2, streamId)
+      ..string(3, service);
+    return _command(commandId, 25, payload.takeBytes());
+  }
+
+  /// 编码向已打开流追加 SSH/SFTP 字节（native tag 26）。
+  Uint8List sshStreamDataCommand({
+    required String commandId,
+    required String peerId,
+    required int streamId,
+    required Uint8List data,
+  }) {
+    final payload = _ProtoWriter()
+      ..string(1, peerId)
+      ..varint(2, streamId)
+      ..bytesField(3, data);
+    return _command(commandId, 26, payload.takeBytes());
+  }
+
+  /// 编码关闭一条 ReliableStream（native tag 27）。
+  Uint8List sshStreamCloseCommand({
+    required String commandId,
+    required String peerId,
+    required int streamId,
+  }) {
+    final payload = _ProtoWriter()
+      ..string(1, peerId)
+      ..varint(2, streamId);
+    return _command(commandId, 27, payload.takeBytes());
+  }
+
   /// 从 v1 命令信封读取命令标识。
   String commandId(Uint8List command) {
     final reader = _ProtoReader(command);
@@ -155,6 +237,8 @@ final class NetworkProtocolCodec {
     var commandAccepted = false;
     NetworkError? commandError;
     NetworkEvent? event;
+    SshStreamDataReceivedEvent? sshStreamData;
+    SshStreamClosedEvent? sshStreamClosed;
 
     while (!reader.isDone) {
       final field = reader.field();
@@ -224,6 +308,18 @@ final class NetworkProtocolCodec {
             timestampMs,
             reader.bytes(field.wireType),
           );
+        case 26:
+          sshStreamData = _decodeSshStreamData(
+            eventId,
+            timestampMs,
+            reader.bytes(field.wireType),
+          );
+        case 27:
+          sshStreamClosed = _decodeSshStreamClosed(
+            eventId,
+            timestampMs,
+            reader.bytes(field.wireType),
+          );
         default:
           reader.skip(field.wireType);
       }
@@ -235,6 +331,8 @@ final class NetworkProtocolCodec {
       commandAccepted: commandAccepted,
       commandError: commandError,
       event: event,
+      sshStreamData: sshStreamData,
+      sshStreamClosed: sshStreamClosed,
     );
   }
 
@@ -583,6 +681,66 @@ final class NetworkProtocolCodec {
       eventId: eventId,
       timestamp: _timestamp(timestampMs),
       peers: peers,
+    );
+  }
+
+  /// 解码 SSH 流数据载荷（tag 26）。
+  SshStreamDataReceivedEvent _decodeSshStreamData(
+    String eventId,
+    int timestampMs,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var streamId = 0;
+    var data = Uint8List(0);
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = utf8.decode(reader.bytes(field.wireType));
+        case 2:
+          streamId = reader.varint(field.wireType);
+        case 3:
+          data = Uint8List.fromList(reader.bytes(field.wireType));
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    return SshStreamDataReceivedEvent(
+      eventId: eventId,
+      timestamp: _timestamp(timestampMs),
+      peerId: peerId,
+      streamId: streamId,
+      data: data,
+    );
+  }
+
+  /// 解码 SSH 流关闭载荷（tag 27）。
+  SshStreamClosedEvent _decodeSshStreamClosed(
+    String eventId,
+    int timestampMs,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var streamId = 0;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = utf8.decode(reader.bytes(field.wireType));
+        case 2:
+          streamId = reader.varint(field.wireType);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    return SshStreamClosedEvent(
+      eventId: eventId,
+      timestamp: _timestamp(timestampMs),
+      peerId: peerId,
+      streamId: streamId,
     );
   }
 

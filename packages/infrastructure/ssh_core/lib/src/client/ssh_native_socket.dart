@@ -1,0 +1,225 @@
+// SshNativeSocket：把 dartssh2 的 Socket 层替换为 native ReliableStream 字节流。
+//
+// 拓扑（设计文档 §5/§17/§21）：SSH 端点 = 已注册的对端设备（peer_id），SSH 协议
+// 字节作为不透明负载骑在 native ReliableStream 上；dartssh2 仍是 SSH/SFTP 协议
+// 引擎。本文件定义 [SshNativeStream]（一条 native 字节流）和 [SshNativeStreamConnector]
+// （打开/关闭流的边界），以及实现 dartssh2 `SSHSocket` 的 [SshNativeSocket]。
+//
+// 字节方向：
+// - 读：native `SshStreamDataReceived` 事件按 stream_id 路由到 [SshNativeStream.incoming]，
+//   [SshNativeSocket] 转发给 dartssh2 的 socket.stream。
+// - 写：dartssh2 向 socket.sink 写入字节，[SshNativeSocket] 经 [SshNativeStream.send]
+//   发送（backpressure：await 有界 native send），`flush` 等待 in-flight 发送完成。
+// - 关：socket.close() → [SshNativeStream.close] → native `SshStreamClose`；对端/传输
+//   关闭由 `SshStreamClosed` 事件触发 [SshNativeStream.done]。
+
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:dartssh2/dartssh2.dart';
+
+/// SSH 流服务提示；native 网关把该服务桥接到本地 sshd（network-core stream.rs）。
+const String kSshNativeStreamService = 'ssh';
+
+/// 一条 native ReliableStream 字节流（SSH/SFTP 协议数据作为不透明负载）。
+///
+/// 实现由 App Shell 提供（基于 network runtime gateway），Feature/ssh_core 只依赖
+/// 本接口，避免把 FFI 类型泄漏到公共契约。
+abstract interface class SshNativeStream {
+  /// 从对端到达的字节流（按序、不丢包）。传输关闭后该流正常结束。
+  Stream<Uint8List> get incoming;
+
+  /// 对端关闭或传输丢失时完成；错误时以 error 完成。
+  Future<void> get done;
+
+  /// 向对端追加字节。返回的 Future 在 native 有界发送被接收后完成，提供
+  /// backpressure，禁止丢弃 SSH 字节。
+  Future<void> send(Uint8List data);
+
+  /// 优雅关闭流（发送 native `SshStreamClose`），并完成 [done]。
+  Future<void> close();
+
+  /// 强制释放流，不保证发送 `SshStreamClose`；用于 socket destroy 路径。
+  void destroy();
+}
+
+/// 打开/关闭到 enrolled peer 的 native ReliableStream 的连接器。
+///
+/// `open` 负责（按需）建立对端连接（NetworkFacade.connectPeer(communicationClass:
+/// reliableStream)）后发送 `SshStreamOpen` 命令，并把后续 `SshStreamDataReceived` /
+/// `SshStreamClosed` 事件路由到返回的 [SshNativeStream]。stream_id 由实现分配，
+/// 同一 peer 上的多个 SSH/SFTP/终端流必须使用不同的 stream_id。
+abstract interface class SshNativeStreamConnector {
+  /// 打开一条 [service] 字节流。
+  Future<SshNativeStream> open({
+    required String peerId,
+    String service = kSshNativeStreamService,
+  });
+
+  /// 关闭所有仍打开的流并释放连接器持有的监听资源；幂等。
+  Future<void> closeAll();
+}
+
+/// dartssh2 `SSHSocket` 的 native 实现。
+///
+/// 只替换传输层：认证、加密、channel 复用、SFTP 协议仍由 dartssh2 处理。写侧对
+/// [SshNativeStream.send] 做 backpressure 计数，[flush] 等待 in-flight 发送完成，
+/// 读侧把 [SshNativeStream.incoming] 转发为 socket.stream。
+final class SshNativeSocket implements SSHSocket {
+  /// 创建包住 [stream] 的 socket。
+  SshNativeSocket({required SshNativeStream stream}) : _stream = stream {
+    _sink = _SshNativeSocketSink(this);
+    _incomingSubscription = stream.incoming.listen(
+      _incoming.add,
+      onError: (Object error, StackTrace stackTrace) {
+        _fail(error, stackTrace);
+      },
+      onDone: _completeDone,
+    );
+    unawaited(
+      stream.done.then<void>(
+        (_) => _completeDone(),
+        onError: (Object error, StackTrace stackTrace) {
+          _fail(error, stackTrace);
+        },
+      ),
+    );
+  }
+
+  final SshNativeStream _stream;
+  final StreamController<Uint8List> _incoming = StreamController<Uint8List>();
+  final Completer<void> _done = Completer<void>();
+  StreamSubscription<Uint8List>? _incomingSubscription;
+  late final _SshNativeSocketSink _sink;
+
+  int _pendingSends = 0;
+  Completer<void>? _flushCompleter;
+  bool _closing = false;
+
+  @override
+  Stream<Uint8List> get stream => _incoming.stream;
+
+  @override
+  StreamSink<List<int>> get sink => _sink;
+
+  @override
+  Future<void> get done => _done.future;
+
+  /// 关闭 socket：等待 in-flight 发送后优雅关闭 native 流。
+  @override
+  Future<void> close() async {
+    if (_closing) return _done.future;
+    _closing = true;
+    try {
+      await _flushPending();
+      await _stream.close();
+      _completeDone();
+    } catch (error, stackTrace) {
+      _fail(error, stackTrace);
+    }
+    return _done.future;
+  }
+
+  /// 强制销毁 socket，不等待 in-flight 发送。
+  @override
+  void destroy() {
+    _closing = true;
+    _stream.destroy();
+    _completeDone();
+  }
+
+  /// 等待所有 in-flight 的 native 发送完成（backpressure 释放点）。
+  @override
+  Future<void> flush() async {
+    if (_pendingSends == 0) return;
+    final completer = _flushCompleter ??= Completer<void>();
+    await completer.future;
+  }
+
+  void _onOutgoingData(List<int> data) {
+    if (_closing || data.isEmpty) return;
+    _pendingSends++;
+    // send 的 Future 不能 unhandled：backpressure 失败必须冒泡到 done。
+    _stream
+        .send(Uint8List.fromList(data))
+        .then<void>(
+          (_) => _onSendCompleted(),
+          onError: (Object error, StackTrace stackTrace) {
+            _pendingSends--;
+            _completeFlushIfIdle();
+            _fail(error, stackTrace);
+          },
+        );
+  }
+
+  void _onSendCompleted() {
+    _pendingSends--;
+    _completeFlushIfIdle();
+  }
+
+  void _completeFlushIfIdle() {
+    if (_pendingSends != 0) return;
+    final completer = _flushCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete();
+    }
+    _flushCompleter = null;
+  }
+
+  Future<void> _flushPending() async {
+    await flush();
+    if (_pendingSends == 0) return;
+    final completer = _flushCompleter ??= Completer<void>();
+    await completer.future;
+  }
+
+  void _completeDone() {
+    if (_done.isCompleted) return;
+    _cancelSubscriptions();
+    if (!_incoming.isClosed) unawaited(_incoming.close());
+    _done.complete();
+  }
+
+  void _fail(Object error, StackTrace stackTrace) {
+    if (_done.isCompleted) return;
+    _cancelSubscriptions();
+    if (!_incoming.isClosed) {
+      _incoming.addError(error, stackTrace);
+      unawaited(_incoming.close());
+    }
+    _done.completeError(error, stackTrace);
+  }
+
+  void _cancelSubscriptions() {
+    _incomingSubscription?.cancel();
+    _incomingSubscription = null;
+  }
+}
+
+/// [SshNativeSocket] 的同步写侧 [StreamSink]，保证 `add` 立即登记 in-flight 发送，
+/// 使紧跟其后的 [SshNativeSocket.flush] 能看到全部待发送字节。
+final class _SshNativeSocketSink implements StreamSink<List<int>> {
+  _SshNativeSocketSink(this._socket);
+
+  final SshNativeSocket _socket;
+
+  @override
+  void add(List<int> data) => _socket._onOutgoingData(data);
+
+  @override
+  void addError(Object error, [StackTrace? stackTrace]) =>
+      _socket._fail(error, stackTrace ?? StackTrace.current);
+
+  @override
+  Future<void> addStream(Stream<List<int>> stream) async {
+    await for (final data in stream) {
+      add(data);
+    }
+  }
+
+  @override
+  Future<void> close() => _socket.close();
+
+  @override
+  Future<void> get done => _socket.done;
+}

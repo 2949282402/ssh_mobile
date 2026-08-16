@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_core/ssh_core.dart';
@@ -115,6 +116,69 @@ void main() {
     });
   });
 
+  group('SshClientFactory native stream', () {
+    test(
+      'connectClient opens a native stream when peerId is provided',
+      () async {
+        final connector = _ThrowingConnector();
+        final factory = SshClientFactory(
+          credentialRepository: _FakeCredentialRepository(),
+          hostKeyRepository: _FakeHostKeyRepository(),
+          logger: _FakeLogger(),
+          nativeStreamConnector: connector,
+        );
+        final config = ConnectionConfig(
+          id: 'id',
+          name: 'server',
+          host: 'example.com',
+          username: 'user',
+          authMethod: AuthMethod.password,
+        );
+
+        await expectLater(
+          factory.connectClient(
+            config,
+            credentials: const SshCredentials(password: 'pw', privateKey: null),
+            peerId: 'peer-a',
+          ),
+          throwsA(isA<StateError>()),
+        );
+        expect(connector.openedPeerIds, ['peer-a']);
+      },
+    );
+
+    test(
+      'connectClient does not open a native stream without a peer binding',
+      () async {
+        final connector = _ThrowingConnector();
+        final factory = SshClientFactory(
+          credentialRepository: _FakeCredentialRepository(),
+          hostKeyRepository: _FakeHostKeyRepository(),
+          logger: _FakeLogger(),
+          nativeStreamConnector: connector,
+        );
+        final config = ConnectionConfig(
+          id: 'id',
+          name: 'server',
+          host: '127.0.0.1',
+          port: 1,
+          username: 'user',
+          authMethod: AuthMethod.password,
+        );
+
+        await expectLater(
+          factory.connectClient(
+            config,
+            credentials: const SshCredentials(password: 'pw', privateKey: null),
+            timeout: const Duration(seconds: 2),
+          ),
+          throwsA(anything),
+        );
+        expect(connector.openedPeerIds, isEmpty);
+      },
+    );
+  });
+
   group('SshClientFactory contracts', () {
     test('answers one hidden password prompt only', () {
       final responses =
@@ -193,6 +257,58 @@ final class _FakeRuntime implements SshRuntimeAdapter {
     disposeCount++;
     await _events.close();
   }
+}
+
+final class _ThrowingConnector implements SshNativeStreamConnector {
+  final List<String> openedPeerIds = <String>[];
+
+  @override
+  Future<SshNativeStream> open({
+    required String peerId,
+    String service = kSshNativeStreamService,
+  }) {
+    openedPeerIds.add(peerId);
+    throw StateError('native stream open failed');
+  }
+
+  @override
+  Future<void> closeAll() async {}
+}
+
+final class _FakeCredentialRepository implements CredentialRepository {
+  @override
+  Future<String?> getPassword(String connectionId) async => null;
+
+  @override
+  Future<String?> getPrivateKey(String connectionId) async => null;
+
+  @override
+  Future<void> saveCredentials({
+    required String connectionId,
+    String? password,
+    String? privateKey,
+  }) async {}
+
+  @override
+  Future<void> deleteCredentials(String connectionId) async {}
+}
+
+final class _FakeHostKeyRepository implements HostKeyRepository {
+  @override
+  Future<void> trustHostKey(
+    String connectionId, {
+    required String? algorithm,
+    required String? fingerprint,
+    required DateTime? trustedAt,
+  }) async {}
+}
+
+final class _FakeLogger implements AppLogger {
+  @override
+  void log(LogRecord record) {}
+
+  @override
+  AppLogger scope(String name) => this;
 }
 
 final class _KeyboardRequest {
