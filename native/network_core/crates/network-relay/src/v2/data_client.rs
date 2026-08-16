@@ -16,8 +16,7 @@ use tracing::info;
 use url::Url;
 
 use super::proto::*;
-use crate::client::{authenticated_ws_request, map_connect_error};
-use crate::RelayError;
+use super::shared::{authenticated_ws_request, map_connect_error, RelayError};
 
 const DATA_QUEUE_CAPACITY: usize = 8;
 const EVENT_QUEUE_CAPACITY: usize = 32;

@@ -1,13 +1,8 @@
-//! v1 运行时生命周期与传输契约的集成式测试。
-// v1 原生运行时、命令接受、传输和清理回归测试。
+//! 运行时生命周期、传输契约与 reservation 数据面的集成式测试。
 
 use super::*;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures_util::{SinkExt, StreamExt};
 use network_identity::DeviceIdentity;
-use network_relay::{RelayClient, RelayEvent};
-use network_transfer::build_file_manifest;
-
 use network_protocol::{
     network_command, network_event, AcknowledgeMessageCommand, ChannelMessageEvent,
     CommandResultEvent, CommunicationClass, ConfigureRuntimeCommand, ConnectPeerCommand,
@@ -16,381 +11,51 @@ use network_protocol::{
     RouteType, SendFileCommand, SendMessageCommand, SshStreamCloseCommand, SshStreamDataCommand,
     SshStreamOpenCommand, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
 };
+use network_relay::v2::proto::*;
+use network_relay::v2::{DataEvent, RelayDataClient};
+use network_transfer::build_file_manifest;
 use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tokio_tungstenite::{accept_hdr_async, tungstenite::Message};
 
-#[test]
-fn session_root_source_requires_noise_transport_secret_export() {
-    let source = include_str!("crypto_handshake.rs");
-    assert!(!source.contains("fn derive_session_root("));
-    assert!(!source.contains("noise-xx-aes256gcm-v2\";"));
-    assert!(source.contains("fn derive_application_root("));
-    assert!(source.contains("OsRng.fill_bytes(root_seed.as_mut())"));
-    assert!(source.contains("decrypt_root_seed_exchange"));
-    assert!(source.contains("into_transport_mode()"));
+/// 构造一个合法的 /v2/relay/{32-hex} 数据面地址（测试用 loopback）。
+fn v2_relay_data_endpoint(address: SocketAddr, reservation_id: &str) -> String {
+    format!("ws://{address}/v2/relay/{reservation_id}")
 }
 
-#[tokio::test]
-async fn relay_e2ee_uses_real_session_id() {
-    let attempt = run_relay_e2ee_handshake(false, false).await;
-
-    assert_eq!(attempt.token.len(), crate::session::SESSION_ID_BYTES * 2);
-    assert!(attempt
-        .token
-        .bytes()
-        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
-    assert_ne!(attempt.token, "0000000000000001");
-    assert_eq!(attempt.observed_payloads.len(), 6);
-    assert!(attempt
-        .observed_payloads
-        .iter()
-        .all(|frame| frame.contains(&format!("\"session_id\":\"{}\"", attempt.token))));
-    assert!(attempt
-        .observed_payloads
-        .iter()
-        .all(|frame| !frame.contains("SMKR")));
-}
-
-#[tokio::test]
-async fn relay_e2ee_completes_with_real_session_token() {
-    let attempt = run_relay_e2ee_handshake(false, false).await;
-    let (initiator_root, responder_root) = attempt.roots.expect("completed roots");
-
-    assert_eq!(initiator_root, responder_root);
-    assert!(attempt.connected);
-    assert!(!attempt.root_seed_rejected);
-    assert!(!attempt.missing_accept_rejected);
-}
-
-#[tokio::test]
-async fn relay_e2ee_rejects_tampered_root_seed() {
-    let attempt = run_relay_e2ee_handshake(true, false).await;
-
-    assert!(attempt.root_seed_rejected);
-    assert!(attempt.roots.is_none());
-    assert!(!attempt.connected);
-}
-
-#[tokio::test]
-async fn relay_e2ee_does_not_connect_without_accept() {
-    let attempt = run_relay_e2ee_handshake(false, true).await;
-
-    assert!(attempt.missing_accept_rejected);
-    assert!(attempt.roots.is_none());
-    assert!(!attempt.connected);
-}
-
-struct RelayE2eeAttempt {
-    token: String,
-    connected: bool,
-    roots: Option<([u8; 32], [u8; 32])>,
-    root_seed_rejected: bool,
-    missing_accept_rejected: bool,
-    observed_payloads: Vec<String>,
-}
-
-/// Drives the six opaque Relay controls through the production RelayClient.
-/// `tamper_root_seed` mutates the encrypted Noise transport frame after the
-/// Relay forwards it; `omit_accept` stops before the initiator can obtain
-/// application material or mark the Session connected.
-async fn run_relay_e2ee_handshake(tamper_root_seed: bool, omit_accept: bool) -> RelayE2eeAttempt {
-    let server = FakeRelayServer::start().await;
-    let server_address = server.address;
-    let mut initiator_relay = RelayClient::new(
-        format!("http://{server_address}"),
-        "relay-initiator".into(),
-        "test-credential-a".into(),
-        [11u8; 32],
-    )
-    .expect("create test initiator RelayClient");
-    let mut responder_relay = RelayClient::new(
-        format!("http://{server_address}"),
-        "relay-responder".into(),
-        "test-credential-b".into(),
-        [12u8; 32],
-    )
-    .expect("create test responder RelayClient");
-    initiator_relay
-        .connect()
-        .await
-        .expect("connect initiator RelayClient");
-    responder_relay
-        .connect()
-        .await
-        .expect("connect responder RelayClient");
-    let mut initiator_events = initiator_relay
-        .take_events()
-        .expect("take initiator Relay events");
-    let mut responder_events = responder_relay
-        .take_events()
-        .expect("take responder Relay events");
-
-    let session_manager = crate::session::SessionManager::new();
-    let session_id = match session_manager.begin_connect("relay-responder").await {
-        crate::session::ConnectDecision::Started(session_id) => session_id,
-        decision => panic!("unexpected Session decision: {decision:?}"),
-    };
-    let token = session_id.wire_key();
-    let initiator_identity = Arc::new(DeviceIdentity::generate("relay-initiator".into()));
-    let responder_identity = Arc::new(DeviceIdentity::generate("relay-responder".into()));
-
-    let (mut initiator, hello) = crate::crypto_handshake::RelayInitiatorHandshake::start(
-        Arc::clone(&initiator_identity),
-        &token,
-    )
-    .expect("start Relay Noise handshake");
-    send_relay_crypto_step(
-        &initiator_relay,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_HELLO,
-        &hello,
-    )
-    .await;
-    let hello_at_responder = receive_relay_crypto_step(
-        &mut responder_events,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_HELLO,
-    )
-    .await;
-    let (responder, response) = crate::crypto_handshake::RelayResponderHandshake::accept_hello(
-        Arc::clone(&responder_identity),
-        &hello_at_responder,
-    )
-    .expect("accept Relay Noise hello");
-    send_relay_crypto_step(
-        &responder_relay,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
-        &response,
-    )
-    .await;
-    let response_at_initiator = receive_relay_crypto_step(
-        &mut initiator_events,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
-    )
-    .await;
-    let final_message = initiator
-        .accept_response(
-            &response_at_initiator,
-            &responder_identity.device_id,
-            responder_identity.public_identity_key().to_bytes(),
-        )
-        .expect("accept Relay Noise response");
-    send_relay_crypto_step(
-        &initiator_relay,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_FINAL,
-        &final_message,
-    )
-    .await;
-    let final_at_responder = receive_relay_crypto_step(
-        &mut responder_events,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_FINAL,
-    )
-    .await;
-    let trusted_peer_keys = RwLock::new(HashMap::from([(
-        initiator_identity.device_id.clone(),
-        initiator_identity.public_identity_key().to_bytes(),
-    )]));
-    let (peer_id, confirmer, mut encrypted_seed) = responder
-        .accept_final(&final_at_responder, &trusted_peer_keys, |_, binding| {
-            let binding = binding.to_string();
-            async move { Ok((binding, ())) }
-        })
-        .await
-        .expect("accept Relay Noise final");
-    assert_eq!(peer_id, initiator_identity.device_id);
-    if tamper_root_seed {
-        encrypted_seed[0] ^= 0x40;
-    }
-    send_relay_crypto_step(
-        &responder_relay,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED,
-        &encrypted_seed,
-    )
-    .await;
-    let seed_at_initiator = receive_relay_crypto_step(
-        &mut initiator_events,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED,
-    )
-    .await;
-    let confirmation = match initiator.accept_root_seed(&seed_at_initiator) {
-        Ok(value) => value,
-        Err(_) => {
-            return RelayE2eeAttempt {
-                token,
-                connected: session_manager.is_connected("relay-responder").await,
-                roots: None,
-                root_seed_rejected: true,
-                missing_accept_rejected: false,
-                observed_payloads: server.observed_payloads(),
-            };
-        }
-    };
-    let (confirmation, encrypted_confirm) = confirmation
-        .confirm(token.clone())
-        .expect("confirm Relay root with local Session binding");
-    send_relay_crypto_step(
-        &initiator_relay,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM,
-        &encrypted_confirm,
-    )
-    .await;
-    let confirm_at_responder = receive_relay_crypto_step(
-        &mut responder_events,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM,
-    )
-    .await;
-    let (peer_id, encrypted_accept, responder_material, _) = confirmer
-        .accept_root_confirm(&confirm_at_responder)
-        .expect("accept Relay root confirmation");
-    assert_eq!(peer_id, initiator_identity.device_id);
-    if omit_accept {
-        let missing_accept_rejected = confirmation.accept(&[]).is_err();
-        return RelayE2eeAttempt {
-            token,
-            connected: session_manager.is_connected("relay-responder").await,
-            roots: None,
-            root_seed_rejected: false,
-            missing_accept_rejected,
-            observed_payloads: server.observed_payloads(),
-        };
-    }
-    send_relay_crypto_step(
-        &responder_relay,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_ACCEPT,
-        &encrypted_accept,
-    )
-    .await;
-    let accept_at_initiator = receive_relay_crypto_step(
-        &mut initiator_events,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_ACCEPT,
-    )
-    .await;
-    let initiator_material = confirmation
-        .accept(&accept_at_initiator)
-        .expect("accept Relay application root");
-    assert!(
-        session_manager
-            .mark_relay_route_connected("relay-responder", session_id, RouteType::Relay, None)
-            .await
-    );
-    RelayE2eeAttempt {
-        token,
-        connected: session_manager.is_connected("relay-responder").await,
-        roots: Some((initiator_material.root_key, responder_material.root_key)),
-        root_seed_rejected: false,
-        missing_accept_rejected: false,
-        observed_payloads: server.observed_payloads(),
-    }
-}
-
-async fn send_relay_crypto_step(
-    client: &RelayClient,
-    token: &str,
-    target_id: &str,
-    step: u8,
-    payload: &[u8],
-) {
-    let frame = crate::crypto_handshake::encode_relay_frame(step, payload)
-        .expect("encode Relay crypto frame");
-    client
-        .send_crypto_handshake(token, target_id, &frame)
-        .await
-        .expect("send Relay crypto frame");
-}
-
-async fn receive_relay_crypto_step(
-    events: &mut mpsc::Receiver<RelayEvent>,
-    token: &str,
-    expected_sender: &str,
-    expected_step: u8,
-) -> Vec<u8> {
-    let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
-        .await
-        .expect("Relay crypto event timed out")
-        .expect("Relay crypto event stream ended");
-    let RelayEvent::Control {
-        kind,
-        session_id,
-        peer_id,
-        payload: Some(payload),
-    } = event
-    else {
-        panic!("unexpected Relay crypto event");
-    };
-    assert_eq!(kind, "crypto_handshake");
-    assert_eq!(session_id, token);
-    assert_eq!(peer_id.as_deref(), Some(expected_sender));
-    let frame = URL_SAFE_NO_PAD
-        .decode(payload)
-        .expect("decode opaque Relay crypto payload");
-    let (step, payload) =
-        crate::crypto_handshake::decode_relay_frame(&frame).expect("decode Relay crypto frame");
-    assert_eq!(step, expected_step);
-    payload.to_vec()
-}
-
-struct FakeRelayServer {
+/// Fake Relay v2 数据面：/v2/relay/{reservation_id}。
+///
+/// 校验首帧 RelayDataConnect（reservation_id + local_token），把同一 reservation 的
+/// 两个端点链接起来；对端未链接时把 Payload/Ack 缓冲到 reservation，链接后冲刷。
+struct FakeRelayV2Server {
     address: SocketAddr,
-    observed: Arc<Mutex<Vec<String>>>,
     shutdown: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
 }
 
-impl FakeRelayServer {
-    async fn start() -> Self {
+impl FakeRelayV2Server {
+    async fn start(reservations: HashMap<String, (Vec<u8>, Vec<u8>)>) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
-            .expect("bind fake Relay listener");
-        let address = listener.local_addr().expect("fake Relay address");
-        let observed = Arc::new(Mutex::new(Vec::new()));
+            .expect("bind fake Relay v2 listener");
+        let address = listener.local_addr().expect("fake Relay v2 address");
         let (shutdown, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(run_fake_relay(listener, Arc::clone(&observed), shutdown_rx));
+        let task = tokio::spawn(run_fake_relay_v2(listener, shutdown_rx, reservations));
         Self {
             address,
-            observed,
             shutdown: Some(shutdown),
             task: Some(task),
         }
     }
-
-    fn observed_payloads(&self) -> Vec<String> {
-        self.observed
-            .lock()
-            .expect("fake Relay observations")
-            .clone()
-    }
 }
 
-impl Drop for FakeRelayServer {
+impl Drop for FakeRelayV2Server {
     fn drop(&mut self) {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
@@ -401,113 +66,273 @@ impl Drop for FakeRelayServer {
     }
 }
 
-async fn run_fake_relay(
+/// reservation_id → (initiator_token, responder_token) + 已注册端点/缓冲。
+struct RelayV2DataRegistry {
+    reservations: HashMap<String, (Vec<u8>, Vec<u8>)>,
+    /// reservation_id → 已注册端点 (conn_id, outbound)。
+    endpoints: HashMap<String, Vec<(u64, mpsc::Sender<Message>)>>,
+    /// reservation_id → 对端未链接时缓冲的帧。
+    buffered: HashMap<String, Vec<Message>>,
+    next_conn_id: u64,
+}
+
+impl RelayV2DataRegistry {
+    fn new(reservations: HashMap<String, (Vec<u8>, Vec<u8>)>) -> Self {
+        Self {
+            reservations,
+            endpoints: HashMap::new(),
+            buffered: HashMap::new(),
+            next_conn_id: 0,
+        }
+    }
+
+    fn register(&mut self, reservation_id: &str, outbound: mpsc::Sender<Message>) -> u64 {
+        let conn_id = self.next_conn_id;
+        self.next_conn_id += 1;
+        let endpoints = self
+            .endpoints
+            .entry(reservation_id.to_string())
+            .or_default();
+        // 对端已注册：把缓冲的帧冲刷给新端点。
+        if let Some(buffered) = self.buffered.remove(reservation_id) {
+            for message in buffered {
+                let _ = outbound.try_send(message);
+            }
+        }
+        endpoints.push((conn_id, outbound));
+        conn_id
+    }
+
+    /// 把一帧从 `from_id` 转发给同一 reservation 的对端；对端未链接则缓冲。
+    async fn forward(&mut self, reservation_id: &str, from_id: u64, frame: Message) {
+        let endpoints = self.endpoints.get(reservation_id);
+        let target = endpoints.and_then(|endpoints| {
+            endpoints
+                .iter()
+                .find(|(id, _)| *id != from_id)
+                .map(|(_, sender)| sender.clone())
+        });
+        match target {
+            Some(target) => {
+                let _ = target.send(frame).await;
+            }
+            None => {
+                self.buffered
+                    .entry(reservation_id.to_string())
+                    .or_default()
+                    .push(frame);
+            }
+        }
+    }
+}
+
+#[allow(clippy::result_large_err)]
+async fn run_fake_relay_v2(
     listener: TcpListener,
-    observed: Arc<Mutex<Vec<String>>>,
     mut shutdown: oneshot::Receiver<()>,
+    reservations: HashMap<String, (Vec<u8>, Vec<u8>)>,
 ) {
-    let (incoming_tx, mut incoming_rx) = mpsc::channel::<(String, Message)>(32);
-    let mut outbound = HashMap::<String, mpsc::Sender<Message>>::new();
-    for device_id in ["relay-initiator", "relay-responder"] {
+    let registry = Arc::new(tokio::sync::Mutex::new(RelayV2DataRegistry::new(
+        reservations,
+    )));
+    let mut handles = Vec::new();
+    loop {
         let (stream, _) = tokio::select! {
             result = listener.accept() => match result {
                 Ok(value) => value,
-                Err(_) => return,
+                Err(_) => break,
             },
-            _ = &mut shutdown => return,
-        };
-        let socket = match accept_async(stream).await {
-            Ok(socket) => socket,
-            Err(_) => return,
-        };
-        let (mut writer, reader) = socket.split();
-        let ready = serde_json::json!({
-            "type": "ready",
-            "device_id": device_id,
-            "protocol_version": 1,
-        });
-        if writer
-            .send(Message::Text(ready.to_string().into()))
-            .await
-            .is_err()
-        {
-            return;
-        }
-        let (outbound_tx, mut outbound_rx) = mpsc::channel::<Message>(32);
-        std::mem::drop(tokio::spawn(async move {
-            while let Some(message) = outbound_rx.recv().await {
-                if writer.send(message).await.is_err() {
-                    break;
-                }
-            }
-        }));
-        let incoming_tx = incoming_tx.clone();
-        let sender_id = device_id.to_string();
-        std::mem::drop(tokio::spawn(async move {
-            let mut reader = reader;
-            while let Some(result) = reader.next().await {
-                let Ok(message) = result else {
-                    break;
-                };
-                if incoming_tx
-                    .send((sender_id.clone(), message))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        }));
-        outbound.insert(device_id.to_string(), outbound_tx);
-    }
-    drop(incoming_tx);
-
-    loop {
-        tokio::select! {
             _ = &mut shutdown => break,
-            incoming = incoming_rx.recv() => {
-                let Some((sender_id, Message::Text(text))) = incoming else {
-                    break;
-                };
-                let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text.as_ref()) else {
-                    continue;
-                };
-                if value.get("type").and_then(serde_json::Value::as_str) == Some("heartbeat") {
-                    if let Some(target) = outbound.get(&sender_id) {
-                        let _ = target
-                            .send(Message::Text(
-                                serde_json::json!({"type": "heartbeat_ack"})
-                                    .to_string()
-                                    .into(),
-                            ))
-                            .await;
-                    }
-                    continue;
-                }
-                let Some(target_id) = value
-                    .get("target_id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
-                else {
-                    continue;
-                };
-                observed
-                    .lock()
-                    .expect("fake Relay observations")
-                    .push(text.to_string());
-                value["sender_id"] = serde_json::Value::String(sender_id);
-                let Ok(forwarded) = serde_json::to_string(&value) else {
-                    continue;
-                };
-                if let Some(target) = outbound.get(&target_id) {
-                    let _ = target
-                        .send(Message::Text(forwarded.into()))
-                        .await;
-                }
-            }
-            else => break,
+        };
+        let path_holder = Arc::new(Mutex::new(None::<String>));
+        let path_capture = Arc::clone(&path_holder);
+        let socket = match accept_hdr_async(
+            stream,
+            move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                  response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                *path_capture.lock().expect("fake relay path lock") =
+                    Some(request.uri().path().to_string());
+                Ok(response)
+            },
+        )
+        .await
+        {
+            Ok(socket) => socket,
+            Err(_) => continue,
+        };
+        let path = path_holder
+            .lock()
+            .expect("fake relay path lock")
+            .take()
+            .unwrap_or_default();
+        if let Some(reservation_id) = path.strip_prefix("/v2/relay/") {
+            let registry = Arc::clone(&registry);
+            let handle = tokio::spawn(run_data_connection(
+                registry,
+                reservation_id.to_string(),
+                socket,
+            ));
+            handles.push(handle);
+        } else {
+            drop(socket);
         }
     }
+    drop(shutdown);
+    for handle in handles {
+        handle.abort();
+    }
+}
+
+async fn run_data_connection(
+    registry: Arc<tokio::sync::Mutex<RelayV2DataRegistry>>,
+    reservation_id: String,
+    socket: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+) {
+    let (writer, mut reader) = socket.split();
+    // 阶段一：等待并校验首帧 RelayDataConnect，取得 writer 任务与 conn_id。
+    let Some(Ok(message)) = reader.next().await else {
+        return;
+    };
+    let Message::Binary(frame) = message else {
+        return;
+    };
+    let Ok(frame) = decode_data_frame(&frame) else {
+        return;
+    };
+    let Some(relay_data_frame::Kind::Connect(connect)) = frame.kind else {
+        return;
+    };
+    let tokens = {
+        let guard = registry.lock().await;
+        guard.reservations.get(&reservation_id).cloned()
+    };
+    let Some((initiator_token, responder_token)) = tokens else {
+        return;
+    };
+    if connect.reservation_id != reservation_id
+        || (connect.local_token != initiator_token && connect.local_token != responder_token)
+    {
+        return;
+    }
+    let (tx, mut rx) = mpsc::channel::<Message>(64);
+    let mut writer_for_task = writer;
+    let writer_task = tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            if writer_for_task.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+    let conn_id = registry.lock().await.register(&reservation_id, tx);
+    let writer_task = Some(writer_task);
+    // 阶段二：转发 Payload/Ack/Close 到对端。
+    while let Some(result) = reader.next().await {
+        let Ok(message) = result else {
+            break;
+        };
+        let Message::Binary(frame) = message else {
+            continue;
+        };
+        let Ok(frame) = decode_data_frame(&frame) else {
+            continue;
+        };
+        match frame.kind {
+            Some(relay_data_frame::Kind::Payload(_)) | Some(relay_data_frame::Kind::Ack(_)) => {
+                let encoded = encode_data_frame(&frame).expect("encode data frame");
+                registry
+                    .lock()
+                    .await
+                    .forward(&reservation_id, conn_id, Message::Binary(encoded.into()))
+                    .await;
+            }
+            Some(relay_data_frame::Kind::Close(_)) => {
+                let encoded = encode_data_frame(&frame).expect("encode data frame");
+                registry
+                    .lock()
+                    .await
+                    .forward(&reservation_id, conn_id, Message::Binary(encoded.into()))
+                    .await;
+                break;
+            }
+            _ => {}
+        }
+    }
+    if let Some(task) = writer_task {
+        task.abort();
+    }
+}
+
+/// §25/§31：Relay v2 reservation 数据面集成测试。两个 `RelayDataClient` 分别连接
+/// `/v2/relay/{reservation_id}`，A 发送一个不透明信封，B 通过 `recv()` 收到同一
+/// 负载（服务器不解密）。这验证 reservation 数据面（connect_reservation →
+/// send/recv/close）与 fake relay 的链接/缓冲行为。
+#[test]
+fn relay_data_clients_forward_envelopes_over_reservation() {
+    let reservation_id = hex::encode(rand::random::<[u8; 16]>());
+    let initiator_token: [u8; 32] = rand::random();
+    let responder_token: [u8; 32] = rand::random();
+    let mut reservations = HashMap::new();
+    reservations.insert(
+        reservation_id.clone(),
+        (initiator_token.to_vec(), responder_token.to_vec()),
+    );
+    // relay_rt 必须存活到测试结束，否则 fake relay 的后台任务被中止。
+    let relay_rt = tokio::runtime::Runtime::new().expect("relay test runtime");
+    let relay_server = relay_rt.block_on(FakeRelayV2Server::start(reservations));
+    let endpoint = v2_relay_data_endpoint(relay_server.address, &reservation_id);
+
+    let rt = tokio::runtime::Runtime::new().expect("data test runtime");
+    rt.block_on(async {
+        let mut client_a = RelayDataClient::new(
+            endpoint.clone(),
+            reservation_id.clone(),
+            initiator_token.to_vec(),
+            "credential".into(),
+            [11u8; 32],
+        )
+        .expect("client A");
+        let mut client_b = RelayDataClient::new(
+            endpoint.clone(),
+            reservation_id.clone(),
+            responder_token.to_vec(),
+            "credential".into(),
+            [12u8; 32],
+        )
+        .expect("client B");
+        client_a
+            .connect_reservation()
+            .await
+            .expect("connect A reservation");
+        client_b
+            .connect_reservation()
+            .await
+            .expect("connect B reservation");
+        let mut events_b = client_b.take_events().expect("B events");
+
+        // A 发送一个不透明信封，B 应原样收到（服务器不解密）。
+        let opaque_payload = vec![0xAu8, 0xBu8, 0xCu8, 0xDu8];
+        client_a
+            .send(1, &opaque_payload)
+            .await
+            .expect("A sends payload");
+        let received = tokio::time::timeout(Duration::from_secs(5), events_b.recv())
+            .await
+            .expect("B received payload")
+            .expect("B event stream ended");
+        match received {
+            DataEvent::Payload {
+                encrypted_payload, ..
+            } => {
+                assert_eq!(encrypted_payload, opaque_payload);
+            }
+            other => panic!("expected Payload, got {other:?}"),
+        }
+
+        // B 回一条流控 Ack；随后双向关闭。
+        client_b.send_ack(1).await.expect("B sends ack");
+        client_a.close().await.expect("close A data client");
+    });
+    drop(relay_server);
 }
 
 /// 验证格式错误的命令载荷会以类型化结果拒绝。

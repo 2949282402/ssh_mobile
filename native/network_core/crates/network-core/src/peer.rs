@@ -1,8 +1,4 @@
-//! v1 对端注册表、路由选择与异步连接任务。
-
-// v1 PathManager remote_* 桥接方法在 Step 11 前仍被 v1 代码使用（§38 Step 5 已将它们
-// 标记 deprecated）；保持 v1 行为不变，仅抑制 lint，additive-first。
-#![allow(deprecated)]
+//! 对端注册表、路由选择与异步连接任务（transport-network v2）。
 
 use network_identity::DeviceIdentity;
 use network_nat::{Candidate, CandidateKind, PathManager, MAX_CANDIDATES_PER_SIGNAL};
@@ -11,7 +7,7 @@ use network_protocol::{
     UpsertPeerCommand,
 };
 use network_quic::{read_channel_frame, ChannelFrameKind, QuicEndpointManager, QuicPeerSession};
-use network_relay::RelayClient;
+use network_relay::RelayDataClient;
 use network_transport::{TcpTransport, Transport, WebSocketTransport};
 use quinn::{Connection, Endpoint};
 use std::future::Future;
@@ -955,7 +951,7 @@ fn monotonic_candidate_generation() -> u64 {
 
 pub(crate) async fn establish_relay_crypto(
     state: &RuntimeState,
-    relay: Arc<RelayClient>,
+    data: Arc<RelayDataClient>,
     peer_id: &str,
     session_id: SessionId,
     identity: Arc<DeviceIdentity>,
@@ -986,30 +982,22 @@ pub(crate) async fn establish_relay_crypto(
     }
     waiters.insert(key.clone(), response_tx);
     drop(waiters);
-    let hello = crate::crypto_handshake::encode_relay_frame(
-        crate::crypto_handshake::RELAY_CRYPTO_HELLO,
-        &hello,
-    )
-    .map_err(|_| {
-        protocol_error_with_peer(
-            NetworkErrorCode::AuthenticationFailed,
-            "Relay application E2EE hello is invalid",
-            "connect",
-            peer_id,
-        )
-    })?;
     let result = async {
-        relay
-            .send_crypto_handshake(&session_token, peer_id, &hello)
-            .await
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay application E2EE hello could not be sent",
-                    "connect",
-                    peer_id,
-                )
-            })?;
+        crate::relay::send_relay_crypto(
+            &data,
+            &session_token,
+            crate::crypto_handshake::RELAY_CRYPTO_HELLO,
+            &hello,
+        )
+        .await
+        .map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::RelayError,
+                "Relay application E2EE hello could not be sent",
+                "connect",
+                peer_id,
+            )
+        })?;
         let response = receive_relay_crypto_step(
             &mut response_rx,
             crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
@@ -1026,29 +1014,21 @@ pub(crate) async fn establish_relay_crypto(
                     peer_id,
                 )
             })?;
-        let final_frame = crate::crypto_handshake::encode_relay_frame(
+        crate::relay::send_relay_crypto(
+            &data,
+            &session_token,
             crate::crypto_handshake::RELAY_CRYPTO_FINAL,
             &final_message,
         )
+        .await
         .map_err(|_| {
             protocol_error_with_peer(
-                NetworkErrorCode::AuthenticationFailed,
-                "Relay application E2EE final message is invalid",
+                NetworkErrorCode::RelayError,
+                "Relay application E2EE final message could not be sent",
                 "connect",
                 peer_id,
             )
         })?;
-        relay
-            .send_crypto_handshake(&session_token, peer_id, &final_frame)
-            .await
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay application E2EE final message could not be sent",
-                    "connect",
-                    peer_id,
-                )
-            })?;
         let encrypted_seed = receive_relay_crypto_step(
             &mut response_rx,
             crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED,
@@ -1085,29 +1065,21 @@ pub(crate) async fn establish_relay_crypto(
                     peer_id,
                 )
             })?;
-        let confirm_frame = crate::crypto_handshake::encode_relay_frame(
+        crate::relay::send_relay_crypto(
+            &data,
+            &session_token,
             crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM,
             &encrypted_confirm,
         )
+        .await
         .map_err(|_| {
             protocol_error_with_peer(
-                NetworkErrorCode::AuthenticationFailed,
-                "Relay application E2EE root confirmation is invalid",
+                NetworkErrorCode::RelayError,
+                "Relay application E2EE root confirmation could not be sent",
                 "connect",
                 peer_id,
             )
         })?;
-        relay
-            .send_crypto_handshake(&session_token, peer_id, &confirm_frame)
-            .await
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay application E2EE root confirmation could not be sent",
-                    "connect",
-                    peer_id,
-                )
-            })?;
         let encrypted_accept = receive_relay_crypto_step(
             &mut response_rx,
             crate::crypto_handshake::RELAY_CRYPTO_ACCEPT,
@@ -1732,6 +1704,32 @@ async fn notify_generic_route_loss(
         // 不自动重连（无 RECONNECTING）。业务下次 `connect()` 会重新 Resolve 并按需
         // 新建连接（新 SessionId + 新 Noise root）。
     }
+}
+
+/// §18/§35：reservation 数据面断开即销毁 Relay ConnectionSession。仅当当前
+/// Session 的 route 仍由 `data` 承载时才拆除，并发布类型化断开状态。
+pub(crate) async fn teardown_relay_route(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    data: &Arc<RelayDataClient>,
+) {
+    if !state.sessions.is_current_relay_data(peer_id, data).await {
+        return;
+    }
+    let session_id = state.sessions.current_session_id(peer_id).await;
+    if let Some(route) = state.sessions.close(peer_id).await {
+        route.close().await;
+    }
+    if let Some(session_id) = session_id {
+        state.cancel_session_tasks(peer_id, session_id).await;
+    }
+    emit_peer_state(
+        &state.event_tx,
+        peer_id,
+        PeerConnectionState::Disconnected,
+        RouteType::Unspecified,
+        None,
+    );
 }
 
 async fn handle_connection_disconnect(

@@ -7,7 +7,7 @@
 
 use network_protocol::{CommunicationClass, RouteType};
 use network_quic::{send_channel_frame, ChannelFrameKind};
-use network_relay::RelayClient;
+use network_relay::RelayDataClient;
 use quinn::{Connection, VarInt};
 use rand::{rngs::OsRng, RngCore};
 use std::collections::HashMap;
@@ -238,7 +238,7 @@ enum ActiveConnection {
     Generic(GenericRouteOwner),
     #[cfg(test)]
     GenericTest(GenericRouteHandle),
-    Relay(Option<Arc<RelayClient>>),
+    Relay(Option<Arc<RelayDataClient>>),
 }
 
 /// Cloneable non-owning view used by Delivery and route-selection observers.
@@ -257,14 +257,14 @@ pub(crate) struct RouteView {
 pub(crate) enum StreamCarrier {
     Quic(Connection),
     Generic(GenericRouteHandle),
-    Relay(Option<Arc<RelayClient>>),
+    Relay(Option<Arc<RelayDataClient>>),
 }
 
 #[derive(Clone)]
 enum RouteViewCarrier {
     Quic(Connection),
     Generic(GenericRouteHandle),
-    Relay(Option<Arc<RelayClient>>),
+    Relay(Option<Arc<RelayDataClient>>),
 }
 
 impl ActiveRoute {
@@ -292,7 +292,7 @@ impl ActiveRoute {
         }
     }
 
-    fn relay(client: Option<Arc<RelayClient>>) -> Self {
+    fn relay(client: Option<Arc<RelayDataClient>>) -> Self {
         Self {
             profile: ConnectionProfile::new(Route::relay(RouteTransport::WebSocket)),
             carrier: ActiveConnection::Relay(client),
@@ -602,7 +602,7 @@ impl SessionManager {
         peer_id: &str,
         expected_session_id: SessionId,
         route: RouteType,
-        relay: Option<Arc<RelayClient>>,
+        relay: Option<Arc<RelayDataClient>>,
     ) -> bool {
         let mut sessions = self.sessions.write().await;
         let Some(session) = sessions.get_mut(peer_id) else {
@@ -679,6 +679,32 @@ impl SessionManager {
                 RouteViewCarrier::Quic(connection) => StreamCarrier::Quic(connection),
                 RouteViewCarrier::Generic(handle) => StreamCarrier::Generic(handle),
                 RouteViewCarrier::Relay(client) => StreamCarrier::Relay(client),
+            })
+    }
+
+    /// Returns the current reservation-scoped Relay v2 data client, if the
+    /// active route is a Relay route (§25).
+    pub(crate) async fn current_relay_data(&self, peer_id: &str) -> Option<Arc<RelayDataClient>> {
+        self.current_active_route(peer_id)
+            .await
+            .and_then(|route| match route.carrier {
+                RouteViewCarrier::Relay(client) => client,
+                _ => None,
+            })
+    }
+
+    /// Returns `true` when the current active route is a Relay route backed by
+    /// exactly `data` (§25 reservation data client).
+    pub(crate) async fn is_current_relay_data(
+        &self,
+        peer_id: &str,
+        data: &Arc<RelayDataClient>,
+    ) -> bool {
+        self.current_active_route(peer_id)
+            .await
+            .is_some_and(|route| match route.carrier {
+                RouteViewCarrier::Relay(Some(client)) => Arc::ptr_eq(&client, data),
+                _ => false,
             })
     }
 
@@ -772,20 +798,23 @@ impl SessionManager {
                 .await
                 .map_err(|error| std::io::Error::other(error.to_string()).into()),
             RouteViewCarrier::Relay(Some(relay)) => match kind {
-                GenericFrameKind::DataMessage => relay
-                    .send_channel_message(relay_token, peer_id, payload)
-                    .await
-                    .map_err(|error| std::io::Error::other(error.to_string()).into()),
-                GenericFrameKind::DeliveryAck => relay
-                    .send_channel_ack(relay_token, peer_id, payload)
-                    .await
-                    .map_err(|error| std::io::Error::other(error.to_string()).into()),
+                GenericFrameKind::DataMessage => {
+                    crate::relay::send_relay_channel_message(&relay, relay_token, payload)
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string()).into())
+                }
+                GenericFrameKind::DeliveryAck => {
+                    crate::relay::send_relay_channel_ack(&relay, relay_token, payload)
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string()).into())
+                }
                 GenericFrameKind::StreamBytes
                 | GenericFrameKind::StreamOpen
-                | GenericFrameKind::StreamClose => relay
-                    .send_channel_message(relay_token, peer_id, payload)
-                    .await
-                    .map_err(|error| std::io::Error::other(error.to_string()).into()),
+                | GenericFrameKind::StreamClose => {
+                    crate::relay::send_relay_stream_frame(&relay, relay_token, payload)
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string()).into())
+                }
             },
             RouteViewCarrier::Relay(None) => Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,

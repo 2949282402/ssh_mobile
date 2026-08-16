@@ -15,6 +15,7 @@
 pub mod control_client;
 pub mod data_client;
 pub mod proto;
+mod shared;
 
 #[cfg(test)]
 mod golden_tests;
@@ -30,6 +31,7 @@ pub use proto::{
     RelayDataFrame, RelayDataPayload, RelayFrame, RelayReserveRequest, RelayReserveResponse,
     ResolvePeerRequest, ResolvePeerResponse, ResolveStatus, RuntimeEpoch, TransportCapability,
 };
+pub use shared::RelayError;
 
 pub use proto::{
     MAX_ATTEMPT_ID_BYTES, MAX_DEVICE_ID_BYTES, MAX_DISCOVERY_CANDIDATES,

@@ -22,8 +22,8 @@
 //! 5. **Direct First 4s**（§15）：并发 Direct 候选，第一个 identity authenticated + E2EE
 //!    ready 胜出 → CONNECTED_DIRECT。
 //! 6. **Direct Failed → Reserve Relay**（§25/§31）：控制面 `reserve_relay`。
-//! 7. **Relay Data** → CONNECTED_RELAY。本轮 Relay 数据面复用 v1 Relay 数据路径
-//!    （deprecated，Step 11 迁移到 `RelayDataClient` reservation 模型）。
+//! 7. **Relay Data** → CONNECTED_RELAY：连接 `/v2/relay/{reservation_id}` 数据面
+//!    （`RelayDataClient`），在其上完成 Relay E2EE 握手后挂载 ConnectionSession。
 
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -539,10 +539,9 @@ impl ConnectionOrchestrator {
 
     /// Relay 回退：DIRECT_FAILED → RELAY_RESERVING → RELAY_CONNECTING → CONNECTED_RELAY。
     ///
-    /// - RELAY_RESERVING（§25/§31）：经 v2 控制面 `reserve_relay` 请求 reservation
-    ///   （forward path 接线）。
-    /// - RELAY_CONNECTING：本轮 Relay 数据面仍复用 v1 Relay 数据路径（deprecated，
-    ///   Step 11 迁移到 `RelayDataClient` reservation 模型）。
+    /// - RELAY_RESERVING（§25/§31）：经 v2 控制面 `reserve_relay` 请求 reservation。
+    /// - RELAY_CONNECTING（§25）：连接 `/v2/relay/{reservation_id}` 数据面
+    ///   （`RelayDataClient`），在其上完成 Relay E2EE 握手后挂载 ConnectionSession。
     async fn connect_relay_fallback(
         &self,
         peer_id: &str,
@@ -554,69 +553,72 @@ impl ConnectionOrchestrator {
 
         // RELAY_RESERVING：reserve_relay 经 v2 控制面路由（§31 reserveRelay）。
         self.set_stage(OrchestratorState::RelayReserving);
-        if let Some(control) = state.relay_control.read().await.clone() {
-            if control.is_usable().await {
-                match tokio::time::timeout(
-                    RELAY_RESERVE_TIMEOUT,
-                    control.reserve_relay(
-                        attempt_id.to_string(),
-                        peer_id.to_string(),
-                        super::RELAY_RESERVATION_LIFETIME_S,
-                    ),
+        let reservation = {
+            let control = state.relay_control.read().await.clone().ok_or_else(|| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::RelayError,
+                    "Relay control plane is unavailable",
+                    "connect",
+                    peer_id,
                 )
-                .await
-                {
-                    Ok(Ok(reservation)) => {
-                        tracing::debug!(
-                            peer_id = %peer_id,
-                            attempt_id = %attempt_id,
-                            reservation_id = %reservation.reservation_id,
-                            "relay reservation acquired"
-                        );
-                    }
-                    Ok(Err(error)) => {
-                        tracing::warn!(
-                            peer_id = %peer_id,
-                            error = %error,
-                            "relay reservation failed"
-                        );
-                        return Err(protocol_error_with_peer(
-                            NetworkErrorCode::RelayError,
-                            format!("Relay reservation failed: {error}"),
-                            "connect",
-                            peer_id,
-                        ));
-                    }
-                    Err(_) => {
-                        return Err(protocol_error_with_peer(
-                            NetworkErrorCode::Timeout,
-                            "Relay reservation timed out",
-                            "connect",
-                            peer_id,
-                        ));
-                    }
+            })?;
+            if !control.is_usable().await {
+                return Err(protocol_error_with_peer(
+                    NetworkErrorCode::RelayError,
+                    "Relay control plane is not connected",
+                    "connect",
+                    peer_id,
+                ));
+            }
+            match tokio::time::timeout(
+                RELAY_RESERVE_TIMEOUT,
+                control.reserve_relay(
+                    attempt_id.to_string(),
+                    peer_id.to_string(),
+                    super::RELAY_RESERVATION_LIFETIME_S,
+                ),
+            )
+            .await
+            {
+                Ok(Ok(reservation)) => {
+                    tracing::debug!(
+                        peer_id = %peer_id,
+                        attempt_id = %attempt_id,
+                        reservation_id = %reservation.reservation_id,
+                        "relay reservation acquired"
+                    );
+                    reservation
+                }
+                Ok(Err(error)) => {
+                    tracing::warn!(peer_id = %peer_id, error = %error, "relay reservation failed");
+                    return Err(protocol_error_with_peer(
+                        NetworkErrorCode::RelayError,
+                        format!("Relay reservation failed: {error}"),
+                        "connect",
+                        peer_id,
+                    ));
+                }
+                Err(_) => {
+                    return Err(protocol_error_with_peer(
+                        NetworkErrorCode::Timeout,
+                        "Relay reservation timed out",
+                        "connect",
+                        peer_id,
+                    ));
                 }
             }
-        }
+        };
 
-        // RELAY_CONNECTING：复用 v1 Relay 数据路径（deprecated，Step 11 迁移）。
+        // RELAY_CONNECTING（§25）：连接 reservation 数据面并启动事件循环。
         self.set_stage(OrchestratorState::RelayConnecting);
-        let relay = state.relay.read().await.clone().ok_or_else(|| {
-            protocol_error_with_peer(
-                NetworkErrorCode::RelayError,
-                "Relay route completed without a Relay client",
-                "connect",
-                peer_id,
-            )
-        })?;
-        if !relay.is_usable().await {
-            return Err(protocol_error_with_peer(
-                NetworkErrorCode::RelayError,
-                "Relay data plane is not connected",
-                "connect",
-                peer_id,
-            ));
-        }
+        let data =
+            match crate::relay::connect_initiator_relay_data(&state, peer_id, reservation).await {
+                Ok(data) => data,
+                Err(error) => {
+                    state.sessions.mark_failed(peer_id, session_id).await;
+                    return Err(error);
+                }
+            };
         let crypto_identity = state.identity.read().await.clone().ok_or_else(|| {
             protocol_error_with_peer(
                 NetworkErrorCode::InvalidArgument,
@@ -627,7 +629,7 @@ impl ConnectionOrchestrator {
         })?;
         let (crypto, admission) = match crate::peer::establish_relay_crypto(
             &state,
-            Arc::clone(&relay),
+            Arc::clone(&data),
             peer_id,
             session_id,
             crypto_identity,
@@ -655,7 +657,7 @@ impl ConnectionOrchestrator {
         let session_id = admission.session_id;
         let attached = state
             .sessions
-            .mark_relay_route_connected(peer_id, session_id, RouteType::Relay, Some(relay))
+            .mark_relay_route_connected(peer_id, session_id, RouteType::Relay, Some(data))
             .await;
         if !attached {
             state.sessions.mark_failed(peer_id, session_id).await;

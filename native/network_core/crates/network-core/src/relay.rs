@@ -1,16 +1,22 @@
-//! Relay v1 enrollment 运行时、透明传输路由与 E2E 处理。
-
-// v1 PathManager remote_* 桥接方法在 Step 11 前仍被 v1 代码使用（§38 Step 5 已将它们
-// 标记 deprecated）；保持 v1 行为不变，仅抑制 lint，additive-first。
-#![allow(deprecated)]
+//! Relay v2 控制面 + reservation 数据面（transport-network v2 §24/§25/§31/§32）。
+//!
+//! v1 单一 `RelayClient`（`/v1/connect` JSON 控制 + 0x10 二进制数据）已在 Step 11
+//! 删除。Relay 控制面（`/v2/control`）与数据面（`/v2/relay/{reservation_id}`）物理
+//! 隔离：
+//!
+//! - 控制面：`RelayControlClient`。Resolve / Discovery / Connectivity / Presence /
+//!   Realtime / Reservation 均经它路由（§31 `reserveRelay`）。
+//! - 数据面：`RelayDataClient`（§25）。Direct 失败后由 `ConnectionOrchestrator` 经
+//!   `reserve_relay` 获取 reservation，双方连接 `/v2/relay/{reservation_id}`；文件、
+//!   流与可靠消息数据以不透明信封在数据面上转发（服务器不解密业务数据）。
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use network_protocol::{
     ConfigureRelayCommand, DataMessage, DeliveryAck, NetworkError as ProtocolError,
-    NetworkErrorCode, PeerPresenceChangedEvent, PeerPresenceState, RetryDisposition, RouteType,
+    NetworkErrorCode, PeerPresenceChangedEvent, PeerPresenceState, RouteType,
 };
-use network_relay::v2::{ControlEvent, DiscoverySnapshot, RuntimeEpoch};
-use network_relay::{RelayClient, RelayControlClient, RelayError, RelayEvent};
+use network_relay::v2::{ControlEvent, DataEvent, DiscoverySnapshot, RuntimeEpoch};
+use network_relay::{RelayControlClient, RelayDataClient, RelayError};
 use network_transfer::{
     build_file_manifest, existing_completed_file, existing_partial_offset, FileManifest,
     ResumableTransfer, TransferFailureReason, DEFAULT_TRANSFER_BUFFER,
@@ -27,17 +33,21 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::connection::{decode_generic_frame, GenericFrameKind};
 use crate::crypto::{self, CryptoMode, APPLICATION_CRYPTO_SUITE};
+#[cfg(test)]
+use crate::events::protocol_error_with_retry;
 use crate::events::{
     emit_incoming_offer, emit_peer_presence_changed, emit_peer_presence_snapshot,
     emit_transfer_completed, emit_transfer_error, emit_transfer_progress, protocol_error,
-    protocol_error_with_context, protocol_error_with_retry,
+    protocol_error_with_context,
 };
 use crate::runtime::{
-    LookupResult, PeerConfig, RuntimeState, INCOMING_APPROVAL_TIMEOUT,
-    MAX_PENDING_INCOMING_TRANSFERS, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
+    PeerConfig, RuntimeState, INCOMING_APPROVAL_TIMEOUT, MAX_PENDING_INCOMING_TRANSFERS,
+    MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
 };
+#[cfg(test)]
+use network_protocol::RetryDisposition;
 
-/// Relay 配置只存在 native runtime 内存中，用于 socket 意外断开后的指数退避重连。
+/// Relay 配置只存在 native runtime 内存中，用于控制面 socket 意外断开后的指数退避重连。
 #[derive(Clone)]
 pub(crate) struct RelayReconnectConfig {
     pub(crate) relay_url: String,
@@ -92,7 +102,124 @@ pub(crate) struct ActiveRelayIncoming {
     pub(crate) already_completed: bool,
 }
 
-/// 连接原生 Relay 数据面并启动事件消费者。
+// ---------------------------------------------------------------------------
+// 数据面不透明信封（§25：数据通道只做 Encrypted Payload Forwarding）。
+// 信封第一字节是类型标签（对 Relay 透明，不属于业务数据），其余为业务负载。
+// ---------------------------------------------------------------------------
+
+const DATA_ENV_CRYPTO: u8 = 0x01;
+const DATA_ENV_FILE_OFFER: u8 = 0x02;
+const DATA_ENV_FILE_ACCEPT: u8 = 0x03;
+const DATA_ENV_FILE_COMPLETE: u8 = 0x04;
+const DATA_ENV_FILE_COMPLETE_ACK: u8 = 0x05;
+const DATA_ENV_FILE_CANCEL: u8 = 0x06;
+const DATA_ENV_FILE_CHUNK: u8 = 0x07;
+const DATA_ENV_CHANNEL: u8 = 0x08;
+const DATA_ENV_CHANNEL_ACK: u8 = 0x09;
+const DATA_ENV_STREAM: u8 = 0x0A;
+
+/// 封装并发送一个数据面信封（sequence=0；文件分块单独使用真实序号）。
+async fn send_data_envelope(
+    data: &RelayDataClient,
+    kind: u8,
+    body: &[u8],
+) -> Result<(), RelayError> {
+    let mut envelope = Vec::with_capacity(1 + body.len());
+    envelope.push(kind);
+    envelope.extend_from_slice(body);
+    data.send(0, &envelope).await
+}
+
+/// 封装并发送一个带 token 前缀的数据面信封（crypto/channel/stream 使用）。
+async fn send_data_envelope_with_token(
+    data: &RelayDataClient,
+    kind: u8,
+    token: &str,
+    body: &[u8],
+) -> Result<(), RelayError> {
+    if token.len() > u8::MAX as usize {
+        return Err(RelayError::InvalidConfiguration(
+            "relay data envelope token is too long".into(),
+        ));
+    }
+    let mut envelope = Vec::with_capacity(1 + 1 + token.len() + body.len());
+    envelope.push(kind);
+    envelope.push(token.len() as u8);
+    envelope.extend_from_slice(token.as_bytes());
+    envelope.extend_from_slice(body);
+    data.send(0, &envelope).await
+}
+
+/// 发送一条 Relay E2EE 握手帧（加密握手不是业务数据，但复用数据面不透明转发）。
+pub(crate) async fn send_relay_crypto(
+    data: &RelayDataClient,
+    token: &str,
+    step: u8,
+    payload: &[u8],
+) -> Result<(), RelayError> {
+    let frame = crate::crypto_handshake::encode_relay_frame(step, payload)
+        .map_err(|error| RelayError::Protocol(error.to_string()))?;
+    if token.len() != 32
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(RelayError::InvalidConfiguration(
+            "relay crypto token must be 32 lowercase hexadecimal characters".into(),
+        ));
+    }
+    let mut body = Vec::with_capacity(32 + frame.len());
+    body.extend_from_slice(token.as_bytes());
+    body.extend_from_slice(&frame);
+    send_data_envelope(data, DATA_ENV_CRYPTO, &body).await
+}
+
+/// 发送一条 Relay 可靠消息（DataMessage protobuf 封装）。
+pub(crate) async fn send_relay_channel_message(
+    data: &RelayDataClient,
+    token: &str,
+    payload: &[u8],
+) -> Result<(), RelayError> {
+    send_data_envelope_with_token(data, DATA_ENV_CHANNEL, token, payload).await
+}
+
+/// 发送一条 Relay DeliveryAck。
+pub(crate) async fn send_relay_channel_ack(
+    data: &RelayDataClient,
+    token: &str,
+    payload: &[u8],
+) -> Result<(), RelayError> {
+    send_data_envelope_with_token(data, DATA_ENV_CHANNEL_ACK, token, payload).await
+}
+
+/// 发送一条 Relay byte-stream 帧（StreamOpen/StreamBytes/StreamClose）。
+pub(crate) async fn send_relay_stream_frame(
+    data: &RelayDataClient,
+    token: &str,
+    payload: &[u8],
+) -> Result<(), RelayError> {
+    send_data_envelope_with_token(data, DATA_ENV_STREAM, token, payload).await
+}
+
+/// 解码一个 token 前缀信封，返回 (token, body)。
+fn decode_token_envelope(envelope: &[u8]) -> Result<(&str, &[u8]), RelayError> {
+    if envelope.len() < 2 {
+        return Err(RelayError::Protocol(
+            "relay data envelope is truncated".into(),
+        ));
+    }
+    let token_len = envelope[0] as usize;
+    if envelope.len() < 1 + token_len {
+        return Err(RelayError::Protocol(
+            "relay data envelope token is truncated".into(),
+        ));
+    }
+    let token = std::str::from_utf8(&envelope[1..1 + token_len])
+        .map_err(|_| RelayError::Protocol("relay data envelope token is not UTF-8".into()))?;
+    Ok((token, &envelope[1 + token_len..]))
+}
+
+/// 连接原生 Relay v2 控制面并启动事件消费者（§31 `RelayControlClient`）。
 pub(crate) async fn configure_relay_for_state(
     state: Arc<RuntimeState>,
     command: ConfigureRelayCommand,
@@ -103,11 +230,7 @@ pub(crate) async fn configure_relay_for_state(
         .relay_credential_stale
         .store(false, std::sync::atomic::Ordering::Release);
     state.relay_config.write().await.take();
-    let previous = state.relay.write().await.take();
-    if let Some(previous) = previous {
-        previous.request_disconnect().await;
-        cleanup_relay_state(&state).await;
-    }
+    disconnect_relay_data(state.as_ref()).await;
     let device_id = state
         .identity
         .read()
@@ -131,35 +254,20 @@ pub(crate) async fn configure_relay_for_state(
         credential: command.relay_credential,
         signing_seed,
     };
-    let (relay, events) = connect_relay_client(&device_id, &config)
-        .await
-        .map_err(|error| relay_connect_protocol_error(&error, "configure_relay"))?;
     *state.relay_config.write().await = Some(config.clone());
-    *state.relay.write().await = Some(Arc::clone(&relay));
-    upload_local_discovery(&state).await;
-    // transport-network v2：建立 /v2/control 控制面客户端（§31 `RelayControlClient`）。
-    // resolve / publish / signaling / reserve 均经它路由。v2 控制面连接失败时不阻断
-    // v1 Relay 数据路径（deprecated）；此时 Resolve 退化为本地直连。
     setup_v2_control_plane(&state, &device_id, &config).await;
-    // transport-network v2：控制连接建立后重新发布完整 Discovery Snapshot（§8/§9）。
+    crate::events::emit_relay_state(
+        &state.event_tx,
+        network_protocol::RelayConnectionState::Connected,
+        None,
+    );
+    // transport-network v2：控制连接建立后发布完整 Discovery Snapshot（§8/§9）。
     crate::discovery::spawn_control_connected(&state);
-    state
-        .task_supervisor
-        .spawn_runtime(
-            "relay-events",
-            handle_relay_events(events, Arc::clone(&state), Arc::clone(&relay)),
-        )
-        .ok_or_else(|| {
-            protocol_error(NetworkErrorCode::Cancelled, "network runtime is stopping")
-        })?;
     crate::transfer::resume_relay_transfers(state).await;
     Ok(())
 }
 
 /// transport-network v2：建立 `/v2/control` 控制面客户端并启动事件消费者。
-///
-/// 失败只记日志：v1 Relay 数据路径仍可用（deprecated），Resolve 在控制面不可用时
-/// 退化为本地直连（ConnectionOrchestrator 处理）。
 async fn setup_v2_control_plane(
     state: &Arc<RuntimeState>,
     device_id: &str,
@@ -179,6 +287,7 @@ async fn setup_v2_control_plane(
     };
     if let Err(error) = control.connect().await {
         tracing::warn!(error = %error, "Relay v2 control client connect failed");
+        schedule_relay_reconnect(Arc::clone(state));
         return;
     }
     let Ok(events) = control.take_events() else {
@@ -195,12 +304,7 @@ async fn setup_v2_control_plane(
 }
 
 /// 消费 Relay v2 控制面异步事件（presence hints / inbound ConnectivityOffer /
-/// IncomingRelayReservation / Disconnected）。
-///
-/// - Presence 事件（§23）：只更新 [`crate::connect::presence::PresenceHintCache`] 并发出
-///   UI 类型化事件，绝不触碰 ConnectivityAttempt / CandidateSet / ConnectionSession。
-/// - inbound ConnectivityOffer（§14 应答方视角）：接受并回送 ConnectivityAnswer；Direct
-///   连接由发起方 Direct First 打到本端 accept 监听器。
+/// IncomingRelayReservation / RealtimeSignal / Disconnected）。
 async fn consume_control_events(
     state: Arc<RuntimeState>,
     control: Arc<RelayControlClient>,
@@ -277,14 +381,14 @@ async fn consume_control_events(
                         .await;
                 }
             }
-            ControlEvent::IncomingRelayReservation(_) => {
-                // §25 reservation 数据面（Step 11 迁移到 RelayDataClient）。
-                tracing::debug!("incoming relay reservation (data plane migration pending)");
+            ControlEvent::IncomingRelayReservation(reservation) => {
+                // §25：应答方收到 reservation 后连接 /v2/relay/{reservation_id}，
+                // 建立数据面客户端并启动事件循环（crypto 握手 + 文件/流/消息）。
+                connect_incoming_relay_data(&state, reservation).await;
             }
             ControlEvent::RealtimeSignal(signal) => {
                 // §17/§22：WebRTC 信令经 v2 Relay Control Plane；入站帧路由到
-                // RealtimeManager 做 Offer/Answer/ICE 协商。v1 Relay 数据面信令
-                // （`RelayEvent::Control { webrtc_* }`）在 handle_relay_events 中仍处理。
+                // RealtimeManager 做 Offer/Answer/ICE 协商。
                 if let Err(error) =
                     crate::realtime::handle_v2_realtime_signal(&state, &signal).await
                 {
@@ -297,6 +401,8 @@ async fn consume_control_events(
             }
             ControlEvent::Disconnected { reason } => {
                 tracing::debug!(reason, "Relay v2 control disconnected");
+                schedule_relay_reconnect(Arc::clone(&state));
+                break;
             }
             _ => {}
         }
@@ -317,15 +423,12 @@ async fn local_discovery_tuple(
     )
 }
 
-/// 断开原生 Relay 客户端，并发布类型化最终状态。
+/// 断开原生 Relay 数据面客户端，并发布类型化最终状态。
 pub(crate) async fn disconnect_relay(state: &RuntimeState) -> Result<(), ProtocolError> {
     stop_relay_reconnect_task(state).await;
     state.relay_config.write().await.take();
-    let relay = state.relay.write().await.take();
-    if let Some(relay) = relay {
-        relay.request_disconnect().await;
-    }
-    cleanup_relay_state(state).await;
+    disconnect_relay_data(state).await;
+    state.relay_control.write().await.take();
     crate::events::emit_relay_state(
         &state.event_tx,
         network_protocol::RelayConnectionState::Disconnected,
@@ -334,52 +437,17 @@ pub(crate) async fn disconnect_relay(state: &RuntimeState) -> Result<(), Protoco
     Ok(())
 }
 
-async fn connect_relay_client(
-    device_id: &str,
-    config: &RelayReconnectConfig,
-) -> Result<(Arc<RelayClient>, mpsc::Receiver<RelayEvent>), RelayError> {
-    let mut relay = RelayClient::new(
-        config.relay_url.clone(),
-        device_id.to_string(),
-        config.credential.clone(),
-        config.signing_seed,
-    )?;
-    relay.connect().await?;
-    let events = relay.take_events()?;
-    Ok((Arc::new(relay), events))
-}
-
-/// 将 Relay connect 失败映射为类型化协议错误。凭据过期/身份冲突是终态错误，
-/// 其余仍走通用的 Relay 传输错误，保持既有退避重连行为。
-fn relay_connect_protocol_error(error: &RelayError, operation: &str) -> ProtocolError {
-    match error {
-        RelayError::CredentialExpired(_) => protocol_error_with_retry(
-            NetworkErrorCode::CredentialExpired,
-            error.to_string(),
-            operation,
-            None,
-            RetryDisposition::RefreshCredentialThenRetry,
-            0,
-        ),
-        RelayError::IdentityConflict(_) => protocol_error_with_retry(
-            NetworkErrorCode::IdentityConflict,
-            error.to_string(),
-            operation,
-            None,
-            RetryDisposition::NoRetry,
-            0,
-        ),
-        _ => protocol_error_with_context(
-            NetworkErrorCode::RelayError,
-            error.to_string(),
-            operation,
-            None,
-        ),
+/// 取走并断开当前 reservation 数据面客户端。
+async fn disconnect_relay_data(state: &RuntimeState) {
+    let data = state.relay_data.write().await.take();
+    if let Some(data) = data {
+        data.request_disconnect().await;
     }
+    cleanup_relay_state(state).await;
 }
 
-/// 只在 socket 意外结束时启动一个共享重连任务；显式 DisconnectRelay 会先清除配置，
-/// 因此不会被这个后台任务重新拉起。
+/// 只在控制面 socket 意外结束时启动一个共享重连任务；显式 DisconnectRelay 会先
+/// 清除配置，因此不会被这个后台任务重新拉起。
 fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
     if state
         .relay_reconnect_active
@@ -423,55 +491,25 @@ fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
                 else {
                     break;
                 };
-                match connect_relay_client(&device_id, &config).await {
-                    Ok((relay, events)) => {
-                        *reconnect_state.relay.write().await = Some(Arc::clone(&relay));
-                        upload_local_discovery(&reconnect_state).await;
-                        // transport-network v2：重连（control_connection_id C1→C2，§8）
-                        // 后重建 /v2/control 控制面并重新发布完整 Snapshot（epoch 不变）。
-                        setup_v2_control_plane(&reconnect_state, &device_id, &config).await;
-                        crate::discovery::spawn_control_connected(&reconnect_state);
-                        crate::events::emit_relay_state(
-                            &reconnect_state.event_tx,
-                            network_protocol::RelayConnectionState::Connected,
-                            None,
-                        );
-                        let _ = reconnect_state.task_supervisor.spawn_runtime(
-                            "relay-events",
-                            handle_relay_events(
-                                events,
-                                Arc::clone(&reconnect_state),
-                                Arc::clone(&relay),
-                            ),
-                        );
-                        crate::transfer::resume_relay_transfers(Arc::clone(&reconnect_state)).await;
-                        break;
-                    }
-                    Err(error)
-                        if matches!(
-                            &error,
-                            RelayError::CredentialExpired(_) | RelayError::IdentityConflict(_)
-                        ) =>
-                    {
-                        // 终态认证错误：标记凭据失效、发布类型化 Failed，并停止重连。
-                        reconnect_state
-                            .relay_credential_stale
-                            .store(true, std::sync::atomic::Ordering::Release);
-                        crate::events::emit_relay_state(
-                            &reconnect_state.event_tx,
-                            network_protocol::RelayConnectionState::Failed,
-                            Some(relay_connect_protocol_error(&error, "reconnect_relay")),
-                        );
-                        break;
-                    }
-                    Err(error) => {
-                        tracing::debug!(error = %error, "Relay reconnect attempt failed");
-                        backoff = std::cmp::min(
-                            backoff.saturating_mul(2),
-                            crate::runtime::RECONNECT_MAX_BACKOFF,
-                        );
-                    }
+                if reconnect_state.relay_control.read().await.is_some() {
+                    break;
                 }
+                reconnect_state.relay_control.write().await.take();
+                setup_v2_control_plane(&reconnect_state, &device_id, &config).await;
+                if reconnect_state.relay_control.read().await.is_some() {
+                    crate::discovery::spawn_control_connected(&reconnect_state);
+                    crate::events::emit_relay_state(
+                        &reconnect_state.event_tx,
+                        network_protocol::RelayConnectionState::Connected,
+                        None,
+                    );
+                    crate::transfer::resume_relay_transfers(Arc::clone(&reconnect_state)).await;
+                    break;
+                }
+                backoff = std::cmp::min(
+                    backoff.saturating_mul(2),
+                    crate::runtime::RECONNECT_MAX_BACKOFF,
+                );
             }
             reconnect_state
                 .relay_reconnect_active
@@ -505,378 +543,272 @@ async fn stop_relay_reconnect_task(state: &RuntimeState) {
     }
 }
 
-/// 消费 Relay 控制帧和二进制帧，不将其暴露给 Dart。
-pub(crate) async fn handle_relay_events(
-    mut events: mpsc::Receiver<RelayEvent>,
+/// 应答方收到 `IncomingRelayReservation` 后连接数据面并启动事件循环。
+async fn connect_incoming_relay_data(
+    state: &Arc<RuntimeState>,
+    reservation: network_relay::v2::IncomingRelayReservation,
+) {
+    let Some(config) = state.relay_config.read().await.clone() else {
+        tracing::warn!("incoming relay reservation arrived without a Relay config");
+        return;
+    };
+    let mut data = match RelayDataClient::new(
+        reservation.relay_data_endpoint.clone(),
+        reservation.reservation_id.clone(),
+        reservation.local_token.clone(),
+        config.credential.clone(),
+        config.signing_seed,
+    ) {
+        Ok(data) => data,
+        Err(error) => {
+            tracing::warn!(error = %error, "Relay v2 data client creation failed");
+            return;
+        }
+    };
+    if let Err(error) = data.connect_reservation().await {
+        tracing::warn!(error = %error, "Relay v2 data client connect failed");
+        return;
+    }
+    let events = match data.take_events() {
+        Ok(events) => events,
+        Err(error) => {
+            tracing::warn!(error = %error, "Relay v2 data events were already consumed");
+            return;
+        }
+    };
+    let peer_id = reservation.initiator_device_id.clone();
+    let data = Arc::new(data);
+    let previous = state.relay_data.write().await.replace(data.clone());
+    if let Some(previous) = previous {
+        previous.request_disconnect().await;
+    }
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let state = Arc::clone(state);
+    let _ = supervisor.spawn_runtime("relay-data-events", async move {
+        handle_relay_data_events(state, data, events, peer_id).await;
+    });
+    tracing::info!(
+        peer_id = %reservation.initiator_device_id,
+        reservation_id = %reservation.reservation_id,
+        "relay v2 data plane connected (responder)"
+    );
+}
+
+/// 建立 reservation 数据面客户端（发起方）并返回事件接收器。
+pub(crate) async fn connect_initiator_relay_data(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    reservation: network_relay::v2::RelayReserveResponse,
+) -> Result<Arc<RelayDataClient>, ProtocolError> {
+    let config = state.relay_config.read().await.clone().ok_or_else(|| {
+        protocol_error_with_context(
+            NetworkErrorCode::RelayError,
+            "Relay is not configured",
+            "relay_data_connect",
+            None,
+        )
+    })?;
+    let mut data = RelayDataClient::new(
+        reservation.relay_data_endpoint,
+        reservation.reservation_id,
+        reservation.local_token,
+        config.credential,
+        config.signing_seed,
+    )
+    .map_err(|error| {
+        protocol_error_with_context(
+            NetworkErrorCode::RelayError,
+            error.to_string(),
+            "relay_data_connect",
+            None,
+        )
+    })?;
+    data.connect_reservation().await.map_err(|error| {
+        protocol_error_with_context(
+            NetworkErrorCode::RelayError,
+            error.to_string(),
+            "relay_data_connect",
+            None,
+        )
+    })?;
+    let events = data.take_events().map_err(|error| {
+        protocol_error_with_context(
+            NetworkErrorCode::RelayError,
+            error.to_string(),
+            "relay_data_connect",
+            None,
+        )
+    })?;
+    let data = Arc::new(data);
+    let previous = state.relay_data.write().await.replace(data.clone());
+    if let Some(previous) = previous {
+        previous.request_disconnect().await;
+    }
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let state = Arc::clone(state);
+    let peer_id = peer_id.to_string();
+    let data_for_loop = Arc::clone(&data);
+    let _ = supervisor.spawn_runtime("relay-data-events", async move {
+        handle_relay_data_events(state, data_for_loop, events, peer_id).await;
+    });
+    Ok(data)
+}
+
+/// 消费 reservation 数据面事件，按信封类型分派到业务处理。
+async fn handle_relay_data_events(
     state: Arc<RuntimeState>,
-    relay: Arc<RelayClient>,
+    data: Arc<RelayDataClient>,
+    mut events: mpsc::Receiver<DataEvent>,
+    peer_id: String,
 ) {
     while let Some(event) = events.recv().await {
         match event {
-            RelayEvent::Lookup {
-                peer_id,
-                online,
-                generation,
-                candidates,
-                capabilities,
-            } => {
-                if let Some(sender) = state.relay_lookups.write().await.remove(&peer_id) {
-                    let _ = sender.send(LookupResult {
-                        online,
-                        generation,
-                        candidates,
-                        capabilities,
-                    });
-                }
-            }
-            RelayEvent::PresenceSnapshot { peers } => {
-                // transport-network v2（§23）：Presence 只更新 UI 提示缓存，绝不修改
-                // ConnectivityAttempt / CandidateSet / ConnectionSession（§41 验收项）。
-                let online = peers
-                    .iter()
-                    .map(|peer| (peer.device_id.clone(), peer.generation))
-                    .collect::<Vec<_>>();
-                let dropped = state.presence_hints.reconcile_snapshot(&online);
-                for device_id in &dropped {
-                    emit_peer_presence_changed(
-                        &state.event_tx,
-                        device_id,
-                        0,
-                        PeerPresenceState::Offline,
-                    );
-                }
-                emit_peer_presence_snapshot(
-                    &state.event_tx,
-                    peers
-                        .iter()
-                        .map(|peer| PeerPresenceChangedEvent {
-                            peer_id: peer.device_id.clone(),
-                            generation: peer.generation,
-                            state: PeerPresenceState::Online as i32,
-                        })
-                        .collect(),
-                );
-            }
-            RelayEvent::PeerOnline {
-                device_id,
-                generation,
-            } => {
-                // §23：Presence 无权使旧 Discovery/候选失效；建连前必须 Resolve。
-                state.presence_hints.mark_online(&device_id, generation);
-                emit_peer_presence_changed(
-                    &state.event_tx,
-                    &device_id,
-                    generation,
-                    PeerPresenceState::Online,
-                );
-            }
-            RelayEvent::PeerUpdated {
-                device_id,
-                generation,
-            } => {
-                // §23：仅 UI 提示；不因 generation 变化清除任何候选/attempt 状态。
-                state.presence_hints.mark_updated(&device_id, generation);
-                emit_peer_presence_changed(
-                    &state.event_tx,
-                    &device_id,
-                    generation,
-                    PeerPresenceState::Updated,
-                );
-            }
-            RelayEvent::PeerOffline { device_id } => {
-                // §23：仅 UI 提示离线；不触碰任何建连/候选状态。
-                state.presence_hints.mark_offline(&device_id);
-                emit_peer_presence_changed(
-                    &state.event_tx,
-                    &device_id,
-                    0,
-                    PeerPresenceState::Offline,
-                );
-            }
-            RelayEvent::Control {
-                kind,
-                session_id,
-                peer_id,
-                payload,
-            } if kind == "offer" => {
-                if let (Some(sender_id), Some(payload)) = (peer_id, payload) {
-                    if let Err(error) =
-                        receive_relay_offer(&state, session_id.clone(), sender_id.clone(), payload)
-                            .await
-                    {
-                        emit_transfer_error(
-                            &state.event_tx,
-                            &session_id,
-                            NetworkErrorCode::RelayError,
-                            "Relay incoming offer was rejected".to_string(),
-                            "receive",
-                            Some(&sender_id),
-                        );
-                        if let Some(relay) = state.relay.read().await.as_ref() {
-                            let _ = relay.send_session_control("cancel", &session_id).await;
-                        }
-                        tracing::warn!("Rejected inbound Relay offer: {}", error);
-                    }
-                }
-            }
-            RelayEvent::Control {
-                kind,
-                session_id,
-                peer_id,
-                payload,
-            } if kind == "crypto_handshake" => {
-                if let (Some(peer_id), Some(payload)) = (peer_id, payload) {
-                    if let Err(error) = handle_relay_crypto_handshake(
-                        &state,
-                        &relay,
-                        &session_id,
-                        &peer_id,
-                        &payload,
-                    )
-                    .await
-                    {
-                        tracing::debug!(
-                            peer_id = %peer_id,
-                            error = %error,
-                            "rejected Relay Session E2EE handshake"
-                        );
-                    }
-                }
-            }
-            RelayEvent::Control {
-                kind,
-                session_id,
-                peer_id,
-                payload,
-            } if matches!(
-                kind.as_str(),
-                "webrtc_offer"
-                    | "webrtc_answer"
-                    | "webrtc_ice_candidate"
-                    | "webrtc_ice_restart"
-                    | "webrtc_close"
-            ) =>
-            {
-                if let (Some(peer_id), Some(payload)) = (peer_id, payload) {
-                    if let Err(error) = crate::realtime::handle_relay_signal(
-                        &state,
-                        &kind,
-                        &session_id,
-                        &peer_id,
-                        &payload,
-                    )
-                    .await
-                    {
-                        tracing::debug!(
-                            peer_id = %peer_id,
-                            error = %error,
-                            "rejected WebRTC signaling control"
-                        );
-                    }
-                }
-            }
-            RelayEvent::Control {
-                kind,
-                session_id,
-                peer_id,
-                ..
-            } if kind == "complete" => {
-                if let Err(error) =
-                    complete_relay_incoming(&state, &session_id, peer_id.as_deref()).await
-                {
-                    emit_transfer_error(
-                        &state.event_tx,
-                        &session_id,
-                        NetworkErrorCode::RelayError,
-                        "Relay incoming transfer failed validation".to_string(),
-                        "receive",
-                        peer_id.as_deref(),
-                    );
-                    if let Some(relay) = state.relay.read().await.as_ref() {
-                        let _ = relay.send_session_control("cancel", &session_id).await;
-                    }
-                    tracing::warn!("Failed inbound Relay completion: {}", error);
-                }
-            }
-            RelayEvent::Control {
-                kind,
-                session_id,
-                payload,
-                ..
-            } if kind == "accept" => {
-                if let Some(sender) = state.relay_acceptances.write().await.remove(&session_id) {
-                    let acceptance = payload
-                        .and_then(|payload| serde_json::from_str::<RelayAcceptance>(&payload).ok());
-                    let _ = sender.send(acceptance);
-                }
-            }
-            RelayEvent::Control {
-                kind, session_id, ..
-            } if kind == "complete_ack" => {
-                if let Some(sender) = state.relay_completions.write().await.remove(&session_id) {
-                    let _ = sender.send(true);
-                }
-            }
-            RelayEvent::Control {
-                kind, session_id, ..
-            } if kind == "cancel" => {
-                if let Some(sender) = state.relay_acceptances.write().await.remove(&session_id) {
-                    let _ = sender.send(None);
-                }
-                if let Some(sender) = state.relay_completions.write().await.remove(&session_id) {
-                    let _ = sender.send(false);
-                }
-                cancel_relay_incoming(&state, &session_id).await;
-            }
-            RelayEvent::Control {
-                kind,
-                session_id,
-                peer_id,
-                payload,
-                ..
-            } if kind == "channel_message" => {
-                if let (Some(peer_id), Some(payload)) = (peer_id, payload) {
-                    if let Err(error) =
-                        receive_relay_channel_message(&state, &peer_id, &session_id, &payload).await
-                    {
-                        tracing::debug!(peer_id = %peer_id, error = %error, "rejected Relay DataMessage");
-                    }
-                }
-            }
-            RelayEvent::Control {
-                kind,
-                session_id,
-                peer_id,
-                payload,
-                ..
-            } if kind == "channel_ack" => {
-                if let (Some(peer_id), Some(payload)) = (peer_id, payload) {
-                    if let Err(error) =
-                        receive_relay_delivery_ack(&state, &peer_id, &session_id, &payload).await
-                    {
-                        tracing::debug!(peer_id = %peer_id, error = %error, "rejected Relay DeliveryAck");
-                    }
-                }
-            }
-            RelayEvent::Binary {
-                session_id,
-                sequence,
-                payload,
-                ..
+            DataEvent::Payload {
+                encrypted_payload, ..
             } => {
                 if let Err(error) =
-                    receive_relay_chunk(&state, &session_id, sequence, &payload).await
+                    handle_relay_data_payload(&state, &data, &peer_id, &encrypted_payload).await
                 {
-                    emit_transfer_error(
-                        &state.event_tx,
-                        &session_id,
-                        NetworkErrorCode::RelayError,
-                        "Relay incoming chunk failed validation".to_string(),
-                        "receive",
-                        None,
+                    tracing::debug!(
+                        peer_id = %peer_id,
+                        error = %error,
+                        "rejected relay v2 data envelope"
                     );
-                    cancel_relay_incoming(&state, &session_id).await;
-                    if let Some(relay) = state.relay.read().await.as_ref() {
-                        let _ = relay.send_session_control("cancel", &session_id).await;
-                    }
-                    tracing::warn!("Rejected inbound Relay chunk: {}", error);
                 }
             }
-            RelayEvent::Disconnected { reason } => {
-                handle_relay_disconnect(Arc::clone(&state), relay.clone(), reason).await;
+            DataEvent::Ack { .. } => {
+                // 流控回执：当前文件发送路径不使用显式 Ack 门控，静默忽略。
+            }
+            DataEvent::Close { reason, detail } => {
+                tracing::debug!(peer_id = %peer_id, reason, detail, "relay v2 data closed");
                 break;
             }
-            RelayEvent::Control { .. } => {}
+            DataEvent::Disconnected { reason } => {
+                tracing::debug!(peer_id = %peer_id, reason, "relay v2 data disconnected");
+                break;
+            }
         }
     }
-    handle_relay_disconnect(state, relay, "Relay event stream ended".to_string()).await;
+    relay_data_disconnected(state, data, peer_id).await;
 }
 
-/// 向已连接的 Relay 上传当前设备的 Discovery（generation + 本地 candidates）。
-///
-/// Relay 只按设备 ID 存最新一代摘要；首份在认证连接成功后上传，后续由
-/// Dart 显式 UploadDiscoveryCommand 重传。失败只记日志，不阻断数据面。
-async fn upload_local_discovery(state: &RuntimeState) {
-    let Some(relay) = state.relay.read().await.clone() else {
-        return;
+/// 分派一条数据面信封。
+async fn handle_relay_data_payload(
+    state: &Arc<RuntimeState>,
+    data: &Arc<RelayDataClient>,
+    peer_id: &str,
+    envelope: &[u8],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some((&kind, body)) = envelope.split_first() else {
+        return Err(std::io::Error::other("relay data envelope is empty").into());
     };
-    let Some(manager) = state.local_path_manager.read().await.clone() else {
-        return;
-    };
-    let generation = manager.generation().await.max(1);
-    let candidates = manager
-        .ranked_candidates()
-        .await
-        .into_iter()
-        .map(|candidate| serde_json::to_string(&candidate.advertisement()))
-        .filter_map(Result::ok)
-        .collect::<Vec<_>>();
-    if let Err(error) = relay
-        .send_discovery_update(generation, &candidates, &[])
-        .await
-    {
-        tracing::debug!(error = %error, "Relay discovery upload failed");
+    match kind {
+        DATA_ENV_CRYPTO => {
+            // body = [token 32][step+payload]
+            if body.len() < 32 {
+                return Err(std::io::Error::other("relay crypto envelope is truncated").into());
+            }
+            let token = std::str::from_utf8(&body[..32])?.to_string();
+            handle_relay_crypto_handshake(state, data, &token, peer_id, &body[32..]).await
+        }
+        DATA_ENV_FILE_OFFER => receive_relay_offer(state, data, peer_id, body).await,
+        DATA_ENV_FILE_ACCEPT => {
+            let payload = std::str::from_utf8(body)?;
+            let acceptance = serde_json::from_str::<RelayAcceptance>(payload)?;
+            // 发送方按 transfer_id 等待 accept 应答。
+            if let Some(sender) = state
+                .relay_acceptances
+                .write()
+                .await
+                .remove(&acceptance.transfer_id)
+            {
+                let _ = sender.send(Some(acceptance));
+            }
+            Ok(())
+        }
+        DATA_ENV_FILE_COMPLETE => {
+            let session_id = std::str::from_utf8(body)?;
+            complete_relay_incoming(state, data, session_id, Some(peer_id)).await
+        }
+        DATA_ENV_FILE_COMPLETE_ACK => {
+            let transfer_id = std::str::from_utf8(body)?.to_string();
+            if let Some(sender) = state.relay_completions.write().await.remove(&transfer_id) {
+                let _ = sender.send(true);
+            }
+            Ok(())
+        }
+        DATA_ENV_FILE_CANCEL => {
+            let transfer_id = std::str::from_utf8(body)?.to_string();
+            if let Some(sender) = state.relay_acceptances.write().await.remove(&transfer_id) {
+                let _ = sender.send(None);
+            }
+            if let Some(sender) = state.relay_completions.write().await.remove(&transfer_id) {
+                let _ = sender.send(false);
+            }
+            cancel_relay_incoming(state, &transfer_id).await;
+            Ok(())
+        }
+        DATA_ENV_FILE_CHUNK => {
+            // body = [session_id 32][sequence u64 BE][ciphertext]
+            if body.len() < 40 {
+                return Err(std::io::Error::other("relay chunk envelope is truncated").into());
+            }
+            let session_id = std::str::from_utf8(&body[..32])?.to_string();
+            let sequence = u64::from_be_bytes(body[32..40].try_into()?);
+            receive_relay_chunk(state, data, &session_id, sequence, &body[40..]).await
+        }
+        DATA_ENV_CHANNEL => {
+            let (token, payload) = decode_token_envelope(body)?;
+            let payload = payload.to_vec();
+            receive_relay_channel_message(state, data, peer_id, token, &payload).await
+        }
+        DATA_ENV_CHANNEL_ACK => {
+            let (token, payload) = decode_token_envelope(body)?;
+            let payload = payload.to_vec();
+            receive_relay_delivery_ack(state, data, peer_id, token, &payload).await
+        }
+        DATA_ENV_STREAM => {
+            let (token, payload) = decode_token_envelope(body)?;
+            let payload = payload.to_vec();
+            receive_relay_stream_frame(state, data, peer_id, token, &payload).await
+        }
+        other => {
+            Err(std::io::Error::other(format!("unknown relay data envelope kind {other}")).into())
+        }
     }
 }
 
-/// 显式重传设备 Discovery；由 Dart 的 UploadDiscoveryCommand 触发。
-pub(crate) async fn upload_discovery(
-    state: &RuntimeState,
-    command: network_protocol::UploadDiscoveryCommand,
-) -> Result<(), ProtocolError> {
-    if command.generation == 0 {
-        return Err(protocol_error(
-            NetworkErrorCode::InvalidArgument,
-            "discovery generation must be nonzero",
-        ));
-    }
-    if command.candidates.len() > 64
-        || command.capabilities.len() > 64
-        || command
-            .candidates
-            .iter()
-            .any(|candidate| candidate.is_empty() || candidate.len() > 2048)
-        || command
-            .capabilities
-            .iter()
-            .any(|capability| capability.is_empty() || capability.len() > 256)
+/// 数据面断开：暂停 Relay 传输并清除共享数据客户端；会话侧由 route 丢失统一处理。
+async fn relay_data_disconnected(
+    state: Arc<RuntimeState>,
+    data: Arc<RelayDataClient>,
+    peer_id: String,
+) {
+    let current = state.relay_data.write().await;
+    if current
+        .as_ref()
+        .is_some_and(|current| Arc::ptr_eq(current, &data))
     {
-        return Err(protocol_error(
-            NetworkErrorCode::InvalidArgument,
-            "discovery candidates or capabilities are outside protocol bounds",
-        ));
+        drop(current);
+        state.relay_data.write().await.take();
     }
-    let relay =
-        state.relay.read().await.clone().ok_or_else(|| {
-            protocol_error(NetworkErrorCode::RelayError, "Relay is not connected")
-        })?;
-    relay
-        .send_discovery_update(
-            command.generation,
-            &command.candidates,
-            &command.capabilities,
-        )
-        .await
-        .map_err(|error| {
-            protocol_error_with_context(
-                NetworkErrorCode::RelayError,
-                error.to_string(),
-                "upload_discovery",
-                None,
-            )
-        })
+    cleanup_relay_state(&state).await;
+    // §18/§35：transport 丢失即销毁 ConnectionSession（Relay route 由其数据客户端
+    // 断开驱动）。显式 close 会 emit Disconnected。
+    crate::peer::teardown_relay_route(&state, &peer_id, &data).await;
 }
 
 fn relay_crypto_key(peer_id: &str, session_token: &str) -> String {
     format!("{peer_id}/{session_token}")
 }
 
+/// 处理一条数据面 crypto 信封（应答方或等待中的发起方）。
 async fn handle_relay_crypto_handshake(
     state: &Arc<RuntimeState>,
-    relay: &Arc<RelayClient>,
+    data: &Arc<RelayDataClient>,
     session_token: &str,
     peer_id: &str,
-    encoded_payload: &str,
+    frame_bytes: &[u8],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if session_token.len() != 32
         || !session_token
@@ -891,8 +823,7 @@ async fn handle_relay_crypto_handshake(
         )
         .into());
     }
-    let frame = URL_SAFE_NO_PAD.decode(encoded_payload)?;
-    let (step, payload) = crate::crypto_handshake::decode_relay_frame(&frame)
+    let (step, payload) = crate::crypto_handshake::decode_relay_frame(frame_bytes)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
     let key = relay_crypto_key(peer_id, session_token);
     match step {
@@ -946,9 +877,8 @@ async fn handle_relay_crypto_handshake(
             .map_err(|error| {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
             })?;
-            relay
-                .send_crypto_handshake(session_token, peer_id, &response)
-                .await?;
+            // 用原始 frame 编码回传（data 侧负责加 token 前缀）。
+            send_relay_crypto_raw(data, session_token, &response).await?;
         }
         crate::crypto_handshake::RELAY_CRYPTO_FINAL => {
             let responder = state
@@ -1012,9 +942,7 @@ async fn handle_relay_crypto_handshake(
             .map_err(|error| {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
             })?;
-            relay
-                .send_crypto_handshake(session_token, peer_id, &root_seed)
-                .await?;
+            send_relay_crypto_raw(data, session_token, &root_seed).await?;
         }
         crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM => {
             let confirmer = state
@@ -1046,9 +974,7 @@ async fn handle_relay_crypto_handshake(
             .map_err(|error| {
                 std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
             })?;
-            relay
-                .send_crypto_handshake(session_token, peer_id, &accept)
-                .await?;
+            send_relay_crypto_raw(data, session_token, &accept).await?;
             if admission.session_id.wire_key() != material.local_session_binding {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Interrupted,
@@ -1075,7 +1001,7 @@ async fn handle_relay_crypto_handshake(
                     peer_id,
                     session_id,
                     RouteType::Relay,
-                    Some(Arc::clone(relay)),
+                    Some(Arc::clone(data)),
                 )
                 .await
             {
@@ -1097,7 +1023,6 @@ async fn handle_relay_crypto_handshake(
             crate::transfer::resume_transfers_for_peer(Arc::clone(state), peer_id.to_string())
                 .await;
             // transport-network v2：Relay → Direct 后台升级已删除（§35）；路由建立后不变。
-            // 被替换的旧 Session 已在 admission 时销毁（§18），无需延迟取消。
         }
         _ => {
             return Err(std::io::Error::new(
@@ -1110,51 +1035,34 @@ async fn handle_relay_crypto_handshake(
     Ok(())
 }
 
-async fn handle_relay_disconnect(
-    state: Arc<RuntimeState>,
-    relay: Arc<RelayClient>,
-    reason: String,
-) {
-    let mut current = state.relay.write().await;
-    let is_current = current
-        .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(current, &relay));
-    if !is_current {
-        return;
-    }
-    current.take();
-    drop(current);
-    cleanup_relay_state(&state).await;
-    crate::events::emit_relay_state(
-        &state.event_tx,
-        network_protocol::RelayConnectionState::Disconnected,
-        Some(protocol_error_with_context(
-            NetworkErrorCode::RelayError,
-            format!("Relay socket disconnected: {reason}"),
-            "relay",
-            None,
-        )),
-    );
-    if state.relay_config.read().await.is_some()
-        && !state
-            .relay_credential_stale
-            .load(std::sync::atomic::Ordering::Acquire)
+/// 发送一条已编码的 crypto 帧（data 侧加 token 前缀）。
+async fn send_relay_crypto_raw(
+    data: &RelayDataClient,
+    token: &str,
+    encoded_frame: &[u8],
+) -> Result<(), RelayError> {
+    if token.len() != 32
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     {
-        crate::events::emit_relay_state(
-            &state.event_tx,
-            network_protocol::RelayConnectionState::Connecting,
-            None,
-        );
-        schedule_relay_reconnect(state);
+        return Err(RelayError::InvalidConfiguration(
+            "relay crypto token must be 32 lowercase hexadecimal characters".into(),
+        ));
     }
+    let mut body = Vec::with_capacity(32 + encoded_frame.len());
+    body.extend_from_slice(token.as_bytes());
+    body.extend_from_slice(encoded_frame);
+    send_data_envelope(data, DATA_ENV_CRYPTO, &body).await
 }
 
-/// Relay 只转发 Base64 包装的 opaque DataMessage，业务解码仍在 native core。
+/// Relay 只转发不透明 DataMessage；业务解码仍在 native core。
 async fn receive_relay_channel_message(
     state: &Arc<RuntimeState>,
+    _data: &Arc<RelayDataClient>,
     peer_id: &str,
     session_token: &str,
-    payload: &str,
+    payload: &[u8],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if !state.peers.read().await.contains_key(peer_id) {
         return Err(std::io::Error::new(
@@ -1163,11 +1071,9 @@ async fn receive_relay_channel_message(
         )
         .into());
     }
-    let encoded = URL_SAFE_NO_PAD.decode(payload)?;
-    // ReliableStream frames ride the same Relay `channel_message` control
-    // (design §17 Relay Stream): transparent forwarding, the Relay never parses
-    // business bytes. Detect the generic frame kind first.
-    if let Ok(frame) = decode_generic_frame(&encoded) {
+    // ReliableStream frames ride the same Relay data channel (design §17 Relay
+    // Stream): transparent forwarding, the Relay never parses business bytes.
+    if let Ok(frame) = decode_generic_frame(payload) {
         match frame.kind {
             GenericFrameKind::StreamOpen
             | GenericFrameKind::StreamBytes
@@ -1199,7 +1105,7 @@ async fn receive_relay_channel_message(
             _ => {}
         }
     }
-    let message = DataMessage::decode(encoded.as_slice())?;
+    let message = DataMessage::decode(payload)?;
     if hex::encode(&message.message_id) != session_token {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -1207,7 +1113,49 @@ async fn receive_relay_channel_message(
         )
         .into());
     }
-    crate::channel::handle_data_message(state, peer_id, &encoded).await
+    crate::channel::handle_data_message(state, peer_id, payload).await
+}
+
+/// 专门处理 Relay byte-stream 帧（`DATA_ENV_STREAM`）。
+async fn receive_relay_stream_frame(
+    state: &Arc<RuntimeState>,
+    _data: &Arc<RelayDataClient>,
+    peer_id: &str,
+    session_token: &str,
+    payload: &[u8],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !state.peers.read().await.contains_key(peer_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Relay channel sender is not a registered peer",
+        )
+        .into());
+    }
+    let frame = decode_generic_frame(payload)?;
+    if !matches!(
+        frame.kind,
+        GenericFrameKind::StreamOpen
+            | GenericFrameKind::StreamBytes
+            | GenericFrameKind::StreamClose
+    ) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Relay stream envelope must carry a stream frame",
+        )
+        .into());
+    }
+    let expected_token = format!("stream:{}", relay_stream_id(&frame));
+    if session_token != expected_token {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Relay stream token does not match StreamId",
+        )
+        .into());
+    }
+    crate::stream::handle_inbound_stream_frame(state, peer_id, frame.kind, &frame.payload)
+        .await
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    Ok(())
 }
 
 /// Extracts the logical stream_id from a relayed stream frame payload (all
@@ -1222,9 +1170,10 @@ fn relay_stream_id(frame: &crate::connection::GenericInboundFrame) -> u16 {
 
 async fn receive_relay_delivery_ack(
     state: &Arc<RuntimeState>,
+    _data: &Arc<RelayDataClient>,
     peer_id: &str,
     session_token: &str,
-    payload: &str,
+    payload: &[u8],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if !state.peers.read().await.contains_key(peer_id) {
         return Err(std::io::Error::new(
@@ -1233,8 +1182,7 @@ async fn receive_relay_delivery_ack(
         )
         .into());
     }
-    let encoded = URL_SAFE_NO_PAD.decode(payload)?;
-    let ack = DeliveryAck::decode(encoded.as_slice())?;
+    let ack = DeliveryAck::decode(payload)?;
     if hex::encode(&ack.message_id) != session_token {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -1242,38 +1190,24 @@ async fn receive_relay_delivery_ack(
         )
         .into());
     }
-    crate::channel::handle_delivery_ack(state, peer_id, &encoded).await
+    crate::channel::handle_delivery_ack(state, peer_id, payload).await
 }
 
-/// 清理一次 Relay socket 尝试，但保留可由新 socket 继续使用的业务状态。
+/// 清理一次 Relay 数据面断开，但保留可由新连接继续使用的业务状态。
 ///
-/// `TransferManager` 和稳定 `.part` 属于 TransferSession，不属于 Relay socket；这里
-/// 只丢弃当前 attempt token、等待中的 oneshot 和打开的文件句柄，绝不取消传输或删除
-/// checkpoint。
+/// `TransferManager` 和稳定 `.part` 属于 TransferSession，不属于 Relay 数据面；这里
+/// 只丢弃等待中的 oneshot 和打开的文件句柄，绝不取消传输或删除 checkpoint。
 async fn cleanup_relay_state(state: &RuntimeState) {
-    let outgoing = state
-        .relay_sessions
-        .write()
-        .await
-        .drain()
-        .map(|(transfer_id, _)| transfer_id)
-        .collect::<Vec<_>>();
     let active = {
         let mut active = state.relay_active_incoming.lock().await;
         std::mem::take(&mut *active)
     };
     state.relay_acceptances.write().await.clear();
     state.relay_completions.write().await.clear();
-    state.relay_lookups.write().await.clear();
     state.relay_crypto_waiters.write().await.clear();
     state.relay_crypto_responders.lock().await.clear();
     state.relay_crypto_confirmers.lock().await.clear();
 
-    for transfer_id in outgoing {
-        if state.transfers.pause_for_network(&transfer_id).await {
-            tracing::debug!(transfer_id = %transfer_id, "Relay transfer paused after socket disconnect");
-        }
-    }
     for (transfer_id, incoming) in active {
         drop(incoming.file);
         if state.transfers.pause_for_network(&transfer_id).await {
@@ -1288,20 +1222,35 @@ async fn cleanup_relay_state(state: &RuntimeState) {
 /// 在通知 UI 前解密并校验传入 Relay 申请。
 async fn receive_relay_offer(
     state: &Arc<RuntimeState>,
-    session_id: String,
-    sender_id: String,
-    encoded_payload: String,
+    data: &Arc<RelayDataClient>,
+    sender_id: &str,
+    body: &[u8],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if session_id.len() != 32
-        || !session_id.bytes().all(|value| value.is_ascii_hexdigit())
-        || !state.peers.read().await.contains_key(&sender_id)
-    {
+    if !state.peers.read().await.contains_key(sender_id) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "Relay sender is not a registered peer",
         )
         .into());
     }
+    // body = [session_id 32][base64(encrypted offer)]：session_id 用于派生 offer 的
+    // 加密 nonce（与 v1 同构），必须在明文中。
+    if body.len() < 32 {
+        return Err(std::io::Error::other("Relay offer envelope is truncated").into());
+    }
+    let session_id = std::str::from_utf8(&body[..32])?.to_string();
+    if session_id.len() != 32
+        || !session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Relay offer session ID is invalid",
+        )
+        .into());
+    }
+    let encoded_payload = std::str::from_utf8(&body[32..])?;
     let envelope = URL_SAFE_NO_PAD.decode(encoded_payload)?;
     let session_bytes: [u8; 16] = hex::decode(&session_id)?.try_into().map_err(|_| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Relay session ID")
@@ -1349,7 +1298,7 @@ async fn receive_relay_offer(
         || value.get("session_id").and_then(serde_json::Value::as_str) != Some(session_id.as_str())
         || value.get("transfer_id").and_then(serde_json::Value::as_str)
             != Some(transfer_id.as_str())
-        || offer_sender != Some(sender_id.as_str())
+        || offer_sender != Some(sender_id)
         || receiver != Some(identity.device_id.as_str())
         || !is_sha256_hash(content_hash)
         || !is_sha256_hash(manifest_hash)
@@ -1388,7 +1337,7 @@ async fn receive_relay_offer(
     let pending = PendingRelayIncoming {
         transfer_id: transfer_id.clone(),
         session_id: session_id.clone(),
-        sender_id: sender_id.clone(),
+        sender_id: sender_id.to_string(),
         manifest: manifest.clone(),
         manifest_hash: manifest_hash.to_string(),
         crypto_session_id,
@@ -1433,7 +1382,7 @@ async fn receive_relay_offer(
 
     let resume_offset = state
         .transfers
-        .claim_incoming_resume(&manifest, &sender_id)
+        .claim_incoming_resume(&manifest, sender_id)
         .await;
     let receive_directory = state.receive_directory.read().await.clone();
     let completed_path = if let Some(directory) = receive_directory.as_ref() {
@@ -1444,7 +1393,7 @@ async fn receive_relay_offer(
     if is_new_offer && resume_offset.is_none() {
         if !state
             .transfers
-            .register_incoming(manifest.clone(), sender_id.clone())
+            .register_incoming(manifest.clone(), sender_id.to_string())
             .await
         {
             state
@@ -1459,11 +1408,11 @@ async fn receive_relay_offer(
             .into());
         }
         if completed_path.is_none() {
-            emit_incoming_offer(&state.event_tx, &sender_id, &manifest, RouteType::Relay);
+            emit_incoming_offer(&state.event_tx, sender_id, &manifest, RouteType::Relay);
         }
     }
     if resume_offset.is_some() || completed_path.is_some() {
-        accept_pending_relay_incoming(state, &transfer_id).await?;
+        accept_pending_relay_incoming(state, data, &transfer_id).await?;
         return Ok(());
     }
     let expiry_state = Arc::clone(state);
@@ -1488,12 +1437,17 @@ async fn receive_relay_offer(
                     .transfers
                     .fail_transfer(&expiry_transfer_id, TransferFailureReason::UserRejected)
                     .await;
-                if let Some(relay) = expiry_state.relay.read().await.as_ref() {
-                    let _ = relay.send_session_control("cancel", &session_id).await;
+                if let Some(data) = expiry_state.relay_data.read().await.clone() {
+                    let _ = send_file_cancel(&data, &expiry_transfer_id).await;
                 }
             }
         });
     Ok(())
+}
+
+/// 发送文件控制取消信封（body = transfer_id）。
+async fn send_file_cancel(data: &RelayDataClient, transfer_id: &str) -> Result<(), RelayError> {
+    send_data_envelope(data, DATA_ENV_FILE_CANCEL, transfer_id.as_bytes()).await
 }
 
 /// 应用传入 Relay 审批，并创建临时文件。
@@ -1515,17 +1469,20 @@ pub(crate) async fn respond_to_relay_incoming(
                 None,
             )
         })?;
+    let data = state.relay_data.read().await.clone().ok_or_else(|| {
+        protocol_error_with_context(
+            NetworkErrorCode::RelayError,
+            "Relay data plane is unavailable",
+            "respond_incoming",
+            None,
+        )
+    })?;
     if !accepted {
         state.transfers.cancel_transfer(transfer_id).await;
         state.transfers.remove_transfer(transfer_id).await;
-        if let Some(relay) = state.relay.read().await.as_ref() {
-            relay
-                .send_session_control("cancel", &pending.session_id)
-                .await
-                .map_err(|_| {
-                    protocol_error(NetworkErrorCode::RelayError, "Relay cancellation failed")
-                })?;
-        }
+        send_file_cancel(&data, transfer_id).await.map_err(|_| {
+            protocol_error(NetworkErrorCode::RelayError, "Relay cancellation failed")
+        })?;
         return Ok(());
     }
     state
@@ -1533,7 +1490,7 @@ pub(crate) async fn respond_to_relay_incoming(
         .write()
         .await
         .insert(transfer_id.to_string(), pending);
-    if let Err(error) = accept_pending_relay_incoming(state, transfer_id).await {
+    if let Err(error) = accept_pending_relay_incoming(state, &data, transfer_id).await {
         cancel_relay_incoming(state, transfer_id).await;
         return Err(protocol_error_with_context(
             NetworkErrorCode::RelayError,
@@ -1548,6 +1505,7 @@ pub(crate) async fn respond_to_relay_incoming(
 /// 为首次审批或同一 TransferSession 的自动恢复创建接收 attempt。
 async fn accept_pending_relay_incoming(
     state: &RuntimeState,
+    data: &Arc<RelayDataClient>,
     transfer_id: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pending = state
@@ -1556,9 +1514,6 @@ async fn accept_pending_relay_incoming(
         .await
         .remove(transfer_id)
         .ok_or_else(|| std::io::Error::other("Relay transfer is not pending"))?;
-    let relay = state.relay.read().await.clone().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotConnected, "Relay is unavailable")
-    })?;
     let receive_directory = state
         .receive_directory
         .read()
@@ -1647,9 +1602,7 @@ async fn accept_pending_relay_incoming(
             already_completed,
         },
     );
-    if let Err(error) = relay
-        .send_session_control_with_payload("accept", &pending.session_id, Some(&acceptance))
-        .await
+    if let Err(error) = send_data_envelope(data, DATA_ENV_FILE_ACCEPT, acceptance.as_bytes()).await
     {
         if let Some(active) = state.relay_active_incoming.lock().await.remove(transfer_id) {
             drop(active.file);
@@ -1668,6 +1621,7 @@ async fn accept_pending_relay_incoming(
 /// 认证、排序并写入一个加密 Relay 分块。
 async fn receive_relay_chunk(
     state: &RuntimeState,
+    data: &Arc<RelayDataClient>,
     session_id: &str,
     sequence: u64,
     ciphertext: &[u8],
@@ -1729,12 +1683,14 @@ async fn receive_relay_chunk(
         .transfers
         .update_progress(&transfer_id, active.received_bytes)
         .await;
+    let _ = data;
     Ok(())
 }
 
 /// 校验 Relay 完成状态，提交文件并发送 complete_ack。
 async fn complete_relay_incoming(
     state: &RuntimeState,
+    data: &Arc<RelayDataClient>,
     session_id: &str,
     sender_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -1766,19 +1722,11 @@ async fn complete_relay_incoming(
         )
         .into());
     }
-    let relay = state
-        .relay
-        .read()
-        .await
-        .clone()
-        .ok_or_else(|| std::io::Error::other("Relay is unavailable"))?;
     if active.already_completed {
         state.transfers.mark_verifying(&transfer_id).await;
         state.transfers.mark_completed(&transfer_id).await;
         state.transfers.remove_transfer(&transfer_id).await;
-        relay
-            .send_session_control("complete_ack", session_id)
-            .await?;
+        send_data_envelope(data, DATA_ENV_FILE_COMPLETE_ACK, transfer_id.as_bytes()).await?;
         return Ok(());
     }
     if !relay_hash_matches(active.hasher, &active.offer.manifest.content_hash) {
@@ -1857,27 +1805,25 @@ async fn complete_relay_incoming(
             &active.final_path.to_string_lossy(),
         );
     }
-    relay
-        .send_session_control("complete_ack", session_id)
-        .await?;
+    send_data_envelope(data, DATA_ENV_FILE_COMPLETE_ACK, transfer_id.as_bytes()).await?;
     Ok(())
 }
 
 /// 取消或失败后移除待处理和临时 Relay 状态。
-pub(crate) async fn cancel_relay_incoming(state: &RuntimeState, session_id: &str) {
+pub(crate) async fn cancel_relay_incoming(state: &RuntimeState, session_or_transfer_id: &str) {
     let pending = state
         .relay_pending_incoming
         .write()
         .await
-        .remove(session_id);
+        .remove(session_or_transfer_id);
     let active = {
         let mut active_transfers = state.relay_active_incoming.lock().await;
-        if let Some(active) = active_transfers.remove(session_id) {
-            Some((session_id.to_string(), active))
+        if let Some(active) = active_transfers.remove(session_or_transfer_id) {
+            Some((session_or_transfer_id.to_string(), active))
         } else {
             let transfer_id = active_transfers
                 .iter()
-                .find(|(_, active)| active.offer.session_id == session_id)
+                .find(|(_, active)| active.offer.session_id == session_or_transfer_id)
                 .map(|(transfer_id, _)| transfer_id.clone());
             transfer_id.and_then(|transfer_id| {
                 active_transfers
@@ -1890,7 +1836,7 @@ pub(crate) async fn cancel_relay_incoming(state: &RuntimeState, session_id: &str
         .as_ref()
         .map(|pending| pending.transfer_id.clone())
         .or_else(|| active.as_ref().map(|(transfer_id, _)| transfer_id.clone()))
-        .unwrap_or_else(|| session_id.to_string());
+        .unwrap_or_else(|| session_or_transfer_id.to_string());
     if let Some((_, active)) = active {
         drop(active.file);
         tokio::fs::remove_file(active.temporary_path).await.ok();
@@ -1905,9 +1851,8 @@ pub(crate) async fn cancel_relay_incoming(state: &RuntimeState, session_id: &str
 
 /// CancelTransfer 的 Relay 侧清理入口；显式取消才会删除 checkpoint。
 pub(crate) async fn cancel_transfer(state: &RuntimeState, transfer_id: &str) {
-    let session_id = state.relay_sessions.write().await.remove(transfer_id);
-    if let (Some(relay), Some(session_id)) = (state.relay.read().await.clone(), session_id) {
-        let _ = relay.send_session_control("cancel", &session_id).await;
+    if let Some(data) = state.relay_data.read().await.clone() {
+        let _ = send_file_cancel(&data, transfer_id).await;
     }
     cancel_relay_incoming(state, transfer_id).await;
 }
@@ -2011,7 +1956,7 @@ fn is_transient_relay_error(error: &(dyn std::error::Error + 'static)) -> bool {
     false
 }
 
-/// 发送加密 Relay 申请、分块和完成确认。
+/// 发送加密 Relay 申请、分块和完成确认（reservation 数据面）。
 pub(crate) async fn send_file_over_relay(
     peer: PeerConfig,
     transfer: ResumableTransfer,
@@ -2021,11 +1966,10 @@ pub(crate) async fn send_file_over_relay(
     let peer_id = transfer.peer_id.clone();
     let path = transfer.source_path.clone();
     let result = async {
-        let relay = state
-            .relay
-            .read()
+        let data = state
+            .sessions
+            .current_relay_data(&peer_id)
             .await
-            .clone()
             .ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::NotConnected, "Relay is unavailable")
             })?;
@@ -2067,28 +2011,26 @@ pub(crate) async fn send_file_over_relay(
             "modified_at": manifest.modified_at,
             "content_hash": manifest.content_hash,
         }))?;
+        // offer 用对端 E2E 公钥加密（与 v1 同构）；信封 = [session_id][base64(密文)]。
         let encrypted_offer =
             crypto::encrypt_application_offer(&offer, peer.e2e_public_key, &session_bytes)?;
+        let encoded_offer = URL_SAFE_NO_PAD.encode(encrypted_offer);
+        let mut offer_envelope = Vec::with_capacity(32 + encoded_offer.len());
+        offer_envelope.extend_from_slice(session_id.as_bytes());
+        offer_envelope.extend_from_slice(encoded_offer.as_bytes());
         let (acceptance_tx, acceptance_rx) = oneshot::channel();
         state
             .relay_acceptances
             .write()
             .await
-            .insert(session_id.clone(), acceptance_tx);
+            .insert(transfer_id.clone(), acceptance_tx);
+        send_data_envelope(&data, DATA_ENV_FILE_OFFER, &offer_envelope).await?;
+        let acceptance_result = tokio::time::timeout(INCOMING_APPROVAL_TIMEOUT, acceptance_rx).await;
         state
-            .relay_sessions
+            .relay_acceptances
             .write()
             .await
-            .insert(transfer_id.clone(), session_id.clone());
-        relay
-            .send_offer(
-                &session_id,
-                &peer_id,
-                &URL_SAFE_NO_PAD.encode(encrypted_offer),
-            )
-            .await?;
-        let acceptance_result = tokio::time::timeout(INCOMING_APPROVAL_TIMEOUT, acceptance_rx).await;
-        state.relay_acceptances.write().await.remove(&session_id);
+            .remove(&transfer_id);
         let acceptance = match acceptance_result {
             Ok(Ok(Some(acceptance))) => acceptance,
             Ok(Ok(None)) => {
@@ -2184,9 +2126,12 @@ pub(crate) async fn send_file_over_relay(
                     &buffer[..read],
                 )
                 .await?;
-            relay
-                .forward_opaque_payload(&session_id, sequence, &ciphertext)
-                .await?;
+            // body = [session_id 32][sequence u64 BE][ciphertext]
+            let mut chunk = Vec::with_capacity(40 + ciphertext.len());
+            chunk.extend_from_slice(session_id.as_bytes());
+            chunk.extend_from_slice(&sequence.to_be_bytes());
+            chunk.extend_from_slice(&ciphertext);
+            send_data_envelope(&data, DATA_ENV_FILE_CHUNK, &chunk).await?;
             sequence = crypto::next_sequence(sequence)?;
             transferred += read as u64;
             state
@@ -2212,14 +2157,14 @@ pub(crate) async fn send_file_over_relay(
             .relay_completions
             .write()
             .await
-            .insert(session_id.clone(), completion_tx);
-        relay.send_session_control("complete", &session_id).await?;
+            .insert(transfer_id.clone(), completion_tx);
+        send_data_envelope(&data, DATA_ENV_FILE_COMPLETE, transfer_id.as_bytes()).await?;
         let completed = tokio::time::timeout(INCOMING_APPROVAL_TIMEOUT, completion_rx)
             .await
             .ok()
             .and_then(Result::ok)
             .unwrap_or(false);
-        state.relay_completions.write().await.remove(&session_id);
+        state.relay_completions.write().await.remove(&transfer_id);
         if !completed {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
@@ -2234,16 +2179,14 @@ pub(crate) async fn send_file_over_relay(
         Ok(())
     }
     .await;
-    if let Some(session_id) = state.relay_sessions.write().await.remove(&transfer_id) {
-        if result.is_err()
-            && !result
-                .as_ref()
-                .err()
-                .is_some_and(|error| is_transient_relay_error(error.as_ref()))
-        {
-            if let Some(relay) = state.relay.read().await.as_ref() {
-                let _ = relay.send_session_control("cancel", &session_id).await;
-            }
+    if result.is_err()
+        && result
+            .as_ref()
+            .err()
+            .is_some_and(|error| !is_transient_relay_error(error.as_ref()))
+    {
+        if let Some(data) = state.sessions.current_relay_data(&peer_id).await {
+            let _ = send_file_cancel(&data, &transfer_id).await;
         }
     }
     if result.is_err() && state.transfers.snapshot(&transfer_id).await.is_none() {
@@ -2281,6 +2224,36 @@ pub(crate) async fn send_file_over_relay(
         );
         state.transfers.remove_transfer(&transfer_id).await;
         tracing::debug!(transfer_id = %transfer_id, error = %error, "native Relay file transfer failed");
+    }
+}
+
+/// 将 Relay connect 失败映射为类型化协议错误。凭据过期/身份冲突是终态错误，
+/// 其余仍走通用的 Relay 传输错误。仅测试使用（Step 11 后重连由控制面重建驱动）。
+#[cfg(test)]
+fn relay_connect_protocol_error(error: &RelayError, operation: &str) -> ProtocolError {
+    match error {
+        RelayError::CredentialExpired(_) => protocol_error_with_retry(
+            NetworkErrorCode::CredentialExpired,
+            error.to_string(),
+            operation,
+            None,
+            RetryDisposition::RefreshCredentialThenRetry,
+            0,
+        ),
+        RelayError::IdentityConflict(_) => protocol_error_with_retry(
+            NetworkErrorCode::IdentityConflict,
+            error.to_string(),
+            operation,
+            None,
+            RetryDisposition::NoRetry,
+            0,
+        ),
+        _ => protocol_error_with_context(
+            NetworkErrorCode::RelayError,
+            error.to_string(),
+            operation,
+            None,
+        ),
     }
 }
 

@@ -68,9 +68,9 @@ impl TransferDispatcher {
                     )
                 }),
             Some(RouteType::Relay) => {
-                let relay = self.state.relay.read().await.clone();
-                let usable = match relay {
-                    Some(relay) => relay.is_usable().await,
+                let data = self.state.relay_data.read().await.clone();
+                let usable = match data {
+                    Some(data) => data.is_usable().await,
                     None => false,
                 };
                 if usable {

@@ -283,17 +283,6 @@ pub struct SendRealtimeSignalCommand {
     pub payload: Vec<u8>,
 }
 
-/// 显式重传设备 Discovery 元数据；native 侧在 Relay 认证连接后也会自动上传首份。
-#[derive(Clone, PartialEq, Message)]
-pub struct UploadDiscoveryCommand {
-    #[prost(uint64, tag = "1")]
-    pub generation: u64,
-    #[prost(string, repeated, tag = "2")]
-    pub candidates: Vec<String>,
-    #[prost(string, repeated, tag = "3")]
-    pub capabilities: Vec<String>,
-}
-
 /// 打开一条到对端的 ReliableStream 字节流（设计 §17/§21）。`stream_id` 由调用方
 /// 分配（u32，native 侧校验 ≤ u16::MAX），`service` 是对端网关的服务提示（如 "ssh"）。
 #[derive(Clone, PartialEq, Message)]
@@ -372,8 +361,6 @@ pub mod network_command {
         StopRealtimeSession(StopRealtimeSessionCommand),
         #[prost(message, tag = "23")]
         SendRealtimeSignal(SendRealtimeSignalCommand),
-        #[prost(message, tag = "24")]
-        UploadDiscovery(UploadDiscoveryCommand),
         #[prost(message, tag = "25")]
         SshStreamOpen(SshStreamOpenCommand),
         #[prost(message, tag = "26")]
@@ -827,31 +814,6 @@ mod tests {
                 assert_eq!(snapshot.peers[1].state, PeerPresenceState::Offline as i32);
             }
             other => panic!("unexpected event payload: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn upload_discovery_command_round_trips_through_the_wire() {
-        let command = NetworkCommand {
-            command_id: "upload-discovery".into(),
-            protocol_version: NETWORK_PROTOCOL_VERSION,
-            payload: Some(network_command::Payload::UploadDiscovery(
-                UploadDiscoveryCommand {
-                    generation: 7,
-                    candidates: vec!["candidate-1".into()],
-                    capabilities: vec!["file-transfer".into()],
-                },
-            )),
-        };
-        let encoded = command.encode_to_vec();
-        let decoded = NetworkCommand::decode(encoded.as_slice()).expect("decode");
-        match decoded.payload {
-            Some(network_command::Payload::UploadDiscovery(upload)) => {
-                assert_eq!(upload.generation, 7);
-                assert_eq!(upload.candidates, vec!["candidate-1".to_string()]);
-                assert_eq!(upload.capabilities, vec!["file-transfer".to_string()]);
-            }
-            other => panic!("unexpected command payload: {other:?}"),
         }
     }
 
