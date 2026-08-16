@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::task::JoinHandle;
+use tokio_tungstenite::tungstenite::handshake::client::Request;
+use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::info;
 use url::Url;
@@ -173,9 +175,7 @@ impl RelayDataClient {
         }
         self.disconnect_notified.store(false, Ordering::Release);
         self.intentional_disconnect.store(false, Ordering::Release);
-        let path = self.data_url.path().to_string();
-        let request =
-            authenticated_ws_request(&self.data_url, &path, &self.credential, &self.signing_key)?;
+        let request = self.build_data_upgrade_request()?;
         let (socket, _) = tokio::time::timeout(SOCKET_OPERATION_TIMEOUT, connect_async(request))
             .await
             .map_err(|_| RelayError::Socket("Relay data connection timed out".into()))?
@@ -267,6 +267,24 @@ impl RelayDataClient {
         }));
         info!("Relay v2 data client connected");
         Ok(())
+    }
+
+    /// 构建数据面 WebSocket 升级请求：设备认证头 + 校验 reservation 本地 token 的
+    /// `X-Relay-Token` 头。
+    ///
+    /// Go 端 connectRelayData 在升级前必须校验 reservation token（validRelayToken，
+    /// 从 `?token=` query 或 `X-Relay-Token` header 读取），否则直接返回 401；而
+    /// [`normalize_data_endpoint`] 拒绝端点携带 query，因此 token 只能经 header 传递。
+    fn build_data_upgrade_request(&self) -> Result<Request, RelayError> {
+        let path = self.data_url.path().to_string();
+        let mut request =
+            authenticated_ws_request(&self.data_url, &path, &self.credential, &self.signing_key)?;
+        request.headers_mut().insert(
+            "X-Relay-Token",
+            HeaderValue::from_str(&hex::encode(&self.local_token))
+                .map_err(|error| RelayError::InvalidConfiguration(error.to_string()))?,
+        );
+        Ok(request)
     }
 
     /// 取出数据面事件接收器。
@@ -385,6 +403,17 @@ impl RelayDataClient {
             }
         }
         *self.is_connected.write().await = false;
+        // 主动断开也必须向事件通道发出终态事件，唤醒阻塞在 recv() 上的消费者
+        // （handle_relay_data_events 只在 Close/Disconnected 时退出）；否则 consumer
+        // 会永久驻留，连同 Arc<RelayDataClient> 与事件通道一起泄漏。发送失败说明
+        // 消费者已退出，此时事件通道关闭即可，忽略 send 错误。
+        let _ = self
+            .inbound_tx
+            .send(DataEvent::Close {
+                reason: 0,
+                detail: "intentional disconnect".into(),
+            })
+            .await;
     }
 
     fn outbound(&self) -> Result<&mpsc::Sender<Message>, RelayError> {
@@ -614,5 +643,54 @@ mod tests {
             client.send(1, &vec![0u8; 1024]).await,
             Err(RelayError::NotConnected)
         ));
+    }
+
+    /// 回归 #1：Go 端 connectRelayData 在升级前要求 reservation 本地 token
+    /// （`?token=` 或 `X-Relay-Token`），升级请求必须携带 hex 编码的 token 头。
+    #[test]
+    fn data_upgrade_request_carries_reservation_token_header() {
+        let client = RelayDataClient::new(
+            "wss://relay.example.test/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            (1..33).collect(),
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("client");
+        let request = client.build_data_upgrade_request().expect("upgrade request");
+        assert_eq!(
+            request
+                .headers()
+                .get("X-Relay-Token")
+                .expect("token header")
+                .to_str()
+                .expect("ascii header"),
+            hex::encode(&client.local_token)
+        );
+        // 设备认证头仍然保留。
+        assert!(request.headers().get("Authorization").is_some());
+    }
+
+    /// 回归 #14a：主动断开必须向事件通道发出终态事件，否则消费者阻塞在 recv()
+    /// 上永久驻留（Arc<RelayDataClient> + 事件通道泄漏）。
+    #[tokio::test]
+    async fn request_disconnect_emits_terminal_close_event() {
+        let mut client = RelayDataClient::new(
+            "wss://relay.example.test/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            (1..33).collect(),
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("client");
+        let mut events = client.take_events().expect("events");
+        client.request_disconnect().await;
+        assert_eq!(
+            events.recv().await,
+            Some(DataEvent::Close {
+                reason: 0,
+                detail: "intentional disconnect".into(),
+            })
+        );
     }
 }
