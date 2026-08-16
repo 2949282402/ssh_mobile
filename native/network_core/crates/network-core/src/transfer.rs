@@ -68,7 +68,10 @@ impl TransferDispatcher {
                     )
                 }),
             Some(RouteType::Relay) => {
-                let data = self.state.relay_data.read().await.clone();
+                // 每个对端的 Relay 数据连接由 Session 的活跃 route 承载（§25
+                // reservation 数据面）；不能用设备级单 slot 判断，否则多对端并发时
+                // 会误判路由不可用。
+                let data = self.state.sessions.current_relay_data(peer_id).await;
                 let usable = match data {
                     Some(data) => data.is_usable().await,
                     None => false,

@@ -335,6 +335,84 @@ fn relay_data_clients_forward_envelopes_over_reservation() {
     drop(relay_server);
 }
 
+/// 回归 #2：两条不同 reservation 的 relay 数据连接必须共存；连接 peer-c 不得切断
+/// peer-b 的活跃连接，关闭 peer-b 只影响其自身（旧实现把单 slot `.replace` 并
+/// `request_disconnect`，连接新对端会切断另一对端的在途传输）。
+#[test]
+fn relay_data_reservations_for_two_peers_coexist_and_close_independently() {
+    let res_b = hex::encode(rand::random::<[u8; 16]>());
+    let token_b: [u8; 32] = rand::random();
+    let res_c = hex::encode(rand::random::<[u8; 16]>());
+    let token_c: [u8; 32] = rand::random();
+    let mut reservations = HashMap::new();
+    reservations.insert(res_b.clone(), (token_b.to_vec(), vec![0u8; 32]));
+    reservations.insert(res_c.clone(), (token_c.to_vec(), vec![0u8; 32]));
+    let relay_rt = tokio::runtime::Runtime::new().expect("relay test runtime");
+    let relay_server = relay_rt.block_on(FakeRelayV2Server::start(reservations));
+
+    let rt = tokio::runtime::Runtime::new().expect("data test runtime");
+    rt.block_on(async {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(crate::runtime::RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        *state.relay_config.write().await = Some(crate::relay::RelayReconnectConfig {
+            relay_url: "wss://relay.example.test/v2/control".into(),
+            credential: "credential".into(),
+            signing_seed: [11u8; 32],
+        });
+        let reserve_b = RelayReserveResponse {
+            request_id: 1,
+            attempt_id: "attempt-b".into(),
+            reservation_id: res_b.clone(),
+            relay_data_endpoint: v2_relay_data_endpoint(relay_server.address, &res_b),
+            expires_at_ms: 0,
+            local_token: token_b.to_vec(),
+        };
+        let reserve_c = RelayReserveResponse {
+            request_id: 2,
+            attempt_id: "attempt-c".into(),
+            reservation_id: res_c.clone(),
+            relay_data_endpoint: v2_relay_data_endpoint(relay_server.address, &res_c),
+            expires_at_ms: 0,
+            local_token: token_c.to_vec(),
+        };
+        let data_b = crate::relay::connect_initiator_relay_data(&state, "peer-b", reserve_b)
+            .await
+            .expect("connect peer-b reservation");
+        let data_c = crate::relay::connect_initiator_relay_data(&state, "peer-c", reserve_c)
+            .await
+            .expect("connect peer-c reservation");
+
+        // 关键回归：连接 peer-c 之后 peer-b 的数据面连接必须仍然存活（旧单 slot
+        // 实现会在连接 C 时 .replace 并 request_disconnect，切断 peer-b 在途传输）。
+        assert!(
+            data_b.is_usable().await,
+            "connecting peer-c must not sever peer-b's relay data connection"
+        );
+        assert!(data_c.is_usable().await, "peer-c data connection must be live");
+        assert_eq!(
+            state.relay_data.read().await.len(),
+            2,
+            "two reservations must coexist"
+        );
+
+        // 关闭 peer-b 只影响 peer-b 自身，peer-c 的连接必须保持可用。
+        data_b.request_disconnect().await;
+        assert!(!data_b.is_usable().await, "peer-b data connection closed");
+        assert!(
+            data_c.is_usable().await,
+            "closing peer-b must not tear down peer-c"
+        );
+        assert!(
+            state.relay_data.read().await.get("peer-c").is_some(),
+            "peer-c data connection must stay registered"
+        );
+    });
+    drop(relay_server);
+}
+
 /// 验证格式错误的命令载荷会以类型化结果拒绝。
 #[test]
 fn missing_payload_is_invalid_instead_of_a_fake_no_route() {

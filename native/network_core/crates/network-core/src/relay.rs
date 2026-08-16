@@ -33,18 +33,15 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::connection::{decode_generic_frame, GenericFrameKind};
 use crate::crypto::{self, CryptoMode, APPLICATION_CRYPTO_SUITE};
-#[cfg(test)]
-use crate::events::protocol_error_with_retry;
 use crate::events::{
     emit_incoming_offer, emit_peer_presence_changed, emit_peer_presence_snapshot,
     emit_transfer_completed, emit_transfer_error, emit_transfer_progress, protocol_error,
-    protocol_error_with_context,
+    protocol_error_with_context, protocol_error_with_retry,
 };
 use crate::runtime::{
     PeerConfig, RuntimeState, INCOMING_APPROVAL_TIMEOUT, MAX_PENDING_INCOMING_TRANSFERS,
     MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
 };
-#[cfg(test)]
 use network_protocol::RetryDisposition;
 
 /// Relay 配置只存在 native runtime 内存中，用于控制面 socket 意外断开后的指数退避重连。
@@ -255,7 +252,16 @@ pub(crate) async fn configure_relay_for_state(
         signing_seed,
     };
     *state.relay_config.write().await = Some(config.clone());
-    setup_v2_control_plane(&state, &device_id, &config).await;
+    if let Err(error) = setup_v2_control_plane(&state, &device_id, &config).await {
+        // 控制面 socket 未建立：发布类型化 Failed（不伪造 Connected），Dart 据此
+        // 提示或重新下发 ConfigureRelayCommand（凭据过期/冲突时携带类型化错误）。
+        crate::events::emit_relay_state(
+            &state.event_tx,
+            network_protocol::RelayConnectionState::Failed,
+            Some(error.clone()),
+        );
+        return Err(error);
+    }
     crate::events::emit_relay_state(
         &state.event_tx,
         network_protocol::RelayConnectionState::Connected,
@@ -268,11 +274,15 @@ pub(crate) async fn configure_relay_for_state(
 }
 
 /// transport-network v2：建立 `/v2/control` 控制面客户端并启动事件消费者。
+///
+/// 失败时返回类型化错误。凭据过期/身份冲突是终态错误：标记 `relay_credential_stale`
+/// 并停止重连（现有 stale 守卫随后生效），等待 Dart 下发新 ConfigureRelayCommand 后
+/// 恢复；其余传输错误仍走既有退避重连。
 async fn setup_v2_control_plane(
     state: &Arc<RuntimeState>,
     device_id: &str,
     config: &RelayReconnectConfig,
-) {
+) -> Result<(), ProtocolError> {
     let mut control = match RelayControlClient::new(
         config.relay_url.clone(),
         device_id.to_string(),
@@ -282,18 +292,29 @@ async fn setup_v2_control_plane(
         Ok(control) => control,
         Err(error) => {
             tracing::warn!(error = %error, "Relay v2 control client creation failed");
-            return;
+            return Err(relay_connect_protocol_error(&error, "setup_control_plane"));
         }
     };
     if let Err(error) = control.connect().await {
         tracing::warn!(error = %error, "Relay v2 control client connect failed");
-        schedule_relay_reconnect(Arc::clone(state));
-        return;
+        if matches!(
+            error,
+            RelayError::CredentialExpired(_) | RelayError::IdentityConflict(_)
+        ) {
+            // 终态认证错误：凭据已失效，盲目重连只会复用无效凭据；等待 Dart 下发
+            // 新 ConfigureRelayCommand（configure 入口会重置该标记）。
+            state
+                .relay_credential_stale
+                .store(true, std::sync::atomic::Ordering::Release);
+        } else {
+            schedule_relay_reconnect(Arc::clone(state));
+        }
+        return Err(relay_connect_protocol_error(&error, "setup_control_plane"));
     }
-    let Ok(events) = control.take_events() else {
-        tracing::warn!("Relay v2 control events were already consumed");
-        return;
-    };
+    let events = control.take_events().map_err(|error| {
+        tracing::warn!(error = %error, "Relay v2 control events were already consumed");
+        relay_connect_protocol_error(&error, "setup_control_plane")
+    })?;
     let control = Arc::new(control);
     *state.relay_control.write().await = Some(control.clone());
     let supervisor = Arc::clone(&state.task_supervisor);
@@ -301,6 +322,7 @@ async fn setup_v2_control_plane(
     let _ = supervisor.spawn_runtime("relay-v2-control-events", async move {
         consume_control_events(state, control, events).await;
     });
+    Ok(())
 }
 
 /// 消费 Relay v2 控制面异步事件（presence hints / inbound ConnectivityOffer /
@@ -401,6 +423,11 @@ async fn consume_control_events(
             }
             ControlEvent::Disconnected { reason } => {
                 tracing::debug!(reason, "Relay v2 control disconnected");
+                // 意外断开：先取走控制面 sink 再调度重连，否则重连循环第一处守卫
+                // （relay_control.is_some()）会立即 break——死 client 仍占位，
+                // setup_v2_control_plane 永远不会被再次调用，Discovery / Resolve /
+                // reserve_relay / Realtime 信令持续失效。
+                state.relay_control.write().await.take();
                 schedule_relay_reconnect(Arc::clone(&state));
                 break;
             }
@@ -437,10 +464,10 @@ pub(crate) async fn disconnect_relay(state: &RuntimeState) -> Result<(), Protoco
     Ok(())
 }
 
-/// 取走并断开当前 reservation 数据面客户端。
+/// 取走并断开全部 reservation 数据面客户端。
 async fn disconnect_relay_data(state: &RuntimeState) {
-    let data = state.relay_data.write().await.take();
-    if let Some(data) = data {
+    let data = state.relay_data.write().await.drain().collect::<Vec<_>>();
+    for (_, data) in data {
         data.request_disconnect().await;
     }
     cleanup_relay_state(state).await;
@@ -495,21 +522,40 @@ fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
                     break;
                 }
                 reconnect_state.relay_control.write().await.take();
-                setup_v2_control_plane(&reconnect_state, &device_id, &config).await;
-                if reconnect_state.relay_control.read().await.is_some() {
-                    crate::discovery::spawn_control_connected(&reconnect_state);
-                    crate::events::emit_relay_state(
-                        &reconnect_state.event_tx,
-                        network_protocol::RelayConnectionState::Connected,
-                        None,
-                    );
-                    crate::transfer::resume_relay_transfers(Arc::clone(&reconnect_state)).await;
-                    break;
+                match setup_v2_control_plane(&reconnect_state, &device_id, &config).await {
+                    Ok(()) => {
+                        crate::discovery::spawn_control_connected(&reconnect_state);
+                        crate::events::emit_relay_state(
+                            &reconnect_state.event_tx,
+                            network_protocol::RelayConnectionState::Connected,
+                            None,
+                        );
+                        crate::transfer::resume_relay_transfers(Arc::clone(&reconnect_state))
+                            .await;
+                        break;
+                    }
+                    Err(error)
+                        if reconnect_state
+                            .relay_credential_stale
+                            .load(std::sync::atomic::Ordering::Acquire) =>
+                    {
+                        // 凭据过期/冲突：停止重连并发布类型化 Failed（现有 stale 守卫
+                        // 随后生效），Dart 据此下发新的 ConfigureRelayCommand。
+                        crate::events::emit_relay_state(
+                            &reconnect_state.event_tx,
+                            network_protocol::RelayConnectionState::Failed,
+                            Some(error),
+                        );
+                        break;
+                    }
+                    Err(error) => {
+                        tracing::debug!(error = ?error, "Relay reconnect attempt failed");
+                        backoff = std::cmp::min(
+                            backoff.saturating_mul(2),
+                            crate::runtime::RECONNECT_MAX_BACKOFF,
+                        );
+                    }
                 }
-                backoff = std::cmp::min(
-                    backoff.saturating_mul(2),
-                    crate::runtime::RECONNECT_MAX_BACKOFF,
-                );
             }
             reconnect_state
                 .relay_reconnect_active
@@ -578,10 +624,9 @@ async fn connect_incoming_relay_data(
     };
     let peer_id = reservation.initiator_device_id.clone();
     let data = Arc::new(data);
-    let previous = state.relay_data.write().await.replace(data.clone());
-    if let Some(previous) = previous {
-        previous.request_disconnect().await;
-    }
+    // 以对端为 key 记录活跃 reservation 数据连接：替换同一对端的旧连接（会话重建），
+    // 但绝不因此断开其他对端的活跃连接（§25 每条 reservation 数据面相互独立）。
+    state.relay_data.write().await.insert(peer_id.clone(), data.clone());
     let supervisor = Arc::clone(&state.task_supervisor);
     let state = Arc::clone(state);
     let _ = supervisor.spawn_runtime("relay-data-events", async move {
@@ -640,10 +685,13 @@ pub(crate) async fn connect_initiator_relay_data(
         )
     })?;
     let data = Arc::new(data);
-    let previous = state.relay_data.write().await.replace(data.clone());
-    if let Some(previous) = previous {
-        previous.request_disconnect().await;
-    }
+    // 以对端为 key 记录活跃 reservation 数据连接：连接新对端绝不切断其他对端
+    // 的活跃连接（回归 #2：旧单 slot .replace + request_disconnect 会切断）。
+    state
+        .relay_data
+        .write()
+        .await
+        .insert(peer_id.to_string(), data.clone());
     let supervisor = Arc::clone(&state.task_supervisor);
     let state = Arc::clone(state);
     let peer_id = peer_id.to_string();
@@ -778,20 +826,21 @@ async fn handle_relay_data_payload(
     }
 }
 
-/// 数据面断开：暂停 Relay 传输并清除共享数据客户端；会话侧由 route 丢失统一处理。
+/// 数据面断开：移除该对端的 reservation 数据客户端并暂停 Relay 传输；会话侧由
+/// route 丢失统一处理。只清理断开对端的条目，其他对端的活跃数据连接不受影响。
 async fn relay_data_disconnected(
     state: Arc<RuntimeState>,
     data: Arc<RelayDataClient>,
     peer_id: String,
 ) {
-    let current = state.relay_data.write().await;
-    if current
-        .as_ref()
+    let mut entries = state.relay_data.write().await;
+    if entries
+        .get(&peer_id)
         .is_some_and(|current| Arc::ptr_eq(current, &data))
     {
-        drop(current);
-        state.relay_data.write().await.take();
+        entries.remove(&peer_id);
     }
+    drop(entries);
     cleanup_relay_state(&state).await;
     // §18/§35：transport 丢失即销毁 ConnectionSession（Relay route 由其数据客户端
     // 断开驱动）。显式 close 会 emit Disconnected。
@@ -1421,12 +1470,14 @@ async fn receive_relay_offer(
         .task_supervisor
         .spawn_runtime("relay-approval-timeout", async move {
             tokio::time::sleep(INCOMING_APPROVAL_TIMEOUT).await;
-            let expired = expiry_state
-                .relay_pending_incoming
-                .write()
-                .await
-                .get(&expiry_transfer_id)
-                .is_some_and(|pending| pending.session_id == session_id);
+            let (expired, sender_id) = {
+                let pending = expiry_state.relay_pending_incoming.read().await;
+                let entry = pending.get(&expiry_transfer_id);
+                (
+                    entry.is_some_and(|pending| pending.session_id == session_id),
+                    entry.map(|pending| pending.sender_id.clone()),
+                )
+            };
             if expired {
                 expiry_state
                     .relay_pending_incoming
@@ -1437,8 +1488,12 @@ async fn receive_relay_offer(
                     .transfers
                     .fail_transfer(&expiry_transfer_id, TransferFailureReason::UserRejected)
                     .await;
-                if let Some(data) = expiry_state.relay_data.read().await.clone() {
-                    let _ = send_file_cancel(&data, &expiry_transfer_id).await;
+                // 取消只发到承载该 transfer 的对端 reservation 连接。
+                if let Some(sender_id) = sender_id {
+                    if let Some(data) = expiry_state.relay_data.read().await.get(&sender_id).cloned()
+                    {
+                        let _ = send_file_cancel(&data, &expiry_transfer_id).await;
+                    }
                 }
             }
         });
@@ -1469,14 +1524,20 @@ pub(crate) async fn respond_to_relay_incoming(
                 None,
             )
         })?;
-    let data = state.relay_data.read().await.clone().ok_or_else(|| {
-        protocol_error_with_context(
-            NetworkErrorCode::RelayError,
-            "Relay data plane is unavailable",
-            "respond_incoming",
-            None,
-        )
-    })?;
+    let data = state
+        .relay_data
+        .read()
+        .await
+        .get(&pending.sender_id)
+        .cloned()
+        .ok_or_else(|| {
+            protocol_error_with_context(
+                NetworkErrorCode::RelayError,
+                "Relay data plane is unavailable",
+                "respond_incoming",
+                None,
+            )
+        })?;
     if !accepted {
         state.transfers.cancel_transfer(transfer_id).await;
         state.transfers.remove_transfer(transfer_id).await;
@@ -1851,8 +1912,16 @@ pub(crate) async fn cancel_relay_incoming(state: &RuntimeState, session_or_trans
 
 /// CancelTransfer 的 Relay 侧清理入口；显式取消才会删除 checkpoint。
 pub(crate) async fn cancel_transfer(state: &RuntimeState, transfer_id: &str) {
-    if let Some(data) = state.relay_data.read().await.clone() {
-        let _ = send_file_cancel(&data, transfer_id).await;
+    // 取消只发到承载该 transfer 的对端 reservation 连接（按 transfer 所属 peer 定位）。
+    if let Some(peer_id) = state
+        .transfers
+        .snapshot(transfer_id)
+        .await
+        .map(|snapshot| snapshot.peer_id)
+    {
+        if let Some(data) = state.relay_data.read().await.get(&peer_id).cloned() {
+            let _ = send_file_cancel(&data, transfer_id).await;
+        }
     }
     cancel_relay_incoming(state, transfer_id).await;
 }
@@ -2228,8 +2297,7 @@ pub(crate) async fn send_file_over_relay(
 }
 
 /// 将 Relay connect 失败映射为类型化协议错误。凭据过期/身份冲突是终态错误，
-/// 其余仍走通用的 Relay 传输错误。仅测试使用（Step 11 后重连由控制面重建驱动）。
-#[cfg(test)]
+/// 其余仍走通用的 Relay 传输错误。
 fn relay_connect_protocol_error(error: &RelayError, operation: &str) -> ProtocolError {
     match error {
         RelayError::CredentialExpired(_) => protocol_error_with_retry(
@@ -2383,6 +2451,280 @@ mod tests {
             .relay_reconnect_active
             .load(std::sync::atomic::Ordering::Acquire));
         assert!(state.relay_reconnect_task.lock().unwrap().is_none());
+    }
+
+    /// 回归 #1：意外控制面断开必须清空 relay_control sink 并调度重连，否则重连
+    /// 循环第一处守卫（relay_control.is_some()）会立即 break——死 client 仍占位，
+    /// setup_v2_control_plane 永远不会被再次调用，Discovery/Resolve/Reservation/
+    /// Realtime 信令持续失效，直到 Dart 重新下发 ConfigureRelayCommand。
+    #[tokio::test]
+    async fn control_disconnect_clears_slot_and_reconnect_loop_reruns_setup() {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        state.identity.write().await.replace(Arc::new(
+            network_identity::DeviceIdentity::from_private_keys(
+                "device-a".into(),
+                [1u8; 32],
+                [2u8; 32],
+            ),
+        ));
+        // 快速失败的 loopback 端点：重连循环会立刻尝试 setup_v2_control_plane，
+        // 而不是卡在 relay_control 守卫上。URL 必须是无路径的 origin。
+        *state.relay_config.write().await = Some(RelayReconnectConfig {
+            relay_url: "ws://127.0.0.1:9".into(),
+            credential: "credential".into(),
+            signing_seed: [0u8; 32],
+        });
+        let dead_control = Arc::new(
+            RelayControlClient::new(
+                "ws://127.0.0.1:9".into(),
+                "device-a".into(),
+                "credential".into(),
+                [0u8; 32],
+            )
+            .expect("control client"),
+        );
+        *state.relay_control.write().await = Some(dead_control.clone());
+
+        let (events_tx, events_rx) = mpsc::channel(16);
+        let consume_state = Arc::clone(&state);
+        let handler = tokio::spawn(async move {
+            consume_control_events(consume_state, dead_control, events_rx).await;
+        });
+        events_tx
+            .send(ControlEvent::Disconnected {
+                reason: "test disconnect".into(),
+            })
+            .await
+            .expect("send disconnected");
+        drop(events_tx);
+        handler.await.expect("control consumer should exit");
+
+        // 意外断开必须清空控制面 sink，否则重连循环会在死 client 处立即 break。
+        assert!(
+            state.relay_control.read().await.is_none(),
+            "unexpected disconnect must clear the control-plane slot"
+        );
+        assert!(
+            state
+                .relay_reconnect_active
+                .load(std::sync::atomic::Ordering::Acquire),
+            "reconnect must be scheduled after an unexpected disconnect"
+        );
+        // 等待超过首个退避周期：重连循环必须仍在重试（setup 反复执行），而不是在
+        // relay_control 守卫处立即退出。
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        assert!(
+            state
+                .relay_reconnect_active
+                .load(std::sync::atomic::Ordering::Acquire),
+            "reconnect loop must keep retrying instead of breaking on the stale control slot"
+        );
+    }
+
+    /// 回归 #2：关闭一条 reservation 数据连接只移除该对端的条目，另一对端的活跃
+    /// 数据连接必须原样保留（旧单 slot .take() 会连带清掉其他连接）。
+    #[tokio::test]
+    async fn relay_data_disconnect_removes_only_the_matching_peer_entry() {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        let data_b = Arc::new(
+            RelayDataClient::new(
+                "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+                "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+                vec![0u8; 32],
+                "credential".into(),
+                [0u8; 32],
+            )
+            .expect("peer-b data client"),
+        );
+        let data_c = Arc::new(
+            RelayDataClient::new(
+                "ws://127.0.0.1:9/v2/relay/7a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+                "7a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+                vec![0u8; 32],
+                "credential".into(),
+                [0u8; 32],
+            )
+            .expect("peer-c data client"),
+        );
+        state
+            .relay_data
+            .write()
+            .await
+            .insert("peer-b".into(), data_b.clone());
+        state
+            .relay_data
+            .write()
+            .await
+            .insert("peer-c".into(), data_c.clone());
+        assert_eq!(state.relay_data.read().await.len(), 2);
+
+        relay_data_disconnected(Arc::clone(&state), data_b, "peer-b".into()).await;
+
+        let entries = state.relay_data.read().await;
+        assert!(
+            entries
+                .get("peer-c")
+                .is_some_and(|current| Arc::ptr_eq(current, &data_c)),
+            "peer-c data connection must survive peer-b disconnecting"
+        );
+        assert!(
+            entries.get("peer-b").is_none(),
+            "only the disconnected peer's entry must be removed"
+        );
+    }
+
+    /// 回归 #5a：控制面 socket 未能建立时，configure_relay_for_state 必须发布类型化
+    /// Failed（而不是伪造 Connected），并返回错误。
+    #[tokio::test]
+    async fn configure_relay_emits_failed_when_control_connect_fails() {
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        state.identity.write().await.replace(Arc::new(
+            network_identity::DeviceIdentity::from_private_keys(
+                "device-a".into(),
+                [1u8; 32],
+                [2u8; 32],
+            ),
+        ));
+        let command = ConfigureRelayCommand {
+            // 无路径 origin：控制面 socket 建立失败（连接被拒绝）。
+            relay_url: "ws://127.0.0.1:9".into(),
+            relay_credential: "credential".into(),
+            relay_signing_seed: vec![0u8; 32],
+        };
+        let result = configure_relay_for_state(Arc::clone(&state), command).await;
+        assert!(result.is_err(), "failed control connect must fail configure");
+        assert!(
+            !state
+                .relay_credential_stale
+                .load(std::sync::atomic::Ordering::Acquire),
+            "transient socket failure is not a credential error"
+        );
+
+        let mut saw_failed = false;
+        while let Ok(event) = event_rx.try_recv() {
+            if let Some(network_protocol::network_event::Payload::RelayStateChanged(change)) =
+                event.payload
+            {
+                assert_ne!(
+                    change.state,
+                    network_protocol::RelayConnectionState::Connected as i32,
+                    "control connect failure must not emit Connected"
+                );
+                if change.state == network_protocol::RelayConnectionState::Failed as i32 {
+                    saw_failed = true;
+                }
+            }
+        }
+        assert!(saw_failed, "control connect failure must emit Failed");
+    }
+
+    /// 回归 #5b：凭据过期（服务端以 HTTP 401 + code 12 拒绝）时，configure 必须
+    /// 标记 relay_credential_stale 并停止重连（现有 stale 守卫随后生效），且发布携带
+    /// CredentialExpired 的 Failed，Dart 据此下发新的 ConfigureRelayCommand。
+    #[tokio::test]
+    async fn configure_relay_with_expired_credential_marks_stale_and_emits_failed() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind fake control listener");
+        let address = listener.local_addr().expect("fake control address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept control connect");
+            // 读完请求头，随后以设备面 code 12（凭据过期）拒绝。
+            let mut request = vec![0u8; 4096];
+            let mut used = 0usize;
+            loop {
+                let read = stream
+                    .read(&mut request[used..])
+                    .await
+                    .expect("read control request");
+                if read == 0 {
+                    break;
+                }
+                used += read;
+                if request[..used].windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            // 响应头与 body 必须一次性写入：tungstenite 客户端只在同一次 read 中
+            // 捕获 header 之后的 tail 作为错误响应 body，分两次写会丢失 {"code":12}。
+            let body = "{\"code\":12}";
+            let response = format!(
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write rejection response");
+            stream.flush().await.expect("flush");
+        });
+
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        state.identity.write().await.replace(Arc::new(
+            network_identity::DeviceIdentity::from_private_keys(
+                "device-a".into(),
+                [1u8; 32],
+                [2u8; 32],
+            ),
+        ));
+        let command = ConfigureRelayCommand {
+            relay_url: format!("ws://{address}"),
+            relay_credential: "expired-credential".into(),
+            relay_signing_seed: vec![0u8; 32],
+        };
+        let result = configure_relay_for_state(Arc::clone(&state), command).await;
+        let error = result.expect_err("expired credential must fail configure");
+        assert_eq!(error.code, NetworkErrorCode::CredentialExpired as i32);
+        assert!(
+            state
+                .relay_credential_stale
+                .load(std::sync::atomic::Ordering::Acquire),
+            "expired credential must mark the credential stale"
+        );
+        assert!(
+            !state
+                .relay_reconnect_active
+                .load(std::sync::atomic::Ordering::Acquire),
+            "expired credential must stop scheduling reconnects"
+        );
+        assert!(
+            state.relay_reconnect_task.lock().unwrap().is_none(),
+            "expired credential must not leave a reconnect task behind"
+        );
+
+        let mut saw_failed = false;
+        while let Ok(event) = event_rx.try_recv() {
+            if let Some(network_protocol::network_event::Payload::RelayStateChanged(change)) =
+                event.payload
+            {
+                if change.state == network_protocol::RelayConnectionState::Failed as i32 {
+                    saw_failed = true;
+                    assert_eq!(
+                        change.error.as_ref().map(|error| error.code),
+                        Some(NetworkErrorCode::CredentialExpired as i32),
+                        "Failed must carry the CredentialExpired error so Dart can re-issue credentials"
+                    );
+                }
+            }
+        }
+        assert!(saw_failed, "expired credential must emit Failed");
+        server.await.expect("fake control server should finish");
     }
 
     #[test]

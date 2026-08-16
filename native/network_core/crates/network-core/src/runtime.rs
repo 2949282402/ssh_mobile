@@ -114,7 +114,9 @@ pub(crate) struct RuntimeState {
     ///
     /// 由 `ConnectionOrchestrator::connect_relay_fallback`（发起方）或控制面
     /// `IncomingRelayReservation`（应答方）建立；文件/流/消息数据经它转发。
-    pub(crate) relay_data: RwLock<Option<Arc<RelayDataClient>>>,
+    /// 活跃 reservation 数据面客户端，按对端 device_id 索引（§25 每条 reservation
+    /// 数据面相互独立，一个对端的关闭不得切断另一个对端的活跃连接）。
+    pub(crate) relay_data: RwLock<HashMap<String, Arc<RelayDataClient>>>,
     pub(crate) relay_config: RwLock<Option<crate::relay::RelayReconnectConfig>>,
     pub(crate) relay_reconnect_task: Mutex<Option<TaskId>>,
     pub(crate) relay_reconnect_active: AtomicBool,
@@ -179,7 +181,7 @@ impl RuntimeState {
             crypto: SessionCryptoManager::new(),
             delivery: DeliveryManager::new(),
             realtime: AsyncMutex::new(crate::realtime::RealtimeManager::default()),
-            relay_data: RwLock::new(None),
+            relay_data: RwLock::new(HashMap::new()),
             relay_config: RwLock::new(None),
             relay_reconnect_task: Mutex::new(None),
             relay_reconnect_active: AtomicBool::new(false),
@@ -532,8 +534,8 @@ impl NetworkRuntime {
     fn shutdown_listener(&self, state: Arc<RuntimeState>) {
         self.runtime.block_on(async move {
             state.task_supervisor.cancel_root();
-            let relay_data = state.relay_data.write().await.take();
-            if let Some(relay_data) = relay_data {
+            let relay_data = state.relay_data.write().await.drain().collect::<Vec<_>>();
+            for (_, relay_data) in relay_data {
                 relay_data.request_disconnect().await;
             }
             // 控制面 Drop 会中止后台读写 worker（RelayControlClient::drop）；显式
@@ -583,7 +585,7 @@ impl Drop for NetworkRuntime {
                     }
                 }
                 if let Ok(mut relay_data) = state.relay_data.try_write() {
-                    relay_data.take();
+                    relay_data.clear();
                 }
                 if let Ok(mut realtime) = state.realtime.try_lock() {
                     realtime.close_all();
