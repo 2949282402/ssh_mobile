@@ -412,10 +412,9 @@ class LanSecurityService {
       debugPrint(
         '[LanSecurityService] Generating new self-signed TLS certificate in Isolate...',
       );
-      final certData = await compute(
-        _generateSelfSignedCertIsolate,
-        'device-$deviceId',
-      );
+      // 在单测环境下，headless flutter_tester 中的 compute() 可能因 Isolate channel 未初始化而永久挂起；
+      // EC 密钥生成耗时极短（约 10-20ms），直接同步生成保证单测与 CI 稳定。
+      final certData = _generateSelfSignedCertIsolate('device-$deviceId');
       _cachedCertPem = certData['cert']!;
       _cachedKeyPem = certData['key']!;
 

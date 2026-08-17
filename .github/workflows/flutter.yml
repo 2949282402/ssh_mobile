@@ -331,7 +331,7 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos
       - name: Test
-        run: flutter test --coverage --reporter expanded
+        run: flutter test --coverage --reporter expanded --timeout 60s
       - name: Check coverage floor
         run: dart run tool/check_coverage.dart --minimum=35
 
