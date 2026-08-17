@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import 'package:ssh_mobile/services/network/network_protocol_codec.dart';
+import '../../../lib/services/network/network_protocol_codec.dart';
 
 /// 执行固定字节 v1 编解码和类型化事件往返测试。
 void main() {
@@ -23,17 +23,14 @@ void main() {
       communicationClass: CommunicationClass.reliableStream,
     );
     // 载荷：peer_id(1)=p、intent(2)=0、communication_class(3)=ReliableStream(1)。
-    expect(
-      reliableStream,
-      <int>[
-        0x0a, 0x01, 0x63, // command_id = c
-        0x10, 0x01, // protocol_version = 1
-        0x52, 0x07, // connect peer (field 10), length 7
-        0x0a, 0x01, 0x70, // peer_id = p
-        0x10, 0x00, // intent = 0
-        0x18, 0x01, // communication_class = 1 (ReliableStream)
-      ],
-    );
+    expect(reliableStream, <int>[
+      0x0a, 0x01, 0x63, // command_id = c
+      0x10, 0x01, // protocol_version = 1
+      0x52, 0x07, // connect peer (field 10), length 7
+      0x0a, 0x01, 0x70, // peer_id = p
+      0x10, 0x00, // intent = 0
+      0x18, 0x01, // communication_class = 1 (ReliableStream)
+    ]);
     expect(codec.commandId(reliableStream), 'c');
 
     final bulk = codec.connectPeerCommand(
