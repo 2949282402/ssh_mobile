@@ -23,9 +23,23 @@ void main() {
 
   setUp(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-          _deviceInfoChannel,
-          (call) async => <String, dynamic>{
+        .setMockMethodCallHandler(_deviceInfoChannel, (call) async {
+          if (call.method == 'getLinuxDeviceInfo') {
+            return <String, dynamic>{
+              'name': 'Test Device',
+              'version': '1.0',
+              'id': 'test-id',
+              'idLike': <String>[],
+              'versionCodename': 'test',
+              'versionId': '1.0',
+              'prettyName': 'Test Linux',
+              'buildId': '1',
+              'variant': 'test',
+              'variantId': 'test',
+              'machineId': 'test-machine',
+            };
+          }
+          return <String, dynamic>{
             'name': 'Test Device',
             'model': 'Test Model',
             'brand': 'Test Brand',
@@ -33,8 +47,8 @@ void main() {
             'prettyName': 'Test Linux',
             'systemName': 'Linux',
             'utsname': {'machine': 'x86_64'},
-          },
-        );
+          };
+        });
   });
 
   tearDown(() {
@@ -48,15 +62,11 @@ void main() {
   testWidgets('English guide remains reachable at 320dp and 200% text', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(bottom: 24);
     final semantics = tester.ensureSemantics();
     try {
-      tester.view.physicalSize = const Size(320, 568);
-      tester.view.devicePixelRatio = 1;
-      tester.view.padding = const FakeViewPadding(bottom: 24);
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      addTearDown(tester.view.resetPadding);
-
       late _StartupFixture fixture;
       await tester.runAsync(() async {
         fixture = await _createFixture(language: AppLanguage.en);
@@ -119,6 +129,9 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     } finally {
+      tester.view.resetPadding();
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPhysicalSize();
       semantics.dispose();
     }
   });
@@ -133,38 +146,40 @@ void main() {
       right: 72,
       bottom: 144,
     );
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPadding);
+    try {
+      late _StartupFixture fixture;
+      await tester.runAsync(() async {
+        fixture = await _createFixture(language: AppLanguage.zh);
+      });
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(_guideHost(fixture.viewModel));
+      await tester.pumpAndSettle();
 
-    late _StartupFixture fixture;
-    await tester.runAsync(() async {
-      fixture = await _createFixture(language: AppLanguage.zh);
-    });
-    addTearDown(fixture.dispose);
-    await tester.pumpWidget(_guideHost(fixture.viewModel));
-    await tester.pumpAndSettle();
+      final content = find.byKey(const ValueKey('power-guide-content'));
+      expect(tester.getSize(content).width, lessThanOrEqualTo(640));
+      expect(tester.getRect(content).left, greaterThanOrEqualTo(200));
+      expect(find.text('让 SSH 在后台保持连接'), findsOneWidget);
+      expect(find.text('建议设置'), findsOneWidget);
+      expect(find.text('需要检查电池限制状态'), findsOneWidget);
+      expect(find.text('检查电池设置'), findsOneWidget);
+      expect(find.text('打开应用设置'), findsOneWidget);
+      expect(find.text('暂时继续'), findsOneWidget);
 
-    final content = find.byKey(const ValueKey('power-guide-content'));
-    expect(tester.getSize(content).width, lessThanOrEqualTo(640));
-    expect(tester.getRect(content).left, greaterThanOrEqualTo(200));
-    expect(find.text('让 SSH 在后台保持连接'), findsOneWidget);
-    expect(find.text('建议设置'), findsOneWidget);
-    expect(find.text('需要检查电池限制状态'), findsOneWidget);
-    expect(find.text('检查电池设置'), findsOneWidget);
-    expect(find.text('打开应用设置'), findsOneWidget);
-    expect(find.text('暂时继续'), findsOneWidget);
-
-    final note = find.byKey(const ValueKey('power-guide-note'));
-    await tester.ensureVisible(note);
-    await tester.pump();
-    final noteRect = tester.getRect(note);
-    expect(noteRect.left, greaterThanOrEqualTo(200));
-    expect(noteRect.right, lessThanOrEqualTo(928));
-    expect(noteRect.bottom, lessThanOrEqualTo(1280 / 3 - 48));
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox.shrink());
+      final note = find.byKey(const ValueKey('power-guide-note'));
+      await tester.ensureVisible(note);
+      await tester.pump();
+      final noteRect = tester.getRect(note);
+      expect(noteRect.left, greaterThanOrEqualTo(200));
+      expect(noteRect.right, lessThanOrEqualTo(928));
+      expect(noteRect.bottom, lessThanOrEqualTo(1280 / 3 - 48));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    } finally {
+      tester.view.resetPadding();
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPhysicalSize();
+    }
   });
 
   testWidgets('StartupScreen loads the guide and continue skips this launch', (
@@ -172,8 +187,6 @@ void main() {
   ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
 
     final statusGate = Completer<bool>();
     late _StartupFixture fixture;
@@ -213,6 +226,8 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     } finally {
       debugDefaultTargetPlatformOverride = null;
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPhysicalSize();
     }
   });
 

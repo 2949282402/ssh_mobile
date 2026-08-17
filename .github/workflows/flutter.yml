@@ -15,6 +15,7 @@ concurrency:
 jobs:
   front-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: front
@@ -40,6 +41,7 @@ jobs:
 
   native-network-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: native/network_core
@@ -71,6 +73,7 @@ jobs:
 
   sdk-dart-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: .
@@ -109,6 +112,7 @@ jobs:
 
   relay-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: relay
@@ -161,6 +165,7 @@ jobs:
 
   protocol-v2-contract:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: .
@@ -200,6 +205,7 @@ jobs:
 
   architecture-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: .
@@ -231,6 +237,7 @@ jobs:
 
   workspace-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: .
@@ -269,6 +276,7 @@ jobs:
 
   terminal-smoke-build:
     runs-on: windows-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: .
@@ -292,6 +300,7 @@ jobs:
 
   analyze-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
@@ -337,6 +346,7 @@ jobs:
 
   android-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
@@ -362,6 +372,7 @@ jobs:
 
   windows-build:
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
@@ -387,6 +398,7 @@ jobs:
 
   macos-build:
     runs-on: macos-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
@@ -412,6 +424,7 @@ jobs:
 
   ios-build:
     runs-on: macos-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
