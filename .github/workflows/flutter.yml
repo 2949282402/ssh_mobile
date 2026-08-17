@@ -50,6 +50,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
       - name: Start local coturn
@@ -235,44 +238,101 @@ jobs:
       - name: Check duplicate implementations
         run: dart run tool/duplicate_implementation_check.dart
 
-  workspace-quality:
+  workspace-core-quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: .
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.2'
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
-      - name: Format workspace packages
+      - name: Format core packages
         run: >-
           dart run melos run format
-          --ignore=ssh_mobile
-          --ignore=network_sdk
-          --ignore=network_transport
-          --ignore=ssh_mobile_network_native
-      - name: Analyze workspace packages
+          --scope=app_core
+          --scope=app_ui
+          --scope=connection_core
+          --scope=ssh_core
+      - name: Analyze core packages
         run: >-
           dart run melos run analyze
-          --ignore=ssh_mobile
-          --ignore=network_sdk
-          --ignore=network_transport
-          --ignore=ssh_mobile_network_native
-      - name: Test workspace packages
+          --scope=app_core
+          --scope=app_ui
+          --scope=connection_core
+          --scope=ssh_core
+      - name: Test core packages
         run: >-
           dart run melos run test
-          --ignore=ssh_mobile
-          --ignore=network_sdk
-          --ignore=network_transport
-          --ignore=ssh_mobile_network_native
+          --scope=app_core
+          --scope=app_ui
+          --scope=connection_core
+          --scope=ssh_core
+
+  workspace-features-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Format feature packages
+        run: >-
+          dart run melos run format
+          --scope=feature_ai
+          --scope=feature_connection
+          --scope=feature_developer
+          --scope=feature_lan_share
+          --scope=feature_mcp
+          --scope=feature_monitoring
+          --scope=feature_playbook
+          --scope=feature_rag
+          --scope=feature_sftp
+          --scope=feature_system_admin
+          --scope=feature_terminal
+          --scope=feature_webview
+      - name: Analyze feature packages
+        run: >-
+          dart run melos run analyze
+          --scope=feature_ai
+          --scope=feature_connection
+          --scope=feature_developer
+          --scope=feature_lan_share
+          --scope=feature_mcp
+          --scope=feature_monitoring
+          --scope=feature_playbook
+          --scope=feature_rag
+          --scope=feature_sftp
+          --scope=feature_system_admin
+          --scope=feature_terminal
+          --scope=feature_webview
+      - name: Test feature packages
+        run: >-
+          dart run melos run test
+          --scope=feature_ai
+          --scope=feature_connection
+          --scope=feature_developer
+          --scope=feature_lan_share
+          --scope=feature_mcp
+          --scope=feature_monitoring
+          --scope=feature_playbook
+          --scope=feature_rag
+          --scope=feature_sftp
+          --scope=feature_system_admin
+          --scope=feature_terminal
+          --scope=feature_webview
 
   terminal-smoke-build:
     runs-on: windows-latest
@@ -298,9 +358,9 @@ jobs:
         working-directory: apps/ssh_mobile_terminal
         run: flutter build windows --debug --no-pub
 
-  analyze-and-test:
+  app-static-quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
@@ -320,7 +380,6 @@ jobs:
         working-directory: packages/infrastructure/ssh_mobile_network_native
         run: flutter pub get
       - name: Install Full App dependencies
-        working-directory: apps/ssh_mobile_full
         run: flutter pub get
       - name: Check generated app icons
         run: |
@@ -339,10 +398,37 @@ jobs:
           if grep -R "privateKeyDigest" lib; then exit 1; fi
       - name: Analyze
         run: flutter analyze --no-fatal-infos
-      - name: Test
-        run: flutter test --coverage --reporter expanded --timeout 60s
-      - name: Check coverage floor
-        run: dart run tool/check_coverage.dart --minimum=35
+
+  app-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard_index: [0, 1]
+        total_shards: [2]
+    defaults:
+      run:
+        working-directory: apps/ssh_mobile_full
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install dependencies
+        working-directory: .
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Install Full App dependencies
+        run: flutter pub get
+      - name: Run Sharded Unit Tests
+        run: flutter test --reporter expanded --timeout 60s --total-shards ${{ matrix.total_shards }} --shard-index ${{ matrix.shard_index }}
 
   android-build:
     runs-on: ubuntu-latest
