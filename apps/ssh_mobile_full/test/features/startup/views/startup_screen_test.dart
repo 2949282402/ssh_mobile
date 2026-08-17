@@ -14,8 +14,9 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:app_ui/app_ui.dart';
 
 const _powerChannel = MethodChannel('ssh_mobile/power');
-const _deviceInfoChannel =
-    MethodChannel('dev.fluttercommunity.plus/device_info');
+const _deviceInfoChannel = MethodChannel(
+  'dev.fluttercommunity.plus/device_info',
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
