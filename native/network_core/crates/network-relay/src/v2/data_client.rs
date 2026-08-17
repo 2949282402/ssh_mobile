@@ -657,7 +657,9 @@ mod tests {
             [0u8; 32],
         )
         .expect("client");
-        let request = client.build_data_upgrade_request().expect("upgrade request");
+        let request = client
+            .build_data_upgrade_request()
+            .expect("upgrade request");
         assert_eq!(
             request
                 .headers()

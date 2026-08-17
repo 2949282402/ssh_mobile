@@ -1368,14 +1368,13 @@ pub(crate) async fn accept_tcp_connections(listener: TcpListener, state: Arc<Run
     accept_tcp_loop(listener, state, Box::new(ListenerAccept)).await;
 }
 
+/// §40 TCP accept 步骤的 future 类型（提取别名，避免 clippy type_complexity）。
+type AcceptFuture<'a> =
+    Pin<Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>>;
+
 /// TCP fallback accept 步骤抽象（§40 可注入，便于测试注入瞬态错误）。
 trait TcpAcceptStep: Send {
-    fn accept<'a>(
-        &'a mut self,
-        listener: &'a TcpListener,
-    ) -> Pin<
-        Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>,
-    >;
+    fn accept<'a>(&'a mut self, listener: &'a TcpListener) -> AcceptFuture<'a>;
 }
 
 /// 生产 accept 步骤：直接委托给 tokio 的 `TcpListener::accept`。
@@ -2334,7 +2333,9 @@ mod tests {
         // §40：瞬态 accept 错误（EMFILE/aborted/reset 等）只退避重试，不得终止 inbound
         // TCP/WS 回退；后续真实连接仍被接受。
         let state = new_test_state().await;
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind accept listener");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind accept listener");
         let address = listener.local_addr().expect("accept listener address");
         let loop_task = tokio::spawn(accept_tcp_loop(
             listener,
@@ -2365,7 +2366,9 @@ mod tests {
     async fn tcp_fallback_accept_loop_exits_on_fatal_listener_error() {
         // §40：只有致命错误（listener 已关闭 / fd 失效）才终止 accept 循环。
         let state = new_test_state().await;
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind accept listener");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind accept listener");
         let outcome = tokio::time::timeout(
             Duration::from_secs(1),
             accept_tcp_loop(listener, Arc::clone(&state), Box::new(FatalAcceptError)),
@@ -2387,7 +2390,11 @@ mod tests {
             &'a mut self,
             listener: &'a TcpListener,
         ) -> Pin<
-            Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>,
+            Box<
+                dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>>
+                    + Send
+                    + 'a,
+            >,
         > {
             if self.injected {
                 self.injected = false;
@@ -2411,7 +2418,11 @@ mod tests {
             &'a mut self,
             _listener: &'a TcpListener,
         ) -> Pin<
-            Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>,
+            Box<
+                dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>>
+                    + Send
+                    + 'a,
+            >,
         > {
             Box::pin(async {
                 Err(std::io::Error::new(
@@ -2462,7 +2473,11 @@ mod tests {
         let session_id = started_session(&state, peer_id).await;
 
         let candidates = vec![
-            Candidate::new(blackhole_address, CandidateKind::Lan, "test-blackhole".into()),
+            Candidate::new(
+                blackhole_address,
+                CandidateKind::Lan,
+                "test-blackhole".into(),
+            ),
             Candidate::new(responder_address, CandidateKind::Lan, "test-tcp".into()),
         ];
 
@@ -2494,9 +2509,7 @@ mod tests {
         generic.scope.close().await;
 
         let _ = release_tx.send(());
-        responder_task
-            .await
-            .expect("generic responder should exit");
+        responder_task.await.expect("generic responder should exit");
         endpoint_for_cleanup.close(quinn::VarInt::from_u32(0), b"test complete");
     }
 
@@ -2512,17 +2525,12 @@ mod tests {
         let peer_id = peer_id.to_string();
         let local_peer_id = local_peer_id.to_string();
         let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
-            peer_id,
-            [42u8; 32],
-            [52u8; 32],
+            peer_id, [42u8; 32], [52u8; 32],
         ));
-        let local_public_key = DeviceIdentity::from_private_keys(
-            local_peer_id.clone(),
-            [41u8; 32],
-            [51u8; 32],
-        )
-        .public_identity_key()
-        .to_bytes();
+        let local_public_key =
+            DeviceIdentity::from_private_keys(local_peer_id.clone(), [41u8; 32], [51u8; 32])
+                .public_identity_key()
+                .to_bytes();
         let (release_tx, release_rx) = oneshot::channel();
         let responder_task = tokio::spawn(async move {
             let (stream, _) = listener
@@ -2538,8 +2546,8 @@ mod tests {
                 &mut connection,
                 remote_identity,
                 &trusted_peer_keys,
-                move |_authenticated_peer_id, _remote_session_binding| {
-                    async move { Ok(("33".repeat(16), ())) }
+                move |_authenticated_peer_id, _remote_session_binding| async move {
+                    Ok(("33".repeat(16), ()))
                 },
             )
             .await;

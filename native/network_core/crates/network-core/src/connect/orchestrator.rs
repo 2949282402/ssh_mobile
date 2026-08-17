@@ -209,7 +209,13 @@ impl ConnectionOrchestrator {
                 .current_route(peer_id)
                 .await
                 .unwrap_or(RouteType::Unspecified);
-            emit_peer_state(&state.event_tx, peer_id, PeerConnectionState::Connected, route, None);
+            emit_peer_state(
+                &state.event_tx,
+                peer_id,
+                PeerConnectionState::Connected,
+                route,
+                None,
+            );
             self.set_stage(OrchestratorState::ConnectedDirect);
             return Ok(());
         }
@@ -230,7 +236,13 @@ impl ConnectionOrchestrator {
                     .current_route(peer_id)
                     .await
                     .unwrap_or(RouteType::Unspecified);
-                emit_peer_state(&state.event_tx, peer_id, PeerConnectionState::Connected, route, None);
+                emit_peer_state(
+                    &state.event_tx,
+                    peer_id,
+                    PeerConnectionState::Connected,
+                    route,
+                    None,
+                );
                 self.set_stage(OrchestratorState::ConnectedDirect);
                 return Ok(());
             }
@@ -999,7 +1011,10 @@ mod tests {
 
     /// 构造一个可跑通 `connect_with_class` 前段（配置校验 + Resolve + try_reuse）
     /// 的 RuntimeState：配置了 endpoint/identity/peer，无控制面（本地直连，epoch=None）。
-    async fn configured_reuse_state() -> (Arc<RuntimeState>, tokio::sync::mpsc::UnboundedReceiver<network_protocol::NetworkEvent>) {
+    async fn configured_reuse_state() -> (
+        Arc<RuntimeState>,
+        tokio::sync::mpsc::UnboundedReceiver<network_protocol::NetworkEvent>,
+    ) {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
@@ -1116,7 +1131,9 @@ mod tests {
         let control = StubControl::new(ResolveStatus::Offline, None);
         *state.relay_control.write().await = Some(control);
         let orchestrator = ConnectionOrchestrator::new(state);
-        let result = orchestrator.resolve("peer-b", &peer_without_endpoint()).await;
+        let result = orchestrator
+            .resolve("peer-b", &peer_without_endpoint())
+            .await;
         assert!(matches!(
             result,
             Err(error) if error.code == NetworkErrorCode::PeerOffline as i32
@@ -1236,9 +1253,12 @@ mod tests {
             .sessions
             .set_communication_class(peer_id, CommunicationClass::ReliableMessage)
             .await;
-        state
-            .connection_registry
-            .register(peer_id, None, DEFAULT_CONNECTION_CAPABILITY, session_id);
+        state.connection_registry.register(
+            peer_id,
+            None,
+            DEFAULT_CONNECTION_CAPABILITY,
+            session_id,
+        );
 
         let orchestrator = ConnectionOrchestrator::new(Arc::clone(&state));
         let result = orchestrator

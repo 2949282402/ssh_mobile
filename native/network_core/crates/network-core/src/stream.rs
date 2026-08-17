@@ -998,11 +998,7 @@ pub(crate) async fn handle_incoming_quic_stream(
 /// 的入站字节转成 `SshStreamDataReceived` 事件。Event 流因此与 Bridge/Poll
 /// 共享同一有界缓冲区与背压——writer 在 `MAX_PER_STREAM_BUFFER_CAPACITY`
 /// 处阻塞，而不是逐帧直接灌入无界事件通道。
-async fn spawn_stream_event_emitter(
-    state: &Arc<RuntimeState>,
-    peer_id: &str,
-    stream_id: u16,
-) {
+async fn spawn_stream_event_emitter(state: &Arc<RuntimeState>, peer_id: &str, stream_id: u16) {
     let manager = state.stream_manager(peer_id).await;
     let peer_id = peer_id.to_string();
     let session_key = state
@@ -1011,11 +1007,11 @@ async fn spawn_stream_event_emitter(
         .await
         .map(|id| id.wire_key())
         .unwrap_or_default();
-    let _ = state.task_supervisor.spawn_session(
-        session_key,
-        "stream-event-emitter",
-        async move { manager.drain_events(&peer_id, stream_id).await },
-    );
+    let _ = state
+        .task_supervisor
+        .spawn_session(session_key, "stream-event-emitter", async move {
+            manager.drain_events(&peer_id, stream_id).await
+        });
 }
 
 /// Pumps a QUIC `RecvStream` (the peer's write half of a logical byte stream)
@@ -1292,7 +1288,7 @@ mod tests {
             Some(network_event::Payload::SshStreamClosed(closed)) if closed.stream_id == 1
         ));
         // The drainer exits after it emits the close event.
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), drainer)
+        tokio::time::timeout(std::time::Duration::from_secs(1), drainer)
             .await
             .expect("drainer did not exit after close")
             .expect("drainer panicked");
@@ -1596,7 +1592,7 @@ mod tests {
             closed.payload,
             Some(network_event::Payload::SshStreamClosed(c)) if c.stream_id == 6
         ));
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), drainer)
+        tokio::time::timeout(std::time::Duration::from_secs(1), drainer)
             .await
             .expect("drainer did not exit after close")
             .expect("drainer panicked");

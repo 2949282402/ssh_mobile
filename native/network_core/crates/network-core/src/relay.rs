@@ -541,8 +541,7 @@ fn schedule_relay_reconnect(state: Arc<RuntimeState>) {
                             network_protocol::RelayConnectionState::Connected,
                             None,
                         );
-                        crate::transfer::resume_relay_transfers(Arc::clone(&reconnect_state))
-                            .await;
+                        crate::transfer::resume_relay_transfers(Arc::clone(&reconnect_state)).await;
                         break;
                     }
                     Err(error)
@@ -637,7 +636,11 @@ async fn connect_incoming_relay_data(
     let data = Arc::new(data);
     // 以对端为 key 记录活跃 reservation 数据连接：替换同一对端的旧连接（会话重建），
     // 但绝不因此断开其他对端的活跃连接（§25 每条 reservation 数据面相互独立）。
-    state.relay_data.write().await.insert(peer_id.clone(), data.clone());
+    state
+        .relay_data
+        .write()
+        .await
+        .insert(peer_id.clone(), data.clone());
     let supervisor = Arc::clone(&state.task_supervisor);
     let state = Arc::clone(state);
     let _ = supervisor.spawn_runtime("relay-data-events", async move {
@@ -1275,7 +1278,11 @@ async fn cleanup_relay_state(state: &RuntimeState, peer: Option<&str>) {
         }
     };
     for transfer_id in active_ids {
-        let incoming = state.relay_active_incoming.lock().await.remove(&transfer_id);
+        let incoming = state
+            .relay_active_incoming
+            .lock()
+            .await
+            .remove(&transfer_id);
         if let Some(incoming) = incoming {
             drop(incoming.file);
             if state.transfers.pause_for_network(&transfer_id).await {
@@ -1570,10 +1577,18 @@ async fn receive_relay_offer(
                 // 否则条目停留在 Failed，register_incoming/claim_incoming_resume 只接受
                 // Vacant 或 Paused，后续同一 transfer_id 的再 Offer 会被
                 // "TransferId is already active" 永久拒绝。
-                expiry_state.transfers.remove_transfer(&expiry_transfer_id).await;
+                expiry_state
+                    .transfers
+                    .remove_transfer(&expiry_transfer_id)
+                    .await;
                 // 取消只发到承载该 transfer 的对端 reservation 连接。
                 if let Some(sender_id) = sender_id {
-                    if let Some(data) = expiry_state.relay_data.read().await.get(&sender_id).cloned()
+                    if let Some(data) = expiry_state
+                        .relay_data
+                        .read()
+                        .await
+                        .get(&sender_id)
+                        .cloned()
                     {
                         let _ = send_file_cancel(&data, &expiry_transfer_id).await;
                     }
@@ -2688,7 +2703,10 @@ mod tests {
             relay_signing_seed: vec![0u8; 32],
         };
         let result = configure_relay_for_state(Arc::clone(&state), command).await;
-        assert!(result.is_err(), "failed control connect must fail configure");
+        assert!(
+            result.is_err(),
+            "failed control connect must fail configure"
+        );
         assert!(
             !state
                 .relay_credential_stale
@@ -2737,7 +2755,10 @@ mod tests {
                     break;
                 }
                 used += read;
-                if request[..used].windows(4).any(|window| window == b"\r\n\r\n") {
+                if request[..used]
+                    .windows(4)
+                    .any(|window| window == b"\r\n\r\n")
+                {
                     break;
                 }
             }
@@ -3081,11 +3102,31 @@ mod tests {
                 .contains_key("relay-transfer-c"),
             "peer-c active incoming must survive peer-b disconnecting"
         );
-        assert!(!state.relay_active_incoming.lock().await.contains_key("relay-transfer-b"));
-        assert!(state.relay_acceptances.read().await.contains_key("relay-transfer-c"));
-        assert!(!state.relay_acceptances.read().await.contains_key("relay-transfer-b"));
-        assert!(state.relay_completions.read().await.contains_key("relay-transfer-c"));
-        assert!(!state.relay_completions.read().await.contains_key("relay-transfer-b"));
+        assert!(!state
+            .relay_active_incoming
+            .lock()
+            .await
+            .contains_key("relay-transfer-b"));
+        assert!(state
+            .relay_acceptances
+            .read()
+            .await
+            .contains_key("relay-transfer-c"));
+        assert!(!state
+            .relay_acceptances
+            .read()
+            .await
+            .contains_key("relay-transfer-b"));
+        assert!(state
+            .relay_completions
+            .read()
+            .await
+            .contains_key("relay-transfer-c"));
+        assert!(!state
+            .relay_completions
+            .read()
+            .await
+            .contains_key("relay-transfer-b"));
         assert!(
             state
                 .relay_crypto_waiters
@@ -3094,13 +3135,11 @@ mod tests {
                 .contains_key(&relay_crypto_key("peer-c", "token-c")),
             "peer-c crypto waiter must survive peer-b disconnecting"
         );
-        assert!(
-            !state
-                .relay_crypto_waiters
-                .read()
-                .await
-                .contains_key(&relay_crypto_key("peer-b", "token-b"))
-        );
+        assert!(!state
+            .relay_crypto_waiters
+            .read()
+            .await
+            .contains_key(&relay_crypto_key("peer-b", "token-b")));
         // peer-c 的接收传输未被暂停；peer-b 的被暂停（保留 checkpoint）。
         assert_eq!(
             state

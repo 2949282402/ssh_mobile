@@ -391,7 +391,10 @@ fn relay_data_reservations_for_two_peers_coexist_and_close_independently() {
             data_b.is_usable().await,
             "connecting peer-c must not sever peer-b's relay data connection"
         );
-        assert!(data_c.is_usable().await, "peer-c data connection must be live");
+        assert!(
+            data_c.is_usable().await,
+            "peer-c data connection must be live"
+        );
         assert_eq!(
             state.relay_data.read().await.len(),
             2,
