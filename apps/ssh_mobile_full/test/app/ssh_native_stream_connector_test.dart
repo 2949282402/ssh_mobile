@@ -129,34 +129,37 @@ void main() {
       },
     );
 
-    test('accepted SshStreamOpen CommandResult keeps the stream usable', () async {
-      final gateway = _FakeGateway();
-      final connector = AppSshNativeStreamConnector(
-        gatewayProvider: () async => gateway,
-      );
-      final stream = await connector.open(peerId: 'peer-a');
-      final openCommandId = _commandIdOf(gateway.commands.first);
+    test(
+      'accepted SshStreamOpen CommandResult keeps the stream usable',
+      () async {
+        final gateway = _FakeGateway();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () async => gateway,
+        );
+        final stream = await connector.open(peerId: 'peer-a');
+        final openCommandId = _commandIdOf(gateway.commands.first);
 
-      gateway.push(
-        _commandResultFrame(
-          eventId: 'e3',
-          commandId: openCommandId,
-          accepted: true,
-        ),
-      );
-      await Future<void>.delayed(Duration.zero);
-      // 流仍登记：后续数据事件照常路由。
-      expect(connector.activeStreamCount, 1);
+        gateway.push(
+          _commandResultFrame(
+            eventId: 'e3',
+            commandId: openCommandId,
+            accepted: true,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        // 流仍登记：后续数据事件照常路由。
+        expect(connector.activeStreamCount, 1);
 
-      final received = <Uint8List>[];
-      final subscription = stream.incoming.listen(received.add);
-      gateway.push(_dataFrame(eventId: 'e4', peerId: 'peer-a', streamId: 1));
-      await Future<void>.delayed(Duration.zero);
-      expect(received, hasLength(1));
+        final received = <Uint8List>[];
+        final subscription = stream.incoming.listen(received.add);
+        gateway.push(_dataFrame(eventId: 'e4', peerId: 'peer-a', streamId: 1));
+        await Future<void>.delayed(Duration.zero);
+        expect(received, hasLength(1));
 
-      await subscription.cancel();
-      await connector.closeAll();
-    });
+        await subscription.cancel();
+        await connector.closeAll();
+      },
+    );
 
     test(
       'send fails the stream when the gateway rejects the data command',

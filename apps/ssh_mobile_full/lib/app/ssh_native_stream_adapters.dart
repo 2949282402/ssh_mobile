@@ -132,7 +132,11 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
       case NativeSshStreamClosedEvent(:final streamId):
         final stream = _streams.remove(streamId);
         stream?._onClosed();
-      case NativeCommandResultEvent(:final commandId, :final accepted, :final error):
+      case NativeCommandResultEvent(
+        :final commandId,
+        :final accepted,
+        :final error,
+      ):
         // SshStreamOpen 被 native 同步拒绝（例如对端未连接）时，CommandResult
         // accepted=false；必须让 open 返回的流立即失败，而不是被 default 丢弃
         // 导致 done 永久挂起。

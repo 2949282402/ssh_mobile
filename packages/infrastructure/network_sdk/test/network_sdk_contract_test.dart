@@ -527,19 +527,24 @@ void main() {
     },
   );
 
-  test('facade connectPeer forwards the requested CommunicationClass', () async {
-    final sessions = _RecordingSessionClient();
-    final facade = NetworkFacadeImpl(sessions: sessions);
+  test(
+    'facade connectPeer forwards the requested CommunicationClass',
+    () async {
+      final sessions = _RecordingSessionClient();
+      final facade = NetworkFacadeImpl(sessions: sessions);
 
-    final result = await facade.connectPeer(
-      'peer-1',
-      communicationClass: CommunicationClass.bulkTransfer,
-    );
+      final result = await facade.connectPeer(
+        'peer-1',
+        communicationClass: CommunicationClass.bulkTransfer,
+      );
 
-    expect(result, isA<SdkSuccess<void>>());
-    expect(sessions.connectedPeers, <String>['peer-1']);
-    expect(sessions.connectClasses, <CommunicationClass>[CommunicationClass.bulkTransfer]);
-  });
+      expect(result, isA<SdkSuccess<void>>());
+      expect(sessions.connectedPeers, <String>['peer-1']);
+      expect(sessions.connectClasses, <CommunicationClass>[
+        CommunicationClass.bulkTransfer,
+      ]);
+    },
+  );
 
   test('facade connectPeer defaults to reliableStream class', () async {
     final sessions = _RecordingSessionClient();
@@ -548,10 +553,9 @@ void main() {
     final result = await facade.connectPeer('peer-1');
 
     expect(result, isA<SdkSuccess<void>>());
-    expect(
-      sessions.connectClasses,
-      <CommunicationClass>[CommunicationClass.reliableStream],
-    );
+    expect(sessions.connectClasses, <CommunicationClass>[
+      CommunicationClass.reliableStream,
+    ]);
   });
 
   test('facade connectPeer rejects realtimeMedia class', () async {
