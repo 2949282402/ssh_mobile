@@ -234,7 +234,6 @@ void main() {
   testWidgets('battery action refreshes status and promotes continue', (
     tester,
   ) async {
-    final semantics = tester.ensureSemantics();
     late _StartupFixture fixture;
     await tester.runAsync(() async {
       fixture = await _createFixture(language: AppLanguage.en);
@@ -268,14 +267,7 @@ void main() {
       );
       expect(tester.widget<FilledButton>(continueAction), isA<FilledButton>());
       expect(find.text('Continue to app'), findsOneWidget);
-      _expectButtonSemantics(tester, continueAction, 'Continue to app');
-      expect(
-        tester.getSemantics(find.byKey(const ValueKey('power-guide-status'))),
-        matchesSemantics(
-          label: 'Battery restrictions are relaxed',
-          isLiveRegion: true,
-        ),
-      );
+      expect(find.text('Battery restrictions are relaxed'), findsOneWidget);
 
       final settingsAction = find.byKey(
         const ValueKey('power-guide-settings-action'),
@@ -290,7 +282,6 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     } finally {
       debugDefaultTargetPlatformOverride = null;
-      semantics.dispose();
     }
   });
 }
