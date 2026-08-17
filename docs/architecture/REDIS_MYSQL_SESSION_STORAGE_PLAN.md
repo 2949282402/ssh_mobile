@@ -4,7 +4,7 @@
 
 > **2026-08-15 修订（对齐 transport-network v2）**：本计划原文按「多实例」设计
 > 状态/缓存面。transport-network v2（Main 基线版 §26，
-> [ADR-TRANSPORT-NETWORK-V2](ADR-TRANSPORT-NETWORK-V2.md)）第一阶段明确
+> [ADR-TRANSPORT-NETWORK-V2](../adr/ADR-TRANSPORT-NETWORK-V2.md)）第一阶段明确
 > **单 Relay Control + 单 Relay Data 实例**；Redis 为外部共享 live state
 > （跨实例 presence/discovery 同步）。`Global Control Routing` /
 > `Relay Data Node Selection` 未完整实现前不得宣称 Multi-instance supported。
@@ -242,5 +242,5 @@ type Cache interface {
 ## 9. 里程碑与范围边界
 
 - **本期（M1）**：Phase 0–4 全部落地，交付可持久化的会话/鉴权/状态面；部署拓扑为单 Relay Control + 单 Relay Data 实例，Redis 为共享 live state；数据面保持单实例。
-- **后续（M2，显式 deferred）**：多实例部署与跨实例数据面转发（两个设备落在不同实例时控制帧的桥接/路由）——需先完整实现 `Global Control Routing` + `Relay Data Node Selection` 再开放（见 [ADR-TRANSPORT-NETWORK-V2](ADR-TRANSPORT-NETWORK-V2.md)）；独立工程，等真实多实例流量需要时再启动。
+- **后续（M2，显式 deferred）**：多实例部署与跨实例数据面转发（两个设备落在不同实例时控制帧的桥接/路由）——需先完整实现 `Global Control Routing` + `Relay Data Node Selection` 再开放（见 [ADR-TRANSPORT-NETWORK-V2](../adr/ADR-TRANSPORT-NETWORK-V2.md)）；独立工程，等真实多实例流量需要时再启动。
 - 传输会话迁 Redis（`transfer:{session_id}`）为**可选**：若短期内传输会话无需跨连接/跨实例接管，可保留进程内实现，presence 与鉴权先行。
