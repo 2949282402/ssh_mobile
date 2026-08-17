@@ -46,7 +46,7 @@ PY
 
 # --- 2. Compile-check the proto if protoc is available ---
 if command -v protoc >/dev/null 2>&1; then
-  protoc --proto_path=protocol --descriptor_set_out=/dev/null "$PROTO"
+  protoc --proto_path=protocol --descriptor_set_out=/dev/null protocol/proto/relay/v2/relay_v2.proto
   echo "proto compile-check: OK"
 else
   echo "protoc not available; skipping proto compile-check"
