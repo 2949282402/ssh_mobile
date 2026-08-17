@@ -97,6 +97,7 @@ void main() {
       expect(tester.getBottomRight(continueAction).dy, lessThanOrEqualTo(544));
       await tester.pump(const Duration(milliseconds: 200));
       expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
     } finally {
       semantics.dispose();
     }
@@ -143,6 +144,7 @@ void main() {
     expect(noteRect.bottom, lessThanOrEqualTo(1280 / 3 - 48));
     await tester.pump(const Duration(milliseconds: 200));
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('StartupScreen loads the guide and continue skips this launch', (
