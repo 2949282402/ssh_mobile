@@ -11,18 +11,37 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/startup/viewmodels/startup_viewmodel.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import '../../../test_utils/test_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
 
 const _powerChannel = MethodChannel('ssh_mobile/power');
+const _deviceInfoChannel =
+    MethodChannel('dev.fluttercommunity.plus/device_info');
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          _deviceInfoChannel,
+          (call) async => <String, dynamic>{
+            'name': 'Test Device',
+            'model': 'Test Model',
+            'brand': 'Test Brand',
+            'computerName': 'Test Host',
+            'prettyName': 'Test Linux',
+            'systemName': 'Linux',
+            'utsname': {'machine': 'x86_64'},
+          },
+        );
+  });
 
   tearDown(() {
     debugDefaultTargetPlatformOverride = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_powerChannel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_deviceInfoChannel, null);
   });
 
   testWidgets('English guide remains reachable at 320dp and 200% text', (
@@ -186,7 +205,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Home placeholder'), findsOneWidget);
-      expect(fixture.storageService.powerGuideSeen, isFalse);
+      expect(fixture.appSettings.powerGuideSeen, isFalse);
       expect(fixture.powerCalls, ['isIgnoringBatteryOptimizations']);
       await tester.pump(const Duration(milliseconds: 200));
       expect(tester.takeException(), isNull);
@@ -261,23 +280,19 @@ void main() {
 }
 
 class _StartupFixture {
-  final TestStorageAdapter storageService;
   final AppSettings appSettings;
   final StartupViewModel viewModel;
   final List<String> powerCalls;
 
   const _StartupFixture({
-    required this.storageService,
     required this.appSettings,
     required this.viewModel,
     required this.powerCalls,
   });
 
-  Future<void> dispose() async {
+  void dispose() {
     viewModel.dispose();
     appSettings.dispose();
-    await storageService.shutdown();
-    storageService.dispose();
   }
 }
 
@@ -311,8 +326,6 @@ Future<_StartupFixture> _createFixture({
         }
       });
 
-  final storageService = TestStorageAdapter();
-  await storageService.init();
   final appSettings = AppSettings();
   await appSettings.init();
   final viewModel = StartupViewModel(appSettings: appSettings);
@@ -326,7 +339,6 @@ Future<_StartupFixture> _createFixture({
   }
 
   return _StartupFixture(
-    storageService: storageService,
     appSettings: appSettings,
     viewModel: viewModel,
     powerCalls: powerCalls,
