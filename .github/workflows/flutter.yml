@@ -429,9 +429,11 @@ jobs:
         run: flutter pub get
       - name: Run Sharded Unit Tests
         run: |
-          non_coverage_test_files=(
+          isolated_coverage_test_files=(
             test/features/startup/views/startup_screen_test.dart
             test/screens/system_admin/system_admin_snapshot_tabs_test.dart
+          )
+          non_coverage_test_files=(
             test/services/network/transfer_transport_test.dart
           )
           coverage_test_files=()
@@ -478,7 +480,32 @@ jobs:
             echo "Flutter test shard failed or timed out; retrying once."
           done
 
-          echo "Running isolated Flutter tests without coverage."
+          echo "Running isolated Flutter tests with supplemental coverage."
+          rm -f coverage/isolated-startup-lcov.info
+          timeout --signal=TERM --kill-after=30s 8m \
+            flutter test \
+            --coverage \
+            --coverage-path coverage/isolated-startup-lcov.info \
+            --fail-fast \
+            --reporter expanded \
+            --timeout 60s \
+            --total-shards "${{ matrix.total_shards }}" \
+            --shard-index "${{ matrix.shard_index }}" \
+            "${isolated_coverage_test_files[0]}"
+
+          rm -f coverage/isolated-system-admin-lcov.info
+          timeout --signal=TERM --kill-after=30s 8m \
+            flutter test \
+            --coverage \
+            --coverage-path coverage/isolated-system-admin-lcov.info \
+            --fail-fast \
+            --reporter expanded \
+            --timeout 60s \
+            --total-shards "${{ matrix.total_shards }}" \
+            --shard-index "${{ matrix.shard_index }}" \
+            "${isolated_coverage_test_files[1]}"
+
+          echo "Running native Flutter tests without coverage."
           timeout --signal=TERM --kill-after=30s 8m \
             flutter test \
             --fail-fast \
@@ -491,7 +518,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flutter-coverage-${{ matrix.shard_index }}
-          path: apps/ssh_mobile_full/coverage/lcov.info
+          path: apps/ssh_mobile_full/coverage/*.info
           if-no-files-found: error
 
   app-coverage:
@@ -522,9 +549,18 @@ jobs:
             exit 1
           fi
 
+          mapfile -d '' isolated_files < <(find "$GITHUB_WORKSPACE/coverage-shards" -type f -name 'isolated-*.info' -print0 | sort -z)
+          if [ "${#isolated_files[@]}" -ne 4 ]; then
+            echo "Expected 4 isolated coverage files, found ${#isolated_files[@]}."
+            exit 1
+          fi
+
           coverage_args=()
           for shard_file in "${shard_files[@]}"; do
             coverage_args+=("--file=$shard_file")
+          done
+          for isolated_file in "${isolated_files[@]}"; do
+            coverage_args+=("--file=$isolated_file")
           done
 
           dart run tool/check_coverage.dart \
