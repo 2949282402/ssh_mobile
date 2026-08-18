@@ -46,6 +46,7 @@ use crate::runtime::{
 };
 use network_nat::{
     Candidate, CandidateAdvertisement, ConnectivityAttempt, ConnectivityAttemptState,
+    RuntimeEpoch as NatRuntimeEpoch,
 };
 use network_protocol::RetryDisposition;
 use std::time::SystemTime;
@@ -493,8 +494,14 @@ fn spawn_responder_connectivity_checks(state: Arc<RuntimeState>, offer: Connecti
             .read()
             .await
             .as_ref()
-            .map(|manager| manager.runtime_epoch().low)
-            .unwrap_or(0);
+            .map(|manager| {
+                let epoch = manager.runtime_epoch();
+                NatRuntimeEpoch {
+                    high: epoch.high,
+                    low: epoch.low,
+                }
+            })
+            .unwrap_or(NatRuntimeEpoch { high: 0, low: 0 });
         let mut attempt = ConnectivityAttempt::with_connect_window(
             offer.attempt_id.clone(),
             peer_id.clone(),
@@ -506,7 +513,10 @@ fn spawn_responder_connectivity_checks(state: Arc<RuntimeState>, offer: Connecti
             offer
                 .initiator_runtime_epoch
                 .as_ref()
-                .map(|epoch| epoch.high.rotate_left(17) ^ epoch.low),
+                .map(|epoch| NatRuntimeEpoch {
+                    high: epoch.high,
+                    low: epoch.low,
+                }),
             u64::from(offer.initiator_revision),
             candidates.clone(),
         );

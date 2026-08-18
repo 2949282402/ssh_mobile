@@ -9,6 +9,15 @@ pub const MAX_CONNECT_WINDOW_MS: u32 = 8_000;
 pub const DEFAULT_CONNECT_WINDOW_MS: u32 = 4_000;
 pub const MAX_ATTEMPT_ID_BYTES: usize = 128;
 
+/// Full 128-bit runtime identity. Epochs from different runtimes are
+/// intentionally incomparable; discovery revision is ordered only within the
+/// same epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RuntimeEpoch {
+    pub high: u64,
+    pub low: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CandidateSignalKind {
@@ -32,7 +41,7 @@ pub struct CandidateSignal {
     /// messages omit these fields so the existing JSON exchange is unchanged;
     /// a `ConnectivityAttempt` consumes them when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime_epoch: Option<u64>,
+    pub runtime_epoch: Option<RuntimeEpoch>,
     /// V2 additive: discovery revision the sender's candidates are based on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discovery_revision: Option<u64>,
@@ -77,7 +86,11 @@ impl CandidateSignal {
 
     /// V2 additive builder: attaches the signaling peer's runtime epoch and
     /// discovery revision to the signal. v1 callers do not use this.
-    pub fn with_epoch_revision(mut self, runtime_epoch: u64, discovery_revision: u64) -> Self {
+    pub fn with_epoch_revision(
+        mut self,
+        runtime_epoch: RuntimeEpoch,
+        discovery_revision: u64,
+    ) -> Self {
         self.runtime_epoch = Some(runtime_epoch);
         self.discovery_revision = Some(discovery_revision);
         self
@@ -356,13 +369,18 @@ mod tests {
             DEFAULT_CONNECT_WINDOW_MS,
             vec![candidate],
         )
-        .with_epoch_revision(11, 22);
+        .with_epoch_revision(RuntimeEpoch { high: 11, low: 12 }, 22);
         let json = serde_json::to_value(&signal).unwrap();
         let object = json.as_object().unwrap();
-        assert_eq!(object["runtime_epoch"], 11);
+        let runtime_epoch = object["runtime_epoch"].as_object().unwrap();
+        assert_eq!(runtime_epoch["high"], 11);
+        assert_eq!(runtime_epoch["low"], 12);
         assert_eq!(object["discovery_revision"], 22);
         let decoded: CandidateSignal = serde_json::from_value(json).unwrap();
-        assert_eq!(decoded.runtime_epoch, Some(11));
+        assert_eq!(
+            decoded.runtime_epoch,
+            Some(RuntimeEpoch { high: 11, low: 12 }),
+        );
         assert_eq!(decoded.discovery_revision, Some(22));
     }
 }

@@ -607,10 +607,14 @@ async fn connect_direct_candidates_with_crypto(
             continue;
         }
 
-        // QUIC is only the lead phase. Once its current candidates have all
-        // failed, return so the caller can spend the remaining Direct budget
-        // on generic routes; the same update receiver is handed to that phase.
-        if attempts.is_empty() && pending.is_empty() {
+        // QUIC is only the lead phase, but keep the coordination receiver alive until
+        // its deadline even if current candidates fail: a late ConnectivityAnswer may
+        // add the candidate that wins the race. The same receiver is handed to generic
+        // fallback after the QUIC lead budget expires.
+        if attempts.is_empty()
+            && pending.is_empty()
+            && (updates_closed || Instant::now() >= deadline)
+        {
             break;
         }
 
@@ -648,6 +652,11 @@ async fn connect_direct_candidates_with_crypto(
                 }
             }
             _ = tokio::time::sleep_until(tokio::time::Instant::from_std(next_launch_at)), if !pending.is_empty() => {}
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)),
+                if attempts.is_empty() && pending.is_empty() =>
+            {
+                break;
+            }
         }
     }
     Err(last_error.unwrap_or_else(|| {
@@ -910,6 +919,11 @@ async fn connect_generic_candidates(
                 }
             }
             _ = tokio::time::sleep_until(tokio::time::Instant::from_std(next_launch_at)), if !pending.is_empty() => {}
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)),
+                if attempts.is_empty() && pending.is_empty() =>
+            {
+                break;
+            }
         }
     }
     Err(last_error.unwrap_or_else(|| {
@@ -2614,6 +2628,123 @@ mod tests {
                 ))
             })
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn late_quic_candidate_arriving_before_direct_deadline_can_win() {
+        let client_state = new_test_state().await;
+        let server_state = new_test_state().await;
+        let local_peer_id = "late-candidate-local";
+        let peer_id = "late-candidate-peer";
+
+        let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+            local_peer_id.to_string(),
+            [61u8; 32],
+            [71u8; 32],
+        ));
+        let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+            peer_id.to_string(),
+            [62u8; 32],
+            [72u8; 32],
+        ));
+        let remote_public_key = remote_identity.public_identity_key().to_bytes();
+        *client_state.identity.write().await = Some(Arc::clone(&local_identity));
+        *server_state.identity.write().await = Some(remote_identity);
+        server_state.trusted_peer_keys.write().await.insert(
+            local_peer_id.to_string(),
+            local_identity.public_identity_key().to_bytes(),
+        );
+
+        let server_endpoint = QuicEndpointManager::new(
+            "127.0.0.1:0".parse().expect("server bind address"),
+            Arc::new(PathManager::new()),
+        )
+        .expect("create server QUIC endpoint")
+        .endpoint;
+        let server_address = server_endpoint
+            .local_addr()
+            .expect("server endpoint address");
+        server_state
+            .task_supervisor
+            .spawn_runtime(
+                "late-candidate-quic-accept",
+                accept_connections(server_endpoint.clone(), Arc::clone(&server_state)),
+            )
+            .expect("start server QUIC accept loop");
+
+        let client_endpoint = QuicEndpointManager::new(
+            "127.0.0.1:0".parse().expect("client bind address"),
+            Arc::new(PathManager::new()),
+        )
+        .expect("create client QUIC endpoint")
+        .endpoint;
+        let session_id = started_session(&client_state, peer_id).await;
+
+        // C1 never responds. The Direct phase must keep its coordination receiver alive
+        // long enough for the authenticated ConnectivityAnswer to add C2.
+        let blackhole = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind UDP blackhole");
+        let blackhole_address = blackhole.local_addr().expect("blackhole address");
+        let first_candidate = Candidate::new(
+            blackhole_address,
+            CandidateKind::Lan,
+            "late-candidate-c1".into(),
+        );
+        let reachable_candidate = Candidate::new(
+            server_address,
+            CandidateKind::Lan,
+            "late-candidate-c2".into(),
+        );
+        let (candidate_update_tx, candidate_updates) = watch::channel(None);
+        let update_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            candidate_update_tx
+                .send(Some(vec![reachable_candidate]))
+                .expect("late candidate update receiver should remain alive");
+        });
+
+        let attempt = DirectRouteAttempt {
+            state: Arc::clone(&client_state),
+            endpoint: client_endpoint.clone(),
+            candidates: vec![first_candidate],
+            identity: local_identity,
+            expected_peer_public_key: remote_public_key,
+            peer_id: peer_id.to_string(),
+            session_binding: session_id.wire_key(),
+            session_id,
+            attempt_id: "late-quic-candidate-test".into(),
+            connect_window: Duration::from_secs(2),
+            candidate_updates,
+        };
+        let route =
+            tokio::time::timeout(Duration::from_secs(4), connect_direct_or_generic(attempt))
+                .await
+                .expect("late QUIC candidate should finish within Direct window")
+                .expect("late reachable QUIC candidate should win Direct race");
+        update_task
+            .await
+            .expect("candidate update task should finish");
+
+        let ConnectedRoute::Quic { connection, .. } = route else {
+            panic!("expected the late candidate to produce a QUIC route");
+        };
+        connection.close(quinn::VarInt::from_u32(0), b"test complete");
+
+        client_state.cancel_session_tasks(peer_id, session_id).await;
+        if let Some(server_session_id) = server_state
+            .sessions
+            .current_session_id(local_peer_id)
+            .await
+        {
+            server_state
+                .cancel_session_tasks(local_peer_id, server_session_id)
+                .await;
+        }
+        client_endpoint.close(quinn::VarInt::from_u32(0), b"test complete");
+        server_endpoint.close(quinn::VarInt::from_u32(0), b"test complete");
+        client_state.task_supervisor.cancel_root();
+        server_state.task_supervisor.cancel_root();
+        client_state.task_supervisor.shutdown().await;
+        server_state.task_supervisor.shutdown().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

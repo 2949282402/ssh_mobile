@@ -31,7 +31,7 @@ use tokio::sync::{watch, Mutex};
 
 use network_nat::{
     Candidate, CandidateAdvertisement, CandidateKind, ConnectivityAttempt,
-    MAX_CANDIDATES_PER_SIGNAL,
+    RuntimeEpoch as NatRuntimeEpoch, MAX_CANDIDATES_PER_SIGNAL,
 };
 use network_protocol::{
     CommunicationClass, NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState,
@@ -286,7 +286,7 @@ impl ConnectionOrchestrator {
         let mut attempt = ConnectivityAttempt::with_connect_window(
             attempt_id.clone(),
             peer_id.to_string(),
-            local_epoch.low,
+            nat_runtime_epoch(&local_epoch),
             attempt_started_at,
             DIRECT_CONNECT_WINDOW,
         )
@@ -294,7 +294,7 @@ impl ConnectionOrchestrator {
         let initial_remote_candidates = resolved_candidates(&resolved, &peer);
         if let Err(error) = attempt.apply_remote_candidates(
             resolved_snapshot(&resolved)
-                .and_then(|snapshot| snapshot.runtime_epoch.as_ref().map(runtime_epoch_value)),
+                .and_then(|snapshot| snapshot.runtime_epoch.as_ref().map(nat_runtime_epoch)),
             resolved_snapshot(&resolved)
                 .map(|snapshot| u64::from(snapshot.revision))
                 .unwrap_or(0),
@@ -670,7 +670,7 @@ impl ConnectionOrchestrator {
                             let result = {
                                 let mut attempt = attempt.lock().await;
                                 let result = attempt.apply_remote_candidates(
-                                    snapshot.runtime_epoch.as_ref().map(runtime_epoch_value),
+                                    snapshot.runtime_epoch.as_ref().map(nat_runtime_epoch),
                                     u64::from(snapshot.revision),
                                     candidates,
                                 );
@@ -1036,6 +1036,13 @@ fn new_attempt_id() -> String {
 }
 
 /// 从 Resolve 结果提取对端 runtime_epoch。
+fn nat_runtime_epoch(epoch: &RuntimeEpoch) -> NatRuntimeEpoch {
+    NatRuntimeEpoch {
+        high: epoch.high,
+        low: epoch.low,
+    }
+}
+
 fn resolved_runtime_epoch(resolved: &ResolvedPeer) -> Option<RuntimeEpoch> {
     match resolved {
         ResolvedPeer::Ready { discovery } => discovery
@@ -1053,13 +1060,6 @@ fn resolved_snapshot(resolved: &ResolvedPeer) -> Option<&DiscoverySnapshot> {
             None
         }
     }
-}
-
-/// `ConnectivityAttempt` stores the compact u64 epoch used by the older NAT
-/// exchange API; fold the v2 128-bit runtime epoch without treating either
-/// wire half as a peer-controlled candidate value.
-fn runtime_epoch_value(epoch: &RuntimeEpoch) -> u64 {
-    epoch.high.rotate_left(17) ^ epoch.low
 }
 
 fn discovery_snapshot_candidates(snapshot: &DiscoverySnapshot) -> Vec<Candidate> {
@@ -1316,7 +1316,7 @@ mod tests {
         let attempt = Arc::new(Mutex::new(ConnectivityAttempt::with_connect_window(
             "attempt-answer",
             "peer-b",
-            1,
+            nat_runtime_epoch(&RuntimeEpoch { high: 1, low: 2 }),
             SystemTime::now(),
             DIRECT_CONNECT_WINDOW,
         )));
@@ -1341,6 +1341,10 @@ mod tests {
         let attempt = attempt.lock().await;
         assert_eq!(attempt.remote_candidates().len(), 1);
         assert_eq!(attempt.remote_discovery_revision(), Some(7));
+        assert_eq!(
+            attempt.remote_runtime_epoch(),
+            Some(nat_runtime_epoch(&RuntimeEpoch { high: 3, low: 4 })),
+        );
         assert_eq!(
             attempt.state(),
             network_nat::ConnectivityAttemptState::Connecting
