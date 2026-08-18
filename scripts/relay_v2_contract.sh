@@ -31,7 +31,7 @@ if ! git diff --exit-code -- protocol/relay_v2_testdata/ >/dev/null; then
   echo "then commit the regenerated files." >&2
   exit 1
 fi
-echo "golden fixtures: current (22 fixtures)"
+echo "golden fixtures: current (23 fixtures)"
 
 # --- Semantic sanity: manifest shape ---
 python3 - <<'PY'
@@ -39,7 +39,7 @@ import json, sys
 with open("protocol/relay_v2_testdata/manifest.json") as f:
     m = json.load(f)
 assert m["schema_version"] == 2, "manifest schema_version != 2"
-assert len(m["fixtures"]) == 22, "expected 22 fixtures, got %d" % len(m["fixtures"])
+assert len(m["fixtures"]) == 23, "expected 23 fixtures, got %d" % len(m["fixtures"])
 assert m["constants"]["RELAY_V2_VERSION"] == 2
 print("manifest: OK (%d fixtures)" % len(m["fixtures"]))
 PY

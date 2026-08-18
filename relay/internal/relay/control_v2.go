@@ -245,15 +245,10 @@ func (h *hub) handleDiscoveryPublishV2(sender *peer, pub *v2.DiscoveryPublish) {
 
 // handleResolvePeerRequestV2 用权威 4-state resolve（设计 §10）判定目标可连性：
 // READY 携带 discovery；OFFLINE/NOT_READY/UNKNOWN 分别回状态并附 retry_after_ms 提示。
-// 同时记录该连接最近 resolve 的目标，供 ConnectivityOffer 转发定位（冻结契约的 offer
-// 不携带 target_device_id）。
 func (h *hub) handleResolvePeerRequestV2(sender *peer, req *v2.ResolvePeerRequest) {
 	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
 	result := h.resolvePeer(ctx, req.TargetDeviceId)
 	cancel()
-	sender.stateMutex.Lock()
-	sender.lastResolveTarget = req.TargetDeviceId
-	sender.stateMutex.Unlock()
 	resp := &v2.ResolvePeerResponse{RequestId: req.RequestId, Status: result.status}
 	switch result.status {
 	case v2.ResolveStatus_RESOLVE_STATUS_READY:
@@ -269,17 +264,15 @@ func (h *hub) handleResolvePeerRequestV2(sender *peer, req *v2.ResolvePeerReques
 	})
 }
 
-// handleConnectivityOfferV2 把 A 的 ConnectivityOffer 转发给 A 最近 resolve 的目标
-// （设计 §14：A Resolve B → ConnectivityOffer(A→B)）。转发前服务端用 A 当前已发布的
+// handleConnectivityOfferV2 按 offer 自带的显式 target_device_id 转发
+// （设计 §14：A ConnectivityOffer(target=B) → B）。转发前服务端用 A 当前已发布的
 // discovery 覆盖 initiator_snapshot，并登记 attempt_id → initiator，供对端
 // ConnectivityAnswer / ProtocolError 回路由。
 func (h *hub) handleConnectivityOfferV2(sender *peer, offer *v2.ConnectivityOffer) {
-	sender.stateMutex.Lock()
-	targetID := sender.lastResolveTarget
-	sender.stateMutex.Unlock()
+	targetID := offer.TargetDeviceId
 	if targetID == "" || targetID == sender.deviceID {
 		h.sendV2ProtocolError(sender, offer.RequestId, v2.ErrorCode_ERROR_CODE_PEER_NOT_READY,
-			"connectivity offer requires a prior resolve of a different target")
+			"connectivity offer requires a different target device")
 		return
 	}
 	// 服务端用 A 的已发布 discovery 覆盖 offer 里的 initiator_snapshot（§14：B 从
@@ -336,8 +329,9 @@ func (h *hub) handleConnectivityAnswerV2(sender *peer, ans *v2.ConnectivityAnswe
 	})
 }
 
-// handleRealtimeSignalV2 转发 webrtc 风格的信令（不透明 payload，relay 不解析）到
-// target_device_id 的 v2 控制面连接。
+// handleRealtimeSignalV2 转发 WebRTC 风格的信令（不透明 payload，Relay 不解析）到
+// target_device_id 的 v2 控制面连接。sender_device_id 始终由认证连接覆盖，接收端
+// 只能据此识别远端 peer，绝不能把 target_device_id 当作发送方。
 func (h *hub) handleRealtimeSignalV2(sender *peer, sig *v2.RealtimeSignal) {
 	if sig.TargetDeviceId == "" || sig.TargetDeviceId == sender.deviceID {
 		h.sendV2ProtocolError(sender, sig.RequestId, v2.ErrorCode_ERROR_CODE_PROTOCOL, "invalid realtime target")
@@ -350,6 +344,8 @@ func (h *hub) handleRealtimeSignalV2(sender *peer, sig *v2.RealtimeSignal) {
 		h.sendV2ProtocolError(sender, sig.RequestId, v2.ErrorCode_ERROR_CODE_PEER_OFFLINE, "target peer is not connected on the v2 control plane")
 		return
 	}
+	// 客户端提供的 sender_device_id 仅是提示字段；认证连接身份是唯一可信来源。
+	sig.SenderDeviceId = sender.deviceID
 	h.sendV2Frame(target, &v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
 		Kind:    &v2.RelayFrame_RealtimeSignal{RealtimeSignal: sig},

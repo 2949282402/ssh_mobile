@@ -5,7 +5,7 @@
 //! 跨 connection 存活的 `SessionState::Disconnected`，也不存在复用旧 `SessionId`
 //! 的重连。业务状态（Delivery / Transfer）不属于 Session，由业务 manager 持有。
 
-use network_protocol::{CommunicationClass, RouteType};
+use network_protocol::RouteType;
 use network_quic::{send_channel_frame, ChannelFrameKind};
 use network_relay::RelayDataClient;
 use quinn::{Connection, VarInt};
@@ -98,8 +98,6 @@ struct Session {
     remote_session_binding: Option<String>,
     state: SessionState,
     route: Option<ActiveRoute>,
-    /// 建连时请求的 CommunicationClass（§17）。`Unspecified` 表示默认 ReliableMessage。
-    communication_class: Option<CommunicationClass>,
 }
 
 const GENERIC_ROUTE_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -720,26 +718,6 @@ impl SessionManager {
             })
     }
 
-    /// Records the CommunicationClass a connection was established for (§17).
-    pub(crate) async fn set_communication_class(&self, peer_id: &str, class: CommunicationClass) {
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(peer_id) {
-            session.communication_class = Some(class);
-        }
-    }
-
-    /// Returns the CommunicationClass the current session was established for.
-    pub(crate) async fn current_communication_class(
-        &self,
-        peer_id: &str,
-    ) -> Option<CommunicationClass> {
-        self.sessions
-            .read()
-            .await
-            .get(peer_id)
-            .and_then(|session| session.communication_class)
-    }
-
     /// Returns the old flat projection for compatibility surfaces. Generic
     /// routes intentionally return `Unspecified`; callers needing routing
     /// semantics must use `current_profile`.
@@ -956,7 +934,6 @@ impl SessionManager {
             remote_session_binding: None,
             state: SessionState::Idle,
             route: None,
-            communication_class: None,
         }
     }
 }

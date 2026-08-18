@@ -44,10 +44,6 @@ type peer struct {
 	// relayHost 是 /v2/control 升级请求的 Host 头，用于构造自包含的
 	// relay_data_endpoint（wss://<host>/v2/relay/<reservation_id>）。
 	relayHost string
-	// lastResolveTarget 是 v2 控制面最近一次 ResolvePeerRequest 的目标设备；由于冻结
-	// 契约的 ConnectivityOffer 不携带 target_device_id，服务端据它决定 offer 转发到
-	// 哪条 peer（设计 §14：A Resolve B → ConnectivityOffer(A→B)）。stateMutex 保护。
-	lastResolveTarget string
 }
 
 // 推送发现控制面的帧类型（v2 控制面由 broadcastPeerHintV2 转成 protobuf hint）。

@@ -10,13 +10,14 @@ use network_quic::{read_channel_frame, ChannelFrameKind, QuicEndpointManager, Qu
 use network_relay::RelayDataClient;
 use network_transport::{TcpTransport, Transport, WebSocketTransport};
 use quinn::{Connection, Endpoint};
+use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 
@@ -40,6 +41,10 @@ const STUN_SERVERS_ENV: &str = "SSH_MOBILE_STUN_SERVERS";
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
 const GENERIC_ROUTE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const GENERIC_ROUTE_TASK_START_TIMEOUT: Duration = Duration::from_secs(1);
+/// Delay between launching successive candidate groups. Every attempt still
+/// shares the parent Direct deadline; this only prevents a blackhole from
+/// monopolizing the first probe slot while keeping the race bounded.
+const CANDIDATE_STAGGER: Duration = Duration::from_millis(150);
 /// Direct 阶段中 QUIC race 的领先预算（§15）：先给 QUIC 候选一个子预算，然后用窗口
 /// 剩余预算跑 generic（TCP/WebSocket）候选。避免 QUIC 候选被黑洞/超时耗尽整个 Direct
 /// 窗口时，仅 TCP/WS 可达的 peer 被饿死而错误回退 Relay。
@@ -76,6 +81,9 @@ pub(crate) struct DirectRouteAttempt {
     pub(crate) session_id: SessionId,
     pub(crate) attempt_id: String,
     pub(crate) connect_window: Duration,
+    /// Candidate snapshots arriving from the authenticated ConnectivityAnswer
+    /// while the bounded Direct race is still running.
+    pub(crate) candidate_updates: watch::Receiver<Option<Vec<Candidate>>>,
 }
 
 /// Installs the fresh Noise root for a Session admission（§18 1:1）. The root is
@@ -438,7 +446,7 @@ pub(crate) async fn connect_direct_with_crypto(
     connect_window: Duration,
     session_binding: &str,
     state: Arc<RuntimeState>,
-    expected_session_id: SessionId,
+    expected_session_id: Option<SessionId>,
 ) -> Result<(Connection, SessionCryptoMaterial, SessionAdmissionLease), ProtocolError> {
     let started = Instant::now();
     let connection = connect_direct(
@@ -474,7 +482,7 @@ pub(crate) async fn connect_direct_with_crypto(
                     let admission = admit_single_winner(
                         &state,
                         &authenticated_peer_id,
-                        Some(expected_session_id),
+                        expected_session_id,
                         &remote_session_binding,
                     )
                     .await
@@ -533,6 +541,18 @@ async fn admit_single_winner(
         .await
 }
 
+fn enqueue_candidates(
+    pending: &mut VecDeque<Candidate>,
+    seen: &mut HashSet<String>,
+    candidates: Vec<Candidate>,
+) {
+    for candidate in candidates.into_iter().take(MAX_CANDIDATES_PER_SIGNAL) {
+        if seen.insert(candidate.candidate_id.clone()) {
+            pending.push_back(candidate);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn connect_direct_candidates_with_crypto(
     endpoint: Endpoint,
@@ -541,51 +561,93 @@ async fn connect_direct_candidates_with_crypto(
     expected_peer_public_key: [u8; 32],
     peer_id: String,
     attempt_id: String,
-    connect_window: Duration,
+    deadline: Instant,
     session_binding: String,
     state: Arc<RuntimeState>,
-    expected_session_id: SessionId,
+    expected_session_id: Option<SessionId>,
+    mut candidate_updates: watch::Receiver<Option<Vec<Candidate>>>,
 ) -> Result<(Connection, SessionCryptoMaterial, SessionAdmissionLease), ProtocolError> {
+    let mut pending = VecDeque::new();
+    let mut seen = HashSet::new();
+    enqueue_candidates(&mut pending, &mut seen, candidates);
     let mut attempts = JoinSet::new();
-    for candidate in candidates.into_iter().take(MAX_CANDIDATES_PER_SIGNAL) {
-        let endpoint = endpoint.clone();
-        let identity = Arc::clone(&identity);
-        let peer_id = peer_id.clone();
-        let session_binding = session_binding.clone();
-        let attempt_id = attempt_id.clone();
-        let state = Arc::clone(&state);
-        attempts.spawn(async move {
-            connect_direct_with_crypto(
-                endpoint,
-                candidate.endpoint,
-                identity,
-                expected_peer_public_key,
-                peer_id,
-                attempt_id,
-                connect_window,
-                &session_binding,
-                state,
-                expected_session_id,
-            )
-            .await
-        });
-    }
+    let mut next_launch_at = Instant::now();
+    let mut updates_closed = false;
     let mut last_error = None;
-    while let Some(result) = attempts.join_next().await {
-        match result {
-            Ok(Ok(route)) => {
-                attempts.abort_all();
-                return Ok(route);
+
+    loop {
+        if !pending.is_empty() && Instant::now() >= next_launch_at {
+            let candidate = pending.pop_front().expect("pending candidate");
+            let candidate_window = deadline.saturating_duration_since(Instant::now());
+            if candidate_window.is_zero() {
+                break;
             }
-            Ok(Err(error)) => last_error = Some(error),
-            Err(error) => {
-                last_error = Some(protocol_error_with_peer(
-                    NetworkErrorCode::QuicError,
-                    format!("candidate connectivity task failed: {error}"),
-                    "connect",
-                    &peer_id,
-                ));
+            let endpoint = endpoint.clone();
+            let identity = Arc::clone(&identity);
+            let peer_id_for_task = peer_id.clone();
+            let session_binding = session_binding.clone();
+            let attempt_id = attempt_id.clone();
+            let state = Arc::clone(&state);
+            attempts.spawn(async move {
+                connect_direct_with_crypto(
+                    endpoint,
+                    candidate.endpoint,
+                    identity,
+                    expected_peer_public_key,
+                    peer_id_for_task,
+                    attempt_id,
+                    candidate_window,
+                    &session_binding,
+                    state,
+                    expected_session_id,
+                )
+                .await
+            });
+            next_launch_at = Instant::now() + CANDIDATE_STAGGER;
+            continue;
+        }
+
+        // QUIC is only the lead phase. Once its current candidates have all
+        // failed, return so the caller can spend the remaining Direct budget
+        // on generic routes; the same update receiver is handed to that phase.
+        if attempts.is_empty() && pending.is_empty() {
+            break;
+        }
+
+        tokio::select! {
+            result = attempts.join_next(), if !attempts.is_empty() => {
+                match result {
+                    Some(Ok(Ok(route))) => {
+                        attempts.abort_all();
+                        return Ok(route);
+                    }
+                    Some(Ok(Err(error))) => last_error = Some(error),
+                    Some(Err(error)) => {
+                        last_error = Some(protocol_error_with_peer(
+                            NetworkErrorCode::QuicError,
+                            format!("candidate connectivity task failed: {error}"),
+                            "connect",
+                            &peer_id,
+                        ));
+                    }
+                    None => {}
+                }
             }
+            changed = candidate_updates.changed(), if !updates_closed => {
+                match changed {
+                    Ok(()) => {
+                        if let Some(update) = candidate_updates.borrow_and_update().clone() {
+                            let had_pending = !pending.is_empty();
+                            enqueue_candidates(&mut pending, &mut seen, update);
+                            if !had_pending && !pending.is_empty() {
+                                next_launch_at = Instant::now();
+                            }
+                        }
+                    }
+                    Err(_) => updates_closed = true,
+                }
+            }
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(next_launch_at)), if !pending.is_empty() => {}
         }
     }
     Err(last_error.unwrap_or_else(|| {
@@ -598,13 +660,14 @@ async fn connect_direct_candidates_with_crypto(
     }))
 }
 
-/// Route selection keeps QUIC as the first direct candidate, then falls back
-/// to authenticated TCP and finally a binary WebSocket route. Each generic
-/// route is admitted only after the same identity proof used by QUIC.
+/// Route selection gives QUIC the first direct budget, then races authenticated
+/// TCP and binary WebSocket attempts in staggered candidate groups. Each
+/// generic route is admitted only after the same identity proof used by QUIC.
 ///
 /// §15/§37：Direct 窗口被切成两段——QUIC 候选并行竞争 `min(window, QUIC_LEAD_BUDGET)`，
-/// 然后用窗口**剩余**预算跑 generic（TCP/WebSocket）候选。这样 QUIC 被黑洞/超时
-/// 耗尽后，仅 TCP/WS 可达的 peer 仍能在窗口内走 generic 成功，而不是被饿死回退 Relay。
+/// 然后用窗口**剩余**预算在统一 deadline 内按候选组交错启动 generic
+/// （TCP/WebSocket）尝试。这样 QUIC 被黑洞/超时耗尽后，仅 TCP/WS 可达的 peer
+/// 仍能在窗口内走 generic 成功，而不是被饿死回退 Relay。
 pub(crate) async fn connect_direct_or_generic(
     attempt: DirectRouteAttempt,
 ) -> Result<ConnectedRoute, ProtocolError> {
@@ -619,6 +682,7 @@ pub(crate) async fn connect_direct_or_generic(
         session_id,
         attempt_id,
         connect_window,
+        candidate_updates,
     } = attempt;
     let generic_candidates = candidates.clone();
     let started = Instant::now();
@@ -627,6 +691,7 @@ pub(crate) async fn connect_direct_or_generic(
     let quic_budget = connect_window.min(QUIC_LEAD_BUDGET);
 
     // 1) QUIC 候选并行竞争（子预算内）。
+    let quic_deadline = Instant::now() + quic_budget;
     let quic_result = tokio::time::timeout(
         quic_budget,
         connect_direct_candidates_with_crypto(
@@ -636,10 +701,11 @@ pub(crate) async fn connect_direct_or_generic(
             expected_peer_public_key,
             peer_id.clone(),
             attempt_id,
-            quic_budget,
+            quic_deadline,
             session_binding.clone(),
             Arc::clone(&state),
-            session_id,
+            Some(session_id),
+            candidate_updates.clone(),
         ),
     )
     .await;
@@ -661,7 +727,8 @@ pub(crate) async fn connect_direct_or_generic(
     };
 
     // 2) QUIC 未胜出：用窗口剩余预算跑 generic（TCP/WS）候选。
-    let remaining = connect_window.saturating_sub(started.elapsed());
+    let direct_deadline = started + connect_window;
+    let remaining = direct_deadline.saturating_duration_since(Instant::now());
     let generic_result = tokio::time::timeout(
         remaining,
         connect_generic_candidates(
@@ -672,6 +739,8 @@ pub(crate) async fn connect_direct_or_generic(
             session_binding,
             state,
             session_id,
+            direct_deadline,
+            candidate_updates,
         ),
     )
     .await;
@@ -687,6 +756,47 @@ pub(crate) async fn connect_direct_or_generic(
     }
 }
 
+/// Responder-side authenticated candidate checks started from an inbound
+/// ConnectivityOffer. The normal accept loops remain available as the other
+/// half of the simultaneous check; this task additionally punches toward the
+/// initiator's advertised candidates within the same bounded window.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn connect_responder_direct(
+    endpoint: Endpoint,
+    candidates: Vec<Candidate>,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_public_key: [u8; 32],
+    peer_id: String,
+    attempt_id: String,
+    session_binding: String,
+    state: Arc<RuntimeState>,
+    connect_window: Duration,
+) -> Result<ConnectedRoute, ProtocolError> {
+    let (candidate_update_tx, candidate_updates) = watch::channel::<Option<Vec<Candidate>>>(None);
+    drop(candidate_update_tx);
+    let deadline = Instant::now() + connect_window;
+    let (connection, crypto, admission) = connect_direct_candidates_with_crypto(
+        endpoint,
+        candidates,
+        identity,
+        expected_peer_public_key,
+        peer_id,
+        attempt_id,
+        deadline,
+        session_binding,
+        state,
+        None,
+        candidate_updates,
+    )
+    .await?;
+    Ok(ConnectedRoute::Quic {
+        connection,
+        crypto,
+        admission,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn connect_generic_candidates(
     candidates: Vec<Candidate>,
     identity: Arc<DeviceIdentity>,
@@ -695,38 +805,111 @@ async fn connect_generic_candidates(
     session_binding: String,
     state: Arc<RuntimeState>,
     expected_session_id: SessionId,
+    deadline: Instant,
+    mut candidate_updates: watch::Receiver<Option<Vec<Candidate>>>,
 ) -> Result<AuthenticatedGenericRoute, ProtocolError> {
+    let mut pending = VecDeque::new();
+    let mut seen = HashSet::new();
+    enqueue_candidates(&mut pending, &mut seen, candidates);
+    let mut attempts = JoinSet::new();
+    let mut next_launch_at = Instant::now();
+    let mut updates_closed = false;
     let mut last_error = None;
-    for candidate in candidates.iter().take(MAX_CANDIDATES_PER_SIGNAL) {
-        match connect_tcp_route(
-            candidate.endpoint,
-            Arc::clone(&identity),
-            expected_peer_public_key,
-            peer_id.clone(),
-            session_binding.clone(),
-            Arc::clone(&state),
-            expected_session_id,
-        )
-        .await
-        {
-            Ok(route) => return Ok(route),
-            Err(error) => last_error = Some(error),
+
+    loop {
+        if !pending.is_empty() && Instant::now() >= next_launch_at {
+            let candidate = pending.pop_front().expect("pending candidate");
+            let candidate_window = deadline.saturating_duration_since(Instant::now());
+            if candidate_window.is_zero() {
+                break;
+            }
+            let candidate_endpoint = candidate.endpoint;
+            for websocket in [false, true] {
+                let identity = Arc::clone(&identity);
+                let peer_id_for_task = peer_id.clone();
+                let error_peer_id = peer_id.clone();
+                let session_binding = session_binding.clone();
+                let state = Arc::clone(&state);
+                attempts.spawn(async move {
+                    let operation = async move {
+                        if websocket {
+                            connect_websocket_route(
+                                candidate_endpoint,
+                                identity,
+                                expected_peer_public_key,
+                                peer_id_for_task.clone(),
+                                session_binding,
+                                state,
+                                expected_session_id,
+                            )
+                            .await
+                        } else {
+                            connect_tcp_route(
+                                candidate_endpoint,
+                                identity,
+                                expected_peer_public_key,
+                                peer_id_for_task.clone(),
+                                session_binding,
+                                state,
+                                expected_session_id,
+                            )
+                            .await
+                        }
+                    };
+                    tokio::time::timeout(candidate_window, operation)
+                        .await
+                        .unwrap_or_else(|_| {
+                            Err(protocol_error_with_peer(
+                                NetworkErrorCode::Timeout,
+                                "generic candidate deadline elapsed",
+                                "connect",
+                                &error_peer_id,
+                            ))
+                        })
+                });
+            }
+            next_launch_at = Instant::now() + CANDIDATE_STAGGER;
+            continue;
         }
-    }
-    for candidate in candidates.iter().take(MAX_CANDIDATES_PER_SIGNAL) {
-        match connect_websocket_route(
-            candidate.endpoint,
-            Arc::clone(&identity),
-            expected_peer_public_key,
-            peer_id.clone(),
-            session_binding.clone(),
-            Arc::clone(&state),
-            expected_session_id,
-        )
-        .await
-        {
-            Ok(route) => return Ok(route),
-            Err(error) => last_error = Some(error),
+
+        if attempts.is_empty() && pending.is_empty() && updates_closed {
+            break;
+        }
+
+        tokio::select! {
+            result = attempts.join_next(), if !attempts.is_empty() => {
+                match result {
+                    Some(Ok(Ok(route))) => {
+                        attempts.abort_all();
+                        return Ok(route);
+                    }
+                    Some(Ok(Err(error))) => last_error = Some(error),
+                    Some(Err(error)) => {
+                        last_error = Some(protocol_error_with_peer(
+                            NetworkErrorCode::IoError,
+                            format!("generic candidate task failed: {error}"),
+                            "connect",
+                            &peer_id,
+                        ));
+                    }
+                    None => {}
+                }
+            }
+            changed = candidate_updates.changed(), if !updates_closed => {
+                match changed {
+                    Ok(()) => {
+                        if let Some(update) = candidate_updates.borrow_and_update().clone() {
+                            let had_pending = !pending.is_empty();
+                            enqueue_candidates(&mut pending, &mut seen, update);
+                            if !had_pending && !pending.is_empty() {
+                                next_launch_at = Instant::now();
+                            }
+                        }
+                    }
+                    Err(_) => updates_closed = true,
+                }
+            }
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(next_launch_at)), if !pending.is_empty() => {}
         }
     }
     Err(last_error.unwrap_or_else(|| {
@@ -2480,6 +2663,8 @@ mod tests {
             ),
             Candidate::new(responder_address, CandidateKind::Lan, "test-tcp".into()),
         ];
+        let (candidate_update_tx, candidate_updates) = watch::channel(None);
+        drop(candidate_update_tx);
 
         let attempt = DirectRouteAttempt {
             state: Arc::clone(&state),
@@ -2492,6 +2677,7 @@ mod tests {
             session_id,
             attempt_id: "generic-budget-test".into(),
             connect_window: crate::connect::DIRECT_CONNECT_WINDOW,
+            candidate_updates,
         };
 
         // QUIC 被黑洞耗掉自己的子预算后，generic 用窗口剩余预算走 TCP 成功。

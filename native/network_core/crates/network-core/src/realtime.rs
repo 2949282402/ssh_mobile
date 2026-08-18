@@ -378,18 +378,25 @@ pub(crate) async fn send_signal_command(
 }
 
 /// v2 控制面信令入口（§17/§22：WebRTC signaling 经 Relay Control Plane）。
-/// `RealtimeSignal` 帧携带独立 `revision` 与原始 payload（无 v1 信封）。
+/// `RealtimeSignal` 帧携带独立 `revision` 与原始 payload（无 v1 信封）。Relay
+/// 已将 `sender_device_id` 覆盖为认证连接身份；`target_device_id` 仅用于 Relay
+/// 路由，绝不作为本地 WebRTC 状态机的远端 peer 身份。
 pub(crate) async fn handle_v2_realtime_signal(
     state: &Arc<RuntimeState>,
     signal: &V2RealtimeSignal,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if signal.sender_device_id.is_empty() {
+        return Err(boxed_message(
+            "v2 WebRTC signal is missing the authenticated sender device ID",
+        ));
+    }
     let kind = RealtimeSignalKind::try_from(signal.kind)
         .map_err(|_| boxed_message("invalid v2 WebRTC signal kind"))?;
     handle_realtime_signal(
         state,
         kind,
         &signal.realtime_id,
-        &signal.target_device_id,
+        &signal.sender_device_id,
         signal.revision,
         signal.payload.clone(),
     )
@@ -1794,6 +1801,60 @@ mod tests {
             )),
             event_rx,
         )
+    }
+
+    #[tokio::test]
+    async fn inbound_v2_signal_binds_remote_peer_from_sender_not_target() {
+        let (state, _event_rx) = realtime_test_state().await;
+        register_realtime_peer(&state, "peer-a").await;
+
+        let realtime_id = "00112233445566778899aabbccddeeff";
+        let mut caller = WebRtcPeer::new(WebRtcConfig::default()).expect("caller peer");
+        caller
+            .create_data_channel("ssh-mobile-realtime", Default::default())
+            .expect("data channel");
+        let offer = caller.create_offer().expect("offer");
+        let offer_revision = caller.signaling_revision();
+        let mut responder = WebRtcPeer::new(WebRtcConfig::default()).expect("responder peer");
+        responder
+            .accept_remote_offer(offer)
+            .expect("responder accepts offer");
+        let answer = responder.create_answer().expect("answer");
+
+        state.realtime.lock().await.sessions.insert(
+            realtime_id.into(),
+            RealtimeSession {
+                peer_id: "peer-a".into(),
+                connection_session_id: None,
+                peer: Some(caller),
+                driver: None,
+                revision: offer_revision,
+                remote_revision: 0,
+                ice_revision: offer_revision,
+                seen_candidates: HashSet::new(),
+            },
+        );
+
+        let outcome = handle_v2_realtime_signal(
+            &state,
+            &V2RealtimeSignal {
+                request_id: 1,
+                realtime_id: realtime_id.into(),
+                target_device_id: "local-device-b".into(),
+                kind: V2RealtimeSignalKind::Answer as i32,
+                revision: offer_revision + 1,
+                payload: answer.sdp.into_bytes(),
+                sender_device_id: "peer-a".into(),
+            },
+        )
+        .await;
+        assert!(outcome.is_ok(), "inbound answer: {outcome:?}");
+
+        assert_eq!(
+            state.realtime.lock().await.sessions[realtime_id].peer_id,
+            "peer-a",
+            "the authenticated sender is the remote WebRTC peer"
+        );
     }
 
     async fn register_realtime_peer(state: &RuntimeState, peer_id: &str) {

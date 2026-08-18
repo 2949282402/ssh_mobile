@@ -15,7 +15,9 @@ use network_protocol::{
     ConfigureRelayCommand, DataMessage, DeliveryAck, NetworkError as ProtocolError,
     NetworkErrorCode, PeerPresenceChangedEvent, PeerPresenceState, RouteType,
 };
-use network_relay::v2::{ControlEvent, DataEvent, DiscoverySnapshot, RuntimeEpoch};
+use network_relay::v2::{
+    ConnectivityOffer, ControlEvent, DataEvent, DiscoverySnapshot, RuntimeEpoch,
+};
 use network_relay::{RelayControlClient, RelayDataClient, RelayError};
 use network_transfer::{
     build_file_manifest, existing_completed_file, existing_partial_offset, FileManifest,
@@ -42,7 +44,11 @@ use crate::runtime::{
     PeerConfig, RuntimeState, INCOMING_APPROVAL_TIMEOUT, MAX_PENDING_INCOMING_TRANSFERS,
     MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
 };
+use network_nat::{
+    Candidate, CandidateAdvertisement, ConnectivityAttempt, ConnectivityAttemptState,
+};
 use network_protocol::RetryDisposition;
+use std::time::SystemTime;
 
 /// Relay 配置只存在 native runtime 内存中，用于控制面 socket 意外断开后的指数退避重连。
 #[derive(Clone)]
@@ -397,8 +403,9 @@ async fn consume_control_events(
                 );
             }
             ControlEvent::ConnectivityOffer(offer) => {
-                // 应答方视角（§14）：接受 offer 并回送 ConnectivityAnswer；候选已由
-                // Resolve / Discovery 附带，Direct 由发起方 Direct First 打到本端监听器。
+                // 应答方视角（§14）：先回送 Answer，再在同一个 attempt window
+                // 向 initiator_snapshot 中的候选发起认证检查；本端 accept loop
+                // 同时继续接收发起方打进来的 QUIC Initial。
                 if let Some(identity) = state.identity.read().await.clone() {
                     let (epoch, revision, snapshot) = local_discovery_tuple(&state).await;
                     let _ = control
@@ -411,6 +418,7 @@ async fn consume_control_events(
                             snapshot,
                         )
                         .await;
+                    spawn_responder_connectivity_checks(Arc::clone(&state), offer);
                 }
             }
             ControlEvent::IncomingRelayReservation(reservation) => {
@@ -425,7 +433,7 @@ async fn consume_control_events(
                     crate::realtime::handle_v2_realtime_signal(&state, &signal).await
                 {
                     tracing::debug!(
-                        peer_id = %signal.target_device_id,
+                        peer_id = %signal.sender_device_id,
                         error = %error,
                         "rejected v2 WebRTC signaling control"
                     );
@@ -444,6 +452,111 @@ async fn consume_control_events(
             _ => {}
         }
     }
+}
+
+/// Starts the responder half of a one-shot connectivity attempt. The
+/// initiator's snapshot is copied into an attempt-scoped candidate set; no
+/// candidate is written to PathManager or reused by a later attempt.
+fn spawn_responder_connectivity_checks(state: Arc<RuntimeState>, offer: ConnectivityOffer) {
+    let supervisor = Arc::clone(&state.task_supervisor);
+    let _ = supervisor.spawn_runtime("connectivity-responder-checks", async move {
+        let peer_id = offer.initiator_device_id.clone();
+        let peer = state.peers.read().await.get(&peer_id).cloned();
+        let Some(peer) = peer else {
+            tracing::debug!(peer_id = %peer_id, attempt_id = %offer.attempt_id, "ignored offer for unconfigured peer");
+            return;
+        };
+        let endpoint = state.endpoint.read().await.clone();
+        let Some(endpoint) = endpoint else {
+            tracing::debug!(peer_id = %peer_id, attempt_id = %offer.attempt_id, "cannot run responder checks without endpoint");
+            return;
+        };
+        let identity = state.identity.read().await.clone();
+        let Some(identity) = identity else {
+            return;
+        };
+        let mut candidates = connectivity_offer_candidates(&offer);
+        if let Some(configured_endpoint) = peer.endpoint {
+            if !candidates
+                .iter()
+                .any(|candidate| candidate.endpoint == configured_endpoint)
+            {
+                candidates.push(Candidate::new(
+                    configured_endpoint,
+                    crate::peer::candidate_kind_for(configured_endpoint),
+                    "peer-configured".into(),
+                ));
+            }
+        }
+        let local_epoch = state
+            .local_discovery
+            .read()
+            .await
+            .as_ref()
+            .map(|manager| manager.runtime_epoch().low)
+            .unwrap_or(0);
+        let mut attempt = ConnectivityAttempt::with_connect_window(
+            offer.attempt_id.clone(),
+            peer_id.clone(),
+            local_epoch,
+            SystemTime::now(),
+            crate::connect::DIRECT_CONNECT_WINDOW,
+        );
+        let _ = attempt.apply_remote_candidates(
+            offer
+                .initiator_runtime_epoch
+                .as_ref()
+                .map(|epoch| epoch.high.rotate_left(17) ^ epoch.low),
+            u64::from(offer.initiator_revision),
+            candidates.clone(),
+        );
+        let _ = attempt.set_state(ConnectivityAttemptState::Resolved);
+        let _ = attempt.set_state(ConnectivityAttemptState::Coordinating);
+        let _ = attempt.set_state(ConnectivityAttemptState::Connecting);
+        let digest = Sha256::digest(offer.attempt_id.as_bytes());
+        let session_binding = hex::encode(&digest[..16]);
+        let result = crate::peer::connect_responder_direct(
+            endpoint,
+            candidates,
+            identity,
+            peer.identity_public_key,
+            peer_id.clone(),
+            offer.attempt_id.clone(),
+            session_binding,
+            Arc::clone(&state),
+            crate::connect::DIRECT_CONNECT_WINDOW,
+        )
+        .await;
+        match result {
+            Ok(route) => {
+                let _ = attempt.set_state(ConnectivityAttemptState::Succeeded);
+                let orchestrator = crate::connect::ConnectionOrchestrator::new(state);
+                if let Err(error) = orchestrator.attach_direct_route(&peer_id, route).await {
+                    tracing::debug!(peer_id = %peer_id, attempt_id = %offer.attempt_id, error = %error.message, "responder direct route was not attached");
+                }
+            }
+            Err(error) => {
+                let _ = attempt.set_state(if error.code == network_protocol::NetworkErrorCode::Timeout as i32 {
+                    ConnectivityAttemptState::Expired
+                } else {
+                    ConnectivityAttemptState::Failed
+                });
+                tracing::debug!(peer_id = %peer_id, attempt_id = %offer.attempt_id, error = %error.message, "responder direct checks failed");
+            }
+        }
+    });
+}
+
+fn connectivity_offer_candidates(offer: &ConnectivityOffer) -> Vec<Candidate> {
+    offer
+        .initiator_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.candidate_bundle.as_ref())
+        .into_iter()
+        .flat_map(|bundle| bundle.candidates.iter())
+        .filter_map(|bytes| serde_json::from_slice::<CandidateAdvertisement>(bytes).ok())
+        .filter_map(|advertisement| Candidate::from_advertisement(advertisement).ok())
+        .collect()
 }
 
 /// 读取本地 Discovery 三元组（epoch / revision / snapshot），供 offer/answer 附带。
@@ -1149,11 +1262,16 @@ async fn receive_relay_channel_message(
                     )
                     .into());
                 }
-                let expected_token = format!("stream:{}", relay_stream_id(&frame));
+                let (opener_peer_id, stream_id) =
+                    crate::stream::decode_stream_frame_identity(frame.kind, &frame.payload)
+                        .map_err(|error| {
+                            std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+                        })?;
+                let expected_token = crate::stream::stream_relay_token(&opener_peer_id, stream_id);
                 if session_token != expected_token {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        "Relay stream token does not match StreamId",
+                        "Relay stream token does not match stream opener and id",
                     )
                     .into());
                 }
@@ -1208,11 +1326,15 @@ async fn receive_relay_stream_frame(
         )
         .into());
     }
-    let expected_token = format!("stream:{}", relay_stream_id(&frame));
+    let (opener_peer_id, stream_id) =
+        crate::stream::decode_stream_frame_identity(frame.kind, &frame.payload).map_err(
+            |error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()),
+        )?;
+    let expected_token = crate::stream::stream_relay_token(&opener_peer_id, stream_id);
     if session_token != expected_token {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "Relay stream token does not match StreamId",
+            "Relay stream token does not match stream opener and id",
         )
         .into());
     }
@@ -1220,16 +1342,6 @@ async fn receive_relay_stream_frame(
         .await
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
     Ok(())
-}
-
-/// Extracts the logical stream_id from a relayed stream frame payload (all
-/// three stream frames carry `stream_id` in their first two bytes).
-fn relay_stream_id(frame: &crate::connection::GenericInboundFrame) -> u16 {
-    if frame.payload.len() >= 2 {
-        u16::from_be_bytes([frame.payload[0], frame.payload[1]])
-    } else {
-        0
-    }
 }
 
 async fn receive_relay_delivery_ack(

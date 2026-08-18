@@ -189,6 +189,7 @@ message ConnectivityOffer {
   RuntimeEpoch initiator_runtime_epoch = 4;
   uint32 initiator_revision = 5;
   DiscoverySnapshot initiator_snapshot = 6;  // client may omit; server overwrites with stored discovery before forwarding
+  string target_device_id = 7;               // authenticated sender's explicit offer target
 }
 
 message ConnectivityAnswer {
@@ -256,6 +257,9 @@ message RealtimeSignal {
   RealtimeSignalKind kind = 4;
   uint64 revision = 5;
   bytes payload = 6;                         // <= 256 KiB
+  // The authenticated Relay overwrites this with the sender's device_id
+  // before forwarding. Receivers use it as the remote WebRTC peer identity.
+  string sender_device_id = 7;
 }
 
 message ProtocolError {
@@ -304,6 +308,9 @@ message RelayDataFrame {
     RelayDataPayload payload = 11;
     RelayDataAck ack = 12;
     RelayDataClose close = 13;
+    // Sent by the Relay only after both reservation roles are connected.
+    // Tag 14 is intentionally new so existing data tags remain compatible.
+    RelayDataReady ready = 14;
   }
   reserved 30 to 63;                         // future data messages; 64+ experimental
 }
@@ -325,4 +332,10 @@ message RelayDataAck {
 message RelayDataClose {
   uint32 reason = 1;                         // 0 normal, 1 expiry, 2 error
   string detail = 2;
+}
+
+// Handshake acknowledgement from the Relay: both initiator and responder are
+// present and encrypted business payloads may be sent immediately.
+message RelayDataReady {
+  string reservation_id = 1;
 }

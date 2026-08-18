@@ -428,7 +428,48 @@ jobs:
       - name: Install Full App dependencies
         run: flutter pub get
       - name: Run Sharded Unit Tests
-        run: flutter test --reporter expanded --timeout 60s --total-shards ${{ matrix.total_shards }} --shard-index ${{ matrix.shard_index }}
+        run: flutter test --coverage --reporter expanded --timeout 60s --total-shards ${{ matrix.total_shards }} --shard-index ${{ matrix.shard_index }}
+      - name: Upload shard coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-coverage-${{ matrix.shard_index }}
+          path: apps/ssh_mobile_full/coverage/lcov.info
+          if-no-files-found: error
+
+  app-coverage:
+    runs-on: ubuntu-latest
+    needs: app-unit-tests
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/ssh_mobile_full
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install Full App dependencies
+        run: flutter pub get
+      - name: Download shard coverage
+        uses: actions/download-artifact@v4
+        with:
+          pattern: flutter-coverage-*
+          path: coverage-shards
+      - name: Merge shard coverage
+        run: |
+          mkdir -p coverage
+          mapfile -d '' shard_files < <(find "$GITHUB_WORKSPACE/coverage-shards" -type f -name lcov.info -print0 | sort -z)
+          if [ "${#shard_files[@]}" -eq 0 ]; then
+            echo "No shard coverage files were downloaded."
+            exit 1
+          fi
+          : > coverage/lcov.info
+          for shard_file in "${shard_files[@]}"; do
+            cat "$shard_file" >> coverage/lcov.info
+          done
+      - name: Enforce merged coverage
+        run: dart run tool/check_coverage.dart --minimum=35 --file=coverage/lcov.info
 
   android-build:
     runs-on: ubuntu-latest

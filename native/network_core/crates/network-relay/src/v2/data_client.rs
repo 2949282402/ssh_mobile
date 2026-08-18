@@ -1,7 +1,8 @@
 //! Relay v2 数据面客户端（`/v2/relay/{reservation_id}`）。
 //!
-//! reservation 作用域：只转发不透明的 EncryptedPayload、流控 Ack 与 Close。
-//! 拥有自己的 socket、outbound 队列与速率预算，绝不与
+//! reservation 作用域：先完成 RelayDataConnect/RelayDataReady 配对握手，再转发
+//! 不透明的 EncryptedPayload、流控 Ack 与 Close。拥有自己的 socket、outbound 队列
+//! 与速率预算，绝不与
 //! [`super::RelayControlClient`] 共享任何资源。
 
 use ed25519_dalek::SigningKey;
@@ -163,7 +164,11 @@ impl RelayDataClient {
         })
     }
 
-    /// 连接数据面端点，并发送 RelayDataConnect 认证 reservation。
+    /// 连接数据面端点，发送 RelayDataConnect，并等待 RelayDataReady。
+    ///
+    /// WebSocket 建立或 Connect 写入成功都不代表 reservation 已经可用；只有
+    /// Relay 确认 initiator/responder 两个角色都已加入后，调用方才能立即发送
+    /// E2EE 业务帧。
     pub async fn connect_reservation(&mut self) -> Result<(), RelayError> {
         if *self.is_connected.read().await {
             return Err(RelayError::Protocol(
@@ -181,8 +186,6 @@ impl RelayDataClient {
             .map_err(|_| RelayError::Socket("Relay data connection timed out".into()))?
             .map_err(map_connect_error)?;
         let (mut writer, mut reader) = socket.split();
-        let (outbound, mut outbound_rx) = mpsc::channel::<Message>(DATA_QUEUE_CAPACITY);
-        self.outbound = Some(outbound);
 
         // 首个帧必须是 RelayDataConnect，绑定 reservation 与本地 token。
         let connect_frame = RelayDataFrame {
@@ -200,6 +203,88 @@ impl RelayDataClient {
         .await
         .map_err(|_| RelayError::Socket("Relay data connect timed out".into()))?
         .map_err(|error| RelayError::Socket(error.to_string()))?;
+
+        // Connect 只完成本端认证。RelayDataReady 才表示另一端也已加入；在此之前
+        // 不启动业务 writer/reader，也不暴露 is_connected=true。
+        let reservation_id = self.reservation_id.clone();
+        let ready = tokio::time::timeout(SOCKET_OPERATION_TIMEOUT, async {
+            loop {
+                let message = reader.next().await.ok_or_else(|| {
+                    RelayError::Socket("Relay data closed before pairing was ready".into())
+                })?;
+                let message = message.map_err(|error| RelayError::Socket(error.to_string()))?;
+                match message {
+                    Message::Binary(frame) => {
+                        let frame = decode_data_frame(&frame)?;
+                        if frame.version != RELAY_V2_VERSION {
+                            return Err(RelayError::Protocol(format!(
+                                "unsupported Relay v2 data frame version {}",
+                                frame.version
+                            )));
+                        }
+                        match frame.kind.ok_or_else(|| {
+                            RelayError::Protocol(
+                                "Relay v2 data frame is missing its message kind".into(),
+                            )
+                        })? {
+                            relay_data_frame::Kind::Ready(ready) => {
+                                if ready.reservation_id != reservation_id {
+                                    return Err(RelayError::Protocol(
+                                        "RelayDataReady reservation does not match the client"
+                                            .into(),
+                                    ));
+                                }
+                                break Ok(());
+                            }
+                            relay_data_frame::Kind::Close(close) => {
+                                return Err(RelayError::Socket(format!(
+                                    "Relay closed data pairing: {}",
+                                    close.detail
+                                )))
+                            }
+                            relay_data_frame::Kind::Connect(_) => {
+                                return Err(RelayError::Protocol(
+                                    "Relay server sent RelayDataConnect during pairing".into(),
+                                ))
+                            }
+                            relay_data_frame::Kind::Payload(_) | relay_data_frame::Kind::Ack(_) => {
+                                return Err(RelayError::Protocol(
+                                    "Relay sent business data before RelayDataReady".into(),
+                                ))
+                            }
+                        }
+                    }
+                    Message::Ping(_) | Message::Pong(_) => {}
+                    Message::Close(_) => {
+                        return Err(RelayError::Socket(
+                            "Relay closed data pairing before Ready".into(),
+                        ))
+                    }
+                    Message::Text(_) | Message::Frame(_) => {
+                        return Err(RelayError::Protocol(
+                            "Relay v2 data frames must be binary protobuf".into(),
+                        ))
+                    }
+                }
+            }
+        })
+        .await;
+        match ready {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                let _ = writer.send(Message::Close(None)).await;
+                return Err(error);
+            }
+            Err(_) => {
+                let _ = writer.send(Message::Close(None)).await;
+                return Err(RelayError::Socket(
+                    "Relay data pairing timed out waiting for Ready".into(),
+                ));
+            }
+        }
+
+        let (outbound, mut outbound_rx) = mpsc::channel::<Message>(DATA_QUEUE_CAPACITY);
+        self.outbound = Some(outbound);
         *self.is_connected.write().await = true;
 
         let connected_for_writer = Arc::clone(&self.is_connected);
@@ -265,7 +350,7 @@ impl RelayDataClient {
             )
             .await;
         }));
-        info!("Relay v2 data client connected");
+        info!("Relay v2 data client connected and paired");
         Ok(())
     }
 
@@ -294,7 +379,8 @@ impl RelayDataClient {
             .ok_or_else(|| RelayError::Protocol("Relay data events were already consumed".into()))
     }
 
-    /// 接收下一条数据面事件（Payload / Ack / Close / Disconnected）。
+    /// 接收下一条数据面事件（Payload / Ack / Close / Disconnected）。Ready 只在
+    /// `connect_reservation` 建立后台 worker 前消费，不会作为业务事件暴露。
     pub async fn recv(&mut self) -> Option<DataEvent> {
         self.inbound.as_mut()?.recv().await
     }
@@ -502,6 +588,11 @@ fn data_event_from_frame(frame: RelayDataFrame) -> Result<DataEvent, RelayError>
                 "Relay server must not send RelayDataConnect frames".into(),
             ))
         }
+        relay_data_frame::Kind::Ready(_) => {
+            return Err(RelayError::Protocol(
+                "RelayDataReady is only valid during data connection setup".into(),
+            ))
+        }
         relay_data_frame::Kind::Payload(message) => DataEvent::Payload {
             sequence: message.sequence,
             encrypted_payload: message.encrypted_payload,
@@ -588,6 +679,20 @@ mod tests {
                 detail: "expiry".into(),
             }
         );
+    }
+
+    #[test]
+    fn data_ready_frame_is_a_setup_handshake_not_a_business_event() {
+        let frame = RelayDataFrame {
+            version: RELAY_V2_VERSION,
+            kind: Some(relay_data_frame::Kind::Ready(RelayDataReady {
+                reservation_id: "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            })),
+        };
+        let encoded = encode_data_frame(&frame).expect("encode");
+        let decoded = decode_data_frame(&encoded).expect("decode");
+        assert_eq!(decoded, frame);
+        assert!(data_event_from_frame(decoded).is_err());
     }
 
     #[test]

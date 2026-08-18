@@ -396,6 +396,7 @@ impl RelayControlClient {
     pub async fn start_connectivity_attempt(
         &self,
         attempt_id: String,
+        target_device_id: String,
         initiator_device_id: String,
         initiator_runtime_epoch: RuntimeEpoch,
         initiator_revision: u32,
@@ -409,6 +410,11 @@ impl RelayControlClient {
         if initiator_device_id.is_empty() || initiator_device_id.len() > MAX_DEVICE_ID_BYTES {
             return Err(RelayError::InvalidConfiguration(
                 "initiator device ID is outside protocol bounds".into(),
+            ));
+        }
+        if target_device_id.is_empty() || target_device_id.len() > MAX_DEVICE_ID_BYTES {
+            return Err(RelayError::InvalidConfiguration(
+                "target device ID is outside protocol bounds".into(),
             ));
         }
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
@@ -429,6 +435,7 @@ impl RelayControlClient {
                 initiator_runtime_epoch: Some(initiator_runtime_epoch),
                 initiator_revision,
                 initiator_snapshot,
+                target_device_id,
             })),
         };
         if let Err(error) = self.send_frame(&frame).await {
@@ -459,7 +466,9 @@ impl RelayControlClient {
         }
     }
 
-    /// 发送一个受限的 WebRTC 信令帧（fire-and-forget，不等待应答）。
+    /// 发送一个受限的 WebRTC 信令帧（fire-and-forget，不等待应答）。客户端把
+    /// 自身 device_id 放入 `sender_device_id` 作为提示；Relay 会用认证连接身份
+    /// 覆盖该字段，接收端据此绑定远端 peer。
     pub async fn signal_webrtc(
         &self,
         realtime_id: &str,
@@ -493,6 +502,7 @@ impl RelayControlClient {
                 kind: kind as i32,
                 revision,
                 payload: payload.to_vec(),
+                sender_device_id: self.device_id.clone(),
             })),
         };
         self.send_frame(&frame).await
@@ -896,6 +906,7 @@ mod tests {
             }),
             initiator_revision: 7,
             initiator_snapshot: None,
+            target_device_id: "device-b".into(),
         };
         let frame = RelayFrame {
             version: RELAY_V2_VERSION,
@@ -1120,5 +1131,39 @@ mod tests {
             client.resolve_peer("device-b").await,
             Err(RelayError::NotConnected)
         ));
+    }
+
+    #[tokio::test]
+    async fn signal_webrtc_populates_authenticated_sender_identity() {
+        let mut client = RelayControlClient::new(
+            "https://relay.example.test".into(),
+            "device-a".into(),
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("client");
+        let (outbound, mut frames) = mpsc::channel(1);
+        client.outbound = Some(outbound);
+
+        client
+            .signal_webrtc(
+                "rt-1234",
+                "device-b",
+                RealtimeSignalKind::Offer,
+                1,
+                b"sdp-offer",
+            )
+            .await
+            .expect("signal frame");
+
+        let Message::Binary(frame) = frames.recv().await.expect("outbound frame") else {
+            panic!("expected binary realtime signal frame");
+        };
+        let frame = decode_control_frame(&frame).expect("decode signal frame");
+        let relay_frame::Kind::RealtimeSignal(signal) = frame.kind.expect("signal kind") else {
+            panic!("expected realtime signal kind");
+        };
+        assert_eq!(signal.target_device_id, "device-b");
+        assert_eq!(signal.sender_device_id, "device-a");
     }
 }

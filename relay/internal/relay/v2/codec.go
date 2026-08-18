@@ -266,6 +266,9 @@ func ValidateControl(msg *RelayFrame) error {
 		if err := checkMax("initiator_device_id", len(o.InitiatorDeviceId), MAX_DEVICE_ID_BYTES); err != nil {
 			return err
 		}
+		if err := checkMax("target_device_id", len(o.TargetDeviceId), MAX_DEVICE_ID_BYTES); err != nil {
+			return err
+		}
 		return validateSnapshot(o.InitiatorSnapshot)
 	case *RelayFrame_ConnectivityAnswer:
 		a := k.ConnectivityAnswer
@@ -322,6 +325,9 @@ func ValidateControl(msg *RelayFrame) error {
 		if err := checkMax("target_device_id", len(s.TargetDeviceId), MAX_DEVICE_ID_BYTES); err != nil {
 			return err
 		}
+		if err := checkMax("sender_device_id", len(s.SenderDeviceId), MAX_DEVICE_ID_BYTES); err != nil {
+			return err
+		}
 		return checkMax("payload", len(s.Payload), MAX_REALTIME_SIGNAL_PAYLOAD_BYTES)
 	case *RelayFrame_ProtocolError:
 		return checkMax("attempt_id", len(k.ProtocolError.AttemptId), MAX_ATTEMPT_ID_BYTES)
@@ -344,6 +350,8 @@ func ValidateDataFrame(msg *RelayDataFrame) error {
 			return err
 		}
 		return checkLen("local_token", len(c.LocalToken), RESERVATION_TOKEN_BYTES)
+	case *RelayDataFrame_Ready:
+		return checkLen("reservation_id", len(k.Ready.ReservationId), RESERVATION_ID_HEX_CHARS)
 	default:
 		// RelayDataPayload is bounded by the frame maximum (checked during
 		// framing); RelayDataAck/RelayDataClose carry no size-bounded fields.
@@ -439,6 +447,8 @@ func DataKindName(msg *RelayDataFrame) string {
 	switch msg.Kind.(type) {
 	case *RelayDataFrame_Connect:
 		return "relay_data_connect"
+	case *RelayDataFrame_Ready:
+		return "relay_data_ready"
 	case *RelayDataFrame_Payload:
 		return "relay_data_payload"
 	case *RelayDataFrame_Ack:

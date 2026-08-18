@@ -69,6 +69,7 @@ pub(crate) trait DiscoveryControlPlane: Send + Sync {
     fn start_connectivity_attempt(
         &self,
         _attempt_id: String,
+        _target_device_id: String,
         _initiator_device_id: String,
         _initiator_runtime_epoch: RuntimeEpoch,
         _initiator_revision: u32,
@@ -142,6 +143,7 @@ impl DiscoveryControlPlane for RelayControlClient {
     fn start_connectivity_attempt(
         &self,
         attempt_id: String,
+        target_device_id: String,
         initiator_device_id: String,
         initiator_runtime_epoch: RuntimeEpoch,
         initiator_revision: u32,
@@ -151,6 +153,7 @@ impl DiscoveryControlPlane for RelayControlClient {
             RelayControlClient::start_connectivity_attempt(
                 self,
                 attempt_id,
+                target_device_id,
                 initiator_device_id,
                 initiator_runtime_epoch,
                 initiator_revision,

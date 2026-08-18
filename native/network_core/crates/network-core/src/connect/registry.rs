@@ -150,6 +150,7 @@ fn capability_covers(registered: u8, requested: u8) -> bool {
 mod tests {
     use super::*;
     use crate::session::SessionManager;
+    use std::sync::Arc;
 
     fn epoch(high: u64, low: u64) -> Option<RuntimeEpoch> {
         Some(RuntimeEpoch { high, low })
@@ -170,6 +171,52 @@ mod tests {
         registry.register("device-b", epoch(1, 2), 0, session_b);
         let found = registry.lookup("device-b", &epoch(1, 2), 0).expect("reuse");
         assert_eq!(found.session_id, session_b);
+    }
+
+    #[test]
+    fn lookup_capability_is_order_independent_and_concurrent() {
+        // A request's CommunicationClass is translated to a lookup mask at the
+        // boundary; the registry never stores that request-local value. Both
+        // orderings and concurrent readers must observe the same route capability.
+        let registry = Arc::new(ConnectionRegistry::new());
+        let session_id = SessionId::from_bytes([7u8; crate::session::SESSION_ID_BYTES]);
+        let remote_epoch = Some(RuntimeEpoch { high: 1, low: 2 });
+        registry.register(
+            "device-b",
+            remote_epoch.clone(),
+            super::super::DEFAULT_CONNECTION_CAPABILITY,
+            session_id,
+        );
+
+        for capability in [
+            super::super::CAPABILITY_RELIABLE_STREAM,
+            super::super::CAPABILITY_RELIABLE_MESSAGE,
+            super::super::CAPABILITY_RELIABLE_STREAM,
+        ] {
+            assert!(registry
+                .lookup("device-b", &remote_epoch, capability)
+                .is_some());
+        }
+
+        let handles: Vec<_> = (0..8)
+            .map(|index| {
+                let registry = Arc::clone(&registry);
+                let remote_epoch = remote_epoch.clone();
+                std::thread::spawn(move || {
+                    let capability = if index % 2 == 0 {
+                        super::super::CAPABILITY_RELIABLE_MESSAGE
+                    } else {
+                        super::super::CAPABILITY_RELIABLE_STREAM
+                    };
+                    assert!(registry
+                        .lookup("device-b", &remote_epoch, capability)
+                        .is_some());
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("capability lookup thread");
+        }
     }
 
     #[tokio::test]

@@ -27,9 +27,11 @@
 
 use std::sync::Arc;
 use std::time::SystemTime;
+use tokio::sync::{watch, Mutex};
 
 use network_nat::{
-    Candidate, CandidateAdvertisement, ConnectivityAttempt, MAX_CANDIDATES_PER_SIGNAL,
+    Candidate, CandidateAdvertisement, CandidateKind, ConnectivityAttempt,
+    MAX_CANDIDATES_PER_SIGNAL,
 };
 use network_protocol::{
     CommunicationClass, NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState,
@@ -138,8 +140,8 @@ impl ConnectionOrchestrator {
     }
 
     /// 带 CommunicationClass 的建连入口（§17/§37）。这是 FFI 面向的连接表面：
-    /// 调用方指定业务通信类别，连接层映射为 transport capability + connection
-    /// shape，并把类别记录到建立的 ConnectionSession 上。
+    /// 调用方指定本次业务所需能力，连接层只用它查询/选择实际 ConnectionProfile；
+    /// ConnectionSession 不保存最近一次业务类别。
     pub(crate) async fn connect_with_class(
         &self,
         peer_id: &str,
@@ -198,10 +200,6 @@ impl ConnectionOrchestrator {
                 session = ?reused,
                 "reused existing healthy connection"
             );
-            // §17/§40：重用路径必须记录本次请求的 CommunicationClass——否则会话保留
-            // 先前建立时的类别，ReliableStream 请求重用 ReliableMessage 会话后，
-            // open_stream 的类别门禁会错误返回 UnsupportedTransport。
-            state.sessions.set_communication_class(peer_id, class).await;
             // 重用成功同样发布 Connected 终态：Dart connect() 把该事件当作成功信号
             // （失败才由命令面发 Failed），不发布会令其等待超时。
             let route = state
@@ -226,7 +224,6 @@ impl ConnectionOrchestrator {
         let session_id = match state.sessions.begin_connect(peer_id).await {
             ConnectDecision::AlreadyConnected(session_id) => {
                 // 有健康连接但未登记（例如被动端 accept 建立的 Session）→ 登记并重用。
-                state.sessions.set_communication_class(peer_id, class).await;
                 self.register_current(state.clone(), peer_id, &remote_epoch, session_id)
                     .await;
                 // 已连接会话满足一次新的 connect()：同样发布 Connected 终态，
@@ -247,15 +244,11 @@ impl ConnectionOrchestrator {
                 return Ok(());
             }
             ConnectDecision::InProgress(_) => {
-                // 已有连接任务在途：合并，不做重复建连。仍要记录本次请求的类别，
-                // in-flight 任务完成时发布的 Connected 事件即携带最新类别。
-                state.sessions.set_communication_class(peer_id, class).await;
+                // 已有连接任务在途：合并，不做重复建连；每个调用方的 required
+                // capability 只影响自己的 registry 查询，不写共享 Session 状态。
                 return Ok(());
             }
-            ConnectDecision::Started(session_id) => {
-                state.sessions.set_communication_class(peer_id, class).await;
-                session_id
-            }
+            ConnectDecision::Started(session_id) => session_id,
         };
 
         // -----------------------------------------------------------------
@@ -289,18 +282,47 @@ impl ConnectionOrchestrator {
         // - `remote_candidates`：Resolve 返回的对端候选（§14 服务器附带 A 当前
         //   Discovery 给 B）+ 手工配置 endpoint。
         // Direct 的**连接目标**是 remote_candidates；本端候选绝不加入连接目标。
-        let _attempt = ConnectivityAttempt::with_connect_window(
+        let attempt_started_at = SystemTime::now();
+        let mut attempt = ConnectivityAttempt::with_connect_window(
             attempt_id.clone(),
             peer_id.to_string(),
-            0,
-            SystemTime::now(),
+            local_epoch.low,
+            attempt_started_at,
             DIRECT_CONNECT_WINDOW,
         )
         .with_local_candidates(collect_local_candidates(state.clone()).await);
-        let remote_candidates = resolved_candidates(&resolved, &peer);
+        let initial_remote_candidates = resolved_candidates(&resolved, &peer);
+        if let Err(error) = attempt.apply_remote_candidates(
+            resolved_snapshot(&resolved)
+                .and_then(|snapshot| snapshot.runtime_epoch.as_ref().map(runtime_epoch_value)),
+            resolved_snapshot(&resolved)
+                .map(|snapshot| u64::from(snapshot.revision))
+                .unwrap_or(0),
+            initial_remote_candidates,
+        ) {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                format!("invalid remote candidate snapshot: {error}"),
+                "connect",
+                peer_id,
+            ));
+        }
+        let _ = attempt.set_state(network_nat::ConnectivityAttemptState::Resolved);
+        let preserved_direct_candidates = attempt
+            .remote_candidates()
+            .iter()
+            .filter(|candidate| candidate.interface_name == "peer-configured")
+            .cloned()
+            .collect::<Vec<_>>();
+        let attempt = Arc::new(Mutex::new(attempt));
+        {
+            let mut attempt_state = attempt.lock().await;
+            let _ = attempt_state.set_state(network_nat::ConnectivityAttemptState::Coordinating);
+        }
 
         // 发 offer 的异步任务：不阻塞 Direct 窗口（§14 双方 simultaneous checks）。
-        if let Some(control) = self.state.relay_control.read().await.clone() {
+        let candidate_updates = if let Some(control) = self.state.relay_control.read().await.clone()
+        {
             self.spawn_coordination(
                 control,
                 peer_id.to_string(),
@@ -308,8 +330,19 @@ impl ConnectionOrchestrator {
                 local_epoch,
                 local_revision,
                 local_snapshot,
-            );
-        }
+                Arc::clone(&attempt),
+                preserved_direct_candidates,
+            )
+        } else {
+            let (sender, receiver) = watch::channel(None);
+            drop(sender);
+            receiver
+        };
+        let remote_candidates = attempt.lock().await.remote_candidates().to_vec();
+        let _ = attempt
+            .lock()
+            .await
+            .set_state(network_nat::ConnectivityAttemptState::Connecting);
 
         // -----------------------------------------------------------------
         // 5. DIRECT_CONNECTING（§15）：Direct First 4s。
@@ -328,6 +361,7 @@ impl ConnectionOrchestrator {
                 session_id,
                 attempt_id: attempt_id.clone(),
                 connect_window: DIRECT_CONNECT_WINDOW,
+                candidate_updates,
             }),
         )
         .await;
@@ -361,8 +395,11 @@ impl ConnectionOrchestrator {
         match route {
             // Direct 成功：挂载 Session → CONNECTED_DIRECT。
             Ok(route) => {
+                let _ = attempt
+                    .lock()
+                    .await
+                    .set_state(network_nat::ConnectivityAttemptState::Succeeded);
                 let admission = self.attach_direct_route(peer_id, route).await?;
-                state.sessions.set_communication_class(peer_id, class).await;
                 self.register_current(
                     Arc::clone(&state),
                     peer_id,
@@ -375,13 +412,16 @@ impl ConnectionOrchestrator {
             }
             // Direct 失败：DIRECT_FAILED → RELAY_RESERVING → RELAY_CONNECTING（§15/§37）。
             Err(direct_error) => {
+                let _ = attempt
+                    .lock()
+                    .await
+                    .set_state(network_nat::ConnectivityAttemptState::Expired);
                 self.set_stage(OrchestratorState::DirectFailed);
                 match self
                     .connect_relay_fallback(peer_id, session_id, &peer, &attempt_id)
                     .await
                 {
                     Ok(admission) => {
-                        state.sessions.set_communication_class(peer_id, class).await;
                         self.register_current(
                             Arc::clone(&state),
                             peer_id,
@@ -428,11 +468,8 @@ impl ConnectionOrchestrator {
             return Ok(ResolvedPeer::Ready { discovery: None });
         }
         let resolver = DiscoveryResolver::new(control);
-        match tokio::time::timeout(RESOLVE_TIMEOUT, resolver.resolve(peer_id)).await {
-            Ok(Ok(resolved)) => match resolved {
-                resolved @ ResolvedPeer::Ready { .. } => Ok(resolved),
-                non_ready => self.local_endpoint_fallback(peer_id, peer, non_ready),
-            },
+        let result = match tokio::time::timeout(RESOLVE_TIMEOUT, resolver.resolve(peer_id)).await {
+            Ok(Ok(resolved)) => Ok(resolved),
             Ok(Err(error)) => Err(relay_resolve_error(&error, peer_id)),
             Err(_) => Err(protocol_error_with_peer(
                 NetworkErrorCode::Timeout,
@@ -440,6 +477,32 @@ impl ConnectionOrchestrator {
                 "connect",
                 peer_id,
             )),
+        };
+        self.fallback_to_local_direct_or_error(peer_id, peer, result)
+    }
+
+    /// Preserve a configured local endpoint when the authoritative Resolve path
+    /// returns a non-ready status, transport error, or timeout. This is a local
+    /// direct attempt only; it never converts Relay UNKNOWN/OFFLINE into an
+    /// online result or fabricates remote discovery.
+    fn fallback_to_local_direct_or_error(
+        &self,
+        peer_id: &str,
+        peer: &crate::runtime::PeerConfig,
+        result: Result<ResolvedPeer, ProtocolError>,
+    ) -> Result<ResolvedPeer, ProtocolError> {
+        match result {
+            Ok(resolved @ ResolvedPeer::Ready { .. }) => Ok(resolved),
+            Ok(non_ready) => self.local_endpoint_fallback(peer_id, peer, non_ready),
+            Err(error) if peer.endpoint.is_some() => {
+                tracing::debug!(
+                    peer_id = %peer_id,
+                    error = %error.message,
+                    "Resolve failed but peer has a configured direct endpoint; attempting local direct"
+                );
+                Ok(ResolvedPeer::Ready { discovery: None })
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -554,6 +617,7 @@ impl ConnectionOrchestrator {
     }
 
     /// 发送 ConnectivityOffer（异步任务，不阻塞 Direct 窗口）。
+    #[allow(clippy::too_many_arguments)]
     fn spawn_coordination(
         &self,
         control: Arc<dyn crate::discovery::DiscoveryControlPlane>,
@@ -562,7 +626,10 @@ impl ConnectionOrchestrator {
         local_epoch: RuntimeEpoch,
         local_revision: u32,
         local_snapshot: Option<DiscoverySnapshot>,
-    ) {
+        attempt: Arc<Mutex<ConnectivityAttempt>>,
+        preserved_direct_candidates: Vec<Candidate>,
+    ) -> watch::Receiver<Option<Vec<Candidate>>> {
+        let (candidate_update_tx, candidate_updates) = watch::channel(None);
         let state = Arc::clone(&self.state);
         let supervisor = Arc::clone(&state.task_supervisor);
         let _ = supervisor.spawn_runtime("connectivity-coordination", async move {
@@ -578,6 +645,7 @@ impl ConnectionOrchestrator {
             match control
                 .start_connectivity_attempt(
                     attempt_id.clone(),
+                    peer_id.clone(),
                     device_id,
                     local_epoch,
                     local_revision,
@@ -586,6 +654,53 @@ impl ConnectionOrchestrator {
                 .await
             {
                 Ok(answer) => {
+                    if answer.attempt_id != attempt_id {
+                        tracing::debug!(
+                            peer_id = %peer_id,
+                            expected_attempt_id = %attempt_id,
+                            received_attempt_id = %answer.attempt_id,
+                            "ignored stale connectivity answer"
+                        );
+                        return;
+                    }
+                    if answer.accepted {
+                        if let Some(snapshot) = answer.responder_snapshot.as_ref() {
+                            let mut candidates = discovery_snapshot_candidates(snapshot);
+                            candidates.extend(preserved_direct_candidates.iter().cloned());
+                            let result = {
+                                let mut attempt = attempt.lock().await;
+                                let result = attempt.apply_remote_candidates(
+                                    snapshot.runtime_epoch.as_ref().map(runtime_epoch_value),
+                                    u64::from(snapshot.revision),
+                                    candidates,
+                                );
+                                match result {
+                                    Ok(true) => {
+                                        let _ = attempt.set_state(
+                                            network_nat::ConnectivityAttemptState::Connecting,
+                                        );
+                                        Ok(Some(attempt.remote_candidates().to_vec()))
+                                    }
+                                    Ok(false) => Ok(None),
+                                    Err(error) => Err(error),
+                                }
+                            };
+                            match result {
+                                Ok(Some(candidates)) => {
+                                    let _ = candidate_update_tx.send(Some(candidates));
+                                }
+                                Ok(None) => {}
+                                Err(error) => {
+                                    tracing::debug!(
+                                        peer_id = %peer_id,
+                                        attempt_id = %attempt_id,
+                                        error = %error,
+                                        "rejected responder candidate snapshot"
+                                    );
+                                }
+                            }
+                        }
+                    }
                     tracing::debug!(
                         peer_id = %peer_id,
                         attempt_id = %attempt_id,
@@ -603,6 +718,7 @@ impl ConnectionOrchestrator {
                 }
             }
         });
+        candidate_updates
     }
 
     /// Relay 回退：DIRECT_FAILED → RELAY_RESERVING → RELAY_CONNECTING → CONNECTED_RELAY。
@@ -750,7 +866,7 @@ impl ConnectionOrchestrator {
     }
 
     /// Direct 成功后挂载 Session（连接 Session 同生命周期，§18）。
-    async fn attach_direct_route(
+    pub(crate) async fn attach_direct_route(
         &self,
         peer_id: &str,
         route: ConnectedRoute,
@@ -930,29 +1046,66 @@ fn resolved_runtime_epoch(resolved: &ResolvedPeer) -> Option<RuntimeEpoch> {
 }
 
 /// 从 Resolve 结果解码远端候选（opaque JSON → Candidate）。
+fn resolved_snapshot(resolved: &ResolvedPeer) -> Option<&DiscoverySnapshot> {
+    match resolved {
+        ResolvedPeer::Ready { discovery } => discovery.as_ref(),
+        ResolvedPeer::Offline | ResolvedPeer::NotReady { .. } | ResolvedPeer::Unknown { .. } => {
+            None
+        }
+    }
+}
+
+/// `ConnectivityAttempt` stores the compact u64 epoch used by the older NAT
+/// exchange API; fold the v2 128-bit runtime epoch without treating either
+/// wire half as a peer-controlled candidate value.
+fn runtime_epoch_value(epoch: &RuntimeEpoch) -> u64 {
+    epoch.high.rotate_left(17) ^ epoch.low
+}
+
+fn discovery_snapshot_candidates(snapshot: &DiscoverySnapshot) -> Vec<Candidate> {
+    snapshot
+        .candidate_bundle
+        .as_ref()
+        .into_iter()
+        .flat_map(|bundle| bundle.candidates.iter())
+        .filter_map(|bytes| serde_json::from_slice::<CandidateAdvertisement>(bytes).ok())
+        .filter_map(|advertisement| Candidate::from_advertisement(advertisement).ok())
+        .collect()
+}
+
 fn resolved_candidates(
     resolved: &ResolvedPeer,
     peer: &crate::runtime::PeerConfig,
 ) -> Vec<Candidate> {
     let mut candidates = Vec::new();
-    if let ResolvedPeer::Ready {
-        discovery:
-            Some(DiscoverySnapshot {
-                candidate_bundle: Some(bundle),
-                ..
-            }),
-    } = resolved
-    {
-        for bytes in &bundle.candidates {
-            if let Ok(advertisement) = serde_json::from_slice::<CandidateAdvertisement>(bytes) {
-                if let Ok(candidate) = Candidate::from_advertisement(advertisement) {
-                    candidates.push(candidate);
-                }
-            }
-        }
+    if let Some(snapshot) = resolved_snapshot(resolved) {
+        candidates.extend(discovery_snapshot_candidates(snapshot));
     }
     append_configured_endpoint(&mut candidates, peer);
+    candidates.sort_by(|left, right| {
+        candidate_order(left)
+            .cmp(&candidate_order(right))
+            .then_with(|| right.priority.cmp(&left.priority))
+            .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+    });
     candidates
+}
+
+/// Direct candidate order is deterministic and deliberately independent of the
+/// order in which a remote snapshot happened to arrive. The configured endpoint
+/// is a last-resort direct candidate after the advertised LAN/public/reflexive
+/// candidates, while the remaining kinds keep their lower-priority tail.
+fn candidate_order(candidate: &Candidate) -> u8 {
+    if candidate.interface_name == "peer-configured" {
+        return 3;
+    }
+    match candidate.kind {
+        CandidateKind::Lan => 0,
+        CandidateKind::PublicIpv6 => 1,
+        CandidateKind::ServerReflexive => 2,
+        CandidateKind::PortMapped => 4,
+        CandidateKind::Relay => 5,
+    }
 }
 
 /// 收集本地候选（local PathManager 已 gather 的候选）。
@@ -1083,6 +1236,115 @@ mod tests {
     #[test]
     fn direct_window_constant_is_four_seconds() {
         assert_eq!(DIRECT_CONNECT_WINDOW, Duration::from_millis(4000));
+    }
+
+    #[test]
+    fn direct_candidates_are_ranked_before_the_staggered_race() {
+        let mut candidates = vec![
+            Candidate::new(
+                "198.51.100.4:41004".parse().unwrap(),
+                CandidateKind::ServerReflexive,
+                "srflx".into(),
+            ),
+            Candidate::new(
+                "192.168.1.4:41001".parse().unwrap(),
+                CandidateKind::Lan,
+                "lan".into(),
+            ),
+            Candidate::new(
+                "127.0.0.1:41000".parse().unwrap(),
+                CandidateKind::Lan,
+                "peer-configured".into(),
+            ),
+            Candidate::new(
+                "[2001:db8::4]:41002".parse().unwrap(),
+                CandidateKind::PublicIpv6,
+                "ipv6".into(),
+            ),
+        ];
+        candidates.sort_by(|left, right| {
+            candidate_order(left)
+                .cmp(&candidate_order(right))
+                .then_with(|| right.priority.cmp(&left.priority))
+                .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+        });
+        assert_eq!(candidates[0].interface_name, "lan");
+        assert_eq!(candidates[1].interface_name, "ipv6");
+        assert_eq!(candidates[2].interface_name, "srflx");
+        assert_eq!(candidates[3].interface_name, "peer-configured");
+    }
+
+    #[tokio::test]
+    async fn connectivity_answer_merges_candidates_into_the_live_attempt() {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        *state.identity.write().await = Some(Arc::new(
+            network_identity::DeviceIdentity::from_private_keys(
+                "local-a".into(),
+                [1u8; 32],
+                [2u8; 32],
+            ),
+        ));
+        let candidate = Candidate::new(
+            "198.51.100.20:42020".parse().expect("candidate endpoint"),
+            CandidateKind::Lan,
+            "answer-lan".into(),
+        )
+        .with_generation(7);
+        let snapshot = DiscoverySnapshot {
+            runtime_epoch: Some(RuntimeEpoch { high: 3, low: 4 }),
+            revision: 7,
+            transport_capabilities: Vec::new(),
+            candidate_bundle: Some(network_relay::v2::CandidateBundle {
+                candidates: vec![serde_json::to_vec(&candidate.advertisement()).expect("candidate")],
+            }),
+            published_at_ms: 1,
+        };
+        let control =
+            StubControl::with_connectivity_answer(network_relay::v2::ConnectivityAnswer {
+                request_id: 1,
+                attempt_id: "attempt-answer".into(),
+                accepted: true,
+                responder_device_id: "peer-b".into(),
+                responder_runtime_epoch: snapshot.runtime_epoch.clone(),
+                responder_revision: snapshot.revision,
+                responder_snapshot: Some(snapshot),
+            });
+        let attempt = Arc::new(Mutex::new(ConnectivityAttempt::with_connect_window(
+            "attempt-answer",
+            "peer-b",
+            1,
+            SystemTime::now(),
+            DIRECT_CONNECT_WINDOW,
+        )));
+        let orchestrator = ConnectionOrchestrator::new(state);
+        let mut updates = orchestrator.spawn_coordination(
+            control,
+            "peer-b".into(),
+            "attempt-answer".into(),
+            RuntimeEpoch { high: 1, low: 2 },
+            1,
+            None,
+            Arc::clone(&attempt),
+            Vec::new(),
+        );
+        tokio::time::timeout(Duration::from_secs(1), updates.changed())
+            .await
+            .expect("candidate update timeout")
+            .expect("coordination sender dropped");
+        let updates = updates.borrow().clone().expect("candidate update");
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].endpoint.port(), 42020);
+        let attempt = attempt.lock().await;
+        assert_eq!(attempt.remote_candidates().len(), 1);
+        assert_eq!(attempt.remote_discovery_revision(), Some(7));
+        assert_eq!(
+            attempt.state(),
+            network_nat::ConnectivityAttemptState::Connecting
+        );
     }
 
     #[tokio::test]
@@ -1230,11 +1492,77 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reused_session_records_requested_class_and_emits_connected() {
-        // §17/§40：Registry 重用路径必须记录本次请求的 CommunicationClass 并发布
-        // Connected 终态——否则 ReliableStream 请求复用 ReliableMessage 会话后，
-        // open_stream 的类别门禁会错误返回 UnsupportedTransport，且 Dart connect()
-        // 等不到成功信号而超时。
+    async fn resolve_transport_error_with_configured_endpoint_falls_back_to_local_direct() {
+        // Resolve transport errors do not make a locally configured endpoint
+        // unusable; they only remove authoritative discovery for this attempt.
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        *state.relay_control.write().await = Some(StubControl::error());
+        let orchestrator = ConnectionOrchestrator::new(state);
+        let peer = crate::runtime::PeerConfig {
+            endpoint: Some("192.168.1.20:41020".parse().expect("test endpoint")),
+            identity_public_key: [7u8; 32],
+            e2e_public_key: [8u8; 32],
+        };
+        let resolved = orchestrator
+            .resolve("peer-b", &peer)
+            .await
+            .expect("transport error with configured endpoint should fall back");
+        assert!(matches!(resolved, ResolvedPeer::Ready { discovery: None }));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resolve_timeout_with_configured_endpoint_falls_back_to_local_direct() {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        *state.relay_control.write().await = Some(StubControl::timeout());
+        let orchestrator = ConnectionOrchestrator::new(state);
+        let peer = crate::runtime::PeerConfig {
+            endpoint: Some("127.0.0.1:40000".parse().expect("test endpoint")),
+            identity_public_key: [7u8; 32],
+            e2e_public_key: [8u8; 32],
+        };
+        let task = tokio::spawn(async move { orchestrator.resolve("peer-b", &peer).await });
+        tokio::task::yield_now().await;
+        tokio::time::advance(RESOLVE_TIMEOUT + Duration::from_millis(1)).await;
+        let resolved = task
+            .await
+            .expect("resolve task")
+            .expect("timeout with configured endpoint should fall back");
+        assert!(matches!(resolved, ResolvedPeer::Ready { discovery: None }));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resolve_timeout_without_endpoint_remains_a_timeout_error() {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        *state.relay_control.write().await = Some(StubControl::timeout());
+        let orchestrator = ConnectionOrchestrator::new(state);
+        let peer = peer_without_endpoint();
+        let task = tokio::spawn(async move { orchestrator.resolve("peer-b", &peer).await });
+        tokio::task::yield_now().await;
+        tokio::time::advance(RESOLVE_TIMEOUT + Duration::from_millis(1)).await;
+        let result = task.await.expect("resolve task");
+        assert!(matches!(
+            result,
+            Err(error) if error.code == NetworkErrorCode::Timeout as i32
+        ));
+    }
+
+    #[tokio::test]
+    async fn reused_session_uses_route_profile_and_emits_connected() {
+        // §17/§40：Registry 重用路径依据已登记的实际 capability；后续
+        // ReliableStream 请求复用同一条同时支持 message/stream 的 Relay route 时，
+        // 不需要覆盖 Session 上的任何业务类别状态。
         let (state, mut event_rx) = configured_reuse_state().await;
         let peer_id = "peer-b";
 
@@ -1249,10 +1577,6 @@ mod tests {
                 .mark_relay_route_connected(peer_id, session_id, RouteType::Relay, None)
                 .await
         );
-        state
-            .sessions
-            .set_communication_class(peer_id, CommunicationClass::ReliableMessage)
-            .await;
         state.connection_registry.register(
             peer_id,
             None,
@@ -1266,12 +1590,8 @@ mod tests {
             .await;
         assert!(result.is_ok(), "reuse path should succeed: {result:?}");
 
-        // 重用的会话必须携带本次请求的类别，open_stream 不再被类别门禁拦成
-        // UnsupportedTransport（Relay(None) 载体只会因未连接而失败）。
-        assert_eq!(
-            state.sessions.current_communication_class(peer_id).await,
-            Some(CommunicationClass::ReliableStream)
-        );
+        // 重用的 Relay route profile 支持 ReliableStream；Relay(None) 载体只会因
+        // 未连接而失败，不能因为此前的业务类别阻止 open_stream。
         let stream_result = crate::stream::open_stream(
             &state,
             peer_id,
@@ -1318,6 +1638,9 @@ mod tests {
     struct StubControl {
         status: network_relay::v2::ResolveStatus,
         discovery: Option<DiscoverySnapshot>,
+        resolve_error: bool,
+        resolve_never: bool,
+        connectivity_answer: Option<network_relay::v2::ConnectivityAnswer>,
     }
 
     impl StubControl {
@@ -1325,7 +1648,43 @@ mod tests {
             status: network_relay::v2::ResolveStatus,
             discovery: Option<DiscoverySnapshot>,
         ) -> Arc<Self> {
-            Arc::new(Self { status, discovery })
+            Arc::new(Self {
+                status,
+                discovery,
+                resolve_error: false,
+                resolve_never: false,
+                connectivity_answer: None,
+            })
+        }
+
+        fn error() -> Arc<Self> {
+            Arc::new(Self {
+                status: ResolveStatus::Unknown,
+                discovery: None,
+                resolve_error: true,
+                resolve_never: false,
+                connectivity_answer: None,
+            })
+        }
+
+        fn timeout() -> Arc<Self> {
+            Arc::new(Self {
+                status: ResolveStatus::Unknown,
+                discovery: None,
+                resolve_error: false,
+                resolve_never: true,
+                connectivity_answer: None,
+            })
+        }
+
+        fn with_connectivity_answer(answer: network_relay::v2::ConnectivityAnswer) -> Arc<Self> {
+            Arc::new(Self {
+                status: ResolveStatus::Unknown,
+                discovery: None,
+                resolve_error: false,
+                resolve_never: false,
+                connectivity_answer: Some(answer),
+            })
         }
     }
 
@@ -1356,6 +1715,17 @@ mod tests {
                     + '_,
             >,
         > {
+            if self.resolve_error {
+                return Box::pin(async { Err(RelayError::NotConnected) });
+            }
+            if self.resolve_never {
+                return Box::pin(async {
+                    std::future::pending::<
+                        Result<network_relay::v2::ResolvePeerResponse, RelayError>,
+                    >()
+                    .await
+                });
+            }
             let status = self.status;
             let discovery = self.discovery.clone();
             Box::pin(async move {
@@ -1372,6 +1742,26 @@ mod tests {
             &self,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + '_>> {
             Box::pin(async { true })
+        }
+
+        fn start_connectivity_attempt(
+            &self,
+            _attempt_id: String,
+            _target_device_id: String,
+            _initiator_device_id: String,
+            _initiator_runtime_epoch: RuntimeEpoch,
+            _initiator_revision: u32,
+            _initiator_snapshot: Option<DiscoverySnapshot>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<network_relay::v2::ConnectivityAnswer, RelayError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            let answer = self.connectivity_answer.clone();
+            Box::pin(async move { answer.ok_or(RelayError::NotConnected) })
         }
     }
 }

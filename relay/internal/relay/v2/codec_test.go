@@ -193,8 +193,8 @@ func assertCapabilities(t *testing.T, caps []TransportCapability, e map[string]a
 
 func TestGoldenFixtures(t *testing.T) {
 	m := mustLoadManifest(t)
-	if len(m.Fixtures) != 22 {
-		t.Fatalf("expected 22 fixtures, got %d", len(m.Fixtures))
+	if len(m.Fixtures) != 23 {
+		t.Fatalf("expected 23 fixtures, got %d", len(m.Fixtures))
 	}
 	root := findRepoRoot(t)
 	for _, fx := range m.Fixtures {
@@ -306,6 +306,7 @@ func assertControlExpects(t *testing.T, frame *RelayFrame, e map[string]any) {
 		assertUint64(t, m.RequestId, e, "request_id")
 		assertStr(t, m.AttemptId, e, "attempt_id")
 		assertStr(t, m.InitiatorDeviceId, e, "initiator_device_id")
+		assertStr(t, m.TargetDeviceId, e, "target_device_id")
 		if m.InitiatorRuntimeEpoch == nil {
 			t.Fatal("expected initiator_runtime_epoch")
 		}
@@ -389,6 +390,7 @@ func assertControlExpects(t *testing.T, frame *RelayFrame, e map[string]any) {
 		assertUint64(t, m.RequestId, e, "request_id")
 		assertStr(t, m.RealtimeId, e, "realtime_id")
 		assertStr(t, m.TargetDeviceId, e, "target_device_id")
+		assertStr(t, m.SenderDeviceId, e, "sender_device_id")
 		assertEnumNumber(t, m.Kind, e, "kind")
 		assertEnumName(t, m.Kind, e, "kind_name")
 		assertUint64(t, m.Revision, e, "revision")
@@ -427,6 +429,9 @@ func assertDataExpects(t *testing.T, frame *RelayDataFrame, e map[string]any) {
 		m := frame.GetConnect()
 		assertStr(t, m.ReservationId, e, "reservation_id")
 		assertHex(t, m.LocalToken, e, "local_token_hex")
+	case "relay_data_ready":
+		m := frame.GetReady()
+		assertStr(t, m.ReservationId, e, "reservation_id")
 	case "relay_data_payload":
 		m := frame.GetPayload()
 		assertUint64(t, m.Sequence, e, "sequence")

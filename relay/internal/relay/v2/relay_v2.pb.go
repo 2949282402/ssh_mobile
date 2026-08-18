@@ -939,6 +939,7 @@ type ConnectivityOffer struct {
 	InitiatorRuntimeEpoch *RuntimeEpoch          `protobuf:"bytes,4,opt,name=initiator_runtime_epoch,json=initiatorRuntimeEpoch,proto3" json:"initiator_runtime_epoch,omitempty"`
 	InitiatorRevision     uint32                 `protobuf:"varint,5,opt,name=initiator_revision,json=initiatorRevision,proto3" json:"initiator_revision,omitempty"`
 	InitiatorSnapshot     *DiscoverySnapshot     `protobuf:"bytes,6,opt,name=initiator_snapshot,json=initiatorSnapshot,proto3" json:"initiator_snapshot,omitempty"` // client may omit; server overwrites with stored discovery before forwarding
+	TargetDeviceId        string                 `protobuf:"bytes,7,opt,name=target_device_id,json=targetDeviceId,proto3" json:"target_device_id,omitempty"` // authenticated sender's explicit offer target
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -1013,6 +1014,13 @@ func (x *ConnectivityOffer) GetInitiatorSnapshot() *DiscoverySnapshot {
 		return x.InitiatorSnapshot
 	}
 	return nil
+}
+
+func (x *ConnectivityOffer) GetTargetDeviceId() string {
+	if x != nil {
+		return x.TargetDeviceId
+	}
+	return ""
 }
 
 type ConnectivityAnswer struct {
@@ -1583,6 +1591,7 @@ type RealtimeSignal struct {
 	Kind           RealtimeSignalKind     `protobuf:"varint,4,opt,name=kind,proto3,enum=relay.v2.RealtimeSignalKind" json:"kind,omitempty"`
 	Revision       uint64                 `protobuf:"varint,5,opt,name=revision,proto3" json:"revision,omitempty"`
 	Payload        []byte                 `protobuf:"bytes,6,opt,name=payload,proto3" json:"payload,omitempty"` // <= 256 KiB
+	SenderDeviceId string                 `protobuf:"bytes,7,opt,name=sender_device_id,json=senderDeviceId,proto3" json:"sender_device_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1657,6 +1666,13 @@ func (x *RealtimeSignal) GetPayload() []byte {
 		return x.Payload
 	}
 	return nil
+}
+
+func (x *RealtimeSignal) GetSenderDeviceId() string {
+	if x != nil {
+		return x.SenderDeviceId
+	}
+	return ""
 }
 
 type ProtocolError struct {
@@ -2063,6 +2079,7 @@ type RelayDataFrame struct {
 	// Types that are valid to be assigned to Kind:
 	//
 	//	*RelayDataFrame_Connect
+	//	*RelayDataFrame_Ready
 	//	*RelayDataFrame_Payload
 	//	*RelayDataFrame_Ack
 	//	*RelayDataFrame_Close
@@ -2124,6 +2141,15 @@ func (x *RelayDataFrame) GetConnect() *RelayDataConnect {
 	return nil
 }
 
+func (x *RelayDataFrame) GetReady() *RelayDataReady {
+	if x != nil {
+		if x, ok := x.Kind.(*RelayDataFrame_Ready); ok {
+			return x.Ready
+		}
+	}
+	return nil
+}
+
 func (x *RelayDataFrame) GetPayload() *RelayDataPayload {
 	if x != nil {
 		if x, ok := x.Kind.(*RelayDataFrame_Payload); ok {
@@ -2159,6 +2185,10 @@ type RelayDataFrame_Connect struct {
 	Connect *RelayDataConnect `protobuf:"bytes,10,opt,name=connect,proto3,oneof"`
 }
 
+type RelayDataFrame_Ready struct {
+	Ready *RelayDataReady `protobuf:"bytes,14,opt,name=ready,proto3,oneof"`
+}
+
 type RelayDataFrame_Payload struct {
 	Payload *RelayDataPayload `protobuf:"bytes,11,opt,name=payload,proto3,oneof"`
 }
@@ -2172,6 +2202,8 @@ type RelayDataFrame_Close struct {
 }
 
 func (*RelayDataFrame_Connect) isRelayDataFrame_Kind() {}
+
+func (*RelayDataFrame_Ready) isRelayDataFrame_Kind() {}
 
 func (*RelayDataFrame_Payload) isRelayDataFrame_Kind() {}
 
@@ -2379,6 +2411,50 @@ func (x *RelayDataClose) GetDetail() string {
 	return ""
 }
 
+type RelayDataReady struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ReservationId string                 `protobuf:"bytes,1,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RelayDataReady) Reset() {
+	*x = RelayDataReady{}
+	mi := &file_relay_v2_relay_v2_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RelayDataReady) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RelayDataReady) ProtoMessage() {}
+
+func (x *RelayDataReady) ProtoReflect() protoreflect.Message {
+	mi := &file_relay_v2_relay_v2_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RelayDataReady.ProtoReflect.Descriptor instead.
+func (*RelayDataReady) Descriptor() ([]byte, []int) {
+	return file_relay_v2_relay_v2_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *RelayDataReady) GetReservationId() string {
+	if x != nil {
+		return x.ReservationId
+	}
+	return ""
+}
+
 var File_relay_v2_relay_v2_proto protoreflect.FileDescriptor
 
 const file_relay_v2_relay_v2_proto_rawDesc = "" +
@@ -2430,7 +2506,7 @@ const file_relay_v2_relay_v2_proto_rawDesc = "" +
 	"request_id\x18\x01 \x01(\x04R\trequestId\x12/\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x17.relay.v2.ResolveStatusR\x06status\x129\n" +
 	"\tdiscovery\x18\x03 \x01(\v2\x1b.relay.v2.DiscoverySnapshotR\tdiscovery\x12$\n" +
-	"\x0eretry_after_ms\x18\x04 \x01(\rR\fretryAfterMs\"\xcc\x02\n" +
+	"\x0eretry_after_ms\x18\x04 \x01(\rR\fretryAfterMs\"\xf6\x02\n" +
 	"\x11ConnectivityOffer\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\x04R\trequestId\x12\x1d\n" +
@@ -2439,7 +2515,8 @@ const file_relay_v2_relay_v2_proto_rawDesc = "" +
 	"\x13initiator_device_id\x18\x03 \x01(\tR\x11initiatorDeviceId\x12N\n" +
 	"\x17initiator_runtime_epoch\x18\x04 \x01(\v2\x16.relay.v2.RuntimeEpochR\x15initiatorRuntimeEpoch\x12-\n" +
 	"\x12initiator_revision\x18\x05 \x01(\rR\x11initiatorRevision\x12J\n" +
-	"\x12initiator_snapshot\x18\x06 \x01(\v2\x1b.relay.v2.DiscoverySnapshotR\x11initiatorSnapshot\"\xe9\x02\n" +
+	"\x12initiator_snapshot\x18\x06 \x01(\v2\x1b.relay.v2.DiscoverySnapshotR\x11initiatorSnapshot\x12(\n" +
+	"\x10target_device_id\x18\a \x01(\tR\x0etargetDeviceId\"\xe9\x02\n" +
 	"\x12ConnectivityAnswer\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\x04R\trequestId\x12\x1d\n" +
@@ -2490,7 +2567,7 @@ const file_relay_v2_relay_v2_proto_rawDesc = "" +
 	"\x13relay_data_endpoint\x18\x04 \x01(\tR\x11relayDataEndpoint\x12\"\n" +
 	"\rexpires_at_ms\x18\x05 \x01(\x03R\vexpiresAtMs\x12\x1f\n" +
 	"\vlocal_token\x18\x06 \x01(\fR\n" +
-	"localToken\"\xe2\x01\n" +
+	"localToken\"\x8f\x02\n" +
 	"\x0eRealtimeSignal\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\x04R\trequestId\x12\x1f\n" +
@@ -2499,7 +2576,8 @@ const file_relay_v2_relay_v2_proto_rawDesc = "" +
 	"\x10target_device_id\x18\x03 \x01(\tR\x0etargetDeviceId\x120\n" +
 	"\x04kind\x18\x04 \x01(\x0e2\x1c.relay.v2.RealtimeSignalKindR\x04kind\x12\x1a\n" +
 	"\brevision\x18\x05 \x01(\x04R\brevision\x12\x18\n" +
-	"\apayload\x18\x06 \x01(\fR\apayload\"\x90\x01\n" +
+	"\apayload\x18\x06 \x01(\fR\apayload\x12+\n" +
+	"\x10sender_device_id\x18\x07 \x01(\tR\x0esenderDeviceId\"\x90\x01\n" +
 	"\rProtocolError\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\x04R\trequestId\x12\x1d\n" +
@@ -2529,14 +2607,15 @@ const file_relay_v2_relay_v2_proto_rawDesc = "" +
 	"\x1aincoming_relay_reservation\x18\x18 \x01(\v2\".relay.v2.IncomingRelayReservationH\x00R\x18incomingRelayReservation\x12C\n" +
 	"\x0frealtime_signal\x18\x19 \x01(\v2\x18.relay.v2.RealtimeSignalH\x00R\x0erealtimeSignal\x12@\n" +
 	"\x0eprotocol_error\x18\x1a \x01(\v2\x17.relay.v2.ProtocolErrorH\x00R\rprotocolErrorB\x06\n" +
-	"\x04kindJ\x04\b\x1e\x10@\"\x86\x02\n" +
+	"\x04kindJ\x04\b\x1e\x10@\"\xb8\x02\n" +
 	"\x0eRelayDataFrame\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\rR\aversion\x126\n" +
 	"\aconnect\x18\n" +
 	" \x01(\v2\x1a.relay.v2.RelayDataConnectH\x00R\aconnect\x126\n" +
 	"\apayload\x18\v \x01(\v2\x1a.relay.v2.RelayDataPayloadH\x00R\apayload\x12*\n" +
 	"\x03ack\x18\f \x01(\v2\x16.relay.v2.RelayDataAckH\x00R\x03ack\x120\n" +
-	"\x05close\x18\r \x01(\v2\x18.relay.v2.RelayDataCloseH\x00R\x05closeB\x06\n" +
+	"\x05close\x18\r \x01(\v2\x18.relay.v2.RelayDataCloseH\x00R\x05close\x120\n" +
+	"\x05ready\x18\x0e \x01(\v2\x18.relay.v2.RelayDataReadyH\x00R\x05readyB\x06\n" +
 	"\x04kindJ\x04\b\x1e\x10@\"Z\n" +
 	"\x10RelayDataConnect\x12%\n" +
 	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x12\x1f\n" +
@@ -2549,7 +2628,9 @@ const file_relay_v2_relay_v2_proto_rawDesc = "" +
 	"\bsequence\x18\x01 \x01(\x04R\bsequence\"@\n" +
 	"\x0eRelayDataClose\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\rR\x06reason\x12\x16\n" +
-	"\x06detail\x18\x02 \x01(\tR\x06detail*\x89\x02\n" +
+	"\x06detail\x18\x02 \x01(\tR\x06detail\"7\n" +
+	"\x0eRelayDataReady\x12%\n" +
+	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId*\x89\x02\n" +
 	"\x13TransportCapability\x12$\n" +
 	" TRANSPORT_CAPABILITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19TRANSPORT_CAPABILITY_QUIC\x10\x01\x12\x1c\n" +
@@ -2602,7 +2683,7 @@ func file_relay_v2_relay_v2_proto_rawDescGZIP() []byte {
 }
 
 var file_relay_v2_relay_v2_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_relay_v2_relay_v2_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_relay_v2_relay_v2_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_relay_v2_relay_v2_proto_goTypes = []any{
 	(TransportCapability)(0),         // 0: relay.v2.TransportCapability
 	(ResolveStatus)(0),               // 1: relay.v2.ResolveStatus
@@ -2635,6 +2716,7 @@ var file_relay_v2_relay_v2_proto_goTypes = []any{
 	(*RelayDataPayload)(nil),         // 28: relay.v2.RelayDataPayload
 	(*RelayDataAck)(nil),             // 29: relay.v2.RelayDataAck
 	(*RelayDataClose)(nil),           // 30: relay.v2.RelayDataClose
+	(*RelayDataReady)(nil),           // 31: relay.v2.RelayDataReady
 }
 var file_relay_v2_relay_v2_proto_depIdxs = []int32{
 	4,  // 0: relay.v2.DiscoverySnapshot.runtime_epoch:type_name -> relay.v2.RuntimeEpoch
@@ -2674,11 +2756,12 @@ var file_relay_v2_relay_v2_proto_depIdxs = []int32{
 	28, // 34: relay.v2.RelayDataFrame.payload:type_name -> relay.v2.RelayDataPayload
 	29, // 35: relay.v2.RelayDataFrame.ack:type_name -> relay.v2.RelayDataAck
 	30, // 36: relay.v2.RelayDataFrame.close:type_name -> relay.v2.RelayDataClose
-	37, // [37:37] is the sub-list for method output_type
-	37, // [37:37] is the sub-list for method input_type
-	37, // [37:37] is the sub-list for extension type_name
-	37, // [37:37] is the sub-list for extension extendee
-	0,  // [0:37] is the sub-list for field type_name
+	31, // 37: relay.v2.RelayDataFrame.ready:type_name -> relay.v2.RelayDataReady
+	38, // [38:38] is the sub-list for method output_type
+	38, // [38:38] is the sub-list for method input_type
+	38, // [38:38] is the sub-list for extension type_name
+	38, // [38:38] is the sub-list for extension extendee
+	0,  // [0:38] is the sub-list for field type_name
 }
 
 func init() { file_relay_v2_relay_v2_proto_init() }
@@ -2707,6 +2790,7 @@ func file_relay_v2_relay_v2_proto_init() {
 	}
 	file_relay_v2_relay_v2_proto_msgTypes[22].OneofWrappers = []any{
 		(*RelayDataFrame_Connect)(nil),
+		(*RelayDataFrame_Ready)(nil),
 		(*RelayDataFrame_Payload)(nil),
 		(*RelayDataFrame_Ack)(nil),
 		(*RelayDataFrame_Close)(nil),
@@ -2717,7 +2801,7 @@ func file_relay_v2_relay_v2_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_relay_v2_relay_v2_proto_rawDesc), len(file_relay_v2_relay_v2_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   27,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

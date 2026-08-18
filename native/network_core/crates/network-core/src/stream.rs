@@ -65,8 +65,17 @@ pub(crate) const STREAM_SOCKET_CHUNK_BYTES: usize = 16 * 1024;
 pub(crate) const STREAM_QUIC_PREAMBLE_MAGIC: [u8; 4] = *b"SMSS";
 /// File offer magic mirrored from `network_quic::file_stream` for dispatch.
 pub(crate) const FILE_OFFER_MAGIC: [u8; 4] = *b"SMFT";
-/// Generic StreamBytes inner header: stream_id(u16) + seq(u64) + len(u32).
-const STREAM_GENERIC_HEADER_BYTES: usize = 2 + 8 + 4;
+/// Generic stream frame header: opener_len(u8) + opener bytes +
+/// stream_id(u16) + the frame-specific fields.  The opener is carried on
+/// every frame because bytes flow in both directions on one logical stream;
+/// transport direction alone is not enough to disambiguate two peers opening
+/// the same stream_id at the same time.
+const STREAM_OPENER_LENGTH_BYTES: usize = 1;
+const STREAM_ID_BYTES: usize = 2;
+const STREAM_GENERIC_BYTES_HEADER_BYTES: usize =
+    STREAM_OPENER_LENGTH_BYTES + STREAM_ID_BYTES + 8 + 4;
+const STREAM_GENERIC_OPEN_HEADER_BYTES: usize = STREAM_OPENER_LENGTH_BYTES + STREAM_ID_BYTES + 2;
+const STREAM_GENERIC_CLOSE_HEADER_BYTES: usize = STREAM_OPENER_LENGTH_BYTES + STREAM_ID_BYTES;
 
 // ---------------------------------------------------------------------------
 // Stream errors
@@ -109,73 +118,174 @@ impl StreamError {
 // Wire encoders / decoders (generic-route frames and QUIC preamble)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn encode_stream_bytes_frame(stream_id: u16, seq: u64, data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(STREAM_GENERIC_HEADER_BYTES + data.len());
+fn append_stream_opener(out: &mut Vec<u8>, opener_peer_id: &str) -> Result<(), StreamError> {
+    if opener_peer_id.is_empty() || opener_peer_id.len() > 128 {
+        return Err(StreamError::InvalidArgument);
+    }
+    out.push(opener_peer_id.len() as u8);
+    out.extend_from_slice(opener_peer_id.as_bytes());
+    Ok(())
+}
+
+fn decode_stream_opener(payload: &[u8], cursor: &mut usize) -> Result<String, StreamError> {
+    if payload.len() < *cursor + STREAM_OPENER_LENGTH_BYTES {
+        return Err(StreamError::InvalidFrame);
+    }
+    let opener_len = payload[*cursor] as usize;
+    *cursor += STREAM_OPENER_LENGTH_BYTES;
+    if opener_len == 0 || opener_len > 128 || payload.len() < *cursor + opener_len {
+        return Err(StreamError::InvalidFrame);
+    }
+    let opener = std::str::from_utf8(&payload[*cursor..*cursor + opener_len])
+        .map_err(|_| StreamError::InvalidFrame)?
+        .to_string();
+    *cursor += opener_len;
+    Ok(opener)
+}
+
+pub(crate) fn encode_stream_bytes_frame(
+    opener_peer_id: &str,
+    stream_id: u16,
+    seq: u64,
+    data: &[u8],
+) -> Result<Vec<u8>, StreamError> {
+    if data.is_empty() {
+        return Err(StreamError::InvalidArgument);
+    }
+    let mut out =
+        Vec::with_capacity(STREAM_GENERIC_BYTES_HEADER_BYTES + opener_peer_id.len() + data.len());
+    append_stream_opener(&mut out, opener_peer_id)?;
     out.extend_from_slice(&stream_id.to_be_bytes());
     out.extend_from_slice(&seq.to_be_bytes());
     out.extend_from_slice(&(data.len() as u32).to_be_bytes());
     out.extend_from_slice(data);
-    out
+    Ok(out)
 }
 
-pub(crate) fn decode_stream_bytes_frame(payload: &[u8]) -> Result<(u16, u64, &[u8]), StreamError> {
-    if payload.len() < STREAM_GENERIC_HEADER_BYTES {
+pub(crate) fn decode_stream_bytes_frame(
+    payload: &[u8],
+) -> Result<(String, u16, u64, &[u8]), StreamError> {
+    if payload.len() < STREAM_GENERIC_BYTES_HEADER_BYTES {
         return Err(StreamError::InvalidFrame);
     }
-    let stream_id = u16::from_be_bytes(payload[0..2].try_into().expect("stream_id bytes"));
-    let seq = u64::from_be_bytes(payload[2..10].try_into().expect("seq bytes"));
-    let len = u32::from_be_bytes(payload[10..14].try_into().expect("len bytes")) as usize;
-    if len == 0 || STREAM_GENERIC_HEADER_BYTES + len != payload.len() {
+    let mut cursor = 0;
+    let opener = decode_stream_opener(payload, &mut cursor)?;
+    if payload.len() < cursor + STREAM_ID_BYTES + 8 + 4 {
         return Err(StreamError::InvalidFrame);
     }
-    Ok((
-        stream_id,
-        seq,
-        &payload[STREAM_GENERIC_HEADER_BYTES..STREAM_GENERIC_HEADER_BYTES + len],
-    ))
+    let stream_id = u16::from_be_bytes(
+        payload[cursor..cursor + STREAM_ID_BYTES]
+            .try_into()
+            .expect("stream_id bytes"),
+    );
+    cursor += STREAM_ID_BYTES;
+    let seq = u64::from_be_bytes(payload[cursor..cursor + 8].try_into().expect("seq bytes"));
+    cursor += 8;
+    let len =
+        u32::from_be_bytes(payload[cursor..cursor + 4].try_into().expect("len bytes")) as usize;
+    cursor += 4;
+    if len == 0 || cursor + len != payload.len() {
+        return Err(StreamError::InvalidFrame);
+    }
+    Ok((opener, stream_id, seq, &payload[cursor..cursor + len]))
 }
 
 pub(crate) fn encode_stream_open_frame(
+    opener_peer_id: &str,
     stream_id: u16,
     service: &str,
 ) -> Result<Vec<u8>, StreamError> {
     if service.is_empty() || service.len() > MAX_SERVICE_BYTES {
         return Err(StreamError::InvalidArgument);
     }
-    let mut out = Vec::with_capacity(4 + service.len());
+    let mut out =
+        Vec::with_capacity(STREAM_GENERIC_OPEN_HEADER_BYTES + opener_peer_id.len() + service.len());
+    append_stream_opener(&mut out, opener_peer_id)?;
     out.extend_from_slice(&stream_id.to_be_bytes());
     out.extend_from_slice(&(service.len() as u16).to_be_bytes());
     out.extend_from_slice(service.as_bytes());
     Ok(out)
 }
 
-pub(crate) fn decode_stream_open_frame(payload: &[u8]) -> Result<(u16, String), StreamError> {
-    if payload.len() < 4 {
+pub(crate) fn decode_stream_open_frame(
+    payload: &[u8],
+) -> Result<(String, u16, String), StreamError> {
+    if payload.len() < STREAM_GENERIC_OPEN_HEADER_BYTES {
         return Err(StreamError::InvalidFrame);
     }
-    let stream_id = u16::from_be_bytes(payload[0..2].try_into().expect("stream_id bytes"));
-    let service_len =
-        u16::from_be_bytes(payload[2..4].try_into().expect("service_len bytes")) as usize;
-    if service_len == 0 || service_len > MAX_SERVICE_BYTES || 4 + service_len != payload.len() {
+    let mut cursor = 0;
+    let opener = decode_stream_opener(payload, &mut cursor)?;
+    if payload.len() < cursor + STREAM_ID_BYTES + 2 {
         return Err(StreamError::InvalidFrame);
     }
-    let service = std::str::from_utf8(&payload[4..4 + service_len])
+    let stream_id = u16::from_be_bytes(
+        payload[cursor..cursor + STREAM_ID_BYTES]
+            .try_into()
+            .expect("stream_id bytes"),
+    );
+    cursor += STREAM_ID_BYTES;
+    let service_len = u16::from_be_bytes(
+        payload[cursor..cursor + 2]
+            .try_into()
+            .expect("service_len bytes"),
+    ) as usize;
+    cursor += 2;
+    if service_len == 0 || service_len > MAX_SERVICE_BYTES || cursor + service_len != payload.len()
+    {
+        return Err(StreamError::InvalidFrame);
+    }
+    let service = std::str::from_utf8(&payload[cursor..cursor + service_len])
         .map_err(|_| StreamError::InvalidFrame)?
         .to_string();
-    Ok((stream_id, service))
+    Ok((opener, stream_id, service))
 }
 
-pub(crate) fn encode_stream_close_frame(stream_id: u16) -> Vec<u8> {
-    stream_id.to_be_bytes().to_vec()
+pub(crate) fn encode_stream_close_frame(
+    opener_peer_id: &str,
+    stream_id: u16,
+) -> Result<Vec<u8>, StreamError> {
+    let mut out = Vec::with_capacity(STREAM_GENERIC_CLOSE_HEADER_BYTES + opener_peer_id.len());
+    append_stream_opener(&mut out, opener_peer_id)?;
+    out.extend_from_slice(&stream_id.to_be_bytes());
+    Ok(out)
 }
 
-pub(crate) fn decode_stream_close_frame(payload: &[u8]) -> Result<u16, StreamError> {
-    if payload.len() != 2 {
+pub(crate) fn decode_stream_close_frame(payload: &[u8]) -> Result<(String, u16), StreamError> {
+    if payload.len() < STREAM_GENERIC_CLOSE_HEADER_BYTES {
         return Err(StreamError::InvalidFrame);
     }
-    Ok(u16::from_be_bytes(
-        payload[0..2].try_into().expect("close stream_id bytes"),
-    ))
+    let mut cursor = 0;
+    let opener = decode_stream_opener(payload, &mut cursor)?;
+    if payload.len() != cursor + STREAM_ID_BYTES {
+        return Err(StreamError::InvalidFrame);
+    }
+    let stream_id = u16::from_be_bytes(
+        payload[cursor..cursor + STREAM_ID_BYTES]
+            .try_into()
+            .expect("close stream_id bytes"),
+    );
+    Ok((opener, stream_id))
+}
+
+/// Extracts the stable `(opener_peer_id, stream_id)` identity from any stream
+/// frame. Relay uses the same identity to validate its opaque token before
+/// dispatching the frame to the stream manager.
+pub(crate) fn decode_stream_frame_identity(
+    kind: GenericFrameKind,
+    payload: &[u8],
+) -> Result<(String, u16), StreamError> {
+    match kind {
+        GenericFrameKind::StreamOpen => {
+            let (opener, stream_id, _) = decode_stream_open_frame(payload)?;
+            Ok((opener, stream_id))
+        }
+        GenericFrameKind::StreamBytes => {
+            let (opener, stream_id, _, _) = decode_stream_bytes_frame(payload)?;
+            Ok((opener, stream_id))
+        }
+        GenericFrameKind::StreamClose => decode_stream_close_frame(payload),
+        _ => Err(StreamError::InvalidFrame),
+    }
 }
 
 pub(crate) fn encode_quic_stream_preamble(
@@ -218,13 +328,10 @@ pub(crate) async fn read_quic_stream_preamble_after_magic(
     Ok((stream_id, service))
 }
 
-/// Relay 路由的流令牌：仅含 stream_id，与发起方向无关（无 opener 维度）。
-///
-/// 已知局限（记录，不在本轮修复）：若两个对端各自用同一 stream_id 在 relay
-/// 上独立 open，令牌会碰撞导致字节交叉串扰。根治需要 opener 作用域的令牌 +
-/// 方向作用域的本地流键；当前保持现状，仅在此记录该设计债。
-fn stream_relay_token(stream_id: u16) -> String {
-    format!("stream:{stream_id}")
+/// Relay 路由的流令牌：稳定绑定 opener peer 与 stream_id，避免两个方向
+/// 同时使用同一逻辑 id 时共享数据面 token。
+pub(crate) fn stream_relay_token(opener_peer_id: &str, stream_id: u16) -> String {
+    format!("stream:{opener_peer_id}:{stream_id}")
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +388,28 @@ impl StreamEntry {
 
 #[derive(Default)]
 struct StreamState {
-    streams: HashMap<u16, StreamEntry>,
+    streams: HashMap<StreamKey, StreamEntry>,
+}
+
+/// Direction-independent logical stream opener.  A per-peer manager has one
+/// local device and one authenticated remote peer, so Local/Remote is the
+/// compact representation of the opener peer id used on the wire.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum StreamOpener {
+    Local,
+    Remote,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct StreamKey {
+    opener: StreamOpener,
+    stream_id: u16,
+}
+
+impl StreamKey {
+    fn new(opener: StreamOpener, stream_id: u16) -> Self {
+        Self { opener, stream_id }
+    }
 }
 
 /// Cloneable per-peer owner of every byte-stream receive buffer and QUIC send
@@ -303,6 +431,7 @@ impl ReliableStreamManager {
 
     pub(crate) async fn open(
         &self,
+        opener: StreamOpener,
         stream_id: u16,
         service: &str,
         consumer: StreamConsumer,
@@ -314,12 +443,13 @@ impl ReliableStreamManager {
         if state.streams.len() >= MAX_CONCURRENT_STREAMS {
             return Err(StreamError::CapacityExceeded);
         }
-        if state.streams.contains_key(&stream_id) {
+        let key = StreamKey::new(opener, stream_id);
+        if state.streams.contains_key(&key) {
             return Err(StreamError::AlreadyOpen);
         }
         let (wake_tx, _) = watch::channel(0u64);
         state.streams.insert(
-            stream_id,
+            key,
             StreamEntry {
                 consumer,
                 recv_chunks: VecDeque::new(),
@@ -339,13 +469,14 @@ impl ReliableStreamManager {
 
     pub(crate) async fn register_quic_send(
         &self,
+        opener: StreamOpener,
         stream_id: u16,
         send: SendStream,
     ) -> Result<(), StreamError> {
         let mut state = self.inner.lock().await;
         let entry = state
             .streams
-            .get_mut(&stream_id)
+            .get_mut(&StreamKey::new(opener, stream_id))
             .ok_or(StreamError::NotFound)?;
         entry.quic_send = Some(send);
         Ok(())
@@ -353,18 +484,32 @@ impl ReliableStreamManager {
 
     /// Acquires the per-stream send mutex so a full send operation (generic
     /// frame sequence or QUIC write) is not interleaved with another caller.
-    pub(crate) async fn send_guard(&self, stream_id: u16) -> Result<Arc<Mutex<()>>, StreamError> {
+    pub(crate) async fn send_guard(
+        &self,
+        opener: StreamOpener,
+        stream_id: u16,
+    ) -> Result<Arc<Mutex<()>>, StreamError> {
         let state = self.inner.lock().await;
-        let entry = state.streams.get(&stream_id).ok_or(StreamError::NotFound)?;
+        let entry = state
+            .streams
+            .get(&StreamKey::new(opener, stream_id))
+            .ok_or(StreamError::NotFound)?;
         if entry.send_closed {
             return Err(StreamError::Closed);
         }
         Ok(Arc::clone(&entry.send_lock))
     }
 
-    pub(crate) async fn next_send_seq(&self, stream_id: u16) -> Result<u64, StreamError> {
+    pub(crate) async fn next_send_seq(
+        &self,
+        opener: StreamOpener,
+        stream_id: u16,
+    ) -> Result<u64, StreamError> {
         let state = self.inner.lock().await;
-        let entry = state.streams.get(&stream_id).ok_or(StreamError::NotFound)?;
+        let entry = state
+            .streams
+            .get(&StreamKey::new(opener, stream_id))
+            .ok_or(StreamError::NotFound)?;
         if entry.send_closed {
             return Err(StreamError::Closed);
         }
@@ -373,13 +518,14 @@ impl ReliableStreamManager {
 
     pub(crate) async fn bump_send_seq(
         &self,
+        opener: StreamOpener,
         stream_id: u16,
         count: u64,
     ) -> Result<(), StreamError> {
         let mut state = self.inner.lock().await;
         let entry = state
             .streams
-            .get_mut(&stream_id)
+            .get_mut(&StreamKey::new(opener, stream_id))
             .ok_or(StreamError::NotFound)?;
         if entry.send_closed {
             return Err(StreamError::Closed);
@@ -392,6 +538,7 @@ impl ReliableStreamManager {
     /// must be held by the caller so the `take`/`put-back` cannot race.
     pub(crate) async fn quic_send_bytes(
         &self,
+        opener: StreamOpener,
         stream_id: u16,
         data: &[u8],
     ) -> Result<(), StreamError> {
@@ -399,7 +546,7 @@ impl ReliableStreamManager {
             let mut state = self.inner.lock().await;
             let entry = state
                 .streams
-                .get_mut(&stream_id)
+                .get_mut(&StreamKey::new(opener, stream_id))
                 .ok_or(StreamError::NotFound)?;
             if entry.send_closed {
                 return Err(StreamError::Closed);
@@ -410,7 +557,7 @@ impl ReliableStreamManager {
         // The peer closing the stream aborts the write; that resolves to an
         // error and we drop the dead stream half.
         let mut state = self.inner.lock().await;
-        if let Some(entry) = state.streams.get_mut(&stream_id) {
+        if let Some(entry) = state.streams.get_mut(&StreamKey::new(opener, stream_id)) {
             if entry.send_closed {
                 return Err(StreamError::Closed);
             }
@@ -422,12 +569,16 @@ impl ReliableStreamManager {
     }
 
     /// Finishes the QUIC send half (graceful close of our write side).
-    pub(crate) async fn quic_finish_send(&self, stream_id: u16) -> Result<(), StreamError> {
+    pub(crate) async fn quic_finish_send(
+        &self,
+        opener: StreamOpener,
+        stream_id: u16,
+    ) -> Result<(), StreamError> {
         let mut send = {
             let mut state = self.inner.lock().await;
             let entry = state
                 .streams
-                .get_mut(&stream_id)
+                .get_mut(&StreamKey::new(opener, stream_id))
                 .ok_or(StreamError::NotFound)?;
             if entry.send_closed {
                 return Ok(());
@@ -447,6 +598,7 @@ impl ReliableStreamManager {
     pub(crate) async fn handle_bytes(
         &self,
         peer_id: &str,
+        opener: StreamOpener,
         stream_id: u16,
         seq: u64,
         data: Vec<u8>,
@@ -459,7 +611,7 @@ impl ReliableStreamManager {
                 let mut state = self.inner.lock().await;
                 let entry = state
                     .streams
-                    .get_mut(&stream_id)
+                    .get_mut(&StreamKey::new(opener, stream_id))
                     .ok_or(StreamError::NotFound)?;
                 if entry.recv_closed || entry.send_closed {
                     // Late packet racing the close: drop, not an error.
@@ -494,7 +646,7 @@ impl ReliableStreamManager {
         loop {
             let wait: Option<watch::Receiver<u64>> = {
                 let mut state = self.inner.lock().await;
-                let Some(entry) = state.streams.get_mut(&stream_id) else {
+                let Some(entry) = state.streams.get_mut(&StreamKey::new(opener, stream_id)) else {
                     return Ok(());
                 };
                 if entry.consumer != StreamConsumer::Event || entry.recv_bytes < after {
@@ -515,11 +667,11 @@ impl ReliableStreamManager {
     /// `MAX_PER_STREAM_BUFFER_CAPACITY`. 设计 §17：Event 流与 Bridge/Poll 共享
     /// 同一有界缓冲区与背压；本任务把缓冲字节转成事件，而不是逐帧直接灌入
     /// 无界事件通道。
-    pub(crate) async fn drain_events(self, peer_id: &str, stream_id: u16) {
+    pub(crate) async fn drain_events(self, peer_id: &str, opener: StreamOpener, stream_id: u16) {
         loop {
             let wait: Option<watch::Receiver<u64>> = {
                 let mut state = self.inner.lock().await;
-                let Some(entry) = state.streams.get_mut(&stream_id) else {
+                let Some(entry) = state.streams.get_mut(&StreamKey::new(opener, stream_id)) else {
                     return;
                 };
                 if let Some(chunk) = entry.recv_chunks.pop_front() {
@@ -545,11 +697,12 @@ impl ReliableStreamManager {
     /// Inbound StreamOpen: register the remote-opened stream.
     pub(crate) async fn handle_open(
         &self,
+        opener: StreamOpener,
         stream_id: u16,
         service: &str,
         consumer: StreamConsumer,
     ) -> Result<(), StreamError> {
-        self.open(stream_id, service, consumer).await
+        self.open(opener, stream_id, service, consumer).await
     }
 
     /// Inbound StreamClose / QUIC EOF: mark the receive side closed and wake
@@ -560,11 +713,13 @@ impl ReliableStreamManager {
     pub(crate) async fn handle_close(
         &self,
         peer_id: &str,
+        opener: StreamOpener,
         stream_id: u16,
     ) -> Result<(), StreamError> {
         {
             let mut state = self.inner.lock().await;
-            let Some(entry) = state.streams.get_mut(&stream_id) else {
+            let key = StreamKey::new(opener, stream_id);
+            let Some(entry) = state.streams.get_mut(&key) else {
                 return Ok(());
             };
             if entry.recv_closed {
@@ -573,7 +728,7 @@ impl ReliableStreamManager {
             entry.recv_closed = true;
             entry.wake();
             if entry.send_closed {
-                state.streams.remove(&stream_id);
+                state.streams.remove(&key);
             }
         }
         let _ = peer_id;
@@ -587,11 +742,13 @@ impl ReliableStreamManager {
     pub(crate) async fn close_local(
         &self,
         peer_id: &str,
+        opener: StreamOpener,
         stream_id: u16,
     ) -> Result<(), StreamError> {
         let removed = {
             let mut state = self.inner.lock().await;
-            let Some(entry) = state.streams.get_mut(&stream_id) else {
+            let key = StreamKey::new(opener, stream_id);
+            let Some(entry) = state.streams.get_mut(&key) else {
                 return Ok(());
             };
             if entry.send_closed {
@@ -601,7 +758,7 @@ impl ReliableStreamManager {
             entry.wake();
             let removed = entry.recv_closed;
             if removed {
-                state.streams.remove(&stream_id);
+                state.streams.remove(&key);
             }
             removed
         };
@@ -615,6 +772,7 @@ impl ReliableStreamManager {
     /// EOF.
     pub(crate) async fn receive(
         &self,
+        opener: StreamOpener,
         stream_id: u16,
         buf: &mut [u8],
     ) -> Result<usize, StreamError> {
@@ -623,7 +781,7 @@ impl ReliableStreamManager {
                 let mut state = self.inner.lock().await;
                 let entry = state
                     .streams
-                    .get_mut(&stream_id)
+                    .get_mut(&StreamKey::new(opener, stream_id))
                     .ok_or(StreamError::NotFound)?;
                 if entry.consumer == StreamConsumer::Event {
                     return Err(StreamError::InvalidArgument);
@@ -661,34 +819,46 @@ impl ReliableStreamManager {
     }
 
     #[allow(dead_code)] // test/diagnostic query surface
-    pub(crate) async fn is_open(&self, stream_id: u16) -> bool {
+    pub(crate) async fn is_open(&self, opener: StreamOpener, stream_id: u16) -> bool {
         let state = self.inner.lock().await;
-        state.streams.contains_key(&stream_id)
+        state
+            .streams
+            .contains_key(&StreamKey::new(opener, stream_id))
     }
 
     #[allow(dead_code)] // test/diagnostic query surface
-    pub(crate) async fn is_recv_closed(&self, stream_id: u16) -> bool {
+    pub(crate) async fn is_recv_closed(&self, opener: StreamOpener, stream_id: u16) -> bool {
         let state = self.inner.lock().await;
-        state.streams.get(&stream_id).is_some_and(|e| e.recv_closed)
+        state
+            .streams
+            .get(&StreamKey::new(opener, stream_id))
+            .is_some_and(|e| e.recv_closed)
     }
 
     /// 诊断/测试查询面：返回该流当前缓冲的字节数，用于断言背压下有界性。
     #[cfg(test)]
-    async fn buffered_bytes(&self, stream_id: u16) -> Option<usize> {
+    async fn buffered_bytes(&self, opener: StreamOpener, stream_id: u16) -> Option<usize> {
         let state = self.inner.lock().await;
-        state.streams.get(&stream_id).map(|entry| entry.recv_bytes)
+        state
+            .streams
+            .get(&StreamKey::new(opener, stream_id))
+            .map(|entry| entry.recv_bytes)
     }
 
     /// Session teardown: close every stream for the peer. Returns the ids so
     /// the caller can emit closed events.
-    pub(crate) async fn close_all(&self, peer_id: &str) -> Vec<u16> {
+    pub(crate) async fn close_all(&self, peer_id: &str) -> Vec<(StreamOpener, u16)> {
         let ids = {
             let mut state = self.inner.lock().await;
-            let ids: Vec<u16> = state.streams.keys().copied().collect();
+            let ids: Vec<(StreamOpener, u16)> = state
+                .streams
+                .keys()
+                .map(|key| (key.opener, key.stream_id))
+                .collect();
             state.streams.clear();
             ids
         };
-        for stream_id in &ids {
+        for (_, stream_id) in &ids {
             emit_stream_closed(&self.event_tx, peer_id, *stream_id);
         }
         ids
@@ -703,6 +873,42 @@ fn validate_peer(peer_id: &str) -> bool {
     !peer_id.is_empty() && peer_id.len() <= 128
 }
 
+async fn local_stream_opener_peer_id(state: &Arc<RuntimeState>) -> Result<String, StreamError> {
+    state
+        .identity
+        .read()
+        .await
+        .as_ref()
+        .map(|identity| identity.device_id.clone())
+        .ok_or(StreamError::NotConnected)
+}
+
+async fn stream_opener_peer_id(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    opener: StreamOpener,
+) -> Result<String, StreamError> {
+    match opener {
+        StreamOpener::Local => local_stream_opener_peer_id(state).await,
+        StreamOpener::Remote => Ok(peer_id.to_string()),
+    }
+}
+
+async fn inbound_stream_opener(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    opener_peer_id: &str,
+) -> Result<StreamOpener, StreamError> {
+    let local_peer_id = local_stream_opener_peer_id(state).await?;
+    if opener_peer_id == local_peer_id {
+        Ok(StreamOpener::Local)
+    } else if opener_peer_id == peer_id {
+        Ok(StreamOpener::Remote)
+    } else {
+        Err(StreamError::InvalidFrame)
+    }
+}
+
 /// Opens a byte stream to a peer. `consumer` selects how inbound bytes are
 /// delivered (events / bridge / poll).
 pub(crate) async fn open_stream(
@@ -712,18 +918,8 @@ pub(crate) async fn open_stream(
     service: &str,
     consumer: StreamConsumer,
 ) -> Result<(), StreamError> {
-    // §17: the ConnectionSession's CommunicationClass gates the carrier shape.
-    // ReliableStream / BulkTransfer / Unspecified (default) allow byte streams;
-    // a session explicitly typed ReliableMessage is not a byte-stream carrier.
-    match state.sessions.current_communication_class(peer_id).await {
-        Some(
-            network_protocol::CommunicationClass::ReliableStream
-            | network_protocol::CommunicationClass::BulkTransfer
-            | network_protocol::CommunicationClass::Unspecified,
-        )
-        | None => {}
-        Some(_) => return Err(StreamError::UnsupportedTransport),
-    }
+    // The business request's CommunicationClass is not stored on the session;
+    // byte-stream admission is based only on the active route's actual profile.
     let profile = state
         .sessions
         .current_profile(peer_id)
@@ -737,15 +933,18 @@ pub(crate) async fn open_stream(
         .current_stream_carrier(peer_id)
         .await
         .ok_or(StreamError::NotConnected)?;
+    let opener_peer_id = local_stream_opener_peer_id(state).await?;
     let manager = state.stream_manager(peer_id).await;
     match carrier {
         StreamCarrier::Generic(handle) => {
-            let payload = encode_stream_open_frame(stream_id, service)?;
+            let payload = encode_stream_open_frame(&opener_peer_id, stream_id, service)?;
             handle
                 .send(GenericFrameKind::StreamOpen, &payload)
                 .await
                 .map_err(|error| StreamError::Send(error.to_string()))?;
-            manager.open(stream_id, service, consumer).await?;
+            manager
+                .open(StreamOpener::Local, stream_id, service, consumer)
+                .await?;
             Ok(())
         }
         StreamCarrier::Quic(connection) => {
@@ -760,23 +959,33 @@ pub(crate) async fn open_stream(
             send.flush()
                 .await
                 .map_err(|error| StreamError::Send(error.to_string()))?;
-            manager.open(stream_id, service, consumer).await?;
-            manager.register_quic_send(stream_id, send).await?;
-            spawn_quic_stream_reader(state, peer_id, stream_id, recv).await;
+            manager
+                .open(StreamOpener::Local, stream_id, service, consumer)
+                .await?;
+            manager
+                .register_quic_send(StreamOpener::Local, stream_id, send)
+                .await?;
+            spawn_quic_stream_reader(state, peer_id, StreamOpener::Local, stream_id, recv).await;
             Ok(())
         }
         StreamCarrier::Relay(Some(relay)) => {
-            let payload = encode_stream_open_frame(stream_id, service)?;
-            crate::relay::send_relay_stream_frame(&relay, &stream_relay_token(stream_id), &payload)
-                .await
-                .map_err(|error| StreamError::Send(error.to_string()))?;
-            manager.open(stream_id, service, consumer).await?;
+            let payload = encode_stream_open_frame(&opener_peer_id, stream_id, service)?;
+            crate::relay::send_relay_stream_frame(
+                &relay,
+                &stream_relay_token(&opener_peer_id, stream_id),
+                &payload,
+            )
+            .await
+            .map_err(|error| StreamError::Send(error.to_string()))?;
+            manager
+                .open(StreamOpener::Local, stream_id, service, consumer)
+                .await?;
             Ok(())
         }
         StreamCarrier::Relay(None) => Err(StreamError::NotConnected),
     }?;
     if consumer == StreamConsumer::Event {
-        spawn_stream_event_emitter(state, peer_id, stream_id).await;
+        spawn_stream_event_emitter(state, peer_id, StreamOpener::Local, stream_id).await;
     }
     Ok(())
 }
@@ -790,11 +999,22 @@ pub(crate) async fn send_stream(
     stream_id: u16,
     data: &[u8],
 ) -> Result<(), StreamError> {
+    send_stream_with_opener(state, peer_id, StreamOpener::Local, stream_id, data).await
+}
+
+async fn send_stream_with_opener(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    opener: StreamOpener,
+    stream_id: u16,
+    data: &[u8],
+) -> Result<(), StreamError> {
     if data.is_empty() {
         return Ok(());
     }
     let manager = state.stream_manager(peer_id).await;
-    let send_guard = manager.send_guard(stream_id).await?;
+    let opener_peer_id = stream_opener_peer_id(state, peer_id, opener).await?;
+    let send_guard = manager.send_guard(opener, stream_id).await?;
     let _guard = send_guard.lock().await;
     let carrier = state
         .sessions
@@ -803,35 +1023,37 @@ pub(crate) async fn send_stream(
         .ok_or(StreamError::NotConnected)?;
     match carrier {
         StreamCarrier::Generic(handle) => {
-            let seq = manager.next_send_seq(stream_id).await?;
+            let seq = manager.next_send_seq(opener, stream_id).await?;
             let mut chunks = 0u64;
             for chunk in data.chunks(MAX_STREAM_FRAME_BYTES) {
-                let payload = encode_stream_bytes_frame(stream_id, seq + chunks, chunk);
+                let payload =
+                    encode_stream_bytes_frame(&opener_peer_id, stream_id, seq + chunks, chunk)?;
                 handle
                     .send(GenericFrameKind::StreamBytes, &payload)
                     .await
                     .map_err(|error| StreamError::Send(error.to_string()))?;
                 chunks += 1;
             }
-            manager.bump_send_seq(stream_id, chunks).await?;
+            manager.bump_send_seq(opener, stream_id, chunks).await?;
             Ok(())
         }
-        StreamCarrier::Quic(_) => manager.quic_send_bytes(stream_id, data).await,
+        StreamCarrier::Quic(_) => manager.quic_send_bytes(opener, stream_id, data).await,
         StreamCarrier::Relay(Some(relay)) => {
-            let seq = manager.next_send_seq(stream_id).await?;
+            let seq = manager.next_send_seq(opener, stream_id).await?;
             let mut chunks = 0u64;
             for chunk in data.chunks(MAX_STREAM_FRAME_BYTES) {
-                let payload = encode_stream_bytes_frame(stream_id, seq + chunks, chunk);
+                let payload =
+                    encode_stream_bytes_frame(&opener_peer_id, stream_id, seq + chunks, chunk)?;
                 crate::relay::send_relay_stream_frame(
                     &relay,
-                    &stream_relay_token(stream_id),
+                    &stream_relay_token(&opener_peer_id, stream_id),
                     &payload,
                 )
                 .await
                 .map_err(|error| StreamError::Send(error.to_string()))?;
                 chunks += 1;
             }
-            manager.bump_send_seq(stream_id, chunks).await?;
+            manager.bump_send_seq(opener, stream_id, chunks).await?;
             Ok(())
         }
         StreamCarrier::Relay(None) => Err(StreamError::NotConnected),
@@ -839,14 +1061,25 @@ pub(crate) async fn send_stream(
 }
 
 /// Drains buffered bytes for a Bridge/Poll consumer.
+#[allow(dead_code)]
 pub(crate) async fn receive_stream(
     state: &Arc<RuntimeState>,
     peer_id: &str,
     stream_id: u16,
     buf: &mut [u8],
 ) -> Result<usize, StreamError> {
+    receive_stream_with_opener(state, peer_id, StreamOpener::Local, stream_id, buf).await
+}
+
+async fn receive_stream_with_opener(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    opener: StreamOpener,
+    stream_id: u16,
+    buf: &mut [u8],
+) -> Result<usize, StreamError> {
     let manager = state.stream_manager(peer_id).await;
-    manager.receive(stream_id, buf).await
+    manager.receive(opener, stream_id, buf).await
 }
 
 /// Closes a byte stream locally and tells the peer.
@@ -855,7 +1088,17 @@ pub(crate) async fn close_stream(
     peer_id: &str,
     stream_id: u16,
 ) -> Result<(), StreamError> {
+    close_stream_with_opener(state, peer_id, StreamOpener::Local, stream_id).await
+}
+
+async fn close_stream_with_opener(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    opener: StreamOpener,
+    stream_id: u16,
+) -> Result<(), StreamError> {
     let manager = state.stream_manager(peer_id).await;
+    let opener_peer_id = stream_opener_peer_id(state, peer_id, opener).await?;
     let carrier = state
         .sessions
         .current_stream_carrier(peer_id)
@@ -863,25 +1106,29 @@ pub(crate) async fn close_stream(
         .ok_or(StreamError::NotConnected)?;
     match carrier {
         StreamCarrier::Generic(handle) => {
-            let payload = encode_stream_close_frame(stream_id);
+            let payload = encode_stream_close_frame(&opener_peer_id, stream_id)?;
             handle
                 .send(GenericFrameKind::StreamClose, &payload)
                 .await
                 .map_err(|error| StreamError::Send(error.to_string()))?;
-            manager.close_local(peer_id, stream_id).await?;
+            manager.close_local(peer_id, opener, stream_id).await?;
             Ok(())
         }
         StreamCarrier::Quic(_) => {
-            manager.quic_finish_send(stream_id).await?;
-            manager.close_local(peer_id, stream_id).await?;
+            manager.quic_finish_send(opener, stream_id).await?;
+            manager.close_local(peer_id, opener, stream_id).await?;
             Ok(())
         }
         StreamCarrier::Relay(Some(relay)) => {
-            let payload = encode_stream_close_frame(stream_id);
-            crate::relay::send_relay_stream_frame(&relay, &stream_relay_token(stream_id), &payload)
-                .await
-                .map_err(|error| StreamError::Send(error.to_string()))?;
-            manager.close_local(peer_id, stream_id).await?;
+            let payload = encode_stream_close_frame(&opener_peer_id, stream_id)?;
+            crate::relay::send_relay_stream_frame(
+                &relay,
+                &stream_relay_token(&opener_peer_id, stream_id),
+                &payload,
+            )
+            .await
+            .map_err(|error| StreamError::Send(error.to_string()))?;
+            manager.close_local(peer_id, opener, stream_id).await?;
             Ok(())
         }
         StreamCarrier::Relay(None) => Err(StreamError::NotConnected),
@@ -899,20 +1146,26 @@ pub(crate) async fn handle_inbound_stream_frame(
 ) -> Result<(), StreamError> {
     match kind {
         GenericFrameKind::StreamOpen => {
-            let (stream_id, service) = decode_stream_open_frame(payload)?;
-            handle_inbound_open(state, peer_id, stream_id, &service).await
+            let (opener_peer_id, stream_id, service) = decode_stream_open_frame(payload)?;
+            if inbound_stream_opener(state, peer_id, &opener_peer_id).await? != StreamOpener::Remote
+            {
+                return Err(StreamError::InvalidFrame);
+            }
+            handle_inbound_open(state, peer_id, StreamOpener::Remote, stream_id, &service).await
         }
         GenericFrameKind::StreamBytes => {
-            let (stream_id, seq, data) = decode_stream_bytes_frame(payload)?;
+            let (opener_peer_id, stream_id, seq, data) = decode_stream_bytes_frame(payload)?;
+            let opener = inbound_stream_opener(state, peer_id, &opener_peer_id).await?;
             let manager = state.stream_manager(peer_id).await;
             manager
-                .handle_bytes(peer_id, stream_id, seq, data.to_vec())
+                .handle_bytes(peer_id, opener, stream_id, seq, data.to_vec())
                 .await
         }
         GenericFrameKind::StreamClose => {
-            let stream_id = decode_stream_close_frame(payload)?;
+            let (opener_peer_id, stream_id) = decode_stream_close_frame(payload)?;
+            let opener = inbound_stream_opener(state, peer_id, &opener_peer_id).await?;
             let manager = state.stream_manager(peer_id).await;
-            manager.handle_close(peer_id, stream_id).await
+            manager.handle_close(peer_id, opener, stream_id).await
         }
         _ => Err(StreamError::InvalidFrame),
     }
@@ -924,6 +1177,7 @@ pub(crate) async fn handle_inbound_stream_frame(
 async fn handle_inbound_open(
     state: &Arc<RuntimeState>,
     peer_id: &str,
+    opener: StreamOpener,
     stream_id: u16,
     service: &str,
 ) -> Result<(), StreamError> {
@@ -933,7 +1187,10 @@ async fn handle_inbound_open(
         StreamConsumer::Event
     };
     let manager = state.stream_manager(peer_id).await;
-    match manager.handle_open(stream_id, service, consumer).await {
+    match manager
+        .handle_open(opener, stream_id, service, consumer)
+        .await
+    {
         Ok(()) => {}
         Err(StreamError::AlreadyOpen) => {
             // 同一 stream_id 的重复 open：丢弃这个重复的 open，已存在的活动流
@@ -944,9 +1201,9 @@ async fn handle_inbound_open(
         Err(error) => return Err(error),
     }
     if consumer == StreamConsumer::Bridge {
-        spawn_ssh_gateway(Arc::clone(state), peer_id.to_string(), stream_id);
+        spawn_ssh_gateway(Arc::clone(state), peer_id.to_string(), opener, stream_id);
     } else {
-        spawn_stream_event_emitter(state, peer_id, stream_id).await;
+        spawn_stream_event_emitter(state, peer_id, opener, stream_id).await;
     }
     Ok(())
 }
@@ -969,7 +1226,10 @@ pub(crate) async fn handle_incoming_quic_stream(
         StreamConsumer::Event
     };
     let manager = state.stream_manager(&peer_id).await;
-    match manager.handle_open(stream_id, &service, consumer).await {
+    match manager
+        .handle_open(StreamOpener::Remote, stream_id, &service, consumer)
+        .await
+    {
         Ok(()) => {}
         Err(StreamError::AlreadyOpen) => {
             // 重复 open：丢弃这个重复的 QUIC 流，已存在的活动流保持原样，
@@ -978,15 +1238,21 @@ pub(crate) async fn handle_incoming_quic_stream(
         }
         Err(_) => return,
     }
-    if manager.register_quic_send(stream_id, send).await.is_err() {
-        let _ = manager.handle_close(&peer_id, stream_id).await;
+    if manager
+        .register_quic_send(StreamOpener::Remote, stream_id, send)
+        .await
+        .is_err()
+    {
+        let _ = manager
+            .handle_close(&peer_id, StreamOpener::Remote, stream_id)
+            .await;
         return;
     }
-    spawn_quic_stream_reader(&state, &peer_id, stream_id, receive).await;
+    spawn_quic_stream_reader(&state, &peer_id, StreamOpener::Remote, stream_id, receive).await;
     if consumer == StreamConsumer::Bridge {
-        spawn_ssh_gateway(state, peer_id, stream_id);
+        spawn_ssh_gateway(state, peer_id, StreamOpener::Remote, stream_id);
     } else {
-        spawn_stream_event_emitter(&state, &peer_id, stream_id).await;
+        spawn_stream_event_emitter(&state, &peer_id, StreamOpener::Remote, stream_id).await;
     }
 }
 
@@ -998,7 +1264,12 @@ pub(crate) async fn handle_incoming_quic_stream(
 /// 的入站字节转成 `SshStreamDataReceived` 事件。Event 流因此与 Bridge/Poll
 /// 共享同一有界缓冲区与背压——writer 在 `MAX_PER_STREAM_BUFFER_CAPACITY`
 /// 处阻塞，而不是逐帧直接灌入无界事件通道。
-async fn spawn_stream_event_emitter(state: &Arc<RuntimeState>, peer_id: &str, stream_id: u16) {
+async fn spawn_stream_event_emitter(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    opener: StreamOpener,
+    stream_id: u16,
+) {
     let manager = state.stream_manager(peer_id).await;
     let peer_id = peer_id.to_string();
     let session_key = state
@@ -1010,7 +1281,7 @@ async fn spawn_stream_event_emitter(state: &Arc<RuntimeState>, peer_id: &str, st
     let _ = state
         .task_supervisor
         .spawn_session(session_key, "stream-event-emitter", async move {
-            manager.drain_events(&peer_id, stream_id).await
+            manager.drain_events(&peer_id, opener, stream_id).await
         });
 }
 
@@ -1019,6 +1290,7 @@ async fn spawn_stream_event_emitter(state: &Arc<RuntimeState>, peer_id: &str, st
 pub(crate) async fn spawn_quic_stream_reader(
     state: &Arc<RuntimeState>,
     peer_id: &str,
+    opener: StreamOpener,
     stream_id: u16,
     mut recv: quinn::RecvStream,
 ) {
@@ -1039,11 +1311,13 @@ pub(crate) async fn spawn_quic_stream_reader(
             match recv.read(&mut buf).await {
                 Ok(Some(n)) => {
                     let data = buf[..n].to_vec();
-                    let _ = manager.handle_bytes(&peer_id, stream_id, seq, data).await;
+                    let _ = manager
+                        .handle_bytes(&peer_id, opener, stream_id, seq, data)
+                        .await;
                     seq += 1;
                 }
                 Ok(None) | Err(_) => {
-                    let _ = manager.handle_close(&peer_id, stream_id).await;
+                    let _ = manager.handle_close(&peer_id, opener, stream_id).await;
                     return;
                 }
             }
@@ -1054,7 +1328,12 @@ pub(crate) async fn spawn_quic_stream_reader(
 /// The SSH Server Service (design §21 option B): bridges a native byte stream
 /// whose service hint is `ssh` to a local TCP sshd socket. Zero SSH protocol
 /// code; the bridge just pumps bytes both ways.
-pub(crate) fn spawn_ssh_gateway(state: Arc<RuntimeState>, peer_id: String, stream_id: u16) {
+pub(crate) fn spawn_ssh_gateway(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    opener: StreamOpener,
+    stream_id: u16,
+) {
     let supervisor = Arc::clone(&state.task_supervisor);
     let _ = supervisor.spawn_runtime("ssh-gateway", async move {
         let gateway_port = state
@@ -1070,7 +1349,7 @@ pub(crate) fn spawn_ssh_gateway(state: Arc<RuntimeState>, peer_id: String, strea
                     %error,
                     "SSH gateway could not connect to local sshd"
                 );
-                let _ = close_stream(&state, &peer_id, stream_id).await;
+                let _ = close_stream_with_opener(&state, &peer_id, opener, stream_id).await;
                 return;
             }
         };
@@ -1086,16 +1365,22 @@ pub(crate) fn spawn_ssh_gateway(state: Arc<RuntimeState>, peer_id: String, strea
                     match read_half.read(&mut buf).await {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            if send_stream(&state, &peer_id, stream_id, &buf[..n])
-                                .await
-                                .is_err()
+                            if send_stream_with_opener(
+                                &state,
+                                &peer_id,
+                                opener,
+                                stream_id,
+                                &buf[..n],
+                            )
+                            .await
+                            .is_err()
                             {
                                 break;
                             }
                         }
                     }
                 }
-                let _ = close_stream(&state, &peer_id, stream_id).await;
+                let _ = close_stream_with_opener(&state, &peer_id, opener, stream_id).await;
             }
         });
 
@@ -1106,7 +1391,9 @@ pub(crate) fn spawn_ssh_gateway(state: Arc<RuntimeState>, peer_id: String, strea
             async move {
                 let mut buf = vec![0u8; STREAM_SOCKET_CHUNK_BYTES];
                 loop {
-                    match receive_stream(&state, &peer_id, stream_id, &mut buf).await {
+                    match receive_stream_with_opener(&state, &peer_id, opener, stream_id, &mut buf)
+                        .await
+                    {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
                             if write_half.write_all(&buf[..n]).await.is_err() {
@@ -1120,7 +1407,7 @@ pub(crate) fn spawn_ssh_gateway(state: Arc<RuntimeState>, peer_id: String, strea
         });
 
         let _ = tokio::join!(socket_to_stream, stream_to_socket);
-        let _ = close_stream(&state, &peer_id, stream_id).await;
+        let _ = close_stream_with_opener(&state, &peer_id, opener, stream_id).await;
     });
 }
 
@@ -1237,19 +1524,123 @@ mod tests {
 
     #[test]
     fn stream_wire_frames_round_trip() {
-        let data = encode_stream_bytes_frame(7, 3, b"hello");
-        let (stream_id, seq, payload) = decode_stream_bytes_frame(&data).expect("decode bytes");
-        assert_eq!((stream_id, seq), (7, 3));
+        let data = encode_stream_bytes_frame("peer-a", 7, 3, b"hello").expect("encode bytes");
+        let (opener, stream_id, seq, payload) =
+            decode_stream_bytes_frame(&data).expect("decode bytes");
+        assert_eq!((opener.as_str(), stream_id, seq), ("peer-a", 7, 3));
         assert_eq!(payload, b"hello");
 
-        let open = encode_stream_open_frame(7, "ssh").expect("encode open");
-        let (stream_id, service) = decode_stream_open_frame(&open).expect("decode open");
-        assert_eq!((stream_id, service.as_str()), (7, "ssh"));
+        let open = encode_stream_open_frame("peer-a", 7, "ssh").expect("encode open");
+        let (opener, stream_id, service) = decode_stream_open_frame(&open).expect("decode open");
+        assert_eq!(
+            (opener.as_str(), stream_id, service.as_str()),
+            ("peer-a", 7, "ssh")
+        );
 
-        let close = encode_stream_close_frame(7);
-        assert_eq!(decode_stream_close_frame(&close).expect("decode close"), 7);
+        let close = encode_stream_close_frame("peer-a", 7).expect("encode close");
+        assert_eq!(
+            decode_stream_close_frame(&close).expect("decode close"),
+            ("peer-a".to_string(), 7)
+        );
+        assert_eq!(stream_relay_token("peer-a", 7), "stream:peer-a:7");
         assert!(decode_stream_open_frame(b"\x00\x01\xff").is_err());
         assert!(decode_stream_bytes_frame(&[0u8; 8]).is_err());
+    }
+
+    #[tokio::test]
+    async fn same_stream_id_isolated_by_opener_direction() {
+        let (manager, _event_rx) = test_manager();
+        manager
+            .open(StreamOpener::Local, 1, "local", StreamConsumer::Poll)
+            .await
+            .expect("local open");
+        manager
+            .open(StreamOpener::Remote, 1, "remote", StreamConsumer::Poll)
+            .await
+            .expect("remote open");
+
+        manager
+            .handle_bytes("peer-a", StreamOpener::Local, 1, 0, b"from-local".to_vec())
+            .await
+            .expect("local bytes");
+        manager
+            .handle_bytes(
+                "peer-a",
+                StreamOpener::Remote,
+                1,
+                0,
+                b"from-remote".to_vec(),
+            )
+            .await
+            .expect("remote bytes");
+
+        let mut buf = [0u8; 32];
+        let n = manager
+            .receive(StreamOpener::Local, 1, &mut buf)
+            .await
+            .expect("local receive");
+        assert_eq!(&buf[..n], b"from-local");
+        let n = manager
+            .receive(StreamOpener::Remote, 1, &mut buf)
+            .await
+            .expect("remote receive");
+        assert_eq!(&buf[..n], b"from-remote");
+        assert!(manager.is_open(StreamOpener::Local, 1).await);
+        assert!(manager.is_open(StreamOpener::Remote, 1).await);
+    }
+
+    #[tokio::test]
+    async fn inbound_frames_route_same_id_by_wire_opener() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        *state.identity.write().await = Some(Arc::new(
+            network_identity::DeviceIdentity::from_private_keys(
+                "local-a".into(),
+                [1u8; 32],
+                [2u8; 32],
+            ),
+        ));
+        let peer_id = "peer-b";
+        let manager = state.stream_manager(peer_id).await;
+        manager
+            .open(StreamOpener::Local, 1, "local", StreamConsumer::Poll)
+            .await
+            .expect("local open");
+        manager
+            .open(StreamOpener::Remote, 1, "remote", StreamConsumer::Poll)
+            .await
+            .expect("remote open");
+
+        let local_frame =
+            encode_stream_bytes_frame("local-a", 1, 0, b"local-bytes").expect("encode local frame");
+        handle_inbound_stream_frame(&state, peer_id, GenericFrameKind::StreamBytes, &local_frame)
+            .await
+            .expect("route local opener");
+        let remote_frame = encode_stream_bytes_frame("peer-b", 1, 0, b"remote-bytes")
+            .expect("encode remote frame");
+        handle_inbound_stream_frame(
+            &state,
+            peer_id,
+            GenericFrameKind::StreamBytes,
+            &remote_frame,
+        )
+        .await
+        .expect("route remote opener");
+
+        let mut buf = [0u8; 32];
+        let n = manager
+            .receive(StreamOpener::Local, 1, &mut buf)
+            .await
+            .expect("receive local opener");
+        assert_eq!(&buf[..n], b"local-bytes");
+        let n = manager
+            .receive(StreamOpener::Remote, 1, &mut buf)
+            .await
+            .expect("receive remote opener");
+        assert_eq!(&buf[..n], b"remote-bytes");
     }
 
     #[test]
@@ -1263,16 +1654,18 @@ mod tests {
     async fn event_consumer_emits_data_and_close() {
         let (manager, mut event_rx) = test_manager();
         manager
-            .open(1, "custom", StreamConsumer::Event)
+            .open(StreamOpener::Local, 1, "custom", StreamConsumer::Event)
             .await
             .expect("open");
         // Event-mode bytes are buffered and delivered by the drainer task.
         let drainer = {
             let manager = manager.clone();
-            tokio::spawn(async move { manager.drain_events("peer-a", 1).await })
+            tokio::spawn(
+                async move { manager.drain_events("peer-a", StreamOpener::Local, 1).await },
+            )
         };
         manager
-            .handle_bytes("peer-a", 1, 0, b"ping".to_vec())
+            .handle_bytes("peer-a", StreamOpener::Local, 1, 0, b"ping".to_vec())
             .await
             .expect("bytes");
         let event = event_rx.recv().await.expect("data event");
@@ -1281,7 +1674,10 @@ mod tests {
             Some(network_event::Payload::SshStreamDataReceived(recv))
                 if recv.peer_id == "peer-a" && recv.stream_id == 1 && recv.data == b"ping"
         ));
-        manager.handle_close("peer-a", 1).await.expect("close");
+        manager
+            .handle_close("peer-a", StreamOpener::Local, 1)
+            .await
+            .expect("close");
         let event = event_rx.recv().await.expect("close event");
         assert!(matches!(
             event.payload,
@@ -1298,35 +1694,50 @@ mod tests {
     async fn poll_consumer_buffers_until_read_and_reports_eof() {
         let (manager, mut event_rx) = test_manager();
         manager
-            .open(2, "custom", StreamConsumer::Poll)
+            .open(StreamOpener::Local, 2, "custom", StreamConsumer::Poll)
             .await
             .expect("open");
         manager
-            .handle_bytes("peer-a", 2, 0, b"abc".to_vec())
+            .handle_bytes("peer-a", StreamOpener::Local, 2, 0, b"abc".to_vec())
             .await
             .expect("bytes");
         manager
-            .handle_bytes("peer-a", 2, 1, b"de".to_vec())
+            .handle_bytes("peer-a", StreamOpener::Local, 2, 1, b"de".to_vec())
             .await
             .expect("bytes");
 
         let mut buf = [0u8; 2];
-        let n = manager.receive(2, &mut buf).await.expect("receive");
+        let n = manager
+            .receive(StreamOpener::Local, 2, &mut buf)
+            .await
+            .expect("receive");
         assert_eq!((n, &buf[..n]), (2, &b"ab"[..]));
-        let n = manager.receive(2, &mut buf).await.expect("receive");
+        let n = manager
+            .receive(StreamOpener::Local, 2, &mut buf)
+            .await
+            .expect("receive");
         assert_eq!((n, &buf[..n]), (2, &b"cd"[..]));
-        let n = manager.receive(2, &mut buf).await.expect("receive");
+        let n = manager
+            .receive(StreamOpener::Local, 2, &mut buf)
+            .await
+            .expect("receive");
         assert_eq!((n, &buf[..n]), (1, &b"e"[..]));
 
-        manager.handle_close("peer-a", 2).await.expect("close");
+        manager
+            .handle_close("peer-a", StreamOpener::Local, 2)
+            .await
+            .expect("close");
         let n = manager
-            .receive(2, &mut buf)
+            .receive(StreamOpener::Local, 2, &mut buf)
             .await
             .expect("receive after close");
         assert_eq!(n, 0);
         // close_local removes the entry once both sides closed.
-        manager.close_local("peer-a", 2).await.expect("close local");
-        assert!(!manager.is_open(2).await);
+        manager
+            .close_local("peer-a", StreamOpener::Local, 2)
+            .await
+            .expect("close local");
+        assert!(!manager.is_open(StreamOpener::Local, 2).await);
         // Event channel was unused for the poll consumer.
         assert!(event_rx.try_recv().is_err());
     }
@@ -1335,13 +1746,16 @@ mod tests {
     async fn data_after_close_is_dropped_not_an_error() {
         let (manager, _event_rx) = test_manager();
         manager
-            .open(3, "custom", StreamConsumer::Poll)
+            .open(StreamOpener::Local, 3, "custom", StreamConsumer::Poll)
             .await
             .expect("open");
-        manager.handle_close("peer-a", 3).await.expect("close");
+        manager
+            .handle_close("peer-a", StreamOpener::Local, 3)
+            .await
+            .expect("close");
         // A late packet racing the close must not be treated as a fatal error.
         assert!(manager
-            .handle_bytes("peer-a", 3, 0, b"late".to_vec())
+            .handle_bytes("peer-a", StreamOpener::Local, 3, 0, b"late".to_vec())
             .await
             .is_ok());
     }
@@ -1350,21 +1764,23 @@ mod tests {
     async fn duplicate_and_gap_sequence_handling() {
         let (manager, _event_rx) = test_manager();
         manager
-            .open(4, "custom", StreamConsumer::Poll)
+            .open(StreamOpener::Local, 4, "custom", StreamConsumer::Poll)
             .await
             .expect("open");
         manager
-            .handle_bytes("peer-a", 4, 0, b"a".to_vec())
+            .handle_bytes("peer-a", StreamOpener::Local, 4, 0, b"a".to_vec())
             .await
             .expect("first");
         // Duplicate seq 0 is dropped silently.
         assert!(manager
-            .handle_bytes("peer-a", 4, 0, b"dup".to_vec())
+            .handle_bytes("peer-a", StreamOpener::Local, 4, 0, b"dup".to_vec())
             .await
             .is_ok());
         // Gap (seq 2 after seq 0) is a protocol error for that stream only.
         assert!(matches!(
-            manager.handle_bytes("peer-a", 4, 2, b"gap".to_vec()).await,
+            manager
+                .handle_bytes("peer-a", StreamOpener::Local, 4, 2, b"gap".to_vec())
+                .await,
             Err(StreamError::InvalidFrame)
         ));
     }
@@ -1378,26 +1794,32 @@ mod tests {
         ));
         let peer_id = "peer-a";
         // 首次 open 注册一条活动流（Event 消费者，数据以事件形式交付）。
-        handle_inbound_open(&state, peer_id, 42, "custom")
+        handle_inbound_open(&state, peer_id, StreamOpener::Remote, 42, "custom")
             .await
             .expect("first open");
         let manager = state.stream_manager(peer_id).await;
-        assert!(manager.is_open(42).await, "first stream must be open");
+        assert!(
+            manager.is_open(StreamOpener::Remote, 42).await,
+            "first stream must be open"
+        );
 
         // 同一 stream_id 的重复 open：必须被忽略，绝不能把现有活动流当作
         // 关闭处理（修复 #5：原先会 handle_close 关掉现有流的接收侧）。
-        handle_inbound_open(&state, peer_id, 42, "custom")
+        handle_inbound_open(&state, peer_id, StreamOpener::Remote, 42, "custom")
             .await
             .expect("duplicate open is ignored");
-        assert!(manager.is_open(42).await, "existing stream must stay open");
         assert!(
-            !manager.is_recv_closed(42).await,
+            manager.is_open(StreamOpener::Remote, 42).await,
+            "existing stream must stay open"
+        );
+        assert!(
+            !manager.is_recv_closed(StreamOpener::Remote, 42).await,
             "existing stream receive side must stay open"
         );
 
         // 现有流在重复 open 之后仍然接收字节（以事件交付）。
         manager
-            .handle_bytes(peer_id, 42, 0, b"still-live".to_vec())
+            .handle_bytes(peer_id, StreamOpener::Remote, 42, 0, b"still-live".to_vec())
             .await
             .expect("bytes after duplicate open");
         let event = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
@@ -1415,7 +1837,7 @@ mod tests {
     async fn backpressure_blocks_until_consumer_drains() {
         let (manager, _event_rx) = test_manager();
         manager
-            .open(5, "custom", StreamConsumer::Poll)
+            .open(StreamOpener::Local, 5, "custom", StreamConsumer::Poll)
             .await
             .expect("open");
         let big = vec![0x42u8; MAX_STREAM_FRAME_BYTES];
@@ -1423,7 +1845,7 @@ mod tests {
         let mut pushed = 0;
         loop {
             if manager
-                .handle_bytes("peer-a", 5, pushed, big.clone())
+                .handle_bytes("peer-a", StreamOpener::Local, 5, pushed, big.clone())
                 .await
                 .is_err()
             {
@@ -1439,7 +1861,7 @@ mod tests {
             let manager = manager.clone();
             tokio::spawn(async move {
                 manager
-                    .handle_bytes("peer-a", 5, pushed, vec![0x01; 1])
+                    .handle_bytes("peer-a", StreamOpener::Local, 5, pushed, vec![0x01; 1])
                     .await
             })
         };
@@ -1450,7 +1872,10 @@ mod tests {
         );
         // Drain one chunk: the blocked writer completes.
         let mut buf = [0u8; MAX_STREAM_FRAME_BYTES];
-        let n = manager.receive(5, &mut buf).await.expect("drain");
+        let n = manager
+            .receive(StreamOpener::Local, 5, &mut buf)
+            .await
+            .expect("drain");
         assert_eq!(n, MAX_STREAM_FRAME_BYTES);
         let result = tokio::time::timeout(std::time::Duration::from_secs(1), blocked)
             .await
@@ -1463,7 +1888,7 @@ mod tests {
     async fn backpressure_wakeup_is_never_lost_under_repeated_races() {
         let (manager, _event_rx) = test_manager();
         manager
-            .open(9, "custom", StreamConsumer::Poll)
+            .open(StreamOpener::Local, 9, "custom", StreamConsumer::Poll)
             .await
             .expect("open");
         // 回归修复 #4：填满-阻塞-腾空-唤醒循环反复执行，暴露「检查条件后释放
@@ -1474,11 +1899,15 @@ mod tests {
         let mut sink = [0u8; MAX_STREAM_FRAME_BYTES];
         for _ in 0..50 {
             // 填满有界缓冲，使下一次写入必然阻塞（背压前提）。
-            while manager.buffered_bytes(9).await.unwrap() + chunk.len()
+            while manager
+                .buffered_bytes(StreamOpener::Local, 9)
+                .await
+                .unwrap()
+                + chunk.len()
                 <= MAX_PER_STREAM_BUFFER_CAPACITY
             {
                 manager
-                    .handle_bytes("peer-a", 9, pushed, chunk.clone())
+                    .handle_bytes("peer-a", StreamOpener::Local, 9, pushed, chunk.clone())
                     .await
                     .expect("fill");
                 pushed += 1;
@@ -1488,14 +1917,17 @@ mod tests {
                 let manager = manager.clone();
                 tokio::spawn(async move {
                     manager
-                        .handle_bytes("peer-a", 9, pushed, vec![0x01; 1])
+                        .handle_bytes("peer-a", StreamOpener::Local, 9, pushed, vec![0x01; 1])
                         .await
                 })
             };
             // 给 writer 机会进入等待点并注册，放大检查-等待竞态窗口。
             tokio::task::yield_now().await;
             // 从另一任务 drain 一块：阻塞的 writer 必须完成，唤醒绝不丢失。
-            let n = manager.receive(9, &mut sink).await.expect("drain");
+            let n = manager
+                .receive(StreamOpener::Local, 9, &mut sink)
+                .await
+                .expect("drain");
             assert_eq!(n, MAX_STREAM_FRAME_BYTES);
             let result = tokio::time::timeout(std::time::Duration::from_secs(1), blocked)
                 .await
@@ -1504,8 +1936,13 @@ mod tests {
             assert!(result.is_ok());
             pushed += 1;
             // 清空残留，使下一轮从空缓冲开始（保持「缓冲满才阻塞」前提成立）。
-            while manager.buffered_bytes(9).await.unwrap() > 0 {
-                let _ = manager.receive(9, &mut sink).await;
+            while manager
+                .buffered_bytes(StreamOpener::Local, 9)
+                .await
+                .unwrap()
+                > 0
+            {
+                let _ = manager.receive(StreamOpener::Local, 9, &mut sink).await;
             }
         }
     }
@@ -1514,7 +1951,7 @@ mod tests {
     async fn event_consumer_flood_stays_bounded_and_drains_in_order() {
         let (manager, mut event_rx) = test_manager();
         manager
-            .open(6, "custom", StreamConsumer::Event)
+            .open(StreamOpener::Local, 6, "custom", StreamConsumer::Event)
             .await
             .expect("open");
 
@@ -1528,7 +1965,7 @@ mod tests {
                 let mut pushed = 0u64;
                 while pushed < total_chunks as u64 {
                     manager
-                        .handle_bytes("peer-a", 6, pushed, chunk.clone())
+                        .handle_bytes("peer-a", StreamOpener::Local, 6, pushed, chunk.clone())
                         .await
                         .expect("handle_bytes");
                     pushed += 1;
@@ -1543,7 +1980,10 @@ mod tests {
             "flood must be blocked waiting for the Event drainer"
         );
         // 缓冲字节数不越过 cap，且尚未发出任何事件（事件只由 drainer 从缓冲吐出）。
-        let buffered = manager.buffered_bytes(6).await.expect("stream");
+        let buffered = manager
+            .buffered_bytes(StreamOpener::Local, 6)
+            .await
+            .expect("stream");
         assert!(
             buffered <= MAX_PER_STREAM_BUFFER_CAPACITY,
             "buffered bytes must stay bounded: {buffered} > {MAX_PER_STREAM_BUFFER_CAPACITY}"
@@ -1556,7 +1996,9 @@ mod tests {
         // 启动 drainer：阻塞的 writer 随 drain 推进，全部字节最终按序以事件发出。
         let drainer = {
             let manager = manager.clone();
-            tokio::spawn(async move { manager.drain_events("peer-a", 6).await })
+            tokio::spawn(
+                async move { manager.drain_events("peer-a", StreamOpener::Local, 6).await },
+            )
         };
         let pushed = tokio::time::timeout(std::time::Duration::from_secs(5), flood)
             .await
@@ -1583,7 +2025,10 @@ mod tests {
         assert_eq!(received, pushed as usize * MAX_STREAM_FRAME_BYTES);
 
         // 关闭后 drainer 发出 close 事件并退出。
-        manager.handle_close("peer-a", 6).await.expect("close");
+        manager
+            .handle_close("peer-a", StreamOpener::Local, 6)
+            .await
+            .expect("close");
         let closed = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
             .await
             .expect("close event missing")
@@ -1603,13 +2048,19 @@ mod tests {
         let (manager, _event_rx) = test_manager();
         for id in 1..=MAX_CONCURRENT_STREAMS {
             manager
-                .open(id as u16, "custom", StreamConsumer::Poll)
+                .open(
+                    StreamOpener::Local,
+                    id as u16,
+                    "custom",
+                    StreamConsumer::Poll,
+                )
                 .await
                 .expect("open");
         }
         assert!(matches!(
             manager
                 .open(
+                    StreamOpener::Local,
                     (MAX_CONCURRENT_STREAMS + 1) as u16,
                     "custom",
                     StreamConsumer::Poll

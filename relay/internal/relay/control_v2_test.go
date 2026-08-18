@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -158,6 +159,21 @@ func readV2ControlFrameNoFatal(conn *websocket.Conn) (*v2.RelayFrame, error) {
 	return frame, nil
 }
 
+func readV2RealtimeSignal(t *testing.T, conn *websocket.Conn) *v2.RealtimeSignal {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_ = conn.SetReadDeadline(deadline)
+		frame, err := readV2ControlFrameNoFatal(conn)
+		if err != nil {
+			t.Fatalf("read v2 realtime signal: %v", err)
+		}
+		if signal := frame.GetRealtimeSignal(); signal != nil {
+			return signal
+		}
+	}
+}
+
 func writeV2DataFrame(t *testing.T, conn *websocket.Conn, frame *v2.RelayDataFrame) {
 	t.Helper()
 	data, err := v2.EncodeDataFrame(frame)
@@ -187,14 +203,15 @@ func readV2DataFrameDeadline(t *testing.T, conn *websocket.Conn, deadline time.D
 	return frame
 }
 
-// waitRelayPending 轮询 relayDataRegistry 的 pending 表，直到 reservationID 是否
-// 在 pending 中与 want 一致（true=第一端点已登记，false=两端点已链接并移出 pending）。
+// waitRelayPending 轮询 role-aware relayDataRegistry，直到 reservationID 是否
+// 仍有未配对端点（true=一端等待，false=两端已就绪/无等待端点）。
 func waitRelayPending(t *testing.T, server *Server, reservationID string, want bool) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		server.relayData.mutex.Lock()
-		_, present := server.relayData.pending[reservationID]
+		pair := server.relayData.pairs[reservationID]
+		present := pair != nil && (pair.initiator == nil || pair.responder == nil)
 		server.relayData.mutex.Unlock()
 		if present == want {
 			return
@@ -203,6 +220,14 @@ func waitRelayPending(t *testing.T, server *Server, reservationID string, want b
 			t.Fatalf("relay data pending state for %s: want present=%v, timed out", reservationID, want)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func readRelayDataReady(t *testing.T, conn *websocket.Conn, reservationID string) {
+	t.Helper()
+	frame := readV2DataFrame(t, conn)
+	if frame == nil || frame.GetReady() == nil || frame.GetReady().ReservationId != reservationID {
+		t.Fatalf("expected relay_data_ready for %s, got %+v", reservationID, frame)
 	}
 }
 
@@ -359,7 +384,7 @@ func TestControlV2ConnectivityForwarding(t *testing.T) {
 		t.Fatalf("device-a expected peer_available_hint after device-b publish, got %+v", hint)
 	}
 
-	// A resolve B（记录 A 的 lastResolveTarget，ConnectivityOffer 据此路由）。
+	// A resolve B；ConnectivityOffer 另外携带显式 target_device_id。
 	writeV2ControlFrame(t, connA, &v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
 		Kind: &v2.RelayFrame_ResolvePeerRequest{ResolvePeerRequest: &v2.ResolvePeerRequest{
@@ -370,7 +395,7 @@ func TestControlV2ConnectivityForwarding(t *testing.T) {
 		t.Fatalf("expected resolve response, got %+v", resp)
 	}
 
-	// A 向 B（A 最近 resolve 的 target）发 ConnectivityOffer。
+	// A 向 B 发带显式目标的 ConnectivityOffer。
 	attemptID := "a1b2c3d4e5f60718293a4b5c6d7e8f90"
 	writeV2ControlFrame(t, connA, &v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
@@ -378,6 +403,7 @@ func TestControlV2ConnectivityForwarding(t *testing.T) {
 			RequestId:         1003,
 			AttemptId:         attemptID,
 			InitiatorDeviceId: "device-a",
+			TargetDeviceId:    "device-b",
 		}},
 	})
 	offer := readV2ControlFrame(t, connB)
@@ -407,6 +433,42 @@ func TestControlV2ConnectivityForwarding(t *testing.T) {
 	}
 }
 
+// TestControlV2ConnectivityOfferRoutesByExplicitTargetConcurrently fixes routing
+// independence when one authenticated sender has multiple connectivity attempts in
+// flight: each offer must use its own target_device_id, with no per-connection
+// "last resolve" state that can cross-wire B and C.
+func TestControlV2ConnectivityOfferRoutesByExplicitTargetConcurrently(t *testing.T) {
+	server, _ := newV2TestServer(t)
+	sender := injectPeer(server.hub, "device-a")
+	targetB := injectPeer(server.hub, "device-b")
+	targetC := injectPeer(server.hub, "device-c")
+
+	offers := []*v2.ConnectivityOffer{
+		{RequestId: 3001, AttemptId: strings.Repeat("b", 32), InitiatorDeviceId: "device-a", TargetDeviceId: "device-b"},
+		{RequestId: 3002, AttemptId: strings.Repeat("c", 32), InitiatorDeviceId: "device-a", TargetDeviceId: "device-c"},
+	}
+	var waitGroup sync.WaitGroup
+	for _, offer := range offers {
+		waitGroup.Add(1)
+		go func(offer *v2.ConnectivityOffer) {
+			defer waitGroup.Done()
+			server.hub.handleConnectivityOfferV2(sender, offer)
+		}(offer)
+	}
+	waitGroup.Wait()
+
+	for target, attemptID := range map[*peer]string{
+		targetB: strings.Repeat("b", 32),
+		targetC: strings.Repeat("c", 32),
+	} {
+		frame := readV2ControlFrameFromPeer(t, target)
+		offer := frame.GetConnectivityOffer()
+		if offer == nil || offer.AttemptId != attemptID || offer.TargetDeviceId != target.deviceID {
+			t.Fatalf("target %s received the wrong explicit offer: %+v", target.deviceID, frame)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 控制面：RealtimeSignal 转发
 // ---------------------------------------------------------------------------
@@ -421,21 +483,48 @@ func TestControlV2RealtimeSignalForwarding(t *testing.T) {
 	connB := dialControlV2(t, httpServer.URL, credB, "device-b", 0x52, privB)
 	defer connB.Close()
 
-	writeV2ControlFrame(t, connA, &v2.RelayFrame{
-		Version: v2.RELAY_V2_VERSION,
-		Kind: &v2.RelayFrame_RealtimeSignal{RealtimeSignal: &v2.RealtimeSignal{
-			RequestId:      1001,
-			RealtimeId:     "rt-1234",
-			TargetDeviceId: "device-b",
-			Kind:           v2.RealtimeSignalKind_REALTIME_SIGNAL_KIND_OFFER,
-			Revision:       1,
-			Payload:        []byte("sdp-offer"),
-		}},
-	})
-	sig := readV2ControlFrame(t, connB)
-	rs := sig.GetRealtimeSignal()
-	if rs == nil || rs.TargetDeviceId != "device-b" || rs.Kind != v2.RealtimeSignalKind_REALTIME_SIGNAL_KIND_OFFER || !bytes.Equal(rs.Payload, []byte("sdp-offer")) {
-		t.Fatalf("device-b expected realtime_signal, got %+v", sig)
+	send := func(t *testing.T, from, to *websocket.Conn, requestID uint64, target string, kind v2.RealtimeSignalKind, payload string) *v2.RealtimeSignal {
+		t.Helper()
+		writeV2ControlFrame(t, from, &v2.RelayFrame{
+			Version: v2.RELAY_V2_VERSION,
+			Kind: &v2.RelayFrame_RealtimeSignal{RealtimeSignal: &v2.RealtimeSignal{
+				RequestId:      requestID,
+				RealtimeId:     "rt-1234",
+				TargetDeviceId: target,
+				SenderDeviceId: "spoofed-device",
+				Kind:           kind,
+				Revision:       requestID,
+				Payload:        []byte(payload),
+			}},
+		})
+		return readV2RealtimeSignal(t, to)
+	}
+
+	// Each direction must preserve the authenticated sender, even when the
+	// client-provided sender field is forged and target_device_id is the local
+	// device on receipt.
+	for _, tc := range []struct {
+		name       string
+		from, to   *websocket.Conn
+		target     string
+		kind       v2.RealtimeSignalKind
+		payload    string
+		wantSender string
+	}{
+		{name: "offer A to B", from: connA, to: connB, target: "device-b", kind: v2.RealtimeSignalKind_REALTIME_SIGNAL_KIND_OFFER, payload: "sdp-offer", wantSender: "device-a"},
+		{name: "answer B to A", from: connB, to: connA, target: "device-a", kind: v2.RealtimeSignalKind_REALTIME_SIGNAL_KIND_ANSWER, payload: "sdp-answer", wantSender: "device-b"},
+		{name: "ice A to B", from: connA, to: connB, target: "device-b", kind: v2.RealtimeSignalKind_REALTIME_SIGNAL_KIND_ICE_CANDIDATE, payload: "candidate-a", wantSender: "device-a"},
+		{name: "ice B to A", from: connB, to: connA, target: "device-a", kind: v2.RealtimeSignalKind_REALTIME_SIGNAL_KIND_ICE_CANDIDATE, payload: "candidate-b", wantSender: "device-b"},
+		{name: "close A to B", from: connA, to: connB, target: "device-b", kind: v2.RealtimeSignalKind_REALTIME_SIGNAL_KIND_CLOSE, payload: "close-a", wantSender: "device-a"},
+		{name: "close B to A", from: connB, to: connA, target: "device-a", kind: v2.RealtimeSignalKind_REALTIME_SIGNAL_KIND_CLOSE, payload: "close-b", wantSender: "device-b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			signal := send(t, tc.from, tc.to, uint64(len(tc.name)), tc.target, tc.kind, tc.payload)
+			if signal.TargetDeviceId != tc.target || signal.SenderDeviceId != tc.wantSender ||
+				signal.Kind != tc.kind || !bytes.Equal(signal.Payload, []byte(tc.payload)) {
+				t.Fatalf("unexpected realtime signal: %+v", signal)
+			}
+		})
 	}
 }
 
@@ -572,6 +661,8 @@ func TestControlV2ReservationAndRelayData(t *testing.T) {
 		}},
 	})
 	waitRelayPending(t, server, rr.ReservationId, false)
+	readRelayDataReady(t, dataA, rr.ReservationId)
+	readRelayDataReady(t, dataB, rr.ReservationId)
 
 	// A → B：RelayDataPayload（不透明 encrypted_payload）。
 	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{
@@ -605,6 +696,154 @@ func TestControlV2ReservationAndRelayData(t *testing.T) {
 	closeFrame := readV2DataFrame(t, dataB)
 	if closeFrame.GetClose() == nil || closeFrame.GetClose().Reason != 0 {
 		t.Fatalf("device-b expected relay_data_close, got %+v", closeFrame)
+	}
+}
+
+// TestRelayDataReadyRequiresBothRoles fixes the strict data-plane readiness
+// contract: the initiator may wait on the socket, but it must not receive
+// Ready or become eligible for business payloads before the responder joins.
+func TestRelayDataReadyRequiresBothRoles(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	ctx := context.Background()
+	reservationID := hex.EncodeToString(randomBytes(16))
+	initiatorToken := randomBytes(32)
+	responderToken := randomBytes(32)
+	if err := server.cache.CreateReservation(ctx, Reservation{
+		ReservationID:     reservationID,
+		InitiatorDeviceID: "device-a",
+		ResponderDeviceID: "device-b",
+		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		InitiatorToken:    initiatorToken,
+		ResponderToken:    responderToken,
+		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dataA := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(initiatorToken))
+	defer dataA.Close()
+	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{
+			ReservationId: reservationID,
+			LocalToken:    initiatorToken,
+		}},
+	})
+	waitRelayPending(t, server, reservationID, true)
+	// Simulate a delayed responder. The pending initiator must not observe a
+	// setup acknowledgement while the other role is absent.
+	if frame := readV2DataFrameDeadline(t, dataA, 250*time.Millisecond); frame != nil {
+		t.Fatalf("initiator received data before responder joined: %+v", frame)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	dataB := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(responderToken))
+	defer dataB.Close()
+	writeV2DataFrame(t, dataB, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{
+			ReservationId: reservationID,
+			LocalToken:    responderToken,
+		}},
+	})
+	waitRelayPending(t, server, reservationID, false)
+	readRelayDataReady(t, dataA, reservationID)
+	readRelayDataReady(t, dataB, reservationID)
+
+	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayDataFrame_Payload{Payload: &v2.RelayDataPayload{
+			Sequence:         1,
+			EncryptedPayload: []byte("after-ready"),
+		}},
+	})
+	if frame := readV2DataFrame(t, dataB); frame == nil || frame.GetPayload() == nil {
+		t.Fatalf("payload should forward after both Ready frames, got %+v", frame)
+	}
+}
+
+// TestRelayDataSameRoleRetryReplacesOldEndpoint fixes role-aware reservation
+// pairing: retries replace only the endpoint with the same token role and never
+// link initiator+initiator or responder+responder.
+func TestRelayDataSameRoleRetryReplacesOldEndpoint(t *testing.T) {
+	for _, replaceInitiator := range []bool{true, false} {
+		name := "responder"
+		if replaceInitiator {
+			name = "initiator"
+		}
+		t.Run(name, func(t *testing.T) {
+			server, httpServer := newV2TestServer(t)
+			ctx := context.Background()
+			reservationID := hex.EncodeToString(randomBytes(16))
+			initiatorToken := randomBytes(32)
+			responderToken := randomBytes(32)
+			if err := server.cache.CreateReservation(ctx, Reservation{
+				ReservationID:     reservationID,
+				InitiatorDeviceID: "device-a",
+				ResponderDeviceID: "device-b",
+				RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+				InitiatorToken:    initiatorToken,
+				ResponderToken:    responderToken,
+				ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			firstToken := initiatorToken
+			secondToken := responderToken
+			if !replaceInitiator {
+				firstToken, secondToken = responderToken, initiatorToken
+			}
+			first := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(firstToken))
+			defer first.Close()
+			writeV2DataFrame(t, first, &v2.RelayDataFrame{
+				Version: v2.RELAY_V2_VERSION,
+				Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{
+					ReservationId: reservationID,
+					LocalToken:    firstToken,
+				}},
+			})
+			waitRelayPending(t, server, reservationID, true)
+
+			retry := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(firstToken))
+			defer retry.Close()
+			writeV2DataFrame(t, retry, &v2.RelayDataFrame{
+				Version: v2.RELAY_V2_VERSION,
+				Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{
+					ReservationId: reservationID,
+					LocalToken:    firstToken,
+				}},
+			})
+			if frame := readV2DataFrameDeadline(t, first, 2*time.Second); frame == nil || frame.GetClose() == nil {
+				t.Fatalf("replaced %s endpoint should receive close, got %+v", name, frame)
+			}
+			waitRelayPending(t, server, reservationID, true)
+
+			other := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(secondToken))
+			defer other.Close()
+			writeV2DataFrame(t, other, &v2.RelayDataFrame{
+				Version: v2.RELAY_V2_VERSION,
+				Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{
+					ReservationId: reservationID,
+					LocalToken:    secondToken,
+				}},
+			})
+			waitRelayPending(t, server, reservationID, false)
+			readRelayDataReady(t, retry, reservationID)
+			readRelayDataReady(t, other, reservationID)
+
+			writeV2DataFrame(t, retry, &v2.RelayDataFrame{
+				Version: v2.RELAY_V2_VERSION,
+				Kind: &v2.RelayDataFrame_Payload{Payload: &v2.RelayDataPayload{
+					Sequence:         7,
+					EncryptedPayload: []byte("replacement-wins"),
+				}},
+			})
+			frame := readV2DataFrame(t, other)
+			if frame == nil || frame.GetPayload() == nil || frame.GetPayload().Sequence != 7 {
+				t.Fatalf("replacement endpoint should be linked to the opposite role, got %+v", frame)
+			}
+		})
 	}
 }
 
@@ -849,7 +1088,7 @@ func TestControlV2OfferInitiatorForcedToSender(t *testing.T) {
 	if hint := readV2ControlFrame(t, connA); hint.GetPeerAvailableHint() == nil {
 		t.Fatalf("device-a expected peer_available_hint, got %+v", hint)
 	}
-	// A resolve B（记录 lastResolveTarget，offer 据此路由）。
+	// A resolve B；offer 的路由目标由其显式 target_device_id 决定。
 	writeV2ControlFrame(t, connA, &v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
 		Kind:    &v2.RelayFrame_ResolvePeerRequest{ResolvePeerRequest: &v2.ResolvePeerRequest{RequestId: 1002, TargetDeviceId: "device-b"}},
@@ -866,6 +1105,7 @@ func TestControlV2OfferInitiatorForcedToSender(t *testing.T) {
 			RequestId:         1003,
 			AttemptId:         attemptID,
 			InitiatorDeviceId: "victim-device",
+			TargetDeviceId:    "device-b",
 		}},
 	})
 	offer := readV2ControlFrame(t, connB)
@@ -991,6 +1231,8 @@ func TestRelayDataSlidingExpiryKeepsActiveSessionAlive(t *testing.T) {
 	waitRelayPending(t, server, reservationID, true)
 	writeV2DataFrame(t, dataB, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: responderToken}}})
 	waitRelayPending(t, server, reservationID, false)
+	readRelayDataReady(t, dataA, reservationID)
+	readRelayDataReady(t, dataB, reservationID)
 
 	// 双向持续转发直到超过原始硬到期（≈now+5s）：任何一侧中途被强关都会让读帧失败。
 	seq := uint64(1)
@@ -1046,6 +1288,8 @@ func TestRelayDataSlidingExpiryClosesIdleSession(t *testing.T) {
 	waitRelayPending(t, server, reservationID, true)
 	writeV2DataFrame(t, dataB, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: responderToken}}})
 	waitRelayPending(t, server, reservationID, false)
+	readRelayDataReady(t, dataA, reservationID)
+	readRelayDataReady(t, dataB, reservationID)
 
 	// 先活跃一小段（触发滑动续期），然后彻底空闲。
 	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{Version: v2.RELAY_V2_VERSION, Kind: &v2.RelayDataFrame_Payload{Payload: &v2.RelayDataPayload{Sequence: 1, EncryptedPayload: []byte("opaque")}}})
@@ -1108,6 +1352,8 @@ func TestRelayDataPeerNotifiedOnAbnormalClose(t *testing.T) {
 		Kind:    &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: responderToken}},
 	})
 	waitRelayPending(t, server, reservationID, false)
+	readRelayDataReady(t, dataA, reservationID)
+	readRelayDataReady(t, dataB, reservationID)
 
 	// A 异常断开（不发送 RelayDataClose）：B 应在短时间内收到 reason 2 通知。
 	dataA.Close()
@@ -1172,6 +1418,8 @@ func TestRelayDataLateJoinAfterSlidingRenewal(t *testing.T) {
 		Kind:    &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{ReservationId: reservationID, LocalToken: responderToken}},
 	})
 	waitRelayPending(t, server, reservationID, false)
+	readRelayDataReady(t, dataA, reservationID)
+	readRelayDataReady(t, dataB, reservationID)
 
 	// 晚加入的 B 拿到全新窗口：不被陈旧 ExpiresAtMs 的初始定时器立即 reason 1 强关，
 	// 数据面可正常转发。
@@ -1203,9 +1451,8 @@ func TestControlV2RouteRejectsSupersededPeer(t *testing.T) {
 	// 被取代的旧连接 + 已接管设备的新连接（h.peers 里只保留新连接）。
 	stale := injectPeer(h, "device-a")
 	injectPeer(h, "device-a")
-	// 目标 B 在线：旧连接曾 resolve 它（offer 会按 lastResolveTarget 路由到 B）。
+	// 目标 B 在线：offer 自带显式 target_device_id。
 	target := injectPeer(h, "device-b")
-	stale.lastResolveTarget = "device-b"
 
 	cases := []struct {
 		name  string
@@ -1215,7 +1462,7 @@ func TestControlV2RouteRejectsSupersededPeer(t *testing.T) {
 			name: "connectivity offer",
 			frame: &v2.RelayFrame{
 				Version: v2.RELAY_V2_VERSION,
-				Kind:    &v2.RelayFrame_ConnectivityOffer{ConnectivityOffer: &v2.ConnectivityOffer{RequestId: 1001, AttemptId: strings.Repeat("ab", 16), InitiatorDeviceId: "device-a"}},
+				Kind:    &v2.RelayFrame_ConnectivityOffer{ConnectivityOffer: &v2.ConnectivityOffer{RequestId: 1001, AttemptId: strings.Repeat("ab", 16), InitiatorDeviceId: "device-a", TargetDeviceId: "device-b"}},
 			},
 		},
 		{

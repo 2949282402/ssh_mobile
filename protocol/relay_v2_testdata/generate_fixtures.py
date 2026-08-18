@@ -4,7 +4,7 @@
 Implements the minimal protobuf wire encoding for exactly the relay.v2
 messages frozen in protocol/proto/relay/v2/relay_v2.proto, then emits:
 
-  * 22 full-wire-frame .bin fixtures (4-byte big-endian length + protobuf)
+  * 23 full-wire-frame .bin fixtures (4-byte big-endian length + protobuf)
   * manifest.json  — semantic expectations shared by the Rust and Go codecs
   * session_sequence.golden.json — ordered full-lifecycle frame sequence
 
@@ -273,7 +273,7 @@ def msg_resolve_peer_response(request_id, status, discovery, retry_after_ms):
 
 
 def msg_connectivity_offer(request_id, attempt_id, initiator_device_id, epoch_high, epoch_low,
-                           initiator_revision, initiator_snapshot):
+                           initiator_revision, initiator_snapshot, target_device_id):
     out = b""
     if request_id:
         out += f_varint(1, request_id)
@@ -287,6 +287,8 @@ def msg_connectivity_offer(request_id, attempt_id, initiator_device_id, epoch_hi
         out += f_varint(5, initiator_revision)
     if initiator_snapshot is not None:
         out += f_msg(6, initiator_snapshot)
+    if target_device_id:
+        out += f_len(7, target_device_id)
     return out
 
 
@@ -400,7 +402,9 @@ def msg_incoming_relay_reservation(attempt_id, reservation_id, initiator_device_
     return out
 
 
-def msg_realtime_signal(request_id, realtime_id, target_device_id, kind, revision, payload):
+def msg_realtime_signal(
+    request_id, realtime_id, target_device_id, kind, revision, payload, sender_device_id
+):
     out = b""
     if request_id:
         out += f_varint(1, request_id)
@@ -414,6 +418,8 @@ def msg_realtime_signal(request_id, realtime_id, target_device_id, kind, revisio
         out += f_varint(5, revision)
     if payload:
         out += f_len(6, payload)
+    if sender_device_id:
+        out += f_len(7, sender_device_id)
     return out
 
 
@@ -457,6 +463,13 @@ def msg_relay_data_close(reason, detail):
     return out
 
 
+def msg_relay_data_ready(reservation_id):
+    out = b""
+    if reservation_id:
+        out += f_len(1, reservation_id)
+    return out
+
+
 # RelayFrame oneof field numbers (must match the .proto).
 ONE_OF = {
     "ready": 10, "heartbeat": 11, "heartbeat_ack": 12, "discovery_publish": 13,
@@ -466,7 +479,7 @@ ONE_OF = {
     "relay_reserve_response": 23, "incoming_relay_reservation": 24, "realtime_signal": 25,
     "protocol_error": 26,
 }
-DATA_ONE_OF = {"connect": 10, "payload": 11, "ack": 12, "close": 13}
+DATA_ONE_OF = {"connect": 10, "payload": 11, "ack": 12, "close": 13, "ready": 14}
 
 
 def relay_frame(kind, inner_bytes):
@@ -615,11 +628,12 @@ FIXTURES = [
             request_id=SEED["request_id"], attempt_id=SEED["attempt_id"],
             initiator_device_id=SEED["device_a"], epoch_high=SEED["epoch_high"],
             epoch_low=SEED["epoch_low"], initiator_revision=SEED["revision"],
-            initiator_snapshot=SNAPSHOT_A)),
+            initiator_snapshot=SNAPSHOT_A, target_device_id=SEED["device_b"])),
         expects=dict(
             message="connectivity_offer", version=2, request_id=SEED["request_id"],
             attempt_id=SEED["attempt_id"], initiator_device_id=SEED["device_a"],
-            initiator_revision=SEED["revision"], **_epoch_expect("epoch_high", "epoch_low")),
+            initiator_revision=SEED["revision"], target_device_id=SEED["device_b"],
+            **_epoch_expect("epoch_high", "epoch_low")),
     ),
     # 11
     dict(
@@ -721,10 +735,11 @@ FIXTURES = [
         build=lambda: relay_frame("realtime_signal", msg_realtime_signal(
             request_id=SEED["request_id"], realtime_id=SEED["realtime_id"],
             target_device_id=SEED["device_b"], kind=3, revision=SEED["revision"],
-            payload=REALTIME_PAYLOAD)),
+            payload=REALTIME_PAYLOAD, sender_device_id=SEED["device_a"])),
         expects=dict(
             message="realtime_signal", version=2, request_id=SEED["request_id"],
             realtime_id=SEED["realtime_id"], target_device_id=SEED["device_b"],
+            sender_device_id=SEED["device_a"],
             kind=3, kind_name="REALTIME_SIGNAL_KIND_ICE_CANDIDATE", revision=SEED["revision"],
             payload_hex=REALTIME_PAYLOAD.hex()),
     ),
@@ -752,6 +767,15 @@ FIXTURES = [
     ),
     # 21
     dict(
+        name="relay_data_ready", file="relay_data_ready.data.bin", transport="data",
+        direction="relay->client",
+        build=lambda: relay_data_frame("ready", msg_relay_data_ready(
+            reservation_id=SEED["reservation_id"])),
+        expects=dict(
+            message="relay_data_ready", version=2, reservation_id=SEED["reservation_id"]),
+    ),
+    # 22
+    dict(
         name="relay_data_payload", file="relay_data_payload.data.bin", transport="data",
         direction="peer->relay",
         build=lambda: relay_data_frame("payload", msg_relay_data_payload(
@@ -760,7 +784,7 @@ FIXTURES = [
             message="relay_data_payload", version=2, sequence=SEED["sequence"],
             encrypted_payload_hex=ENCRYPTED_PAYLOAD.hex()),
     ),
-    # 22
+    # 23
     dict(
         name="relay_data_close", file="relay_data_close.data.bin", transport="data",
         direction="peer->relay",
@@ -783,6 +807,7 @@ SESSION_SEQUENCE = [
     ("relay_reserve_response.control.bin", "reservation issued to initiator"),
     ("incoming_relay_reservation.control.bin", "reservation pushed to responder"),
     ("relay_data_connect.data.bin", "both endpoints connect the data plane"),
+    ("relay_data_ready.data.bin", "Relay confirms both reservation roles are connected"),
     ("relay_data_payload.data.bin", "first encrypted payload"),
     ("relay_data_payload.data.bin", "second encrypted payload (re-uses sequence=42 fixture; live flows increment sequence)"),
     ("relay_data_close.data.bin", "normal close"),
@@ -838,8 +863,8 @@ def generated_files():
 def main():
     check_only = "--check" in sys.argv
     files = generated_files()
-    if len(FIXTURES) != 22:
-        print("error: expected 22 fixtures, got %d" % len(FIXTURES), file=sys.stderr)
+    if len(FIXTURES) != 23:
+        print("error: expected 23 fixtures, got %d" % len(FIXTURES), file=sys.stderr)
         return 1
     if check_only:
         ok = True

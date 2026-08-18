@@ -228,6 +228,8 @@ pub struct ConnectivityOffer {
     pub initiator_revision: u32,
     #[prost(message, optional, tag = "6")]
     pub initiator_snapshot: Option<DiscoverySnapshot>,
+    #[prost(string, tag = "7")]
+    pub target_device_id: String,
 }
 
 #[derive(Clone, PartialEq, Eq, Message)]
@@ -344,6 +346,8 @@ pub struct RealtimeSignal {
     pub revision: u64,
     #[prost(bytes = "vec", tag = "6")]
     pub payload: Vec<u8>,
+    #[prost(string, tag = "7")]
+    pub sender_device_id: String,
 }
 
 #[derive(Clone, PartialEq, Eq, Message)]
@@ -439,7 +443,7 @@ pub mod relay_frame {
 pub struct RelayDataFrame {
     #[prost(uint32, tag = "1")]
     pub version: u32,
-    #[prost(oneof = "relay_data_frame::Kind", tags = "10, 11, 12, 13")]
+    #[prost(oneof = "relay_data_frame::Kind", tags = "10, 11, 12, 13, 14")]
     pub kind: Option<relay_data_frame::Kind>,
 }
 
@@ -456,6 +460,8 @@ pub mod relay_data_frame {
         Ack(RelayDataAck),
         #[prost(message, tag = "13")]
         Close(RelayDataClose),
+        #[prost(message, tag = "14")]
+        Ready(RelayDataReady),
     }
 }
 
@@ -487,6 +493,12 @@ pub struct RelayDataClose {
     pub reason: u32,
     #[prost(string, tag = "2")]
     pub detail: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct RelayDataReady {
+    #[prost(string, tag = "1")]
+    pub reservation_id: String,
 }
 
 // ---------------------------------------------------------------------------

@@ -7,9 +7,9 @@
 // flow control 与 close——服务端绝不解析 encrypted_payload（ADR-017 边界）。
 //
 // 数据面连接不使用 hub peer 表，也没有 presence 租约：它是 reservation 作用域内的
-// 短命双端点连接。relayDataRegistry 负责把同一 reservation 的两个端点链接起来，之后
-// 每个端点收到的 RelayDataPayload/RelayDataAck 都被原样转发到另一端，RelayDataClose
-// 则双向关闭。
+// 短命双端点连接。relayDataRegistry 负责按 initiator/responder 角色把同一 reservation
+// 的两个端点链接起来，并在配对完成后发送 RelayDataReady；之后每个端点收到的
+// RelayDataPayload/RelayDataAck 都被原样转发到另一端，RelayDataClose 则双向关闭。
 
 package relay
 
@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -215,46 +216,129 @@ func (r *redisStore) RenewReservation(ctx context.Context, reservationID string,
 // /v2/relay/{reservation_id} —— 不透明数据面
 // ---------------------------------------------------------------------------
 
-// relayDataRegistry 把同一 reservation 的两个 /v2/relay 端点链接起来。第一个连接的
-// 端点进入 pending 等待对端；第二个连接到达时把它们互相 link，随后各自转发。任一
-// 端点关闭时 unregister 解除链接并让对端感知。
+type relayDataRole uint8
+
+const (
+	relayDataRoleInitiator relayDataRole = iota + 1
+	relayDataRoleResponder
+)
+
+type relayDataPair struct {
+	initiator *relayDataConn
+	responder *relayDataConn
+}
+
+// relayDataRegistry 把同一 reservation 的 initiator/responder 两个 /v2/relay
+// 端点链接起来。角色由首帧 token 决定，不能因为到达顺序而互换。
 type relayDataRegistry struct {
-	mutex   sync.Mutex
-	pending map[string]*relayDataConn
+	mutex        sync.Mutex
+	pairs        map[string]*relayDataPair
+	pendingPairs int
 }
 
 func newRelayDataRegistry() *relayDataRegistry {
-	return &relayDataRegistry{pending: make(map[string]*relayDataConn)}
+	return &relayDataRegistry{pairs: make(map[string]*relayDataPair)}
 }
 
-// register 登记一条已通过 Connect 校验的数据面连接。返回 false 表示 pending 容量
-// 已满且该 reservation 尚无对端，调用方应关闭该连接。
-func (r *relayDataRegistry) register(rc *relayDataConn) bool {
+// register 登记一条已通过 Connect 校验的数据面连接。
+//
+// 同角色重试会替换旧端点；只有两个角色都存在时才会按顺序排入 Ready 帧，并将
+// ready 置为 true。返回的 replaced 由调用方在解锁后关闭，避免旧连接的读循环
+// 参与新 pair 的状态变更。
+func (r *relayDataRegistry) register(rc *relayDataConn) (peer, replaced *relayDataConn, ok bool) {
 	r.mutex.Lock()
-	defer r.mutex.Unlock()
-	if other := r.pending[rc.reservationID]; other != nil {
-		// 对端已在等待：两个端点齐了，互相 link。
-		delete(r.pending, rc.reservationID)
-		rc.link(other)
-		return true
+	pair := r.pairs[rc.reservationID]
+	if pair == nil {
+		if r.pendingPairs >= maxPendingRelayDataConns {
+			r.mutex.Unlock()
+			return nil, nil, false
+		}
+		pair = &relayDataPair{}
+		r.pairs[rc.reservationID] = pair
+		r.pendingPairs++
 	}
-	if len(r.pending) >= maxPendingRelayDataConns {
-		return false
+
+	var slot **relayDataConn
+	var other *relayDataConn
+	switch rc.role {
+	case relayDataRoleInitiator:
+		slot = &pair.initiator
+		other = pair.responder
+	case relayDataRoleResponder:
+		slot = &pair.responder
+		other = pair.initiator
+	default:
+		r.mutex.Unlock()
+		return nil, nil, false
 	}
-	r.pending[rc.reservationID] = rc
-	return true
+	if *slot != nil {
+		replaced = *slot
+		// If the replaced endpoint was already paired, detach the old edge before
+		// linking the retry. Its read loop must not tear down the live opposite role.
+		if oldPeer := replaced.peerConn(); oldPeer != nil {
+			oldPeer.clearPeer()
+		}
+		replaced.clearPeer()
+		replaced.ready.Store(false)
+	}
+	*slot = rc
+
+	if pair.initiator != nil && pair.responder != nil {
+		if r.pendingPairs > 0 {
+			r.pendingPairs--
+		}
+		peer = other
+		rc.link(peer)
+		// Enqueue Ready before publishing ready=true. This makes a subsequent
+		// payload from either read loop observe that its own Ready is already
+		// ahead of business traffic in the outbound queue.
+		readyQueued := rc.enqueueReady() && peer.enqueueReady()
+		rc.ready.Store(readyQueued)
+		peer.ready.Store(readyQueued)
+	}
+	r.mutex.Unlock()
+	return peer, replaced, true
 }
 
-// unregister 在端点关闭时解除注册。若是 pending 中的等待端点直接移除；若是已链接
-// 的端点则清空双方的 peer 引用，让对端转发失败后自行关闭。
+// unregister 在端点关闭时解除注册。旧的、已经被同角色替换的连接不会触碰当前 pair。
 func (r *relayDataRegistry) unregister(rc *relayDataConn) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
-	if r.pending[rc.reservationID] == rc {
-		delete(r.pending, rc.reservationID)
+	pair := r.pairs[rc.reservationID]
+	if pair == nil {
 		return
 	}
+	wasComplete := pair.initiator != nil && pair.responder != nil
+	removed := false
+	if pair.initiator == rc {
+		pair.initiator = nil
+		removed = true
+	}
+	if pair.responder == rc {
+		pair.responder = nil
+		removed = true
+	}
+	if !removed {
+		return
+	}
+	rc.ready.Store(false)
+	other := pair.initiator
+	if other == nil {
+		other = pair.responder
+	}
+	if other != nil {
+		other.ready.Store(false)
+		other.clearPeer()
+	}
 	rc.clearPeer()
+	if pair.initiator == nil && pair.responder == nil {
+		delete(r.pairs, rc.reservationID)
+		if r.pendingPairs > 0 {
+			r.pendingPairs--
+		}
+	} else if wasComplete {
+		r.pendingPairs++
+	}
 }
 
 // relayDataConn 是 /v2/relay/{reservation_id} 的一个端点。它没有 presence 租约，
@@ -264,6 +348,7 @@ func (r *relayDataRegistry) unregister(rc *relayDataConn) {
 type relayDataConn struct {
 	reservationID string
 	res           Reservation
+	role          relayDataRole
 	registry      *relayDataRegistry
 	cache         Cache // 滑动窗口续期 reservation 存储 TTL 用
 	socket        *websocket.Conn
@@ -275,6 +360,7 @@ type relayDataConn struct {
 
 	peerMutex sync.Mutex
 	peer      *relayDataConn
+	ready     atomic.Bool
 
 	// 与 hub peer 同构的速率/积压预算字段。
 	stateMutex         sync.Mutex
@@ -332,8 +418,9 @@ func (rc *relayDataConn) peerConn() *relayDataConn {
 }
 
 // read 是数据面读循环：第一帧必须是 RelayDataConnect（校验 reservation_id + token），
-// 之后 RelayDataPayload/RelayDataAck 原样转发给对端，RelayDataClose 转发后双向关闭。
-// 任何协议违规 / 过期 / 预算超限都以 RelayDataClose(reason 1/2) 收场。
+// Relay 在两个角色都加入后发送 RelayDataReady；之后 RelayDataPayload/RelayDataAck
+// 才能原样转发给对端。RelayDataClose 转发后双向关闭。任何协议违规 / 过期 / 预算
+// 超限都以 RelayDataClose(reason 1/2) 收场。
 func (rc *relayDataConn) read() {
 	defer func() {
 		rc.close()
@@ -384,24 +471,38 @@ func (rc *relayDataConn) read() {
 				rc.sendCloseAndShutdown(2, "first frame must be relay_data_connect")
 				return
 			}
-			if !rc.acceptConnect(connect) {
+			role, ok := rc.acceptConnect(connect)
+			if !ok {
 				rc.sendCloseAndShutdown(2, "invalid reservation id or token")
 				return
 			}
+			rc.role = role
 			connected = true
-			if !rc.registry.register(rc) {
+			peer, replaced, registered := rc.registry.register(rc)
+			if replaced != nil {
+				replaced.sendCloseAndShutdown(2, "relay data connection replaced")
+			}
+			if !registered {
 				rc.sendCloseAndShutdown(2, "too many pending relay data connections")
 				return
 			}
-			// Connect 成功即活跃：续期滑动窗口。
+			if peer != nil && !rc.ready.Load() {
+				rc.sendCloseAndShutdown(2, "relay data pairing ready notification failed")
+				return
+			}
+			// Connect/Ready 成功即活跃：续期滑动窗口。
 			rc.touch(expiryTimer)
 			continue
 		}
 		switch {
 		case frame.GetPayload() != nil || frame.GetAck() != nil:
 			// opaque 转发：encrypted_payload 绝不解密/解析，Ack 仅按 sequence 转发。
+			if !rc.ready.Load() {
+				rc.sendCloseAndShutdown(2, "relay data pairing is not ready")
+				return
+			}
 			if !rc.forward(frame) {
-				rc.sendCloseAndShutdown(2, "relay peer not connected")
+				rc.sendCloseAndShutdown(2, "relay peer not ready")
 				return
 			}
 			// 数据帧即活跃证据：续期滑动窗口，否则长会话会在 lifetime+grace 后被强关。
@@ -416,6 +517,9 @@ func (rc *relayDataConn) read() {
 			if other := rc.peerConn(); other != nil {
 				other.close()
 			}
+			return
+		case frame.GetReady() != nil:
+			rc.sendCloseAndShutdown(2, "relay_data_ready is server-to-client only")
 			return
 		default:
 			rc.sendCloseAndShutdown(2, "unexpected relay data frame")
@@ -456,24 +560,42 @@ func (rc *relayDataConn) refreshTTL() time.Duration {
 	return remaining + rc.grace
 }
 
-// acceptConnect 校验首帧 RelayDataConnect：reservation_id 必须等于路径段，local_token
-// 必须匹配本端（A 或 B）的 token。
-func (rc *relayDataConn) acceptConnect(connect *v2.RelayDataConnect) bool {
+// acceptConnect 校验首帧 RelayDataConnect，并根据 token 固定端点角色。
+func (rc *relayDataConn) acceptConnect(connect *v2.RelayDataConnect) (relayDataRole, bool) {
 	if connect.ReservationId != rc.reservationID {
-		return false
+		return 0, false
 	}
-	return bytes.Equal(connect.LocalToken, rc.res.InitiatorToken) ||
-		bytes.Equal(connect.LocalToken, rc.res.ResponderToken)
+	initiator := bytes.Equal(connect.LocalToken, rc.res.InitiatorToken)
+	responder := bytes.Equal(connect.LocalToken, rc.res.ResponderToken)
+	if initiator == responder {
+		// A token that matches both sides is ambiguous and cannot establish a
+		// stable reservation role.
+		return 0, false
+	}
+	if initiator {
+		return relayDataRoleInitiator, true
+	}
+	return relayDataRoleResponder, true
 }
 
 // forward 把一帧 RelayDataFrame 编码后投递给对端端点。返回 false 表示对端未连接或
 // 编码/投递失败。
 func (rc *relayDataConn) forward(frame *v2.RelayDataFrame) bool {
 	other := rc.peerConn()
-	if other == nil {
+	if !rc.ready.Load() || other == nil || !other.ready.Load() {
 		return false
 	}
 	return other.enqueueFrame(frame)
+}
+
+// enqueueReady places the pairing acknowledgement before business frames.
+func (rc *relayDataConn) enqueueReady() bool {
+	return rc.enqueueFrame(&v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayDataFrame_Ready{Ready: &v2.RelayDataReady{
+			ReservationId: rc.reservationID,
+		}},
+	})
 }
 
 // enqueueFrame 编码并投递一帧到本连接的 outbound。

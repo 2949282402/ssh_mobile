@@ -9,7 +9,7 @@
 //! attempts and no attempt's state can leak into the next one.
 
 use crate::candidate::Candidate;
-use crate::exchange::CandidateSignal;
+use crate::exchange::{CandidateSignal, MAX_CANDIDATES_PER_SIGNAL};
 use std::collections::HashSet;
 use std::time::{Duration, SystemTime};
 
@@ -184,55 +184,71 @@ impl ConnectivityAttempt {
             .collect()
     }
 
-    /// Attempt-scoped validity gatekeeper for an incoming offer/answer.
-    ///
-    /// This replaces the v1 `PathManager::apply_remote_candidates` role: the
-    /// signal must belong to THIS attempt (`attempt_id` match), a stale epoch
-    /// must never regress the attempt, and the remote candidate set is stored
-    /// only on the attempt. Returns `Ok(false)` for a stale attempt (the caller
-    /// should ignore it), `Err` for a malformed signal, and `Ok(true)` when the
-    /// remote discovery snapshot was applied.
-    pub fn apply_signal(&mut self, signal: &CandidateSignal) -> Result<bool, String> {
-        signal.validate()?;
-        if signal.attempt_id != self.attempt_id {
-            // A signal for a different attempt is stale — never cross-attempt.
+    /// Merges a discovery snapshot into this attempt's remote candidate set.
+    /// Discovery snapshots carry already-decoded candidate advertisements, so
+    /// their candidate generation is independent from the control signal's
+    /// exchange generation. The attempt still owns epoch/revision monotonicity
+    /// and replaces removed candidates atomically.
+    pub fn apply_remote_candidates(
+        &mut self,
+        runtime_epoch: Option<u64>,
+        discovery_revision: u64,
+        candidates: Vec<Candidate>,
+    ) -> Result<bool, String> {
+        if self.state.is_terminal() {
             return Ok(false);
         }
-        let signal_epoch = signal.runtime_epoch.unwrap_or(signal.generation);
-        let signal_revision = signal.discovery_revision.unwrap_or(signal.generation);
-
-        match self.remote_runtime_epoch {
-            Some(current) if signal_epoch < current => return Ok(false),
-            Some(current) if signal_epoch > current => {
-                self.remote_runtime_epoch = Some(signal_epoch);
-                self.remote_discovery_revision = Some(signal_revision);
-                self.remote_candidates.clear();
-            }
-            Some(_) => {
-                // Same epoch: only advance the revision, never regress it.
-                if self
-                    .remote_discovery_revision
-                    .is_none_or(|current| signal_revision > current)
-                {
-                    self.remote_discovery_revision = Some(signal_revision);
-                }
-            }
-            None => {
-                self.remote_runtime_epoch = Some(signal_epoch);
-                self.remote_discovery_revision = Some(signal_revision);
-                self.remote_candidates.clear();
-            }
+        if candidates.len() > MAX_CANDIDATES_PER_SIGNAL {
+            return Err("remote candidate set exceeds the attempt limit".into());
+        }
+        let mut incoming_ids = HashSet::with_capacity(candidates.len());
+        if candidates
+            .iter()
+            .any(|candidate| !incoming_ids.insert(candidate.candidate_id.clone()))
+        {
+            return Err("remote candidate set contains duplicate ids".into());
         }
 
-        let incoming_ids = signal
-            .candidates
-            .iter()
-            .map(|candidate| candidate.candidate_id.clone())
-            .collect::<HashSet<_>>();
+        if let Some(signal_epoch) = runtime_epoch {
+            match self.remote_runtime_epoch {
+                Some(current) if signal_epoch < current => return Ok(false),
+                Some(current) if signal_epoch > current => {
+                    self.remote_runtime_epoch = Some(signal_epoch);
+                    self.remote_discovery_revision = Some(discovery_revision);
+                    self.remote_candidates.clear();
+                }
+                Some(_) => {
+                    if let Some(current_revision) = self.remote_discovery_revision {
+                        if discovery_revision < current_revision {
+                            return Ok(false);
+                        }
+                        if discovery_revision > current_revision {
+                            self.remote_discovery_revision = Some(discovery_revision);
+                        }
+                    } else {
+                        self.remote_discovery_revision = Some(discovery_revision);
+                    }
+                }
+                None => {
+                    self.remote_runtime_epoch = Some(signal_epoch);
+                    self.remote_discovery_revision = Some(discovery_revision);
+                    self.remote_candidates.clear();
+                }
+            }
+        } else if let Some(current_revision) = self.remote_discovery_revision {
+            if discovery_revision < current_revision {
+                return Ok(false);
+            }
+            if discovery_revision > current_revision {
+                self.remote_discovery_revision = Some(discovery_revision);
+            }
+        } else {
+            self.remote_discovery_revision = Some(discovery_revision);
+        }
+
         self.remote_candidates
             .retain(|candidate| incoming_ids.contains(&candidate.candidate_id));
-        for advertisement in &signal.candidates {
-            let candidate = Candidate::from_advertisement(advertisement.clone())?;
+        for candidate in candidates {
             if let Some(existing) = self
                 .remote_candidates
                 .iter_mut()
@@ -256,6 +272,31 @@ impl ConnectivityAttempt {
             }
         }
         Ok(true)
+    }
+
+    /// Attempt-scoped validity gatekeeper for an incoming offer/answer.
+    ///
+    /// This replaces the v1 `PathManager::apply_remote_candidates` role: the
+    /// signal must belong to THIS attempt (`attempt_id` match), a stale epoch
+    /// must never regress the attempt, and the remote candidate set is stored
+    /// only on the attempt. Returns `Ok(false)` for a stale attempt (the caller
+    /// should ignore it), `Err` for a malformed signal, and `Ok(true)` when the
+    /// remote discovery snapshot was applied.
+    pub fn apply_signal(&mut self, signal: &CandidateSignal) -> Result<bool, String> {
+        signal.validate()?;
+        if signal.attempt_id != self.attempt_id {
+            // A signal for a different attempt is stale — never cross-attempt.
+            return Ok(false);
+        }
+        let signal_epoch = signal.runtime_epoch.unwrap_or(signal.generation);
+        let signal_revision = signal.discovery_revision.unwrap_or(signal.generation);
+
+        let candidates = signal
+            .candidates
+            .iter()
+            .map(|candidate| Candidate::from_advertisement(candidate.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.apply_remote_candidates(Some(signal_epoch), signal_revision, candidates)
     }
 }
 
@@ -407,5 +448,73 @@ mod tests {
         assert_eq!(pool.len(), 2);
         assert_eq!(pool[0].endpoint.port(), 41020);
         assert_eq!(pool[1].endpoint.port(), 40002);
+    }
+
+    #[test]
+    fn discovery_snapshot_merge_replaces_removed_candidates_and_keeps_epoch_monotonic() {
+        let first = Candidate::new(
+            "192.168.1.20:41020".parse().unwrap(),
+            CandidateKind::Lan,
+            "wifi".into(),
+        );
+        let second = Candidate::new(
+            "198.51.100.20:42020".parse().unwrap(),
+            CandidateKind::PublicIpv6,
+            "public".into(),
+        );
+        let mut attempt = attempt("attempt-a");
+        assert!(attempt
+            .apply_remote_candidates(Some(7), 1, vec![first.clone(), second.clone()])
+            .unwrap());
+        assert_eq!(attempt.remote_candidates().len(), 2);
+
+        assert!(attempt
+            .apply_remote_candidates(Some(7), 2, vec![second.clone()])
+            .unwrap());
+        assert_eq!(attempt.remote_candidates().len(), 1);
+        assert_eq!(
+            attempt.remote_candidates()[0].candidate_id,
+            second.candidate_id
+        );
+
+        assert!(!attempt
+            .apply_remote_candidates(Some(6), 3, vec![first])
+            .unwrap());
+        assert_eq!(attempt.remote_candidates().len(), 1);
+        assert_eq!(attempt.remote_discovery_revision(), Some(2));
+    }
+
+    #[test]
+    fn older_revision_and_terminal_attempt_cannot_update_candidates() {
+        let first = Candidate::new(
+            "192.168.1.20:41020".parse().unwrap(),
+            CandidateKind::Lan,
+            "wifi".into(),
+        );
+        let replacement = Candidate::new(
+            "198.51.100.20:42020".parse().unwrap(),
+            CandidateKind::PublicIpv6,
+            "public".into(),
+        );
+        let mut attempt = attempt("attempt-a");
+        assert!(attempt
+            .apply_remote_candidates(Some(7), 2, vec![first.clone()])
+            .unwrap());
+        assert!(!attempt
+            .apply_remote_candidates(Some(7), 1, vec![replacement.clone()])
+            .unwrap());
+        assert_eq!(
+            attempt.remote_candidates()[0].candidate_id,
+            first.candidate_id
+        );
+
+        assert!(attempt.set_state(ConnectivityAttemptState::Succeeded));
+        assert!(!attempt
+            .apply_remote_candidates(Some(8), 3, vec![replacement])
+            .unwrap());
+        assert_eq!(
+            attempt.remote_candidates()[0].candidate_id,
+            first.candidate_id
+        );
     }
 }

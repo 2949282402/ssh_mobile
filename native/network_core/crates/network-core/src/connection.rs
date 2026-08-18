@@ -296,10 +296,12 @@ impl GenericConnection {
 ///
 /// The byte-stream frames (`StreamOpen`/`StreamBytes`/`StreamClose`) are the
 /// ReliableStream carrier (§17): multiple byte streams multiplex over one
-/// framed ConnectionSession. `StreamBytes` payload is
-/// `stream_id(u16) + stream_seq(u64) + len(u32) + data`; the other two carry
-/// `stream_id(u16) [+ service]`. Their inner parsing lives in `crate::stream`
-/// so a malformed stream frame only fails that stream, never the route.
+/// framed ConnectionSession. Each stream payload starts with
+/// `opener_len(u8) + opener_peer_id(UTF-8) + stream_id(u16)`; `StreamBytes`
+/// then carries `stream_seq(u64) + len(u32) + data`, while `StreamOpen` adds
+/// the service hint and `StreamClose` ends at the stream id. Their inner
+/// parsing lives in `crate::stream` so a malformed stream frame only fails
+/// that stream, never the route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GenericFrameKind {
     DataMessage = 1,
