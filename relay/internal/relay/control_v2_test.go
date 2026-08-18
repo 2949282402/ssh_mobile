@@ -880,6 +880,82 @@ func TestRelayDataSameRoleRetryReplacesOldEndpoint(t *testing.T) {
 	}
 }
 
+func TestRelayDataPairedDisconnectRequiresFreshPair(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	ctx := context.Background()
+	reservationID := hex.EncodeToString(randomBytes(16))
+	initiatorToken := randomBytes(32)
+	responderToken := randomBytes(32)
+	if err := server.cache.CreateReservation(ctx, Reservation{
+		ReservationID:     reservationID,
+		InitiatorDeviceID: "device-a",
+		ResponderDeviceID: "device-b",
+		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		InitiatorToken:    initiatorToken,
+		ResponderToken:    responderToken,
+		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	connect := func(conn *websocket.Conn, token []byte) {
+		t.Helper()
+		writeV2DataFrame(t, conn, &v2.RelayDataFrame{
+			Version: v2.RELAY_V2_VERSION,
+			Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{
+				ReservationId: reservationID,
+				LocalToken:    token,
+			}},
+		})
+	}
+
+	a1 := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(initiatorToken))
+	b1 := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(responderToken))
+	defer a1.Close()
+	defer b1.Close()
+	connect(a1, initiatorToken)
+	waitRelayPending(t, server, reservationID, true)
+	connect(b1, responderToken)
+	waitRelayPending(t, server, reservationID, false)
+	readRelayDataReady(t, a1, reservationID)
+	readRelayDataReady(t, b1, reservationID)
+
+	if err := a1.Close(); err != nil {
+		t.Fatal(err)
+	}
+	closeFrame := readV2DataFrameDeadline(t, b1, 2*time.Second)
+	if closeFrame == nil || closeFrame.GetClose() == nil || closeFrame.GetClose().Reason != 2 {
+		t.Fatalf("paired peer should receive relay_data_close after disconnect, got %+v", closeFrame)
+	}
+	waitRelayPending(t, server, reservationID, false)
+
+	a2 := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(initiatorToken))
+	defer a2.Close()
+	connect(a2, initiatorToken)
+	waitRelayPending(t, server, reservationID, true)
+	if frame := readV2DataFrameDeadline(t, a2, 250*time.Millisecond); frame != nil {
+		t.Fatalf("replacement initiator must wait for a fresh responder, got %+v", frame)
+	}
+
+	b2 := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(responderToken))
+	defer b2.Close()
+	connect(b2, responderToken)
+	waitRelayPending(t, server, reservationID, false)
+	readRelayDataReady(t, a2, reservationID)
+	readRelayDataReady(t, b2, reservationID)
+
+	writeV2DataFrame(t, a2, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayDataFrame_Payload{Payload: &v2.RelayDataPayload{
+			Sequence:         8,
+			EncryptedPayload: []byte("fresh-pair"),
+		}},
+	})
+	frame := readV2DataFrame(t, b2)
+	if frame == nil || frame.GetPayload() == nil || string(frame.GetPayload().EncryptedPayload) != "fresh-pair" {
+		t.Fatalf("fresh pair should forward payload, got %+v", frame)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // /v2/relay 校验
 // ---------------------------------------------------------------------------

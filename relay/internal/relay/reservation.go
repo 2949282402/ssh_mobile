@@ -242,10 +242,11 @@ func newRelayDataRegistry() *relayDataRegistry {
 
 // register 登记一条已通过 Connect 校验的数据面连接。
 //
-// 同角色重试会替换旧端点；只有两个角色都存在时才会按顺序排入 Ready 帧，并将
-// ready 置为 true。返回的 replaced 由调用方在解锁后关闭，避免旧连接的读循环
+// 同角色重试会替换旧端点；已经完成配对的 reservation 则整体拆除旧 pair，要求
+// 两端重新完成 Connect/Ready。只有两个角色都存在时才会按顺序排入 Ready 帧，并
+// 将 ready 置为 true。返回的 replaced 由调用方在解锁后关闭，避免旧连接的读循环
 // 参与新 pair 的状态变更。
-func (r *relayDataRegistry) register(rc *relayDataConn) (peer, replaced *relayDataConn, ok bool) {
+func (r *relayDataRegistry) register(rc *relayDataConn) (peer *relayDataConn, replaced []*relayDataConn, ok bool) {
 	r.mutex.Lock()
 	pair := r.pairs[rc.reservationID]
 	if pair == nil {
@@ -272,14 +273,34 @@ func (r *relayDataRegistry) register(rc *relayDataConn) (peer, replaced *relayDa
 		return nil, nil, false
 	}
 	if *slot != nil {
-		replaced = *slot
-		// If the replaced endpoint was already paired, detach the old edge before
-		// linking the retry. Its read loop must not tear down the live opposite role.
-		if oldPeer := replaced.peerConn(); oldPeer != nil {
-			oldPeer.clearPeer()
+		old := *slot
+		if pair.initiator != nil && pair.responder != nil {
+			// A completed pair is a single Ready handshake. A same-role retry
+			// therefore invalidates both old endpoints instead of reusing the
+			// opposite endpoint and delivering it a second Ready frame.
+			oldInitiator := pair.initiator
+			oldResponder := pair.responder
+			oldInitiator.clearPeer()
+			oldResponder.clearPeer()
+			oldInitiator.ready.Store(false)
+			oldResponder.ready.Store(false)
+			replaced = append(replaced, oldInitiator, oldResponder)
+			delete(r.pairs, rc.reservationID)
+			pair = &relayDataPair{}
+			r.pairs[rc.reservationID] = pair
+			r.pendingPairs++
+			switch rc.role {
+			case relayDataRoleInitiator:
+				slot = &pair.initiator
+			case relayDataRoleResponder:
+				slot = &pair.responder
+			}
+			other = nil
+		} else {
+			replaced = append(replaced, old)
+			old.clearPeer()
+			old.ready.Store(false)
 		}
-		replaced.clearPeer()
-		replaced.ready.Store(false)
 	}
 	*slot = rc
 
@@ -331,13 +352,13 @@ func (r *relayDataRegistry) unregister(rc *relayDataConn) {
 		other.clearPeer()
 	}
 	rc.clearPeer()
-	if pair.initiator == nil && pair.responder == nil {
+	if wasComplete {
+		delete(r.pairs, rc.reservationID)
+	} else if pair.initiator == nil && pair.responder == nil {
 		delete(r.pairs, rc.reservationID)
 		if r.pendingPairs > 0 {
 			r.pendingPairs--
 		}
-	} else if wasComplete {
-		r.pendingPairs++
 	}
 }
 
@@ -479,8 +500,8 @@ func (rc *relayDataConn) read() {
 			rc.role = role
 			connected = true
 			peer, replaced, registered := rc.registry.register(rc)
-			if replaced != nil {
-				replaced.sendCloseAndShutdown(2, "relay data connection replaced")
+			for _, old := range replaced {
+				old.sendCloseAndShutdown(2, "relay data connection replaced")
 			}
 			if !registered {
 				rc.sendCloseAndShutdown(2, "too many pending relay data connections")
