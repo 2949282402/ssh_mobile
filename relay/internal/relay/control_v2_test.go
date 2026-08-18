@@ -932,9 +932,10 @@ func TestRelayDataPairedDisconnectRequiresFreshPair(t *testing.T) {
 	defer a2.Close()
 	connect(a2, initiatorToken)
 	waitRelayPending(t, server, reservationID, true)
-	if frame := readV2DataFrameDeadline(t, a2, 250*time.Millisecond); frame != nil {
-		t.Fatalf("replacement initiator must wait for a fresh responder, got %+v", frame)
-	}
+	// The pending registry state above is the authoritative assertion that A2
+	// cannot receive Ready before B2 joins. Do not perform a timed read here:
+	// gorilla/websocket records a read timeout as permanent, while this same
+	// connection must be read after B2 completes the fresh pairing.
 
 	b2 := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(responderToken))
 	defer b2.Close()
