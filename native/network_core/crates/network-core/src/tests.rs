@@ -69,11 +69,17 @@ impl Drop for FakeRelayV2Server {
 /// reservation_id → (initiator_token, responder_token) + 已注册端点/缓冲。
 struct RelayV2DataRegistry {
     reservations: HashMap<String, (Vec<u8>, Vec<u8>)>,
-    /// reservation_id → 已注册端点 (conn_id, outbound)。
-    endpoints: HashMap<String, Vec<(u64, mpsc::Sender<Message>)>>,
+    /// reservation_id → 已注册端点。
+    endpoints: HashMap<String, Vec<RelayV2DataEndpoint>>,
     /// reservation_id → 对端未链接时缓冲的帧。
     buffered: HashMap<String, Vec<Message>>,
     next_conn_id: u64,
+}
+
+struct RelayV2DataEndpoint {
+    conn_id: u64,
+    initiator: bool,
+    outbound: mpsc::Sender<Message>,
 }
 
 impl RelayV2DataRegistry {
@@ -86,7 +92,12 @@ impl RelayV2DataRegistry {
         }
     }
 
-    fn register(&mut self, reservation_id: &str, outbound: mpsc::Sender<Message>) -> u64 {
+    fn register(
+        &mut self,
+        reservation_id: &str,
+        initiator: bool,
+        outbound: mpsc::Sender<Message>,
+    ) -> (u64, Option<Vec<mpsc::Sender<Message>>>) {
         let conn_id = self.next_conn_id;
         self.next_conn_id += 1;
         let endpoints = self
@@ -99,8 +110,21 @@ impl RelayV2DataRegistry {
                 let _ = outbound.try_send(message);
             }
         }
-        endpoints.push((conn_id, outbound));
-        conn_id
+        endpoints.push(RelayV2DataEndpoint {
+            conn_id,
+            initiator,
+            outbound,
+        });
+        let ready_targets = (endpoints.len() == 2
+            && endpoints.iter().any(|endpoint| endpoint.initiator)
+            && endpoints.iter().any(|endpoint| !endpoint.initiator))
+        .then(|| {
+            endpoints
+                .iter()
+                .map(|endpoint| endpoint.outbound.clone())
+                .collect()
+        });
+        (conn_id, ready_targets)
     }
 
     /// 把一帧从 `from_id` 转发给同一 reservation 的对端；对端未链接则缓冲。
@@ -109,8 +133,8 @@ impl RelayV2DataRegistry {
         let target = endpoints.and_then(|endpoints| {
             endpoints
                 .iter()
-                .find(|(id, _)| *id != from_id)
-                .map(|(_, sender)| sender.clone())
+                .find(|endpoint| endpoint.conn_id != from_id)
+                .map(|endpoint| endpoint.outbound.clone())
         });
         match target {
             Some(target) => {
@@ -214,6 +238,11 @@ async fn run_data_connection(
     {
         return;
     }
+    let initiator = connect.local_token == initiator_token;
+    let responder = connect.local_token == responder_token;
+    if initiator == responder {
+        return;
+    }
     let (tx, mut rx) = mpsc::channel::<Message>(64);
     let mut writer_for_task = writer;
     let writer_task = tokio::spawn(async move {
@@ -223,7 +252,25 @@ async fn run_data_connection(
             }
         }
     });
-    let conn_id = registry.lock().await.register(&reservation_id, tx);
+    let (conn_id, ready_targets) = registry
+        .lock()
+        .await
+        .register(&reservation_id, initiator, tx);
+    if let Some(ready_targets) = ready_targets {
+        let ready = Message::Binary(
+            encode_data_frame(&RelayDataFrame {
+                version: RELAY_V2_VERSION,
+                kind: Some(relay_data_frame::Kind::Ready(RelayDataReady {
+                    reservation_id: reservation_id.clone(),
+                })),
+            })
+            .expect("encode Ready frame")
+            .into(),
+        );
+        for target in ready_targets {
+            let _ = target.send(ready.clone()).await;
+        }
+    }
     let writer_task = Some(writer_task);
     // 阶段二：转发 Payload/Ack/Close 到对端。
     while let Some(result) = reader.next().await {
@@ -299,14 +346,12 @@ fn relay_data_clients_forward_envelopes_over_reservation() {
             [12u8; 32],
         )
         .expect("client B");
-        client_a
-            .connect_reservation()
-            .await
-            .expect("connect A reservation");
-        client_b
-            .connect_reservation()
-            .await
-            .expect("connect B reservation");
+        let (result_a, result_b) = tokio::join!(
+            client_a.connect_reservation(),
+            client_b.connect_reservation()
+        );
+        result_a.expect("connect A reservation");
+        result_b.expect("connect B reservation");
         let mut events_b = client_b.take_events().expect("B events");
 
         // A 发送一个不透明信封，B 应原样收到（服务器不解密）。
@@ -378,12 +423,34 @@ fn relay_data_reservations_for_two_peers_coexist_and_close_independently() {
             expires_at_ms: 0,
             local_token: token_c.to_vec(),
         };
-        let data_b = crate::relay::connect_initiator_relay_data(&state, "peer-b", reserve_b)
-            .await
-            .expect("connect peer-b reservation");
-        let data_c = crate::relay::connect_initiator_relay_data(&state, "peer-c", reserve_c)
-            .await
-            .expect("connect peer-c reservation");
+        let mut responder_b = RelayDataClient::new(
+            reserve_b.relay_data_endpoint.clone(),
+            reserve_b.reservation_id.clone(),
+            vec![0u8; 32],
+            "credential".into(),
+            [12u8; 32],
+        )
+        .expect("responder B client");
+        let mut responder_c = RelayDataClient::new(
+            reserve_c.relay_data_endpoint.clone(),
+            reserve_c.reservation_id.clone(),
+            vec![0u8; 32],
+            "credential".into(),
+            [13u8; 32],
+        )
+        .expect("responder C client");
+        let (responder_b_result, data_b_result) = tokio::join!(
+            responder_b.connect_reservation(),
+            crate::relay::connect_initiator_relay_data(&state, "peer-b", reserve_b)
+        );
+        responder_b_result.expect("connect responder B reservation");
+        let data_b = data_b_result.expect("connect peer-b reservation");
+        let (responder_c_result, data_c_result) = tokio::join!(
+            responder_c.connect_reservation(),
+            crate::relay::connect_initiator_relay_data(&state, "peer-c", reserve_c)
+        );
+        responder_c_result.expect("connect responder C reservation");
+        let data_c = data_c_result.expect("connect peer-c reservation");
 
         // 关键回归：连接 peer-c 之后 peer-b 的数据面连接必须仍然存活（旧单 slot
         // 实现会在连接 C 时 .replace 并 request_disconnect，切断 peer-b 在途传输）。

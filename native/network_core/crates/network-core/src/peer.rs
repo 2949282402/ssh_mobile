@@ -824,50 +824,50 @@ async fn connect_generic_candidates(
                 break;
             }
             let candidate_endpoint = candidate.endpoint;
-            for websocket in [false, true] {
-                let identity = Arc::clone(&identity);
-                let peer_id_for_task = peer_id.clone();
-                let error_peer_id = peer_id.clone();
-                let session_binding = session_binding.clone();
-                let state = Arc::clone(&state);
-                attempts.spawn(async move {
-                    let operation = async move {
-                        if websocket {
+            let identity = Arc::clone(&identity);
+            let peer_id_for_task = peer_id.clone();
+            let error_peer_id = peer_id.clone();
+            let session_binding = session_binding.clone();
+            let state = Arc::clone(&state);
+            attempts.spawn(async move {
+                let operation = async move {
+                    match connect_tcp_route(
+                        candidate_endpoint,
+                        Arc::clone(&identity),
+                        expected_peer_public_key,
+                        peer_id_for_task.clone(),
+                        session_binding.clone(),
+                        Arc::clone(&state),
+                        expected_session_id,
+                    )
+                    .await
+                    {
+                        Ok(route) => Ok(route),
+                        Err(_) => {
                             connect_websocket_route(
                                 candidate_endpoint,
                                 identity,
                                 expected_peer_public_key,
-                                peer_id_for_task.clone(),
-                                session_binding,
-                                state,
-                                expected_session_id,
-                            )
-                            .await
-                        } else {
-                            connect_tcp_route(
-                                candidate_endpoint,
-                                identity,
-                                expected_peer_public_key,
-                                peer_id_for_task.clone(),
+                                peer_id_for_task,
                                 session_binding,
                                 state,
                                 expected_session_id,
                             )
                             .await
                         }
-                    };
-                    tokio::time::timeout(candidate_window, operation)
-                        .await
-                        .unwrap_or_else(|_| {
-                            Err(protocol_error_with_peer(
-                                NetworkErrorCode::Timeout,
-                                "generic candidate deadline elapsed",
-                                "connect",
-                                &error_peer_id,
-                            ))
-                        })
-                });
-            }
+                    }
+                };
+                tokio::time::timeout(candidate_window, operation)
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(protocol_error_with_peer(
+                            NetworkErrorCode::Timeout,
+                            "generic candidate deadline elapsed",
+                            "connect",
+                            &error_peer_id,
+                        ))
+                    })
+            });
             next_launch_at = Instant::now() + CANDIDATE_STAGGER;
             continue;
         }

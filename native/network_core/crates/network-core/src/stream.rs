@@ -894,6 +894,25 @@ async fn stream_opener_peer_id(
     }
 }
 
+/// Resolves the opener for an FFI command against the stream registry.  A
+/// command can target either a locally opened stream or a stream opened by the
+/// remote peer, so assuming `Local` would reject valid reverse-direction
+/// traffic.
+async fn command_stream_opener(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    stream_id: u16,
+) -> Result<StreamOpener, StreamError> {
+    let manager = state.stream_manager(peer_id).await;
+    if manager.is_open(StreamOpener::Local, stream_id).await {
+        Ok(StreamOpener::Local)
+    } else if manager.is_open(StreamOpener::Remote, stream_id).await {
+        Ok(StreamOpener::Remote)
+    } else {
+        Err(StreamError::NotFound)
+    }
+}
+
 async fn inbound_stream_opener(
     state: &Arc<RuntimeState>,
     peer_id: &str,
@@ -999,7 +1018,8 @@ pub(crate) async fn send_stream(
     stream_id: u16,
     data: &[u8],
 ) -> Result<(), StreamError> {
-    send_stream_with_opener(state, peer_id, StreamOpener::Local, stream_id, data).await
+    let opener = command_stream_opener(state, peer_id, stream_id).await?;
+    send_stream_with_opener(state, peer_id, opener, stream_id, data).await
 }
 
 async fn send_stream_with_opener(
@@ -1088,7 +1108,8 @@ pub(crate) async fn close_stream(
     peer_id: &str,
     stream_id: u16,
 ) -> Result<(), StreamError> {
-    close_stream_with_opener(state, peer_id, StreamOpener::Local, stream_id).await
+    let opener = command_stream_opener(state, peer_id, stream_id).await?;
+    close_stream_with_opener(state, peer_id, opener, stream_id).await
 }
 
 async fn close_stream_with_opener(

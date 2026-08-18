@@ -1240,7 +1240,7 @@ mod tests {
 
     #[test]
     fn direct_candidates_are_ranked_before_the_staggered_race() {
-        let mut candidates = vec![
+        let mut candidates = [
             Candidate::new(
                 "198.51.100.4:41004".parse().unwrap(),
                 CandidateKind::ServerReflexive,

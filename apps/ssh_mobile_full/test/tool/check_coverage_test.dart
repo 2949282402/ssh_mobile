@@ -29,18 +29,8 @@ void main() {
 
   test('deduplicates the same source lines across shards and unions hits', () {
     final summary = summarizeLcovFiles([
-      const [
-        'SF:lib/foo.dart',
-        'DA:10,1',
-        'DA:11,0',
-        'end_of_record',
-      ],
-      const [
-        'SF:lib/foo.dart',
-        'DA:10,0',
-        'DA:11,1',
-        'end_of_record',
-      ],
+      const ['SF:lib/foo.dart', 'DA:10,1', 'DA:11,0', 'end_of_record'],
+      const ['SF:lib/foo.dart', 'DA:10,0', 'DA:11,1', 'end_of_record'],
     ]);
 
     expect(summary.linesFound, 2);
@@ -50,18 +40,8 @@ void main() {
 
   test('deduplicates partially overlapping source line sets', () {
     final summary = summarizeLcovFiles([
-      const [
-        'SF:lib/foo.dart',
-        'DA:10,1',
-        'DA:11,1',
-        'end_of_record',
-      ],
-      const [
-        'SF:lib/foo.dart',
-        'DA:11,0',
-        'DA:12,1',
-        'end_of_record',
-      ],
+      const ['SF:lib/foo.dart', 'DA:10,1', 'DA:11,1', 'end_of_record'],
+      const ['SF:lib/foo.dart', 'DA:11,0', 'DA:12,1', 'end_of_record'],
     ]);
 
     expect(summary.linesFound, 3);

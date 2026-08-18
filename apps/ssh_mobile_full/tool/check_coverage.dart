@@ -81,9 +81,7 @@ CoverageSummary summarizeLcovFiles(Iterable<Iterable<String>> files) {
         final lineNumber = int.tryParse(fields[0]);
         final executionCount = int.tryParse(fields[1]);
         final source = currentSource;
-        if (source == null ||
-            lineNumber == null ||
-            executionCount == null) {
+        if (source == null || lineNumber == null || executionCount == null) {
           continue;
         }
 

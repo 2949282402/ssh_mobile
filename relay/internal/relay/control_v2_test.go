@@ -732,8 +732,31 @@ func TestRelayDataReadyRequiresBothRoles(t *testing.T) {
 	waitRelayPending(t, server, reservationID, true)
 	// Simulate a delayed responder. The pending initiator must not observe a
 	// setup acknowledgement while the other role is absent.
-	if frame := readV2DataFrameDeadline(t, dataA, 250*time.Millisecond); frame != nil {
-		t.Fatalf("initiator received data before responder joined: %+v", frame)
+	type dataReadResult struct {
+		frame *v2.RelayDataFrame
+		err   error
+	}
+	initiatorRead := make(chan dataReadResult, 1)
+	go func() {
+		kind, data, err := dataA.ReadMessage()
+		if err != nil {
+			initiatorRead <- dataReadResult{err: err}
+			return
+		}
+		if kind != websocket.BinaryMessage {
+			initiatorRead <- dataReadResult{err: fmt.Errorf("unexpected message type %d", kind)}
+			return
+		}
+		frame, err := v2.DecodeData(data)
+		initiatorRead <- dataReadResult{frame: frame, err: err}
+	}()
+	select {
+	case result := <-initiatorRead:
+		if result.err != nil {
+			t.Fatalf("initiator read failed before responder joined: %v", result.err)
+		}
+		t.Fatalf("initiator received data before responder joined: %+v", result.frame)
+	case <-time.After(250 * time.Millisecond):
 	}
 
 	time.Sleep(500 * time.Millisecond)
@@ -747,7 +770,17 @@ func TestRelayDataReadyRequiresBothRoles(t *testing.T) {
 		}},
 	})
 	waitRelayPending(t, server, reservationID, false)
-	readRelayDataReady(t, dataA, reservationID)
+	select {
+	case result := <-initiatorRead:
+		if result.err != nil {
+			t.Fatalf("initiator failed waiting for Ready: %v", result.err)
+		}
+		if result.frame == nil || result.frame.GetReady() == nil || result.frame.GetReady().ReservationId != reservationID {
+			t.Fatalf("expected relay_data_ready for %s, got %+v", reservationID, result.frame)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("initiator did not receive Ready after responder joined")
+	}
 	readRelayDataReady(t, dataB, reservationID)
 
 	writeV2DataFrame(t, dataA, &v2.RelayDataFrame{
