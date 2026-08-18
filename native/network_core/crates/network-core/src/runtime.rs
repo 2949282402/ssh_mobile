@@ -219,7 +219,14 @@ impl RuntimeState {
         // §17/§21：ConnectionSession 销毁时关闭该 peer 的所有 ReliableStream，
         // 并向应用发布 SshStreamClosed（SSH 不做透明恢复，客户端自行重连）。
         if let Some(manager) = self.reliable_streams.write().await.remove(peer_id) {
-            manager.close_all(peer_id).await;
+            let local_opener_device_id = self
+                .identity
+                .read()
+                .await
+                .as_ref()
+                .map(|identity| identity.device_id.clone())
+                .unwrap_or_default();
+            manager.close_all(peer_id, &local_opener_device_id).await;
         }
         // §19/§20 业务状态（pending / dedup / ordered）不属于 Session：transport
         // 丢失或 Session 被替换时**不得**清理 Delivery 的接收端去重/有序状态，

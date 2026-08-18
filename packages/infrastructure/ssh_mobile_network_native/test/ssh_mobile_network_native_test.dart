@@ -302,7 +302,7 @@ void main() {
     final open = NativeNetworkProtocol.sshStreamOpenCommand(
       commandId: 'open-1',
       peerId: 'peer-a',
-      streamId: 7,
+      handle: const NativeStreamHandle(openerDeviceId: 'device-a', streamId: 7),
       service: 'ssh',
     );
     expect(open, isNotEmpty);
@@ -312,7 +312,7 @@ void main() {
     final data = NativeNetworkProtocol.sshStreamDataCommand(
       commandId: 'data-1',
       peerId: 'peer-a',
-      streamId: 7,
+      handle: const NativeStreamHandle(openerDeviceId: 'device-a', streamId: 7),
       data: Uint8List.fromList([0xde, 0xad, 0xbe, 0xef]),
     );
     expect(data, isNotEmpty);
@@ -323,7 +323,7 @@ void main() {
     final close = NativeNetworkProtocol.sshStreamCloseCommand(
       commandId: 'close-1',
       peerId: 'peer-a',
-      streamId: 7,
+      handle: const NativeStreamHandle(openerDeviceId: 'device-a', streamId: 7),
     );
     expect(close, isNotEmpty);
     expect(close, contains(0xda)); // field 27 key prefix
@@ -332,7 +332,9 @@ void main() {
   test('SSH stream data received event decodes from tag 26', () {
     final nested = <int>[
       0x0a, 0x06, ...'peer-a'.codeUnits, // peer_id = peer-a
-      0x10, 0x07, // stream_id = 7
+      0x12, 0x0c, // handle
+      0x0a, 0x08, ...'device-a'.codeUnits,
+      0x10, 0x07,
       0x1a, 0x04, 0x01, 0x02, 0x03, 0x04, // data
     ];
     final frame = Uint8List.fromList(<int>[
@@ -353,12 +355,20 @@ void main() {
     expect(event, isA<NativeSshStreamDataReceivedEvent>());
     final stream = event! as NativeSshStreamDataReceivedEvent;
     expect(stream.peerId, 'peer-a');
-    expect(stream.streamId, 7);
+    expect(
+      stream.handle,
+      const NativeStreamHandle(openerDeviceId: 'device-a', streamId: 7),
+    );
     expect(stream.data, orderedEquals([1, 2, 3, 4]));
   });
 
   test('SSH stream closed event decodes from tag 27', () {
-    final nested = <int>[0x0a, 0x06, ...'peer-a'.codeUnits, 0x10, 0x07];
+    final nested = <int>[
+      0x0a, 0x06, ...'peer-a'.codeUnits,
+      0x12, 0x0c, // handle
+      0x0a, 0x08, ...'device-a'.codeUnits,
+      0x10, 0x07,
+    ];
     final frame = Uint8List.fromList(<int>[
       0x0a,
       0x03,
@@ -377,7 +387,10 @@ void main() {
     expect(event, isA<NativeSshStreamClosedEvent>());
     final closed = event! as NativeSshStreamClosedEvent;
     expect(closed.peerId, 'peer-a');
-    expect(closed.streamId, 7);
+    expect(
+      closed.handle,
+      const NativeStreamHandle(openerDeviceId: 'device-a', streamId: 7),
+    );
   });
 
   test('SSH stream commands reject invalid stream ids and services', () {
@@ -385,7 +398,10 @@ void main() {
       () => NativeNetworkProtocol.sshStreamOpenCommand(
         commandId: 'c',
         peerId: 'peer-a',
-        streamId: 0,
+        handle: const NativeStreamHandle(
+          openerDeviceId: 'device-a',
+          streamId: 0,
+        ),
       ),
       throwsArgumentError,
     );
@@ -393,7 +409,10 @@ void main() {
       () => NativeNetworkProtocol.sshStreamOpenCommand(
         commandId: 'c',
         peerId: 'peer-a',
-        streamId: 7,
+        handle: const NativeStreamHandle(
+          openerDeviceId: 'device-a',
+          streamId: 7,
+        ),
         service: '',
       ),
       throwsArgumentError,

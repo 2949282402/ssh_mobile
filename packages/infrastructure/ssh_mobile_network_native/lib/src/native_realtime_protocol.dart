@@ -19,6 +19,7 @@ const _maxEventBytes = 384 * 1024;
 const _maxStreamServiceBytes = 128;
 const _maxStreamId = 0xffff;
 const _maxStreamDataBytes = 384 * 1024;
+const _maxStreamHandleBytes = _maxPeerIdBytes + 16;
 
 /// Native WebRTC Realtime session lifecycle states.
 enum NativeRealtimeSessionState {
@@ -248,6 +249,32 @@ final class NativeRealtimeSignalEvent extends NativeNetworkEvent {
   final Uint8List payload;
 }
 
+/// Stable business identity for a logical ReliableStream.
+///
+/// `streamId` is only unique within the opener device namespace.
+final class NativeStreamHandle {
+  /// Creates a logical stream handle.
+  const NativeStreamHandle({
+    required this.openerDeviceId,
+    required this.streamId,
+  });
+
+  /// Device ID of the side that opened the logical stream.
+  final String openerDeviceId;
+
+  /// Numeric stream ID within the opener device namespace.
+  final int streamId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is NativeStreamHandle &&
+      other.openerDeviceId == openerDeviceId &&
+      other.streamId == streamId;
+
+  @override
+  int get hashCode => Object.hash(openerDeviceId, streamId);
+}
+
 /// ReliableStream 收到对端字节后发布的事件（network-protocol tag 26）。
 final class NativeSshStreamDataReceivedEvent extends NativeNetworkEvent {
   /// Creates an SSH stream data event.
@@ -256,15 +283,21 @@ final class NativeSshStreamDataReceivedEvent extends NativeNetworkEvent {
     required super.timestampMs,
     required super.protocolVersion,
     required this.peerId,
-    required this.streamId,
+    required this.handle,
     required Uint8List data,
   }) : data = Uint8List.fromList(data);
 
   /// Remote peer identifier.
   final String peerId;
 
-  /// Logical ReliableStream identifier assigned by the opening side.
-  final int streamId;
+  /// Stable identity of the logical stream.
+  final NativeStreamHandle handle;
+
+  /// Opener device ID, retained as a convenience view of [handle].
+  String get openerDeviceId => handle.openerDeviceId;
+
+  /// Logical stream identifier, retained as a convenience view of [handle].
+  int get streamId => handle.streamId;
 
   /// Opaque SSH/SFTP protocol bytes.
   final Uint8List data;
@@ -278,14 +311,20 @@ final class NativeSshStreamClosedEvent extends NativeNetworkEvent {
     required super.timestampMs,
     required super.protocolVersion,
     required this.peerId,
-    required this.streamId,
+    required this.handle,
   });
 
   /// Remote peer identifier.
   final String peerId;
 
-  /// Logical ReliableStream identifier.
-  final int streamId;
+  /// Stable identity of the logical stream.
+  final NativeStreamHandle handle;
+
+  /// Opener device ID, retained as a convenience view of [handle].
+  String get openerDeviceId => handle.openerDeviceId;
+
+  /// Logical stream identifier, retained as a convenience view of [handle].
+  int get streamId => handle.streamId;
 }
 
 /// Bounded Protobuf command/event codec for the native Realtime API.
@@ -368,19 +407,19 @@ final class NativeNetworkProtocol {
   static Uint8List sshStreamOpenCommand({
     required String commandId,
     required String peerId,
-    required int streamId,
+    required NativeStreamHandle handle,
     String service = 'ssh',
   }) {
     _validateCommandId(commandId);
     _validatePeerId(peerId);
-    _validateStreamId(streamId);
+    _validateStreamHandle(handle);
     _validateStreamService(service);
     return _command(
       commandId,
       25,
       (_ProtoWriter()
             ..string(1, peerId)
-            ..varint(2, streamId)
+            ..message(2, _encodeStreamHandle(handle))
             ..string(3, service))
           .takeBytes(),
     );
@@ -390,12 +429,12 @@ final class NativeNetworkProtocol {
   static Uint8List sshStreamDataCommand({
     required String commandId,
     required String peerId,
-    required int streamId,
+    required NativeStreamHandle handle,
     required Uint8List data,
   }) {
     _validateCommandId(commandId);
     _validatePeerId(peerId);
-    _validateStreamId(streamId);
+    _validateStreamHandle(handle);
     if (data.length > _maxStreamDataBytes) {
       throw ArgumentError.value(
         data.length,
@@ -408,7 +447,7 @@ final class NativeNetworkProtocol {
       26,
       (_ProtoWriter()
             ..string(1, peerId)
-            ..varint(2, streamId)
+            ..message(2, _encodeStreamHandle(handle))
             ..bytesField(3, data))
           .takeBytes(),
     );
@@ -418,17 +457,17 @@ final class NativeNetworkProtocol {
   static Uint8List sshStreamCloseCommand({
     required String commandId,
     required String peerId,
-    required int streamId,
+    required NativeStreamHandle handle,
   }) {
     _validateCommandId(commandId);
     _validatePeerId(peerId);
-    _validateStreamId(streamId);
+    _validateStreamHandle(handle);
     return _command(
       commandId,
       27,
       (_ProtoWriter()
             ..string(1, peerId)
-            ..varint(2, streamId))
+            ..message(2, _encodeStreamHandle(handle)))
           .takeBytes(),
     );
   }
@@ -698,6 +737,31 @@ final class NativeNetworkProtocol {
     );
   }
 
+  static NativeStreamHandle _decodeStreamHandle(Uint8List bytes) {
+    final reader = _ProtoReader(bytes);
+    var openerDeviceId = '';
+    var streamId = 0;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          openerDeviceId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 2:
+          streamId = reader.varint(field.wireType);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedPeerId(openerDeviceId);
+    if (streamId < 1 || streamId > _maxStreamId) {
+      throw const FormatException('SSH stream ID is outside bounds.');
+    }
+    return NativeStreamHandle(
+      openerDeviceId: openerDeviceId,
+      streamId: streamId,
+    );
+  }
+
   static NativeSshStreamDataReceivedEvent _decodeSshStreamData(
     String eventId,
     int timestampMs,
@@ -706,7 +770,7 @@ final class NativeNetworkProtocol {
   ) {
     final reader = _ProtoReader(bytes);
     var peerId = '';
-    var streamId = 0;
+    NativeStreamHandle? handle;
     var data = Uint8List(0);
     while (!reader.isDone) {
       final field = reader.field();
@@ -714,7 +778,9 @@ final class NativeNetworkProtocol {
         case 1:
           peerId = reader.string(field.wireType, _maxPeerIdBytes);
         case 2:
-          streamId = reader.varint(field.wireType);
+          handle = _decodeStreamHandle(
+            reader.bytes(field.wireType, _maxStreamHandleBytes),
+          );
         case 3:
           data = reader.bytes(field.wireType, _maxStreamDataBytes);
         default:
@@ -722,15 +788,16 @@ final class NativeNetworkProtocol {
       }
     }
     _validateDecodedPeerId(peerId);
-    if (streamId < 0 || streamId > _maxStreamId) {
-      throw const FormatException('SSH stream ID is outside bounds.');
+    final streamHandle = handle;
+    if (streamHandle == null) {
+      throw const FormatException('SSH stream event has no stream handle.');
     }
     return NativeSshStreamDataReceivedEvent(
       eventId: eventId,
       timestampMs: timestampMs,
       protocolVersion: protocolVersion,
       peerId: peerId,
-      streamId: streamId,
+      handle: streamHandle,
       data: data,
     );
   }
@@ -743,28 +810,31 @@ final class NativeNetworkProtocol {
   ) {
     final reader = _ProtoReader(bytes);
     var peerId = '';
-    var streamId = 0;
+    NativeStreamHandle? handle;
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
         case 1:
           peerId = reader.string(field.wireType, _maxPeerIdBytes);
         case 2:
-          streamId = reader.varint(field.wireType);
+          handle = _decodeStreamHandle(
+            reader.bytes(field.wireType, _maxStreamHandleBytes),
+          );
         default:
           reader.skip(field.wireType);
       }
     }
     _validateDecodedPeerId(peerId);
-    if (streamId < 0 || streamId > _maxStreamId) {
-      throw const FormatException('SSH stream ID is outside bounds.');
+    final streamHandle = handle;
+    if (streamHandle == null) {
+      throw const FormatException('SSH stream event has no stream handle.');
     }
     return NativeSshStreamClosedEvent(
       eventId: eventId,
       timestampMs: timestampMs,
       protocolVersion: protocolVersion,
       peerId: peerId,
-      streamId: streamId,
+      handle: streamHandle,
     );
   }
 
@@ -832,6 +902,17 @@ final class NativeNetworkProtocol {
       );
     }
   }
+
+  static void _validateStreamHandle(NativeStreamHandle handle) {
+    _validatePeerId(handle.openerDeviceId);
+    _validateStreamId(handle.streamId);
+  }
+
+  static Uint8List _encodeStreamHandle(NativeStreamHandle handle) =>
+      (_ProtoWriter()
+            ..string(1, handle.openerDeviceId)
+            ..varint(2, handle.streamId))
+          .takeBytes();
 
   static void _validateStreamService(String value) {
     if (value.isEmpty || _utf8ByteLength(value) > _maxStreamServiceBytes) {

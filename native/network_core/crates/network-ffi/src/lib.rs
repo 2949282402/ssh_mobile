@@ -233,7 +233,7 @@ mod tests {
         network_command, network_event, NetworkCommand, NetworkEvent, RealtimeSessionState,
         RealtimeSignalEvent, RealtimeSignalKind, RealtimeStateChangedEvent, SshStreamClosedEvent,
         SshStreamDataCommand, SshStreamDataReceivedEvent, SshStreamOpenCommand,
-        StartRealtimeSessionCommand, NETWORK_PROTOCOL_VERSION,
+        StartRealtimeSessionCommand, StreamHandle, NETWORK_PROTOCOL_VERSION,
     };
     use prost::Message;
     use std::ptr;
@@ -340,13 +340,17 @@ mod tests {
     /// 边界，不暴露内部 stream handle 或类型。
     #[test]
     fn carries_ssh_stream_commands_and_events_through_the_ffi_wire() {
+        let handle = StreamHandle {
+            opener_device_id: "device-a".into(),
+            stream_id: 3,
+        };
         let open = NetworkCommand {
             command_id: "ssh-open".into(),
             protocol_version: NETWORK_PROTOCOL_VERSION,
             payload: Some(network_command::Payload::SshStreamOpen(
                 SshStreamOpenCommand {
                     peer_id: "peer-a".into(),
-                    stream_id: 3,
+                    handle: Some(handle.clone()),
                     service: "ssh".into(),
                 },
             )),
@@ -356,7 +360,13 @@ mod tests {
         match decoded.payload {
             Some(network_command::Payload::SshStreamOpen(open)) => {
                 assert_eq!(open.peer_id, "peer-a");
-                assert_eq!(open.stream_id, 3);
+                assert_eq!(open.handle.as_ref().map(|handle| handle.stream_id), Some(3));
+                assert_eq!(
+                    open.handle
+                        .as_ref()
+                        .map(|handle| handle.opener_device_id.as_str()),
+                    Some("device-a")
+                );
                 assert_eq!(open.service, "ssh");
             }
             other => panic!("unexpected command payload: {other:?}"),
@@ -368,7 +378,7 @@ mod tests {
             payload: Some(network_command::Payload::SshStreamData(
                 SshStreamDataCommand {
                     peer_id: "peer-a".into(),
-                    stream_id: 3,
+                    handle: Some(handle.clone()),
                     data: b"SSH".to_vec(),
                 },
             )),
@@ -377,7 +387,7 @@ mod tests {
             .expect("decode ssh stream data");
         assert!(matches!(
             decoded.payload,
-            Some(network_command::Payload::SshStreamData(data)) if data.stream_id == 3 && data.data == b"SSH"
+            Some(network_command::Payload::SshStreamData(data)) if data.handle.as_ref().is_some_and(|handle| handle.stream_id == 3 && handle.opener_device_id == "device-a") && data.data == b"SSH"
         ));
 
         let received = NetworkEvent {
@@ -387,7 +397,7 @@ mod tests {
             payload: Some(network_event::Payload::SshStreamDataReceived(
                 SshStreamDataReceivedEvent {
                     peer_id: "peer-a".into(),
-                    stream_id: 3,
+                    handle: Some(handle.clone()),
                     data: b"reply".to_vec(),
                 },
             )),
@@ -396,7 +406,13 @@ mod tests {
             .expect("decode ssh stream event");
         match decoded.payload {
             Some(network_event::Payload::SshStreamDataReceived(recv)) => {
-                assert_eq!(recv.stream_id, 3);
+                assert_eq!(recv.handle.as_ref().map(|handle| handle.stream_id), Some(3));
+                assert_eq!(
+                    recv.handle
+                        .as_ref()
+                        .map(|handle| handle.opener_device_id.as_str()),
+                    Some("device-a")
+                );
                 assert_eq!(recv.data, b"reply");
             }
             other => panic!("unexpected event payload: {other:?}"),
@@ -409,7 +425,7 @@ mod tests {
             payload: Some(network_event::Payload::SshStreamClosed(
                 SshStreamClosedEvent {
                     peer_id: "peer-a".into(),
-                    stream_id: 3,
+                    handle: Some(handle.clone()),
                 },
             )),
         };
@@ -417,7 +433,7 @@ mod tests {
             .expect("decode ssh stream closed event");
         assert!(matches!(
             decoded.payload,
-            Some(network_event::Payload::SshStreamClosed(closed)) if closed.stream_id == 3
+            Some(network_event::Payload::SshStreamClosed(closed)) if closed.handle.as_ref().is_some_and(|handle| handle.stream_id == 3 && handle.opener_device_id == "device-a")
         ));
     }
 }

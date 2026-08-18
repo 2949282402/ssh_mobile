@@ -182,6 +182,10 @@ final class AppRuntimeFactory {
 
       final sshNativeStreamConnector = AppSshNativeStreamConnector(
         gatewayProvider: () => runtimeNetworkRuntime.openCommandGateway(),
+        openerDeviceIdProvider: () async {
+          await appSettings.ensureLanIdentity();
+          return appSettings.lanDeviceId;
+        },
       );
       cleanup.add(
         sshNativeStreamConnector.closeAll,

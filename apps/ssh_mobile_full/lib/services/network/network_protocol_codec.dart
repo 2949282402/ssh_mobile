@@ -7,6 +7,10 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:network_sdk/network_sdk.dart';
+import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
+
+/// Stable identity for a logical ReliableStream.
+typedef SshStreamHandle = NativeStreamHandle;
 
 /// ReliableStream 收到对端 SSH/SFTP 字节的事件（network-protocol tag 26）。
 final class SshStreamDataReceivedEvent {
@@ -15,14 +19,15 @@ final class SshStreamDataReceivedEvent {
     required this.eventId,
     required this.timestamp,
     required this.peerId,
-    required this.streamId,
+    required this.handle,
     required this.data,
   });
 
   final String eventId;
   final DateTime timestamp;
   final String peerId;
-  final int streamId;
+  final NativeStreamHandle handle;
+  int get streamId => handle.streamId;
   final Uint8List data;
 }
 
@@ -33,13 +38,14 @@ final class SshStreamClosedEvent {
     required this.eventId,
     required this.timestamp,
     required this.peerId,
-    required this.streamId,
+    required this.handle,
   });
 
   final String eventId;
   final DateTime timestamp;
   final String peerId;
-  final int streamId;
+  final NativeStreamHandle handle;
+  int get streamId => handle.streamId;
 }
 
 /// 解码后的 v1 信封，包含内部命令结果或公开事件。
@@ -76,6 +82,36 @@ final class NetworkProtocolCodec {
 
   /// 创建无状态 v1 编解码器。
   const NetworkProtocolCodec();
+
+  Uint8List _encodeSshStreamHandle(NativeStreamHandle handle) =>
+      (_ProtoWriter()
+            ..string(1, handle.openerDeviceId)
+            ..varint(2, handle.streamId))
+          .takeBytes();
+
+  NativeStreamHandle _decodeSshStreamHandle(Uint8List bytes) {
+    final reader = _ProtoReader(bytes);
+    var openerDeviceId = '';
+    var streamId = 0;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          openerDeviceId = utf8.decode(reader.bytes(field.wireType));
+        case 2:
+          streamId = reader.varint(field.wireType);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    if (openerDeviceId.isEmpty || streamId < 1 || streamId > 0xffff) {
+      throw const FormatException('SSH stream handle is invalid.');
+    }
+    return NativeStreamHandle(
+      openerDeviceId: openerDeviceId,
+      streamId: streamId,
+    );
+  }
 
   /// 编码运行时配置命令。
   Uint8List configureRuntimeCommand({
@@ -187,12 +223,12 @@ final class NetworkProtocolCodec {
   Uint8List sshStreamOpenCommand({
     required String commandId,
     required String peerId,
-    required int streamId,
+    required NativeStreamHandle handle,
     String service = 'ssh',
   }) {
     final payload = _ProtoWriter()
       ..string(1, peerId)
-      ..varint(2, streamId)
+      ..message(2, _encodeSshStreamHandle(handle))
       ..string(3, service);
     return _command(commandId, 25, payload.takeBytes());
   }
@@ -201,12 +237,12 @@ final class NetworkProtocolCodec {
   Uint8List sshStreamDataCommand({
     required String commandId,
     required String peerId,
-    required int streamId,
+    required NativeStreamHandle handle,
     required Uint8List data,
   }) {
     final payload = _ProtoWriter()
       ..string(1, peerId)
-      ..varint(2, streamId)
+      ..message(2, _encodeSshStreamHandle(handle))
       ..bytesField(3, data);
     return _command(commandId, 26, payload.takeBytes());
   }
@@ -215,11 +251,11 @@ final class NetworkProtocolCodec {
   Uint8List sshStreamCloseCommand({
     required String commandId,
     required String peerId,
-    required int streamId,
+    required NativeStreamHandle handle,
   }) {
     final payload = _ProtoWriter()
       ..string(1, peerId)
-      ..varint(2, streamId);
+      ..message(2, _encodeSshStreamHandle(handle));
     return _command(commandId, 27, payload.takeBytes());
   }
 
@@ -699,7 +735,7 @@ final class NetworkProtocolCodec {
   ) {
     final reader = _ProtoReader(bytes);
     var peerId = '';
-    var streamId = 0;
+    NativeStreamHandle? handle;
     var data = Uint8List(0);
     while (!reader.isDone) {
       final field = reader.field();
@@ -707,18 +743,22 @@ final class NetworkProtocolCodec {
         case 1:
           peerId = utf8.decode(reader.bytes(field.wireType));
         case 2:
-          streamId = reader.varint(field.wireType);
+          handle = _decodeSshStreamHandle(reader.bytes(field.wireType));
         case 3:
           data = Uint8List.fromList(reader.bytes(field.wireType));
         default:
           reader.skip(field.wireType);
       }
     }
+    final streamHandle = handle;
+    if (streamHandle == null) {
+      throw const FormatException('SSH stream event has no stream handle.');
+    }
     return SshStreamDataReceivedEvent(
       eventId: eventId,
       timestamp: _timestamp(timestampMs),
       peerId: peerId,
-      streamId: streamId,
+      handle: streamHandle,
       data: data,
     );
   }
@@ -731,23 +771,27 @@ final class NetworkProtocolCodec {
   ) {
     final reader = _ProtoReader(bytes);
     var peerId = '';
-    var streamId = 0;
+    NativeStreamHandle? handle;
     while (!reader.isDone) {
       final field = reader.field();
       switch (field.number) {
         case 1:
           peerId = utf8.decode(reader.bytes(field.wireType));
         case 2:
-          streamId = reader.varint(field.wireType);
+          handle = _decodeSshStreamHandle(reader.bytes(field.wireType));
         default:
           reader.skip(field.wireType);
       }
+    }
+    final streamHandle = handle;
+    if (streamHandle == null) {
+      throw const FormatException('SSH stream event has no stream handle.');
     }
     return SshStreamClosedEvent(
       eventId: eventId,
       timestamp: _timestamp(timestampMs),
       peerId: peerId,
-      streamId: streamId,
+      handle: streamHandle,
     );
   }
 

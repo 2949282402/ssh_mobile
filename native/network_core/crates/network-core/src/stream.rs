@@ -26,7 +26,7 @@
 use network_protocol::network_event;
 use network_protocol::{
     NetworkError as ProtocolError, NetworkErrorCode, NetworkEvent, SshStreamCloseCommand,
-    SshStreamDataCommand, SshStreamOpenCommand,
+    SshStreamDataCommand, SshStreamOpenCommand, StreamHandle,
 };
 use quinn::SendStream;
 use std::collections::{HashMap, VecDeque};
@@ -105,12 +105,12 @@ pub(crate) enum StreamError {
 
 impl StreamError {
     fn into_protocol(self, peer_id: &str, operation: &str) -> ProtocolError {
-        protocol_error_with_peer(
-            NetworkErrorCode::IoError,
-            self.to_string(),
-            operation,
-            peer_id,
-        )
+        let code = if matches!(self, StreamError::InvalidArgument) {
+            NetworkErrorCode::InvalidArgument
+        } else {
+            NetworkErrorCode::IoError
+        };
+        protocol_error_with_peer(code, self.to_string(), operation, peer_id)
     }
 }
 
@@ -667,7 +667,13 @@ impl ReliableStreamManager {
     /// `MAX_PER_STREAM_BUFFER_CAPACITY`. 设计 §17：Event 流与 Bridge/Poll 共享
     /// 同一有界缓冲区与背压；本任务把缓冲字节转成事件，而不是逐帧直接灌入
     /// 无界事件通道。
-    pub(crate) async fn drain_events(self, peer_id: &str, opener: StreamOpener, stream_id: u16) {
+    pub(crate) async fn drain_events(
+        self,
+        peer_id: &str,
+        opener: StreamOpener,
+        stream_id: u16,
+        opener_device_id: &str,
+    ) {
         loop {
             let wait: Option<watch::Receiver<u64>> = {
                 let mut state = self.inner.lock().await;
@@ -676,14 +682,20 @@ impl ReliableStreamManager {
                 };
                 if let Some(chunk) = entry.recv_chunks.pop_front() {
                     entry.recv_bytes -= chunk.len();
-                    emit_stream_data_received(&self.event_tx, peer_id, stream_id, &chunk);
+                    emit_stream_data_received(
+                        &self.event_tx,
+                        peer_id,
+                        opener_device_id,
+                        stream_id,
+                        &chunk,
+                    );
                     entry.wake();
                     continue;
                 }
                 if entry.recv_closed {
                     // 缓冲区已空且对端关闭：最后发出 close 事件，保证 data 先于 close。
                     drop(state);
-                    emit_stream_closed(&self.event_tx, peer_id, stream_id);
+                    emit_stream_closed(&self.event_tx, peer_id, opener_device_id, stream_id);
                     return;
                 }
                 Some(entry.wait_rx())
@@ -847,7 +859,11 @@ impl ReliableStreamManager {
 
     /// Session teardown: close every stream for the peer. Returns the ids so
     /// the caller can emit closed events.
-    pub(crate) async fn close_all(&self, peer_id: &str) -> Vec<(StreamOpener, u16)> {
+    pub(crate) async fn close_all(
+        &self,
+        peer_id: &str,
+        local_opener_device_id: &str,
+    ) -> Vec<(StreamOpener, u16)> {
         let ids = {
             let mut state = self.inner.lock().await;
             let ids: Vec<(StreamOpener, u16)> = state
@@ -858,8 +874,12 @@ impl ReliableStreamManager {
             state.streams.clear();
             ids
         };
-        for (_, stream_id) in &ids {
-            emit_stream_closed(&self.event_tx, peer_id, *stream_id);
+        for (opener, stream_id) in &ids {
+            let opener_device_id = match opener {
+                StreamOpener::Local => local_opener_device_id,
+                StreamOpener::Remote => peer_id,
+            };
+            emit_stream_closed(&self.event_tx, peer_id, opener_device_id, *stream_id);
         }
         ids
     }
@@ -894,20 +914,32 @@ async fn stream_opener_peer_id(
     }
 }
 
-/// Resolves the opener for an FFI command against the stream registry.  A
-/// command can target either a locally opened stream or a stream opened by the
-/// remote peer, so assuming `Local` would reject valid reverse-direction
-/// traffic.
+/// Resolves the opener for an FFI command from its explicit business handle.
+/// A command can target either a locally opened stream or a stream opened by the
+/// remote peer; the handle, never stream existence order, selects the namespace.
 async fn command_stream_opener(
     state: &Arc<RuntimeState>,
     peer_id: &str,
-    stream_id: u16,
-) -> Result<StreamOpener, StreamError> {
+    handle: &StreamHandle,
+) -> Result<(StreamOpener, u16), StreamError> {
+    if !validate_peer(&handle.opener_device_id) {
+        return Err(StreamError::InvalidArgument);
+    }
+    let stream_id = u16::try_from(handle.stream_id).map_err(|_| StreamError::InvalidArgument)?;
+    if stream_id == 0 {
+        return Err(StreamError::InvalidArgument);
+    }
+    let local_peer_id = local_stream_opener_peer_id(state).await?;
+    let opener = if handle.opener_device_id == local_peer_id {
+        StreamOpener::Local
+    } else if handle.opener_device_id == peer_id {
+        StreamOpener::Remote
+    } else {
+        return Err(StreamError::InvalidArgument);
+    };
     let manager = state.stream_manager(peer_id).await;
-    if manager.is_open(StreamOpener::Local, stream_id).await {
-        Ok(StreamOpener::Local)
-    } else if manager.is_open(StreamOpener::Remote, stream_id).await {
-        Ok(StreamOpener::Remote)
+    if manager.is_open(opener, stream_id).await {
+        Ok((opener, stream_id))
     } else {
         Err(StreamError::NotFound)
     }
@@ -1015,10 +1047,10 @@ pub(crate) async fn open_stream(
 pub(crate) async fn send_stream(
     state: &Arc<RuntimeState>,
     peer_id: &str,
-    stream_id: u16,
+    handle: &StreamHandle,
     data: &[u8],
 ) -> Result<(), StreamError> {
-    let opener = command_stream_opener(state, peer_id, stream_id).await?;
+    let (opener, stream_id) = command_stream_opener(state, peer_id, handle).await?;
     send_stream_with_opener(state, peer_id, opener, stream_id, data).await
 }
 
@@ -1106,9 +1138,9 @@ async fn receive_stream_with_opener(
 pub(crate) async fn close_stream(
     state: &Arc<RuntimeState>,
     peer_id: &str,
-    stream_id: u16,
+    handle: &StreamHandle,
 ) -> Result<(), StreamError> {
-    let opener = command_stream_opener(state, peer_id, stream_id).await?;
+    let (opener, stream_id) = command_stream_opener(state, peer_id, handle).await?;
     close_stream_with_opener(state, peer_id, opener, stream_id).await
 }
 
@@ -1291,6 +1323,13 @@ async fn spawn_stream_event_emitter(
     opener: StreamOpener,
     stream_id: u16,
 ) {
+    let opener_device_id = match opener {
+        StreamOpener::Local => match local_stream_opener_peer_id(state).await {
+            Ok(device_id) => device_id,
+            Err(_) => return,
+        },
+        StreamOpener::Remote => peer_id.to_string(),
+    };
     let manager = state.stream_manager(peer_id).await;
     let peer_id = peer_id.to_string();
     let session_key = state
@@ -1302,7 +1341,9 @@ async fn spawn_stream_event_emitter(
     let _ = state
         .task_supervisor
         .spawn_session(session_key, "stream-event-emitter", async move {
-            manager.drain_events(&peer_id, opener, stream_id).await
+            manager
+                .drain_events(&peer_id, opener, stream_id, &opener_device_id)
+                .await
         });
 }
 
@@ -1436,6 +1477,46 @@ pub(crate) fn spawn_ssh_gateway(
 // FFI command handlers
 // ---------------------------------------------------------------------------
 
+fn parse_stream_handle(
+    handle: Option<StreamHandle>,
+    peer_id: &str,
+    operation: &str,
+) -> Result<(StreamHandle, u16), ProtocolError> {
+    let handle = handle.ok_or_else(|| {
+        protocol_error_with_peer(
+            NetworkErrorCode::InvalidArgument,
+            "handle is required",
+            operation,
+            peer_id,
+        )
+    })?;
+    if !validate_peer(&handle.opener_device_id) {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::InvalidArgument,
+            "handle.opener_device_id must contain 1-128 characters",
+            operation,
+            peer_id,
+        ));
+    }
+    let stream_id = u16::try_from(handle.stream_id).map_err(|_| {
+        protocol_error_with_peer(
+            NetworkErrorCode::InvalidArgument,
+            "handle.stream_id must be in 1..=65535",
+            operation,
+            peer_id,
+        )
+    })?;
+    if stream_id == 0 {
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::InvalidArgument,
+            "handle.stream_id must be non-zero",
+            operation,
+            peer_id,
+        ));
+    }
+    Ok((handle, stream_id))
+}
+
 pub(crate) async fn handle_ssh_stream_open(
     state: Arc<RuntimeState>,
     command: SshStreamOpenCommand,
@@ -1456,18 +1537,15 @@ pub(crate) async fn handle_ssh_stream_open(
             &command.peer_id,
         ));
     }
-    let stream_id = u16::try_from(command.stream_id).map_err(|_| {
-        protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "stream_id must be in 1..=65535",
-            "ssh_stream_open",
-            &command.peer_id,
-        )
-    })?;
-    if stream_id == 0 {
+    let (handle, stream_id) =
+        parse_stream_handle(command.handle, &command.peer_id, "ssh_stream_open")?;
+    let local_opener_device_id = local_stream_opener_peer_id(&state)
+        .await
+        .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_open"))?;
+    if handle.opener_device_id != local_opener_device_id {
         return Err(protocol_error_with_peer(
             NetworkErrorCode::InvalidArgument,
-            "stream_id must be non-zero",
+            "ssh stream open handle must identify the local opener",
             "ssh_stream_open",
             &command.peer_id,
         ));
@@ -1495,15 +1573,8 @@ pub(crate) async fn handle_ssh_stream_data(
             &command.peer_id,
         ));
     }
-    let stream_id = u16::try_from(command.stream_id).map_err(|_| {
-        protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "stream_id must be in 1..=65535",
-            "ssh_stream_data",
-            &command.peer_id,
-        )
-    })?;
-    send_stream(&state, &command.peer_id, stream_id, &command.data)
+    let (handle, _) = parse_stream_handle(command.handle, &command.peer_id, "ssh_stream_data")?;
+    send_stream(&state, &command.peer_id, &handle, &command.data)
         .await
         .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_data"))
 }
@@ -1520,15 +1591,8 @@ pub(crate) async fn handle_ssh_stream_close(
             &command.peer_id,
         ));
     }
-    let stream_id = u16::try_from(command.stream_id).map_err(|_| {
-        protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "stream_id must be in 1..=65535",
-            "ssh_stream_close",
-            &command.peer_id,
-        )
-    })?;
-    close_stream(&state, &command.peer_id, stream_id)
+    let (handle, _) = parse_stream_handle(command.handle, &command.peer_id, "ssh_stream_close")?;
+    close_stream(&state, &command.peer_id, &handle)
         .await
         .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_close"))
 }
@@ -1681,9 +1745,11 @@ mod tests {
         // Event-mode bytes are buffered and delivered by the drainer task.
         let drainer = {
             let manager = manager.clone();
-            tokio::spawn(
-                async move { manager.drain_events("peer-a", StreamOpener::Local, 1).await },
-            )
+            tokio::spawn(async move {
+                manager
+                    .drain_events("peer-a", StreamOpener::Local, 1, "local-device")
+                    .await
+            })
         };
         manager
             .handle_bytes("peer-a", StreamOpener::Local, 1, 0, b"ping".to_vec())
@@ -1693,7 +1759,7 @@ mod tests {
         assert!(matches!(
             event.payload,
             Some(network_event::Payload::SshStreamDataReceived(recv))
-                if recv.peer_id == "peer-a" && recv.stream_id == 1 && recv.data == b"ping"
+                if recv.peer_id == "peer-a" && recv.handle.as_ref().is_some_and(|handle| handle.opener_device_id == "local-device" && handle.stream_id == 1) && recv.data == b"ping"
         ));
         manager
             .handle_close("peer-a", StreamOpener::Local, 1)
@@ -1702,7 +1768,7 @@ mod tests {
         let event = event_rx.recv().await.expect("close event");
         assert!(matches!(
             event.payload,
-            Some(network_event::Payload::SshStreamClosed(closed)) if closed.stream_id == 1
+            Some(network_event::Payload::SshStreamClosed(closed)) if closed.handle.as_ref().is_some_and(|handle| handle.opener_device_id == "local-device" && handle.stream_id == 1)
         ));
         // The drainer exits after it emits the close event.
         tokio::time::timeout(std::time::Duration::from_secs(1), drainer)
@@ -1850,7 +1916,7 @@ mod tests {
         assert!(matches!(
             event.payload,
             Some(network_event::Payload::SshStreamDataReceived(recv))
-                if recv.stream_id == 42 && recv.data == b"still-live"
+                if recv.handle.as_ref().is_some_and(|handle| handle.opener_device_id == "peer-a" && handle.stream_id == 42) && recv.data == b"still-live"
         ));
     }
 
@@ -2017,9 +2083,11 @@ mod tests {
         // 启动 drainer：阻塞的 writer 随 drain 推进，全部字节最终按序以事件发出。
         let drainer = {
             let manager = manager.clone();
-            tokio::spawn(
-                async move { manager.drain_events("peer-a", StreamOpener::Local, 6).await },
-            )
+            tokio::spawn(async move {
+                manager
+                    .drain_events("peer-a", StreamOpener::Local, 6, "local-device")
+                    .await
+            })
         };
         let pushed = tokio::time::timeout(std::time::Duration::from_secs(5), flood)
             .await
@@ -2039,7 +2107,12 @@ mod tests {
                 .expect("timed out waiting for stream data events")
                 .expect("event channel closed");
             if let Some(network_event::Payload::SshStreamDataReceived(recv)) = event.payload {
-                assert_eq!(recv.stream_id, 6);
+                assert!(recv
+                    .handle
+                    .as_ref()
+                    .is_some_and(
+                        |handle| handle.opener_device_id == "local-device" && handle.stream_id == 6
+                    ));
                 received += recv.data.len();
             }
         }
@@ -2056,7 +2129,7 @@ mod tests {
             .expect("event channel closed");
         assert!(matches!(
             closed.payload,
-            Some(network_event::Payload::SshStreamClosed(c)) if c.stream_id == 6
+            Some(network_event::Payload::SshStreamClosed(c)) if c.handle.as_ref().is_some_and(|handle| handle.opener_device_id == "local-device" && handle.stream_id == 6)
         ));
         tokio::time::timeout(std::time::Duration::from_secs(1), drainer)
             .await

@@ -15,6 +15,7 @@ void main() {
         final gateway = _FakeGateway();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
         );
 
         final stream = await connector.open(peerId: 'peer-a');
@@ -29,14 +30,37 @@ void main() {
         stream.done.then((_) => done.add('done'));
 
         // 推送 SshStreamDataReceived（tag 26）。
-        gateway.push(_dataFrame(eventId: 'e1', peerId: 'peer-a', streamId: 1));
+        gateway.push(
+          _dataFrame(
+            eventId: 'e1-ambiguous',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-b',
+            streamId: 1,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(received, isEmpty);
+
+        gateway.push(
+          _dataFrame(
+            eventId: 'e1',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 1,
+          ),
+        );
         await Future<void>.delayed(Duration.zero);
         expect(received, hasLength(1));
         expect(received[0], orderedEquals([0x01, 0x02, 0x03]));
 
         // 推送 SshStreamClosed（tag 27），done 完成且流被移除。
         gateway.push(
-          _closedFrame(eventId: 'e2', peerId: 'peer-a', streamId: 1),
+          _closedFrame(
+            eventId: 'e2',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 1,
+          ),
         );
         await stream.done;
         expect(done, ['done']);
@@ -53,6 +77,7 @@ void main() {
         final gateway = _FakeGateway();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
         );
         final stream = await connector.open(peerId: 'peer-a');
         gateway.commands.clear();
@@ -74,6 +99,7 @@ void main() {
       final gateway = _FakeGateway();
       final connector = AppSshNativeStreamConnector(
         gatewayProvider: () async => gateway,
+        openerDeviceIdProvider: () async => 'device-a',
       );
       final stream = await connector.open(peerId: 'peer-a');
       final doneFuture = stream.done.then((_) {});
@@ -92,6 +118,7 @@ void main() {
         final gateway = _FakeGateway();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
         );
         final stream = await connector.open(peerId: 'peer-a');
         expect(connector.activeStreamCount, 1);
@@ -135,6 +162,7 @@ void main() {
         final gateway = _FakeGateway();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
         );
         final stream = await connector.open(peerId: 'peer-a');
         final openCommandId = _commandIdOf(gateway.commands.first);
@@ -152,7 +180,14 @@ void main() {
 
         final received = <Uint8List>[];
         final subscription = stream.incoming.listen(received.add);
-        gateway.push(_dataFrame(eventId: 'e4', peerId: 'peer-a', streamId: 1));
+        gateway.push(
+          _dataFrame(
+            eventId: 'e4',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 1,
+          ),
+        );
         await Future<void>.delayed(Duration.zero);
         expect(received, hasLength(1));
 
@@ -167,6 +202,7 @@ void main() {
         final gateway = _FakeGateway();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
         );
         final stream = await connector.open(peerId: 'peer-a');
         gateway.commands.clear();
@@ -199,6 +235,7 @@ void main() {
       final gateway = _FakeGateway();
       final connector = AppSshNativeStreamConnector(
         gatewayProvider: () async => gateway,
+        openerDeviceIdProvider: () async => 'device-a',
       );
       final stream = await connector.open(peerId: 'peer-a');
 
@@ -216,11 +253,15 @@ void main() {
 Uint8List _dataFrame({
   required String eventId,
   required String peerId,
+  required String openerDeviceId,
   required int streamId,
 }) {
   final payload = <int>[
     ..._stringField(1, peerId),
-    ..._varintField(2, streamId),
+    ..._messageField(2, <int>[
+      ..._stringField(1, openerDeviceId),
+      ..._varintField(2, streamId),
+    ]),
     0x1a,
     0x03,
     0x01,
@@ -285,11 +326,15 @@ String _commandIdOf(Uint8List command) {
 Uint8List _closedFrame({
   required String eventId,
   required String peerId,
+  required String openerDeviceId,
   required int streamId,
 }) {
   final payload = <int>[
     ..._stringField(1, peerId),
-    ..._varintField(2, streamId),
+    ..._messageField(2, <int>[
+      ..._stringField(1, openerDeviceId),
+      ..._varintField(2, streamId),
+    ]),
   ];
   return _eventFrame(eventId, 27, payload);
 }

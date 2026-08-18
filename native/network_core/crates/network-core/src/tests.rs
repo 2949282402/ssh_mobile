@@ -9,7 +9,7 @@ use network_protocol::{
     DeliveryAckedEvent, DeliveryPolicyCode, NetworkCommand, NetworkError as ProtocolError,
     NetworkErrorCode, PeerConnectionState, RespondIncomingTransferCommand, RouteTransport,
     RouteType, SendFileCommand, SendMessageCommand, SshStreamCloseCommand, SshStreamDataCommand,
-    SshStreamOpenCommand, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
+    SshStreamOpenCommand, StreamHandle, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
 };
 use network_relay::v2::proto::*;
 use network_relay::v2::{DataEvent, RelayDataClient};
@@ -2410,45 +2410,74 @@ fn force_tcp_fallback(runtime: &NetworkRuntime) {
     });
 }
 
-fn ssh_open_command(peer_id: &str, stream_id: u16, service: &str) -> NetworkCommand {
+fn ssh_open_command(
+    opener_device_id: &str,
+    peer_id: &str,
+    stream_id: u16,
+    service: &str,
+) -> NetworkCommand {
     NetworkCommand {
         command_id: format!("ssh-open-{stream_id}"),
         protocol_version: NETWORK_PROTOCOL_VERSION,
         payload: Some(network_command::Payload::SshStreamOpen(
             SshStreamOpenCommand {
                 peer_id: peer_id.into(),
-                stream_id: stream_id as u32,
+                handle: Some(StreamHandle {
+                    opener_device_id: opener_device_id.into(),
+                    stream_id: stream_id as u32,
+                }),
                 service: service.into(),
             },
         )),
     }
 }
 
-fn ssh_data_command(peer_id: &str, stream_id: u16, data: &[u8]) -> NetworkCommand {
+fn ssh_data_command(
+    opener_device_id: &str,
+    peer_id: &str,
+    stream_id: u16,
+    data: &[u8],
+) -> NetworkCommand {
     NetworkCommand {
         command_id: format!("ssh-data-{stream_id}"),
         protocol_version: NETWORK_PROTOCOL_VERSION,
         payload: Some(network_command::Payload::SshStreamData(
             SshStreamDataCommand {
                 peer_id: peer_id.into(),
-                stream_id: stream_id as u32,
+                handle: Some(StreamHandle {
+                    opener_device_id: opener_device_id.into(),
+                    stream_id: stream_id as u32,
+                }),
                 data: data.to_vec(),
             },
         )),
     }
 }
 
-fn ssh_close_command(peer_id: &str, stream_id: u16) -> NetworkCommand {
+fn ssh_close_command(opener_device_id: &str, peer_id: &str, stream_id: u16) -> NetworkCommand {
     NetworkCommand {
         command_id: format!("ssh-close-{stream_id}"),
         protocol_version: NETWORK_PROTOCOL_VERSION,
         payload: Some(network_command::Payload::SshStreamClose(
             SshStreamCloseCommand {
                 peer_id: peer_id.into(),
-                stream_id: stream_id as u32,
+                handle: Some(StreamHandle {
+                    opener_device_id: opener_device_id.into(),
+                    stream_id: stream_id as u32,
+                }),
             },
         )),
     }
+}
+
+fn stream_handle_matches(
+    handle: Option<&StreamHandle>,
+    opener_device_id: &str,
+    stream_id: u16,
+) -> bool {
+    handle.is_some_and(|handle| {
+        handle.opener_device_id == opener_device_id && handle.stream_id == stream_id as u32
+    })
 }
 
 /// QUIC bidi direct path (§17): open/send/recv/close round-trip over a real
@@ -2505,40 +2534,73 @@ fn reliable_stream_round_trips_bytes_over_quic_bidi() {
     );
 
     const STREAM_ID: u16 = 1;
-    send_and_expect_accepted(&runtime_a, ssh_open_command("stream-b", STREAM_ID, "test"));
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_open_command("stream-a", "stream-b", STREAM_ID, "test"),
+    );
+    send_and_expect_accepted(
+        &runtime_b,
+        ssh_open_command("stream-b", "stream-a", STREAM_ID, "test"),
+    );
 
     // A -> B data (QUIC bidi stream bytes).
-    send_and_expect_accepted(&runtime_a, ssh_data_command("stream-b", STREAM_ID, b"ping"));
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_data_command("stream-a", "stream-b", STREAM_ID, b"ping"),
+    );
     let received = poll_until(&runtime_b, Duration::from_secs(10), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::SshStreamDataReceived(recv))
-                if recv.peer_id == "stream-a" && recv.stream_id == STREAM_ID as u32 && recv.data == b"ping"
+                if recv.peer_id == "stream-a" && stream_handle_matches(recv.handle.as_ref(), "stream-a", STREAM_ID) && recv.data == b"ping"
         )
     });
     assert!(received.is_some(), "stream-b never received ping");
 
     // B -> A data (the QUIC send half is registered on the responder side).
-    send_and_expect_accepted(&runtime_b, ssh_data_command("stream-a", STREAM_ID, b"pong"));
+    send_and_expect_accepted(
+        &runtime_b,
+        ssh_data_command("stream-b", "stream-a", STREAM_ID, b"pong"),
+    );
     let echo = poll_until(&runtime_a, Duration::from_secs(10), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::SshStreamDataReceived(recv))
-                if recv.peer_id == "stream-b" && recv.stream_id == STREAM_ID as u32 && recv.data == b"pong"
+                if recv.peer_id == "stream-b" && stream_handle_matches(recv.handle.as_ref(), "stream-b", STREAM_ID) && recv.data == b"pong"
         )
     });
     assert!(echo.is_some(), "stream-a never received pong");
 
     // Teardown: A closes -> B sees SshStreamClosed.
-    send_and_expect_accepted(&runtime_a, ssh_close_command("stream-b", STREAM_ID));
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_close_command("stream-a", "stream-b", STREAM_ID),
+    );
     let closed = poll_until(&runtime_b, Duration::from_secs(10), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::SshStreamClosed(closed))
-                if closed.peer_id == "stream-a" && closed.stream_id == STREAM_ID as u32
+                if closed.peer_id == "stream-a" && stream_handle_matches(closed.handle.as_ref(), "stream-a", STREAM_ID)
         )
     });
     assert!(closed.is_some(), "stream-b never saw the stream close");
+
+    send_and_expect_accepted(
+        &runtime_b,
+        ssh_close_command("stream-b", "stream-a", STREAM_ID),
+    );
+    let reverse_closed = poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamClosed(closed))
+                if closed.peer_id == "stream-b"
+                    && stream_handle_matches(closed.handle.as_ref(), "stream-b", STREAM_ID)
+        )
+    });
+    assert!(
+        reverse_closed.is_some(),
+        "stream-a never saw the reverse stream close"
+    );
 
     runtime_a.stop().expect("stop runtime A");
     runtime_b.stop().expect("stop runtime B");
@@ -2602,11 +2664,11 @@ fn stream_bytes_interleave_with_data_message_on_generic_route() {
     const STREAM_ID: u16 = 2;
     send_and_expect_accepted(
         &runtime_a,
-        ssh_open_command("stream-tcp-b", STREAM_ID, "test"),
+        ssh_open_command("stream-tcp-a", "stream-tcp-b", STREAM_ID, "test"),
     );
     send_and_expect_accepted(
         &runtime_a,
-        ssh_data_command("stream-tcp-b", STREAM_ID, b"stream-bytes"),
+        ssh_data_command("stream-tcp-a", "stream-tcp-b", STREAM_ID, b"stream-bytes"),
     );
     send_and_expect_accepted(
         &runtime_a,
@@ -2630,7 +2692,7 @@ fn stream_bytes_interleave_with_data_message_on_generic_route() {
             &event.payload,
             Some(network_event::Payload::SshStreamDataReceived(recv))
                 if recv.peer_id == "stream-tcp-a"
-                    && recv.stream_id == STREAM_ID as u32
+                    && stream_handle_matches(recv.handle.as_ref(), "stream-tcp-a", STREAM_ID)
                     && recv.data == b"stream-bytes"
         )
     });
@@ -2711,34 +2773,40 @@ fn ssh_stream_data_after_close_is_rejected_cleanly() {
     const STREAM_ID: u16 = 3;
     send_and_expect_accepted(
         &runtime_a,
-        ssh_open_command("stream-fail-b", STREAM_ID, "test"),
+        ssh_open_command("stream-fail-a", "stream-fail-b", STREAM_ID, "test"),
     );
     // Establish the stream on B before tearing down (deterministic: the QUIC
     // open and close could otherwise be coalesced before B's accept loop runs).
     send_and_expect_accepted(
         &runtime_a,
-        ssh_data_command("stream-fail-b", STREAM_ID, b"hello"),
+        ssh_data_command("stream-fail-a", "stream-fail-b", STREAM_ID, b"hello"),
     );
     let received = poll_until(&runtime_b, Duration::from_secs(10), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::SshStreamDataReceived(recv))
-                if recv.stream_id == STREAM_ID as u32 && recv.data == b"hello"
+                if stream_handle_matches(recv.handle.as_ref(), "stream-fail-a", STREAM_ID) && recv.data == b"hello"
         )
     });
     assert!(received.is_some(), "stream was not established on B");
 
     // Tear down from both sides.
-    send_and_expect_accepted(&runtime_a, ssh_close_command("stream-fail-b", STREAM_ID));
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_close_command("stream-fail-a", "stream-fail-b", STREAM_ID),
+    );
     let closed = poll_until(&runtime_b, Duration::from_secs(10), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::SshStreamClosed(closed))
-                if closed.stream_id == STREAM_ID as u32
+                if stream_handle_matches(closed.handle.as_ref(), "stream-fail-a", STREAM_ID)
         )
     });
     assert!(closed.is_some(), "B never saw the stream close");
-    send_and_expect_accepted(&runtime_b, ssh_close_command("stream-fail-a", STREAM_ID));
+    send_and_expect_accepted(
+        &runtime_b,
+        ssh_close_command("stream-fail-a", "stream-fail-a", STREAM_ID),
+    );
 
     // Sending on a closed stream must be a clean command rejection.
     let late = NetworkCommand {
@@ -2747,7 +2815,10 @@ fn ssh_stream_data_after_close_is_rejected_cleanly() {
         payload: Some(network_command::Payload::SshStreamData(
             SshStreamDataCommand {
                 peer_id: "stream-fail-b".into(),
-                stream_id: STREAM_ID as u32,
+                handle: Some(StreamHandle {
+                    opener_device_id: "stream-fail-a".into(),
+                    stream_id: STREAM_ID as u32,
+                }),
                 data: b"late".to_vec(),
             },
         )),
@@ -2862,21 +2933,26 @@ fn ssh_gateway_bridges_stream_to_a_local_tcp_echo_server() {
     const STREAM_ID: u16 = 4;
     send_and_expect_accepted(
         &runtime_a,
-        ssh_open_command("stream-gw-b", STREAM_ID, crate::stream::STREAM_SERVICE_SSH),
+        ssh_open_command(
+            "stream-gw-a",
+            "stream-gw-b",
+            STREAM_ID,
+            crate::stream::STREAM_SERVICE_SSH,
+        ),
     );
 
     // The bridge pumps A -> gateway -> echo server -> gateway -> A.
     let payload = b"bridge-round-trip";
     send_and_expect_accepted(
         &runtime_a,
-        ssh_data_command("stream-gw-b", STREAM_ID, payload),
+        ssh_data_command("stream-gw-a", "stream-gw-b", STREAM_ID, payload),
     );
     let echoed = poll_until(&runtime_a, Duration::from_secs(10), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::SshStreamDataReceived(recv))
                 if recv.peer_id == "stream-gw-b"
-                    && recv.stream_id == STREAM_ID as u32
+                    && stream_handle_matches(recv.handle.as_ref(), "stream-gw-a", STREAM_ID)
                     && recv.data == payload
         )
     });

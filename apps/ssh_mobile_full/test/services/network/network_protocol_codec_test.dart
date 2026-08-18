@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
+import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 import '../../../lib/services/network/network_protocol_codec.dart';
 
 /// 执行固定字节 v1 编解码和类型化事件往返测试。
@@ -188,7 +189,7 @@ void main() {
     final open = codec.sshStreamOpenCommand(
       commandId: 'open-1',
       peerId: 'peer-a',
-      streamId: 7,
+      handle: const SshStreamHandle(openerDeviceId: 'device-a', streamId: 7),
       service: 'ssh',
     );
     expect(open, isNotEmpty);
@@ -198,7 +199,7 @@ void main() {
     final data = codec.sshStreamDataCommand(
       commandId: 'data-1',
       peerId: 'peer-a',
-      streamId: 7,
+      handle: const SshStreamHandle(openerDeviceId: 'device-a', streamId: 7),
       data: Uint8List.fromList(<int>[0xde, 0xad, 0xbe, 0xef]),
     );
     expect(data, isNotEmpty);
@@ -209,7 +210,7 @@ void main() {
     final close = codec.sshStreamCloseCommand(
       commandId: 'close-1',
       peerId: 'peer-a',
-      streamId: 7,
+      handle: const SshStreamHandle(openerDeviceId: 'device-a', streamId: 7),
     );
     expect(close, isNotEmpty);
     expect(close, contains(0xda)); // field 27 key prefix
@@ -220,8 +221,19 @@ void main() {
       Uint8List.fromList(<int>[
         0x0a, 0x03, 0x65, 0x76, 0x74, // event_id = evt
         0x18, 0x01, // protocol_version = 1
-        0xd2, 0x01, 0x10, // field 26 key + length 16
+        0xd2, 0x01, 0x1c, // field 26 key + length 28
         0x0a, 0x06, 0x70, 0x65, 0x65, 0x72, 0x2d, 0x61, // peer_id = peer-a
+        0x12, 0x0c, // handle
+        0x0a,
+        0x08,
+        0x64,
+        0x65,
+        0x76,
+        0x69,
+        0x63,
+        0x65,
+        0x2d,
+        0x61, // opener_device_id = device-a
         0x10, 0x07, // stream_id = 7
         0x1a, 0x04, 0x01, 0x02, 0x03, 0x04, // data
       ]),
@@ -231,7 +243,10 @@ void main() {
     expect(frame.event, isNull);
     final stream = frame.sshStreamData!;
     expect(stream.peerId, 'peer-a');
-    expect(stream.streamId, 7);
+    expect(
+      stream.handle,
+      const SshStreamHandle(openerDeviceId: 'device-a', streamId: 7),
+    );
     expect(stream.data, orderedEquals(<int>[1, 2, 3, 4]));
   });
 
@@ -240,8 +255,20 @@ void main() {
       Uint8List.fromList(<int>[
         0x0a, 0x03, 0x65, 0x76, 0x74, // event_id = evt
         0x18, 0x01, // protocol_version = 1
-        0xda, 0x01, 0x0a, // field 27 key + length 10
+        0xda, 0x01, 0x16, // field 27 key + length 22
         0x0a, 0x06, 0x70, 0x65, 0x65, 0x72, 0x2d, 0x61, // peer_id = peer-a
+        0x12,
+        0x0c, // handle
+        0x0a,
+        0x08,
+        0x64,
+        0x65,
+        0x76,
+        0x69,
+        0x63,
+        0x65,
+        0x2d,
+        0x61, // opener_device_id = device-a
         0x10, 0x07, // stream_id = 7
       ]),
     );
@@ -249,7 +276,10 @@ void main() {
     expect(frame.sshStreamClosed, isNotNull);
     final closed = frame.sshStreamClosed!;
     expect(closed.peerId, 'peer-a');
-    expect(closed.streamId, 7);
+    expect(
+      closed.handle,
+      const SshStreamHandle(openerDeviceId: 'device-a', streamId: 7),
+    );
   });
 
   test('peer presence snapshot event decodes a peer list', () {

@@ -6,8 +6,8 @@ use network_protocol::{
     PeerPresenceState, PeerStateChangedEvent, RealtimeSignalEvent, RealtimeSnapshotEvent,
     RealtimeStateChangedEvent, RelayConnectionState, RetryDisposition,
     RouteTopology as ProtocolRouteTopology, RouteTransport as ProtocolRouteTransport, RouteType,
-    SshStreamClosedEvent, SshStreamDataReceivedEvent, TransferCompletedEvent, TransferFailedEvent,
-    TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
+    SshStreamClosedEvent, SshStreamDataReceivedEvent, StreamHandle, TransferCompletedEvent,
+    TransferFailedEvent, TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -252,17 +252,24 @@ pub(crate) fn emit_realtime_snapshot(
 pub(crate) fn emit_stream_data_received(
     event_tx: &UnboundedSender<NetworkEvent>,
     peer_id: &str,
+    opener_device_id: &str,
     stream_id: u16,
     data: &[u8],
 ) {
     let _ = event_tx.send(NetworkEvent {
-        event_id: format!("{peer_id}/stream/{stream_id}/data/{}", unix_timestamp_ms()),
+        event_id: format!(
+            "{peer_id}/stream/{opener_device_id}/{stream_id}/data/{}",
+            unix_timestamp_ms()
+        ),
         timestamp_ms: unix_timestamp_ms(),
         protocol_version: NETWORK_PROTOCOL_VERSION,
         payload: Some(network_event::Payload::SshStreamDataReceived(
             SshStreamDataReceivedEvent {
                 peer_id: peer_id.to_string(),
-                stream_id: stream_id as u32,
+                handle: Some(StreamHandle {
+                    opener_device_id: opener_device_id.to_string(),
+                    stream_id: stream_id as u32,
+                }),
                 data: data.to_vec(),
             },
         )),
@@ -273,11 +280,12 @@ pub(crate) fn emit_stream_data_received(
 pub(crate) fn emit_stream_closed(
     event_tx: &UnboundedSender<NetworkEvent>,
     peer_id: &str,
+    opener_device_id: &str,
     stream_id: u16,
 ) {
     let _ = event_tx.send(NetworkEvent {
         event_id: format!(
-            "{peer_id}/stream/{stream_id}/closed/{}",
+            "{peer_id}/stream/{opener_device_id}/{stream_id}/closed/{}",
             unix_timestamp_ms()
         ),
         timestamp_ms: unix_timestamp_ms(),
@@ -285,7 +293,10 @@ pub(crate) fn emit_stream_closed(
         payload: Some(network_event::Payload::SshStreamClosed(
             SshStreamClosedEvent {
                 peer_id: peer_id.to_string(),
-                stream_id: stream_id as u32,
+                handle: Some(StreamHandle {
+                    opener_device_id: opener_device_id.to_string(),
+                    stream_id: stream_id as u32,
+                }),
             },
         )),
     });
