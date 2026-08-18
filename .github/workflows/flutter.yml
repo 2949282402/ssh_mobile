@@ -428,7 +428,10 @@ jobs:
       - name: Install Full App dependencies
         run: flutter pub get
       - name: Run Sharded Unit Tests
-        run: flutter test --coverage --reporter expanded --timeout 60s --total-shards ${{ matrix.total_shards }} --shard-index ${{ matrix.shard_index }}
+        # Keep the two matrix shards parallel, but serialize Flutter tester
+        # processes inside each shard so coverage collection cannot race a
+        # tester that has already exited.
+        run: flutter test --coverage --concurrency=1 --reporter expanded --timeout 60s --total-shards ${{ matrix.total_shards }} --shard-index ${{ matrix.shard_index }}
       - name: Upload shard coverage
         uses: actions/upload-artifact@v4
         with:
