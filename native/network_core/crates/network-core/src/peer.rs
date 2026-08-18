@@ -81,6 +81,7 @@ pub(crate) struct DirectRouteAttempt {
     pub(crate) session_id: SessionId,
     pub(crate) attempt_id: String,
     pub(crate) connect_window: Duration,
+    pub(crate) allow_websocket: bool,
     /// Candidate snapshots arriving from the authenticated ConnectivityAnswer
     /// while the bounded Direct race is still running.
     pub(crate) candidate_updates: watch::Receiver<Option<Vec<Candidate>>>,
@@ -541,13 +542,46 @@ async fn admit_single_winner(
         .await
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CandidateAttemptKey {
+    candidate_id: String,
+    endpoint: SocketAddr,
+    generation: u64,
+}
+
+fn candidate_attempt_key(candidate: &Candidate) -> CandidateAttemptKey {
+    CandidateAttemptKey {
+        candidate_id: candidate.candidate_id.clone(),
+        endpoint: candidate.endpoint,
+        generation: candidate.generation,
+    }
+}
+
+/// Reconciles an authoritative candidate snapshot with the not-yet-started queue.
+/// An endpoint or generation change creates a new attempt key even when the
+/// candidate ID is unchanged; candidates removed from the snapshot are dropped
+/// before they can enter the race. Active attempts are intentionally left alone.
 fn enqueue_candidates(
     pending: &mut VecDeque<Candidate>,
-    seen: &mut HashSet<String>,
+    started: &mut HashSet<CandidateAttemptKey>,
     candidates: Vec<Candidate>,
 ) {
-    for candidate in candidates.into_iter().take(MAX_CANDIDATES_PER_SIGNAL) {
-        if seen.insert(candidate.candidate_id.clone()) {
+    let snapshot = candidates
+        .into_iter()
+        .take(MAX_CANDIDATES_PER_SIGNAL)
+        .collect::<Vec<_>>();
+    let snapshot_keys = snapshot
+        .iter()
+        .map(candidate_attempt_key)
+        .collect::<HashSet<_>>();
+    pending.retain(|candidate| snapshot_keys.contains(&candidate_attempt_key(candidate)));
+    for candidate in snapshot {
+        let key = candidate_attempt_key(&candidate);
+        if !started.contains(&key)
+            && !pending
+                .iter()
+                .any(|pending| candidate_attempt_key(pending) == key)
+        {
             pending.push_back(candidate);
         }
     }
@@ -568,8 +602,8 @@ async fn connect_direct_candidates_with_crypto(
     mut candidate_updates: watch::Receiver<Option<Vec<Candidate>>>,
 ) -> Result<(Connection, SessionCryptoMaterial, SessionAdmissionLease), ProtocolError> {
     let mut pending = VecDeque::new();
-    let mut seen = HashSet::new();
-    enqueue_candidates(&mut pending, &mut seen, candidates);
+    let mut started = HashSet::new();
+    enqueue_candidates(&mut pending, &mut started, candidates);
     let mut attempts = JoinSet::new();
     let mut next_launch_at = Instant::now();
     let mut updates_closed = false;
@@ -578,6 +612,7 @@ async fn connect_direct_candidates_with_crypto(
     loop {
         if !pending.is_empty() && Instant::now() >= next_launch_at {
             let candidate = pending.pop_front().expect("pending candidate");
+            started.insert(candidate_attempt_key(&candidate));
             let candidate_window = deadline.saturating_duration_since(Instant::now());
             if candidate_window.is_zero() {
                 break;
@@ -642,7 +677,7 @@ async fn connect_direct_candidates_with_crypto(
                     Ok(()) => {
                         if let Some(update) = candidate_updates.borrow_and_update().clone() {
                             let had_pending = !pending.is_empty();
-                            enqueue_candidates(&mut pending, &mut seen, update);
+                            enqueue_candidates(&mut pending, &mut started, update);
                             if !had_pending && !pending.is_empty() {
                                 next_launch_at = Instant::now();
                             }
@@ -691,6 +726,7 @@ pub(crate) async fn connect_direct_or_generic(
         session_id,
         attempt_id,
         connect_window,
+        allow_websocket,
         candidate_updates,
     } = attempt;
     let generic_candidates = candidates.clone();
@@ -748,6 +784,7 @@ pub(crate) async fn connect_direct_or_generic(
             session_binding,
             state,
             session_id,
+            allow_websocket,
             direct_deadline,
             candidate_updates,
         ),
@@ -806,6 +843,81 @@ pub(crate) async fn connect_responder_direct(
 }
 
 #[allow(clippy::too_many_arguments)]
+async fn connect_generic_candidate(
+    endpoint: SocketAddr,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_public_key: [u8; 32],
+    peer_id: String,
+    session_binding: String,
+    state: Arc<RuntimeState>,
+    expected_session_id: SessionId,
+    allow_websocket: bool,
+    candidate_window: Duration,
+) -> Result<AuthenticatedGenericRoute, ProtocolError> {
+    let error_peer_id = peer_id.clone();
+    let operation = async move {
+        let mut transports = JoinSet::new();
+        transports.spawn(connect_tcp_route(
+            endpoint,
+            Arc::clone(&identity),
+            expected_peer_public_key,
+            peer_id.clone(),
+            session_binding.clone(),
+            Arc::clone(&state),
+            expected_session_id,
+        ));
+        if allow_websocket {
+            transports.spawn(connect_websocket_route(
+                endpoint,
+                identity,
+                expected_peer_public_key,
+                peer_id.clone(),
+                session_binding,
+                state,
+                expected_session_id,
+            ));
+        }
+
+        let mut last_error = None;
+        while let Some(result) = transports.join_next().await {
+            match result {
+                Ok(Ok(route)) => {
+                    transports.abort_all();
+                    return Ok(route);
+                }
+                Ok(Err(error)) => last_error = Some(error),
+                Err(error) => {
+                    last_error = Some(protocol_error_with_peer(
+                        NetworkErrorCode::IoError,
+                        format!("generic transport task failed: {error}"),
+                        "connect",
+                        &peer_id,
+                    ));
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "generic candidate transport race produced no route",
+                "connect",
+                &peer_id,
+            )
+        }))
+    };
+    tokio::time::timeout(candidate_window, operation)
+        .await
+        .unwrap_or_else(|_| {
+            Err(protocol_error_with_peer(
+                NetworkErrorCode::Timeout,
+                "generic candidate deadline elapsed",
+                "connect",
+                &error_peer_id,
+            ))
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn connect_generic_candidates(
     candidates: Vec<Candidate>,
     identity: Arc<DeviceIdentity>,
@@ -814,12 +926,13 @@ async fn connect_generic_candidates(
     session_binding: String,
     state: Arc<RuntimeState>,
     expected_session_id: SessionId,
+    allow_websocket: bool,
     deadline: Instant,
     mut candidate_updates: watch::Receiver<Option<Vec<Candidate>>>,
 ) -> Result<AuthenticatedGenericRoute, ProtocolError> {
     let mut pending = VecDeque::new();
-    let mut seen = HashSet::new();
-    enqueue_candidates(&mut pending, &mut seen, candidates);
+    let mut started = HashSet::new();
+    enqueue_candidates(&mut pending, &mut started, candidates);
     let mut attempts = JoinSet::new();
     let mut next_launch_at = Instant::now();
     let mut updates_closed = false;
@@ -828,55 +941,27 @@ async fn connect_generic_candidates(
     loop {
         if !pending.is_empty() && Instant::now() >= next_launch_at {
             let candidate = pending.pop_front().expect("pending candidate");
+            started.insert(candidate_attempt_key(&candidate));
             let candidate_window = deadline.saturating_duration_since(Instant::now());
             if candidate_window.is_zero() {
                 break;
             }
             let candidate_endpoint = candidate.endpoint;
-            let identity = Arc::clone(&identity);
+            let candidate_identity = Arc::clone(&identity);
             let peer_id_for_task = peer_id.clone();
-            let error_peer_id = peer_id.clone();
-            let session_binding = session_binding.clone();
-            let state = Arc::clone(&state);
-            attempts.spawn(async move {
-                let operation = async move {
-                    match connect_tcp_route(
-                        candidate_endpoint,
-                        Arc::clone(&identity),
-                        expected_peer_public_key,
-                        peer_id_for_task.clone(),
-                        session_binding.clone(),
-                        Arc::clone(&state),
-                        expected_session_id,
-                    )
-                    .await
-                    {
-                        Ok(route) => Ok(route),
-                        Err(_) => {
-                            connect_websocket_route(
-                                candidate_endpoint,
-                                identity,
-                                expected_peer_public_key,
-                                peer_id_for_task,
-                                session_binding,
-                                state,
-                                expected_session_id,
-                            )
-                            .await
-                        }
-                    }
-                };
-                tokio::time::timeout(candidate_window, operation)
-                    .await
-                    .unwrap_or_else(|_| {
-                        Err(protocol_error_with_peer(
-                            NetworkErrorCode::Timeout,
-                            "generic candidate deadline elapsed",
-                            "connect",
-                            &error_peer_id,
-                        ))
-                    })
-            });
+            let session_binding_for_task = session_binding.clone();
+            let state_for_task = Arc::clone(&state);
+            attempts.spawn(connect_generic_candidate(
+                candidate_endpoint,
+                candidate_identity,
+                expected_peer_public_key,
+                peer_id_for_task,
+                session_binding_for_task,
+                state_for_task,
+                expected_session_id,
+                allow_websocket,
+                candidate_window,
+            ));
             next_launch_at = Instant::now() + CANDIDATE_STAGGER;
             continue;
         }
@@ -909,7 +994,7 @@ async fn connect_generic_candidates(
                     Ok(()) => {
                         if let Some(update) = candidate_updates.borrow_and_update().clone() {
                             let had_pending = !pending.is_empty();
-                            enqueue_candidates(&mut pending, &mut seen, update);
+                            enqueue_candidates(&mut pending, &mut started, update);
                             if !had_pending && !pending.is_empty() {
                                 next_launch_at = Instant::now();
                             }
@@ -2102,7 +2187,7 @@ fn spawn_session_teardown(
 mod tests {
     use super::*;
     use crate::session::ConnectDecision;
-    use network_transport::{TcpTransport, Transport};
+    use network_transport::{TcpTransport, Transport, WebSocketTransport};
     use std::collections::HashMap;
     use std::sync::atomic::AtomicU16;
     use tokio::io::AsyncReadExt;
@@ -2631,6 +2716,110 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generic_candidate_races_tcp_and_websocket_concurrently() {
+        let state = new_test_state().await;
+        let peer_id = "generic-race-peer";
+        let local_peer_id = "generic-race-local";
+        let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+            local_peer_id.to_string(),
+            [81u8; 32],
+            [91u8; 32],
+        ));
+        let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+            peer_id.to_string(),
+            [82u8; 32],
+            [92u8; 32],
+        ));
+        let remote_public_key = remote_identity.public_identity_key().to_bytes();
+        let session_id = started_session(&state, peer_id).await;
+        let (endpoint, release_tx, responder_task) =
+            spawn_mixed_generic_responder(peer_id, local_peer_id).await;
+        let route = tokio::time::timeout(
+            Duration::from_secs(3),
+            connect_generic_candidate(
+                endpoint,
+                local_identity,
+                remote_public_key,
+                peer_id.to_string(),
+                session_id.wire_key(),
+                Arc::clone(&state),
+                session_id,
+                true,
+                Duration::from_secs(1),
+            ),
+        )
+        .await
+        .expect("TCP/WS candidate race should finish within the candidate window")
+        .expect("WebSocket should win while TCP is blackholed");
+
+        let AuthenticatedGenericRoute { scope, .. } = route;
+        assert_eq!(
+            scope
+                .profile()
+                .expect("staged generic route profile")
+                .transport(),
+            RouteTransport::WebSocket,
+            "WebSocket must race TCP instead of waiting for TCP to fail"
+        );
+        scope.close().await;
+        state.cancel_session_tasks(peer_id, session_id).await;
+        let _ = release_tx.send(());
+        responder_task
+            .await
+            .expect("mixed generic responder should exit");
+        state.task_supervisor.cancel_root();
+        state.task_supervisor.shutdown().await;
+    }
+
+    #[test]
+    fn candidate_snapshot_requeues_changed_endpoint_and_drops_deleted_pending() {
+        let mut old = Candidate::new(
+            "192.0.2.10:41000".parse().expect("old endpoint"),
+            CandidateKind::Lan,
+            "same-interface".into(),
+        )
+        .with_generation(1);
+        old.candidate_id = "same-candidate".into();
+        let mut deleted = Candidate::new(
+            "192.0.2.11:41001".parse().expect("deleted endpoint"),
+            CandidateKind::Lan,
+            "deleted-interface".into(),
+        );
+        deleted.candidate_id = "deleted-candidate".into();
+
+        let mut pending = VecDeque::new();
+        let mut started = HashSet::new();
+        enqueue_candidates(&mut pending, &mut started, vec![old, deleted]);
+        let launched = pending.pop_front().expect("old candidate should be queued");
+        started.insert(candidate_attempt_key(&launched));
+
+        let mut updated = Candidate::new(
+            "198.51.100.10:42000".parse().expect("updated endpoint"),
+            CandidateKind::Lan,
+            "same-interface".into(),
+        )
+        .with_generation(2);
+        updated.candidate_id = "same-candidate".into();
+        enqueue_candidates(&mut pending, &mut started, vec![updated.clone()]);
+
+        assert_eq!(pending.len(), 1, "the updated candidate should be requeued");
+        let queued = pending
+            .front()
+            .expect("updated candidate should remain pending");
+        assert_eq!(queued.candidate_id, updated.candidate_id);
+        assert_eq!(queued.endpoint, updated.endpoint);
+        assert_eq!(queued.generation, updated.generation);
+        assert!(!started.contains(&candidate_attempt_key(&updated)));
+
+        enqueue_candidates(&mut pending, &mut started, vec![updated]);
+        assert_eq!(
+            pending.len(),
+            1,
+            "the same snapshot must not duplicate a pending candidate"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn late_quic_candidate_arriving_before_direct_deadline_can_win() {
         let client_state = new_test_state().await;
         let server_state = new_test_state().await;
@@ -2713,6 +2902,7 @@ mod tests {
             session_id,
             attempt_id: "late-quic-candidate-test".into(),
             connect_window: Duration::from_secs(2),
+            allow_websocket: true,
             candidate_updates,
         };
         let route =
@@ -2808,6 +2998,7 @@ mod tests {
             session_id,
             attempt_id: "generic-budget-test".into(),
             connect_window: crate::connect::DIRECT_CONNECT_WINDOW,
+            allow_websocket: true,
             candidate_updates,
         };
 
@@ -2828,6 +3019,81 @@ mod tests {
         let _ = release_tx.send(());
         responder_task.await.expect("generic responder should exit");
         endpoint_for_cleanup.close(quinn::VarInt::from_u32(0), b"test complete");
+    }
+
+    /// 在同一个 endpoint 上把 TCP 连接保持为黑洞，并为 WebSocket 连接完成认证。
+    /// 这样可以验证同一个 candidate 内两种 generic transport 会并发 race。
+    async fn spawn_mixed_generic_responder(
+        peer_id: &str,
+        local_peer_id: &str,
+    ) -> (SocketAddr, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mixed generic responder");
+        let address = listener.local_addr().expect("mixed responder address");
+        let peer_id = peer_id.to_string();
+        let local_peer_id = local_peer_id.to_string();
+        let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+            peer_id, [82u8; 32], [92u8; 32],
+        ));
+        let local_public_key =
+            DeviceIdentity::from_private_keys(local_peer_id.clone(), [81u8; 32], [91u8; 32])
+                .public_identity_key()
+                .to_bytes();
+        let (release_tx, release_rx) = oneshot::channel();
+        let responder_task = tokio::spawn(async move {
+            let trusted_peer_keys =
+                tokio::sync::RwLock::new(HashMap::from([(local_peer_id, local_public_key)]));
+            let mut release_rx = release_rx;
+            let mut raw_connections = Vec::new();
+            let mut websocket_authenticated = false;
+            loop {
+                tokio::select! {
+                    _ = &mut release_rx => break,
+                    accepted = listener.accept() => {
+                        let (stream, _) = accepted.expect("accept mixed generic connection");
+                        let mut probe = [0u8; 4];
+                        let looks_like_websocket = tokio::time::timeout(
+                            Duration::from_secs(1),
+                            stream.peek(&mut probe),
+                        )
+                        .await
+                        .ok()
+                        .and_then(Result::ok)
+                        .is_some_and(|length| length == probe.len() && &probe == b"GET ");
+                        if looks_like_websocket {
+                            let socket = WebSocketTransport::accept(stream)
+                                .await
+                                .expect("accept WebSocket transport");
+                            let mut connection = GenericConnection::from_transport(
+                                Transport::WebSocket(Box::new(socket)),
+                            );
+                            authenticate_responder(
+                                &mut connection,
+                                Arc::clone(&remote_identity),
+                                &trusted_peer_keys,
+                                |_authenticated_peer_id, _remote_session_binding| async move {
+                                    Ok(("33".repeat(16), ()))
+                                },
+                            )
+                            .await
+                            .expect("authenticate WebSocket responder");
+                            websocket_authenticated = true;
+                        } else {
+                            // TCP has connected but the responder never sends the generic
+                            // handshake, so the TCP race remains a blackhole.
+                            raw_connections.push(stream);
+                        }
+                    }
+                }
+            }
+            assert!(
+                websocket_authenticated,
+                "the mixed responder should observe a WebSocket attempt"
+            );
+            drop(raw_connections);
+        });
+        (address, release_tx, responder_task)
     }
 
     /// 启动一个接受单条 TCP 连接并完成 generic responder 握手的测试对端。

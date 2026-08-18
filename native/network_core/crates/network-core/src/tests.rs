@@ -2032,7 +2032,7 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "tcp-b".into(),
                 intent: 0,
-                communication_class: 0,
+                communication_class: CommunicationClass::ReliableStream as i32,
             })),
         },
     );
@@ -2144,7 +2144,7 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "tcp-b".into(),
                 intent: 0,
-                communication_class: 0,
+                communication_class: CommunicationClass::ReliableStream as i32,
             })),
         },
     );

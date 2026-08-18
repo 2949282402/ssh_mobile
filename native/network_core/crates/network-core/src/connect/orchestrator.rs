@@ -361,6 +361,7 @@ impl ConnectionOrchestrator {
                 session_id,
                 attempt_id: attempt_id.clone(),
                 connect_window: DIRECT_CONNECT_WINDOW,
+                allow_websocket: matches!(class, CommunicationClass::ReliableMessage),
                 candidate_updates,
             }),
         )
