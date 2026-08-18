@@ -1,4 +1,4 @@
-最新更新时间：2026-08-11
+最新更新时间：2026-08-19
 
 # ADR-015: Generic TCP, UDP, and WebSocket Transports
 
@@ -22,6 +22,10 @@ RouteSelector 才是上层 owner。
   这些能力继续由现有 native Session/Delivery/Crypto/Relay 层组合。
 - 本 Step 只添加 Rust workspace 能力和单测，不新增 FFI 命令，不修改 Flutter/Dart
   客户端协议，也不替换当前 QUIC/Relay 默认路线。
+
+### Direct race 集成边界
+
+TCP 与 WebSocket 的 framing、认证和生命周期仍由各自 transport owner 负责；network-core 在 Direct candidate window 内统一调度它们。对支持 WebSocket 的 generic route，TCP 与 WebSocket 对同一 candidate 并发竞争，不能把 WebSocket 作为 TCP 失败后的串行 fallback。candidate 去重键包含 `candidate_id`、endpoint 和 generation，因此 endpoint/generation 更新会产生新的 attempt，权威 snapshot 删除的 pending candidate 不会继续启动。
 
 ## 影响
 

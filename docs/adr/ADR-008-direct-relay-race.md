@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-15
+> 最新更新时间：2026-08-19
 
 # ADR-008：Direct First 顺序建连（先解析 Discovery，再 Direct，超时才 Relay）
 
@@ -32,6 +32,8 @@ Direct timeout 后才查询 Relay，用户会在可用 Relay 已经存在时仍�
   体现。
 - Relay 路线一旦启动，其 ready / 失败按 Relay 自身的 lookup 语义处理；Relay
   胜出时绑定当前 Session（Direct 尝试此时已结束，无并行清理问题）。
+- Direct race 的 candidate key 是 `(candidate_id, endpoint, generation)`，不能只按 `candidate_id` 去重。权威 snapshot 删除尚未启动的 candidate 时，必须从 pending queue 移除；同 ID 更新 endpoint 或 generation 时，视为新的 candidate attempt。
+- 对支持 generic WebSocket 的路由，单个 candidate 同时启动 TCP 与 WebSocket，并共享同一个 Direct deadline；不能等待 TCP 失败后才触发 WebSocket。Coordination channel 仍存活时，延迟 ConnectivityAnswer 增加的 QUIC candidate 也必须加入当前 race。
 - 没有 Direct candidate 且 lookup 在线/fail-open 时直接进 Relay 数据面；只有
   单一路线时保留该路线的 8 秒总预算。
 - 首个 ready Route 绑定到当前 Session。
@@ -53,4 +55,4 @@ Relay」的路径劣化；代价是彻底无法 Direct 时最多多等 4s 才进
 
 native 测试覆盖：connect_window 内 Direct ready、超时后 Relay fallback、
 单个 Direct candidate 快速失败仍等满窗口、无 Direct candidate 且 lookup 在线
-时直接 Relay、单一路线的 8s 总预算、以及 Relay 胜出后绑定当前 Session 的语义。
+时直接 Relay、单一路线的 8s 总预算、以及 Relay 胜出后绑定当前 Session 的语义；TCP blackhole + WebSocket reachable、同 ID candidate endpoint/generation 更新、snapshot 删除 pending candidate、以及 Direct window 内延迟 answer 新增 QUIC candidate。

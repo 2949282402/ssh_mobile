@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-15
+> 最新更新时间：2026-08-19
 
 # 网络传输 SDK 架构设计
 
@@ -1219,6 +1219,14 @@ Direct / Relay 重新竞速
 
 ---
 
+### 12.3 v2 Discovery 与 Direct race 不变量
+
+`ConnectivityAttempt` 保存完整的 128-bit `RuntimeEpoch`；只有相同 epoch 的 `revision` 才能比较新旧，不同 epoch 直接替换远端 snapshot。Direct window 内，coordination channel 尚未关闭时到达的 Answer candidate 仍必须加入 race，不能因当前 candidate 队列暂时为空而提前进入 Relay。
+
+Candidate race 使用 `(candidate_id, endpoint, generation)` 作为 attempt identity。权威 snapshot 删除尚未启动的 candidate 时从 pending queue 移除；同 ID 更新 endpoint 或 generation 时重新尝试。对支持 generic WebSocket 的路由，同一 candidate 的 TCP 与 WebSocket 并发竞争，共享 Direct deadline，不能把 WebSocket 变成 TCP 失败后的串行 fallback。
+
+---
+
 ## 13. CandidateManager
 
 Candidate 是“可能可用的连接方案”。
@@ -2002,6 +2010,10 @@ pub enum SdkEvent {
 ```
 
 ---
+
+### 25.1 ReliableStream 的 FFI 业务身份
+
+FFI 与 App 事件不能只携带 `(peer_id, stream_id)`。逻辑流使用稳定的 `StreamHandle = (opener_device_id, stream_id)`，并把该 handle 同时放入 `StreamOpened`（由 `SshStreamOpen` + accepted `CommandResult` 表达）、`StreamDataReceived`、`StreamClosed` 以及 Send/Close command。Native 内部仍可使用 `StreamKey { opener, stream_id }`，但 App 路由必须按完整 handle 查找，允许双方同时打开相同数字 `stream_id`。
 
 ## 26. Metrics 与 Observability
 

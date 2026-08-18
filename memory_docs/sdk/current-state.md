@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-19
 
 # SDK Current State
 
@@ -13,6 +13,8 @@ The maintained network contract is development-stage v1.
 - Rust owns authenticated QUIC, generic TCP/WebSocket carriers, UDP datagrams,
   WSS Relay integration, native WebRTC, Session routing, Delivery/Recovery,
   application E2EE, and resumable file-transfer state.
+- Discovery attempts preserve the full 128-bit `RuntimeEpoch`; revisions are ordered only within the same epoch, and late Answer candidates can still join the live Direct race.
+- ReliableStream commands and events use `StreamHandle(opener_device_id, stream_id)` end-to-end, so reverse-direction streams with the same numeric ID remain distinct.
 - Queue acceptance, native command completion, transport acknowledgement, and
   application acknowledgement remain distinct.
 - Generic reliable carriers support Session Delivery. File streaming continues

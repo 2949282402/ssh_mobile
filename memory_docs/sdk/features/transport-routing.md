@@ -1,4 +1,4 @@
-> Last updated: 2026-08-16
+> Last updated: 2026-08-19
 
 # Transport and Routing
 
@@ -32,6 +32,9 @@ Routing invariants:
   confirmed_offset. A peer runtime restart or transport loss simply triggers a
   new Resolve → new Connection → new Session; SSH/WebRTC build new sessions
   (no transparent recovery).
+
+- Direct candidate races use `(candidate_id, endpoint, generation)` as the attempt key; TCP and WebSocket race concurrently when the route supports WebSocket, and a late Answer candidate can join before the Direct deadline.
+- Relay Data reservations use a one-shot `Ready` per pair. Replacing or disconnecting either side closes the old pair and requires a fresh Connect → Ready handshake.
 
 Implementation entry points:
 

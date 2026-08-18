@@ -1,4 +1,4 @@
-> Last updated: 2026-08-15
+> Last updated: 2026-08-19
 
 # Backend Current State
 
@@ -50,6 +50,7 @@ Current boundaries:
   The backend does not own Application Root material or plaintext; discovery
   storage keeps opaque candidates without parsing their endpoint semantics
   (ADR-017 revision boundary).
+- The V2 Relay Data registry treats `Ready` as one-shot per completed pair. If either role disconnects or is replaced, the old pair is closed and both roles must perform a fresh `Connect → Ready`; the remaining old endpoint never receives a second `Ready`.
 - Process restart clears device, administrator-session, and Relay-session state
   **in memory mode**; `mysql` mode keeps enrollment and revocation durable and
   devices keep working across a restart.

@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-18
+> 最新更新时间：2026-08-19
 
 # ADR-RELAY-DATA-PLANE-V2：Control/Data 物理分离、Reservation 模型、Relay Protocol V2
 
@@ -49,9 +49,9 @@ Relay 确认两端角色后 → RelayDataReady → encrypted payload
 
 数据通道只负责配对握手、encrypted forwarding / flow control / close。
 `relay_data_endpoint` 与 `local_token` 由 reservation 授予；连接双方凭
-`reservation_id` 进入同一数据通道。相同角色的重试替换旧端点，不会把两个
+`reservation_id` 进入同一数据通道。未完成配对时，相同角色的重试替换旧端点，不会把两个
 initiator 或两个 responder 互相配对；Rust `RelayDataClient` 只有收到 Ready
-后才返回连接成功。
+后才返回连接成功。已完成 `Ready` 握手的 pair 是一次性的：任一角色被替换或断开都会关闭当前 pair、清除另一侧的配对关系，并重新等待双方 Connect → Ready；Relay 不会向仍在线的旧客户端发送第二个 Ready。
 
 ### Relay Protocol V2
 
@@ -107,4 +107,4 @@ live state`、`MySQL = 外部持久状态`。不得宣称 Multi-instance support
 heartbeat / Resolve / signaling 不受影响；Control 面禁止 File Chunk / Delivery
 Payload / Bulk Payload（静态守卫）；Relay Protocol V2 的 request_id 关联、
 attempt_id 关联、stale answer 忽略；reservation 生命周期（expires_at 过期、
-local_token 校验、角色配对、Ready 栅栏、双方连接 /v2/relay/{reservation_id}）。
+local_token 校验、角色配对、Ready 栅栏、双方连接 /v2/relay/{reservation_id}）。回归测试还必须覆盖：A1+B1 已完成 Ready 后 A1 断开，A2 连接时不得收到 Ready；只有 B2 重新 Connect 后，A2+B2 才能再次收到一次 Ready 并传输 payload。

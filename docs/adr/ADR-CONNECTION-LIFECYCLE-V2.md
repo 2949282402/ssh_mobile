@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-15
+> 最新更新时间：2026-08-19
 
 # ADR-CONNECTION-LIFECYCLE-V2：连接生命周期重构（ConnectivityAttempt 一次性、ConnectionSession 可丢弃）
 
@@ -57,6 +57,10 @@ ConnectivityAttempt {
   remote_attempt_id 留在全局 PathManager；Presence Event 删除当前 Attempt。
 - 删除 `network-nat` 的 persistent `remote_generation` / `remote_attempt_id`。
 
+### ConnectivityAttempt 的版本与候选更新边界
+
+`ConnectivityAttempt` 只保存完整的 128-bit `RuntimeEpoch`，不把 epoch 压缩成可排序的 `u64`。同 epoch 时按 `revision` 判 stale/update；不同 epoch 代表新的 Runtime snapshot，直接替换旧候选集。Answer 晚到时，只要 coordination channel 尚未关闭且 Direct deadline 未到，新候选仍要加入当前 race。
+
 ### PathManager 仅保留 metrics
 
 - 拆分出 `ConnectionPathMetrics`（只属于已建立连接的 RTT / Jitter / Loss /
@@ -83,6 +87,8 @@ ConnectivityAttempt {
 - 4s 内任一 identity-authenticated + E2EE-ready 的 Direct 成功 → `CONNECTED_DIRECT`。
 - 4s 超时 → `DIRECT_FAILED` → `ReserveRelay` → Relay Data。**Relay 不再和
   Direct 并行抢跑**（无 happy-eyeballs 并行 Relay 启动）。
+
+Direct race 以单个 candidate 为边界：QUIC 候选按 Direct deadline 竞争；支持 generic WebSocket 的路由中，TCP 与 WebSocket 在同一个 candidate window 内并行启动，不允许 TCP 黑洞把 WebSocket 机会变成串行 fallback。待启动 candidate 的身份是 `(candidate_id, endpoint, generation)`；同 ID 但 endpoint 或 generation 更新时必须重新尝试，权威 snapshot 删除的未启动 candidate 必须丢弃。
 
 ### 不再进行 Relay → Direct 后台升级
 
@@ -115,4 +121,4 @@ peer `runtime_epoch == Resolve 返回 epoch` 且 capability 满足本次业务�
 新 connection 先 Resolve、existing connection + same epoch reuse、existing
 connection + new epoch 不复用、QUIC direct success/timeout、TCP / WebSocket /
 Relay fallback、identity mismatch、同时连接多个 peer、同 peer 多 connect 合并、
-stale/delayed attempt answer。
+stale/delayed attempt answer、同 ID candidate endpoint/generation 更新、删除未启动 candidate、TCP blackhole + WebSocket reachable，以及 Direct window 内延迟 answer 新增 QUIC candidate。

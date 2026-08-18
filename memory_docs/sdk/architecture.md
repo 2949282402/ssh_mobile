@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-19
 
 # SDK Architecture
 
@@ -24,7 +24,9 @@ Ownership rules:
 - `ssh_mobile_network_native` owns the helper isolate and explicit native
   `start → stop → destroy` binding lifecycle.
 - Rust `network-core` owns logical Session state, active routes, Delivery,
-  cryptographic context, transfer state, Realtime state, and supervised tasks.
+  full-epoch ConnectivityAttempt snapshots, candidate races, StreamHandle-aware
+  ReliableStream events, cryptographic context, transfer state, Realtime state,
+  and supervised tasks.
 - `relay/` is an external authenticated carrier and opaque forwarder, not a
   Session or crypto owner.
 

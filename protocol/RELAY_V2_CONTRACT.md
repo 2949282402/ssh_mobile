@@ -1,4 +1,4 @@
-> Last updated: 2026-08-18
+> Last updated: 2026-08-19
 
 # Relay Protocol V2 — Frozen Wire Contract
 
@@ -70,10 +70,16 @@ Authoritative files:
   `/v2/relay/{id}` with role-specific tokens → Relay queues `RelayDataReady` to
   both endpoints → encrypted payload flows → `RelayDataClose` or TTL expiry.
 - `RelayDataConnect` authenticates the initiator/responder role from its token;
-  same-role retries replace the old endpoint. `RelayDataPayload` and
-  `RelayDataAck` are rejected until the two roles are paired and `Ready` has
-  been queued. A client must wait for `Ready` before treating the data plane as
-  connected.
+  same-role retries replace an unpaired endpoint. Once a pair has completed
+  the `Ready` handshake, replacing either role invalidates the whole old pair:
+  Relay closes both old endpoints with `RelayDataClose(reason=2)`, creates a
+  fresh pending pair, and never sends a second `Ready` to the endpoint that
+  remained connected. Both roles must complete a new `Connect → Ready`
+  handshake before payload or ack traffic resumes.
+- `RelayDataPayload` and `RelayDataAck` are rejected until the two roles are
+  paired and `Ready` has been queued. `Ready` is a one-shot event for one
+  paired data connection; a client must wait for it before treating the data
+  plane as connected.
 
 ## 4. Message inventory
 
