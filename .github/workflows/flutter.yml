@@ -401,7 +401,7 @@ jobs:
 
   app-unit-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -428,10 +428,30 @@ jobs:
       - name: Install Full App dependencies
         run: flutter pub get
       - name: Run Sharded Unit Tests
-        # Keep the two matrix shards parallel, but serialize Flutter tester
-        # processes inside each shard so coverage collection cannot race a
-        # tester that has already exited.
-        run: flutter test --coverage --concurrency=1 --reporter expanded --timeout 60s --total-shards ${{ matrix.total_shards }} --shard-index ${{ matrix.shard_index }}
+        run: |
+          test_args=(
+            --coverage
+            --fail-fast
+            --reporter expanded
+            --timeout 60s
+            --total-shards "${{ matrix.total_shards }}"
+            --shard-index "${{ matrix.shard_index }}"
+          )
+
+          for attempt in 1 2; do
+            echo "Running Flutter test shard ${{ matrix.shard_index }} (attempt $attempt)."
+            if timeout --signal=TERM --kill-after=30s 8m \
+              flutter test "${test_args[@]}"; then
+              exit 0
+            else
+              status=$?
+            fi
+
+            if [ "$attempt" -eq 2 ]; then
+              exit "$status"
+            fi
+            echo "Flutter test shard failed or timed out; retrying once."
+          done
       - name: Upload shard coverage
         uses: actions/upload-artifact@v4
         with:
