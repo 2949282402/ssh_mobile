@@ -1,6 +1,21 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-15
 
 # ADR-009：Session 断线后的自动重连
+
+## Status
+
+Superseded on 2026-08-15：transport-network v2（[ADR-CONNECTION-LIFECYCLE-V2](ADR-CONNECTION-LIFECYCLE-V2.md)）
+把 `ConnectionSession` 定义为与 Transport Connection 同生命周期的可丢弃对象，
+**删除通用自动重连**（`reconnect_loop` / `schedule_reconnect` / `ReconnectManager`
+只恢复 Connection/Route 的职责）。连接断开后业务显式重新 `ResolvePeer` 并新建
+连接；业务连续性由 Delivery / Transfer 在传输之上按业务身份恢复（见
+[ADR-BUSINESS-RECOVERY-V2](ADR-BUSINESS-RECOVERY-V2.md)）。
+
+## Historical note
+
+本 ADR 记录 v1 的 Session 级自动重连决策（最多 5 次、250ms 起始退避、`SessionId`
+代际令牌），保留仅供决策历史参考。v2 不再有跨 Transport 存活的逻辑 Session，因此
+「以 SessionId 为代际令牌的有界重连」随之删除。
 
 ## 背景
 
@@ -32,4 +47,4 @@ Direct QUIC 断线后可以在后台恢复，并重新参与 Direct/Relay 竞速
 
 ## 状态
 
-Accepted
+Superseded（2026-08-15，见上文 Status）

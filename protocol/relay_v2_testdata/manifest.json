@@ -1,0 +1,432 @@
+{
+  "constants": {
+    "DIRECT_CONNECT_WINDOW_MS": 4000,
+    "FRAME_LENGTH_PREFIX_BYTES": 4,
+    "HEARTBEAT_INTERVAL_S": 20,
+    "MAX_ATTEMPT_ID_BYTES": 128,
+    "MAX_DEVICE_ID_BYTES": 128,
+    "MAX_DISCOVERY_CANDIDATES": 64,
+    "MAX_DISCOVERY_CANDIDATE_BYTES": 4096,
+    "MAX_DISCOVERY_CAPABILITIES": 64,
+    "MAX_REALTIME_ID_BYTES": 128,
+    "MAX_REALTIME_SIGNAL_PAYLOAD_BYTES": 262144,
+    "MAX_RELAY_DATA_FRAME_BYTES": 524292,
+    "MAX_RELAY_FRAME_BYTES": 524292,
+    "PRESENCE_TTL_S": 60,
+    "RELAY_V2_VERSION": 2,
+    "RESERVATION_EXPIRY_GRACE_S": 5,
+    "RESERVATION_ID_BYTES": 16,
+    "RESERVATION_ID_HEX_CHARS": 32,
+    "RESERVATION_LIFETIME_S_DEFAULT": 60,
+    "RESERVATION_TOKEN_BYTES": 32,
+    "RESOLVE_RETRY_HINT_NOT_READY_MS": 2000,
+    "RESOLVE_RETRY_HINT_UNKNOWN_MS": 5000,
+    "SERVER_HEARTBEAT_MISSES_BEFORE_CLOSE": 2
+  },
+  "enums": {
+    "ErrorCode": {
+      "ERROR_CODE_AUTHENTICATION_FAILED": 2,
+      "ERROR_CODE_CONTROL_UNAVAILABLE": 1,
+      "ERROR_CODE_EPOCH_CONFLICT": 7,
+      "ERROR_CODE_FRAME_TOO_LARGE": 14,
+      "ERROR_CODE_MALFORMED_FRAME": 13,
+      "ERROR_CODE_PEER_NOT_READY": 4,
+      "ERROR_CODE_PEER_OFFLINE": 3,
+      "ERROR_CODE_PROTOCOL": 6,
+      "ERROR_CODE_RATE_LIMITED": 12,
+      "ERROR_CODE_RELAY_UNAVAILABLE": 11,
+      "ERROR_CODE_RESERVATION_EXPIRED": 10,
+      "ERROR_CODE_RESERVATION_FAILED": 9,
+      "ERROR_CODE_RESOLVE_TIMEOUT": 5,
+      "ERROR_CODE_REVISION_STALE": 8,
+      "ERROR_CODE_UNSPECIFIED": 0
+    },
+    "RealtimeSignalKind": {
+      "REALTIME_SIGNAL_KIND_ANSWER": 2,
+      "REALTIME_SIGNAL_KIND_CLOSE": 5,
+      "REALTIME_SIGNAL_KIND_ICE_CANDIDATE": 3,
+      "REALTIME_SIGNAL_KIND_ICE_RESTART": 4,
+      "REALTIME_SIGNAL_KIND_OFFER": 1,
+      "REALTIME_SIGNAL_KIND_UNSPECIFIED": 0
+    },
+    "ResolveStatus": {
+      "RESOLVE_STATUS_NOT_READY": 3,
+      "RESOLVE_STATUS_OFFLINE": 2,
+      "RESOLVE_STATUS_READY": 1,
+      "RESOLVE_STATUS_UNKNOWN": 4,
+      "RESOLVE_STATUS_UNSPECIFIED": 0
+    },
+    "TransportCapability": {
+      "TRANSPORT_CAPABILITY_QUIC": 1,
+      "TRANSPORT_CAPABILITY_RELAY_DATA": 6,
+      "TRANSPORT_CAPABILITY_TCP": 2,
+      "TRANSPORT_CAPABILITY_UDP_DATAGRAM": 3,
+      "TRANSPORT_CAPABILITY_UNSPECIFIED": 0,
+      "TRANSPORT_CAPABILITY_WEBRTC": 5,
+      "TRANSPORT_CAPABILITY_WEBSOCKET": 4
+    }
+  },
+  "fixtures": [
+    {
+      "direction": "server->client",
+      "expects": {
+        "device_id": "11111111111111111111111111111111",
+        "heartbeat_interval_s": 20,
+        "message": "ready",
+        "presence_ttl_s": 60,
+        "protocol_version": 2,
+        "server_time_ms": 1723840800123,
+        "version": 2
+      },
+      "file": "ready.control.bin",
+      "name": "ready",
+      "transport": "control"
+    },
+    {
+      "direction": "client->server",
+      "expects": {
+        "message": "heartbeat",
+        "request_id": 1001,
+        "sent_at_ms": 1723840820123,
+        "version": 2
+      },
+      "file": "heartbeat.control.bin",
+      "name": "heartbeat",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "message": "heartbeat_ack",
+        "request_id": 1001,
+        "server_time_ms": 1723840820123,
+        "version": 2
+      },
+      "file": "heartbeat_ack.control.bin",
+      "name": "heartbeat_ack",
+      "transport": "control"
+    },
+    {
+      "direction": "client->server",
+      "expects": {
+        "candidate_count": 2,
+        "epoch_high": "0x6a09e667",
+        "epoch_low": "0xbb67ae85",
+        "message": "discovery_publish",
+        "published_at_ms": 1723840800456,
+        "request_id": 1001,
+        "revision": 7,
+        "transport_capabilities": [
+          1,
+          2,
+          6
+        ],
+        "transport_capability_names": [
+          "QUIC",
+          "TCP",
+          "RELAY_DATA"
+        ],
+        "version": 2
+      },
+      "file": "discovery_publish.control.bin",
+      "name": "discovery_publish",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "epoch_high": "0x6a09e667",
+        "epoch_low": "0xbb67ae85",
+        "message": "discovery_ack",
+        "request_id": 1001,
+        "revision": 7,
+        "version": 2
+      },
+      "file": "discovery_ack.control.bin",
+      "name": "discovery_ack",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "epoch_high": "0x6a09e667",
+        "epoch_low": "0xbb67ae85",
+        "message": "resolve_peer_response",
+        "request_id": 1001,
+        "revision": 7,
+        "status": 1,
+        "status_name": "RESOLVE_STATUS_READY",
+        "version": 2
+      },
+      "file": "resolve_ready.control.bin",
+      "name": "resolve_ready",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "message": "resolve_peer_response",
+        "request_id": 1001,
+        "status": 2,
+        "status_name": "RESOLVE_STATUS_OFFLINE",
+        "version": 2
+      },
+      "file": "resolve_offline.control.bin",
+      "name": "resolve_offline",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "message": "resolve_peer_response",
+        "request_id": 1001,
+        "retry_after_ms": 2000,
+        "status": 3,
+        "status_name": "RESOLVE_STATUS_NOT_READY",
+        "version": 2
+      },
+      "file": "resolve_not_ready.control.bin",
+      "name": "resolve_not_ready",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "message": "resolve_peer_response",
+        "request_id": 1001,
+        "retry_after_ms": 5000,
+        "status": 4,
+        "status_name": "RESOLVE_STATUS_UNKNOWN",
+        "version": 2
+      },
+      "file": "resolve_unknown.control.bin",
+      "name": "resolve_unknown",
+      "transport": "control"
+    },
+    {
+      "direction": "client->server",
+      "expects": {
+        "attempt_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "epoch_high": "0x6a09e667",
+        "epoch_low": "0xbb67ae85",
+        "initiator_device_id": "11111111111111111111111111111111",
+        "initiator_revision": 7,
+        "message": "connectivity_offer",
+        "request_id": 1001,
+        "version": 2
+      },
+      "file": "connectivity_offer.control.bin",
+      "name": "connectivity_offer",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "accepted": true,
+        "attempt_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "epoch_high": "0x9e3779b9",
+        "epoch_low": "0x7f4a7c15",
+        "message": "connectivity_answer",
+        "request_id": 2002,
+        "responder_device_id": "22222222222222222222222222222222",
+        "responder_revision": 3,
+        "version": 2
+      },
+      "file": "connectivity_answer.control.bin",
+      "name": "connectivity_answer",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "message": "presence_hint_snapshot",
+        "peer_count": 2,
+        "peers": [
+          {
+            "device_id": "11111111111111111111111111111111",
+            "epoch_high": "0x6a09e667",
+            "epoch_low": "0xbb67ae85",
+            "online": true,
+            "revision": 7
+          },
+          {
+            "device_id": "22222222222222222222222222222222",
+            "epoch_high": "0x9e3779b9",
+            "epoch_low": "0x7f4a7c15",
+            "online": true,
+            "revision": 3
+          }
+        ],
+        "published_at_ms": 1723840800456,
+        "version": 2
+      },
+      "file": "presence_hint_snapshot.control.bin",
+      "name": "presence_hint_snapshot",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "device_id": "22222222222222222222222222222222",
+        "epoch_high": "0x9e3779b9",
+        "epoch_low": "0x7f4a7c15",
+        "message": "peer_available_hint",
+        "revision": 3,
+        "version": 2
+      },
+      "file": "peer_available_hint.control.bin",
+      "name": "peer_available_hint",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "device_id": "22222222222222222222222222222222",
+        "message": "peer_unavailable_hint",
+        "reason": "device offline",
+        "version": 2
+      },
+      "file": "peer_unavailable_hint.control.bin",
+      "name": "peer_unavailable_hint",
+      "transport": "control"
+    },
+    {
+      "direction": "client->server",
+      "expects": {
+        "attempt_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "desired_lifetime_s": 60,
+        "message": "relay_reserve_request",
+        "request_id": 1001,
+        "target_device_id": "22222222222222222222222222222222",
+        "version": 2
+      },
+      "file": "relay_reserve_request.control.bin",
+      "name": "relay_reserve_request",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "attempt_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "expires_at_ms": 1723840860123,
+        "local_token_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "message": "relay_reserve_response",
+        "relay_data_endpoint": "wss://relay.example.test/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d",
+        "request_id": 1001,
+        "reservation_id": "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d",
+        "version": 2
+      },
+      "file": "relay_reserve_response.control.bin",
+      "name": "relay_reserve_response",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "attempt_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "expires_at_ms": 1723840860123,
+        "initiator_device_id": "11111111111111111111111111111111",
+        "local_token_hex": "2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
+        "message": "incoming_relay_reservation",
+        "relay_data_endpoint": "wss://relay.example.test/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d",
+        "reservation_id": "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d",
+        "version": 2
+      },
+      "file": "incoming_relay_reservation.control.bin",
+      "name": "incoming_relay_reservation",
+      "transport": "control"
+    },
+    {
+      "direction": "client->server",
+      "expects": {
+        "kind": 3,
+        "kind_name": "REALTIME_SIGNAL_KIND_ICE_CANDIDATE",
+        "message": "realtime_signal",
+        "payload_hex": "7364702d6d69643d303b63616e6469646174653a3834323136333034392031207564702031363737373239353335203139382e35312e3130302e3720353433323120747970207372666c78",
+        "realtime_id": "rt-9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+        "request_id": 1001,
+        "revision": 7,
+        "target_device_id": "22222222222222222222222222222222",
+        "version": 2
+      },
+      "file": "realtime_signal.control.bin",
+      "name": "realtime_signal",
+      "transport": "control"
+    },
+    {
+      "direction": "server->client",
+      "expects": {
+        "attempt_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+        "code": 7,
+        "code_name": "ERROR_CODE_EPOCH_CONFLICT",
+        "error_message": "revision already published under a different runtime epoch",
+        "message": "protocol_error",
+        "request_id": 1001,
+        "version": 2
+      },
+      "file": "protocol_error.control.bin",
+      "name": "protocol_error",
+      "transport": "control"
+    },
+    {
+      "direction": "client->relay",
+      "expects": {
+        "local_token_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+        "message": "relay_data_connect",
+        "reservation_id": "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d",
+        "version": 2
+      },
+      "file": "relay_data_connect.data.bin",
+      "name": "relay_data_connect",
+      "transport": "data"
+    },
+    {
+      "direction": "peer->relay",
+      "expects": {
+        "encrypted_payload_hex": "4142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80",
+        "message": "relay_data_payload",
+        "sequence": 42,
+        "version": 2
+      },
+      "file": "relay_data_payload.data.bin",
+      "name": "relay_data_payload",
+      "transport": "data"
+    },
+    {
+      "direction": "peer->relay",
+      "expects": {
+        "message": "relay_data_close",
+        "reason": 0,
+        "version": 2
+      },
+      "file": "relay_data_close.data.bin",
+      "name": "relay_data_close",
+      "transport": "data"
+    }
+  ],
+  "schema_version": 2,
+  "seed": {
+    "attempt_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+    "candidate_a": "cand:type=host;ip=192.168.1.10;port=54321;proto=quic",
+    "candidate_b": "cand:type=srflx;ip=203.0.113.7;port=3478;proto=udp",
+    "device_a": "11111111111111111111111111111111",
+    "device_b": "22222222222222222222222222222222",
+    "epoch_high": "0x6a09e667",
+    "epoch_low": "0xbb67ae85",
+    "expires_at_ms": 1723840860123,
+    "published_at_ms": 1723840800456,
+    "realtime_id": "rt-9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+    "request_id": 1001,
+    "reservation_id": "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d",
+    "responder_epoch_high": "0x9e3779b9",
+    "responder_epoch_low": "0x7f4a7c15",
+    "responder_request_id": 2002,
+    "responder_revision": 3,
+    "revision": 7,
+    "schema_version": 2,
+    "sent_at_ms": 1723840820123,
+    "sequence": 42,
+    "server_time_ms": 1723840800123
+  },
+  "title": "relay v2 golden fixture manifest"
+}

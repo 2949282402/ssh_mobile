@@ -1,6 +1,20 @@
-> 最新更新时间：2026-08-07
+> 最新更新时间：2026-08-15
 
 # ADR-006：开发阶段统一 v1 网络契约
+
+## Status
+
+Superseded on 2026-08-15：transport-network v2（[ADR-TRANSPORT-NETWORK-V2](ADR-TRANSPORT-NETWORK-V2.md)）删除 v1-only
+契约——v2 明确引入新协议代际与 wire 形态（Relay Protocol V2、Discovery V2），
+不再维持「不引入 v2/v3/v4、不实现版本 fallback」的 v1 约束。本 ADR 的「协议升级
+必须在一次明确开发阶段变更中整体完成」原则仍适用（v2 正是这样一次整体变更），
+但 v1 wire / LAN / Relay device 契约与 native ABI 本身被 v2 取代。
+
+## Historical note
+
+本 ADR 记录 v1 开发阶段的统一网络契约，保留仅供决策历史参考。当前项目已进入
+transport-network v2 破坏性重构，v1 协议、旧 transport、Dart Relay 数据面、
+`/v1/control` 与协议降级兼容包装均不再受支持。
 
 ## 背景
 

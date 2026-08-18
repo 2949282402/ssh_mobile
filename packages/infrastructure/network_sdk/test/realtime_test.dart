@@ -414,6 +414,102 @@ void main() {
       expect(session.revision, 10);
     },
   );
+
+  test(
+    'facade realtime session routes state through the SDK coordinator',
+    () async {
+      final backend = _FakeRealtimeBackend();
+      final client = RealtimeClientImpl(backend: backend);
+      final facade = NetworkFacadeImpl(
+        sessions: _StubSessionClient(),
+        realtime: client,
+      );
+      final session = facade.createRealtimeSession(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+      );
+      addTearDown(() async {
+        await client.dispose();
+        await facade.dispose();
+      });
+
+      expect(session.state, RealtimeSessionState.idle);
+      expect(await session.start(), isA<SdkSuccess<void>>());
+      expect(backend.startCalls, 1);
+
+      backend.emit(
+        const RealtimeSessionStateChangedEvent(
+          realtimeId: '00112233445566778899aabbccddeeff',
+          peerId: 'peer-a',
+          state: RealtimeSessionState.connected,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(session.state, RealtimeSessionState.connected);
+    },
+  );
+}
+
+/// Facade 测试使用的空 SessionClient 替身；Facade 仅把 Realtime 委托给注入的
+/// RealtimeClient，因此 SessionClient 不需要实现具体网络调用。
+final class _StubSessionClient implements SessionClient {
+  @override
+  Stream<SdkEvent> get events => const Stream<SdkEvent>.empty();
+
+  @override
+  Future<SdkResult<void>> start(SdkRuntimeConfig config) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> stop() async => const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> upsertPeer(SdkPeerConfig peer) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> connect(
+    String peerId, {
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
+  }) async => const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> disconnect(String peerId) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> configureRelay(SdkRelayConfig config) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> disconnectRelay() async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<SdkTransferSession>> send({
+    required String transferId,
+    required String peerId,
+    required String filePath,
+  }) => throw UnimplementedError('not used in this test');
+
+  @override
+  Future<SdkResult<void>> cancel(String transferId) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> respondToIncoming({
+    required String transferId,
+    required bool accept,
+  }) async => const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<SdkRouteSnapshot>> state(String peerId) async => SdkSuccess(
+    SdkRouteSnapshot(peerId: peerId, routeType: NetworkRouteType.unspecified),
+  );
+
+  @override
+  Future<void> dispose() async {}
 }
 
 final class _FakeRealtimeBackend implements RealtimeSessionBackend {

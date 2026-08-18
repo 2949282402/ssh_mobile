@@ -1,0 +1,81 @@
+{
+  "schema_version": 2,
+  "sequence": [
+    {
+      "file": "ready.control.bin",
+      "note": "server sends Ready on connect",
+      "step": 1
+    },
+    {
+      "file": "heartbeat.control.bin",
+      "note": "client heartbeat",
+      "step": 2
+    },
+    {
+      "file": "heartbeat_ack.control.bin",
+      "note": "server ack echoes request_id",
+      "step": 3
+    },
+    {
+      "file": "discovery_publish.control.bin",
+      "note": "client publishes full discovery snapshot",
+      "step": 4
+    },
+    {
+      "file": "discovery_ack.control.bin",
+      "note": "server CAS ack echoes epoch+revision",
+      "step": 5
+    },
+    {
+      "file": "resolve_ready.control.bin",
+      "note": "resolve returns READY with snapshot",
+      "step": 6
+    },
+    {
+      "file": "connectivity_offer.control.bin",
+      "note": "initiator opens connectivity attempt",
+      "step": 7
+    },
+    {
+      "file": "connectivity_answer.control.bin",
+      "note": "responder accepts, correlates by attempt_id",
+      "step": 8
+    },
+    {
+      "file": "relay_reserve_request.control.bin",
+      "note": "direct failed; reserve relay",
+      "step": 9
+    },
+    {
+      "file": "relay_reserve_response.control.bin",
+      "note": "reservation issued to initiator",
+      "step": 10
+    },
+    {
+      "file": "incoming_relay_reservation.control.bin",
+      "note": "reservation pushed to responder",
+      "step": 11
+    },
+    {
+      "file": "relay_data_connect.data.bin",
+      "note": "both endpoints connect the data plane",
+      "step": 12
+    },
+    {
+      "file": "relay_data_payload.data.bin",
+      "note": "first encrypted payload",
+      "step": 13
+    },
+    {
+      "file": "relay_data_payload.data.bin",
+      "note": "second encrypted payload (re-uses sequence=42 fixture; live flows increment sequence)",
+      "step": 14
+    },
+    {
+      "file": "relay_data_close.data.bin",
+      "note": "normal close",
+      "step": 15
+    }
+  ],
+  "title": "relay v2 full-lifecycle golden sequence"
+}

@@ -231,7 +231,8 @@ mod tests {
     use super::*;
     use network_protocol::{
         network_command, network_event, NetworkCommand, NetworkEvent, RealtimeSessionState,
-        RealtimeSignalEvent, RealtimeSignalKind, RealtimeStateChangedEvent,
+        RealtimeSignalEvent, RealtimeSignalKind, RealtimeStateChangedEvent, SshStreamClosedEvent,
+        SshStreamDataCommand, SshStreamDataReceivedEvent, SshStreamOpenCommand,
         StartRealtimeSessionCommand, NETWORK_PROTOCOL_VERSION,
     };
     use prost::Message;
@@ -333,5 +334,90 @@ mod tests {
             })) => assert_eq!(state, RealtimeSessionState::Connected as i32),
             other => panic!("unexpected realtime event payload: {other:?}"),
         }
+    }
+
+    /// 验证 ReliableStream（§17）的 SSH 字节流命令与事件沿用现有 FFI Protobuf
+    /// 边界，不暴露内部 stream handle 或类型。
+    #[test]
+    fn carries_ssh_stream_commands_and_events_through_the_ffi_wire() {
+        let open = NetworkCommand {
+            command_id: "ssh-open".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SshStreamOpen(
+                SshStreamOpenCommand {
+                    peer_id: "peer-a".into(),
+                    stream_id: 3,
+                    service: "ssh".into(),
+                },
+            )),
+        };
+        let decoded = NetworkCommand::decode(open.encode_to_vec().as_slice())
+            .expect("decode ssh stream open");
+        match decoded.payload {
+            Some(network_command::Payload::SshStreamOpen(open)) => {
+                assert_eq!(open.peer_id, "peer-a");
+                assert_eq!(open.stream_id, 3);
+                assert_eq!(open.service, "ssh");
+            }
+            other => panic!("unexpected command payload: {other:?}"),
+        }
+
+        let data = NetworkCommand {
+            command_id: "ssh-data".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SshStreamData(
+                SshStreamDataCommand {
+                    peer_id: "peer-a".into(),
+                    stream_id: 3,
+                    data: b"SSH".to_vec(),
+                },
+            )),
+        };
+        let decoded = NetworkCommand::decode(data.encode_to_vec().as_slice())
+            .expect("decode ssh stream data");
+        assert!(matches!(
+            decoded.payload,
+            Some(network_command::Payload::SshStreamData(data)) if data.stream_id == 3 && data.data == b"SSH"
+        ));
+
+        let received = NetworkEvent {
+            event_id: "ssh-recv".into(),
+            timestamp_ms: 123,
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_event::Payload::SshStreamDataReceived(
+                SshStreamDataReceivedEvent {
+                    peer_id: "peer-a".into(),
+                    stream_id: 3,
+                    data: b"reply".to_vec(),
+                },
+            )),
+        };
+        let decoded = NetworkEvent::decode(received.encode_to_vec().as_slice())
+            .expect("decode ssh stream event");
+        match decoded.payload {
+            Some(network_event::Payload::SshStreamDataReceived(recv)) => {
+                assert_eq!(recv.stream_id, 3);
+                assert_eq!(recv.data, b"reply");
+            }
+            other => panic!("unexpected event payload: {other:?}"),
+        }
+
+        let closed = NetworkEvent {
+            event_id: "ssh-closed".into(),
+            timestamp_ms: 124,
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_event::Payload::SshStreamClosed(
+                SshStreamClosedEvent {
+                    peer_id: "peer-a".into(),
+                    stream_id: 3,
+                },
+            )),
+        };
+        let decoded = NetworkEvent::decode(closed.encode_to_vec().as_slice())
+            .expect("decode ssh stream closed event");
+        assert!(matches!(
+            decoded.payload,
+            Some(network_event::Payload::SshStreamClosed(closed)) if closed.stream_id == 3
+        ));
     }
 }

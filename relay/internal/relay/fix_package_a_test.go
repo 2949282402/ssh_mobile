@@ -230,13 +230,13 @@ func TestHubAddSerializesConcurrentSameDeviceClaims(t *testing.T) {
 	credential, _, privateKey := enrollViaHTTP(t, httpServer.URL, "device-a", "test-token")
 
 	// A1 connects; its lease claim is gated (blocks before the ready frame).
-	connA1 := dialDeviceNoReady(t, httpServer.URL, credential, "device-a", 0x10, privateKey)
+	connA1 := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x10, privateKey)
 	defer connA1.Close()
 	<-gate.blocked
 
 	// A2 connects while A1's claim is in flight: it must block at the admission
 	// lock (not reach the map or Redis) until A1's claim completes.
-	connA2 := dialDeviceNoReady(t, httpServer.URL, credential, "device-a", 0x11, privateKey)
+	connA2 := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x11, privateKey)
 	defer connA2.Close()
 	time.Sleep(100 * time.Millisecond)
 	server.hub.mutex.Lock()
@@ -249,10 +249,10 @@ func TestHubAddSerializesConcurrentSameDeviceClaims(t *testing.T) {
 	close(gate.release)
 
 	// A2's admission completes only after A1's claim; read A2's ready frame.
-	var ready controlFrame
 	_ = connA2.SetReadDeadline(time.Now().Add(3 * time.Second))
-	if err := connA2.ReadJSON(&ready); err != nil || ready.Type != "ready" || ready.DeviceID != "device-a" {
-		t.Fatalf("A2 was not admitted after serialized claim: %+v (%v)", ready, err)
+	readyFrame, err := readV2ControlFrameNoFatal(connA2)
+	if err != nil || readyFrame.GetReady() == nil || readyFrame.GetReady().DeviceId != "device-a" {
+		t.Fatalf("A2 was not admitted after serialized claim: %+v (%v)", readyFrame, err)
 	}
 	_ = connA2.SetReadDeadline(time.Time{})
 

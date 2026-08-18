@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -488,7 +489,220 @@ void main() {
     expect(error.retryDisposition, RetryDisposition.refreshCredentialThenRetry);
     expect(error.retryAfterSeconds, 30);
   });
+
+  test('CommunicationClass mirrors the five v2 business classes', () {
+    expect(CommunicationClass.values, hasLength(5));
+    expect(CommunicationClass.reliableStream, isA<CommunicationClass>());
+    expect(CommunicationClass.reliableMessage, isA<CommunicationClass>());
+    expect(CommunicationClass.bulkTransfer, isA<CommunicationClass>());
+    expect(CommunicationClass.unreliableDatagram, isA<CommunicationClass>());
+    expect(CommunicationClass.realtimeMedia, isA<CommunicationClass>());
+    // wireValue 必须镜像 network-protocol `CommunicationClass` 枚举（§17）。
+    expect(CommunicationClass.reliableStream.wireValue, 1);
+    expect(CommunicationClass.reliableMessage.wireValue, 2);
+    expect(CommunicationClass.bulkTransfer.wireValue, 3);
+    expect(CommunicationClass.unreliableDatagram.wireValue, 4);
+    expect(CommunicationClass.realtimeMedia.wireValue, 5);
+  });
+
+  test(
+    'facade connectPeer registers peer transport identity before connect',
+    () async {
+      final sessions = _RecordingSessionClient();
+      final facade = NetworkFacadeImpl(sessions: sessions);
+
+      final result = await facade.connectPeer(
+        'peer-1',
+        peer: SdkPeerConfig(
+          peerId: 'peer-1',
+          endpointAddress: '192.168.1.2:5432',
+          identityPublicKey: _identityKey,
+          e2ePublicKey: _identityKey,
+        ),
+      );
+
+      expect(result, isA<SdkSuccess<void>>());
+      expect(sessions.upsertedPeer?.peerId, 'peer-1');
+      expect(sessions.connectedPeers, <String>['peer-1']);
+    },
+  );
+
+  test(
+    'facade connectPeer forwards the requested CommunicationClass',
+    () async {
+      final sessions = _RecordingSessionClient();
+      final facade = NetworkFacadeImpl(sessions: sessions);
+
+      final result = await facade.connectPeer(
+        'peer-1',
+        communicationClass: CommunicationClass.bulkTransfer,
+      );
+
+      expect(result, isA<SdkSuccess<void>>());
+      expect(sessions.connectedPeers, <String>['peer-1']);
+      expect(sessions.connectClasses, <CommunicationClass>[
+        CommunicationClass.bulkTransfer,
+      ]);
+    },
+  );
+
+  test('facade connectPeer defaults to reliableStream class', () async {
+    final sessions = _RecordingSessionClient();
+    final facade = NetworkFacadeImpl(sessions: sessions);
+
+    final result = await facade.connectPeer('peer-1');
+
+    expect(result, isA<SdkSuccess<void>>());
+    expect(sessions.connectClasses, <CommunicationClass>[
+      CommunicationClass.reliableStream,
+    ]);
+  });
+
+  test('facade connectPeer rejects realtimeMedia class', () async {
+    final sessions = _RecordingSessionClient();
+    final facade = NetworkFacadeImpl(sessions: sessions);
+
+    final result = await facade.connectPeer(
+      'peer-1',
+      communicationClass: CommunicationClass.realtimeMedia,
+    );
+
+    expect(result, isA<SdkFailure<void>>());
+    expect(
+      (result as SdkFailure<void>).error.code,
+      NetworkErrorCode.invalidArgument,
+    );
+    expect(sessions.connectedPeers, isEmpty);
+  });
+
+  test('facade transferFile maps bulkTransfer onto native send', () async {
+    final sessions = _RecordingSessionClient();
+    final facade = NetworkFacadeImpl(sessions: sessions);
+
+    final result = await facade.transferFile(
+      transferId: 'transfer-1',
+      peerId: 'peer-1',
+      filePath: '/tmp/file.bin',
+    );
+
+    expect(result, isA<SdkSuccess<SdkTransferSession>>());
+    expect(sessions.sentTransferId, 'transfer-1');
+  });
+
+  test('facade transferFile rejects non-bulk communication class', () async {
+    final sessions = _RecordingSessionClient();
+    final facade = NetworkFacadeImpl(sessions: sessions);
+
+    final result = await facade.transferFile(
+      transferId: 'transfer-1',
+      peerId: 'peer-1',
+      filePath: '/tmp/file.bin',
+      communicationClass: CommunicationClass.reliableMessage,
+    );
+
+    expect(result, isA<SdkFailure<SdkTransferSession>>());
+    expect(
+      (result as SdkFailure<SdkTransferSession>).error.code,
+      NetworkErrorCode.invalidArgument,
+    );
+    expect(sessions.sentTransferId, isNull);
+  });
+
+  test(
+    'facade sendMessage surfaces unsupported reliable message failure',
+    () async {
+      final sessions = _RecordingSessionClient();
+      final facade = NetworkFacadeImpl(sessions: sessions);
+
+      final result = await facade.sendMessage(
+        peerId: 'peer-1',
+        payload: Uint8List.fromList(<int>[1, 2, 3]),
+      );
+
+      expect(result, isA<SdkFailure<void>>());
+      expect(
+        (result as SdkFailure<void>).error.code,
+        NetworkErrorCode.invalidArgument,
+      );
+    },
+  );
+
+  test(
+    'facade realtime session delegates to the injected RealtimeClient',
+    () async {
+      final sessions = _RecordingSessionClient();
+      final realtime = _FakeRealtimeClient();
+      final facade = NetworkFacadeImpl(sessions: sessions, realtime: realtime);
+
+      final session = facade.createRealtimeSession(
+        realtimeId: 'a' * 32,
+        peerId: 'peer-1',
+      );
+
+      expect(session, isA<RealtimeSession>());
+      expect(session.peerId, 'peer-1');
+      expect(realtime.createdPeerId, 'peer-1');
+    },
+  );
+
+  test('facade realtime is unavailable without an injected RealtimeClient', () {
+    final facade = NetworkFacadeImpl(sessions: _RecordingSessionClient());
+
+    expect(
+      () =>
+          facade.createRealtimeSession(realtimeId: 'a' * 32, peerId: 'peer-1'),
+      throwsUnsupportedError,
+    );
+  });
+
+  test('facade dispose releases the owned session client', () async {
+    final sessions = _RecordingSessionClient();
+    final facade = NetworkFacadeImpl(sessions: sessions);
+    await facade.dispose();
+
+    expect(sessions.disposed, isTrue);
+    expect(
+      () => facade.connectPeer('peer-1'),
+      throwsA(isA<SdkClientDisposedException>()),
+    );
+  });
 }
+
+/// 32 字节 Ed25519 密钥材料，仅用于测试 Facade 委托调用形状。
+final Uint8List _identityKey = Uint8List.fromList(<int>[
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+  30,
+  31,
+  32,
+]);
 
 SdkResponse _response(int statusCode, [Map<String, dynamic>? body]) =>
     SdkResponse(
@@ -588,14 +802,137 @@ final class _FakeAuthenticatedApiClient implements AuthenticatedApiClient {
 }
 
 final class _FakeRealtimeClient implements RealtimeClient {
+  String? createdPeerId;
+  String? createdRealtimeId;
+
   @override
   RealtimeSession createSession({
     required String realtimeId,
     required String peerId,
-  }) => throw UnimplementedError();
+  }) {
+    createdRealtimeId = realtimeId;
+    createdPeerId = peerId;
+    return _FakeRealtimeSession(realtimeId: realtimeId, peerId: peerId);
+  }
 
   @override
   Future<void> dispose() async {}
+}
+
+final class _FakeRealtimeSession implements RealtimeSession {
+  const _FakeRealtimeSession({required this.realtimeId, required this.peerId});
+
+  @override
+  final String realtimeId;
+
+  @override
+  final String peerId;
+
+  @override
+  RealtimeSessionState get state => RealtimeSessionState.idle;
+
+  @override
+  int get revision => 0;
+
+  @override
+  Stream<RealtimeVideoFrame> get remoteVideo =>
+      const Stream<RealtimeVideoFrame>.empty();
+
+  @override
+  RealtimeAudioState get audioState => RealtimeAudioState.unavailable;
+
+  @override
+  Future<SdkResult<void>> start() async => const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> stop() async => const SdkSuccess<void>(null);
+}
+
+/// 记录 Facade 委托调用的 SessionClient 替身。
+final class _RecordingSessionClient implements SessionClient {
+  final StreamController<SdkEvent> _events =
+      StreamController<SdkEvent>.broadcast();
+  SdkPeerConfig? upsertedPeer;
+  final List<String> connectedPeers = <String>[];
+  final List<CommunicationClass> connectClasses = <CommunicationClass>[];
+  String? sentTransferId;
+  bool disposed = false;
+
+  @override
+  Stream<SdkEvent> get events => _events.stream;
+
+  @override
+  Future<SdkResult<void>> start(SdkRuntimeConfig config) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> stop() async => const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> upsertPeer(SdkPeerConfig peer) async {
+    upsertedPeer = peer;
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> connect(
+    String peerId, {
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
+  }) async {
+    connectedPeers.add(peerId);
+    connectClasses.add(communicationClass);
+    return const SdkSuccess<void>(null);
+  }
+
+  @override
+  Future<SdkResult<void>> disconnect(String peerId) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> configureRelay(SdkRelayConfig config) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> disconnectRelay() async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<SdkTransferSession>> send({
+    required String transferId,
+    required String peerId,
+    required String filePath,
+  }) async {
+    sentTransferId = transferId;
+    return SdkSuccess(
+      SdkTransferSession(
+        transferId: transferId,
+        peerId: peerId,
+        filePath: filePath,
+        routeType: NetworkRouteType.unspecified,
+      ),
+    );
+  }
+
+  @override
+  Future<SdkResult<void>> cancel(String transferId) async =>
+      const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<void>> respondToIncoming({
+    required String transferId,
+    required bool accept,
+  }) async => const SdkSuccess<void>(null);
+
+  @override
+  Future<SdkResult<SdkRouteSnapshot>> state(String peerId) async => SdkSuccess(
+    SdkRouteSnapshot(peerId: peerId, routeType: NetworkRouteType.unspecified),
+  );
+
+  @override
+  Future<void> dispose() async {
+    disposed = true;
+    await _events.close();
+  }
 }
 
 final class _FakeEvents implements EventStreamClient {
@@ -621,8 +958,10 @@ final class _FakeSessionClient implements SessionClient {
       const SdkSuccess(null);
 
   @override
-  Future<SdkResult<void>> connect(String peerId) async =>
-      const SdkSuccess(null);
+  Future<SdkResult<void>> connect(
+    String peerId, {
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
+  }) async => const SdkSuccess(null);
 
   @override
   Future<SdkResult<void>> disconnect(String peerId) async =>
@@ -634,13 +973,6 @@ final class _FakeSessionClient implements SessionClient {
 
   @override
   Future<SdkResult<void>> disconnectRelay() async => const SdkSuccess(null);
-
-  @override
-  Future<SdkResult<void>> uploadDiscovery({
-    required int generation,
-    required List<String> candidates,
-    required List<String> capabilities,
-  }) async => const SdkSuccess(null);
 
   @override
   Future<SdkResult<SdkTransferSession>> send({

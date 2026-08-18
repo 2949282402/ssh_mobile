@@ -1,395 +1,61 @@
-//! v1 运行时生命周期与传输契约的集成式测试。
-// v1 原生运行时、命令接受、传输和清理回归测试。
+//! 运行时生命周期、传输契约与 reservation 数据面的集成式测试。
 
 use super::*;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures_util::{SinkExt, StreamExt};
 use network_identity::DeviceIdentity;
-use network_relay::{RelayClient, RelayEvent};
-use network_transfer::{FileManifest, NETWORK_TRANSFER_PROTOCOL_VERSION};
-
 use network_protocol::{
     network_command, network_event, AcknowledgeMessageCommand, ChannelMessageEvent,
-    CommandResultEvent, ConfigureRuntimeCommand, ConnectPeerCommand, DeliveryAckedEvent,
-    DeliveryPolicyCode, NetworkCommand, NetworkError as ProtocolError, NetworkErrorCode,
-    PeerConnectionState, RespondIncomingTransferCommand, RouteTransport, RouteType,
-    SendFileCommand, SendMessageCommand, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
+    CommandResultEvent, CommunicationClass, ConfigureRuntimeCommand, ConnectPeerCommand,
+    DeliveryAckedEvent, DeliveryPolicyCode, NetworkCommand, NetworkError as ProtocolError,
+    NetworkErrorCode, PeerConnectionState, RespondIncomingTransferCommand, RouteTransport,
+    RouteType, SendFileCommand, SendMessageCommand, SshStreamCloseCommand, SshStreamDataCommand,
+    SshStreamOpenCommand, UpsertPeerCommand, NETWORK_PROTOCOL_VERSION,
 };
+use network_relay::v2::proto::*;
+use network_relay::v2::{DataEvent, RelayDataClient};
+use network_transfer::build_file_manifest;
 use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tokio_tungstenite::{accept_hdr_async, tungstenite::Message};
 
-#[test]
-fn session_root_source_requires_noise_transport_secret_export() {
-    let source = include_str!("crypto_handshake.rs");
-    assert!(!source.contains("fn derive_session_root("));
-    assert!(!source.contains("noise-xx-aes256gcm-v2\";"));
-    assert!(source.contains("fn derive_application_root("));
-    assert!(source.contains("OsRng.fill_bytes(root_seed.as_mut())"));
-    assert!(source.contains("decrypt_root_seed_exchange"));
-    assert!(source.contains("into_transport_mode()"));
+/// 构造一个合法的 /v2/relay/{32-hex} 数据面地址（测试用 loopback）。
+fn v2_relay_data_endpoint(address: SocketAddr, reservation_id: &str) -> String {
+    format!("ws://{address}/v2/relay/{reservation_id}")
 }
 
-#[tokio::test]
-async fn relay_e2ee_uses_real_session_id() {
-    let attempt = run_relay_e2ee_handshake(false, false).await;
-
-    assert_eq!(attempt.token.len(), crate::session::SESSION_ID_BYTES * 2);
-    assert!(attempt
-        .token
-        .bytes()
-        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
-    assert_ne!(attempt.token, "0000000000000001");
-    assert_eq!(attempt.observed_payloads.len(), 6);
-    assert!(attempt
-        .observed_payloads
-        .iter()
-        .all(|frame| frame.contains(&format!("\"session_id\":\"{}\"", attempt.token))));
-    assert!(attempt
-        .observed_payloads
-        .iter()
-        .all(|frame| !frame.contains("SMKR")));
-}
-
-#[tokio::test]
-async fn relay_e2ee_completes_with_real_session_token() {
-    let attempt = run_relay_e2ee_handshake(false, false).await;
-    let (initiator_root, responder_root) = attempt.roots.expect("completed roots");
-
-    assert_eq!(initiator_root, responder_root);
-    assert!(attempt.connected);
-    assert!(!attempt.root_seed_rejected);
-    assert!(!attempt.missing_accept_rejected);
-}
-
-#[tokio::test]
-async fn relay_e2ee_rejects_tampered_root_seed() {
-    let attempt = run_relay_e2ee_handshake(true, false).await;
-
-    assert!(attempt.root_seed_rejected);
-    assert!(attempt.roots.is_none());
-    assert!(!attempt.connected);
-}
-
-#[tokio::test]
-async fn relay_e2ee_does_not_connect_without_accept() {
-    let attempt = run_relay_e2ee_handshake(false, true).await;
-
-    assert!(attempt.missing_accept_rejected);
-    assert!(attempt.roots.is_none());
-    assert!(!attempt.connected);
-}
-
-struct RelayE2eeAttempt {
-    token: String,
-    connected: bool,
-    roots: Option<([u8; 32], [u8; 32])>,
-    root_seed_rejected: bool,
-    missing_accept_rejected: bool,
-    observed_payloads: Vec<String>,
-}
-
-/// Drives the six opaque Relay controls through the production RelayClient.
-/// `tamper_root_seed` mutates the encrypted Noise transport frame after the
-/// Relay forwards it; `omit_accept` stops before the initiator can obtain
-/// application material or mark the Session connected.
-async fn run_relay_e2ee_handshake(tamper_root_seed: bool, omit_accept: bool) -> RelayE2eeAttempt {
-    let server = FakeRelayServer::start().await;
-    let server_address = server.address;
-    let mut initiator_relay = RelayClient::new(
-        format!("http://{server_address}"),
-        "relay-initiator".into(),
-        "test-credential-a".into(),
-        [11u8; 32],
-    )
-    .expect("create test initiator RelayClient");
-    let mut responder_relay = RelayClient::new(
-        format!("http://{server_address}"),
-        "relay-responder".into(),
-        "test-credential-b".into(),
-        [12u8; 32],
-    )
-    .expect("create test responder RelayClient");
-    initiator_relay
-        .connect()
-        .await
-        .expect("connect initiator RelayClient");
-    responder_relay
-        .connect()
-        .await
-        .expect("connect responder RelayClient");
-    let mut initiator_events = initiator_relay
-        .take_events()
-        .expect("take initiator Relay events");
-    let mut responder_events = responder_relay
-        .take_events()
-        .expect("take responder Relay events");
-
-    let session_manager = crate::session::SessionManager::new();
-    let session_id = match session_manager.begin_connect("relay-responder").await {
-        crate::session::ConnectDecision::Started(session_id) => session_id,
-        decision => panic!("unexpected Session decision: {decision:?}"),
-    };
-    let token = session_id.wire_key();
-    let initiator_identity = Arc::new(DeviceIdentity::generate("relay-initiator".into()));
-    let responder_identity = Arc::new(DeviceIdentity::generate("relay-responder".into()));
-
-    let (mut initiator, hello) = crate::crypto_handshake::RelayInitiatorHandshake::start(
-        Arc::clone(&initiator_identity),
-        &token,
-    )
-    .expect("start Relay Noise handshake");
-    send_relay_crypto_step(
-        &initiator_relay,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_HELLO,
-        &hello,
-    )
-    .await;
-    let hello_at_responder = receive_relay_crypto_step(
-        &mut responder_events,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_HELLO,
-    )
-    .await;
-    let (responder, response) = crate::crypto_handshake::RelayResponderHandshake::accept_hello(
-        Arc::clone(&responder_identity),
-        &hello_at_responder,
-    )
-    .expect("accept Relay Noise hello");
-    send_relay_crypto_step(
-        &responder_relay,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
-        &response,
-    )
-    .await;
-    let response_at_initiator = receive_relay_crypto_step(
-        &mut initiator_events,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
-    )
-    .await;
-    let final_message = initiator
-        .accept_response(
-            &response_at_initiator,
-            &responder_identity.device_id,
-            responder_identity.public_identity_key().to_bytes(),
-        )
-        .expect("accept Relay Noise response");
-    send_relay_crypto_step(
-        &initiator_relay,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_FINAL,
-        &final_message,
-    )
-    .await;
-    let final_at_responder = receive_relay_crypto_step(
-        &mut responder_events,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_FINAL,
-    )
-    .await;
-    let trusted_peer_keys = RwLock::new(HashMap::from([(
-        initiator_identity.device_id.clone(),
-        initiator_identity.public_identity_key().to_bytes(),
-    )]));
-    let (peer_id, confirmer, mut encrypted_seed) = responder
-        .accept_final(&final_at_responder, &trusted_peer_keys, |_, binding| {
-            let binding = binding.to_string();
-            async move { Ok((binding, ())) }
-        })
-        .await
-        .expect("accept Relay Noise final");
-    assert_eq!(peer_id, initiator_identity.device_id);
-    if tamper_root_seed {
-        encrypted_seed[0] ^= 0x40;
-    }
-    send_relay_crypto_step(
-        &responder_relay,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED,
-        &encrypted_seed,
-    )
-    .await;
-    let seed_at_initiator = receive_relay_crypto_step(
-        &mut initiator_events,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED,
-    )
-    .await;
-    let confirmation = match initiator.accept_root_seed(&seed_at_initiator) {
-        Ok(value) => value,
-        Err(_) => {
-            return RelayE2eeAttempt {
-                token,
-                connected: session_manager.is_connected("relay-responder").await,
-                roots: None,
-                root_seed_rejected: true,
-                missing_accept_rejected: false,
-                observed_payloads: server.observed_payloads(),
-            };
-        }
-    };
-    let (confirmation, encrypted_confirm) = confirmation
-        .confirm(token.clone())
-        .expect("confirm Relay root with local Session binding");
-    send_relay_crypto_step(
-        &initiator_relay,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM,
-        &encrypted_confirm,
-    )
-    .await;
-    let confirm_at_responder = receive_relay_crypto_step(
-        &mut responder_events,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM,
-    )
-    .await;
-    let (peer_id, encrypted_accept, responder_material, _) = confirmer
-        .accept_root_confirm(&confirm_at_responder)
-        .expect("accept Relay root confirmation");
-    assert_eq!(peer_id, initiator_identity.device_id);
-    if omit_accept {
-        let missing_accept_rejected = confirmation.accept(&[]).is_err();
-        return RelayE2eeAttempt {
-            token,
-            connected: session_manager.is_connected("relay-responder").await,
-            roots: None,
-            root_seed_rejected: false,
-            missing_accept_rejected,
-            observed_payloads: server.observed_payloads(),
-        };
-    }
-    send_relay_crypto_step(
-        &responder_relay,
-        &token,
-        "relay-initiator",
-        crate::crypto_handshake::RELAY_CRYPTO_ACCEPT,
-        &encrypted_accept,
-    )
-    .await;
-    let accept_at_initiator = receive_relay_crypto_step(
-        &mut initiator_events,
-        &token,
-        "relay-responder",
-        crate::crypto_handshake::RELAY_CRYPTO_ACCEPT,
-    )
-    .await;
-    let initiator_material = confirmation
-        .accept(&accept_at_initiator)
-        .expect("accept Relay application root");
-    assert!(
-        session_manager
-            .mark_relay_route_connected("relay-responder", session_id, RouteType::Relay, None)
-            .await
-    );
-    RelayE2eeAttempt {
-        token,
-        connected: session_manager.is_connected("relay-responder").await,
-        roots: Some((initiator_material.root_key, responder_material.root_key)),
-        root_seed_rejected: false,
-        missing_accept_rejected: false,
-        observed_payloads: server.observed_payloads(),
-    }
-}
-
-async fn send_relay_crypto_step(
-    client: &RelayClient,
-    token: &str,
-    target_id: &str,
-    step: u8,
-    payload: &[u8],
-) {
-    let frame = crate::crypto_handshake::encode_relay_frame(step, payload)
-        .expect("encode Relay crypto frame");
-    client
-        .send_crypto_handshake(token, target_id, &frame)
-        .await
-        .expect("send Relay crypto frame");
-}
-
-async fn receive_relay_crypto_step(
-    events: &mut mpsc::Receiver<RelayEvent>,
-    token: &str,
-    expected_sender: &str,
-    expected_step: u8,
-) -> Vec<u8> {
-    let event = tokio::time::timeout(Duration::from_secs(5), events.recv())
-        .await
-        .expect("Relay crypto event timed out")
-        .expect("Relay crypto event stream ended");
-    let RelayEvent::Control {
-        kind,
-        session_id,
-        peer_id,
-        payload: Some(payload),
-    } = event
-    else {
-        panic!("unexpected Relay crypto event");
-    };
-    assert_eq!(kind, "crypto_handshake");
-    assert_eq!(session_id, token);
-    assert_eq!(peer_id.as_deref(), Some(expected_sender));
-    let frame = URL_SAFE_NO_PAD
-        .decode(payload)
-        .expect("decode opaque Relay crypto payload");
-    let (step, payload) =
-        crate::crypto_handshake::decode_relay_frame(&frame).expect("decode Relay crypto frame");
-    assert_eq!(step, expected_step);
-    payload.to_vec()
-}
-
-struct FakeRelayServer {
+/// Fake Relay v2 数据面：/v2/relay/{reservation_id}。
+///
+/// 校验首帧 RelayDataConnect（reservation_id + local_token），把同一 reservation 的
+/// 两个端点链接起来；对端未链接时把 Payload/Ack 缓冲到 reservation，链接后冲刷。
+struct FakeRelayV2Server {
     address: SocketAddr,
-    observed: Arc<Mutex<Vec<String>>>,
     shutdown: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
 }
 
-impl FakeRelayServer {
-    async fn start() -> Self {
+impl FakeRelayV2Server {
+    async fn start(reservations: HashMap<String, (Vec<u8>, Vec<u8>)>) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
-            .expect("bind fake Relay listener");
-        let address = listener.local_addr().expect("fake Relay address");
-        let observed = Arc::new(Mutex::new(Vec::new()));
+            .expect("bind fake Relay v2 listener");
+        let address = listener.local_addr().expect("fake Relay v2 address");
         let (shutdown, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(run_fake_relay(listener, Arc::clone(&observed), shutdown_rx));
+        let task = tokio::spawn(run_fake_relay_v2(listener, shutdown_rx, reservations));
         Self {
             address,
-            observed,
             shutdown: Some(shutdown),
             task: Some(task),
         }
     }
-
-    fn observed_payloads(&self) -> Vec<String> {
-        self.observed
-            .lock()
-            .expect("fake Relay observations")
-            .clone()
-    }
 }
 
-impl Drop for FakeRelayServer {
+impl Drop for FakeRelayV2Server {
     fn drop(&mut self) {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
@@ -400,113 +66,354 @@ impl Drop for FakeRelayServer {
     }
 }
 
-async fn run_fake_relay(
+/// reservation_id → (initiator_token, responder_token) + 已注册端点/缓冲。
+struct RelayV2DataRegistry {
+    reservations: HashMap<String, (Vec<u8>, Vec<u8>)>,
+    /// reservation_id → 已注册端点 (conn_id, outbound)。
+    endpoints: HashMap<String, Vec<(u64, mpsc::Sender<Message>)>>,
+    /// reservation_id → 对端未链接时缓冲的帧。
+    buffered: HashMap<String, Vec<Message>>,
+    next_conn_id: u64,
+}
+
+impl RelayV2DataRegistry {
+    fn new(reservations: HashMap<String, (Vec<u8>, Vec<u8>)>) -> Self {
+        Self {
+            reservations,
+            endpoints: HashMap::new(),
+            buffered: HashMap::new(),
+            next_conn_id: 0,
+        }
+    }
+
+    fn register(&mut self, reservation_id: &str, outbound: mpsc::Sender<Message>) -> u64 {
+        let conn_id = self.next_conn_id;
+        self.next_conn_id += 1;
+        let endpoints = self
+            .endpoints
+            .entry(reservation_id.to_string())
+            .or_default();
+        // 对端已注册：把缓冲的帧冲刷给新端点。
+        if let Some(buffered) = self.buffered.remove(reservation_id) {
+            for message in buffered {
+                let _ = outbound.try_send(message);
+            }
+        }
+        endpoints.push((conn_id, outbound));
+        conn_id
+    }
+
+    /// 把一帧从 `from_id` 转发给同一 reservation 的对端；对端未链接则缓冲。
+    async fn forward(&mut self, reservation_id: &str, from_id: u64, frame: Message) {
+        let endpoints = self.endpoints.get(reservation_id);
+        let target = endpoints.and_then(|endpoints| {
+            endpoints
+                .iter()
+                .find(|(id, _)| *id != from_id)
+                .map(|(_, sender)| sender.clone())
+        });
+        match target {
+            Some(target) => {
+                let _ = target.send(frame).await;
+            }
+            None => {
+                self.buffered
+                    .entry(reservation_id.to_string())
+                    .or_default()
+                    .push(frame);
+            }
+        }
+    }
+}
+
+#[allow(clippy::result_large_err)]
+async fn run_fake_relay_v2(
     listener: TcpListener,
-    observed: Arc<Mutex<Vec<String>>>,
     mut shutdown: oneshot::Receiver<()>,
+    reservations: HashMap<String, (Vec<u8>, Vec<u8>)>,
 ) {
-    let (incoming_tx, mut incoming_rx) = mpsc::channel::<(String, Message)>(32);
-    let mut outbound = HashMap::<String, mpsc::Sender<Message>>::new();
-    for device_id in ["relay-initiator", "relay-responder"] {
+    let registry = Arc::new(tokio::sync::Mutex::new(RelayV2DataRegistry::new(
+        reservations,
+    )));
+    let mut handles = Vec::new();
+    loop {
         let (stream, _) = tokio::select! {
             result = listener.accept() => match result {
                 Ok(value) => value,
-                Err(_) => return,
+                Err(_) => break,
             },
-            _ = &mut shutdown => return,
-        };
-        let socket = match accept_async(stream).await {
-            Ok(socket) => socket,
-            Err(_) => return,
-        };
-        let (mut writer, reader) = socket.split();
-        let ready = serde_json::json!({
-            "type": "ready",
-            "device_id": device_id,
-            "protocol_version": 1,
-        });
-        if writer
-            .send(Message::Text(ready.to_string().into()))
-            .await
-            .is_err()
-        {
-            return;
-        }
-        let (outbound_tx, mut outbound_rx) = mpsc::channel::<Message>(32);
-        std::mem::drop(tokio::spawn(async move {
-            while let Some(message) = outbound_rx.recv().await {
-                if writer.send(message).await.is_err() {
-                    break;
-                }
-            }
-        }));
-        let incoming_tx = incoming_tx.clone();
-        let sender_id = device_id.to_string();
-        std::mem::drop(tokio::spawn(async move {
-            let mut reader = reader;
-            while let Some(result) = reader.next().await {
-                let Ok(message) = result else {
-                    break;
-                };
-                if incoming_tx
-                    .send((sender_id.clone(), message))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        }));
-        outbound.insert(device_id.to_string(), outbound_tx);
-    }
-    drop(incoming_tx);
-
-    loop {
-        tokio::select! {
             _ = &mut shutdown => break,
-            incoming = incoming_rx.recv() => {
-                let Some((sender_id, Message::Text(text))) = incoming else {
-                    break;
-                };
-                let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text.as_ref()) else {
-                    continue;
-                };
-                if value.get("type").and_then(serde_json::Value::as_str) == Some("heartbeat") {
-                    if let Some(target) = outbound.get(&sender_id) {
-                        let _ = target
-                            .send(Message::Text(
-                                serde_json::json!({"type": "heartbeat_ack"})
-                                    .to_string()
-                                    .into(),
-                            ))
-                            .await;
-                    }
-                    continue;
-                }
-                let Some(target_id) = value
-                    .get("target_id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
-                else {
-                    continue;
-                };
-                observed
-                    .lock()
-                    .expect("fake Relay observations")
-                    .push(text.to_string());
-                value["sender_id"] = serde_json::Value::String(sender_id);
-                let Ok(forwarded) = serde_json::to_string(&value) else {
-                    continue;
-                };
-                if let Some(target) = outbound.get(&target_id) {
-                    let _ = target
-                        .send(Message::Text(forwarded.into()))
-                        .await;
-                }
-            }
-            else => break,
+        };
+        let path_holder = Arc::new(Mutex::new(None::<String>));
+        let path_capture = Arc::clone(&path_holder);
+        let socket = match accept_hdr_async(
+            stream,
+            move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                  response: tokio_tungstenite::tungstenite::handshake::server::Response| {
+                *path_capture.lock().expect("fake relay path lock") =
+                    Some(request.uri().path().to_string());
+                Ok(response)
+            },
+        )
+        .await
+        {
+            Ok(socket) => socket,
+            Err(_) => continue,
+        };
+        let path = path_holder
+            .lock()
+            .expect("fake relay path lock")
+            .take()
+            .unwrap_or_default();
+        if let Some(reservation_id) = path.strip_prefix("/v2/relay/") {
+            let registry = Arc::clone(&registry);
+            let handle = tokio::spawn(run_data_connection(
+                registry,
+                reservation_id.to_string(),
+                socket,
+            ));
+            handles.push(handle);
+        } else {
+            drop(socket);
         }
     }
+    drop(shutdown);
+    for handle in handles {
+        handle.abort();
+    }
+}
+
+async fn run_data_connection(
+    registry: Arc<tokio::sync::Mutex<RelayV2DataRegistry>>,
+    reservation_id: String,
+    socket: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+) {
+    let (writer, mut reader) = socket.split();
+    // 阶段一：等待并校验首帧 RelayDataConnect，取得 writer 任务与 conn_id。
+    let Some(Ok(message)) = reader.next().await else {
+        return;
+    };
+    let Message::Binary(frame) = message else {
+        return;
+    };
+    let Ok(frame) = decode_data_frame(&frame) else {
+        return;
+    };
+    let Some(relay_data_frame::Kind::Connect(connect)) = frame.kind else {
+        return;
+    };
+    let tokens = {
+        let guard = registry.lock().await;
+        guard.reservations.get(&reservation_id).cloned()
+    };
+    let Some((initiator_token, responder_token)) = tokens else {
+        return;
+    };
+    if connect.reservation_id != reservation_id
+        || (connect.local_token != initiator_token && connect.local_token != responder_token)
+    {
+        return;
+    }
+    let (tx, mut rx) = mpsc::channel::<Message>(64);
+    let mut writer_for_task = writer;
+    let writer_task = tokio::spawn(async move {
+        while let Some(message) = rx.recv().await {
+            if writer_for_task.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+    let conn_id = registry.lock().await.register(&reservation_id, tx);
+    let writer_task = Some(writer_task);
+    // 阶段二：转发 Payload/Ack/Close 到对端。
+    while let Some(result) = reader.next().await {
+        let Ok(message) = result else {
+            break;
+        };
+        let Message::Binary(frame) = message else {
+            continue;
+        };
+        let Ok(frame) = decode_data_frame(&frame) else {
+            continue;
+        };
+        match frame.kind {
+            Some(relay_data_frame::Kind::Payload(_)) | Some(relay_data_frame::Kind::Ack(_)) => {
+                let encoded = encode_data_frame(&frame).expect("encode data frame");
+                registry
+                    .lock()
+                    .await
+                    .forward(&reservation_id, conn_id, Message::Binary(encoded.into()))
+                    .await;
+            }
+            Some(relay_data_frame::Kind::Close(_)) => {
+                let encoded = encode_data_frame(&frame).expect("encode data frame");
+                registry
+                    .lock()
+                    .await
+                    .forward(&reservation_id, conn_id, Message::Binary(encoded.into()))
+                    .await;
+                break;
+            }
+            _ => {}
+        }
+    }
+    if let Some(task) = writer_task {
+        task.abort();
+    }
+}
+
+/// §25/§31：Relay v2 reservation 数据面集成测试。两个 `RelayDataClient` 分别连接
+/// `/v2/relay/{reservation_id}`，A 发送一个不透明信封，B 通过 `recv()` 收到同一
+/// 负载（服务器不解密）。这验证 reservation 数据面（connect_reservation →
+/// send/recv/close）与 fake relay 的链接/缓冲行为。
+#[test]
+fn relay_data_clients_forward_envelopes_over_reservation() {
+    let reservation_id = hex::encode(rand::random::<[u8; 16]>());
+    let initiator_token: [u8; 32] = rand::random();
+    let responder_token: [u8; 32] = rand::random();
+    let mut reservations = HashMap::new();
+    reservations.insert(
+        reservation_id.clone(),
+        (initiator_token.to_vec(), responder_token.to_vec()),
+    );
+    // relay_rt 必须存活到测试结束，否则 fake relay 的后台任务被中止。
+    let relay_rt = tokio::runtime::Runtime::new().expect("relay test runtime");
+    let relay_server = relay_rt.block_on(FakeRelayV2Server::start(reservations));
+    let endpoint = v2_relay_data_endpoint(relay_server.address, &reservation_id);
+
+    let rt = tokio::runtime::Runtime::new().expect("data test runtime");
+    rt.block_on(async {
+        let mut client_a = RelayDataClient::new(
+            endpoint.clone(),
+            reservation_id.clone(),
+            initiator_token.to_vec(),
+            "credential".into(),
+            [11u8; 32],
+        )
+        .expect("client A");
+        let mut client_b = RelayDataClient::new(
+            endpoint.clone(),
+            reservation_id.clone(),
+            responder_token.to_vec(),
+            "credential".into(),
+            [12u8; 32],
+        )
+        .expect("client B");
+        client_a
+            .connect_reservation()
+            .await
+            .expect("connect A reservation");
+        client_b
+            .connect_reservation()
+            .await
+            .expect("connect B reservation");
+        let mut events_b = client_b.take_events().expect("B events");
+
+        // A 发送一个不透明信封，B 应原样收到（服务器不解密）。
+        let opaque_payload = vec![0xAu8, 0xBu8, 0xCu8, 0xDu8];
+        client_a
+            .send(1, &opaque_payload)
+            .await
+            .expect("A sends payload");
+        let received = tokio::time::timeout(Duration::from_secs(5), events_b.recv())
+            .await
+            .expect("B received payload")
+            .expect("B event stream ended");
+        match received {
+            DataEvent::Payload {
+                encrypted_payload, ..
+            } => {
+                assert_eq!(encrypted_payload, opaque_payload);
+            }
+            other => panic!("expected Payload, got {other:?}"),
+        }
+
+        // B 回一条流控 Ack；随后双向关闭。
+        client_b.send_ack(1).await.expect("B sends ack");
+        client_a.close().await.expect("close A data client");
+    });
+    drop(relay_server);
+}
+
+/// 回归 #2：两条不同 reservation 的 relay 数据连接必须共存；连接 peer-c 不得切断
+/// peer-b 的活跃连接，关闭 peer-b 只影响其自身（旧实现把单 slot `.replace` 并
+/// `request_disconnect`，连接新对端会切断另一对端的在途传输）。
+#[test]
+fn relay_data_reservations_for_two_peers_coexist_and_close_independently() {
+    let res_b = hex::encode(rand::random::<[u8; 16]>());
+    let token_b: [u8; 32] = rand::random();
+    let res_c = hex::encode(rand::random::<[u8; 16]>());
+    let token_c: [u8; 32] = rand::random();
+    let mut reservations = HashMap::new();
+    reservations.insert(res_b.clone(), (token_b.to_vec(), vec![0u8; 32]));
+    reservations.insert(res_c.clone(), (token_c.to_vec(), vec![0u8; 32]));
+    let relay_rt = tokio::runtime::Runtime::new().expect("relay test runtime");
+    let relay_server = relay_rt.block_on(FakeRelayV2Server::start(reservations));
+
+    let rt = tokio::runtime::Runtime::new().expect("data test runtime");
+    rt.block_on(async {
+        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(crate::runtime::RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        *state.relay_config.write().await = Some(crate::relay::RelayReconnectConfig {
+            relay_url: "wss://relay.example.test/v2/control".into(),
+            credential: "credential".into(),
+            signing_seed: [11u8; 32],
+        });
+        let reserve_b = RelayReserveResponse {
+            request_id: 1,
+            attempt_id: "attempt-b".into(),
+            reservation_id: res_b.clone(),
+            relay_data_endpoint: v2_relay_data_endpoint(relay_server.address, &res_b),
+            expires_at_ms: 0,
+            local_token: token_b.to_vec(),
+        };
+        let reserve_c = RelayReserveResponse {
+            request_id: 2,
+            attempt_id: "attempt-c".into(),
+            reservation_id: res_c.clone(),
+            relay_data_endpoint: v2_relay_data_endpoint(relay_server.address, &res_c),
+            expires_at_ms: 0,
+            local_token: token_c.to_vec(),
+        };
+        let data_b = crate::relay::connect_initiator_relay_data(&state, "peer-b", reserve_b)
+            .await
+            .expect("connect peer-b reservation");
+        let data_c = crate::relay::connect_initiator_relay_data(&state, "peer-c", reserve_c)
+            .await
+            .expect("connect peer-c reservation");
+
+        // 关键回归：连接 peer-c 之后 peer-b 的数据面连接必须仍然存活（旧单 slot
+        // 实现会在连接 C 时 .replace 并 request_disconnect，切断 peer-b 在途传输）。
+        assert!(
+            data_b.is_usable().await,
+            "connecting peer-c must not sever peer-b's relay data connection"
+        );
+        assert!(
+            data_c.is_usable().await,
+            "peer-c data connection must be live"
+        );
+        assert_eq!(
+            state.relay_data.read().await.len(),
+            2,
+            "two reservations must coexist"
+        );
+
+        // 关闭 peer-b 只影响 peer-b 自身，peer-c 的连接必须保持可用。
+        data_b.request_disconnect().await;
+        assert!(!data_b.is_usable().await, "peer-b data connection closed");
+        assert!(
+            data_c.is_usable().await,
+            "closing peer-b must not tear down peer-c"
+        );
+        assert!(
+            state.relay_data.read().await.get("peer-c").is_some(),
+            "peer-c data connection must stay registered"
+        );
+    });
+    drop(relay_server);
 }
 
 /// 验证格式错误的命令载荷会以类型化结果拒绝。
@@ -551,13 +458,13 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
             crate::session::ConnectDecision::Started(session_id) => session_id,
             decision => panic!("unexpected session decision: {decision:?}"),
         };
-        let session_key = session_id.wire_key();
         let first = crate::delivery::MessageId::from_bytes([90; 16]);
         let buffered = crate::delivery::MessageId::from_bytes([91; 16]);
+        // §20：投递状态按 Peer 业务作用域 key，不使用每连接的 SessionId。
         assert_eq!(
             state
                 .delivery
-                .begin_incoming(&session_key, "control", first, 1, Instant::now())
+                .begin_incoming("delivery-peer", "control", first, 1, Instant::now())
                 .await,
             crate::delivery::DedupDecision::New
         );
@@ -566,7 +473,7 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
                 .delivery
                 .accept_ordered(crate::delivery::OrderedMessage {
                     peer_id: "delivery-peer".into(),
-                    session_id: session_key.clone(),
+                    session_id: session_id.wire_key(),
                     channel_id: "control".into(),
                     message_id: first,
                     sequence: 0,
@@ -579,7 +486,7 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
         assert_eq!(
             state
                 .delivery
-                .begin_incoming(&session_key, "control", buffered, 1, Instant::now())
+                .begin_incoming("delivery-peer", "control", buffered, 1, Instant::now())
                 .await,
             crate::delivery::DedupDecision::New
         );
@@ -588,7 +495,7 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
                 .delivery
                 .accept_ordered(crate::delivery::OrderedMessage {
                     peer_id: "delivery-peer".into(),
-                    session_id: session_key.clone(),
+                    session_id: session_id.wire_key(),
                     channel_id: "control".into(),
                     message_id: buffered,
                     sequence: 1,
@@ -601,7 +508,7 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
         assert_eq!(state.delivery.incoming_state_counts().await, (2, 0, 1));
         let expired = state
             .delivery
-            .expire_incoming(&session_key, Instant::now() + Duration::from_secs(11))
+            .expire_incoming("delivery-peer", Instant::now() + Duration::from_secs(11))
             .await;
         assert!(expired.is_empty());
         assert_eq!(state.delivery.incoming_state_counts().await, (2, 0, 1));
@@ -766,6 +673,7 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "device-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -846,13 +754,260 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
     fs::remove_dir_all(test_root).ok();
 }
 
-/// 验证未 ACK 的消息在显式 recovery 后沿同一逻辑 Session 重放，且接收端
-/// dedup 不会再次把同一个 MessageId 交给应用，显式 ACK 使用当前 recovery
-/// epoch。
+/// §40 Recovery：文件传输中断（TransferOperation = PAUSED，§19）→ ConnectionSession
+/// 销毁 → 重新建连（新 ConnectionSession + 新 Noise root）→ `ResumeTransfer(transfer_id)`
+/// 与对端协商 confirmed_offset（checkpoint）→ 从 checkpoint 继续，最终完成。
 ///
-/// recovery 通过显式驱动，而不是真实 Connection 断开重连：重连可能触发会话
-/// crypto 换代（`ReplaceWithNew`），使以旧 crypto 加密的重放无法解密而静默
-/// 丢失，测试无法在重连上得到确定性结果。
+/// 传输状态按 transfer_id + peer_id 保存在 TransferManager，不依赖 SessionId；新连接
+/// 建立后由 orchestrator 触发 `resume_transfers_for_peer` 领取暂停传输并在新连接上恢复。
+#[test]
+fn file_transfer_resumes_across_a_fresh_connection() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root = std::env::temp_dir().join(format!(
+        "ssh-mobile-transfer-resume-{}",
+        rand::random::<u64>()
+    ));
+    let source_dir = test_root.join("source");
+    let receive_b = test_root.join("receive-b");
+    fs::create_dir_all(&source_dir).expect("source directory");
+    fs::create_dir_all(&receive_b).expect("receive directory");
+    let source_path = source_dir.join("payload.bin");
+    let source_data: Vec<u8> = (0..1024u32).map(|i| (i % 251) as u8).collect();
+    fs::write(&source_path, &source_data).expect("source file");
+    const TRANSFER_ID: &str = "resume-transfer-1";
+    const CONFIRMED_OFFSET: u64 = 256;
+
+    let identity_seed_a = [41u8; 32];
+    let identity_seed_b = [42u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("resume-a".into(), identity_seed_a, [51u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("resume-b".into(), identity_seed_b, [52u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "resume-a",
+        identity_seed_a,
+        [51u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "resume-b",
+        identity_seed_b,
+        [52u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        receive_b.clone(),
+    );
+    send_and_expect_accepted(
+        &runtime_a,
+        upsert_command(
+            "resume-upsert-b",
+            "resume-b",
+            address_b,
+            public_key_b,
+            [52u8; 32],
+        ),
+    );
+    send_and_expect_accepted(
+        &runtime_b,
+        upsert_command(
+            "resume-upsert-a",
+            "resume-a",
+            address_a,
+            public_key_a,
+            [51u8; 32],
+        ),
+    );
+
+    // 第一次连接（第一个 ConnectionSession）。
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "resume-connect-1".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "resume-b".into(),
+                intent: 0,
+                communication_class: 0,
+            })),
+        },
+    );
+    assert!(
+        poll_until(&runtime_a, Duration::from_secs(20), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::PeerState(state))
+                    if state.peer_id == "resume-b"
+                        && state.state == PeerConnectionState::Connected as i32
+                        && state.active_route == RouteType::QuicDirect as i32
+            )
+        })
+        .is_some(),
+        "first connection never reached connected state"
+    );
+
+    let state_a = runtime_a
+        .state
+        .lock()
+        .expect("runtime A state lock")
+        .clone()
+        .expect("runtime A state");
+    let old_session_id = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_session_id("resume-b")
+            .await
+            .expect("first ConnectionSession id")
+    });
+    let manifest = runtime_a
+        .handle()
+        .block_on(build_file_manifest(TRANSFER_ID.into(), &source_path))
+        .expect("build transfer manifest");
+    // 模拟中断：TransferOperation 已协商到 CONFIRMED_OFFSET 后网络断开 → PAUSED。
+    runtime_a.handle().block_on(async {
+        assert!(
+            state_a
+                .transfers
+                .register_outgoing(manifest, source_path.clone(), "resume-b".into())
+                .await
+        );
+        assert!(state_a.transfers.mark_transferring(TRANSFER_ID).await);
+        assert!(
+            state_a
+                .transfers
+                .update_progress(TRANSFER_ID, CONFIRMED_OFFSET)
+                .await
+        );
+        assert!(state_a.transfers.pause_for_network(TRANSFER_ID).await);
+    });
+    // 接收端保留同 checkpoint 的 `.part` 文件。
+    fs::write(
+        receive_b.join(format!("{TRANSFER_ID}.part")),
+        &source_data[..CONFIRMED_OFFSET as usize],
+    )
+    .expect("receiver partial checkpoint");
+
+    // transport 丢失：销毁 ConnectionSession（§19：ConnectionSession=DESTROYED，
+    // TransferOperation=PAUSED 保留在 TransferManager）。
+    runtime_a.handle().block_on(async {
+        crate::connect::orchestrator::close_session_and_registry(
+            Arc::clone(&state_a),
+            "resume-b".into(),
+            old_session_id,
+        )
+        .await;
+    });
+    assert!(
+        poll_until(&runtime_b, Duration::from_secs(10), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::PeerState(state))
+                    if state.peer_id == "resume-a"
+                        && state.state == PeerConnectionState::Disconnected as i32
+            )
+        })
+        .is_some(),
+        "receiver never observed the transport loss"
+    );
+
+    // 重新建连（新 ConnectionSession）→ orchestrator 触发 ResumeTransfer(transfer_id)。
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "resume-connect-2".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "resume-b".into(),
+                intent: 0,
+                communication_class: 0,
+            })),
+        },
+    );
+    assert!(
+        poll_until(&runtime_a, Duration::from_secs(20), |event| {
+            matches!(
+                &event.payload,
+                Some(network_event::Payload::PeerState(state))
+                    if state.peer_id == "resume-b"
+                        && state.state == PeerConnectionState::Connected as i32
+                        && state.active_route == RouteType::QuicDirect as i32
+            )
+        })
+        .is_some(),
+        "fresh connection never reached connected state"
+    );
+    let new_session_id = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_session_id("resume-b")
+            .await
+            .expect("fresh ConnectionSession id")
+    });
+    assert_ne!(
+        old_session_id, new_session_id,
+        "fresh connection must get a fresh SessionId"
+    );
+
+    // 接收端收到 ResumeTransfer 的重新 Offer；协商 confirmed_offset 后从 checkpoint 继续。
+    let offer = poll_until(&runtime_b, Duration::from_secs(20), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::IncomingTransferOffer(offer))
+                if offer.transfer_id == TRANSFER_ID
+        )
+    });
+    assert!(
+        offer.is_some(),
+        "receiver never saw the resumed transfer offer"
+    );
+    send_and_expect_accepted(
+        &runtime_b,
+        NetworkCommand {
+            command_id: "resume-accept".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::RespondIncomingTransfer(
+                RespondIncomingTransferCommand {
+                    transfer_id: TRANSFER_ID.into(),
+                    accept: true,
+                },
+            )),
+        },
+    );
+    let completed = poll_until(&runtime_b, Duration::from_secs(20), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::TransferCompleted(completed))
+                if completed.transfer_id == TRANSFER_ID
+        )
+    });
+    assert!(
+        completed.is_some(),
+        "resumed transfer never completed across the fresh connection"
+    );
+    assert_eq!(
+        fs::read(receive_b.join("payload.bin")).expect("received resumed file"),
+        source_data
+    );
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// 验证未 ACK 的消息在显式 recovery 后以**同一个 MessageId** 重放，接收端
+/// dedup 不会再次把同一个 MessageId 交给应用（§20），显式 ACK 只按 MessageId
+/// 关联、不依赖连接代数对齐。
+///
+/// recovery 通过显式驱动（连接保持稳定）；真实 Connection 断开重连场景由
+/// `delivery_reliable_message_resends_same_message_id_after_reconnect` 覆盖。
 #[test]
 fn delivery_recovery_replays_same_message_after_explicit_recovery() {
     let runtime_a = NetworkRuntime::new().expect("runtime A");
@@ -921,6 +1076,7 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "delivery-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -969,29 +1125,15 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
     assert_ne!(session_id, "delivery-b");
     assert_eq!(message_id.len(), 16);
 
-    // 连接保持稳定；显式驱动一次确定性 recovery，把未 ACK 消息重放一次，
-    // 验证重放被 dedup、不重新发布事件、不自动 ACK，且显式 ACK 使用新的
-    // recovery epoch。这里不依赖生产重连路径：重连可能触发会话 crypto 换代
-    // （ReplaceWithNew），使以旧 crypto 加密的重放无法解密而静默丢失，测试
-    // 无法在重连上断言确定结果。
+    // 连接保持稳定；显式驱动一次确定性 recovery，把未 ACK 消息以同一个
+    // MessageId 重放一次（§20）。验证重放被按 MessageId 去重、不重新发布事件、
+    // 不自动 ACK。ACK 不再依赖 recovery epoch 对齐——关联只认 MessageId。
     let recovered_session = runtime_a
-        .recover_current_session_for_test("delivery-b")
+        .recover_current_peer_for_test("delivery-b")
         .expect("current session exists");
     assert_eq!(
         recovered_session, session_id,
         "deterministic recovery should drive the same session"
-    );
-    assert!(
-        wait_for_recovery_epoch_settled(
-            &runtime_a,
-            &runtime_b,
-            &session_id,
-            "control",
-            &message_id,
-            Duration::from_millis(200),
-            Duration::from_secs(20),
-        ),
-        "recovery epochs never settled between sender and receiver"
     );
 
     // 不在第一次事件后 ACK；recovery 重放的重复 DataMessage 仍处于 InFlight，
@@ -1011,8 +1153,7 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
         "InFlight duplicate was incorrectly ACKed"
     );
 
-    // 重放只能更新 DeliveryManager 内部的 epoch；应用事件不携带旧 epoch，
-    // 应用 ACK 也不需要保存它。显式 ACK 必须使用当前恢复周期的 epoch。
+    // 重放不会让接收端再次进入应用 handler（MessageId 去重）。
     let duplicate = poll_until(&runtime_b, Duration::from_secs(1), |event| {
         matches!(
             &event.payload,
@@ -1036,22 +1177,20 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
             )),
         },
     );
+    // ACK 按 MessageId 完成，无论携带的连接代数是多少。
     let recovered_ack = poll_until(&runtime_a, Duration::from_secs(20), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
                 peer_id,
                 message_id: acknowledged_id,
-                recovery_epoch,
                 ..
-            })) if peer_id == "delivery-b"
-                && acknowledged_id == &message_id
-                && *recovery_epoch >= 2
+            })) if peer_id == "delivery-b" && acknowledged_id == &message_id
         )
     });
     assert!(
         recovered_ack.is_some(),
-        "explicit ACK did not use the latest recovery epoch"
+        "explicit ACK did not complete the recovered MessageId"
     );
 
     // 再发一条新消息，验证应用在收到事件后显式提交 AcknowledgeMessage，
@@ -1115,83 +1254,81 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
     fs::remove_dir_all(test_root).ok();
 }
 
-/// 验证未 ACK 的消息沿真实 Connection 断开 → 生产自动重连 → Delivery Recovery
-/// 完整链路重放一次：普通断网重连必须保持逻辑 Session 与 Crypto 连续性
-/// （`SessionCryptoDecision::ContinueExisting`），绝不能触发 `ReplaceWithNew`
-/// 使旧 crypto 加密的重放无法解密；接收端 dedup 不重复发布，显式 ACK 使用
-/// 当前 recovery epoch。
+/// §20 可靠消息恢复。消息未 ACK 时 Connection 丢失，随后建立新 Connection
+/// （新 SessionId 加新 Noise root），发送端以同一个 MessageId 重发，接收端按
+/// MessageId 去重而不重复执行业务，显式 ACK 跨新连接完成。
 ///
-/// 与 `delivery_recovery_replays_same_message_after_explicit_recovery` 互补：
-/// 后者在稳定连接上显式驱动 recovery 做确定性单元验证；本测试走真实
-/// transport 断开 + `reconnect_loop` 生产重连路径。
+/// transport-network v2（§18）：新连接 = 新 SessionId；pending 属于 Peer 业务
+/// 作用域，连接丢失时保留。
 #[test]
-fn delivery_recovery_replays_same_message_across_reconnected_connection() {
+fn delivery_reliable_message_resends_same_message_id_after_reconnect() {
     let runtime_a = NetworkRuntime::new().expect("runtime A");
     let runtime_b = NetworkRuntime::new().expect("runtime B");
     runtime_a.start().expect("start runtime A");
     runtime_b.start().expect("start runtime B");
-    let requested_address_a = SocketAddr::from(([127, 0, 0, 1], 0));
-    let requested_address_b = SocketAddr::from(([127, 0, 0, 1], 0));
-    let identity_seed_a = [41u8; 32];
-    let identity_seed_b = [42u8; 32];
-    let public_key_a =
-        DeviceIdentity::from_private_keys("delivery-a".into(), identity_seed_a, [51u8; 32])
-            .public_identity_key()
-            .to_bytes();
-    let public_key_b =
-        DeviceIdentity::from_private_keys("delivery-b".into(), identity_seed_b, [52u8; 32])
-            .public_identity_key()
-            .to_bytes();
     let test_root = std::env::temp_dir().join(format!(
-        "ssh-mobile-delivery-recovery-reconnect-{}",
+        "ssh-mobile-delivery-reconnect-{}",
         rand::random::<u64>()
     ));
     fs::create_dir_all(&test_root).expect("test root");
 
+    let identity_seed_a = [161u8; 32];
+    let identity_seed_b = [162u8; 32];
+    let e2e_seed_a = [171u8; 32];
+    let e2e_seed_b = [172u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("reconnect-a".into(), identity_seed_a, e2e_seed_a)
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("reconnect-b".into(), identity_seed_b, e2e_seed_b)
+            .public_identity_key()
+            .to_bytes();
     let address_a = configure_runtime_for_test(
         &runtime_a,
-        "delivery-a",
+        "reconnect-a",
         identity_seed_a,
-        [51u8; 32],
-        requested_address_a,
+        e2e_seed_a,
+        SocketAddr::from(([127, 0, 0, 1], 0)),
         test_root.join("receive-a"),
     );
     let address_b = configure_runtime_for_test(
         &runtime_b,
-        "delivery-b",
+        "reconnect-b",
         identity_seed_b,
-        [52u8; 32],
-        requested_address_b,
+        e2e_seed_b,
+        SocketAddr::from(([127, 0, 0, 1], 0)),
         test_root.join("receive-b"),
     );
     send_and_expect_accepted(
         &runtime_a,
         upsert_command(
-            "delivery-upsert-b",
-            "delivery-b",
+            "reconnect-upsert-b",
+            "reconnect-b",
             address_b,
             public_key_b,
-            [52u8; 32],
+            e2e_seed_b,
         ),
     );
     send_and_expect_accepted(
         &runtime_b,
         upsert_command(
-            "delivery-upsert-a",
-            "delivery-a",
+            "reconnect-upsert-a",
+            "reconnect-a",
             address_a,
             public_key_a,
-            [51u8; 32],
+            e2e_seed_a,
         ),
     );
     send_and_expect_accepted(
         &runtime_a,
         NetworkCommand {
-            command_id: "delivery-connect".into(),
+            command_id: "reconnect-connect-1".into(),
             protocol_version: NETWORK_PROTOCOL_VERSION,
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
-                peer_id: "delivery-b".into(),
+                peer_id: "reconnect-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -1199,21 +1336,22 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
         matches!(
             &event.payload,
             Some(network_event::Payload::PeerState(state))
-                if state.peer_id == "delivery-b"
+                if state.peer_id == "reconnect-b"
                     && state.state == PeerConnectionState::Connected as i32
         )
     })
     .is_some());
 
+    // 发送可靠消息；接收端收到但**不 ACK**。
     send_and_expect_accepted(
         &runtime_a,
         NetworkCommand {
-            command_id: "delivery-send".into(),
+            command_id: "reconnect-send".into(),
             protocol_version: NETWORK_PROTOCOL_VERSION,
             payload: Some(network_command::Payload::SendMessage(SendMessageCommand {
-                peer_id: "delivery-b".into(),
+                peer_id: "reconnect-b".into(),
                 channel_id: "control".into(),
-                payload: b"recover-me".to_vec(),
+                payload: b"reconnect-me".to_vec(),
                 policy: DeliveryPolicyCode::AckedDeduplicated as i32,
                 crypto_mode: 0,
             })),
@@ -1227,111 +1365,123 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
                 channel_id,
                 payload,
                 ..
-            })) if peer_id == "delivery-a" && channel_id == "control" && payload == b"recover-me"
+            })) if peer_id == "reconnect-a" && channel_id == "control" && payload == b"reconnect-me"
         )
     })
     .expect("receiver should observe the first delivery");
-    let (session_id, message_id) = match first_message.payload {
+    let (first_session_id, message_id) = match first_message.payload {
         Some(network_event::Payload::ChannelMessage(message)) => {
             (message.session_id, message.message_id)
         }
         _ => unreachable!("predicate already checked the event"),
     };
-    assert_ne!(session_id, "delivery-b");
     assert_eq!(message_id.len(), 16);
+    let message_id_bytes: [u8; 16] = message_id.as_slice().try_into().expect("16 bytes");
 
-    // 中断前捕获 sender 侧 crypto 上下文 Arc，作为 ContinueExisting 的判据：
-    // ContinueExisting 复用同一 Arc；ReplaceWithNew 会删除别名并安装新上下文。
     let state_a = runtime_a
         .state
         .lock()
         .expect("runtime A state lock")
         .clone()
         .expect("runtime A state");
-    let original_context = state_a
-        .crypto
-        .get("delivery-b", &session_id)
-        .expect("original Session crypto context");
+    let original_session_id = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_session_id("reconnect-b")
+            .await
+            .expect("A Session ID")
+    });
 
-    // 禁用 B 侧的自动重连：断网后两端会各自重连，新建连接互相替换会形成
-    // ping-pong 并并发触发 recover_session。隔离被动端后，A 单独走真实的
-    // reconnect_loop，恢复链路可确定性收敛；两端并发重连的竞态单独调查。
-    runtime_b.disable_peer_reconnect_for_test("delivery-a");
-
-    // 强制关闭当前 transport Connection（不关 Session），驱动真实自动重连。
-    runtime_a.close_peer_connection_for_test("delivery-b");
-    assert!(poll_until(&runtime_a, Duration::from_secs(15), |event| {
+    // 关闭 A→B 的当前 route：transport 丢失，A 侧 Session 被销毁；pending 保留。
+    let route = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_active_route("reconnect-b")
+            .await
+            .expect("active A route")
+    });
+    runtime_a.handle().block_on(route.close_for_test());
+    assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::PeerState(state))
-                if state.peer_id == "delivery-b"
+                if state.peer_id == "reconnect-b"
                     && state.state == PeerConnectionState::Disconnected as i32
         )
     })
     .is_some());
 
-    // 生产 reconnect_loop 自动重连回同一 peer。
-    assert!(poll_until(&runtime_a, Duration::from_secs(30), |event| {
+    // 业务显式重连（§35 不自动重连）；A 得到全新 SessionId + 新 Noise root。
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "reconnect-connect-2".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "reconnect-b".into(),
+                intent: 0,
+                communication_class: 0,
+            })),
+        },
+    );
+    assert!(poll_until(&runtime_a, Duration::from_secs(20), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::PeerState(state))
-                if state.peer_id == "delivery-b"
+                if state.peer_id == "reconnect-b"
                     && state.state == PeerConnectionState::Connected as i32
         )
     })
     .is_some());
-
-    // 连续性：普通断网重连必须保留 SessionId 并复用 CryptoContext（ContinueExisting）。
-    let reconnected_session_id = runtime_a
-        .handle()
-        .block_on(state_a.sessions.current_session_id("delivery-b"))
-        .expect("session must survive reconnect");
-    assert_eq!(
-        reconnected_session_id.wire_key(),
-        session_id,
-        "ordinary reconnect must not replace the logical Session"
-    );
-    let reconnected_context = state_a
-        .crypto
-        .get("delivery-b", &session_id)
-        .expect("reconnected Session crypto context");
-    assert!(
-        std::sync::Arc::ptr_eq(&original_context, &reconnected_context),
-        "ordinary reconnect must ContinueExisting (same crypto Arc), not ReplaceWithNew"
-    );
-
-    // 显式 ACK 前等待 recovery epoch 在发送端与接收端之间稳定对齐，吸收多候选
-    // 并发 recover_session。
-    assert!(
-        wait_for_recovery_epoch_settled(
-            &runtime_a,
-            &runtime_b,
-            &session_id,
-            "control",
-            &message_id,
-            Duration::from_millis(200),
-            Duration::from_secs(20),
-        ),
-        "recovery epochs never settled between sender and receiver"
-    );
-
-    // 不在第一次事件后 ACK；重连重放的重复 DataMessage 仍处于 InFlight，
-    // 接收端既不重新发布事件，也不能自动 ACK。
-    let unexpected_ack = poll_until(&runtime_a, Duration::from_secs(1), |event| {
-        matches!(
-            &event.payload,
-            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
-                peer_id,
-                message_id: acknowledged_id,
-                ..
-            })) if peer_id == "delivery-b" && acknowledged_id == &message_id
-        )
+    let reconnected_session_id = runtime_a.handle().block_on(async {
+        state_a
+            .sessions
+            .current_session_id("reconnect-b")
+            .await
+            .expect("reconnected A Session ID")
     });
+    assert_ne!(original_session_id, reconnected_session_id);
+
+    // 重连后 A 以同一个 MessageId 重发；等接收端观测到该重放帧（active 记录
+    // 的 wire 代数被更新），证明重放已落地并被按 MessageId 去重。
+    let state_b = runtime_b
+        .state
+        .lock()
+        .expect("runtime B state lock")
+        .clone()
+        .expect("runtime B state");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut observed_replay_epoch = 0u64;
+    while Instant::now() < deadline {
+        observed_replay_epoch = runtime_b
+            .handle()
+            .block_on(state_b.delivery.incoming_recovery_epoch(
+                "reconnect-a",
+                "control",
+                crate::delivery::MessageId::from_bytes(message_id_bytes),
+            ))
+            .unwrap_or(0);
+        if observed_replay_epoch >= 2 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
     assert!(
-        unexpected_ack.is_none(),
-        "InFlight duplicate was incorrectly ACKed"
+        observed_replay_epoch >= 2,
+        "receiver never observed the re-sent MessageId after reconnect"
     );
 
+    // 接收端确认重放落地后，发送端 Peer 作用域连接代数必然已递增
+    // （每次 Connection Ready 的 recover_peer 递增一次）。
+    let peer_generation = runtime_a
+        .handle()
+        .block_on(state_a.delivery.current_peer_recovery_epoch("reconnect-b"));
+    assert!(
+        peer_generation >= 2,
+        "sender peer generation should advance after reconnect (got {peer_generation})"
+    );
+
+    // 去重：接收端不会再次把同一个 MessageId 交给应用。
     let duplicate = poll_until(&runtime_b, Duration::from_secs(1), |event| {
         matches!(
             &event.payload,
@@ -1339,45 +1489,58 @@ fn delivery_recovery_replays_same_message_across_reconnected_connection() {
                 if message.message_id == message_id
         )
     });
-    assert!(duplicate.is_none(), "dedup delivered the message twice");
+    assert!(
+        duplicate.is_none(),
+        "receiver double-delivered the same MessageId after reconnect"
+    );
 
-    // 应用显式 ACK 使用当前恢复周期的 epoch 完成 Delivery。
+    // InFlight 重放不自动 ACK。
+    let unexpected_ack = poll_until(&runtime_a, Duration::from_secs(1), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
+                peer_id,
+                message_id: acknowledged_id,
+                ..
+            })) if peer_id == "reconnect-b" && acknowledged_id == &message_id
+        )
+    });
+    assert!(
+        unexpected_ack.is_none(),
+        "InFlight duplicate was incorrectly ACKed"
+    );
+
+    // 显式 ACK（携带第一次事件看到的 wire session_id；关联只认 MessageId）
+    // 跨新连接完成。
     send_and_expect_accepted(
         &runtime_b,
         NetworkCommand {
-            command_id: "delivery-ack-recovered".into(),
+            command_id: "reconnect-ack".into(),
             protocol_version: NETWORK_PROTOCOL_VERSION,
             payload: Some(network_command::Payload::AcknowledgeMessage(
                 AcknowledgeMessageCommand {
-                    peer_id: "delivery-a".into(),
-                    session_id: session_id.clone(),
+                    peer_id: "reconnect-a".into(),
+                    session_id: first_session_id,
                     channel_id: "control".into(),
                     message_id: message_id.clone(),
                 },
             )),
         },
     );
-    // 该 ACK 只有在 ACK epoch 与 sender 当前 message epoch 完全相等时才被接受
-    // （delivery.rs acknowledge 返回 StaleEpoch）。当前单侧重连路径下 epoch 固定
-    // 为 2，故稳定；若未来恢复两端并发重连，任何新增的 recover_session 都会再次
-    // bump sender epoch 并使此处超时——改动隔离假设时必须回归此断言。
-    let recovered_ack = poll_until(&runtime_a, Duration::from_secs(20), |event| {
+    assert!(poll_until(&runtime_a, Duration::from_secs(20), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
                 peer_id,
                 message_id: acknowledged_id,
-                recovery_epoch,
                 ..
-            })) if peer_id == "delivery-b"
-                && acknowledged_id == &message_id
-                && *recovery_epoch >= 2
+            })) if peer_id == "reconnect-b" && acknowledged_id == &message_id
         )
-    });
-    assert!(
-        recovered_ack.is_some(),
-        "explicit ACK did not use the latest recovery epoch"
-    );
+    })
+    .is_some());
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();
 }
 
@@ -1451,6 +1614,7 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "restart-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -1491,24 +1655,23 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
         .get("restart-a", &old_b_session_id.wire_key())
         .expect("B1 CryptoContext");
     let orphaned_transfer_id = "restart-orphaned-transfer";
-    let orphaned_manifest = FileManifest {
-        transfer_id: orphaned_transfer_id.into(),
-        file_name: "restart-payload.bin".into(),
-        file_size: 1,
-        modified_at: 0,
-        content_hash: "00".repeat(32),
-        protocol_version: NETWORK_TRANSFER_PROTOCOL_VERSION,
-    };
+    // §19：TransferOperation 按 transfer_id + peer_id 保存；Session 替换后保留并在
+    // 新连接上 ResumeTransfer。用真实源文件 + 真实 manifest，使恢复尝试在断言前不会
+    // 因源文件缺失而失败移除。
+    let orphaned_source_path = test_root.join("restart-payload.bin");
+    fs::write(&orphaned_source_path, b"orphan-payload").expect("orphaned transfer source");
+    let orphaned_manifest = runtime_b
+        .handle()
+        .block_on(build_file_manifest(
+            orphaned_transfer_id.into(),
+            &orphaned_source_path,
+        ))
+        .expect("build orphaned transfer manifest");
     runtime_b.handle().block_on(async {
         assert!(
             state_b
                 .transfers
-                .register_outgoing(
-                    orphaned_manifest,
-                    test_root.join("restart-payload.bin"),
-                    "restart-a".into(),
-                    old_b_session_id.wire_key(),
-                )
+                .register_outgoing(orphaned_manifest, orphaned_source_path, "restart-a".into())
                 .await
         );
         assert!(
@@ -1524,13 +1687,13 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
                 .await
         );
     });
-    // 在旧 Session 下 enqueue 一条未 ACK 的 pending 消息：peer restart 后
-    // ReplaceWithNew 必须显式清理这条旧 Session 的 pending，且绝不能把它
-    // 错误恢复进新的替换 Session。
+    // 在 Peer 业务作用域下 enqueue 一条未 ACK 的 pending 消息（§20）：peer
+    // restart 后 ReplaceWithNew 不得清理它；新连接通过 Peer 作用域以同一个
+    // MessageId 恢复重发。
     let old_pending = runtime_b
         .handle()
         .block_on(state_b.delivery.enqueue_with_crypto(
-            &old_b_session_id.wire_key(),
+            "restart-a",
             "control",
             b"old-session-pending".to_vec(),
             crate::delivery::DeliveryPolicy::AckedDeduplicated,
@@ -1583,6 +1746,7 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "restart-a".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -1604,32 +1768,19 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             .expect("B2 Session ID")
     });
     assert_ne!(old_b_session_id, new_b_session_id);
-    // 旧 Session 的 pending 必须被 retire_session_resources 显式清理：恢复
-    // 旧 session 得到空快照；新 session 的快照不含旧消息（不跨 session 恢复）。
-    let old_snapshot = runtime_b.handle().block_on(
-        state_b
-            .delivery
-            .recover_session(&old_b_session_id.wire_key()),
-    );
+    // §19/§20：业务状态（pending Delivery / paused Transfer）属于 Peer 业务
+    // 作用域，Session 替换/销毁后必须保留。新连接（新 SessionId）通过 Peer
+    // 作用域恢复该 pending，并以同一个 MessageId 重发——不再是旧 Session 专属、
+    // 不跨 Session 恢复的模型。
+    let peer_snapshot = runtime_b
+        .handle()
+        .block_on(state_b.delivery.recover_peer("restart-a"));
     assert!(
-        old_snapshot.messages.is_empty(),
-        "retired Session's pending Delivery must be explicitly cleared"
-    );
-    let new_snapshot = runtime_b.handle().block_on(
-        state_b
-            .delivery
-            .recover_session(&new_b_session_id.wire_key()),
-    );
-    assert!(
-        new_snapshot
+        peer_snapshot
             .messages
             .iter()
-            .all(|message| message.session_id == new_b_session_id.wire_key())
-            && !new_snapshot
-                .messages
-                .iter()
-                .any(|message| message.message_id == old_pending_message_id),
-        "replacement Session must never restore the old Session's pending Delivery"
+            .any(|message| message.message_id == old_pending_message_id),
+        "Peer-scoped pending Delivery must survive Session replacement and be recoverable on the next connection"
     );
     let stale_context = state_b
         .crypto
@@ -1666,16 +1817,8 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
             .transfers
             .snapshot(orphaned_transfer_id)
             .await
-            .is_none()
+            .is_some()
     }));
-    assert!(poll_until(&runtime_b, Duration::from_secs(5), |event| {
-        matches!(
-            &event.payload,
-            Some(network_event::Payload::TransferFailed(transfer))
-                if transfer.transfer_id == orphaned_transfer_id
-        )
-    })
-    .is_some());
 
     send_and_expect_accepted(
         &runtime_a2,
@@ -1741,8 +1884,11 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
 /// numeric port still accepts TCP, proving that fallback is a real authenticated
 /// Session route rather than a capability-only wrapper. The test also sends a
 /// Delivery message and completes the application ACK through that route.
+///
+/// transport-network v2（§18）：transport 丢失即销毁 ConnectionSession，重新
+/// connect() 必须得到**全新** SessionId（绝不复用旧 id）。
 #[test]
-fn tcp_fallback_authenticates_delivery_and_keeps_session_id() {
+fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
     let runtime_a = NetworkRuntime::new().expect("runtime A");
     let runtime_b = NetworkRuntime::new().expect("runtime B");
     runtime_a.start().expect("start runtime A");
@@ -1819,6 +1965,7 @@ fn tcp_fallback_authenticates_delivery_and_keeps_session_id() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "tcp-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -1921,6 +2068,19 @@ fn tcp_fallback_authenticates_delivery_and_keeps_session_id() {
         )
     })
     .is_some());
+    // transport-network v2（§35）：连接丢失后不自动重连；业务重新发起 connect()。
+    send_and_expect_accepted(
+        &runtime_a,
+        NetworkCommand {
+            command_id: "tcp-reconnect".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: "tcp-b".into(),
+                intent: 0,
+                communication_class: 0,
+            })),
+        },
+    );
     assert!(poll_until(&runtime_a, Duration::from_secs(25), |event| {
         matches!(
             &event.payload,
@@ -1938,7 +2098,8 @@ fn tcp_fallback_authenticates_delivery_and_keeps_session_id() {
             .await
             .expect("reconnected TCP Session ID")
     });
-    assert_eq!(original_session_id, reconnected_session_id);
+    // §18 1:1：新连接 = 新 ConnectionSession = 新 SessionId。
+    assert_ne!(original_session_id, reconnected_session_id);
     runtime_a.stop().expect("stop runtime A");
     runtime_b.stop().expect("stop runtime B");
     fs::remove_dir_all(test_root).ok();
@@ -2018,6 +2179,7 @@ fn websocket_fallback_authenticates_delivery_and_ack() {
             payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
                 peer_id: "ws-b".into(),
                 intent: 0,
+                communication_class: 0,
             })),
         },
     );
@@ -2090,360 +2252,575 @@ fn websocket_fallback_authenticates_delivery_and_ack() {
     fs::remove_dir_all(test_root).ok();
 }
 
-/// A pending Delivery item is kept under the logical Session while the
-/// authenticated route changes from TCP to a newly available QUIC endpoint.
-/// The old carrier is closed only after the atomic Session swap.
-#[test]
-fn tcp_to_quic_migration_preserves_pending_delivery_and_session_id() {
-    let runtime_a = NetworkRuntime::new().expect("runtime A");
-    let runtime_tcp = NetworkRuntime::new().expect("TCP peer runtime");
-    runtime_a.start().expect("start runtime A");
-    runtime_tcp.start().expect("start TCP peer runtime");
-    let test_root = std::env::temp_dir().join(format!(
-        "ssh-mobile-route-migration-{}",
-        rand::random::<u64>()
-    ));
-    fs::create_dir_all(&test_root).expect("test root");
-    let identity_seed_a = [141u8; 32];
-    let identity_seed_peer = [142u8; 32];
-    let public_key_a =
-        DeviceIdentity::from_private_keys("migration-a".into(), identity_seed_a, [151u8; 32])
-            .public_identity_key()
-            .to_bytes();
-    let public_key_peer =
-        DeviceIdentity::from_private_keys("migration-peer".into(), identity_seed_peer, [152u8; 32])
-            .public_identity_key()
-            .to_bytes();
-    let address_a = configure_runtime_for_test(
-        &runtime_a,
-        "migration-a",
-        identity_seed_a,
-        [151u8; 32],
-        SocketAddr::from(([127, 0, 0, 1], 0)),
-        test_root.join("receive-a"),
+// ---------------------------------------------------------------------------
+// ReliableStream byte-stream carrier (§17) integration tests
+// ---------------------------------------------------------------------------
+
+/// Peer/endpoint/key material shared by the ReliableStream integration tests.
+struct StreamTestPeers {
+    device_a: String,
+    device_b: String,
+    address_a: SocketAddr,
+    address_b: SocketAddr,
+    public_key_a: [u8; 32],
+    public_key_b: [u8; 32],
+    seed_a: [u8; 32],
+    seed_b: [u8; 32],
+}
+
+/// Connects two runtimes and waits for a peer state whose route transport
+/// matches `transport`.
+fn connect_runtimes_for_stream_test(
+    runtime_a: &NetworkRuntime,
+    runtime_b: &NetworkRuntime,
+    peers: &StreamTestPeers,
+    transport: RouteTransport,
+) {
+    send_and_expect_accepted(
+        runtime_a,
+        upsert_command(
+            &format!("{}-upsert-b", peers.device_a),
+            &peers.device_b,
+            peers.address_b,
+            peers.public_key_b,
+            peers.seed_b,
+        ),
     );
-    let address_tcp = configure_runtime_for_test(
-        &runtime_tcp,
-        "migration-peer",
-        identity_seed_peer,
-        [152u8; 32],
-        SocketAddr::from(([127, 0, 0, 1], 0)),
-        test_root.join("receive-tcp"),
+    send_and_expect_accepted(
+        runtime_b,
+        upsert_command(
+            &format!("{}-upsert-a", peers.device_b),
+            &peers.device_a,
+            peers.address_a,
+            peers.public_key_a,
+            peers.seed_a,
+        ),
     );
-    let tcp_state = runtime_tcp
+    send_and_expect_accepted(
+        runtime_a,
+        NetworkCommand {
+            command_id: format!("{}-connect-{}", peers.device_a, peers.device_b),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
+                peer_id: peers.device_b.clone(),
+                intent: 0,
+                communication_class: CommunicationClass::ReliableStream as i32,
+            })),
+        },
+    );
+    let connected = poll_until(runtime_a, Duration::from_secs(25), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::PeerState(state))
+                if state.peer_id == peers.device_b
+                    && state.state == PeerConnectionState::Connected as i32
+                    && state.route_transport == transport as i32
+        )
+    });
+    assert!(
+        connected.is_some(),
+        "connection to {} never reached {transport:?}",
+        peers.device_b
+    );
+}
+
+/// Disables a runtime's QUIC endpoint so the orchestrator falls back to TCP.
+fn force_tcp_fallback(runtime: &NetworkRuntime) {
+    let state = runtime
         .state
         .lock()
-        .expect("TCP peer state lock")
+        .expect("runtime state lock")
         .clone()
-        .expect("TCP peer state");
-    runtime_tcp.handle().block_on(async {
-        tcp_state
+        .expect("runtime state");
+    runtime.handle().block_on(async {
+        state
             .endpoint
             .read()
             .await
             .as_ref()
-            .expect("TCP peer endpoint")
-            .close(quinn::VarInt::from_u32(0), b"migration TCP phase");
+            .expect("endpoint")
+            .close(quinn::VarInt::from_u32(0), b"TCP fallback test");
     });
+}
+
+fn ssh_open_command(peer_id: &str, stream_id: u16, service: &str) -> NetworkCommand {
+    NetworkCommand {
+        command_id: format!("ssh-open-{stream_id}"),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_command::Payload::SshStreamOpen(
+            SshStreamOpenCommand {
+                peer_id: peer_id.into(),
+                stream_id: stream_id as u32,
+                service: service.into(),
+            },
+        )),
+    }
+}
+
+fn ssh_data_command(peer_id: &str, stream_id: u16, data: &[u8]) -> NetworkCommand {
+    NetworkCommand {
+        command_id: format!("ssh-data-{stream_id}"),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_command::Payload::SshStreamData(
+            SshStreamDataCommand {
+                peer_id: peer_id.into(),
+                stream_id: stream_id as u32,
+                data: data.to_vec(),
+            },
+        )),
+    }
+}
+
+fn ssh_close_command(peer_id: &str, stream_id: u16) -> NetworkCommand {
+    NetworkCommand {
+        command_id: format!("ssh-close-{stream_id}"),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_command::Payload::SshStreamClose(
+            SshStreamCloseCommand {
+                peer_id: peer_id.into(),
+                stream_id: stream_id as u32,
+            },
+        )),
+    }
+}
+
+/// QUIC bidi direct path (§17): open/send/recv/close round-trip over a real
+/// QUIC bidirectional stream (no re-framing).
+#[test]
+fn reliable_stream_round_trips_bytes_over_quic_bidi() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root =
+        std::env::temp_dir().join(format!("ssh-mobile-stream-{}", rand::random::<u64>()));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [201u8; 32];
+    let identity_seed_b = [202u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("stream-a".into(), identity_seed_a, [211u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("stream-b".into(), identity_seed_b, [212u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "stream-a",
+        identity_seed_a,
+        [211u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "stream-b",
+        identity_seed_b,
+        [212u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    connect_runtimes_for_stream_test(
+        &runtime_a,
+        &runtime_b,
+        &StreamTestPeers {
+            device_a: "stream-a".into(),
+            device_b: "stream-b".into(),
+            address_a,
+            address_b,
+            public_key_a,
+            public_key_b,
+            seed_a: [211u8; 32],
+            seed_b: [212u8; 32],
+        },
+        RouteTransport::Quic,
+    );
+
+    const STREAM_ID: u16 = 1;
+    send_and_expect_accepted(&runtime_a, ssh_open_command("stream-b", STREAM_ID, "test"));
+
+    // A -> B data (QUIC bidi stream bytes).
+    send_and_expect_accepted(&runtime_a, ssh_data_command("stream-b", STREAM_ID, b"ping"));
+    let received = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.peer_id == "stream-a" && recv.stream_id == STREAM_ID as u32 && recv.data == b"ping"
+        )
+    });
+    assert!(received.is_some(), "stream-b never received ping");
+
+    // B -> A data (the QUIC send half is registered on the responder side).
+    send_and_expect_accepted(&runtime_b, ssh_data_command("stream-a", STREAM_ID, b"pong"));
+    let echo = poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.peer_id == "stream-b" && recv.stream_id == STREAM_ID as u32 && recv.data == b"pong"
+        )
+    });
+    assert!(echo.is_some(), "stream-a never received pong");
+
+    // Teardown: A closes -> B sees SshStreamClosed.
+    send_and_expect_accepted(&runtime_a, ssh_close_command("stream-b", STREAM_ID));
+    let closed = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamClosed(closed))
+                if closed.peer_id == "stream-a" && closed.stream_id == STREAM_ID as u32
+        )
+    });
+    assert!(closed.is_some(), "stream-b never saw the stream close");
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// Generic-route carrier (§17): StreamBytes frames interleave with DataMessage
+/// frames on the same framed TCP route.
+#[test]
+fn stream_bytes_interleave_with_data_message_on_generic_route() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root =
+        std::env::temp_dir().join(format!("ssh-mobile-stream-tcp-{}", rand::random::<u64>()));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [221u8; 32];
+    let identity_seed_b = [222u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("stream-tcp-a".into(), identity_seed_a, [231u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("stream-tcp-b".into(), identity_seed_b, [232u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "stream-tcp-a",
+        identity_seed_a,
+        [231u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "stream-tcp-b",
+        identity_seed_b,
+        [232u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    force_tcp_fallback(&runtime_b);
+    connect_runtimes_for_stream_test(
+        &runtime_a,
+        &runtime_b,
+        &StreamTestPeers {
+            device_a: "stream-tcp-a".into(),
+            device_b: "stream-tcp-b".into(),
+            address_a,
+            address_b,
+            public_key_a,
+            public_key_b,
+            seed_a: [231u8; 32],
+            seed_b: [232u8; 32],
+        },
+        RouteTransport::Tcp,
+    );
+
+    const STREAM_ID: u16 = 2;
     send_and_expect_accepted(
         &runtime_a,
-        upsert_command(
-            "migration-upsert-peer-tcp",
-            "migration-peer",
-            address_tcp,
-            public_key_peer,
-            [152u8; 32],
-        ),
+        ssh_open_command("stream-tcp-b", STREAM_ID, "test"),
     );
     send_and_expect_accepted(
-        &runtime_tcp,
-        upsert_command(
-            "migration-tcp-upsert-a",
-            "migration-a",
-            address_a,
-            public_key_a,
-            [151u8; 32],
-        ),
+        &runtime_a,
+        ssh_data_command("stream-tcp-b", STREAM_ID, b"stream-bytes"),
     );
     send_and_expect_accepted(
         &runtime_a,
         NetworkCommand {
-            command_id: "migration-connect".into(),
+            command_id: "tcp-stream-message".into(),
             protocol_version: NETWORK_PROTOCOL_VERSION,
-            payload: Some(network_command::Payload::ConnectPeer(ConnectPeerCommand {
-                peer_id: "migration-peer".into(),
-                intent: 0,
+            payload: Some(network_command::Payload::SendMessage(SendMessageCommand {
+                peer_id: "stream-tcp-b".into(),
+                channel_id: "control".into(),
+                payload: b"message-bytes".to_vec(),
+                policy: DeliveryPolicyCode::AckedDeduplicated as i32,
+                crypto_mode: 0,
             })),
         },
     );
-    assert!(poll_until(&runtime_a, Duration::from_secs(25), |event| {
+
+    // Both a StreamBytes frame and a DataMessage frame survive on the same
+    // framed carrier, delivered to their independent handlers.
+    let stream = poll_until(&runtime_b, Duration::from_secs(10), |event| {
         matches!(
             &event.payload,
-            Some(network_event::Payload::PeerState(state))
-                if state.peer_id == "migration-peer"
-                    && state.state == PeerConnectionState::Connected as i32
-                    && state.route_transport == RouteTransport::Tcp as i32
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.peer_id == "stream-tcp-a"
+                    && recv.stream_id == STREAM_ID as u32
+                    && recv.data == b"stream-bytes"
         )
-    })
-    .is_some());
-    let state_a = runtime_a
-        .state
-        .lock()
-        .expect("runtime A state lock")
-        .clone()
-        .expect("runtime A state");
-    let (session_id, old_route) = runtime_a.handle().block_on(async {
-        let session_id = state_a
-            .sessions
-            .current_session_id("migration-peer")
-            .await
-            .expect("migration Session ID");
-        let route = state_a
-            .sessions
-            .current_active_route("migration-peer")
-            .await
-            .expect("TCP active route");
-        (session_id, route)
     });
-    let old_accept_task = *tcp_state.accept_task.lock().expect("TCP accept task lock");
-    runtime_tcp.handle().block_on(async {
-        let old_endpoint = tcp_state.endpoint.write().await.take();
-        if let Some(old_endpoint) = old_endpoint {
-            old_endpoint.close(quinn::VarInt::from_u32(0), b"migration TCP phase ended");
-        }
-        if let Some(task_id) = old_accept_task {
-            tcp_state.task_supervisor.cancel_task(task_id).await;
-        }
-    });
-    let replacement_socket = std::net::UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-        .expect("bind replacement QUIC endpoint for route migration");
-    replacement_socket
-        .set_nonblocking(true)
-        .expect("configure migration QUIC socket");
-    let replacement_endpoint = runtime_tcp.handle().block_on(async {
-        network_quic::QuicEndpointManager::from_bound_socket(
-            replacement_socket,
-            Arc::new(network_nat::PathManager::new()),
-        )
-        .expect("create replacement QUIC endpoint")
-        .endpoint
-    });
-    let replacement_address = replacement_endpoint
-        .local_addr()
-        .expect("read replacement QUIC endpoint address");
-    let replacement_accept_task = runtime_tcp.handle().block_on(async {
-        *tcp_state.endpoint.write().await = Some(replacement_endpoint.clone());
-        tcp_state
-            .task_supervisor
-            .spawn_runtime(
-                "migration-quic-accept",
-                crate::peer::accept_connections(
-                    replacement_endpoint.clone(),
-                    Arc::clone(&tcp_state),
-                ),
-            )
-            .expect("spawn replacement QUIC accept task")
-    });
-    *tcp_state
-        .accept_task
-        .lock()
-        .expect("replacement accept task lock") = Some(replacement_accept_task);
-    let original_context = state_a
-        .crypto
-        .get("migration-peer", &session_id.wire_key())
-        .expect("original Session crypto context");
-    let original_epoch = original_context
-        .lock()
-        .expect("original Session crypto lock")
-        .current_epoch();
-    runtime_a
-        .handle()
-        .block_on(state_a.delivery.enqueue_with_crypto(
-            &session_id.wire_key(),
-            "control",
-            b"pending-before-quic".to_vec(),
-            crate::delivery::DeliveryPolicy::AckedDeduplicated,
-            crate::crypto::CryptoMode::None,
-            Default::default(),
-        ))
-        .expect("queue pending migration Delivery");
-    runtime_a.handle().block_on(async {
-        state_a
-            .peers
-            .write()
-            .await
-            .get_mut("migration-peer")
-            .expect("migration peer config")
-            .endpoint = Some(replacement_address);
-    });
-    let identity = runtime_a.handle().block_on(async {
-        state_a
-            .identity
-            .read()
-            .await
-            .clone()
-            .expect("migration identity")
-    });
-    let endpoint = runtime_a.handle().block_on(async {
-        state_a
-            .endpoint
-            .read()
-            .await
-            .clone()
-            .expect("migration QUIC endpoint")
-    });
-    let (replacement, crypto, admission) = runtime_a
-        .handle()
-        .block_on(crate::peer::connect_direct_with_crypto(
-            endpoint,
-            replacement_address,
-            identity,
-            public_key_peer,
-            "migration-peer".into(),
-            "migration-attempt".into(),
-            Duration::from_secs(5),
-            &session_id.wire_key(),
-            Arc::clone(&state_a),
-            session_id,
-        ))
-        .expect("authenticated QUIC replacement");
-    runtime_a.handle().block_on(async {
-        state_a
-            .install_crypto_material(
-                "migration-peer",
-                &session_id.wire_key(),
-                &crypto,
-                admission.decision,
-            )
-            .expect("install replacement E2EE context");
-    });
-    let replacement_context = state_a
-        .crypto
-        .get("migration-peer", &session_id.wire_key())
-        .expect("replacement route Session crypto context");
-    assert!(std::sync::Arc::ptr_eq(
-        &original_context,
-        &replacement_context
-    ));
-    assert_eq!(
-        replacement_context
-            .lock()
-            .expect("replacement Session crypto lock")
-            .current_epoch(),
-        original_epoch
+    assert!(
+        stream.is_some(),
+        "generic route never delivered stream bytes"
     );
-    let replacement_receiver = replacement.clone();
-    let previous = runtime_a
-        .handle()
-        .block_on(async {
-            if state_a
-                .sessions
-                .current_active_route("migration-peer")
-                .await
-                .is_some()
-            {
-                state_a
-                    .sessions
-                    .replace_active_route_if_current(
-                        "migration-peer",
-                        session_id,
-                        &old_route,
-                        crate::session::ActiveRoute::quic(replacement, RouteType::QuicDirect),
-                    )
-                    .await
-                    .map(Some)
-            } else {
-                Some(
-                    state_a
-                        .sessions
-                        .attach_connection_for_session(
-                            "migration-peer",
-                            Some(session_id),
-                            replacement,
-                            RouteType::QuicDirect,
-                            true,
-                        )
-                        .await
-                        .expect("attach route after old callback"),
-                )
-            }
-        })
-        .expect("atomic TCP to QUIC route swap");
-    if let Some(previous) = previous {
-        runtime_a.handle().block_on(previous.close());
-    }
-    runtime_a.handle().block_on(async {
-        crate::peer::spawn_session_receivers(
-            state_a.clone(),
-            "migration-peer".into(),
-            replacement_receiver,
-            session_id,
-        );
-    });
-    runtime_a.handle().block_on(crate::channel::recover_session(
-        state_a.clone(),
-        "migration-peer".into(),
-        session_id,
-    ));
-    let received = poll_until(&runtime_tcp, Duration::from_secs(10), |event| {
+    let message = poll_until(&runtime_b, Duration::from_secs(10), |event| {
         matches!(
             &event.payload,
             Some(network_event::Payload::ChannelMessage(message))
-                if message.peer_id == "migration-a"
-                    && message.payload == b"pending-before-quic"
-        )
-    })
-    .expect("pending Delivery was not recovered on QUIC");
-    let (remote_session_id, message_id) = match received.payload {
-        Some(network_event::Payload::ChannelMessage(message)) => {
-            (message.session_id, message.message_id)
-        }
-        _ => unreachable!("predicate already checked the event"),
-    };
-    send_and_expect_accepted(
-        &runtime_tcp,
-        NetworkCommand {
-            command_id: "migration-ack".into(),
-            protocol_version: NETWORK_PROTOCOL_VERSION,
-            payload: Some(network_command::Payload::AcknowledgeMessage(
-                AcknowledgeMessageCommand {
-                    peer_id: "migration-a".into(),
-                    session_id: remote_session_id,
-                    channel_id: "control".into(),
-                    message_id,
-                },
-            )),
-        },
-    );
-    assert!(poll_until(&runtime_a, Duration::from_secs(10), |event| {
-        matches!(
-            &event.payload,
-            Some(network_event::Payload::DeliveryAcked(DeliveryAckedEvent {
-                peer_id,
-                ..
-            })) if peer_id == "migration-peer"
-        )
-    })
-    .is_some());
-    let (same_session, transport) = runtime_a.handle().block_on(async {
-        let profile = state_a
-            .sessions
-            .current_profile("migration-peer")
-            .await
-            .expect("migrated profile");
-        (
-            state_a
-                .sessions
-                .current_session_id("migration-peer")
-                .await
-                .expect("migrated Session ID"),
-            profile.transport(),
+                if message.peer_id == "stream-tcp-a" && message.payload == b"message-bytes"
         )
     });
-    assert_eq!(same_session, session_id);
-    assert_eq!(transport, crate::connection::RouteTransport::Quic);
+    assert!(
+        message.is_some(),
+        "generic route never delivered the DataMessage"
+    );
+
     runtime_a.stop().expect("stop runtime A");
-    runtime_tcp.stop().expect("stop TCP peer runtime");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// Failure scenario: sending on a closed stream resolves to a clean command
+/// rejection (no teardown, no panic).
+#[test]
+fn ssh_stream_data_after_close_is_rejected_cleanly() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root =
+        std::env::temp_dir().join(format!("ssh-mobile-stream-fail-{}", rand::random::<u64>()));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [241u8; 32];
+    let identity_seed_b = [242u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("stream-fail-a".into(), identity_seed_a, [251u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("stream-fail-b".into(), identity_seed_b, [252u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "stream-fail-a",
+        identity_seed_a,
+        [251u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "stream-fail-b",
+        identity_seed_b,
+        [252u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    connect_runtimes_for_stream_test(
+        &runtime_a,
+        &runtime_b,
+        &StreamTestPeers {
+            device_a: "stream-fail-a".into(),
+            device_b: "stream-fail-b".into(),
+            address_a,
+            address_b,
+            public_key_a,
+            public_key_b,
+            seed_a: [251u8; 32],
+            seed_b: [252u8; 32],
+        },
+        RouteTransport::Quic,
+    );
+
+    const STREAM_ID: u16 = 3;
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_open_command("stream-fail-b", STREAM_ID, "test"),
+    );
+    // Establish the stream on B before tearing down (deterministic: the QUIC
+    // open and close could otherwise be coalesced before B's accept loop runs).
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_data_command("stream-fail-b", STREAM_ID, b"hello"),
+    );
+    let received = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.stream_id == STREAM_ID as u32 && recv.data == b"hello"
+        )
+    });
+    assert!(received.is_some(), "stream was not established on B");
+
+    // Tear down from both sides.
+    send_and_expect_accepted(&runtime_a, ssh_close_command("stream-fail-b", STREAM_ID));
+    let closed = poll_until(&runtime_b, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamClosed(closed))
+                if closed.stream_id == STREAM_ID as u32
+        )
+    });
+    assert!(closed.is_some(), "B never saw the stream close");
+    send_and_expect_accepted(&runtime_b, ssh_close_command("stream-fail-a", STREAM_ID));
+
+    // Sending on a closed stream must be a clean command rejection.
+    let late = NetworkCommand {
+        command_id: "ssh-data-after-close".into(),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_command::Payload::SshStreamData(
+            SshStreamDataCommand {
+                peer_id: "stream-fail-b".into(),
+                stream_id: STREAM_ID as u32,
+                data: b"late".to_vec(),
+            },
+        )),
+    };
+    runtime_a.send_command(late).expect("queue late data");
+    let rejected = poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::CommandResult(result))
+                if result.command_id == "ssh-data-after-close" && !result.accepted
+        )
+    });
+    assert!(
+        rejected.is_some(),
+        "late stream data was not rejected cleanly"
+    );
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    fs::remove_dir_all(test_root).ok();
+}
+
+/// Peer SSH Server Service (design §21 option B): a stream whose service hint
+/// is `ssh` is bridged by the peer's native runtime to a local TCP socket.
+/// Tested against a local echo server instead of a real sshd.
+#[test]
+fn ssh_gateway_bridges_stream_to_a_local_tcp_echo_server() {
+    let runtime_a = NetworkRuntime::new().expect("runtime A");
+    let runtime_b = NetworkRuntime::new().expect("runtime B");
+    runtime_a.start().expect("start runtime A");
+    runtime_b.start().expect("start runtime B");
+    let test_root =
+        std::env::temp_dir().join(format!("ssh-mobile-stream-gw-{}", rand::random::<u64>()));
+    fs::create_dir_all(&test_root).expect("test root");
+    let identity_seed_a = [61u8; 32];
+    let identity_seed_b = [62u8; 32];
+    let public_key_a =
+        DeviceIdentity::from_private_keys("stream-gw-a".into(), identity_seed_a, [71u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let public_key_b =
+        DeviceIdentity::from_private_keys("stream-gw-b".into(), identity_seed_b, [72u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let address_a = configure_runtime_for_test(
+        &runtime_a,
+        "stream-gw-a",
+        identity_seed_a,
+        [71u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-a"),
+    );
+    let address_b = configure_runtime_for_test(
+        &runtime_b,
+        "stream-gw-b",
+        identity_seed_b,
+        [72u8; 32],
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        test_root.join("receive-b"),
+    );
+    connect_runtimes_for_stream_test(
+        &runtime_a,
+        &runtime_b,
+        &StreamTestPeers {
+            device_a: "stream-gw-a".into(),
+            device_b: "stream-gw-b".into(),
+            address_a,
+            address_b,
+            public_key_a,
+            public_key_b,
+            seed_a: [71u8; 32],
+            seed_b: [72u8; 32],
+        },
+        RouteTransport::Quic,
+    );
+
+    // Local TCP echo server on runtime B's worker threads; the peer gateway
+    // bridges to it. Tested against an echo server instead of a real sshd.
+    let (echo_port, echo_task) = runtime_b.handle().block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind echo server");
+        let port = listener.local_addr().expect("echo address").port();
+        let task = tokio::spawn(async move {
+            loop {
+                let (socket, _) = match listener.accept().await {
+                    Ok(connection) => connection,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    let (mut read_half, mut write_half) = socket.into_split();
+                    let _ = tokio::io::copy(&mut read_half, &mut write_half).await;
+                });
+            }
+        });
+        (port, task)
+    });
+
+    // Point the peer's SSH gateway at the echo server.
+    let state_b = runtime_b
+        .state
+        .lock()
+        .expect("runtime B state lock")
+        .clone()
+        .expect("runtime B state");
+    runtime_b.handle().block_on(async {
+        state_b
+            .stream_gateway_port
+            .store(echo_port, std::sync::atomic::Ordering::Release);
+    });
+
+    const STREAM_ID: u16 = 4;
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_open_command("stream-gw-b", STREAM_ID, crate::stream::STREAM_SERVICE_SSH),
+    );
+
+    // The bridge pumps A -> gateway -> echo server -> gateway -> A.
+    let payload = b"bridge-round-trip";
+    send_and_expect_accepted(
+        &runtime_a,
+        ssh_data_command("stream-gw-b", STREAM_ID, payload),
+    );
+    let echoed = poll_until(&runtime_a, Duration::from_secs(10), |event| {
+        matches!(
+            &event.payload,
+            Some(network_event::Payload::SshStreamDataReceived(recv))
+                if recv.peer_id == "stream-gw-b"
+                    && recv.stream_id == STREAM_ID as u32
+                    && recv.data == payload
+        )
+    });
+    assert!(
+        echoed.is_some(),
+        "echoed bytes never returned to the initiator"
+    );
+
+    runtime_a.stop().expect("stop runtime A");
+    runtime_b.stop().expect("stop runtime B");
+    echo_task.abort();
     fs::remove_dir_all(test_root).ok();
 }
 
@@ -2563,66 +2940,6 @@ fn wait_for_session_connected(runtime: &NetworkRuntime, peer_id: &str, timeout: 
             .block_on(state.sessions.is_connected(peer_id))
         {
             return true;
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    false
-}
-
-/// 等待连接恢复后的 recovery epoch 在发送端与接收端之间稳定对齐。
-///
-/// 连接恢复会触发多次 `recover_session`，发送端 epoch 逐次递增并重放未 ACK
-/// 消息；接收端 active 记录的 epoch 只在重放落地后追上发送端。若测试在两者
-/// 尚未对齐时发送显式 ACK，ACK 会携带滞后 epoch，发送端判定 StaleEpoch 而
-/// 不再发布 DeliveryAcked，造成偶发失败。因此测试必须等到：
-/// 1. 发送端当前 session epoch >= 2（至少经历了一次连接恢复）；
-/// 2. 接收端 active 记录 epoch 与发送端当前 epoch 相等（最后一次重放已落地）；
-/// 3. 该对齐状态在 settle 窗口内保持稳定（后续不再有新的 recovery）。
-fn wait_for_recovery_epoch_settled(
-    sender: &NetworkRuntime,
-    receiver: &NetworkRuntime,
-    session_id: &str,
-    channel_id: &str,
-    message_id: &[u8],
-    settle: Duration,
-    timeout: Duration,
-) -> bool {
-    let sender_state = sender
-        .state
-        .lock()
-        .expect("runtime state lock")
-        .clone()
-        .expect("runtime state");
-    let receiver_state = receiver
-        .state
-        .lock()
-        .expect("runtime state lock")
-        .clone()
-        .expect("runtime state");
-    let message_id = crate::delivery::MessageId::from_bytes(
-        message_id.try_into().expect("message_id must be 16 bytes"),
-    );
-    let deadline = Instant::now() + timeout;
-    let mut aligned_since: Option<Instant> = None;
-    while Instant::now() < deadline {
-        let sender_epoch = sender.handle().block_on(
-            sender_state
-                .delivery
-                .current_session_recovery_epoch(session_id),
-        );
-        let receiver_epoch = receiver.handle().block_on(
-            receiver_state
-                .delivery
-                .incoming_recovery_epoch(session_id, channel_id, message_id),
-        );
-        let aligned = sender_epoch >= 2 && receiver_epoch == Some(sender_epoch);
-        if aligned {
-            aligned_since = aligned_since.or(Some(Instant::now()));
-            if aligned_since.is_some_and(|start| start.elapsed() >= settle) {
-                return true;
-            }
-        } else {
-            aligned_since = None;
         }
         std::thread::sleep(Duration::from_millis(25));
     }

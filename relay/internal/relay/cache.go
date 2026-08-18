@@ -107,6 +107,17 @@ type Cache interface {
 	AdminSessionExists(ctx context.Context, token string) (bool, error)
 	// DeleteAdminSession 删除管理端会话。
 	DeleteAdminSession(ctx context.Context, token string) error
+	// CreateReservation 原子存储一条 relay-data reservation（设计 §25，Redis
+	// relay:reservation:{id}），TTL 到 expires_at_ms。
+	CreateReservation(ctx context.Context, r Reservation) error
+	// GetReservation 返回 reservation；不存在或已过期返回 (zero, false, nil)。
+	GetReservation(ctx context.Context, reservationID string) (Reservation, bool, error)
+	// RenewReservation 把 reservation 的存活期限滑动到 now+ttl（数据面滑动窗口续期：
+	// 每次成功帧刷新 TTL，长会话不被一次性到期定时器中断）。条目不存在/已过期返回
+	// false，不复活。
+	RenewReservation(ctx context.Context, reservationID string, ttl time.Duration) (bool, error)
+	// DeleteReservation 删除 reservation（双方关闭后清理）。
+	DeleteReservation(ctx context.Context, reservationID string) error
 	// Publish 广播一个跨实例事件。内存实现为空操作（事件在本地直接处理）。
 	Publish(ctx context.Context, event RelayEvent) error
 	// Close 释放缓存持有的外部资源（Redis 连接等）；内存实现为空操作。
@@ -334,9 +345,9 @@ func (m *memoryStore) GetDiscoveries(_ context.Context, deviceIDs []string) (map
 }
 
 // ListOnlinePeers 返回可在线判定的设备（明确版 §13）：presence 与 discovery 均有效、
-// discovery.Generation>0、且 presence 与 discovery 的所有者 ConnectionID 一致。占位
-// discovery 已移除后，gen-0 或 owner 不匹配的条目（重连窗口内旧连接的残留 discovery）
-// 都不算在线。
+// discovery 已可靠发布（ready()：revision>0）、且 presence 与 discovery 的所有者
+// ConnectionID 一致。revision=0 或 owner 不匹配的条目（重连窗口内旧连接的残留
+// discovery）都不算在线。
 func (m *memoryStore) ListOnlinePeers(_ context.Context) (map[string]Discovery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -351,7 +362,7 @@ func (m *memoryStore) ListOnlinePeers(_ context.Context) (map[string]Discovery, 
 		if !present || now.After(presence.expiresAt) || presence.presence.ConnectionID != entry.discovery.ConnectionID {
 			continue
 		}
-		if entry.discovery.Generation == 0 {
+		if !entry.discovery.ready() {
 			continue
 		}
 		result[deviceID] = entry.discovery

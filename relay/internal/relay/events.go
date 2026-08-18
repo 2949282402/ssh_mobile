@@ -1,31 +1,30 @@
-// Cross-instance device-lifecycle events carried over Redis Pub/Sub, plus the
+// Device-lifecycle events carried over the Redis Pub/Sub event bus, plus the
 // periodic revocation reconciliation that bounds the missed-event window.
 //
-// In single-instance deployments the local hub already disconnects a device
-// directly; the event bus is the shared channel that lets every other instance
-// do the same. The memory store publishes nothing (events are handled locally),
-// so memory mode has no subscriber goroutine.
+// Relay Control and Relay Data are single-instance in this phase; there is no
+// Global Control Routing or Relay Data Node Selection (design §26). Redis is the
+// shared-live-state layer: the event bus is the shared channel that lets a
+// second instance (e.g. a future migration or a failover) converge on the same
+// lifecycle decisions while each instance handles its own local hub. The memory
+// store publishes nothing (events are handled locally), so memory mode has no
+// subscriber goroutine.
 
 package relay
 
 import (
 	"context"
-	"encoding/json"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 // RelayEvent 是经 relayEventsChannel 广播的跨实例生命周期事件。
 // connection.replaced 额外携带新旧连接的实例/连接 ID，供旧实例定向断开被取代的
 // 那条连接（而非整个 device，避免延迟事件误踢更新一代）。
-// peer_online/peer_updated/peer_offline 携带该设备的 discovery generation，供
-// 其它实例重建推送发现帧。
+// peer_online/peer_updated/peer_offline 只携带设备 ID：订阅侧从共享 discovery 回查
+// runtime_epoch/revision 来重建推送发现帧（advisory，best-effort）。
 type RelayEvent struct {
-	Type       string `json:"type"`
-	DeviceID   string `json:"device_id"`
-	Time       int64  `json:"ts"`
-	Generation uint64 `json:"generation,omitempty"`
+	Type     string `json:"type"`
+	DeviceID string `json:"device_id"`
+	Time     int64  `json:"ts"`
 	// InstanceID 是发布事件实例的标识：推送发现事件由发布方先本地广播再 Publish，
 	// 订阅方（含发布方自身的订阅连接）据此跳过同实例回环，避免对本地 peer 重复推送。
 	InstanceID      string `json:"instance_id,omitempty"`
@@ -69,15 +68,23 @@ func (s *Server) handleRelayEvent(event RelayEvent) {
 		if event.InstanceID == s.hub.instanceID {
 			return
 		}
-		// 其它实例发布的推送发现事件：本实例把对应帧广播给所有本地 peer（排除事件
-		// 归属设备自身，它所在的实例负责直接通知它）。
+		// 其它实例发布的推送发现事件：本实例把对应 hint 广播给所有本地 v2 控制面 peer
+		// （排除事件归属设备自身，它所在的实例负责直接通知它）。online/updated 的
+		// epoch/revision 需回查共享 discovery（best-effort，advisory）。
 		frameType := map[string]string{
 			eventPeerOnline:  framePeerOnline,
 			eventPeerUpdated: framePeerUpdated,
 			eventPeerOffline: framePeerOffline,
 		}[event.Type]
-		frame, _ := json.Marshal(controlFrame{Type: frameType, DeviceID: event.DeviceID, Generation: event.Generation})
-		s.hub.broadcast(event.DeviceID, outboundFrame{websocket.TextMessage, frame})
+		d := Discovery{}
+		if frameType != framePeerOffline && s.hub.presence != nil {
+			dctx, dcancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+			if dd, ok, err := s.hub.presence.GetDiscovery(dctx, event.DeviceID); err == nil && ok {
+				d = dd
+			}
+			dcancel()
+		}
+		s.hub.broadcastPeerHintV2(frameType, event.DeviceID, d)
 	}
 }
 

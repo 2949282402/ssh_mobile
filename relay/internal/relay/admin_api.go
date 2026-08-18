@@ -1,4 +1,4 @@
-// v1 Relay 管理 API；设备数据面仍由 /v1 路由处理。
+// Relay 管理 API；设备数据面由 /v2 传输网络路由处理。
 
 package relay
 
@@ -55,16 +55,18 @@ type adminDevice struct {
 }
 
 // hubSnapshot 只带管理端消费的本地 hub 数据。在线状态与 RemoteAddr 一律来自
-// presence 租约（GetPresences），本地 peer 表不参与 admin 视图——它在多实例部署
-// 下只反映本实例，跨实例设备会显示为空白地址。
+// presence 租约（GetPresences），本地 peer 表不参与 admin 视图——它只反映本实例
+// 持有的连接，其它实例连接同一共享 Redis 的设备在 admin 视图里显示为空白地址
+// （设计 §26：Relay Control/Data 单实例，Redis 为共享实时状态层）。
+//
+// ActiveTransfers 在 v2 传输网络中恒为 0：活跃 relay-data 连接由 reservation 短命
+// 数据面承载（/v2/relay），不经过 hub 的 peer 表，也不计入本快照。
 type hubSnapshot struct {
 	ActiveSessions int
 }
 
 func (h *hub) snapshot() hubSnapshot {
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	return hubSnapshot{ActiveSessions: len(h.transferSessions)}
+	return hubSnapshot{ActiveSessions: 0}
 }
 
 func (s *Server) adminOverview(w http.ResponseWriter, _ *http.Request) {

@@ -37,47 +37,6 @@ func TestEnrolledDeviceLimitAllowsReplacementButRejectsNewDevice(t *testing.T) {
 	}
 }
 
-func TestTransferSessionLimitRejectsAdditionalOffers(t *testing.T) {
-	hub := newHub(Config{MaxTransferSessions: 1})
-	defer hub.close()
-
-	sender := &peer{
-		deviceID: "sender",
-		outbound: make(chan outboundFrame, 2),
-		done:     make(chan struct{}),
-	}
-	receiver := &peer{
-		deviceID: "receiver",
-		outbound: make(chan outboundFrame, 2),
-		done:     make(chan struct{}),
-	}
-	hub.mutex.Lock()
-	hub.peers[sender.deviceID] = sender
-	hub.peers[receiver.deviceID] = receiver
-	hub.mutex.Unlock()
-
-	offer := func(sessionID string) []byte {
-		payload, err := json.Marshal(controlFrame{
-			Type:      "offer",
-			SessionID: sessionID,
-			TargetID:  receiver.deviceID,
-			Payload:   base64.RawURLEncoding.EncodeToString([]byte("opaque")),
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return payload
-	}
-	hub.routeControl(sender, offer("00112233445566778899aabbccddeeff"))
-	hub.routeControl(sender, offer("ffeeddccbbaa99887766554433221100"))
-
-	hub.mutex.Lock()
-	defer hub.mutex.Unlock()
-	if len(hub.transferSessions) != 1 {
-		t.Fatalf("transfer session limit was not enforced: %d", len(hub.transferSessions))
-	}
-}
-
 func TestPeerPendingFrameAndByteLimits(t *testing.T) {
 	peer := &peer{
 		outbound:         make(chan outboundFrame, 4),
@@ -266,7 +225,7 @@ func TestAdminTokenRotationIsProcessLocalAndRestartClearsDevices(t *testing.T) {
 }
 
 func TestHubCloseIsIdempotentAndStopsPruner(t *testing.T) {
-	hub := newHub(Config{SessionTTL: time.Minute})
+	hub := newHub(Config{})
 	done := make(chan struct{})
 	go func() {
 		hub.close()

@@ -5,13 +5,13 @@ use network_protocol::{
     RespondIncomingTransferCommand, RouteType, SendFileCommand,
 };
 use network_quic::{
-    read_file_completion, read_file_decision, read_file_offer, write_file_completion,
-    write_file_decision, write_file_offer,
+    read_file_completion, read_file_decision, write_file_completion, write_file_decision,
+    write_file_offer,
 };
 use network_transfer::{
     build_file_manifest, existing_completed_file, existing_partial_offset,
-    stream_receive_file_cancellable, stream_send_file_cancellable, ResumableTransfer,
-    TransferFailureReason, TransferManager,
+    stream_receive_file_cancellable, stream_send_file_cancellable, FileManifest, ResumableTransfer,
+    TransferFailureReason, TransferManager, NETWORK_TRANSFER_PROTOCOL_VERSION,
 };
 use quinn::{Connection, RecvStream, SendStream};
 use std::collections::hash_map::Entry;
@@ -19,6 +19,7 @@ use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
 
 use crate::events::{
@@ -67,9 +68,12 @@ impl TransferDispatcher {
                     )
                 }),
             Some(RouteType::Relay) => {
-                let relay = self.state.relay.read().await.clone();
-                let usable = match relay {
-                    Some(relay) => relay.is_usable().await,
+                // 每个对端的 Relay 数据连接由 Session 的活跃 route 承载（§25
+                // reservation 数据面）；不能用设备级单 slot 判断，否则多对端并发时
+                // 会误判路由不可用。
+                let data = self.state.sessions.current_relay_data(peer_id).await;
+                let usable = match data {
+                    Some(data) => data.is_usable().await,
                     None => false,
                 };
                 if usable {
@@ -241,14 +245,12 @@ pub(crate) async fn start_file_send(
             &command.peer_id,
         )
     })?;
+    // §19：TransferOperation 按 transfer_id + peer_id 注册，SessionId 不进入
+    // 持久化的业务状态；`ResumableTransfer.session_id` 在派发时从当前
+    // ConnectionSession 附加（用于 Relay E2EE 与任务分组）。
     if !state
         .transfers
-        .register_outgoing(
-            manifest.clone(),
-            path.clone(),
-            command.peer_id.clone(),
-            session_id.wire_key(),
-        )
+        .register_outgoing(manifest.clone(), path.clone(), command.peer_id.clone())
         .await
     {
         return Err(protocol_error_with_peer(
@@ -387,17 +389,22 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
     }
 }
 
-/// Connection/Route Ready 后领取同一逻辑 Session 的暂停传输。
+/// 新 ConnectionSession 建立后领取同一 Peer 的暂停传输（§19 ResumeTransfer）。
+///
+/// 领取按 transfer_id + peer_id 进行；当前 ConnectionSession 的 wire key 作为
+/// `session_id` 附加到每个 ResumableTransfer（Relay E2EE / 任务分组），并在新的
+/// QUIC/Relay 连接上重新协商 confirmed_offset。
 pub(crate) async fn resume_transfers_for_peer(state: Arc<RuntimeState>, peer_id: String) {
     let dispatcher = TransferDispatcher::new(Arc::clone(&state));
     let Some(session_id) = state.sessions.current_session_id(&peer_id).await else {
         return;
     };
+    let session_key = session_id.wire_key();
     match dispatcher.current_route(&peer_id).await {
         Ok(TransferRoute::QuicDirect(connection)) => {
             for transfer in state
                 .transfers
-                .take_resumable_for_session(&peer_id, &session_id.wire_key())
+                .take_resumable_for_peer(&peer_id, &session_key)
                 .await
             {
                 let _ = state.task_supervisor.spawn_session(
@@ -410,7 +417,7 @@ pub(crate) async fn resume_transfers_for_peer(state: Arc<RuntimeState>, peer_id:
         Ok(TransferRoute::Relay) => {
             for transfer in state
                 .transfers
-                .take_resumable_for_session(&peer_id, &session_id.wire_key())
+                .take_resumable_for_peer(&peer_id, &session_key)
                 .await
             {
                 if dispatcher
@@ -438,16 +445,82 @@ pub(crate) async fn resume_relay_transfers(state: Arc<RuntimeState>) {
 }
 
 /// 校验传入申请，并等待接收方审批决定。
-pub(crate) async fn handle_incoming_file(
+/// Mirrors `network_quic::read_file_offer` for the shared bidi dispatcher: the
+/// first four magic bytes have already been consumed to route the stream, so
+/// the remaining offer fields are parsed here without re-touching the magic.
+/// Kept in network-core to avoid coupling the accept loop to a network-quic
+/// signature change; the wire format is identical to `read_file_offer`.
+pub(crate) async fn read_file_offer_after_magic(
+    receive: &mut RecvStream,
+) -> Result<FileManifest, Box<dyn Error + Send + Sync>> {
+    let protocol_version = receive.read_u32().await?;
+    if protocol_version != NETWORK_TRANSFER_PROTOCOL_VERSION {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "unsupported file protocol",
+        )
+        .into());
+    }
+    let transfer_id = read_bounded_utf8(receive, MAX_TRANSFER_ID_BYTES, "transfer ID").await?;
+    let file_name = read_bounded_utf8(receive, MAX_FILE_NAME_BYTES, "file name").await?;
+    let file_size = receive.read_u64().await?;
+    let modified_at = receive.read_i64().await?;
+    let mut hash = [0u8; 32];
+    receive.read_exact(&mut hash).await?;
+    let manifest = FileManifest {
+        transfer_id,
+        file_name,
+        file_size,
+        modified_at,
+        content_hash: hex::encode(hash),
+        protocol_version,
+    };
+    manifest
+        .validate()
+        .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
+    Ok(manifest)
+}
+
+async fn read_bounded_utf8(
+    receive: &mut RecvStream,
+    maximum: usize,
+    label: &str,
+) -> Result<String, Box<dyn Error + Send + Sync>> {
+    let length = receive.read_u16().await? as usize;
+    if length == 0 || length > maximum {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid {label} length"),
+        )
+        .into());
+    }
+    let mut value = vec![0u8; length];
+    receive.read_exact(&mut value).await?;
+    String::from_utf8(value).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{label} is not UTF-8"),
+        )
+        .into()
+    })
+}
+
+const MAX_TRANSFER_ID_BYTES: usize = 128;
+const MAX_FILE_NAME_BYTES: usize = 255;
+
+/// Processes an incoming transfer whose offer has already been parsed by the
+/// shared bidi dispatcher (`read_file_offer_after_magic`), so the file data
+/// path never duplicates the transfer lifecycle.
+pub(crate) async fn handle_incoming_file_after_offer(
     peer_id: String,
     mut send: SendStream,
     mut receive: RecvStream,
+    manifest: FileManifest,
     state: Arc<RuntimeState>,
 ) {
     let mut active_transfer_id = None;
     let mut registered_transfer = false;
     let result = async {
-        let manifest = read_file_offer(&mut receive).await?;
         active_transfer_id = Some(manifest.transfer_id.clone());
         let session_id = state
             .sessions
@@ -455,9 +528,10 @@ pub(crate) async fn handle_incoming_file(
             .await
             .ok_or_else(|| std::io::Error::other("logical Session is unavailable"))?;
         let session_key = session_id.wire_key();
+        // §19：注册按 transfer_id + peer_id；SessionId 只用于本地任务分组键。
         if !state
             .transfers
-            .register_incoming(manifest.clone(), peer_id.clone(), session_id.wire_key())
+            .register_incoming(manifest.clone(), peer_id.clone())
             .await
         {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(

@@ -1,4 +1,4 @@
-// v1 Relay 服务配置、环境变量解析和随机材料生成。
+// Relay 服务配置、环境变量解析和随机材料生成。
 
 package relay
 
@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"net"
 	"net/netip"
 	"os"
 	"strconv"
@@ -14,25 +15,12 @@ import (
 )
 
 const (
-	// maxControlFrameBytes 限制单个 JSON 控制帧的大小。
-	maxControlFrameBytes = 384 * 1024
-	// maxBinaryFrameBytes 限制单个不透明二进制帧的大小。
-	maxBinaryFrameBytes = 1024*1024 + 25
-	// maxChannelPayloadBytes 限制 Delivery 控制信封携带的不透明正文大小。
-	maxChannelPayloadBytes = 48 * 1024
-	// maxCandidatePayloadBytes 限制 Candidate Offer/Answer 的信令正文大小。
-	maxCandidatePayloadBytes = 32 * 1024
-	// maxRealtimeSignalPayloadBytes 限制 WebRTC SDP/ICE 信令正文大小。
-	maxRealtimeSignalPayloadBytes = 256 * 1024
-
 	defaultAddress                           = ":8080"
 	defaultCredentialTTL                     = 24 * time.Hour
-	defaultSessionTTL                        = 15 * time.Minute
 	defaultAdminSessionTTL                   = 24 * time.Hour
 	defaultMaxConnections                    = 2048
 	defaultMaxEnrolledDevices                = 4096
 	defaultMaxRevokedDevices                 = 4096
-	defaultMaxTransferSessions               = 4096
 	defaultMaxPendingFramesPerDevice         = 64
 	defaultMaxPendingBytesPerDevice    int64 = 16 * 1024 * 1024
 	defaultMaxFramesPerSecondPerDevice       = 256
@@ -47,6 +35,10 @@ const (
 	defaultHTTPIdleTimeout                   = 60 * time.Second
 	defaultHTTPMaxHeaderBytes                = 16 * 1024
 	defaultPresenceTTL                       = 60 * time.Second
+	// 服务端心跳监视器默认值镜像冻结契约常量：HEARTBEAT_INTERVAL_S=20、
+	// SERVER_HEARTBEAT_MISSES_BEFORE_CLOSE=2（配合 PRESENCE_TTL_S=60：60/20）。
+	defaultServerHeartbeatInterval = 20 * time.Second
+	defaultServerHeartbeatMisses   = 2
 )
 
 // relayEventsChannel is the Redis Pub/Sub channel carrying cross-instance
@@ -55,21 +47,28 @@ const relayEventsChannel = "relay:events"
 
 // Config 保存 Relay 服务器的监听、认证和资源边界。
 type Config struct {
-	Address                     string
-	StorageMode                 string
-	DatabaseURL                 string
-	RedisURL                    string
-	InstanceID                  string
-	PresenceTTL                 time.Duration
+	Address     string
+	StorageMode string
+	DatabaseURL string
+	RedisURL    string
+	InstanceID  string
+	// PublicURL 是服务端对外可达的公共源（wss://host[:port] 或 host[:port]），用于构造
+	// 自包含的 relay_data_endpoint。未配置时从监听地址派生 dev 默认；无论哪种情况都绝不
+	// 使用客户端提供的 Host 头（攻击者可控，会把对端 token 引导到任意地址）。
+	PublicURL   string
+	PresenceTTL time.Duration
+	// ServerHeartbeatInterval 是服务端心跳监视器的检查周期：连续
+	// ServerHeartbeatMisses 个周期未收到该连接的心跳帧即关闭连接并释放 presence 租约。
+	// 客户端驱动的续期（心跳路径的 RenewPresence）不受影响。
+	ServerHeartbeatInterval     time.Duration
+	ServerHeartbeatMisses       int
 	EnrollmentToken             string
 	CredentialKey               []byte
 	CredentialTTL               time.Duration
-	SessionTTL                  time.Duration
 	AdminSessionTTL             time.Duration
 	MaxConnections              int
 	MaxEnrolledDevices          int
 	MaxRevokedDevices           int
-	MaxTransferSessions         int
 	MaxPendingFramesPerDevice   int
 	MaxPendingBytesPerDevice    int64
 	MaxFramesPerSecondPerDevice int
@@ -115,6 +114,7 @@ func ConfigFromEnvironment() (Config, error) {
 	if storageMode == "" {
 		storageMode = "memory"
 	}
+	publicURL := os.Getenv("RELAY_PUBLIC_URL")
 	if storageMode != "memory" && storageMode != "mysql" {
 		return Config{}, errors.New("RELAY_STORAGE_MODE must be \"memory\" or \"mysql\"")
 	}
@@ -146,16 +146,17 @@ func ConfigFromEnvironment() (Config, error) {
 		DatabaseURL:                 databaseURL,
 		RedisURL:                    redisURL,
 		InstanceID:                  instanceID,
+		PublicURL:                   publicURL,
 		PresenceTTL:                 durationEnv("RELAY_PRESENCE_TTL", defaultPresenceTTL),
+		ServerHeartbeatInterval:     durationEnv("RELAY_SERVER_HEARTBEAT_INTERVAL", defaultServerHeartbeatInterval),
+		ServerHeartbeatMisses:       intEnv("RELAY_SERVER_HEARTBEAT_MISSES", defaultServerHeartbeatMisses),
 		EnrollmentToken:             enrollment,
 		CredentialKey:               decoded,
 		CredentialTTL:               durationEnv("RELAY_CREDENTIAL_TTL", defaultCredentialTTL),
-		SessionTTL:                  durationEnv("RELAY_SESSION_TTL", defaultSessionTTL),
 		AdminSessionTTL:             durationEnv("RELAY_ADMIN_SESSION_TTL", defaultAdminSessionTTL),
 		MaxConnections:              intEnv("RELAY_MAX_CONNECTIONS", defaultMaxConnections),
 		MaxEnrolledDevices:          intEnv("RELAY_MAX_ENROLLED_DEVICES", defaultMaxEnrolledDevices),
 		MaxRevokedDevices:           intEnv("RELAY_MAX_REVOKED_DEVICES", defaultMaxRevokedDevices),
-		MaxTransferSessions:         intEnv("RELAY_MAX_TRANSFER_SESSIONS", defaultMaxTransferSessions),
 		MaxPendingFramesPerDevice:   intEnv("RELAY_MAX_PENDING_FRAMES_PER_DEVICE", defaultMaxPendingFramesPerDevice),
 		MaxPendingBytesPerDevice:    int64Env("RELAY_MAX_PENDING_BYTES_PER_DEVICE", defaultMaxPendingBytesPerDevice),
 		MaxFramesPerSecondPerDevice: intEnv("RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE", defaultMaxFramesPerSecondPerDevice),
@@ -212,9 +213,6 @@ func withConfigDefaults(config Config) Config {
 	if config.CredentialTTL <= 0 {
 		config.CredentialTTL = defaultCredentialTTL
 	}
-	if config.SessionTTL <= 0 {
-		config.SessionTTL = defaultSessionTTL
-	}
 	if config.AdminSessionTTL <= 0 {
 		config.AdminSessionTTL = defaultAdminSessionTTL
 	}
@@ -226,9 +224,6 @@ func withConfigDefaults(config Config) Config {
 	}
 	if config.MaxRevokedDevices <= 0 {
 		config.MaxRevokedDevices = defaultMaxRevokedDevices
-	}
-	if config.MaxTransferSessions <= 0 {
-		config.MaxTransferSessions = defaultMaxTransferSessions
 	}
 	if config.MaxPendingFramesPerDevice <= 0 {
 		config.MaxPendingFramesPerDevice = defaultMaxPendingFramesPerDevice
@@ -260,6 +255,12 @@ func withConfigDefaults(config Config) Config {
 	if config.PresenceTTL <= 0 {
 		config.PresenceTTL = defaultPresenceTTL
 	}
+	if config.ServerHeartbeatInterval <= 0 {
+		config.ServerHeartbeatInterval = defaultServerHeartbeatInterval
+	}
+	if config.ServerHeartbeatMisses <= 0 {
+		config.ServerHeartbeatMisses = defaultServerHeartbeatMisses
+	}
 	if config.HTTPReadTimeout <= 0 {
 		config.HTTPReadTimeout = defaultHTTPReadTimeout
 	}
@@ -273,6 +274,34 @@ func withConfigDefaults(config Config) Config {
 		config.HTTPMaxHeaderBytes = defaultHTTPMaxHeaderBytes
 	}
 	return config
+}
+
+// relayDataEndpointOrigin 返回构造自包含 relay_data_endpoint 的公共源（wss://host[:port]）。
+// 优先使用显式配置的 PublicURL（RELAY_PUBLIC_URL，可带或不带 scheme）；未配置时从监听
+// 地址派生 dev 默认（通配主机退化到 localhost）。它绝不读取客户端提供的 Host 头——Host 头
+// 攻击者可控，用它构造端点会把对端 B 的 32-byte ResponderToken 引导到攻击者选择的地址。
+func relayDataEndpointOrigin(config Config) string {
+	if config.PublicURL != "" {
+		origin := strings.TrimSpace(config.PublicURL)
+		origin = strings.TrimSuffix(origin, "/")
+		if !strings.Contains(origin, "://") {
+			origin = "wss://" + origin
+		}
+		return origin
+	}
+	host, port, err := net.SplitHostPort(config.Address)
+	if err != nil {
+		// 异常监听地址：以 localhost 前缀兜底，保留原端口串。
+		if strings.HasPrefix(config.Address, ":") {
+			return "wss://localhost" + config.Address
+		}
+		return "wss://localhost:" + config.Address
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "localhost"
+	}
+	return "wss://" + net.JoinHostPort(host, port)
 }
 
 // durationEnv 读取正的时间间隔，异常时返回指定默认值。

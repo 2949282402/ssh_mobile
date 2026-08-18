@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-16
 
 # Transport and Routing
 
@@ -11,7 +11,8 @@ protocol implementations directly.
 | QUIC | Direct | Authenticated primary reliable Session and stream carrier |
 | TCP | Direct | Authenticated generic reliable-message carrier |
 | WebSocket | Direct | Authenticated generic reliable-message carrier |
-| WSS Relay | Relay | Authenticated opaque fallback and control carrier |
+| WSS /v2/control | Relay | Control plane (auth/heartbeat/discovery/resolve/signaling/reservation) |
+| WSS /v2/relay/{id} | Relay | Reservation-scoped opaque encrypted data plane (RelayDataFrame) |
 | UDP | Direct | Unreliable datagrams only |
 | WebRTC | Direct or ICE Relay | Native Realtime Session route |
 
@@ -22,10 +23,15 @@ Routing invariants:
 - Reliable Delivery asks the active route for a capability rather than
   branching on a concrete transport.
 - UDP is not eligible for acknowledged, ordered, or file-delivery semantics.
-- Route replacement commits the new carrier before recovering pending Delivery
-  and closing the old carrier.
-- Ordinary route migration retains Session identity and Session-owned crypto.
-  A peer runtime restart creates a new logical Session.
+- A ConnectionSession is 1:1 with its transport connection (design §18): it is
+  created fresh with a new SessionId + new Noise root on every new connection
+  and destroyed on transport loss. There is no route migration and no
+  session-identity / crypto-root continuity across connections.
+- Business state is the only cross-connection continuity (design §19-20):
+  Delivery recovers by MessageId, Transfer resumes by transfer_id +
+  confirmed_offset. A peer runtime restart or transport loss simply triggers a
+  new Resolve → new Connection → new Session; SSH/WebRTC build new sessions
+  (no transparent recovery).
 
 Implementation entry points:
 

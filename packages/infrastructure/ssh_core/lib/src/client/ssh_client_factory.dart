@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 
 import '../model/ssh_credentials.dart';
 import 'ssh_host_key_policy.dart';
+import 'ssh_native_socket.dart';
 
 /// dartssh2 认证参数快照。
 final class SshClientAuthOptions {
@@ -25,18 +26,36 @@ final class SshClientAuthOptions {
   final SSHUserInfoRequestHandler? onUserInfoRequest;
 }
 
+/// 从 [ConnectionConfig] 解析 enrolled peer 标识的解析器。
+///
+/// App 层可以通过 ConnectionConfig→PeerCatalog 索引实现；当前没有 peer 绑定的
+/// 连接返回 null，工厂会回退到原始 TCP Socket（保持既有任意主机 SSH 可用）。
+typedef SshPeerIdResolver = String? Function(ConnectionConfig config);
+
 /// 通过 Core Repository 创建已认证 SSH Client。
 final class SshClientFactory {
   /// 创建 Client 工厂。
+  ///
+  /// [nativeStreamConnector] 非空时，[connectClient] 优先通过 native
+  /// ReliableStream 建立 Socket（[SshNativeSocket]）；没有 connector 或没有
+  /// 可解析的 peer 绑定时回退到 `SSHSocket.connect` 原始 TCP。
   const SshClientFactory({
     required this.credentialRepository,
     required this.hostKeyRepository,
     required this.logger,
+    this.nativeStreamConnector,
+    this.peerIdResolver,
   });
 
   final CredentialRepository credentialRepository;
   final HostKeyRepository hostKeyRepository;
   final AppLogger logger;
+
+  /// 可选的 native ReliableStream 连接器；null 表示不启用 native 传输。
+  final SshNativeStreamConnector? nativeStreamConnector;
+
+  /// 可选的对端绑定解析器；仅在 [nativeStreamConnector] 非空时使用。
+  final SshPeerIdResolver? peerIdResolver;
 
   static final RegExp _passwordPromptPattern = RegExp(
     r'password|passphrase|pass phrase',
@@ -57,11 +76,16 @@ final class SshClientFactory {
   }
 
   /// 建立 Socket、绑定 Host Key 策略并完成认证。
+  ///
+  /// [peerId] 显式提供 enrolled peer 标识时优先走 native 传输；未提供则通过
+  /// [peerIdResolver] 解析。native 不可用（无 connector / 无 peer 绑定）时回退到
+  /// 原始 TCP Socket，保持任意主机 SSH 的既有行为。
   Future<SSHClient> connectClient(
     ConnectionConfig config, {
     Duration timeout = const Duration(seconds: 15),
     SshCredentials? credentials,
     SshHostKeyConfirmation? onUnknownHostKey,
+    String? peerId,
   }) async {
     final resolved = credentials ?? await loadCredentials(config);
     validateAuthSecrets(
@@ -93,11 +117,7 @@ final class SshClientFactory {
           'connection=${config.name} host=${config.host}:${config.port} '
           'user=${config.username} authMethod=${config.authMethod.name}',
     );
-    final socket = await SSHSocket.connect(
-      config.host,
-      config.port,
-      timeout: timeout,
-    );
+    final socket = await _openSocket(config, timeout: timeout, peerId: peerId);
     try {
       final client = SSHClient(
         socket,
@@ -125,6 +145,39 @@ final class SshClientFactory {
       socket.close();
       rethrow;
     }
+  }
+
+  /// 打开 SSH Socket：native ReliableStream 优先，原始 TCP 回退。
+  Future<SSHSocket> _openSocket(
+    ConnectionConfig config, {
+    required Duration timeout,
+    String? peerId,
+  }) async {
+    final connector = nativeStreamConnector;
+    if (connector == null) {
+      return SSHSocket.connect(config.host, config.port, timeout: timeout);
+    }
+    final resolvedPeerId = peerId ?? peerIdResolver?.call(config);
+    if (resolvedPeerId == null || resolvedPeerId.trim().isEmpty) {
+      _log(
+        LogLevel.warning,
+        'SSH connection has no peer binding; falling back to TCP socket',
+        details: 'connection=${config.name} host=${config.host}:${config.port}',
+      );
+      return SSHSocket.connect(config.host, config.port, timeout: timeout);
+    }
+    _log(
+      LogLevel.info,
+      'SSH client opening native reliable stream',
+      details:
+          'connection=${config.name} peer=$resolvedPeerId '
+          'service=$kSshNativeStreamService',
+    );
+    final stream = await connector.open(
+      peerId: resolvedPeerId,
+      service: kSshNativeStreamService,
+    );
+    return SshNativeSocket(stream: stream);
   }
 
   /// 根据认证模式构造 dartssh2 身份和回调。
@@ -187,13 +240,13 @@ final class SshClientFactory {
     required ConnectionConfig config,
     required String? password,
     required String? privateKey,
-    required AppLogger logger,
+    AppLogger? logger,
   }) {
     final hasPassword = password?.isNotEmpty == true;
     final hasPrivateKey = privateKey?.isNotEmpty == true;
     StateError missingError(String message) {
       final error = StateError(message);
-      logger.log(
+      logger?.log(
         LogRecord(
           timestamp: DateTime.now(),
           level: LogLevel.warning,

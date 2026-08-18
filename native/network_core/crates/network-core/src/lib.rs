@@ -5,10 +5,12 @@
 
 mod channel;
 mod commands;
+pub(crate) mod connect;
 pub mod connection;
 pub(crate) mod crypto;
 mod crypto_handshake;
 pub mod delivery;
+mod discovery;
 mod errors;
 mod events;
 mod generic_auth;
@@ -17,6 +19,7 @@ mod realtime;
 mod relay;
 mod runtime;
 mod session;
+mod stream;
 mod task_supervisor;
 mod transfer;
 

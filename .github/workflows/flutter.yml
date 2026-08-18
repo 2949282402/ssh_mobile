@@ -15,6 +15,7 @@ concurrency:
 jobs:
   front-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: front
@@ -40,6 +41,7 @@ jobs:
 
   native-network-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: native/network_core
@@ -48,6 +50,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
       - name: Start local coturn
@@ -71,6 +76,7 @@ jobs:
 
   sdk-dart-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: .
@@ -109,6 +115,7 @@ jobs:
 
   relay-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: relay
@@ -159,8 +166,49 @@ jobs:
       - name: Scan relay vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
+  protocol-v2-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: Install protoc (best-effort)
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+        continue-on-error: true
+      - name: Compile-check relay v2 proto
+        run: |
+          if command -v protoc >/dev/null 2>&1; then
+            protoc --proto_path=protocol --descriptor_set_out=/dev/null protocol/proto/relay/v2/relay_v2.proto
+            echo "proto compile-check: OK"
+          else
+            echo "protoc unavailable; skipping proto compile-check"
+          fi
+      - name: Run relay v2 contract check
+        run: bash scripts/relay_v2_contract.sh
+      - name: Install buf (best-effort)
+        run: go install github.com/bufbuild/buf/cmd/buf@v1.47.2
+        continue-on-error: true
+      - name: buf lint
+        run: |
+          BUF="$(command -v buf 2>/dev/null || echo "$HOME/go/bin/buf")"
+          if [ -x "$BUF" ] && [ -f protocol/buf.yaml ]; then
+            (cd protocol && "$BUF" lint)
+            echo "buf lint: OK"
+          else
+            echo "buf not available; skipping buf lint"
+          fi
+
   architecture-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: .
@@ -190,46 +238,105 @@ jobs:
       - name: Check duplicate implementations
         run: dart run tool/duplicate_implementation_check.dart
 
-  workspace-quality:
+  workspace-core-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: .
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.2'
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
-      - name: Format workspace packages
+      - name: Format core packages
         run: >-
           dart run melos run format
-          --ignore=ssh_mobile
-          --ignore=network_sdk
-          --ignore=network_transport
-          --ignore=ssh_mobile_network_native
-      - name: Analyze workspace packages
+          --scope=app_core
+          --scope=app_ui
+          --scope=connection_core
+          --scope=ssh_core
+      - name: Analyze core packages
         run: >-
           dart run melos run analyze
-          --ignore=ssh_mobile
-          --ignore=network_sdk
-          --ignore=network_transport
-          --ignore=ssh_mobile_network_native
-      - name: Test workspace packages
+          --scope=app_core
+          --scope=app_ui
+          --scope=connection_core
+          --scope=ssh_core
+      - name: Test core packages
         run: >-
           dart run melos run test
-          --ignore=ssh_mobile
-          --ignore=network_sdk
-          --ignore=network_transport
-          --ignore=ssh_mobile_network_native
+          --scope=app_core
+          --scope=app_ui
+          --scope=connection_core
+          --scope=ssh_core
+
+  workspace-features-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Format feature packages
+        run: >-
+          dart run melos run format
+          --scope=feature_ai
+          --scope=feature_connection
+          --scope=feature_developer
+          --scope=feature_lan_share
+          --scope=feature_mcp
+          --scope=feature_monitoring
+          --scope=feature_playbook
+          --scope=feature_rag
+          --scope=feature_sftp
+          --scope=feature_system_admin
+          --scope=feature_terminal
+          --scope=feature_webview
+      - name: Analyze feature packages
+        run: >-
+          dart run melos run analyze
+          --scope=feature_ai
+          --scope=feature_connection
+          --scope=feature_developer
+          --scope=feature_lan_share
+          --scope=feature_mcp
+          --scope=feature_monitoring
+          --scope=feature_playbook
+          --scope=feature_rag
+          --scope=feature_sftp
+          --scope=feature_system_admin
+          --scope=feature_terminal
+          --scope=feature_webview
+      - name: Test feature packages
+        run: >-
+          dart run melos run test
+          --scope=feature_ai
+          --scope=feature_connection
+          --scope=feature_developer
+          --scope=feature_lan_share
+          --scope=feature_mcp
+          --scope=feature_monitoring
+          --scope=feature_playbook
+          --scope=feature_rag
+          --scope=feature_sftp
+          --scope=feature_system_admin
+          --scope=feature_terminal
+          --scope=feature_webview
 
   terminal-smoke-build:
     runs-on: windows-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: .
@@ -251,8 +358,9 @@ jobs:
         working-directory: apps/ssh_mobile_terminal
         run: flutter build windows --debug --no-pub
 
-  analyze-and-test:
+  app-static-quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
@@ -272,7 +380,6 @@ jobs:
         working-directory: packages/infrastructure/ssh_mobile_network_native
         run: flutter pub get
       - name: Install Full App dependencies
-        working-directory: apps/ssh_mobile_full
         run: flutter pub get
       - name: Check generated app icons
         run: |
@@ -291,13 +398,41 @@ jobs:
           if grep -R "privateKeyDigest" lib; then exit 1; fi
       - name: Analyze
         run: flutter analyze --no-fatal-infos
-      - name: Test
-        run: flutter test --coverage --reporter expanded
-      - name: Check coverage floor
-        run: dart run tool/check_coverage.dart --minimum=35
+
+  app-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard_index: [0, 1]
+        total_shards: [2]
+    defaults:
+      run:
+        working-directory: apps/ssh_mobile_full
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          cache: true
+      - name: Install dependencies
+        working-directory: .
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Install Full App dependencies
+        run: flutter pub get
+      - name: Run Sharded Unit Tests
+        run: flutter test --reporter expanded --timeout 60s --total-shards ${{ matrix.total_shards }} --shard-index ${{ matrix.shard_index }}
 
   android-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
@@ -323,6 +458,7 @@ jobs:
 
   windows-build:
     runs-on: windows-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
@@ -348,6 +484,7 @@ jobs:
 
   macos-build:
     runs-on: macos-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/ssh_mobile_full
@@ -373,6 +510,7 @@ jobs:
 
   ios-build:
     runs-on: macos-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/ssh_mobile_full

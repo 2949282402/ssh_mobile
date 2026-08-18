@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use network_protocol::{
-    network_command, NetworkCommand, NetworkError as ProtocolError, NetworkErrorCode,
-    PeerConnectionState, RelayConnectionState, RouteType, NETWORK_PROTOCOL_VERSION,
+    network_command, CommunicationClass, NetworkCommand, NetworkError as ProtocolError,
+    NetworkErrorCode, PeerConnectionState, RelayConnectionState, RouteType,
+    NETWORK_PROTOCOL_VERSION,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -59,7 +60,8 @@ pub(crate) async fn dispatch_command(
             peer::upsert_peer(&state, peer_command).await
         }
         Some(network_command::Payload::ConnectPeer(connect)) => {
-            start_connect_peer(state, connect.peer_id).await
+            let class = decode_communication_class(connect.communication_class);
+            start_connect_peer(state, connect.peer_id, class).await
         }
         Some(network_command::Payload::SendFile(_))
         | Some(network_command::Payload::CancelTransfer(_))
@@ -84,13 +86,19 @@ pub(crate) async fn dispatch_command(
         Some(network_command::Payload::ConfigureRelay(config)) => {
             start_configure_relay(state, config).await
         }
-        Some(network_command::Payload::UploadDiscovery(upload)) => {
-            start_upload_discovery(state, upload).await
-        }
         Some(network_command::Payload::DisconnectPeer(disconnect)) => {
             peer::disconnect_peer(&state, disconnect.peer_id).await
         }
         Some(network_command::Payload::DisconnectRelay(_)) => relay::disconnect_relay(&state).await,
+        Some(network_command::Payload::SshStreamOpen(open)) => {
+            crate::stream::handle_ssh_stream_open(state, open).await
+        }
+        Some(network_command::Payload::SshStreamData(data)) => {
+            crate::stream::handle_ssh_stream_data(state, data).await
+        }
+        Some(network_command::Payload::SshStreamClose(close)) => {
+            crate::stream::handle_ssh_stream_close(state, close).await
+        }
         None => Err(protocol_error(
             NetworkErrorCode::InvalidArgument,
             "network command payload is required",
@@ -102,6 +110,7 @@ pub(crate) async fn dispatch_command(
 async fn start_connect_peer(
     state: Arc<RuntimeState>,
     peer_id: String,
+    class: CommunicationClass,
 ) -> Result<(), ProtocolError> {
     if peer_id.is_empty() {
         return Err(protocol_error(
@@ -134,7 +143,9 @@ async fn start_connect_peer(
     );
     let supervisor = Arc::clone(&state.task_supervisor);
     let task_started = supervisor.spawn_runtime("peer-connect", async move {
-        if let Err(error) = peer::connect_peer(Arc::clone(&state), peer_id.clone()).await {
+        // transport-network v2（§11/§37）：唯一建连入口 ConnectionOrchestrator。
+        let orchestrator = crate::connect::ConnectionOrchestrator::new(Arc::clone(&state));
+        if let Err(error) = orchestrator.connect_with_class(&peer_id, class).await {
             let code =
                 NetworkErrorCode::try_from(error.code).unwrap_or(NetworkErrorCode::Unspecified);
             emit_peer_state(
@@ -202,90 +213,8 @@ async fn start_configure_relay(
     Ok(())
 }
 
-/// 显式重传设备 Discovery 元数据；native 侧在 Relay 认证连接后也会自动上传首份。
-async fn start_upload_discovery(
-    state: Arc<RuntimeState>,
-    command: network_protocol::UploadDiscoveryCommand,
-) -> Result<(), ProtocolError> {
-    if state.identity.read().await.is_none() {
-        return Err(protocol_error(
-            NetworkErrorCode::InvalidArgument,
-            "runtime must be configured before Relay discovery upload",
-        ));
-    }
-    relay::upload_discovery(&state, command).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use network_identity::DeviceIdentity;
-    use network_protocol::{network_command, UploadDiscoveryCommand};
-    use std::sync::atomic::AtomicU16;
-
-    fn discovery_command(
-        generation: u64,
-        candidates: Vec<String>,
-        capabilities: Vec<String>,
-    ) -> NetworkCommand {
-        NetworkCommand {
-            command_id: "upload-discovery".into(),
-            protocol_version: NETWORK_PROTOCOL_VERSION,
-            payload: Some(network_command::Payload::UploadDiscovery(
-                UploadDiscoveryCommand {
-                    generation,
-                    candidates,
-                    capabilities,
-                },
-            )),
-        }
-    }
-
-    async fn configured_state() -> Arc<RuntimeState> {
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
-        *state.identity.write().await = Some(Arc::new(DeviceIdentity::from_private_keys(
-            "device-a".into(),
-            [1u8; 32],
-            [2u8; 32],
-        )));
-        state
-    }
-
-    #[tokio::test]
-    async fn upload_discovery_requires_a_runtime_identity() {
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
-        let result = dispatch_command(discovery_command(1, vec![], vec![]), state).await;
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::InvalidArgument as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn upload_discovery_rejects_zero_generation() {
-        let result = dispatch_command(
-            discovery_command(0, vec![], vec![]),
-            configured_state().await,
-        )
-        .await;
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::InvalidArgument as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn upload_discovery_requires_a_connected_relay() {
-        let result = dispatch_command(
-            discovery_command(1, vec!["candidate".into()], vec!["file-transfer".into()]),
-            configured_state().await,
-        )
-        .await;
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::RelayError as i32
-        ));
-    }
+/// 把 wire 上的 CommunicationClass 解码为内部值；未知值（非法）按默认
+/// ReliableMessage 处理，保证旧调用方（发送 0）行为不变。
+fn decode_communication_class(value: i32) -> CommunicationClass {
+    CommunicationClass::try_from(value).unwrap_or(CommunicationClass::ReliableMessage)
 }

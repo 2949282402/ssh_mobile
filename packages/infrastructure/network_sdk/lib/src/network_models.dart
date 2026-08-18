@@ -34,6 +34,35 @@ extension NetworkErrorCodePolicy on NetworkErrorCode {
   };
 }
 
+/// 传输网络 v2 的五种业务通信类别（设计文档 §16/§17）。
+///
+/// 业务只能通过 [CommunicationClass] 表达通信语义，不能直接指定 QUIC/TCP/UDP
+/// 等具体传输。每个类别映射到现有 native command/event tag；当前 native v1
+/// 契约不新增 tag（SSH 流与消息通道 tag 由 WS-E 在并行工作流落地）。
+/// [wireValue] 镜像 network-protocol crate `CommunicationClass` 的 prost 枚举值。
+enum CommunicationClass {
+  /// 可靠字节流（SSH 等连续流式通信）。当前 native 数据面由 ConfigureRuntime
+  /// 初始化；SSH 流式 FFI 由 WS-E 落地。
+  reliableStream(1),
+
+  /// 可靠消息。native 消息通道 tag 由 WS-E 落地，当前不发送。
+  reliableMessage(2),
+
+  /// 大文件批量传输。映射到 native `SendFile` 命令（codec tag 11）。
+  bulkTransfer(3),
+
+  /// 不可靠数据报。第一阶段 native 数据面不提供，当前不发送。
+  unreliableDatagram(4),
+
+  /// 实时媒体会话。映射到 native Realtime command/event（codec tag 21/22/23）。
+  realtimeMedia(5);
+
+  const CommunicationClass(this.wireValue);
+
+  /// 对应 network-protocol `CommunicationClass` 的 prost 枚举值（§17）。
+  final int wireValue;
+}
+
 /// 服务端建议的重试策略；默认 Unspecified 表示未指定。
 enum RetryDisposition {
   unspecified(0),
@@ -95,8 +124,7 @@ enum NetworkOperation {
   connectRelay('connect_relay'),
   bootstrapProbe('bootstrap_probe'),
   listPeers('list_peers'),
-  requestConnection('request_connection'),
-  uploadDiscovery('upload_discovery');
+  requestConnection('request_connection');
 
   const NetworkOperation(this.wireName);
 

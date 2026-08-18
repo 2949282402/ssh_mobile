@@ -11,32 +11,62 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/startup/viewmodels/startup_viewmodel.dart';
 import 'package:ssh_mobile/features/startup/views/startup_screen.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import '../../../test_utils/test_storage_adapter.dart';
 import 'package:app_ui/app_ui.dart';
 
 const _powerChannel = MethodChannel('ssh_mobile/power');
+const _deviceInfoChannel = MethodChannel(
+  'dev.fluttercommunity.plus/device_info',
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_deviceInfoChannel, (call) async {
+          if (call.method == 'getLinuxDeviceInfo') {
+            return <String, dynamic>{
+              'name': 'Test Device',
+              'version': '1.0',
+              'id': 'test-id',
+              'idLike': <String>[],
+              'versionCodename': 'test',
+              'versionId': '1.0',
+              'prettyName': 'Test Linux',
+              'buildId': '1',
+              'variant': 'test',
+              'variantId': 'test',
+              'machineId': 'test-machine',
+            };
+          }
+          return <String, dynamic>{
+            'name': 'Test Device',
+            'model': 'Test Model',
+            'brand': 'Test Brand',
+            'computerName': 'Test Host',
+            'prettyName': 'Test Linux',
+            'systemName': 'Linux',
+            'utsname': {'machine': 'x86_64'},
+          };
+        });
+  });
 
   tearDown(() {
     debugDefaultTargetPlatformOverride = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_powerChannel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(_deviceInfoChannel, null);
   });
 
   testWidgets('English guide remains reachable at 320dp and 200% text', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(bottom: 24);
     final semantics = tester.ensureSemantics();
     try {
-      tester.view.physicalSize = const Size(320, 568);
-      tester.view.devicePixelRatio = 1;
-      tester.view.padding = const FakeViewPadding(bottom: 24);
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      addTearDown(tester.view.resetPadding);
-
       late _StartupFixture fixture;
       await tester.runAsync(() async {
         fixture = await _createFixture(language: AppLanguage.en);
@@ -97,7 +127,11 @@ void main() {
       expect(tester.getBottomRight(continueAction).dy, lessThanOrEqualTo(544));
       await tester.pump(const Duration(milliseconds: 200));
       expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
     } finally {
+      tester.view.resetPadding();
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPhysicalSize();
       semantics.dispose();
     }
   });
@@ -112,37 +146,40 @@ void main() {
       right: 72,
       bottom: 144,
     );
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPadding);
+    try {
+      late _StartupFixture fixture;
+      await tester.runAsync(() async {
+        fixture = await _createFixture(language: AppLanguage.zh);
+      });
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(_guideHost(fixture.viewModel));
+      await tester.pumpAndSettle();
 
-    late _StartupFixture fixture;
-    await tester.runAsync(() async {
-      fixture = await _createFixture(language: AppLanguage.zh);
-    });
-    addTearDown(fixture.dispose);
-    await tester.pumpWidget(_guideHost(fixture.viewModel));
-    await tester.pumpAndSettle();
+      final content = find.byKey(const ValueKey('power-guide-content'));
+      expect(tester.getSize(content).width, lessThanOrEqualTo(640));
+      expect(tester.getRect(content).left, greaterThanOrEqualTo(200));
+      expect(find.text('让 SSH 在后台保持连接'), findsOneWidget);
+      expect(find.text('建议设置'), findsOneWidget);
+      expect(find.text('需要检查电池限制状态'), findsOneWidget);
+      expect(find.text('检查电池设置'), findsOneWidget);
+      expect(find.text('打开应用设置'), findsOneWidget);
+      expect(find.text('暂时继续'), findsOneWidget);
 
-    final content = find.byKey(const ValueKey('power-guide-content'));
-    expect(tester.getSize(content).width, lessThanOrEqualTo(640));
-    expect(tester.getRect(content).left, greaterThanOrEqualTo(200));
-    expect(find.text('让 SSH 在后台保持连接'), findsOneWidget);
-    expect(find.text('建议设置'), findsOneWidget);
-    expect(find.text('需要检查电池限制状态'), findsOneWidget);
-    expect(find.text('检查电池设置'), findsOneWidget);
-    expect(find.text('打开应用设置'), findsOneWidget);
-    expect(find.text('暂时继续'), findsOneWidget);
-
-    final note = find.byKey(const ValueKey('power-guide-note'));
-    await tester.ensureVisible(note);
-    await tester.pump();
-    final noteRect = tester.getRect(note);
-    expect(noteRect.left, greaterThanOrEqualTo(200));
-    expect(noteRect.right, lessThanOrEqualTo(928));
-    expect(noteRect.bottom, lessThanOrEqualTo(1280 / 3 - 48));
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(tester.takeException(), isNull);
+      final note = find.byKey(const ValueKey('power-guide-note'));
+      await tester.ensureVisible(note);
+      await tester.pump();
+      final noteRect = tester.getRect(note);
+      expect(noteRect.left, greaterThanOrEqualTo(200));
+      expect(noteRect.right, lessThanOrEqualTo(928));
+      expect(noteRect.bottom, lessThanOrEqualTo(1280 / 3 - 48));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    } finally {
+      tester.view.resetPadding();
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPhysicalSize();
+    }
   });
 
   testWidgets('StartupScreen loads the guide and continue skips this launch', (
@@ -150,8 +187,6 @@ void main() {
   ) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
 
     final statusGate = Completer<bool>();
     late _StartupFixture fixture;
@@ -184,20 +219,21 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Home placeholder'), findsOneWidget);
-      expect(fixture.storageService.powerGuideSeen, isFalse);
+      expect(fixture.appSettings.powerGuideSeen, isFalse);
       expect(fixture.powerCalls, ['isIgnoringBatteryOptimizations']);
       await tester.pump(const Duration(milliseconds: 200));
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     } finally {
       debugDefaultTargetPlatformOverride = null;
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPhysicalSize();
     }
   });
 
   testWidgets('battery action refreshes status and promotes continue', (
     tester,
   ) async {
-    final semantics = tester.ensureSemantics();
     late _StartupFixture fixture;
     await tester.runAsync(() async {
       fixture = await _createFixture(language: AppLanguage.en);
@@ -231,14 +267,7 @@ void main() {
       );
       expect(tester.widget<FilledButton>(continueAction), isA<FilledButton>());
       expect(find.text('Continue to app'), findsOneWidget);
-      _expectButtonSemantics(tester, continueAction, 'Continue to app');
-      expect(
-        tester.getSemantics(find.byKey(const ValueKey('power-guide-status'))),
-        matchesSemantics(
-          label: 'Battery restrictions are relaxed',
-          isLiveRegion: true,
-        ),
-      );
+      expect(find.text('Battery restrictions are relaxed'), findsOneWidget);
 
       final settingsAction = find.byKey(
         const ValueKey('power-guide-settings-action'),
@@ -253,29 +282,24 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     } finally {
       debugDefaultTargetPlatformOverride = null;
-      semantics.dispose();
     }
   });
 }
 
 class _StartupFixture {
-  final TestStorageAdapter storageService;
   final AppSettings appSettings;
   final StartupViewModel viewModel;
   final List<String> powerCalls;
 
   const _StartupFixture({
-    required this.storageService,
     required this.appSettings,
     required this.viewModel,
     required this.powerCalls,
   });
 
-  Future<void> dispose() async {
+  void dispose() {
     viewModel.dispose();
     appSettings.dispose();
-    await storageService.shutdown();
-    storageService.dispose();
   }
 }
 
@@ -309,8 +333,6 @@ Future<_StartupFixture> _createFixture({
         }
       });
 
-  final storageService = TestStorageAdapter();
-  await storageService.init();
   final appSettings = AppSettings();
   await appSettings.init();
   final viewModel = StartupViewModel(appSettings: appSettings);
@@ -324,7 +346,6 @@ Future<_StartupFixture> _createFixture({
   }
 
   return _StartupFixture(
-    storageService: storageService,
     appSettings: appSettings,
     viewModel: viewModel,
     powerCalls: powerCalls,

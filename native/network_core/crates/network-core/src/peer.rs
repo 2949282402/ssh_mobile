@@ -1,20 +1,18 @@
-//! v1 对端注册表、路由选择与异步连接任务。
+//! 对端注册表、路由选择与异步连接任务（transport-network v2）。
 
 use network_identity::DeviceIdentity;
-use network_nat::{
-    Candidate, CandidateAdvertisement, CandidateKind, CandidateSignal, PathManager,
-    MAX_CANDIDATES_PER_SIGNAL,
-};
+use network_nat::{Candidate, CandidateKind, PathManager, MAX_CANDIDATES_PER_SIGNAL};
 use network_protocol::{
-    NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState, PeerPresenceState,
-    RouteType, UpsertPeerCommand,
+    NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState, RouteType,
+    UpsertPeerCommand,
 };
 use network_quic::{read_channel_frame, ChannelFrameKind, QuicEndpointManager, QuicPeerSession};
-use network_relay::RelayClient;
+use network_relay::RelayDataClient;
 use network_transport::{TcpTransport, Transport, WebSocketTransport};
-use quinn::{Connection, Endpoint, VarInt};
+use quinn::{Connection, Endpoint};
 use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::{atomic::Ordering, Arc};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
@@ -28,37 +26,37 @@ use crate::connection::{
 };
 use crate::crypto_handshake::SessionCryptoMaterial;
 use crate::events::{
-    emit_peer_presence_changed, emit_peer_state, emit_peer_state_profile, emit_route_changed,
-    emit_route_changed_profile, protocol_error, protocol_error_with_peer,
+    emit_peer_state, emit_peer_state_profile, emit_route_changed, protocol_error,
+    protocol_error_with_peer,
 };
 use crate::generic_auth::{authenticate_initiator, authenticate_responder};
 use crate::runtime::{
-    CandidateAttempt, LookupResult, PeerConfig, PeerPresence, RuntimeState, SessionAdmissionLease,
-    DEFAULT_CANDIDATE_CONNECT_WINDOW, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES, PEER_CONNECT_TIMEOUT,
-    RECONNECT_INITIAL_BACKOFF, RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_BACKOFF,
+    PeerConfig, RuntimeState, SessionAdmissionLease, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
+    PEER_CONNECT_TIMEOUT,
 };
-use crate::session::{ConnectDecision, GenericRouteScope, SessionId};
+use crate::session::{ActiveRoute, GenericRouteScope, SessionAdmissionError, SessionId};
 
 const STUN_SERVERS_ENV: &str = "SSH_MOBILE_STUN_SERVERS";
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
-const PATH_METRICS_INTERVAL: Duration = Duration::from_secs(2);
-const CANDIDATE_SIGNAL_WAIT: Duration = Duration::from_millis(300);
-/// Relay lookup 的解析等待上限：lookup 在 Direct 之前阻塞解析对端 Discovery，正常
-/// 部署下是毫秒级往返，超上限即 fail-open 用本地候选继续，避免控制面抖动拖延 Direct。
-const DISCOVERY_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
-const DIRECT_UPGRADE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
-const DIRECT_UPGRADE_STABLE_DURATION: Duration = Duration::from_millis(750);
 const GENERIC_ROUTE_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 const GENERIC_ROUTE_TASK_START_TIMEOUT: Duration = Duration::from_secs(1);
+/// Direct 阶段中 QUIC race 的领先预算（§15）：先给 QUIC 候选一个子预算，然后用窗口
+/// 剩余预算跑 generic（TCP/WebSocket）候选。避免 QUIC 候选被黑洞/超时耗尽整个 Direct
+/// 窗口时，仅 TCP/WS 可达的 peer 被饿死而错误回退 Relay。
+const QUIC_LEAD_BUDGET: Duration = Duration::from_millis(2500);
+/// TCP fallback accept 循环在瞬态错误（EMFILE/ENOBUFS/aborted）后的退避间隔，避免
+/// 热点重试（§40）。
+const TCP_ACCEPT_RETRY_BACKOFF: Duration = Duration::from_millis(50);
+const TCP_ACCEPT_RETRY_BACKOFF_MAX: Duration = Duration::from_millis(500);
 
-struct AuthenticatedGenericRoute {
-    scope: GenericRouteScope,
-    endpoint: SocketAddr,
-    crypto: SessionCryptoMaterial,
-    admission: SessionAdmissionLease,
+pub(crate) struct AuthenticatedGenericRoute {
+    pub(crate) scope: GenericRouteScope,
+    pub(crate) endpoint: SocketAddr,
+    pub(crate) crypto: SessionCryptoMaterial,
+    pub(crate) admission: SessionAdmissionLease,
 }
 
-enum ConnectedRoute {
+pub(crate) enum ConnectedRoute {
     Quic {
         connection: Connection,
         crypto: SessionCryptoMaterial,
@@ -67,22 +65,23 @@ enum ConnectedRoute {
     Generic(AuthenticatedGenericRoute),
 }
 
-struct DirectRouteAttempt {
-    state: Arc<RuntimeState>,
-    endpoint: Endpoint,
-    candidates: Vec<Candidate>,
-    identity: Arc<DeviceIdentity>,
-    expected_peer_public_key: [u8; 32],
-    peer_id: String,
-    session_binding: String,
-    session_id: SessionId,
-    attempt_id: String,
-    connect_window: Duration,
+pub(crate) struct DirectRouteAttempt {
+    pub(crate) state: Arc<RuntimeState>,
+    pub(crate) endpoint: Endpoint,
+    pub(crate) candidates: Vec<Candidate>,
+    pub(crate) identity: Arc<DeviceIdentity>,
+    pub(crate) expected_peer_public_key: [u8; 32],
+    pub(crate) peer_id: String,
+    pub(crate) session_binding: String,
+    pub(crate) session_id: SessionId,
+    pub(crate) attempt_id: String,
+    pub(crate) connect_window: Duration,
 }
 
-/// Installs material for a Session reservation that was already admitted by
-/// the continuity gate. Responder handshakes use this after selecting the
-/// final local binding before sending the RootSeed.
+/// Installs the fresh Noise root for a Session admission（§18 1:1）. The root is
+/// always new per connection; there is no ContinueExisting path. Responder
+/// handshakes use this after selecting the final local binding before sending
+/// the RootSeed.
 pub(crate) async fn install_admitted_crypto(
     state: &RuntimeState,
     peer_id: &str,
@@ -90,12 +89,7 @@ pub(crate) async fn install_admitted_crypto(
     crypto: &SessionCryptoMaterial,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if state
-        .install_crypto_material(
-            peer_id,
-            &admission.session_id.wire_key(),
-            crypto,
-            admission.decision,
-        )
+        .install_crypto_material(peer_id, &admission.session_id.wire_key(), crypto)
         .is_err()
     {
         state
@@ -193,11 +187,13 @@ pub(crate) async fn configure_runtime(
         .ok_or_else(|| {
             protocol_error(NetworkErrorCode::Cancelled, "network runtime is stopping")
         })?;
-    let mut accept_task = state
-        .accept_task
-        .lock()
-        .map_err(|_| protocol_error(NetworkErrorCode::QuicError, "accept task lock poisoned"))?;
-    *accept_task = Some(task_id);
+    {
+        // 作用域限定 MutexGuard 生命周期，避免跨 await 持有非 Send 的 guard。
+        let mut accept_task = state.accept_task.lock().map_err(|_| {
+            protocol_error(NetworkErrorCode::QuicError, "accept task lock poisoned")
+        })?;
+        *accept_task = Some(task_id);
+    }
     let tcp_task_id = state
         .task_supervisor
         .spawn_runtime(
@@ -207,11 +203,16 @@ pub(crate) async fn configure_runtime(
         .ok_or_else(|| {
             protocol_error(NetworkErrorCode::Cancelled, "network runtime is stopping")
         })?;
-    let mut tcp_accept_task = state
-        .tcp_accept_task
-        .lock()
-        .map_err(|_| protocol_error(NetworkErrorCode::IoError, "TCP accept task lock poisoned"))?;
-    *tcp_accept_task = Some(tcp_task_id);
+    {
+        let mut tcp_accept_task = state.tcp_accept_task.lock().map_err(|_| {
+            protocol_error(NetworkErrorCode::IoError, "TCP accept task lock poisoned")
+        })?;
+        *tcp_accept_task = Some(tcp_task_id);
+    }
+    // transport-network v2：运行时配置完成（identity + 本地候选已就绪）后初始化本地
+    // Discovery 生命周期（新 runtime_epoch + revision=1）。v1 upload_discovery /
+    // peer_presence 已随 Step 11 删除。
+    crate::discovery::begin_epoch(&state).await;
     Ok(())
 }
 
@@ -311,23 +312,9 @@ pub(crate) async fn upsert_peer(
             "peer E2E key must contain 32 bytes",
         )
     })?;
-    if let Some(endpoint) = endpoint {
-        let manager = Arc::new(PathManager::new());
-        manager
-            .add_candidates(vec![Candidate::new(
-                endpoint,
-                candidate_kind_for(endpoint),
-                "peer-advertised".to_string(),
-            )])
-            .await;
-        state
-            .path_managers
-            .write()
-            .await
-            .insert(command.peer_id.clone(), manager);
-    } else {
-        state.path_managers.write().await.remove(&command.peer_id);
-    }
+    // transport-network v2：upsert 只保存配置 endpoint 与可信密钥；对端候选不再存
+    // 全局 path_manager（§12/§29）。每次 connect 前由 ConnectionOrchestrator 经 Resolve
+    // 获取权威 Discovery，本地配置 endpoint 作为 Direct 候选追加。
     state.peers.write().await.insert(
         command.peer_id.clone(),
         PeerConfig {
@@ -361,13 +348,14 @@ pub(crate) async fn disconnect_peer(
     }
     if let Some(session_id) = session_id {
         state.cancel_session_tasks(&peer_id, session_id).await;
-        // Explicit Session close releases receive-side active handlers and
-        // ordered buffers. A transient Connection loss takes a different
-        // path and keeps them for Delivery recovery.
-        state.delivery.close_session(&session_id.wire_key()).await;
+        // Explicit Peer disconnect releases receive-side active handlers and
+        // ordered buffers. A transient Connection loss takes a different path
+        // (Session destroyed) and must keep them for Delivery recovery（§20）——
+        // 因此清理只发生在用户显式断开时，transport 丢失不清理。
+        state.delivery.close_peer(&peer_id).await;
     }
-    state.candidate_attempts.write().await.remove(&peer_id);
-    state.direct_upgrade_tasks.write().await.remove(&peer_id);
+    // transport-network v2：断开时注销连接登记（§34）。
+    state.connection_registry.unregister(&peer_id);
     emit_peer_state(
         &state.event_tx,
         &peer_id,
@@ -376,402 +364,6 @@ pub(crate) async fn disconnect_peer(
         None,
     );
     Ok(())
-}
-
-/// 执行 Direct/Relay 连接竞速，并将先 ready 的 Route 绑定到 Session。
-pub(crate) async fn connect_peer(
-    state: Arc<RuntimeState>,
-    peer_id: String,
-) -> Result<(), ProtocolError> {
-    let endpoint = state.endpoint.read().await.clone().ok_or_else(|| {
-        protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "runtime is not configured",
-            "connect",
-            &peer_id,
-        )
-    })?;
-    let identity = state.identity.read().await.clone().ok_or_else(|| {
-        protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "runtime is not configured",
-            "connect",
-            &peer_id,
-        )
-    })?;
-    let peer = state
-        .peers
-        .read()
-        .await
-        .get(&peer_id)
-        .cloned()
-        .ok_or_else(|| {
-            protocol_error_with_peer(
-                NetworkErrorCode::NoRoute,
-                "peer has no configured route",
-                "connect",
-                &peer_id,
-            )
-        })?;
-    let session_id = match state.sessions.begin_connect(&peer_id).await {
-        ConnectDecision::AlreadyConnected(_) | ConnectDecision::InProgress(_) => return Ok(()),
-        ConnectDecision::Started(session_id) => session_id,
-    };
-    let relay = state.relay.read().await.clone();
-    let relay = match relay {
-        Some(relay) if relay.is_usable().await => Some(relay),
-        _ => None,
-    };
-    let relay_for_session = relay.clone();
-
-    let local_manager = state.local_path_manager.read().await.clone();
-    let local_generation = match local_manager {
-        Some(manager) => manager.generation().await.max(1),
-        None => 1,
-    };
-    let attempt_id = new_candidate_attempt_id();
-    let local_attempt = CandidateAttempt {
-        attempt_id: attempt_id.clone(),
-        generation: local_generation,
-        connect_window: DEFAULT_CANDIDATE_CONNECT_WINDOW,
-        expires_at: Instant::now() + DEFAULT_CANDIDATE_CONNECT_WINDOW,
-    };
-    state
-        .candidate_attempts
-        .write()
-        .await
-        .insert(peer_id.clone(), local_attempt.clone());
-
-    // 解析对端 Discovery（lookup）：Relay 控制面返回对端是否在线及其候选。放在
-    // Direct 之前——即使本地没有任何对端候选，也能先拿到公网候选走 Direct First，
-    // 而不是先选 Relay 再在内部补查（review P1-1：候选必须先于路径选择可用）。
-    let mut relay_fallback = relay.is_some();
-    // 对端被 Relay 明确判离线（无 presence+discovery）：无 Relay 数据面回退，但本地
-    // 配置的 endpoint 仍可尝试 Direct（LAN 对端可能未连 Relay）。区别于「本端根本没
-    // 有可用 Relay」——前者在无 Direct 候选时返回 PeerOffline，后者返回 NoRoute。
-    let mut peer_offline_on_relay = false;
-    if let Some(relay) = relay.as_ref() {
-        match resolve_peer_discovery(&state, relay, &peer_id).await {
-            Ok(true) => {}
-            Ok(false) => {
-                relay_fallback = false;
-                peer_offline_on_relay = true;
-            }
-            // lookup 本身故障：fail-open，保留 Relay 回退，用本地候选继续。
-            Err(error) => tracing::debug!(
-                peer_id = %peer_id,
-                error = %error.message,
-                "Relay peer lookup failed; continuing with local candidates"
-            ),
-        }
-    }
-    // 候选信令：把本地候选经 Relay 发给对端，短窗口内等对端 answer 补充候选。
-    if relay_fallback {
-        if let Some(relay) = relay.as_ref() {
-            let candidate_update = state.candidate_signal_notify.notified();
-            if send_candidate_offer(&state, relay, &peer_id, &local_attempt)
-                .await
-                .is_ok()
-            {
-                let _ = timeout(CANDIDATE_SIGNAL_WAIT, candidate_update).await;
-            }
-        }
-    }
-    let peer_manager = state.path_managers.read().await.get(&peer_id).cloned();
-    let mut direct_candidates = match peer_manager.as_ref() {
-        Some(manager) => manager.ranked_candidates().await,
-        None => peer
-            .endpoint
-            .map(|endpoint| {
-                Candidate::new(
-                    endpoint,
-                    candidate_kind_for(endpoint),
-                    "peer-advertised".into(),
-                )
-            })
-            .into_iter()
-            .collect(),
-    };
-    if let Some(endpoint) = peer.endpoint {
-        if !direct_candidates
-            .iter()
-            .any(|candidate| candidate.endpoint == endpoint)
-        {
-            direct_candidates.push(Candidate::new(
-                endpoint,
-                candidate_kind_for(endpoint),
-                "peer-configured".into(),
-            ));
-        }
-    }
-    let connect_window = match peer_manager.as_ref() {
-        Some(manager) => local_attempt
-            .connect_window
-            .min(manager.remote_connect_window().await),
-        None => local_attempt.connect_window,
-    };
-
-    // 路由选择：Direct First（connect_window 内 Direct 胜出）→ 失败才 Relay 数据面。
-    // Relay 回退仅在 lookup 在线（或 fail-open 未知）时可用；对端明确离线则无 Relay
-    // 回退，直接用本地候选走 Direct。
-    let route = if !direct_candidates.is_empty() {
-        let direct = connect_direct_or_generic(DirectRouteAttempt {
-            state: Arc::clone(&state),
-            endpoint,
-            candidates: direct_candidates,
-            identity,
-            expected_peer_public_key: peer.identity_public_key,
-            peer_id: peer_id.clone(),
-            session_binding: session_id.wire_key(),
-            session_id,
-            attempt_id: attempt_id.clone(),
-            connect_window,
-        });
-        if relay_fallback {
-            let relay_attempt = connect_relay_data();
-            connect_direct_first(direct, Some(relay_attempt), connect_window, &peer_id).await
-        } else {
-            direct.await.map(ReadyRoute::Direct)
-        }
-    } else if relay_fallback {
-        connect_relay_data().await.map(|_| ReadyRoute::Relay)
-    } else if peer_offline_on_relay {
-        Err(protocol_error_with_peer(
-            NetworkErrorCode::PeerOffline,
-            "Relay peer is offline or did not answer lookup",
-            "connect",
-            &peer_id,
-        ))
-    } else {
-        Err(protocol_error_with_peer(
-            NetworkErrorCode::NoRoute,
-            "peer has no usable direct or Relay route",
-            "connect",
-            &peer_id,
-        ))
-    };
-
-    clear_candidate_attempt(&state, &peer_id, &attempt_id).await;
-
-    match route {
-        Ok(ReadyRoute::Direct(ConnectedRoute::Quic {
-            connection,
-            crypto,
-            admission,
-        })) => {
-            let session_id = admission.session_id;
-            if install_admitted_crypto(&state, &peer_id, &admission, &crypto)
-                .await
-                .is_err()
-            {
-                connection.close(VarInt::from_u32(0), b"application E2EE install failed");
-                return Err(protocol_error_with_peer(
-                    NetworkErrorCode::AuthenticationFailed,
-                    "application E2EE handshake was not accepted",
-                    "connect",
-                    &peer_id,
-                ));
-            }
-            let previous_route = state
-                .sessions
-                .attach_connection_for_session(
-                    &peer_id,
-                    Some(session_id),
-                    connection.clone(),
-                    RouteType::QuicDirect,
-                    admission.decision == crate::session::SessionCryptoDecision::ContinueExisting,
-                )
-                .await
-                .map_err(|_| {
-                    protocol_error_with_peer(
-                        NetworkErrorCode::Cancelled,
-                        "connection completed after Session was closed",
-                        "connect",
-                        &peer_id,
-                    )
-                })?;
-            if let Some(previous_route) = previous_route {
-                previous_route.close().await;
-            }
-            if state.sessions.current_session_id(&peer_id).await != Some(session_id) {
-                state.sessions.mark_failed(&peer_id, session_id).await;
-                return Err(protocol_error_with_peer(
-                    NetworkErrorCode::Cancelled,
-                    "connection completed after Session was closed",
-                    "connect",
-                    &peer_id,
-                ));
-            }
-            emit_peer_state(
-                &state.event_tx,
-                &peer_id,
-                PeerConnectionState::Connected,
-                RouteType::QuicDirect,
-                None,
-            );
-            spawn_path_metrics_monitor(
-                Arc::clone(&state),
-                peer_id.clone(),
-                session_id,
-                connection.clone(),
-            );
-            crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-            if admission.decision != crate::session::SessionCryptoDecision::ReplaceWithNew {
-                crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
-                    .await;
-            }
-            spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
-            state.finish_session_replacement(admission);
-            Ok(())
-        }
-        Ok(ReadyRoute::Direct(ConnectedRoute::Generic(generic))) => {
-            let mut scope = generic.scope;
-            let profile = scope
-                .profile()
-                .expect("supervised GenericRoute scope has a profile");
-            let admission = generic.admission;
-            let session_id = admission.session_id;
-            if install_admitted_crypto(&state, &peer_id, &admission, &generic.crypto)
-                .await
-                .is_err()
-            {
-                scope.close().await;
-                state.sessions.mark_failed(&peer_id, session_id).await;
-                return Err(protocol_error_with_peer(
-                    NetworkErrorCode::AuthenticationFailed,
-                    "application E2EE handshake was not accepted",
-                    "connect",
-                    &peer_id,
-                ));
-            }
-            let previous_route = match state
-                .sessions
-                .attach_generic_route_for_session(
-                    &peer_id,
-                    Some(session_id),
-                    &mut scope,
-                    admission.decision == crate::session::SessionCryptoDecision::ContinueExisting,
-                )
-                .await
-            {
-                Ok(previous_route) => previous_route,
-                Err(_) => {
-                    scope.close().await;
-                    state.sessions.mark_failed(&peer_id, session_id).await;
-                    return Err(protocol_error_with_peer(
-                        NetworkErrorCode::Cancelled,
-                        "generic connection completed after Session was closed",
-                        "connect",
-                        &peer_id,
-                    ));
-                }
-            };
-            if let Some(previous_route) = previous_route {
-                previous_route.close().await;
-            }
-            emit_peer_state_profile(
-                &state.event_tx,
-                &peer_id,
-                PeerConnectionState::Connected,
-                Some(profile),
-                None,
-            );
-            emit_route_changed_profile(
-                &state.event_tx,
-                &peer_id,
-                Some(profile),
-                generic.endpoint,
-                0,
-                0.0,
-            );
-            crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-            state.finish_session_replacement(admission);
-            Ok(())
-        }
-        Ok(ReadyRoute::Relay) => {
-            let relay = relay_for_session.clone().ok_or_else(|| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay route completed without a Relay client",
-                    "connect",
-                    &peer_id,
-                )
-            })?;
-            let crypto_identity = state.identity.read().await.clone().ok_or_else(|| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::InvalidArgument,
-                    "runtime identity is unavailable",
-                    "connect",
-                    &peer_id,
-                )
-            })?;
-            let (crypto, admission) = match establish_relay_crypto(
-                &state,
-                relay,
-                &peer_id,
-                session_id,
-                crypto_identity,
-                peer.identity_public_key,
-            )
-            .await
-            {
-                Ok(crypto) => crypto,
-                Err(error) => {
-                    state.sessions.mark_failed(&peer_id, session_id).await;
-                    return Err(error);
-                }
-            };
-            if install_admitted_crypto(&state, &peer_id, &admission, &crypto)
-                .await
-                .is_err()
-            {
-                return Err(protocol_error_with_peer(
-                    NetworkErrorCode::AuthenticationFailed,
-                    "Relay application E2EE handshake was not accepted",
-                    "connect",
-                    &peer_id,
-                ));
-            }
-            let session_id = admission.session_id;
-            let attached = state
-                .sessions
-                .mark_relay_route_connected(
-                    &peer_id,
-                    session_id,
-                    RouteType::Relay,
-                    relay_for_session,
-                )
-                .await;
-            if !attached {
-                state.sessions.mark_failed(&peer_id, session_id).await;
-                return Err(protocol_error_with_peer(
-                    NetworkErrorCode::Cancelled,
-                    "Relay route completed after Session was closed",
-                    "connect",
-                    &peer_id,
-                ));
-            }
-            emit_peer_state(
-                &state.event_tx,
-                &peer_id,
-                PeerConnectionState::Connected,
-                RouteType::Relay,
-                None,
-            );
-            crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-            if admission.decision != crate::session::SessionCryptoDecision::ReplaceWithNew {
-                crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
-                    .await;
-            }
-            schedule_direct_upgrade(Arc::clone(&state), peer_id, session_id);
-            state.finish_session_replacement(admission);
-            Ok(())
-        }
-        Err(error) => {
-            state.sessions.mark_failed(&peer_id, session_id).await;
-            Err(error)
-        }
-    }
 }
 
 /// Direct QUIC 尝试的总预算为 8 秒，避免连接和认证各自再等待一次。
@@ -879,14 +471,14 @@ pub(crate) async fn connect_direct_with_crypto(
                     if authenticated_peer_id != expected_peer_id_for_resolver {
                         return Err(crate::crypto_handshake::CryptoHandshakeError::Failed);
                     }
-                    let admission = state
-                        .admit_authenticated_session(
-                            &authenticated_peer_id,
-                            Some(expected_session_id),
-                            &remote_session_binding,
-                        )
-                        .await
-                        .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
+                    let admission = admit_single_winner(
+                        &state,
+                        &authenticated_peer_id,
+                        Some(expected_session_id),
+                        &remote_session_binding,
+                    )
+                    .await
+                    .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
                     Ok((admission.session_id.wire_key(), admission))
                 }
             },
@@ -910,6 +502,35 @@ pub(crate) async fn connect_direct_with_crypto(
         )
     })?;
     Ok((connection, crypto, admission))
+}
+
+/// Single-winner Session admission（§18/§40 Concurrency）。
+///
+/// `connect_direct_candidates_with_crypto` 并发 race 多个 candidate 时，每个 candidate
+/// 都会走到 `admit_authenticated_session`。若 winner 已把 route 挂到 Session（state →
+/// Connected），loser 迟到的 admit 会触发 `ReplaceWithNew`：拆掉刚挂载的 winning route，
+/// 双方都掉线。本 guard 在 admit 前重查当前 Session 状态——仍处于 in-flight（未挂载、
+/// 未被替换）才继续 admit，否则视为 loser 拒绝，绝不触发替换。只服务发起方候选
+/// （expected_session_id 已知）；应答方 simultaneous connect 的 Initialize 语义不受影响。
+async fn admit_single_winner(
+    state: &RuntimeState,
+    peer_id: &str,
+    expected_session_id: Option<SessionId>,
+    remote_session_binding: &str,
+) -> Result<SessionAdmissionLease, SessionAdmissionError> {
+    // Session 已 Connected（winner 已挂载 route）：后来的 candidate 是 loser，拒绝。
+    if state.sessions.is_connected(peer_id).await {
+        return Err(SessionAdmissionError::StaleSession);
+    }
+    // 期望的 Session 已被替换/销毁：同样是 loser。
+    if let Some(expected) = expected_session_id {
+        if state.sessions.current_session_id(peer_id).await != Some(expected) {
+            return Err(SessionAdmissionError::StaleSession);
+        }
+    }
+    state
+        .admit_authenticated_session(peer_id, expected_session_id, remote_session_binding)
+        .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -980,7 +601,11 @@ async fn connect_direct_candidates_with_crypto(
 /// Route selection keeps QUIC as the first direct candidate, then falls back
 /// to authenticated TCP and finally a binary WebSocket route. Each generic
 /// route is admitted only after the same identity proof used by QUIC.
-async fn connect_direct_or_generic(
+///
+/// §15/§37：Direct 窗口被切成两段——QUIC 候选并行竞争 `min(window, QUIC_LEAD_BUDGET)`，
+/// 然后用窗口**剩余**预算跑 generic（TCP/WebSocket）候选。这样 QUIC 被黑洞/超时
+/// 耗尽后，仅 TCP/WS 可达的 peer 仍能在窗口内走 generic 成功，而不是被饿死回退 Relay。
+pub(crate) async fn connect_direct_or_generic(
     attempt: DirectRouteAttempt,
 ) -> Result<ConnectedRoute, ProtocolError> {
     let DirectRouteAttempt {
@@ -996,37 +621,69 @@ async fn connect_direct_or_generic(
         connect_window,
     } = attempt;
     let generic_candidates = candidates.clone();
-    match connect_direct_candidates_with_crypto(
-        endpoint,
-        candidates,
-        Arc::clone(&identity),
-        expected_peer_public_key,
-        peer_id.clone(),
-        attempt_id,
-        connect_window,
-        session_binding.clone(),
-        Arc::clone(&state),
-        session_id,
+    let started = Instant::now();
+    // QUIC race 领先预算（不改变 DIRECT_CONNECT_WINDOW 的语义：它仍是整个 Direct 阶段
+    // 的总窗口）。
+    let quic_budget = connect_window.min(QUIC_LEAD_BUDGET);
+
+    // 1) QUIC 候选并行竞争（子预算内）。
+    let quic_result = tokio::time::timeout(
+        quic_budget,
+        connect_direct_candidates_with_crypto(
+            endpoint,
+            candidates,
+            Arc::clone(&identity),
+            expected_peer_public_key,
+            peer_id.clone(),
+            attempt_id,
+            quic_budget,
+            session_binding.clone(),
+            Arc::clone(&state),
+            session_id,
+        ),
     )
-    .await
-    {
-        Ok((connection, crypto, admission)) => Ok(ConnectedRoute::Quic {
-            connection,
-            crypto,
-            admission,
-        }),
-        Err(quic_error) => connect_generic_candidates(
+    .await;
+    let quic_fallback_error = match quic_result {
+        Ok(Ok((connection, crypto, admission))) => {
+            return Ok(ConnectedRoute::Quic {
+                connection,
+                crypto,
+                admission,
+            });
+        }
+        Ok(Err(error)) => error,
+        Err(_) => protocol_error_with_peer(
+            NetworkErrorCode::Timeout,
+            "Direct QUIC window elapsed",
+            "connect",
+            &peer_id,
+        ),
+    };
+
+    // 2) QUIC 未胜出：用窗口剩余预算跑 generic（TCP/WS）候选。
+    let remaining = connect_window.saturating_sub(started.elapsed());
+    let generic_result = tokio::time::timeout(
+        remaining,
+        connect_generic_candidates(
             generic_candidates,
             identity,
             expected_peer_public_key,
-            peer_id,
+            peer_id.clone(),
             session_binding,
             state,
             session_id,
-        )
-        .await
-        .map(ConnectedRoute::Generic)
-        .map_err(|_| quic_error),
+        ),
+    )
+    .await;
+    match generic_result {
+        Ok(Ok(route)) => Ok(ConnectedRoute::Generic(route)),
+        Ok(Err(_)) => Err(quic_fallback_error),
+        Err(_) => Err(protocol_error_with_peer(
+            NetworkErrorCode::Timeout,
+            "Direct connect window elapsed",
+            "connect",
+            &peer_id,
+        )),
     }
 }
 
@@ -1219,14 +876,14 @@ async fn connect_tcp_route(
                     if authenticated_peer_id != resolver_peer_id {
                         return Err(crate::crypto_handshake::CryptoHandshakeError::Failed);
                     }
-                    let admission = resolver_state
-                        .admit_authenticated_session(
-                            &resolver_peer_id,
-                            Some(expected_session_id),
-                            &remote_session_binding,
-                        )
-                        .await
-                        .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
+                    let admission = admit_single_winner(
+                        &resolver_state,
+                        &resolver_peer_id,
+                        Some(expected_session_id),
+                        &remote_session_binding,
+                    )
+                    .await
+                    .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
                     Ok((admission.session_id.wire_key(), admission))
                 }
             },
@@ -1308,14 +965,14 @@ async fn connect_websocket_route(
                     if authenticated_peer_id != resolver_peer_id {
                         return Err(crate::crypto_handshake::CryptoHandshakeError::Failed);
                     }
-                    let admission = resolver_state
-                        .admit_authenticated_session(
-                            &resolver_peer_id,
-                            Some(expected_session_id),
-                            &remote_session_binding,
-                        )
-                        .await
-                        .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
+                    let admission = admit_single_winner(
+                        &resolver_state,
+                        &resolver_peer_id,
+                        Some(expected_session_id),
+                        &remote_session_binding,
+                    )
+                    .await
+                    .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
                     Ok((admission.session_id.wire_key(), admission))
                 }
             },
@@ -1355,230 +1012,6 @@ async fn connect_websocket_route(
     }
 }
 
-/// Starts the answering side of the same bounded QUIC connectivity window.
-/// Receiving a candidate Offer is enough to authorize one direct punch; it
-/// must not recursively create another candidate Offer or a second Relay
-/// route race.
-pub(crate) fn spawn_candidate_punch(
-    state: Arc<RuntimeState>,
-    peer_id: String,
-    attempt_id: String,
-    connect_window: Duration,
-) {
-    let supervisor = Arc::clone(&state.task_supervisor);
-    let _ = supervisor.spawn_runtime("candidate-punch", async move {
-        run_candidate_punch(state, peer_id, attempt_id, connect_window).await;
-    });
-}
-
-async fn run_candidate_punch(
-    state: Arc<RuntimeState>,
-    peer_id: String,
-    attempt_id: String,
-    connect_window: Duration,
-) {
-    let endpoint = state.endpoint.read().await.clone();
-    let identity = state.identity.read().await.clone();
-    let peer = state.peers.read().await.get(&peer_id).cloned();
-    let manager = state.path_managers.read().await.get(&peer_id).cloned();
-    let (Some(endpoint), Some(identity), Some(peer), Some(manager)) =
-        (endpoint, identity, peer, manager)
-    else {
-        tracing::debug!(peer_id = %peer_id, "candidate punch skipped because runtime or peer is unavailable");
-        return;
-    };
-    let mut candidates = manager.ranked_candidates().await;
-    if let Some(peer_endpoint) = peer.endpoint {
-        if !candidates
-            .iter()
-            .any(|candidate| candidate.endpoint == peer_endpoint)
-        {
-            candidates.push(Candidate::new(
-                peer_endpoint,
-                candidate_kind_for(peer_endpoint),
-                "peer-configured".into(),
-            ));
-        }
-    }
-    if candidates.is_empty() {
-        return;
-    }
-
-    let decision = state.sessions.begin_connect(&peer_id).await;
-    let session_id = match decision {
-        ConnectDecision::Started(session_id) | ConnectDecision::InProgress(session_id) => {
-            session_id
-        }
-        ConnectDecision::AlreadyConnected(session_id) => {
-            if state
-                .sessions
-                .current_profile(&peer_id)
-                .await
-                .is_some_and(|profile| profile.transport() == RouteTransport::Quic)
-            {
-                return;
-            }
-            session_id
-        }
-    };
-    let current_profile = state.sessions.current_profile(&peer_id).await;
-    if current_profile.is_some_and(|profile| profile.transport() == RouteTransport::Quic) {
-        return;
-    }
-    let connect_window = connect_window
-        .min(manager.remote_connect_window().await)
-        .min(DEFAULT_CANDIDATE_CONNECT_WINDOW);
-    let (connection, crypto, admission) = match connect_direct_candidates_with_crypto(
-        endpoint,
-        candidates,
-        identity,
-        peer.identity_public_key,
-        peer_id.clone(),
-        attempt_id.clone(),
-        connect_window,
-        session_id.wire_key(),
-        Arc::clone(&state),
-        session_id,
-    )
-    .await
-    {
-        Ok(route) => route,
-        Err(error) => {
-            tracing::debug!(
-                peer_id = %peer_id,
-                attempt_id = %attempt_id,
-                error = %error.message,
-                "coordinated QUIC candidate punch failed"
-            );
-            if current_profile.is_none() {
-                state.sessions.mark_failed(&peer_id, session_id).await;
-            }
-            return;
-        }
-    };
-    if install_admitted_crypto(&state, &peer_id, &admission, &crypto)
-        .await
-        .is_err()
-    {
-        connection.close(VarInt::from_u32(0), b"application E2EE install failed");
-        return;
-    }
-    let session_id = admission.session_id;
-    let current_profile = (admission.decision
-        == crate::session::SessionCryptoDecision::ContinueExisting)
-        .then_some(current_profile)
-        .flatten();
-
-    let previous_route = if current_profile
-        .is_some_and(|profile| profile.topology() == crate::connection::RouteTopology::Relay)
-    {
-        if state
-            .sessions
-            .current_active_route(&peer_id)
-            .await
-            .is_some()
-        {
-            state
-                .sessions
-                .replace_route_if_current(
-                    &peer_id,
-                    session_id,
-                    RouteType::Relay,
-                    connection.clone(),
-                    RouteType::QuicDirect,
-                )
-                .await
-                .then_some(None)
-        } else {
-            state
-                .sessions
-                .attach_connection_for_session(
-                    &peer_id,
-                    Some(session_id),
-                    connection.clone(),
-                    RouteType::QuicDirect,
-                    true,
-                )
-                .await
-                .ok()
-        }
-    } else if current_profile.is_some() {
-        match state.sessions.current_active_route(&peer_id).await {
-            Some(current_route) => state
-                .sessions
-                .replace_active_route_if_current(
-                    &peer_id,
-                    session_id,
-                    &current_route,
-                    crate::session::ActiveRoute::quic(connection.clone(), RouteType::QuicDirect),
-                )
-                .await
-                .map(Some),
-            None => state
-                .sessions
-                .attach_connection_for_session(
-                    &peer_id,
-                    Some(session_id),
-                    connection.clone(),
-                    RouteType::QuicDirect,
-                    true,
-                )
-                .await
-                .ok(),
-        }
-    } else {
-        state
-            .sessions
-            .attach_connection_for_session(
-                &peer_id,
-                Some(session_id),
-                connection.clone(),
-                RouteType::QuicDirect,
-                false,
-            )
-            .await
-            .ok()
-    };
-    let Some(previous_route) = previous_route else {
-        connection.close(VarInt::from_u32(0), b"candidate punch superseded");
-        return;
-    };
-    if let Some(previous_route) = previous_route {
-        previous_route.close().await;
-    }
-    emit_peer_state(
-        &state.event_tx,
-        &peer_id,
-        PeerConnectionState::Connected,
-        RouteType::QuicDirect,
-        None,
-    );
-    emit_route_changed(
-        &state.event_tx,
-        &peer_id,
-        RouteType::QuicDirect,
-        connection.remote_address(),
-        connection.rtt().as_millis().min(u32::MAX as u128) as u32,
-        0.0,
-    );
-    spawn_path_metrics_monitor(
-        Arc::clone(&state),
-        peer_id.clone(),
-        session_id,
-        connection.clone(),
-    );
-    crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-    if admission.decision != crate::session::SessionCryptoDecision::ReplaceWithNew {
-        crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
-    }
-    spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
-    state.finish_session_replacement(admission);
-}
-
-fn new_candidate_attempt_id() -> String {
-    hex::encode(rand::random::<[u8; 16]>())
-}
-
 /// 生成单调的本地 Discovery generation 种子：用 unix 毫秒，重启/换代只会得到更大的
 /// 值。配合服务端「拒绝 generation 回退」（handleDiscoveryUpdate）不会把重启后的设备
 /// 误判为回退而卡离线——旧的随机种子跨进程重启有一半概率更小，会让服务端拒绝上传。
@@ -1590,633 +1023,9 @@ fn monotonic_candidate_generation() -> u64 {
         .max(1)
 }
 
-async fn clear_candidate_attempt(state: &RuntimeState, peer_id: &str, attempt_id: &str) {
-    let mut attempts = state.candidate_attempts.write().await;
-    if attempts
-        .get(peer_id)
-        .is_some_and(|attempt| attempt.attempt_id == attempt_id)
-    {
-        attempts.remove(peer_id);
-    }
-}
-
-/// Keeps a Relay-backed Session usable while probing the advertised direct
-/// candidates. The task owns no business state and exits when the Session is
-/// closed, replaced, or already promoted by another route.
-pub(crate) fn schedule_direct_upgrade(
-    state: Arc<RuntimeState>,
-    peer_id: String,
-    session_id: SessionId,
-) {
-    let supervisor = Arc::clone(&state.task_supervisor);
-    let _ = supervisor.spawn_session(session_id.wire_key(), "direct-upgrade", async move {
-        {
-            let mut tasks = state.direct_upgrade_tasks.write().await;
-            if tasks
-                .get(&peer_id)
-                .is_some_and(|current| *current == session_id)
-            {
-                return;
-            }
-            tasks.insert(peer_id.clone(), session_id);
-        }
-
-        direct_upgrade_loop(Arc::clone(&state), peer_id.clone(), session_id).await;
-
-        let mut tasks = state.direct_upgrade_tasks.write().await;
-        if tasks
-            .get(&peer_id)
-            .is_some_and(|current| *current == session_id)
-        {
-            tasks.remove(&peer_id);
-        }
-    });
-}
-
-async fn direct_upgrade_loop(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
-    loop {
-        if state.sessions.current_session_id(&peer_id).await != Some(session_id)
-            || state.sessions.current_route(&peer_id).await != Some(RouteType::Relay)
-        {
-            return;
-        }
-
-        let endpoint = state.endpoint.read().await.clone();
-        let identity = state.identity.read().await.clone();
-        let peer = state.peers.read().await.get(&peer_id).cloned();
-        let manager = state.path_managers.read().await.get(&peer_id).cloned();
-        let Some(endpoint) = endpoint else {
-            return;
-        };
-        let Some(identity) = identity else {
-            return;
-        };
-        let Some(peer) = peer else {
-            return;
-        };
-        let mut candidates = match manager.as_ref() {
-            Some(manager) => manager.ranked_candidates().await,
-            None => peer
-                .endpoint
-                .map(|endpoint| {
-                    Candidate::new(
-                        endpoint,
-                        candidate_kind_for(endpoint),
-                        "peer-advertised".into(),
-                    )
-                })
-                .into_iter()
-                .collect(),
-        };
-        if let Some(endpoint) = peer.endpoint {
-            if !candidates
-                .iter()
-                .any(|candidate| candidate.endpoint == endpoint)
-            {
-                candidates.push(Candidate::new(
-                    endpoint,
-                    candidate_kind_for(endpoint),
-                    "peer-configured".into(),
-                ));
-            }
-        }
-
-        let attempt_id = match manager.as_ref() {
-            Some(manager) => manager
-                .remote_attempt_id()
-                .await
-                .unwrap_or_else(new_candidate_attempt_id),
-            None => new_candidate_attempt_id(),
-        };
-        let connect_window = match manager.as_ref() {
-            Some(manager) => manager
-                .remote_connect_window()
-                .await
-                .min(DEFAULT_CANDIDATE_CONNECT_WINDOW),
-            None => DEFAULT_CANDIDATE_CONNECT_WINDOW,
-        };
-
-        if !candidates.is_empty() {
-            match connect_direct_candidates_with_crypto(
-                endpoint,
-                candidates,
-                identity,
-                peer.identity_public_key,
-                peer_id.clone(),
-                attempt_id,
-                connect_window,
-                session_id.wire_key(),
-                Arc::clone(&state),
-                session_id,
-            )
-            .await
-            {
-                Ok((connection, crypto, admission)) => {
-                    if install_admitted_crypto(&state, &peer_id, &admission, &crypto)
-                        .await
-                        .is_err()
-                    {
-                        connection.close(VarInt::from_u32(0), b"application E2EE install failed");
-                        return;
-                    }
-                    let session_id = admission.session_id;
-                    if admission.decision == crate::session::SessionCryptoDecision::ReplaceWithNew {
-                        if !state
-                            .sessions
-                            .attach_connection(
-                                &peer_id,
-                                Some(session_id),
-                                connection.clone(),
-                                RouteType::QuicDirect,
-                            )
-                            .await
-                        {
-                            connection.close(VarInt::from_u32(0), b"new Session attach failed");
-                            return;
-                        }
-                        emit_peer_state(
-                            &state.event_tx,
-                            &peer_id,
-                            PeerConnectionState::Connected,
-                            RouteType::QuicDirect,
-                            None,
-                        );
-                        spawn_path_metrics_monitor(
-                            Arc::clone(&state),
-                            peer_id.clone(),
-                            session_id,
-                            connection.clone(),
-                        );
-                        crate::channel::recover_session(
-                            Arc::clone(&state),
-                            peer_id.clone(),
-                            session_id,
-                        )
-                        .await;
-                        spawn_session_receivers(
-                            Arc::clone(&state),
-                            peer_id,
-                            connection,
-                            session_id,
-                        );
-                        state.finish_session_replacement(admission);
-                        return;
-                    }
-                    // Require a short stable window before replacing Relay;
-                    // a transient UDP success must not cause route flapping.
-                    tokio::time::sleep(DIRECT_UPGRADE_STABLE_DURATION).await;
-                    if state.sessions.current_session_id(&peer_id).await != Some(session_id)
-                        || state.sessions.current_route(&peer_id).await != Some(RouteType::Relay)
-                    {
-                        connection.close(VarInt::from_u32(0), b"upgrade superseded");
-                        return;
-                    }
-                    let remote_endpoint = connection.remote_address();
-                    let stats = connection.stats();
-                    if !state
-                        .sessions
-                        .replace_route_if_current(
-                            &peer_id,
-                            session_id,
-                            RouteType::Relay,
-                            connection.clone(),
-                            RouteType::QuicDirect,
-                        )
-                        .await
-                    {
-                        return;
-                    }
-                    if let Some(manager) = manager {
-                        manager
-                            .record_quic_sample(
-                                remote_endpoint,
-                                connection.rtt(),
-                                stats.path.sent_packets,
-                                stats.path.lost_packets,
-                            )
-                            .await;
-                        let _ = manager.activate_path(remote_endpoint).await;
-                        let candidate = manager.get_candidate(remote_endpoint).await;
-                        emit_route_changed(
-                            &state.event_tx,
-                            &peer_id,
-                            RouteType::QuicDirect,
-                            remote_endpoint,
-                            candidate.as_ref().map_or(0, |candidate| candidate.rtt_ms),
-                            candidate
-                                .as_ref()
-                                .map_or(0.0, |candidate| candidate.loss_rate),
-                        );
-                    } else {
-                        emit_route_changed(
-                            &state.event_tx,
-                            &peer_id,
-                            RouteType::QuicDirect,
-                            remote_endpoint,
-                            connection.rtt().as_millis().min(u32::MAX as u128) as u32,
-                            0.0,
-                        );
-                    }
-                    spawn_path_metrics_monitor(
-                        Arc::clone(&state),
-                        peer_id.clone(),
-                        session_id,
-                        connection.clone(),
-                    );
-                    crate::channel::recover_session(
-                        Arc::clone(&state),
-                        peer_id.clone(),
-                        session_id,
-                    )
-                    .await;
-                    crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
-                        .await;
-                    spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
-                    state.finish_session_replacement(admission);
-                    return;
-                }
-                Err(error) => {
-                    tracing::debug!(peer_id = %peer_id, error = %error.message, "background direct probe failed; Relay remains active");
-                }
-            }
-        }
-        tokio::time::sleep(DIRECT_UPGRADE_PROBE_INTERVAL).await;
-    }
-}
-
-async fn send_candidate_offer(
+pub(crate) async fn establish_relay_crypto(
     state: &RuntimeState,
-    relay: &RelayClient,
-    peer_id: &str,
-    attempt: &CandidateAttempt,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let local_manager = state
-        .local_path_manager
-        .read()
-        .await
-        .clone()
-        .ok_or_else(|| std::io::Error::other("local candidate manager is unavailable"))?;
-    let generation = local_manager.generation().await.max(1);
-    let candidates = local_manager.ranked_candidates().await;
-    let signal = CandidateSignal::offer(
-        attempt.generation.max(generation),
-        attempt.attempt_id.clone(),
-        attempt.connect_window.as_millis().min(u128::from(u32::MAX)) as u32,
-        candidates.iter().map(Candidate::advertisement).collect(),
-    );
-    let payload = serde_json::to_vec(&signal)?;
-    relay
-        .send_candidate_offer(&attempt.attempt_id, peer_id, &payload)
-        .await?;
-    Ok(())
-}
-
-/// Starts native-only path quality sampling for one authenticated direct
-/// Connection. The task exits as soon as SessionManager observes a different
-/// current Connection.
-fn spawn_path_metrics_monitor(
-    state: Arc<RuntimeState>,
-    peer_id: String,
-    session_id: SessionId,
-    connection: Connection,
-) {
-    let supervisor = Arc::clone(&state.task_supervisor);
-    let _ = supervisor.spawn_session(session_id.wire_key(), "path-metrics", async move {
-        monitor_direct_path(state, peer_id, session_id, connection).await;
-    });
-}
-
-async fn monitor_direct_path(
-    state: Arc<RuntimeState>,
-    peer_id: String,
-    session_id: SessionId,
-    connection: Connection,
-) {
-    let manager = state.path_managers.read().await.get(&peer_id).cloned();
-    let Some(manager) = manager else {
-        return;
-    };
-
-    loop {
-        let current = state.sessions.current_connection(&peer_id).await;
-        if current
-            .as_ref()
-            .is_none_or(|current| current.stable_id() != connection.stable_id())
-        {
-            return;
-        }
-
-        let endpoint = connection.remote_address();
-        let stats = connection.stats();
-        manager
-            .record_quic_sample(
-                endpoint,
-                connection.rtt(),
-                stats.path.sent_packets,
-                stats.path.lost_packets,
-            )
-            .await;
-        if manager
-            .get_active_path()
-            .await
-            .is_none_or(|active| active.endpoint != endpoint)
-        {
-            let _ = manager.activate_path(endpoint).await;
-        }
-        if let Some(candidate) = manager.get_candidate(endpoint).await {
-            emit_route_changed(
-                &state.event_tx,
-                &peer_id,
-                RouteType::QuicDirect,
-                candidate.endpoint,
-                candidate.rtt_ms,
-                candidate.loss_rate,
-            );
-        }
-
-        if let Some(candidate) = manager.better_path_than_active().await {
-            if migrate_direct_path(
-                Arc::clone(&state),
-                peer_id.clone(),
-                session_id,
-                connection.clone(),
-                candidate,
-            )
-            .await
-            {
-                return;
-            }
-        }
-        tokio::time::sleep(PATH_METRICS_INTERVAL).await;
-    }
-}
-
-/// Establishes and authenticates a better candidate before atomically
-/// replacing the Session connection. Existing streams stay owned by the old
-/// connection until the replacement is ready.
-async fn migrate_direct_path(
-    state: Arc<RuntimeState>,
-    peer_id: String,
-    session_id: SessionId,
-    current_connection: Connection,
-    candidate: Candidate,
-) -> bool {
-    if candidate.endpoint == current_connection.remote_address() {
-        return false;
-    }
-    let endpoint = match state.endpoint.read().await.clone() {
-        Some(endpoint) => endpoint,
-        None => return false,
-    };
-    let identity = match state.identity.read().await.clone() {
-        Some(identity) => identity,
-        None => return false,
-    };
-    let peer = match state.peers.read().await.get(&peer_id).cloned() {
-        Some(peer) => peer,
-        None => return false,
-    };
-    let manager = state.path_managers.read().await.get(&peer_id).cloned();
-    let attempt_id = match manager.as_ref() {
-        Some(manager) => manager
-            .remote_attempt_id()
-            .await
-            .unwrap_or_else(new_candidate_attempt_id),
-        None => new_candidate_attempt_id(),
-    };
-    let connect_window = match manager.as_ref() {
-        Some(manager) => manager
-            .remote_connect_window()
-            .await
-            .min(DEFAULT_CANDIDATE_CONNECT_WINDOW),
-        None => DEFAULT_CANDIDATE_CONNECT_WINDOW,
-    };
-    let (replacement, crypto, admission) = match connect_direct_with_crypto(
-        endpoint,
-        candidate.endpoint,
-        identity,
-        peer.identity_public_key,
-        peer_id.clone(),
-        attempt_id,
-        connect_window,
-        &session_id.wire_key(),
-        Arc::clone(&state),
-        session_id,
-    )
-    .await
-    {
-        Ok(route) => route,
-        Err(error) => {
-            tracing::debug!(
-                peer_id = %peer_id,
-                endpoint = %candidate.endpoint,
-                error = %error.message,
-                "better direct path failed authentication"
-            );
-            return false;
-        }
-    };
-    if install_admitted_crypto(&state, &peer_id, &admission, &crypto)
-        .await
-        .is_err()
-    {
-        replacement.close(VarInt::from_u32(0), b"application E2EE install failed");
-        return false;
-    }
-    let session_id = admission.session_id;
-    if admission.decision == crate::session::SessionCryptoDecision::ReplaceWithNew {
-        if !state
-            .sessions
-            .attach_connection(
-                &peer_id,
-                Some(session_id),
-                replacement.clone(),
-                RouteType::QuicDirect,
-            )
-            .await
-        {
-            replacement.close(VarInt::from_u32(0), b"new Session attach failed");
-            return false;
-        }
-        emit_peer_state(
-            &state.event_tx,
-            &peer_id,
-            PeerConnectionState::Connected,
-            RouteType::QuicDirect,
-            None,
-        );
-        spawn_path_metrics_monitor(
-            Arc::clone(&state),
-            peer_id.clone(),
-            session_id,
-            replacement.clone(),
-        );
-        crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-        spawn_session_receivers(Arc::clone(&state), peer_id, replacement, session_id);
-        return true;
-    }
-    let Some(previous) = state
-        .sessions
-        .replace_connection_if_current(
-            &peer_id,
-            session_id,
-            &current_connection,
-            replacement.clone(),
-            RouteType::QuicDirect,
-        )
-        .await
-    else {
-        return false;
-    };
-    previous.close(VarInt::from_u32(0), b"route migrated");
-    if let Some(manager) = state.path_managers.read().await.get(&peer_id).cloned() {
-        let _ = manager.activate_path(candidate.endpoint).await;
-    }
-    emit_route_changed(
-        &state.event_tx,
-        &peer_id,
-        RouteType::QuicDirect,
-        candidate.endpoint,
-        candidate.rtt_ms,
-        candidate.loss_rate,
-    );
-    spawn_path_metrics_monitor(
-        Arc::clone(&state),
-        peer_id.clone(),
-        session_id,
-        replacement.clone(),
-    );
-    crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-    crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
-    spawn_session_receivers(Arc::clone(&state), peer_id, replacement, session_id);
-    state.finish_session_replacement(admission);
-    true
-}
-
-/// 顺序 Direct First 模型下，Relay 数据面只在 Direct 窗口耗尽或快速失败后启动。
-/// Discovery 解析（lookup）已前移到 connect_peer 开头完成，这里只是返回「Relay
-/// 路由已选定」的标记；真正的 Relay Session 建立（establish_relay_crypto）在调用方
-/// 的 ReadyRoute::Relay 分支完成。
-async fn connect_relay_data() -> Result<(), ProtocolError> {
-    Ok(())
-}
-
-/// 通过 Relay 控制面解析对端 Discovery（明确版 §13）并把结果作为连接前的**权威对账**
-/// 应用到本地缓存：lookup 返回对端是否在线及其 generation/capabilities/candidates。
-///
-/// - 在线：按返回的 generation 替换/刷新 path_manager（generation 变化或首见 → 删旧
-///   重建、只装该 generation 候选；相同 → 合并），并同步 peer_presence.generation。
-///   候选是不透明 base64 JSON（CandidateAdvertisement 序列化），解码失败逐条跳过，
-///   候选仅增强、不因失败中断连接。
-/// - 离线：删除 discovery-derived path_manager（保留配置 endpoint），避免拿旧代候选
-///   白试 Direct 窗口。
-///
-/// 返回 Ok(true)=在线（候选已对账）、Ok(false)=对端不在 Relay 上（无 Relay 数据面
-/// 回退，但仍可尝试本地 Direct）、Err=lookup 本身故障（fail-open：调用方保留 Relay
-/// 回退并用本地候选继续，控制面抖动不阻断连接）。
-async fn resolve_peer_discovery(
-    state: &RuntimeState,
-    relay: &RelayClient,
-    peer_id: &str,
-) -> Result<bool, ProtocolError> {
-    let (lookup_tx, lookup_rx) = oneshot::channel();
-    state
-        .relay_lookups
-        .write()
-        .await
-        .insert(peer_id.to_string(), lookup_tx);
-    if relay.lookup_peer(peer_id).await.is_err() {
-        state.relay_lookups.write().await.remove(peer_id);
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::RelayError,
-            "Relay peer lookup failed",
-            "connect",
-            peer_id,
-        ));
-    }
-    // lookup 在 Direct 之前阻塞解析，等待上限要短：正常部署下是毫秒级往返，超上限
-    // 即 fail-open（不判离线），避免控制面抖动拖延 Direct 路径。
-    let result = match timeout(DISCOVERY_LOOKUP_TIMEOUT, lookup_rx).await {
-        Ok(Ok(result)) => Some(result),
-        // 超时 / 通道关闭：在线状态未知，fail-open。
-        _ => None,
-    };
-    state.relay_lookups.write().await.remove(peer_id);
-    let Some(result) = result else {
-        tracing::debug!(peer_id = %peer_id, "Relay peer lookup timed out; continuing without discovery");
-        return Ok(true);
-    };
-    reconcile_peer_discovery(state, peer_id, &result).await;
-    Ok(result.online)
-}
-
-/// 把一次权威 lookup 结果应用到本地缓存（cache reconciliation）。lookup 是连接前的
-/// 权威对账：peer_online/updated/offline 是低延迟增量通知，可能因 Redis Pub/Sub 瞬时
-/// 丢失，而 lookup_response 反映服务器当前权威状态。
-///
-/// - 离线：删除 discovery-derived path_manager / candidate_attempts，避免 connect_peer
-///   拿旧代候选白试 Direct 窗口；同步移除 peer_presence 条目，若此前有缓存则 emit
-///   Offline（避免设备列表与连接状态分裂）。保留 PeerConfig.endpoint——手工配置 /
-///   LAN Direct 仍允许尝试。
-/// - 在线：generation 变化或首见 → 旧代 path_manager 里的 direct 候选全部失效，删掉
-///   重建，只安装该 generation 候选；generation 相同 → 在既有 manager 上合并刷新。
-///   同步 peer_presence.generation。
-async fn reconcile_peer_discovery(state: &RuntimeState, peer_id: &str, result: &LookupResult) {
-    if !result.online {
-        state.path_managers.write().await.remove(peer_id);
-        state.candidate_attempts.write().await.remove(peer_id);
-        // lookup 是连接前权威状态：明确 offline 时移除 peer_presence 缓存条目；若此前
-        // 有缓存（UI 认为在线），emit Offline 避免 UI 与连接状态分裂。
-        let was_cached = state.peer_presence.write().await.remove(peer_id).is_some();
-        if was_cached {
-            emit_peer_presence_changed(&state.event_tx, peer_id, 0, PeerPresenceState::Offline);
-        }
-        return;
-    }
-    let cache_generation = state
-        .peer_presence
-        .read()
-        .await
-        .get(peer_id)
-        .map(|entry| entry.generation);
-    if cache_generation != Some(result.generation) {
-        state.path_managers.write().await.remove(peer_id);
-        state.peer_presence.write().await.insert(
-            peer_id.to_string(),
-            PeerPresence {
-                generation: result.generation,
-            },
-        );
-    }
-    if !result.candidates.is_empty() {
-        let candidates = result
-            .candidates
-            .iter()
-            .filter_map(|encoded| {
-                serde_json::from_str::<CandidateAdvertisement>(encoded)
-                    .ok()
-                    .and_then(|advertisement| Candidate::from_advertisement(advertisement).ok())
-            })
-            .filter(|candidate| result.generation == 0 || candidate.generation == result.generation)
-            .collect::<Vec<_>>();
-        if !candidates.is_empty() {
-            // 对端尚无 path_manager（generation 变化时已被删除，或纯凭 discovery 发现）
-            // 则新建，保证该 generation 候选进入 Direct 候选集。
-            let manager = state
-                .path_managers
-                .write()
-                .await
-                .entry(peer_id.to_string())
-                .or_insert_with(|| Arc::new(PathManager::new()))
-                .clone();
-            manager.add_candidates(candidates).await;
-        }
-    }
-}
-
-async fn establish_relay_crypto(
-    state: &RuntimeState,
-    relay: Arc<RelayClient>,
+    data: Arc<RelayDataClient>,
     peer_id: &str,
     session_id: SessionId,
     identity: Arc<DeviceIdentity>,
@@ -2247,30 +1056,22 @@ async fn establish_relay_crypto(
     }
     waiters.insert(key.clone(), response_tx);
     drop(waiters);
-    let hello = crate::crypto_handshake::encode_relay_frame(
-        crate::crypto_handshake::RELAY_CRYPTO_HELLO,
-        &hello,
-    )
-    .map_err(|_| {
-        protocol_error_with_peer(
-            NetworkErrorCode::AuthenticationFailed,
-            "Relay application E2EE hello is invalid",
-            "connect",
-            peer_id,
-        )
-    })?;
     let result = async {
-        relay
-            .send_crypto_handshake(&session_token, peer_id, &hello)
-            .await
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay application E2EE hello could not be sent",
-                    "connect",
-                    peer_id,
-                )
-            })?;
+        crate::relay::send_relay_crypto(
+            &data,
+            &session_token,
+            crate::crypto_handshake::RELAY_CRYPTO_HELLO,
+            &hello,
+        )
+        .await
+        .map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::RelayError,
+                "Relay application E2EE hello could not be sent",
+                "connect",
+                peer_id,
+            )
+        })?;
         let response = receive_relay_crypto_step(
             &mut response_rx,
             crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
@@ -2287,29 +1088,21 @@ async fn establish_relay_crypto(
                     peer_id,
                 )
             })?;
-        let final_frame = crate::crypto_handshake::encode_relay_frame(
+        crate::relay::send_relay_crypto(
+            &data,
+            &session_token,
             crate::crypto_handshake::RELAY_CRYPTO_FINAL,
             &final_message,
         )
+        .await
         .map_err(|_| {
             protocol_error_with_peer(
-                NetworkErrorCode::AuthenticationFailed,
-                "Relay application E2EE final message is invalid",
+                NetworkErrorCode::RelayError,
+                "Relay application E2EE final message could not be sent",
                 "connect",
                 peer_id,
             )
         })?;
-        relay
-            .send_crypto_handshake(&session_token, peer_id, &final_frame)
-            .await
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay application E2EE final message could not be sent",
-                    "connect",
-                    peer_id,
-                )
-            })?;
         let encrypted_seed = receive_relay_crypto_step(
             &mut response_rx,
             crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED,
@@ -2346,29 +1139,21 @@ async fn establish_relay_crypto(
                     peer_id,
                 )
             })?;
-        let confirm_frame = crate::crypto_handshake::encode_relay_frame(
+        crate::relay::send_relay_crypto(
+            &data,
+            &session_token,
             crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM,
             &encrypted_confirm,
         )
+        .await
         .map_err(|_| {
             protocol_error_with_peer(
-                NetworkErrorCode::AuthenticationFailed,
-                "Relay application E2EE root confirmation is invalid",
+                NetworkErrorCode::RelayError,
+                "Relay application E2EE root confirmation could not be sent",
                 "connect",
                 peer_id,
             )
         })?;
-        relay
-            .send_crypto_handshake(&session_token, peer_id, &confirm_frame)
-            .await
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay application E2EE root confirmation could not be sent",
-                    "connect",
-                    peer_id,
-                )
-            })?;
         let encrypted_accept = receive_relay_crypto_step(
             &mut response_rx,
             crate::crypto_handshake::RELAY_CRYPTO_ACCEPT,
@@ -2412,49 +1197,8 @@ async fn receive_relay_crypto_step(
     }
 }
 
-enum ReadyRoute<T> {
-    Direct(T),
-    Relay,
-}
-
-/// 顺序 Direct First：先只等待 Direct 在 connect_window 内 ready。
-///
-/// 窗口内 Direct 成功 → 用 Direct；窗口内快速失败或超时后再顺序尝试 Relay
-/// （零延迟）。Direct 候选内部仍可并行竞速，但不再与 Relay 并行竞速，因此
-/// Direct 胜出时不会留下未清理的 Relay lookup waiter。
-async fn connect_direct_first<Direct, Relay, ConnectionT>(
-    direct: Direct,
-    relay: Option<Relay>,
-    connect_window: Duration,
-    peer_id: &str,
-) -> Result<ReadyRoute<ConnectionT>, ProtocolError>
-where
-    Direct: Future<Output = Result<ConnectionT, ProtocolError>>,
-    Relay: Future<Output = Result<(), ProtocolError>>,
-{
-    match timeout(connect_window, direct).await {
-        Ok(Ok(connection)) => Ok(ReadyRoute::Direct(connection)),
-        Ok(Err(direct_error)) => match relay {
-            Some(relay) => relay
-                .await
-                .map(|_| ReadyRoute::Relay)
-                .map_err(|_| direct_error),
-            None => Err(direct_error),
-        },
-        Err(_) => match relay {
-            Some(relay) => relay.await.map(|_| ReadyRoute::Relay),
-            None => Err(protocol_error_with_peer(
-                NetworkErrorCode::Timeout,
-                "Direct connection window expired before a route was ready",
-                "connect",
-                peer_id,
-            )),
-        },
-    }
-}
-
 /// 为路径选择和诊断对端点进行分类。
-fn candidate_kind_for(endpoint: SocketAddr) -> CandidateKind {
+pub(crate) fn candidate_kind_for(endpoint: SocketAddr) -> CandidateKind {
     match endpoint.ip() {
         std::net::IpAddr::V4(address)
             if address.is_private() || address.is_loopback() || address.is_link_local() =>
@@ -2571,8 +1315,6 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                         Some(session_id),
                         connection.clone(),
                         RouteType::QuicDirect,
-                        admission.decision
-                            == crate::session::SessionCryptoDecision::ContinueExisting,
                     )
                     .await
                     .map_err(|_| std::io::Error::other("Session was closed"))?;
@@ -2589,20 +1331,20 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     RouteType::QuicDirect,
                     None,
                 );
-                spawn_path_metrics_monitor(
-                    Arc::clone(&state),
-                    peer_id.clone(),
-                    session_id,
-                    connection.clone(),
+                // transport-network v2：路径指标只发一次快照（§36 无后台路径迁移）。
+                emit_route_changed(
+                    &state.event_tx,
+                    &peer_id,
+                    RouteType::QuicDirect,
+                    connection.remote_address(),
+                    connection.rtt().as_millis().min(u32::MAX as u128) as u32,
+                    0.0,
                 );
-                crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id)
+                crate::channel::recover_session(Arc::clone(&state), peer_id.clone()).await;
+                // §19：业务状态（Transfer）不属于 Session；每条新连接都尝试恢复暂停传输。
+                crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
                     .await;
-                if admission.decision != crate::session::SessionCryptoDecision::ReplaceWithNew {
-                    crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone())
-                        .await;
-                }
                 spawn_session_receivers(Arc::clone(&state), peer_id, connection, session_id);
-                state.finish_session_replacement(admission);
                 Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
             }
             .await;
@@ -2619,15 +1361,62 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
 /// Accepts TCP fallback sockets on the same numeric port as the QUIC UDP
 /// endpoint. A socket is not admitted into a Session until the generic
 /// Ed25519/Session-binding handshake succeeds.
+///
+/// §40：瞬态 accept 错误（EMFILE / ENOBUFS / aborted / reset 等）只记录并退避后继续，
+/// 绝不终止 inbound TCP/WS 回退；只有致命错误（listener 已关闭）或任务被取消才退出。
 pub(crate) async fn accept_tcp_connections(listener: TcpListener, state: Arc<RuntimeState>) {
+    accept_tcp_loop(listener, state, Box::new(ListenerAccept)).await;
+}
+
+/// §40 TCP accept 步骤的 future 类型（提取别名，避免 clippy type_complexity）。
+type AcceptFuture<'a> =
+    Pin<Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>>;
+
+/// TCP fallback accept 步骤抽象（§40 可注入，便于测试注入瞬态错误）。
+trait TcpAcceptStep: Send {
+    fn accept<'a>(&'a mut self, listener: &'a TcpListener) -> AcceptFuture<'a>;
+}
+
+/// 生产 accept 步骤：直接委托给 tokio 的 `TcpListener::accept`。
+struct ListenerAccept;
+
+impl TcpAcceptStep for ListenerAccept {
+    fn accept<'a>(
+        &'a mut self,
+        listener: &'a TcpListener,
+    ) -> Pin<
+        Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>,
+    > {
+        Box::pin(listener.accept())
+    }
+}
+
+/// TCP fallback accept 核心循环。`accept` 步骤可注入，便于测试注入瞬态错误。
+async fn accept_tcp_loop(
+    listener: TcpListener,
+    state: Arc<RuntimeState>,
+    mut accept: Box<dyn TcpAcceptStep>,
+) {
+    let mut backoff = TCP_ACCEPT_RETRY_BACKOFF;
     loop {
-        let (stream, peer_address) = match listener.accept().await {
+        let (stream, peer_address) = match accept.accept(&listener).await {
             Ok(connection) => connection,
             Err(error) => {
-                tracing::debug!(%error, "TCP fallback accept loop stopped");
-                return;
+                if accept_error_is_fatal(&error) {
+                    tracing::debug!(%error, "TCP fallback accept loop stopped");
+                    return;
+                }
+                tracing::debug!(
+                    %error,
+                    "transient TCP fallback accept error; retrying after backoff"
+                );
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(TCP_ACCEPT_RETRY_BACKOFF_MAX);
+                continue;
             }
         };
+        // 一次成功 accept 说明瞬态资源压力已缓解：复位退避。
+        backoff = TCP_ACCEPT_RETRY_BACKOFF;
         let state = Arc::clone(&state);
         let supervisor = Arc::clone(&state.task_supervisor);
         let _ = supervisor.spawn_runtime("incoming-tcp-handshake", async move {
@@ -2662,6 +1451,15 @@ pub(crate) async fn accept_tcp_connections(listener: TcpListener, state: Arc<Run
             }
         });
     }
+}
+
+/// accept 错误是否致命：仅 listener 已关闭（fd 失效）视为致命；其余（EMFILE / ENOBUFS /
+/// aborted / reset / interrupted 等）都是瞬态错误，应退避重试。
+fn accept_error_is_fatal(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::InvalidInput | std::io::ErrorKind::Unsupported
+    )
 }
 
 async fn accept_authenticated_generic(
@@ -2737,13 +1535,7 @@ async fn accept_authenticated_generic(
             .expect("supervised GenericRoute scope has a profile");
         let previous_route = match state
             .sessions
-            .attach_generic_route_for_session(
-                &peer_id,
-                Some(session_id),
-                &mut scope,
-                admission.decision
-                    == crate::session::SessionCryptoDecision::ContinueExisting,
-            )
+            .attach_generic_route_for_session(&peer_id, Some(session_id), &mut scope)
             .await
         {
             Ok(previous_route) => previous_route,
@@ -2762,8 +1554,8 @@ async fn accept_authenticated_generic(
             Some(profile),
             None,
         );
-        crate::channel::recover_session(Arc::clone(&state), peer_id.clone(), session_id).await;
-        state.finish_session_replacement(admission);
+        crate::channel::recover_session(Arc::clone(&state), peer_id.clone()).await;
+        crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.clone()).await;
         tracing::debug!(%peer_address, session_id = %session_id.wire_key(), "authenticated TCP fallback route attached");
         Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
     }
@@ -2777,7 +1569,11 @@ async fn accept_authenticated_generic(
     result
 }
 
-/// 接受一个已认证对端的双向流。
+/// 接受一个已认证对端的双向流。共享的 `accept_bi` 循环按首 4 字节路由：
+/// 文件 offer (`SMFT`) 走 `handle_incoming_file_after_offer`，ReliableStream
+/// 前导 (`SMSS`) 走 `crate::stream`（§17）。首 4 字节被消耗后，
+/// 文件 offer 的其余字段由 `read_file_offer_after_magic` 续读，因此文件数据
+/// 路径与原 `read_file_offer` 完全一致。
 pub(crate) async fn receive_file_streams(
     peer_id: String,
     connection: Connection,
@@ -2786,15 +1582,61 @@ pub(crate) async fn receive_file_streams(
 ) {
     loop {
         match connection.accept_bi().await {
-            Ok((send, receive)) => {
+            Ok((send, mut receive)) => {
                 let state = Arc::clone(&state);
                 let peer_id = peer_id.clone();
                 let supervisor = Arc::clone(&state.task_supervisor);
                 let _ = supervisor.spawn_session(
                     session_id.wire_key(),
-                    "file-stream-receiver",
+                    "bidi-stream-receiver",
                     async move {
-                        crate::transfer::handle_incoming_file(peer_id, send, receive, state).await;
+                        let mut magic = [0u8; 4];
+                        if tokio::time::timeout(
+                            GENERIC_ROUTE_CONNECT_TIMEOUT,
+                            receive.read_exact(&mut magic),
+                        )
+                        .await
+                        .ok()
+                        .and_then(Result::ok)
+                        .is_none()
+                        {
+                            return;
+                        }
+                        if magic == crate::stream::FILE_OFFER_MAGIC {
+                            match crate::transfer::read_file_offer_after_magic(&mut receive).await {
+                                Ok(manifest) => {
+                                    crate::transfer::handle_incoming_file_after_offer(
+                                        peer_id, send, receive, manifest, state,
+                                    )
+                                    .await;
+                                }
+                                Err(error) => {
+                                    tracing::debug!(
+                                        peer_id = %peer_id,
+                                        error = %error,
+                                        "rejected QUIC file offer"
+                                    );
+                                }
+                            }
+                        } else if magic == crate::stream::STREAM_QUIC_PREAMBLE_MAGIC {
+                            match crate::stream::read_quic_stream_preamble_after_magic(&mut receive)
+                                .await
+                            {
+                                Ok((stream_id, service)) => {
+                                    crate::stream::handle_incoming_quic_stream(
+                                        state, peer_id, stream_id, service, send, receive,
+                                    )
+                                    .await;
+                                }
+                                Err(error) => {
+                                    tracing::debug!(
+                                        peer_id = %peer_id,
+                                        error = %error,
+                                        "rejected QUIC reliable-stream preamble"
+                                    );
+                                }
+                            }
+                        }
                     },
                 );
             }
@@ -2932,14 +1774,34 @@ fn generic_route_receiver_task(
                         return;
                     };
                     let result = match frame.kind {
-                        GenericFrameKind::DataMessage => {
-                            crate::channel::handle_data_message(&state, &peer_id, &frame.payload).await
-                        }
-                        GenericFrameKind::DeliveryAck => {
-                            crate::channel::handle_delivery_ack(&state, &peer_id, &frame.payload).await
-                        }
+                        GenericFrameKind::DataMessage => crate::channel::handle_data_message(
+                            &state,
+                            &peer_id,
+                            &frame.payload,
+                        )
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string())),
+                        GenericFrameKind::DeliveryAck => crate::channel::handle_delivery_ack(
+                            &state,
+                            &peer_id,
+                            &frame.payload,
+                        )
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string())),
+                        GenericFrameKind::StreamBytes
+                        | GenericFrameKind::StreamOpen
+                        | GenericFrameKind::StreamClose => crate::stream::handle_inbound_stream_frame(
+                            &state,
+                            &peer_id,
+                            frame.kind,
+                            &frame.payload,
+                        )
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string())),
                     };
                     if let Err(error) = result {
+                        // StreamBytes is a data path: a malformed stream frame
+                        // fails that stream only, never the route (§17).
                         tracing::debug!(peer_id = %peer_id, error = %error, "rejected generic channel frame");
                     }
                 }
@@ -2953,14 +1815,14 @@ async fn notify_generic_route_loss(
     state: &Arc<RuntimeState>,
     peer_id: &str,
     route_id: u64,
-    session_id: SessionId,
+    _session_id: SessionId,
 ) {
-    if state
+    let destroyed = state
         .sessions
-        .mark_generic_disconnected_if_current(peer_id, route_id)
-        .await
-        .is_some()
-    {
+        .destroy_generic_session_if_current(peer_id, route_id)
+        .await;
+    if let Some((session_id, route)) = destroyed {
+        spawn_session_teardown(Arc::clone(state), peer_id.to_string(), session_id, route);
         emit_peer_state(
             &state.event_tx,
             peer_id,
@@ -2968,8 +1830,36 @@ async fn notify_generic_route_loss(
             RouteType::Unspecified,
             None,
         );
-        schedule_reconnect(Arc::clone(state), peer_id.to_string(), session_id);
+        // transport-network v2（§18/§35）：transport 丢失即销毁 ConnectionSession，
+        // 不自动重连（无 RECONNECTING）。业务下次 `connect()` 会重新 Resolve 并按需
+        // 新建连接（新 SessionId + 新 Noise root）。
     }
+}
+
+/// §18/§35：reservation 数据面断开即销毁 Relay ConnectionSession。仅当当前
+/// Session 的 route 仍由 `data` 承载时才拆除，并发布类型化断开状态。
+pub(crate) async fn teardown_relay_route(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    data: &Arc<RelayDataClient>,
+) {
+    if !state.sessions.is_current_relay_data(peer_id, data).await {
+        return;
+    }
+    let session_id = state.sessions.current_session_id(peer_id).await;
+    if let Some(route) = state.sessions.close(peer_id).await {
+        route.close().await;
+    }
+    if let Some(session_id) = session_id {
+        state.cancel_session_tasks(peer_id, session_id).await;
+    }
+    emit_peer_state(
+        &state.event_tx,
+        peer_id,
+        PeerConnectionState::Disconnected,
+        RouteType::Unspecified,
+        None,
+    );
 }
 
 async fn handle_connection_disconnect(
@@ -2977,11 +1867,12 @@ async fn handle_connection_disconnect(
     peer_id: &str,
     connection: &Connection,
 ) {
-    let disconnected_session = state
+    let destroyed = state
         .sessions
-        .mark_disconnected_if_current(peer_id, connection)
+        .destroy_quic_session_if_current(peer_id, connection)
         .await;
-    if let Some(session_id) = disconnected_session {
+    if let Some((session_id, route)) = destroyed {
+        spawn_session_teardown(Arc::clone(state), peer_id.to_string(), session_id, route);
         emit_peer_state(
             &state.event_tx,
             peer_id,
@@ -2989,105 +1880,31 @@ async fn handle_connection_disconnect(
             RouteType::Unspecified,
             None,
         );
-        schedule_reconnect(Arc::clone(state), peer_id.to_string(), session_id);
+        // transport-network v2（§18/§35）：transport 丢失即销毁 ConnectionSession，
+        // 不自动重连。业务下次 `connect()` 会重新 Resolve 并按需新建连接。
     }
 }
 
-/// 为一个 Session 建立唯一的自动重连任务。
-fn schedule_reconnect(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
-    #[cfg(test)]
-    {
-        if state
-            .reconnect_disabled_peers
-            .lock()
-            .expect("reconnect disabled peers lock")
-            .contains(&peer_id)
-        {
-            return;
-        }
-    }
+/// 在 Session 组外调度一次完整的 session 销毁：关闭 detached route、retire
+/// 资源并取消 supervised task group。调用方通常是 Session 组内的 receiver 任务，
+/// 不能在此处自等 join，因此拆到 runtime task 执行。
+fn spawn_session_teardown(
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    session_id: SessionId,
+    route: ActiveRoute,
+) {
     let supervisor = Arc::clone(&state.task_supervisor);
-    let _ = supervisor.spawn_session(session_id.wire_key(), "session-reconnect", async move {
-        let should_start = {
-            let mut tasks = state.reconnect_tasks.write().await;
-            match tasks.get(&peer_id).copied() {
-                Some(existing) if existing == session_id => false,
-                _ => {
-                    tasks.insert(peer_id.clone(), session_id);
-                    true
-                }
-            }
-        };
-        if !should_start {
-            return;
-        }
-        reconnect_loop(Arc::clone(&state), peer_id.clone(), session_id).await;
-        let mut tasks = state.reconnect_tasks.write().await;
-        if tasks.get(&peer_id).copied() == Some(session_id) {
-            tasks.remove(&peer_id);
-        }
+    let _ = supervisor.spawn_runtime("session-teardown", async move {
+        route.close().await;
+        state.cancel_session_tasks(&peer_id, session_id).await;
     });
-}
-
-/// 连接丢失后重新走当前 Candidate/Direct/Relay 选择；任务以 Session ID
-/// 为边界，显式关闭或新建 Session 后旧任务会自然退出。
-async fn reconnect_loop(state: Arc<RuntimeState>, peer_id: String, session_id: SessionId) {
-    let mut failures = 0;
-    let mut backoff = RECONNECT_INITIAL_BACKOFF;
-    let mut last_error = None;
-    while failures < RECONNECT_MAX_ATTEMPTS {
-        if !state.sessions.should_reconnect(&peer_id, session_id).await {
-            return;
-        }
-        if failures > 0 {
-            tokio::time::sleep(backoff).await;
-            backoff = std::cmp::min(backoff.saturating_mul(2), RECONNECT_MAX_BACKOFF);
-            if !state.sessions.should_reconnect(&peer_id, session_id).await {
-                return;
-            }
-        }
-        emit_peer_state(
-            &state.event_tx,
-            &peer_id,
-            PeerConnectionState::Connecting,
-            RouteType::Unspecified,
-            None,
-        );
-        match connect_peer(Arc::clone(&state), peer_id.clone()).await {
-            Ok(()) if state.sessions.is_connected(&peer_id).await => return,
-            Ok(()) => {
-                // Another caller may already own the in-flight attempt. Avoid
-                // spinning while that attempt is allowed to finish.
-                tokio::time::sleep(RECONNECT_INITIAL_BACKOFF).await;
-            }
-            Err(error) => {
-                failures += 1;
-                last_error = Some(error);
-            }
-        }
-    }
-    if !state.sessions.should_reconnect(&peer_id, session_id).await {
-        return;
-    }
-    emit_peer_state(
-        &state.event_tx,
-        &peer_id,
-        PeerConnectionState::Failed,
-        RouteType::Unspecified,
-        Some(last_error.unwrap_or_else(|| {
-            protocol_error_with_peer(
-                NetworkErrorCode::Timeout,
-                "automatic reconnect attempts exhausted",
-                "reconnect",
-                &peer_id,
-            )
-        })),
-    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::ConnectDecision;
     use network_transport::{TcpTransport, Transport};
     use std::collections::HashMap;
     use std::sync::atomic::AtomicU16;
@@ -3114,197 +1931,6 @@ mod tests {
     async fn new_test_state() -> Arc<RuntimeState> {
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))))
-    }
-
-    /// lookup 返回新 generation 时，旧代 path_manager 候选必须全部失效重建，只保留新
-    /// generation 候选（review P2：add_candidates 是合并语义，事件丢失会让新旧两代候选
-    /// 共存）。
-    #[tokio::test]
-    async fn reconcile_peer_discovery_replaces_stale_generation_cache() {
-        let state = new_test_state().await;
-        state
-            .peer_presence
-            .write()
-            .await
-            .insert("peer-a".into(), PeerPresence { generation: 10 });
-        let old_manager = Arc::new(PathManager::new());
-        old_manager
-            .add_candidates(vec![Candidate::new(
-                "192.168.1.20:50000".parse().unwrap(),
-                CandidateKind::Lan,
-                "eth0".into(),
-            )
-            .with_generation(10)])
-            .await;
-        state
-            .path_managers
-            .write()
-            .await
-            .insert("peer-a".into(), old_manager);
-
-        let new_candidate = Candidate::new(
-            "5.6.7.8:60000".parse().unwrap(),
-            CandidateKind::ServerReflexive,
-            "eth0".into(),
-        )
-        .with_generation(11);
-        let lookup = LookupResult {
-            online: true,
-            generation: 11,
-            candidates: vec![serde_json::to_string(&new_candidate.advertisement()).unwrap()],
-            capabilities: vec![],
-        };
-
-        reconcile_peer_discovery(&state, "peer-a", &lookup).await;
-
-        let manager = state
-            .path_managers
-            .read()
-            .await
-            .get("peer-a")
-            .cloned()
-            .expect("path_manager must be recreated");
-        let ranked = manager.ranked_candidates().await;
-        assert_eq!(
-            ranked.len(),
-            1,
-            "stale generation candidates must be replaced"
-        );
-        assert_eq!(ranked[0].generation, 11);
-        assert_eq!(
-            ranked[0].endpoint,
-            "5.6.7.8:60000".parse::<SocketAddr>().unwrap()
-        );
-        assert_eq!(
-            state
-                .peer_presence
-                .read()
-                .await
-                .get("peer-a")
-                .map(|entry| entry.generation),
-            Some(11)
-        );
-    }
-
-    /// lookup 明确 offline 时删除 discovery-derived path_manager（保留配置 endpoint
-    /// 走 LAN Direct 的语义由 connect_peer 的 direct_candidates 组装负责），并同步
-    /// peer_presence——此前有缓存时 emit Offline，避免设备列表与连接状态分裂。
-    #[tokio::test]
-    async fn reconcile_peer_discovery_offline_clears_cached_direct_and_syncs_presence() {
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        state
-            .peer_presence
-            .write()
-            .await
-            .insert("peer-a".into(), PeerPresence { generation: 10 });
-        state
-            .path_managers
-            .write()
-            .await
-            .insert("peer-a".into(), Arc::new(PathManager::new()));
-        state.candidate_attempts.write().await.insert(
-            "peer-a".into(),
-            CandidateAttempt {
-                attempt_id: "attempt-old".into(),
-                generation: 10,
-                connect_window: Duration::from_secs(1),
-                expires_at: Instant::now() + Duration::from_secs(1),
-            },
-        );
-
-        let lookup = LookupResult {
-            online: false,
-            generation: 0,
-            candidates: vec![],
-            capabilities: vec![],
-        };
-        reconcile_peer_discovery(&state, "peer-a", &lookup).await;
-
-        assert!(
-            state.path_managers.read().await.get("peer-a").is_none(),
-            "offline lookup must clear the cached path_manager"
-        );
-        assert!(
-            state
-                .candidate_attempts
-                .read()
-                .await
-                .get("peer-a")
-                .is_none(),
-            "offline lookup must clear the cached candidate attempt"
-        );
-        assert!(
-            state.peer_presence.read().await.get("peer-a").is_none(),
-            "offline lookup must remove the peer_presence entry"
-        );
-        // 此前有缓存 → 应 emit Offline。
-        let mut offline_emitted = false;
-        while let Ok(event) = event_rx.try_recv() {
-            if let Some(network_protocol::network_event::Payload::PeerPresenceChanged(entry)) =
-                event.payload
-            {
-                if entry.peer_id == "peer-a" && entry.state == PeerPresenceState::Offline as i32 {
-                    offline_emitted = true;
-                }
-            }
-        }
-        assert!(
-            offline_emitted,
-            "offline lookup must emit PeerPresenceState::Offline"
-        );
-    }
-
-    /// generation 相同时合并刷新（不重建），避免丢掉已采样的质量数据。
-    #[tokio::test]
-    async fn reconcile_peer_discovery_same_generation_merges() {
-        let state = new_test_state().await;
-        state
-            .peer_presence
-            .write()
-            .await
-            .insert("peer-a".into(), PeerPresence { generation: 10 });
-        let manager = Arc::new(PathManager::new());
-        manager
-            .add_candidates(vec![Candidate::new(
-                "192.168.1.20:50000".parse().unwrap(),
-                CandidateKind::Lan,
-                "eth0".into(),
-            )
-            .with_generation(10)])
-            .await;
-        state
-            .path_managers
-            .write()
-            .await
-            .insert("peer-a".into(), manager);
-
-        let extra = Candidate::new(
-            "192.168.1.21:50001".parse().unwrap(),
-            CandidateKind::Lan,
-            "eth0".into(),
-        )
-        .with_generation(10);
-        let lookup = LookupResult {
-            online: true,
-            generation: 10,
-            candidates: vec![serde_json::to_string(&extra.advertisement()).unwrap()],
-            capabilities: vec![],
-        };
-        reconcile_peer_discovery(&state, "peer-a", &lookup).await;
-
-        let manager = state
-            .path_managers
-            .read()
-            .await
-            .get("peer-a")
-            .cloned()
-            .expect("path_manager must be retained");
-        let ranked = manager.ranked_candidates().await;
-        assert_eq!(ranked.len(), 2, "same generation should merge candidates");
     }
 
     async fn started_generic_scope(
@@ -3360,170 +1986,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_ready_within_window_wins_and_relay_is_never_polled() {
-        let route = connect_direct_first(
-            async { Ok::<(), ProtocolError>(()) },
-            Some(async {
-                panic!("Relay must not be polled when Direct wins the window");
-            }),
-            Duration::from_millis(50),
-            "direct-first-peer",
-        )
-        .await
-        .expect("Direct should win within the window");
-
-        assert!(matches!(route, ReadyRoute::Direct(())));
-    }
-
-    #[tokio::test]
-    async fn direct_timeout_then_relay_wins() {
-        let route = connect_direct_first(
-            async {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok::<(), ProtocolError>(())
-            },
-            Some(async {
-                tokio::time::sleep(Duration::from_millis(1)).await;
-                Ok::<(), ProtocolError>(())
-            }),
-            Duration::from_millis(10),
-            "direct-timeout-peer",
-        )
-        .await
-        .expect("Relay should win after the Direct window");
-
-        assert!(matches!(route, ReadyRoute::Relay));
-    }
-
-    #[tokio::test]
-    async fn direct_fast_failure_falls_back_to_relay() {
-        let route = connect_direct_first(
-            async {
-                Err::<(), ProtocolError>(protocol_error(
-                    NetworkErrorCode::QuicError,
-                    "direct failed",
-                ))
-            },
-            Some(async { Ok::<(), ProtocolError>(()) }),
-            Duration::from_millis(50),
-            "direct-fail-peer",
-        )
-        .await
-        .expect("Relay should remain eligible after a fast Direct failure");
-
-        assert!(matches!(route, ReadyRoute::Relay));
-    }
-
-    #[tokio::test]
-    async fn failed_authenticated_direct_probe_keeps_relay_eligible() {
-        let route = connect_direct_first(
-            async {
-                Err::<(), ProtocolError>(protocol_error(
-                    NetworkErrorCode::AuthenticationFailed,
-                    "candidate identity rejected",
-                ))
-            },
-            Some(async { Ok::<(), ProtocolError>(()) }),
-            Duration::from_millis(50),
-            "auth-fail-peer",
-        )
-        .await
-        .expect("Relay must remain available after direct auth failure");
-
-        assert!(matches!(route, ReadyRoute::Relay));
-    }
-
-    #[tokio::test]
-    async fn relay_failure_after_direct_timeout_is_reported() {
-        let route = connect_direct_first(
-            async {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok::<(), ProtocolError>(())
-            },
-            Some(async {
-                Err::<(), ProtocolError>(protocol_error(
-                    NetworkErrorCode::PeerOffline,
-                    "Relay peer is offline",
-                ))
-            }),
-            Duration::from_millis(10),
-            "relay-fail-peer",
-        )
-        .await;
-
-        assert!(matches!(
-            route,
-            Err(error) if error.code == NetworkErrorCode::PeerOffline as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn relay_failure_after_direct_fast_failure_prefers_direct_error() {
-        let route = connect_direct_first(
-            async {
-                Err::<(), ProtocolError>(protocol_error(
-                    NetworkErrorCode::AuthenticationFailed,
-                    "candidate identity rejected",
-                ))
-            },
-            Some(async {
-                Err::<(), ProtocolError>(protocol_error(
-                    NetworkErrorCode::PeerOffline,
-                    "Relay peer is offline",
-                ))
-            }),
-            Duration::from_millis(50),
-            "both-fail-peer",
-        )
-        .await;
-
-        assert!(matches!(
-            route,
-            Err(error) if error.code == NetworkErrorCode::AuthenticationFailed as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn direct_timeout_without_relay_returns_timeout() {
-        let route = connect_direct_first(
-            async {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok::<(), ProtocolError>(())
-            },
-            None::<std::future::Ready<Result<(), ProtocolError>>>,
-            Duration::from_millis(10),
-            "no-relay-peer",
-        )
-        .await;
-
-        assert!(matches!(
-            route,
-            Err(error) if error.code == NetworkErrorCode::Timeout as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn direct_failure_without_relay_returns_direct_error() {
-        let route = connect_direct_first(
-            async {
-                Err::<(), ProtocolError>(protocol_error(
-                    NetworkErrorCode::QuicError,
-                    "direct failed",
-                ))
-            },
-            None::<std::future::Ready<Result<(), ProtocolError>>>,
-            Duration::from_millis(50),
-            "no-relay-fail-peer",
-        )
-        .await;
-
-        assert!(matches!(
-            route,
-            Err(error) if error.code == NetworkErrorCode::QuicError as i32
-        ));
-    }
-
-    #[tokio::test]
     async fn session_close_stops_and_joins_generic_route_tasks() {
         let state = new_test_state().await;
         let session_id = started_session(&state, "generic-close-peer").await;
@@ -3533,12 +1995,7 @@ mod tests {
         assert_eq!(state.task_supervisor.active_count(), 2);
         state
             .sessions
-            .attach_generic_route_for_session(
-                "generic-close-peer",
-                Some(session_id),
-                &mut scope,
-                false,
-            )
+            .attach_generic_route_for_session("generic-close-peer", Some(session_id), &mut scope)
             .await
             .expect("attach GenericRoute");
 
@@ -3559,71 +2016,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generic_route_replacement_closes_old_owner_before_new_owner_remains() {
+    async fn connected_session_rejects_a_second_route_to_enforce_one_to_one() {
+        // §18 1:1：Session 已 Connected 且持有 route 时，拒绝再挂第二条 route。
         let state = new_test_state().await;
-        let session_id = started_session(&state, "generic-replace-peer").await;
-        let (first_connection, mut first_server) = generic_connection_pair().await;
+        let peer_id = "generic-one-to-one-peer";
+        let session_id = started_session(&state, peer_id).await;
+        let (first_connection, _server) = generic_connection_pair().await;
         let mut first_scope =
-            started_generic_scope(&state, "generic-replace-peer", session_id, first_connection)
-                .await;
+            started_generic_scope(&state, peer_id, session_id, first_connection).await;
         state
             .sessions
-            .attach_generic_route_for_session(
-                "generic-replace-peer",
-                Some(session_id),
-                &mut first_scope,
-                false,
-            )
+            .attach_generic_route_for_session(peer_id, Some(session_id), &mut first_scope)
             .await
             .expect("attach first GenericRoute");
 
-        let (second_connection, mut second_server) = generic_connection_pair().await;
-        let mut second_scope = started_generic_scope(
-            &state,
-            "generic-replace-peer",
-            session_id,
-            second_connection,
-        )
-        .await;
-        let old_route = state
+        let (second_connection, _second_server) = generic_connection_pair().await;
+        let mut second_scope =
+            started_generic_scope(&state, peer_id, session_id, second_connection).await;
+        assert!(state
             .sessions
-            .attach_generic_route_for_session(
-                "generic-replace-peer",
-                Some(session_id),
-                &mut second_scope,
-                true,
-            )
+            .attach_generic_route_for_session(peer_id, Some(session_id), &mut second_scope)
             .await
-            .expect("replace GenericRoute")
-            .expect("old GenericRoute owner");
-        old_route.close().await;
-        assert_eq!(state.task_supervisor.active_count(), 2);
+            .is_err());
+        second_scope.close().await;
 
-        let mut buffer = [0u8; 1];
-        let first_read =
-            tokio::time::timeout(Duration::from_secs(1), first_server.read(&mut buffer))
-                .await
-                .expect("old GenericRoute socket should close")
-                .expect("read old server-side socket");
-        assert_eq!(first_read, 0);
-
-        let current_route = state
-            .sessions
-            .close("generic-replace-peer")
-            .await
-            .expect("close should detach replacement owner");
+        let current_route = state.sessions.close(peer_id).await.expect("close Session");
         current_route.close().await;
         assert_eq!(state.task_supervisor.active_count(), 0);
-        let second_read =
-            tokio::time::timeout(Duration::from_secs(1), second_server.read(&mut buffer))
-                .await
-                .expect("replacement GenericRoute socket should close")
-                .expect("read replacement server-side socket");
-        assert_eq!(second_read, 0);
     }
 
     #[tokio::test]
-    async fn outbound_generic_peer_restart_binds_tasks_to_new_session() {
+    async fn outbound_generic_peer_restart_replaces_session_and_cancels_old_tasks() {
+        // §18：peer restart（新 remote binding）会让新连接整体替换旧 Session（新
+        // SessionId + 新 root），并且旧 Session 的 task group 在 admission 时立即取消。
         let state = new_test_state().await;
         let peer_id = "generic-outbound-restart-peer";
         let local_peer_id = "generic-outbound-local";
@@ -3635,6 +2060,29 @@ mod tests {
             .admit_authenticated_session(peer_id, Some(old_session_id), &old_remote_binding)
             .await
             .expect("seed the old remote Session binding");
+
+        // 在握手前把哨兵放进旧 Session 组，验证被替换后立即取消。
+        let (sentinel_started_tx, sentinel_started_rx) = oneshot::channel();
+        let (sentinel_cancelled_tx, sentinel_cancelled_rx) = oneshot::channel();
+        let sentinel_task = state.task_supervisor.spawn_session(
+            old_session_id.wire_key(),
+            "old-session-sentinel",
+            async move {
+                let mut signal = CancellationSignal {
+                    started: Some(sentinel_started_tx),
+                    cancelled: Some(sentinel_cancelled_tx),
+                };
+                if let Some(sender) = signal.started.take() {
+                    let _ = sender.send(());
+                }
+                std::future::pending::<()>().await;
+            },
+        );
+        assert!(sentinel_task.is_some(), "old Session sentinel should start");
+        timeout(Duration::from_secs(1), sentinel_started_rx)
+            .await
+            .expect("old Session sentinel did not start")
+            .expect("old Session sentinel start signal was dropped");
 
         let local_identity = Arc::new(DeviceIdentity::from_private_keys(
             local_peer_id.to_string(),
@@ -3704,6 +2152,12 @@ mod tests {
         )
         .await
         .expect("outbound TCP GenericRoute should authenticate");
+        // 握手期间 admission 已经取消了旧 Session 组（含哨兵）。
+        timeout(Duration::from_secs(1), sentinel_cancelled_rx)
+            .await
+            .expect("old Session cancellation did not complete during admission")
+            .expect("old Session sentinel signal was dropped");
+
         let AuthenticatedGenericRoute {
             mut scope,
             admission,
@@ -3714,38 +2168,10 @@ mod tests {
 
         state
             .sessions
-            .attach_generic_route_for_session(peer_id, Some(new_session_id), &mut scope, false)
+            .attach_generic_route_for_session(peer_id, Some(new_session_id), &mut scope)
             .await
             .expect("attach outbound GenericRoute to replacement Session");
 
-        let (sentinel_started_tx, sentinel_started_rx) = oneshot::channel();
-        let (sentinel_cancelled_tx, sentinel_cancelled_rx) = oneshot::channel();
-        let sentinel_task = state.task_supervisor.spawn_session(
-            old_session_id.wire_key(),
-            "old-session-sentinel",
-            async move {
-                let mut signal = CancellationSignal {
-                    started: Some(sentinel_started_tx),
-                    cancelled: Some(sentinel_cancelled_tx),
-                };
-                if let Some(sender) = signal.started.take() {
-                    let _ = sender.send(());
-                }
-                std::future::pending::<()>().await;
-            },
-        );
-        assert!(sentinel_task.is_some(), "old Session sentinel should start");
-        timeout(Duration::from_secs(1), sentinel_started_rx)
-            .await
-            .expect("old Session sentinel did not start")
-            .expect("old Session sentinel start signal was dropped");
-
-        state.finish_session_replacement(admission);
-
-        timeout(Duration::from_secs(1), sentinel_cancelled_rx)
-            .await
-            .expect("old Session cancellation did not complete")
-            .expect("old Session sentinel signal was dropped");
         wait_for_active_task_count(&state.task_supervisor, 2).await;
         assert_eq!(
             state.sessions.current_session_id(peer_id).await,
@@ -3801,7 +2227,6 @@ mod tests {
                 "generic-failed-attach-peer",
                 Some(session_id),
                 &mut scope,
-                false,
             )
             .await
             .is_err());
@@ -3838,7 +2263,6 @@ mod tests {
                     "generic-runtime-stop-peer",
                     Some(session_id),
                     &mut scope,
-                    false,
                 )
                 .await
                 .expect("attach runtime GenericRoute");
@@ -3856,6 +2280,281 @@ mod tests {
                 .expect("read runtime-stop socket");
             assert_eq!(read, 0);
         });
+    }
+
+    #[tokio::test]
+    async fn losing_candidate_admit_never_replaces_attached_winner_session() {
+        // §18/§40：race 两个 candidate 时，winner 已 attach route（Session Connected）后，
+        // loser 迟到的 admit 不得触发 ReplaceWithNew——否则拆掉刚挂载的 winning route，
+        // 双方都掉线。
+        let state = new_test_state().await;
+        let peer_id = "candidate-race-peer";
+        let session_id = started_session(&state, peer_id).await;
+        let binding = "11".repeat(16);
+
+        // winner：第一次 admit 成功，保持 in-flight Session（Initialize）。
+        let winner = admit_single_winner(&state, peer_id, Some(session_id), &binding)
+            .await
+            .expect("winner admission should succeed");
+        assert_eq!(winner.session_id, session_id);
+
+        // winner 挂载一条 generic route（Session → Connected）。
+        let (connection, _server) = generic_connection_pair().await;
+        let mut scope = started_generic_scope(&state, peer_id, session_id, connection).await;
+        state
+            .sessions
+            .attach_generic_route_for_session(peer_id, Some(session_id), &mut scope)
+            .await
+            .expect("attach winner generic route");
+        assert!(state.sessions.is_connected(peer_id).await);
+
+        // loser：同 (peer, expected_session_id) 的迟到 admit 必须被拒绝，绝不替换。
+        assert!(
+            admit_single_winner(&state, peer_id, Some(session_id), &binding)
+                .await
+                .is_err(),
+            "losing candidate must not trigger a Session replacement"
+        );
+
+        // winner 的 Session 与 route 仍然存活（无 disconnect）。
+        assert_eq!(
+            state.sessions.current_session_id(peer_id).await,
+            Some(session_id)
+        );
+        assert!(state.sessions.is_connected(peer_id).await);
+
+        let current_route = state.sessions.close(peer_id).await.expect("close Session");
+        current_route.close().await;
+        assert_eq!(state.task_supervisor.active_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn tcp_fallback_accept_loop_survives_transient_accept_errors() {
+        // §40：瞬态 accept 错误（EMFILE/aborted/reset 等）只退避重试，不得终止 inbound
+        // TCP/WS 回退；后续真实连接仍被接受。
+        let state = new_test_state().await;
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind accept listener");
+        let address = listener.local_addr().expect("accept listener address");
+        let loop_task = tokio::spawn(accept_tcp_loop(
+            listener,
+            Arc::clone(&state),
+            Box::new(InjectOnceTransientAcceptError { injected: true }),
+        ));
+        // 等循环处理注入的错误 + 退避。
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // 建立一条真实连接：循环必须继续 accept 并派生 handshake 任务。
+        let _client = TcpStream::connect(address)
+            .await
+            .expect("connect after transient accept error");
+        timeout(Duration::from_secs(2), async {
+            loop {
+                if state.task_supervisor.active_count() >= 1 {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("accept loop did not process the connection after the transient error");
+        loop_task.abort();
+    }
+
+    #[tokio::test]
+    async fn tcp_fallback_accept_loop_exits_on_fatal_listener_error() {
+        // §40：只有致命错误（listener 已关闭 / fd 失效）才终止 accept 循环。
+        let state = new_test_state().await;
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind accept listener");
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(1),
+            accept_tcp_loop(listener, Arc::clone(&state), Box::new(FatalAcceptError)),
+        )
+        .await;
+        assert!(
+            outcome.is_ok(),
+            "fatal accept errors must terminate the TCP fallback accept loop"
+        );
+    }
+
+    /// 注入一次瞬态 accept 错误，之后委托真实 `TcpListener::accept` 的测试 accept 步骤。
+    struct InjectOnceTransientAcceptError {
+        injected: bool,
+    }
+
+    impl TcpAcceptStep for InjectOnceTransientAcceptError {
+        fn accept<'a>(
+            &'a mut self,
+            listener: &'a TcpListener,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            if self.injected {
+                self.injected = false;
+                Box::pin(async {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionAborted,
+                        "injected transient accept error",
+                    ))
+                })
+            } else {
+                Box::pin(listener.accept())
+            }
+        }
+    }
+
+    /// 始终返回致命 accept 错误的测试 accept 步骤（listener 已关闭）。
+    struct FatalAcceptError;
+
+    impl TcpAcceptStep for FatalAcceptError {
+        fn accept<'a>(
+            &'a mut self,
+            _listener: &'a TcpListener,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "listener closed",
+                ))
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn generic_direct_route_gets_budget_when_quic_candidates_are_blackholed() {
+        // §15/§37：QUIC 候选被黑洞（UDP socket 收包但不响应）时不得耗尽整个 Direct 窗口——
+        // generic（TCP/WebSocket）候选应拿到自己的时间片；仅 TCP 可达的 peer 在窗口内走
+        // generic 成功，而不是直接超时回退 Relay。
+        let state = new_test_state().await;
+        let peer_id = "generic-budget-peer";
+        let local_peer_id = "generic-budget-local";
+
+        // QUIC 黑洞：绑定 UDP socket 但从不读取/响应 → QUIC candidate 挂到子预算超时。
+        let blackhole = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind UDP blackhole");
+        let blackhole_address = blackhole.local_addr().expect("blackhole address");
+
+        // 可用的 generic（TCP）路由。
+        let (responder_address, release_tx, responder_task) =
+            spawn_tcp_generic_responder(peer_id, local_peer_id).await;
+
+        // 发起方 QUIC endpoint（仅用于发起 candidate 连接）。
+        let endpoint_manager = network_quic::QuicEndpointManager::new(
+            "127.0.0.1:0".parse().expect("wildcard address"),
+            Arc::new(PathManager::new()),
+        )
+        .expect("create QUIC endpoint");
+        let endpoint = endpoint_manager.endpoint;
+        let endpoint_for_cleanup = endpoint.clone();
+
+        let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+            local_peer_id.to_string(),
+            [41u8; 32],
+            [51u8; 32],
+        ));
+        let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+            peer_id.to_string(),
+            [42u8; 32],
+            [52u8; 32],
+        ));
+        let remote_public_key = remote_identity.public_identity_key().to_bytes();
+        let session_id = started_session(&state, peer_id).await;
+
+        let candidates = vec![
+            Candidate::new(
+                blackhole_address,
+                CandidateKind::Lan,
+                "test-blackhole".into(),
+            ),
+            Candidate::new(responder_address, CandidateKind::Lan, "test-tcp".into()),
+        ];
+
+        let attempt = DirectRouteAttempt {
+            state: Arc::clone(&state),
+            endpoint,
+            candidates,
+            identity: local_identity,
+            expected_peer_public_key: remote_public_key,
+            peer_id: peer_id.to_string(),
+            session_binding: session_id.wire_key(),
+            session_id,
+            attempt_id: "generic-budget-test".into(),
+            connect_window: crate::connect::DIRECT_CONNECT_WINDOW,
+        };
+
+        // QUIC 被黑洞耗掉自己的子预算后，generic 用窗口剩余预算走 TCP 成功。
+        let route = tokio::time::timeout(
+            Duration::from_secs(5),
+            connect_direct_or_generic(attempt),
+        )
+        .await
+        .expect("direct phase must finish within the window")
+        .expect("peer reachable only via TCP must succeed via the generic path within the window");
+
+        let ConnectedRoute::Generic(generic) = route else {
+            panic!("expected a generic route for a TCP-only reachable peer");
+        };
+        generic.scope.close().await;
+
+        let _ = release_tx.send(());
+        responder_task.await.expect("generic responder should exit");
+        endpoint_for_cleanup.close(quinn::VarInt::from_u32(0), b"test complete");
+    }
+
+    /// 启动一个接受单条 TCP 连接并完成 generic responder 握手的测试对端。
+    async fn spawn_tcp_generic_responder(
+        peer_id: &str,
+        local_peer_id: &str,
+    ) -> (SocketAddr, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind generic responder");
+        let address = listener.local_addr().expect("responder address");
+        let peer_id = peer_id.to_string();
+        let local_peer_id = local_peer_id.to_string();
+        let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+            peer_id, [42u8; 32], [52u8; 32],
+        ));
+        let local_public_key =
+            DeviceIdentity::from_private_keys(local_peer_id.clone(), [41u8; 32], [51u8; 32])
+                .public_identity_key()
+                .to_bytes();
+        let (release_tx, release_rx) = oneshot::channel();
+        let responder_task = tokio::spawn(async move {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("accept generic responder connection");
+            let mut connection = GenericConnection::from_transport(Transport::Tcp(
+                TcpTransport::from_stream(stream),
+            ));
+            let trusted_peer_keys =
+                tokio::sync::RwLock::new(HashMap::from([(local_peer_id, local_public_key)]));
+            let _ = authenticate_responder(
+                &mut connection,
+                remote_identity,
+                &trusted_peer_keys,
+                move |_authenticated_peer_id, _remote_session_binding| async move {
+                    Ok(("33".repeat(16), ()))
+                },
+            )
+            .await;
+            // 保持连接存活直到测试释放。
+            let _ = release_rx.await;
+        });
+        (address, release_tx, responder_task)
     }
 
     #[test]

@@ -51,6 +51,7 @@ final class AppRuntime implements Disposable {
     required this.terminalSessionMetadataStore,
     required this.sshSessionManager,
     required this.sshService,
+    this.sshNativeStreamConnector,
     required this.sftpService,
     required this.monitoringModule,
     required this.monitoringService,
@@ -113,6 +114,12 @@ final class AppRuntime implements Disposable {
   /// App Scope Realtime SDK owner; its backend borrows the NetworkRuntime handle.
   final RealtimeClient realtimeClient;
 
+  /// 当前业务网络门面；由 App 组合根装配并在 LAN 接收器激活后可用。
+  ///
+  /// 未激活时为 null；激活后返回包装共享 NetworkRuntime/RealtimeClient 的
+  /// [NetworkFacade]。业务只消费该门面，不直接操作底层 Session/Runtime。
+  NetworkFacade? get networkFacade => lanShareModule.coordinator.networkFacade;
+
   /// 启动协调器属于 App Shell，负责首帧前后的核心初始化状态。
   final AppBootstrapCoordinator bootstrapCoordinator;
 
@@ -127,6 +134,9 @@ final class AppRuntime implements Disposable {
 
   /// App Scope 唯一 SSH Manager；旧 [sshService] 是同一实例的兼容类型视图。
   final SshSessionManager sshSessionManager;
+
+  /// App Scope 的 native SSH ReliableStream 连接器；null 表示未启用 native 传输。
+  final SshNativeStreamConnector? sshNativeStreamConnector;
 
   // TODO(refactor-step-10): 替换为 sftp feature 的公共运行时契约。
   final SftpService sftpService;

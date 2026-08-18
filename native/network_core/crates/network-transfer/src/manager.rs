@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 /// 传输失败的稳定原因。网络断开不属于这里的终态错误，而是进入
-/// [`TransferState::Paused`]，等待同一逻辑 Session 的新 Route。
+/// [`TransferState::Paused`]，等待下一次 ConnectionSession 的 ResumeTransfer。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransferFailureReason {
     HashMismatch,
@@ -35,21 +35,32 @@ pub enum TransferState {
     Failed(TransferFailureReason),
 }
 
-/// 文件传输的业务会话。这里刻意不保存 quinn::Connection、Relay socket
-/// 或其他 Route handle；这些资源只属于当前一次 TransferDispatcher 尝试。
+/// 文件传输的业务操作（transport-network v2 §19）。
+///
+/// 真正跨连接保存的是 `transfer_id + peer_id + manifest_hash + total_size +
+/// confirmed_offset`；这里刻意**不**保存 SessionId / Connection / Relay socket——
+/// 那些只属于当前一次 Route 尝试，由 network-core 的 TransferDispatcher 在派发时
+/// 从当前 ConnectionSession 附加。连接断开时本会话进入 [`TransferState::Paused`]，
+/// 而 ConnectionSession 被销毁；业务状态保留在本结构体中，等待新连接上的
+/// `ResumeTransfer(transfer_id)` 恢复。
 pub struct TransferSession {
     pub transfer_id: String,
     pub peer_id: String,
-    /// 由 network-core 的逻辑 SessionId 编码而来；Connection 更换时保持不变。
-    pub session_id: String,
+    /// 携带 `manifest_hash`（= `content_hash`）与 `total_size`（= `file_size`）。
     pub manifest: FileManifest,
-    pub bytes_transferred: u64,
+    /// 已与对端协商确认的写入偏移（checkpoint）。Connection 更换后重新协商时作为
+    /// 本端 `confirmed_offset`。
+    pub confirmed_offset: u64,
     pub state: TransferState,
     pub cancellation: TransferCancellation,
     pub source_path: Option<PathBuf>,
 }
 
 /// 可交给 Route Dispatcher 重新协商的一次出站传输尝试。
+///
+/// `session_id` **不是**持久化的业务键：它由 network-core 在派发时从当前
+/// ConnectionSession 附加（用于 Relay E2EE 与任务分组），Connection 更换后会用
+/// 新 Session 的 wire key 重新编码（§18 新 Noise root）。
 #[derive(Clone, Debug)]
 pub struct ResumableTransfer {
     pub transfer_id: String,
@@ -57,6 +68,7 @@ pub struct ResumableTransfer {
     pub session_id: String,
     pub source_path: PathBuf,
     pub manifest: FileManifest,
+    /// 本端已确认的 checkpoint；与对端协商后可能被更新。
     pub offset: u64,
 }
 
@@ -64,8 +76,7 @@ pub struct ResumableTransfer {
 pub struct TransferSnapshot {
     pub transfer_id: String,
     pub peer_id: String,
-    pub session_id: String,
-    pub bytes_transferred: u64,
+    pub confirmed_offset: u64,
     pub state: TransferState,
 }
 
@@ -89,14 +100,9 @@ impl TransferManager {
 
     /// 注册一个等待用户审批的接收会话。
     ///
-    /// 如果之前的同一 Session 仅因网络断开而暂停，则重新收到相同 manifest
-    /// 时复用业务会话，而不是创建第二个 TransferId。
-    pub async fn register_incoming(
-        &self,
-        manifest: FileManifest,
-        peer_id: String,
-        session_id: String,
-    ) -> bool {
+    /// 如果同一 Peer 仅因网络断开而暂停（§19），则重新收到相同 manifest 时复用
+    /// 业务会话，而不是创建第二个 TransferId。
+    pub async fn register_incoming(&self, manifest: FileManifest, peer_id: String) -> bool {
         let id = manifest.transfer_id.clone();
         let mut transfers = self.transfers.write().await;
         match transfers.entry(id) {
@@ -104,7 +110,6 @@ impl TransferManager {
                 entry.insert(Self::new_session(
                     manifest,
                     peer_id,
-                    session_id,
                     None,
                     TransferState::WaitingApproval,
                 ));
@@ -114,7 +119,6 @@ impl TransferManager {
                 let item = entry.get_mut();
                 if item.state == TransferState::Paused
                     && item.peer_id == peer_id
-                    && item.session_id == session_id
                     && item.manifest == manifest
                 {
                     item.state = TransferState::WaitingApproval;
@@ -126,37 +130,34 @@ impl TransferManager {
         }
     }
 
-    /// 原子领取同一逻辑 Session 的暂停接收传输。
+    /// 原子领取同一 Peer 的暂停接收传输（§19：按 transfer_id + peer_id）。
     ///
-    /// Relay 重新 Offer 时会携带新的 socket token，但业务 TransferId、Manifest
-    /// 和逻辑 SessionId 必须保持一致；只有满足这三个条件才允许跳过再次审批。
+    /// Relay 重新 Offer 时会携带新的 socket/session token，但业务 TransferId、
+    /// Manifest 和 Peer 必须保持一致；只有满足这三个条件才允许跳过再次审批。
     pub async fn claim_incoming_resume(
         &self,
         manifest: &FileManifest,
         peer_id: &str,
-        session_id: &str,
     ) -> Option<u64> {
         let mut transfers = self.transfers.write().await;
         let item = transfers.get_mut(&manifest.transfer_id)?;
         if item.state == TransferState::Paused
             && item.peer_id == peer_id
-            && item.session_id == session_id
             && item.manifest == *manifest
         {
             item.state = TransferState::Resuming;
-            Some(item.bytes_transferred)
+            Some(item.confirmed_offset)
         } else {
             None
         }
     }
 
-    /// 注册出站传输；Route handle 不进入 TransferSession。
+    /// 注册出站传输；Route handle 与 SessionId 不进入 TransferSession。
     pub async fn register_outgoing(
         &self,
         manifest: FileManifest,
         source_path: PathBuf,
         peer_id: String,
-        session_id: String,
     ) -> bool {
         let id = manifest.transfer_id.clone();
         let mut transfers = self.transfers.write().await;
@@ -165,7 +166,6 @@ impl TransferManager {
                 entry.insert(Self::new_session(
                     manifest,
                     peer_id,
-                    session_id,
                     Some(source_path),
                     TransferState::Offering,
                 ));
@@ -219,7 +219,7 @@ impl TransferManager {
         false
     }
 
-    /// 更新业务偏移，不绑定任何 transport stream。
+    /// 更新已确认的业务偏移，不绑定任何 transport stream。
     pub async fn update_progress(&self, transfer_id: &str, bytes: u64) -> bool {
         let mut transfers = self.transfers.write().await;
         let Some(item) = transfers.get_mut(transfer_id) else {
@@ -233,13 +233,13 @@ impl TransferManager {
                 | TransferState::Resuming
                 | TransferState::Verifying
         ) {
-            item.bytes_transferred = bytes;
+            item.confirmed_offset = bytes;
             return true;
         }
         false
     }
 
-    /// 网络错误只暂停业务会话；源文件、Manifest、SessionId 和偏移都保留。
+    /// 网络错误只暂停业务会话；源文件、Manifest、Peer 和偏移都保留。
     pub async fn pause_for_network(&self, transfer_id: &str) -> bool {
         let mut transfers = self.transfers.write().await;
         let Some(item) = transfers.get_mut(transfer_id) else {
@@ -293,8 +293,12 @@ impl TransferManager {
         true
     }
 
-    /// 原子地领取同一逻辑 Session 的暂停传输，避免新的 Route 重复发送。
-    pub async fn take_resumable_for_session(
+    /// 原子地领取同一 Peer 的暂停传输，避免新的 Route 重复发送（§19）。
+    ///
+    /// 匹配只按 `peer_id` 与 `Paused` 状态进行；`session_id` 仅作为派发时附加的
+    /// crypto/task 键，由调用方从当前 ConnectionSession 传入，**不参与匹配**——
+    /// Connection 更换后必须用新 Session 的 wire key 重新编码。
+    pub async fn take_resumable_for_peer(
         &self,
         peer_id: &str,
         session_id: &str,
@@ -303,10 +307,7 @@ impl TransferManager {
         transfers
             .values_mut()
             .filter_map(|item| {
-                if item.state != TransferState::Paused
-                    || item.peer_id != peer_id
-                    || item.session_id != session_id
-                {
+                if item.state != TransferState::Paused || item.peer_id != peer_id {
                     return None;
                 }
                 let source_path = item.source_path.clone()?;
@@ -314,13 +315,40 @@ impl TransferManager {
                 Some(ResumableTransfer {
                     transfer_id: item.transfer_id.clone(),
                     peer_id: item.peer_id.clone(),
-                    session_id: item.session_id.clone(),
+                    session_id: session_id.to_string(),
                     source_path,
                     manifest: item.manifest.clone(),
-                    offset: item.bytes_transferred,
+                    offset: item.confirmed_offset,
                 })
             })
             .collect()
+    }
+
+    /// transport-network v2（§19）：ConnectionSession 销毁（transport 丢失 / 显式
+    /// 断开 / 被新连接替换）时把该 Peer 所有非终态传输置为 `Paused`。业务状态保留
+    /// 在 TransferManager，等待下一次连接上的 `ResumeTransfer(transfer_id)` 恢复。
+    ///
+    /// 返回被暂停的 transfer_id 列表，供调用方诊断/事件使用。
+    pub async fn pause_peer_transfers(&self, peer_id: &str) -> Vec<String> {
+        let mut transfers = self.transfers.write().await;
+        let mut paused = Vec::new();
+        for item in transfers.values_mut() {
+            if item.peer_id != peer_id {
+                continue;
+            }
+            if matches!(
+                item.state,
+                TransferState::Offering
+                    | TransferState::WaitingApproval
+                    | TransferState::Transferring
+                    | TransferState::Resuming
+                    | TransferState::Verifying
+            ) {
+                item.state = TransferState::Paused;
+                paused.push(item.transfer_id.clone());
+            }
+        }
+        paused
     }
 
     pub async fn is_cancelled(&self, transfer_id: &str) -> bool {
@@ -339,39 +367,6 @@ impl TransferManager {
             .map(|item| item.cancellation.clone())
     }
 
-    /// Terminate every non-terminal transfer bound to a replaced logical
-    /// Session. Session replacement is not a route migration: these business
-    /// sessions must not be claimed by the new Session.
-    pub async fn terminate_session_transfers(
-        &self,
-        peer_id: &str,
-        session_id: &str,
-        reason: TransferFailureReason,
-    ) -> Vec<TransferSnapshot> {
-        let mut transfers = self.transfers.write().await;
-        let mut terminated = Vec::new();
-        transfers.retain(|_, item| {
-            if item.peer_id != peer_id || item.session_id != session_id {
-                return true;
-            }
-            if !matches!(
-                item.state,
-                TransferState::Completed | TransferState::Cancelled | TransferState::Failed(_)
-            ) {
-                item.cancellation.cancel();
-                terminated.push(TransferSnapshot {
-                    transfer_id: item.transfer_id.clone(),
-                    peer_id: item.peer_id.clone(),
-                    session_id: item.session_id.clone(),
-                    bytes_transferred: item.bytes_transferred,
-                    state: TransferState::Failed(reason),
-                });
-            }
-            false
-        });
-        terminated
-    }
-
     pub async fn snapshot(&self, transfer_id: &str) -> Option<TransferSnapshot> {
         self.transfers
             .read()
@@ -380,8 +375,7 @@ impl TransferManager {
             .map(|item| TransferSnapshot {
                 transfer_id: item.transfer_id.clone(),
                 peer_id: item.peer_id.clone(),
-                session_id: item.session_id.clone(),
-                bytes_transferred: item.bytes_transferred,
+                confirmed_offset: item.confirmed_offset,
                 state: item.state.clone(),
             })
     }
@@ -393,16 +387,14 @@ impl TransferManager {
     fn new_session(
         manifest: FileManifest,
         peer_id: String,
-        session_id: String,
         source_path: Option<PathBuf>,
         state: TransferState,
     ) -> TransferSession {
         TransferSession {
             transfer_id: manifest.transfer_id.clone(),
             peer_id,
-            session_id,
             manifest,
-            bytes_transferred: 0,
+            confirmed_offset: 0,
             state,
             cancellation: TransferCancellation::default(),
             source_path,
@@ -427,7 +419,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn network_pause_preserves_session_and_can_be_claimed_once() {
+    async fn network_pause_preserves_peer_and_can_be_claimed_once() {
         let manager = TransferManager::new();
         assert!(
             manager
@@ -435,7 +427,6 @@ mod tests {
                     manifest("transfer-1"),
                     PathBuf::from("source.bin"),
                     "peer-b".into(),
-                    "0000000000000001".into(),
                 )
                 .await
         );
@@ -446,20 +437,24 @@ mod tests {
             manager.snapshot("transfer-1").await.unwrap().state,
             TransferState::Paused
         );
+        // §19：恢复按 Peer 领取；session_id 只是派发时附加的 crypto/task 键，
+        // 不参与匹配——新 ConnectionSession 用新 wire key 重新编码。
         let resumed = manager
-            .take_resumable_for_session("peer-b", "0000000000000001")
+            .take_resumable_for_peer("peer-b", "0000000000000002")
             .await;
         assert_eq!(resumed.len(), 1);
         assert_eq!(resumed[0].offset, 2);
-        assert_eq!(resumed[0].session_id, "0000000000000001");
+        assert_eq!(resumed[0].session_id, "0000000000000002");
         assert!(manager
-            .take_resumable_for_session("peer-b", "0000000000000001")
+            .take_resumable_for_peer("peer-b", "0000000000000002")
             .await
             .is_empty());
     }
 
     #[tokio::test]
-    async fn replacement_session_terminates_old_transfer() {
+    async fn paused_transfer_survives_session_replacement_and_resumes_by_peer() {
+        // §19：ConnectionSession 被替换（新连接）不是终态；TransferOperation 保留
+        // 并按 transfer_id + peer_id 恢复，而不是按 SessionId 终止。
         let manager = TransferManager::new();
         assert!(
             manager
@@ -467,56 +462,88 @@ mod tests {
                     manifest("transfer-2"),
                     PathBuf::from("source.bin"),
                     "peer-b".into(),
-                    "0000000000000001".into(),
                 )
                 .await
         );
         assert!(manager.mark_transferring("transfer-2").await);
+        assert!(manager.update_progress("transfer-2", 3).await);
+        // 旧 ConnectionSession 销毁 → Paused。
         assert!(manager.pause_for_network("transfer-2").await);
-        assert!(manager
-            .take_resumable_for_session("peer-b", "0000000000000002")
-            .await
-            .is_empty());
-        let cancellation = manager
-            .cancellation_token("transfer-2")
-            .await
-            .expect("transfer cancellation token");
-        let terminated = manager
-            .terminate_session_transfers(
-                "peer-b",
-                "0000000000000001",
-                TransferFailureReason::SessionReplaced,
-            )
-            .await;
-        assert_eq!(terminated.len(), 1);
-        assert_eq!(
-            terminated[0].state,
-            TransferState::Failed(TransferFailureReason::SessionReplaced)
+        let paused_ids = manager.pause_peer_transfers("peer-b").await;
+        assert!(
+            paused_ids.is_empty(),
+            "already-paused transfer is not re-paused"
         );
-        assert!(cancellation.is_cancelled());
-        assert!(manager.snapshot("transfer-2").await.is_none());
+        // 新 ConnectionSession（不同 wire key）通过 Peer 领取并恢复。
+        let resumed = manager
+            .take_resumable_for_peer("peer-b", "0000000000000002")
+            .await;
+        assert_eq!(resumed.len(), 1);
+        assert_eq!(resumed[0].offset, 3);
+        assert_eq!(resumed[0].session_id, "0000000000000002");
+        // 恢复后旧状态不再是 Paused。
+        assert_eq!(
+            manager.snapshot("transfer-2").await.unwrap().state,
+            TransferState::Resuming
+        );
     }
 
     #[tokio::test]
-    async fn incoming_paused_session_is_reused_only_for_same_manifest() {
+    async fn session_destruction_pauses_active_transfers() {
+        let manager = TransferManager::new();
+        assert!(
+            manager
+                .register_outgoing(
+                    manifest("transfer-pause-all"),
+                    PathBuf::from("source.bin"),
+                    "peer-b".into(),
+                )
+                .await
+        );
+        assert!(manager.mark_transferring("transfer-pause-all").await);
+        assert!(manager.update_progress("transfer-pause-all", 1).await);
+        let paused_ids = manager.pause_peer_transfers("peer-b").await;
+        assert_eq!(paused_ids, vec!["transfer-pause-all".to_string()]);
+        assert_eq!(
+            manager.snapshot("transfer-pause-all").await.unwrap().state,
+            TransferState::Paused
+        );
+        // 其他 Peer 的传输不受影响。
+        assert!(
+            manager
+                .register_outgoing(
+                    manifest("transfer-other-peer"),
+                    PathBuf::from("source.bin"),
+                    "peer-c".into(),
+                )
+                .await
+        );
+        assert!(manager.mark_transferring("transfer-other-peer").await);
+        assert!(manager.pause_peer_transfers("peer-b").await.is_empty());
+        assert_eq!(
+            manager.snapshot("transfer-other-peer").await.unwrap().state,
+            TransferState::Transferring
+        );
+    }
+
+    #[tokio::test]
+    async fn incoming_paused_transfer_is_reused_only_for_same_peer_and_manifest() {
         let manager = TransferManager::new();
         let first = manifest("transfer-3");
         assert!(
             manager
-                .register_incoming(first.clone(), "peer-b".into(), "0000000000000001".into(),)
+                .register_incoming(first.clone(), "peer-b".into(),)
                 .await
         );
         assert!(manager.mark_transferring("transfer-3").await);
         assert!(manager.pause_for_network("transfer-3").await);
-        assert!(
-            manager
-                .register_incoming(first, "peer-b".into(), "0000000000000001".into(),)
-                .await
-        );
+        // 同一 Peer + 同一 Manifest → 复用并回到 WaitingApproval。
+        assert!(manager.register_incoming(first, "peer-b".into(),).await);
         assert_eq!(
             manager.snapshot("transfer-3").await.unwrap().state,
             TransferState::WaitingApproval
         );
+        // 同一 TransferId 但不同 Manifest → 拒绝复用（业务身份不匹配）。
         assert!(
             !manager
                 .register_incoming(
@@ -525,7 +552,6 @@ mod tests {
                         ..manifest("transfer-3")
                     },
                     "peer-b".into(),
-                    "0000000000000001".into(),
                 )
                 .await
         );
@@ -537,11 +563,7 @@ mod tests {
         let file_manifest = manifest("transfer-resume");
         assert!(
             manager
-                .register_incoming(
-                    file_manifest.clone(),
-                    "peer-b".into(),
-                    "0000000000000001".into(),
-                )
+                .register_incoming(file_manifest.clone(), "peer-b".into(),)
                 .await
         );
         assert!(manager.mark_transferring("transfer-resume").await);
@@ -549,14 +571,55 @@ mod tests {
         assert!(manager.pause_for_network("transfer-resume").await);
         assert_eq!(
             manager
-                .claim_incoming_resume(&file_manifest, "peer-b", "0000000000000001",)
+                .claim_incoming_resume(&file_manifest, "peer-b",)
                 .await,
             Some(2)
         );
+        // 不同 Peer → 拒绝；TransferOperation 保持 Paused，可再被正确 Peer 领取。
         assert!(manager
-            .claim_incoming_resume(&file_manifest, "peer-b", "0000000000000002")
+            .claim_incoming_resume(&file_manifest, "peer-c")
             .await
             .is_none());
+        assert!(manager
+            .claim_incoming_resume(&file_manifest, "peer-b")
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn checkpoint_mismatch_keeps_transfer_paused() {
+        // §40 失败场景：ResumeTransfer 协商出的 checkpoint 与对端不一致时，恢复被
+        // 拒绝，TransferOperation 必须留在 Paused（干净失败，不能继续发送）。
+        let manager = TransferManager::new();
+        let file_manifest = manifest("transfer-checkpoint");
+        assert!(
+            manager
+                .register_incoming(file_manifest.clone(), "peer-b".into(),)
+                .await
+        );
+        assert!(manager.mark_transferring("transfer-checkpoint").await);
+        assert!(manager.update_progress("transfer-checkpoint", 5).await);
+        assert!(manager.pause_for_network("transfer-checkpoint").await);
+        // 对端以不同 Manifest 来恢复（checkpoint 所属业务身份不匹配）→ None。
+        let mismatched = FileManifest {
+            file_size: 99,
+            ..file_manifest.clone()
+        };
+        assert!(manager
+            .claim_incoming_resume(&mismatched, "peer-b")
+            .await
+            .is_none());
+        assert_eq!(
+            manager.snapshot("transfer-checkpoint").await.unwrap().state,
+            TransferState::Paused
+        );
+        // 恢复仍可被正确 Manifest 领取，checkpoint（confirmed_offset）不变。
+        assert_eq!(
+            manager
+                .claim_incoming_resume(&file_manifest, "peer-b")
+                .await,
+            Some(5)
+        );
     }
 
     #[tokio::test]
@@ -568,7 +631,6 @@ mod tests {
                     manifest("transfer-4"),
                     PathBuf::from("source.bin"),
                     "peer-b".into(),
-                    "0000000000000001".into(),
                 )
                 .await
         );

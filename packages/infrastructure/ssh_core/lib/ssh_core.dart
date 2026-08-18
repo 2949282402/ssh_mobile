@@ -6,6 +6,7 @@ library;
 export 'src/client/ssh_client_factory.dart';
 export 'src/client/ssh_command_executor.dart';
 export 'src/client/ssh_host_key_policy.dart';
+export 'src/client/ssh_native_socket.dart';
 export 'src/model/ssh_credentials.dart';
 export 'src/model/ssh_runtime_event.dart';
 export 'src/model/ssh_session.dart';

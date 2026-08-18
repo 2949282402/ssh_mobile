@@ -44,10 +44,14 @@ class SshService extends ChangeNotifier
   final connection_core.HostKeyRepository _hostKeyRepository;
   final terminal_metadata.TerminalSessionMetadataStore _terminalMetadataStore;
   final AppSettings? _appSettings;
+  final ssh_core.SshNativeStreamConnector? _nativeStreamConnector;
+  final ssh_core.SshPeerIdResolver? _peerIdResolver;
   late final SshClientFactory _clientFactory = SshClientFactory(
     credentialRepository: _credentialRepository,
     hostKeyRepository: _hostKeyRepository,
     logger: AppLogService.instance,
+    nativeStreamConnector: _nativeStreamConnector,
+    peerIdResolver: _peerIdResolver,
   );
   final FlutterBackgroundService _backgroundService =
       FlutterBackgroundService();
@@ -83,11 +87,15 @@ class SshService extends ChangeNotifier
     required terminal_metadata.TerminalSessionMetadataStore
     terminalMetadataStore,
     AppSettings? appSettings,
+    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
+    ssh_core.SshPeerIdResolver? peerIdResolver,
   }) : _connectionRepository = connectionRepository,
        _credentialRepository = credentialRepository,
        _hostKeyRepository = hostKeyRepository,
        _terminalMetadataStore = terminalMetadataStore,
-       _appSettings = appSettings {
+       _appSettings = appSettings,
+       _nativeStreamConnector = nativeStreamConnector,
+       _peerIdResolver = peerIdResolver {
     StartupInstrumentation.instance.recordServiceConstructed('SshService');
   }
 
@@ -134,6 +142,9 @@ class SshService extends ChangeNotifier
       await ensureInitialized();
     } finally {
       await _coreSessionPool.close();
+      // 关闭所有 native ReliableStream/ConnectionSession，必须在
+      // networkRuntime.dispose 之前完成（app_runtime.dart 释放顺序）。
+      await _nativeStreamConnector?.closeAll();
       dispose();
     }
   }
@@ -157,10 +168,18 @@ class SshService extends ChangeNotifier
   }
 
   bool get _usesBackgroundService {
+    // native 传输（连接器 + peer 绑定解析器都已配置）时 SSH 走 UI isolate 的
+    // 本地路径（FFI handle 不是多 isolate 安全的）；否则移动端继续使用
+    // background service 原始 TCP，保持既有后台保活行为。
     return !kIsWeb &&
         (defaultTargetPlatform == TargetPlatform.android ||
-            defaultTargetPlatform == TargetPlatform.iOS);
+            defaultTargetPlatform == TargetPlatform.iOS) &&
+        !_canUseNativeTransport;
   }
+
+  /// 是否已配置 native ReliableStream 传输（连接器 + peer 绑定解析器）。
+  bool get _canUseNativeTransport =>
+      _nativeStreamConnector != null && _peerIdResolver != null;
 
   @override
   List<SshSession> get sessions => _sessionsView;
@@ -569,6 +588,7 @@ class SshService extends ChangeNotifier
           'hostKeyFingerprint': config.hostKeyFingerprint,
           'hostKeyAlgorithm': config.hostKeyAlgorithm,
           'hostKeyTrustedAt': config.hostKeyTrustedAt?.toIso8601String(),
+          'peerId': _peerIdResolver?.call(config),
           'showServerNameInNotification':
               _appSettings?.showServerNamesInNotifications ?? false,
           'terminalWidth': config.terminalWidth,

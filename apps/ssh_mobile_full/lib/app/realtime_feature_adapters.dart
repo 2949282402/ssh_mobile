@@ -173,8 +173,11 @@ final class AppRealtimeSessionBackend implements RealtimeSessionBackend {
       case NativeCommandResultEvent event:
         _completeCommand(event);
       case NativeRealtimeSignalEvent():
+      case NativeSshStreamDataReceivedEvent():
+      case NativeSshStreamClosedEvent():
       // Command acceptance and SDP/ICE signaling are native concerns. The
       // session state and snapshot events are the only lifecycle sources.
+      // SSH stream data/closed events are consumed by the SSH connector.
     }
   }
 

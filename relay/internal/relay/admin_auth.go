@@ -85,7 +85,7 @@ func (s *Server) adminAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // adminResponseHeaders applies response protections to every administrative
-// endpoint without changing the device-plane v1 response contract.
+// endpoint without changing the device-plane response contract.
 func adminResponseHeaders(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")

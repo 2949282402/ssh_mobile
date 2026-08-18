@@ -1,0 +1,19 @@
+# buf configuration for the frozen relay v2 contract.
+#
+# The relay.v2 protos are locked. `buf lint` and `buf breaking` give the
+# frozen-contract guarantee: any field/tag change after freeze fails CI.
+# 模块根必须为 `proto/`（PACKAGE_DIRECTORY_MATCH：包 relay.v2 需位于
+# relay/v2/ 目录）；proto/network/v1 为遗留 v1 契约，不在本 frozen-contract
+# 门禁范围内，整文件豁免，避免被其风格违规阻塞 relay v2 契约门禁。
+# Run from protocol/:  buf lint  /  buf breaking --against <ref>
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+  ignore:
+    - proto/network/v1/network.proto
+breaking:
+  use:
+    - FILE

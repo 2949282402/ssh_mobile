@@ -298,6 +298,108 @@ void main() {
     expect(result.error!.retryAfterSeconds, 30);
   });
 
+  test('SSH stream commands encode into tags 25/26/27', () {
+    final open = NativeNetworkProtocol.sshStreamOpenCommand(
+      commandId: 'open-1',
+      peerId: 'peer-a',
+      streamId: 7,
+      service: 'ssh',
+    );
+    expect(open, isNotEmpty);
+    expect(open, contains(0xca)); // field 25 key prefix
+    expect(open, contains(0x07)); // stream_id = 7
+
+    final data = NativeNetworkProtocol.sshStreamDataCommand(
+      commandId: 'data-1',
+      peerId: 'peer-a',
+      streamId: 7,
+      data: Uint8List.fromList([0xde, 0xad, 0xbe, 0xef]),
+    );
+    expect(data, isNotEmpty);
+    expect(data, contains(0xd2)); // field 26 key prefix
+    expect(data, contains(0xde));
+    expect(data, contains(0xef));
+
+    final close = NativeNetworkProtocol.sshStreamCloseCommand(
+      commandId: 'close-1',
+      peerId: 'peer-a',
+      streamId: 7,
+    );
+    expect(close, isNotEmpty);
+    expect(close, contains(0xda)); // field 27 key prefix
+  });
+
+  test('SSH stream data received event decodes from tag 26', () {
+    final nested = <int>[
+      0x0a, 0x06, ...'peer-a'.codeUnits, // peer_id = peer-a
+      0x10, 0x07, // stream_id = 7
+      0x1a, 0x04, 0x01, 0x02, 0x03, 0x04, // data
+    ];
+    final frame = Uint8List.fromList(<int>[
+      0x0a,
+      0x03,
+      ...'evt'.codeUnits,
+      0x10,
+      0x7b,
+      0x18,
+      0x01,
+      0xd2,
+      0x01,
+      nested.length,
+      ...nested,
+    ]);
+
+    final event = NativeNetworkProtocol.decodeEvent(frame);
+    expect(event, isA<NativeSshStreamDataReceivedEvent>());
+    final stream = event! as NativeSshStreamDataReceivedEvent;
+    expect(stream.peerId, 'peer-a');
+    expect(stream.streamId, 7);
+    expect(stream.data, orderedEquals([1, 2, 3, 4]));
+  });
+
+  test('SSH stream closed event decodes from tag 27', () {
+    final nested = <int>[0x0a, 0x06, ...'peer-a'.codeUnits, 0x10, 0x07];
+    final frame = Uint8List.fromList(<int>[
+      0x0a,
+      0x03,
+      ...'evt'.codeUnits,
+      0x10,
+      0x7b,
+      0x18,
+      0x01,
+      0xda,
+      0x01,
+      nested.length,
+      ...nested,
+    ]);
+
+    final event = NativeNetworkProtocol.decodeEvent(frame);
+    expect(event, isA<NativeSshStreamClosedEvent>());
+    final closed = event! as NativeSshStreamClosedEvent;
+    expect(closed.peerId, 'peer-a');
+    expect(closed.streamId, 7);
+  });
+
+  test('SSH stream commands reject invalid stream ids and services', () {
+    expect(
+      () => NativeNetworkProtocol.sshStreamOpenCommand(
+        commandId: 'c',
+        peerId: 'peer-a',
+        streamId: 0,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => NativeNetworkProtocol.sshStreamOpenCommand(
+        commandId: 'c',
+        peerId: 'peer-a',
+        streamId: 7,
+        service: '',
+      ),
+      throwsArgumentError,
+    );
+  });
+
   test('unknown future realtime event tag is ignored', () {
     final frame = Uint8List.fromList(<int>[
       0x0a,

@@ -8,6 +8,7 @@ test-support = []
 
 [dependencies]
 network-protocol = { path = "../network-protocol" }
+prost = "0.13"
 tokio = { version = "1.38", features = ["full"] }
 tracing = "0.1"
 thiserror = "1.0"

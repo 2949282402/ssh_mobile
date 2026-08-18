@@ -16,6 +16,9 @@ const _realtimeIdBytes = 32;
 const _maxRealtimePayloadBytes = 256 * 1024;
 const _maxIceCandidateBytes = 8 * 1024;
 const _maxEventBytes = 384 * 1024;
+const _maxStreamServiceBytes = 128;
+const _maxStreamId = 0xffff;
+const _maxStreamDataBytes = 384 * 1024;
 
 /// Native WebRTC Realtime session lifecycle states.
 enum NativeRealtimeSessionState {
@@ -245,6 +248,46 @@ final class NativeRealtimeSignalEvent extends NativeNetworkEvent {
   final Uint8List payload;
 }
 
+/// ReliableStream 收到对端字节后发布的事件（network-protocol tag 26）。
+final class NativeSshStreamDataReceivedEvent extends NativeNetworkEvent {
+  /// Creates an SSH stream data event.
+  NativeSshStreamDataReceivedEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.peerId,
+    required this.streamId,
+    required Uint8List data,
+  }) : data = Uint8List.fromList(data);
+
+  /// Remote peer identifier.
+  final String peerId;
+
+  /// Logical ReliableStream identifier assigned by the opening side.
+  final int streamId;
+
+  /// Opaque SSH/SFTP protocol bytes.
+  final Uint8List data;
+}
+
+/// ReliableStream 关闭事件（network-protocol tag 27）。
+final class NativeSshStreamClosedEvent extends NativeNetworkEvent {
+  /// Creates an SSH stream closed event.
+  const NativeSshStreamClosedEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.peerId,
+    required this.streamId,
+  });
+
+  /// Remote peer identifier.
+  final String peerId;
+
+  /// Logical ReliableStream identifier.
+  final int streamId;
+}
+
 /// Bounded Protobuf command/event codec for the native Realtime API.
 final class NativeNetworkProtocol {
   /// Current native protocol version.
@@ -321,6 +364,75 @@ final class NativeNetworkProtocol {
     );
   }
 
+  /// Encodes `SshStreamOpen` into the v1 command envelope (tag 25).
+  static Uint8List sshStreamOpenCommand({
+    required String commandId,
+    required String peerId,
+    required int streamId,
+    String service = 'ssh',
+  }) {
+    _validateCommandId(commandId);
+    _validatePeerId(peerId);
+    _validateStreamId(streamId);
+    _validateStreamService(service);
+    return _command(
+      commandId,
+      25,
+      (_ProtoWriter()
+            ..string(1, peerId)
+            ..varint(2, streamId)
+            ..string(3, service))
+          .takeBytes(),
+    );
+  }
+
+  /// Encodes `SshStreamData` into the v1 command envelope (tag 26).
+  static Uint8List sshStreamDataCommand({
+    required String commandId,
+    required String peerId,
+    required int streamId,
+    required Uint8List data,
+  }) {
+    _validateCommandId(commandId);
+    _validatePeerId(peerId);
+    _validateStreamId(streamId);
+    if (data.length > _maxStreamDataBytes) {
+      throw ArgumentError.value(
+        data.length,
+        'data',
+        'SSH stream data is too large.',
+      );
+    }
+    return _command(
+      commandId,
+      26,
+      (_ProtoWriter()
+            ..string(1, peerId)
+            ..varint(2, streamId)
+            ..bytesField(3, data))
+          .takeBytes(),
+    );
+  }
+
+  /// Encodes `SshStreamClose` into the v1 command envelope (tag 27).
+  static Uint8List sshStreamCloseCommand({
+    required String commandId,
+    required String peerId,
+    required int streamId,
+  }) {
+    _validateCommandId(commandId);
+    _validatePeerId(peerId);
+    _validateStreamId(streamId);
+    return _command(
+      commandId,
+      27,
+      (_ProtoWriter()
+            ..string(1, peerId)
+            ..varint(2, streamId))
+          .takeBytes(),
+    );
+  }
+
   /// Decodes a native event. Unknown event payloads return null so a newer
   /// Rust event cannot terminate the public typed stream.
   static NativeNetworkEvent? decodeEvent(Uint8List bytes) {
@@ -346,6 +458,8 @@ final class NativeNetworkProtocol {
         case 21:
         case 22:
         case 23:
+        case 26:
+        case 27:
           payloadField = field.number;
           payload = reader.bytes(field.wireType);
         default:
@@ -383,6 +497,18 @@ final class NativeNetworkProtocol {
         eventPayload,
       ),
       23 => _decodeRealtimeSnapshot(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      26 => _decodeSshStreamData(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      27 => _decodeSshStreamClosed(
         eventId,
         timestampMs,
         protocolVersion,
@@ -572,6 +698,76 @@ final class NativeNetworkProtocol {
     );
   }
 
+  static NativeSshStreamDataReceivedEvent _decodeSshStreamData(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var streamId = 0;
+    var data = Uint8List(0);
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 2:
+          streamId = reader.varint(field.wireType);
+        case 3:
+          data = reader.bytes(field.wireType, _maxStreamDataBytes);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedPeerId(peerId);
+    if (streamId < 0 || streamId > _maxStreamId) {
+      throw const FormatException('SSH stream ID is outside bounds.');
+    }
+    return NativeSshStreamDataReceivedEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      peerId: peerId,
+      streamId: streamId,
+      data: data,
+    );
+  }
+
+  static NativeSshStreamClosedEvent _decodeSshStreamClosed(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var streamId = 0;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 2:
+          streamId = reader.varint(field.wireType);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedPeerId(peerId);
+    if (streamId < 0 || streamId > _maxStreamId) {
+      throw const FormatException('SSH stream ID is outside bounds.');
+    }
+    return NativeSshStreamClosedEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      peerId: peerId,
+      streamId: streamId,
+    );
+  }
+
   static NativeNetworkError _decodeError(Uint8List bytes) {
     final reader = _ProtoReader(bytes);
     var code = 0;
@@ -624,6 +820,26 @@ final class NativeNetworkProtocol {
   static void _validatePeerId(String value) {
     if (value.isEmpty || _utf8ByteLength(value) > _maxPeerIdBytes) {
       throw ArgumentError.value(value, 'peerId', 'Must contain 1-128 bytes.');
+    }
+  }
+
+  static void _validateStreamId(int value) {
+    if (value < 1 || value > _maxStreamId) {
+      throw ArgumentError.value(
+        value,
+        'streamId',
+        'Must be within 1-$_maxStreamId.',
+      );
+    }
+  }
+
+  static void _validateStreamService(String value) {
+    if (value.isEmpty || _utf8ByteLength(value) > _maxStreamServiceBytes) {
+      throw ArgumentError.value(
+        value,
+        'service',
+        'Must contain 1-$_maxStreamServiceBytes bytes.',
+      );
     }
   }
 

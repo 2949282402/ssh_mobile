@@ -1,6 +1,12 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-15
 
-# ADR-011：直连文件传输的 checkpoint 与 Resume
+# ADR-030：直连文件传输的 checkpoint 与 Resume
+
+## Status
+
+Accepted（2026-08-15 重编号：原为 ADR-011，与
+[ADR-011-transfer-session-route-dispatch.md](ADR-011-transfer-session-route-dispatch.md)
+重复编号，本 ADR 改为 ADR-030 以消除歧义。内容不变。）
 
 ## 背景
 
@@ -37,4 +43,4 @@ runtime。
 
 ## 状态
 
-Accepted
+Accepted（2026-08-15 起编号为 ADR-030，见上文 Status）

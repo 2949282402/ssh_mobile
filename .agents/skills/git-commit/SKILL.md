@@ -3,7 +3,7 @@ name: git-commit
 description: Inspect, stage, and commit repository changes safely. Use when the user asks to commit, stage files, run git commit, or says "提交一下", "git 提交", or "git提交一下"; create a scoped message and verify the resulting repository state.
 ---
 
-> 最新更新时间：2026-08-14
+> 最新更新时间：2026-08-15
 
 # Git Commit
 
@@ -39,11 +39,11 @@ description: Inspect, stage, and commit repository changes safely. Use when the 
 规范提交（subject + 详细 body，多个逻辑点分条）：
 
 ```
-feat(relay): 引入 Storage/Cache 存储层并接入 MySQL/Redis 多实例后端
+feat(relay): 引入 Storage/Cache 存储层并接入 MySQL/Redis 存储后端
 
 - Storage/Cache 接口抽象 + 内存实现（默认 RELAY_STORAGE_MODE=memory）
 - MySQL 持久化 enrollment/吊销（openMySQLStore、幂等 schema、-seed-enrollments 播种）
-- Redis 共享状态层：presence、防重放 nonce（SET+Lua 128 上限）、admin 会话、跨实例事件
+- Redis 共享状态层：presence、防重放 nonce（SET+Lua 128 上限）、admin 会话、共享状态事件（单 Relay 实例部署）
 - mysql 模式强制要求 Redis；fail-open 降级（nonce 降级 + 日志告警）
 ```
 

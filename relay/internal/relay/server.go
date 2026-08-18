@@ -1,8 +1,10 @@
 // Relay server composition and route registration.
 //
-// The device protocol remains under /v1. Administrative HTTP handlers live in
-// the admin_* files, while device and hub behavior is kept in their own
-// protocol-focused files.
+// The transport network is v2-only: /v2/control is the long-lived control plane
+// (protobuf RelayFrame) and /v2/relay/{reservation_id} is the reservation-scoped
+// opaque data plane (RelayDataFrame). Enrollment/refresh stay under /v1/devices
+// because they issue the bearer credentials both control planes authenticate
+// with. Administrative HTTP handlers live in the admin_* files.
 
 package relay
 
@@ -19,12 +21,15 @@ import (
 )
 
 type Server struct {
-	config       Config
-	hub          *hub
-	upgrader     websocket.Upgrader
-	store        Storage
-	cache        Cache
-	admin        adminAuthState
+	config   Config
+	hub      *hub
+	upgrader websocket.Upgrader
+	store    Storage
+	cache    Cache
+	admin    adminAuthState
+	// relayData 是 /v2/relay/{reservation_id} 数据面端点的链接注册表（设计 §25）。
+	// 它与 hub 的 peer 表完全独立：数据面连接没有 presence 租约，只按 reservation 配对。
+	relayData    relayDataRegistry
 	startedAt    time.Time
 	eventsCtx    context.Context
 	eventsCancel context.CancelFunc
@@ -86,6 +91,7 @@ func NewServer(config Config) *Server {
 			configured:    adminConfigured,
 			loginAttempts: make(map[string]adminLoginAttempt),
 		},
+		relayData:    *newRelayDataRegistry(),
 		startedAt:    time.Now(),
 		eventsCtx:    eventsCtx,
 		eventsCancel: eventsCancel,
@@ -146,7 +152,7 @@ func OpenServer(config Config) (*Server, error) {
 	}
 }
 
-// RegisterRoutes 注册公开、管理端和 v1 设备端点。
+// RegisterRoutes 注册公开、管理端、设备凭证端点和 v2 传输网络端点。
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", s.health)
 
@@ -173,11 +179,16 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/admin/v1/access/enrollment-token", adminAuth(s.adminToken))
 	mux.HandleFunc("POST /api/admin/v1/access/enrollment-token/rotate", adminAuthStateChange(s.adminRotateToken))
 
-	// Device Plane。
+	// Device credential endpoints（仍为 v2 控制面签发 Bearer 凭据）。
 	mux.HandleFunc("POST /v1/devices/enroll", s.enroll)
 	mux.HandleFunc("POST /v1/devices/refresh", s.refresh)
-	mux.HandleFunc("GET /v1/connect", s.connect)
-	mux.HandleFunc("GET /v1/peers", s.listPeers)
+
+	// Transport Network V2（设计 §24）：控制面与数据面物理拆开。
+	// GET /v2/control —— 长期存活的控制面，只走 RelayFrame（protobuf）。
+	mux.HandleFunc("GET /v2/control", s.connectControlV2)
+	// GET /v2/relay/{reservation_id} —— reservation 作用域的不透明数据面，只走
+	// RelayDataFrame；reservation 由 /v2/control 的 RelayReserveRequest 创建（§25）。
+	mux.HandleFunc("GET /v2/relay/{reservation_id}", s.connectRelayData)
 }
 
 // health 提供无需认证的存活检查端点。

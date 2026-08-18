@@ -26,11 +26,9 @@ func TestConfigRequiresExplicitSecretsAndAdministrator(t *testing.T) {
 
 	t.Setenv("RELAY_ADMIN_PASSWORD", "long-random-password")
 	t.Setenv("RELAY_CREDENTIAL_TTL", "2h")
-	t.Setenv("RELAY_SESSION_TTL", "10m")
 	t.Setenv("RELAY_ADMIN_SESSION_TTL", "6h")
 	t.Setenv("RELAY_MAX_CONNECTIONS", "512")
 	t.Setenv("RELAY_MAX_ENROLLED_DEVICES", "1024")
-	t.Setenv("RELAY_MAX_TRANSFER_SESSIONS", "2048")
 	t.Setenv("RELAY_MAX_PENDING_FRAMES_PER_DEVICE", "48")
 	t.Setenv("RELAY_MAX_PENDING_BYTES_PER_DEVICE", "1048576")
 	t.Setenv("RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE", "128")
@@ -53,13 +51,13 @@ func TestConfigRequiresExplicitSecretsAndAdministrator(t *testing.T) {
 	if config.Address != ":9090" {
 		t.Fatalf("unexpected default address %q", config.Address)
 	}
-	if config.CredentialTTL != 2*time.Hour || config.SessionTTL != 10*time.Minute || config.AdminSessionTTL != 6*time.Hour {
-		t.Fatalf("duration environment values were not loaded: credential=%s session=%s admin=%s", config.CredentialTTL, config.SessionTTL, config.AdminSessionTTL)
+	if config.CredentialTTL != 2*time.Hour || config.AdminSessionTTL != 6*time.Hour {
+		t.Fatalf("duration environment values were not loaded: credential=%s admin=%s", config.CredentialTTL, config.AdminSessionTTL)
 	}
 	if config.MaxConnections != 512 {
 		t.Fatalf("max connection environment value was not loaded: %d", config.MaxConnections)
 	}
-	if config.MaxEnrolledDevices != 1024 || config.MaxTransferSessions != 2048 ||
+	if config.MaxEnrolledDevices != 1024 ||
 		config.MaxPendingFramesPerDevice != 48 || config.MaxPendingBytesPerDevice != 1048576 ||
 		config.MaxFramesPerSecondPerDevice != 128 || config.MaxBytesPerSecondPerDevice != 8388608 ||
 		config.MaxAdminSessions != 8 || config.AdminLoginMaxAttempts != 3 ||
@@ -89,6 +87,28 @@ func TestConfigDefaultsAreFiniteAndProxyBoundaryIsClosed(t *testing.T) {
 	}
 	if len(cfg.TrustedProxyCIDRs) != 0 {
 		t.Fatalf("trusted proxy CIDRs should default to an empty boundary: %+v", cfg.TrustedProxyCIDRs)
+	}
+}
+
+// TestRelayDataEndpointOrigin 固定 relay_data_endpoint 公共源的构造：显式 PublicURL
+// 优先（可带或不带 scheme、容忍尾部斜杠）；未配置时从监听地址派生，通配主机退化到
+// localhost。该源永不读取客户端 Host 头。
+func TestRelayDataEndpointOrigin(t *testing.T) {
+	cases := []struct {
+		cfg  Config
+		want string
+	}{
+		{Config{PublicURL: "wss://relay.example.com"}, "wss://relay.example.com"},
+		{Config{PublicURL: "relay.example.com:9443"}, "wss://relay.example.com:9443"},
+		{Config{PublicURL: "https://relay.example.com/"}, "https://relay.example.com"},
+		{Config{Address: ":8080"}, "wss://localhost:8080"},
+		{Config{Address: "0.0.0.0:8080"}, "wss://localhost:8080"},
+		{Config{Address: "127.0.0.1:9090"}, "wss://127.0.0.1:9090"},
+	}
+	for _, c := range cases {
+		if got := relayDataEndpointOrigin(c.cfg); got != c.want {
+			t.Errorf("relayDataEndpointOrigin(%+v) = %q, want %q", c.cfg, got, c.want)
+		}
 	}
 }
 

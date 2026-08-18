@@ -1,8 +1,13 @@
-//! Session 生命周期与当前 transport connection 的隔离。
+//! ConnectionSession 生命周期（transport-network v2，设计 §18）。
+//!
+//! 每个 transport connection 拥有且仅拥有一个 `ConnectionSession`：新连接建立时
+//! 创建新的 `SessionId` 与新的 Noise root；transport 丢失即销毁 Session，不存在
+//! 跨 connection 存活的 `SessionState::Disconnected`，也不存在复用旧 `SessionId`
+//! 的重连。业务状态（Delivery / Transfer）不属于 Session，由业务 manager 持有。
 
-use network_protocol::RouteType;
+use network_protocol::{CommunicationClass, RouteType};
 use network_quic::{send_channel_frame, ChannelFrameKind};
-use network_relay::RelayClient;
+use network_relay::RelayDataClient;
 use quinn::{Connection, VarInt};
 use rand::{rngs::OsRng, RngCore};
 use std::collections::HashMap;
@@ -27,15 +32,13 @@ pub(crate) struct SessionId([u8; SESSION_ID_BYTES]);
 
 pub(crate) const SESSION_ID_BYTES: usize = 16;
 
-/// Session 自身的生命周期；Connection 断开只会让 Session 进入
-/// Disconnected，而不会销毁 Session。
+/// Session 自身的生命周期（§18）。`Closed` / `Failed` 是终态；transport 丢失
+/// 直接销毁 Session（从注册表移除），因此不存在存活的重连态。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SessionState {
     Idle,
     Connecting,
     Connected,
-    Reconnecting,
-    Disconnected,
     Closed,
     Failed,
 }
@@ -48,27 +51,14 @@ pub(crate) enum ConnectDecision {
     InProgress(SessionId),
 }
 
-/// Decides whether authenticated handshake material belongs to the current
-/// logical Session or starts a new one.  The decision is made from the
-/// peer's binding, never from a transport route or a local alias.
+/// 握手材料安装的决策。Session 与 connection 一一对应（§18），因此唯一允许的
+/// 决策是安装**全新** root：`Initialize` 用于直接 admit 一个 `begin_connect`
+/// 创建且仍在途中的 Session；`ReplaceWithNew` 用于新连接到达时替换一个已经存在
+/// 的旧 Session（新 SessionId + 新 root）。不存在 `ContinueExisting`。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SessionCryptoDecision {
     Initialize,
-    ContinueExisting,
     ReplaceWithNew,
-}
-
-/// Compare a newly authenticated peer binding with the binding recorded by
-/// the current logical Session.
-pub(crate) fn evaluate_remote_session(
-    current_remote_binding: Option<&str>,
-    new_remote_binding: &str,
-) -> SessionCryptoDecision {
-    match current_remote_binding {
-        None => SessionCryptoDecision::Initialize,
-        Some(current) if current == new_remote_binding => SessionCryptoDecision::ContinueExisting,
-        Some(_) => SessionCryptoDecision::ReplaceWithNew,
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,7 +68,7 @@ pub(crate) struct SessionAdmission {
     pub(crate) replaced_session_id: Option<SessionId>,
 }
 
-/// Result of the Session continuity decision.  The old route is detached but
+/// Result of the Session admission decision.  The old route is detached but
 /// deliberately not closed here: closing a carrier is the Runtime/Session
 /// lifecycle owner's job, and GenericRoute carries supervised task leases that
 /// must be stopped outside the Session lock.
@@ -108,6 +98,8 @@ struct Session {
     remote_session_binding: Option<String>,
     state: SessionState,
     route: Option<ActiveRoute>,
+    /// 建连时请求的 CommunicationClass（§17）。`Unspecified` 表示默认 ReliableMessage。
+    communication_class: Option<CommunicationClass>,
 }
 
 const GENERIC_ROUTE_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -246,7 +238,7 @@ enum ActiveConnection {
     Generic(GenericRouteOwner),
     #[cfg(test)]
     GenericTest(GenericRouteHandle),
-    Relay(Option<Arc<RelayClient>>),
+    Relay(Option<Arc<RelayDataClient>>),
 }
 
 /// Cloneable non-owning view used by Delivery and route-selection observers.
@@ -258,11 +250,21 @@ pub(crate) struct RouteView {
     carrier: RouteViewCarrier,
 }
 
+/// The current route carrier projected for byte-stream I/O (ReliableStream §17).
+/// Owned handles (the QUIC `Connection`) are cloneable; the Generic route only
+/// needs its bounded send handle.
+#[derive(Clone)]
+pub(crate) enum StreamCarrier {
+    Quic(Connection),
+    Generic(GenericRouteHandle),
+    Relay(Option<Arc<RelayDataClient>>),
+}
+
 #[derive(Clone)]
 enum RouteViewCarrier {
     Quic(Connection),
     Generic(GenericRouteHandle),
-    Relay(Option<Arc<RelayClient>>),
+    Relay(Option<Arc<RelayDataClient>>),
 }
 
 impl ActiveRoute {
@@ -290,7 +292,7 @@ impl ActiveRoute {
         }
     }
 
-    fn relay(client: Option<Arc<RelayClient>>) -> Self {
+    fn relay(client: Option<Arc<RelayDataClient>>) -> Self {
         Self {
             profile: ConnectionProfile::new(Route::relay(RouteTransport::WebSocket)),
             carrier: ActiveConnection::Relay(client),
@@ -312,29 +314,6 @@ impl ActiveRoute {
         RouteView {
             profile: self.profile,
             carrier,
-        }
-    }
-
-    fn same_carrier(&self, other: &RouteView) -> bool {
-        match (&self.carrier, &other.carrier) {
-            (ActiveConnection::Quic(left), RouteViewCarrier::Quic(right)) => {
-                left.stable_id() == right.stable_id()
-            }
-            (ActiveConnection::Generic(left), RouteViewCarrier::Generic(right)) => {
-                left.handle().id() == right.id()
-            }
-            #[cfg(test)]
-            (ActiveConnection::GenericTest(left), RouteViewCarrier::Generic(right)) => {
-                left.id() == right.id()
-            }
-            (ActiveConnection::Relay(left), RouteViewCarrier::Relay(right)) => {
-                match (left, right) {
-                    (Some(left), Some(right)) => Arc::ptr_eq(left, right),
-                    (None, None) => true,
-                    _ => false,
-                }
-            }
-            _ => false,
         }
     }
 
@@ -385,30 +364,24 @@ impl SessionManager {
     }
 
     /// 开始一次连接尝试，已连接或已有连接任务时不重复创建 Session。
+    ///
+    /// §18：Session 与 transport connection 一一对应。终态（`Closed` / `Failed`）
+    /// 或已销毁（不在注册表）的 Session 都会生成一个**全新** SessionId；不存在
+    /// 复用旧 SessionId 的 reconnect。
     pub(crate) async fn begin_connect(&self, peer_id: &str) -> ConnectDecision {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(peer_id) {
             match session.state {
                 SessionState::Connected => return ConnectDecision::AlreadyConnected(session.id),
-                SessionState::Connecting | SessionState::Reconnecting => {
+                SessionState::Connecting => {
                     return ConnectDecision::InProgress(session.id);
                 }
-                SessionState::Closed => {
+                SessionState::Closed | SessionState::Failed | SessionState::Idle => {
                     let mut replacement = Self::new_session();
                     replacement.state = SessionState::Connecting;
                     let id = replacement.id;
                     *session = replacement;
                     return ConnectDecision::Started(id);
-                }
-                SessionState::Idle => {
-                    session.state = SessionState::Connecting;
-                    session.route = None;
-                    return ConnectDecision::Started(session.id);
-                }
-                SessionState::Disconnected | SessionState::Failed => {
-                    session.state = SessionState::Reconnecting;
-                    session.route = None;
-                    return ConnectDecision::Started(session.id);
                 }
             }
         }
@@ -420,11 +393,11 @@ impl SessionManager {
         ConnectDecision::Started(id)
     }
 
-    /// Admit a completed application handshake into the logical Session
-    /// lifecycle.  This is the single continuity gate shared by QUIC, generic
-    /// routes, and Relay.  The old route is detached before it is closed so
-    /// stale callbacks cannot observe it as the current route after a peer
-    /// runtime restart.
+    /// Admit a completed application handshake into a 1:1 ConnectionSession
+    /// (design §18). QUIC, generic routes, and Relay all route through this
+    /// gate. A new connection either admits the in-flight `begin_connect`
+    /// Session (fresh root, same SessionId) or replaces an existing Session
+    /// with a fresh SessionId + fresh root. There is no ContinueExisting.
     pub(crate) async fn admit_authenticated_session(
         &self,
         peer_id: &str,
@@ -435,79 +408,83 @@ impl SessionManager {
             return Err(SessionAdmissionError::InvalidRemoteBinding);
         }
 
-        let (admission, old_route) = {
-            let mut sessions = self.sessions.write().await;
-            let Some(current) = sessions.get_mut(peer_id) else {
-                if expected_session_id.is_some() {
-                    return Err(SessionAdmissionError::StaleSession);
-                }
-                let mut session = Self::new_session();
-                session.remote_session_binding = Some(new_remote_binding.to_string());
-                session.state = SessionState::Connecting;
-                let admission = SessionAdmission {
-                    session_id: session.id,
-                    decision: SessionCryptoDecision::Initialize,
-                    replaced_session_id: None,
-                };
-                sessions.insert(peer_id.to_string(), session);
-                return Ok(SessionAdmissionOutcome {
-                    admission,
-                    detached_route: None,
-                });
-            };
-
-            if expected_session_id.is_some_and(|expected| expected != current.id) {
+        let mut sessions = self.sessions.write().await;
+        let Some(current) = sessions.get_mut(peer_id) else {
+            if expected_session_id.is_some() {
                 return Err(SessionAdmissionError::StaleSession);
             }
-
-            if current.state == SessionState::Closed {
-                let replaced_session_id = current.id;
-                let old_route = current.route.take();
-                let mut replacement = Self::new_session();
-                replacement.remote_session_binding = Some(new_remote_binding.to_string());
-                replacement.state = SessionState::Connecting;
-                let admission = SessionAdmission {
-                    session_id: replacement.id,
-                    decision: SessionCryptoDecision::ReplaceWithNew,
-                    replaced_session_id: Some(replaced_session_id),
-                };
-                *current = replacement;
-                (admission, old_route)
-            } else {
-                let decision = evaluate_remote_session(
-                    current.remote_session_binding.as_deref(),
-                    new_remote_binding,
-                );
-                match decision {
-                    SessionCryptoDecision::Initialize | SessionCryptoDecision::ContinueExisting => {
-                        current.remote_session_binding = Some(new_remote_binding.to_string());
-                        (
-                            SessionAdmission {
-                                session_id: current.id,
-                                decision,
-                                replaced_session_id: None,
-                            },
-                            None,
-                        )
-                    }
-                    SessionCryptoDecision::ReplaceWithNew => {
-                        let replaced_session_id = current.id;
-                        let old_route = current.route.take();
-                        let mut replacement = Self::new_session();
-                        replacement.remote_session_binding = Some(new_remote_binding.to_string());
-                        replacement.state = SessionState::Connecting;
-                        let admission = SessionAdmission {
-                            session_id: replacement.id,
-                            decision,
-                            replaced_session_id: Some(replaced_session_id),
-                        };
-                        *current = replacement;
-                        (admission, old_route)
-                    }
-                }
-            }
+            // Responder 首次 admit：创建一个全新的 1:1 Session。
+            let mut session = Self::new_session();
+            session.remote_session_binding = Some(new_remote_binding.to_string());
+            session.state = SessionState::Connecting;
+            let admission = SessionAdmission {
+                session_id: session.id,
+                decision: SessionCryptoDecision::Initialize,
+                replaced_session_id: None,
+            };
+            sessions.insert(peer_id.to_string(), session);
+            return Ok(SessionAdmissionOutcome {
+                admission,
+                detached_route: None,
+            });
         };
 
+        if expected_session_id.is_some_and(|expected| expected != current.id) {
+            return Err(SessionAdmissionError::StaleSession);
+        }
+
+        // §18/§40 单赢者语义（写锁内的权威 guard）：期望的 Session 仍在 Connecting 时，
+        // 同一次 attempt 的 admit 走 Initialize；一旦 winner 已把 route 挂到它上面
+        // （Connected），或它已被显式关闭/失败，同一次 attempt 的迟到 admit 是 loser，
+        // 必须返回 StaleSession 而**绝不**整体替换——否则会拆掉 winner 刚挂载的 route，
+        // 双方都掉线。合法的替换只来自新 begin_connect（不同 expected id，已在上方拦截）
+        // 或 binding 变更（state 仍在 Connecting）。
+        if expected_session_id.is_some_and(|expected| {
+            expected == current.id && current.state != SessionState::Connecting
+        }) {
+            return Err(SessionAdmissionError::StaleSession);
+        }
+
+        let binding_changed = current
+            .remote_session_binding
+            .as_deref()
+            .is_some_and(|recorded| recorded != new_remote_binding);
+
+        // §18 1:1：只有 begin_connect 创建、仍在途中的 Session 会被直接 admit（安装
+        // 新 root，但保持 SessionId）。Responder 在 simultaneous connect 时也会直接
+        // admit 一个本端出站 connect 创建、尚未绑定 remote binding 的 Connecting
+        // Session，避免把它替换掉。任何已经带有不同 remote binding 的 Session，或
+        // 已经 Connected/Closed/Failed 的 Session，都会被新连接整体替换（新 SessionId +
+        // 新 root）——不存在 ContinueExisting。
+        let in_flight_initialize = expected_session_id.is_some()
+            && current.state == SessionState::Connecting
+            && !binding_changed
+            || expected_session_id.is_none()
+                && current.state == SessionState::Connecting
+                && current.remote_session_binding.is_none();
+        if in_flight_initialize {
+            current.remote_session_binding = Some(new_remote_binding.to_string());
+            return Ok(SessionAdmissionOutcome {
+                admission: SessionAdmission {
+                    session_id: current.id,
+                    decision: SessionCryptoDecision::Initialize,
+                    replaced_session_id: None,
+                },
+                detached_route: None,
+            });
+        }
+
+        let replaced_session_id = current.id;
+        let old_route = current.route.take();
+        let mut replacement = Self::new_session();
+        replacement.remote_session_binding = Some(new_remote_binding.to_string());
+        replacement.state = SessionState::Connecting;
+        let admission = SessionAdmission {
+            session_id: replacement.id,
+            decision: SessionCryptoDecision::ReplaceWithNew,
+            replaced_session_id: Some(replaced_session_id),
+        };
+        *current = replacement;
         Ok(SessionAdmissionOutcome {
             admission,
             detached_route: old_route,
@@ -538,21 +515,10 @@ impl SessionManager {
         Ok(())
     }
 
-    /// 绑定一个新的实际 Connection，但保留原有 Session ID。
-    pub(crate) async fn attach_connection(
-        &self,
-        peer_id: &str,
-        expected_session_id: Option<SessionId>,
-        connection: Connection,
-        route: RouteType,
-    ) -> bool {
-        self.attach_connection_for_session(peer_id, expected_session_id, connection, route, false)
-            .await
-            .is_ok()
-    }
-
-    /// Attaches an authenticated QUIC route, optionally replacing the active
-    /// carrier for the same logical Session. The returned route is detached
+    /// Attaches an authenticated QUIC route to a 1:1 ConnectionSession (§18).
+    /// A Session owns exactly one carrier for its whole life; attaching to a
+    /// Session that is already `Connected` with a route is rejected (a new
+    /// connection must create a new Session). The returned route is detached
     /// atomically and must be closed by the caller after releasing the lock.
     pub(crate) async fn attach_connection_for_session(
         &self,
@@ -560,7 +526,6 @@ impl SessionManager {
         expected_session_id: Option<SessionId>,
         connection: Connection,
         route: RouteType,
-        replace_current: bool,
     ) -> Result<Option<ActiveRoute>, ()> {
         let mut sessions = self.sessions.write().await;
         let session = match sessions.get_mut(peer_id) {
@@ -581,7 +546,7 @@ impl SessionManager {
             connection.close(VarInt::from_u32(0), b"session replaced");
             return Err(());
         }
-        if session.state == SessionState::Connected && session.route.is_some() && !replace_current {
+        if session.state == SessionState::Connected && session.route.is_some() {
             drop(sessions);
             connection.close(VarInt::from_u32(0), b"direct nomination already won");
             return Err(());
@@ -590,18 +555,20 @@ impl SessionManager {
         Ok(session.route.replace(ActiveRoute::quic(connection, route)))
     }
 
-    /// Atomically commits an authenticated GenericRoute scope. The driver is
-    /// released from its paused pre-attach state while the Session write lock
-    /// is held; only then is its unique owner installed as the current route.
+    /// Atomically commits an authenticated GenericRoute scope to a 1:1
+    /// ConnectionSession (§18). The driver is released from its paused
+    /// pre-attach state while the Session write lock is held; only then is its
+    /// unique owner installed as the current route.
     pub(crate) async fn attach_generic_route_for_session(
         &self,
         peer_id: &str,
         expected_session_id: Option<SessionId>,
         scope: &mut GenericRouteScope,
-        replace_current: bool,
     ) -> Result<Option<ActiveRoute>, ()> {
         let profile = scope.profile().ok_or(())?;
-        if !profile.supports(ConnectionCapability::ReliableMessage) {
+        if !profile.supports(ConnectionCapability::ReliableMessage)
+            && !profile.supports(ConnectionCapability::ReliableStream)
+        {
             return Err(());
         }
         let mut sessions = self.sessions.write().await;
@@ -616,9 +583,7 @@ impl SessionManager {
         };
         if session.state == SessionState::Closed
             || expected_session_id.is_some_and(|id| id != session.id)
-            || (session.state == SessionState::Connected
-                && session.route.is_some()
-                && !replace_current)
+            || (session.state == SessionState::Connected && session.route.is_some())
         {
             return Err(());
         }
@@ -644,100 +609,12 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Atomically replaces the current Connection for a Session after a new
-    /// route has completed authentication. The old handle is returned so the
-    /// caller can close it after releasing the Session lock.
-    pub(crate) async fn replace_connection_if_current(
-        &self,
-        peer_id: &str,
-        expected_session_id: SessionId,
-        current_connection: &Connection,
-        replacement: Connection,
-        route: RouteType,
-    ) -> Option<Connection> {
-        let mut sessions = self.sessions.write().await;
-        let session = sessions.get_mut(peer_id)?;
-        let is_current = session
-            .route
-            .as_ref()
-            .is_some_and(|route| match &route.carrier {
-                ActiveConnection::Quic(connection) => {
-                    connection.stable_id() == current_connection.stable_id()
-                }
-                _ => false,
-            });
-        if session.id != expected_session_id || session.state == SessionState::Closed || !is_current
-        {
-            drop(sessions);
-            replacement.close(VarInt::from_u32(0), b"session replaced");
-            return None;
-        }
-        let previous = session.route.replace(ActiveRoute::quic(replacement, route));
-        session.state = SessionState::Connected;
-        match previous {
-            Some(ActiveRoute {
-                carrier: ActiveConnection::Quic(connection),
-                ..
-            }) => Some(connection),
-            _ => None,
-        }
-    }
-
-    /// Atomically promotes a connected Relay route to a newly authenticated
-    /// direct Connection. The Relay route has no Connection handle, so this
-    /// transition has its own guard and cannot accidentally replace a newer
-    /// direct route or a closed Session.
-    pub(crate) async fn replace_route_if_current(
-        &self,
-        peer_id: &str,
-        expected_session_id: SessionId,
-        expected_route: RouteType,
-        replacement: Connection,
-        route: RouteType,
-    ) -> bool {
-        let mut sessions = self.sessions.write().await;
-        let Some(session) = sessions.get_mut(peer_id) else {
-            replacement.close(VarInt::from_u32(0), b"session replaced");
-            return false;
-        };
-        if session.id != expected_session_id
-            || session.state != SessionState::Connected
-            || session
-                .route
-                .as_ref()
-                .and_then(|route| route.profile.route().to_wire())
-                != Some(expected_route)
-            || session
-                .route
-                .as_ref()
-                .is_some_and(|route| !matches!(route.carrier, ActiveConnection::Relay(_)))
-        {
-            drop(sessions);
-            replacement.close(VarInt::from_u32(0), b"session replaced");
-            return false;
-        }
-        session.route = Some(ActiveRoute::quic(replacement, route));
-        true
-    }
-
-    /// 记录一个没有 Quinn handle 的已连接 Route，例如 Relay 控制面。
-    #[cfg(test)]
-    async fn mark_route_connected(
-        &self,
-        peer_id: &str,
-        expected_session_id: SessionId,
-        route: RouteType,
-    ) -> bool {
-        self.mark_relay_route_connected(peer_id, expected_session_id, route, None)
-            .await
-    }
-
     pub(crate) async fn mark_relay_route_connected(
         &self,
         peer_id: &str,
         expected_session_id: SessionId,
         route: RouteType,
-        relay: Option<Arc<RelayClient>>,
+        relay: Option<Arc<RelayDataClient>>,
     ) -> bool {
         let mut sessions = self.sessions.write().await;
         let Some(session) = sessions.get_mut(peer_id) else {
@@ -752,37 +629,6 @@ impl SessionManager {
             _ => None,
         };
         true
-    }
-
-    /// Atomically swaps any authenticated active route while retaining the
-    /// logical SessionId. The caller closes the returned old route only after
-    /// the swap has become visible to Delivery and receiver tasks.
-    pub(crate) async fn replace_active_route_if_current(
-        &self,
-        peer_id: &str,
-        expected_session_id: SessionId,
-        expected_route: &RouteView,
-        replacement: ActiveRoute,
-    ) -> Option<ActiveRoute> {
-        let mut sessions = self.sessions.write().await;
-        let session = sessions.get_mut(peer_id)?;
-        let matches_current = session
-            .route
-            .as_ref()
-            .is_some_and(|current| current.same_carrier(expected_route));
-        if session.id != expected_session_id
-            || session.state != SessionState::Connected
-            || !matches_current
-        {
-            return None;
-        }
-        session.state = SessionState::Connected;
-        Some(
-            session
-                .route
-                .replace(replacement)
-                .expect("matched active route"),
-        )
     }
 
     /// 取得当前可靠 direct Connection；Session 自身不随 Connection drop 消失。
@@ -836,6 +682,64 @@ impl SessionManager {
             .and_then(|session| session.route.as_ref().map(ActiveRoute::view))
     }
 
+    /// Returns the current route carrier for byte-stream I/O. This is a
+    /// separate projection so `RouteView`'s private carrier stays encapsulated.
+    pub(crate) async fn current_stream_carrier(&self, peer_id: &str) -> Option<StreamCarrier> {
+        self.current_active_route(peer_id)
+            .await
+            .map(|route| match route.carrier {
+                RouteViewCarrier::Quic(connection) => StreamCarrier::Quic(connection),
+                RouteViewCarrier::Generic(handle) => StreamCarrier::Generic(handle),
+                RouteViewCarrier::Relay(client) => StreamCarrier::Relay(client),
+            })
+    }
+
+    /// Returns the current reservation-scoped Relay v2 data client, if the
+    /// active route is a Relay route (§25).
+    pub(crate) async fn current_relay_data(&self, peer_id: &str) -> Option<Arc<RelayDataClient>> {
+        self.current_active_route(peer_id)
+            .await
+            .and_then(|route| match route.carrier {
+                RouteViewCarrier::Relay(client) => client,
+                _ => None,
+            })
+    }
+
+    /// Returns `true` when the current active route is a Relay route backed by
+    /// exactly `data` (§25 reservation data client).
+    pub(crate) async fn is_current_relay_data(
+        &self,
+        peer_id: &str,
+        data: &Arc<RelayDataClient>,
+    ) -> bool {
+        self.current_active_route(peer_id)
+            .await
+            .is_some_and(|route| match route.carrier {
+                RouteViewCarrier::Relay(Some(client)) => Arc::ptr_eq(&client, data),
+                _ => false,
+            })
+    }
+
+    /// Records the CommunicationClass a connection was established for (§17).
+    pub(crate) async fn set_communication_class(&self, peer_id: &str, class: CommunicationClass) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(peer_id) {
+            session.communication_class = Some(class);
+        }
+    }
+
+    /// Returns the CommunicationClass the current session was established for.
+    pub(crate) async fn current_communication_class(
+        &self,
+        peer_id: &str,
+    ) -> Option<CommunicationClass> {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .and_then(|session| session.communication_class)
+    }
+
     /// Returns the old flat projection for compatibility surfaces. Generic
     /// routes intentionally return `Unspecified`; callers needing routing
     /// semantics must use `current_profile`.
@@ -855,9 +759,11 @@ impl SessionManager {
             })
     }
 
-    /// Sends one Delivery data/ACK frame through the current route capability.
-    /// The caller supplies the opaque token required by the Relay protocol;
-    /// no caller branches on QUIC, TCP, WebSocket, UDP, or Relay.
+    /// Sends one Delivery data/ACK frame or one byte-stream frame through the
+    /// current route capability. The caller supplies the opaque token required
+    /// by the Relay protocol; no caller branches on QUIC, TCP, WebSocket, UDP,
+    /// or Relay. Byte-stream frames use the framed generic/Relay carrier only;
+    /// the QUIC direct path uses real bidirectional streams (`crate::stream`).
     pub(crate) async fn send_channel_frame(
         &self,
         peer_id: &str,
@@ -868,17 +774,34 @@ impl SessionManager {
         let route = self.current_active_route(peer_id).await.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotConnected, "route unavailable")
         })?;
-        if !route
-            .profile
-            .supports(ConnectionCapability::ReliableMessage)
-        {
-            return Err(std::io::Error::other("route does not support reliable messages").into());
+        let is_stream_frame = matches!(
+            kind,
+            GenericFrameKind::StreamBytes
+                | GenericFrameKind::StreamOpen
+                | GenericFrameKind::StreamClose
+        );
+        let capability = if is_stream_frame {
+            ConnectionCapability::ReliableStream
+        } else {
+            ConnectionCapability::ReliableMessage
+        };
+        if !route.profile.supports(capability) {
+            return Err(std::io::Error::other(format!(
+                "route does not support the requested capability {capability:?}"
+            ))
+            .into());
         }
         match route.carrier {
             RouteViewCarrier::Quic(connection) => {
                 let kind = match kind {
                     GenericFrameKind::DataMessage => ChannelFrameKind::DataMessage,
                     GenericFrameKind::DeliveryAck => ChannelFrameKind::DeliveryAck,
+                    _ => {
+                        return Err(std::io::Error::other(
+                            "byte-stream frames do not use the QUIC channel; use open_bi",
+                        )
+                        .into());
+                    }
                 };
                 send_channel_frame(&connection, kind, payload).await
             }
@@ -887,14 +810,23 @@ impl SessionManager {
                 .await
                 .map_err(|error| std::io::Error::other(error.to_string()).into()),
             RouteViewCarrier::Relay(Some(relay)) => match kind {
-                GenericFrameKind::DataMessage => relay
-                    .send_channel_message(relay_token, peer_id, payload)
-                    .await
-                    .map_err(|error| std::io::Error::other(error.to_string()).into()),
-                GenericFrameKind::DeliveryAck => relay
-                    .send_channel_ack(relay_token, peer_id, payload)
-                    .await
-                    .map_err(|error| std::io::Error::other(error.to_string()).into()),
+                GenericFrameKind::DataMessage => {
+                    crate::relay::send_relay_channel_message(&relay, relay_token, payload)
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string()).into())
+                }
+                GenericFrameKind::DeliveryAck => {
+                    crate::relay::send_relay_channel_ack(&relay, relay_token, payload)
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string()).into())
+                }
+                GenericFrameKind::StreamBytes
+                | GenericFrameKind::StreamOpen
+                | GenericFrameKind::StreamClose => {
+                    crate::relay::send_relay_stream_frame(&relay, relay_token, payload)
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string()).into())
+                }
             },
             RouteViewCarrier::Relay(None) => Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
@@ -914,13 +846,14 @@ impl SessionManager {
             })
     }
 
-    /// 仅当断开的 Connection 仍是当前 Connection 时才更新 Session，避免旧
-    /// Connection 的收尾任务覆盖已经接入的新 Connection。
-    pub(crate) async fn mark_disconnected_if_current(
+    /// §18 transport 丢失即销毁 Session：仅当断开的 Connection 仍是当前
+    /// Connection 时移除该 Session，并把拆下的 route owner 交回调用方做有界
+    /// 关闭与 supervised task join。旧 Connection 的收尾任务不会覆盖新 Session。
+    pub(crate) async fn destroy_quic_session_if_current(
         &self,
         peer_id: &str,
         connection: &Connection,
-    ) -> Option<SessionId> {
+    ) -> Option<(SessionId, ActiveRoute)> {
         let mut sessions = self.sessions.write().await;
         let session = sessions.get_mut(peer_id)?;
         let is_current = session
@@ -934,16 +867,20 @@ impl SessionManager {
             return None;
         }
         let session_id = session.id;
-        session.route = None;
-        session.state = SessionState::Disconnected;
-        Some(session_id)
+        let route = session
+            .route
+            .take()
+            .expect("current QUIC session must own a route");
+        sessions.remove(peer_id);
+        Some((session_id, route))
     }
 
-    pub(crate) async fn mark_generic_disconnected_if_current(
+    /// §18 transport 丢失即销毁 Session：仅当断开的是当前 GenericRoute 时移除。
+    pub(crate) async fn destroy_generic_session_if_current(
         &self,
         peer_id: &str,
         route_id: u64,
-    ) -> Option<SessionId> {
+    ) -> Option<(SessionId, ActiveRoute)> {
         let mut sessions = self.sessions.write().await;
         let session = sessions.get_mut(peer_id)?;
         let current_generic = session.route.as_ref().is_some_and(|route| {
@@ -966,33 +903,18 @@ impl SessionManager {
             return None;
         }
         let session_id = session.id;
-        session.route = None;
-        session.state = SessionState::Disconnected;
-        Some(session_id)
-    }
-
-    /// 在没有具体 Connection handle 时记录一次断开，主要用于后续
-    /// ConnectionManager/恢复任务接入前的状态边界。
-    #[cfg(test)]
-    async fn mark_disconnected(&self, peer_id: &str) -> bool {
-        let mut sessions = self.sessions.write().await;
-        let Some(session) = sessions.get_mut(peer_id) else {
-            return false;
-        };
-        session.route = None;
-        session.state = SessionState::Disconnected;
-        true
+        let route = session
+            .route
+            .take()
+            .expect("current generic session must own a route");
+        sessions.remove(peer_id);
+        Some((session_id, route))
     }
 
     pub(crate) async fn mark_failed(&self, peer_id: &str, expected_session_id: SessionId) {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(peer_id) {
-            if session.id == expected_session_id
-                && matches!(
-                    session.state,
-                    SessionState::Connecting | SessionState::Reconnecting
-                )
-            {
+            if session.id == expected_session_id && session.state == SessionState::Connecting {
                 session.route = None;
                 session.state = SessionState::Failed;
             }
@@ -1019,22 +941,6 @@ impl SessionManager {
             .map(|session| session.id)
     }
 
-    /// 检查某次重连任务是否仍属于同一个 Session，且没有被显式关闭或
-    /// 其他连接任务完成。
-    pub(crate) async fn should_reconnect(&self, peer_id: &str, session_id: SessionId) -> bool {
-        self.sessions
-            .read()
-            .await
-            .get(peer_id)
-            .is_some_and(|session| {
-                session.id == session_id
-                    && !matches!(
-                        session.state,
-                        SessionState::Connected | SessionState::Closed
-                    )
-            })
-    }
-
     #[cfg(test)]
     async fn state(&self, peer_id: &str) -> Option<SessionState> {
         self.sessions
@@ -1050,6 +956,7 @@ impl SessionManager {
             remote_session_binding: None,
             state: SessionState::Idle,
             route: None,
+            communication_class: None,
         }
     }
 }
@@ -1058,6 +965,13 @@ impl SessionId {
     fn random() -> Self {
         let mut bytes = [0u8; SESSION_ID_BYTES];
         OsRng.fill_bytes(&mut bytes);
+        Self(bytes)
+    }
+
+    /// 测试专用：从固定字节构造可预测的 SessionId（用于断言新 ConnectionSession
+    /// 生成全新 SessionId、旧 RealtimeSession 绑定随之销毁）。
+    #[cfg(test)]
+    pub(crate) fn from_bytes(bytes: [u8; SESSION_ID_BYTES]) -> Self {
         Self(bytes)
     }
 
@@ -1070,9 +984,7 @@ impl SessionId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use network_nat::PathManager;
-    use network_quic::QuicEndpointManager;
-    use std::sync::Arc;
+    use crate::connection::TestBlockingGenericRoute;
 
     #[tokio::test]
     async fn new_session_ids_are_random_128_bit_lowercase_hex() {
@@ -1101,106 +1013,195 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transient_disconnect_keeps_session_id_for_reconnect() {
+    async fn concurrent_connect_is_merged_while_in_progress() {
+        // §40 Concurrency：同 peer 并发 connect 合并——已有连接任务在途时返回
+        // InProgress（不重复创建 Session/建连）。
         let manager = SessionManager::new();
         let first = match manager.begin_connect("peer-b").await {
             ConnectDecision::Started(id) => id,
             decision => panic!("unexpected decision: {decision:?}"),
         };
-        assert_eq!(
-            manager.state("peer-b").await,
-            Some(SessionState::Connecting)
+        // 仍在 Connecting（任务在途）→ 第二次 begin_connect 合并。
+        assert!(matches!(
+            manager.begin_connect("peer-b").await,
+            ConnectDecision::InProgress(session_id) if session_id == first
+        ));
+        // 已有健康连接 → AlreadyConnected。
+        assert!(
+            manager
+                .mark_relay_route_connected("peer-b", first, RouteType::Relay, None)
+                .await
         );
-
-        assert!(manager.mark_disconnected("peer-b").await);
-        assert_eq!(
-            manager.state("peer-b").await,
-            Some(SessionState::Disconnected)
-        );
-
-        let second = match manager.begin_connect("peer-b").await {
-            ConnectDecision::Started(id) => id,
-            decision => panic!("unexpected decision: {decision:?}"),
-        };
-        assert_eq!(first, second);
-        assert_eq!(manager.session_id("peer-b").await, Some(first));
-        assert!(manager.should_reconnect("peer-b", first).await);
-    }
-
-    #[test]
-    fn remote_session_binding_decision_is_explicit() {
-        assert_eq!(
-            evaluate_remote_session(None, "remote-a"),
-            SessionCryptoDecision::Initialize
-        );
-        assert_eq!(
-            evaluate_remote_session(Some("remote-a"), "remote-a"),
-            SessionCryptoDecision::ContinueExisting
-        );
-        assert_eq!(
-            evaluate_remote_session(Some("remote-a"), "remote-b"),
-            SessionCryptoDecision::ReplaceWithNew
-        );
+        assert!(matches!(
+            manager.begin_connect("peer-b").await,
+            ConnectDecision::AlreadyConnected(session_id) if session_id == first
+        ));
     }
 
     #[tokio::test]
-    async fn same_remote_binding_preserves_session_and_changed_binding_replaces_it() {
+    async fn transport_loss_destroys_session_and_reconnect_gets_a_new_id() {
+        // §18/§40：transport 丢失即销毁 Session；重新 begin_connect 得到全新 SessionId，
+        // 绝不复用旧 id。
         let manager = SessionManager::new();
-        let first = match manager.begin_connect("peer-b").await {
+        let peer_id = "peer-loss";
+        let first = match manager.begin_connect(peer_id).await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        let TestBlockingGenericRoute { handle, worker, .. } =
+            crate::connection::test_blocking_generic_route();
+        let route_id = handle.id();
+        manager
+            .attach_test_generic_route(peer_id, first, handle)
+            .await
+            .expect("attach test route");
+        assert_eq!(manager.session_id(peer_id).await, Some(first));
+
+        let destroyed = manager
+            .destroy_generic_session_if_current(peer_id, route_id)
+            .await
+            .expect("current route must be destroyed");
+        assert_eq!(destroyed.0, first);
+        assert_eq!(manager.session_id(peer_id).await, None);
+
+        let second = match manager.begin_connect(peer_id).await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        assert_ne!(first, second);
+        drop(worker);
+    }
+
+    #[tokio::test]
+    async fn in_flight_initiator_admission_keeps_its_session_but_installs_new_root() {
+        // §18：begin_connect 创建、仍在途中的 Session 被直接 admit（Initialize），
+        // 不生成第二个 SessionId。
+        let manager = SessionManager::new();
+        let peer_id = "peer-init";
+        let first = match manager.begin_connect(peer_id).await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        let admission = manager
+            .admit_authenticated_session(peer_id, Some(first), "remote-a")
+            .await
+            .expect("admit in-flight initiator Session");
+        assert_eq!(admission.session_id, first);
+        assert_eq!(admission.decision, SessionCryptoDecision::Initialize);
+        assert_eq!(admission.replaced_session_id, None);
+    }
+
+    #[tokio::test]
+    async fn responder_admits_into_an_in_flight_connecting_session() {
+        // §18：simultaneous connect 时，responder 直接 admit 本端出站 connect 创建、
+        // 尚未绑定 remote binding 的 Connecting Session，避免替换掉它。
+        let manager = SessionManager::new();
+        let peer_id = "peer-simultaneous";
+        let session_id = match manager.begin_connect(peer_id).await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        let admission = manager
+            .admit_authenticated_session(peer_id, None, "remote-a")
+            .await
+            .expect("responder admits into in-flight Session");
+        assert_eq!(admission.session_id, session_id);
+        assert_eq!(admission.decision, SessionCryptoDecision::Initialize);
+        assert_eq!(admission.replaced_session_id, None);
+        // 出站 connect 的 admit 仍然成功（同一个 Session）。
+        let outbound = manager
+            .admit_authenticated_session(peer_id, Some(session_id), "remote-a")
+            .await
+            .expect("outbound admit after responder admit");
+        assert_eq!(outbound.session_id, session_id);
+    }
+
+    #[tokio::test]
+    async fn new_connection_replaces_an_existing_session_with_a_fresh_id() {
+        // §18：新连接到达时若已存在旧 Session（例如对端 runtime 重启 / 并发建连），
+        // 必须整体替换——新 SessionId + ReplaceWithNew，绝不 ContinueExisting。
+        let manager = SessionManager::new();
+        let peer_id = "peer-replace";
+        let first = match manager.begin_connect(peer_id).await {
             ConnectDecision::Started(id) => id,
             decision => panic!("unexpected decision: {decision:?}"),
         };
         let initialized = manager
-            .admit_authenticated_session("peer-b", Some(first), "remote-a")
+            .admit_authenticated_session(peer_id, Some(first), "remote-a")
             .await
             .expect("initial authenticated Session");
         assert_eq!(initialized.session_id, first);
         assert_eq!(initialized.decision, SessionCryptoDecision::Initialize);
         assert_eq!(
             manager
-                .current_remote_session_binding("peer-b")
+                .current_remote_session_binding(peer_id)
                 .await
                 .as_deref(),
             Some("remote-a")
         );
 
-        manager.mark_disconnected("peer-b").await;
-        let reconnect = match manager.begin_connect("peer-b").await {
-            ConnectDecision::Started(id) => id,
-            decision => panic!("unexpected decision: {decision:?}"),
-        };
-        assert_eq!(reconnect, first);
-        let continued = manager
-            .admit_authenticated_session("peer-b", Some(reconnect), "remote-a")
-            .await
-            .expect("same remote Session");
-        assert_eq!(continued.session_id, first);
-        assert_eq!(continued.decision, SessionCryptoDecision::ContinueExisting);
-
+        // 同一个 Session 用新 binding 再次 admit（peer restart 信号）→ 必须替换。
         let replaced = manager
-            .admit_authenticated_session("peer-b", Some(first), "remote-b")
+            .admit_authenticated_session(peer_id, Some(first), "remote-b")
             .await
             .expect("peer restart replacement");
         assert_ne!(replaced.session_id, first);
         assert_eq!(replaced.decision, SessionCryptoDecision::ReplaceWithNew);
         assert_eq!(replaced.replaced_session_id, Some(first));
-        assert_eq!(
-            manager.session_id("peer-b").await,
-            Some(replaced.session_id)
-        );
+        assert_eq!(manager.session_id(peer_id).await, Some(replaced.session_id));
         assert_eq!(
             manager
-                .current_remote_session_binding("peer-b")
+                .current_remote_session_binding(peer_id)
                 .await
                 .as_deref(),
             Some("remote-b")
         );
+
+        // 旧 SessionId 再次 admit → StaleSession（旧会话已被销毁）。
         assert!(matches!(
             manager
-                .admit_authenticated_session("peer-b", Some(first), "remote-c")
+                .admit_authenticated_session(peer_id, Some(first), "remote-c")
                 .await,
             Err(SessionAdmissionError::StaleSession)
         ));
+    }
+
+    #[tokio::test]
+    async fn stale_admit_for_connected_session_is_rejected_without_detaching_route() {
+        // §18/§40 单赢者（写锁内权威 guard）：winner 已把 route 挂到 Session
+        // （Connected）后，同一次 attempt 的迟到 admit 必须返回 StaleSession，绝不
+        // 整体替换——否则会拆掉 winner 刚挂载的 route，双方掉线。
+        let manager = SessionManager::new();
+        let peer_id = "peer-stale-admit";
+        let session_id = match manager.begin_connect(peer_id).await {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        let admitted = manager
+            .admit_authenticated_session(peer_id, Some(session_id), "remote-a")
+            .await
+            .expect("initial admit of the in-flight Session");
+        assert_eq!(admitted.decision, SessionCryptoDecision::Initialize);
+
+        // winner 挂载 route → Connected。
+        let TestBlockingGenericRoute { handle, worker, .. } =
+            crate::connection::test_blocking_generic_route();
+        manager
+            .attach_test_generic_route(peer_id, session_id, handle)
+            .await
+            .expect("attach winner route");
+        assert_eq!(manager.state(peer_id).await, Some(SessionState::Connected));
+
+        // loser：同一个 session id 的迟到 admit 必须被拒绝，且不拆掉 winner 的 route。
+        assert!(matches!(
+            manager
+                .admit_authenticated_session(peer_id, Some(session_id), "remote-a")
+                .await,
+            Err(SessionAdmissionError::StaleSession)
+        ));
+        assert_eq!(manager.state(peer_id).await, Some(SessionState::Connected));
+        assert_eq!(manager.session_id(peer_id).await, Some(session_id));
+        drop(worker);
     }
 
     #[tokio::test]
@@ -1218,271 +1219,38 @@ mod tests {
             decision => panic!("unexpected decision: {decision:?}"),
         };
         assert_ne!(first, second);
-        assert!(!manager.should_reconnect("peer-b", first).await);
-        assert!(manager.should_reconnect("peer-b", second).await);
         manager.close("peer-b").await;
-        assert!(!manager.should_reconnect("peer-b", second).await);
     }
 
     #[tokio::test]
-    async fn explicit_close_does_not_recover_delivery_into_replacement_session() {
+    async fn explicit_close_preserves_peer_pending_delivery() {
         let manager = SessionManager::new();
         let delivery = crate::delivery::DeliveryManager::new();
         let first = match manager.begin_connect("peer-b").await {
             ConnectDecision::Started(id) => id,
             decision => panic!("unexpected decision: {decision:?}"),
         };
+        // §20：pending 属于 Peer 业务作用域，不使用每连接的 SessionId。
         delivery
             .enqueue(
-                &first.wire_key(),
+                "peer-b",
                 "control",
                 b"old-session".to_vec(),
                 crate::delivery::DeliveryPolicy::Acked,
                 Default::default(),
             )
             .await
-            .expect("enqueue old session message");
+            .expect("enqueue peer message");
         manager.close("peer-b").await;
         let second = match manager.begin_connect("peer-b").await {
             ConnectDecision::Started(id) => id,
             decision => panic!("unexpected decision: {decision:?}"),
         };
         assert_ne!(first, second);
-        assert!(delivery
-            .recover_session(&second.wire_key())
-            .await
-            .messages
-            .is_empty());
-        assert_eq!(
-            delivery
-                .recover_session(&first.wire_key())
-                .await
-                .messages
-                .len(),
-            1
-        );
-    }
-
-    #[tokio::test]
-    async fn stale_connection_attempt_cannot_attach_to_replaced_session() {
-        let manager = SessionManager::new();
-        let first = match manager.begin_connect("peer-b").await {
-            ConnectDecision::Started(id) => id,
-            decision => panic!("unexpected decision: {decision:?}"),
-        };
-        manager.close("peer-b").await;
-        let second = match manager.begin_connect("peer-b").await {
-            ConnectDecision::Started(id) => id,
-            decision => panic!("unexpected decision: {decision:?}"),
-        };
-        assert_ne!(first, second);
-        assert!(!manager.should_reconnect("peer-b", first).await);
-        assert!(manager.should_reconnect("peer-b", second).await);
-    }
-
-    #[tokio::test]
-    async fn stale_connection_callbacks_cannot_mutate_replacement_session() {
-        let manager = SessionManager::new();
-        let first = match manager.begin_connect("peer-b").await {
-            ConnectDecision::Started(id) => id,
-            decision => panic!("unexpected decision: {decision:?}"),
-        };
-        manager
-            .admit_authenticated_session("peer-b", Some(first), "remote-runtime-1")
-            .await
-            .expect("initial admission");
-        let server_socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("server socket");
-        let server =
-            QuicEndpointManager::from_bound_socket(server_socket, Arc::new(PathManager::new()))
-                .expect("server endpoint");
-        let client_socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("client socket");
-        let client =
-            QuicEndpointManager::from_bound_socket(client_socket, Arc::new(PathManager::new()))
-                .expect("client endpoint");
-        let server_address = server.endpoint.local_addr().expect("server address");
-
-        let server_endpoint = server.endpoint.clone();
-        let first_accept = tokio::spawn(async move {
-            server_endpoint
-                .accept()
-                .await
-                .expect("first incoming")
-                .await
-                .expect("first connection")
-        });
-        let first_connection = client
-            .endpoint
-            .connect(server_address, "ssh-mobile")
-            .expect("first connect")
-            .await
-            .expect("first client connection");
-        let _first_server_connection = first_accept.await.expect("first accept task");
-        assert!(
-            manager
-                .attach_connection(
-                    "peer-b",
-                    Some(first),
-                    first_connection.clone(),
-                    RouteType::QuicDirect,
-                )
-                .await
-        );
-        let old_route = manager
-            .current_active_route("peer-b")
-            .await
-            .expect("old active route");
-
-        let replacement = manager
-            .admit_authenticated_session("peer-b", None, "remote-runtime-2")
-            .await
-            .expect("replacement admission");
-        assert_eq!(replacement.decision, SessionCryptoDecision::ReplaceWithNew);
-        assert_eq!(replacement.replaced_session_id, Some(first));
-        assert_ne!(replacement.session_id, first);
-
-        let server_endpoint = server.endpoint.clone();
-        let second_accept = tokio::spawn(async move {
-            server_endpoint
-                .accept()
-                .await
-                .expect("second incoming")
-                .await
-                .expect("second connection")
-        });
-        let second_connection = client
-            .endpoint
-            .connect(server_address, "ssh-mobile")
-            .expect("second connect")
-            .await
-            .expect("second client connection");
-        let second_server_connection = second_accept.await.expect("second accept task");
-        assert!(
-            manager
-                .attach_connection(
-                    "peer-b",
-                    Some(replacement.session_id),
-                    second_connection.clone(),
-                    RouteType::QuicDirect,
-                )
-                .await
-        );
-
-        let server_endpoint = server.endpoint.clone();
-        let stale_route_accept = tokio::spawn(async move {
-            server_endpoint
-                .accept()
-                .await
-                .expect("stale route incoming")
-                .await
-                .expect("stale route connection")
-        });
-        let stale_route_connection = client
-            .endpoint
-            .connect(server_address, "ssh-mobile")
-            .expect("stale route connect")
-            .await
-            .expect("stale route client connection");
-        let stale_route_server_connection =
-            stale_route_accept.await.expect("stale route accept task");
-        assert!(manager
-            .replace_active_route_if_current(
-                "peer-b",
-                first,
-                &old_route,
-                ActiveRoute::quic(stale_route_connection, RouteType::QuicDirect),
-            )
-            .await
-            .is_none());
-        assert!(manager
-            .mark_disconnected_if_current("peer-b", &first_connection)
-            .await
-            .is_none());
-        assert!(!manager.should_reconnect("peer-b", first).await);
-        assert_eq!(
-            manager.current_session_id("peer-b").await,
-            Some(replacement.session_id)
-        );
-        assert_eq!(
-            manager
-                .current_connection("peer-b")
-                .await
-                .expect("replacement connection")
-                .stable_id(),
-            second_connection.stable_id()
-        );
-
-        first_connection.close(VarInt::from_u32(0), b"test complete");
-        second_connection.close(VarInt::from_u32(0), b"test complete");
-        second_server_connection.close(VarInt::from_u32(0), b"test complete");
-        stale_route_server_connection.close(VarInt::from_u32(0), b"test complete");
-        client.endpoint.close(VarInt::from_u32(0), b"test complete");
-        server.endpoint.close(VarInt::from_u32(0), b"test complete");
-    }
-
-    #[tokio::test]
-    async fn relay_route_can_be_promoted_atomically_after_direct_connection_is_ready() {
-        let manager = SessionManager::new();
-        let session_id = match manager.begin_connect("peer-b").await {
-            ConnectDecision::Started(id) => id,
-            decision => panic!("unexpected decision: {decision:?}"),
-        };
-        assert!(
-            manager
-                .mark_route_connected("peer-b", session_id, RouteType::Relay)
-                .await
-        );
-
-        let server_socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("server socket");
-        let server =
-            QuicEndpointManager::from_bound_socket(server_socket, Arc::new(PathManager::new()))
-                .expect("server endpoint");
-        let client_socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("client socket");
-        let client =
-            QuicEndpointManager::from_bound_socket(client_socket, Arc::new(PathManager::new()))
-                .expect("client endpoint");
-        let server_endpoint = server.endpoint.clone();
-        let accept_task = tokio::spawn(async move {
-            let incoming = server_endpoint.accept().await.expect("incoming connection");
-            incoming.await.expect("server connection")
-        });
-        let connection = client
-            .endpoint
-            .connect(
-                server.endpoint.local_addr().expect("server address"),
-                "ssh-mobile",
-            )
-            .expect("create direct connection")
-            .await
-            .expect("direct connection");
-        let server_connection = accept_task.await.expect("accept task");
-
-        assert!(
-            manager
-                .replace_route_if_current(
-                    "peer-b",
-                    session_id,
-                    RouteType::Relay,
-                    connection.clone(),
-                    RouteType::QuicDirect,
-                )
-                .await
-        );
-        assert_eq!(
-            manager.current_route("peer-b").await,
-            Some(RouteType::QuicDirect)
-        );
-        assert_eq!(
-            manager
-                .current_connection("peer-b")
-                .await
-                .expect("promoted connection")
-                .stable_id(),
-            connection.stable_id()
-        );
-
-        connection.close(VarInt::from_u32(0), b"test complete");
-        server_connection.close(VarInt::from_u32(0), b"test complete");
-        client.endpoint.close(VarInt::from_u32(0), b"test complete");
-        server.endpoint.close(VarInt::from_u32(0), b"test complete");
+        // §19/§20：Session 关闭/换代不清理 pending；任何新连接（新 SessionId）
+        // 都能通过 Peer 作用域恢复并以同一个 MessageId 重发。
+        let snapshot = delivery.recover_peer("peer-b").await;
+        assert_eq!(snapshot.messages.len(), 1);
+        assert_eq!(snapshot.messages[0].payload, b"old-session");
     }
 }

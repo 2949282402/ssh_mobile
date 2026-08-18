@@ -42,11 +42,11 @@ func TestConnectExpiredCredentialReturnsCode12(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
-	request := httptest.NewRequest("GET", "/v1/connect", nil)
+	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+expired)
 	request.Header.Set("X-Relay-Nonce", nonce)
 	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("GET\n/v1/connect\n"+nonce)),
+		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
 	))
 
 	mux := http.NewServeMux()
@@ -93,7 +93,7 @@ func TestConnectGenericAuthFailureKeepsCode2(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
-	request := httptest.NewRequest("GET", "/v1/connect", nil)
+	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
 	request.Header.Set("X-Relay-Nonce", nonce)
 	// Sign with the wrong key: a non-expired but invalid proof.
@@ -102,7 +102,7 @@ func TestConnectGenericAuthFailureKeepsCode2(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(wrongPrivate, []byte("GET\n/v1/connect\n"+nonce)),
+		ed25519.Sign(wrongPrivate, []byte("GET\n/v2/control\n"+nonce)),
 	))
 
 	mux := http.NewServeMux()

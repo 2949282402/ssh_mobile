@@ -2,7 +2,7 @@
 //
 // 该类只编排 LAN HTTPS/mDNS、配对、Relay enrollment 和 Feature ViewModel，
 // 不创建 SSH、FFI 或全局 Network 实现。NetworkRuntime、身份材料和原生
-// NetworkService 均由 App Shell 通过 Port 注入，协调器是它们的使用方。
+// NetworkFacade 均由 App Shell 通过 Port 注入，协调器是它们的使用方。
 
 import 'dart:async';
 
@@ -112,7 +112,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   LanStorageService? _lanStorageService;
   LanTransferService? _transferService;
   RelayEnrollmentService? _relayEnrollmentService;
-  NetworkService? _networkService;
+  NetworkFacade? _networkFacade;
   LanShareNetworkIdentityMaterial? _networkIdentityMaterial;
   bool _nativeRelayActive = false;
   RelayConnectionState _relayConnectionState =
@@ -179,15 +179,15 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     error: _relayError,
   );
 
-  /// 可用时返回 App Shell 注入的网络服务。
-  NetworkService? get networkService => _networkService;
+  /// 可用时返回 App Shell 注入的网络 Facade。
+  NetworkFacade? get networkFacade => _networkFacade;
 
   /// 接收器初始化后发布原生传入传输申请。
   Stream<IncomingTransferOffer> get nativeIncomingTransferOffers async* {
     await ensureInitialized();
-    final network = _networkService;
-    if (network == null || !_receiverActive) return;
-    yield* network.events
+    final facade = _networkFacade;
+    if (facade == null || !_receiverActive) return;
+    yield* facade.events
         .where((event) => event is IncomingTransferOffer)
         .cast<IncomingTransferOffer>();
   }
@@ -198,10 +198,10 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   ) async {
     await ensureInitialized();
     await ensureViewModel();
-    final network = _networkService;
+    final facade = _networkFacade;
     final security = _securityService;
     final transfer = _transferService;
-    if (network == null || security == null || transfer == null) {
+    if (facade == null || security == null || transfer == null) {
       return _networkFailure(
         NetworkErrorCode.noRoute,
         'native network runtime is unavailable',
@@ -209,7 +209,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       );
     }
     if (!await security.isDevicePaired(offer.peerId)) {
-      await network.respondToIncoming(
+      await facade.respondToIncomingTransfer(
         transferId: offer.transferId,
         accept: false,
       );
@@ -234,7 +234,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         routeType: offer.routeType,
       ),
     );
-    return network.respondToIncoming(
+    return facade.respondToIncomingTransfer(
       transferId: offer.transferId,
       accept: true,
     );
@@ -245,15 +245,15 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     IncomingTransferOffer offer,
   ) async {
     await ensureInitialized();
-    final network = _networkService;
-    if (network == null) {
+    final facade = _networkFacade;
+    if (facade == null) {
       return _networkFailure(
         NetworkErrorCode.noRoute,
         'native network runtime is unavailable',
         NetworkOperation.respondToIncoming,
       );
     }
-    return network.respondToIncoming(
+    return facade.respondToIncomingTransfer(
       transferId: offer.transferId,
       accept: false,
     );
@@ -444,8 +444,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     final relayCapability = await _requireRelayCapability();
     if (relayCapability is NetworkFailure<void>) return relayCapability;
     final client = _relayEnrollmentService;
-    final network = _networkService;
-    if (client == null || network == null) {
+    final facade = _networkFacade;
+    if (client == null || facade == null) {
       return _networkFailure(
         NetworkErrorCode.noRoute,
         'native network runtime is unavailable',
@@ -477,7 +477,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       final disconnected = await _disconnectRelaySocket();
       if (disconnected is NetworkFailure<void>) return disconnected;
     }
-    final result = await network.configureRelay(
+    final result = await facade.configureRelay(
       RelayConfig(
         relayUrl: configuration.endpoint.toString(),
         relayCredential: configuration.credential,
@@ -541,13 +541,13 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   }
 
   Future<NetworkResult<void>> _disconnectRelaySocket() async {
-    final network = _networkService;
+    final facade = _networkFacade;
     _nativeRelayActive = false;
-    if (network == null) {
+    if (facade == null) {
       _relayConnectionState = RelayConnectionState.disconnected;
       return const NetworkSuccess<void>(null);
     }
-    final result = await network.disconnectRelay();
+    final result = await facade.disconnectRelay();
     if (result is NetworkSuccess<void>) {
       _relayConnectionState = RelayConnectionState.disconnected;
       _relayError = null;
@@ -803,7 +803,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     await _viewModel?.shutdown();
     await _transferService?.stopListening();
     await _discoveryService?.stopAdvertising();
-    await _disposeNetworkService();
+    await _disposeNetworkFacade();
     _receiverActive = false;
     notifyListeners();
   }
@@ -830,7 +830,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         securityService: _securityService!,
         storageService: _lanStorageService!,
         transferService: _transferService!,
-        networkService: _networkService,
+        networkFacade: _networkFacade,
         historyDao: historyRepository.dao,
         appSettings: appSettings,
         dataProtection: dataProtection,
@@ -929,7 +929,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       await transfer?.stopListening();
       discovery?.dispose();
       transfer?.dispose();
-      await _disposeNetworkService();
+      await _disposeNetworkFacade();
       _discoveryService = null;
       _securityService = null;
       _lanStorageService = null;
@@ -989,7 +989,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       }
     }
 
-    if (boundPort == null || _networkService != null) return;
+    if (boundPort == null || _networkFacade != null) return;
     final identity = _networkIdentityMaterial;
     final security = _securityService;
     final storage = _lanStorageService;
@@ -997,15 +997,15 @@ final class LanReceiverCoordinator extends ChangeNotifier {
 
     try {
       await networkRuntime.ensureCapability(NetworkCapability.runtime);
-      final network = await networkFactory.create(
+      final facade = await networkFactory.create(
         deviceId: appSettings.lanDeviceId,
         identityPrivateKey: identity.privateSeed,
         e2ePrivateKey: await security.getStaticX25519PrivateKeyBytes(),
         listenAddress: '0.0.0.0:$boundPort',
         receiveDirectory: (await storage.getSandboxDirectory()).path,
       );
-      if (network == null) return;
-      final startResult = await network.start(
+      if (facade == null) return;
+      final startResult = await facade.start(
         NetworkRuntimeConfig(
           deviceId: appSettings.lanDeviceId,
           identityPrivateKey: identity.privateSeed,
@@ -1019,11 +1019,11 @@ final class LanReceiverCoordinator extends ChangeNotifier {
           'Native network runtime configuration failed',
           details: startResult.error.toString(),
         );
-        await network.dispose();
+        await facade.dispose();
         return;
       }
-      _networkService = network;
-      _networkEventSubscription = network.events.listen(_handleNetworkEvent);
+      _networkFacade = facade;
+      _networkEventSubscription = facade.events.listen(_handleNetworkEvent);
       _connectConfiguredRelayInBackground();
     } on Object catch (error, stackTrace) {
       logger.warning(
@@ -1069,24 +1069,24 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     _handshakePendingSubscription = null;
   }
 
-  /// 停止并释放 App Shell 创建的网络服务。
-  Future<void> _disposeNetworkService() async {
-    final network = _networkService;
-    _networkService = null;
+  /// 停止并释放 App Shell 创建的网络 Facade。
+  Future<void> _disposeNetworkFacade() async {
+    final facade = _networkFacade;
+    _networkFacade = null;
     _nativeRelayActive = false;
     _relayConnectionState = RelayConnectionState.disconnected;
     await _networkEventSubscription?.cancel();
     _networkEventSubscription = null;
-    if (network == null) return;
+    if (facade == null) return;
     try {
-      await network.stop();
+      await facade.stop();
     } catch (error, stackTrace) {
       logger.warning(
         'Native network runtime stop failed',
         details: '$error\n$stackTrace',
       );
     }
-    await network.dispose();
+    await facade.dispose();
   }
 
   /// 将统一错误构造成稳定的失败结果。
@@ -1114,7 +1114,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     await _cancelReceiverSubscriptions();
     await _transferService?.stopListening();
     await _discoveryService?.stopAdvertising();
-    await _disposeNetworkService();
+    await _disposeNetworkFacade();
     await _relayEnrollmentService?.dispose();
     _relayEnrollmentService = null;
     _transferService?.dispose();

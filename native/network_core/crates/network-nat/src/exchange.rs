@@ -28,6 +28,14 @@ pub struct CandidateSignal {
     /// Shared bounded time budget for parallel direct connection attempts.
     pub connect_window_ms: u32,
     pub candidates: Vec<CandidateAdvertisement>,
+    /// V2 additive: runtime epoch of the signaling peer's control plane. v1
+    /// messages omit these fields so the existing JSON exchange is unchanged;
+    /// a `ConnectivityAttempt` consumes them when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_epoch: Option<u64>,
+    /// V2 additive: discovery revision the sender's candidates are based on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_revision: Option<u64>,
 }
 
 impl CandidateSignal {
@@ -44,6 +52,8 @@ impl CandidateSignal {
             attempt_id,
             connect_window_ms,
             candidates,
+            runtime_epoch: None,
+            discovery_revision: None,
         }
     }
 
@@ -60,7 +70,17 @@ impl CandidateSignal {
             attempt_id,
             connect_window_ms,
             candidates,
+            runtime_epoch: None,
+            discovery_revision: None,
         }
+    }
+
+    /// V2 additive builder: attaches the signaling peer's runtime epoch and
+    /// discovery revision to the signal. v1 callers do not use this.
+    pub fn with_epoch_revision(mut self, runtime_epoch: u64, discovery_revision: u64) -> Self {
+        self.runtime_epoch = Some(runtime_epoch);
+        self.discovery_revision = Some(discovery_revision);
+        self
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -272,5 +292,77 @@ mod tests {
         signal.connect_window_ms = DEFAULT_CONNECT_WINDOW_MS;
         signal.attempt_id = " ".into();
         assert!(signal.validate().is_err());
+    }
+
+    #[test]
+    fn v1_json_exchange_is_unchanged_when_v2_fields_are_absent() {
+        let candidate = Candidate::new(
+            "192.168.1.10:40009".parse().unwrap(),
+            CandidateKind::Lan,
+            "wifi".into(),
+        )
+        .with_generation(6)
+        .advertisement();
+        let signal = CandidateSignal::offer(
+            6,
+            "attempt-a".into(),
+            DEFAULT_CONNECT_WINDOW_MS,
+            vec![candidate],
+        );
+        let json = serde_json::to_value(&signal).unwrap();
+        let object = json.as_object().unwrap();
+        assert!(
+            !object.contains_key("runtime_epoch"),
+            "v1 JSON must not emit runtime_epoch"
+        );
+        assert!(
+            !object.contains_key("discovery_revision"),
+            "v1 JSON must not emit discovery_revision"
+        );
+        // Old v1 JSON (without the new fields) must still deserialize.
+        let old_json = r#"{
+            "version": 1,
+            "kind": "offer",
+            "generation": 6,
+            "attempt_id": "attempt-a",
+            "connect_window_ms": 4000,
+            "candidates": [{
+                "candidate_id": "wifi@192.168.1.10:40009",
+                "endpoint": "192.168.1.10:40009",
+                "kind": "lan",
+                "priority": 100,
+                "interface": "wifi",
+                "generation": 6
+            }]
+        }"#;
+        let decoded: CandidateSignal = serde_json::from_str(old_json).unwrap();
+        assert_eq!(decoded.runtime_epoch, None);
+        assert_eq!(decoded.discovery_revision, None);
+        assert_eq!(decoded.candidates.len(), 1);
+    }
+
+    #[test]
+    fn v2_epoch_and_revision_round_trip_additively() {
+        let candidate = Candidate::new(
+            "192.168.1.10:40010".parse().unwrap(),
+            CandidateKind::Lan,
+            "wifi".into(),
+        )
+        .with_generation(6)
+        .advertisement();
+        let signal = CandidateSignal::offer(
+            6,
+            "attempt-a".into(),
+            DEFAULT_CONNECT_WINDOW_MS,
+            vec![candidate],
+        )
+        .with_epoch_revision(11, 22);
+        let json = serde_json::to_value(&signal).unwrap();
+        let object = json.as_object().unwrap();
+        assert_eq!(object["runtime_epoch"], 11);
+        assert_eq!(object["discovery_revision"], 22);
+        let decoded: CandidateSignal = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.runtime_epoch, Some(11));
+        assert_eq!(decoded.discovery_revision, Some(22));
     }
 }

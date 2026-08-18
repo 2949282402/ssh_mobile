@@ -1,11 +1,11 @@
 //! v1 网络运行时生命周期、共享状态与命令/事件通道。
 
-use network_protocol::{NetworkCommand, NetworkErrorCode, NetworkEvent};
+use network_protocol::{NetworkCommand, NetworkEvent};
 use std::sync::{
     atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering},
     Arc, Mutex,
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::{
     mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -21,25 +21,20 @@ use crate::crypto_handshake::{
 use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
 use crate::session::{
-    SessionAdmission, SessionAdmissionError, SessionAdmissionOutcome, SessionCryptoDecision,
-    SessionId, SessionManager,
+    SessionAdmission, SessionAdmissionError, SessionAdmissionOutcome, SessionId, SessionManager,
 };
+use crate::stream::ReliableStreamManager;
 use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
 use network_identity::DeviceIdentity;
 use network_nat::PathManager;
-use network_relay::RelayClient;
-use network_transfer::{TransferFailureReason, TransferManager};
+use network_relay::RelayDataClient;
+use network_transfer::TransferManager;
 use quinn::Endpoint;
 use std::collections::HashMap;
-#[cfg(test)]
-use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 pub(crate) const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
-pub(crate) const DEFAULT_CANDIDATE_CONNECT_WINDOW: Duration =
-    Duration::from_millis(network_nat::DEFAULT_CONNECT_WINDOW_MS as u64);
-pub(crate) const RECONNECT_MAX_ATTEMPTS: usize = 5;
 pub(crate) const RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 pub(crate) const RECONNECT_MAX_BACKOFF: Duration = Duration::from_secs(5);
 pub(crate) const INCOMING_APPROVAL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -53,42 +48,19 @@ pub(crate) const RUNTIME_RUNNING: u8 = 1;
 pub(crate) const RUNTIME_STOPPING: u8 = 2;
 pub(crate) const RUNTIME_STOPPED: u8 = 3;
 
-/// Non-Copy cleanup lease for an authenticated Session admission.  A replaced
-/// Session's task group is canceled only after the new route commits.  If the
-/// handshake or attach path drops this lease first, the fallback cancellation
-/// is scheduled as a runtime-scoped task so an old Session task never awaits
-/// its own group.
+/// 一次 authenticated Session admission 的不可变载体。
+///
+/// transport-network v2（§18）：Session 与 connection 一一对应，被替换的旧 Session
+/// 会在 admission 时立即整体销毁（route 关闭 + task group 取消 + 资源 retire），
+/// 因此不需要 drop 时机的延迟取消。
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SessionAdmissionLease {
     admission: SessionAdmission,
-    supervisor: Arc<RuntimeTaskSupervisor>,
-    armed: bool,
 }
 
 impl SessionAdmissionLease {
-    fn new(admission: SessionAdmission, supervisor: Arc<RuntimeTaskSupervisor>) -> Self {
-        Self {
-            admission,
-            supervisor,
-            armed: true,
-        }
-    }
-
-    /// Disarm the failure cleanup after the new route is fully attached and
-    /// all post-attach initialization has succeeded.
-    pub(crate) fn finalize(mut self) {
-        self.armed = false;
-    }
-
-    fn schedule_abort(&self) {
-        let Some(replaced_session_id) = self.admission.replaced_session_id else {
-            return;
-        };
-        let spawn_supervisor = Arc::clone(&self.supervisor);
-        let cancel_supervisor = Arc::clone(&self.supervisor);
-        let session_key = replaced_session_id.wire_key();
-        let _ = spawn_supervisor.spawn_runtime("abort-session-admission", async move {
-            cancel_supervisor.cancel_session(&session_key).await;
-        });
+    pub(crate) fn new(admission: SessionAdmission) -> Self {
+        Self { admission }
     }
 }
 
@@ -100,14 +72,6 @@ impl std::ops::Deref for SessionAdmissionLease {
     }
 }
 
-impl Drop for SessionAdmissionLease {
-    fn drop(&mut self) {
-        if self.armed {
-            self.schedule_abort();
-        }
-    }
-}
-
 pub(crate) type RelayCryptoMessage = (u8, Vec<u8>);
 type RelayCryptoSender = mpsc::Sender<RelayCryptoMessage>;
 
@@ -116,36 +80,6 @@ pub(crate) struct PeerConfig {
     pub(crate) endpoint: Option<SocketAddr>,
     pub(crate) identity_public_key: [u8; 32],
     pub(crate) e2e_public_key: [u8; 32],
-}
-
-/// One locally initiated candidate-exchange window. The attempt ID is kept
-/// outside PathManager so an old Relay answer cannot authorize a new QUIC
-/// connectivity check.
-#[derive(Clone, Debug)]
-pub(crate) struct CandidateAttempt {
-    pub(crate) attempt_id: String,
-    pub(crate) generation: u64,
-    pub(crate) connect_window: Duration,
-    pub(crate) expires_at: Instant,
-}
-
-/// Relay Presence 控制面维护的在线设备摘要（Discovery Cache）。客户端不自行用固定
-/// TTL 推断远端下线（review P2-4）：peer_offline 是权威增量事件、presence_snapshot
-/// 做全量对账，因此只保留 generation。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PeerPresence {
-    pub(crate) generation: u64,
-}
-
-/// Relay lookup 的完整结果：在线状态 + 该设备的 Discovery（generation/candidates/
-/// capabilities）。候选是不透明 base64 JSON 字符串（CandidateAdvertisement 序列化），
-/// 消费端负责解码。
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct LookupResult {
-    pub(crate) online: bool,
-    pub(crate) generation: u64,
-    pub(crate) candidates: Vec<String>,
-    pub(crate) capabilities: Vec<String>,
 }
 
 pub(crate) struct RuntimeState {
@@ -169,8 +103,6 @@ pub(crate) struct RuntimeState {
     pub(crate) receive_directory: RwLock<Option<PathBuf>>,
     pub(crate) local_path_manager: RwLock<Option<Arc<PathManager>>>,
     pub(crate) peers: RwLock<HashMap<String, PeerConfig>>,
-    pub(crate) path_managers: RwLock<HashMap<String, Arc<PathManager>>>,
-    pub(crate) candidate_attempts: RwLock<HashMap<String, CandidateAttempt>>,
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
     pub(crate) sessions: SessionManager,
     /// Session-owned application crypto. Route changes do not replace this
@@ -178,33 +110,52 @@ pub(crate) struct RuntimeState {
     pub(crate) crypto: SessionCryptoManager,
     pub(crate) delivery: DeliveryManager,
     pub(crate) realtime: AsyncMutex<crate::realtime::RealtimeManager>,
-    pub(crate) delivery_tasks: RwLock<HashMap<String, SessionId>>,
-    pub(crate) reconnect_tasks: RwLock<HashMap<String, SessionId>>,
-    #[cfg(test)]
-    pub(crate) reconnect_disabled_peers: Mutex<HashSet<String>>,
-    pub(crate) direct_upgrade_tasks: RwLock<HashMap<String, SessionId>>,
-    pub(crate) relay: RwLock<Option<Arc<RelayClient>>>,
+    /// transport-network v2：reservation 作用域的 Relay v2 数据面客户端（§25/§31）。
+    ///
+    /// 由 `ConnectionOrchestrator::connect_relay_fallback`（发起方）或控制面
+    /// `IncomingRelayReservation`（应答方）建立；文件/流/消息数据经它转发。
+    /// 活跃 reservation 数据面客户端，按对端 device_id 索引（§25 每条 reservation
+    /// 数据面相互独立，一个对端的关闭不得切断另一个对端的活跃连接）。
+    pub(crate) relay_data: RwLock<HashMap<String, Arc<RelayDataClient>>>,
     pub(crate) relay_config: RwLock<Option<crate::relay::RelayReconnectConfig>>,
     pub(crate) relay_reconnect_task: Mutex<Option<TaskId>>,
     pub(crate) relay_reconnect_active: AtomicBool,
     /// 当前 Relay 凭据已被服务端判定过期/冲突；在 Dart 下发新的
     /// ConfigureRelayCommand 前抑制所有自动重连。
     pub(crate) relay_credential_stale: AtomicBool,
-    pub(crate) relay_acceptances:
-        RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
-    pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
-    pub(crate) relay_lookups: RwLock<HashMap<String, oneshot::Sender<LookupResult>>>,
-    /// Relay Presence 控制面维护的在线设备表；presence_snapshot 填充，增量帧更新。
-    pub(crate) peer_presence: RwLock<HashMap<String, PeerPresence>>,
+    /// transport-network v2：本地 Discovery 生命周期 owner（§9/§29）。
+    pub(crate) local_discovery: RwLock<Option<Arc<crate::discovery::LocalDiscoveryManager>>>,
+    /// transport-network v2：v2 控制面客户端 sink（§31 `RelayControlClient` 抽象）。
+    ///
+    /// resolve / publish / signaling / reserve 均经此 trait 对象路由。Step 6 接线后由
+    /// `relay::configure_relay_for_state` 填充。
+    pub(crate) relay_control: RwLock<Option<Arc<dyn crate::discovery::DiscoveryControlPlane>>>,
+    /// transport-network v2：连接重用注册表（§34/§29）。
+    pub(crate) connection_registry: crate::connect::registry::ConnectionRegistry,
+    /// transport-network v2：Presence → UI-only 提示缓存（§23/§29）。Presence 事件
+    /// 只更新本缓存，绝不修改 ConnectivityAttempt / CandidateSet / ConnectionSession。
+    pub(crate) presence_hints: crate::connect::presence::PresenceHintCache,
+    /// ReliableStream byte-stream managers, keyed by peer（§17）。每个 peer 的
+    /// receive buffer / QUIC send half / 网关桥都挂在这个 manager 上。
+    pub(crate) reliable_streams: RwLock<HashMap<String, ReliableStreamManager>>,
+    /// SSH 网关桥接的本地 sshd 端口（§21 option B）。生产默认 22；测试可覆盖指向
+    /// 本地 echo server。
+    pub(crate) stream_gateway_port: Arc<AtomicU16>,
     pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
     pub(crate) relay_crypto_confirmers:
         AsyncMutex<HashMap<String, RelayResponderConfirmation<SessionAdmissionLease>>>,
-    pub(crate) candidate_signal_notify: Notify,
-    pub(crate) relay_sessions: RwLock<HashMap<String, String>>,
+    /// reservation 数据面上的 Relay 文件传输业务状态（非 v1 会话协议）：
+    /// - `relay_pending_incoming`：等待 UI 审批的传入 offer（transfer_id → pending）。
+    /// - `relay_active_incoming`：正在接收的活跃传输（transfer_id → active）。
+    /// - `relay_acceptances` / `relay_completions`：发送方按 transfer_id 等待 accept/
+    ///   complete_ack 应答的 oneshot（由数据面事件循环投递）。
     pub(crate) relay_pending_incoming: RwLock<HashMap<String, crate::relay::PendingRelayIncoming>>,
     pub(crate) relay_active_incoming:
         AsyncMutex<HashMap<String, crate::relay::ActiveRelayIncoming>>,
+    pub(crate) relay_acceptances:
+        RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
+    pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) incoming_decisions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) transfers: TransferManager,
     pub(crate) event_tx: UnboundedSender<NetworkEvent>,
@@ -225,34 +176,29 @@ impl RuntimeState {
             receive_directory: RwLock::new(None),
             local_path_manager: RwLock::new(None),
             peers: RwLock::new(HashMap::new()),
-            path_managers: RwLock::new(HashMap::new()),
-            candidate_attempts: RwLock::new(HashMap::new()),
             trusted_peer_keys: RwLock::new(HashMap::new()),
             sessions: SessionManager::new(),
             crypto: SessionCryptoManager::new(),
             delivery: DeliveryManager::new(),
             realtime: AsyncMutex::new(crate::realtime::RealtimeManager::default()),
-            delivery_tasks: RwLock::new(HashMap::new()),
-            reconnect_tasks: RwLock::new(HashMap::new()),
-            #[cfg(test)]
-            reconnect_disabled_peers: Mutex::new(HashSet::new()),
-            direct_upgrade_tasks: RwLock::new(HashMap::new()),
-            relay: RwLock::new(None),
+            relay_data: RwLock::new(HashMap::new()),
             relay_config: RwLock::new(None),
             relay_reconnect_task: Mutex::new(None),
             relay_reconnect_active: AtomicBool::new(false),
             relay_credential_stale: AtomicBool::new(false),
-            relay_acceptances: RwLock::new(HashMap::new()),
-            relay_completions: RwLock::new(HashMap::new()),
-            relay_lookups: RwLock::new(HashMap::new()),
-            peer_presence: RwLock::new(HashMap::new()),
+            local_discovery: RwLock::new(None),
+            relay_control: RwLock::new(None),
+            connection_registry: crate::connect::registry::ConnectionRegistry::new(),
+            presence_hints: crate::connect::presence::PresenceHintCache::new(),
+            reliable_streams: RwLock::new(HashMap::new()),
+            stream_gateway_port: Arc::new(AtomicU16::new(crate::stream::STREAM_LOCAL_SSH_PORT)),
             relay_crypto_waiters: RwLock::new(HashMap::new()),
             relay_crypto_responders: AsyncMutex::new(HashMap::new()),
             relay_crypto_confirmers: AsyncMutex::new(HashMap::new()),
-            candidate_signal_notify: Notify::new(),
-            relay_sessions: RwLock::new(HashMap::new()),
             relay_pending_incoming: RwLock::new(HashMap::new()),
             relay_active_incoming: AsyncMutex::new(HashMap::new()),
+            relay_acceptances: RwLock::new(HashMap::new()),
+            relay_completions: RwLock::new(HashMap::new()),
             incoming_decisions: RwLock::new(HashMap::new()),
             transfers: TransferManager::new(),
             event_tx,
@@ -262,61 +208,43 @@ impl RuntimeState {
 
     async fn retire_session_resources(&self, peer_id: &str, session_id: SessionId) {
         let session_key = session_id.wire_key();
-        // Retire aliases and task indexes before awaiting the old task group.
-        // A reconnect/receiver task may be inside a bounded I/O wait; the
-        // replacement Session must become cryptographically isolated without
-        // waiting for that transport task to finish unwinding.
+        // Retire aliases before awaiting the old task group.
+        // A receiver task may be inside a bounded I/O wait; the replacement
+        // Session must become cryptographically isolated without waiting for
+        // that transport task to finish unwinding.
         self.crypto.remove_session(peer_id, &session_key);
-        self.delivery_tasks
-            .write()
-            .await
-            .retain(|_, current| *current != session_id);
-        self.reconnect_tasks
-            .write()
-            .await
-            .retain(|_, current| *current != session_id);
-        self.direct_upgrade_tasks
-            .write()
-            .await
-            .retain(|_, current| *current != session_id);
-        self.candidate_attempts.write().await.remove(peer_id);
-        let terminated_transfers = self
-            .transfers
-            .terminate_session_transfers(
-                peer_id,
-                &session_key,
-                TransferFailureReason::SessionReplaced,
-            )
-            .await;
-        for transfer in terminated_transfers {
-            self.incoming_decisions
-                .write()
-                .await
-                .remove(&transfer.transfer_id);
-            crate::relay::cancel_transfer(self, &transfer.transfer_id).await;
-            crate::events::emit_transfer_error(
-                &self.event_tx,
-                &transfer.transfer_id,
-                NetworkErrorCode::Cancelled,
-                "transfer terminated because the peer Session was replaced".to_string(),
-                "session_replace",
-                Some(peer_id),
-            );
+        // transport-network v2：Session 替换/关闭时同步注销连接登记（§34）。
+        self.connection_registry
+            .unregister_if_session(peer_id, session_id);
+        // §17/§21：ConnectionSession 销毁时关闭该 peer 的所有 ReliableStream，
+        // 并向应用发布 SshStreamClosed（SSH 不做透明恢复，客户端自行重连）。
+        if let Some(manager) = self.reliable_streams.write().await.remove(peer_id) {
+            manager.close_all(peer_id).await;
         }
-        self.delivery.close_session(&session_key).await;
+        // §19/§20 业务状态（pending / dedup / ordered）不属于 Session：transport
+        // 丢失或 Session 被替换时**不得**清理 Delivery 的接收端去重/有序状态，
+        // 否则新连接无法按 MessageId 去重、无法在有序通道上从断点继续。显式
+        // Disconnect 才清理（见 peer::disconnect_peer）。
     }
 
     pub(crate) async fn cancel_session_tasks(&self, peer_id: &str, session_id: SessionId) {
         let session_key = session_id.wire_key();
         self.retire_session_resources(peer_id, session_id).await;
+        // §19：ConnectionSession 销毁（transport 丢失 / 显式断开 / 被新连接替换）
+        // 时把该 Peer 的非终态 TransferOperation 置为 Paused。业务状态保留在
+        // TransferManager，等待下一次连接上的 ResumeTransfer(transfer_id) 恢复。
+        self.transfers.pause_peer_transfers(peer_id).await;
+        // §22：RealtimeSession 绑定在 ConnectionSession 上，transport 丢失即随
+        // ConnectionSession 销毁（发出 Closed、销毁 PeerConnection）；不做透明恢复。
+        crate::realtime::close_realtime_sessions_for_session(self, peer_id, session_id).await;
         self.task_supervisor.cancel_session(&session_key).await;
     }
 
-    /// Admit authenticated Noise material only after Session continuity has
-    /// been evaluated. A changed remote binding retires the old Session's
-    /// aliases and receive-side Delivery state before the new crypto context
-    /// is installed; task cancellation is deferred until the replacement
-    /// route has attached.
+    /// Admit authenticated Noise material for a 1:1 ConnectionSession（§18）。
+    ///
+    /// 被替换的旧 Session 在这里立即整体销毁（关闭 detached route + retire 资源 +
+    /// 取消其 task group）。因为 Session 与 connection 一一对应，旧 Session 属于另一条
+    /// connection，取消其任务组不会中断当前新连接的握手。
     pub(crate) async fn admit_authenticated_session(
         &self,
         peer_id: &str,
@@ -335,38 +263,10 @@ impl RuntimeState {
             detached_route.close().await;
         }
         if let Some(replaced_session_id) = admission.replaced_session_id {
-            self.retire_session_resources(peer_id, replaced_session_id)
-                .await;
-            // The retired Session's sender-side pending can never be delivered
-            // on the replacement Session; clear it (with byte-budget
-            // accounting) so it does not linger or leak the delivery budget.
-            self.delivery
-                .retire_pending_for_session(&replaced_session_id.wire_key())
+            self.cancel_session_tasks(peer_id, replaced_session_id)
                 .await;
         }
-        Ok(SessionAdmissionLease::new(
-            admission,
-            Arc::clone(&self.task_supervisor),
-        ))
-    }
-
-    /// Finish cancellation only after the winning replacement route has been
-    /// attached. A reconnect task can itself be the handshake that discovers
-    /// the peer restart; canceling its old Session group before it installs the
-    /// new route would abort the successful handshake midway.
-    pub(crate) fn finish_session_replacement(&self, admission: SessionAdmissionLease) {
-        let Some(replaced_session_id) = admission.replaced_session_id else {
-            admission.finalize();
-            return;
-        };
-        let supervisor = Arc::clone(&self.task_supervisor);
-        let session_key = replaced_session_id.wire_key();
-        admission.finalize();
-        let _ = self
-            .task_supervisor
-            .spawn_runtime("cancel-replaced-session", async move {
-                supervisor.cancel_session(&session_key).await;
-            });
+        Ok(SessionAdmissionLease::new(admission))
     }
 
     pub(crate) async fn crypto_context(
@@ -386,7 +286,6 @@ impl RuntimeState {
         peer_id: &str,
         session_id: &str,
         material: &SessionCryptoMaterial,
-        decision: SessionCryptoDecision,
     ) -> Result<(), CryptoError> {
         self.crypto
             .install_material_aliases(
@@ -394,7 +293,6 @@ impl RuntimeState {
                 &[session_id, material.remote_session_binding.as_str()],
                 material.root_key,
                 material.initiator,
-                decision,
             )
             .map(|_| ())
     }
@@ -451,6 +349,16 @@ impl RuntimeState {
             .map_err(|_| CryptoError::StateUnavailable)?
             .decrypt_for_delivery(aad, envelope);
         result
+    }
+
+    /// Returns the per-peer ReliableStream manager, creating it lazily. The
+    /// manager holds the receive buffers and QUIC send halves for every byte
+    /// stream to `peer_id` (§17).
+    pub(crate) async fn stream_manager(&self, peer_id: &str) -> ReliableStreamManager {
+        let mut map = self.reliable_streams.write().await;
+        map.entry(peer_id.to_string())
+            .or_insert_with(|| ReliableStreamManager::new(self.event_tx.clone()))
+            .clone()
     }
 }
 
@@ -626,10 +534,13 @@ impl NetworkRuntime {
     fn shutdown_listener(&self, state: Arc<RuntimeState>) {
         self.runtime.block_on(async move {
             state.task_supervisor.cancel_root();
-            let relay = state.relay.write().await.take();
-            if let Some(relay) = relay {
-                relay.request_disconnect().await;
+            let relay_data = state.relay_data.write().await.drain().collect::<Vec<_>>();
+            for (_, relay_data) in relay_data {
+                relay_data.request_disconnect().await;
             }
+            // 控制面 Drop 会中止后台读写 worker（RelayControlClient::drop）；显式
+            // take 释放共享引用即可。
+            state.relay_control.write().await.take();
             state.realtime.lock().await.close_all();
             if let Some(endpoint) = state.endpoint.write().await.take() {
                 endpoint.close(quinn::VarInt::from_u32(0), b"runtime stopping");
@@ -638,56 +549,12 @@ impl NetworkRuntime {
         });
     }
 
-    /// 仅测试用：强制关闭当前 peer 的 active transport Connection/route，
-    /// 但不关闭逻辑 Session，从而驱动生产自动重连路径。
+    /// 仅测试用：为当前 Peer 显式驱动一次确定性 recovery，返回其 wire key。
     ///
-    /// 与 `disconnect_peer` 不同（那会 `SessionManager::close` + 清空接收态），
-    /// 这里只中断底层 transport，让 `handle_connection_disconnect` →
-    /// `schedule_reconnect` → `reconnect_loop` 走真实的重连 + Delivery Recovery。
+    /// 测试在连接保持稳定时显式重放未 ACK 消息，验证接收端按 MessageId 去重。
+    /// 重放会以当前 ConnectionSession 重新编码发送（§20），不依赖生产重连路径。
     #[cfg(test)]
-    pub(crate) fn close_peer_connection_for_test(&self, peer_id: &str) {
-        let state = self
-            .state
-            .lock()
-            .expect("runtime state lock")
-            .clone()
-            .expect("runtime state");
-        self.runtime.block_on(async move {
-            if let Some(route) = state.sessions.current_active_route(peer_id).await {
-                route.close_for_test().await;
-            }
-        });
-    }
-
-    /// 仅测试用：禁用指定 peer 的自动重连。
-    ///
-    /// 断网时两端会各自触发自动重连；若两端都重连，新建连接会互相替换，
-    /// 替换会再次关闭对端连接并重新调度重连，形成连接 ping-pong 与并发
-    /// `recover_session` epoch 风暴，使测试无法确定收敛。需要隔离单侧重连
-    /// 路径的测试（如 delivery-recovery 集成测试）可对被动端禁用自动重连，
-    /// 让主动端单独走真实 `reconnect_loop`。
-    #[cfg(test)]
-    pub(crate) fn disable_peer_reconnect_for_test(&self, peer_id: &str) {
-        let state = self
-            .state
-            .lock()
-            .expect("runtime state lock")
-            .clone()
-            .expect("runtime state");
-        state
-            .reconnect_disabled_peers
-            .lock()
-            .expect("reconnect disabled peers lock")
-            .insert(peer_id.to_string());
-    }
-
-    /// 仅测试用：为当前 Session 显式驱动一次确定性 recovery，返回其 wire key。
-    ///
-    /// 测试在连接保持稳定时显式重放未 ACK 消息，验证 dedup 与显式 ACK 使用
-    /// 当前 recovery epoch。避免依赖生产重连路径：重连可能触发会话 crypto
-    /// 换代（ReplaceWithNew），使以旧 crypto 加密的重放无法解密而静默丢失。
-    #[cfg(test)]
-    pub(crate) fn recover_current_session_for_test(&self, peer_id: &str) -> Option<String> {
+    pub(crate) fn recover_current_peer_for_test(&self, peer_id: &str) -> Option<String> {
         let state = self
             .state
             .lock()
@@ -697,8 +564,7 @@ impl NetworkRuntime {
         self.runtime.block_on(async move {
             let session_id = state.sessions.current_session_id(peer_id).await?;
             let wire_key = session_id.wire_key();
-            crate::channel::recover_session(Arc::clone(&state), peer_id.to_string(), session_id)
-                .await;
+            crate::channel::recover_session(Arc::clone(&state), peer_id.to_string()).await;
             Some(wire_key)
         })
     }
@@ -718,8 +584,8 @@ impl Drop for NetworkRuntime {
                         endpoint.close(quinn::VarInt::from_u32(0), b"runtime dropped");
                     }
                 }
-                if let Ok(mut relay) = state.relay.try_write() {
-                    relay.take();
+                if let Ok(mut relay_data) = state.relay_data.try_write() {
+                    relay_data.clear();
                 }
                 if let Ok(mut realtime) = state.realtime.try_lock() {
                     realtime.close_all();

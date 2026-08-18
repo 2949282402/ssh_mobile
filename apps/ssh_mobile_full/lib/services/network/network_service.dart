@@ -112,7 +112,10 @@ final class NativeNetworkService implements NetworkService {
 
   /// 接受对端连接任务，并等待最终的 connected/failed 状态。
   @override
-  Future<NetworkResult<void>> connect(String peerId) async {
+  Future<NetworkResult<void>> connect(
+    String peerId, {
+    CommunicationClass communicationClass = CommunicationClass.reliableStream,
+  }) async {
     _ensureUsable();
     if (peerId.trim().isEmpty) {
       return _failure(
@@ -142,7 +145,11 @@ final class NativeNetworkService implements NetworkService {
           if (!terminalState.isCompleted) terminalState.complete(event);
         });
     final result = await _submit(
-      _codec.connectPeerCommand(commandId: const Uuid().v4(), peerId: peerId),
+      _codec.connectPeerCommand(
+        commandId: const Uuid().v4(),
+        peerId: peerId,
+        communicationClass: communicationClass,
+      ),
       operation: NetworkOperation.connect,
       timeout: const Duration(seconds: 12),
     );
@@ -266,39 +273,6 @@ final class NativeNetworkService implements NetworkService {
     return _submit(
       _codec.disconnectRelayCommand(commandId: const Uuid().v4()),
       operation: NetworkOperation.disconnectRelay,
-    );
-  }
-
-  /// 上传本机 Discovery（generation + opaque candidates/capabilities）到 Relay。
-  ///
-  /// Relay 认证连接后由 Native 侧自动上传首份；此方法用于网络/candidate 变化后
-  /// 由调用方显式重传（明确版 §7/§8）。候选是不透明字符串，SDK 不做语义解释。
-  @override
-  Future<NetworkResult<void>> uploadDiscovery({
-    required int generation,
-    required List<String> candidates,
-    required List<String> capabilities,
-  }) {
-    _ensureUsable();
-    if (generation <= 0) {
-      return Future.value(
-        _failure(
-          const NetworkError(
-            code: NetworkErrorCode.invalidArgument,
-            message: 'generation must be positive',
-            operation: NetworkOperation.uploadDiscovery,
-          ),
-        ),
-      );
-    }
-    return _submit(
-      _codec.uploadDiscoveryCommand(
-        commandId: const Uuid().v4(),
-        generation: generation,
-        candidates: candidates,
-        capabilities: capabilities,
-      ),
-      operation: NetworkOperation.uploadDiscovery,
     );
   }
 

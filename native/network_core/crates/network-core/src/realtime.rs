@@ -5,18 +5,18 @@
 //! clipboard, files, Delivery, and Relay recovery remain on their existing
 //! QUIC/Relay paths.
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use network_protocol::{
     RealtimeSessionState, RealtimeSignalKind, SendRealtimeSignalCommand,
     StartRealtimeSessionCommand, StopRealtimeSessionCommand,
 };
-use network_relay::RelayClient;
+use network_relay::v2::{
+    RealtimeSignal as V2RealtimeSignal, RealtimeSignalKind as V2RealtimeSignalKind,
+};
 use network_webrtc::{
     run_realtime_io, DescriptionType, IceCandidate, IceServerConfig, RealtimeIoDriver,
     RealtimeIoDriverHandle, RealtimeIoEvent, SessionDescription, WebRtcConfig, WebRtcError,
     WebRtcPeer, MAX_ICE_CANDIDATE_BYTES, MAX_SDP_BYTES,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -27,19 +27,18 @@ use crate::events::{
     protocol_error_with_peer,
 };
 use crate::runtime::RuntimeState;
+use crate::session::SessionId;
 
-const REALTIME_SIGNAL_VERSION: u32 = 1;
 const MAX_REALTIME_SIGNAL_PAYLOAD_BYTES: usize = MAX_SDP_BYTES;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct RealtimeSignalEnvelope {
-    v: u32,
-    revision: u64,
-    payload: String,
-}
 
 struct RealtimeSession {
     peer_id: String,
+    /// §22：PeerConnection/SDP/ICE 状态绑定在创建它的 ConnectionSession 上，
+    /// ConnectionSession 销毁（transport 丢失）即一并销毁 RealtimeSession；
+    /// 恢复必须走新的 Resolve → Connection → 重新 signaling → 新 PeerConnection。
+    /// `None` 表示创建时该 peer 尚无 ConnectionSession（例如 responder 首个信令
+    /// 早于数据连接建立）。
+    connection_session_id: Option<SessionId>,
     /// Signaling uses this only for sessions created by the pure state-machine
     /// tests. Runtime sessions keep the peer inside `RealtimeIoDriver` and
     /// access it through `driver` so the socket and sans-I/O peer share one
@@ -70,11 +69,47 @@ impl RealtimeManager {
             let _ = with_session_peer(&mut session, WebRtcPeer::close);
         }
     }
+
+    /// §22：ConnectionSession 销毁（transport 丢失）时关闭绑定在该 ConnectionSession
+    /// 上的所有 RealtimeSession——移除注册、销毁 WebRTC peer。返回 `(realtime_id,
+    /// peer_id, close_revision)`，供调用方取消 supervised I/O 任务并发出 Closed 事件。
+    fn close_for_connection_session(
+        &mut self,
+        peer_id: &str,
+        session_id: SessionId,
+    ) -> Vec<(String, String, u64)> {
+        let mut closed = Vec::new();
+        let matching = self
+            .sessions
+            .iter()
+            .filter(|(_, session)| {
+                session.peer_id == peer_id && session.connection_session_id == Some(session_id)
+            })
+            .map(|(realtime_id, _)| realtime_id.clone())
+            .collect::<Vec<_>>();
+        for realtime_id in matching {
+            let Some(mut session) = self.sessions.remove(&realtime_id) else {
+                continue;
+            };
+            let close_revision = session.revision.saturating_add(1);
+            let _ = with_session_peer(&mut session, WebRtcPeer::close);
+            closed.push((realtime_id, session.peer_id, close_revision));
+        }
+        closed
+    }
 }
 
 struct OutboundSignal {
     realtime_id: String,
     peer_id: String,
+    kind: RealtimeSignalKind,
+    revision: u64,
+    payload: Vec<u8>,
+}
+
+/// 一条已解码的入站 WebRTC 信令。v1 信封（revision 内嵌）与 v2 控制面帧
+/// （revision 独立字段）在进入状态机前都归一化为该三元组。
+struct InboundSignal {
     kind: RealtimeSignalKind,
     revision: u64,
     payload: Vec<u8>,
@@ -93,7 +128,25 @@ pub(crate) async fn start_session(
 ) -> Result<(), network_protocol::NetworkError> {
     validate_realtime_id(&command.realtime_id)?;
     validate_peer(&state, &command.peer_id).await?;
-    let relay = usable_relay(&state).await?;
+
+    // §22：重复启动同一 realtime session 必须在绑定任何 I/O 资源（UDP socket、
+    // data channel）之前拒绝——否则错误路径会丢弃一个已绑定 socket 的驱动而不
+    // 确定性关闭（泄漏）。这里先做快速检查；下面持锁插入前还会二次确认（并发
+    // 下两次 start_session 都可能通过本次检查）。
+    if state
+        .realtime
+        .lock()
+        .await
+        .sessions
+        .contains_key(&command.realtime_id)
+    {
+        return Err(realtime_error(
+            network_protocol::NetworkErrorCode::InvalidArgument,
+            "realtime session already exists",
+            "start_realtime",
+            &command.peer_id,
+        ));
+    }
 
     let mut driver = create_io_driver(&state, runtime_webrtc_config())
         .await
@@ -128,8 +181,18 @@ pub(crate) async fn start_session(
     let driver = driver.into_handle();
     let realtime_id = command.realtime_id;
     let peer_id = command.peer_id;
+    // §22：PeerConnection 绑定在创建它的 ConnectionSession 上（transport 丢失时
+    // 随 ConnectionSession 一并销毁）。创建时若尚无数据连接，绑定为 None。
+    let connection_session_id = state.sessions.current_session_id(&peer_id).await;
     let mut sessions = state.realtime.lock().await;
     if sessions.sessions.contains_key(&realtime_id) {
+        // 并发下两次 start_session 都通过了开头的提前检查：这里在持锁下二次确认。
+        // 若已被并发调用占用，必须显式 close 刚创建/绑定的驱动，保证 socket 与
+        // peer 被确定性释放（绝不静默丢弃）。
+        if let Ok(mut driver) = driver.lock() {
+            let _ = driver.close();
+        }
+        drop(sessions);
         return Err(realtime_error(
             network_protocol::NetworkErrorCode::InvalidArgument,
             "realtime session already exists",
@@ -141,6 +204,7 @@ pub(crate) async fn start_session(
         realtime_id.clone(),
         RealtimeSession {
             peer_id: peer_id.clone(),
+            connection_session_id,
             peer: None,
             driver: Some(driver.clone()),
             revision,
@@ -158,7 +222,7 @@ pub(crate) async fn start_session(
         revision,
         payload: offer.sdp.into_bytes(),
     };
-    if let Err(error) = send_signal(&relay, &outbound).await {
+    if let Err(error) = send_signal(&state, &outbound).await {
         state.realtime.lock().await.sessions.remove(&realtime_id);
         emit_realtime_state(
             &state.event_tx,
@@ -229,17 +293,15 @@ pub(crate) async fn stop_session(
         .cancel_session(&realtime_task_key(&command.realtime_id))
         .await;
     let _ = with_session_peer(&mut session, WebRtcPeer::close);
-    if let Some(relay) = state.relay.read().await.clone() {
-        let outbound = OutboundSignal {
-            realtime_id: command.realtime_id.clone(),
-            peer_id: session.peer_id.clone(),
-            kind: RealtimeSignalKind::WebRtcClose,
-            revision: close_revision,
-            payload: b"close".to_vec(),
-        };
-        if relay.is_usable().await {
-            let _ = send_signal(&relay, &outbound).await;
-        }
+    let outbound = OutboundSignal {
+        realtime_id: command.realtime_id.clone(),
+        peer_id: session.peer_id.clone(),
+        kind: RealtimeSignalKind::WebRtcClose,
+        revision: close_revision,
+        payload: b"close".to_vec(),
+    };
+    if let Err(error) = send_signal(state, &outbound).await {
+        tracing::debug!(error = %error.message, "failed to send WebRTC close signal");
     }
     emit_realtime_state(
         &state.event_tx,
@@ -267,7 +329,6 @@ pub(crate) async fn send_signal_command(
         )
     })?;
     validate_signal(kind, command.revision, &command.payload)?;
-    let relay = usable_relay(state).await?;
     let (session_peer_id, session_revision, ice_revision) = {
         let sessions = state.realtime.lock().await;
         let Some(session) = sessions.sessions.get(&command.realtime_id) else {
@@ -304,7 +365,7 @@ pub(crate) async fn send_signal_command(
         revision: command.revision,
         payload: command.payload,
     };
-    send_signal(&relay, &outbound).await?;
+    send_signal(state, &outbound).await?;
     emit_realtime_signal(
         &state.event_tx,
         &outbound.realtime_id,
@@ -316,23 +377,44 @@ pub(crate) async fn send_signal_command(
     Ok(())
 }
 
-pub(crate) async fn handle_relay_signal(
+/// v2 控制面信令入口（§17/§22：WebRTC signaling 经 Relay Control Plane）。
+/// `RealtimeSignal` 帧携带独立 `revision` 与原始 payload（无 v1 信封）。
+pub(crate) async fn handle_v2_realtime_signal(
     state: &Arc<RuntimeState>,
-    relay: &RelayClient,
-    kind: &str,
+    signal: &V2RealtimeSignal,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let kind = RealtimeSignalKind::try_from(signal.kind)
+        .map_err(|_| boxed_message("invalid v2 WebRTC signal kind"))?;
+    handle_realtime_signal(
+        state,
+        kind,
+        &signal.realtime_id,
+        &signal.target_device_id,
+        signal.revision,
+        signal.payload.clone(),
+    )
+    .await
+}
+
+/// WebRTC signaling 协商核心：v1 / v2 两条入站路径共用。
+///
+/// 入站 Offer 在没有 RealtimeSession 时会创建一个新的 responder 会话；该会话按
+/// §22 绑定到发起方当前 ConnectionSession（`connection_session_id`），transport 丢失
+/// 时随 ConnectionSession 一并销毁。`outcome.outbound`（Answer / restart Offer / ICE）
+/// 经 v2 控制面回发。
+async fn handle_realtime_signal(
+    state: &Arc<RuntimeState>,
+    kind: RealtimeSignalKind,
     realtime_id: &str,
     peer_id: &str,
-    payload: &str,
+    revision: u64,
+    payload: Vec<u8>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     validate_realtime_id(realtime_id).map_err(boxed_protocol_error)?;
     validate_peer(state, peer_id)
         .await
         .map_err(boxed_protocol_error)?;
-    let kind = signal_kind_from_control(kind)
-        .ok_or_else(|| boxed_message("invalid WebRTC control type"))?;
-    let envelope = decode_envelope(payload)?;
-    validate_signal(kind, envelope.revision, &envelope.payload_bytes())
-        .map_err(boxed_protocol_error)?;
+    validate_signal(kind, revision, &payload).map_err(boxed_protocol_error)?;
 
     let pending_driver = if kind == RealtimeSignalKind::WebRtcOffer
         && !state
@@ -351,6 +433,9 @@ pub(crate) async fn handle_relay_signal(
     } else {
         None
     };
+    // §22：responder 新建会话时绑定当前 ConnectionSession；后续 transport 丢失据此
+    // 关闭 RealtimeSession。
+    let connection_session_id = state.sessions.current_session_id(peer_id).await;
 
     let pending_driver_for_spawn = pending_driver.clone();
     let outcome = {
@@ -359,10 +444,13 @@ pub(crate) async fn handle_relay_signal(
             &mut manager,
             realtime_id,
             peer_id,
-            kind,
-            envelope.revision,
-            envelope.payload_bytes(),
+            InboundSignal {
+                kind,
+                revision,
+                payload: payload.clone(),
+            },
             pending_driver,
+            connection_session_id,
         )?
     };
 
@@ -415,8 +503,8 @@ pub(crate) async fn handle_relay_signal(
         realtime_id,
         peer_id,
         kind as i32,
-        envelope.revision,
-        envelope.payload_bytes(),
+        revision,
+        payload,
     );
     emit_realtime_state(
         &state.event_tx,
@@ -427,7 +515,7 @@ pub(crate) async fn handle_relay_signal(
         None,
     );
     if let Some(outbound) = outcome.outbound {
-        if let Err(error) = send_signal(relay, &outbound).await {
+        if let Err(error) = send_signal(state, &outbound).await {
             if spawned_io {
                 state
                     .task_supervisor
@@ -458,18 +546,33 @@ fn apply_signal(
     revision: u64,
     payload: Vec<u8>,
 ) -> Result<SignalOutcome, Box<dyn std::error::Error + Send + Sync>> {
-    apply_signal_with_driver(manager, realtime_id, peer_id, kind, revision, payload, None)
+    apply_signal_with_driver(
+        manager,
+        realtime_id,
+        peer_id,
+        InboundSignal {
+            kind,
+            revision,
+            payload,
+        },
+        None,
+        None,
+    )
 }
 
 fn apply_signal_with_driver(
     manager: &mut RealtimeManager,
     realtime_id: &str,
     peer_id: &str,
-    kind: RealtimeSignalKind,
-    revision: u64,
-    payload: Vec<u8>,
+    signal: InboundSignal,
     pending_driver: Option<RealtimeIoDriverHandle>,
+    connection_session_id: Option<SessionId>,
 ) -> Result<SignalOutcome, Box<dyn std::error::Error + Send + Sync>> {
+    let InboundSignal {
+        kind,
+        revision,
+        payload,
+    } = signal;
     if kind == RealtimeSignalKind::WebRtcClose {
         let Some(session) = manager.sessions.get(realtime_id) else {
             return Err(boxed_message("realtime session does not exist"));
@@ -521,6 +624,7 @@ fn apply_signal_with_driver(
                 None => match pending_driver {
                     Some(driver) => RealtimeSession {
                         peer_id: peer_id.to_string(),
+                        connection_session_id,
                         peer: None,
                         driver: Some(driver),
                         revision: 0,
@@ -530,6 +634,7 @@ fn apply_signal_with_driver(
                     },
                     None => RealtimeSession {
                         peer_id: peer_id.to_string(),
+                        connection_session_id,
                         peer: Some(
                             WebRtcPeer::new(WebRtcConfig::default())
                                 .expect("validated default WebRTC configuration"),
@@ -868,6 +973,35 @@ async fn remove_realtime_session(state: &RuntimeState, realtime_id: &str, peer_i
     }
 }
 
+/// §22：ConnectionSession 销毁（transport 丢失 / 显式断开 / 被新连接替换）时关闭
+/// 绑定在它上面的所有 RealtimeSession。旧 RealtimeSession 发出 `Closed` 事件并被移除；
+/// 用户/feature 可重新请求，manager 会经新的 Resolve → Connection → signaling 建立
+/// 全新的 PeerConnection——绝不透明恢复旧 PeerConnection 对象。
+pub(crate) async fn close_realtime_sessions_for_session(
+    state: &RuntimeState,
+    peer_id: &str,
+    session_id: SessionId,
+) {
+    let closed = {
+        let mut manager = state.realtime.lock().await;
+        manager.close_for_connection_session(peer_id, session_id)
+    };
+    for (realtime_id, session_peer_id, close_revision) in closed {
+        state
+            .task_supervisor
+            .cancel_session(&realtime_task_key(&realtime_id))
+            .await;
+        emit_realtime_state(
+            &state.event_tx,
+            &realtime_id,
+            &session_peer_id,
+            RealtimeSessionState::Closed as i32,
+            close_revision,
+            None,
+        );
+    }
+}
+
 async fn session_revision(state: &RuntimeState, realtime_id: &str) -> u64 {
     state
         .realtime
@@ -895,12 +1029,6 @@ async fn forward_local_candidate(
     if session_peer_id != peer_id {
         return;
     }
-    let Some(relay) = state.relay.read().await.clone() else {
-        return;
-    };
-    if !relay.is_usable().await {
-        return;
-    }
     let payload = candidate.candidate.into_bytes();
     let outbound = OutboundSignal {
         realtime_id: realtime_id.to_owned(),
@@ -909,7 +1037,7 @@ async fn forward_local_candidate(
         revision,
         payload,
     };
-    if let Err(error) = send_signal(&relay, &outbound).await {
+    if let Err(error) = send_signal(state, &outbound).await {
         tracing::debug!(peer_id, error = %error.message, "failed to forward WebRTC ICE candidate");
         return;
     }
@@ -921,24 +1049,6 @@ async fn forward_local_candidate(
         revision,
         outbound.payload,
     );
-}
-
-async fn usable_relay(
-    state: &RuntimeState,
-) -> Result<Arc<RelayClient>, network_protocol::NetworkError> {
-    let relay = state.relay.read().await.clone().ok_or_else(|| {
-        protocol_error(
-            network_protocol::NetworkErrorCode::RelayError,
-            "Relay signaling route is unavailable",
-        )
-    })?;
-    if !relay.is_usable().await {
-        return Err(protocol_error(
-            network_protocol::NetworkErrorCode::RelayError,
-            "Relay signaling route is disconnected",
-        ));
-    }
-    Ok(relay)
 }
 
 async fn validate_peer(
@@ -1002,24 +1112,32 @@ fn validate_signal(
     Ok(())
 }
 
+/// §22：WebRTC 信令经 v2 Relay Control Plane 路由（`signal_webrtc`），与媒体面
+/// (P2P/TURN) 分离。v1 Relay 数据面信令路径已在 Step 11 删除。
 async fn send_signal(
-    relay: &RelayClient,
+    state: &RuntimeState,
     signal: &OutboundSignal,
 ) -> Result<(), network_protocol::NetworkError> {
-    let payload = encode_envelope(signal.revision, &signal.payload).map_err(|error| {
-        realtime_error(
-            network_protocol::NetworkErrorCode::InvalidArgument,
-            error.to_string(),
-            "encode_realtime_signal",
-            &signal.peer_id,
-        )
-    })?;
-    relay
-        .send_webrtc_signal(
-            control_type(signal.kind),
+    let Some(control) = state.relay_control.read().await.clone() else {
+        return Err(protocol_error(
+            network_protocol::NetworkErrorCode::RelayError,
+            "Relay signaling route is unavailable",
+        ));
+    };
+    if !control.is_usable().await {
+        return Err(protocol_error(
+            network_protocol::NetworkErrorCode::RelayError,
+            "Relay signaling route is disconnected",
+        ));
+    }
+    let kind = to_v2_signal_kind(signal.kind);
+    control
+        .signal_webrtc(
             &signal.realtime_id,
             &signal.peer_id,
-            &payload,
+            kind,
+            signal.revision,
+            &signal.payload,
         )
         .await
         .map_err(|error| {
@@ -1032,60 +1150,16 @@ async fn send_signal(
         })
 }
 
-fn encode_envelope(revision: u64, payload: &[u8]) -> Result<Vec<u8>, serde_json::Error> {
-    serde_json::to_vec(&RealtimeSignalEnvelope {
-        v: REALTIME_SIGNAL_VERSION,
-        revision,
-        payload: URL_SAFE_NO_PAD.encode(payload),
-    })
-}
-
-fn decode_envelope(
-    payload: &str,
-) -> Result<DecodedEnvelope, Box<dyn std::error::Error + Send + Sync>> {
-    let bytes = URL_SAFE_NO_PAD.decode(payload)?;
-    let envelope: RealtimeSignalEnvelope = serde_json::from_slice(&bytes)?;
-    if envelope.v != REALTIME_SIGNAL_VERSION {
-        return Err(boxed_message("unsupported WebRTC signal version"));
-    }
-    let payload = URL_SAFE_NO_PAD.decode(envelope.payload)?;
-    Ok(DecodedEnvelope {
-        revision: envelope.revision,
-        payload,
-    })
-}
-
-struct DecodedEnvelope {
-    revision: u64,
-    payload: Vec<u8>,
-}
-
-impl DecodedEnvelope {
-    fn payload_bytes(&self) -> Vec<u8> {
-        self.payload.clone()
-    }
-}
-
-fn control_type(kind: RealtimeSignalKind) -> &'static str {
+/// network-protocol 的 WebRTC 信号类型 → v2 控制面 wire 类型（值一一对应）。
+fn to_v2_signal_kind(kind: RealtimeSignalKind) -> V2RealtimeSignalKind {
     match kind {
-        RealtimeSignalKind::WebRtcOffer => "webrtc_offer",
-        RealtimeSignalKind::WebRtcAnswer => "webrtc_answer",
-        RealtimeSignalKind::IceCandidate => "webrtc_ice_candidate",
-        RealtimeSignalKind::IceRestart => "webrtc_ice_restart",
-        RealtimeSignalKind::WebRtcClose => "webrtc_close",
-        RealtimeSignalKind::Unspecified => "webrtc_unknown",
+        RealtimeSignalKind::WebRtcOffer => V2RealtimeSignalKind::Offer,
+        RealtimeSignalKind::WebRtcAnswer => V2RealtimeSignalKind::Answer,
+        RealtimeSignalKind::IceCandidate => V2RealtimeSignalKind::IceCandidate,
+        RealtimeSignalKind::IceRestart => V2RealtimeSignalKind::IceRestart,
+        RealtimeSignalKind::WebRtcClose => V2RealtimeSignalKind::Close,
+        RealtimeSignalKind::Unspecified => V2RealtimeSignalKind::Unspecified,
     }
-}
-
-fn signal_kind_from_control(kind: &str) -> Option<RealtimeSignalKind> {
-    Some(match kind {
-        "webrtc_offer" => RealtimeSignalKind::WebRtcOffer,
-        "webrtc_answer" => RealtimeSignalKind::WebRtcAnswer,
-        "webrtc_ice_candidate" => RealtimeSignalKind::IceCandidate,
-        "webrtc_ice_restart" => RealtimeSignalKind::IceRestart,
-        "webrtc_close" => RealtimeSignalKind::WebRtcClose,
-        _ => return None,
-    })
 }
 
 fn realtime_error(
@@ -1110,9 +1184,19 @@ fn boxed_message(message: impl Into<String>) -> Box<dyn std::error::Error + Send
 #[cfg(test)]
 mod tests {
     use super::*;
-    use network_protocol::network_event;
-    use network_webrtc::DataChannelReliability;
+    use network_protocol::{network_event, NetworkErrorCode};
+    use network_relay::v2::{DiscoveryAck, DiscoverySnapshot, ResolvePeerResponse};
+    use network_relay::RelayError;
+    use network_webrtc::{DataChannelReliability, SignalingState};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
     use std::time::Duration;
+
+    use crate::discovery::DiscoveryControlPlane;
+    use crate::runtime::PeerConfig;
+    use crate::session::ConnectDecision;
 
     #[tokio::test]
     async fn realtime_snapshot_carries_authoritative_state_and_revision_after_connected() {
@@ -1125,6 +1209,7 @@ mod tests {
                 realtime_id.into(),
                 RealtimeSession {
                     peer_id: "peer-a".into(),
+                    connection_session_id: None,
                     peer: None,
                     driver: None,
                     revision: 7,
@@ -1164,15 +1249,6 @@ mod tests {
         assert_eq!(snapshots[0].state, RealtimeSessionState::Connected as i32);
         assert_eq!(snapshots[0].revision, 7);
         assert!(snapshots[0].error.is_none());
-    }
-
-    #[test]
-    fn signaling_envelope_round_trips_revision_and_binary_payload() {
-        let encoded = encode_envelope(3, b"sdp-bytes").expect("encode");
-        let outer = URL_SAFE_NO_PAD.encode(encoded);
-        let decoded = decode_envelope(&outer).expect("decode");
-        assert_eq!(decoded.revision, 3);
-        assert_eq!(decoded.payload, b"sdp-bytes");
     }
 
     #[tokio::test]
@@ -1271,20 +1347,6 @@ mod tests {
     }
 
     #[test]
-    fn signal_control_names_cover_the_complete_v1_set() {
-        for (kind, expected) in [
-            (RealtimeSignalKind::WebRtcOffer, "webrtc_offer"),
-            (RealtimeSignalKind::WebRtcAnswer, "webrtc_answer"),
-            (RealtimeSignalKind::IceCandidate, "webrtc_ice_candidate"),
-            (RealtimeSignalKind::IceRestart, "webrtc_ice_restart"),
-            (RealtimeSignalKind::WebRtcClose, "webrtc_close"),
-        ] {
-            assert_eq!(signal_kind_from_control(expected), Some(kind));
-            assert_eq!(control_type(kind), expected);
-        }
-    }
-
-    #[test]
     fn offer_answer_and_stale_revision_are_session_bound() {
         let realtime_id = "00112233445566778899aabbccddeeff";
         let mut caller = WebRtcPeer::new(WebRtcConfig::default()).expect("caller");
@@ -1312,6 +1374,7 @@ mod tests {
             realtime_id.into(),
             RealtimeSession {
                 peer_id: "peer-b".into(),
+                connection_session_id: None,
                 peer: Some(caller),
                 driver: None,
                 revision: caller_revision,
@@ -1471,5 +1534,504 @@ mod tests {
             &vec![b'x'; MAX_ICE_CANDIDATE_BYTES + 1],
         )
         .is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // §22 / §40 Recovery：ConnectionSession 丢失 → RealtimeSession Closed →
+    // 重新建立 → 全新 PeerConnection（绝不透明恢复旧 PeerConnection 对象）。
+    // -----------------------------------------------------------------------
+
+    /// 全新 PeerConnection 首个 Offer 的 signaling revision（`WebRtcPeer::create_offer`
+    /// 把计数器从 0 推进到 1；fresh session 从该起点重启计数，绝不继承旧会话的 revision）。
+    const FRESH_OFFER_REVISION: u64 = 1;
+
+    #[tokio::test]
+    async fn transport_loss_closes_realtime_session_and_reestablish_uses_a_fresh_peer() {
+        let realtime_id = "00112233445566778899aabbccddeeff";
+        let s1 = SessionId::from_bytes([1u8; 16]);
+        let s2 = SessionId::from_bytes([2u8; 16]);
+
+        // 第一代：responder 从 offer 建立，绑定 ConnectionSession S1，持有 driver1。
+        let mut caller = WebRtcPeer::new(WebRtcConfig::default()).expect("caller");
+        caller
+            .create_data_channel("ssh-mobile-realtime", Default::default())
+            .expect("data channel");
+        let offer = caller.create_offer().expect("offer");
+        let offer_sdp = offer.sdp.clone();
+        let offer_revision = caller.signaling_revision();
+        let driver1 = RealtimeIoDriver::bind(
+            WebRtcPeer::new(WebRtcConfig::default()).expect("responder peer"),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .await
+        .expect("responder driver")
+        .into_handle();
+
+        let mut manager = RealtimeManager::default();
+        let first = apply_signal_with_driver(
+            &mut manager,
+            realtime_id,
+            "peer-a",
+            InboundSignal {
+                kind: RealtimeSignalKind::WebRtcOffer,
+                revision: offer_revision,
+                payload: offer.sdp.into_bytes(),
+            },
+            Some(driver1.clone()),
+            Some(s1),
+        )
+        .expect("first answer");
+        assert_eq!(first.state, RealtimeSessionState::Negotiating);
+        assert_eq!(
+            manager.sessions[realtime_id].connection_session_id,
+            Some(s1)
+        );
+
+        // transport 丢失（ConnectionSession S1 销毁）→ RealtimeSession Closed。
+        let closed = manager.close_for_connection_session("peer-a", s1);
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].0, realtime_id);
+        assert_eq!(closed[0].1, "peer-a");
+        assert_eq!(closed[0].2, first.revision + 1);
+        assert!(!manager.sessions.contains_key(realtime_id));
+        // 旧 PeerConnection 对象被销毁，其 DTLS/ICE 状态不可复用。
+        assert!(matches!(
+            driver1.lock().unwrap().peer_mut().signaling_state(),
+            SignalingState::Closed
+        ));
+
+        // 第二代：新的 Resolve → Connection S2 → 重新 signaling → 全新 PeerConnection。
+        let mut caller2 = WebRtcPeer::new(WebRtcConfig::default()).expect("caller 2");
+        caller2
+            .create_data_channel("ssh-mobile-realtime", Default::default())
+            .expect("data channel");
+        let offer2 = caller2.create_offer().expect("offer 2");
+        let offer2_sdp = offer2.sdp.clone();
+        let offer2_revision = caller2.signaling_revision();
+        let driver2 = RealtimeIoDriver::bind(
+            WebRtcPeer::new(WebRtcConfig::default()).expect("responder peer 2"),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .await
+        .expect("responder driver 2")
+        .into_handle();
+        let second = apply_signal_with_driver(
+            &mut manager,
+            realtime_id,
+            "peer-a",
+            InboundSignal {
+                kind: RealtimeSignalKind::WebRtcOffer,
+                revision: offer2_revision,
+                payload: offer2.sdp.into_bytes(),
+            },
+            Some(driver2.clone()),
+            Some(s2),
+        )
+        .expect("second answer");
+        assert_eq!(second.state, RealtimeSessionState::Negotiating);
+        assert_eq!(
+            manager.sessions[realtime_id].connection_session_id,
+            Some(s2)
+        );
+        // 新会话是全新 PeerConnection（对象不复用、SDP 是新 DTLS/ICE 状态），
+        // 且计数从该会话自己的起点重启。
+        assert!(
+            !Arc::ptr_eq(&driver1, &driver2),
+            "new PeerConnection must be a fresh object, never the old one"
+        );
+        assert_ne!(
+            offer_sdp, offer2_sdp,
+            "new offer must carry fresh DTLS/ICE state"
+        );
+        assert_eq!(manager.sessions[realtime_id].revision, second.revision);
+    }
+
+    #[test]
+    fn close_for_connection_session_only_affects_bound_realtime_sessions() {
+        let realtime_id = "00112233445566778899aabbccddeeff";
+        let other_realtime_id = "ffeeddccbbaa99887766554433221100";
+        let s1 = SessionId::from_bytes([1u8; 16]);
+        let s2 = SessionId::from_bytes([2u8; 16]);
+        let mut manager = RealtimeManager::default();
+        let insert = |manager: &mut RealtimeManager,
+                      id: &str,
+                      peer_id: &str,
+                      connection_session_id: Option<SessionId>| {
+            manager.sessions.insert(
+                id.to_string(),
+                RealtimeSession {
+                    peer_id: peer_id.to_string(),
+                    connection_session_id,
+                    peer: Some(
+                        WebRtcPeer::new(WebRtcConfig::default())
+                            .expect("validated default WebRTC configuration"),
+                    ),
+                    driver: None,
+                    revision: 1,
+                    remote_revision: 0,
+                    ice_revision: 1,
+                    seen_candidates: HashSet::new(),
+                },
+            );
+        };
+        // 目标：peer-a 绑定 S1 → 应被关闭。
+        insert(&mut manager, realtime_id, "peer-a", Some(s1));
+        // peer-a 绑定 S2 → 不受影响。
+        insert(&mut manager, other_realtime_id, "peer-a", Some(s2));
+        // peer-b 绑定 S1 → 不同 peer，不受影响。
+        insert(
+            &mut manager,
+            "01010101010101010101010101010101",
+            "peer-b",
+            Some(s1),
+        );
+        // peer-a 未绑定 ConnectionSession → 不受影响。
+        insert(
+            &mut manager,
+            "02020202020202020202020202020202",
+            "peer-a",
+            None,
+        );
+
+        let closed = manager.close_for_connection_session("peer-a", s1);
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].0, realtime_id);
+        assert!(!manager.sessions.contains_key(realtime_id));
+        assert!(manager.sessions.contains_key(other_realtime_id));
+        assert!(manager
+            .sessions
+            .contains_key("01010101010101010101010101010101"));
+        assert!(manager
+            .sessions
+            .contains_key("02020202020202020202020202020202"));
+    }
+
+    /// 记录 v2 控制面 WebRTC 信令的 mock（可配置发送失败模拟信令丢失）。
+    #[derive(Clone)]
+    struct SignalCall {
+        realtime_id: String,
+        target_device_id: String,
+        kind: V2RealtimeSignalKind,
+        revision: u64,
+        payload: Vec<u8>,
+    }
+
+    struct RecordingControl {
+        signals: Mutex<Vec<SignalCall>>,
+        fail_signals: AtomicBool,
+    }
+
+    impl RecordingControl {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                signals: Mutex::new(Vec::new()),
+                fail_signals: AtomicBool::new(false),
+            })
+        }
+
+        fn signal_calls(&self) -> Vec<SignalCall> {
+            self.signals.lock().unwrap().clone()
+        }
+    }
+
+    impl DiscoveryControlPlane for RecordingControl {
+        fn publish_discovery(
+            &self,
+            _request_id: u64,
+            _snapshot: DiscoverySnapshot,
+        ) -> Pin<Box<dyn Future<Output = Result<DiscoveryAck, RelayError>> + Send + '_>> {
+            Box::pin(async move { Err(RelayError::NotConnected) })
+        }
+
+        fn resolve_peer(
+            &self,
+            _target_device_id: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<ResolvePeerResponse, RelayError>> + Send + '_>>
+        {
+            Box::pin(async move { Err(RelayError::NotConnected) })
+        }
+
+        fn is_usable(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+            Box::pin(async move { true })
+        }
+
+        fn signal_webrtc(
+            &self,
+            realtime_id: &str,
+            target_device_id: &str,
+            kind: V2RealtimeSignalKind,
+            revision: u64,
+            payload: &[u8],
+        ) -> Pin<Box<dyn Future<Output = Result<(), RelayError>> + Send + '_>> {
+            let fail = self.fail_signals.load(Ordering::Acquire);
+            let call = SignalCall {
+                realtime_id: realtime_id.to_string(),
+                target_device_id: target_device_id.to_string(),
+                kind,
+                revision,
+                payload: payload.to_vec(),
+            };
+            Box::pin(async move {
+                if fail {
+                    Err(RelayError::NotConnected)
+                } else {
+                    self.signals.lock().unwrap().push(call);
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    async fn realtime_test_state() -> (
+        Arc<RuntimeState>,
+        tokio::sync::mpsc::UnboundedReceiver<network_protocol::NetworkEvent>,
+    ) {
+        let (event_tx, event_rx) = unbounded_channel();
+        (
+            Arc::new(RuntimeState::new(
+                event_tx,
+                Arc::new(std::sync::atomic::AtomicU16::new(0)),
+            )),
+            event_rx,
+        )
+    }
+
+    async fn register_realtime_peer(state: &RuntimeState, peer_id: &str) {
+        state.peers.write().await.insert(
+            peer_id.to_string(),
+            PeerConfig {
+                endpoint: None,
+                identity_public_key: [7u8; 32],
+                e2e_public_key: [8u8; 32],
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn signaling_flows_over_v2_control_plane_and_transport_loss_then_reestablishes() {
+        let (state, mut event_rx) = realtime_test_state().await;
+        let control = RecordingControl::new();
+        *state.relay_control.write().await = Some(control.clone());
+        register_realtime_peer(&state, "peer-a").await;
+        let s1 = match state.sessions.begin_connect("peer-a").await {
+            ConnectDecision::Started(session_id) => session_id,
+            decision => panic!("unexpected Session decision: {decision:?}"),
+        };
+        let realtime_id = "00112233445566778899aabbccddeeff";
+
+        // 首次建立：Offer 经 v2 控制面发出（signal_webrtc），并绑定 ConnectionSession S1。
+        start_session(
+            state.clone(),
+            StartRealtimeSessionCommand {
+                realtime_id: realtime_id.into(),
+                peer_id: "peer-a".into(),
+            },
+        )
+        .await
+        .expect("first realtime session");
+        let first_calls = control.signal_calls();
+        assert_eq!(first_calls.len(), 1);
+        assert_eq!(first_calls[0].kind, V2RealtimeSignalKind::Offer);
+        assert_eq!(first_calls[0].realtime_id, realtime_id);
+        assert_eq!(first_calls[0].target_device_id, "peer-a");
+        // 全新 PeerConnection 的计数从该会话自己的起点重启（create_offer → revision 1）。
+        assert_eq!(first_calls[0].revision, FRESH_OFFER_REVISION);
+        let driver1 = state.realtime.lock().await.sessions[realtime_id]
+            .driver
+            .clone()
+            .expect("first driver");
+
+        // transport 丢失：ConnectionSession 销毁 → RealtimeSession Closed（§22）。
+        state.cancel_session_tasks("peer-a", s1).await;
+        assert!(
+            !state
+                .realtime
+                .lock()
+                .await
+                .sessions
+                .contains_key(realtime_id),
+            "transport loss must tear down the realtime session"
+        );
+        let mut closed_seen = false;
+        while let Ok(event) = event_rx.try_recv() {
+            if let Some(network_event::Payload::RealtimeState(state_event)) = event.payload {
+                if state_event.realtime_id == realtime_id
+                    && state_event.state == RealtimeSessionState::Closed as i32
+                {
+                    closed_seen = true;
+                }
+            }
+        }
+        assert!(
+            closed_seen,
+            "transport loss must emit RealtimeSessionState::Closed"
+        );
+
+        // 新 ConnectionSession（用户重新 Resolve → Connection，§22）。
+        let _ = state.sessions.close("peer-a").await;
+        let s2 = match state.sessions.begin_connect("peer-a").await {
+            ConnectDecision::Started(session_id) => session_id,
+            decision => panic!("unexpected Session decision: {decision:?}"),
+        };
+        assert_ne!(s1, s2);
+
+        // 重新请求：新 PeerConnection + 信令经新鲜连接重发。
+        start_session(
+            state.clone(),
+            StartRealtimeSessionCommand {
+                realtime_id: realtime_id.into(),
+                peer_id: "peer-a".into(),
+            },
+        )
+        .await
+        .expect("re-established realtime session");
+        let driver2 = state.realtime.lock().await.sessions[realtime_id]
+            .driver
+            .clone()
+            .expect("second driver");
+        assert!(
+            !Arc::ptr_eq(&driver1, &driver2),
+            "new PeerConnection must not reuse the old object"
+        );
+
+        let all_calls = control.signal_calls();
+        assert_eq!(
+            all_calls.len(),
+            2,
+            "re-establishment resends the offer over the fresh connection"
+        );
+        assert_eq!(all_calls[1].kind, V2RealtimeSignalKind::Offer);
+        assert_eq!(
+            all_calls[1].revision, FRESH_OFFER_REVISION,
+            "new session restarts its counters"
+        );
+        assert_ne!(
+            all_calls[0].payload, all_calls[1].payload,
+            "fresh offer carries new DTLS/ICE state"
+        );
+    }
+
+    #[tokio::test]
+    async fn signaling_lost_mid_negotiation_closes_cleanly_and_re_request_succeeds() {
+        let (state, _event_rx) = realtime_test_state().await;
+        let control = RecordingControl::new();
+        control.fail_signals.store(true, Ordering::Release);
+        *state.relay_control.write().await = Some(control.clone());
+        register_realtime_peer(&state, "peer-a").await;
+        let realtime_id = "00112233445566778899aabbccddeeff";
+
+        // 信令在协商中途丢失（控制面发送失败）→ start_session 干净失败并清理会话。
+        let error = start_session(
+            state.clone(),
+            StartRealtimeSessionCommand {
+                realtime_id: realtime_id.into(),
+                peer_id: "peer-a".into(),
+            },
+        )
+        .await
+        .expect_err("signaling loss must fail start_session");
+        assert_eq!(error.code, NetworkErrorCode::RelayError as i32);
+        assert!(
+            !state
+                .realtime
+                .lock()
+                .await
+                .sessions
+                .contains_key(realtime_id),
+            "failed session must be torn down"
+        );
+
+        // 信令路径恢复后重新请求 → 成功，Offer 经 v2 控制面发出。
+        control.fail_signals.store(false, Ordering::Release);
+        start_session(
+            state.clone(),
+            StartRealtimeSessionCommand {
+                realtime_id: realtime_id.into(),
+                peer_id: "peer-a".into(),
+            },
+        )
+        .await
+        .expect("re-request after signaling recovery");
+        let calls = control.signal_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].kind, V2RealtimeSignalKind::Offer);
+        assert!(state
+            .realtime
+            .lock()
+            .await
+            .sessions
+            .contains_key(realtime_id));
+    }
+
+    #[tokio::test]
+    async fn duplicate_start_realtime_rejects_without_retaining_a_bound_driver() {
+        let (state, _event_rx) = realtime_test_state().await;
+        let control = RecordingControl::new();
+        *state.relay_control.write().await = Some(control.clone());
+        register_realtime_peer(&state, "peer-a").await;
+        let realtime_id = "00112233445566778899aabbccddeeff";
+
+        start_session(
+            state.clone(),
+            StartRealtimeSessionCommand {
+                realtime_id: realtime_id.into(),
+                peer_id: "peer-a".into(),
+            },
+        )
+        .await
+        .expect("first start");
+        let first_driver = {
+            let sessions = state.realtime.lock().await;
+            assert_eq!(
+                sessions.sessions.len(),
+                1,
+                "exactly one session after the first start"
+            );
+            sessions.sessions[realtime_id]
+                .driver
+                .clone()
+                .expect("first driver")
+        };
+        // 基线：会话表 + 已 spawn 的 realtime-io 任务 + 本测试克隆各持有一份。
+        let baseline_refs = Arc::strong_count(&first_driver);
+        assert_eq!(
+            baseline_refs, 3,
+            "expected session map, io task and test clone to hold the driver"
+        );
+
+        // 同一 realtime_id 重复启动：必须在绑定任何 socket 之前拒绝，不得让
+        // 第二次调用创建并丢弃一个已绑定的驱动（泄漏）。
+        let error = start_session(
+            state.clone(),
+            StartRealtimeSessionCommand {
+                realtime_id: realtime_id.into(),
+                peer_id: "peer-a".into(),
+            },
+        )
+        .await
+        .expect_err("duplicate start must be rejected");
+        assert_eq!(error.code, NetworkErrorCode::InvalidArgument as i32);
+
+        // 没有泄漏：会话表未被覆盖或新增；原驱动的 Arc 未变，且引用计数与
+        // 基线一致——重复调用没有额外保留任何已绑定驱动。
+        let sessions = state.realtime.lock().await;
+        assert_eq!(
+            sessions.sessions.len(),
+            1,
+            "duplicate start must not add a session"
+        );
+        let still_driver = sessions.sessions[realtime_id]
+            .driver
+            .as_ref()
+            .expect("driver");
+        assert!(
+            Arc::ptr_eq(&first_driver, still_driver),
+            "duplicate start must not overwrite the existing session"
+        );
+        assert_eq!(
+            Arc::strong_count(&first_driver),
+            baseline_refs,
+            "no extra bound driver handle may be retained by the rejected start"
+        );
     }
 }

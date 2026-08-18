@@ -1,12 +1,23 @@
-> 最新更新时间：2026-08-13
+> 最新更新时间：2026-08-15
 
 # ADR-029：v1 协议契约消费（Relay refresh、重试策略、Realtime 快照）
 
 ## Status
 
-Accepted for the v1 protocol-contract Wave 2 migration. Relay Go, Rust native
-codec, and the Dart SDK contract have landed (Domain 3); this ADR records the
-four-layer sync and the Flutter client consumption layer (Domain 4).
+Superseded on 2026-08-15：本 ADR 记录的是 **v1 协议契约**的消费 wire shapes
+（`NetworkErrorCode` 12/13、`RetryDisposition`、`NetworkError` 字段 5/6、
+Realtime revision 快照、`POST /v1/devices/refresh`）。transport-network v2 以
+[ADR-RELAY-DATA-PLANE-V2](ADR-RELAY-DATA-PLANE-V2.md) 的 Relay Protocol V2
+（Protobuf Binary over WebSocket、`request_id` + `attempt_id` 关联）取代 v1 wire
+契约；本 ADR 的 v1 错误码/重试/refresh/revision 形态不再作为当前契约权威。
+
+## Historical note
+
+本 ADR 保留 v1 协议契约的消费决策历史（Go Relay + Rust native codec + Dart
+`network_sdk` + Flutter App 四层同步）。Realtime `revision` 的比较语义在 v2 命名
+表中仍作为「Realtime 快照版本」保留（见
+[ADR-TRANSPORT-NETWORK-V2](ADR-TRANSPORT-NETWORK-V2.md) 命名方案）；其余 v1
+wire 形态随 v2 迁移删除。
 
 ## Context
 

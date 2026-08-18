@@ -134,12 +134,28 @@ pub struct NetworkError {
     pub retry_after_seconds: u32,
 }
 
+/// 业务请求连接的通信类别（设计 §17）。连接层将其映射为 transport capability
+/// 与 connection shape；默认（Unspecified）按 ReliableMessage 处理。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum CommunicationClass {
+    Unspecified = 0,
+    ReliableStream = 1,
+    ReliableMessage = 2,
+    BulkTransfer = 3,
+    UnreliableDatagram = 4,
+    RealtimeMedia = 5,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct ConnectPeerCommand {
     #[prost(string, tag = "1")]
     pub peer_id: String,
     #[prost(uint32, tag = "2")]
     pub intent: u32,
+    /// 本次连接请求的 CommunicationClass；Unspecified(0) 视为默认 ReliableMessage。
+    #[prost(enumeration = "CommunicationClass", tag = "3")]
+    pub communication_class: i32,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -267,15 +283,36 @@ pub struct SendRealtimeSignalCommand {
     pub payload: Vec<u8>,
 }
 
-/// 显式重传设备 Discovery 元数据；native 侧在 Relay 认证连接后也会自动上传首份。
+/// 打开一条到对端的 ReliableStream 字节流（设计 §17/§21）。`stream_id` 由调用方
+/// 分配（u32，native 侧校验 ≤ u16::MAX），`service` 是对端网关的服务提示（如 "ssh"）。
 #[derive(Clone, PartialEq, Message)]
-pub struct UploadDiscoveryCommand {
-    #[prost(uint64, tag = "1")]
-    pub generation: u64,
-    #[prost(string, repeated, tag = "2")]
-    pub candidates: Vec<String>,
-    #[prost(string, repeated, tag = "3")]
-    pub capabilities: Vec<String>,
+pub struct SshStreamOpenCommand {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(uint32, tag = "2")]
+    pub stream_id: u32,
+    #[prost(string, tag = "3")]
+    pub service: String,
+}
+
+/// 向一条已打开的 ReliableStream 追加字节（SSH/SFTP 协议数据作为不透明负载）。
+#[derive(Clone, PartialEq, Message)]
+pub struct SshStreamDataCommand {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(uint32, tag = "2")]
+    pub stream_id: u32,
+    #[prost(bytes = "vec", tag = "3")]
+    pub data: Vec<u8>,
+}
+
+/// 关闭一条 ReliableStream。对端会观察到 StreamClosed。
+#[derive(Clone, PartialEq, Message)]
+pub struct SshStreamCloseCommand {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(uint32, tag = "2")]
+    pub stream_id: u32,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -286,7 +323,7 @@ pub struct NetworkCommand {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_command::Payload",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27"
     )]
     pub payload: Option<network_command::Payload>,
 }
@@ -324,8 +361,12 @@ pub mod network_command {
         StopRealtimeSession(StopRealtimeSessionCommand),
         #[prost(message, tag = "23")]
         SendRealtimeSignal(SendRealtimeSignalCommand),
-        #[prost(message, tag = "24")]
-        UploadDiscovery(UploadDiscoveryCommand),
+        #[prost(message, tag = "25")]
+        SshStreamOpen(SshStreamOpenCommand),
+        #[prost(message, tag = "26")]
+        SshStreamData(SshStreamDataCommand),
+        #[prost(message, tag = "27")]
+        SshStreamClose(SshStreamCloseCommand),
     }
 }
 
@@ -572,6 +613,26 @@ pub struct DeliveryAckedEvent {
     pub recovery_epoch: u64,
 }
 
+/// ReliableStream 收到对端字节后发布的事件（设计 §17）。字节是不透明负载。
+#[derive(Clone, PartialEq, Message)]
+pub struct SshStreamDataReceivedEvent {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(uint32, tag = "2")]
+    pub stream_id: u32,
+    #[prost(bytes = "vec", tag = "3")]
+    pub data: Vec<u8>,
+}
+
+/// ReliableStream 关闭事件（本端 close_stream / 对端 StreamClose / transport 丢失）。
+#[derive(Clone, PartialEq, Message)]
+pub struct SshStreamClosedEvent {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(uint32, tag = "2")]
+    pub stream_id: u32,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct NetworkEvent {
     #[prost(string, tag = "1")]
@@ -582,7 +643,7 @@ pub struct NetworkEvent {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_event::Payload",
-        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25"
+        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27"
     )]
     pub payload: Option<network_event::Payload>,
 }
@@ -622,6 +683,10 @@ pub mod network_event {
         PeerPresenceChanged(PeerPresenceChangedEvent),
         #[prost(message, tag = "25")]
         PeerPresenceSnapshot(PeerPresenceSnapshotEvent),
+        #[prost(message, tag = "26")]
+        SshStreamDataReceived(SshStreamDataReceivedEvent),
+        #[prost(message, tag = "27")]
+        SshStreamClosed(SshStreamClosedEvent),
     }
 }
 
@@ -753,27 +818,134 @@ mod tests {
     }
 
     #[test]
-    fn upload_discovery_command_round_trips_through_the_wire() {
-        let command = NetworkCommand {
-            command_id: "upload-discovery".into(),
+    fn communication_class_values_are_stable_wire_identifiers() {
+        // §17：五种固定 CommunicationClass，值不允许漂移。
+        assert_eq!(CommunicationClass::Unspecified as i32, 0);
+        assert_eq!(CommunicationClass::ReliableStream as i32, 1);
+        assert_eq!(CommunicationClass::ReliableMessage as i32, 2);
+        assert_eq!(CommunicationClass::BulkTransfer as i32, 3);
+        assert_eq!(CommunicationClass::UnreliableDatagram as i32, 4);
+        assert_eq!(CommunicationClass::RealtimeMedia as i32, 5);
+        assert_eq!(
+            CommunicationClass::try_from(5),
+            Ok(CommunicationClass::RealtimeMedia)
+        );
+        assert!(CommunicationClass::try_from(99).is_err());
+    }
+
+    #[test]
+    fn connect_peer_command_defaults_communication_class_to_unspecified() {
+        let command = ConnectPeerCommand {
+            peer_id: "peer-a".into(),
+            intent: 0,
+            communication_class: 0,
+        };
+        let encoded = command.encode_to_vec();
+        let decoded = ConnectPeerCommand::decode(encoded.as_slice()).expect("decode");
+        assert_eq!(
+            decoded.communication_class,
+            CommunicationClass::Unspecified as i32
+        );
+    }
+
+    #[test]
+    fn ssh_stream_commands_and_events_round_trip_through_the_wire() {
+        let open = NetworkCommand {
+            command_id: "ssh-open".into(),
             protocol_version: NETWORK_PROTOCOL_VERSION,
-            payload: Some(network_command::Payload::UploadDiscovery(
-                UploadDiscoveryCommand {
-                    generation: 7,
-                    candidates: vec!["candidate-1".into()],
-                    capabilities: vec!["file-transfer".into()],
+            payload: Some(network_command::Payload::SshStreamOpen(
+                SshStreamOpenCommand {
+                    peer_id: "peer-a".into(),
+                    stream_id: 7,
+                    service: "ssh".into(),
                 },
             )),
         };
-        let encoded = command.encode_to_vec();
-        let decoded = NetworkCommand::decode(encoded.as_slice()).expect("decode");
+        let decoded = NetworkCommand::decode(open.encode_to_vec().as_slice()).expect("decode open");
         match decoded.payload {
-            Some(network_command::Payload::UploadDiscovery(upload)) => {
-                assert_eq!(upload.generation, 7);
-                assert_eq!(upload.candidates, vec!["candidate-1".to_string()]);
-                assert_eq!(upload.capabilities, vec!["file-transfer".to_string()]);
+            Some(network_command::Payload::SshStreamOpen(open)) => {
+                assert_eq!(open.peer_id, "peer-a");
+                assert_eq!(open.stream_id, 7);
+                assert_eq!(open.service, "ssh");
             }
             other => panic!("unexpected command payload: {other:?}"),
         }
+
+        let data = NetworkCommand {
+            command_id: "ssh-data".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SshStreamData(
+                SshStreamDataCommand {
+                    peer_id: "peer-a".into(),
+                    stream_id: 7,
+                    data: b"SSH-bytes".to_vec(),
+                },
+            )),
+        };
+        let decoded = NetworkCommand::decode(data.encode_to_vec().as_slice()).expect("decode data");
+        match decoded.payload {
+            Some(network_command::Payload::SshStreamData(data)) => {
+                assert_eq!(data.stream_id, 7);
+                assert_eq!(data.data, b"SSH-bytes");
+            }
+            other => panic!("unexpected command payload: {other:?}"),
+        }
+
+        let close = NetworkCommand {
+            command_id: "ssh-close".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SshStreamClose(
+                SshStreamCloseCommand {
+                    peer_id: "peer-a".into(),
+                    stream_id: 7,
+                },
+            )),
+        };
+        let decoded =
+            NetworkCommand::decode(close.encode_to_vec().as_slice()).expect("decode close");
+        assert!(matches!(
+            decoded.payload,
+            Some(network_command::Payload::SshStreamClose(close)) if close.stream_id == 7
+        ));
+
+        let received = NetworkEvent {
+            event_id: "ssh-recv".into(),
+            timestamp_ms: 123,
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_event::Payload::SshStreamDataReceived(
+                SshStreamDataReceivedEvent {
+                    peer_id: "peer-a".into(),
+                    stream_id: 7,
+                    data: b"reply".to_vec(),
+                },
+            )),
+        };
+        let decoded =
+            NetworkEvent::decode(received.encode_to_vec().as_slice()).expect("decode event");
+        match decoded.payload {
+            Some(network_event::Payload::SshStreamDataReceived(recv)) => {
+                assert_eq!(recv.stream_id, 7);
+                assert_eq!(recv.data, b"reply");
+            }
+            other => panic!("unexpected event payload: {other:?}"),
+        }
+
+        let closed = NetworkEvent {
+            event_id: "ssh-closed".into(),
+            timestamp_ms: 124,
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_event::Payload::SshStreamClosed(
+                SshStreamClosedEvent {
+                    peer_id: "peer-a".into(),
+                    stream_id: 7,
+                },
+            )),
+        };
+        let decoded =
+            NetworkEvent::decode(closed.encode_to_vec().as_slice()).expect("decode closed event");
+        assert!(matches!(
+            decoded.payload,
+            Some(network_event::Payload::SshStreamClosed(closed)) if closed.stream_id == 7
+        ));
     }
 }
