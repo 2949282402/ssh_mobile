@@ -456,20 +456,22 @@ jobs:
         with:
           pattern: flutter-coverage-*
           path: coverage-shards
-      - name: Merge shard coverage
+      - name: Enforce shard coverage
         run: |
-          mkdir -p coverage
           mapfile -d '' shard_files < <(find "$GITHUB_WORKSPACE/coverage-shards" -type f -name lcov.info -print0 | sort -z)
-          if [ "${#shard_files[@]}" -eq 0 ]; then
-            echo "No shard coverage files were downloaded."
+          if [ "${#shard_files[@]}" -ne 2 ]; then
+            echo "Expected 2 shard coverage files, found ${#shard_files[@]}."
             exit 1
           fi
-          : > coverage/lcov.info
+
+          coverage_args=()
           for shard_file in "${shard_files[@]}"; do
-            cat "$shard_file" >> coverage/lcov.info
+            coverage_args+=("--file=$shard_file")
           done
-      - name: Enforce merged coverage
-        run: dart run tool/check_coverage.dart --minimum=35 --file=coverage/lcov.info
+
+          dart run tool/check_coverage.dart \
+            --minimum=35 \
+            "${coverage_args[@]}"
 
   android-build:
     runs-on: ubuntu-latest
