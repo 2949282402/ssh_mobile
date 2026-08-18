@@ -429,6 +429,30 @@ jobs:
         run: flutter pub get
       - name: Run Sharded Unit Tests
         run: |
+          non_coverage_test_files=(
+            test/features/startup/views/startup_screen_test.dart
+            test/screens/system_admin/system_admin_snapshot_tabs_test.dart
+            test/services/network/transfer_transport_test.dart
+          )
+          coverage_test_files=()
+          mapfile -d '' all_test_files < <(
+            find test -type f -name '*_test.dart' -print0 | sort -z
+          )
+          for test_file in "${all_test_files[@]}"; do
+            case "$test_file" in
+              test/features/startup/views/startup_screen_test.dart|test/screens/system_admin/system_admin_snapshot_tabs_test.dart|test/services/network/transfer_transport_test.dart)
+                ;;
+              *)
+                coverage_test_files+=("$test_file")
+                ;;
+            esac
+          done
+
+          if [ "${#coverage_test_files[@]}" -eq 0 ]; then
+            echo "No coverage test files were discovered."
+            exit 1
+          fi
+
           test_args=(
             --coverage
             --fail-fast
@@ -440,9 +464,10 @@ jobs:
 
           for attempt in 1 2; do
             echo "Running Flutter test shard ${{ matrix.shard_index }} (attempt $attempt)."
+            rm -f coverage/lcov.info
             if timeout --signal=TERM --kill-after=30s 8m \
-              flutter test "${test_args[@]}"; then
-              exit 0
+              flutter test "${test_args[@]}" "${coverage_test_files[@]}"; then
+              break
             else
               status=$?
             fi
@@ -452,6 +477,16 @@ jobs:
             fi
             echo "Flutter test shard failed or timed out; retrying once."
           done
+
+          echo "Running isolated Flutter tests without coverage."
+          timeout --signal=TERM --kill-after=30s 8m \
+            flutter test \
+            --fail-fast \
+            --reporter expanded \
+            --timeout 60s \
+            --total-shards "${{ matrix.total_shards }}" \
+            --shard-index "${{ matrix.shard_index }}" \
+            "${non_coverage_test_files[@]}"
       - name: Upload shard coverage
         uses: actions/upload-artifact@v4
         with:
