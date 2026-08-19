@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-19
 
 # SSH Mobile 跨平台 P2P 网络平台实施计划
 
@@ -8,9 +8,10 @@
 
 ---
 
-# 当前实施状态（2026-08-12）
+# 当前实施状态（2026-08-19）
 
-本文件同时保留完整目标架构与后续阶段；以下状态只描述已经接入生产调用链的部分：
+本文件同时保留完整目标架构与后续阶段；以下状态只描述已经接入生产调用链的部分。
+旧阶段中的 v1 Session/Connection 方案保留为历史设计，当前生命周期以 v2 ADR 为准。
 
 - 已完成 Rust Tokio runtime、版本化 Protobuf command/event FFI 和 Dart
   helper-isolate 生命周期。
@@ -18,62 +19,63 @@
   有界流式传输、SHA-256 校验、临时文件提交、接收端持久化完成确认、取消和进度事件。
 - `LanShareViewModel` 通过 `NetworkService` 提交 native 文件任务；命令接受与
   `TransferCompleted`/`TransferFailed` 终态事件严格分离，历史只保存稳定错误码。
-- peer 公布的 candidate 会进入每 peer `PathManager` 并由选择结果驱动 QUIC；
-  Candidate Offer/Answer、持续 RTT/loss 探测、并行 direct 竞速和 Relay 到
-  Direct 的稳定窗口升级已经进入 native Session 调用链。
+- peer 公布的 candidate 会进入每 peer `ConnectivityAttempt`；PathManager 只
+  保留已建立连接的 RTT/loss metrics，不保存远端 discovery truth。
+  Candidate Offer/Answer 与 Direct race 受 attempt 版本边界约束，Direct First
+  在固定窗口内选择一次 transport；Relay 不再后台升级到 Direct。
+  Transport loss 销毁当前 ConnectionSession，下一次业务连接重新 Resolve。
 - Rust Relay 已实现当前 v1 协议的 WSS 认证、opaque offer、AES-GCM chunk、
   complete/complete_ack、取消、接收入站审批及安全落盘；Flutter 只负责 v1
   enrollment、凭据安全存储和 native 配置，不再建立 Dart Relay 数据面。
-- `network-core::RealtimeManager` 已作为 Session-owned Realtime Route 接入
+- `network-core::RealtimeManager` 已作为当前 ConnectionSession 上的 Realtime Route 接入
   WebRTC；Offer/Answer/ICE/Restart/Close 只走认证 Relay control plane，
   `ssh_mobile_network_native` 通过 helper isolate 提供有界 typed Realtime
   command/event API，不向 Dart 暴露 Quinn、Socket 或 WebRTC 原生句柄。
-- native `network-core::connection` now models routes as `RouteTopology × RouteTransport`. Native route selection records blocked QUIC/UDP candidates explicitly, falls back to TCP or WebSocket/WSS only when the requested capability permits it, and leaves SessionId/Delivery/Recovery ownership unchanged.
+- native `network-core::connection` now models routes as `RouteTopology × RouteTransport`.
+  Each transport Connection has exactly one ConnectionSession with a fresh SessionId
+  and Noise root; transport loss destroys it, while Delivery/Transfer business state
+  resumes by business ID across a fresh ConnectionSession.
 - Plan 3 Step 1 now separates native Delivery active receive state from
   processed dedup history. TTL/LRU pruning cannot remove `InFlight` or
   `OrderedBuffered`; application ACK timeout fails a strict ordered channel
-  without skipping Sequence, and explicit Session close clears receive-side
+  without skipping Sequence, and explicit ConnectionSession close clears receive-side
   active state.
 - Plan 3 Step 2 now separates Realtime queue acceptance from command completion.
   `NetworkRealtimeGateway` returns a `NativeCommandTicket`; the App Shell keeps a
   bounded `commandId → Completer<SdkResult<void>>` map with timeout and dispose
   cleanup. `RealtimeSession` lifecycle states remain native-state-event driven, and
   a successful stop command waits for native `closed` before reporting `stopped`.
-- Plan 3 Step 3 now makes `Session` own a composed `ActiveRoute` with a bounded
-  generic carrier. Authenticated TCP and direct WebSocket routes can carry
-  Delivery data/ACK frames, reconnect under the same logical SessionId, and
-  recover pending Delivery state. Route admission reuses pinned Ed25519 identity
-  proof plus a Session binding; UDP has no reliable-message capability. QUIC
-  migration atomically swaps the active carrier before Delivery recovery, and
-  public peer/route events expose `RouteTopology × RouteTransport` metadata.
-- Plan 3 Step 4 now installs Session application roots only after an authenticated
+- Plan 3 Step 3 now admits each authenticated generic carrier as a
+  `ConnectionSession` with a bounded carrier. TCP and direct WebSocket routes can
+  carry Delivery data/ACK frames; every new transport uses a fresh SessionId and
+  Noise root, while pending Delivery resumes by MessageId/channel state. UDP has
+  no reliable-message capability, and transport loss destroys the session rather
+  than migrating its route. Public peer/route events expose
+  `RouteTopology × RouteTransport` metadata.
+- Plan 3 Step 4 installs each ConnectionSession root only after an authenticated
   `Noise_XX_25519_AESGCM_SHA256` exchange and the v3 post-handshake export.
   After pinned identity proof, Noise TransportState protects a fresh random
   RootSeed plus RootConfirm/Accept; the transcript hash is context, not secret
-  root material. QUIC, Relay, TCP, and WebSocket carriers use the same Session
-  crypto owner. Production nonces are structured
-  epoch/direction prefixes plus monotonic counters, bounded key rotation is
-  enforced, and missing E2EE context returns an error instead of silently
-  downgrading to plaintext. See `docs/adr/ADR-028-forward-secret-session-e2ee.md`.
-- Session continuity is now decided once in `SessionManager` from the
-  authenticated `remote_session_binding`. A matching binding means ordinary
-  reconnect or route migration: the local SessionId, CryptoContext, Root,
-  KeyEpoch, pending Delivery, and transfer state remain attached. A changed
-  binding means peer Runtime restart: the old Session is replaced, its crypto
-  aliases, Delivery state, and task indexes are retired, and the fresh Noise
-  Root is installed under a new local SessionId. The responder selects that
-  final local binding before sending RootSeed; the initiator returns it inside
-  RootConfirm so stale pre-auth reservations cannot make the two peers replace
-  one another repeatedly.
+  root material. Every new transport gets a new SessionId and Noise root;
+  Delivery/Transfer state is re-encoded under the current root. Production
+  nonces are structured epoch/direction prefixes plus monotonic counters,
+  bounded key rotation is enforced, and missing E2EE context returns an error
+  instead of silently downgrading to plaintext. See `docs/adr/ADR-028-forward-secret-session-e2ee.md`.
+- V2 makes `ConnectionSession` transport-scoped. A transport loss destroys the
+  current session and its crypto context; the next explicit connection performs
+  Resolve and creates a new SessionId and Noise root. Delivery resumes pending
+  messages by MessageId/channel state, and Transfer resumes by transfer_id plus
+  confirmed_offset. No old SessionId, root, route, or transport ciphertext is
+  carried into the new connection.
 - `network_sdk.RealtimeClient` now provides a Feature-safe `RealtimeSession` boundary;
   the App Shell maps native lifecycle events while Features cannot encode SDP/ICE or
   touch PeerConnection, sockets, or native handles. Native DataChannel media remains
   typed-unavailable until a native decoder/media event is implemented.
 - Step 9 has a fixed A–L real-network fault matrix in
-  `docs/NETWORK_FAULT_MATRIX.md`; native direct/route migration/recovery,
-  coturn fallback, Docker functional smoke, Caddy recovery, Relay restart, and
-  checkpoint/resume tests are recorded, while physical network switching,
-  background/foreground, and 1 GiB+ device transfer still require device evidence.
+  `docs/NETWORK_FAULT_MATRIX.md`; its v1 route-migration/reconnect entries remain
+  historical validation records. Current v2 checks cover Direct/Relay fallback,
+  fresh ConnectionSessions, Delivery/Transfer recovery, Relay restart, and
+  checkpoint/resume; physical network switching and 1 GiB+ transfer still need evidence.
 - 当前项目不再支持或实现 WireGuard；本文后续相关章节仅保留为历史方案记录，
   不属于当前实现和发布验收范围。
 - Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；
@@ -83,8 +85,8 @@
   LAN HTTP 错误使用稳定的
   `code`、`message`、`operation`、`peer_id` 结构，WebShare 固定 HTTPS，
   浏览器不满足安全上下文时禁止传输而不自动降级。
-- WireGuard、完整公网 candidate 协调、路径迁移和 Phase 11 RTC 尚未完成，不能因
-  上述文件传输闭环而标记为已交付。
+- WireGuard、完整公网 candidate 协调和 Phase 11 RTC 不属于当前实现和发布验收范围，
+  不能因上述文件传输闭环而标记为已交付。
 
 开发阶段 Drift 只维护 `schemaVersion = 1` 的当前 schema；字段变化后删除本地
 开发数据库并重新生成代码，不编写迁移或旧数据导入逻辑。
@@ -391,7 +393,7 @@ NAT Traversal
 QUIC
 File Transfer
 E2E Encryption
-Connection Migration
+ConnectionSession lifecycle
 Route Measurement
 WireGuard orchestration
 ```
@@ -766,21 +768,21 @@ seek(offset)
 # 19. 文件 E2E 加密
 
 QUIC 已经加密，但考虑 Relay、generic fallback 以及现有安全模型，继续保留
-Session-owned 应用层 E2E。应用层 root 只在 authenticated Noise XX 完成后安装：
+ConnectionSession-owned 应用层 E2E。每个 transport 的应用层 root 只在 authenticated Noise XX 完成后安装：
 
 ```text
 File
  ↓
-Session Application E2E
+ConnectionSession Application E2E
  ↓
 QUIC / TCP / WebSocket / Relay
  ↓
 Route
 ```
 
-Noise XX 使用每次 Session 的 ephemeral X25519 DH，长期 Ed25519 DeviceIdentity
+Noise XX 使用每个 ConnectionSession 的 ephemeral X25519 DH，长期 Ed25519 DeviceIdentity
 只用于身份认证；Relay 只转发 opaque handshake/control 和 ciphertext，永远看不到
-Session root 或业务明文。详细 threat model、身份绑定和 nonce/rotation policy
+ConnectionSession root 或业务明文。详细 threat model、身份绑定和 nonce/rotation policy
 见 `docs/adr/ADR-028-forward-secret-session-e2ee.md`。
 
 现有项目已经具备 X25519 + AES-256-GCM 和 pinned peer key，因此 V1 不要同步更换密码算法。
@@ -3199,7 +3201,7 @@ QUIC
 file transfer
 crypto
 route selection
-connection migration
+ConnectionSession lifecycle
 WireGuard orchestration
 ```
 

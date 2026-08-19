@@ -1,4 +1,4 @@
-> Last updated: 2026-08-12
+> Last updated: 2026-08-19
 
 # SSH Mobile Network Native
 
@@ -13,13 +13,17 @@ and only then destroys the Rust handle.
 The current v1 runtime handles peer registration with pinned Ed25519/X25519
 keys, per-peer `PathManager` selection, authenticated Quinn sessions, approved
 and verified file receive, cancellation, progress/completion events, the
-native WSS Relay data path, and a Session-owned WebRTC Realtime route. The
+native WSS Relay data path, and a WebRTC Realtime route over the current ConnectionSession. The
 native `RealtimeIoDriver` now owns each WebRTC UDP socket and drives the
 sans-I/O ICE, DTLS, SRTP, SCTP/DataChannel, and timeout pump under the Runtime
 TaskSupervisor. Dart can submit bounded Realtime commands and consume typed
 state/signaling events; Rust still owns all long-lived network state, sockets,
 WebRTC peers, and Relay data frames. Unsupported commands and routes return
 explicit errors rather than synthetic success.
+
+Each authenticated transport Connection creates exactly one ConnectionSession with a
+fresh SessionId and Noise root. Transport loss destroys it; Delivery/Transfer
+business state is retained above that boundary and resumes on a later connection.
 
 ## v1 contract
 
@@ -32,23 +36,24 @@ explicit errors rather than synthetic success.
   revisions, enum values, and bounded byte payloads. `events` decodes command
   results and Realtime state/signaling events without exposing Rust pointers,
   Quinn connections, UDP sockets, or WebRTC raw objects.
-- Delivery application acknowledgements are identified by logical Session ID,
-  Channel ID, and Message ID only. Recovery epochs remain native Delivery state;
-  Dart must not cache or echo an epoch from an earlier event.
+- Delivery application acknowledgements use the current ConnectionSession Session
+  ID, Channel ID, and Message ID. Recovery epochs remain native Delivery state;
+  Dart must not cache or echo an epoch from an earlier event or connection.
 - `SessionBoundOrdered` delivery is also native-owned: only the expected
   sequence reaches the application, while later messages stay in bounded
   reorder state until the current application ACK releases the next one.
 - All native background work is owned by `RuntimeTaskSupervisor`: the root
-  cancellation scope owns runtime tasks, and each logical Session owns a
-  cancellable child group for reconnect, direct-upgrade, path metrics,
-  Delivery retry, channel receivers, and file receivers. `stop()` cancels the
-  root, closes Relay/WebRTC/QUIC resources, and waits for every registered task
-  before returning.
-- Application payload crypto is Session-owned and Route-independent. E2EE is
-  the secure protobuf default; clear payloads require an explicit opt-out.
-  Delivery retains logical plaintext and re-encrypts each retry with a fresh
-  nonce. The same `CryptoContext` covers QUIC channel messages and Relay
-  forwarding/file chunks, while Relay sees only opaque ciphertext.
+  cancellation scope owns runtime tasks, and each ConnectionSession owns a
+  cancellable child group for its carrier, channel receivers, and file receivers.
+  Delivery retry and Transfer resume workers remain business-manager-owned across
+  transport loss; v2 has no ConnectionSession-owned reconnect or direct-upgrade task.
+  `stop()` cancels the root, closes Relay/WebRTC/QUIC resources, and waits for
+  every registered task before returning.
+- Application payload crypto is ConnectionSession-owned; every new transport
+  Connection gets a fresh SessionId and Noise root. E2EE is the secure protobuf
+  default and clear payloads require an explicit opt-out. Delivery retains
+  logical plaintext and re-encrypts each retry; the same `CryptoContext` covers
+  QUIC/Relay data within one ConnectionSession, while Relay sees only ciphertext.
 - NAT traversal uses the same native UDP socket for candidate gathering and
   Quinn. Candidate Offer/Answer carries generation, attempt ID, and a bounded
   connect window; both peers may run simultaneous authenticated QUIC Initial

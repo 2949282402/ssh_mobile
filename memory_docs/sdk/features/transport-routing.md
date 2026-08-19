@@ -2,13 +2,13 @@
 
 # Transport and Routing
 
-Rust selects and owns concrete carriers behind a logical Session. Features
+Rust selects and owns concrete carriers behind a ConnectionSession. Features
 request capabilities through typed Dart contracts and do not select sockets or
 protocol implementations directly.
 
 | Carrier | Topology | Current role |
 | --- | --- | --- |
-| QUIC | Direct | Authenticated primary reliable Session and stream carrier |
+| QUIC | Direct | Authenticated primary reliable carrier and stream transport |
 | TCP | Direct | Authenticated generic reliable-message carrier |
 | WebSocket | Direct | Authenticated generic reliable-message carrier |
 | WSS /v2/control | Relay | Control plane (auth/heartbeat/discovery/resolve/signaling/reservation) |
@@ -19,7 +19,7 @@ protocol implementations directly.
 Routing invariants:
 
 - Topology and transport are separate metadata.
-- A carrier is authenticated before admission to a Session.
+- A carrier is authenticated before admission to a ConnectionSession.
 - Reliable Delivery asks the active route for a capability rather than
   branching on a concrete transport.
 - UDP is not eligible for acknowledged, ordered, or file-delivery semantics.
@@ -30,7 +30,7 @@ Routing invariants:
 - Business state is the only cross-connection continuity (design §19-20):
   Delivery recovers by MessageId, Transfer resumes by transfer_id +
   confirmed_offset. A peer runtime restart or transport loss simply triggers a
-  new Resolve → new Connection → new Session; SSH/WebRTC build new sessions
+  new Resolve → new Connection → new ConnectionSession; SSH/WebRTC build new ConnectionSessions
   (no transparent recovery).
 
 - Direct candidate races use `(candidate_id, endpoint, generation)` as the attempt key; TCP and WebSocket race concurrently when the route supports WebSocket, and a late Answer candidate can join before the Direct deadline.

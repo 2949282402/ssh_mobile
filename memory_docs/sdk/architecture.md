@@ -23,12 +23,16 @@ Ownership rules:
   lends bounded gateways; borrowers release subscriptions, not the native handle.
 - `ssh_mobile_network_native` owns the helper isolate and explicit native
   `start → stop → destroy` binding lifecycle.
-- Rust `network-core` owns logical Session state, active routes, Delivery,
+- Rust `network-core` owns transport-scoped ConnectionSession state, active routes, Delivery/Transfer managers,
   full-epoch ConnectivityAttempt snapshots, candidate races, StreamHandle-aware
   ReliableStream events, cryptographic context, transfer state, Realtime state,
   and supervised tasks.
+- Each transport Connection owns exactly one `ConnectionSession`; a new
+  connection gets a new `SessionId` and Noise root, and transport loss destroys
+  that session. Delivery and Transfer managers own the business state that may
+  resume across fresh ConnectionSessions.
 - `relay/` is an external authenticated carrier and opaque forwarder, not a
-  Session or crypto owner.
+  ConnectionSession or crypto owner.
 
 The complete rationale remains in the
 [network design](../../docs/网络传输SDK架构设计_最终版.md) and

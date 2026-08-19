@@ -8,7 +8,7 @@
 >
 > 核心技术：Flutter、flutter_rust_bridge、Rust、Tokio、Quinn、TCP、UDP、WebSocket、QUIC、WebRTC
 >
-> 可靠性核心：Connection Reconnect + Delivery/Recovery + Application ACK + Dedup + File Checkpoint/Resume
+> 可靠性核心：一次性 ConnectionSession + Delivery/Recovery + Application ACK + Dedup + File Checkpoint/Resume
 
 ---
 
@@ -31,9 +31,9 @@ Flutter 不直接决定：
 - 使用 TCP、UDP、WebSocket、QUIC 还是 WebRTC；
 - 当前是否走 P2P；
 - 何时切换 Relay；
-- 网络断开后如何重连；
+- 网络断开后如何显式重新 Resolve 并建立新的 ConnectionSession；
 - 新 Connection 建立后哪些应用层数据需要恢复、重传、去重或丢弃；
-- 文件如何跨 Connection、Route 甚至 App 重启进行断点续传；
+- 文件如何跨新的 ConnectionSession 甚至 App 重启进行断点续传；
 - 某类数据使用可靠流还是 Datagram；
 - E2EE 如何加密、解密和管理密钥。
 
@@ -66,29 +66,28 @@ relay.connect(...);
 
 协议和路由必须属于 Rust SDK 内部实现细节。
 
-### 2.2 Session 与 Connection 分离
+### 2.2 ConnectionSession 与 Transport 同生命周期（v2）
 
-这是整个架构最重要的原则之一。
-
-```text
-Session = 一次业务会话
-Connection = Session 当前实际使用的一条网络连接
-Route = Connection 当前采用的路径
-```
-
-例如：
+这是当前架构最重要的生命周期原则。
 
 ```text
-Session #1001
-    │
-    ├── QUIC Direct        ← 初始
-    │
-    ├── QUIC Relay         ← 直连失败后
-    │
-    └── WebRTC P2P         ← 后续发现更优线路
+Connection = 一条具体的 Transport Connection
+ConnectionSession = 一个且仅一个 Connection 对应的认证业务会话
+SessionId = 当前 ConnectionSession 的一次性 wire 身份
+Route = 当前 Connection 的 topology × transport 元数据
 ```
 
-底层 Connection 可以变化，但 Session 尽量保持不变。
+生命周期固定为：
+
+```text
+Connection 建立 → Identity Auth → Noise E2EE → ConnectionSession
+Transport Lost → ConnectionSession Destroyed
+```
+
+每个新的 Transport Connection 都创建新的 `SessionId` 与新的 Noise root；禁止
+跨 Transport 继承旧的 SessionId、CryptoContext 或 route migration 连续性。
+Delivery 与 Transfer 的业务状态不属于 ConnectionSession，而是由业务 manager
+按 `MessageId`/channel、`transfer_id` 与 `confirmed_offset` 跨新连接恢复。
 
 ### 2.3 Transport 与业务协议解耦
 
@@ -161,33 +160,33 @@ Connection Stateful
 - 不解析业务协议；
 - 不解密应用层 E2EE；
 - 不保存文件、剪贴板、终端、音视频等内容；
-- 只维护短生命周期的连接和 Session 路由映射；
+- 只维护短生命周期的 ConnectionSession/transport 映射，不拥有业务恢复状态；
 - 只允许有界内存 Buffer；
 - 通过 Backpressure 防止无限缓存。
 
-### 2.7 Reconnect 与 Delivery Recovery 分离
+### 2.7 New Connection 与 Delivery Recovery 分离（v2）
 
 必须明确：
 
 ```text
-Reconnect
-= 重新建立网络连接
+New Connection
+= Resolve 后建立新的 ConnectionSession
 
 Delivery Recovery
-= 新 Connection 建立后，恢复未完成的应用层交付
+= 在新的 ConnectionSession 上恢复未完成的应用层业务交付
 ```
 
 例如：
 
 ```text
-QUIC Connection #1
+QUIC Connection #1 / ConnectionSession #1
       X
 
 ConnectionManager
       ↓
-QUIC Relay Connection #2
+New QUIC Relay Connection #2 / ConnectionSession #2
       ↓
-Connection Ready
+Connection Ready（new SessionId + new Noise root）
       ↓
 DeliveryManager
       ├── 恢复未 ACK 的 Control Message
@@ -196,7 +195,7 @@ DeliveryManager
       └── TransferManager 恢复文件 Chunk
 ```
 
-因此应用层可靠性状态的生命周期必须独立于单条 Connection。
+因此 Delivery/Transfer 的业务状态生命周期独立于 ConnectionSession，并在新连接上按业务 ID 恢复。
 
 
 ---
@@ -264,7 +263,7 @@ DeliveryManager
 │  │ Connection Layer                                                      │  │
 │  │ ConnectionManager                                                     │  │
 │  │ CandidateManager / RouteSelector / RelayManager                       │  │
-│  │ Retry / Reconnect / Migration / Health Check / NAT Traversal         │  │
+│  │ Attempt / Deadline / Health Check / NAT Traversal                    │  │
 │  └───────────────┬───────────────────────────────────┬────────────────────┘  │
 │                  │                                   │                       │
 │                  ▼                                   ▼                       │
@@ -501,35 +500,32 @@ Control    → Reliable Highest Priority
 
 ## 6. Session Layer
 
-### 6.1 Session 模型
+### 6.1 ConnectionSession 模型
 
 建议：
 
 ```rust
-pub struct Session {
+pub struct ConnectionSession {
     pub id: SessionId,
     pub local_peer: PeerId,
     pub remote_peer: PeerId,
-    pub state: SessionState,
+    pub state: ConnectionSessionState,
     pub capabilities: NegotiatedCapabilities,
     pub crypto: CryptoContext,
-    pub delivery: DeliveryContext,
-    pub connection: Option<ConnectionHandle>,
+    pub connection: ConnectionHandle,
 }
 ```
 
-### 6.2 Session 状态
+### 6.2 ConnectionSession 状态
 
 建议：
 
 ```rust
-pub enum SessionState {
+pub enum ConnectionSessionState {
     Idle,
     Negotiating,
     Connecting,
     Connected,
-    Reconnecting,
-    Recovering,
     Closing,
     Closed,
     Failed,
@@ -643,7 +639,7 @@ Payload = Ciphertext
 
 ## 9. Delivery / Recovery Layer
 
-这一层是 SDK 处理**应用层断网恢复**的核心。它解决的不是普通丢包，而是：旧 Connection 已经死亡，新 Connection 建立后，如何继续未完成的业务。
+这一层是 SDK 处理**应用层断网恢复**的核心。旧 ConnectionSession 销毁后，Delivery 与 Transfer 如何在新的 ConnectionSession 上继续，属于业务 manager 的职责。
 
 ### 9.1 Transport 重传与应用层恢复的边界
 
@@ -652,13 +648,13 @@ TCP / QUIC 内部重传
 = 同一条 Connection 存活期间处理网络丢包
 
 Delivery / Recovery
-= Connection 已失效后，在新的 Connection 上恢复业务状态
+= ConnectionSession 已失效后，在新的 ConnectionSession 上按业务身份恢复状态
 ```
 
 例如：
 
 ```text
-Session #1001
+Business state（MessageId / TransferId）
 │
 ├── Message #101  ACKed
 ├── Message #102  SentUnacked
@@ -670,9 +666,9 @@ QUIC Connection #A
 
 ConnectionManager
         ↓
-QUIC Relay Connection #B
+New QUIC Relay Connection #B / ConnectionSession #B
         ↓
-Connection Ready
+Connection Ready（new SessionId + new Noise root）
         ↓
 Delivery Recovery
         ├── 保持 #101 完成状态
@@ -707,7 +703,7 @@ Delivery / Recovery
     └── Atomic Finalize
 ```
 
-`ConnectionManager` 只负责“路重新接起来”，`DeliveryManager` / `TransferManager` 负责“路接起来以后继续完成业务”。
+`ConnectionManager` 只负责建立当前 ConnectionSession；`DeliveryManager` / `TransferManager` 负责跨 ConnectionSession 按业务 ID 继续完成业务。
 
 ### 9.3 DeliveryPolicy
 
@@ -851,7 +847,7 @@ pub struct DedupWindow {
 建议按：
 
 ```text
-Session + Channel
+Peer/Business Channel（不绑定当前 SessionId）
 ```
 
 维护。
@@ -867,7 +863,7 @@ Ordered Channel 必须使用独立 Sequence：
 103
 ```
 
-Connection 切换后 Sequence 空间不能重置。
+新的 ConnectionSession 使用新的 SessionId/root，但业务 Sequence 空间不能重置。
 
 接收端维护：
 
@@ -893,7 +889,7 @@ Message created
       ↓
 Disconnect
       ↓
-Reconnect
+New ConnectionSession
       ↓
 now > expires_at ?
    ├── Yes → Expired / Drop
@@ -913,41 +909,41 @@ now > expires_at ?
 | Video | BestEffort | 不重放旧帧，恢复后请求关键帧 |
 | Audio | BestEffort | 不重放旧帧 |
 
-### 9.11 Recovery Handshake
+### 9.11 Business Recovery on a New ConnectionSession
 
-新 Connection Ready 后不能直接把 Session 标记回 Connected。
+新 Connection Ready 后直接得到新的 ConnectionSession；后续只恢复需要连续性的业务状态。
 
 建议：
 
 ```text
-Connection Ready
+Resolve → New Connection
       ↓
-Session = Recovering
+New ConnectionSession = Connected
       ↓
-RecoveryHello
+Business Recovery
       ↓
-交换：
-- Session ID
-- Recovery Epoch
-- Last Ack / Sequence State
-- Transfer Resume Capability
+交换业务恢复快照：
+- MessageId / Delivery state
+- Channel sequence / last ACK
+- TransferId / confirmed_offset
+- 不携带旧 SessionId 或旧 Connection ciphertext
       ↓
-恢复 Pending / Transfer
+按业务 ID 恢复 Pending / Transfer
       ↓
-RecoveryComplete
+Business Recovery Complete
       ↓
-Session = Connected
+ConnectionSession = Connected
 ```
 
 ### 9.12 Recovery Epoch
 
-建议 Session 中增加：
+Recovery Epoch 属于 Delivery business state，不放在 ConnectionSession 中：
 
 ```text
 recovery_epoch
 ```
 
-每次完整重连可递增，用于：
+每个 business recovery cycle 可递增，用于：
 
 - 区分旧 Connection 延迟到达的数据；
 - Crypto Epoch 管理；
@@ -1103,9 +1099,9 @@ AEAD                  → ChaCha20-Poly1305 或 AES-256-GCM
 - Sequence Number；
 - Replay Protection；
 - Key Rotation；
-- Session Key 生命周期；
+- ConnectionSession / Noise root 生命周期；
 - 对端身份认证；
-- Transport Migration 时 CryptoContext 的继承或重新协商策略。
+- 每个新 Transport Connection 使用新的 SessionId 与 Noise root，禁止继承旧 CryptoContext。
 
 ---
 
@@ -1164,10 +1160,10 @@ pub struct ChannelPolicy {
 - 创建实际连接；
 - 维护当前 Connection；
 - 连接失败处理；
-- 路由切换；
-- Reconnect；
-- Connection Migration；
-- 向 SessionManager 汇报状态；
+- 为当前 Connection 选择 Route；
+- Resolve 后创建新的 Connection；
+- 创建与销毁 ConnectionSession；
+- 向 ConnectionSession manager 汇报状态；
 - Connection Ready 后触发 Delivery Recovery。
 
 不负责：
@@ -1187,7 +1183,7 @@ pub enum ConnectionState {
     ConnectingRelay,
     ConnectedDirect,
     ConnectedRelay,
-    Reconnecting,
+    DirectFailed,
     Disconnected,
 }
 ```
@@ -1212,9 +1208,9 @@ ConnectingDirect
 ```text
 Connected*
    ↓
-Reconnecting
+ConnectionSession Destroyed
    ↓
-Direct / Relay 重新竞速
+下一次显式 connect → Resolve → New ConnectionSession
 ```
 
 ---
@@ -1388,7 +1384,7 @@ pub struct RelayConfig {
 ```rust
 pub struct NetworkConfig {
     pub relays: Vec<RelayConfig>,
-    pub reconnect: ReconnectConfig,
+    pub connection: ConnectionPolicy,
     pub delivery: DeliveryConfig,
     pub qos: QosConfig,
 }
@@ -1411,7 +1407,7 @@ pub struct NetworkConfig {
 - RTT；
 - E2EE；
 - Relay 切换；
-- Direct 恢复；
+- Direct First 后的新连接建立；
 - Backpressure。
 
 ---
@@ -1931,8 +1927,8 @@ Flutter Client Facade
 - `EventStreamClient`：暴露 Rust SDK 的 `SdkEvent` 流，并负责订阅、取消、
   生命周期和有界事件处理。它不是 Flutter 侧的裸 WebSocket/QUIC 客户端。
 - `SessionClient`：提供 `connect(peer)`、`disconnect(session)`、文件、终端、
-  剪贴板和远控等业务 API。Peer 身份认证、长连接、重连、Route 选择、
-  Delivery Recovery 和 Transport 切换由 Rust SDK 完成。
+  剪贴板和远控等业务 API。Peer 身份认证、Resolve、Transport 选择和
+  ConnectionSession 生命周期由 Rust SDK 完成；Delivery/Transfer 按业务 ID 恢复。
 
 示例接口可以保持粗粒度：
 
@@ -2030,8 +2026,7 @@ Bytes Sent / Received
 Current Transport
 Current Route
 Direct / Relay
-Reconnect Count
-Route Migration Count
+ConnectionSession Created Count
 Handshake Duration
 Recovery Duration
 Pending Message Count
@@ -2239,24 +2234,24 @@ First Usable Route
 Connection Established
   │
   ▼
-Session Connected
+ConnectionSession Connected（new SessionId + new Noise root）
   │
   ▼
 Flutter 收到 Connected Event
 ```
 
-后续：
+Transport loss 后：
 
 ```text
-Metrics 持续测量
+ConnectionSession Destroyed
       ↓
-RouteSelector 持续评估
+业务状态保留在 DeliveryManager / TransferManager
       ↓
-连接断开 / 更优路径出现
+下一次显式 connect → Resolve
       ↓
-Connection Migration / Reconnect
+New ConnectionSession
       ↓
-Session 尽量保持不变
+Delivery/Transfer 按 MessageId、transfer_id 恢复
 ```
 
 ---
@@ -2315,13 +2310,13 @@ QUIC Stream
 Direct 或 Relay
 ```
 
-Route 改变时：
+Transport loss 时：
 
 ```text
-File Transfer State 保持
-Session 保持
-重新建立 Connection
-根据协议状态 Resume
+File Transfer State 保持在 TransferManager
+ConnectionSession 销毁
+Resolve 后建立新 ConnectionSession
+根据 transfer_id 与 confirmed_offset Resume
 ```
 
 因此文件协议必须支持：
@@ -2434,12 +2429,12 @@ Direct failure → Relay success
 Relay failure
 QUIC → TCP fallback
 QUIC → WebSocket fallback
-Connection drop → reconnect
+Connection drop → Resolve → new ConnectionSession
 Connection Ready → Delivery Recovery
 ACK lost → resend + dedup
-Pending message across Connection migration
+Pending message across fresh ConnectionSessions
 TTL expired message is not replayed
-Relay → Direct migration
+Direct/Relay fallback without route migration
 File resume
 App kill → persistent file resume
 E2EE on/off
@@ -2501,7 +2496,7 @@ FD 数量
 
 ## 37. 第一阶段禁止过度设计
 
-虽然最终架构支持：
+虽然完整设计需要覆盖：
 
 ```text
 TCP
@@ -2511,7 +2506,7 @@ QUIC
 WebRTC
 Relay
 E2EE
-Route Migration
+显式重建 ConnectionSession
 ```
 
 但不要一次性全部实现。
@@ -2547,19 +2542,20 @@ Route Migration
 
 验收：两个客户端可稳定双向通信。
 
-### Phase 2：Session / Protocol / Connection 抽象
+### Phase 2：ConnectionSession / Protocol / Connection 抽象
 
 实现：
 
-- SessionManager；
-- Session != Connection；
+- ConnectionSessionManager；
+- ConnectionSession = exactly one Transport Connection；
 - MessageEnvelope；
 - Protocol Codec；
 - Capability Negotiation；
 - ConnectionManager；
 - State Machine。
 
-验收：销毁并重建 Connection 不会破坏 Session 模型。
+验收：销毁并重建 Connection 会创建新的 ConnectionSession、SessionId 与 Noise
+root，但 Delivery/Transfer 业务状态仍可按业务 ID 恢复。
 
 ### Phase 3：Delivery / Recovery Core
 
@@ -2573,12 +2569,12 @@ Route Migration
 - Dedup Window；
 - TTL；
 - Retry Budget；
-- Recovery Handshake。
+- Business Recovery Handshake。
 
 验收：
 
 ```text
-发送 ACK_REQUIRED 消息\n强制断网\n建立新 Connection\n未 ACK 消息自动恢复\n接收端不会重复执行业务
+发送 ACK_REQUIRED 消息\n强制断网\n建立新 Connection（新 ConnectionSession、SessionId、Noise root）\n按 MessageId/channel 恢复未 ACK 消息\n接收端不会重复执行业务
 ```
 
 ### Phase 4：File Transfer + Persistent Resume
@@ -2595,7 +2591,8 @@ Route Migration
 - Atomic Finalize；
 - App restart recovery。
 
-验收：大文件在 Direct → Relay、断网、App 重启后均可继续，最终 Hash 一致。
+验收：大文件在 Direct/Relay fallback、断网或 App 重启后，均可在新的
+ConnectionSession 上按 transfer_id 与 confirmed_offset 继续，最终 Hash 一致。
 
 ### Phase 5：Relay
 
@@ -2609,7 +2606,7 @@ Route Migration
 - Bounded Buffer；
 - Backpressure；
 - Rate Limit；
-- Direct → Relay 自动切换。
+- Direct First 后显式 Relay fallback（创建新的 ConnectionSession）。
 
 验收：Relay 不解析、不持久化业务 Payload。
 
@@ -2622,7 +2619,7 @@ Route Migration
 - WebSocket / WSS；
 - Candidate integration。
 
-验收：QUIC 被阻断时可自动选择兼容路径。
+验收：QUIC 被阻断时可选择兼容路径并创建新的 ConnectionSession。
 
 ### Phase 7：Application E2EE
 
@@ -2636,19 +2633,21 @@ Route Migration
 - Replay Protection；
 - Key Rotation。
 
-验收：Relay 无法读取业务内容；Recovery 后 Pending 数据使用当前 CryptoContext 重新加密。
+验收：Relay 无法读取业务内容；Recovery 后 Pending 数据使用新
+ConnectionSession 的 Noise root/CryptoContext 重新加密。
 
-### Phase 8：RouteSelector + Metrics + Migration
+### Phase 8：RouteSelector + Metrics + Explicit Reconnect
 
 实现：
 
 - Route Score；
 - RTT / Loss / Jitter / Bandwidth；
 - background probing；
-- Relay → Direct migration；
+- 新 Connection 建立时的 Direct/Relay route selection；
 - multi-relay。
 
-验收：Route 切换不破坏 Session、MessageId、TransferId 和 Delivery State。
+验收：每次新 Connection 都创建新的 ConnectionSession、SessionId 与 Noise
+root；Delivery/Transfer 的 MessageId、TransferId 和业务状态跨连接保持。
 
 ### Phase 9：WebRTC
 
@@ -2765,7 +2764,7 @@ crypto → Quinn                        ❌
 
 必须全部满足：
 
-- MessageId 在 Session 内唯一；
+- MessageId 在 Delivery business scope/channel 内唯一；
 - Ordered Channel 有独立 Sequence；
 - 支持 Application ACK；
 - ACK 丢失后可安全重发；
@@ -2773,10 +2772,10 @@ crypto → Quinn                        ❌
 - 需要幂等的命令有业务幂等键；
 - Pending Queue 有消息数和字节数上限；
 - TTL 到期消息不会断网后重放；
-- Reconnect 与 Recovery 是不同状态；
-- Connection 重建后会执行 Recovery Handshake；
+- Transport loss 销毁 ConnectionSession，随后在新 ConnectionSession 上执行 Business Recovery；
+- 每个新 Connection 都创建新的 SessionId 与 Noise root；
 - Delivery State 不依赖某一条具体 Connection；
-- Route Migration 不会重置 MessageId / Sequence；
+- 新 ConnectionSession 不会重置业务 MessageId / Sequence；
 - 能测试 ACK lost、duplicate、reorder、disconnect；
 - Metrics 可观察 Pending、Retry、Dedup、Recovery Duration。
 
@@ -2786,7 +2785,7 @@ crypto → Quinn                        ❌
 
 必须全部满足：
 
-- TransferId 独立于 Connection；
+- TransferId 独立于 ConnectionSession；
 - 支持 Chunk ID / Offset；
 - 支持 Received Range 或 Bitmap；
 - 支持 ResumeRequest / ResumeState；
@@ -2798,7 +2797,8 @@ crypto → Quinn                        ❌
 - 完成后进行 Hash 校验；
 - 最终文件采用原子 finalize；
 - Relay 不保存任何 Resume State；
-- 支持 Direct ↔ Relay 期间继续同一 Transfer。
+- 支持 Direct/Relay fallback 或 transport loss 后，在新的 ConnectionSession 上
+  继续同一 Transfer。
 
 ---
 
@@ -2884,11 +2884,10 @@ Flutter：
 “我要连接设备 B，并发送文件。”
 
 Rust SDK：
-“当前 QUIC Direct 不通，自动启动 Relay；
- Relay QUIC 先建立成功；
- 文件使用 Reliable File Channel；
- E2EE 已开启；
- 后续发现 Direct 线路更优，再迁移连接。”
+“当前 QUIC Direct 不通，按 Direct First 规则在窗口后启动 Relay；
+ 新 transport 建立新的 ConnectionSession、SessionId 和 Noise root；
+ 文件使用 Reliable File Channel；E2EE 已开启；
+ 连接断开后 Delivery/Transfer 按业务 ID 在新 ConnectionSession 上恢复。”
 ```
 
 这才是该网络传输 SDK 的核心价值。
@@ -2900,15 +2899,15 @@ Rust SDK：
 本项目后续开发应始终遵循以下十二条硬性原则：
 
 1. **Flutter 不直接操作具体网络协议。**
-2. **Session 与 Connection 生命周期分离。**
+2. **ConnectionSession 与 Transport 1:1 同生命周期；每个新 Transport 都使用新的 SessionId 与 Noise root。**
 3. **业务 Protocol 与 Transport 解耦。**
 4. **Transport 重传与应用层 Delivery Recovery 是两套机制。**
-5. **Reconnect 负责重新建立网络；Delivery/Recovery 负责恢复未完成业务。**
+5. **Transport loss 销毁 ConnectionSession；Delivery/Recovery 负责在新 ConnectionSession 上恢复未完成业务。**
 6. **Application ACK、MessageId、Dedup 是跨 Connection 可靠交付的基础。**
 7. **文件使用 TransferId + Chunk/Range + Checkpoint + Resume，不使用简单 Message Retry。**
-8. **应用层 E2EE 独立于 TCP/UDP/WebSocket/QUIC/WebRTC，重试数据使用当前 CryptoContext 重新加密。**
+8. **应用层 E2EE 独立于 TCP/UDP/WebSocket/QUIC/WebRTC；每个新 ConnectionSession 使用新的 Noise root，重试数据重新加密。**
 9. **QUIC 作为通用数据主力，WebRTC 作为实时通信子系统，TCP/WebSocket 为兼容和 fallback，UDP 为底层 Datagram 能力。**
-10. **Direct 优先但不绝对，RouteSelector 根据网络质量和业务意图选择路线。**
+10. **Direct 优先但不绝对；RouteSelector 在每次新 Connection 建立时根据能力和业务意图选择路线，连接存续期间不做 route migration。**
 11. **Relay 只做临时透明转发，不持久化、不解密业务数据，也不保存 Resume 状态。**
 12. **所有 Queue 有界；所有业务显式定义 DeliveryPolicy，禁止“所有失败数据一律重传”。**
 
@@ -2932,7 +2931,7 @@ Rust SDK：
 9. Connection 重建后是重放、恢复、同步最新状态还是直接丢弃？
 10. 是否需要跨 App 重启持久化？
 11. 最大 Pending 消息数和字节数是多少？
-12. 当前 Route 切换后 MessageId / Sequence / TransferId 是否保持？
+12. 新 ConnectionSession 后 MessageId / Sequence / TransferId 是否按业务语义保持？
 
 没有回答完这些问题，不允许把新业务标记为“支持断网恢复”。
 
@@ -3019,17 +3018,17 @@ Audio / Video
 ### C.4 断网恢复
 
 ```text
-Connection Lost
+Transport Lost
       ↓
-Session = Reconnecting
+ConnectionSession = Destroyed
       ↓
-ConnectionManager
+Resolve / ConnectionOrchestrator
       ↓
-Direct / Relay / Fallback Candidates
+Direct First → Relay fallback
       ↓
-New Connection Ready
+New Connection Ready（new SessionId + new Noise root）
       ↓
-Session = Recovering
+New ConnectionSession = Connected
       ↓
 DeliveryManager + TransferManager
       ├── Ack/Dedup Recovery
@@ -3038,7 +3037,7 @@ DeliveryManager + TransferManager
       ├── Latest-State Sync
       └── File Resume
       ↓
-Recovery Complete
+Business Recovery Complete
       ↓
-Session = Connected
+ConnectionSession remains Connected
 ```

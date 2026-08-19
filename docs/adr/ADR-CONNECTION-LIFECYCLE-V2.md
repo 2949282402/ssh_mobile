@@ -77,6 +77,9 @@ ConnectivityAttempt {
 - 重新建立 = `New Connection → New ConnectionSessionId → New Noise Root`。
 - **禁止试图恢复旧 Socket 的 CryptoContext**，禁止跨 Transport 的 Session
   连续性 / route migration 连续性 / crypto root 连续性。
+- `Delivery` 与 `Transfer` 的业务状态不属于 `ConnectionSession`：未确认消息按
+  `MessageId`/业务 channel 恢复，文件按 `transfer_id` 与
+  `confirmed_offset` 恢复；它们可以在新的 ConnectionSession 上继续。
 - 删除 `SessionState::Disconnected` 存活 + `should_reconnect` + `reconnect_loop`
   复用同一 `SessionId` + `SessionCryptoDecision::ContinueExisting` 的 crypto
   root 复用。
