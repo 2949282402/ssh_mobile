@@ -11,7 +11,10 @@ use crate::peer;
 use crate::relay;
 use crate::runtime::RuntimeState;
 use crate::transfer;
-use crate::{connect::PeerState, errors::CoreNetworkError};
+use crate::{
+    connect::{IntentGeneration, PeerId, PeerState, PeerSupervisor},
+    errors::CoreNetworkError,
+};
 use network_protocol::{
     network_command, CommunicationClass, NetworkCommand, NetworkError as ProtocolError,
     NetworkErrorCode, RelayConnectionState, NETWORK_PROTOCOL_VERSION,
@@ -47,7 +50,7 @@ impl CommandResultLedger {
     }
 }
 
-/// 运行唯一命令 worker，并为每个命令发布一个内部结果。
+/// 运行唯一命令 worker，并为每个命令发布一个终态结果。
 pub(crate) async fn run_command_worker(
     mut commands: tokio::sync::mpsc::Receiver<NetworkCommand>,
     state: Arc<RuntimeState>,
@@ -56,24 +59,79 @@ pub(crate) async fn run_command_worker(
     let result_ledger = CommandResultLedger::new();
     while let Some(command) = commands.recv().await {
         let command_id = command.command_id.clone();
+        let command_peer_id = command_peer_id(&command);
         match result_ledger.claim(&command_id) {
             Ok(true) => {}
-            // A duplicate command is intentionally silent: emitting another
-            // event with the same id would break exactly-once correlation.
-            Ok(false) => continue,
+            // A duplicate envelope is still given a correlated terminal
+            // result.  Distinct ConnectPeer commands use distinct ids and
+            // join the same supervisor generation below; only a repeated
+            // envelope id is rejected here.
+            Ok(false) => {
+                emit_command_result(
+                    &state.event_tx,
+                    command_id,
+                    command_peer_id,
+                    Err(protocol_error(
+                        NetworkErrorCode::InvalidArgument,
+                        "command_id has already been completed",
+                    )),
+                );
+                continue;
+            }
             Err(error) => {
                 emit_command_result(
                     &state.event_tx,
                     command_id,
+                    command_peer_id,
                     Err(protocol_error(NetworkErrorCode::IoError, error.to_string())),
                 );
                 continue;
             }
         }
         let result = dispatch_command(command, Arc::clone(&state)).await;
-        emit_command_result(&state.event_tx, command_id, result);
+        emit_command_result(&state.event_tx, command_id, command_peer_id, result);
     }
     tracing::info!("Network runtime worker shut down");
+}
+
+/// Extract the public peer scope before the command is moved into its
+/// subsystem.  `CommandResult` carries this scope so SDK trackers can reject
+/// a terminal result for the wrong peer without exposing native handles.
+fn command_peer_id(command: &NetworkCommand) -> Option<String> {
+    match command.payload.as_ref() {
+        Some(network_command::Payload::ConnectPeer(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::SendFile(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::ConfigureRuntime(_)) => None,
+        Some(network_command::Payload::UpsertPeer(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::RespondIncomingTransfer(_)) => None,
+        Some(network_command::Payload::ConfigureRelay(_)) => None,
+        Some(network_command::Payload::DisconnectPeer(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::DisconnectRelay(_)) => None,
+        Some(network_command::Payload::StartRealtimeSession(command)) => {
+            Some(command.peer_id.clone())
+        }
+        Some(network_command::Payload::StopRealtimeSession(_)) => None,
+        Some(network_command::Payload::SendRealtimeSignal(command)) => {
+            Some(command.peer_id.clone())
+        }
+        Some(network_command::Payload::UpsertPeerV2(command)) => {
+            command.config.as_ref().map(|config| config.peer_id.clone())
+        }
+        Some(network_command::Payload::RemovePeer(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::SendMessageV2(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::Transfer(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::PeerDiagnostics(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::NetworkEnvironmentChanged(_)) => None,
+        Some(network_command::Payload::CancelTransfer(_)) => None,
+        Some(network_command::Payload::SendMessage(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::AcknowledgeMessage(command)) => {
+            Some(command.peer_id.clone())
+        }
+        Some(network_command::Payload::SshStreamOpen(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::SshStreamData(command)) => Some(command.peer_id.clone()),
+        Some(network_command::Payload::SshStreamClose(command)) => Some(command.peer_id.clone()),
+        None => None,
+    }
 }
 
 /// 校验 V2 信封，并将载荷路由到所属子系统。
@@ -109,7 +167,11 @@ pub(crate) async fn dispatch_command(
                 protocol_error(NetworkErrorCode::InvalidArgument, "peer config is required")
             })?;
             validate_e2ee_policy(config.e2ee_policy)?;
-            peer::upsert_peer(
+            let e2ee_policy =
+                network_protocol::E2eePolicy::try_from(config.e2ee_policy).map_err(|_| {
+                    protocol_error(NetworkErrorCode::InvalidArgument, "unknown E2EE policy")
+                })?;
+            let result = peer::upsert_peer_with_policy(
                 &state,
                 network_protocol::UpsertPeerCommand {
                     peer_id: config.peer_id,
@@ -117,8 +179,10 @@ pub(crate) async fn dispatch_command(
                     identity_public_key: config.identity_public_key,
                     e2e_public_key: config.e2e_public_key,
                 },
+                e2ee_policy,
             )
-            .await
+            .await;
+            result
         }
         Some(network_command::Payload::ConnectPeer(connect)) => {
             let class = decode_communication_class(connect.communication_class);
@@ -193,6 +257,7 @@ pub(crate) async fn dispatch_command(
             emit_peer_diagnostics(&state, diagnostics.peer_id).await
         }
         Some(network_command::Payload::NetworkEnvironmentChanged(environment)) => {
+            handle_network_environment_changed(&state, &environment).await?;
             crate::events::emit_network_environment_changed(&state.event_tx, environment);
             Ok(())
         }
@@ -220,27 +285,41 @@ fn validate_e2ee_policy(value: i32) -> Result<(), ProtocolError> {
 }
 
 async fn remove_peer_v2(state: &RuntimeState, peer_id: String) -> Result<(), ProtocolError> {
-    if peer_id.is_empty() || peer_id.len() > 128 {
+    if PeerId::new(&peer_id).is_err() {
         return Err(protocol_error(
             NetworkErrorCode::InvalidArgument,
             "peer_id must contain 1-128 characters",
         ));
     }
-    state
+    let supervisor = state
         .peer_supervisors
-        .disconnect(&peer_id)
+        .get_or_create(&peer_id)
         .map_err(|error| protocol_error(NetworkErrorCode::Lifecycle, error.to_string()))?;
-    if let Ok(peer) = crate::connect::PeerId::new(&peer_id) {
-        state.ready_paths.revoke_peer(&peer);
-    }
-    state.connection_sessions.close(&peer_id).await;
+    supervisor.disconnect();
+
+    // Disconnect the owned ConnectionSession before removing any peer
+    // indexes.  `cancel_session_tasks` closes streams/realtime, pauses
+    // business work, and joins the session task group; route.close() hard
+    // closes the physical carrier itself.
+    close_peer_connection(state, &peer_id).await;
+
+    // RemovePeer is an explicit destructive lifecycle boundary, so paused
+    // business state must not remain resumable under a deleted peer.
+    cancel_peer_transfers(state, &peer_id).await;
+
+    state.relay_path_ready.write().await.remove(&peer_id);
+    clear_peer_relay_crypto(state, &peer_id).await;
+
     state.delivery.close_peer(&peer_id).await;
+    close_peer_streams(state, &peer_id).await;
     state.peers.write().await.remove(&peer_id);
     state.trusted_peer_keys.write().await.remove(&peer_id);
     state.remote_candidate_cache.write().await.remove(&peer_id);
-    state.relay_data.write().await.remove(&peer_id);
-    state.reliable_streams.write().await.remove(&peer_id);
     state.ready_session_index.unregister(&peer_id);
+    // `disconnect` preserves long-lived maintenance by design. Removal is a
+    // stronger owner boundary: stop the supervisor so maintenance is cleared
+    // and the registry can evict the exact peer entry.
+    supervisor.stop();
     let _ = state.peer_supervisors.remove_if_evictable(&peer_id);
     crate::events::emit_peer_lifecycle(
         &state.event_tx,
@@ -257,29 +336,327 @@ async fn remove_peer_v2(state: &RuntimeState, peer_id: String) -> Result<(), Pro
 }
 
 async fn emit_peer_diagnostics(state: &RuntimeState, peer_id: String) -> Result<(), ProtocolError> {
-    if peer_id.is_empty() || peer_id.len() > 128 {
+    if PeerId::new(&peer_id).is_err() {
         return Err(protocol_error(
             NetworkErrorCode::InvalidArgument,
             "peer_id must contain 1-128 characters",
         ));
     }
+
+    let configured = state.peers.read().await.contains_key(&peer_id);
+    let supervisor = if configured {
+        Some(
+            state
+                .peer_supervisors
+                .get_or_create(&peer_id)
+                .map_err(|error| protocol_error(NetworkErrorCode::Lifecycle, error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let peer_state = supervisor
+        .as_ref()
+        .map(|supervisor| supervisor.state())
+        .unwrap_or(PeerState::Offline);
+    let queued_command_count = supervisor
+        .as_ref()
+        .is_some_and(|supervisor| supervisor.state() == PeerState::Connecting)
+        as u32;
+    let ready_path_count = ready_path_count(state, &peer_id).await;
+    let active_stream_count = state.reliable_streams.read().await.contains_key(&peer_id) as u32;
+    let active_transfer_count = active_transfer_count(state, &peer_id).await;
+    let e2ee_policy = state
+        .peers
+        .read()
+        .await
+        .get(&peer_id)
+        .map(|peer| peer.e2ee_policy as i32)
+        .unwrap_or(network_protocol::E2eePolicy::Required as i32);
+
     crate::events::emit_peer_diagnostics(
         &state.event_tx,
         network_protocol::PeerDiagnostics {
             peer_id,
-            state: network_protocol::PeerState::Offline as i32,
-            e2ee_policy: network_protocol::E2eePolicy::Required as i32,
-            ready_path_count: 0,
-            queued_command_count: 0,
-            active_stream_count: 0,
-            active_transfer_count: 0,
+            state: peer_state as i32,
+            e2ee_policy,
+            ready_path_count,
+            queued_command_count,
+            active_stream_count,
+            active_transfer_count,
             last_error: None,
         },
     );
     Ok(())
 }
 
-/// 接受对端连接请求，并分离握手任务。
+/// Close the current transport/session owner for one peer.  This helper is
+/// shared by RemovePeer and environment recovery; neither caller leaves an
+/// `ActiveRoute`, path handle, or session task group behind.
+async fn close_peer_connection(state: &RuntimeState, peer_id: &str) {
+    // RuntimeState owns the admitted carrier and its PeerPathManager. This is
+    // the hard-close boundary for QUIC/generic physical paths; the registry
+    // revoke below closes any remaining indexed borrower path as well.
+    state.close_transport_path(peer_id).await;
+    if let Ok(peer) = PeerId::new(peer_id) {
+        state.ready_paths.revoke_peer(&peer);
+    }
+    // A hard-closed PeerPathManager cannot publish a fresh path. Remove the
+    // manager entry so the next environment generation gets a new owner.
+    state.peer_path_managers.write().await.remove(peer_id);
+    let session_id = state.connection_sessions.current_session_id(peer_id).await;
+    if let Some(session_id) = session_id {
+        state.cancel_session_tasks(peer_id, session_id).await;
+        state
+            .connection_sessions
+            .retire_session(peer_id, session_id)
+            .await;
+    }
+    state.ready_session_index.unregister(peer_id);
+
+    state.relay_path_ready.write().await.remove(peer_id);
+    clear_peer_relay_crypto(state, peer_id).await;
+}
+
+/// Close and remove every ReliableStream manager owned by the peer.  The
+/// manager emits the application-visible closed events before its registry
+/// entry is dropped.
+async fn close_peer_streams(state: &RuntimeState, peer_id: &str) {
+    let manager = state.reliable_streams.read().await.get(peer_id).cloned();
+    if let Some(manager) = manager {
+        let local_opener_device_id = state
+            .identity
+            .read()
+            .await
+            .as_ref()
+            .map(|identity| identity.device_id.clone())
+            .unwrap_or_default();
+        manager.close_all(peer_id, &local_opener_device_id).await;
+    }
+    state.reliable_streams.write().await.remove(peer_id);
+}
+
+/// Explicit peer removal cancels every known transfer identity, including
+/// Relay offers and waiter-only Relay operations.  The TransferManager remains
+/// the business owner; this function only drives its public cancellation API
+/// and lets the Relay owner remove its own socket/file state.
+async fn cancel_peer_transfers(state: &RuntimeState, peer_id: &str) {
+    let mut transfer_ids = state
+        .transfers
+        .pause_peer_transfers(peer_id)
+        .await
+        .into_iter()
+        .collect::<HashSet<_>>();
+
+    transfer_ids.extend(
+        state
+            .relay_pending_incoming
+            .read()
+            .await
+            .values()
+            .filter(|pending| pending.sender_id == peer_id)
+            .map(|pending| pending.transfer_id.clone()),
+    );
+    transfer_ids.extend(
+        state
+            .relay_active_incoming
+            .lock()
+            .await
+            .values()
+            .filter(|active| active.offer.sender_id == peer_id)
+            .map(|active| active.offer.transfer_id.clone()),
+    );
+
+    let relay_waiter_ids = state
+        .relay_acceptances
+        .read()
+        .await
+        .keys()
+        .chain(state.relay_completions.read().await.keys())
+        .cloned()
+        .collect::<Vec<_>>();
+    for transfer_id in relay_waiter_ids {
+        if state
+            .transfers
+            .snapshot(&transfer_id)
+            .await
+            .is_some_and(|snapshot| snapshot.peer_id == peer_id)
+        {
+            transfer_ids.insert(transfer_id);
+        }
+    }
+
+    for transfer_id in transfer_ids {
+        state.transfers.cancel_transfer(&transfer_id).await;
+        relay::cancel_transfer(state, &transfer_id).await;
+        state.incoming_decisions.write().await.remove(&transfer_id);
+    }
+}
+
+/// Remove crypto waiters whose owner is the deleted peer.  The maps are
+/// session/handshake resources, not durable peer configuration.
+async fn clear_peer_relay_crypto(state: &RuntimeState, peer_id: &str) {
+    let prefix = format!("{peer_id}/");
+    state
+        .relay_crypto_waiters
+        .write()
+        .await
+        .retain(|key, _| !key.starts_with(&prefix));
+    state
+        .relay_crypto_responders
+        .lock()
+        .await
+        .retain(|key, _| !key.starts_with(&prefix));
+    state
+        .relay_crypto_confirmers
+        .lock()
+        .await
+        .retain(|key, _| !key.starts_with(&prefix));
+}
+
+/// The ready-path registry deliberately exposes lease selection, not its
+/// internal map. Count paths from the peer-owned path manager and its indexed
+/// leases; pre-admission Relay data is not a selectable path.
+async fn ready_path_count(state: &RuntimeState, peer_id: &str) -> u32 {
+    let manager_path_count = state
+        .peer_path_managers
+        .read()
+        .await
+        .get(peer_id)
+        .cloned()
+        .map(|manager| {
+            let manager = manager.lock().expect("peer path manager lock");
+            manager.direct_ready().len() as u32 + u32::from(manager.relay_ready().is_some())
+        })
+        .unwrap_or_default();
+    let selected_profile = PeerId::new(peer_id).ok().and_then(|peer| {
+        state
+            .ready_paths
+            .select_compatible_ready_path(&peer, 0)
+            .ok()
+            .map(|lease| lease.profile())
+    });
+    let current_profile = state.path_profile(peer_id).await;
+    let mut count = manager_path_count.max(u32::from(
+        selected_profile.is_some() || current_profile.is_some(),
+    ));
+    count = count.max(manager_path_count);
+    count
+}
+
+/// Return the peer-scoped transfer identities visible at this lifecycle
+/// boundary.  Relay pending/active and completion waiters are all real
+/// TransferManager-owned identities; no synthetic fixed counter is reported.
+async fn active_transfer_count(state: &RuntimeState, peer_id: &str) -> u32 {
+    let mut transfer_ids = HashSet::new();
+    transfer_ids.extend(
+        state
+            .relay_pending_incoming
+            .read()
+            .await
+            .values()
+            .filter(|pending| pending.sender_id == peer_id)
+            .map(|pending| pending.transfer_id.clone()),
+    );
+    transfer_ids.extend(
+        state
+            .relay_active_incoming
+            .lock()
+            .await
+            .values()
+            .filter(|active| active.offer.sender_id == peer_id)
+            .map(|active| active.offer.transfer_id.clone()),
+    );
+
+    let waiter_ids = state
+        .relay_acceptances
+        .read()
+        .await
+        .keys()
+        .chain(state.relay_completions.read().await.keys())
+        .cloned()
+        .collect::<Vec<_>>();
+    for transfer_id in waiter_ids {
+        if state
+            .transfers
+            .snapshot(&transfer_id)
+            .await
+            .is_some_and(|snapshot| snapshot.peer_id == peer_id)
+        {
+            transfer_ids.insert(transfer_id);
+        }
+    }
+    transfer_ids.len().min(u32::MAX as usize) as u32
+}
+
+/// Apply an environment transition to the owning lifecycle graph.  Local
+/// candidate refresh/revision/publish happens first; active peer generations
+/// are then cancelled and, when connectivity is available, restarted through
+/// the PeerSupervisor so stale retries cannot revive an old path.
+async fn handle_network_environment_changed(
+    state: &Arc<RuntimeState>,
+    environment: &network_protocol::NetworkEnvironmentChangedCommand,
+) -> Result<(), ProtocolError> {
+    crate::discovery::on_local_candidates_changed(state).await;
+    // A local interface/NAT change invalidates the remote Stage-A pairing
+    // opportunity as well.  The next supervisor generation must resolve or
+    // gather fresh candidates instead of reusing this retry snapshot.
+    state.remote_candidate_cache.write().await.clear();
+
+    let peer_ids = state.peers.read().await.keys().cloned().collect::<Vec<_>>();
+    let mut first_error = None;
+    for (index, peer_id) in peer_ids.into_iter().enumerate() {
+        let supervisor = state
+            .peer_supervisors
+            .get_or_create(&peer_id)
+            .map_err(|error| core_error(&peer_id, "environment_changed", error))?;
+        let should_reprobe = matches!(
+            supervisor.state(),
+            PeerState::Online | PeerState::Connecting
+        ) || supervisor.maintain_connection();
+        if !should_reprobe {
+            continue;
+        }
+
+        // Disconnect invalidates all joined waiters and increments the intent
+        // generation.  This is the retry reset/stale guard for the new network
+        // environment; closing the session then retires its physical path,
+        // stream, realtime, and session task owners.
+        let _ = supervisor.disconnect();
+        close_peer_connection(state, &peer_id).await;
+        if !environment.has_connectivity {
+            continue;
+        }
+
+        let command_id = format!("environment-reprobe-{}-{index}", environment.generation);
+        match state.peer_supervisors.start_connect(
+            Arc::clone(state),
+            &peer_id,
+            command_id,
+            CommunicationClass::ReliableMessage,
+        ) {
+            Ok(intent) => {
+                if intent.is_new {
+                    emit_peer_lifecycle(&state.event_tx, &peer_id, PeerState::Connecting, None);
+                }
+                intent.detach_completion();
+            }
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(core_error(&peer_id, "environment_changed", error));
+                }
+            }
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Submit a peer intent and await the supervisor-owned completion.  Queueing
+/// the ConnectivityAttempt is not command success: only Online settles as
+/// Succeeded; an attempt failure is Failed, while invalidated generations and
+/// shutdown are Cancelled.
 async fn start_connect_peer(
     state: Arc<RuntimeState>,
     command_id: String,
@@ -308,17 +685,69 @@ async fn start_connect_peer(
             &peer_id,
         ));
     }
+    let supervisor = state
+        .peer_supervisors
+        .get_or_create(&peer_id)
+        .map_err(|error| core_error(&peer_id, "connect", error))?;
     let intent = state
         .peer_supervisors
         .start_connect(Arc::clone(&state), &peer_id, command_id, class)
         .map_err(|error| core_error(&peer_id, "connect", error))?;
-    if !intent.is_new {
-        intent.detach_completion();
-        return Ok(());
+    let generation = intent.generation;
+    if intent.is_new {
+        emit_peer_lifecycle(&state.event_tx, &peer_id, PeerState::Connecting, None);
     }
-    intent.detach_completion();
-    emit_peer_lifecycle(&state.event_tx, &peer_id, PeerState::Connecting, None);
-    Ok(())
+    match intent.completion().await {
+        Ok(Ok(PeerState::Online)) => Ok(()),
+        Ok(Ok(state)) => Err(protocol_error_with_peer(
+            NetworkErrorCode::PeerOffline,
+            format!("peer connect completed in unexpected state {state:?}"),
+            "connect",
+            &peer_id,
+        )),
+        Ok(Err(error)) => {
+            if connect_completion_was_cancelled(&supervisor, generation, &error) {
+                Err(protocol_error_with_peer(
+                    NetworkErrorCode::Cancelled,
+                    error.to_string(),
+                    "connect",
+                    &peer_id,
+                ))
+            } else if matches!(error, CoreNetworkError::Cancelled) {
+                // The current PeerSupervisor translates an unsuccessful
+                // ConnectivityAttempt into Cancelled after it has emitted the
+                // detailed PeerState failure.  The generation is unchanged in
+                // that case, so preserve the public Failed terminal state.
+                Err(protocol_error_with_peer(
+                    NetworkErrorCode::IoError,
+                    "connectivity attempt failed",
+                    "connect",
+                    &peer_id,
+                ))
+            } else {
+                Err(core_error(&peer_id, "connect", error))
+            }
+        }
+        Err(_) => Err(protocol_error_with_peer(
+            NetworkErrorCode::Cancelled,
+            "connectivity attempt was cancelled before completion",
+            "connect",
+            &peer_id,
+        )),
+    }
+}
+
+fn connect_completion_was_cancelled(
+    supervisor: &PeerSupervisor,
+    generation: IntentGeneration,
+    error: &CoreNetworkError,
+) -> bool {
+    matches!(
+        error,
+        CoreNetworkError::SupervisorStopping
+            | CoreNetworkError::StaleAttempt
+            | CoreNetworkError::StaleIntent
+    ) || (matches!(error, CoreNetworkError::Cancelled) && supervisor.generation() != generation)
 }
 
 fn core_error(peer_id: &str, operation: &str, error: CoreNetworkError) -> ProtocolError {
@@ -400,5 +829,166 @@ mod tests {
         assert_eq!(ledger.claim("command-1"), Ok(true));
         assert_eq!(ledger.claim("command-1"), Ok(false));
         assert_eq!(ledger.claim("command-2"), Ok(true));
+    }
+
+    #[test]
+    fn connect_cancellation_requires_generation_invalidation() {
+        let supervisor = PeerSupervisor::new(PeerId::new("peer-a").expect("valid peer"));
+        let intent = supervisor
+            .begin_connect("connect-a", CommunicationClass::ReliableMessage)
+            .expect("connect intent");
+        let generation = intent.generation;
+        intent.detach_completion();
+
+        // PeerSupervisor uses Cancelled for an unsuccessful attempt as well
+        // as an explicit disconnect. The unchanged generation distinguishes
+        // the former so commands can report Failed rather than Cancelled.
+        assert!(!connect_completion_was_cancelled(
+            &supervisor,
+            generation,
+            &CoreNetworkError::Cancelled
+        ));
+
+        supervisor.disconnect();
+        assert!(connect_completion_was_cancelled(
+            &supervisor,
+            generation,
+            &CoreNetworkError::Cancelled
+        ));
+        assert!(connect_completion_was_cancelled(
+            &supervisor,
+            generation,
+            &CoreNetworkError::SupervisorStopping
+        ));
+    }
+
+    #[tokio::test]
+    async fn environment_change_refreshes_discovery_revision() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            sender,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        crate::discovery::begin_epoch(&state).await;
+
+        dispatch_command(
+            NetworkCommand {
+                command_id: "environment-change".into(),
+                protocol_version: NETWORK_PROTOCOL_VERSION,
+                payload: Some(network_command::Payload::NetworkEnvironmentChanged(
+                    network_protocol::NetworkEnvironmentChangedCommand {
+                        generation: 7,
+                        has_connectivity: false,
+                        is_foreground: true,
+                        is_metered: false,
+                    },
+                )),
+            },
+            Arc::clone(&state),
+        )
+        .await
+        .expect("environment change");
+
+        assert_eq!(
+            state
+                .local_discovery
+                .read()
+                .await
+                .as_ref()
+                .expect("discovery manager")
+                .revision(),
+            2
+        );
+        assert!(matches!(
+            receiver.try_recv().expect("environment event").payload,
+            Some(network_protocol::network_event::Payload::NetworkEnvironmentChanged(event))
+                if event.generation == 7 && !event.has_connectivity
+        ));
+    }
+
+    #[tokio::test]
+    async fn remove_peer_evicts_configuration_and_supervisor() {
+        let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+        let state = RuntimeState::new(sender, Arc::new(std::sync::atomic::AtomicU16::new(0)));
+        state.peers.write().await.insert(
+            "peer-a".into(),
+            crate::runtime::PeerConfig {
+                endpoint: None,
+                identity_public_key: [1; 32],
+                e2e_public_key: [2; 32],
+                e2ee_policy: network_protocol::E2eePolicy::Required,
+            },
+        );
+        state
+            .trusted_peer_keys
+            .write()
+            .await
+            .insert("peer-a".into(), [1; 32]);
+        state
+            .peer_supervisors
+            .get_or_create_with_configured("peer-a", true)
+            .expect("supervisor");
+
+        remove_peer_v2(&state, "peer-a".into())
+            .await
+            .expect("remove peer");
+
+        assert!(!state.peers.read().await.contains_key("peer-a"));
+        assert!(!state.trusted_peer_keys.read().await.contains_key("peer-a"));
+        assert_eq!(state.peer_supervisors.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn diagnostics_reads_live_supervisor_and_path_manager() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let state = RuntimeState::new(sender, Arc::new(std::sync::atomic::AtomicU16::new(0)));
+        state.peers.write().await.insert(
+            "peer-a".into(),
+            crate::runtime::PeerConfig {
+                endpoint: None,
+                identity_public_key: [1; 32],
+                e2e_public_key: [2; 32],
+                e2ee_policy: network_protocol::E2eePolicy::Required,
+            },
+        );
+        let supervisor = state
+            .peer_supervisors
+            .get_or_create_with_configured("peer-a", true)
+            .expect("supervisor");
+        supervisor.admit_inbound(true).expect("online supervisor");
+
+        let peer = PeerId::new("peer-a").expect("valid peer");
+        let mut path_manager =
+            crate::connect::PeerPathManager::new(peer, Arc::clone(&state.ready_paths));
+        path_manager
+            .publish_ready(
+                crate::connection::ConnectionProfile::for_route(
+                    network_protocol::RouteType::QuicDirect,
+                )
+                .expect("direct profile"),
+            )
+            .expect("ready path");
+        state.peer_path_managers.write().await.insert(
+            "peer-a".into(),
+            Arc::new(std::sync::Mutex::new(path_manager)),
+        );
+
+        emit_peer_diagnostics(&state, "peer-a".into())
+            .await
+            .expect("diagnostics");
+        let Some(network_protocol::network_event::Payload::PeerDiagnostics(diagnostics)) =
+            receiver.try_recv().expect("diagnostics event").payload
+        else {
+            panic!("expected PeerDiagnostics");
+        };
+        assert_eq!(
+            diagnostics.state,
+            network_protocol::PeerState::Online as i32
+        );
+        assert_eq!(diagnostics.ready_path_count, 1);
+        assert_eq!(
+            diagnostics.e2ee_policy,
+            network_protocol::E2eePolicy::Required as i32
+        );
     }
 }

@@ -1,12 +1,11 @@
-//! Per-peer intent coordination for the transport-network v2 core slice.
+//! Per-peer lifecycle ownership for the transport-network v2 core.
 //!
-//! The legacy runtime stores a number of transport objects in maps keyed by a
-//! string peer id.  This module provides the smaller ownership boundary that
-//! new lifecycle code can use while those older owners are migrated: one
-//! validated [`PeerId`] owns one bounded mailbox, one intent generation, and
-//! one bounded set of completion waiters.
+//! One validated [`PeerId`] owns one bounded mailbox, one intent generation,
+//! one connectivity-attempt worker, and one bounded set of completion waiters.
+//! Transport and path observations are reported here; they do not become a
+//! second lifecycle state machine in the connection-session store.
 
-use network_protocol::CommunicationClass;
+use network_protocol::{CommunicationClass, NetworkError as ProtocolError};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{
@@ -149,13 +148,29 @@ struct PeerInner {
     configured: bool,
 }
 
+struct ConnectionTask {
+    generation: IntentGeneration,
+    lease: TaskLease,
+}
+
+fn core_error_for_attempt(error: &ProtocolError) -> CoreNetworkError {
+    match NetworkErrorCode::try_from(error.code).unwrap_or(NetworkErrorCode::Unspecified) {
+        NetworkErrorCode::NoRoute
+        | NetworkErrorCode::PeerOffline
+        | NetworkErrorCode::PeerNotReady => CoreNetworkError::NoRoute,
+        NetworkErrorCode::Cancelled => CoreNetworkError::Cancelled,
+        _ => CoreNetworkError::Cancelled,
+    }
+}
+
 /// One peer's bounded lifecycle coordinator.
 pub(crate) struct PeerSupervisor {
     peer_id: PeerId,
     mailbox_tx: mpsc::Sender<PeerIntent>,
     mailbox_rx: Mutex<Option<mpsc::Receiver<PeerIntent>>>,
+    mailbox_task: Mutex<Option<TaskLease>>,
     inner: Mutex<PeerInner>,
-    connection_task: Mutex<Option<TaskLease>>,
+    connection_task: Mutex<Option<ConnectionTask>>,
     next_resource_id: AtomicU64,
 }
 
@@ -166,6 +181,7 @@ impl PeerSupervisor {
             peer_id,
             mailbox_tx,
             mailbox_rx: Mutex::new(Some(mailbox_rx)),
+            mailbox_task: Mutex::new(None),
             inner: Mutex::new(PeerInner {
                 state: PeerState::Offline,
                 generation: IntentGeneration::INITIAL,
@@ -215,81 +231,186 @@ impl PeerSupervisor {
         self.begin_connect_with_policy(command_id, class, true)
     }
 
-    /// Start the sole transport establishment owned by this peer supervisor.
-    ///
-    /// Command dispatch submits an intent here rather than creating a second
-    /// per-peer connectivity owner.  The bounded mailbox remains the intent
-    /// hand-off/serialization point, while this method owns the supervised
-    /// `ConnectivityAttemptCoordinator` task and its generation completion.
+    /// Start the peer mailbox worker and submit the sole transport-establishment
+    /// intent owned by this supervisor.
     pub(crate) fn start_connect(
         self: &Arc<Self>,
         state: Arc<RuntimeState>,
         command_id: String,
         class: CommunicationClass,
     ) -> Result<PeerConnectIntent, CoreNetworkError> {
-        let intent = self.begin_connect(&command_id, class)?;
-        if !intent.is_new {
-            return Ok(intent);
+        self.start_mailbox_worker(Arc::clone(&state))?;
+        self.begin_connect(&command_id, class)
+    }
+
+    /// Start the only worker that consumes this peer's intents.  The worker
+    /// owns the hand-off from the mailbox to a supervised
+    /// `ConnectivityAttemptCoordinator`; callers never start an attempt
+    /// directly.
+    fn start_mailbox_worker(
+        self: &Arc<Self>,
+        state: Arc<RuntimeState>,
+    ) -> Result<(), CoreNetworkError> {
+        let mut mailbox_task = self.mailbox_task.lock().expect("peer mailbox task lock");
+        if mailbox_task.is_some() {
+            return Ok(());
         }
 
-        let generation = intent.generation;
-        if let Err(error) = self.mark_child_started() {
-            let _ = self.complete(generation, Err(error.clone()));
-            return Err(error);
-        }
+        let receiver = self
+            .mailbox_rx
+            .lock()
+            .expect("peer mailbox lock")
+            .take()
+            .ok_or(CoreNetworkError::SupervisorStopping)?;
         let supervisor = Arc::clone(self);
-        let task_peer_id = self.peer_id.as_str().to_string();
         let task_supervisor = Arc::clone(&state.task_supervisor);
+        let worker_task_supervisor = Arc::clone(&task_supervisor);
+        let peer_id = self.peer_id.as_str().to_string();
+        let task = task_supervisor.spawn_session_controlled(
+            format!("peer-mailbox/{peer_id}"),
+            "peer-mailbox",
+            async move {
+                let mut receiver = receiver;
+                while let Some(intent) = receiver.recv().await {
+                    supervisor.start_attempt(
+                        Arc::clone(&state),
+                        Arc::clone(&worker_task_supervisor),
+                        intent,
+                    );
+                }
+            },
+        );
+        let Some(task) = task else {
+            return Err(CoreNetworkError::SupervisorStopping);
+        };
+        *mailbox_task = Some(task);
+        Ok(())
+    }
+
+    fn start_attempt(
+        self: &Arc<Self>,
+        state: Arc<RuntimeState>,
+        task_supervisor: Arc<RuntimeTaskSupervisor>,
+        intent: PeerIntent,
+    ) {
+        if !self.is_current(intent.generation) {
+            return;
+        }
+
+        {
+            let mut inner = self.inner.lock().expect("peer supervisor lock");
+            if inner.stopping || inner.generation != intent.generation {
+                return;
+            }
+            inner.retry_scheduled = false;
+        }
+
+        // A new generation always cancels the previous attempt before its
+        // candidate race is started.  The generation guard remains the only
+        // authority for deciding whether a completion may update peer state.
+        self.cancel_connection_task();
+        if let Err(error) = self.mark_child_started() {
+            self.complete_attempt_without_task(intent.generation, Err(error), false);
+            return;
+        }
+
+        let supervisor = Arc::clone(self);
+        let peer_id = self.peer_id.as_str().to_string();
+        let generation = intent.generation;
         let task_state = Arc::clone(&state);
-        let task_lease = task_supervisor.spawn_session_controlled(
-            format!("peer-connect/{task_peer_id}"),
+        let task = task_supervisor.spawn_session_controlled(
+            format!(
+                "peer-connect/{peer_id}/{generation}",
+                generation = generation.get()
+            ),
             "peer-connect",
             async move {
                 let attempt_coordinator =
                     crate::connect::ConnectivityAttemptCoordinator::new(Arc::clone(&task_state));
-                match attempt_coordinator
-                    .connect_with_class(&task_peer_id, class)
-                    .await
-                {
-                    Ok(()) => {
-                        if supervisor.is_current(generation) {
-                            let _ = supervisor.complete(generation, Ok(PeerState::Online));
-                        }
-                    }
-                    Err(error) => {
-                        if supervisor.is_current(generation) {
-                            let _ =
-                                supervisor.complete(generation, Err(CoreNetworkError::Cancelled));
-                            let code = NetworkErrorCode::try_from(error.code)
-                                .unwrap_or(NetworkErrorCode::Unspecified);
-                            emit_peer_state(
-                                &task_state.event_tx,
-                                &task_peer_id,
-                                PeerConnectionState::Failed,
-                                RouteType::Unspecified,
-                                Some(protocol_error_with_peer(
-                                    code,
-                                    error.message,
-                                    "connect",
-                                    &task_peer_id,
-                                )),
-                            );
-                        }
-                    }
-                }
-                supervisor.mark_child_finished();
+                let result = attempt_coordinator
+                    .connect_with_class(&peer_id, intent.class)
+                    .await;
+                supervisor.finish_attempt(generation, result, task_state);
             },
         );
-        let Some(task_lease) = task_lease else {
-            self.mark_child_finished();
-            let _ = self.complete(generation, Err(CoreNetworkError::SupervisorStopping));
-            return Err(CoreNetworkError::SupervisorStopping);
+        let Some(task) = task else {
+            self.complete_attempt_without_task(
+                generation,
+                Err(CoreNetworkError::SupervisorStopping),
+                true,
+            );
+            return;
         };
         self.connection_task
             .lock()
             .expect("peer connection task lock")
-            .replace(task_lease);
-        Ok(intent)
+            .replace(ConnectionTask {
+                generation,
+                lease: task,
+            });
+        if !self.is_current(generation) {
+            self.cancel_connection_task_for(generation);
+        }
+    }
+
+    fn finish_attempt(
+        &self,
+        generation: IntentGeneration,
+        result: Result<(), ProtocolError>,
+        state: Arc<RuntimeState>,
+    ) {
+        let failure = result.as_ref().err().map(|error| {
+            (
+                NetworkErrorCode::try_from(error.code).unwrap_or(NetworkErrorCode::Unspecified),
+                error.message.clone(),
+            )
+        });
+        let completion = match &result {
+            Ok(()) => Ok(PeerState::Online),
+            Err(error) => Err(core_error_for_attempt(error)),
+        };
+
+        // Take the task lease before completing the generation.  This closes
+        // the race where a new intent could observe Offline and start while
+        // the previous child is still counted as active.
+        let task_owned = self.take_connection_task(generation);
+        let task_was_owned = task_owned.is_some();
+        drop(task_owned);
+        if task_was_owned {
+            self.mark_child_finished();
+        }
+
+        // `complete` performs the generation/stopping check.  Do not add a
+        // session id, route id, or connection-store check here: a late result
+        // is stale solely when its intent generation is no longer current.
+        if self.complete(generation, completion).is_ok() {
+            if let Some((code, message)) = failure {
+                emit_peer_state(
+                    &state.event_tx,
+                    self.peer_id.as_str(),
+                    PeerConnectionState::Failed,
+                    RouteType::Unspecified,
+                    Some(protocol_error_with_peer(
+                        code,
+                        message,
+                        "connect",
+                        self.peer_id.as_str(),
+                    )),
+                );
+            }
+        }
+    }
+
+    fn complete_attempt_without_task(
+        &self,
+        generation: IntentGeneration,
+        completion: Result<PeerState, CoreNetworkError>,
+        child_started: bool,
+    ) {
+        if child_started {
+            self.mark_child_finished();
+        }
+        let _ = self.complete(generation, completion);
     }
 
     /// Business operations ensure a compatible path without opting into
@@ -343,6 +464,7 @@ impl PeerSupervisor {
             if is_new {
                 inner.generation = inner.generation.next();
                 inner.state = PeerState::Connecting;
+                inner.retry_scheduled = true;
             }
             let generation = inner.generation;
             inner
@@ -385,6 +507,7 @@ impl PeerSupervisor {
                 Ok(state) => *state,
                 Err(_) => PeerState::Offline,
             };
+            inner.retry_scheduled = false;
             let waiters = inner
                 .waiters
                 .drain()
@@ -404,45 +527,13 @@ impl PeerSupervisor {
     /// Invalidate all current work and wake its waiters before the peer is
     /// removed from the active graph.
     pub(crate) fn disconnect(&self) -> usize {
-        self.cancel_connection_task();
-        let (waiters, delivered) = {
-            let mut inner = self.inner.lock().expect("peer supervisor lock");
-            inner.generation = inner.generation.next();
-            inner.state = PeerState::Offline;
-            inner.maintain_connection = false;
-            let waiters = inner
-                .waiters
-                .drain()
-                .map(|(_, waiter)| waiter.sender)
-                .collect::<Vec<_>>();
-            let delivered = waiters.len();
-            (waiters, delivered)
-        };
-        for waiter in waiters {
-            let _ = waiter.send(Err(CoreNetworkError::Cancelled));
-        }
-        delivered
+        self.invalidate_generation(false, true, CoreNetworkError::Cancelled)
     }
 
     pub(crate) fn stop(&self) -> usize {
-        self.cancel_connection_task();
-        let (waiters, delivered) = {
-            let mut inner = self.inner.lock().expect("peer supervisor lock");
-            inner.stopping = true;
-            inner.generation = inner.generation.next();
-            inner.state = PeerState::Offline;
-            inner.maintain_connection = false;
-            let waiters = inner
-                .waiters
-                .drain()
-                .map(|(_, waiter)| waiter.sender)
-                .collect::<Vec<_>>();
-            let delivered = waiters.len();
-            (waiters, delivered)
-        };
-        for waiter in waiters {
-            let _ = waiter.send(Err(CoreNetworkError::SupervisorStopping));
-        }
+        let delivered =
+            self.invalidate_generation(true, true, CoreNetworkError::SupervisorStopping);
+        self.cancel_mailbox_worker();
         delivered
     }
 
@@ -475,6 +566,7 @@ impl PeerSupervisor {
                 return;
             }
             inner.state = PeerState::Offline;
+            inner.retry_scheduled = false;
             inner
                 .waiters
                 .drain()
@@ -511,8 +603,49 @@ impl PeerSupervisor {
     /// leak. Passive peers go Offline; maintained peers remain Offline until a
     /// bounded, explicit recovery trigger starts a new intent.
     pub(crate) fn path_lost(&self) {
-        self.cancel_connection_task();
-        self.inner.lock().expect("peer supervisor lock").state = PeerState::Offline;
+        // A loss is an observation owned by the peer lifecycle coordinator.
+        // It invalidates the current attempt generation but deliberately
+        // preserves `maintain_connection`; a later explicit retry can submit
+        // a fresh intent without the SessionStore becoming a reconnect owner.
+        self.invalidate_generation(false, false, CoreNetworkError::Cancelled);
+    }
+
+    fn invalidate_generation(
+        &self,
+        stopping: bool,
+        clear_maintenance: bool,
+        completion_error: CoreNetworkError,
+    ) -> usize {
+        let (previous_generation, waiters, delivered) = {
+            let mut inner = self.inner.lock().expect("peer supervisor lock");
+            if stopping {
+                inner.stopping = true;
+            } else if inner.stopping {
+                return 0;
+            }
+            let previous_generation = inner.generation;
+            inner.generation = inner.generation.next();
+            inner.state = PeerState::Offline;
+            inner.retry_scheduled = false;
+            if clear_maintenance {
+                inner.maintain_connection = false;
+            }
+            let waiters = inner
+                .waiters
+                .drain()
+                .map(|(_, waiter)| waiter.sender)
+                .collect::<Vec<_>>();
+            let delivered = waiters.len();
+            (previous_generation, waiters, delivered)
+        };
+
+        // Invalidate the generation before cancellation so a completion that
+        // races with abort can only observe StaleIntent.
+        self.cancel_connection_task_for(previous_generation);
+        for waiter in waiters {
+            let _ = waiter.send(Err(completion_error.clone()));
+        }
+        delivered
     }
 
     /// Cancel the single supervised connectivity attempt, if any. This is
@@ -525,8 +658,55 @@ impl PeerSupervisor {
             .expect("peer connection task lock")
             .take()
         {
-            task.abort_now();
+            task.lease.abort_now();
             self.mark_child_finished();
+        }
+    }
+
+    fn cancel_connection_task_for(&self, generation: IntentGeneration) {
+        let task = {
+            let mut current = self
+                .connection_task
+                .lock()
+                .expect("peer connection task lock");
+            if current
+                .as_ref()
+                .is_some_and(|task| task.generation == generation)
+            {
+                current.take()
+            } else {
+                None
+            }
+        };
+        if let Some(mut task) = task {
+            task.lease.abort_now();
+            self.mark_child_finished();
+        }
+    }
+
+    fn cancel_mailbox_worker(&self) {
+        if let Some(mut task) = self
+            .mailbox_task
+            .lock()
+            .expect("peer mailbox task lock")
+            .take()
+        {
+            task.abort_now();
+        }
+    }
+
+    fn take_connection_task(&self, generation: IntentGeneration) -> Option<TaskLease> {
+        let mut task = self
+            .connection_task
+            .lock()
+            .expect("peer connection task lock");
+        if task
+            .as_ref()
+            .is_some_and(|task| task.generation == generation)
+        {
+            task.take().map(|task| task.lease)
+        } else {
+            None
         }
     }
 
@@ -576,14 +756,12 @@ impl PeerSupervisor {
 /// Registry that creates exactly one supervisor for each validated peer id.
 pub(crate) struct PeerSupervisorRegistry {
     supervisors: RwLock<HashMap<PeerId, Arc<PeerSupervisor>>>,
-    task_supervisor: Option<Arc<RuntimeTaskSupervisor>>,
 }
 
 impl Default for PeerSupervisorRegistry {
     fn default() -> Self {
         Self {
             supervisors: RwLock::new(HashMap::new()),
-            task_supervisor: None,
         }
     }
 }
@@ -593,14 +771,11 @@ impl PeerSupervisorRegistry {
         Self::default()
     }
 
-    /// Runtime construction opts into a supervised mailbox consumer. The
-    /// plain `new()` constructor remains available for unit tests that take
-    /// the receiver themselves.
-    pub(crate) fn with_task_supervisor(task_supervisor: Arc<RuntimeTaskSupervisor>) -> Self {
-        Self {
-            supervisors: RwLock::new(HashMap::new()),
-            task_supervisor: Some(task_supervisor),
-        }
+    /// Runtime construction keeps this entry point for the shared wiring;
+    /// each peer starts its worker when the runtime state is available to
+    /// `start_connect`.
+    pub(crate) fn with_task_supervisor(_task_supervisor: Arc<RuntimeTaskSupervisor>) -> Self {
+        Self::default()
     }
 
     pub(crate) fn get_or_create(
@@ -674,7 +849,9 @@ impl PeerSupervisorRegistry {
                 .find(|(_, supervisor)| supervisor.can_evict())
                 .map(|(peer_id, _)| peer_id.clone())
             {
-                supervisors.remove(&evict_peer);
+                if let Some(supervisor) = supervisors.remove(&evict_peer) {
+                    supervisor.stop();
+                }
             } else {
                 return Err(CoreNetworkError::ResourceLimit("peer supervisors"));
             }
@@ -682,25 +859,6 @@ impl PeerSupervisorRegistry {
 
         let supervisor = PeerSupervisor::new(peer_id.clone());
         supervisor.set_configured(configured);
-        if let Some(task_supervisor) = &self.task_supervisor {
-            let receiver = supervisor
-                .take_mailbox()
-                .ok_or(CoreNetworkError::SupervisorStopping)?;
-            let worker_supervisor = Arc::clone(&supervisor);
-            task_supervisor
-                .spawn_runtime(format!("peer-mailbox/{}", peer_id.as_str()), async move {
-                    let mut receiver = receiver;
-                    while let Some(intent) = receiver.recv().await {
-                        // The transport child owns the actual attempt. The
-                        // mailbox worker only drains bounded coordination
-                        // intents and drops late generations.
-                        if !worker_supervisor.is_current(intent.generation) {
-                            continue;
-                        }
-                    }
-                })
-                .ok_or(CoreNetworkError::SupervisorStopping)?;
-        }
         supervisors.insert(peer_id, Arc::clone(&supervisor));
         Ok(supervisor)
     }
@@ -761,6 +919,7 @@ impl PeerSupervisorRegistry {
         if !supervisor.can_evict() {
             return Ok(false);
         }
+        supervisor.stop();
         supervisors.remove(&peer_id);
         Ok(true)
     }
@@ -805,6 +964,15 @@ mod tests {
 
     fn supervisor() -> Arc<PeerSupervisor> {
         PeerSupervisor::new(PeerId::new("peer-a").expect("peer id"))
+    }
+
+    fn runtime_state() -> Arc<RuntimeState> {
+        let (event_tx, _event_rx) =
+            tokio::sync::mpsc::unbounded_channel::<network_protocol::NetworkEvent>();
+        Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ))
     }
 
     #[test]
@@ -856,6 +1024,28 @@ mod tests {
             Ok(PeerState::Online)
         );
         assert_eq!(supervisor.state(), PeerState::Online);
+    }
+
+    #[tokio::test]
+    async fn path_loss_invalidates_generation_before_late_completion() {
+        let supervisor = supervisor();
+        let intent = supervisor
+            .begin_connect("command-1", CommunicationClass::ReliableMessage)
+            .expect("connect");
+        let generation = intent.generation;
+
+        supervisor.path_lost();
+
+        assert_eq!(
+            intent.completion().await.expect("completion"),
+            Err(CoreNetworkError::Cancelled)
+        );
+        assert_eq!(supervisor.state(), PeerState::Offline);
+        assert!(supervisor.maintain_connection());
+        assert_eq!(
+            supervisor.complete(generation, Ok(PeerState::Online)),
+            Err(CoreNetworkError::StaleIntent)
+        );
     }
 
     #[test]
@@ -942,28 +1132,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn supervised_registry_drains_repeated_intents_without_filling_mailbox() {
-        let task_supervisor = RuntimeTaskSupervisor::new();
-        let registry = PeerSupervisorRegistry::with_task_supervisor(Arc::clone(&task_supervisor));
-        let supervisor = registry.get_or_create("peer-a").expect("peer supervisor");
-
+    async fn mailbox_worker_starts_attempts_and_drains_repeated_intents() {
+        let state = runtime_state();
+        let registry = PeerSupervisorRegistry::new();
         for index in 0..(PEER_MAILBOX_CAPACITY * 2) {
             let command_id = format!("command-{index}");
-            let intent = supervisor
-                .begin_connect(&command_id, CommunicationClass::ReliableMessage)
+            let intent = registry
+                .start_connect(
+                    Arc::clone(&state),
+                    "peer-a",
+                    command_id,
+                    CommunicationClass::ReliableMessage,
+                )
                 .expect("mailbox consumer keeps up");
             assert!(intent.is_new);
-            assert_eq!(
-                supervisor.complete(intent.generation, Err(CoreNetworkError::Cancelled),),
-                Ok(1)
-            );
-            assert_eq!(
-                intent.completion().await.expect("completion"),
+            assert!(matches!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), intent.completion())
+                    .await
+                    .expect("attempt completion")
+                    .expect("completion waiter"),
                 Err(CoreNetworkError::Cancelled)
-            );
+            ));
             tokio::task::yield_now().await;
         }
 
-        task_supervisor.shutdown().await;
+        state.task_supervisor.shutdown().await;
     }
 }

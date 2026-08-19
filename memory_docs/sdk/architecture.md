@@ -1,4 +1,4 @@
-> Last updated: 2026-08-19
+> Last updated: 2026-08-20
 
 # SDK Architecture
 
@@ -23,16 +23,22 @@ Ownership rules:
   lends bounded gateways; borrowers release subscriptions, not the native handle.
 - `ssh_mobile_network_native` owns the helper isolate and explicit native
   `start → stop → destroy` binding lifecycle.
-- Rust `network-core` owns transport-scoped ConnectionSession state, active routes, Delivery/Transfer managers,
-  full-epoch ConnectivityAttempt snapshots, candidate races, StreamHandle-aware
+- Rust `network-core` owns the `PeerSupervisor` lifecycle owner,
+  `PeerPathManager` Direct/Relay physical carriers, transport-scoped
+  ConnectionSession security state, Delivery/Transfer managers, full-epoch
+  ConnectivityAttempt snapshots, candidate races, StreamHandle-aware
   ReliableStream events, cryptographic context, transfer state, Realtime state,
-  and supervised tasks.
+  and supervised tasks. Business code borrows a `PathLease`; the
+  `ConnectionSessionStore` does not own route or Peer lifecycle.
 - Each transport Connection owns exactly one `ConnectionSession`; a new
   connection gets a new `SessionId` and Noise root, and transport loss destroys
   that session. Delivery and Transfer managers own the business state that may
   resume across fresh ConnectionSessions.
 - `relay/` is an external authenticated carrier and opaque forwarder, not a
   ConnectionSession or crypto owner.
+- New transport connections always create a fresh SessionId and application
+  root. Required E2EE is the normal business path; Disabled is Direct
+  identity-only and cannot fall through to Relay.
 
 The complete rationale remains in the
 [network design](../../docs/网络传输SDK架构设计_最终版.md) and

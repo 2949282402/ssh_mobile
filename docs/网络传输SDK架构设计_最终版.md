@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-19
+> 最新更新时间：2026-08-20
 
 # 网络传输 SDK 架构设计
 
@@ -88,6 +88,14 @@ Transport Lost → ConnectionSession Destroyed
 跨 Transport 继承旧的 SessionId、CryptoContext 或 route migration 连续性。
 Delivery 与 Transfer 的业务状态不属于 ConnectionSession，而是由业务 manager
 按 `MessageId`/channel、`transfer_id` 与 `confirmed_offset` 跨新连接恢复。
+
+当前实现的 ownership closeout：`PeerSupervisor` 是每个 Peer 唯一的可变连接状态
+Owner；`PeerPathManager` 实际持有 Direct/Relay `PhysicalPath` 与 carrier，业务只
+借用 `PathLease`；`ConnectionSessionStore` 只保存连接身份、远端 binding、admission
+winner 和 security decision，不保存 route/carrier/lifecycle truth。Required E2EE
+为每条新连接创建 fresh application root，Disabled 仅允许 Direct identity-only，
+Relay Disabled fail closed。Stage A/B/C 依次执行纯 Direct 候选、authoritative
+Resolve→Offer Direct window 和受策略/预算约束的 Relay fallback。
 
 ### 2.3 Transport 与业务协议解耦
 

@@ -2,10 +2,10 @@
 
 use crate::runtime::EventSender;
 use network_protocol::{
-    network_event, CommandResultEvent, NetworkError as ProtocolError, NetworkErrorCode,
-    NetworkEvent, PeerConnectionState, PeerPresenceChangedEvent, PeerPresenceSnapshotEvent,
-    PeerPresenceState, PeerStateChangedEvent, RealtimeSignalEvent, RealtimeSnapshotEvent,
-    RealtimeStateChangedEvent, RelayConnectionState, RetryDisposition,
+    network_event, CommandResult, CommandResultState, NetworkError as ProtocolError,
+    NetworkErrorCode, NetworkEvent, PeerConnectionState, PeerPresenceChangedEvent,
+    PeerPresenceSnapshotEvent, PeerPresenceState, PeerStateChangedEvent, RealtimeSignalEvent,
+    RealtimeSnapshotEvent, RealtimeStateChangedEvent, RelayConnectionState, RetryDisposition,
     RouteTopology as ProtocolRouteTopology, RouteTransport as ProtocolRouteTransport, RouteType,
     SshStreamClosedEvent, SshStreamDataReceivedEvent, StreamHandle, TransferCompletedEvent,
     TransferFailedEvent, TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
@@ -60,23 +60,41 @@ pub(crate) fn emit_transfer_progress_for_peer(
     });
 }
 
-/// 发布由 Dart 服务消费的私有命令确认。
+/// 发布一个由 public command tracker 消费的终态结果。
+///
+/// `NetworkRuntime::send_command` is the synchronous Accepted boundary.  The
+/// worker must publish exactly one `CommandResult` V2 event after the async
+/// operation settles; the legacy `accepted` boolean event is intentionally not
+/// emitted here because the native FFI treats either result variant as the
+/// terminal correlation point.
 pub(crate) fn emit_command_result(
     event_tx: &EventSender,
     command_id: String,
+    command_peer_id: Option<String>,
     result: Result<(), ProtocolError>,
 ) {
-    let (accepted, error) = match result {
-        Ok(()) => (true, None),
-        Err(error) => (false, Some(error)),
+    let (state, error, error_peer_id) = match result {
+        Ok(()) => (CommandResultState::Succeeded, None, None),
+        Err(error) => {
+            let state = match NetworkErrorCode::try_from(error.code).ok() {
+                Some(NetworkErrorCode::Cancelled | NetworkErrorCode::StaleOperation) => {
+                    CommandResultState::Cancelled
+                }
+                _ => CommandResultState::Failed,
+            };
+            let peer_id = (!error.peer_id.is_empty()).then(|| error.peer_id.clone());
+            (state, Some(error), peer_id)
+        }
     };
+    let peer_id = error_peer_id.or(command_peer_id).unwrap_or_default();
     let _ = event_tx.send(NetworkEvent {
         event_id: format!("{command_id}/result"),
         timestamp_ms: unix_timestamp_ms(),
         protocol_version: NETWORK_PROTOCOL_VERSION,
-        payload: Some(network_event::Payload::CommandResult(CommandResultEvent {
+        payload: Some(network_event::Payload::CommandResultV2(CommandResult {
             command_id,
-            accepted,
+            peer_id,
+            state: state as i32,
             error,
         })),
     });
@@ -593,4 +611,97 @@ pub(crate) fn unix_timestamp_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use network_protocol::network_event;
+
+    #[test]
+    fn command_result_emits_one_correlated_success_terminal() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let event_sender = EventSender::from(sender);
+
+        emit_command_result(
+            &event_sender,
+            "connect-a".into(),
+            Some("peer-a".into()),
+            Ok(()),
+        );
+
+        let event = receiver.try_recv().expect("terminal event");
+        let Some(network_event::Payload::CommandResultV2(result)) = event.payload else {
+            panic!("expected CommandResultV2");
+        };
+        assert_eq!(result.command_id, "connect-a");
+        assert_eq!(result.peer_id, "peer-a");
+        assert_eq!(result.state, CommandResultState::Succeeded as i32);
+        assert!(result.error.is_none());
+        assert!(
+            receiver.try_recv().is_err(),
+            "terminal must be emitted once"
+        );
+    }
+
+    #[test]
+    fn command_result_maps_stale_and_cancelled_errors_to_cancelled() {
+        for code in [
+            NetworkErrorCode::Cancelled,
+            NetworkErrorCode::StaleOperation,
+        ] {
+            let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+            let event_sender = EventSender::from(sender);
+            emit_command_result(
+                &event_sender,
+                "connect-a".into(),
+                Some("peer-a".into()),
+                Err(protocol_error_with_peer(
+                    code,
+                    "cancelled",
+                    "connect",
+                    "peer-a",
+                )),
+            );
+
+            let event = receiver.try_recv().expect("terminal event");
+            let Some(network_event::Payload::CommandResultV2(result)) = event.payload else {
+                panic!("expected CommandResultV2");
+            };
+            assert_eq!(result.state, CommandResultState::Cancelled as i32);
+            assert_eq!(result.peer_id, "peer-a");
+            assert_eq!(result.error.expect("error").code, code as i32);
+            assert!(
+                receiver.try_recv().is_err(),
+                "terminal must be emitted once"
+            );
+        }
+    }
+
+    #[test]
+    fn command_result_maps_other_errors_to_failed_and_uses_command_scope() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let event_sender = EventSender::from(sender);
+        emit_command_result(
+            &event_sender,
+            "message-a".into(),
+            Some("peer-a".into()),
+            Err(protocol_error(NetworkErrorCode::NoRoute, "no route")),
+        );
+
+        let event = receiver.try_recv().expect("terminal event");
+        let Some(network_event::Payload::CommandResultV2(result)) = event.payload else {
+            panic!("expected CommandResultV2");
+        };
+        assert_eq!(result.state, CommandResultState::Failed as i32);
+        assert_eq!(result.peer_id, "peer-a");
+        assert_eq!(
+            result.error.expect("error").code,
+            NetworkErrorCode::NoRoute as i32
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "terminal must be emitted once"
+        );
+    }
 }

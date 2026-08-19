@@ -33,6 +33,18 @@ impl E2eePolicy {
             _ => Err(PathHandshakeError::InvalidFrame),
         }
     }
+
+    /// Convert the frozen Network V2 enum at the policy boundary. Keeping the
+    /// conversion here prevents callers from validating a protocol policy and
+    /// then silently falling back to the handshake default.
+    pub(crate) fn from_network_code(code: i32) -> Result<Self, PathHandshakeError> {
+        match network_protocol::E2eePolicy::try_from(code)
+            .map_err(|_| PathHandshakeError::InvalidFrame)?
+        {
+            network_protocol::E2eePolicy::Required => Ok(Self::Required),
+            network_protocol::E2eePolicy::Disabled => Ok(Self::Disabled),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,6 +137,13 @@ impl PathHandshakeMetadata {
             MAX_CONNECTION_PROFILE_BYTES,
         )?;
         Ok(())
+    }
+
+    pub(crate) fn security_for(
+        &self,
+        local_policy: E2eePolicy,
+    ) -> Result<PathSecurity, PathHandshakeError> {
+        negotiate_security(self.path_kind, local_policy, self.e2ee_policy)
     }
 
     pub(crate) fn decode(cursor: &mut impl MetadataCursor) -> Result<Self, PathHandshakeError> {
@@ -223,6 +242,19 @@ pub(crate) enum PathSecurity {
     IdentityOnly,
 }
 
+impl PathSecurity {
+    pub(crate) fn policy(self) -> E2eePolicy {
+        match self {
+            Self::E2ee => E2eePolicy::Required,
+            Self::IdentityOnly => E2eePolicy::Disabled,
+        }
+    }
+
+    pub(crate) fn has_application_e2ee(self) -> bool {
+        matches!(self, Self::E2ee)
+    }
+}
+
 pub(crate) fn negotiate_security(
     path_kind: PathKind,
     local: E2eePolicy,
@@ -283,8 +315,8 @@ fn append_bytes(output: &mut Vec<u8>, value: &[u8], max: usize) -> Result<(), Pa
 
 #[cfg(test)]
 mod tests {
-    use network_identity::DeviceIdentity;
     use super::*;
+    use network_identity::DeviceIdentity;
 
     fn identity(id: &str, seed: u8) -> DeviceIdentity {
         DeviceIdentity::from_private_keys(id.into(), [seed; 32], [seed.wrapping_add(1); 32])
@@ -375,8 +407,28 @@ mod tests {
     #[test]
     fn policy_rules_are_fail_closed() {
         assert_eq!(
+            E2eePolicy::from_network_code(network_protocol::E2eePolicy::Required as i32),
+            Ok(E2eePolicy::Required)
+        );
+        assert_eq!(
+            E2eePolicy::from_network_code(network_protocol::E2eePolicy::Disabled as i32),
+            Ok(E2eePolicy::Disabled)
+        );
+        assert_eq!(
+            E2eePolicy::from_network_code(99),
+            Err(PathHandshakeError::InvalidFrame)
+        );
+        assert_eq!(
             negotiate_security(PathKind::Direct, E2eePolicy::Required, E2eePolicy::Disabled),
             Err(PathHandshakeError::SecurityPolicyMismatch)
+        );
+        assert_eq!(
+            negotiate_security(PathKind::Direct, E2eePolicy::Required, E2eePolicy::Required),
+            Ok(PathSecurity::E2ee)
+        );
+        assert_eq!(
+            negotiate_security(PathKind::Direct, E2eePolicy::Disabled, E2eePolicy::Disabled),
+            Ok(PathSecurity::IdentityOnly)
         );
         assert_eq!(
             negotiate_security(PathKind::Relay, E2eePolicy::Disabled, E2eePolicy::Disabled),

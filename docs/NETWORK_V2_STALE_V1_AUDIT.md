@@ -19,17 +19,22 @@
   `protocol-v2-contract`、`native-network-quality`、`relay-quality` 和
   `sdk-dart-quality` 覆盖协议 fixtures、Rust、Go Relay 与 Dart SDK。现有
   `scripts/relay_v2_contract.sh` 负责 fixtures/proto/buf 合同检查，不应被误读为
-  Rust/Go 单元测试替代品；后者由对应 CI job 执行。
+  Rust/Go 单元测试替代品；`acceptance_matrix.json` 当前 32/32 为
+  `covered`，后者由对应 CI job 执行。
 - **Memory 已补齐当前高成本事实**：SDK Memory 记录 command-result 去重、peer
   connect intent、CandidatePayloadV2 cache 和 Delivery attempt 边界；Backend
   Memory 记录 v2 request/attempt 校验、Resolve fail-closed、epoch 要求、数据面
   role binding 与吊销关闭。
-- **本地 WSL Rust 验证已通过**：`cargo fmt --all -- --check`、
+- **V2 ownership 与本地 Rust 验证已收口**：`PeerSupervisor` 是唯一可变的
+  Peer connectivity owner，`PeerPathManager` 持有 Direct/Relay
+  `PhysicalPath`，`ConnectionSessionStore` 只保存 identity/admission/security，
+  业务操作通过 `PathLease` 取得一次性路径。`cargo fmt --all -- --check`、
   `cargo check --workspace --locked`、workspace Clippy `-D warnings` 和
-  `cargo test --workspace --locked` 均通过；其中 `network-core` 当前为 215 项，
+  `cargo test --workspace --locked` 均通过；其中 `network-core` 为 235 项，
   workspace 测试包含 network-ffi、network-nat、network-protocol、Relay 和
   network-webrtc（1 个需要外部 coturn 的 ignored 测试）。
-- **Go/Dart 本地门禁未运行**：当前 WSL 没有 `go`/`gofmt`、`dart` 或 `flutter`；
+- **Go/Dart 本地门禁未完成**：当前 WSL 没有 `go`/`gofmt`、`dart` 或 `flutter`；
+  strict acceptance 已执行到 Go selector 并因 `go: command not found` 停止，
   对应行为套件由 CI 的 `relay-quality` 与 `sdk-dart-quality` job 执行，不能把
   历史机器上的结果当成本次验证结果。
 - **Network SDK/Data V2 已完成切换**：native Rust/Dart wire envelope 使用协议版本
@@ -39,8 +44,10 @@
 - **V2 ownership 命名已收口**：连接尝试由
   `ConnectivityAttemptCoordinator` 编排，ConnectionSession 由
   `ConnectionSessionStore` 保存，`ReadySessionIndex` 只保存可复用摘要；Peer
-  lifecycle 仍由 `PeerSupervisorRegistry` 负责。Network V2 `SendMessage` /
-  `DataMessage` 不再携带 per-message crypto mode，始终使用 Session E2EE。
+  lifecycle 由 `PeerSupervisorRegistry` 负责，物理 carrier 由
+  `PeerPathManager` 负责。Network V2 `SendMessage` / `DataMessage` 不再携带
+  per-message crypto mode；Required 使用 fresh application E2EE root，Disabled
+  仅允许 Direct identity-only，Relay Disabled fail closed。
 - **关键生产队列已收口**：Runtime event mailbox 与 Transfer progress channel
   有界；WebRTC I/O event sink 也必须使用有界 Tokio channel。测试适配器可以使用
   unbounded channel，但不进入生产运行时。
@@ -69,8 +76,8 @@
 - PathHandshakeV2 已折叠进既有 Noise transcript；Relay 只转发
   `DATA_ENV_CRYPTO`，PairReady 后完成 crypto admission，只有
   `complete_relay_admission` 完成后才设置 `relay_path_ready` 并发布 Connected。
-  Rust workspace 与 Phase 0 contract baseline 已通过；Go/Dart strict 选择器在本机
-  因工具链缺失未运行。
+  Rust workspace 与 Phase 0 contract baseline 已通过；strict selector 已运行至
+  Go 边界，Go/Dart 后续选择器因工具链缺失未运行。
 - CandidatePayloadV2/cache 现在由 `RuntimeState` 持有，Stage A 会先读取 fresh
   monotonic cache/configured direct candidates，失败后才进入 Resolve→Offer；Resolve
   与 ConnectivityAnswer 会刷新 cache；过期 Stage B refresh、heartbeat 不刷新、

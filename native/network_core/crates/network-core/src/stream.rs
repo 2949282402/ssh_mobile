@@ -35,10 +35,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
 
+use crate::channel::{select_business_path_lease, send_business_frame};
+use crate::connect::CAPABILITY_RELIABLE_STREAM;
 use crate::connection::GenericFrameKind;
+use crate::connection::RouteTransport;
 use crate::events::{emit_stream_closed, emit_stream_data_received, protocol_error_with_peer};
 use crate::runtime::{EventSender, RuntimeState};
-use crate::session::StreamCarrier;
 
 // ---------------------------------------------------------------------------
 // Centralized constants (design §39: no magic numbers)
@@ -137,6 +139,7 @@ pub(crate) enum StreamError {
     #[error("peer is not connected")]
     NotConnected,
     #[error("current route does not support byte streams")]
+    #[allow(dead_code)] // retained for the public stream error taxonomy
     UnsupportedTransport,
     #[error("route send failed: {0}")]
     Send(String),
@@ -406,6 +409,8 @@ struct StreamEntry {
     next_send_seq: u64,
     send_closed: bool,
     send_lock: Arc<Mutex<()>>,
+    session_key: Option<String>,
+    path_id: Option<u64>,
 }
 
 impl StreamEntry {
@@ -513,9 +518,46 @@ impl ReliableStreamManager {
                 next_send_seq: 0,
                 send_closed: false,
                 send_lock: Arc::new(Mutex::new(())),
+                session_key: None,
+                path_id: None,
             },
         );
         Ok(())
+    }
+
+    /// Binds a logical stream to the ConnectionSession and path used for its
+    /// opening attempt. A later path/session change closes the stream instead
+    /// of transparently writing SSH bytes into a new connection.
+    pub(crate) async fn bind_attempt(
+        &self,
+        opener: StreamOpener,
+        stream_id: u16,
+        session_key: String,
+        path_id: u64,
+    ) -> Result<(), StreamError> {
+        let mut state = self.inner.lock().await;
+        let entry = state
+            .streams
+            .get_mut(&StreamKey::new(opener, stream_id))
+            .ok_or(StreamError::NotFound)?;
+        entry.session_key = Some(session_key);
+        entry.path_id = Some(path_id);
+        Ok(())
+    }
+
+    pub(crate) async fn attempt_matches(
+        &self,
+        opener: StreamOpener,
+        stream_id: u16,
+        session_key: &str,
+        path_id: u64,
+    ) -> Result<bool, StreamError> {
+        let state = self.inner.lock().await;
+        let entry = state
+            .streams
+            .get(&StreamKey::new(opener, stream_id))
+            .ok_or(StreamError::NotFound)?;
+        Ok(entry.session_key.as_deref() == Some(session_key) && entry.path_id == Some(path_id))
     }
 
     pub(crate) async fn register_quic_send(
@@ -1019,6 +1061,47 @@ async fn inbound_stream_opener(
     }
 }
 
+async fn close_stream_after_path_loss(
+    manager: &ReliableStreamManager,
+    peer_id: &str,
+    opener: StreamOpener,
+    stream_id: u16,
+) -> StreamError {
+    // SSH/ReliableStream has no transparent recovery. Mark both halves closed
+    // and wake the consumer so the application can explicitly open a new
+    // logical stream after it has decided to reconnect.
+    let _ = manager.handle_close(peer_id, opener, stream_id).await;
+    let _ = manager.close_local(peer_id, opener, stream_id).await;
+    StreamError::Closed
+}
+
+async fn bind_inbound_attempt(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    manager: &ReliableStreamManager,
+    opener: StreamOpener,
+    stream_id: u16,
+) -> Result<(), StreamError> {
+    let session_key = state
+        .connection_sessions
+        .current_session_id(peer_id)
+        .await
+        .map(|session_id| session_id.wire_key())
+        .ok_or(StreamError::NotConnected)?;
+    let lease = match select_business_path_lease(state, peer_id, CAPABILITY_RELIABLE_STREAM).await {
+        Ok(lease) => lease,
+        Err(_) => {
+            return Err(close_stream_after_path_loss(manager, peer_id, opener, stream_id).await)
+        }
+    };
+    if !lease.is_active() {
+        return Err(StreamError::NotConnected);
+    }
+    manager
+        .bind_attempt(opener, stream_id, session_key, lease.handle().id())
+        .await
+}
+
 /// Opens a byte stream to a peer. `consumer` selects how inbound bytes are
 /// delivered (events / bridge / poll).
 pub(crate) async fn open_stream(
@@ -1028,21 +1111,14 @@ pub(crate) async fn open_stream(
     service: &str,
     consumer: StreamConsumer,
 ) -> Result<(), StreamError> {
-    // The business request's CommunicationClass is not stored on the session;
-    // byte-stream admission is based only on the active route's actual profile.
-    let profile = state
+    let session_id = state
         .connection_sessions
-        .current_profile(peer_id)
+        .current_session_id(peer_id)
         .await
         .ok_or(StreamError::NotConnected)?;
-    if !profile.supports(crate::connection::ConnectionCapability::ReliableStream) {
-        return Err(StreamError::UnsupportedTransport);
-    }
-    let carrier = state
-        .connection_sessions
-        .current_stream_carrier(peer_id)
+    let lease = select_business_path_lease(state, peer_id, CAPABILITY_RELIABLE_STREAM)
         .await
-        .ok_or(StreamError::NotConnected)?;
+        .map_err(|_| StreamError::NotConnected)?;
     let opener_peer_id = local_stream_opener_peer_id(state).await?;
     let manager = state.stream_manager(peer_id).await;
     // Reserve the lease before emitting any wire bytes.  This prevents a
@@ -1051,48 +1127,75 @@ pub(crate) async fn open_stream(
     manager
         .open(StreamOpener::Local, stream_id, service, consumer)
         .await?;
-    let result = match carrier {
-        StreamCarrier::Generic(handle) => {
-            let payload = encode_stream_open_frame(&opener_peer_id, stream_id, service)?;
-            handle
-                .send(GenericFrameKind::StreamOpen, &payload)
+    manager
+        .bind_attempt(
+            StreamOpener::Local,
+            stream_id,
+            session_id.wire_key(),
+            lease.handle().id(),
+        )
+        .await?;
+    if state.connection_sessions.current_session_id(peer_id).await != Some(session_id) {
+        let _ =
+            close_stream_after_path_loss(&manager, peer_id, StreamOpener::Local, stream_id).await;
+        return Err(StreamError::Closed);
+    }
+    let result = match lease.profile().transport() {
+        RouteTransport::Quic => {
+            async {
+                if !lease.is_active() {
+                    return Err(StreamError::Closed);
+                }
+                let connection = state
+                    .path_connection_for_lease(&lease)
+                    .await
+                    .ok_or(StreamError::NotConnected)?;
+                let (mut send, recv) = connection
+                    .open_bi()
+                    .await
+                    .map_err(|error| StreamError::Send(error.to_string()))?;
+                if !lease.is_active() {
+                    return Err(StreamError::Closed);
+                }
+                let preamble = encode_quic_stream_preamble(stream_id, service)?;
+                send.write_all(&preamble)
+                    .await
+                    .map_err(|error| StreamError::Send(error.to_string()))?;
+                send.flush()
+                    .await
+                    .map_err(|error| StreamError::Send(error.to_string()))?;
+                if !lease.is_active() {
+                    return Err(StreamError::Closed);
+                }
+                manager
+                    .register_quic_send(StreamOpener::Local, stream_id, send)
+                    .await?;
+                spawn_quic_stream_reader(state, peer_id, StreamOpener::Local, stream_id, recv)
+                    .await;
+                Ok(())
+            }
+            .await
+        }
+        _ => {
+            async {
+                let payload = encode_stream_open_frame(&opener_peer_id, stream_id, service)?;
+                send_business_frame(
+                    state,
+                    peer_id,
+                    &lease,
+                    &stream_relay_token(&opener_peer_id, stream_id),
+                    GenericFrameKind::StreamOpen,
+                    &payload,
+                )
                 .await
                 .map_err(|error| StreamError::Send(error.to_string()))
-        }
-        StreamCarrier::Quic(connection) => {
-            let (mut send, recv) = connection
-                .open_bi()
-                .await
-                .map_err(|error| StreamError::Send(error.to_string()))?;
-            let preamble = encode_quic_stream_preamble(stream_id, service)?;
-            send.write_all(&preamble)
-                .await
-                .map_err(|error| StreamError::Send(error.to_string()))?;
-            send.flush()
-                .await
-                .map_err(|error| StreamError::Send(error.to_string()))?;
-            manager
-                .register_quic_send(StreamOpener::Local, stream_id, send)
-                .await?;
-            spawn_quic_stream_reader(state, peer_id, StreamOpener::Local, stream_id, recv).await;
-            Ok(())
-        }
-        StreamCarrier::Relay(Some(relay)) => {
-            let payload = encode_stream_open_frame(&opener_peer_id, stream_id, service)?;
-            crate::relay::send_relay_stream_frame(
-                &relay,
-                &stream_relay_token(&opener_peer_id, stream_id),
-                &payload,
-            )
+            }
             .await
-            .map_err(|error| StreamError::Send(error.to_string()))
         }
-        StreamCarrier::Relay(None) => Err(StreamError::NotConnected),
     };
     if let Err(error) = result {
-        let _ = manager
-            .close_local(peer_id, StreamOpener::Local, stream_id)
-            .await;
+        let _ =
+            close_stream_after_path_loss(&manager, peer_id, StreamOpener::Local, stream_id).await;
         return Err(error);
     }
     if consumer == StreamConsumer::Event {
@@ -1128,48 +1231,68 @@ async fn send_stream_with_opener(
     let opener_peer_id = stream_opener_peer_id(state, peer_id, opener).await?;
     let send_guard = manager.send_guard(opener, stream_id).await?;
     let _guard = send_guard.lock().await;
-    let carrier = state
+    let Some(session_key) = state
         .connection_sessions
-        .current_stream_carrier(peer_id)
+        .current_session_id(peer_id)
         .await
-        .ok_or(StreamError::NotConnected)?;
-    match carrier {
-        StreamCarrier::Generic(handle) => {
-            let seq = manager.next_send_seq(opener, stream_id).await?;
-            let mut chunks = 0u64;
-            for chunk in data.chunks(MAX_STREAM_FRAME_BYTES) {
-                let payload =
-                    encode_stream_bytes_frame(&opener_peer_id, stream_id, seq + chunks, chunk)?;
-                handle
-                    .send(GenericFrameKind::StreamBytes, &payload)
+        .map(|session_id| session_id.wire_key())
+    else {
+        return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await);
+    };
+    let lease = match select_business_path_lease(state, peer_id, CAPABILITY_RELIABLE_STREAM).await {
+        Ok(lease) => lease,
+        Err(_) => {
+            return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await)
+        }
+    };
+    if !manager
+        .attempt_matches(opener, stream_id, &session_key, lease.handle().id())
+        .await?
+    {
+        return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await);
+    }
+    let result = match lease.profile().transport() {
+        RouteTransport::Quic => {
+            if !lease.is_active() {
+                Err(StreamError::Closed)
+            } else {
+                manager.quic_send_bytes(opener, stream_id, data).await
+            }
+        }
+        _ => {
+            async {
+                let seq = manager.next_send_seq(opener, stream_id).await?;
+                let mut chunks = 0u64;
+                for chunk in data.chunks(MAX_STREAM_FRAME_BYTES) {
+                    let payload =
+                        encode_stream_bytes_frame(&opener_peer_id, stream_id, seq + chunks, chunk)?;
+                    send_business_frame(
+                        state,
+                        peer_id,
+                        &lease,
+                        &stream_relay_token(&opener_peer_id, stream_id),
+                        GenericFrameKind::StreamBytes,
+                        &payload,
+                    )
                     .await
                     .map_err(|error| StreamError::Send(error.to_string()))?;
-                chunks += 1;
+                    chunks += 1;
+                }
+                manager.bump_send_seq(opener, stream_id, chunks).await?;
+                Ok(())
             }
-            manager.bump_send_seq(opener, stream_id, chunks).await?;
-            Ok(())
+            .await
         }
-        StreamCarrier::Quic(_) => manager.quic_send_bytes(opener, stream_id, data).await,
-        StreamCarrier::Relay(Some(relay)) => {
-            let seq = manager.next_send_seq(opener, stream_id).await?;
-            let mut chunks = 0u64;
-            for chunk in data.chunks(MAX_STREAM_FRAME_BYTES) {
-                let payload =
-                    encode_stream_bytes_frame(&opener_peer_id, stream_id, seq + chunks, chunk)?;
-                crate::relay::send_relay_stream_frame(
-                    &relay,
-                    &stream_relay_token(&opener_peer_id, stream_id),
-                    &payload,
-                )
-                .await
-                .map_err(|error| StreamError::Send(error.to_string()))?;
-                chunks += 1;
-            }
-            manager.bump_send_seq(opener, stream_id, chunks).await?;
-            Ok(())
-        }
-        StreamCarrier::Relay(None) => Err(StreamError::NotConnected),
+    };
+    if !lease.is_active() {
+        let _ = close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await;
+        return Err(StreamError::Closed);
     }
+    if let Err(error) = result {
+        let _ = close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await;
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Drains buffered bytes for a Bridge/Poll consumer.
@@ -1212,40 +1335,56 @@ async fn close_stream_with_opener(
 ) -> Result<(), StreamError> {
     let manager = state.stream_manager(peer_id).await;
     let opener_peer_id = stream_opener_peer_id(state, peer_id, opener).await?;
-    let carrier = state
+    let Some(session_key) = state
         .connection_sessions
-        .current_stream_carrier(peer_id)
+        .current_session_id(peer_id)
         .await
-        .ok_or(StreamError::NotConnected)?;
-    match carrier {
-        StreamCarrier::Generic(handle) => {
-            let payload = encode_stream_close_frame(&opener_peer_id, stream_id)?;
-            handle
-                .send(GenericFrameKind::StreamClose, &payload)
+        .map(|session_id| session_id.wire_key())
+    else {
+        return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await);
+    };
+    let lease = match select_business_path_lease(state, peer_id, CAPABILITY_RELIABLE_STREAM).await {
+        Ok(lease) => lease,
+        Err(_) => {
+            return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await)
+        }
+    };
+    if !manager
+        .attempt_matches(opener, stream_id, &session_key, lease.handle().id())
+        .await?
+    {
+        return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await);
+    }
+    let result = match lease.profile().transport() {
+        RouteTransport::Quic => {
+            if !lease.is_active() {
+                Err(StreamError::Closed)
+            } else {
+                manager.quic_finish_send(opener, stream_id).await
+            }
+        }
+        _ => {
+            async {
+                let payload = encode_stream_close_frame(&opener_peer_id, stream_id)?;
+                send_business_frame(
+                    state,
+                    peer_id,
+                    &lease,
+                    &stream_relay_token(&opener_peer_id, stream_id),
+                    GenericFrameKind::StreamClose,
+                    &payload,
+                )
                 .await
                 .map_err(|error| StreamError::Send(error.to_string()))?;
-            manager.close_local(peer_id, opener, stream_id).await?;
-            Ok(())
-        }
-        StreamCarrier::Quic(_) => {
-            manager.quic_finish_send(opener, stream_id).await?;
-            manager.close_local(peer_id, opener, stream_id).await?;
-            Ok(())
-        }
-        StreamCarrier::Relay(Some(relay)) => {
-            let payload = encode_stream_close_frame(&opener_peer_id, stream_id)?;
-            crate::relay::send_relay_stream_frame(
-                &relay,
-                &stream_relay_token(&opener_peer_id, stream_id),
-                &payload,
-            )
+                Ok(())
+            }
             .await
-            .map_err(|error| StreamError::Send(error.to_string()))?;
-            manager.close_local(peer_id, opener, stream_id).await?;
-            Ok(())
         }
-        StreamCarrier::Relay(None) => Err(StreamError::NotConnected),
+    };
+    if !lease.is_active() || result.is_err() {
+        return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await);
     }
+    manager.close_local(peer_id, opener, stream_id).await
 }
 
 /// Routes an inbound generic stream frame (from the generic-route receiver or
@@ -1313,6 +1452,10 @@ async fn handle_inbound_open(
         }
         Err(error) => return Err(error),
     }
+    if let Err(error) = bind_inbound_attempt(state, peer_id, &manager, opener, stream_id).await {
+        let _ = close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await;
+        return Err(error);
+    }
     if consumer == StreamConsumer::Bridge {
         spawn_ssh_gateway(Arc::clone(state), peer_id.to_string(), opener, stream_id);
     } else {
@@ -1350,6 +1493,14 @@ pub(crate) async fn handle_incoming_quic_stream(
             return;
         }
         Err(_) => return,
+    }
+    if bind_inbound_attempt(&state, &peer_id, &manager, StreamOpener::Remote, stream_id)
+        .await
+        .is_err()
+    {
+        let _ =
+            close_stream_after_path_loss(&manager, &peer_id, StreamOpener::Remote, stream_id).await;
+        return;
     }
     if manager
         .register_quic_send(StreamOpener::Remote, stream_id, send)
@@ -1672,6 +1823,35 @@ mod tests {
         assert!(ReliableStreamIdentity::new("peer-a", "device-a", 0).is_err());
     }
 
+    #[tokio::test]
+    async fn path_loss_closes_stream_instead_of_rebinding_it() {
+        let (manager, _event_rx) = test_manager();
+        manager
+            .open(StreamOpener::Local, 9, "ssh", StreamConsumer::Poll)
+            .await
+            .expect("open");
+        manager
+            .bind_attempt(StreamOpener::Local, 9, "session-a".to_string(), 11)
+            .await
+            .expect("bind attempt");
+
+        assert!(!manager
+            .attempt_matches(StreamOpener::Local, 9, "session-a", 12)
+            .await
+            .expect("attempt lookup"));
+        assert!(matches!(
+            close_stream_after_path_loss(&manager, "peer-a", StreamOpener::Local, 9).await,
+            StreamError::Closed
+        ));
+        assert!(!manager.is_open(StreamOpener::Local, 9).await);
+        assert!(matches!(
+            manager
+                .open(StreamOpener::Local, 9, "ssh", StreamConsumer::Poll)
+                .await,
+            Err(StreamError::Closed)
+        ));
+    }
+
     fn test_manager() -> (ReliableStreamManager, mpsc::UnboundedReceiver<NetworkEvent>) {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         (ReliableStreamManager::new(event_tx), event_rx)
@@ -1975,6 +2155,18 @@ mod tests {
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
         let peer_id = "peer-a";
+        let session_id = crate::session::SessionId::new();
+        state
+            .connection_sessions
+            .register_pending_session(peer_id, session_id)
+            .await
+            .expect("register stream test session");
+        let route = crate::connection::test_blocking_generic_route();
+        state
+            .attach_test_generic_route(peer_id, session_id, route.handle)
+            .await
+            .expect("attach stream test path");
+        route.worker.abort();
         // 首次 open 注册一条活动流（Event 消费者，数据以事件形式交付）。
         handle_inbound_open(&state, peer_id, StreamOpener::Remote, 42, "custom")
             .await

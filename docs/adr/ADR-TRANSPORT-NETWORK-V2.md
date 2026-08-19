@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-15
+> 最新更新时间：2026-08-20
 
 # ADR-TRANSPORT-NETWORK-V2：传输网络 v2 架构（Breaking Refactor 总纲）
 
@@ -49,6 +49,30 @@ Every implementation step must obey these four rules. In particular:
 - Business continuity (file transfer, reliable message, Delivery) is owned
   above the transport and resumed across fresh connections by business identity
   (`transfer_id` / `MessageId`).
+
+### Implementation ownership closeout
+
+The current implementation makes the four principles executable rather than
+descriptive:
+
+- `PeerSupervisor` is the sole mutable Peer connectivity/lifecycle owner and
+  receives transport-loss reports through its generation-guarded mailbox.
+- `PeerPathManager` owns the Direct and Relay `PhysicalPath` carriers. A
+  `PathHandle` is non-owning; business operations acquire and release a
+  `PathLease`, and normal drain is distinct from hard close/security revoke.
+- `ConnectionSessionStore` stores only connection identity, remote binding,
+  admission winner state, and security decisions. It does not expose route,
+  carrier, Relay-data, Peer lifecycle, or capability-union state.
+- Delivery, Transfer, ReliableStream, SSH, and Realtime use the path owner for
+  transport selection. Transport loss destroys the ConnectionSession; only
+  Delivery/Transfer business identities may resume on a fresh connection.
+- `E2eePolicy::Required` installs a fresh application root after authenticated
+  Noise/path admission. `E2eePolicy::Disabled` is identity-only Direct and
+  cannot open a Relay path or create application crypto context.
+- Stage A is cache/configured Direct only; Stage B is authoritative
+  Resolve→Offer with a fixed four-second Direct window; Stage C reserves Relay
+  only after `READY`, Direct failure, capability compatibility, Required E2EE,
+  and remaining budget.
 
 ### Naming scheme for generation / epoch / revision
 
@@ -121,4 +145,7 @@ runtime_epoch + revision 且有 ACK、Resolve 四态、Candidate 完全 attempt
 scoped、PathManager 不保存远端长期 Discovery Truth、Direct First 固定 4s、
 Control/Relay Data 物理分离、ConnectionSession 与 Transport 同生命周期、
 Delivery/Transfer 自行恢复、SSH/WebRTC 新建 Session、Relay→Direct 后台升级
-移除，以及 Rust / Go / Dart / Flutter 测试全部通过。
+移除，以及 Rust / Go / Dart / Flutter 测试全部通过。当前提交的
+`protocol/contract_tests/acceptance_matrix.json` 已将 32 个案例标记为
+`covered`；完整 strict、Go、Dart、buf 和 pinned descriptor 门禁仍由 CI
+执行。

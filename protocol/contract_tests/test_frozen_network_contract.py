@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import struct
 import unittest
 from pathlib import Path
@@ -228,11 +229,12 @@ class FrozenNetworkContractTest(unittest.TestCase):
         self.assertIn("event_mux_applies_bounded_control_data_fairness", ffi)
         matrix = _load_matrix()
         cases = {case["id"]: case for case in matrix["cases"]}
-        self.assertEqual(cases["flow.bounded_event_mux"]["status"], "characterized")
+        self.assertEqual(cases["flow.bounded_event_mux"]["status"], "covered")
 
-    def test_ci_runs_the_phase_zero_baseline(self) -> None:
+    def test_ci_runs_the_final_strict_acceptance_gate(self) -> None:
         workflow = _read(".github/workflows/flutter.yml")
-        self.assertIn("bash scripts/network_v2_acceptance.sh baseline", workflow)
+        self.assertIn("bash scripts/network_v2_acceptance.sh strict", workflow)
+        self.assertNotIn("bash scripts/network_v2_acceptance.sh baseline", workflow)
 
     def test_marker_evidence_is_not_behavior_coverage(self) -> None:
         matrix = _load_matrix()
@@ -248,6 +250,32 @@ class FrozenNetworkContractTest(unittest.TestCase):
                 self.assertIsInstance(verification, dict)
                 assert isinstance(verification, dict)
                 self.assertEqual(verification.get("kind"), "owner_behavior_test")
+                tests = verification.get("tests")
+                self.assertIsInstance(tests, list)
+                assert isinstance(tests, list)
+                self.assertTrue(tests)
+                for test in tests:
+                    self.assertIsInstance(test, dict)
+                    assert isinstance(test, dict)
+                    self.assertIn(test.get("owner"), {"rust", "go", "dart"})
+                    path = ROOT / test["path"]
+                    self.assertTrue(path.is_file(), f"missing behavior test: {path}")
+                    source = path.read_text(encoding="utf-8")
+                    name = re.escape(test["name"])
+                    if test["owner"] == "rust":
+                        pattern = (
+                            rf"(?m)^\s*#\[(?:tokio::)?test[^\]]*\]\s*"
+                            rf"(?:async\s+)?fn\s+{name}\s*\("
+                        )
+                    elif test["owner"] == "go":
+                        pattern = rf"(?m)^\s*func\s+{name}\s*\("
+                    else:
+                        pattern = rf"\btest(?:Widgets)?\s*\(\s*['\"]{name}['\"]"
+                    self.assertRegex(
+                        source,
+                        pattern,
+                        f"behavior test {test['name']!r} is not a test declaration in {path}",
+                    )
 
 
 if __name__ == "__main__":

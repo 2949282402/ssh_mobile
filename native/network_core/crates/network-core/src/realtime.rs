@@ -1212,8 +1212,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::discovery::DiscoveryControlPlane;
+    use crate::runtime::ConnectDecision;
     use crate::runtime::PeerConfig;
-    use crate::session::ConnectDecision;
 
     #[tokio::test]
     async fn realtime_snapshot_carries_authoritative_state_and_revision_after_connected() {
@@ -1874,6 +1874,7 @@ mod tests {
                 endpoint: None,
                 identity_public_key: [7u8; 32],
                 e2e_public_key: [8u8; 32],
+                e2ee_policy: network_protocol::E2eePolicy::Required,
             },
         );
     }
@@ -1884,7 +1885,10 @@ mod tests {
         let control = RecordingControl::new();
         *state.relay_control.write().await = Some(control.clone());
         register_realtime_peer(&state, "peer-a").await;
-        let s1 = match state.connection_sessions.begin_connect("peer-a").await {
+        let s1 = match state
+            .begin_connect("peer-a", crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+            .await
+        {
             ConnectDecision::Started(session_id) => session_id,
             decision => panic!("unexpected Session decision: {decision:?}"),
         };
@@ -1939,8 +1943,12 @@ mod tests {
         );
 
         // 新 ConnectionSession（用户重新 Resolve → Connection，§22）。
-        let _ = state.connection_sessions.close("peer-a").await;
-        let s2 = match state.connection_sessions.begin_connect("peer-a").await {
+        let _ = state.close_transport_path("peer-a").await;
+        let _ = state.connection_sessions.retire_session("peer-a", s1).await;
+        let s2 = match state
+            .begin_connect("peer-a", crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+            .await
+        {
             ConnectDecision::Started(session_id) => session_id,
             decision => panic!("unexpected Session decision: {decision:?}"),
         };

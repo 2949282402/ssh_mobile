@@ -21,6 +21,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 
+use crate::connect::GenericRouteScope;
 use crate::connect::{
     profile_capability_mask, CAPABILITY_RELIABLE_MESSAGE, CAPABILITY_UNRELIABLE_DATAGRAM,
     DEFAULT_CONNECTION_CAPABILITY,
@@ -34,12 +35,12 @@ use crate::events::{
     emit_peer_state, emit_peer_state_profile, emit_route_changed, protocol_error,
     protocol_error_with_peer,
 };
-use crate::generic_auth::{authenticate_initiator, authenticate_responder};
+use crate::generic_auth::{authenticate_initiator_with_policy, authenticate_responder_auto_policy};
 use crate::runtime::{
     ConnectionAdmissionLease, PeerConfig, RuntimeState, MAX_PENDING_RELAY_CRYPTO_HANDSHAKES,
     PEER_CONNECT_TIMEOUT,
 };
-use crate::session::{ActiveRoute, ConnectionAdmissionError, GenericRouteScope, SessionId};
+use crate::session::{ConnectionAdmissionError, SessionId};
 
 const STUN_SERVERS_ENV: &str = "SSH_MOBILE_STUN_SERVERS";
 const STUN_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
@@ -101,14 +102,14 @@ pub(crate) async fn install_admitted_crypto(
     admission: &ConnectionAdmissionLease,
     crypto: &SessionCryptoMaterial,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !crypto.has_application_e2ee() {
+        return Ok(());
+    }
     if state
         .install_crypto_material(peer_id, &admission.session_id.wire_key(), crypto)
         .is_err()
     {
-        state
-            .connection_sessions
-            .mark_failed(peer_id, admission.session_id)
-            .await;
+        state.fail_session(peer_id, admission.session_id).await;
         return Err(std::io::Error::other("application E2EE install failed").into());
     }
     Ok(())
@@ -158,31 +159,69 @@ pub(crate) async fn configure_runtime(
         identity_private_key,
         e2e_private_key,
     ));
-    let path_manager = Arc::new(PathManager::new());
-    let (socket, bound_address) = bind_and_gather_candidates(listen_address, &path_manager)
-        .await
-        .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
+    // TCP and UDP intentionally advertise the same numeric port, but UDP port
+    // 0 allocation can race with another runtime's TCP listener when tests or
+    // multiple local runtimes start concurrently. If the caller requested an
+    // ephemeral port, discard the colliding UDP socket and select another
+    // paired port; an explicit port remains fail-closed.
+    const EPHEMERAL_BIND_ATTEMPTS: usize = 8;
+    let bind_attempts = if listen_address.port() == 0 {
+        EPHEMERAL_BIND_ATTEMPTS
+    } else {
+        1
+    };
+    let mut last_tcp_bind_error = None;
+    let (path_manager, socket, bound_address, tcp_listener) = {
+        let mut selected = None;
+        for _ in 0..bind_attempts {
+            let path_manager = Arc::new(PathManager::new());
+            let (socket, bound_address) = bind_and_gather_candidates(listen_address, &path_manager)
+                .await
+                .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
+            let tcp_socket = match std::net::TcpListener::bind(bound_address) {
+                Ok(socket) => socket,
+                Err(error) if listen_address.port() == 0 => {
+                    last_tcp_bind_error = Some(error);
+                    drop(socket);
+                    continue;
+                }
+                Err(error) => {
+                    return Err(protocol_error(
+                        NetworkErrorCode::IoError,
+                        format!("failed to bind TCP fallback listener: {error}"),
+                    ));
+                }
+            };
+            tcp_socket
+                .set_nonblocking(true)
+                .map_err(|error| protocol_error(NetworkErrorCode::IoError, error.to_string()))?;
+            let tcp_listener = TcpListener::from_std(tcp_socket).map_err(|error| {
+                protocol_error(
+                    NetworkErrorCode::IoError,
+                    format!("failed to configure TCP fallback listener: {error}"),
+                )
+            })?;
+            selected = Some((path_manager, socket, bound_address, tcp_listener));
+            break;
+        }
+        selected.ok_or_else(|| {
+            protocol_error(
+                NetworkErrorCode::IoError,
+                format!(
+                    "failed to bind paired ephemeral TCP/UDP listeners after {bind_attempts} attempts: {}",
+                    last_tcp_bind_error
+                        .map(|error| error.to_string())
+                        .unwrap_or_else(|| "unknown bind error".into())
+                ),
+            )
+        })?
+    };
     path_manager
         .set_generation(monotonic_candidate_generation())
         .await;
     let manager = QuicEndpointManager::from_bound_socket(socket, Arc::clone(&path_manager))
         .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
     let endpoint = manager.endpoint;
-    let tcp_socket = std::net::TcpListener::bind(bound_address).map_err(|error| {
-        protocol_error(
-            NetworkErrorCode::IoError,
-            format!("failed to bind TCP fallback listener: {error}"),
-        )
-    })?;
-    tcp_socket
-        .set_nonblocking(true)
-        .map_err(|error| protocol_error(NetworkErrorCode::IoError, error.to_string()))?;
-    let tcp_listener = TcpListener::from_std(tcp_socket).map_err(|error| {
-        protocol_error(
-            NetworkErrorCode::IoError,
-            format!("failed to configure TCP fallback listener: {error}"),
-        )
-    })?;
     state
         .bound_port
         .store(bound_address.port(), Ordering::Release);
@@ -292,6 +331,14 @@ pub(crate) async fn upsert_peer(
     state: &RuntimeState,
     command: UpsertPeerCommand,
 ) -> Result<(), ProtocolError> {
+    upsert_peer_with_policy(state, command, network_protocol::E2eePolicy::Required).await
+}
+
+pub(crate) async fn upsert_peer_with_policy(
+    state: &RuntimeState,
+    command: UpsertPeerCommand,
+    e2ee_policy: network_protocol::E2eePolicy,
+) -> Result<(), ProtocolError> {
     if command.peer_id.is_empty() || command.peer_id.len() > 128 {
         return Err(protocol_error(
             NetworkErrorCode::InvalidArgument,
@@ -338,6 +385,7 @@ pub(crate) async fn upsert_peer(
             endpoint,
             identity_public_key,
             e2e_public_key,
+            e2ee_policy,
         },
     );
     state
@@ -363,14 +411,13 @@ pub(crate) async fn disconnect_peer(
         .peer_supervisors
         .disconnect(&peer_id)
         .map_err(|error| protocol_error(NetworkErrorCode::InvalidArgument, error.to_string()))?;
-    if let Ok(peer) = crate::connect::PeerId::new(&peer_id) {
-        state.ready_paths.revoke_peer(&peer);
-    }
     let session_id = state.connection_sessions.current_session_id(&peer_id).await;
-    if let Some(route) = state.connection_sessions.close(&peer_id).await {
-        route.close().await;
-    }
+    let _ = state.close_transport_path(&peer_id).await;
     if let Some(session_id) = session_id {
+        let _ = state
+            .connection_sessions
+            .retire_session(&peer_id, session_id)
+            .await;
         state.cancel_session_tasks(&peer_id, session_id).await;
         // Explicit Peer disconnect releases receive-side active handlers and
         // ordered buffers. A transient Connection loss takes a different path
@@ -478,16 +525,18 @@ pub(crate) async fn connect_direct_with_crypto(
     let remaining = connect_window
         .min(PEER_CONNECT_TIMEOUT)
         .saturating_sub(started.elapsed());
+    let e2ee_policy = state.e2ee_policy(&peer_id).await;
     let expected_peer_id_for_resolver = peer_id.clone();
     let admission_state = Arc::clone(&state);
     let (crypto, admission) = tokio::time::timeout(
         remaining,
-        crate::crypto_handshake::initiate_quic(
+        crate::crypto_handshake::initiate_quic_with_policy(
             &connection,
             identity,
             &peer_id,
             expected_peer_public_key,
             session_binding,
+            e2ee_policy,
             move |authenticated_peer_id, remote_session_binding| {
                 let state = Arc::clone(&admission_state);
                 let authenticated_peer_id = authenticated_peer_id.to_string();
@@ -530,8 +579,7 @@ pub(crate) async fn connect_direct_with_crypto(
     let quic_profile =
         ConnectionProfile::for_route(RouteType::QuicDirect).expect("QUIC route profile");
     if !state
-        .connection_sessions
-        .candidate_supports_required_capabilities(&peer_id, admission.session_id, quic_profile)
+        .candidate_supports_required(&peer_id, admission.session_id, quic_profile)
         .await
     {
         state
@@ -570,7 +618,7 @@ async fn admit_single_winner(
 ) -> Result<ConnectionAdmissionLease, ConnectionAdmissionError> {
     loop {
         // Session 已 Connected（winner 已挂载 route）：后来的 candidate 是 loser，拒绝。
-        if state.connection_sessions.is_connected(peer_id).await {
+        if state.path_is_connected(peer_id).await {
             return Err(ConnectionAdmissionError::StaleSession);
         }
         // 期望的 Session 已被替换/销毁：同样是 loser。
@@ -579,7 +627,6 @@ async fn admit_single_winner(
                 return Err(ConnectionAdmissionError::StaleSession);
             }
         }
-        let notified = state.connection_sessions.wait_for_admission_change();
         match state
             .admit_authenticated_session_with_capability(
                 peer_id,
@@ -592,11 +639,10 @@ async fn admit_single_winner(
             Ok(admission) => return Ok(admission),
             Err(ConnectionAdmissionError::StaleSession)
                 if state
-                    .connection_sessions
-                    .admission_can_retry(peer_id, expected_session_id)
+                    .path_admission_can_retry(peer_id, expected_session_id)
                     .await =>
             {
-                notified.await;
+                state.wait_for_path_change().await;
             }
             Err(error) => return Err(error),
         }
@@ -952,10 +998,7 @@ async fn connect_generic_candidate(
                     let compatible = match route.scope.profile() {
                         Some(profile) => {
                             state
-                                .connection_sessions
-                                .candidate_supports_required_capabilities(
-                                    &peer_id, session_id, profile,
-                                )
+                                .candidate_supports_required(&peer_id, session_id, profile)
                                 .await
                         }
                         None => false,
@@ -1233,14 +1276,16 @@ async fn connect_tcp_route(
                 &peer_id,
             )
         })?;
+        let e2ee_policy = state.e2ee_policy(&peer_id).await;
         let resolver_state = Arc::clone(&state);
         let resolver_peer_id = peer_id.clone();
-        let (crypto, admission) = authenticate_initiator(
+        let (crypto, admission) = authenticate_initiator_with_policy(
             &mut connection,
             identity,
             &peer_id,
             expected_peer_public_key,
             &session_binding,
+            e2ee_policy,
             move |authenticated_peer_id, remote_session_binding| {
                 let resolver_state = Arc::clone(&resolver_state);
                 let resolver_peer_id = resolver_peer_id.clone();
@@ -1296,8 +1341,7 @@ async fn connect_tcp_route(
         };
         let profile = scope.profile().expect("supervised TCP route profile");
         if !state
-            .connection_sessions
-            .candidate_supports_required_capabilities(&peer_id, admission.session_id, profile)
+            .candidate_supports_required(&peer_id, admission.session_id, profile)
             .await
         {
             scope.close().await;
@@ -1359,14 +1403,16 @@ async fn connect_websocket_route(
                 )
             })?
             .with_topology(RouteTopology::Direct);
+        let e2ee_policy = state.e2ee_policy(&peer_id).await;
         let resolver_state = Arc::clone(&state);
         let resolver_peer_id = peer_id.clone();
-        let (crypto, admission) = authenticate_initiator(
+        let (crypto, admission) = authenticate_initiator_with_policy(
             &mut connection,
             identity,
             &peer_id,
             expected_peer_public_key,
             &session_binding,
+            e2ee_policy,
             move |authenticated_peer_id, remote_session_binding| {
                 let resolver_state = Arc::clone(&resolver_state);
                 let resolver_peer_id = resolver_peer_id.clone();
@@ -1421,8 +1467,7 @@ async fn connect_websocket_route(
         };
         let profile = scope.profile().expect("supervised WebSocket route profile");
         if !state
-            .connection_sessions
-            .candidate_supports_required_capabilities(&peer_id, admission.session_id, profile)
+            .candidate_supports_required(&peer_id, admission.session_id, profile)
             .await
         {
             scope.close().await;
@@ -1479,18 +1524,31 @@ pub(crate) async fn establish_relay_crypto(
     identity: Arc<DeviceIdentity>,
     expected_peer_public_key: [u8; 32],
 ) -> Result<(SessionCryptoMaterial, ConnectionAdmissionLease), ProtocolError> {
+    let e2ee_policy = state.e2ee_policy(peer_id).await;
+    if e2ee_policy != crate::crypto_handshake::path_handshake::E2eePolicy::Required {
+        state.fail_session(peer_id, session_id).await;
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::AuthenticationFailed,
+            "Relay paths require application E2EE",
+            "connect",
+            peer_id,
+        ));
+    }
     let session_token = session_id.wire_key();
     let (mut handshake, hello) =
-        crate::crypto_handshake::RelayInitiatorHandshake::start(identity, &session_token).map_err(
-            |_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::AuthenticationFailed,
-                    "Relay application E2EE handshake could not start",
-                    "connect",
-                    peer_id,
-                )
-            },
-        )?;
+        crate::crypto_handshake::RelayInitiatorHandshake::start_with_policy(
+            identity,
+            &session_token,
+            e2ee_policy,
+        )
+        .map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::AuthenticationFailed,
+                "Relay application E2EE handshake could not start",
+                "connect",
+                peer_id,
+            )
+        })?;
     let key = format!("{peer_id}/{session_token}");
     let (response_tx, mut response_rx) = mpsc::channel(3);
     let mut waiters = state.relay_crypto_waiters.write().await;
@@ -1711,16 +1769,18 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                 })??;
                 let peer_id = session.peer_device_id.clone();
                 let connection = session.connection.clone();
+                let e2ee_policy = state.e2ee_policy(&peer_id).await;
                 let binding_state = Arc::clone(&state);
                 let crypto =
                     tokio::time::timeout(
                         PEER_CONNECT_TIMEOUT,
-                        crate::crypto_handshake::respond_quic(
+                        crate::crypto_handshake::respond_quic_with_policy(
                             &connection,
                             state.identity.read().await.clone().ok_or_else(|| {
                                 std::io::Error::other("runtime identity unavailable")
                             })?,
                             &state.trusted_peer_keys,
+                            e2ee_policy,
                             move |authenticated_peer_id, remote_session_binding| {
                                 let binding_state = Arc::clone(&binding_state);
                                 let authenticated_peer_id = authenticated_peer_id.to_string();
@@ -1767,8 +1827,7 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                 let quic_profile = ConnectionProfile::for_route(RouteType::QuicDirect)
                     .expect("QUIC route profile");
                 if !state
-                    .connection_sessions
-                    .candidate_supports_required_capabilities(&peer_id, session_id, quic_profile)
+                    .candidate_supports_required(&peer_id, session_id, quic_profile)
                     .await
                 {
                     state
@@ -1795,8 +1854,7 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     .await
                     .map_err(|_| std::io::Error::other("Session was replaced during handshake"))?;
                 install_admitted_crypto(&state, &peer_id, &admission, &crypto).await?;
-                let previous_route = state
-                    .connection_sessions
+                let _previous_route = state
                     .attach_connection_for_session(
                         &peer_id,
                         Some(session_id),
@@ -1805,9 +1863,6 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     )
                     .await
                     .map_err(|_| std::io::Error::other("Session was closed"))?;
-                if let Some(previous_route) = previous_route {
-                    previous_route.close().await;
-                }
                 if state.connection_sessions.current_session_id(&peer_id).await != Some(session_id)
                 {
                     return Err(std::io::Error::other("Session was closed").into());
@@ -1838,10 +1893,7 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
             .await;
             if let Err(error) = result {
                 if let Some((peer_id, session_id)) = attempted_session {
-                    state
-                        .connection_sessions
-                        .mark_failed(&peer_id, session_id)
-                        .await;
+                    state.fail_session(&peer_id, session_id).await;
                 }
                 tracing::warn!("Rejected inbound QUIC connection: {}", error);
             }
@@ -1968,7 +2020,7 @@ async fn accept_authenticated_generic(
     let binding_state = Arc::clone(&state);
     let authenticated = tokio::time::timeout(
         GENERIC_ROUTE_CONNECT_TIMEOUT,
-        authenticate_responder(
+        authenticate_responder_auto_policy(
             &mut connection,
             identity,
             &state.trusted_peer_keys,
@@ -2002,6 +2054,21 @@ async fn accept_authenticated_generic(
         crypto,
         admission,
     } = authenticated;
+    if state.e2ee_policy(&peer_id).await != crypto.e2ee_policy {
+        state
+            .connection_sessions
+            .release_authenticated_session(
+                &peer_id,
+                admission.session_id,
+                &crypto.remote_session_binding,
+            )
+            .await;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "generic route E2EE policy does not match peer configuration",
+        )
+        .into());
+    }
     tracing::debug!(%session_binding, "generic route Session binding authenticated");
     if admission.session_id.wire_key() != crypto.local_session_binding {
         return Err(std::io::Error::new(
@@ -2013,8 +2080,7 @@ async fn accept_authenticated_generic(
     let session_id = admission.session_id;
     let profile = connection.profile();
     if !state
-        .connection_sessions
-        .candidate_supports_required_capabilities(&peer_id, session_id, profile)
+        .candidate_supports_required(&peer_id, session_id, profile)
         .await
     {
         state
@@ -2045,8 +2111,7 @@ async fn accept_authenticated_generic(
         let profile = scope
             .profile()
             .expect("supervised GenericRoute scope has a profile");
-        let previous_route = match state
-            .connection_sessions
+        let _previous_route = match state
             .attach_generic_route_for_session(&peer_id, Some(session_id), &mut scope)
             .await
         {
@@ -2056,9 +2121,6 @@ async fn accept_authenticated_generic(
                 return Err(std::io::Error::other("TCP route lost its Session race").into());
             }
         };
-        if let Some(previous_route) = previous_route {
-            previous_route.close().await;
-        }
         emit_peer_state_profile(
             &state.event_tx,
             &peer_id,
@@ -2073,10 +2135,7 @@ async fn accept_authenticated_generic(
     }
     .await;
     if result.is_err() {
-        state
-            .connection_sessions
-            .mark_failed(&attempted_peer_id, session_id)
-            .await;
+        state.fail_session(&attempted_peer_id, session_id).await;
     }
     result
 }
@@ -2327,26 +2386,16 @@ async fn notify_generic_route_loss(
     state: &Arc<RuntimeState>,
     peer_id: &str,
     route_id: u64,
-    _session_id: SessionId,
+    session_id: SessionId,
 ) {
-    let destroyed = state
-        .connection_sessions
-        .destroy_generic_session_if_current(peer_id, route_id)
-        .await;
-    if let Some((session_id, route)) = destroyed {
-        spawn_session_teardown(Arc::clone(state), peer_id.to_string(), session_id, route);
-        let _ = state.peer_supervisors.disconnect(peer_id);
-        emit_peer_state(
-            &state.event_tx,
-            peer_id,
-            PeerConnectionState::Disconnected,
-            RouteType::Unspecified,
-            None,
-        );
-        // transport-network v2（§18/§35）：transport 丢失即销毁 ConnectionSession，
-        // 不自动重连（无 RECONNECTING）。业务下次 `connect()` 会重新 Resolve 并按需
-        // 新建连接（新 SessionId + 新 Noise root）。
+    if state
+        .close_direct_path(peer_id, Some(route_id))
+        .await
+        .is_none()
+    {
+        return;
     }
+    finalize_path_loss(state, peer_id, session_id).await;
 }
 
 /// §18/§35：reservation 数据面断开即销毁 Relay ConnectionSession。仅当当前
@@ -2356,28 +2405,16 @@ pub(crate) async fn teardown_relay_route(
     peer_id: &str,
     data: &Arc<RelayDataClient>,
 ) {
-    if !state
-        .connection_sessions
-        .is_current_relay_data(peer_id, data)
-        .await
-    {
+    if !state.path_is_current_relay_data(peer_id, data).await {
         return;
     }
-    let session_id = state.connection_sessions.current_session_id(peer_id).await;
-    if let Some(route) = state.connection_sessions.close(peer_id).await {
-        route.close().await;
+    let Some(session_id) = state.connection_sessions.current_session_id(peer_id).await else {
+        return;
+    };
+    if state.close_relay_path(peer_id, Some(data)).await.is_none() {
+        return;
     }
-    if let Some(session_id) = session_id {
-        state.cancel_session_tasks(peer_id, session_id).await;
-    }
-    let _ = state.peer_supervisors.disconnect(peer_id);
-    emit_peer_state(
-        &state.event_tx,
-        peer_id,
-        PeerConnectionState::Disconnected,
-        RouteType::Unspecified,
-        None,
-    );
+    finalize_path_loss(state, peer_id, session_id).await;
 }
 
 async fn handle_connection_disconnect(
@@ -2385,45 +2422,66 @@ async fn handle_connection_disconnect(
     peer_id: &str,
     connection: &Connection,
 ) {
-    let destroyed = state
-        .connection_sessions
-        .destroy_quic_session_if_current(peer_id, connection)
-        .await;
-    if let Some((session_id, route)) = destroyed {
-        spawn_session_teardown(Arc::clone(state), peer_id.to_string(), session_id, route);
-        let _ = state.peer_supervisors.disconnect(peer_id);
-        emit_peer_state(
-            &state.event_tx,
-            peer_id,
-            PeerConnectionState::Disconnected,
-            RouteType::Unspecified,
-            None,
-        );
-        // transport-network v2（§18/§35）：transport 丢失即销毁 ConnectionSession，
-        // 不自动重连。业务下次 `connect()` 会重新 Resolve 并按需新建连接。
+    let Some(session_id) = state.connection_sessions.current_session_id(peer_id).await else {
+        return;
+    };
+    if state
+        .close_direct_path_for_connection(peer_id, connection)
+        .await
+        .is_none()
+    {
+        return;
     }
+    finalize_path_loss(state, peer_id, session_id).await;
 }
 
-/// 在 Session 组外调度一次完整的 session 销毁：关闭 detached route、retire
-/// 资源并取消 supervised task group。调用方通常是 Session 组内的 receiver 任务，
-/// 不能在此处自等 join，因此拆到 runtime task 执行。
-fn spawn_session_teardown(
-    state: Arc<RuntimeState>,
-    peer_id: String,
-    session_id: SessionId,
-    route: ActiveRoute,
-) {
-    let supervisor = Arc::clone(&state.task_supervisor);
-    let _ = supervisor.spawn_runtime("session-teardown", async move {
-        route.close().await;
-        state.cancel_session_tasks(&peer_id, session_id).await;
-    });
+async fn finalize_path_loss(state: &Arc<RuntimeState>, peer_id: &str, session_id: SessionId) {
+    if state.connection_sessions.current_session_id(peer_id).await != Some(session_id)
+        || state.path_is_connected(peer_id).await
+    {
+        // Direct/Relay are independent physical slots. Losing one does not
+        // invalidate the Session while the other remains usable.
+        return;
+    }
+    if !state
+        .connection_sessions
+        .retire_session(peer_id, session_id)
+        .await
+    {
+        return;
+    }
+    // This function is commonly called by a session-scoped receiver task.
+    // Joining that same task group inline would await the current task and
+    // deadlock before the public Disconnected event can be emitted.
+    let cleanup_state = Arc::clone(state);
+    let cleanup_peer_id = peer_id.to_string();
+    let _ = state
+        .task_supervisor
+        .spawn_runtime("path-loss-cleanup", async move {
+            cleanup_state
+                .cancel_session_tasks(&cleanup_peer_id, session_id)
+                .await;
+        });
+    if let Ok(supervisor) = state.peer_supervisors.get_or_create(peer_id) {
+        supervisor.path_lost();
+    }
+    emit_peer_state(
+        &state.event_tx,
+        peer_id,
+        PeerConnectionState::Disconnected,
+        RouteType::Unspecified,
+        None,
+    );
+    // transport-network v2（§18/§35）：最后一条 transport 丢失即销毁
+    // ConnectionSession，不自动重连（无 RECONNECTING）。业务下次 `connect()`
+    // 会重新 Resolve，并按需新建连接（新 SessionId + 新 Noise root）。
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::ConnectDecision;
+    use crate::generic_auth::authenticate_responder;
+    use crate::runtime::ConnectDecision;
     use network_transport::{TcpTransport, Transport, WebSocketTransport};
     use std::collections::HashMap;
     use std::sync::atomic::AtomicU16;
@@ -2469,7 +2527,10 @@ mod tests {
     }
 
     async fn started_session(state: &RuntimeState, peer_id: &str) -> SessionId {
-        match state.connection_sessions.begin_connect(peer_id).await {
+        match state
+            .begin_connect(peer_id, crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+            .await
+        {
             ConnectDecision::Started(session_id) => session_id,
             decision => panic!("unexpected Session decision: {decision:?}"),
         }
@@ -2513,14 +2574,12 @@ mod tests {
             started_generic_scope(&state, "generic-close-peer", session_id, connection).await;
         assert_eq!(state.task_supervisor.active_count(), 2);
         state
-            .connection_sessions
             .attach_generic_route_for_session("generic-close-peer", Some(session_id), &mut scope)
             .await
             .expect("attach GenericRoute");
 
         let route = state
-            .connection_sessions
-            .close("generic-close-peer")
+            .close_transport_path("generic-close-peer")
             .await
             .expect("Session close should detach GenericRoute owner");
         route.close().await;
@@ -2544,7 +2603,6 @@ mod tests {
         let mut first_scope =
             started_generic_scope(&state, peer_id, session_id, first_connection).await;
         state
-            .connection_sessions
             .attach_generic_route_for_session(peer_id, Some(session_id), &mut first_scope)
             .await
             .expect("attach first GenericRoute");
@@ -2553,18 +2611,16 @@ mod tests {
         let mut second_scope =
             started_generic_scope(&state, peer_id, session_id, second_connection).await;
         assert!(state
-            .connection_sessions
             .attach_generic_route_for_session(peer_id, Some(session_id), &mut second_scope)
             .await
             .is_err());
         second_scope.close().await;
 
-        let current_route = state
-            .connection_sessions
-            .close(peer_id)
+        let closed_route = state
+            .close_transport_path(peer_id)
             .await
             .expect("close Session");
-        current_route.close().await;
+        closed_route.close().await;
         assert_eq!(state.task_supervisor.active_count(), 0);
     }
 
@@ -2583,6 +2639,11 @@ mod tests {
             .admit_authenticated_session(peer_id, Some(old_session_id), &old_remote_binding)
             .await
             .expect("seed the old remote Session binding");
+        state
+            .connection_sessions
+            .finalize_authenticated_session(peer_id, old_session_id, &old_remote_binding)
+            .await
+            .expect("finalize the old remote Session binding");
 
         // 在握手前把哨兵放进旧 Session 组，验证被替换后立即取消。
         let (sentinel_started_tx, sentinel_started_rx) = oneshot::channel();
@@ -2690,7 +2751,6 @@ mod tests {
         assert_ne!(new_session_id, old_session_id);
 
         state
-            .connection_sessions
             .attach_generic_route_for_session(peer_id, Some(new_session_id), &mut scope)
             .await
             .expect("attach outbound GenericRoute to replacement Session");
@@ -2704,12 +2764,7 @@ mod tests {
         let payload = b"replacement-route-still-alive";
         timeout(
             Duration::from_secs(1),
-            state.connection_sessions.send_channel_frame(
-                peer_id,
-                "",
-                GenericFrameKind::DataMessage,
-                payload,
-            ),
+            state.path_send_channel_frame(peer_id, "", GenericFrameKind::DataMessage, payload),
         )
         .await
         .expect("sending through replacement GenericRoute timed out")
@@ -2725,12 +2780,11 @@ mod tests {
         expected_frame.extend_from_slice(payload);
         assert_eq!(received_frame, expected_frame);
 
-        let current_route = state
-            .connection_sessions
-            .close(peer_id)
+        let closed_route = state
+            .close_transport_path(peer_id)
             .await
             .expect("close replacement GenericRoute");
-        current_route.close().await;
+        closed_route.close().await;
         let _ = release_tx.send(());
         responder_task
             .await
@@ -2747,11 +2801,13 @@ mod tests {
             started_generic_scope(&state, "generic-failed-attach-peer", session_id, connection)
                 .await;
         state
+            .close_transport_path("generic-failed-attach-peer")
+            .await;
+        let _ = state
             .connection_sessions
-            .close("generic-failed-attach-peer")
+            .retire_session("generic-failed-attach-peer", session_id)
             .await;
         assert!(state
-            .connection_sessions
             .attach_generic_route_for_session(
                 "generic-failed-attach-peer",
                 Some(session_id),
@@ -2787,7 +2843,6 @@ mod tests {
                 started_generic_scope(&state, "generic-runtime-stop-peer", session_id, connection)
                     .await;
             state
-                .connection_sessions
                 .attach_generic_route_for_session(
                     "generic-runtime-stop-peer",
                     Some(session_id),
@@ -2837,11 +2892,10 @@ mod tests {
         let (connection, _server) = generic_connection_pair().await;
         let mut scope = started_generic_scope(&state, peer_id, session_id, connection).await;
         state
-            .connection_sessions
             .attach_generic_route_for_session(peer_id, Some(session_id), &mut scope)
             .await
             .expect("attach winner generic route");
-        assert!(state.connection_sessions.is_connected(peer_id).await);
+        assert!(state.path_is_connected(peer_id).await);
 
         // loser：同 (peer, expected_session_id) 的迟到 admit 必须被拒绝，绝不替换。
         assert!(
@@ -2862,14 +2916,13 @@ mod tests {
             state.connection_sessions.current_session_id(peer_id).await,
             Some(session_id)
         );
-        assert!(state.connection_sessions.is_connected(peer_id).await);
+        assert!(state.path_is_connected(peer_id).await);
 
-        let current_route = state
-            .connection_sessions
-            .close(peer_id)
+        let closed_route = state
+            .close_transport_path(peer_id)
             .await
             .expect("close Session");
-        current_route.close().await;
+        closed_route.close().await;
         assert_eq!(state.task_supervisor.active_count(), 0);
     }
 
@@ -2995,8 +3048,7 @@ mod tests {
         ));
         let remote_public_key = remote_identity.public_identity_key().to_bytes();
         let session_id = match state
-            .connection_sessions
-            .begin_connect_with_capability(peer_id, crate::connect::CAPABILITY_RELIABLE_MESSAGE)
+            .begin_connect(peer_id, crate::connect::CAPABILITY_RELIABLE_MESSAGE)
             .await
         {
             ConnectDecision::Started(session_id) => session_id,

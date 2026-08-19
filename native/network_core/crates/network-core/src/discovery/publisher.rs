@@ -63,6 +63,13 @@ pub(crate) trait DiscoveryControlPlane: Send + Sync {
     /// 控制面 socket 是否仍可发送新帧。
     fn is_usable(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>>;
 
+    /// The last validated Relay `Ready.presence_ttl_s`. A control-plane
+    /// implementation without a Ready frame returns `None`, so candidate
+    /// caches use their safe 60-second fallback.
+    fn ready_presence_ttl(&self) -> Option<Duration> {
+        None
+    }
+
     /// 开启一个异步 connectivity attempt，按 `attempt_id` 关联应答（§14/§31）。
     ///
     /// 默认实现：未接线的 mock 返回 NotConnected。
@@ -138,6 +145,10 @@ impl DiscoveryControlPlane for RelayControlClient {
 
     fn is_usable(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
         Box::pin(async move { RelayControlClient::is_usable(self).await })
+    }
+
+    fn ready_presence_ttl(&self) -> Option<Duration> {
+        RelayControlClient::ready_presence_ttl(self)
     }
 
     fn start_connectivity_attempt(

@@ -12,7 +12,17 @@
       "id": "candidate.fresh_stage_a",
       "category": "candidate-cache",
       "acceptance": "A fresh remote snapshot is eligible for Stage A direct candidates.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+            "name": "cache_uses_monotonic_age_and_server_confirmed_ttl"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
@@ -27,7 +37,17 @@
       "id": "candidate.expired_stage_a",
       "category": "candidate-cache",
       "acceptance": "An expired snapshot is not returned to Stage A.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+            "name": "cache_uses_monotonic_age_and_server_confirmed_ttl"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
@@ -42,7 +62,17 @@
       "id": "candidate.expired_stage_b_refresh",
       "category": "candidate-cache",
       "acceptance": "After Stage A expiry, Stage B Resolve data can refresh the cache.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+            "name": "expired_stage_b_resolve_snapshot_refreshes_cache"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
@@ -64,7 +94,17 @@
       "id": "candidate.epoch_invalidation",
       "category": "candidate-cache",
       "acceptance": "A remote runtime epoch change immediately invalidates the old Stage A snapshot.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+            "name": "runtime_epoch_change_invalidates_before_new_snapshot_arrives"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
@@ -79,7 +119,17 @@
       "id": "candidate.wall_clock_jump_monotonic",
       "category": "candidate-cache",
       "acceptance": "Cache age uses a native monotonic clock and is not derived from published wall time.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+            "name": "cache_uses_monotonic_age_and_server_confirmed_ttl"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
@@ -94,7 +144,17 @@
       "id": "candidate.heartbeat_does_not_refresh",
       "category": "candidate-cache",
       "acceptance": "A control heartbeat does not move the candidate learning point.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+            "name": "heartbeat_does_not_refresh_candidate_learning_point"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
@@ -110,7 +170,22 @@
       "id": "candidate.ready_presence_ttl",
       "category": "candidate-cache",
       "acceptance": "The Ready-confirmed presence TTL is used for candidate freshness.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+            "name": "cache_uses_monotonic_age_and_server_confirmed_ttl"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay-proto/src/lib.rs",
+            "name": "constants_match_manifest"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
@@ -122,7 +197,7 @@
         {
           "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
           "contains": [
-            "network_relay::v2::PRESENCE_TTL_S"
+            "ready_presence_ttl"
           ]
         }
       ]
@@ -131,7 +206,17 @@
       "id": "candidate.equal_revision_fingerprint",
       "category": "candidate-cache",
       "acceptance": "An equal revision with a different candidate fingerprint is rejected.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+            "name": "same_revision_with_different_fingerprint_is_inconsistent"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
@@ -146,7 +231,22 @@
       "id": "relay.data_env_crypto_first",
       "category": "relay-path-handshake",
       "acceptance": "Relay DATA_ENV_CRYPTO is the only application envelope admitted before PathHandshake Ready.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/crypto_handshake.rs",
+            "name": "relay_noise_xx_preserves_the_same_session_root"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/tests.rs",
+            "name": "relay_data_clients_forward_envelopes_over_reservation"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/path_handshake.rs",
@@ -168,7 +268,22 @@
       "id": "relay.pre_pair_reject",
       "category": "relay-path-handshake",
       "acceptance": "Relay data is rejected until both roles have completed the PairReady admission.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataPairReadyRequiresBothRoles"
+          },
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/reservation_l1_test.go",
+            "name": "TestRelayDataRegistryRejectsDuplicateRoleAndConsumesPair"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/relay.rs",
@@ -189,7 +304,22 @@
       "id": "relay.business_before_ready_reject",
       "category": "relay-path-handshake",
       "acceptance": "Channel, stream, and file business envelopes are rejected before Ready.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataPairReadyRequiresBothRoles"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/src/v2/data_client.rs",
+            "name": "pair_ready_is_a_websocket_control_signal_not_a_business_frame"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/relay.rs",
@@ -204,7 +334,17 @@
       "id": "relay.crypto_drives_v2",
       "category": "relay-path-handshake",
       "acceptance": "The DATA_ENV_CRYPTO path carries the authenticated PathHandshakeV2 progression.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/crypto_handshake.rs",
+            "name": "relay_noise_xx_preserves_the_same_session_root"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/path_handshake.rs",
@@ -226,7 +366,22 @@
       "id": "relay.ready_business_admission",
       "category": "relay-path-handshake",
       "acceptance": "Business traffic is admitted only after the authenticated path reaches Ready.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/crypto_handshake.rs",
+            "name": "relay_noise_xx_preserves_the_same_session_root"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/tests.rs",
+            "name": "relay_data_clients_forward_envelopes_over_reservation"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/path_handshake.rs",
@@ -248,7 +403,22 @@
       "id": "relay.opaque_payload",
       "category": "relay-path-handshake",
       "acceptance": "Relay forwards encrypted payload bytes without parsing their inner envelope.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/tests.rs",
+            "name": "relay_data_clients_forward_envelopes_over_reservation"
+          },
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestControlV2ReservationAndRelayData"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "protocol/proto/relay/v2/relay_v2.proto",
@@ -269,7 +439,22 @@
       "id": "relay.route_separation",
       "category": "relay-path-handshake",
       "acceptance": "Control route and data route reject the other route's envelope type.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestControlV2RejectsRelayDataFrame"
+          },
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataConnectValidation"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "relay/internal/relay/control_v2_test.go",
@@ -290,7 +475,17 @@
       "id": "revocation.expired_control_admission",
       "category": "revocation",
       "acceptance": "An expired credential cannot create a new control connection.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/wave2_contract_test.go",
+            "name": "TestConnectExpiredCredentialReturnsCode12"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "relay/internal/relay/wave2_contract_test.go",
@@ -304,7 +499,17 @@
       "id": "revocation.expired_data_admission",
       "category": "revocation",
       "acceptance": "An expired credential cannot create a new data connection.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/network_v2_revocation_acceptance_test.go",
+            "name": "TestNetworkV2ExpiredCredentialCannotOpenDataSocket"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "relay/internal/relay/network_v2_revocation_acceptance_test.go",
@@ -319,7 +524,17 @@
       "id": "revocation.natural_expiry_keeps_ready",
       "category": "revocation",
       "acceptance": "Natural credential expiry does not tear down an already Ready data path.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataIdleCredentialExpiryKeepsReadySessionAlive"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "relay/internal/relay/control_v2_test.go",
@@ -334,7 +549,17 @@
       "id": "revocation.pending_initiator_responder_active",
       "category": "revocation",
       "acceptance": "Explicit revoke closes pending initiator, pending responder, active socket, and active counterpart.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataCloseDeviceClosesPendingActiveAndCounterpart"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "relay/internal/relay/control_v2_test.go",
@@ -348,7 +573,22 @@
       "id": "revocation.old_token_reconnect",
       "category": "revocation",
       "acceptance": "A revoked or mismatched old role token cannot reconnect to a new data reservation.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataAdmissionBindsDeviceRoleAndToken"
+          },
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataConnectValidation"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "relay/internal/relay/control_v2_test.go",
@@ -363,7 +603,22 @@
       "id": "revocation.persistent_failure_fails_closed",
       "category": "revocation",
       "acceptance": "A persistent revoke-store failure does not report false success and leaves admission revoked when the store says so.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/fix_package_a_test.go",
+            "name": "TestAdminRevokeReturnsErrorWhenRevokeFails"
+          },
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/fix_package_b_test.go",
+            "name": "TestReconcileRevocationsDisconnectsRevokedDevice"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "relay/internal/relay/fix_package_a_test.go",
@@ -383,7 +638,17 @@
       "id": "revocation.nonparticipant_untouched",
       "category": "revocation",
       "acceptance": "Revoking one device does not clear a foreign device's presence or data path.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/fix_package_a_test.go",
+            "name": "TestDisconnectDeviceDoesNotClearForeignPresence"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "relay/internal/relay/fix_package_a_test.go",
@@ -397,7 +662,27 @@
       "id": "flow.stage_a_pure_direct",
       "category": "staged-connect",
       "acceptance": "Stage A is a pure direct race using fresh cache/configured candidates before Resolve.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "direct_candidates_are_ranked_before_the_staggered_race"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "direct_window_constant_is_four_seconds"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "stage_a_uses_fresh_cache_and_configured_direct_candidates_only"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
@@ -414,7 +699,22 @@
       "id": "flow.stage_b_resolve_offer",
       "category": "staged-connect",
       "acceptance": "Stage B performs authoritative Resolve and coordination after Stage A fails.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "resolve_is_the_authoritative_gate_before_connect"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "connectivity_answer_merges_candidates_into_the_live_attempt"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
@@ -429,7 +729,22 @@
       "id": "flow.stage_c_relay_fallback",
       "category": "staged-connect",
       "acceptance": "Stage C enters bounded Relay fallback only after the direct window fails.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "relay_fallback_gate_requires_ready_relay_policy_and_budget"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-nat/src/path_manager.rs",
+            "name": "nat_fixture_candidate_priority_prefers_direct_paths_and_keeps_relay_fallback"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
@@ -445,7 +760,22 @@
       "id": "flow.multi_peer_gate",
       "category": "peer-lifecycle",
       "acceptance": "Concurrent requests for one peer share one generation while different peers remain isolated.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs",
+            "name": "peer_ids_are_validated_and_isolated"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs",
+            "name": "concurrent_connects_share_one_generation_and_completion"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs",
@@ -460,7 +790,27 @@
       "id": "flow.role_token_pairready",
       "category": "relay-path-handshake",
       "acceptance": "Role/token binding, one-writer pairing, and PairReady are enforced before payload flow.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataAdmissionBindsDeviceRoleAndToken"
+          },
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataSameRoleRetryRejectsDuplicate"
+          },
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataPairReadyRequiresBothRoles"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "relay/internal/relay/control_v2_test.go",
@@ -476,13 +826,34 @@
       "id": "flow.path_lease",
       "category": "path-lifecycle",
       "acceptance": "Path handles are non-owning and leases release path reservations without closing the owner.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/path.rs",
+            "name": "physical_path_owns_carrier_and_handle_is_non_owning"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/path.rs",
+            "name": "normal_retire_drains_leases_and_closes_unleased_paths"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/path.rs",
+            "name": "hard_close_and_security_failure_revoke_immediately"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/connect/path.rs",
           "contains": [
-            "handles_are_non_owning_and_leases_are_released",
-            "revoked_handle_cannot_be_reacquired"
+            "physical_path_owns_carrier_and_handle_is_non_owning",
+            "normal_retire_drains_leases_and_closes_unleased_paths",
+            "hard_close_and_security_failure_revoke_immediately"
           ]
         }
       ]
@@ -491,7 +862,27 @@
       "id": "flow.idle_ssh_240s",
       "category": "long-lived-session",
       "acceptance": "An idle SSH session remains usable beyond 240 seconds while control heartbeats continue.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataSlidingExpiryKeepsActiveSessionAlive"
+          },
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataIdleCredentialExpiryKeepsReadySessionAlive"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/stream.rs",
+            "name": "event_consumer_flood_stays_bounded_and_drains_in_order"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "relay/internal/relay/control_v2_test.go",
@@ -513,7 +904,27 @@
       "id": "flow.delivery_retry_resume",
       "category": "delivery",
       "acceptance": "Reliable delivery retries and resumable transfer state remain bounded and ordered.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/delivery.rs",
+            "name": "retry_policy_is_bounded_and_expiry_removes_pending"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/delivery.rs",
+            "name": "recovery_preserves_sequence_and_rejects_stale_ack"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/tests.rs",
+            "name": "file_transfer_resumes_across_a_fresh_connection"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/delivery.rs",
@@ -533,7 +944,27 @@
       "id": "flow.bounded_event_mux",
       "category": "event-delivery",
       "acceptance": "The final EventMux has bounded memory, fairness, overflow policy, and peer isolation.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-ffi/src/lib.rs",
+            "name": "event_mux_applies_bounded_control_data_fairness"
+          },
+          {
+            "owner": "dart",
+            "path": "packages/infrastructure/network_transport/test/event_mux_test.dart",
+            "name": "critical control is preferred but data is served after eight controls"
+          },
+          {
+            "owner": "dart",
+            "path": "packages/infrastructure/network_transport/test/event_mux_test.dart",
+            "name": "data overflow drops oldest data and control overflow rejects"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "native/network_core/crates/network-core/src/runtime.rs",
@@ -564,7 +995,32 @@
       "id": "flow.mobile_versioning",
       "category": "client-compatibility",
       "acceptance": "Dart/native version gates and mobile acceptance tests agree with the v2 wire contract.",
-      "status": "characterized",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "dart",
+            "path": "packages/infrastructure/network_sdk/test/network_v2_contract_test.dart",
+            "name": "v2 requests are Peer-scoped and copy bounded payloads"
+          },
+          {
+            "owner": "dart",
+            "path": "packages/infrastructure/network_sdk/test/network_v2_contract_test.dart",
+            "name": "CommandResultTracker completes a command exactly once"
+          },
+          {
+            "owner": "dart",
+            "path": "packages/infrastructure/ssh_mobile_network_native/test/ssh_mobile_network_native_test.dart",
+            "name": "unknown future realtime event tag is ignored"
+          },
+          {
+            "owner": "dart",
+            "path": "packages/infrastructure/ssh_mobile_network_native/test/ssh_mobile_network_native_test.dart",
+            "name": "SshMobileNetworkNative ABI version check"
+          }
+        ]
+      },
       "evidence": [
         {
           "path": "packages/infrastructure/network_sdk/lib/src/network_v2.dart",

@@ -24,6 +24,7 @@ pub(crate) struct AuthenticatedPeer<T> {
     pub(crate) admission: T,
 }
 
+#[allow(dead_code)] // compatibility helper retained for focused handshake tests
 pub(crate) async fn authenticate_initiator<F, Fut, T>(
     connection: &mut GenericConnection,
     local_identity: Arc<DeviceIdentity>,
@@ -73,6 +74,7 @@ where
     .await
 }
 
+#[allow(dead_code)] // compatibility helper retained for focused handshake tests
 pub(crate) async fn authenticate_responder<F, Fut, T>(
     connection: &mut GenericConnection,
     local_identity: Arc<DeviceIdentity>,
@@ -93,6 +95,7 @@ where
     .await
 }
 
+#[allow(dead_code)] // compatibility helper retained for focused handshake tests
 pub(crate) async fn authenticate_responder_with_policy<F, Fut, T>(
     connection: &mut GenericConnection,
     local_identity: Arc<DeviceIdentity>,
@@ -109,6 +112,36 @@ where
         local_identity,
         trusted_peer_keys,
         e2ee_policy,
+        resolve_local_session_binding,
+    )
+    .await?;
+    Ok(AuthenticatedPeer {
+        peer_id,
+        session_binding: crypto.remote_session_binding.clone(),
+        crypto,
+        admission,
+    })
+}
+
+/// Authenticate an inbound generic route using the policy advertised inside
+/// its authenticated PathHandshake metadata. The peer identity is not
+/// available until the Noise proof, so the runtime verifies the configured
+/// peer policy immediately after this function returns and before publishing
+/// the physical path.
+pub(crate) async fn authenticate_responder_auto_policy<F, Fut, T>(
+    connection: &mut GenericConnection,
+    local_identity: Arc<DeviceIdentity>,
+    trusted_peer_keys: &RwLock<HashMap<String, [u8; 32]>>,
+    resolve_local_session_binding: F,
+) -> Result<AuthenticatedPeer<T>, CryptoHandshakeError>
+where
+    F: FnOnce(&str, &str) -> Fut,
+    Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
+{
+    let (peer_id, crypto, admission) = crate::crypto_handshake::respond_generic_auto_policy(
+        connection,
+        local_identity,
+        trusted_peer_keys,
         resolve_local_session_binding,
     )
     .await?;

@@ -41,6 +41,12 @@ const ROOT_EXCHANGE_VERSION: u8 = 3;
 const ROOT_EXCHANGE_ROOT_SEED: u8 = 1;
 const ROOT_EXCHANGE_ROOT_CONFIRM: u8 = 2;
 const ROOT_EXCHANGE_ACCEPT: u8 = 3;
+// Direct identity-only admission uses Noise transport ciphertext for the
+// responder/initiator binding exchange. These are not Relay frames and never
+// carry an application RootSeed.
+const IDENTITY_ONLY_BINDING: u8 = 4;
+const IDENTITY_ONLY_CONFIRM: u8 = 5;
+const IDENTITY_ONLY_ACCEPT: u8 = 6;
 const APPLICATION_ROOT_DOMAIN: &[u8] = b"ssh-mobile/session/application/root/v3";
 const ROOT_CONFIRM_DOMAIN: &[u8] = b"ssh-mobile/session/application/root-confirm/v3";
 const MAX_DEVICE_ID_BYTES: usize = 128;
@@ -76,12 +82,37 @@ pub(crate) enum CryptoHandshakeError {
 /// `initiator` controls the later directional traffic-key derivation.
 #[derive(Clone)]
 pub(crate) struct SessionCryptoMaterial {
+    /// This field remains the established application-key handoff for the
+    /// existing runtime adapter. It is all-zero for identity-only admission;
+    /// callers must check `path_security` before installing application crypto.
     pub(crate) root_key: [u8; 32],
     pub(crate) local_session_binding: String,
     pub(crate) remote_session_binding: String,
     pub(crate) initiator: bool,
-    #[allow(dead_code)]
     pub(crate) e2ee_policy: path_handshake::E2eePolicy,
+    #[allow(dead_code)] // read through has_application_e2ee at the runtime boundary
+    pub(crate) path_security: path_handshake::PathSecurity,
+}
+
+impl SessionCryptoMaterial {
+    pub(crate) fn has_application_e2ee(&self) -> bool {
+        self.path_security.has_application_e2ee()
+    }
+
+    fn identity_only(
+        local_session_binding: String,
+        remote_session_binding: String,
+        initiator: bool,
+    ) -> Self {
+        Self {
+            root_key: [0u8; 32],
+            local_session_binding,
+            remote_session_binding,
+            initiator,
+            e2ee_policy: path_handshake::E2eePolicy::Disabled,
+            path_security: path_handshake::PathSecurity::IdentityOnly,
+        }
+    }
 }
 
 struct NoiseHandshake {
@@ -97,7 +128,7 @@ struct EstablishedNoise {
     handshake_hash: [u8; 32],
     session_binding: String,
     initiator: bool,
-    e2ee_policy: path_handshake::E2eePolicy,
+    path_security: path_handshake::PathSecurity,
 }
 
 struct InitiatorRootExchange {
@@ -112,6 +143,17 @@ struct ResponderRootExchange {
     noise: EstablishedNoise,
     root_key: Zeroizing<[u8; 32]>,
     expected_confirm: Zeroizing<[u8; ROOT_CONFIRM_BYTES]>,
+    local_session_binding: String,
+}
+
+struct InitiatorIdentityOnlyExchange {
+    noise: EstablishedNoise,
+    remote_session_binding: String,
+    local_session_binding: String,
+}
+
+struct ResponderIdentityOnlyExchange {
+    noise: EstablishedNoise,
     local_session_binding: String,
 }
 
@@ -174,6 +216,7 @@ impl NoiseHandshake {
         Ok(payload)
     }
 
+    #[cfg(test)]
     fn into_established(
         self,
         session_binding: String,
@@ -181,10 +224,24 @@ impl NoiseHandshake {
         self.into_established_with_policy(session_binding, path_handshake::E2eePolicy::Required)
     }
 
+    #[cfg(test)]
     fn into_established_with_policy(
         self,
         session_binding: String,
         e2ee_policy: path_handshake::E2eePolicy,
+    ) -> Result<EstablishedNoise, CryptoHandshakeError> {
+        let path_security = path_handshake::negotiate_security(
+            path_handshake::PathKind::Direct,
+            e2ee_policy,
+            e2ee_policy,
+        )?;
+        self.into_established_with_security(session_binding, path_security)
+    }
+
+    fn into_established_with_security(
+        self,
+        session_binding: String,
+        path_security: path_handshake::PathSecurity,
     ) -> Result<EstablishedNoise, CryptoHandshakeError> {
         if !self.state.is_handshake_finished() {
             return Err(CryptoHandshakeError::Failed);
@@ -204,7 +261,7 @@ impl NoiseHandshake {
             handshake_hash,
             session_binding,
             initiator: self.initiator,
-            e2ee_policy,
+            path_security,
         })
     }
 }
@@ -214,7 +271,7 @@ impl EstablishedNoise {
         mut self,
         local_session_binding: &str,
     ) -> Result<(ResponderRootExchange, Vec<u8>), CryptoHandshakeError> {
-        if self.initiator {
+        if self.initiator || !self.path_security.has_application_e2ee() {
             return Err(CryptoHandshakeError::Failed);
         }
         validate_binding(local_session_binding)?;
@@ -243,11 +300,30 @@ impl EstablishedNoise {
         ))
     }
 
+    fn begin_identity_only(
+        mut self,
+        local_session_binding: &str,
+    ) -> Result<(ResponderIdentityOnlyExchange, Vec<u8>), CryptoHandshakeError> {
+        if self.initiator || self.path_security != path_handshake::PathSecurity::IdentityOnly {
+            return Err(CryptoHandshakeError::Failed);
+        }
+        validate_binding(local_session_binding)?;
+        let payload = identity_only_binding_payload(local_session_binding)?;
+        let encrypted_binding = self.encrypt_exchange(IDENTITY_ONLY_BINDING, &payload)?;
+        Ok((
+            ResponderIdentityOnlyExchange {
+                noise: self,
+                local_session_binding: local_session_binding.to_string(),
+            },
+            encrypted_binding,
+        ))
+    }
+
     fn accept_root_seed(
         mut self,
         encrypted_seed: &[u8],
     ) -> Result<InitiatorRootExchange, CryptoHandshakeError> {
-        if !self.initiator {
+        if !self.initiator || !self.path_security.has_application_e2ee() {
             return Err(CryptoHandshakeError::Failed);
         }
         let (root_seed, remote_session_binding) =
@@ -266,6 +342,21 @@ impl EstablishedNoise {
             noise: self,
             root_key,
             expected_confirm: confirm,
+            remote_session_binding,
+            local_session_binding: String::new(),
+        })
+    }
+
+    fn accept_identity_only_binding(
+        mut self,
+        encrypted_binding: &[u8],
+    ) -> Result<InitiatorIdentityOnlyExchange, CryptoHandshakeError> {
+        if !self.initiator || self.path_security != path_handshake::PathSecurity::IdentityOnly {
+            return Err(CryptoHandshakeError::Failed);
+        }
+        let remote_session_binding = self.decrypt_identity_only_binding(encrypted_binding)?;
+        Ok(InitiatorIdentityOnlyExchange {
+            noise: self,
             remote_session_binding,
             local_session_binding: String::new(),
         })
@@ -378,6 +469,46 @@ impl EstablishedNoise {
         Ok((confirm, remote_session_binding))
     }
 
+    fn decrypt_identity_only_binding(
+        &mut self,
+        ciphertext: &[u8],
+    ) -> Result<String, CryptoHandshakeError> {
+        if ciphertext.is_empty() || ciphertext.len() > MAX_HANDSHAKE_FRAME_BYTES {
+            return Err(CryptoHandshakeError::Invalid);
+        }
+        let mut plaintext = Zeroizing::new([0u8; MAX_HANDSHAKE_PAYLOAD_BYTES]);
+        let length = self
+            .transport
+            .read_message(ciphertext, &mut plaintext[..])
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+        let payload = parse_root_exchange_payload(
+            &plaintext[..length],
+            IDENTITY_ONLY_BINDING,
+            &self.session_binding,
+        )?;
+        parse_identity_only_binding_payload(payload)
+    }
+
+    fn decrypt_identity_only_confirm(
+        &mut self,
+        ciphertext: &[u8],
+    ) -> Result<String, CryptoHandshakeError> {
+        if ciphertext.is_empty() || ciphertext.len() > MAX_HANDSHAKE_FRAME_BYTES {
+            return Err(CryptoHandshakeError::Invalid);
+        }
+        let mut plaintext = Zeroizing::new([0u8; MAX_HANDSHAKE_PAYLOAD_BYTES]);
+        let length = self
+            .transport
+            .read_message(ciphertext, &mut plaintext[..])
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+        let payload = parse_root_exchange_payload(
+            &plaintext[..length],
+            IDENTITY_ONLY_CONFIRM,
+            &self.session_binding,
+        )?;
+        parse_identity_only_binding_payload(payload)
+    }
+
     fn into_material(
         self,
         root_key: [u8; 32],
@@ -389,8 +520,56 @@ impl EstablishedNoise {
             local_session_binding,
             remote_session_binding,
             initiator: self.initiator,
-            e2ee_policy: self.e2ee_policy,
+            e2ee_policy: self.path_security.policy(),
+            path_security: self.path_security,
         }
+    }
+}
+
+impl InitiatorIdentityOnlyExchange {
+    fn confirm(
+        mut self,
+        local_session_binding: String,
+    ) -> Result<(Self, Vec<u8>), CryptoHandshakeError> {
+        validate_binding(&local_session_binding)?;
+        let payload = identity_only_binding_payload(&local_session_binding)?;
+        let encrypted_confirm = self
+            .noise
+            .encrypt_exchange(IDENTITY_ONLY_CONFIRM, &payload)?;
+        self.local_session_binding = local_session_binding;
+        Ok((self, encrypted_confirm))
+    }
+
+    fn accept(
+        self,
+        encrypted_accept: &[u8],
+    ) -> Result<SessionCryptoMaterial, CryptoHandshakeError> {
+        let mut noise = self.noise;
+        noise.decrypt_fixed_exchange::<0>(IDENTITY_ONLY_ACCEPT, encrypted_accept)?;
+        Ok(SessionCryptoMaterial::identity_only(
+            self.local_session_binding,
+            self.remote_session_binding,
+            true,
+        ))
+    }
+}
+
+impl ResponderIdentityOnlyExchange {
+    fn accept_confirm(
+        self,
+        encrypted_confirm: &[u8],
+    ) -> Result<(Vec<u8>, SessionCryptoMaterial), CryptoHandshakeError> {
+        let mut noise = self.noise;
+        let remote_session_binding = noise.decrypt_identity_only_confirm(encrypted_confirm)?;
+        let encrypted_accept = noise.encrypt_exchange(IDENTITY_ONLY_ACCEPT, &[])?;
+        Ok((
+            encrypted_accept,
+            SessionCryptoMaterial::identity_only(
+                self.local_session_binding,
+                remote_session_binding,
+                false,
+            ),
+        ))
     }
 }
 
@@ -468,6 +647,7 @@ where
         },
         e2ee_policy,
     )?;
+    let path_security = path_metadata.security_for(e2ee_policy)?;
     let mut handshake = NoiseHandshake::new(identity, true)?;
     let hello = hello_payload_with_path(session_binding, &path_metadata)?;
     connection
@@ -501,32 +681,98 @@ where
         .await
         .map_err(|_| CryptoHandshakeError::Failed)?;
     let established =
-        handshake.into_established_with_policy(session_binding.to_string(), e2ee_policy)?;
-    let encrypted_seed = connection
-        .recv()
-        .await
-        .map_err(|_| CryptoHandshakeError::Failed)?;
-    let initiator = established.accept_root_seed(&encrypted_seed)?;
-    let remote_session_binding = initiator.remote_session_binding.clone();
-    let (local_session_binding, admission) =
-        resolve_remote_session(expected_peer_id, &remote_session_binding).await?;
-    let (initiator, encrypted_confirm) = initiator.confirm(local_session_binding)?;
-    connection
-        .send(&encrypted_confirm)
-        .await
-        .map_err(|_| CryptoHandshakeError::Failed)?;
-    let encrypted_accept = connection
-        .recv()
-        .await
-        .map_err(|_| CryptoHandshakeError::Failed)?;
-    Ok((initiator.accept(&encrypted_accept)?, admission))
+        handshake.into_established_with_security(session_binding.to_string(), path_security)?;
+    match path_security {
+        path_handshake::PathSecurity::E2ee => {
+            let encrypted_seed = connection
+                .recv()
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            let initiator = established.accept_root_seed(&encrypted_seed)?;
+            let remote_session_binding = initiator.remote_session_binding.clone();
+            let (local_session_binding, admission) =
+                resolve_remote_session(expected_peer_id, &remote_session_binding).await?;
+            let (initiator, encrypted_confirm) = initiator.confirm(local_session_binding)?;
+            connection
+                .send(&encrypted_confirm)
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            let encrypted_accept = connection
+                .recv()
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            Ok((initiator.accept(&encrypted_accept)?, admission))
+        }
+        path_handshake::PathSecurity::IdentityOnly => {
+            let encrypted_binding = connection
+                .recv()
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            let initiator = established.accept_identity_only_binding(&encrypted_binding)?;
+            let remote_session_binding = initiator.remote_session_binding.clone();
+            let (local_session_binding, admission) =
+                resolve_remote_session(expected_peer_id, &remote_session_binding).await?;
+            let (initiator, encrypted_confirm) = initiator.confirm(local_session_binding)?;
+            connection
+                .send(&encrypted_confirm)
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            let encrypted_accept = connection
+                .recv()
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            Ok((initiator.accept(&encrypted_accept)?, admission))
+        }
+    }
 }
 
+#[allow(dead_code)] // compatibility helper retained for focused handshake tests
 pub(crate) async fn respond_generic_with_policy<F, Fut, T>(
     connection: &mut GenericConnection,
     identity: Arc<DeviceIdentity>,
     trusted_peer_keys: &RwLock<HashMap<String, [u8; 32]>>,
     e2ee_policy: path_handshake::E2eePolicy,
+    resolve_local_session_binding: F,
+) -> Result<(String, SessionCryptoMaterial, T), CryptoHandshakeError>
+where
+    F: FnOnce(&str, &str) -> Fut,
+    Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
+{
+    respond_generic_internal(
+        connection,
+        identity,
+        trusted_peer_keys,
+        Some(e2ee_policy),
+        resolve_local_session_binding,
+    )
+    .await
+}
+
+pub(crate) async fn respond_generic_auto_policy<F, Fut, T>(
+    connection: &mut GenericConnection,
+    identity: Arc<DeviceIdentity>,
+    trusted_peer_keys: &RwLock<HashMap<String, [u8; 32]>>,
+    resolve_local_session_binding: F,
+) -> Result<(String, SessionCryptoMaterial, T), CryptoHandshakeError>
+where
+    F: FnOnce(&str, &str) -> Fut,
+    Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
+{
+    respond_generic_internal(
+        connection,
+        identity,
+        trusted_peer_keys,
+        None,
+        resolve_local_session_binding,
+    )
+    .await
+}
+
+async fn respond_generic_internal<F, Fut, T>(
+    connection: &mut GenericConnection,
+    identity: Arc<DeviceIdentity>,
+    trusted_peer_keys: &RwLock<HashMap<String, [u8; 32]>>,
+    e2ee_policy: Option<path_handshake::E2eePolicy>,
     resolve_local_session_binding: F,
 ) -> Result<(String, SessionCryptoMaterial, T), CryptoHandshakeError>
 where
@@ -541,14 +787,14 @@ where
             .map_err(|_| CryptoHandshakeError::Failed)?,
     )?;
     let (session_binding, path_metadata) = parse_hello_with_path(&hello)?;
-    validate_direct_path_metadata(
+    let path_security = validate_direct_path_metadata(
         &path_metadata,
         match connection.profile().route().transport() {
             RouteTransport::Tcp => b"direct/tcp/v2".as_slice(),
             RouteTransport::WebSocket => b"direct/websocket/v2".as_slice(),
             RouteTransport::Quic | RouteTransport::Udp => return Err(CryptoHandshakeError::Failed),
         },
-        e2ee_policy,
+        e2ee_policy.unwrap_or(path_metadata.e2ee_policy),
     )?;
     // Generic routes do not expose the authenticated peer identity until the
     // initiator proof arrives. Keep the responder proof bound to the same
@@ -601,22 +847,45 @@ where
     let (local_session_binding, admission) =
         resolve_local_session_binding(&peer_id, &session_binding).await?;
     let established =
-        handshake.into_established_with_policy(session_binding.clone(), e2ee_policy)?;
-    let (responder, encrypted_seed) = established.begin_responder(&local_session_binding)?;
-    connection
-        .send(&encrypted_seed)
-        .await
-        .map_err(|_| CryptoHandshakeError::Failed)?;
-    let encrypted_confirm = connection
-        .recv()
-        .await
-        .map_err(|_| CryptoHandshakeError::Failed)?;
-    let (encrypted_accept, material) = responder.accept_confirm(&encrypted_confirm)?;
-    connection
-        .send(&encrypted_accept)
-        .await
-        .map_err(|_| CryptoHandshakeError::Failed)?;
-    Ok((peer_id, material, admission))
+        handshake.into_established_with_security(session_binding.clone(), path_security)?;
+    match path_security {
+        path_handshake::PathSecurity::E2ee => {
+            let (responder, encrypted_seed) =
+                established.begin_responder(&local_session_binding)?;
+            connection
+                .send(&encrypted_seed)
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            let encrypted_confirm = connection
+                .recv()
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            let (encrypted_accept, material) = responder.accept_confirm(&encrypted_confirm)?;
+            connection
+                .send(&encrypted_accept)
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            Ok((peer_id, material, admission))
+        }
+        path_handshake::PathSecurity::IdentityOnly => {
+            let (responder, encrypted_binding) =
+                established.begin_identity_only(&local_session_binding)?;
+            connection
+                .send(&encrypted_binding)
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            let encrypted_confirm = connection
+                .recv()
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            let (encrypted_accept, material) = responder.accept_confirm(&encrypted_confirm)?;
+            connection
+                .send(&encrypted_accept)
+                .await
+                .map_err(|_| CryptoHandshakeError::Failed)?;
+            Ok((peer_id, material, admission))
+        }
+    }
 }
 
 /// Relay carries the Noise XX messages plus the post-handshake root exchange
@@ -627,6 +896,7 @@ pub(crate) struct RelayInitiatorHandshake {
     handshake: NoiseHandshake,
     session_binding: String,
     path_metadata: path_handshake::PathHandshakeMetadata,
+    path_security: path_handshake::PathSecurity,
 }
 
 pub(crate) struct RelayInitiatorConfirmation {
@@ -634,12 +904,26 @@ pub(crate) struct RelayInitiatorConfirmation {
 }
 
 impl RelayInitiatorHandshake {
+    #[allow(dead_code)] // compatibility helper retained for focused handshake tests
     pub(crate) fn start(
         identity: Arc<DeviceIdentity>,
         session_binding: &str,
     ) -> Result<(Self, Vec<u8>), CryptoHandshakeError> {
+        Self::start_with_policy(
+            identity,
+            session_binding,
+            path_handshake::E2eePolicy::Required,
+        )
+    }
+
+    pub(crate) fn start_with_policy(
+        identity: Arc<DeviceIdentity>,
+        session_binding: &str,
+        e2ee_policy: path_handshake::E2eePolicy,
+    ) -> Result<(Self, Vec<u8>), CryptoHandshakeError> {
         validate_binding(session_binding)?;
-        let path_metadata = relay_path_metadata(session_binding)?;
+        let path_metadata = relay_path_metadata(session_binding, e2ee_policy)?;
+        let path_security = validate_relay_path_metadata(&path_metadata, e2ee_policy)?;
         let mut handshake = NoiseHandshake::new(identity, true)?;
         let message =
             handshake.write(&hello_payload_with_path(session_binding, &path_metadata)?)?;
@@ -648,6 +932,7 @@ impl RelayInitiatorHandshake {
                 handshake,
                 session_binding: session_binding.to_string(),
                 path_metadata,
+                path_security,
             },
             message,
         ))
@@ -683,7 +968,9 @@ impl RelayInitiatorHandshake {
         self,
         encrypted_seed: &[u8],
     ) -> Result<RelayInitiatorConfirmation, CryptoHandshakeError> {
-        let established = self.handshake.into_established(self.session_binding)?;
+        let established = self
+            .handshake
+            .into_established_with_security(self.session_binding, self.path_security)?;
         let exchange = established.accept_root_seed(encrypted_seed)?;
         Ok(RelayInitiatorConfirmation { exchange })
     }
@@ -715,6 +1002,7 @@ pub(crate) struct RelayResponderHandshake {
     handshake: NoiseHandshake,
     session_binding: String,
     path_metadata: path_handshake::PathHandshakeMetadata,
+    path_security: path_handshake::PathSecurity,
 }
 
 pub(crate) struct RelayResponderConfirmation<T> {
@@ -728,9 +1016,17 @@ impl RelayResponderHandshake {
         identity: Arc<DeviceIdentity>,
         hello: &[u8],
     ) -> Result<(Self, Vec<u8>), CryptoHandshakeError> {
+        Self::accept_hello_with_policy(identity, hello, path_handshake::E2eePolicy::Required)
+    }
+
+    pub(crate) fn accept_hello_with_policy(
+        identity: Arc<DeviceIdentity>,
+        hello: &[u8],
+        e2ee_policy: path_handshake::E2eePolicy,
+    ) -> Result<(Self, Vec<u8>), CryptoHandshakeError> {
         let mut handshake = NoiseHandshake::new(identity, false)?;
         let (session_binding, path_metadata) = parse_hello_with_path(&handshake.read(hello)?)?;
-        validate_relay_path_metadata(&path_metadata)?;
+        let path_security = validate_relay_path_metadata(&path_metadata, e2ee_policy)?;
         let responder_proof = proof_payload_with_signature_with_path(
             &handshake,
             2,
@@ -744,6 +1040,7 @@ impl RelayResponderHandshake {
                 handshake,
                 session_binding,
                 path_metadata,
+                path_security,
             },
             response,
         ))
@@ -791,7 +1088,7 @@ impl RelayResponderHandshake {
             resolve_local_session_binding(&peer_id, &self.session_binding).await?;
         let established = self
             .handshake
-            .into_established(self.session_binding.clone())?;
+            .into_established_with_security(self.session_binding.clone(), self.path_security)?;
         let (exchange, encrypted_seed) = established.begin_responder(&local_session_binding)?;
         Ok((
             peer_id.clone(),
@@ -864,6 +1161,7 @@ pub(crate) fn decode_relay_frame(frame: &[u8]) -> Result<(u8, &[u8]), CryptoHand
 
 /// The QUIC route uses one additional bidirectional stream for the same
 /// application handshake.  The stream is discarded after the root is derived.
+#[allow(dead_code)] // compatibility helper retained for legacy internal callers
 pub(crate) async fn initiate_quic<F, Fut, T>(
     connection: &quinn::Connection,
     identity: Arc<DeviceIdentity>,
@@ -907,6 +1205,7 @@ where
         .map_err(|_| CryptoHandshakeError::Failed)?;
     let path_metadata =
         direct_path_metadata(session_binding, b"direct/quic/v2".to_vec(), e2ee_policy)?;
+    let path_security = path_metadata.security_for(e2ee_policy)?;
     let mut handshake = NoiseHandshake::new(identity, true)?;
     write_quic_frame(
         &mut send,
@@ -932,20 +1231,36 @@ where
     )?;
     write_quic_frame(&mut send, &handshake.write(&initiator_proof)?).await?;
     let established =
-        handshake.into_established_with_policy(session_binding.to_string(), e2ee_policy)?;
-    let encrypted_seed = read_quic_frame(&mut recv).await?;
-    let initiator = established.accept_root_seed(&encrypted_seed)?;
-    let remote_session_binding = initiator.remote_session_binding.clone();
-    let (local_session_binding, admission) =
-        resolve_remote_session(expected_peer_id, &remote_session_binding).await?;
-    let (initiator, encrypted_confirm) = initiator.confirm(local_session_binding)?;
-    write_quic_frame(&mut send, &encrypted_confirm).await?;
-    let encrypted_accept = read_quic_frame(&mut recv).await?;
-    let material = initiator.accept(&encrypted_accept)?;
+        handshake.into_established_with_security(session_binding.to_string(), path_security)?;
+    let (material, admission) = match path_security {
+        path_handshake::PathSecurity::E2ee => {
+            let encrypted_seed = read_quic_frame(&mut recv).await?;
+            let initiator = established.accept_root_seed(&encrypted_seed)?;
+            let remote_session_binding = initiator.remote_session_binding.clone();
+            let (local_session_binding, admission) =
+                resolve_remote_session(expected_peer_id, &remote_session_binding).await?;
+            let (initiator, encrypted_confirm) = initiator.confirm(local_session_binding)?;
+            write_quic_frame(&mut send, &encrypted_confirm).await?;
+            let encrypted_accept = read_quic_frame(&mut recv).await?;
+            (initiator.accept(&encrypted_accept)?, admission)
+        }
+        path_handshake::PathSecurity::IdentityOnly => {
+            let encrypted_binding = read_quic_frame(&mut recv).await?;
+            let initiator = established.accept_identity_only_binding(&encrypted_binding)?;
+            let remote_session_binding = initiator.remote_session_binding.clone();
+            let (local_session_binding, admission) =
+                resolve_remote_session(expected_peer_id, &remote_session_binding).await?;
+            let (initiator, encrypted_confirm) = initiator.confirm(local_session_binding)?;
+            write_quic_frame(&mut send, &encrypted_confirm).await?;
+            let encrypted_accept = read_quic_frame(&mut recv).await?;
+            (initiator.accept(&encrypted_accept)?, admission)
+        }
+    };
     send.finish().map_err(|_| CryptoHandshakeError::Failed)?;
     Ok((material, admission))
 }
 
+#[allow(dead_code)] // compatibility helper retained for legacy internal callers
 pub(crate) async fn respond_quic<F, Fut, T>(
     connection: &quinn::Connection,
     identity: Arc<DeviceIdentity>,
@@ -984,10 +1299,12 @@ where
     let mut handshake = NoiseHandshake::new(identity, false)?;
     let (session_binding, path_metadata) =
         parse_hello_with_path(&handshake.read(&read_quic_frame(&mut recv).await?)?)?;
-    validate_direct_path_metadata(&path_metadata, b"direct/quic/v2", e2ee_policy)?;
+    let path_security =
+        validate_direct_path_metadata(&path_metadata, b"direct/quic/v2", e2ee_policy)?;
     // The peer identity is not available until the final Noise proof. Use the
     // initiator binding as a pre-authentication placeholder; the authenticated
-    // local binding is sent inside the encrypted RootSeed exchange below.
+    // local binding is sent after the identity proof. Required uses RootSeed;
+    // Disabled uses only the identity-only binding exchange.
     let responder_proof = proof_payload_with_signature_with_path(
         &handshake,
         2,
@@ -1027,12 +1344,27 @@ where
     let (local_session_binding, admission) =
         resolve_local_session_binding(&peer_id, &session_binding).await?;
     let established =
-        handshake.into_established_with_policy(session_binding.clone(), e2ee_policy)?;
-    let (responder, encrypted_seed) = established.begin_responder(&local_session_binding)?;
-    write_quic_frame(&mut send, &encrypted_seed).await?;
-    let encrypted_confirm = read_quic_frame(&mut recv).await?;
-    let (encrypted_accept, material) = responder.accept_confirm(&encrypted_confirm)?;
-    write_quic_frame(&mut send, &encrypted_accept).await?;
+        handshake.into_established_with_security(session_binding.clone(), path_security)?;
+    let material = match path_security {
+        path_handshake::PathSecurity::E2ee => {
+            let (responder, encrypted_seed) =
+                established.begin_responder(&local_session_binding)?;
+            write_quic_frame(&mut send, &encrypted_seed).await?;
+            let encrypted_confirm = read_quic_frame(&mut recv).await?;
+            let (encrypted_accept, material) = responder.accept_confirm(&encrypted_confirm)?;
+            write_quic_frame(&mut send, &encrypted_accept).await?;
+            material
+        }
+        path_handshake::PathSecurity::IdentityOnly => {
+            let (responder, encrypted_binding) =
+                established.begin_identity_only(&local_session_binding)?;
+            write_quic_frame(&mut send, &encrypted_binding).await?;
+            let encrypted_confirm = read_quic_frame(&mut recv).await?;
+            let (encrypted_accept, material) = responder.accept_confirm(&encrypted_confirm)?;
+            write_quic_frame(&mut send, &encrypted_accept).await?;
+            material
+        }
+    };
     send.finish().map_err(|_| CryptoHandshakeError::Failed)?;
     Ok((peer_id, material, admission))
 }
@@ -1057,10 +1389,11 @@ fn direct_path_metadata(
 
 fn relay_path_metadata(
     session_binding: &str,
+    policy: path_handshake::E2eePolicy,
 ) -> Result<path_handshake::PathHandshakeMetadata, CryptoHandshakeError> {
     validate_binding(session_binding)?;
     Ok(path_handshake::PathHandshakeMetadata::new(
-        path_handshake::E2eePolicy::Required,
+        policy,
         path_handshake::PathKind::Relay,
         session_binding.as_bytes().to_vec(),
         b"relay-data/v2".to_vec(),
@@ -1071,31 +1404,26 @@ fn validate_direct_path_metadata(
     metadata: &path_handshake::PathHandshakeMetadata,
     profile: &[u8],
     policy: path_handshake::E2eePolicy,
-) -> Result<(), CryptoHandshakeError> {
+) -> Result<path_handshake::PathSecurity, CryptoHandshakeError> {
     if metadata.path_kind != path_handshake::PathKind::Direct {
         return Err(path_handshake::PathHandshakeError::PathBindingMismatch.into());
     }
     if metadata.connection_profile != profile {
         return Err(path_handshake::PathHandshakeError::ConnectionProfileMismatch.into());
     }
-    path_handshake::negotiate_security(metadata.path_kind, policy, metadata.e2ee_policy)?;
-    Ok(())
+    Ok(metadata.security_for(policy)?)
 }
 
 fn validate_relay_path_metadata(
     metadata: &path_handshake::PathHandshakeMetadata,
-) -> Result<(), CryptoHandshakeError> {
+    policy: path_handshake::E2eePolicy,
+) -> Result<path_handshake::PathSecurity, CryptoHandshakeError> {
     if metadata.path_kind != path_handshake::PathKind::Relay
         || metadata.connection_profile != b"relay-data/v2"
     {
         return Err(path_handshake::PathHandshakeError::PathBindingMismatch.into());
     }
-    path_handshake::negotiate_security(
-        metadata.path_kind,
-        path_handshake::E2eePolicy::Required,
-        metadata.e2ee_policy,
-    )?;
-    Ok(())
+    Ok(metadata.security_for(policy)?)
 }
 
 #[cfg(test)]
@@ -1452,7 +1780,12 @@ fn root_exchange_payload(
 ) -> Result<Vec<u8>, CryptoHandshakeError> {
     if !matches!(
         message_type,
-        ROOT_EXCHANGE_ROOT_SEED | ROOT_EXCHANGE_ROOT_CONFIRM | ROOT_EXCHANGE_ACCEPT
+        ROOT_EXCHANGE_ROOT_SEED
+            | ROOT_EXCHANGE_ROOT_CONFIRM
+            | ROOT_EXCHANGE_ACCEPT
+            | IDENTITY_ONLY_BINDING
+            | IDENTITY_ONLY_CONFIRM
+            | IDENTITY_ONLY_ACCEPT
     ) || payload.len() > MAX_HANDSHAKE_PAYLOAD_BYTES
     {
         return Err(CryptoHandshakeError::Invalid);
@@ -1488,6 +1821,25 @@ fn root_confirm_payload(
     payload.extend_from_slice(confirm);
     append_string(&mut payload, local_session_binding)?;
     Ok(payload)
+}
+
+fn identity_only_binding_payload(
+    local_session_binding: &str,
+) -> Result<Vec<u8>, CryptoHandshakeError> {
+    validate_binding(local_session_binding)?;
+    let mut payload = Vec::with_capacity(2 + local_session_binding.len());
+    append_string(&mut payload, local_session_binding)?;
+    Ok(payload)
+}
+
+fn parse_identity_only_binding_payload(payload: &[u8]) -> Result<String, CryptoHandshakeError> {
+    let mut cursor = Cursor::new(payload);
+    let binding = cursor.take_string(MAX_SESSION_BINDING_BYTES)?;
+    if !cursor.done() {
+        return Err(CryptoHandshakeError::Invalid);
+    }
+    validate_binding(&binding)?;
+    Ok(binding)
 }
 
 fn parse_root_exchange_payload<'a>(
@@ -1898,6 +2250,7 @@ mod tests {
         let (initiator, encrypted_confirm) = initiator.confirm(binding.to_string()).unwrap();
         let (_, responder_material) = responder.accept_confirm(&encrypted_confirm).unwrap();
         assert_ne!(responder_material.root_key, [0u8; 32]);
+        assert!(responder_material.has_application_e2ee());
         assert!(initiator.accept(&[]).is_err());
     }
 
@@ -1973,65 +2326,47 @@ mod tests {
 
     #[test]
     fn direct_disabled_material_is_marked_identity_only() {
-        let (initiator_identity, responder_identity) = identities();
-        let binding = "0000000000000001";
-        let metadata = direct_path_metadata(
-            binding,
-            b"direct/tcp/v2".to_vec(),
-            path_handshake::E2eePolicy::Disabled,
-        )
-        .unwrap();
-        let mut initiator = NoiseHandshake::new(initiator_identity, true).unwrap();
-        let mut responder = NoiseHandshake::new(responder_identity, false).unwrap();
-        let hello = initiator
-            .write(&hello_payload_with_path(binding, &metadata).unwrap())
-            .unwrap();
-        let responder_binding = parse_hello_with_path(&responder.read(&hello).unwrap())
-            .unwrap()
-            .0;
-        let response = responder
-            .write(
-                &proof_payload_with_signature_with_path(
-                    &responder,
-                    2,
-                    &responder_binding,
-                    &responder_binding,
-                    &metadata,
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        let response_payload = initiator.read(&response).unwrap();
-        validate_proof_with_path(
-            &response_payload,
-            2,
-            "responder",
-            &identities().1.public_identity_key().to_bytes(),
-            &initiator,
-            binding,
-            &metadata,
-        )
-        .unwrap();
-        let final_message = initiator
-            .write(
-                &proof_payload_with_signature_with_path(&initiator, 1, binding, binding, &metadata)
-                    .unwrap(),
-            )
-            .unwrap();
-        let final_payload = responder.read(&final_message).unwrap();
-        parse_proof_identity_with_path(&final_payload, 1, &responder, binding, &metadata).unwrap();
+        let (initiator, responder, binding) =
+            completed_identity_handshake_with_policy(path_handshake::E2eePolicy::Disabled);
         let initiator = initiator
             .into_established_with_policy(binding.to_string(), path_handshake::E2eePolicy::Disabled)
             .unwrap();
         let responder = responder
             .into_established_with_policy(binding.to_string(), path_handshake::E2eePolicy::Disabled)
             .unwrap();
-        let (responder, encrypted_seed) = responder.begin_responder(binding).unwrap();
-        let initiator = initiator.accept_root_seed(&encrypted_seed).unwrap();
-        let (initiator, encrypted_confirm) = initiator.confirm(binding.to_string()).unwrap();
+        let (responder, encrypted_binding) =
+            responder.begin_identity_only("0000000000000002").unwrap();
+        let initiator = initiator
+            .accept_identity_only_binding(&encrypted_binding)
+            .unwrap();
+        assert_eq!(initiator.remote_session_binding, "0000000000000002");
+        let (initiator, encrypted_confirm) =
+            initiator.confirm("0000000000000003".to_string()).unwrap();
         let (encrypted_accept, responder_material) =
             responder.accept_confirm(&encrypted_confirm).unwrap();
         let initiator_material = initiator.accept(&encrypted_accept).unwrap();
+        assert_eq!(initiator_material.root_key, [0u8; 32]);
+        assert_eq!(responder_material.root_key, [0u8; 32]);
+        assert!(!initiator_material.has_application_e2ee());
+        assert!(!responder_material.has_application_e2ee());
+        assert_eq!(
+            initiator_material.path_security,
+            path_handshake::PathSecurity::IdentityOnly
+        );
+        assert_eq!(
+            responder_material.path_security,
+            path_handshake::PathSecurity::IdentityOnly
+        );
+        assert_eq!(initiator_material.local_session_binding, "0000000000000003");
+        assert_eq!(
+            initiator_material.remote_session_binding,
+            "0000000000000002"
+        );
+        assert_eq!(responder_material.local_session_binding, "0000000000000002");
+        assert_eq!(
+            responder_material.remote_session_binding,
+            "0000000000000003"
+        );
         assert_eq!(
             initiator_material.e2ee_policy,
             path_handshake::E2eePolicy::Disabled
@@ -2040,6 +2375,50 @@ mod tests {
             responder_material.e2ee_policy,
             path_handshake::E2eePolicy::Disabled
         );
+    }
+
+    #[test]
+    fn disabled_policy_never_enters_the_root_exchange() {
+        let (initiator, responder, binding) =
+            completed_identity_handshake_with_policy(path_handshake::E2eePolicy::Disabled);
+        let initiator = initiator
+            .into_established_with_policy(binding.clone(), path_handshake::E2eePolicy::Disabled)
+            .unwrap();
+        let responder = responder
+            .into_established_with_policy(binding, path_handshake::E2eePolicy::Disabled)
+            .unwrap();
+        assert!(responder.begin_responder("0000000000000002").is_err());
+        assert!(initiator
+            .accept_root_seed(&[0u8; ROOT_SEED_BYTES + NOISE_TRANSPORT_TAG_BYTES])
+            .is_err());
+    }
+
+    #[test]
+    fn relay_disabled_policy_fails_closed_before_noise_root_exchange() {
+        let (initiator_identity, responder_identity) = identities();
+        let binding = "0000000000000001";
+        assert!(matches!(
+            RelayInitiatorHandshake::start_with_policy(
+                Arc::clone(&initiator_identity),
+                binding,
+                path_handshake::E2eePolicy::Disabled,
+            ),
+            Err(CryptoHandshakeError::Path(
+                path_handshake::PathHandshakeError::RelayRequiresE2ee
+            ))
+        ));
+
+        let (_, hello) = RelayInitiatorHandshake::start(initiator_identity, binding).unwrap();
+        assert!(matches!(
+            RelayResponderHandshake::accept_hello_with_policy(
+                responder_identity,
+                &hello,
+                path_handshake::E2eePolicy::Disabled,
+            ),
+            Err(CryptoHandshakeError::Path(
+                path_handshake::PathHandshakeError::RelayRequiresE2ee
+            ))
+        ));
     }
 
     #[tokio::test]
@@ -2238,26 +2617,44 @@ mod tests {
     }
 
     fn completed_identity_handshake() -> (NoiseHandshake, NoiseHandshake, String) {
+        completed_identity_handshake_with_policy(path_handshake::E2eePolicy::Required)
+    }
+
+    fn completed_identity_handshake_with_policy(
+        e2ee_policy: path_handshake::E2eePolicy,
+    ) -> (NoiseHandshake, NoiseHandshake, String) {
         let (initiator_identity, responder_identity) = identities();
         let binding = "0000000000000001".to_string();
+        let metadata =
+            direct_path_metadata(&binding, b"direct/generic/v2".to_vec(), e2ee_policy).unwrap();
         let mut initiator = NoiseHandshake::new(initiator_identity, true).unwrap();
         let mut responder = NoiseHandshake::new(responder_identity, false).unwrap();
-        let hello = initiator.write(&hello_payload(&binding).unwrap()).unwrap();
-        let responder_binding = parse_hello(&responder.read(&hello).unwrap()).unwrap();
+        let hello = initiator
+            .write(&hello_payload_with_path(&binding, &metadata).unwrap())
+            .unwrap();
+        let responder_binding = parse_hello_with_path(&responder.read(&hello).unwrap())
+            .unwrap()
+            .0;
         let response = responder
             .write(
-                &proof_payload_with_signature(
+                &proof_payload_with_signature_with_path(
                     &responder,
                     2,
                     &responder_binding,
                     &responder_binding,
+                    &metadata,
                 )
                 .unwrap(),
             )
             .unwrap();
         let _ = initiator.read(&response).unwrap();
         let final_message = initiator
-            .write(&proof_payload_with_signature(&initiator, 1, &binding, &binding).unwrap())
+            .write(
+                &proof_payload_with_signature_with_path(
+                    &initiator, 1, &binding, &binding, &metadata,
+                )
+                .unwrap(),
+            )
             .unwrap();
         let _ = responder.read(&final_message).unwrap();
         (initiator, responder, binding)

@@ -182,6 +182,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24.x'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
       - uses: arduino/setup-protoc@v3
         with:
           version: '27.1'
@@ -197,8 +201,8 @@ jobs:
             protocol/proto/network/v2/network.proto
       - name: Run relay v2 contract check
         run: bash scripts/relay_v2_contract.sh
-      - name: Run Phase 0 network v2 characterization matrix
-        run: bash scripts/network_v2_acceptance.sh baseline
+      - name: Run strict network v2 acceptance gate
+        run: bash scripts/network_v2_acceptance.sh strict
       - name: buf lint
         working-directory: protocol
         run: buf lint

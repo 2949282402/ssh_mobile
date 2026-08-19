@@ -5,7 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use network_identity::DeviceIdentity;
 use network_protocol::{
     network_command, network_event, AcknowledgeMessageCommand, ChannelMessageEvent,
-    CommandResultEvent, CommunicationClass, ConfigureRuntimeCommand, ConnectPeerCommand,
+    CommandResultState, CommunicationClass, ConfigureRuntimeCommand, ConnectPeerCommand,
     DeliveryAckedEvent, DeliveryPolicyCode, NetworkCommand, NetworkError as ProtocolError,
     NetworkErrorCode, PeerConnectionState, RespondIncomingTransferCommand, RouteTransport,
     RouteType, SendFileCommand, SendMessageCommand, SshStreamCloseCommand, SshStreamDataCommand,
@@ -14,10 +14,10 @@ use network_protocol::{
 use network_relay::v2::proto::*;
 use network_relay::v2::{DataEvent, RelayDataClient};
 use network_transfer::build_file_manifest;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -457,11 +457,9 @@ fn relay_data_reservations_for_two_peers_coexist_and_close_independently() {
             data_c.is_usable().await,
             "peer-c data connection must be live"
         );
-        assert_eq!(
-            state.relay_data.read().await.len(),
-            2,
-            "two reservations must coexist"
-        );
+        // Data clients are staged by the connection attempt and become
+        // RuntimeState-owned only after Relay E2EE admission publishes a path.
+        // The two reservations must still coexist while staged.
 
         // 关闭 peer-b 只影响 peer-b 自身，peer-c 的连接必须保持可用。
         data_b.request_disconnect().await;
@@ -471,8 +469,8 @@ fn relay_data_reservations_for_two_peers_coexist_and_close_independently() {
             "closing peer-b must not tear down peer-c"
         );
         assert!(
-            state.relay_data.read().await.get("peer-c").is_some(),
-            "peer-c data connection must stay registered"
+            data_c.is_usable().await,
+            "peer-c data connection must stay live"
         );
     });
     drop(relay_server);
@@ -494,12 +492,46 @@ fn missing_payload_is_invalid_instead_of_a_fake_no_route() {
     let event = runtime.poll_event(1000).expect("command result");
     assert!(matches!(
         event.payload,
-        Some(network_event::Payload::CommandResult(CommandResultEvent {
-            accepted: false,
+        Some(network_event::Payload::CommandResultV2(network_protocol::CommandResult {
+            state,
             error: Some(ProtocolError { code, .. }),
             ..
-        })) if code == NetworkErrorCode::InvalidArgument as i32
+        })) if state == CommandResultState::Failed as i32
+            && code == NetworkErrorCode::InvalidArgument as i32
     ));
+    assert!(
+        runtime.poll_event(50).is_none(),
+        "a command must emit exactly one terminal result"
+    );
+}
+
+/// A repeated envelope ID is rejected by the worker, but it still receives a
+/// correlated terminal result instead of disappearing silently.
+#[test]
+fn duplicate_command_id_retains_terminal_correlation() {
+    let runtime = NetworkRuntime::new().expect("runtime");
+    runtime.start().expect("start runtime");
+    for _ in 0..2 {
+        runtime
+            .send_command(NetworkCommand {
+                command_id: "duplicate-command".into(),
+                protocol_version: NETWORK_PROTOCOL_VERSION,
+                payload: None,
+            })
+            .expect("send command");
+    }
+
+    let first = runtime.poll_event(1000).expect("first command result");
+    let second = runtime.poll_event(1000).expect("duplicate command result");
+    for event in [first, second] {
+        let Some(network_event::Payload::CommandResultV2(result)) = event.payload else {
+            panic!("expected CommandResultV2");
+        };
+        assert_eq!(result.command_id, "duplicate-command");
+        assert_eq!(result.state, CommandResultState::Failed as i32);
+        assert!(result.error.is_some());
+    }
+    assert!(runtime.poll_event(50).is_none(), "no third terminal result");
 }
 
 /// 通过 Runtime owner 验证：processed dedup TTL 到期不会清理仍等待应用
@@ -517,11 +549,13 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
 
     runtime.handle().block_on(async {
         let session_id = match state
-            .connection_sessions
-            .begin_connect("delivery-peer")
+            .begin_connect(
+                "delivery-peer",
+                crate::connect::DEFAULT_CONNECTION_CAPABILITY,
+            )
             .await
         {
-            crate::session::ConnectDecision::Started(session_id) => session_id,
+            crate::runtime::ConnectDecision::Started(session_id) => session_id,
             decision => panic!("unexpected session decision: {decision:?}"),
         };
         let first = crate::delivery::MessageId::from_bytes([90; 16]);
@@ -1458,14 +1492,9 @@ fn delivery_reliable_message_resends_same_message_id_after_reconnect() {
     });
 
     // 关闭 A→B 的当前 route：transport 丢失，A 侧 Session 被销毁；pending 保留。
-    let route = runtime_a.handle().block_on(async {
-        state_a
-            .connection_sessions
-            .current_route_view("reconnect-b")
-            .await
-            .expect("active A route")
-    });
-    runtime_a.handle().block_on(route.close_for_test());
+    runtime_a
+        .handle()
+        .block_on(state_a.close_path_for_test("reconnect-b"));
     assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
         matches!(
             &event.payload,
@@ -2116,14 +2145,9 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
     })
     .is_some());
 
-    let route = runtime_a.handle().block_on(async {
-        state_a
-            .connection_sessions
-            .current_route_view("tcp-b")
-            .await
-            .expect("active TCP route")
-    });
-    runtime_a.handle().block_on(route.close_for_test());
+    runtime_a
+        .handle()
+        .block_on(state_a.close_path_for_test("tcp-b"));
     assert!(poll_until(&runtime_a, Duration::from_secs(5), |event| {
         matches!(
             &event.payload,
@@ -2833,8 +2857,9 @@ fn ssh_stream_data_after_close_is_rejected_cleanly() {
     let rejected = poll_until(&runtime_a, Duration::from_secs(10), |event| {
         matches!(
             &event.payload,
-            Some(network_event::Payload::CommandResult(result))
-                if result.command_id == "ssh-data-after-close" && !result.accepted
+            Some(network_event::Payload::CommandResultV2(result))
+                if result.command_id == "ssh-data-after-close"
+                    && result.state == CommandResultState::Failed as i32
         )
     });
     assert!(
@@ -3027,7 +3052,7 @@ fn upsert_command(
     }
 }
 
-/// 将命令入队，并只等待其内部接受结果。
+/// 将命令入队，并等待其异步终态成功结果。
 ///
 /// 每个 NetworkRuntime 启动一个多线程 tokio worker。全套测试并行执行真实
 /// QUIC/UDP/TCP/WebSocket 网络 I/O 时可能重度超订 CPU，命令结果在加载下的
@@ -3038,39 +3063,71 @@ fn send_and_expect_accepted(runtime: &NetworkRuntime, command: NetworkCommand) {
     let result = poll_until(runtime, Duration::from_secs(30), |event| {
         matches!(
             &event.payload,
-            Some(network_event::Payload::CommandResult(result))
+            Some(network_event::Payload::CommandResultV2(result))
                 if result.command_id == command_id
         )
     })
     .unwrap_or_else(|| panic!("command {command_id} timed out waiting for command result"));
     match result.payload {
-        Some(network_event::Payload::CommandResult(CommandResultEvent {
-            accepted: true, ..
-        })) => {}
-        Some(network_event::Payload::CommandResult(CommandResultEvent {
-            error: Some(error),
-            ..
-        })) => panic!(
-            "command {command_id} rejected: code={} message={} operation={} peer_id={}",
-            error.code, error.message, error.operation, error.peer_id
-        ),
+        Some(network_event::Payload::CommandResultV2(result))
+            if result.state == CommandResultState::Succeeded as i32 => {}
+        Some(network_event::Payload::CommandResultV2(result)) => {
+            let error = result
+                .error
+                .expect("failed command result must carry an error");
+            panic!(
+                "command {command_id} rejected: code={} message={} operation={} peer_id={}",
+                error.code, error.message, error.operation, error.peer_id
+            )
+        }
         other => panic!("command {command_id} returned unexpected result: {other:?}"),
     }
 }
 
 /// 轮询原生事件，直到匹配谓词或超时。
+static TEST_EVENT_BACKLOG: OnceLock<
+    Mutex<HashMap<usize, VecDeque<network_protocol::NetworkEvent>>>,
+> = OnceLock::new();
+
 fn poll_until(
     runtime: &NetworkRuntime,
     timeout: Duration,
     predicate: impl Fn(&network_protocol::NetworkEvent) -> bool,
 ) -> Option<network_protocol::NetworkEvent> {
     let deadline = Instant::now() + timeout;
+    let runtime_key = runtime as *const NetworkRuntime as usize;
+    let mut deferred = VecDeque::new();
     while Instant::now() < deadline {
-        if let Some(event) = runtime.poll_event(100) {
-            if predicate(&event) {
-                return Some(event);
+        let event = TEST_EVENT_BACKLOG
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .expect("test event backlog lock")
+            .get_mut(&runtime_key)
+            .and_then(VecDeque::pop_front)
+            .or_else(|| runtime.poll_event(100));
+        let Some(event) = event else {
+            continue;
+        };
+        if predicate(&event) {
+            let mut backlog = TEST_EVENT_BACKLOG
+                .get_or_init(|| Mutex::new(HashMap::new()))
+                .lock()
+                .expect("test event backlog lock");
+            let queue = backlog.entry(runtime_key).or_default();
+            while let Some(event) = deferred.pop_back() {
+                queue.push_front(event);
             }
+            return Some(event);
         }
+        deferred.push_back(event);
+    }
+    let mut backlog = TEST_EVENT_BACKLOG
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("test event backlog lock");
+    let queue = backlog.entry(runtime_key).or_default();
+    while let Some(event) = deferred.pop_back() {
+        queue.push_front(event);
     }
     None
 }
@@ -3084,10 +3141,7 @@ fn wait_for_session_connected(runtime: &NetworkRuntime, peer_id: &str, timeout: 
         .expect("runtime state");
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if runtime
-            .handle()
-            .block_on(state.connection_sessions.is_connected(peer_id))
-        {
+        if runtime.handle().block_on(state.path_is_connected(peer_id)) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(25));

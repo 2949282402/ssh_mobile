@@ -1,11 +1,11 @@
-> Last updated: 2026-08-19
+> Last updated: 2026-08-20
 
 # SDK Current State
 
-The maintained public network contract remains development-stage v1 while the
-transport-network v2 migration is developed as an additive native/Relay path;
-the v1 wording here is a compatibility-state label, not a claim that v2 code is
-absent.
+The native transport runtime and Relay control/data path implement
+transport-network v2. Any v1 label in the public bootstrap/compatibility surface
+is a boundary label only; it is not a transport fallback and must not reintroduce
+the retired v1 route/session owner model.
 
 - `network_sdk` provides typed bootstrap, authenticated API, Session, event,
   and Feature-safe Realtime contracts.
@@ -14,8 +14,11 @@ absent.
 - `ssh_mobile_network_native` runs native event polling on a helper isolate and
   exposes typed Protobuf commands and events.
 - Rust owns authenticated QUIC, generic TCP/WebSocket carriers, UDP datagrams,
-  WSS Relay integration, native WebRTC, ConnectionSession routing, Delivery/Recovery,
-  application E2EE, and resumable file-transfer state.
+  WSS Relay integration, native WebRTC, `PeerSupervisor` lifecycle,
+  `PeerPathManager` Direct/Relay physical carriers, Delivery/Recovery,
+  application E2EE, and resumable file-transfer state. `ConnectionSessionStore`
+  is security/admission-only; business operations select a carrier through a
+  `PathLease`.
 - A `ConnectionSession` is 1:1 with its transport Connection. Every new
   connection gets a new `SessionId` and Noise root; transport loss destroys the
   session, while Delivery and Transfer business state resumes by business ID.
@@ -37,6 +40,14 @@ absent.
   probing. Relay candidates never enter a DirectProbe; resolved candidate cache
   freshness uses a monotonic clock, server-confirmed TTL, and
   `runtime_epoch`/same-epoch `revision` ordering with fingerprint consistency.
+- E2EE policy is enforced end-to-end: Required installs a fresh application
+  root after authenticated Noise/path admission, while Disabled is Direct
+  identity-only and Relay Disabled is rejected before application crypto.
+- Connectivity stages are authoritative and ordered: Stage A uses only fresh
+  configured/cache Direct candidates; Stage B requires Resolve→Offer and a
+  fixed four-second Direct window; Stage C can reserve Relay only when Resolve
+  is READY, Direct failed, capabilities match, Required E2EE is active, and
+  budget remains.
 - `RuntimeState` owns the per-peer resolved candidate cache. Stage A reads only
   fresh cached/configured direct candidates and does not call Resolve/Offer;
   Stage B starts the existing Resolve→Offer gate after Stage A failure. Session
@@ -44,8 +55,9 @@ absent.
   `(peer_id, opener_device_id, stream_id)` handle cannot transparently write to
   a new Session.
 - Generic reliable carriers carry Delivery frames; Delivery business state resumes
-  across connections. File streaming continues
-  through its current QUIC/Relay dispatcher until a separate stream-carrier migration.
+  across connections. File and stream operations acquire fresh path leases after
+  loss, and SSH/Realtime explicitly close rather than transparently migrating a
+  stale connection.
 - Feature-facing Realtime does not expose native signaling or media resources;
   decoded media availability remains defined by the public package contract.
 

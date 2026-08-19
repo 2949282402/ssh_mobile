@@ -4,12 +4,13 @@
 //! handle。Connection 恢复后由上层取出 `RecoverySnapshot`，在当前 transport
 //! 上重新发送；因此 ACK、去重和重试不会绑定到某一条已失效的 Connection。
 //!
-//! transport-network v2（§19/§20）：跨连接稳定的是业务身份 **MessageId +
-//! ChannelId**（以及其所属的 Peer），**不是** Transport Connection 或
+//! transport-network v2（§19/§20）：跨连接稳定的是业务身份 **PeerId +
+//! MessageId + ChannelId**，**不是** Transport Connection 或
 //! ConnectionSession。Step 8 之后 Session 与 connection 一一对应且可销毁：
 //! 新连接 = 新 SessionId + 新 Noise root。因此本 manager 的 pending / dedup /
 //! ordered 状态全部按 **Peer 业务作用域** 保存，绝不用每个连接的 SessionId
-//! 作 key；`MessageId` 是 ACK 与去重的稳定键。连接丢失时本 manager 不会清空
+//! 作 key；`DeliveryIdentity`（PeerId + MessageId）是发送端 ACK 的稳定键。
+//! 连接丢失时本 manager 不会清空
 //! 这些状态，未 ACK 的消息会在新连接上以**同一个 MessageId** 重新发送，
 //! 由接收端按 MessageId 去重（§20）。
 
@@ -436,9 +437,9 @@ pub(crate) struct IncomingTimeout {
 }
 
 struct DeliveryStore {
-    pending: HashMap<MessageId, PendingMessage>,
+    pending: HashMap<DeliveryIdentity, PendingMessage>,
     pending_bytes: usize,
-    terminal_outcomes: HashMap<MessageId, (String, DeliveryTerminalOutcome)>,
+    terminal_outcomes: HashMap<DeliveryIdentity, DeliveryTerminalOutcome>,
     next_sequences: HashMap<(String, String), u64>,
     /// Peer 作用域连接代数（每次 Connection Ready 递增一次）。只用于 wire。
     recovery_epochs: HashMap<String, u64>,
@@ -578,22 +579,12 @@ impl DeliveryManager {
                         && message.channel_id == channel_id
                         && message.policy == DeliveryPolicy::LatestState
                 })
-                .map(|(message_id, _)| *message_id)
+                .map(|(identity, _)| identity.clone())
                 .collect::<Vec<_>>();
-            for message_id in obsolete {
-                let peer_id = store
-                    .pending
-                    .get(&message_id)
-                    .map(|message| message.peer_id.clone());
-                if let Some(peer_id) = peer_id {
-                    record_terminal(
-                        &mut store,
-                        message_id,
-                        peer_id,
-                        DeliveryTerminalOutcome::Cancelled,
-                    );
+            for identity in obsolete {
+                if remove_pending(&mut store, &identity).is_some() {
+                    record_terminal(&mut store, identity, DeliveryTerminalOutcome::Cancelled);
                 }
-                remove_pending(&mut store, &message_id);
             }
         }
         if policy != DeliveryPolicy::BestEffort
@@ -613,7 +604,7 @@ impl DeliveryManager {
             .get(peer_id)
             .copied()
             .unwrap_or_default();
-        let message_id = next_message_id(&store.pending, &store.terminal_outcomes);
+        let message_id = next_message_id(peer_id, &store.pending, &store.terminal_outcomes);
         let message = PendingMessage {
             message_id,
             peer_id: peer_id.to_string(),
@@ -632,7 +623,13 @@ impl DeliveryManager {
         };
         if policy != DeliveryPolicy::BestEffort {
             store.pending_bytes += message.payload.len();
-            store.pending.insert(message_id, message.clone());
+            store.pending.insert(
+                DeliveryIdentity {
+                    peer_id: peer_id.to_string(),
+                    message_id,
+                },
+                message.clone(),
+            );
         }
         Ok(message)
     }
@@ -676,24 +673,32 @@ impl DeliveryManager {
         now: Instant,
     ) -> Result<Option<PendingMessage>, DeliveryError> {
         let mut store = self.store.lock().await;
-        let Some(existing) = store.pending.get(&message_id) else {
+        if let Some(peer_id) = expected_peer_id {
+            let scoped_identity = DeliveryIdentity {
+                peer_id: peer_id.to_string(),
+                message_id,
+            };
+            if !store.pending.contains_key(&scoped_identity)
+                && store
+                    .pending
+                    .keys()
+                    .any(|identity| identity.message_id == message_id)
+            {
+                return Err(DeliveryError::InvalidScope);
+            }
+        }
+        let Some(identity) = resolve_pending_identity(&store, expected_peer_id, message_id) else {
             return Err(DeliveryError::NotFound);
         };
-        if expected_peer_id.is_some_and(|peer_id| existing.peer_id != peer_id) {
-            return Err(DeliveryError::InvalidScope);
-        }
+        let Some(existing) = store.pending.get(&identity) else {
+            return Err(DeliveryError::NotFound);
+        };
         if is_expired(existing, now) {
-            let peer_id = existing.peer_id.clone();
-            remove_pending(&mut store, &message_id);
-            record_terminal(
-                &mut store,
-                message_id,
-                peer_id,
-                DeliveryTerminalOutcome::Expired,
-            );
+            remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Expired);
             return Err(DeliveryError::Expired);
         }
-        let Some(message) = store.pending.get_mut(&message_id) else {
+        let Some(message) = store.pending.get_mut(&identity) else {
             return Err(DeliveryError::NotFound);
         };
         if matches!(message.state, DeliveryState::Sending) {
@@ -710,15 +715,9 @@ impl DeliveryManager {
         }
         let next_attempt = message.attempts.saturating_add(1);
         if next_attempt > message.retry_policy.max_attempts {
-            let peer_id = message.peer_id.clone();
             message.state = DeliveryState::Failed;
-            let _ = remove_pending(&mut store, &message_id);
-            record_terminal(
-                &mut store,
-                message_id,
-                peer_id,
-                DeliveryTerminalOutcome::Failed,
-            );
+            let _ = remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Failed);
             return Err(DeliveryError::RetryExhausted);
         }
         let retry_bytes = message
@@ -729,15 +728,9 @@ impl DeliveryManager {
             .max_total_retry_bytes
             .is_some_and(|limit| retry_bytes > limit)
         {
-            let peer_id = message.peer_id.clone();
             message.state = DeliveryState::Failed;
-            let _ = remove_pending(&mut store, &message_id);
-            record_terminal(
-                &mut store,
-                message_id,
-                peer_id,
-                DeliveryTerminalOutcome::Failed,
-            );
+            let _ = remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Failed);
             return Err(DeliveryError::RetryExhausted);
         }
         message.attempts = next_attempt;
@@ -773,11 +766,13 @@ impl DeliveryManager {
         now: Instant,
     ) -> bool {
         let mut store = self.store.lock().await;
-        let Some(message) = store.pending.get_mut(&message_id) else {
+        let Some(identity) = resolve_pending_identity(&store, expected_peer_id, message_id) else {
+            return false;
+        };
+        let Some(message) = store.pending.get_mut(&identity) else {
             return false;
         };
         if message.state != DeliveryState::Sending
-            || expected_peer_id.is_some_and(|peer_id| message.peer_id != peer_id)
             || expected_attempt.is_some_and(|attempt| message.attempts != attempt)
         {
             return false;
@@ -815,24 +810,18 @@ impl DeliveryManager {
         now: Instant,
     ) -> RetryDecision {
         let mut store = self.store.lock().await;
-        let Some(existing) = store.pending.get(&message_id) else {
+        let Some(identity) = resolve_pending_identity(&store, expected_peer_id, message_id) else {
             return RetryDecision::NotFound;
         };
-        if expected_peer_id.is_some_and(|peer_id| existing.peer_id != peer_id) {
+        let Some(existing) = store.pending.get(&identity) else {
             return RetryDecision::NotFound;
-        }
+        };
         if is_expired(existing, now) {
-            let peer_id = existing.peer_id.clone();
-            remove_pending(&mut store, &message_id);
-            record_terminal(
-                &mut store,
-                message_id,
-                peer_id,
-                DeliveryTerminalOutcome::Expired,
-            );
+            remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Expired);
             return RetryDecision::Expired;
         }
-        let Some(message) = store.pending.get_mut(&message_id) else {
+        let Some(message) = store.pending.get_mut(&identity) else {
             return RetryDecision::NotFound;
         };
         // A result may arrive after recovery invalidated its lease.  Do not let
@@ -854,15 +843,9 @@ impl DeliveryManager {
                         > limit
                 })
         {
-            let peer_id = message.peer_id.clone();
             message.state = DeliveryState::Failed;
-            remove_pending(&mut store, &message_id);
-            record_terminal(
-                &mut store,
-                message_id,
-                peer_id,
-                DeliveryTerminalOutcome::Failed,
-            );
+            remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Failed);
             return RetryDecision::Failed;
         }
         message.state = DeliveryState::Queued;
@@ -880,20 +863,15 @@ impl DeliveryManager {
             return AckResult::Unknown;
         }
         let mut store = self.store.lock().await;
-        let Some(message) = store.pending.get(&message_id) else {
-            return AckResult::Unknown;
+        let identity = DeliveryIdentity {
+            peer_id: peer_id.to_string(),
+            message_id,
         };
-        if message.peer_id != peer_id {
+        if !store.pending.contains_key(&identity) {
             return AckResult::Unknown;
         }
-        let peer_id = message.peer_id.clone();
-        remove_pending(&mut store, &message_id);
-        record_terminal(
-            &mut store,
-            message_id,
-            peer_id,
-            DeliveryTerminalOutcome::Acknowledged,
-        );
+        remove_pending(&mut store, &identity);
+        record_terminal(&mut store, identity, DeliveryTerminalOutcome::Acknowledged);
         AckResult::Acknowledged
     }
 
@@ -909,11 +887,11 @@ impl DeliveryManager {
             return None;
         }
         let store = self.store.lock().await;
-        store
-            .terminal_outcomes
-            .get(&message_id)
-            .filter(|(owner, _)| owner == peer_id)
-            .map(|(_, outcome)| *outcome)
+        let identity = DeliveryIdentity {
+            peer_id: peer_id.to_string(),
+            message_id,
+        };
+        store.terminal_outcomes.get(&identity).copied()
     }
 
     /// 新 Connection Ready 后，重置 Peer 作用域的 in-flight 状态并返回恢复批次。
@@ -947,16 +925,16 @@ impl DeliveryManager {
             .pending
             .iter()
             .filter(|(_, message)| message.peer_id == peer_id)
-            .map(|(message_id, _)| *message_id)
+            .map(|(identity, _)| identity.clone())
             .collect::<Vec<_>>();
         let mut messages = Vec::new();
         let mut expired = Vec::new();
-        for message_id in message_ids {
-            let Some(message) = store.pending.get_mut(&message_id) else {
+        for identity in message_ids {
+            let Some(message) = store.pending.get_mut(&identity) else {
                 continue;
             };
             if is_expired(message, now) {
-                expired.push((message_id, message.peer_id.clone()));
+                expired.push(identity.clone());
                 continue;
             }
             message.state = DeliveryState::Queued;
@@ -964,14 +942,9 @@ impl DeliveryManager {
             message.recovery_epoch = recovery_epoch;
             messages.push(message.clone());
         }
-        for (message_id, peer_id) in expired {
-            remove_pending(&mut store, &message_id);
-            record_terminal(
-                &mut store,
-                message_id,
-                peer_id,
-                DeliveryTerminalOutcome::Expired,
-            );
+        for identity in expired {
+            remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Expired);
         }
         messages.sort_by_key(|message| message.sequence);
         RecoverySnapshot {
@@ -987,16 +960,16 @@ impl DeliveryManager {
             .pending
             .iter()
             .filter(|(_, message)| message.peer_id == peer_id)
-            .map(|(message_id, _)| *message_id)
+            .map(|(identity, _)| identity.clone())
             .collect::<Vec<_>>();
         let mut retryable = Vec::new();
         let mut expired = Vec::new();
-        for message_id in message_ids {
-            let Some(message) = store.pending.get_mut(&message_id) else {
+        for identity in message_ids {
+            let Some(message) = store.pending.get_mut(&identity) else {
                 continue;
             };
             if is_expired(message, now) {
-                expired.push((message_id, message.peer_id.clone()));
+                expired.push(identity.clone());
             } else if message.state == DeliveryState::SentUnacked && now >= message.next_retry_at {
                 message.state = DeliveryState::Queued;
                 message.next_retry_at = now;
@@ -1005,14 +978,9 @@ impl DeliveryManager {
                 retryable.push(message.clone());
             }
         }
-        for (message_id, peer_id) in expired {
-            remove_pending(&mut store, &message_id);
-            record_terminal(
-                &mut store,
-                message_id,
-                peer_id,
-                DeliveryTerminalOutcome::Expired,
-            );
+        for identity in expired {
+            remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Expired);
         }
         retryable.sort_by_key(|message| message.sequence);
         retryable
@@ -1031,19 +999,16 @@ impl DeliveryManager {
 
     pub async fn cancel(&self, message_id: MessageId) -> bool {
         let mut store = self.store.lock().await;
-        let Some(message) = store.pending.get_mut(&message_id) else {
+        let Some(identity) = resolve_pending_identity(&store, None, message_id) else {
             return false;
         };
-        let peer_id = message.peer_id.clone();
+        let Some(message) = store.pending.get_mut(&identity) else {
+            return false;
+        };
         message.state = DeliveryState::Cancelled;
-        let removed = remove_pending(&mut store, &message_id).is_some();
+        let removed = remove_pending(&mut store, &identity).is_some();
         if removed {
-            record_terminal(
-                &mut store,
-                message_id,
-                peer_id,
-                DeliveryTerminalOutcome::Cancelled,
-            );
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Cancelled);
         }
         removed
     }
@@ -1445,34 +1410,59 @@ impl DeliveryManager {
 }
 
 fn next_message_id(
-    pending: &HashMap<MessageId, PendingMessage>,
-    terminal_outcomes: &HashMap<MessageId, (String, DeliveryTerminalOutcome)>,
+    peer_id: &str,
+    pending: &HashMap<DeliveryIdentity, PendingMessage>,
+    terminal_outcomes: &HashMap<DeliveryIdentity, DeliveryTerminalOutcome>,
 ) -> MessageId {
     loop {
         let mut bytes = [0u8; MESSAGE_ID_BYTES];
         rand::thread_rng().fill_bytes(&mut bytes);
         let candidate = MessageId(bytes);
-        if !pending.contains_key(&candidate) && !terminal_outcomes.contains_key(&candidate) {
+        let identity = DeliveryIdentity {
+            peer_id: peer_id.to_string(),
+            message_id: candidate,
+        };
+        if !pending.contains_key(&identity) && !terminal_outcomes.contains_key(&identity) {
             return candidate;
         }
     }
 }
 
+fn resolve_pending_identity(
+    store: &DeliveryStore,
+    expected_peer_id: Option<&str>,
+    message_id: MessageId,
+) -> Option<DeliveryIdentity> {
+    if let Some(peer_id) = expected_peer_id {
+        let identity = DeliveryIdentity {
+            peer_id: peer_id.to_string(),
+            message_id,
+        };
+        return store.pending.contains_key(&identity).then_some(identity);
+    }
+
+    let mut matches = store
+        .pending
+        .keys()
+        .filter(|identity| identity.message_id == message_id)
+        .cloned();
+    let identity = matches.next()?;
+    matches.next().is_none().then_some(identity)
+}
+
 fn record_terminal(
     store: &mut DeliveryStore,
-    message_id: MessageId,
-    peer_id: String,
+    identity: DeliveryIdentity,
     outcome: DeliveryTerminalOutcome,
 ) {
-    if store.terminal_outcomes.len() >= MAX_TERMINAL_OUTCOMES {
-        if let Some(oldest) = store.terminal_outcomes.keys().next().copied() {
+    if !store.terminal_outcomes.contains_key(&identity)
+        && store.terminal_outcomes.len() >= MAX_TERMINAL_OUTCOMES
+    {
+        if let Some(oldest) = store.terminal_outcomes.keys().next().cloned() {
             store.terminal_outcomes.remove(&oldest);
         }
     }
-    store
-        .terminal_outcomes
-        .entry(message_id)
-        .or_insert((peer_id, outcome));
+    store.terminal_outcomes.entry(identity).or_insert(outcome);
 }
 
 fn is_expired(message: &PendingMessage, now: Instant) -> bool {
@@ -1481,8 +1471,11 @@ fn is_expired(message: &PendingMessage, now: Instant) -> bool {
         .is_some_and(|expires_at| now >= expires_at)
 }
 
-fn remove_pending(store: &mut DeliveryStore, message_id: &MessageId) -> Option<PendingMessage> {
-    let message = store.pending.remove(message_id)?;
+fn remove_pending(
+    store: &mut DeliveryStore,
+    identity: &DeliveryIdentity,
+) -> Option<PendingMessage> {
+    let message = store.pending.remove(identity)?;
     store.pending_bytes = store.pending_bytes.saturating_sub(message.payload.len());
     Some(message)
 }
@@ -3012,9 +3005,61 @@ mod tests {
         let identity = DeliveryIdentity::new("peer-a", message_id).expect("identity");
         assert_eq!(identity.peer_id, "peer-a");
         assert_eq!(identity.message_id, message_id);
+        assert_ne!(
+            identity,
+            DeliveryIdentity::new("peer-b", message_id).expect("peer-scoped identity")
+        );
         assert_eq!(
             DeliveryIdentity::new("", message_id),
             Err(DeliveryError::InvalidScope)
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_and_terminal_delivery_keys_include_peer() {
+        let manager = DeliveryManager::with_config(config());
+        let now = Instant::now();
+        let message_id = MessageId([9; MESSAGE_ID_BYTES]);
+        let mut store = manager.store.lock().await;
+        for peer_id in ["peer-a", "peer-b"] {
+            let message = PendingMessage {
+                message_id,
+                peer_id: peer_id.to_string(),
+                channel_id: "control".to_string(),
+                sequence: 0,
+                payload: vec![1, 2, 3],
+                policy: DeliveryPolicy::Acked,
+                state: DeliveryState::Queued,
+                attempts: 0,
+                created_at: now,
+                expires_at: None,
+                recovery_epoch: 0,
+                retry_policy: retry_policy(),
+                next_retry_at: now,
+                retry_bytes: 0,
+            };
+            store.pending_bytes += message.payload.len();
+            store.pending.insert(
+                DeliveryIdentity::new(peer_id, message_id).expect("identity"),
+                message,
+            );
+        }
+        drop(store);
+
+        assert_eq!(manager.pending_len().await, 2);
+        assert_eq!(
+            manager.acknowledge("peer-a", message_id).await,
+            AckResult::Acknowledged
+        );
+        assert_eq!(manager.pending_len().await, 1);
+        assert_eq!(
+            manager.terminal_outcome("peer-a", message_id).await,
+            Some(DeliveryTerminalOutcome::Acknowledged)
+        );
+        assert_eq!(manager.terminal_outcome("peer-b", message_id).await, None);
+        assert_eq!(
+            manager.acknowledge("peer-b", message_id).await,
+            AckResult::Acknowledged
         );
     }
 

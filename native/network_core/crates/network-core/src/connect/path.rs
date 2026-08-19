@@ -1,30 +1,410 @@
-//! Ready-path identity and ownership separation.
+//! Peer-owned physical paths and bounded business leases.
 //!
-//! [`PathHandle`] is a non-owning identity that may be copied into a routing
-//! decision. [`PathLease`] is the bounded, owning reservation that keeps one
-//! ready path admitted for a caller. Releasing a lease never closes a Session
-//! or transport; the path registry remains owned by the peer/runtime owner.
+//! A [`PeerPathManager`] owns the physical carriers for one peer.  The
+//! registry only indexes weak references so it can revoke paths during peer
+//! teardown without becoming a second carrier owner.  [`PathHandle`] is a
+//! copyable, non-owning identity; [`PathLease`] holds the explicit reference
+//! that keeps one [`PhysicalPath`] alive for a borrower and releases it when
+//! the operation ends.
 
 use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc, Mutex,
-};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
-use crate::connection::{ConnectionProfile, RouteTopology, RouteTransport};
+use network_protocol::RouteType;
+use network_quic::{send_channel_frame, ChannelFrameKind};
+use network_relay::RelayDataClient;
+use quinn::{Connection, VarInt};
+
+use crate::connection::{
+    ConnectionProfile, GenericFrameKind, GenericRouteHandle, Route, RouteTopology, RouteTransport,
+};
 use crate::errors::CoreNetworkError;
+use crate::task_supervisor::{CancellationToken, TaskLease};
 
 use super::peer_supervisor::PeerId;
 
 pub(crate) const MAX_READY_PATHS_PER_PEER: usize = 8;
 pub(crate) const MAX_PATH_LEASES: usize = 32;
 
+const GENERIC_ROUTE_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Owns the generic route driver and receiver leases while a route is being
+/// staged for publication. The path owner takes this value only after the
+/// authenticated route wins its admission race.
+pub(crate) struct GenericRouteOwner {
+    handle: GenericRouteHandle,
+    driver_task: TaskLease,
+    receiver_task: TaskLease,
+    route_stop: CancellationToken,
+    stopping: Arc<AtomicBool>,
+    committed: bool,
+}
+
+impl GenericRouteOwner {
+    pub(crate) fn new(
+        handle: GenericRouteHandle,
+        driver_task: TaskLease,
+        receiver_task: TaskLease,
+        route_stop: CancellationToken,
+        stopping: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            handle,
+            driver_task,
+            receiver_task,
+            route_stop,
+            stopping,
+            committed: false,
+        }
+    }
+
+    pub(crate) fn handle(&self) -> &GenericRouteHandle {
+        &self.handle
+    }
+
+    async fn close(mut self) {
+        self.stopping.store(true, Ordering::Release);
+        if !self.committed {
+            self.route_stop.cancel();
+            self.receiver_task.cancel().await;
+            self.driver_task.cancel().await;
+            return;
+        }
+        self.receiver_task.cancel().await;
+        match tokio::time::timeout(GENERIC_ROUTE_CLOSE_TIMEOUT, self.handle.close()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::debug!(route_id = self.handle.id(), %error, "generic route close failed")
+            }
+            Err(_) => tracing::debug!(route_id = self.handle.id(), "generic route close timed out"),
+        }
+        self.route_stop.cancel();
+        self.driver_task.cancel().await;
+    }
+}
+
+impl Drop for GenericRouteOwner {
+    fn drop(&mut self) {
+        self.stopping.store(true, Ordering::Release);
+        self.route_stop.cancel();
+        self.receiver_task.abort_now();
+        self.driver_task.abort_now();
+    }
+}
+
+/// Staged generic route between task startup and physical-path publication.
+pub(crate) struct GenericRouteScope {
+    owner: Option<GenericRouteOwner>,
+    commit: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl GenericRouteScope {
+    pub(crate) fn new(
+        handle: GenericRouteHandle,
+        driver_task: TaskLease,
+        receiver_task: TaskLease,
+        route_stop: CancellationToken,
+        stopping: Arc<AtomicBool>,
+        commit: tokio::sync::oneshot::Sender<()>,
+    ) -> Self {
+        Self {
+            owner: Some(GenericRouteOwner::new(
+                handle,
+                driver_task,
+                receiver_task,
+                route_stop,
+                stopping,
+            )),
+            commit: Some(commit),
+        }
+    }
+
+    pub(crate) fn profile(&self) -> Option<ConnectionProfile> {
+        self.owner.as_ref().map(|owner| owner.handle().profile())
+    }
+
+    pub(crate) fn commit_and_take_owner(&mut self) -> Result<GenericRouteOwner, ()> {
+        let commit = self.commit.take().ok_or(())?;
+        commit.send(()).map_err(|_| ())?;
+        let mut owner = self.owner.take().ok_or(())?;
+        owner.committed = true;
+        Ok(owner)
+    }
+
+    pub(crate) async fn close(mut self) {
+        if let Some(owner) = self.owner.take() {
+            owner.close().await;
+        }
+    }
+}
+
+/// A route carrier owned by the peer path layer. It is intentionally kept
+/// separate from ConnectionSessionStore: the store records admission facts,
+/// while this value owns the authenticated transport and its I/O handles.
+pub(crate) struct ActiveRoute {
+    profile: ConnectionProfile,
+    carrier: ActiveConnection,
+}
+
+enum ActiveConnection {
+    Quic(Connection),
+    Generic(GenericRouteOwner),
+    #[cfg(test)]
+    GenericTest(GenericRouteHandle),
+    Relay(Option<Arc<RelayDataClient>>),
+}
+
+#[derive(Clone)]
+enum RouteViewCarrier {
+    Quic(Connection),
+    Generic(GenericRouteHandle),
+    #[cfg(test)]
+    GenericTest(GenericRouteHandle),
+    Relay(Option<Arc<RelayDataClient>>),
+}
+
+/// Cloneable, non-owning I/O projection used by a leased business operation.
+#[derive(Clone)]
+pub(crate) enum StreamCarrier {
+    Quic(Connection),
+    Generic(GenericRouteHandle),
+    #[cfg(test)]
+    GenericTest(GenericRouteHandle),
+    Relay(Option<Arc<RelayDataClient>>),
+}
+
+impl ActiveRoute {
+    pub(crate) fn quic(connection: Connection, route: RouteType) -> Self {
+        Self {
+            profile: ConnectionProfile::for_route(route)
+                .expect("QUIC and Relay route types have a composed profile"),
+            carrier: ActiveConnection::Quic(connection),
+        }
+    }
+
+    pub(crate) fn generic(owner: GenericRouteOwner) -> Self {
+        Self {
+            profile: owner.handle().profile(),
+            carrier: ActiveConnection::Generic(owner),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn generic_test(handle: GenericRouteHandle) -> Self {
+        Self {
+            profile: handle.profile(),
+            carrier: ActiveConnection::GenericTest(handle),
+        }
+    }
+
+    pub(crate) fn relay(client: Option<Arc<RelayDataClient>>) -> Self {
+        Self {
+            profile: ConnectionProfile::new(Route::relay(RouteTransport::WebSocket)),
+            carrier: ActiveConnection::Relay(client),
+        }
+    }
+
+    pub(crate) fn profile(&self) -> ConnectionProfile {
+        self.profile
+    }
+
+    fn view(&self) -> RouteView {
+        let carrier = match &self.carrier {
+            ActiveConnection::Quic(connection) => RouteViewCarrier::Quic(connection.clone()),
+            ActiveConnection::Generic(owner) => RouteViewCarrier::Generic(owner.handle().clone()),
+            #[cfg(test)]
+            ActiveConnection::GenericTest(handle) => RouteViewCarrier::GenericTest(handle.clone()),
+            ActiveConnection::Relay(client) => RouteViewCarrier::Relay(client.clone()),
+        };
+        RouteView {
+            profile: self.profile,
+            carrier,
+        }
+    }
+
+    pub(crate) async fn close(self) {
+        match self.carrier {
+            ActiveConnection::Quic(connection) => {
+                connection.close(VarInt::from_u32(0), b"physical path closed");
+            }
+            ActiveConnection::Generic(owner) => owner.close().await,
+            #[cfg(test)]
+            ActiveConnection::GenericTest(handle) => {
+                let _ = handle.close().await;
+            }
+            ActiveConnection::Relay(Some(client)) => client.request_disconnect().await,
+            ActiveConnection::Relay(None) => {}
+        }
+    }
+}
+
+#[derive(Clone)]
+struct RouteView {
+    profile: ConnectionProfile,
+    carrier: RouteViewCarrier,
+}
+
+/// Shared physical route handle used by RuntimeState and the PathCarrier
+/// callback. The callback closes this exact carrier when the owning path is
+/// revoked or drained after its leases finish.
+pub(crate) struct PhysicalRoute {
+    route: Mutex<Option<ActiveRoute>>,
+}
+
+impl PhysicalRoute {
+    pub(crate) fn new(route: ActiveRoute) -> Arc<Self> {
+        Arc::new(Self {
+            route: Mutex::new(Some(route)),
+        })
+    }
+
+    pub(crate) fn profile(&self) -> Option<ConnectionProfile> {
+        self.route
+            .lock()
+            .expect("physical route lock")
+            .as_ref()
+            .map(ActiveRoute::profile)
+    }
+
+    fn view(&self) -> Option<RouteView> {
+        self.route
+            .lock()
+            .expect("physical route lock")
+            .as_ref()
+            .map(ActiveRoute::view)
+    }
+
+    pub(crate) fn connection(&self) -> Option<Connection> {
+        self.view().and_then(|view| match view.carrier {
+            RouteViewCarrier::Quic(connection) => Some(connection),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn stream_carrier(&self) -> Option<StreamCarrier> {
+        self.view().map(|view| match view.carrier {
+            RouteViewCarrier::Quic(connection) => StreamCarrier::Quic(connection),
+            RouteViewCarrier::Generic(handle) => StreamCarrier::Generic(handle),
+            #[cfg(test)]
+            RouteViewCarrier::GenericTest(handle) => StreamCarrier::GenericTest(handle),
+            RouteViewCarrier::Relay(client) => StreamCarrier::Relay(client),
+        })
+    }
+
+    pub(crate) fn relay_data(&self) -> Option<Arc<RelayDataClient>> {
+        self.view().and_then(|view| match view.carrier {
+            RouteViewCarrier::Relay(client) => client,
+            _ => None,
+        })
+    }
+
+    pub(crate) fn is_relay_data(&self, data: &Arc<RelayDataClient>) -> bool {
+        self.relay_data()
+            .is_some_and(|current| Arc::ptr_eq(&current, data))
+    }
+
+    pub(crate) async fn send_channel_frame(
+        &self,
+        relay_token: &str,
+        kind: GenericFrameKind,
+        payload: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let view = self.view().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "physical path unavailable",
+            )
+        })?;
+        let is_stream = matches!(
+            kind,
+            GenericFrameKind::StreamBytes
+                | GenericFrameKind::StreamOpen
+                | GenericFrameKind::StreamClose
+        );
+        if is_stream
+            && !view
+                .profile
+                .supports(crate::connection::ConnectionCapability::ReliableStream)
+            || !is_stream
+                && !view
+                    .profile
+                    .supports(crate::connection::ConnectionCapability::ReliableMessage)
+        {
+            return Err(std::io::Error::other("physical path lacks requested capability").into());
+        }
+        match view.carrier {
+            RouteViewCarrier::Quic(connection) => {
+                let kind = match kind {
+                    GenericFrameKind::DataMessage => ChannelFrameKind::DataMessage,
+                    GenericFrameKind::DeliveryAck => ChannelFrameKind::DeliveryAck,
+                    _ => {
+                        return Err(
+                            std::io::Error::other("stream frames require QUIC bi-stream").into(),
+                        )
+                    }
+                };
+                send_channel_frame(&connection, kind, payload).await
+            }
+            RouteViewCarrier::Generic(handle) => handle
+                .send(kind, payload)
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()).into()),
+            #[cfg(test)]
+            RouteViewCarrier::GenericTest(handle) => handle
+                .send(kind, payload)
+                .await
+                .map_err(|error| std::io::Error::other(error.to_string()).into()),
+            RouteViewCarrier::Relay(Some(relay)) => match kind {
+                GenericFrameKind::DataMessage => {
+                    crate::relay::send_relay_channel_message(&relay, relay_token, payload)
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string()).into())
+                }
+                GenericFrameKind::DeliveryAck => {
+                    crate::relay::send_relay_channel_ack(&relay, relay_token, payload)
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string()).into())
+                }
+                GenericFrameKind::StreamBytes
+                | GenericFrameKind::StreamOpen
+                | GenericFrameKind::StreamClose => {
+                    crate::relay::send_relay_stream_frame(&relay, relay_token, payload)
+                        .await
+                        .map_err(|error| std::io::Error::other(error.to_string()).into())
+                }
+            },
+            RouteViewCarrier::Relay(None) => Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "Relay path unavailable",
+            )
+            .into()),
+        }
+    }
+
+    pub(crate) async fn close(&self) {
+        let route = { self.route.lock().expect("physical route lock").take() };
+        if let Some(route) = route {
+            route.close().await;
+        }
+    }
+}
+
 /// The two path topologies owned by one peer supervisor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PathKind {
     Direct,
     Relay,
+}
+
+impl PathKind {
+    fn from_profile(profile: ConnectionProfile) -> Self {
+        match profile.topology() {
+            RouteTopology::Direct => Self::Direct,
+            RouteTopology::Relay => Self::Relay,
+        }
+    }
 }
 
 /// A bounded Direct probe can coexist with an already Ready Direct path.
@@ -48,14 +428,67 @@ impl DirectProbe {
     }
 }
 
-/// Result of selecting a path. A caller still has to acquire a `PathLease`;
-/// the enum never owns a path or transport.
+/// Result of selecting a physical path. The enum never owns a carrier; the
+/// caller must acquire a [`PathLease`] for the selected topology.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PathSelection {
     Direct,
     Relay,
 }
 
+/// The lifecycle reason delivered to a carrier when its owner closes it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PathCloseReason {
+    NormalRetire,
+    HardClose,
+    SecurityFailure,
+}
+
+/// A physical carrier transferred into a [`PhysicalPath`].
+///
+/// The trait intentionally consumes the carrier on close. This makes the
+/// ownership boundary explicit: a handle or lease can never close a carrier
+/// without the physical-path owner first revoking or retiring it. Production
+/// adapters can wrap a QUIC connection, generic route owner, or Relay data
+/// client in this trait without changing the path state machine or wire
+/// contract.
+pub(crate) trait PathCarrier: Send + 'static {
+    fn close(self: Box<Self>, reason: PathCloseReason);
+}
+
+/// A metadata-only carrier used by the compatibility helper and unit tests.
+/// Real connection admission should use
+/// [`PeerPathManager::publish_ready_with_carrier`].
+struct NoopPathCarrier;
+
+impl PathCarrier for NoopPathCarrier {
+    fn close(self: Box<Self>, _reason: PathCloseReason) {}
+}
+
+/// Convenient adapter for callers that already own a concrete carrier and
+/// only need to supply its close operation to the path owner.
+struct CallbackPathCarrier {
+    close: Option<Box<dyn FnOnce(PathCloseReason) + Send>>,
+}
+
+impl PathCarrier for CallbackPathCarrier {
+    fn close(mut self: Box<Self>, reason: PathCloseReason) {
+        if let Some(close) = self.close.take() {
+            close(reason);
+        }
+    }
+}
+
+pub(crate) fn callback_path_carrier<F>(close: F) -> Box<dyn PathCarrier>
+where
+    F: FnOnce(PathCloseReason) + Send + 'static,
+{
+    Box::new(CallbackPathCarrier {
+        close: Some(Box::new(close)),
+    })
+}
+
+/// A non-owning identity for one physical path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PathHandle {
     id: u64,
@@ -80,20 +513,198 @@ impl PathHandle {
     pub(crate) fn capability_mask(&self) -> u8 {
         self.capability_mask
     }
+
+    pub(crate) fn kind(&self) -> PathKind {
+        PathKind::from_profile(self.profile)
+    }
 }
 
-struct PathEntry {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PhysicalPathState {
+    Ready,
+    Draining,
+    Closed(PathCloseReason),
+}
+
+struct PhysicalPathInner {
+    state: PhysicalPathState,
+    carrier: Option<Box<dyn PathCarrier>>,
+    leases: usize,
+    last_activity: Instant,
+}
+
+/// The sole owner of one authenticated Direct or Relay carrier.
+pub(crate) struct PhysicalPath {
     handle: PathHandle,
-    active: AtomicBool,
-    accepting: AtomicBool,
-    leases: AtomicUsize,
+    inner: Mutex<PhysicalPathInner>,
 }
 
-/// An owning reservation. It is deliberately not `Clone`: each borrower must
-/// acquire and release its own lease, while the owner keeps the handle/path.
+impl PhysicalPath {
+    fn new(handle: PathHandle, carrier: Box<dyn PathCarrier>, created_at: Instant) -> Arc<Self> {
+        Arc::new(Self {
+            handle,
+            inner: Mutex::new(PhysicalPathInner {
+                state: PhysicalPathState::Ready,
+                carrier: Some(carrier),
+                leases: 0,
+                last_activity: created_at,
+            }),
+        })
+    }
+
+    fn handle(&self) -> &PathHandle {
+        &self.handle
+    }
+
+    fn profile(&self) -> ConnectionProfile {
+        self.handle.profile()
+    }
+
+    fn supports(&self, required_capabilities: u8) -> bool {
+        self.handle.capability_mask() & required_capabilities == required_capabilities
+    }
+
+    fn is_ready(&self) -> bool {
+        matches!(
+            self.inner.lock().expect("physical path lock").state,
+            PhysicalPathState::Ready
+        )
+    }
+
+    fn is_active(&self) -> bool {
+        matches!(
+            self.inner.lock().expect("physical path lock").state,
+            PhysicalPathState::Ready | PhysicalPathState::Draining
+        )
+    }
+
+    fn is_acquirable(&self, required_capabilities: u8) -> bool {
+        let inner = self.inner.lock().expect("physical path lock");
+        matches!(inner.state, PhysicalPathState::Ready) && self.supports(required_capabilities)
+    }
+
+    fn lease_count(&self) -> usize {
+        self.inner.lock().expect("physical path lock").leases
+    }
+
+    fn has_carrier(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("physical path lock")
+            .carrier
+            .is_some()
+    }
+
+    fn try_acquire(self: &Arc<Self>) -> Result<PathLease, CoreNetworkError> {
+        let mut inner = self.inner.lock().expect("physical path lock");
+        if !matches!(inner.state, PhysicalPathState::Ready) {
+            return Err(CoreNetworkError::StaleAttempt);
+        }
+        if inner.leases >= MAX_PATH_LEASES {
+            return Err(CoreNetworkError::ResourceLimit("path leases"));
+        }
+        inner.leases += 1;
+        inner.last_activity = Instant::now();
+        Ok(PathLease {
+            handle: self.handle.clone(),
+            path: Arc::clone(self),
+            released: false,
+        })
+    }
+
+    fn retire_normal(&self) -> bool {
+        let carrier = {
+            let mut inner = self.inner.lock().expect("physical path lock");
+            match inner.state {
+                PhysicalPathState::Ready => {
+                    inner.state = PhysicalPathState::Draining;
+                }
+                PhysicalPathState::Draining => {}
+                PhysicalPathState::Closed(_) => return false,
+            }
+            if inner.leases == 0 {
+                inner.state = PhysicalPathState::Closed(PathCloseReason::NormalRetire);
+                inner.carrier.take()
+            } else {
+                None
+            }
+        };
+        close_carrier(carrier, PathCloseReason::NormalRetire);
+        true
+    }
+
+    fn close_with_reason(&self, reason: PathCloseReason) -> bool {
+        let carrier = {
+            let mut inner = self.inner.lock().expect("physical path lock");
+            if matches!(inner.state, PhysicalPathState::Closed(_)) {
+                return false;
+            }
+            inner.state = PhysicalPathState::Closed(reason);
+            inner.carrier.take()
+        };
+        close_carrier(carrier, reason);
+        true
+    }
+
+    fn release_lease(&self) {
+        let carrier = {
+            let mut inner = self.inner.lock().expect("physical path lock");
+            if inner.leases == 0 {
+                return;
+            }
+            inner.leases -= 1;
+            if inner.leases == 0 && matches!(inner.state, PhysicalPathState::Draining) {
+                inner.state = PhysicalPathState::Closed(PathCloseReason::NormalRetire);
+                inner.carrier.take()
+            } else {
+                if matches!(inner.state, PhysicalPathState::Ready) {
+                    inner.last_activity = Instant::now();
+                }
+                None
+            }
+        };
+        close_carrier(carrier, PathCloseReason::NormalRetire);
+    }
+
+    fn record_activity(&self) {
+        let mut inner = self.inner.lock().expect("physical path lock");
+        if matches!(inner.state, PhysicalPathState::Ready) {
+            inner.last_activity = Instant::now();
+        }
+    }
+
+    fn is_ephemeral_idle(&self, now: Instant) -> bool {
+        let inner = self.inner.lock().expect("physical path lock");
+        matches!(inner.state, PhysicalPathState::Ready)
+            && inner.leases == 0
+            && now.saturating_duration_since(inner.last_activity)
+                >= super::EPHEMERAL_PATH_IDLE_TIMEOUT
+    }
+}
+
+impl Drop for PhysicalPath {
+    fn drop(&mut self) {
+        // A manager normally retires or hard-closes before dropping its last
+        // owner. This guard keeps an unexpected owner drop from leaking the
+        // transferred carrier.
+        let _ = self.close_with_reason(PathCloseReason::HardClose);
+    }
+}
+
+fn close_carrier(carrier: Option<Box<dyn PathCarrier>>, reason: PathCloseReason) {
+    if let Some(carrier) = carrier {
+        carrier.close(reason);
+    }
+}
+
+/// An explicit reservation held by one business operation.
+///
+/// The lease owns only a reference to the peer-owned [`PhysicalPath`]. It
+/// never owns the carrier and cannot make a new lease after retirement.
 pub(crate) struct PathLease {
     handle: PathHandle,
-    entry: Arc<PathEntry>,
+    path: Arc<PhysicalPath>,
+    released: bool,
 }
 
 impl PathLease {
@@ -105,182 +716,206 @@ impl PathLease {
         self.handle.profile()
     }
 
-    /// Hard-close and normal drain both revoke future acquisition. Existing
-    /// borrowers can observe the revocation and unwind without the lease
-    /// pretending to keep a dead path usable.
+    /// A hard close or security failure becomes visible to existing borrowers
+    /// immediately. A normal drain remains active until the last lease is
+    /// released, at which point the carrier is closed.
     pub(crate) fn is_active(&self) -> bool {
-        self.entry.active.load(Ordering::Acquire)
+        self.path.is_active()
+    }
+
+    /// Explicitly release this business reservation. `Drop` remains the
+    /// safety net for callers that leave the operation through an error path.
+    pub(crate) fn release(mut self) {
+        self.release_inner();
     }
 
     #[cfg(test)]
     fn lease_count(&self) -> usize {
-        self.entry.leases.load(Ordering::Acquire)
+        self.path.lease_count()
+    }
+
+    fn release_inner(&mut self) {
+        if !self.released {
+            self.released = true;
+            self.path.release_lease();
+        }
     }
 }
 
 impl Drop for PathLease {
     fn drop(&mut self) {
-        self.entry.leases.fetch_sub(1, Ordering::AcqRel);
+        self.release_inner();
     }
 }
 
-/// Runtime-owned ready path registry.
+/// Weak path index used by runtime-level peer teardown and by borrowed handle
+/// lookup. It never owns a carrier; the corresponding [`PeerPathManager`]
+/// owns every strong [`PhysicalPath`] reference.
 #[derive(Default)]
 pub(crate) struct PathRegistry {
-    next_id: AtomicUsize,
-    paths: Mutex<HashMap<PeerId, HashMap<u64, Arc<PathEntry>>>>,
+    next_id: AtomicU64,
+    paths: Mutex<HashMap<PeerId, HashMap<u64, Weak<PhysicalPath>>>>,
 }
 
 impl PathRegistry {
     pub(crate) fn new() -> Self {
         Self {
-            next_id: AtomicUsize::new(1),
+            next_id: AtomicU64::new(1),
             paths: Mutex::new(HashMap::new()),
         }
     }
 
-    pub(crate) fn publish_ready(
+    fn create_path(
         &self,
         peer_id: &PeerId,
         profile: ConnectionProfile,
-    ) -> Result<PathHandle, CoreNetworkError> {
+        carrier: Box<dyn PathCarrier>,
+        created_at: Instant,
+    ) -> Result<Arc<PhysicalPath>, CoreNetworkError> {
         let capability_mask = super::profile_capability_mask(profile);
         if capability_mask == 0 {
+            carrier.close(PathCloseReason::HardClose);
             return Err(CoreNetworkError::CapabilityUnavailable);
         }
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed) as u64;
+
+        let mut paths = self.paths.lock().expect("path registry lock");
+        let peer_paths = paths.entry(peer_id.clone()).or_default();
+        peer_paths.retain(|_, path| path.strong_count() > 0);
+        if peer_paths.len() >= MAX_READY_PATHS_PER_PEER {
+            carrier.close(PathCloseReason::HardClose);
+            return Err(CoreNetworkError::ResourceLimit("ready paths"));
+        }
+
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let handle = PathHandle {
             id,
             peer_id: peer_id.clone(),
             profile,
             capability_mask,
         };
-        let entry = Arc::new(PathEntry {
-            handle: handle.clone(),
-            active: AtomicBool::new(true),
-            accepting: AtomicBool::new(true),
-            leases: AtomicUsize::new(0),
-        });
+        let path = PhysicalPath::new(handle, carrier, created_at);
+        peer_paths.insert(id, Arc::downgrade(&path));
+        Ok(path)
+    }
+
+    fn lookup(&self, handle: &PathHandle) -> Option<Arc<PhysicalPath>> {
         let mut paths = self.paths.lock().expect("path registry lock");
-        let peer_paths = paths.entry(peer_id.clone()).or_default();
-        if peer_paths.len() >= MAX_READY_PATHS_PER_PEER {
-            return Err(CoreNetworkError::ResourceLimit("ready paths"));
+        let peer_id = handle.peer_id().clone();
+        let (path, empty) = match paths.get_mut(&peer_id) {
+            Some(peer_paths) => {
+                let path = peer_paths
+                    .get(&handle.id())
+                    .and_then(Weak::upgrade)
+                    .filter(|path| path.handle() == handle);
+                if path.is_none() {
+                    peer_paths.remove(&handle.id());
+                }
+                (path, peer_paths.is_empty())
+            }
+            None => (None, false),
+        };
+        if empty {
+            paths.remove(&peer_id);
         }
-        peer_paths.insert(id, entry);
-        Ok(handle)
+        path
+    }
+
+    fn take_entry(&self, handle: &PathHandle) -> Option<Weak<PhysicalPath>> {
+        let mut paths = self.paths.lock().expect("path registry lock");
+        let peer_id = handle.peer_id().clone();
+        let (entry, empty) = match paths.get_mut(&peer_id) {
+            Some(peer_paths) => {
+                let entry = peer_paths.remove(&handle.id());
+                (entry, peer_paths.is_empty())
+            }
+            None => (None, false),
+        };
+        if empty {
+            paths.remove(&peer_id);
+        }
+        entry
     }
 
     pub(crate) fn acquire(&self, handle: &PathHandle) -> Result<PathLease, CoreNetworkError> {
-        let entry = self
-            .paths
-            .lock()
-            .expect("path registry lock")
-            .get(handle.peer_id())
-            .and_then(|paths| paths.get(&handle.id()))
-            .cloned()
-            .filter(|entry| {
-                entry.handle == *handle
-                    && entry.active.load(Ordering::Acquire)
-                    && entry.accepting.load(Ordering::Acquire)
-            })
-            .ok_or(CoreNetworkError::StaleAttempt)?;
-        reserve_lease(&entry)?;
-        Ok(PathLease {
-            handle: handle.clone(),
-            entry,
-        })
+        self.lookup(handle)
+            .ok_or(CoreNetworkError::StaleAttempt)?
+            .try_acquire()
     }
 
-    /// Select the best currently ready path that covers the requested
-    /// capability mask. Incompatible ready paths are never returned.
+    /// Select the best indexed ready path for a capability without making the
+    /// registry a route owner. A stale weak entry is simply skipped.
     pub(crate) fn select_compatible_ready_path(
         &self,
         peer_id: &PeerId,
         required_capabilities: u8,
     ) -> Result<PathLease, CoreNetworkError> {
-        let entry = self
-            .paths
-            .lock()
-            .expect("path registry lock")
-            .get(peer_id)
-            .and_then(|paths| {
-                paths
-                    .values()
-                    .filter(|entry| {
-                        entry.active.load(Ordering::Acquire)
-                            && entry.accepting.load(Ordering::Acquire)
-                            && (entry.handle.capability_mask() & required_capabilities)
-                                == required_capabilities
-                    })
-                    .max_by_key(|entry| {
-                        (path_preference(entry.handle.profile()), entry.handle.id())
-                    })
-                    .cloned()
-            })
-            .ok_or(CoreNetworkError::NoRoute)?;
-        reserve_lease(&entry)?;
-        Ok(PathLease {
-            handle: entry.handle.clone(),
-            entry,
-        })
+        let candidates = {
+            let mut paths = self.paths.lock().expect("path registry lock");
+            let Some(peer_paths) = paths.get_mut(peer_id) else {
+                return Err(CoreNetworkError::NoRoute);
+            };
+            let candidates = peer_paths
+                .values()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>();
+            peer_paths.retain(|_, path| path.strong_count() > 0);
+            candidates
+        };
+
+        let mut candidates = candidates;
+        candidates.sort_by_key(|path| (path_preference(path.profile()), path.handle().id()));
+        for path in candidates.into_iter().rev() {
+            if !path.is_acquirable(required_capabilities) {
+                continue;
+            }
+            match path.try_acquire() {
+                Ok(lease) => return Ok(lease),
+                Err(CoreNetworkError::StaleAttempt) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(CoreNetworkError::NoRoute)
     }
 
     pub(crate) fn revoke(&self, handle: &PathHandle) -> bool {
-        let removed = self
-            .paths
-            .lock()
-            .expect("path registry lock")
-            .get_mut(handle.peer_id())
-            .and_then(|paths| paths.remove(&handle.id()));
-        if let Some(entry) = removed {
-            entry.active.store(false, Ordering::Release);
-            entry.accepting.store(false, Ordering::Release);
-            true
-        } else {
-            false
+        let Some(entry) = self.take_entry(handle) else {
+            return false;
+        };
+        if let Some(path) = entry.upgrade() {
+            path.close_with_reason(PathCloseReason::HardClose);
         }
+        true
     }
 
-    /// Normal retirement: stop new leases while retaining the entry until the
-    /// owner performs final cleanup. Existing leases are allowed to drain.
+    /// Normal retirement removes the weak index immediately, then lets the
+    /// physical owner close after any existing leases drain.
     pub(crate) fn drain(&self, handle: &PathHandle) -> bool {
-        let entry = self
-            .paths
-            .lock()
-            .expect("path registry lock")
-            .get(handle.peer_id())
-            .and_then(|paths| paths.get(&handle.id()))
-            .cloned()
-            .filter(|entry| entry.handle == *handle);
-        if let Some(entry) = entry {
-            entry.accepting.store(false, Ordering::Release);
-            true
-        } else {
-            false
+        let Some(entry) = self.take_entry(handle) else {
+            return false;
+        };
+        if let Some(path) = entry.upgrade() {
+            path.retire_normal();
         }
+        true
+    }
+
+    pub(crate) fn security_failure(&self, handle: &PathHandle) -> bool {
+        let Some(entry) = self.take_entry(handle) else {
+            return false;
+        };
+        if let Some(path) = entry.upgrade() {
+            path.close_with_reason(PathCloseReason::SecurityFailure);
+        }
+        true
     }
 
     pub(crate) fn lease_count(&self, handle: &PathHandle) -> Option<usize> {
-        self.paths
-            .lock()
-            .expect("path registry lock")
-            .get(handle.peer_id())
-            .and_then(|paths| paths.get(&handle.id()))
-            .filter(|entry| entry.handle == *handle)
-            .map(|entry| entry.leases.load(Ordering::Acquire))
+        self.lookup(handle).map(|path| path.lease_count())
     }
 
     fn is_acquirable(&self, handle: &PathHandle) -> bool {
-        self.paths
-            .lock()
-            .expect("path registry lock")
-            .get(handle.peer_id())
-            .and_then(|paths| paths.get(&handle.id()))
-            .is_some_and(|entry| {
-                entry.handle == *handle
-                    && entry.active.load(Ordering::Acquire)
-                    && entry.accepting.load(Ordering::Acquire)
-            })
+        self.lookup(handle)
+            .is_some_and(|path| path.is_acquirable(0))
     }
 
     pub(crate) fn revoke_peer(&self, peer_id: &PeerId) -> usize {
@@ -293,25 +928,43 @@ impl PathRegistry {
             .unwrap_or_default();
         let count = entries.len();
         for entry in entries {
-            entry.active.store(false, Ordering::Release);
-            entry.accepting.store(false, Ordering::Release);
+            if let Some(path) = entry.upgrade() {
+                path.close_with_reason(PathCloseReason::HardClose);
+            }
         }
         count
     }
 }
 
-/// Per-peer path truth. It deliberately has no mutable global `active_path`:
-/// Direct Ready, Direct Probe, and Relay Ready are independent states and a
-/// selection is made only when a business request asks for a capability.
+/// Direct path state. A ready Direct path may have a separate bounded probe
+/// in flight; [`PeerPathManager::direct_probe`] exposes that demand.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DirectPathState {
+    None,
+    Probe,
+    Ready,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RelayPathState {
+    None,
+    Ready,
+}
+
+/// Per-peer physical path owner. Direct and Relay are independent slots, so
+/// both may be Ready at once; business selection happens only when a caller
+/// requests a capability and acquires a lease.
 pub(crate) struct PeerPathManager {
     peer_id: PeerId,
     registry: Arc<PathRegistry>,
+    direct_path: Option<Arc<PhysicalPath>>,
     direct_ready: Vec<PathHandle>,
+    relay_path: Option<Arc<PhysicalPath>>,
     relay_ready: Option<PathHandle>,
+    draining_paths: Vec<Arc<PhysicalPath>>,
     direct_probe: Option<DirectProbe>,
     draining: bool,
     hard_closed: bool,
-    last_activity: Instant,
 }
 
 impl PeerPathManager {
@@ -319,12 +972,14 @@ impl PeerPathManager {
         Self {
             peer_id,
             registry,
+            direct_path: None,
             direct_ready: Vec::new(),
+            relay_path: None,
             relay_ready: None,
+            draining_paths: Vec::new(),
             direct_probe: None,
             draining: false,
             hard_closed: false,
-            last_activity: Instant::now(),
         }
     }
 
@@ -332,12 +987,36 @@ impl PeerPathManager {
         &self.peer_id
     }
 
+    /// Kept as a one-element slice for compatibility with existing path
+    /// observations. The actual carrier is held by `direct_path`.
     pub(crate) fn direct_ready(&self) -> &[PathHandle] {
         &self.direct_ready
     }
 
     pub(crate) fn relay_ready(&self) -> Option<&PathHandle> {
         self.relay_ready.as_ref()
+    }
+
+    pub(crate) fn direct_state(&self) -> DirectPathState {
+        if self
+            .direct_path
+            .as_ref()
+            .is_some_and(|path| path.is_ready())
+        {
+            DirectPathState::Ready
+        } else if self.direct_probe.is_some() {
+            DirectPathState::Probe
+        } else {
+            DirectPathState::None
+        }
+    }
+
+    pub(crate) fn relay_state(&self) -> RelayPathState {
+        if self.relay_path.as_ref().is_some_and(|path| path.is_ready()) {
+            RelayPathState::Ready
+        } else {
+            RelayPathState::None
+        }
     }
 
     pub(crate) fn direct_probe(&self) -> Option<&DirectProbe> {
@@ -348,14 +1027,56 @@ impl PeerPathManager {
         &mut self,
         profile: ConnectionProfile,
     ) -> Result<PathHandle, CoreNetworkError> {
+        self.publish_ready_with_carrier_at(profile, Box::new(NoopPathCarrier), Instant::now())
+    }
+
+    pub(crate) fn publish_ready_with_carrier(
+        &mut self,
+        profile: ConnectionProfile,
+        carrier: Box<dyn PathCarrier>,
+    ) -> Result<PathHandle, CoreNetworkError> {
+        self.publish_ready_with_carrier_at(profile, carrier, Instant::now())
+    }
+
+    fn publish_ready_with_carrier_at(
+        &mut self,
+        profile: ConnectionProfile,
+        carrier: Box<dyn PathCarrier>,
+        created_at: Instant,
+    ) -> Result<PathHandle, CoreNetworkError> {
         if self.draining || self.hard_closed {
             return Err(CoreNetworkError::Cancelled);
         }
-        let handle = self.registry.publish_ready(&self.peer_id, profile)?;
-        self.last_activity = Instant::now();
-        match profile.topology() {
-            RouteTopology::Direct => self.direct_ready.push(handle.clone()),
-            RouteTopology::Relay => self.relay_ready = Some(handle.clone()),
+
+        let kind = PathKind::from_profile(profile);
+        let old_path = match kind {
+            PathKind::Direct => {
+                self.direct_ready.clear();
+                self.direct_path.take()
+            }
+            PathKind::Relay => {
+                self.relay_ready = None;
+                self.relay_path.take()
+            }
+        };
+        if let Some(old_path) = old_path {
+            self.retire_path(old_path, PathCloseReason::NormalRetire);
+        }
+
+        let path = self
+            .registry
+            .create_path(&self.peer_id, profile, carrier, created_at)?;
+        let handle = path.handle().clone();
+        match kind {
+            PathKind::Direct => {
+                self.direct_ready.push(handle.clone());
+                self.direct_path = Some(path);
+                self.direct_probe = None;
+            }
+            PathKind::Relay => {
+                self.relay_ready = Some(handle.clone());
+                self.relay_path = Some(path);
+            }
         }
         Ok(handle)
     }
@@ -372,7 +1093,6 @@ impl PeerPathManager {
             return Err(CoreNetworkError::Cancelled);
         }
         let deadline = Instant::now() + budget;
-        self.last_activity = Instant::now();
         match self.direct_probe.as_mut() {
             Some(probe) => {
                 if probe.generation != generation {
@@ -405,107 +1125,198 @@ impl PeerPathManager {
     }
 
     /// Select Direct immediately when compatible. If it is unavailable, an
-    /// already Ready Relay is immediately usable while Direct recovery may
-    /// continue in `direct_probe`.
+    /// already Ready Relay is usable while Direct probing continues.
     pub(crate) fn select(&self, required_capabilities: u8) -> Option<PathSelection> {
-        if self.direct_ready.iter().any(|handle| {
-            handle.capability_mask() & required_capabilities == required_capabilities
-                && self.registry.is_acquirable(handle)
-        }) {
+        if self
+            .direct_path
+            .as_ref()
+            .is_some_and(|path| path.is_acquirable(required_capabilities))
+        {
             return Some(PathSelection::Direct);
         }
-        self.relay_ready.as_ref().and_then(|handle| {
-            (handle.capability_mask() & required_capabilities == required_capabilities
-                && self.registry.is_acquirable(handle))
-            .then_some(PathSelection::Relay)
-        })
+        if self
+            .relay_path
+            .as_ref()
+            .is_some_and(|path| path.is_acquirable(required_capabilities))
+        {
+            return Some(PathSelection::Relay);
+        }
+        None
     }
 
     pub(crate) fn acquire(
         &self,
         required_capabilities: u8,
     ) -> Result<(PathSelection, PathLease), CoreNetworkError> {
-        match self.select(required_capabilities) {
-            Some(PathSelection::Direct) => {
-                let handle = self
-                    .direct_ready
-                    .iter()
-                    .find(|handle| {
-                        handle.capability_mask() & required_capabilities == required_capabilities
-                            && self.registry.is_acquirable(handle)
-                    })
-                    .ok_or(CoreNetworkError::NoRoute)?;
-                Ok((PathSelection::Direct, self.registry.acquire(handle)?))
+        if let Some(path) = self.direct_path.as_ref() {
+            if path.is_acquirable(required_capabilities) {
+                match path.try_acquire() {
+                    Ok(lease) => return Ok((PathSelection::Direct, lease)),
+                    Err(CoreNetworkError::StaleAttempt) => {}
+                    Err(error) => return Err(error),
+                }
             }
-            Some(PathSelection::Relay) => {
-                let handle = self.relay_ready.as_ref().expect("relay selection handle");
-                Ok((PathSelection::Relay, self.registry.acquire(handle)?))
-            }
-            None => Err(CoreNetworkError::NoRoute),
         }
+        if let Some(path) = self.relay_path.as_ref() {
+            if path.is_acquirable(required_capabilities) {
+                match path.try_acquire() {
+                    Ok(lease) => return Ok((PathSelection::Relay, lease)),
+                    Err(CoreNetworkError::StaleAttempt) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Err(CoreNetworkError::NoRoute)
     }
 
     pub(crate) fn normal_drain(&mut self) {
         self.draining = true;
-        for handle in self.direct_ready.iter().chain(self.relay_ready.iter()) {
-            self.registry.drain(handle);
-        }
-    }
-
-    pub(crate) fn record_activity(&mut self) {
-        self.last_activity = Instant::now();
+        self.direct_probe = None;
+        self.retire_all(PathCloseReason::NormalRetire);
+        self.reap_draining_paths();
     }
 
     pub(crate) fn hard_close(&mut self) {
         self.hard_closed = true;
         self.draining = true;
-        for handle in self.direct_ready.drain(..) {
-            self.registry.revoke(&handle);
-        }
-        if let Some(handle) = self.relay_ready.take() {
-            self.registry.revoke(&handle);
-        }
         self.direct_probe = None;
+        self.retire_all(PathCloseReason::HardClose);
+        self.close_draining_paths(PathCloseReason::HardClose);
+    }
+
+    pub(crate) fn hard_close_relay(&mut self) {
+        if let Some(path) = self.take_relay() {
+            self.retire_path(path, PathCloseReason::HardClose);
+        }
+    }
+
+    pub(crate) fn hard_close_direct(&mut self) {
+        self.direct_probe = None;
+        if let Some(path) = self.take_direct() {
+            self.retire_path(path, PathCloseReason::HardClose);
+        }
+    }
+
+    /// Security failures use the hard-close path so no existing lease can
+    /// keep a compromised carrier usable.
+    pub(crate) fn security_failure(&mut self) {
+        self.hard_closed = true;
+        self.draining = true;
+        self.direct_probe = None;
+        self.retire_all(PathCloseReason::SecurityFailure);
+        self.close_draining_paths(PathCloseReason::SecurityFailure);
+    }
+
+    pub(crate) fn record_activity(&self) {
+        if let Some(path) = self.direct_path.as_ref() {
+            path.record_activity();
+        }
+        if let Some(path) = self.relay_path.as_ref() {
+            path.record_activity();
+        }
+    }
+
+    /// Retire every Ready path that has had no borrower for the fixed 60s
+    /// ephemeral-path window. The caller supplies `now` so tests do not sleep.
+    pub(crate) fn retire_ephemeral(&mut self, now: Instant) -> usize {
+        if self.draining || self.hard_closed {
+            return 0;
+        }
+
+        let direct_expired = self
+            .direct_path
+            .as_ref()
+            .is_some_and(|path| path.is_ephemeral_idle(now));
+        let relay_expired = self
+            .relay_path
+            .as_ref()
+            .is_some_and(|path| path.is_ephemeral_idle(now));
+        let mut retired = 0;
+        if direct_expired {
+            if let Some(path) = self.take_direct() {
+                self.retire_path(path, PathCloseReason::NormalRetire);
+                retired += 1;
+            }
+        }
+        if relay_expired {
+            if let Some(path) = self.take_relay() {
+                self.retire_path(path, PathCloseReason::NormalRetire);
+                retired += 1;
+            }
+        }
+        retired
     }
 
     pub(crate) fn ephemeral_idle(&self, now: Instant) -> bool {
         !self.draining
             && !self.hard_closed
-            && self.direct_probe.is_none()
+            && (self.direct_path.is_some() || self.relay_path.is_some())
             && self
-                .direct_ready
-                .iter()
-                .chain(self.relay_ready.iter())
-                .all(|handle| self.registry.lease_count(handle) == Some(0))
-            && self
-                .direct_probe
+                .direct_path
                 .as_ref()
-                .is_none_or(|probe| probe.is_expired(now))
-            && now.saturating_duration_since(self.last_activity)
-                >= super::EPHEMERAL_PATH_IDLE_TIMEOUT
+                .is_none_or(|path| path.is_ephemeral_idle(now))
+            && self
+                .relay_path
+                .as_ref()
+                .is_none_or(|path| path.is_ephemeral_idle(now))
+    }
+
+    fn take_direct(&mut self) -> Option<Arc<PhysicalPath>> {
+        self.direct_ready.clear();
+        self.direct_path.take()
+    }
+
+    fn take_relay(&mut self) -> Option<Arc<PhysicalPath>> {
+        self.relay_ready = None;
+        self.relay_path.take()
+    }
+
+    fn retire_path(&mut self, path: Arc<PhysicalPath>, reason: PathCloseReason) {
+        let handle = path.handle().clone();
+        match reason {
+            PathCloseReason::NormalRetire => {
+                let _ = self.registry.drain(&handle);
+                path.retire_normal();
+                if path.is_active() {
+                    self.draining_paths.push(path);
+                }
+            }
+            PathCloseReason::HardClose => {
+                let _ = self.registry.revoke(&handle);
+                path.close_with_reason(PathCloseReason::HardClose);
+            }
+            PathCloseReason::SecurityFailure => {
+                let _ = self.registry.security_failure(&handle);
+                path.close_with_reason(PathCloseReason::SecurityFailure);
+            }
+        }
+    }
+
+    fn close_draining_paths(&mut self, reason: PathCloseReason) {
+        for path in self.draining_paths.drain(..) {
+            path.close_with_reason(reason);
+        }
+    }
+
+    fn reap_draining_paths(&mut self) {
+        self.draining_paths.retain(|path| path.is_active());
+    }
+
+    fn retire_all(&mut self, reason: PathCloseReason) {
+        let direct = self.take_direct();
+        let relay = self.take_relay();
+        if let Some(path) = direct {
+            self.retire_path(path, reason);
+        }
+        if let Some(path) = relay {
+            self.retire_path(path, reason);
+        }
     }
 }
 
-fn reserve_lease(entry: &Arc<PathEntry>) -> Result<(), CoreNetworkError> {
-    if !entry.active.load(Ordering::Acquire) || !entry.accepting.load(Ordering::Acquire) {
-        return Err(CoreNetworkError::StaleAttempt);
-    }
-    loop {
-        let current = entry.leases.load(Ordering::Acquire);
-        if current >= MAX_PATH_LEASES {
-            return Err(CoreNetworkError::ResourceLimit("path leases"));
-        }
-        if entry
-            .leases
-            .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            if entry.active.load(Ordering::Acquire) && entry.accepting.load(Ordering::Acquire) {
-                return Ok(());
-            }
-            entry.leases.fetch_sub(1, Ordering::AcqRel);
-            return Err(CoreNetworkError::StaleAttempt);
-        }
+impl Drop for PeerPathManager {
+    fn drop(&mut self) {
+        self.hard_close();
     }
 }
 
@@ -525,152 +1336,297 @@ mod tests {
     use crate::connect::{CAPABILITY_RELIABLE_MESSAGE, CAPABILITY_RELIABLE_STREAM};
     use crate::connection::{Route, RouteTransport};
 
+    fn test_peer() -> PeerId {
+        PeerId::new("peer-a").expect("peer id")
+    }
+
+    fn profile(topology: PathKind, transport: RouteTransport) -> ConnectionProfile {
+        let route = match topology {
+            PathKind::Direct => Route::direct(transport),
+            PathKind::Relay => Route::relay(transport),
+        };
+        ConnectionProfile::new(route)
+    }
+
+    fn recording_carrier(closes: &Arc<Mutex<Vec<PathCloseReason>>>) -> Box<dyn PathCarrier> {
+        let closes = Arc::clone(closes);
+        callback_path_carrier(move |reason| {
+            closes.lock().expect("close log lock").push(reason);
+        })
+    }
+
     #[test]
-    fn handles_are_non_owning_and_leases_are_released() {
-        let registry = PathRegistry::new();
-        let peer = PeerId::new("peer-a").expect("peer id");
-        let handle = registry
-            .publish_ready(
-                &peer,
-                ConnectionProfile::new(Route::direct(RouteTransport::Tcp)),
+    fn physical_path_owns_carrier_and_handle_is_non_owning() {
+        let registry = Arc::new(PathRegistry::new());
+        let closes = Arc::new(Mutex::new(Vec::new()));
+        let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+        let handle = manager
+            .publish_ready_with_carrier(
+                profile(PathKind::Direct, RouteTransport::Tcp),
+                recording_carrier(&closes),
             )
-            .expect("ready path");
-        let lease = registry.acquire(&handle).expect("lease");
+            .expect("direct path");
+        let copied_handle = handle.clone();
+        let lease = registry.acquire(&copied_handle).expect("path lease");
+
         assert_eq!(lease.handle(), &handle);
         assert_eq!(lease.lease_count(), 1);
-        drop(lease);
-        let lease = registry.acquire(&handle).expect("second lease");
-        assert_eq!(lease.lease_count(), 1);
-    }
+        assert!(lease.path.has_carrier());
+        assert!(registry.acquire(&handle).is_ok());
 
-    #[test]
-    fn selection_skips_incompatible_ready_paths_and_prefers_direct() {
-        let registry = PathRegistry::new();
-        let peer = PeerId::new("peer-a").expect("peer id");
-        let _message_only = registry
-            .publish_ready(
-                &peer,
-                ConnectionProfile::new(Route::direct(RouteTransport::WebSocket)),
-            )
-            .expect("message path");
-        let direct = registry
-            .publish_ready(
-                &peer,
-                ConnectionProfile::new(Route::direct(RouteTransport::Quic)),
-            )
-            .expect("quic path");
-        let relay = registry
-            .publish_ready(
-                &peer,
-                ConnectionProfile::new(Route::relay(RouteTransport::WebSocket)),
-            )
-            .expect("relay path");
-
-        let stream = registry
-            .select_compatible_ready_path(&peer, CAPABILITY_RELIABLE_STREAM)
-            .expect("stream path");
-        assert_eq!(stream.handle(), &direct);
-        drop(stream);
-        let message = registry
-            .select_compatible_ready_path(&peer, CAPABILITY_RELIABLE_MESSAGE)
-            .expect("message path");
-        assert_eq!(message.handle(), &direct);
-        assert_ne!(message.handle(), &relay);
-    }
-
-    #[test]
-    fn revoked_handle_cannot_be_reacquired() {
-        let registry = PathRegistry::new();
-        let peer = PeerId::new("peer-a").expect("peer id");
-        let handle = registry
-            .publish_ready(
-                &peer,
-                ConnectionProfile::new(Route::direct(RouteTransport::Tcp)),
-            )
-            .expect("ready path");
-        assert!(registry.revoke(&handle));
+        manager.normal_drain();
+        assert!(lease.is_active(), "normal drain waits for existing leases");
+        assert!(closes.lock().expect("close log lock").is_empty());
         assert!(matches!(
             registry.acquire(&handle),
             Err(CoreNetworkError::StaleAttempt)
         ));
-        assert!(matches!(
-            registry.select_compatible_ready_path(&peer, 1),
-            Err(CoreNetworkError::NoRoute)
-        ));
-    }
 
-    #[test]
-    fn peer_path_manager_keeps_direct_ready_and_probe_and_uses_relay_immediately() {
-        let registry = Arc::new(PathRegistry::new());
-        let peer = PeerId::new("peer-a").expect("peer id");
-        let mut manager = PeerPathManager::new(peer, Arc::clone(&registry));
-        let relay = manager
-            .publish_ready(ConnectionProfile::new(Route::relay(
-                RouteTransport::WebSocket,
-            )))
-            .expect("relay path");
-
+        lease.release();
         assert_eq!(
-            manager.select(CAPABILITY_RELIABLE_MESSAGE),
-            Some(PathSelection::Relay)
+            closes.lock().expect("close log lock").as_slice(),
+            &[PathCloseReason::NormalRetire]
         );
-        let (selection, lease) = manager
-            .acquire(CAPABILITY_RELIABLE_MESSAGE)
-            .expect("ready relay is immediately usable");
-        assert_eq!(selection, PathSelection::Relay);
-        assert_eq!(lease.handle(), &relay);
-
-        manager
-            .ensure_direct_probe(7, CAPABILITY_RELIABLE_MESSAGE, Duration::from_secs(4))
-            .expect("direct recovery probe");
-        assert!(manager.direct_probe().is_some());
-        drop(lease);
     }
 
     #[test]
-    fn peer_path_manager_prefers_direct_without_destroying_relay() {
+    fn direct_and_relay_can_both_be_ready_and_direct_is_preferred() {
         let registry = Arc::new(PathRegistry::new());
-        let peer = PeerId::new("peer-a").expect("peer id");
-        let mut manager = PeerPathManager::new(peer, Arc::clone(&registry));
+        let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
         let relay = manager
-            .publish_ready(ConnectionProfile::new(Route::relay(
-                RouteTransport::WebSocket,
-            )))
+            .publish_ready(profile(PathKind::Relay, RouteTransport::WebSocket))
             .expect("relay path");
         let direct = manager
-            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Quic)))
+            .publish_ready(profile(PathKind::Direct, RouteTransport::Quic))
             .expect("direct path");
 
-        let (selection, lease) = manager
-            .acquire(CAPABILITY_RELIABLE_MESSAGE)
-            .expect("direct path");
+        assert_eq!(manager.direct_state(), DirectPathState::Ready);
+        assert_eq!(manager.relay_state(), RelayPathState::Ready);
+        assert_eq!(manager.direct_ready(), std::slice::from_ref(&direct));
+        assert_eq!(manager.relay_ready(), Some(&relay));
+        assert_eq!(
+            manager.select(CAPABILITY_RELIABLE_MESSAGE),
+            Some(PathSelection::Direct)
+        );
+
+        let (selection, direct_lease) = manager
+            .acquire(CAPABILITY_RELIABLE_STREAM)
+            .expect("direct stream lease");
         assert_eq!(selection, PathSelection::Direct);
-        assert_eq!(lease.handle(), &direct);
-        drop(lease);
+        assert_eq!(direct_lease.handle(), &direct);
+        drop(direct_lease);
         assert!(registry.acquire(&relay).is_ok());
     }
 
     #[test]
-    fn hard_close_revokes_existing_leases_and_normal_drain_rejects_new_ones() {
+    fn direct_probe_is_bounded_and_relay_remains_selectable() {
         let registry = Arc::new(PathRegistry::new());
-        let peer = PeerId::new("peer-a").expect("peer id");
-        let mut manager = PeerPathManager::new(peer, Arc::clone(&registry));
+        let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+        let relay = manager
+            .publish_ready(profile(PathKind::Relay, RouteTransport::WebSocket))
+            .expect("relay path");
+
+        manager
+            .ensure_direct_probe(7, CAPABILITY_RELIABLE_MESSAGE, Duration::from_secs(4))
+            .expect("direct probe");
+        assert_eq!(manager.direct_state(), DirectPathState::Probe);
+        assert!(manager.direct_probe().is_some());
+        assert_eq!(
+            manager.select(CAPABILITY_RELIABLE_MESSAGE),
+            Some(PathSelection::Relay)
+        );
+
+        let (selection, lease) = manager
+            .acquire(CAPABILITY_RELIABLE_MESSAGE)
+            .expect("relay remains usable during probe");
+        assert_eq!(selection, PathSelection::Relay);
+        assert_eq!(lease.handle(), &relay);
+        drop(lease);
+        assert!(manager.finish_direct_probe(7));
+        assert_eq!(manager.direct_state(), DirectPathState::None);
+    }
+
+    #[test]
+    fn normal_retire_drains_leases_and_closes_unleased_paths() {
+        let registry = Arc::new(PathRegistry::new());
+        let direct_closes = Arc::new(Mutex::new(Vec::new()));
+        let relay_closes = Arc::new(Mutex::new(Vec::new()));
+        let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+        let direct = manager
+            .publish_ready_with_carrier(
+                profile(PathKind::Direct, RouteTransport::Tcp),
+                recording_carrier(&direct_closes),
+            )
+            .expect("direct path");
+        let relay = manager
+            .publish_ready_with_carrier(
+                profile(PathKind::Relay, RouteTransport::WebSocket),
+                recording_carrier(&relay_closes),
+            )
+            .expect("relay path");
+        let direct_lease = registry.acquire(&direct).expect("direct lease");
+
+        manager.normal_drain();
+        assert_eq!(manager.direct_state(), DirectPathState::None);
+        assert_eq!(manager.relay_state(), RelayPathState::None);
+        assert!(direct_lease.is_active());
+        assert!(direct_closes.lock().expect("close log lock").is_empty());
+        assert_eq!(
+            relay_closes.lock().expect("close log lock").as_slice(),
+            &[PathCloseReason::NormalRetire]
+        );
+        assert!(matches!(
+            registry.acquire(&relay),
+            Err(CoreNetworkError::StaleAttempt)
+        ));
+
+        drop(direct_lease);
+        assert_eq!(
+            direct_closes.lock().expect("close log lock").as_slice(),
+            &[PathCloseReason::NormalRetire]
+        );
+    }
+
+    #[test]
+    fn hard_close_and_security_failure_revoke_immediately() {
+        let registry = Arc::new(PathRegistry::new());
+        let closes = Arc::new(Mutex::new(Vec::new()));
+        let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
         let handle = manager
-            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+            .publish_ready_with_carrier(
+                profile(PathKind::Direct, RouteTransport::Tcp),
+                recording_carrier(&closes),
+            )
             .expect("direct path");
         let lease = registry.acquire(&handle).expect("lease");
-        manager.normal_drain();
-        assert!(lease.is_active());
+
+        manager.security_failure();
+        assert!(!lease.is_active());
+        assert_eq!(
+            closes.lock().expect("close log lock").as_slice(),
+            &[PathCloseReason::SecurityFailure]
+        );
         assert!(matches!(
             registry.acquire(&handle),
             Err(CoreNetworkError::StaleAttempt)
         ));
         drop(lease);
 
-        manager.hard_close();
+        let second_closes = Arc::new(Mutex::new(Vec::new()));
+        let mut second_manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+        let second = second_manager
+            .publish_ready_with_carrier(
+                profile(PathKind::Direct, RouteTransport::Tcp),
+                recording_carrier(&second_closes),
+            )
+            .expect("second direct path");
+        let second_lease = registry.acquire(&second).expect("second lease");
+        second_manager.hard_close();
+        assert!(!second_lease.is_active());
+        assert_eq!(
+            second_closes.lock().expect("close log lock").as_slice(),
+            &[PathCloseReason::HardClose]
+        );
+
+        let drained_closes = Arc::new(Mutex::new(Vec::new()));
+        let mut drained_manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+        let drained = drained_manager
+            .publish_ready_with_carrier(
+                profile(PathKind::Direct, RouteTransport::Tcp),
+                recording_carrier(&drained_closes),
+            )
+            .expect("draining path");
+        let drained_lease = registry.acquire(&drained).expect("draining lease");
+        drained_manager.normal_drain();
+        assert!(drained_lease.is_active());
+        drained_manager.hard_close();
+        assert!(!drained_lease.is_active());
+        assert_eq!(
+            drained_closes.lock().expect("close log lock").as_slice(),
+            &[PathCloseReason::HardClose]
+        );
+    }
+
+    #[test]
+    fn ephemeral_paths_retire_after_sixty_seconds_without_sleeping() {
+        let registry = Arc::new(PathRegistry::new());
+        let closes = Arc::new(Mutex::new(Vec::new()));
+        let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+        let now = Instant::now();
+        let handle = manager
+            .publish_ready_with_carrier_at(
+                profile(PathKind::Direct, RouteTransport::Tcp),
+                recording_carrier(&closes),
+                now - super::super::EPHEMERAL_PATH_IDLE_TIMEOUT - Duration::from_secs(1),
+            )
+            .expect("ephemeral direct path");
+
+        assert!(manager.ephemeral_idle(now));
+        assert_eq!(manager.retire_ephemeral(now), 1);
         assert!(matches!(
             registry.acquire(&handle),
             Err(CoreNetworkError::StaleAttempt)
         ));
+        assert_eq!(
+            closes.lock().expect("close log lock").as_slice(),
+            &[PathCloseReason::NormalRetire]
+        );
+    }
+
+    #[test]
+    fn registry_peer_revoke_hard_closes_manager_owned_paths() {
+        let registry = Arc::new(PathRegistry::new());
+        let closes = Arc::new(Mutex::new(Vec::new()));
+        let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+        let handle = manager
+            .publish_ready_with_carrier(
+                profile(PathKind::Relay, RouteTransport::WebSocket),
+                recording_carrier(&closes),
+            )
+            .expect("relay path");
+        let lease = registry.acquire(&handle).expect("lease");
+
+        assert_eq!(registry.revoke_peer(&test_peer()), 1);
+        assert!(!lease.is_active());
+        assert_eq!(
+            closes.lock().expect("close log lock").as_slice(),
+            &[PathCloseReason::HardClose]
+        );
+        assert_eq!(manager.relay_state(), RelayPathState::None);
+    }
+
+    #[test]
+    fn registry_selection_skips_incompatible_paths_and_prefers_direct() {
+        let registry = Arc::new(PathRegistry::new());
+        let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+        let direct_message = manager
+            .publish_ready(profile(PathKind::Direct, RouteTransport::WebSocket))
+            .expect("message-only path");
+        let relay = manager
+            .publish_ready(profile(PathKind::Relay, RouteTransport::WebSocket))
+            .expect("relay stream fallback");
+
+        let relay_lease = registry
+            .select_compatible_ready_path(&test_peer(), CAPABILITY_RELIABLE_STREAM)
+            .expect("relay stream path");
+        assert_eq!(relay_lease.handle(), &relay);
+        assert_ne!(relay_lease.handle(), &direct_message);
+        drop(relay_lease);
+
+        let direct = manager
+            .publish_ready(profile(PathKind::Direct, RouteTransport::Quic))
+            .expect("quic path");
+        let direct_lease = registry
+            .select_compatible_ready_path(&test_peer(), CAPABILITY_RELIABLE_STREAM)
+            .expect("direct stream path");
+        assert_eq!(direct_lease.handle(), &direct);
+        assert_eq!(direct_lease.profile().transport(), RouteTransport::Quic);
+        drop(direct_lease);
+
+        let message_lease = registry
+            .select_compatible_ready_path(&test_peer(), CAPABILITY_RELIABLE_MESSAGE)
+            .expect("direct message path");
+        assert_eq!(message_lease.profile().topology(), RouteTopology::Direct);
+        drop(message_lease);
     }
 }

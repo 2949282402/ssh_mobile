@@ -2,7 +2,7 @@
 //!
 //! 每次新的 `connect()` 都 Resolve（§10/§34）。Resolve 之后，如果
 //! [`ReadySessionIndex`] 已为该 peer 登记了一条连接摘要（健康由调用方通过
-//! `sessions.is_connected` 确认），且：
+//! Runtime 的 PeerPathManager 确认），且：
 //!
 //! - peer `runtime_epoch` == Resolve 返回的 epoch，且
 //! - 连接 capability 满足本次业务
@@ -11,8 +11,8 @@
 //! 关闭旧连接并创建新的 ConnectivityAttempt（§34）。
 //!
 //! 该索引只保存映射（peer → epoch/capability/session），不持有 Connection 本体；
-//! 真正的 Connection 归 ConnectionSessionStore 的 route 所有，健康判断也只能由 ConnectionSessionStore
-//! 完成。索引是纯映射，可在单元测试中独立验证复用规则。
+//! 真正的 Connection 归 Runtime 的 PeerPathManager/PhysicalRoute 所有，健康判断也只能由
+//! 路径 owner 完成。索引是纯映射，可在单元测试中独立验证复用规则。
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -48,7 +48,7 @@ impl ReadySessionIndex {
     /// 按 §34 查询可复用连接。
     ///
     /// 返回 `Some(registered)` 当且仅当已登记连接与 Resolve 返回的 epoch 一致且
-    /// capability 满足本次请求。调用方仍需通过 ConnectionSessionStore 确认该连接健康。
+    /// capability 满足本次请求。调用方仍需通过 Runtime 的 PeerPathManager 确认该路径健康。
     pub(crate) fn lookup(
         &self,
         peer_id: &str,
@@ -157,10 +157,12 @@ mod tests {
     }
 
     async fn session_id(manager: &ConnectionSessionStore, peer_id: &str) -> SessionId {
-        match manager.begin_connect(peer_id).await {
-            crate::session::ConnectDecision::Started(id) => id,
-            decision => panic!("unexpected decision: {decision:?}"),
-        }
+        let id = SessionId::new();
+        manager
+            .register_pending_session(peer_id, id)
+            .await
+            .expect("reserve session identity");
+        id
     }
 
     #[tokio::test]

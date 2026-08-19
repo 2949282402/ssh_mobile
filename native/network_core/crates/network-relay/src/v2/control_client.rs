@@ -99,6 +99,9 @@ pub struct RelayControlClient {
     disconnect_notified: Arc<AtomicBool>,
     intentional_disconnect: Arc<AtomicBool>,
     heartbeat_interval: Duration,
+    /// Server-confirmed Ready.presence_ttl_s for remote candidate freshness.
+    /// It remains absent until a Ready frame has been validated.
+    ready_presence_ttl: Option<Duration>,
 }
 
 impl Drop for RelayControlClient {
@@ -151,6 +154,7 @@ impl RelayControlClient {
             disconnect_notified: Arc::new(AtomicBool::new(false)),
             intentional_disconnect: Arc::new(AtomicBool::new(false)),
             heartbeat_interval: Duration::from_secs(u64::from(HEARTBEAT_INTERVAL_S)),
+            ready_presence_ttl: None,
         })
     }
 
@@ -186,6 +190,7 @@ impl RelayControlClient {
             .map_err(|error| RelayError::Socket(error.to_string()))?;
         let ready = validate_ready(ready, &self.device_id)?;
         self.heartbeat_interval = Duration::from_secs(u64::from(ready.heartbeat_interval_s.max(1)));
+        self.ready_presence_ttl = ready_presence_ttl_from_frame(&ready);
 
         let (outbound, mut outbound_rx) = mpsc::channel::<Message>(CONTROL_QUEUE_CAPACITY);
         self.outbound = Some(outbound);
@@ -322,6 +327,12 @@ impl RelayControlClient {
                 .outbound
                 .as_ref()
                 .is_some_and(|sender| !sender.is_closed())
+    }
+
+    /// Return the server-confirmed candidate-cache TTL from the last Ready
+    /// frame. No value is exposed before a Ready handshake succeeds.
+    pub fn ready_presence_ttl(&self) -> Option<Duration> {
+        self.ready_presence_ttl
     }
 
     /// 发送一次显式 Heartbeat，并等待对应的 HeartbeatAck 回显 `request_id`。
@@ -765,6 +776,10 @@ fn validate_ready(message: Message, expected_device_id: &str) -> Result<Ready, R
     Ok(ready.clone())
 }
 
+fn ready_presence_ttl_from_frame(ready: &Ready) -> Option<Duration> {
+    (ready.presence_ttl_s != 0).then(|| Duration::from_secs(u64::from(ready.presence_ttl_s)))
+}
+
 /// Validate the semantic fields that protobuf scalar defaults cannot express.
 /// A zero epoch/revision is never a usable discovery publication; accepting it
 /// would let an offline or not-ready peer enter the direct-connect path.
@@ -1117,6 +1132,28 @@ mod tests {
             "device-a"
         )
         .is_err());
+    }
+
+    #[test]
+    fn ready_presence_ttl_is_optional_until_a_valid_value_is_received() {
+        let ready = Ready {
+            protocol_version: RELAY_V2_VERSION,
+            device_id: "device-a".into(),
+            server_time_ms: 0,
+            heartbeat_interval_s: HEARTBEAT_INTERVAL_S,
+            presence_ttl_s: 37,
+        };
+        assert_eq!(
+            ready_presence_ttl_from_frame(&ready),
+            Some(Duration::from_secs(37))
+        );
+        assert_eq!(
+            ready_presence_ttl_from_frame(&Ready {
+                presence_ttl_s: 0,
+                ..ready
+            }),
+            None
+        );
     }
 
     #[test]

@@ -14,14 +14,18 @@ use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex, Notify, RwLock};
 use tracing::info;
 
 use crate::commands::run_command_worker;
+use crate::connect::{
+    callback_path_carrier, profile_capability_mask, PathHandle, PeerId, PeerPathManager,
+    PhysicalRoute,
+};
 use crate::crypto::{CryptoContext, CryptoError, SessionCryptoManager};
 use crate::crypto_handshake::{
     RelayResponderConfirmation, RelayResponderHandshake, SessionCryptoMaterial,
 };
 use crate::delivery::DeliveryManager;
-use crate::errors::NetworkError;
+use crate::errors::{CoreNetworkError, NetworkError};
 use crate::session::{
-    ConnectDecision, ConnectionAdmission, ConnectionAdmissionError, ConnectionAdmissionOutcome,
+    ConnectionAdmission, ConnectionAdmissionError, ConnectionAdmissionOutcome,
     ConnectionSessionStore, SessionId,
 };
 use crate::stream::ReliableStreamManager;
@@ -166,6 +170,23 @@ pub(crate) struct ConnectionAdmissionLease {
     admission: ConnectionAdmission,
 }
 
+/// Session admission is deliberately separate from Peer lifecycle. This
+/// result only tells the attempt whether it owns a fresh SessionId reservation
+/// or must observe an already-reserved identity; the PeerSupervisor owns the
+/// actual in-flight operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConnectDecision {
+    Started(SessionId),
+    AlreadyConnected(SessionId),
+    InProgress(SessionId),
+}
+
+struct OwnedTransportPath {
+    session_id: SessionId,
+    handle: PathHandle,
+    route: Arc<PhysicalRoute>,
+}
+
 impl ConnectionAdmissionLease {
     pub(crate) fn new(admission: ConnectionAdmission) -> Self {
         Self { admission }
@@ -188,6 +209,7 @@ pub(crate) struct PeerConfig {
     pub(crate) endpoint: Option<SocketAddr>,
     pub(crate) identity_public_key: [u8; 32],
     pub(crate) e2e_public_key: [u8; 32],
+    pub(crate) e2ee_policy: network_protocol::E2eePolicy,
 }
 
 pub(crate) struct RuntimeState {
@@ -220,13 +242,6 @@ pub(crate) struct RuntimeState {
     pub(crate) crypto: SessionCryptoManager,
     pub(crate) delivery: DeliveryManager,
     pub(crate) realtime: AsyncMutex<crate::realtime::RealtimeManager>,
-    /// transport-network v2：reservation 作用域的 Relay v2 数据面客户端（§25/§31）。
-    ///
-    /// 由 `ConnectivityAttemptCoordinator::connect_relay_fallback`（发起方）或控制面
-    /// `IncomingRelayReservation`（应答方）建立；文件/流/消息数据经它转发。
-    /// 活跃 reservation 数据面客户端，按对端 device_id 索引（§25 每条 reservation
-    /// 数据面相互独立，一个对端的关闭不得切断另一个对端的活跃连接）。
-    pub(crate) relay_data: RwLock<HashMap<String, Arc<RelayDataClient>>>,
     pub(crate) relay_config: RwLock<Option<crate::relay::RelayReconnectConfig>>,
     pub(crate) relay_reconnect_task: Mutex<Option<TaskId>>,
     pub(crate) relay_reconnect_active: AtomicBool,
@@ -253,7 +268,14 @@ pub(crate) struct RuntimeState {
     /// waiters, and bounded control mailboxes by validated PeerId.
     pub(crate) peer_supervisors: crate::connect::PeerSupervisorRegistry,
     /// Runtime owner of ready-path handles. Borrowers receive leases only.
-    pub(crate) ready_paths: crate::connect::PathRegistry,
+    pub(crate) ready_paths: Arc<crate::connect::PathRegistry>,
+    /// Strong peer-owned path managers. `ready_paths` is only a weak index;
+    /// these managers own the corresponding PhysicalPath and its carrier.
+    pub(crate) peer_path_managers: RwLock<HashMap<String, Arc<Mutex<PeerPathManager>>>>,
+    /// Runtime lookup for the exact admitted carriers behind published
+    /// PathHandles. Direct and Relay entries may coexist; this is an I/O
+    /// projection, never SessionStore state.
+    transport_paths: RwLock<HashMap<String, Vec<OwnedTransportPath>>>,
     /// ReliableStream byte-stream managers, keyed by peer（§17）。每个 peer 的
     /// receive buffer / QUIC send half / 网关桥都挂在这个 manager 上。
     pub(crate) reliable_streams: RwLock<HashMap<String, ReliableStreamManager>>,
@@ -305,7 +327,6 @@ impl RuntimeState {
             crypto: SessionCryptoManager::new(),
             delivery: DeliveryManager::new(),
             realtime: AsyncMutex::new(crate::realtime::RealtimeManager::default()),
-            relay_data: RwLock::new(HashMap::new()),
             relay_config: RwLock::new(None),
             relay_reconnect_task: Mutex::new(None),
             relay_reconnect_active: AtomicBool::new(false),
@@ -318,7 +339,9 @@ impl RuntimeState {
             peer_supervisors: crate::connect::PeerSupervisorRegistry::with_task_supervisor(
                 Arc::clone(&task_supervisor),
             ),
-            ready_paths: crate::connect::PathRegistry::new(),
+            ready_paths: Arc::new(crate::connect::PathRegistry::new()),
+            peer_path_managers: RwLock::new(HashMap::new()),
+            transport_paths: RwLock::new(HashMap::new()),
             reliable_streams: RwLock::new(HashMap::new()),
             stream_gateway_port: Arc::new(AtomicU16::new(crate::stream::STREAM_LOCAL_SSH_PORT)),
             relay_crypto_waiters: RwLock::new(HashMap::new()),
@@ -379,14 +402,39 @@ impl RuntimeState {
     pub(crate) async fn begin_connect(
         &self,
         peer_id: &str,
-        required_capabilities: u8,
+        _required_capabilities: u8,
     ) -> ConnectDecision {
-        // Session admission owns transport lifecycle only. A business
-        // capability is selected by the caller's path/attempt; it must not
-        // cause a healthy Connected session to be closed and replaced.
-        self.connection_sessions
-            .begin_connect_with_capability(peer_id, required_capabilities)
-            .await
+        // SessionStore only reserves a fresh identity. It deliberately does
+        // not know whether a peer is Connecting or Online; that decision is
+        // owned by PeerSupervisor. The existing binding is sufficient for
+        // this attempt-local stale guard.
+        if let Some(session_id) = self.connection_sessions.current_session_id(peer_id).await {
+            if self
+                .connection_sessions
+                .current_remote_session_binding(peer_id)
+                .await
+                .is_some()
+            {
+                ConnectDecision::AlreadyConnected(session_id)
+            } else {
+                ConnectDecision::InProgress(session_id)
+            }
+        } else {
+            let session_id = SessionId::new();
+            match self
+                .connection_sessions
+                .register_pending_session(peer_id, session_id)
+                .await
+            {
+                Ok(()) => ConnectDecision::Started(session_id),
+                Err(_) => ConnectDecision::InProgress(
+                    self.connection_sessions
+                        .current_session_id(peer_id)
+                        .await
+                        .unwrap_or(session_id),
+                ),
+            }
+        }
     }
 
     /// Admit authenticated Noise material for a 1:1 ConnectionSession（§18）。
@@ -417,27 +465,650 @@ impl RuntimeState {
         remote_session_binding: &str,
         candidate_capabilities: u8,
     ) -> Result<ConnectionAdmissionLease, ConnectionAdmissionError> {
+        let _ = candidate_capabilities;
         let outcome: ConnectionAdmissionOutcome = self
             .connection_sessions
-            .admit_authenticated_session_with_capability(
-                peer_id,
-                expected_session_id,
-                remote_session_binding,
-                candidate_capabilities,
-            )
+            .admit_authenticated_session(peer_id, expected_session_id, remote_session_binding)
             .await?;
-        let ConnectionAdmissionOutcome {
-            admission,
-            detached_route,
-        } = outcome;
-        if let Some(detached_route) = detached_route {
-            detached_route.close().await;
-        }
+        let admission = outcome.admission;
         if let Some(replaced_session_id) = admission.replaced_session_id {
+            self.close_transport_path(peer_id).await;
             self.cancel_session_tasks(peer_id, replaced_session_id)
                 .await;
         }
         Ok(ConnectionAdmissionLease::new(admission))
+    }
+
+    async fn peer_path_manager(
+        &self,
+        peer_id: &str,
+    ) -> Result<Arc<Mutex<PeerPathManager>>, CoreNetworkError> {
+        let peer = PeerId::new(peer_id)?;
+        if let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() {
+            return Ok(manager);
+        }
+        let mut managers = self.peer_path_managers.write().await;
+        Ok(managers
+            .entry(peer_id.to_string())
+            .or_insert_with(|| {
+                Arc::new(Mutex::new(PeerPathManager::new(
+                    peer.clone(),
+                    Arc::clone(&self.ready_paths),
+                )))
+            })
+            .clone())
+    }
+
+    async fn publish_transport_path(
+        &self,
+        peer_id: &str,
+        session_id: SessionId,
+        route: crate::connect::ActiveRoute,
+    ) -> Result<Option<Arc<PhysicalRoute>>, CoreNetworkError> {
+        let profile = route.profile();
+        let physical = PhysicalRoute::new(route);
+        let close_target = Arc::clone(&physical);
+        let carrier = callback_path_carrier(move |_reason| {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move { close_target.close().await });
+            }
+        });
+        let manager = self.peer_path_manager(peer_id).await?;
+        let handle = manager
+            .lock()
+            .expect("peer path manager lock")
+            .publish_ready_with_carrier(profile, carrier)?;
+        let mut paths = self.transport_paths.write().await;
+        let entries = paths.entry(peer_id.to_string()).or_default();
+        let old = entries
+            .iter()
+            .position(|entry| entry.handle.profile().topology() == profile.topology())
+            .map(|index| entries.remove(index).route);
+        entries.push(OwnedTransportPath {
+            session_id,
+            handle,
+            route: physical,
+        });
+        Ok(old)
+    }
+
+    pub(crate) async fn attach_connection_for_session(
+        &self,
+        peer_id: &str,
+        expected_session_id: Option<SessionId>,
+        connection: quinn::Connection,
+        route: network_protocol::RouteType,
+    ) -> Result<Option<Arc<PhysicalRoute>>, ()> {
+        let session_id = match self.connection_sessions.current_session_id(peer_id).await {
+            Some(session_id) => {
+                if expected_session_id.is_some_and(|expected| expected != session_id) {
+                    connection.close(quinn::VarInt::from_u32(0), b"stale physical path");
+                    return Err(());
+                }
+                session_id
+            }
+            None if expected_session_id.is_some() => {
+                connection.close(quinn::VarInt::from_u32(0), b"stale physical path");
+                return Err(());
+            }
+            None => {
+                let session_id = SessionId::new();
+                self.connection_sessions
+                    .register_pending_session(peer_id, session_id)
+                    .await
+                    .map_err(|_| ())?;
+                session_id
+            }
+        };
+        self.publish_transport_path(
+            peer_id,
+            session_id,
+            crate::connect::ActiveRoute::quic(connection, route),
+        )
+        .await
+        .map_err(|_| ())
+    }
+
+    pub(crate) async fn attach_generic_route_for_session(
+        &self,
+        peer_id: &str,
+        expected_session_id: Option<SessionId>,
+        scope: &mut crate::connect::GenericRouteScope,
+    ) -> Result<Option<Arc<PhysicalRoute>>, ()> {
+        let session_id = self
+            .connection_sessions
+            .current_session_id(peer_id)
+            .await
+            .ok_or(())?;
+        if expected_session_id.is_some_and(|expected| expected != session_id) {
+            return Err(());
+        }
+        let profile = scope.profile().ok_or(())?;
+        if self.path_profile(peer_id).await == Some(profile) {
+            return Err(());
+        }
+        let owner = scope.commit_and_take_owner()?;
+        self.publish_transport_path(
+            peer_id,
+            session_id,
+            crate::connect::ActiveRoute::generic(owner),
+        )
+        .await
+        .map_err(|_| ())
+    }
+
+    pub(crate) async fn mark_relay_route_connected(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        relay: Option<Arc<RelayDataClient>>,
+    ) -> bool {
+        if self.connection_sessions.current_session_id(peer_id).await != Some(expected_session_id) {
+            return false;
+        }
+        self.publish_transport_path(
+            peer_id,
+            expected_session_id,
+            crate::connect::ActiveRoute::relay(relay),
+        )
+        .await
+        .is_ok()
+    }
+
+    pub(crate) async fn path_profile(
+        &self,
+        peer_id: &str,
+    ) -> Option<crate::connection::ConnectionProfile> {
+        self.transport_paths
+            .read()
+            .await
+            .get(peer_id)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| {
+                        entry.handle.profile().topology()
+                            == crate::connection::RouteTopology::Direct
+                    })
+                    .or_else(|| entries.first())
+                    .and_then(|entry| entry.route.profile())
+            })
+    }
+
+    pub(crate) async fn e2ee_policy(
+        &self,
+        peer_id: &str,
+    ) -> crate::crypto_handshake::path_handshake::E2eePolicy {
+        let configured = self
+            .peers
+            .read()
+            .await
+            .get(peer_id)
+            .map(|peer| peer.e2ee_policy)
+            .unwrap_or(network_protocol::E2eePolicy::Required);
+        crate::crypto_handshake::path_handshake::E2eePolicy::from_network_code(configured as i32)
+            .unwrap_or_default()
+    }
+
+    pub(crate) async fn path_route(&self, peer_id: &str) -> Option<network_protocol::RouteType> {
+        self.path_profile(peer_id)
+            .await
+            .and_then(|profile| profile.route().to_wire())
+    }
+
+    #[allow(dead_code)] // retained for runtime diagnostics and focused tests
+    pub(crate) async fn path_connection(&self, peer_id: &str) -> Option<quinn::Connection> {
+        self.transport_paths
+            .read()
+            .await
+            .get(peer_id)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| {
+                        entry.handle.profile().topology()
+                            == crate::connection::RouteTopology::Direct
+                    })
+                    .or_else(|| entries.first())
+                    .and_then(|entry| entry.route.connection())
+            })
+    }
+
+    pub(crate) async fn path_connection_for_lease(
+        &self,
+        lease: &crate::connect::PathLease,
+    ) -> Option<quinn::Connection> {
+        if !lease.is_active() {
+            return None;
+        }
+        let handle = lease.handle().clone();
+        self.transport_paths
+            .read()
+            .await
+            .get(handle.peer_id().as_str())
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.handle == handle)
+                    .and_then(|entry| entry.route.connection())
+            })
+    }
+
+    #[allow(dead_code)] // retained for runtime diagnostics and focused tests
+    pub(crate) async fn path_stream_carrier(
+        &self,
+        peer_id: &str,
+    ) -> Option<crate::connect::StreamCarrier> {
+        self.transport_paths
+            .read()
+            .await
+            .get(peer_id)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| {
+                        entry.handle.profile().topology()
+                            == crate::connection::RouteTopology::Direct
+                    })
+                    .or_else(|| entries.first())
+                    .and_then(|entry| entry.route.stream_carrier())
+            })
+    }
+
+    pub(crate) async fn path_relay_data(&self, peer_id: &str) -> Option<Arc<RelayDataClient>> {
+        self.transport_paths
+            .read()
+            .await
+            .get(peer_id)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| {
+                        entry.handle.profile().topology() == crate::connection::RouteTopology::Relay
+                    })
+                    .and_then(|entry| entry.route.relay_data())
+            })
+    }
+
+    pub(crate) async fn path_relay_data_for_lease(
+        &self,
+        lease: &crate::connect::PathLease,
+    ) -> Option<Arc<RelayDataClient>> {
+        if !lease.is_active() {
+            return None;
+        }
+        let handle = lease.handle().clone();
+        self.transport_paths
+            .read()
+            .await
+            .get(handle.peer_id().as_str())
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.handle == handle)
+                    .and_then(|entry| entry.route.relay_data())
+            })
+    }
+
+    pub(crate) async fn path_is_current_relay_data(
+        &self,
+        peer_id: &str,
+        data: &Arc<RelayDataClient>,
+    ) -> bool {
+        self.transport_paths
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|entries| entries.iter().any(|entry| entry.route.is_relay_data(data)))
+    }
+
+    #[allow(dead_code)] // retained for runtime diagnostics and focused tests
+    pub(crate) async fn path_send_channel_frame(
+        &self,
+        peer_id: &str,
+        relay_token: &str,
+        kind: crate::connection::GenericFrameKind,
+        payload: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let required_capability = match kind {
+            crate::connection::GenericFrameKind::DataMessage
+            | crate::connection::GenericFrameKind::DeliveryAck => {
+                crate::connection::ConnectionCapability::ReliableMessage
+            }
+            crate::connection::GenericFrameKind::StreamOpen
+            | crate::connection::GenericFrameKind::StreamBytes
+            | crate::connection::GenericFrameKind::StreamClose => {
+                crate::connection::ConnectionCapability::ReliableStream
+            }
+        };
+        let route =
+            self.transport_paths
+                .read()
+                .await
+                .get(peer_id)
+                .and_then(|entries| {
+                    entries
+                        .iter()
+                        .filter(|entry| {
+                            entry.route.profile().is_some_and(|profile| {
+                                profile.topology() == crate::connection::RouteTopology::Direct
+                                    && profile.supports(required_capability)
+                            })
+                        })
+                        .map(|entry| Arc::clone(&entry.route))
+                        .next()
+                        .or_else(|| {
+                            entries
+                                .iter()
+                                .find(|entry| {
+                                    entry.route.profile().is_some_and(|profile| {
+                                        profile.supports(required_capability)
+                                    })
+                                })
+                                .map(|entry| Arc::clone(&entry.route))
+                        })
+                })
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::NotConnected, "path unavailable")
+                })?;
+        route.send_channel_frame(relay_token, kind, payload).await
+    }
+
+    pub(crate) async fn path_send_channel_frame_for_lease(
+        &self,
+        lease: &crate::connect::PathLease,
+        relay_token: &str,
+        kind: crate::connection::GenericFrameKind,
+        payload: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if !lease.is_active() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "path lease inactive",
+            )
+            .into());
+        }
+        let handle = lease.handle().clone();
+        let route = self
+            .transport_paths
+            .read()
+            .await
+            .get(handle.peer_id().as_str())
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.handle == handle)
+                    .map(|entry| Arc::clone(&entry.route))
+            })
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "path lease is stale")
+            })?;
+        let result = route.send_channel_frame(relay_token, kind, payload).await;
+        if result.is_ok() && !lease.is_active() {
+            return Err(
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "path lease lost").into(),
+            );
+        }
+        result
+    }
+
+    pub(crate) async fn path_is_connected(&self, peer_id: &str) -> bool {
+        let current_session = self.connection_sessions.current_session_id(peer_id).await;
+        self.transport_paths
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|entries| {
+                current_session.is_some_and(|session_id| {
+                    entries.iter().any(|entry| {
+                        entry.session_id == session_id && entry.route.profile().is_some()
+                    })
+                })
+            })
+    }
+
+    /// Validate an authenticated candidate before its PhysicalRoute is
+    /// published. This is an admission check, not a connectivity truth read:
+    /// the candidate owns no Runtime path until the caller commits it.
+    pub(crate) async fn candidate_supports_required(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        profile: crate::connection::ConnectionProfile,
+    ) -> bool {
+        self.connection_sessions.current_session_id(peer_id).await == Some(expected_session_id)
+            && profile_capability_mask(profile) != 0
+    }
+
+    /// Validate a candidate against the requested capability before path
+    /// publication. The capability mask remains attempt-local and is never
+    /// stored in ConnectionSessionStore.
+    pub(crate) async fn candidate_supports(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        profile: crate::connection::ConnectionProfile,
+        required_capabilities: u8,
+    ) -> bool {
+        self.connection_sessions.current_session_id(peer_id).await == Some(expected_session_id)
+            && profile_capability_mask(profile) & required_capabilities == required_capabilities
+    }
+
+    pub(crate) async fn path_admission_can_retry(
+        &self,
+        peer_id: &str,
+        expected_session_id: Option<SessionId>,
+    ) -> bool {
+        self.connection_sessions.current_session_id(peer_id).await == expected_session_id
+            && self
+                .connection_sessions
+                .current_remote_session_binding(peer_id)
+                .await
+                .is_none()
+    }
+
+    pub(crate) async fn wait_for_path_change(&self) {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    pub(crate) async fn fail_session(&self, peer_id: &str, session_id: SessionId) {
+        self.close_transport_path(peer_id).await;
+        if self
+            .connection_sessions
+            .retire_session(peer_id, session_id)
+            .await
+        {
+            self.cancel_session_tasks(peer_id, session_id).await;
+        }
+    }
+
+    pub(crate) async fn close_transport_path(&self, peer_id: &str) -> Option<Arc<PhysicalRoute>> {
+        let entries = self.transport_paths.write().await.remove(peer_id);
+        let entries = entries?;
+        if let Ok(manager) = self.peer_path_manager(peer_id).await {
+            manager.lock().expect("peer path manager lock").hard_close();
+        }
+        self.peer_path_managers.write().await.remove(peer_id);
+        let mut routes = entries.into_iter().map(|entry| entry.route);
+        let first = routes.next();
+        for route in routes {
+            route.close().await;
+        }
+        if let Some(route) = &first {
+            route.close().await;
+        }
+        first
+    }
+
+    pub(crate) async fn close_relay_path(
+        &self,
+        peer_id: &str,
+        data: Option<&Arc<RelayDataClient>>,
+    ) -> Option<Arc<PhysicalRoute>> {
+        let wanted_data = data.cloned();
+        let (route, has_remaining) = {
+            let mut paths = self.transport_paths.write().await;
+            let entries = paths.get_mut(peer_id)?;
+            let index = entries.iter().position(|entry| {
+                entry.handle.profile().topology() == crate::connection::RouteTopology::Relay
+                    && wanted_data
+                        .as_ref()
+                        .is_none_or(|wanted| entry.route.is_relay_data(wanted))
+            })?;
+            let route = entries.remove(index).route;
+            let has_remaining = !entries.is_empty();
+            if !has_remaining {
+                paths.remove(peer_id);
+            }
+            (route, has_remaining)
+        };
+        if let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() {
+            manager
+                .lock()
+                .expect("peer path manager lock")
+                .hard_close_relay();
+        }
+        if !has_remaining {
+            self.peer_path_managers.write().await.remove(peer_id);
+        }
+        route.close().await;
+        Some(route)
+    }
+
+    pub(crate) async fn close_direct_path(
+        &self,
+        peer_id: &str,
+        route_id: Option<u64>,
+    ) -> Option<Arc<PhysicalRoute>> {
+        let (route, has_remaining) = {
+            let mut paths = self.transport_paths.write().await;
+            let entries = paths.get_mut(peer_id)?;
+            let index = entries.iter().position(|entry| {
+                entry.handle.profile().topology() == crate::connection::RouteTopology::Direct
+                    && route_id.is_none_or(|id| entry.handle.id() == id)
+            })?;
+            let route = entries.remove(index).route;
+            let has_remaining = !entries.is_empty();
+            if !has_remaining {
+                paths.remove(peer_id);
+            }
+            (route, has_remaining)
+        };
+        if let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() {
+            manager
+                .lock()
+                .expect("peer path manager lock")
+                .hard_close_direct();
+        }
+        if !has_remaining {
+            self.peer_path_managers.write().await.remove(peer_id);
+        }
+        route.close().await;
+        Some(route)
+    }
+
+    pub(crate) async fn close_direct_path_for_connection(
+        &self,
+        peer_id: &str,
+        connection: &quinn::Connection,
+    ) -> Option<Arc<PhysicalRoute>> {
+        if std::env::var_os("SSH_MOBILE_TEST_EVENTS").is_some() {
+            eprintln!(
+                "CLOSE DIRECT LOOKUP peer={peer_id} connection={}",
+                connection.stable_id()
+            );
+        }
+        let route_id = self
+            .transport_paths
+            .read()
+            .await
+            .get(peer_id)
+            .and_then(|entries| {
+                entries.iter().find_map(|entry| {
+                    let candidate = (entry.handle.profile().topology()
+                        == crate::connection::RouteTopology::Direct)
+                        .then(|| entry.route.connection())
+                        .flatten();
+                    candidate
+                        .filter(|candidate| candidate.stable_id() == connection.stable_id())
+                        .map(|_| entry.handle.id())
+                })
+            });
+        self.close_direct_path(peer_id, route_id).await
+    }
+
+    pub(crate) async fn close_all_relay_paths(&self) {
+        let peers = self
+            .transport_paths
+            .read()
+            .await
+            .iter()
+            .filter(|(_, entries)| {
+                entries.iter().any(|entry| {
+                    entry.handle.profile().topology() == crate::connection::RouteTopology::Relay
+                })
+            })
+            .map(|(peer_id, _)| peer_id.clone())
+            .collect::<Vec<_>>();
+        for peer_id in peers {
+            let _ = self.close_relay_path(&peer_id, None).await;
+        }
+    }
+
+    pub(crate) async fn close_all_transport_paths(&self) {
+        let peers = self
+            .transport_paths
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for peer_id in peers {
+            let _ = self.close_transport_path(&peer_id).await;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn attach_test_generic_route(
+        &self,
+        peer_id: &str,
+        session_id: SessionId,
+        handle: crate::connection::GenericRouteHandle,
+    ) -> Result<(), ()> {
+        self.publish_transport_path(
+            peer_id,
+            session_id,
+            crate::connect::ActiveRoute::generic_test(handle),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|_| ())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn close_path_for_test(&self, peer_id: &str) {
+        let session_id = self.connection_sessions.current_session_id(peer_id).await;
+        if self.close_direct_path(peer_id, None).await.is_some() {
+            if let Some(session_id) = session_id {
+                if self
+                    .connection_sessions
+                    .retire_session(peer_id, session_id)
+                    .await
+                {
+                    self.cancel_session_tasks(peer_id, session_id).await;
+                    if let Ok(supervisor) = self.peer_supervisors.get_or_create(peer_id) {
+                        supervisor.path_lost();
+                    }
+                    crate::events::emit_peer_state(
+                        &self.event_tx,
+                        peer_id,
+                        network_protocol::PeerConnectionState::Disconnected,
+                        network_protocol::RouteType::Unspecified,
+                        None,
+                    );
+                }
+            }
+        }
     }
 
     pub(crate) async fn crypto_context(
@@ -701,10 +1372,7 @@ impl NetworkRuntime {
         self.runtime.block_on(async move {
             state.task_supervisor.cancel_root();
             state.peer_supervisors.stop_all();
-            let relay_data = state.relay_data.write().await.drain().collect::<Vec<_>>();
-            for (_, relay_data) in relay_data {
-                relay_data.request_disconnect().await;
-            }
+            state.close_all_transport_paths().await;
             // 控制面 Drop 会中止后台读写 worker（RelayControlClient::drop）；显式
             // take 释放共享引用即可。
             state.relay_control.write().await.take();
@@ -753,9 +1421,6 @@ impl Drop for NetworkRuntime {
                     if let Some(endpoint) = endpoint.take() {
                         endpoint.close(quinn::VarInt::from_u32(0), b"runtime dropped");
                     }
-                }
-                if let Ok(mut relay_data) = state.relay_data.try_write() {
-                    relay_data.clear();
                 }
                 if let Ok(mut realtime) = state.realtime.try_lock() {
                     realtime.close_all();

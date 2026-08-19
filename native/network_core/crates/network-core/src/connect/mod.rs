@@ -34,7 +34,8 @@ pub(crate) mod ready_index;
 pub(crate) use connectivity_attempt::ConnectivityAttemptCoordinator;
 #[allow(unused_imports)]
 pub(crate) use path::{
-    DirectProbe, PathHandle, PathKind, PathLease, PathRegistry, PathSelection, PeerPathManager,
+    callback_path_carrier, ActiveRoute, DirectProbe, GenericRouteScope, PathHandle, PathKind,
+    PathLease, PathRegistry, PathSelection, PeerPathManager, PhysicalRoute, StreamCarrier,
 };
 #[allow(unused_imports)]
 pub(crate) use peer_supervisor::{

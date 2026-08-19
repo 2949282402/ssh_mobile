@@ -372,18 +372,21 @@ impl std::fmt::Display for CandidatePayloadError {
 
 impl std::error::Error for CandidatePayloadError {}
 
-/// Canonical identity of a candidate set. The candidate ID and interface are
-/// deliberately excluded: endpoint, candidate kind, and qualified transport
-/// capabilities are the values that determine whether two snapshots describe
-/// the same physical options.
+/// Canonical identity of a candidate set. Every candidate field that can affect
+/// direct probing or candidate ordering is included, so an equal revision with
+/// any changed candidate metadata is rejected rather than silently refreshed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateFingerprint(Vec<CandidateFingerprintEntry>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CandidateFingerprintEntry {
+    candidate_id: String,
     endpoint: SocketAddr,
     kind: CandidateKind,
     transport_capabilities: Vec<CandidateTransport>,
+    priority: u32,
+    interface: String,
+    generation: u64,
 }
 
 impl CandidateFingerprint {
@@ -394,14 +397,19 @@ impl CandidateFingerprint {
         for candidate in candidates {
             let candidate = candidate.clone().normalized()?;
             entries.push(CandidateFingerprintEntry {
+                candidate_id: candidate.candidate_id,
                 endpoint: candidate.endpoint,
                 kind: candidate.kind,
                 transport_capabilities: candidate.transport_capabilities,
+                priority: candidate.priority,
+                interface: candidate.interface,
+                generation: candidate.generation,
             });
         }
         entries.sort_by(|left, right| {
-            left.endpoint
-                .cmp(&right.endpoint)
+            left.candidate_id
+                .cmp(&right.candidate_id)
+                .then_with(|| left.endpoint.cmp(&right.endpoint))
                 .then_with(|| {
                     candidate_kind_order(left.kind).cmp(&candidate_kind_order(right.kind))
                 })
@@ -409,6 +417,9 @@ impl CandidateFingerprint {
                     left.transport_capabilities
                         .cmp(&right.transport_capabilities)
                 })
+                .then_with(|| left.priority.cmp(&right.priority))
+                .then_with(|| left.interface.cmp(&right.interface))
+                .then_with(|| left.generation.cmp(&right.generation))
         });
         entries.dedup();
         Ok(Self(entries))
@@ -750,6 +761,22 @@ mod tests {
     }
 
     #[test]
+    fn cache_uses_sixty_second_fallback_when_ready_ttl_is_missing() {
+        let cache =
+            ResolvedCandidateCache::from_snapshot(snapshot(epoch(1, 1), 1, None), Instant::now())
+                .expect("cache");
+        assert_eq!(cache.ttl(), DEFAULT_REMOTE_CANDIDATE_CACHE_TTL);
+        assert_eq!(cache.ttl(), Duration::from_secs(60));
+
+        let zero_ttl_cache = ResolvedCandidateCache::from_snapshot(
+            snapshot(epoch(1, 1), 1, Some(Duration::ZERO)),
+            Instant::now(),
+        )
+        .expect("zero TTL cache");
+        assert_eq!(zero_ttl_cache.ttl(), Duration::from_secs(60));
+    }
+
+    #[test]
     fn expired_stage_b_resolve_snapshot_refreshes_cache() {
         let learned_at = Instant::now();
         let mut cache = ResolvedCandidateCache::from_snapshot(
@@ -834,6 +861,20 @@ mod tests {
                 .expect("cache");
         let mut changed = snapshot(epoch(1, 1), 2, None);
         changed.candidates[0].endpoint.set_port(41002);
+        assert_eq!(
+            cache.apply(changed, learned_at),
+            Err(CandidateCacheError::SameRevisionDifferentFingerprint)
+        );
+    }
+
+    #[test]
+    fn same_revision_with_changed_candidate_metadata_is_inconsistent() {
+        let learned_at = Instant::now();
+        let mut cache =
+            ResolvedCandidateCache::from_snapshot(snapshot(epoch(1, 1), 2, None), learned_at)
+                .expect("cache");
+        let mut changed = snapshot(epoch(1, 1), 2, None);
+        changed.candidates[0].priority += 1;
         assert_eq!(
             cache.apply(changed, learned_at),
             Err(CandidateCacheError::SameRevisionDifferentFingerprint)

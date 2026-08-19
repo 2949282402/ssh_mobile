@@ -22,6 +22,9 @@ use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::{channel, Receiver};
 
+use crate::channel::select_business_path_lease;
+use crate::connect::{PathLease, CAPABILITY_RELIABLE_STREAM};
+use crate::connection::RouteTransport;
 use crate::delivery::{is_valid_peer_id, BusinessRecoveryError};
 use crate::events::{
     emit_incoming_offer, emit_transfer_completed, emit_transfer_error,
@@ -112,59 +115,79 @@ impl TransferDispatcher {
         Self { state }
     }
 
-    async fn current_route(&self, peer_id: &str) -> Result<TransferRoute, ProtocolError> {
-        if !is_valid_peer_id(peer_id) {
-            return Err(protocol_error_with_peer(
-                NetworkErrorCode::InvalidArgument,
-                "peer_id must contain 1-128 characters",
-                "send",
-                peer_id,
-            ));
-        }
-        match self.state.connection_sessions.current_route(peer_id).await {
-            Some(RouteType::QuicDirect | RouteType::Lan) => self
-                .state
-                .connection_sessions
-                .current_connection(peer_id)
+    async fn select_attempt(
+        &self,
+        identity: &TransferIdentity,
+    ) -> Result<(TransferRoute, PathLease), ProtocolError> {
+        let lease =
+            select_business_path_lease(&self.state, &identity.peer_id, CAPABILITY_RELIABLE_STREAM)
                 .await
-                .map(TransferRoute::QuicDirect)
-                .ok_or_else(|| {
+                .map_err(|error| {
                     protocol_error_with_peer(
                         NetworkErrorCode::NoRoute,
-                        "direct route has no active Connection",
+                        error.to_string(),
                         "send",
-                        peer_id,
+                        &identity.peer_id,
                     )
-                }),
-            Some(RouteType::Relay) => {
-                // 每个对端的 Relay 数据连接由 Session 的活跃 route 承载（§25
-                // reservation 数据面）；不能用设备级单 slot 判断，否则多对端并发时
-                // 会误判路由不可用。
-                let data = self
+                })?;
+        if !lease
+            .profile()
+            .supports(crate::connection::ConnectionCapability::ReliableStream)
+        {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "selected path does not support file transfer",
+                "send",
+                &identity.peer_id,
+            ));
+        }
+        match lease.profile().transport() {
+            RouteTransport::Quic => {
+                let connection = self
                     .state
-                    .connection_sessions
-                    .current_relay_data(peer_id)
-                    .await;
-                let usable = match data {
+                    .path_connection_for_lease(&lease)
+                    .await
+                    .ok_or_else(|| {
+                        protocol_error_with_peer(
+                            NetworkErrorCode::NoRoute,
+                            "selected QUIC path has no active Connection",
+                            "send",
+                            &identity.peer_id,
+                        )
+                    })?;
+                if !lease.is_active() {
+                    return Err(protocol_error_with_peer(
+                        NetworkErrorCode::NoRoute,
+                        "selected QUIC path was lost before transfer start",
+                        "send",
+                        &identity.peer_id,
+                    ));
+                }
+                Ok((TransferRoute::QuicDirect(connection), lease))
+            }
+            RouteTransport::WebSocket
+                if lease.profile().topology() == crate::connection::RouteTopology::Relay =>
+            {
+                let usable = match self.state.path_relay_data_for_lease(&lease).await {
                     Some(data) => data.is_usable().await,
                     None => false,
                 };
-                if usable {
-                    Ok(TransferRoute::Relay)
+                if usable && lease.is_active() {
+                    Ok((TransferRoute::Relay, lease))
                 } else {
                     Err(protocol_error_with_peer(
                         NetworkErrorCode::NoRoute,
-                        "Relay route is unavailable",
+                        "selected Relay path has no active data reservation",
                         "send",
-                        peer_id,
+                        &identity.peer_id,
                     ))
                 }
             }
             _ => Err(protocol_error_with_peer(
                 NetworkErrorCode::NoRoute,
-                "peer has no active transfer route",
+                "selected path cannot carry file transfer",
                 "send",
-                peer_id,
+                &identity.peer_id,
             )),
         }
     }
@@ -172,6 +195,7 @@ impl TransferDispatcher {
     async fn dispatch_outgoing(
         &self,
         route: TransferRoute,
+        lease: PathLease,
         transfer: ResumableTransfer,
     ) -> Result<(), ProtocolError> {
         match route {
@@ -183,7 +207,7 @@ impl TransferDispatcher {
                     .spawn_session(
                         session_key,
                         "file-send",
-                        send_file(connection, transfer, Arc::clone(&self.state)),
+                        send_file(connection, transfer, Arc::clone(&self.state), lease),
                     )
                     .is_none()
                 {
@@ -211,14 +235,14 @@ impl TransferDispatcher {
                         )
                     })?;
                 let session_key = transfer.session_id.clone();
+                let state = Arc::clone(&self.state);
                 if self
                     .state
                     .task_supervisor
-                    .spawn_session(
-                        session_key,
-                        "relay-file-send",
-                        crate::relay::send_file_over_relay(peer, transfer, Arc::clone(&self.state)),
-                    )
+                    .spawn_session(session_key, "relay-file-send", async move {
+                        let _lease = lease;
+                        crate::relay::send_file_over_relay(peer, transfer, state).await;
+                    })
                     .is_none()
                 {
                     return Err(protocol_error(
@@ -336,9 +360,6 @@ pub(crate) async fn start_file_send(
                 &command.peer_id,
             )
         })?;
-    let dispatcher = TransferDispatcher::new(Arc::clone(&state));
-    let route = dispatcher.current_route(&command.peer_id).await?;
-
     let manifest = build_file_manifest(command.transfer_id.clone(), &path)
         .await
         .map_err(|_| {
@@ -357,6 +378,17 @@ pub(crate) async fn start_file_send(
             &command.peer_id,
         )
     })?;
+    let identity = TransferIdentity::new(command.peer_id.clone(), command.transfer_id.clone())
+        .map_err(|message| {
+            protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                message,
+                "send",
+                &command.peer_id,
+            )
+        })?;
+    let dispatcher = TransferDispatcher::new(Arc::clone(&state));
+    let (route, lease) = dispatcher.select_attempt(&identity).await?;
     // §19：TransferOperation 按 transfer_id + peer_id 注册，SessionId 不进入
     // 持久化的业务状态；`ResumableTransfer.session_id` 在派发时从当前
     // ConnectionSession 附加（用于 Relay E2EE 与任务分组）。
@@ -380,7 +412,7 @@ pub(crate) async fn start_file_send(
         manifest,
         offset: 0,
     };
-    if let Err(error) = dispatcher.dispatch_outgoing(route, transfer).await {
+    if let Err(error) = dispatcher.dispatch_outgoing(route, lease, transfer).await {
         state.transfers.remove_transfer(&command.transfer_id).await;
         return Err(error);
     }
@@ -389,10 +421,21 @@ pub(crate) async fn start_file_send(
 
 /// 流式传输直连 QUIC 文件；Route handle 由 dispatcher 注入，业务状态仍
 /// 只通过 TransferManager 更新。
-async fn send_file(connection: Connection, transfer: ResumableTransfer, state: Arc<RuntimeState>) {
+async fn send_file(
+    connection: Connection,
+    transfer: ResumableTransfer,
+    state: Arc<RuntimeState>,
+    lease: PathLease,
+) {
     let transfer_id = transfer.transfer_id.clone();
     let peer_id = transfer.peer_id.clone();
     let result = async {
+        if !lease.is_active() {
+            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "business path was lost")
+                    .into(),
+            );
+        }
         if !transfer_attempt_is_current(&state, &peer_id, &transfer.session_id).await {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
                 TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced).into(),
@@ -412,6 +455,12 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
             );
         }
         let (mut send, mut receive) = connection.open_bi().await?;
+        if !lease.is_active() {
+            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "business path was lost")
+                    .into(),
+            );
+        }
         write_file_offer(&mut send, &transfer.manifest).await?;
         let offset = read_file_decision(&mut receive)
             .await?
@@ -463,6 +512,12 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
             ),
         );
         let cancellation = state.transfers.cancellation_token(&transfer_id).await;
+        if !lease.is_active() {
+            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "business path was lost")
+                    .into(),
+            );
+        }
         stream_send_file_cancellable(
             &transfer.source_path,
             offset,
@@ -471,6 +526,12 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
             cancellation.as_ref(),
         )
         .await?;
+        if !lease.is_active() {
+            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "business path was lost")
+                    .into(),
+            );
+        }
         if !transfer_attempt_is_current(&state, &peer_id, &transfer.session_id).await {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
                 TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced).into(),
@@ -572,36 +633,38 @@ pub(crate) async fn resume_transfers_for_peer(state: Arc<RuntimeState>, peer_id:
         return;
     };
     let session_key = session_id.wire_key();
-    match dispatcher.current_route(&peer_id).await {
-        Ok(TransferRoute::QuicDirect(connection)) => {
-            for transfer in state
-                .transfers
-                .take_resumable_for_peer(&peer_id, &session_key)
-                .await
-            {
-                let _ = state.task_supervisor.spawn_session(
-                    transfer.session_id.clone(),
-                    "file-send-resume",
-                    send_file(connection.clone(), transfer, Arc::clone(&state)),
+    let transfers = state
+        .transfers
+        .take_resumable_for_peer(&peer_id, &session_key)
+        .await;
+    for transfer in transfers {
+        let identity = TransferIdentity {
+            peer_id: peer_id.clone(),
+            transfer_id: transfer.transfer_id.clone(),
+        };
+        let attempt = match dispatcher.select_attempt(&identity).await {
+            Ok(attempt) => attempt,
+            Err(error) => {
+                let _ = state
+                    .transfers
+                    .pause_for_network(&transfer.transfer_id)
+                    .await;
+                tracing::debug!(
+                    peer_id = %peer_id,
+                    transfer_id = %transfer.transfer_id,
+                    error = ?error,
+                    "transfer resume waited for a fresh path lease"
                 );
+                continue;
             }
+        };
+        if dispatcher
+            .dispatch_outgoing(attempt.0, attempt.1, transfer)
+            .await
+            .is_err()
+        {
+            tracing::debug!(peer_id = %peer_id, "transfer remained paused after resume dispatch failed");
         }
-        Ok(TransferRoute::Relay) => {
-            for transfer in state
-                .transfers
-                .take_resumable_for_peer(&peer_id, &session_key)
-                .await
-            {
-                if dispatcher
-                    .dispatch_outgoing(TransferRoute::Relay, transfer)
-                    .await
-                    .is_err()
-                {
-                    tracing::debug!(peer_id = %peer_id, "Relay transfer remained paused after resume dispatch failed");
-                }
-            }
-        }
-        Err(_) => {}
     }
 }
 
@@ -609,9 +672,6 @@ pub(crate) async fn resume_transfers_for_peer(state: Arc<RuntimeState>, peer_id:
 pub(crate) async fn resume_relay_transfers(state: Arc<RuntimeState>) {
     let peer_ids = state.peers.read().await.keys().cloned().collect::<Vec<_>>();
     for peer_id in peer_ids {
-        if state.connection_sessions.current_route(&peer_id).await != Some(RouteType::Relay) {
-            continue;
-        }
         resume_transfers_for_peer(Arc::clone(&state), peer_id).await;
     }
 }
@@ -1050,6 +1110,10 @@ mod v2_contract_tests {
         let identity = TransferIdentity::new("peer-a", "transfer-a").expect("identity");
         assert_eq!(identity.peer_id, "peer-a");
         assert_eq!(identity.transfer_id, "transfer-a");
+        assert_ne!(
+            identity,
+            TransferIdentity::new("peer-b", "transfer-a").expect("peer-scoped identity")
+        );
         assert_eq!(ConfirmedOffset::new(4, 8).expect("offset").offset, 4);
         assert!(ConfirmedOffset::new(9, 8).is_err());
     }

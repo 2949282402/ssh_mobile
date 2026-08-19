@@ -1,4 +1,4 @@
-> Last updated: 2026-08-19
+> Last updated: 2026-08-20
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -43,9 +43,14 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 - **SSH connection management** with passwords, private keys, encrypted private keys, jump hosts, server platform selection, and SSH host-key trust-on-first-use verification.
 - **Multi-window terminals** that allow several fixed-name sessions per server and stable tmux session binding.
 - **SFTP file management** with browsing, recent and favorite paths, uploads, downloads, editing, previews, and explicit deletion confirmation. The upload action follows the active theme's secondary color instead of a fixed deep purple.
-- **LAN Quick Share & Network Transfer** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. File sends run through the Rust network runtime: pinned-identity Quinn direct paths are selected first and the current WSS Relay path carries only opaque AES-GCM ciphertext when direct reachability is unavailable. Session traffic uses forward-secret authenticated Noise XX roots, structured epoch/direction/counter nonces, and explicit key rotation; authenticated TCP and direct WebSocket routes are bounded Delivery fallbacks and never silently downgrade E2EE. Route migration preserves the logical SessionId, pending Delivery state, and Session crypto context. Incoming direct and Relay offers require a global explicit approval, verified data is committed in the app sandbox, and success is reported only after receiver persistence and acknowledgement. The active development build does not retain the old HTTPS file-send fallback. Logical ReliableStreams are addressed end-to-end by `(opener_device_id, stream_id)`, so both peers may use the same numeric `stream_id` without ambiguity. The
+- **LAN Quick Share & Network Transfer** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. File sends run through the Rust network runtime: pinned-identity Quinn direct paths are selected first and the current WSS Relay path carries only opaque AES-GCM ciphertext when direct reachability is unavailable. Session traffic uses forward-secret authenticated Noise XX roots, structured epoch/direction/counter nonces, and explicit key rotation; authenticated TCP and direct WebSocket routes are bounded Delivery fallbacks and never silently downgrade E2EE. Every transport has a disposable ConnectionSession with a fresh SessionId and crypto root; transport loss destroys it, while Delivery and Transfer resume by business identity on a fresh PathLease. Incoming direct and Relay offers require a global explicit approval, verified data is committed in the app sandbox, and success is reported only after receiver persistence and acknowledgement. The active development build does not retain the old HTTPS file-send fallback. Logical ReliableStreams are addressed end-to-end by `(opener_device_id, stream_id)`, so both peers may use the same numeric `stream_id` without ambiguity. The
 feature-facing RealtimeSession exposes only lifecycle/state/media views; PeerConnection,
 ICE, SDP, sockets, and Relay signaling remain native/App Shell owned.
+- **Network Protocol V2 ownership** is explicit: `PeerSupervisor` owns mutable peer
+  connectivity, `PeerPathManager` owns Direct/Relay physical paths, and business
+  operations borrow `PathLease` instances. `E2eePolicy::Disabled` is Direct
+  identity-only and cannot fall through to Relay; authoritative Resolve gates the
+  staged Direct/Relay connection flow.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
 - **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; it supports `reviewConfiguredTools` (default) and `trustedAgent` modes while always enforcing its loopback-only and hard security boundaries.
@@ -594,8 +599,9 @@ NetworkRuntime`. Commands return typed acceptance results, while progress and
 terminal outcomes arrive as typed events. The runtime owns per-peer path
 selection, authenticated QUIC/TCP/WebSocket routes, streaming file verification,
 and native Relay send/receive; Flutter owns pairing, approval UI, history, and
-presentation state. The Go Relay remains a memory-only v1 router and never
-receives plaintext file metadata or bytes.
+presentation state. The Go Relay remains a memory-only opaque control/data
+forwarder and never receives plaintext file metadata or bytes; its bootstrap
+compatibility endpoints are separate from the frozen Relay V2 wire contract.
 
 Native channel Delivery keeps active incoming handlers and ordered-buffered
 messages outside the processed dedup TTL/LRU window. Application ACK timeout is

@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-19
+> 最新更新时间：2026-08-20
 
 # SSH Mobile 跨平台 P2P 网络平台实施计划
 
@@ -8,7 +8,7 @@
 
 ---
 
-# 当前实施状态（2026-08-19）
+# 当前实施状态（2026-08-20）
 
 本文件同时保留完整目标架构与后续阶段；以下状态只描述已经接入生产调用链的部分。
 旧阶段中的 v1 Session/Connection 方案保留为历史设计，当前生命周期以 v2 ADR 为准。
@@ -24,9 +24,18 @@
   Candidate Offer/Answer 与 Direct race 受 attempt 版本边界约束，Direct First
   在固定窗口内选择一次 transport；Relay 不再后台升级到 Direct。
   Transport loss 销毁当前 ConnectionSession，下一次业务连接重新 Resolve。
-- Rust Relay 已实现当前 v1 协议的 WSS 认证、opaque offer、AES-GCM chunk、
-  complete/complete_ack、取消、接收入站审批及安全落盘；Flutter 只负责 v1
-  enrollment、凭据安全存储和 native 配置，不再建立 Dart Relay 数据面。
+- Network Protocol V2 ownership cutover 已完成：`PeerSupervisor` 是唯一的
+  Peer connectivity owner，`PeerPathManager` 实际持有 Direct/Relay
+  `PhysicalPath`，`ConnectionSessionStore` 只保存 connection/security admission，
+  Delivery/Transfer/Stream 通过 `PathLease` 选择一次性 carrier。Frozen Relay V2
+  wire contract 未修改。
+- E2EE policy 已贯穿 PeerConfig、Noise/path admission 与业务发送：Required
+  每条新 Transport 安装 fresh application root；Disabled 仅允许 Direct
+  identity-only，Relay Disabled fail closed。Stage A/B/C 分别保持纯 Direct
+  cache、authoritative Resolve→Offer、受预算与策略约束的 Relay fallback。
+- Rust Relay V2 client 已实现 WSS control/data separation、opaque payload、
+  admission、取消、接收入站审批及安全落盘；Flutter 仍只负责 bootstrap
+  enrollment、凭据安全存储和 native 配置，不建立 Dart Relay 数据面。
 - `network-core::RealtimeManager` 已作为当前 ConnectionSession 上的 Realtime Route 接入
   WebRTC；Offer/Answer/ICE/Restart/Close 只走认证 Relay control plane，
   `ssh_mobile_network_native` 通过 helper isolate 提供有界 typed Realtime
@@ -67,6 +76,13 @@
   messages by MessageId/channel state, and Transfer resumes by transfer_id plus
   confirmed_offset. No old SessionId, root, route, or transport ciphertext is
   carried into the new connection.
+- Public async connect commands now report terminal completion from the
+  `PeerSupervisor` result, not from task startup. RemovePeer, environment-change
+  recovery, diagnostics, and duplicate command correlation use the live
+  supervisor/path/business owners.
+- The acceptance matrix has 32/32 cases covered. Local Rust workspace gates and
+  the strict gate's Python/Rust/Relay-proto/FFI portion pass; Go, Dart/Flutter,
+  pinned `protoc`, and `buf` remain CI-only on hosts without those toolchains.
 - `network_sdk.RealtimeClient` now provides a Feature-safe `RealtimeSession` boundary;
   the App Shell maps native lifecycle events while Features cannot encode SDP/ICE or
   touch PeerConnection, sockets, or native handles. Native DataChannel media remains
@@ -79,7 +95,8 @@
 - 当前项目不再支持或实现 WireGuard；本文后续相关章节仅保留为历史方案记录，
   不属于当前实现和发布验收范围。
 - Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；
-  开发阶段不保留旧注册接口、协议降级或旧客户端兼容。
+  开发阶段不保留旧注册接口、协议降级或旧客户端兼容；这些 bootstrap
+  兼容端点与 native Relay V2 control/data contract 分离。
 - Flutter 公共网络层统一返回 `NetworkResult`，公开事件使用类型化事件；
   Realtime command result 只在 App Shell adapter 内部关联，不向 Feature 暴露。
   LAN HTTP 错误使用稳定的

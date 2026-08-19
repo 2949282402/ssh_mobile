@@ -604,10 +604,7 @@ pub(crate) async fn disconnect_relay(state: &RuntimeState) -> Result<(), Protoco
 
 /// 取走并断开全部 reservation 数据面客户端。
 async fn disconnect_relay_data(state: &RuntimeState) {
-    let data = state.relay_data.write().await.drain().collect::<Vec<_>>();
-    for (_, data) in data {
-        data.request_disconnect().await;
-    }
+    state.close_all_relay_paths().await;
     // 断开全部 reservation：清理所有对端的 Relay 状态。
     cleanup_relay_state(state, None).await;
 }
@@ -766,13 +763,6 @@ async fn connect_incoming_relay_data(
     // business envelope is admitted.  Clear the peer-level projection before
     // replacing the reservation so a stale data client cannot open this one.
     state.relay_path_ready.write().await.remove(&peer_id);
-    // 以对端为 key 记录活跃 reservation 数据连接：替换同一对端的旧连接（会话重建），
-    // 但绝不因此断开其他对端的活跃连接（§25 每条 reservation 数据面相互独立）。
-    state
-        .relay_data
-        .write()
-        .await
-        .insert(peer_id.clone(), data.clone());
     let supervisor = Arc::clone(&state.task_supervisor);
     let state = Arc::clone(state);
     let _ = supervisor.spawn_runtime("relay-data-events", async move {
@@ -834,13 +824,6 @@ pub(crate) async fn connect_initiator_relay_data(
     // PairReady belongs to this reservation.  Do not let readiness from a
     // previous reservation authorize business data on the new data client.
     state.relay_path_ready.write().await.remove(peer_id);
-    // 以对端为 key 记录活跃 reservation 数据连接：连接新对端绝不切断其他对端
-    // 的活跃连接（回归 #2：旧单 slot .replace + request_disconnect 会切断）。
-    state
-        .relay_data
-        .write()
-        .await
-        .insert(peer_id.to_string(), data.clone());
     let supervisor = Arc::clone(&state.task_supervisor);
     let state = Arc::clone(state);
     let peer_id = peer_id.to_string();
@@ -988,31 +971,12 @@ async fn relay_data_disconnected(
     data: Arc<RelayDataClient>,
     peer_id: String,
 ) {
-    // A replacement data client may finish its old client's close event after
-    // it has become the map owner. That stale event must not clear the new
-    // client's route-ready state or tear down its Session. During explicit
-    // DisconnectRelay the map is drained first, so the active route check keeps
-    // the deliberate teardown path intact.
-    let current_data = state.relay_data.read().await.get(&peer_id).cloned();
-    if current_data
-        .as_ref()
-        .is_some_and(|current| !Arc::ptr_eq(current, &data))
-        || (current_data.is_none()
-            && !state
-                .connection_sessions
-                .is_current_relay_data(&peer_id, &data)
-                .await)
-    {
+    // The PhysicalRoute is the sole owner of an admitted Relay data client.
+    // A close event from a pre-admission/stale client must not tear down a
+    // different current route.
+    if !state.path_is_current_relay_data(&peer_id, &data).await {
         return;
     }
-    let mut entries = state.relay_data.write().await;
-    if entries
-        .get(&peer_id)
-        .is_some_and(|current| Arc::ptr_eq(current, &data))
-    {
-        entries.remove(&peer_id);
-    }
-    drop(entries);
     // 只清理断开对端的 Relay 状态；其他对端的在途传输原样保留。
     cleanup_relay_state(&state, Some(&peer_id)).await;
     // §18/§35：transport 丢失即销毁 ConnectionSession（Relay route 由其数据客户端
@@ -1042,6 +1006,15 @@ async fn handle_relay_crypto_handshake(
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "Relay E2EE handshake is not bound to a registered peer",
+        )
+        .into());
+    }
+    if state.e2ee_policy(peer_id).await
+        != crate::crypto_handshake::path_handshake::E2eePolicy::Required
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Relay paths require application E2EE",
         )
         .into());
     }
@@ -1229,13 +1202,21 @@ async fn complete_relay_admission(
     admission: ConnectionAdmissionLease,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let session_id = admission.session_id;
+    if state.e2ee_policy(peer_id).await
+        != crate::crypto_handshake::path_handshake::E2eePolicy::Required
+        || material.e2ee_policy != crate::crypto_handshake::path_handshake::E2eePolicy::Required
+    {
+        state.fail_session(peer_id, session_id).await;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Relay application E2EE policy is not Required",
+        )
+        .into());
+    }
     if material.local_session_binding != session_id.wire_key()
         || material.remote_session_binding != session_token
     {
-        state
-            .connection_sessions
-            .mark_failed(peer_id, session_id)
-            .await;
+        state.fail_session(peer_id, session_id).await;
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "Relay E2EE Session/token binding is invalid",
@@ -1245,8 +1226,7 @@ async fn complete_relay_admission(
     let relay_profile = crate::connection::ConnectionProfile::for_route(RouteType::Relay)
         .expect("Relay route has a composed profile");
     if !state
-        .connection_sessions
-        .candidate_supports_capability(
+        .candidate_supports(
             peer_id,
             session_id,
             relay_profile,
@@ -1254,10 +1234,7 @@ async fn complete_relay_admission(
         )
         .await
     {
-        state
-            .connection_sessions
-            .mark_failed(peer_id, session_id)
-            .await;
+        state.fail_session(peer_id, session_id).await;
         return Err(std::io::Error::other(
             "Relay route no longer satisfies the requested capability",
         )
@@ -1269,10 +1246,7 @@ async fn complete_relay_admission(
         .await
         .is_err()
     {
-        state
-            .connection_sessions
-            .mark_failed(peer_id, session_id)
-            .await;
+        state.fail_session(peer_id, session_id).await;
         return Err(std::io::Error::other(
             "Relay Session admission became stale before route commit",
         )
@@ -1280,20 +1254,11 @@ async fn complete_relay_admission(
     }
     crate::peer::install_admitted_crypto(state, peer_id, &admission, &material).await?;
     if !state
-        .connection_sessions
-        .mark_relay_route_connected(
-            peer_id,
-            session_id,
-            RouteType::Relay,
-            Some(Arc::clone(data)),
-        )
+        .mark_relay_route_connected(peer_id, session_id, Some(Arc::clone(data)))
         .await
     {
         state.crypto.remove_session(peer_id, &session_id.wire_key());
-        state
-            .connection_sessions
-            .mark_failed(peer_id, session_id)
-            .await;
+        state.fail_session(peer_id, session_id).await;
         return Err(std::io::Error::new(
             std::io::ErrorKind::Interrupted,
             "Relay Session was closed before route commit",
@@ -1806,13 +1771,7 @@ async fn receive_relay_offer(
                     .await;
                 // 取消只发到承载该 transfer 的对端 reservation 连接。
                 if let Some(sender_id) = sender_id {
-                    if let Some(data) = expiry_state
-                        .relay_data
-                        .read()
-                        .await
-                        .get(&sender_id)
-                        .cloned()
-                    {
+                    if let Some(data) = expiry_state.path_relay_data(&sender_id).await {
                         let _ = send_file_cancel(&data, &expiry_transfer_id).await;
                     }
                 }
@@ -1846,11 +1805,8 @@ pub(crate) async fn respond_to_relay_incoming(
             )
         })?;
     let data = state
-        .relay_data
-        .read()
+        .path_relay_data(&pending.sender_id)
         .await
-        .get(&pending.sender_id)
-        .cloned()
         .ok_or_else(|| {
             protocol_error_with_context(
                 NetworkErrorCode::RelayError,
@@ -2239,7 +2195,7 @@ pub(crate) async fn cancel_transfer(state: &RuntimeState, transfer_id: &str) {
         .await
         .map(|snapshot| snapshot.peer_id)
     {
-        if let Some(data) = state.relay_data.read().await.get(&peer_id).cloned() {
+        if let Some(data) = state.path_relay_data(&peer_id).await {
             let _ = send_file_cancel(&data, transfer_id).await;
         }
     }
@@ -2355,10 +2311,7 @@ pub(crate) async fn send_file_over_relay(
     let peer_id = transfer.peer_id.clone();
     let path = transfer.source_path.clone();
     let result = async {
-        let data = state
-            .connection_sessions
-            .current_relay_data(&peer_id)
-            .await
+        let data = state.path_relay_data(&peer_id).await
             .ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::NotConnected, "Relay is unavailable")
             })?;
@@ -2574,7 +2527,7 @@ pub(crate) async fn send_file_over_relay(
             .err()
             .is_some_and(|error| !is_transient_relay_error(error.as_ref()))
     {
-        if let Some(data) = state.connection_sessions.current_relay_data(&peer_id).await {
+        if let Some(data) = state.path_relay_data(&peer_id).await {
             let _ = send_file_cancel(&data, &transfer_id).await;
         }
     }
@@ -2845,8 +2798,8 @@ mod tests {
         );
     }
 
-    /// 回归 #2：关闭一条 reservation 数据连接只移除该对端的条目，另一对端的活跃
-    /// 数据连接必须原样保留（旧单 slot .take() 会连带清掉其他连接）。
+    /// 回归 #2：关闭一条 reservation 数据连接只移除该对端的物理 Relay path，
+    /// 另一对端的活跃数据连接必须原样保留。
     #[tokio::test]
     async fn relay_data_disconnect_removes_only_the_matching_peer_entry() {
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2874,30 +2827,43 @@ mod tests {
             )
             .expect("peer-c data client"),
         );
-        state
-            .relay_data
-            .write()
+        let session_b = match state
+            .begin_connect("peer-b", crate::connect::DEFAULT_CONNECTION_CAPABILITY)
             .await
-            .insert("peer-b".into(), data_b.clone());
-        state
-            .relay_data
-            .write()
+        {
+            crate::runtime::ConnectDecision::Started(session_id) => session_id,
+            decision => panic!("unexpected peer-b session decision: {decision:?}"),
+        };
+        let session_c = match state
+            .begin_connect("peer-c", crate::connect::DEFAULT_CONNECTION_CAPABILITY)
             .await
-            .insert("peer-c".into(), data_c.clone());
-        assert_eq!(state.relay_data.read().await.len(), 2);
+        {
+            crate::runtime::ConnectDecision::Started(session_id) => session_id,
+            decision => panic!("unexpected peer-c session decision: {decision:?}"),
+        };
+        assert!(
+            state
+                .mark_relay_route_connected("peer-b", session_b, Some(data_b.clone()))
+                .await
+        );
+        assert!(
+            state
+                .mark_relay_route_connected("peer-c", session_c, Some(data_c.clone()))
+                .await
+        );
 
         relay_data_disconnected(Arc::clone(&state), data_b, "peer-b".into()).await;
 
-        let entries = state.relay_data.read().await;
         assert!(
-            entries
-                .get("peer-c")
-                .is_some_and(|current| Arc::ptr_eq(current, &data_c)),
+            state
+                .path_relay_data("peer-c")
+                .await
+                .is_some_and(|current| Arc::ptr_eq(&current, &data_c)),
             "peer-c data connection must survive peer-b disconnecting"
         );
         assert!(
-            entries.get("peer-b").is_none(),
-            "only the disconnected peer's entry must be removed"
+            state.path_relay_data("peer-b").await.is_none(),
+            "only the disconnected peer's path must be removed"
         );
     }
 
@@ -3381,7 +3347,7 @@ mod tests {
             network_transfer::TransferState::Paused
         );
 
-        // 全部断开（disconnect_relay_data 路径）仍清理所有对端的条目。
+        // 全部断开（disconnect_relay_data 路径）仍清理所有对端的路径。
         cleanup_relay_state(&state, None).await;
         assert!(state.relay_active_incoming.lock().await.is_empty());
         assert!(state.relay_acceptances.read().await.is_empty());
@@ -3415,6 +3381,7 @@ mod tests {
                 endpoint: None,
                 identity_public_key: [0u8; 32],
                 e2e_public_key: *sender.public_e2e_key().as_bytes(),
+                e2ee_policy: network_protocol::E2eePolicy::Required,
             },
         );
         let data = Arc::new(
