@@ -1,5 +1,6 @@
-//! v1 类型化事件构建与命令结果错误映射。
+//! Network Protocol V2 类型化事件构建与命令结果错误映射。
 
+use crate::runtime::EventSender;
 use network_protocol::{
     network_event, CommandResultEvent, NetworkError as ProtocolError, NetworkErrorCode,
     NetworkEvent, PeerConnectionState, PeerPresenceChangedEvent, PeerPresenceSnapshotEvent,
@@ -9,13 +10,13 @@ use network_protocol::{
     SshStreamClosedEvent, SshStreamDataReceivedEvent, StreamHandle, TransferCompletedEvent,
     TransferFailedEvent, TransferProgressEvent, NETWORK_PROTOCOL_VERSION,
 };
-use tokio::sync::mpsc::UnboundedSender;
 
+use crate::connect::PeerState;
 use crate::connection::{ConnectionProfile, Route, RouteTopology, RouteTransport};
 
 /// 为活跃传输发布类型化进度事件。
 pub(crate) fn emit_transfer_progress(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     transfer_id: &str,
     bytes_transferred: u64,
     total_bytes: u64,
@@ -36,7 +37,7 @@ pub(crate) fn emit_transfer_progress(
 
 /// 发布由 Dart 服务消费的私有命令确认。
 pub(crate) fn emit_command_result(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     command_id: String,
     result: Result<(), ProtocolError>,
 ) {
@@ -58,29 +59,46 @@ pub(crate) fn emit_command_result(
 
 /// 发布带可选安全错误的类型化对端生命周期事件。
 pub(crate) fn emit_peer_state(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     peer_id: &str,
     state: PeerConnectionState,
-    active_route: RouteType,
+    route_type: RouteType,
     error: Option<ProtocolError>,
 ) {
     emit_peer_state_profile(
         event_tx,
         peer_id,
         state,
-        Route::from_wire(active_route).map(ConnectionProfile::new),
+        Route::from_wire(route_type).map(ConnectionProfile::new),
         error,
     );
 }
 
+/// Project the native v2 lifecycle state onto the frozen wire enum. The
+/// native owner keeps `Offline/Connecting/Online`; the wire contract retains
+/// its historical `Disconnected/Connecting/Connected` values.
+pub(crate) fn emit_peer_lifecycle(
+    event_tx: &EventSender,
+    peer_id: &str,
+    state: PeerState,
+    error: Option<ProtocolError>,
+) {
+    let wire_state = match state {
+        PeerState::Offline => PeerConnectionState::Disconnected,
+        PeerState::Connecting => PeerConnectionState::Connecting,
+        PeerState::Online => PeerConnectionState::Connected,
+    };
+    emit_peer_state(event_tx, peer_id, wire_state, RouteType::Unspecified, error);
+}
+
 pub(crate) fn emit_peer_state_profile(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     peer_id: &str,
     state: PeerConnectionState,
     profile: Option<ConnectionProfile>,
     error: Option<ProtocolError>,
 ) {
-    let active_route = profile
+    let route_type = profile
         .and_then(|profile| profile.route().to_wire())
         .unwrap_or(RouteType::Unspecified);
     let (route_topology, route_transport) = profile.map(protocol_route_metadata).unwrap_or((
@@ -94,7 +112,7 @@ pub(crate) fn emit_peer_state_profile(
         payload: Some(network_event::Payload::PeerState(PeerStateChangedEvent {
             peer_id: peer_id.to_string(),
             state: state as i32,
-            active_route: active_route as i32,
+            route_type: route_type as i32,
             error,
             route_topology: route_topology as i32,
             route_transport: route_transport as i32,
@@ -104,7 +122,7 @@ pub(crate) fn emit_peer_state_profile(
 
 /// 发布 native RouteSelector 完成质量采样或路径迁移后的指标。
 pub(crate) fn emit_route_changed(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     peer_id: &str,
     route_type: RouteType,
     endpoint: std::net::SocketAddr,
@@ -122,7 +140,7 @@ pub(crate) fn emit_route_changed(
 }
 
 pub(crate) fn emit_route_changed_profile(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     peer_id: &str,
     profile: Option<ConnectionProfile>,
     endpoint: std::net::SocketAddr,
@@ -174,7 +192,7 @@ fn protocol_route_metadata(
 
 /// 发布 WebRTC realtime Session 的状态变化，不改变普通 Data Route 的状态。
 pub(crate) fn emit_realtime_state(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     realtime_id: &str,
     peer_id: &str,
     state: i32,
@@ -199,7 +217,7 @@ pub(crate) fn emit_realtime_state(
 
 /// 发布 WebRTC Offer/Answer/ICE 控制面消息，SDP 不进入文件数据面。
 pub(crate) fn emit_realtime_signal(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     realtime_id: &str,
     peer_id: &str,
     kind: i32,
@@ -225,7 +243,7 @@ pub(crate) fn emit_realtime_signal(
 /// 发布 Realtime Session 稳定后的完整状态快照。该事件在对应的状态 delta 之后
 /// 发布，携带 RealtimeManager 中权威的 `session_id`/`peer_id`/`revision`。
 pub(crate) fn emit_realtime_snapshot(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     realtime_id: &str,
     peer_id: &str,
     state: i32,
@@ -250,7 +268,7 @@ pub(crate) fn emit_realtime_snapshot(
 
 /// 发布 ReliableStream 收到的对端字节（设计 §17）。
 pub(crate) fn emit_stream_data_received(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     peer_id: &str,
     opener_device_id: &str,
     stream_id: u16,
@@ -278,7 +296,7 @@ pub(crate) fn emit_stream_data_received(
 
 /// 发布 ReliableStream 关闭事件。
 pub(crate) fn emit_stream_closed(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     peer_id: &str,
     opener_device_id: &str,
     stream_id: u16,
@@ -304,7 +322,7 @@ pub(crate) fn emit_stream_closed(
 
 /// 发布带可选安全错误的类型化 Relay 生命周期事件。
 pub(crate) fn emit_relay_state(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     state: RelayConnectionState,
     error: Option<ProtocolError>,
 ) {
@@ -323,7 +341,7 @@ pub(crate) fn emit_relay_state(
 
 /// 发布单个对端的 Relay Presence 变化。
 pub(crate) fn emit_peer_presence_changed(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     peer_id: &str,
     generation: u64,
     state: PeerPresenceState,
@@ -344,7 +362,7 @@ pub(crate) fn emit_peer_presence_changed(
 
 /// 发布 Relay 认证连接后的完整在线设备快照。
 pub(crate) fn emit_peer_presence_snapshot(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     peers: Vec<PeerPresenceChangedEvent>,
 ) {
     let _ = event_tx.send(NetworkEvent {
@@ -359,7 +377,7 @@ pub(crate) fn emit_peer_presence_snapshot(
 
 /// 发布受审批门控的传入传输申请。
 pub(crate) fn emit_incoming_offer(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     peer_id: &str,
     manifest: &network_transfer::FileManifest,
     route_type: RouteType,
@@ -381,11 +399,7 @@ pub(crate) fn emit_incoming_offer(
 }
 
 /// 发布传输最终成功事件。
-pub(crate) fn emit_transfer_completed(
-    event_tx: &UnboundedSender<NetworkEvent>,
-    transfer_id: &str,
-    local_path: &str,
-) {
+pub(crate) fn emit_transfer_completed(event_tx: &EventSender, transfer_id: &str, local_path: &str) {
     let _ = event_tx.send(NetworkEvent {
         event_id: format!("{transfer_id}/completed"),
         timestamp_ms: unix_timestamp_ms(),
@@ -401,7 +415,7 @@ pub(crate) fn emit_transfer_completed(
 
 /// 使用稳定上下文字段发布传输最终失败事件。
 pub(crate) fn emit_transfer_error(
-    event_tx: &UnboundedSender<NetworkEvent>,
+    event_tx: &EventSender,
     transfer_id: &str,
     code: NetworkErrorCode,
     message: String,
@@ -481,7 +495,7 @@ pub(crate) fn protocol_error_with_peer(
     protocol_error_with_context(code, message, operation, Some(peer_id))
 }
 
-/// 返回 v1 事件信封使用的当前 Unix 时间戳。
+/// 返回 Network Protocol V2 事件信封使用的当前 Unix 时间戳。
 pub(crate) fn unix_timestamp_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

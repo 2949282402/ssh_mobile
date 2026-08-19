@@ -135,7 +135,7 @@ impl LocalDiscoveryManager {
     }
 
     /// 当前 runtime_epoch。
-    #[allow(dead_code)] // forward path：Step 6 resolver/orchestrator 使用
+    #[allow(dead_code)] // forward path：Step 6 resolver/connectivity attempt 使用
     pub(crate) fn runtime_epoch(&self) -> RuntimeEpoch {
         self.inner
             .lock()
@@ -145,13 +145,13 @@ impl LocalDiscoveryManager {
     }
 
     /// 当前 revision。
-    #[allow(dead_code)] // forward path：Step 6 resolver/orchestrator 使用
+    #[allow(dead_code)] // forward path：Step 6 resolver/connectivity attempt 使用
     pub(crate) fn revision(&self) -> u32 {
         self.inner.lock().expect("local discovery lock").revision
     }
 
     /// 当前本地 Discovery 状态。
-    #[allow(dead_code)] // forward path：Step 6 orchestrator 使用
+    #[allow(dead_code)] // forward path：Step 6 connectivity attempt 使用
     pub(crate) fn state(&self) -> LocalDiscoveryState {
         self.inner.lock().expect("local discovery lock").state
     }

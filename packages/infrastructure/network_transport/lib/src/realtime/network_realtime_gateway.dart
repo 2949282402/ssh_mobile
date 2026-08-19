@@ -53,11 +53,16 @@ final class RuntimeNetworkRealtimeGateway implements NetworkRealtimeGateway {
   RuntimeNetworkRealtimeGateway(this._gateway);
 
   final NetworkCommandGateway _gateway;
+  final NativeCommandResultGuard _commandResultGuard =
+      NativeCommandResultGuard();
   int _commandSequence = 0;
 
   @override
   Stream<NativeNetworkEvent> get events => _gateway.events
       .map(_decodeEvent)
+      .where((event) => event != null)
+      .cast<NativeNetworkEvent>()
+      .map(_commandResultGuard.filterEvent)
       .where((event) => event != null)
       .cast<NativeNetworkEvent>();
 
@@ -106,16 +111,23 @@ final class RuntimeNetworkRealtimeGateway implements NetworkRealtimeGateway {
   NativeCommandTicket _send({
     required String commandId,
     required Uint8List command,
-  }) => NativeCommandTicket(
-    commandId: commandId,
-    queueStatus: switch (_gateway.sendCommand(command)) {
+  }) {
+    if (!_commandResultGuard.register(commandId)) {
+      return NativeCommandTicket(
+        commandId: commandId,
+        queueStatus: NativeOperationStatus.failure,
+      );
+    }
+    final queueStatus = switch (_gateway.sendCommand(command)) {
       TransportOperationStatus.success => NativeOperationStatus.success,
       TransportOperationStatus.invalidArgument =>
         NativeOperationStatus.invalidArgument,
       TransportOperationStatus.stopped => NativeOperationStatus.stopped,
       TransportOperationStatus.failure => NativeOperationStatus.failure,
-    },
-  );
+    };
+    if (!queueStatus.isSuccess) _commandResultGuard.cancel(commandId);
+    return NativeCommandTicket(commandId: commandId, queueStatus: queueStatus);
+  }
 
   String _nextCommandId(String operation) {
     _commandSequence = (_commandSequence + 1) & 0x7fffffff;

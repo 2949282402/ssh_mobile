@@ -1,42 +1,88 @@
-//! v1 运行时的命令校验、确认与任务分发。
+//! Network Protocol V2 运行时的命令校验、确认与任务分发。
 
-use std::sync::Arc;
-
-use network_protocol::{
-    network_command, CommunicationClass, NetworkCommand, NetworkError as ProtocolError,
-    NetworkErrorCode, PeerConnectionState, RelayConnectionState, RouteType,
-    NETWORK_PROTOCOL_VERSION,
-};
-use tokio::sync::mpsc::UnboundedReceiver;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use crate::events::{
-    emit_command_result, emit_peer_state, emit_relay_state, protocol_error,
+    emit_command_result, emit_peer_lifecycle, emit_peer_state, emit_relay_state, protocol_error,
     protocol_error_with_peer,
 };
 use crate::peer;
 use crate::relay;
 use crate::runtime::RuntimeState;
 use crate::transfer;
+use crate::{connect::PeerState, errors::CoreNetworkError};
+use network_protocol::{
+    network_command, CommunicationClass, NetworkCommand, NetworkError as ProtocolError,
+    NetworkErrorCode, PeerConnectionState, RelayConnectionState, RouteType,
+    NETWORK_PROTOCOL_VERSION,
+};
+
+const MAX_COMPLETED_COMMANDS: usize = 4096;
+
+/// Tracks command ids at the runtime boundary. A command id is claimed before
+/// dispatch and its result is emitted at most once for the lifetime of this
+/// runtime. The set is deliberately bounded; a runtime restart starts a fresh
+/// correlation domain instead of allowing unbounded bookkeeping growth.
+struct CommandResultLedger {
+    seen: Mutex<HashSet<String>>,
+}
+
+impl CommandResultLedger {
+    fn new() -> Self {
+        Self {
+            seen: Mutex::new(HashSet::new()),
+        }
+    }
+
+    fn claim(&self, command_id: &str) -> Result<bool, CoreNetworkError> {
+        let mut seen = self.seen.lock().expect("command result ledger lock");
+        if seen.contains(command_id) {
+            return Ok(false);
+        }
+        if seen.len() >= MAX_COMPLETED_COMMANDS {
+            return Err(CoreNetworkError::ResourceLimit("command result ledger"));
+        }
+        seen.insert(command_id.to_string());
+        Ok(true)
+    }
+}
 
 /// 运行唯一命令 worker，并为每个命令发布一个内部结果。
 pub(crate) async fn run_command_worker(
-    mut commands: UnboundedReceiver<NetworkCommand>,
+    mut commands: tokio::sync::mpsc::Receiver<NetworkCommand>,
     state: Arc<RuntimeState>,
 ) {
     tracing::info!("Network runtime worker started");
+    let result_ledger = CommandResultLedger::new();
     while let Some(command) = commands.recv().await {
         let command_id = command.command_id.clone();
+        match result_ledger.claim(&command_id) {
+            Ok(true) => {}
+            // A duplicate command is intentionally silent: emitting another
+            // event with the same id would break exactly-once correlation.
+            Ok(false) => continue,
+            Err(error) => {
+                emit_command_result(
+                    &state.event_tx,
+                    command_id,
+                    Err(protocol_error(NetworkErrorCode::IoError, error.to_string())),
+                );
+                continue;
+            }
+        }
         let result = dispatch_command(command, Arc::clone(&state)).await;
         emit_command_result(&state.event_tx, command_id, result);
     }
     tracing::info!("Network runtime worker shut down");
 }
 
-/// 校验 v1 信封，并将载荷路由到所属子系统。
+/// 校验 V2 信封，并将载荷路由到所属子系统。
 pub(crate) async fn dispatch_command(
     command: NetworkCommand,
     state: Arc<RuntimeState>,
 ) -> Result<(), ProtocolError> {
+    let command_id = command.command_id.clone();
     if command.protocol_version != NETWORK_PROTOCOL_VERSION {
         return Err(protocol_error(
             NetworkErrorCode::InvalidArgument,
@@ -61,7 +107,7 @@ pub(crate) async fn dispatch_command(
         }
         Some(network_command::Payload::ConnectPeer(connect)) => {
             let class = decode_communication_class(connect.communication_class);
-            start_connect_peer(state, connect.peer_id, class).await
+            start_connect_peer(state, command_id, connect.peer_id, class).await
         }
         Some(network_command::Payload::SendFile(_))
         | Some(network_command::Payload::CancelTransfer(_))
@@ -109,6 +155,7 @@ pub(crate) async fn dispatch_command(
 /// 接受对端连接请求，并分离握手任务。
 async fn start_connect_peer(
     state: Arc<RuntimeState>,
+    command_id: String,
     peer_id: String,
     class: CommunicationClass,
 ) -> Result<(), ProtocolError> {
@@ -134,41 +181,98 @@ async fn start_connect_peer(
             &peer_id,
         ));
     }
-    emit_peer_state(
-        &state.event_tx,
-        &peer_id,
-        PeerConnectionState::Connecting,
-        RouteType::Unspecified,
-        None,
-    );
+    let supervisor = state
+        .peer_supervisors
+        .get_or_create(&peer_id)
+        .map_err(|error| core_error(&peer_id, "connect", error))?;
+    let intent = supervisor
+        .begin_connect(&command_id, class)
+        .map_err(|error| core_error(&peer_id, "connect", error))?;
+    let generation = intent.generation;
+    if !intent.is_new {
+        intent.detach_completion();
+        return Ok(());
+    }
+    intent.detach_completion();
+    emit_peer_lifecycle(&state.event_tx, &peer_id, PeerState::Connecting, None);
     let supervisor = Arc::clone(&state.task_supervisor);
+    let task_state = Arc::clone(&state);
+    let task_peer_id = peer_id.clone();
     let task_started = supervisor.spawn_runtime("peer-connect", async move {
-        // transport-network v2（§11/§37）：唯一建连入口 ConnectionOrchestrator。
-        let orchestrator = crate::connect::ConnectionOrchestrator::new(Arc::clone(&state));
-        if let Err(error) = orchestrator.connect_with_class(&peer_id, class).await {
-            let code =
-                NetworkErrorCode::try_from(error.code).unwrap_or(NetworkErrorCode::Unspecified);
-            emit_peer_state(
-                &state.event_tx,
-                &peer_id,
-                PeerConnectionState::Failed,
-                RouteType::Unspecified,
-                Some(protocol_error_with_peer(
-                    code,
-                    error.message,
-                    "connect",
-                    &peer_id,
-                )),
-            );
+        if !matches!(
+            task_state.peer_supervisors.get_or_create(&task_peer_id),
+            Ok(peer) if peer.is_current(generation)
+        ) {
+            return;
+        }
+        // transport-network v2（§11/§37）：唯一建连入口 ConnectivityAttemptCoordinator。
+        let attempt_coordinator =
+            crate::connect::ConnectivityAttemptCoordinator::new(Arc::clone(&task_state));
+        match attempt_coordinator
+            .connect_with_class(&task_peer_id, class)
+            .await
+        {
+            Ok(()) => {
+                if let Ok(peer) = task_state.peer_supervisors.get_or_create(&task_peer_id) {
+                    let _ = peer.complete(generation, Ok(PeerState::Online));
+                }
+            }
+            Err(error) => {
+                let Ok(peer) = task_state.peer_supervisors.get_or_create(&task_peer_id) else {
+                    return;
+                };
+                if !peer.is_current(generation) {
+                    return;
+                }
+                let code =
+                    NetworkErrorCode::try_from(error.code).unwrap_or(NetworkErrorCode::Unspecified);
+                let _ = peer.complete(generation, Err(CoreNetworkError::Cancelled));
+                emit_peer_state(
+                    &task_state.event_tx,
+                    &task_peer_id,
+                    PeerConnectionState::Failed,
+                    RouteType::Unspecified,
+                    Some(protocol_error_with_peer(
+                        code,
+                        error.message,
+                        "connect",
+                        &task_peer_id,
+                    )),
+                );
+            }
         }
     });
     if task_started.is_none() {
+        if let Ok(peer) = state.peer_supervisors.get_or_create(&peer_id) {
+            let _ = peer.complete(generation, Err(CoreNetworkError::SupervisorStopping));
+        }
         return Err(protocol_error(
             NetworkErrorCode::Cancelled,
             "network runtime is stopping",
         ));
     }
     Ok(())
+}
+
+fn core_error(peer_id: &str, operation: &str, error: CoreNetworkError) -> ProtocolError {
+    let code = match &error {
+        CoreNetworkError::MailboxFull | CoreNetworkError::ResourceLimit(_) => {
+            NetworkErrorCode::IoError
+        }
+        CoreNetworkError::SupervisorStopping | CoreNetworkError::Cancelled => {
+            NetworkErrorCode::Cancelled
+        }
+        CoreNetworkError::NoRoute => NetworkErrorCode::NoRoute,
+        CoreNetworkError::InvalidPeerId | CoreNetworkError::InvalidCommandId => {
+            NetworkErrorCode::InvalidArgument
+        }
+        CoreNetworkError::DuplicateCommand => NetworkErrorCode::InvalidArgument,
+        CoreNetworkError::StaleAttempt | CoreNetworkError::StaleIntent => {
+            NetworkErrorCode::Cancelled
+        }
+        CoreNetworkError::CapabilityUnavailable => NetworkErrorCode::NoRoute,
+    };
+    protocol_error_with_peer(code, error.to_string(), operation, peer_id)
 }
 
 /// 接受 Relay 配置，并通过 Relay 事件报告 socket 认证结果。
@@ -217,4 +321,17 @@ async fn start_configure_relay(
 /// ReliableMessage 处理，保证旧调用方（发送 0）行为不变。
 fn decode_communication_class(value: i32) -> CommunicationClass {
     CommunicationClass::try_from(value).unwrap_or(CommunicationClass::ReliableMessage)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_result_ledger_claims_each_id_once() {
+        let ledger = CommandResultLedger::new();
+        assert_eq!(ledger.claim("command-1"), Ok(true));
+        assert_eq!(ledger.claim("command-1"), Ok(false));
+        assert_eq!(ledger.claim("command-2"), Ok(true));
+    }
 }

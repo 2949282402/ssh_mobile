@@ -1,4 +1,4 @@
-// v1 原生网络服务，负责将命令确认与 FFI 事件关联，
+// Network Protocol V2 原生网络服务，负责将命令确认与 FFI 事件关联，
 // 并只向 Flutter 暴露类型化的 NetworkResult/NetworkEvent。
 
 import 'dart:async';
@@ -10,17 +10,17 @@ import 'package:network_sdk/network_sdk.dart';
 import 'package:network_transport/network_transport.dart';
 import 'package:uuid/uuid.dart';
 
-import 'network_protocol_codec.dart';
+import 'network_protocol_v2_codec.dart';
 
-/// 将原生 v1 运行时适配为 Flutter 的类型化网络契约。
+/// 将原生 Network Protocol V2 运行时适配为 Flutter 的类型化网络契约。
 final class NativeNetworkService implements NetworkService {
   /// 基于已创建的原生运行时创建服务。
   NativeNetworkService(
     NativeNetworkRuntime runtime, {
-    NetworkProtocolCodec? codec,
+    NetworkProtocolV2Codec? codec,
   }) : _gateway = _NativeRuntimeCommandGateway(runtime),
        _ownedRuntime = runtime,
-       _codec = codec ?? const NetworkProtocolCodec() {
+       _codec = codec ?? const NetworkProtocolV2Codec() {
     _nativeSubscription = _gateway.events.listen(_handleNativeEvent);
   }
 
@@ -30,16 +30,16 @@ final class NativeNetworkService implements NetworkService {
   /// NetworkRuntime 或 native handle；最终资源由 AppRuntime 释放。
   NativeNetworkService.fromGateway(
     NetworkCommandGateway gateway, {
-    NetworkProtocolCodec? codec,
+    NetworkProtocolV2Codec? codec,
   }) : _gateway = gateway,
        _ownedRuntime = null,
-       _codec = codec ?? const NetworkProtocolCodec() {
+       _codec = codec ?? const NetworkProtocolV2Codec() {
     _nativeSubscription = _gateway.events.listen(_handleNativeEvent);
   }
 
   final NetworkCommandGateway _gateway;
   final NativeNetworkRuntime? _ownedRuntime;
-  final NetworkProtocolCodec _codec;
+  final NetworkProtocolV2Codec _codec;
   final StreamController<NetworkEvent> _eventController =
       StreamController<NetworkEvent>.broadcast();
   final Map<String, _PendingNetworkCommand> _pendingCommands =
@@ -433,7 +433,7 @@ final class NativeNetworkService implements NetworkService {
   void _handleNativeEvent(Uint8List bytes) {
     try {
       final frame = _codec.decodeEvent(bytes);
-      if (frame.protocolVersion != NetworkProtocolCodec.protocolVersion) {
+      if (frame.protocolVersion != NetworkProtocolV2Codec.protocolVersion) {
         return;
       }
       final commandId = frame.commandId;
@@ -607,7 +607,7 @@ final class NativeNetworkService implements NetworkService {
   }
 }
 
-/// 将旧 native runtime 适配为共享 gateway，供现有 v1 单元测试使用。
+/// 将 native runtime 适配为共享 gateway，供 Network Protocol V2 测试使用。
 final class _NativeRuntimeCommandGateway implements NetworkCommandGateway {
   _NativeRuntimeCommandGateway(this._runtime);
 

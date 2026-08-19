@@ -2,7 +2,7 @@
 //!
 //! 薄封装 `RelayControlClient::resolve_peer`：把 Resolve 的 4-state
 //! （READY / OFFLINE / NOT_READY / UNKNOWN）映射为类型化结果 [`ResolvedPeer`]，
-//! 供 Step 6 的 ConnectionOrchestrator 消费。本步骤只定义类型 + 调用路径，
+//! 供 Step 6 的 ConnectivityAttemptCoordinator 消费。本步骤只定义类型 + 调用路径，
 //! 不接线到连接主链（§11 在 Step 6 落地）。
 
 use std::sync::Arc;
@@ -55,7 +55,7 @@ impl DiscoveryResolver {
     /// 调用控制面 `resolve_peer` 并把 4-state 映射为 [`ResolvedPeer`]。
     ///
     /// 传输层错误（未连接 / 超时 / 协议错误）以 `Err` 返回，由调用方决定
-    /// fail-open / fail-closed（Step 6 ConnectionOrchestrator）。
+    /// fail-open / fail-closed（Step 6 ConnectivityAttemptCoordinator）。
     #[allow(dead_code)] // forward path：Step 6 使用
     pub(crate) async fn resolve(&self, target_device_id: &str) -> Result<ResolvedPeer, RelayError> {
         let response = self.control.resolve_peer(target_device_id).await?;

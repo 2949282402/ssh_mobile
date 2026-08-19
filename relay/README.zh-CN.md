@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-14
+> 最新更新时间：2026-08-19
 
 # SSH Mobile 控制与中继服务器
 
@@ -205,6 +205,24 @@ go test -race ./...
 go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```
+
+### Network v2 Phase 0 合同矩阵
+
+在仓库根目录运行提交的 Relay v2 fixture 与跨 owner 证据清单的非修改性基线检查：
+
+```sh
+bash scripts/network_v2_acceptance.sh baseline
+```
+
+strict 入口还会调用所属 Rust/Go 测试选择器，并在矩阵仍有 `characterized` 或
+`gap` 时失败：
+
+```sh
+bash scripts/network_v2_acceptance.sh strict
+```
+
+基线通过不表示最终验收已完成；未关闭项保留在
+`protocol/contract_tests/acceptance_matrix.json` 中。
 
 ### 存储集成测试
 

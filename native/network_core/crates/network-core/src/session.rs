@@ -64,7 +64,7 @@ pub(crate) enum SessionCryptoDecision {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SessionAdmission {
+pub(crate) struct ConnectionAdmission {
     pub(crate) session_id: SessionId,
     pub(crate) decision: SessionCryptoDecision,
     pub(crate) replaced_session_id: Option<SessionId>,
@@ -74,13 +74,13 @@ pub(crate) struct SessionAdmission {
 /// deliberately not closed here: closing a carrier is the Runtime/Session
 /// lifecycle owner's job, and GenericRoute carries supervised task leases that
 /// must be stopped outside the Session lock.
-pub(crate) struct SessionAdmissionOutcome {
-    pub(crate) admission: SessionAdmission,
+pub(crate) struct ConnectionAdmissionOutcome {
+    pub(crate) admission: ConnectionAdmission,
     pub(crate) detached_route: Option<ActiveRoute>,
 }
 
-impl Deref for SessionAdmissionOutcome {
-    type Target = SessionAdmission;
+impl Deref for ConnectionAdmissionOutcome {
+    type Target = ConnectionAdmission;
 
     fn deref(&self) -> &Self::Target {
         &self.admission
@@ -88,7 +88,7 @@ impl Deref for SessionAdmissionOutcome {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum SessionAdmissionError {
+pub(crate) enum ConnectionAdmissionError {
     StaleSession,
     InvalidRemoteBinding,
     UnsupportedCapability,
@@ -354,12 +354,12 @@ impl RouteView {
 }
 
 /// App Scope 内唯一的 Session owner。
-pub(crate) struct SessionManager {
+pub(crate) struct ConnectionSessionStore {
     sessions: RwLock<HashMap<String, Session>>,
     capability_notify: Notify,
 }
 
-impl SessionManager {
+impl ConnectionSessionStore {
     pub(crate) fn new() -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
@@ -556,7 +556,7 @@ impl SessionManager {
         peer_id: &str,
         expected_session_id: Option<SessionId>,
         new_remote_binding: &str,
-    ) -> Result<SessionAdmissionOutcome, SessionAdmissionError> {
+    ) -> Result<ConnectionAdmissionOutcome, ConnectionAdmissionError> {
         self.admit_authenticated_session_with_capability(
             peer_id,
             expected_session_id,
@@ -572,35 +572,35 @@ impl SessionManager {
         expected_session_id: Option<SessionId>,
         new_remote_binding: &str,
         candidate_capabilities: u8,
-    ) -> Result<SessionAdmissionOutcome, SessionAdmissionError> {
+    ) -> Result<ConnectionAdmissionOutcome, ConnectionAdmissionError> {
         if new_remote_binding.is_empty() {
-            return Err(SessionAdmissionError::InvalidRemoteBinding);
+            return Err(ConnectionAdmissionError::InvalidRemoteBinding);
         }
 
         let mut sessions = self.sessions.write().await;
         let Some(current) = sessions.get_mut(peer_id) else {
             if expected_session_id.is_some() {
-                return Err(SessionAdmissionError::StaleSession);
+                return Err(ConnectionAdmissionError::StaleSession);
             }
             // Responder 首次 admit：创建一个全新的 1:1 Session。
             let mut session = Self::new_session();
             session.remote_session_binding = Some(new_remote_binding.to_string());
             session.state = SessionState::Connecting;
-            let admission = SessionAdmission {
+            let admission = ConnectionAdmission {
                 session_id: session.id,
                 decision: SessionCryptoDecision::Initialize,
                 replaced_session_id: None,
             };
             sessions.insert(peer_id.to_string(), session);
             self.capability_notify.notify_waiters();
-            return Ok(SessionAdmissionOutcome {
+            return Ok(ConnectionAdmissionOutcome {
                 admission,
                 detached_route: None,
             });
         };
 
         if expected_session_id.is_some_and(|expected| expected != current.id) {
-            return Err(SessionAdmissionError::StaleSession);
+            return Err(ConnectionAdmissionError::StaleSession);
         }
 
         // A remote binding is the stable identity of the peer's current
@@ -614,13 +614,13 @@ impl SessionManager {
             SessionState::Connecting | SessionState::Connected
         ) && current.remote_session_binding.as_deref() == Some(new_remote_binding)
         {
-            return Err(SessionAdmissionError::StaleSession);
+            return Err(ConnectionAdmissionError::StaleSession);
         }
         if current.state == SessionState::Connecting
             && candidate_capabilities & current.required_capabilities
                 != current.required_capabilities
         {
-            return Err(SessionAdmissionError::UnsupportedCapability);
+            return Err(ConnectionAdmissionError::UnsupportedCapability);
         }
 
         // §18/§40 单赢者语义（写锁内的权威 guard）：期望的 Session 仍在 Connecting 时，
@@ -632,7 +632,7 @@ impl SessionManager {
         if expected_session_id.is_some_and(|expected| {
             expected == current.id && current.state != SessionState::Connecting
         }) {
-            return Err(SessionAdmissionError::StaleSession);
+            return Err(ConnectionAdmissionError::StaleSession);
         }
 
         let binding_changed = current
@@ -655,8 +655,8 @@ impl SessionManager {
         if in_flight_initialize {
             current.remote_session_binding = Some(new_remote_binding.to_string());
             self.capability_notify.notify_waiters();
-            return Ok(SessionAdmissionOutcome {
-                admission: SessionAdmission {
+            return Ok(ConnectionAdmissionOutcome {
+                admission: ConnectionAdmission {
                     session_id: current.id,
                     decision: SessionCryptoDecision::Initialize,
                     replaced_session_id: None,
@@ -670,14 +670,14 @@ impl SessionManager {
         let mut replacement = Self::new_session();
         replacement.remote_session_binding = Some(new_remote_binding.to_string());
         replacement.state = SessionState::Connecting;
-        let admission = SessionAdmission {
+        let admission = ConnectionAdmission {
             session_id: replacement.id,
             decision: SessionCryptoDecision::ReplaceWithNew,
             replaced_session_id: Some(replaced_session_id),
         };
         *current = replacement;
         self.capability_notify.notify_waiters();
-        Ok(SessionAdmissionOutcome {
+        Ok(ConnectionAdmissionOutcome {
             admission,
             detached_route: old_route,
         })
@@ -692,23 +692,23 @@ impl SessionManager {
         peer_id: &str,
         expected_session_id: SessionId,
         remote_session_binding: &str,
-    ) -> Result<(), SessionAdmissionError> {
+    ) -> Result<(), ConnectionAdmissionError> {
         if remote_session_binding.is_empty() {
-            return Err(SessionAdmissionError::InvalidRemoteBinding);
+            return Err(ConnectionAdmissionError::InvalidRemoteBinding);
         }
         let mut sessions = self.sessions.write().await;
         let Some(session) = sessions.get_mut(peer_id) else {
-            return Err(SessionAdmissionError::StaleSession);
+            return Err(ConnectionAdmissionError::StaleSession);
         };
         if session.id != expected_session_id || session.state == SessionState::Closed {
-            return Err(SessionAdmissionError::StaleSession);
+            return Err(ConnectionAdmissionError::StaleSession);
         }
         if session
             .remote_session_binding
             .as_deref()
             .is_some_and(|existing| existing != remote_session_binding)
         {
-            return Err(SessionAdmissionError::StaleSession);
+            return Err(ConnectionAdmissionError::StaleSession);
         }
         session.remote_session_binding = Some(remote_session_binding.to_string());
         self.capability_notify.notify_waiters();
@@ -903,7 +903,7 @@ impl SessionManager {
             .map(ActiveRoute::profile)
     }
 
-    pub(crate) async fn current_active_route(&self, peer_id: &str) -> Option<RouteView> {
+    pub(crate) async fn current_route_view(&self, peer_id: &str) -> Option<RouteView> {
         self.sessions
             .read()
             .await
@@ -915,7 +915,7 @@ impl SessionManager {
     /// Returns the current route carrier for byte-stream I/O. This is a
     /// separate projection so `RouteView`'s private carrier stays encapsulated.
     pub(crate) async fn current_stream_carrier(&self, peer_id: &str) -> Option<StreamCarrier> {
-        self.current_active_route(peer_id)
+        self.current_route_view(peer_id)
             .await
             .map(|route| match route.carrier {
                 RouteViewCarrier::Quic(connection) => StreamCarrier::Quic(connection),
@@ -927,7 +927,7 @@ impl SessionManager {
     /// Returns the current reservation-scoped Relay v2 data client, if the
     /// active route is a Relay route (§25).
     pub(crate) async fn current_relay_data(&self, peer_id: &str) -> Option<Arc<RelayDataClient>> {
-        self.current_active_route(peer_id)
+        self.current_route_view(peer_id)
             .await
             .and_then(|route| match route.carrier {
                 RouteViewCarrier::Relay(client) => client,
@@ -942,7 +942,7 @@ impl SessionManager {
         peer_id: &str,
         data: &Arc<RelayDataClient>,
     ) -> bool {
-        self.current_active_route(peer_id)
+        self.current_route_view(peer_id)
             .await
             .is_some_and(|route| match route.carrier {
                 RouteViewCarrier::Relay(Some(client)) => Arc::ptr_eq(&client, data),
@@ -981,7 +981,7 @@ impl SessionManager {
         kind: GenericFrameKind,
         payload: &[u8],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let route = self.current_active_route(peer_id).await.ok_or_else(|| {
+        let route = self.current_route_view(peer_id).await.ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotConnected, "route unavailable")
         })?;
         let is_stream_frame = matches!(
@@ -1206,7 +1206,7 @@ mod tests {
 
     #[tokio::test]
     async fn new_session_ids_are_random_128_bit_lowercase_hex() {
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let first = match manager.begin_connect("peer-a").await {
             ConnectDecision::Started(id) => id,
             decision => panic!("unexpected decision: {decision:?}"),
@@ -1234,7 +1234,7 @@ mod tests {
     async fn concurrent_connect_is_merged_while_in_progress() {
         // §40 Concurrency：同 peer 并发 connect 合并——已有连接任务在途时返回
         // InProgress（不重复创建 Session/建连）。
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let first = match manager.begin_connect("peer-b").await {
             ConnectDecision::Started(id) => id,
             decision => panic!("unexpected decision: {decision:?}"),
@@ -1257,7 +1257,7 @@ mod tests {
     }
     #[tokio::test]
     async fn concurrent_connect_merges_required_capabilities_and_rejects_narrow_candidates() {
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let peer_id = "peer-capability-union";
         let first = match manager
             .begin_connect_with_capability(peer_id, CAPABILITY_RELIABLE_MESSAGE)
@@ -1297,7 +1297,7 @@ mod tests {
             .await;
         assert!(matches!(
             narrow,
-            Err(SessionAdmissionError::UnsupportedCapability)
+            Err(ConnectionAdmissionError::UnsupportedCapability)
         ));
         let admitted = manager
             .admit_authenticated_session_with_capability(
@@ -1315,7 +1315,7 @@ mod tests {
 
     #[tokio::test]
     async fn incompatible_connected_route_requests_a_fresh_session() {
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let peer_id = "peer-capability-replace";
         let first = match manager
             .begin_connect_with_capability(peer_id, DEFAULT_CONNECTION_CAPABILITY)
@@ -1346,7 +1346,7 @@ mod tests {
     async fn transport_loss_destroys_session_and_reconnect_gets_a_new_id() {
         // §18/§40：transport 丢失即销毁 Session；重新 begin_connect 得到全新 SessionId，
         // 绝不复用旧 id。
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let peer_id = "peer-loss";
         let first = match manager.begin_connect(peer_id).await {
             ConnectDecision::Started(id) => id,
@@ -1380,7 +1380,7 @@ mod tests {
     async fn in_flight_initiator_admission_keeps_its_session_but_installs_new_root() {
         // §18：begin_connect 创建、仍在途中的 Session 被直接 admit（Initialize），
         // 不生成第二个 SessionId。
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let peer_id = "peer-init";
         let first = match manager.begin_connect(peer_id).await {
             ConnectDecision::Started(id) => id,
@@ -1400,7 +1400,7 @@ mod tests {
         // §18/§40：simultaneous connect 时，第一个 responder candidate 可以 claim
         // 本端出站 connect 创建、尚未绑定 remote binding 的 Connecting Session；第二个
         // candidate 携带相同 remote binding 时必须是 race loser，不能再次 admit。
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let peer_id = "peer-simultaneous";
         let session_id = match manager.begin_connect(peer_id).await {
             ConnectDecision::Started(id) => id,
@@ -1426,7 +1426,7 @@ mod tests {
             .await;
         assert!(matches!(
             duplicate,
-            Err(SessionAdmissionError::StaleSession)
+            Err(ConnectionAdmissionError::StaleSession)
         ));
         assert_eq!(manager.session_id(peer_id).await, Some(session_id));
     }
@@ -1435,7 +1435,7 @@ mod tests {
     async fn new_connection_replaces_an_existing_session_with_a_fresh_id() {
         // §18：新连接到达时若已存在旧 Session（例如对端 runtime 重启 / 并发建连），
         // 必须整体替换——新 SessionId + ReplaceWithNew，绝不 ContinueExisting。
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let peer_id = "peer-replace";
         let first = match manager.begin_connect(peer_id).await {
             ConnectDecision::Started(id) => id,
@@ -1477,7 +1477,7 @@ mod tests {
             manager
                 .admit_authenticated_session(peer_id, Some(first), "remote-c")
                 .await,
-            Err(SessionAdmissionError::StaleSession)
+            Err(ConnectionAdmissionError::StaleSession)
         ));
     }
 
@@ -1486,7 +1486,7 @@ mod tests {
         // §18/§40 单赢者（写锁内权威 guard）：winner 已把 route 挂到 Session
         // （Connected）后，同一次 attempt 的迟到 admit 必须返回 StaleSession，绝不
         // 整体替换——否则会拆掉 winner 刚挂载的 route，双方掉线。
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let peer_id = "peer-stale-admit";
         let session_id = match manager.begin_connect(peer_id).await {
             ConnectDecision::Started(id) => id,
@@ -1512,13 +1512,13 @@ mod tests {
             manager
                 .admit_authenticated_session(peer_id, Some(session_id), "remote-a")
                 .await,
-            Err(SessionAdmissionError::StaleSession)
+            Err(ConnectionAdmissionError::StaleSession)
         ));
         assert!(matches!(
             manager
                 .admit_authenticated_session(peer_id, None, "remote-a")
                 .await,
-            Err(SessionAdmissionError::StaleSession)
+            Err(ConnectionAdmissionError::StaleSession)
         ));
         assert_eq!(manager.state(peer_id).await, Some(SessionState::Connected));
         assert_eq!(manager.session_id(peer_id).await, Some(session_id));
@@ -1527,7 +1527,7 @@ mod tests {
 
     #[tokio::test]
     async fn explicit_close_ends_session_before_a_new_session_is_created() {
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let first = match manager.begin_connect("peer-b").await {
             ConnectDecision::Started(id) => id,
             decision => panic!("unexpected decision: {decision:?}"),
@@ -1545,7 +1545,7 @@ mod tests {
 
     #[tokio::test]
     async fn explicit_close_preserves_peer_pending_delivery() {
-        let manager = SessionManager::new();
+        let manager = ConnectionSessionStore::new();
         let delivery = crate::delivery::DeliveryManager::new();
         let first = match manager.begin_connect("peer-b").await {
             ConnectDecision::Started(id) => id,

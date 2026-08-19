@@ -1,4 +1,5 @@
 use crate::candidate::{Candidate, CandidateKind};
+use crate::candidate_v2::{CandidatePayloadV2, CandidateTransport};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -6,6 +7,11 @@ use tokio::time::timeout;
 
 const STUN_MAGIC_COOKIE: u32 = 0x2112A442;
 const BINDING_REQUEST_TYPE: u16 = 0x0001;
+
+/// A server-reflexive mapping comes from the shared UDP socket used by QUIC
+/// and datagrams. It is never a TCP or WebSocket candidate.
+pub const STUN_SRFLX_TRANSPORTS: [CandidateTransport; 2] =
+    [CandidateTransport::Quic, CandidateTransport::UdpDatagram];
 
 /// Queries a STUN server over a given UDP socket to discover the server-reflexive endpoint.
 pub async fn query_stun(socket: &UdpSocket, stun_server: SocketAddr) -> Option<Candidate> {
@@ -26,7 +32,7 @@ pub async fn query_stun(socket: &UdpSocket, stun_server: SocketAddr) -> Option<C
         .ok()?
         .ok()?;
 
-    if source.ip() != stun_server.ip()
+    if source != stun_server
         || len < 20
         || u16::from_be_bytes([buf[0], buf[1]]) != 0x0101
         || u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) != STUN_MAGIC_COOKIE
@@ -36,6 +42,24 @@ pub async fn query_stun(socket: &UdpSocket, stun_server: SocketAddr) -> Option<C
     }
     parse_xor_mapped_address(&buf[..len], transaction_id)
         .map(|endpoint| Candidate::new(endpoint, CandidateKind::ServerReflexive, "stun".into()))
+}
+
+/// Queries STUN and returns the versioned, transport-qualified payload. The
+/// caller supplies the non-zero discovery generation because STUN itself has
+/// no discovery-version semantics.
+pub async fn query_stun_v2(
+    socket: &UdpSocket,
+    stun_server: SocketAddr,
+    generation: u64,
+) -> Option<CandidatePayloadV2> {
+    if generation == 0 {
+        return None;
+    }
+    let candidate = query_stun(socket, stun_server)
+        .await?
+        .with_generation(generation);
+    let payload = CandidatePayloadV2::from_candidate(&candidate, STUN_SRFLX_TRANSPORTS.to_vec());
+    payload.validate().ok().map(|_| payload)
 }
 
 fn parse_xor_mapped_address(packet: &[u8], transaction_id: [u8; 12]) -> Option<SocketAddr> {
@@ -176,5 +200,70 @@ mod tests {
         let candidate = query_stun(&client, server_address).await.unwrap();
         assert_eq!(candidate.kind, CandidateKind::ServerReflexive);
         assert_eq!(candidate.endpoint, responder.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn query_stun_rejects_a_response_from_the_expected_ip_but_wrong_port() {
+        let expected = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let spoof = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let expected_address = expected.local_addr().unwrap();
+        let responder = tokio::spawn(async move {
+            let mut request = [0u8; 128];
+            let (length, source) = expected.recv_from(&mut request).await.unwrap();
+            assert_eq!(length, 20);
+            let transaction_id: [u8; 12] = request[8..20].try_into().unwrap();
+            let mapped = "198.51.100.9:4232".parse::<SocketAddr>().unwrap();
+            let mut value = vec![0, 1];
+            value.extend_from_slice(
+                &(mapped.port() ^ (STUN_MAGIC_COOKIE >> 16) as u16).to_be_bytes(),
+            );
+            let ip = match mapped.ip() {
+                IpAddr::V4(ip) => u32::from_be_bytes(ip.octets()),
+                IpAddr::V6(_) => unreachable!("test mapping must be IPv4"),
+            };
+            value.extend_from_slice(&(ip ^ STUN_MAGIC_COOKIE).to_be_bytes());
+            let packet = response(transaction_id, &value);
+            // Send from a different local port, even though the source IP is
+            // identical, to prove full SocketAddr validation.
+            spoof.send_to(&packet, source).await.unwrap();
+        });
+
+        assert!(query_stun(&client, expected_address).await.is_none());
+        responder.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn query_stun_v2_only_advertises_quic_and_udp_datagram() {
+        let server = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let server_address = server.local_addr().unwrap();
+        let responder = tokio::spawn(async move {
+            let mut request = [0u8; 128];
+            let (length, source) = server.recv_from(&mut request).await.unwrap();
+            assert_eq!(length, 20);
+            let transaction_id: [u8; 12] = request[8..20].try_into().unwrap();
+            let mapped = "198.51.100.10:4233".parse::<SocketAddr>().unwrap();
+            let mut value = vec![0, 1];
+            value.extend_from_slice(
+                &(mapped.port() ^ (STUN_MAGIC_COOKIE >> 16) as u16).to_be_bytes(),
+            );
+            let ip = match mapped.ip() {
+                IpAddr::V4(ip) => u32::from_be_bytes(ip.octets()),
+                IpAddr::V6(_) => unreachable!("test mapping must be IPv4"),
+            };
+            value.extend_from_slice(&(ip ^ STUN_MAGIC_COOKIE).to_be_bytes());
+            server
+                .send_to(&response(transaction_id, &value), source)
+                .await
+                .unwrap();
+            mapped
+        });
+
+        let candidate = query_stun_v2(&client, server_address, 7).await.unwrap();
+        assert_eq!(candidate.generation, 7);
+        assert_eq!(candidate.transport_capabilities, STUN_SRFLX_TRANSPORTS);
+        assert_eq!(candidate.endpoint, responder.await.unwrap());
+        assert!(query_stun_v2(&client, server_address, 0).await.is_none());
     }
 }

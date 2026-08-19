@@ -1,11 +1,12 @@
-> 最新更新时间：2026-08-15
+> 最新更新时间：2026-08-19
 
 # ADR-028：Forward-secret Session E2EE Key Agreement
 
 ## Status
 
-Accepted for native network v1 Step 4. transport-network v2 retains this ADR's
-v3 Root exchange, `KeyEpoch`, and structured-nonce model unchanged.
+Accepted for Network Protocol V2. Relay Bootstrap V1 remains an independent
+enrollment/version domain; this ADR's v3 Root exchange, `KeyEpoch`, and
+structured-nonce model are the active Session E2EE contract.
 
 > **2026-08-15 名称澄清（transport-network v2 碰撞）**：本 ADR 中的 "v2 is
 > rejected" 指 **crypto-handshake 版本**——v2 手写 Root 推导被拒绝，当前采用 v3
@@ -87,9 +88,10 @@ forwarder; it is not trusted with Session plaintext or Noise state.
   `MAX_MESSAGES_PER_KEY` or `MAX_BYTES_PER_KEY` is exceeded. Receivers accept
   the current epoch and a bounded recent window, while epoch jumps and prefix
   mismatches are rejected.
-- Keep E2EE as the protobuf default. `CryptoMode::None` remains an explicit
-  caller opt-out only; a requested E2EE payload with no installed context
-  returns `E2eeRequired`, and no route fallback changes that mode.
+- Require E2EE for every Network Protocol V2 application payload. There is no
+  plaintext caller opt-out and no per-message crypto mode; a payload with no
+  installed context returns `E2eeRequired`, and no route fallback changes that
+  requirement.
 - Keep authenticated Delivery replay handling: AEAD-authenticated duplicate
   ciphertext may reach Delivery's `DuplicateInFlight`/`DuplicateProcessed`
   logic, while unauthenticated or best-effort replay is rejected by the

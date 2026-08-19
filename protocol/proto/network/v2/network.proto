@@ -1,9 +1,9 @@
-// v1 网络线协议 schema。开发阶段的结构变化直接在当前版本修改，
-// 不做版本迁移；Dart 与 Rust 手写绑定必须保持字段 tag 一致。
+// Network Protocol V2 schema. Field tags are frozen for this protocol
+// generation; Dart and Rust hand-written bindings must remain aligned.
 
 syntax = "proto3";
 
-package network.v1;
+package network.v2;
 
 enum NetworkErrorCode {
   ERROR_CODE_UNSPECIFIED = 0;
@@ -184,7 +184,8 @@ message NetworkCommand {
 message PeerStateChangedEvent {
   string peer_id = 1;
   PeerConnectionState state = 2;
-  RouteType active_route = 3;
+  // Observational route metadata; PeerSupervisor remains the lifecycle owner.
+  RouteType route_type = 3;
   NetworkError error = 4;
   RouteTopology route_topology = 5;
   RouteTransport route_transport = 6;

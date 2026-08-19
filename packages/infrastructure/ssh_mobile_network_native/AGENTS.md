@@ -28,9 +28,9 @@ Message ID；跨连接的业务状态由 Delivery/Transfer manager 持有。Reco
 
 Application E2EE 必须由 native ConnectionSession owner 维护。每个 transport
 Connection 创建新的 SessionId 与 Noise root；transport loss 销毁
-ConnectionSession，不继承旧 crypto context。E2EE 是 `SendMessage` /
-`DataMessage` 的默认模式；`None` 只能由调用方显式选择。Pending Delivery
-状态只能保存逻辑明文和 crypto mode，不能缓存任何 Route ciphertext；
+ConnectionSession，不继承旧 crypto context。Network Protocol V2 的
+`SendMessage` / `DataMessage` 不携带 per-message crypto mode，始终使用
+ConnectionSession E2EE。Pending Delivery 状态只能保存逻辑明文，不能缓存任何 Route ciphertext；
 Delivery/Transfer 的业务状态留在 manager，并在新 ConnectionSession 上恢复。
 同一 ConnectionSession 内的 QUIC、Relay 以及 Relay 文件分块使用同一
 CryptoContext；新连接按新的 root 重新加密，禁止跨 Transport 继承旧 context。

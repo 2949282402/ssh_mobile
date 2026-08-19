@@ -247,7 +247,7 @@ const compatibilityInventory = <CompatibilityModule>[
       'apps/ssh_mobile_full/lib/app/network_sdk_adapters.dart',
       'apps/ssh_mobile_full/lib/app/lan_share_feature_adapters.dart',
       'apps/ssh_mobile_full/lib/services/network/network_identity_service.dart',
-      'apps/ssh_mobile_full/lib/services/network/network_protocol_codec.dart',
+      'apps/ssh_mobile_full/lib/services/network/network_protocol_v2_codec.dart',
       'apps/ssh_mobile_full/lib/services/network/network_service.dart',
     ],
     removalCondition:

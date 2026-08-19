@@ -22,7 +22,8 @@ use std::sync::{Arc, Mutex};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 /// The application crypto suite carried by encrypted Relay offer metadata.
-/// Data messages carry the numeric suite marker inside their envelope.
+/// Network Protocol V2 always uses the ConnectionSession-owned E2EE context;
+/// crypto mode is not negotiated per message.
 pub(crate) const APPLICATION_CRYPTO_SUITE: &str = "hkdf-sha256-aes256gcm-v1";
 
 #[cfg(test)]
@@ -46,33 +47,6 @@ const MAX_RETAINED_KEY_EPOCHS: u64 = 4;
 pub(crate) const MAX_MESSAGES_PER_KEY: u64 = 1_048_576;
 pub(crate) const MAX_BYTES_PER_KEY: u64 = 1 << 30;
 const NONCE_PREFIX_BYTES: usize = 4;
-
-/// Application payload protection mode.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(crate) enum CryptoMode {
-    /// Application bytes are sent without an additional envelope.
-    None,
-    /// Application bytes are protected by a Session-owned AEAD context.
-    #[default]
-    E2ee,
-}
-
-impl CryptoMode {
-    pub(crate) fn from_code(value: i32) -> Option<Self> {
-        match value {
-            0 => Some(Self::E2ee),
-            1 => Some(Self::None),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn code(self) -> i32 {
-        match self {
-            Self::E2ee => 0,
-            Self::None => 1,
-        }
-    }
-}
 
 /// Numeric suite marker in the application envelope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -668,7 +642,6 @@ pub(crate) fn data_message_aad(
     sequence: u64,
     recovery_epoch: u64,
     policy: i32,
-    crypto_mode: CryptoMode,
 ) -> Vec<u8> {
     let mut aad = Vec::with_capacity(64 + session_id.len() + channel_id.len() + message_id.len());
     append_len_prefixed(&mut aad, session_id.as_bytes());
@@ -677,7 +650,6 @@ pub(crate) fn data_message_aad(
     aad.extend_from_slice(&sequence.to_be_bytes());
     aad.extend_from_slice(&recovery_epoch.to_be_bytes());
     aad.extend_from_slice(&policy.to_be_bytes());
-    aad.extend_from_slice(&crypto_mode.code().to_be_bytes());
     aad
 }
 
@@ -736,14 +708,6 @@ mod tests {
         assert_ne!(ciphertext, b"secret");
         assert_eq!(receiver.decrypt(aad, &ciphertext).unwrap(), b"secret");
         assert_eq!(sender.suite(), CryptoSuite::HkdfSha256Aes256GcmV1);
-    }
-
-    #[test]
-    fn disabled_mode_is_explicit_and_does_not_require_context() {
-        assert_eq!(CryptoMode::from_code(0), Some(CryptoMode::E2ee));
-        assert_eq!(CryptoMode::from_code(1), Some(CryptoMode::None));
-        assert_eq!(CryptoMode::None.code(), 1);
-        assert!(CryptoMode::from_code(99).is_none());
     }
 
     #[test]

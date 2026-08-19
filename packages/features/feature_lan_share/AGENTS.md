@@ -1,4 +1,4 @@
-最新更新时间：2026-08-13
+最新更新时间：2026-08-19
 
 # LAN Share Package Guidelines
 
@@ -27,7 +27,7 @@
   native command gateway 的隐式前置条件；NetworkRuntime/native handle 仍由 App
   Scope Owner 释放。
 - Wave 1 当前唯一的数据面配置仍走现有 `ConfigureRuntime`，会无条件初始化直接
-  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到 v1 协议切换（Wave 2），
+  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到后续协议能力切换（Wave 2），
   当前并不存在。`runtime` 只表示 native command-worker handle 存在。
 - 修改 Dart 文件后运行本 Package 的 format、analyze 和 test；Drift 输入变化
   后重新生成并确认 `*.g.dart` 与输入一致。

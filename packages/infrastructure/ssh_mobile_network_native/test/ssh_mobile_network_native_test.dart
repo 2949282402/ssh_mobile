@@ -1,11 +1,11 @@
-// 原生网络 package 的 v1 ABI 与 helper isolate 生命周期测试。
+// 原生网络 package 的 Network Protocol V2 与独立 C ABI 生命周期测试。
 
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
-/// 执行 v1 原生 ABI 与 helper isolate 生命周期测试。
+/// 执行 Network Protocol V2 与 C ABI 生命周期测试。
 void main() {
   const native = SshMobileNetworkNative();
 
@@ -39,7 +39,7 @@ void main() {
       0x03,
       ...'cmd'.codeUnits,
       0x10,
-      0x01,
+      0x02,
     ]);
     expect(runtime.sendCommand(command), NativeOperationStatus.success);
     expect(await eventFuture, isNotEmpty);
@@ -54,6 +54,29 @@ void main() {
       NativeOperationStatus.stopped,
     );
     await runtime.dispose();
+  });
+
+  test('CommandResult guard admits one terminal result per command', () {
+    final guard = NativeCommandResultGuard(maxPendingCommands: 1);
+    const result = NativeCommandResultEvent(
+      eventId: 'result-1',
+      timestampMs: 1,
+      protocolVersion: NativeNetworkProtocol.protocolVersion,
+      commandId: 'command-1',
+      accepted: true,
+    );
+
+    expect(guard.register('command-1'), isTrue);
+    expect(guard.register('command-1'), isFalse);
+    expect(guard.register('command-2'), isFalse);
+    expect(guard.filterEvent(result), same(result));
+    expect(guard.pendingCount, 0);
+    expect(guard.filterEvent(result), isNull);
+
+    guard.cancel('command-2');
+    expect(guard.register('command-2'), isTrue);
+    guard.clear();
+    expect(guard.pendingCount, 0);
   });
 
   test(
@@ -115,7 +138,7 @@ void main() {
       0x10,
       0x7b,
       0x18,
-      0x01,
+      0x02,
       0xb2,
       0x01,
       nested.length,
@@ -130,7 +153,7 @@ void main() {
     expect(signal.payload, orderedEquals(<int>[118, 61, 48, 13, 10]));
   });
 
-  test('Realtime protocol keeps v1 and ICE end-of-candidates semantics', () {
+  test('Realtime V2 protocol keeps ICE end-of-candidates semantics', () {
     expect(
       NativeNetworkProtocol.sendRealtimeSignalCommand(
         commandId: 'ice-end',
@@ -152,7 +175,7 @@ void main() {
           0x10,
           0x01,
           0x18,
-          0x02,
+          0x01,
         ]),
       ),
       throwsA(isA<FormatException>()),
@@ -179,7 +202,7 @@ void main() {
       0x10,
       0x7b,
       0x18,
-      0x01,
+      0x02,
       0xba,
       0x01,
       nested.length,
@@ -230,7 +253,7 @@ void main() {
       0x10,
       0x7b,
       0x18,
-      0x01,
+      0x02,
       0xba,
       0x01,
       nested.length,
@@ -279,7 +302,7 @@ void main() {
       0x10,
       0x7b,
       0x18,
-      0x01,
+      0x02,
       0x6a,
       nested.length,
       ...nested,
@@ -344,7 +367,7 @@ void main() {
       0x10,
       0x7b,
       0x18,
-      0x01,
+      0x02,
       0xd2,
       0x01,
       nested.length,
@@ -376,7 +399,7 @@ void main() {
       0x10,
       0x7b,
       0x18,
-      0x01,
+      0x02,
       0xda,
       0x01,
       nested.length,
@@ -427,8 +450,11 @@ void main() {
       0x10,
       0x7b,
       0x18,
-      0x01,
-      0xc2,
+      0x02,
+      // Field 28 is intentionally outside the current event union.  Field
+      // 24 is PeerPresenceChanged, so using it here would test malformed
+      // presence payload handling rather than forward compatibility.
+      0xe2,
       0x01,
       0x02,
       0x08,

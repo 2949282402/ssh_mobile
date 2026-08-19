@@ -1,6 +1,6 @@
 // LAN Share Feature 的 App Shell 适配层。
 //
-// 旧 App Service 和 native v1 网络实现仍由 AppRuntime 持有；本文件只把
+// 旧 App Service 和 Network Protocol V2 网络实现仍由 AppRuntime 持有；本文件只把
 // 它们转换为 Feature 的公开 Port/Contract，不把实现反向带入 Package。
 
 import 'package:feature_lan_share/feature_lan_share.dart' as lan;

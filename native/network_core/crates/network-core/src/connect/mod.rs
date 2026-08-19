@@ -11,22 +11,33 @@
 //!
 //! 不存在 `RECONNECTING` / `DIRECT_UPGRADING` / `PATH_REPAIRING` 长期状态（§11）。
 //!
-//! - [`orchestrator::ConnectionOrchestrator`]：唯一建连入口（§11/§37）。
-//! - [`registry::ConnectionRegistry`]：连接重用注册表（§34：同 epoch + capability → 重用；
-//!   新 epoch → 关旧建新）。
+//! - [`connectivity_attempt::ConnectivityAttemptCoordinator`]：唯一建连入口（§11/§37）。
+//! - [`ready_index::ReadySessionIndex`]：仅保存 Resolve epoch/capability/session
+//!   摘要；它不拥有 Connection，也不是真实 connectivity truth。
 //! - [`presence::PresenceHintCache`]：UI-only 的 Presence 提示缓存（§23），绝不影响
 //!   ConnectivityAttempt / CandidateSet / ConnectionSession。
 //!
 //! Relay 控制面（resolve / publish / signaling / reserve）经
 //! [`crate::discovery::DiscoveryControlPlane`]（`RelayControlClient` v2 protobuf wire）
-//! 路由；Relay 数据面在本轮仍复用 v1 Relay 数据路径（deprecated，Step 11 迁移到
-//! `RelayDataClient` reservation 模型）。
+//! 路由；Relay 数据面使用 `RelayDataClient` reservation 模型，业务 admission 与
+//! PathHandshake Ready 由 RelayData 生命周期单独控制。
 
-pub(crate) mod orchestrator;
+pub(crate) mod connectivity_attempt;
+#[allow(dead_code)]
+pub(crate) mod path;
+#[allow(dead_code)]
+pub(crate) mod peer_supervisor;
 pub(crate) mod presence;
-pub(crate) mod registry;
+pub(crate) mod ready_index;
 
-pub(crate) use orchestrator::ConnectionOrchestrator;
+pub(crate) use connectivity_attempt::ConnectivityAttemptCoordinator;
+#[allow(unused_imports)]
+pub(crate) use path::{PathHandle, PathLease, PathRegistry};
+#[allow(unused_imports)]
+pub(crate) use peer_supervisor::{
+    IntentGeneration, PeerConnectIntent, PeerId, PeerIntent, PeerState, PeerSupervisor,
+    PeerSupervisorRegistry,
+};
 
 // ---------------------------------------------------------------------------
 // 集中常量（设计 §39：TTL / timeout / connect window 必须集中定义，禁止散落 magic number）

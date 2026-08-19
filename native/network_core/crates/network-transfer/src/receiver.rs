@@ -5,7 +5,7 @@ use std::io::{Error, ErrorKind};
 use std::path::Path;
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use tracing::info;
 
 pub async fn stream_receive_file<R>(
@@ -13,7 +13,7 @@ pub async fn stream_receive_file<R>(
     destination_dir: &Path,
     offset: u64,
     reader: R,
-    progress_tx: Option<UnboundedSender<(u64, u64)>>,
+    progress_tx: Option<Sender<(u64, u64)>>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
 where
     R: tokio::io::AsyncReadExt + Unpin,
@@ -94,7 +94,7 @@ pub async fn stream_receive_file_cancellable<R>(
     destination_dir: &Path,
     offset: u64,
     mut reader: R,
-    progress_tx: Option<UnboundedSender<(u64, u64)>>,
+    progress_tx: Option<Sender<(u64, u64)>>,
     cancellation: Option<&TransferCancellation>,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>>
 where
@@ -157,7 +157,7 @@ where
         transferred += n as u64;
 
         if let Some(ref tx) = progress_tx {
-            let _ = tx.send((transferred, manifest.file_size));
+            let _ = tx.send((transferred, manifest.file_size)).await;
         }
     }
 

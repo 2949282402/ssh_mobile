@@ -1,10 +1,10 @@
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-19
 
 # Validation Report
 
-- Latest source validation: 2026-08-12
+- Latest source validation: 2026-08-19
 - Full build/coverage baseline: 2026-07-10
-- Host: Windows 10 x64
+- Host: WSL2/Linux only for the current Network Protocol V2 gate
 - Flutter: 3.44.2 stable
 - Dart: 3.12.2
 
@@ -14,6 +14,21 @@ Native network, Relay, workspace Dart, Flutter App/Terminal, and Android/Windows
 debug checks were refreshed by the successful main GitHub Actions run recorded below.
 Coverage and release signing retain the most recent full release-chain evidence from
 2026-07-10; the current Step 2 source-level validation is recorded separately below.
+
+## Network Protocol V2 final WSL gate — 2026-08-19
+
+The current working tree was validated only with the preinstalled WSL toolchain:
+
+- Rust: locked workspace `fmt`, `check`, `test` (207 `network-core` tests), and
+  Clippy with warnings denied passed.
+- Go 1.26.6: `gofmt`, `go test`, race tests, and `go vet` passed.
+- Dart/Flutter: workspace format/analyze and all 21 package test suites passed
+  serially with `--concurrency=1`; the Full App suite passed 832 tests.
+- Contract gates: Python fixtures, baseline/strict Network V2 acceptance, and
+  Relay V2 fixtures passed. `protoc` and `buf` were not installed in WSL and
+  their compile/lint subchecks were explicitly skipped.
+- No Windows command, Windows toolchain, temporary dependency archive, external
+  Relay cluster, or physical mobile device was used for this gate.
 
 ## Noise v3 Session Root correction — 2026-08-12
 
@@ -87,12 +102,12 @@ GitHub Actions main evidence:
 | Network-layer source size | Maintained network Dart/Rust/Go files all below 1000 lines; generated and unrelated legacy files excluded |
 | Native Dart package | `dart format --output=none --set-exit-if-changed lib test hook`, `flutter analyze --no-pub`, and `flutter test --no-pub` passed with 7 package tests; typed Realtime command/event facade is covered |
 | Rust network workspace | The Noise v3 correction passed locked workspace fmt, Clippy with warnings denied, and tests: 129 active tests, including 76 `network-core`, 9 active `network-webrtc` plus 1 ignored coturn-only test, 3 FFI, and 13 `network-nat` tests. |
-| Delivery runtime wiring | `network-core` distinguishes `DuplicateInFlight` from `DuplicateProcessed`, keeps `SessionBoundOrdered` behind expected sequence + in-flight ACK gating, bounds reorder count/bytes/gap, preserves the native Recovery Epoch boundary, and keeps logical plaintext plus crypto mode in pending state; privileged loopback `cargo test -p network-core --lib --locked --offline` passed with 50 tests |
+| Delivery runtime wiring | `network-core` distinguishes `DuplicateInFlight` from `DuplicateProcessed`, keeps `SessionBoundOrdered` behind expected sequence + in-flight ACK gating, bounds reorder count/bytes/gap, preserves the native Recovery Epoch boundary, and keeps logical plaintext only in pending state while ConnectionSession E2EE re-encrypts each retry |
 | Plan 3 Step 1 active Delivery state | In the current workspace, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test -p network-core --locked` passed; the focused native suite reported 59 tests, including active-over-TTL, ordered-buffer-over-TTL, processed-capacity eviction, application ACK timeout, Session close, and Runtime owner coverage |
 | Plan 3 Step 2 Realtime command completion | Local Dart formatting and `flutter analyze --no-pub` passed for `network_sdk` and `network_transport`; Full App analysis reported no errors/warnings and only the existing info-level lints. Ticket/result correlation, bounded pending commands, timeout, dispose cleanup, state-source, and delayed-closed cases are covered by the new SDK/App/transport tests. Flutter test execution remains unverified in this WSL session because `flutter_tester` exits while opening its local HTTP loopback (`HttpException: Connection closed before full header was received`). |
 | Plan 3 Step 3 generic Session routes | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `cargo test --workspace --locked` passed. Focused native integration tests passed for authenticated TCP fallback with Delivery ACK and reconnect, WebSocket fallback with Delivery ACK, and TCP → QUIC migration with pending Delivery recovery and unchanged SessionId. Dart route-event codec formatting and Full App analysis passed; composed `RouteTopology × RouteTransport` fields are decoded and retained in `RouteSnapshot`. |
 | Plan 3 Step 4 forward-secret Session E2EE | The v3-only handshake uses pinned Ed25519 proofs, converts Noise XX into TransportState, and transfers a fresh `OsRng` RootSeed only as Noise ciphertext. HKDF uses RootSeed as IKM and the transcript hash only as salt/context. RootConfirm and Accept gate connection; v2, wrong identity, tamper, wrong confirmation, and incomplete exchange fail closed across QUIC, TCP/WebSocket, and six-stage opaque Relay control. |
-| Session application E2EE | Session-owned `CryptoContext` expands directional HKDF-SHA256/AES-256-GCM keys from the authenticated Noise root, keeps state across Route changes, re-encrypts Delivery retries with fresh structured nonces, rejects tamper/wrong-key/replay/nonce reuse, and protects channel payloads on QUIC, Relay, TCP, and WebSocket plus Relay file chunks; explicit plaintext mode remains opt-in. |
+| Session application E2EE | Session-owned `CryptoContext` expands directional HKDF-SHA256/AES-256-GCM keys from the authenticated Noise root, keeps state across Route changes, re-encrypts Delivery retries with fresh structured nonces, rejects tamper/wrong-key/replay/nonce reuse, and protects channel payloads on QUIC, Relay, TCP, and WebSocket plus Relay file chunks; Network Protocol V2 has no plaintext fallback or per-message crypto mode. |
 | Runtime task supervision | `RuntimeTaskSupervisor` owns the command worker, QUIC accept/handshake, Relay reconnect/events, Session reconnect/direct-upgrade/path metrics, Delivery retry, channel/file receivers, and transfer workers; root/session cancellation joins all registered tasks before stop returns; the native test suite includes cancellation/join coverage and a 100-cycle loopback bind/stop/recreate stress test |
 | Transfer/Connection decoupling | `TransferSession` owns state, Manifest, offset, cancellation, and logical SessionId without a Connection handle; `TransferDispatcher` selects the current QUIC/Relay route, and same-Session direct/Relay resume is tested; `cargo test -p network-transfer -p network-core --locked --offline` passed with 47 tests |
 | Relay-to-Direct upgrade | Relay-backed Sessions keep their route during a deduplicated background candidate probe; an authenticated direct Connection must remain stable before `replace_route_if_current` atomically promotes it, then Delivery recovery and transfer resume run before direct receivers start |
@@ -117,7 +132,7 @@ GitHub Actions main evidence:
 | Terminal Windows debug | Terminal `flutter pub get` followed by `flutter build windows --debug --no-pub` built `apps/ssh_mobile_terminal/build/windows/x64/runner/Debug/ssh_mobile_terminal.exe` successfully |
 | Android release APK | Built successfully without signing credentials |
 | Android release signature check | Expected unsigned result confirmed with `apksigner` |
-| Windows release executable | Built successfully |
+| Windows release executable | Historical CI baseline only; not run in the current WSL-only gate |
 | App icon generation | Deterministic across 33 PNG targets and one ICO target |
 | Drift generated database code | Deterministic on a second build |
 | Shared Codex/Claude maintenance skill | Synchronized |
@@ -128,7 +143,7 @@ GitHub Actions main evidence:
 
 Latest source validation:
 
-```powershell
+```sh
 dart pub get
 dart run melos run format
 dart run melos run analyze
@@ -152,7 +167,7 @@ git diff --check
 
 Native package validation from `packages/infrastructure/ssh_mobile_network_native`:
 
-```powershell
+```sh
 dart format --output=none --set-exit-if-changed lib test hook
 flutter analyze --no-pub
 flutter test --no-pub
@@ -160,7 +175,7 @@ flutter test --no-pub
 
 Rust validation from `native/network_core`:
 
-```powershell
+```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
@@ -170,7 +185,7 @@ cargo test -p network-webrtc --locked -- --ignored relay_only_drivers_exchange_d
 
 Relay validation from `relay`:
 
-```powershell
+```sh
 gofmt -l .
 go vet ./...
 go test ./...
@@ -178,7 +193,7 @@ go test ./...
 
 Docker Relay integration harness:
 
-```powershell
+```sh
 docker compose --env-file .env up -d --build
 go run ./cmd/relay_smoke -scenario functional -base http://localhost:18080
 go run ./cmd/relay_smoke -scenario recover -base http://localhost:18080 -trigger <fault-trigger>
@@ -193,7 +208,7 @@ Flutter results for this validation.
 
 Full build and coverage baseline from 2026-07-10:
 
-```powershell
+```sh
 flutter pub get
 dart format --output=none --set-exit-if-changed lib test tool
 dart run build_runner build

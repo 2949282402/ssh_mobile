@@ -1,4 +1,5 @@
-// ssh_mobile_network_native package 的 v1 Dart 绑定与生命周期封装。
+// ssh_mobile_network_native package 的 Network Protocol V2 Dart 绑定与
+// 生命周期封装。
 // 网络状态由 Rust 运行时拥有；Dart 只提交命令并轮询类型化线协议事件。
 
 import 'dart:ffi';
@@ -14,7 +15,7 @@ export 'src/native_realtime_protocol.dart';
 
 /// ssh_mobile_network_native 的 C ABI FFI 绑定。
 
-/// 返回原生库导出的 v1 ABI 版本。
+/// 返回原生库导出的独立 C ABI 版本。
 @Native<Uint32 Function()>(symbol: 'ssh_net_abi_version')
 external int _sshNetAbiVersionNative();
 
@@ -99,7 +100,7 @@ class NativeNetworkRuntime {
   int _commandSequence = 0;
   bool _stopped = false;
 
-  /// 发布 helper isolate 收到的原始 v1 事件帧。
+  /// 发布 helper isolate 收到的原始 Network Protocol V2 事件帧。
   Stream<Uint8List> get rawEvents => _poller.rawEvents;
 
   /// Typed native command/event stream. Unknown future events are ignored by

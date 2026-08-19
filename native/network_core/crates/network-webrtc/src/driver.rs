@@ -16,11 +16,12 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_UDP_DATAGRAM_BYTES: usize = 64 * 1024;
 const HOST_CANDIDATE_PRIORITY: u32 = 2_130_706_431;
+pub const REALTIME_IO_EVENT_CAPACITY: usize = 256;
 
 /// Events emitted by the real-time I/O loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,7 +139,7 @@ impl RealtimeIoDriver {
 /// closed, or the peer reports a fatal I/O error.
 pub async fn run_realtime_io(
     handle: RealtimeIoDriverHandle,
-    events: UnboundedSender<RealtimeIoEvent>,
+    events: Sender<RealtimeIoEvent>,
 ) -> Result<(), WebRtcError> {
     let mut receive_buffer = vec![0u8; MAX_UDP_DATAGRAM_BYTES];
     loop {
@@ -179,7 +180,7 @@ pub async fn run_realtime_io(
                 .map_err(|error| WebRtcError::Io(error.to_string()))?;
         }
         for event in pending_events {
-            if events.send(event).is_err() {
+            if events.send(event).await.is_err() {
                 return Ok(());
             }
         }
@@ -282,7 +283,7 @@ mod tests {
     use super::*;
     use crate::{DataChannelReliability, IceServerConfig, WebRtcConfig};
     use std::time::Duration;
-    use tokio::sync::mpsc::unbounded_channel;
+    use tokio::sync::mpsc::channel;
 
     #[tokio::test]
     async fn two_local_drivers_exchange_data_channel_payloads() {
@@ -323,8 +324,8 @@ mod tests {
             .accept_remote_answer(answer)
             .unwrap();
 
-        let (caller_events_tx, mut caller_events_rx) = unbounded_channel();
-        let (responder_events_tx, mut responder_events_rx) = unbounded_channel();
+        let (caller_events_tx, mut caller_events_rx) = channel(REALTIME_IO_EVENT_CAPACITY);
+        let (responder_events_tx, mut responder_events_rx) = channel(REALTIME_IO_EVENT_CAPACITY);
         let caller_task = tokio::spawn(run_realtime_io(Arc::clone(&caller), caller_events_tx));
         let responder_task =
             tokio::spawn(run_realtime_io(Arc::clone(&responder), responder_events_tx));
@@ -420,8 +421,8 @@ mod tests {
             .accept_remote_answer(answer)
             .unwrap();
 
-        let (caller_events_tx, mut caller_events_rx) = unbounded_channel();
-        let (responder_events_tx, mut responder_events_rx) = unbounded_channel();
+        let (caller_events_tx, mut caller_events_rx) = channel(REALTIME_IO_EVENT_CAPACITY);
+        let (responder_events_tx, mut responder_events_rx) = channel(REALTIME_IO_EVENT_CAPACITY);
         let caller_task = tokio::spawn(run_realtime_io(Arc::clone(&caller), caller_events_tx));
         let responder_task =
             tokio::spawn(run_realtime_io(Arc::clone(&responder), responder_events_tx));

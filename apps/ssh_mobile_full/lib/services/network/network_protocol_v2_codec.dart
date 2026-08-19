@@ -1,4 +1,4 @@
-// v1 手写网络线协议编解码器，由 Dart FFI 服务与测试共同使用。
+// Network Protocol V2 手写编解码器，由 Dart FFI 服务与测试共同使用。
 //
 // Protobuf schema 仍是唯一线协议来源；本编解码器只镜像仓库中的字段 tag，
 // 不引入生成绑定。
@@ -48,7 +48,7 @@ final class SshStreamClosedEvent {
   int get streamId => handle.streamId;
 }
 
-/// 解码后的 v1 信封，包含内部命令结果或公开事件。
+/// 解码后的 V2 信封，包含内部命令结果或公开事件。
 final class NetworkProtocolFrame {
   /// 创建解码后的协议帧。
   const NetworkProtocolFrame({
@@ -76,12 +76,12 @@ final class NetworkProtocolFrame {
   final SshStreamClosedEvent? sshStreamClosed;
 }
 
-/// 当前 network.v1 线协议契约的手写编解码器。
-final class NetworkProtocolCodec {
-  static const int protocolVersion = 1;
+/// 当前 network.v2 线协议契约的手写编解码器。
+final class NetworkProtocolV2Codec {
+  static const int protocolVersion = 2;
 
-  /// 创建无状态 v1 编解码器。
-  const NetworkProtocolCodec();
+  /// 创建无状态 V2 编解码器。
+  const NetworkProtocolV2Codec();
 
   Uint8List _encodeSshStreamHandle(NativeStreamHandle handle) =>
       (_ProtoWriter()
@@ -259,7 +259,7 @@ final class NetworkProtocolCodec {
     return _command(commandId, 27, payload.takeBytes());
   }
 
-  /// 从 v1 命令信封读取命令标识。
+  /// 从 V2 命令信封读取命令标识。
   String commandId(Uint8List command) {
     final reader = _ProtoReader(command);
     while (!reader.isDone) {
@@ -270,7 +270,7 @@ final class NetworkProtocolCodec {
     throw const FormatException('Network command has no command ID.');
   }
 
-  /// 解码 v1 事件信封及可选的内部命令结果。
+  /// 解码 V2 事件信封及可选的内部命令结果。
   NetworkProtocolFrame decodeEvent(Uint8List bytes) {
     final reader = _ProtoReader(bytes);
     var eventId = '';
@@ -379,7 +379,7 @@ final class NetworkProtocolCodec {
     );
   }
 
-  /// 将命令载荷包装到通用 v1 命令信封中。
+  /// 将命令载荷包装到通用 V2 命令信封中。
   Uint8List _command(String commandId, int field, Uint8List payload) =>
       (_ProtoWriter()
             ..string(1, commandId)
@@ -823,7 +823,7 @@ final class NetworkProtocolCodec {
     );
   }
 
-  /// 解码结构化 v1 网络错误载荷。
+  /// 解码结构化 V2 网络错误载荷。
   NetworkError _decodeError(Uint8List bytes) {
     final reader = _ProtoReader(bytes);
     var code = 0;
@@ -876,7 +876,7 @@ final class _CommandResult {
   final NetworkError? error;
 }
 
-/// 用于网络命令 v1 字段的最小 Protobuf 写入器。
+/// 用于 Network Protocol V2 命令字段的最小 Protobuf 写入器。
 final class _ProtoWriter {
   final BytesBuilder _bytes = BytesBuilder(copy: false);
 
@@ -924,7 +924,7 @@ final class _ProtoField {
   final int wireType;
 }
 
-/// 用于网络事件 v1 字段的最小 Protobuf 读取器。
+/// 用于 Network Protocol V2 事件字段的最小 Protobuf 读取器。
 final class _ProtoReader {
   /// 创建读取 [bytes] 的读取器。
   _ProtoReader(this._bytes);

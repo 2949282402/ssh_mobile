@@ -3,8 +3,8 @@
 // 控制面连接是一条长期存活的 WebSocket，只承载 protobuf 二进制 RelayFrame（每帧 =
 // [4-byte BE 长度][RelayFrame]，codec.DecodeControl）。它复用 hub 的 peer 表与
 // presence 租约：/v2/control 连接经 hub.add 入表、占据设备 presence 租约、受服务端
-// 心跳监视器与 sweeper 管辖。控制面纯净性：RelayDataFrame（或空 kind 帧）在这条
-// 路由上是协议违规，直接关闭。
+// 心跳监视器与 sweeper 管辖。控制面纯净性：RelayDataFrame 错投到这条路由是协议违规
+// 并关闭；proto3 未知 oneof tag 按冻结契约跳过，解码成空 kind 时保持连接以兼容未来 tag。
 //
 // 每条控制面连接的帧分派见 routeControlV2。服务端→客户端的方向性消息（Ready/
 // HeartbeatAck/DiscoveryAck/ResolvePeerResponse/RelayReserveResponse/
@@ -37,7 +37,17 @@ const v2AttemptLifetime = 30 * time.Second
 // ProtocolError 按 attempt_id 回路由。条目带过期时间，由 hub.prune 惰性清理。
 type v2Attempt struct {
 	initiator string
-	expiresAt time.Time
+	// Connection IDs bind the complete offer/answer cycle to the two control
+	// sockets that were READY when the offer was forwarded.  A reconnect of
+	// either device must not be able to consume a late answer from the previous
+	// generation.
+	initiatorConnectionID string
+	// target is the authenticated device that received the offer.  Answers and
+	// attempt-scoped errors are accepted only from this device; an arbitrary
+	// authenticated peer must not be able to consume or poison an attempt.
+	target             string
+	targetConnectionID string
+	expiresAt          time.Time
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +109,33 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 		_ = connection.Close()
 		return
 	}
+	if !s.hub.controlLeaseCurrentV2(peer) {
+		// hub.add historically kept a socket alive when the shared lease store
+		// failed.  A control connection without an authoritative presence lease
+		// is not safe to use for Resolve, signaling, or reservation admission.
+		// Fail closed after the Ready frame rather than exposing a phantom peer.
+		s.hub.sendV2ProtocolErrorSync(peer, 0, v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE, "control lease unavailable")
+		s.hub.disconnectConnection(peer.deviceID, peer.connectionID)
+		return
+	}
+	// Presence hints are advisory, but a newly connected control client needs a
+	// complete current view rather than waiting for the next edge-triggered
+	// event.  Ready remains the first frame; add() has already queued it before
+	// this snapshot is enqueued.
+	s.hub.sendPresenceHintSnapshotV2(peer)
+}
+
+// controlLeaseCurrentV2 verifies the authoritative presence owner after hub.add
+// admits a control socket.  The check closes the admission gap where a backend
+// error could otherwise leave an in-memory peer routable without a lease.
+func (h *hub) controlLeaseCurrentV2(peer *peer) bool {
+	if h.presence == nil || peer == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+	presence, ok, err := h.presence.GetPresence(ctx, peer.deviceID)
+	cancel()
+	return err == nil && ok && presence.ConnectionID == peer.connectionID
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +171,14 @@ func (h *hub) routeControlV2(sender *peer, data []byte) bool {
 		return false
 	}
 	if frame.Kind == nil {
-		// 空 kind 帧（例如把 RelayDataFrame 的载荷当 RelayFrame 解码、或未知 oneof
-		// 之外的裸版本帧）是控制面纯净性违规。
-		h.sendV2ProtocolErrorSync(sender, 0, v2.ErrorCode_ERROR_CODE_PROTOCOL, "empty control frame is a protocol violation")
+		// proto3 unknown oneof tags are intentionally skipped by the frozen
+		// contract.  There is no way to distinguish such a forward-compatible
+		// frame from an empty oneof after decoding, so ignore it rather than
+		// turning a future message into a connection failure.
+		return true
+	}
+	if requestID, err := validateV2ClientRequest(frame); err != nil {
+		h.sendV2ProtocolErrorSync(sender, requestID, v2.ErrorCode_ERROR_CODE_PROTOCOL, err.Error())
 		return false
 	}
 	switch kind := frame.Kind.(type) {
@@ -186,20 +228,32 @@ func (h *hub) handleHeartbeatV2(sender *peer, hb *v2.Heartbeat) {
 	h.mutex.Lock()
 	sender.lastHeartbeat = time.Now()
 	h.mutex.Unlock()
-	if h.presence != nil {
+	if h.presence == nil {
+		h.sendV2ProtocolError(sender, hb.RequestId, v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE, "control lease store unavailable")
+		return
+	}
+	{
 		leaseCtx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
 		ok, err := h.presence.RenewPresence(leaseCtx, sender.deviceID, sender.connectionID, h.presenceFor(sender), h.presenceTTL)
 		cancel()
 		if err != nil {
-			// Redis 抖动或超时：fail-open，下次心跳重试。
+			// The server cannot claim the lease was renewed when the authority
+			// could not be reached.  Keep the socket alive for a later retry, but
+			// fail this heartbeat closed instead of acknowledging a false lease.
+			h.sendV2ProtocolError(sender, hb.RequestId, v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE, "control lease renewal unavailable")
+			return
 		} else if !ok {
 			// 租约已被其它连接抢占：本连接已被取代，自愈关闭且不回 ack。
 			closePeer(sender)
 			return
 		}
 		discCtx, dcancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
-		_, _ = h.presence.RenewDiscovery(discCtx, sender.deviceID, sender.connectionID, h.presenceTTL)
+		_, discErr := h.presence.RenewDiscovery(discCtx, sender.deviceID, sender.connectionID, h.presenceTTL)
 		dcancel()
+		if discErr != nil {
+			h.sendV2ProtocolError(sender, hb.RequestId, v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE, "discovery lease renewal unavailable")
+			return
+		}
 		// 续租后重新核对 currency，防复活已死亡 peer 的租约。
 		h.mutex.Lock()
 		isCurrent := h.peers[sender.deviceID] == sender
@@ -227,6 +281,8 @@ func (h *hub) handleDiscoveryPublishV2(sender *peer, pub *v2.DiscoveryPublish) {
 	if err != nil {
 		code := v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE
 		switch {
+		case errors.Is(err, errDiscoveryInvalidSnapshot):
+			code = v2.ErrorCode_ERROR_CODE_PROTOCOL
 		case errors.Is(err, errDiscoveryRevisionStale),
 			errors.Is(err, errDiscoveryRevisionImmutable),
 			errors.Is(err, errDiscoveryNoRevision):
@@ -246,6 +302,10 @@ func (h *hub) handleDiscoveryPublishV2(sender *peer, pub *v2.DiscoveryPublish) {
 // handleResolvePeerRequestV2 用权威 4-state resolve（设计 §10）判定目标可连性：
 // READY 携带 discovery；OFFLINE/NOT_READY/UNKNOWN 分别回状态并附 retry_after_ms 提示。
 func (h *hub) handleResolvePeerRequestV2(sender *peer, req *v2.ResolvePeerRequest) {
+	if req.TargetDeviceId == "" {
+		h.sendV2ProtocolError(sender, req.RequestId, v2.ErrorCode_ERROR_CODE_PROTOCOL, "resolve requires a target device")
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
 	result := h.resolvePeer(ctx, req.TargetDeviceId)
 	cancel()
@@ -271,20 +331,32 @@ func (h *hub) handleResolvePeerRequestV2(sender *peer, req *v2.ResolvePeerReques
 func (h *hub) handleConnectivityOfferV2(sender *peer, offer *v2.ConnectivityOffer) {
 	targetID := offer.TargetDeviceId
 	if targetID == "" || targetID == sender.deviceID {
-		h.sendV2ProtocolError(sender, offer.RequestId, v2.ErrorCode_ERROR_CODE_PEER_NOT_READY,
+		h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, v2.ErrorCode_ERROR_CODE_PROTOCOL,
 			"connectivity offer requires a different target device")
 		return
 	}
-	// 服务端用 A 的已发布 discovery 覆盖 offer 里的 initiator_snapshot（§14：B 从
-	// offer 拿到 A 当前完整 Discovery，offer/answer 不再承担 discovery 同步职责）。
-	if h.presence != nil {
-		dctx, dcancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
-		d, ok, err := h.presence.GetDiscovery(dctx, sender.deviceID)
-		dcancel()
-		if err == nil && ok && d.ready() {
-			offer.InitiatorSnapshot = discoveryToV2(d)
-		}
+	// Resolve is the only connectivity authority.  Do not forward a client
+	// supplied snapshot when the backend cannot prove that the initiator and
+	// target are READY; doing so would be a fail-open candidate exchange.
+	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+	initiatorResult := h.resolvePeer(ctx, sender.deviceID)
+	targetResult := h.resolvePeer(ctx, targetID)
+	cancel()
+	if initiatorResult.status != v2.ResolveStatus_RESOLVE_STATUS_READY {
+		code, message := resolveStatusError(initiatorResult.status)
+		h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, code, message)
+		return
 	}
+	if targetResult.status != v2.ResolveStatus_RESOLVE_STATUS_READY {
+		code, message := resolveStatusError(targetResult.status)
+		h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, code, message)
+		return
+	}
+	// The relay owns the authoritative initiator snapshot and overwrites all
+	// client-provided identity/version fields before forwarding.
+	offer.InitiatorSnapshot = discoveryToV2(initiatorResult.discovery)
+	offer.InitiatorRuntimeEpoch = &v2.RuntimeEpoch{High: initiatorResult.discovery.RuntimeEpochHigh, Low: initiatorResult.discovery.RuntimeEpochLow}
+	offer.InitiatorRevision = initiatorResult.discovery.Revision
 	// 发起方身份以服务端认证为准：客户端可任意填写 initiator_device_id（伪造为其它设备），
 	// 服务端在转发前强制覆盖为发送者，防止对端把被伪装的设备记为协商发起方。
 	offer.InitiatorDeviceId = sender.deviceID
@@ -292,11 +364,27 @@ func (h *hub) handleConnectivityOfferV2(sender *peer, offer *v2.ConnectivityOffe
 	if h.v2Attempts == nil {
 		h.v2Attempts = make(map[string]v2Attempt)
 	}
-	h.v2Attempts[offer.AttemptId] = v2Attempt{initiator: sender.deviceID, expiresAt: time.Now().Add(v2AttemptLifetime)}
 	target := h.peers[targetID]
+	if existing, exists := h.v2Attempts[offer.AttemptId]; exists {
+		if time.Now().Before(existing.expiresAt) {
+			h.mutex.Unlock()
+			h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, v2.ErrorCode_ERROR_CODE_PROTOCOL, "attempt_id is already in use")
+			return
+		}
+		delete(h.v2Attempts, offer.AttemptId)
+	}
+	if target != nil {
+		h.v2Attempts[offer.AttemptId] = v2Attempt{
+			initiator:             sender.deviceID,
+			initiatorConnectionID: sender.connectionID,
+			target:                targetID,
+			targetConnectionID:    target.connectionID,
+			expiresAt:             time.Now().Add(v2AttemptLifetime),
+		}
+	}
 	h.mutex.Unlock()
 	if target == nil {
-		h.sendV2ProtocolError(sender, offer.RequestId, v2.ErrorCode_ERROR_CODE_PEER_OFFLINE,
+		h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, v2.ErrorCode_ERROR_CODE_PEER_OFFLINE,
 			"target peer is not connected on the v2 control plane")
 		return
 	}
@@ -311,18 +399,36 @@ func (h *hub) handleConnectivityOfferV2(sender *peer, offer *v2.ConnectivityOffe
 func (h *hub) handleConnectivityAnswerV2(sender *peer, ans *v2.ConnectivityAnswer) {
 	h.mutex.Lock()
 	attempt, ok := h.v2Attempts[ans.AttemptId]
-	if ok {
+	if ok && !time.Now().Before(attempt.expiresAt) {
 		delete(h.v2Attempts, ans.AttemptId)
+		ok = false
+	}
+	// A stale or mismatched answer is deliberately dropped.  In particular,
+	// an unrelated authenticated peer must not be able to consume the live
+	// attempt before the real target answers.
+	if ok && (attempt.target != sender.deviceID || attempt.targetConnectionID != sender.connectionID || h.peers[attempt.target] != sender) {
+		h.mutex.Unlock()
+		return
 	}
 	initiator := (*peer)(nil)
 	if ok && attempt.initiator != "" && attempt.initiator != sender.deviceID {
 		initiator = h.peers[attempt.initiator]
+		if initiator == nil || initiator.connectionID != attempt.initiatorConnectionID {
+			initiator = nil
+		}
+	}
+	if ok {
+		delete(h.v2Attempts, ans.AttemptId)
 	}
 	h.mutex.Unlock()
 	if !ok || initiator == nil {
-		h.sendV2ProtocolError(sender, ans.RequestId, v2.ErrorCode_ERROR_CODE_PROTOCOL, "unknown attempt_id")
 		return
 	}
+	// The authenticated target connection is the only trusted source of the
+	// responder identity.  The remaining answer discovery fields are opaque to
+	// the relay and are consumed by the endpoint coordinator after its own
+	// READY/epoch checks.
+	ans.ResponderDeviceId = sender.deviceID
 	h.sendV2Frame(initiator, &v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
 		Kind:    &v2.RelayFrame_ConnectivityAnswer{ConnectivityAnswer: ans},
@@ -362,8 +468,20 @@ func (h *hub) handleProtocolErrorV2(sender *peer, frame *v2.RelayFrame) {
 	h.mutex.Lock()
 	attempt, ok := h.v2Attempts[pe.AttemptId]
 	target := (*peer)(nil)
+	if ok && !time.Now().Before(attempt.expiresAt) {
+		delete(h.v2Attempts, pe.AttemptId)
+		ok = false
+	}
+	if ok && (attempt.target != sender.deviceID || attempt.targetConnectionID != sender.connectionID || h.peers[attempt.target] != sender) {
+		h.mutex.Unlock()
+		return
+	}
 	if ok {
 		target = h.peers[attempt.initiator]
+		if target == nil || target.connectionID != attempt.initiatorConnectionID {
+			target = nil
+		}
+		delete(h.v2Attempts, pe.AttemptId)
 	}
 	h.mutex.Unlock()
 	if ok && target != nil && target != sender {
@@ -379,22 +497,19 @@ func (h *hub) handleProtocolErrorV2(sender *peer, frame *v2.RelayFrame) {
 //     IncomingRelayReservation——B 在 v2 控制面连接时才能收到。
 func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequest) {
 	if req.TargetDeviceId == "" || req.TargetDeviceId == sender.deviceID {
-		h.sendV2ProtocolError(sender, req.RequestId, v2.ErrorCode_ERROR_CODE_PEER_NOT_READY, "invalid reservation target")
+		h.sendV2ProtocolErrorWithAttempt(sender, req.RequestId, req.AttemptId, v2.ErrorCode_ERROR_CODE_PROTOCOL, "invalid reservation target")
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
 	result := h.resolvePeer(ctx, req.TargetDeviceId)
 	cancel()
 	if result.status != v2.ResolveStatus_RESOLVE_STATUS_READY {
-		code := v2.ErrorCode_ERROR_CODE_PEER_OFFLINE
-		if result.status == v2.ResolveStatus_RESOLVE_STATUS_NOT_READY {
-			code = v2.ErrorCode_ERROR_CODE_PEER_NOT_READY
-		}
-		h.sendV2ProtocolError(sender, req.RequestId, code, "reservation target is not ready")
+		code, message := resolveStatusError(result.status)
+		h.sendV2ProtocolErrorWithAttempt(sender, req.RequestId, req.AttemptId, code, message)
 		return
 	}
 	if h.presence == nil {
-		h.sendV2ProtocolError(sender, req.RequestId, v2.ErrorCode_ERROR_CODE_RESERVATION_FAILED, "reservation store unavailable")
+		h.sendV2ProtocolErrorWithAttempt(sender, req.RequestId, req.AttemptId, v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE, "reservation store unavailable")
 		return
 	}
 	lifetime := clampReservationLifetime(req.DesiredLifetimeS)
@@ -422,7 +537,7 @@ func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequ
 	err := h.presence.CreateReservation(cctx, res)
 	ccancel()
 	if err != nil {
-		h.sendV2ProtocolError(sender, req.RequestId, v2.ErrorCode_ERROR_CODE_RESERVATION_FAILED, err.Error())
+		h.sendV2ProtocolErrorWithAttempt(sender, req.RequestId, req.AttemptId, v2.ErrorCode_ERROR_CODE_RESERVATION_FAILED, err.Error())
 		return
 	}
 	// 给 A 回 RelayReserveResponse。
@@ -475,14 +590,65 @@ func (h *hub) sendV2Frame(peer *peer, frame *v2.RelayFrame) {
 // sendV2ProtocolError 向 peer 回一条 ProtocolError（request_id 回显失败请求，
 // 0 表示服务端主动）。异步入队，用于非致命的错误通知。
 func (h *hub) sendV2ProtocolError(peer *peer, requestID uint64, code v2.ErrorCode, message string) {
+	h.sendV2ProtocolErrorWithAttempt(peer, requestID, "", code, message)
+}
+
+// sendV2ProtocolErrorWithAttempt preserves both correlation keys when a
+// failure belongs to an asynchronous connectivity attempt.  The Rust client
+// can then route a responder error to the attempt tracker even though the
+// responder has its own request_id.
+func (h *hub) sendV2ProtocolErrorWithAttempt(peer *peer, requestID uint64, attemptID string, code v2.ErrorCode, message string) {
 	h.sendV2Frame(peer, &v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
 		Kind: &v2.RelayFrame_ProtocolError{ProtocolError: &v2.ProtocolError{
 			RequestId: requestID,
+			AttemptId: attemptID,
 			Code:      code,
 			Message:   message,
 		}},
 	})
+}
+
+// validateV2ClientRequest enforces the correlation fields that protobuf's
+// scalar defaults cannot express.  A request without a non-zero request_id or
+// an async operation without an attempt_id cannot be safely correlated, so it
+// is a connection-level protocol violation.
+func validateV2ClientRequest(frame *v2.RelayFrame) (uint64, error) {
+	if frame == nil || frame.Kind == nil {
+		return 0, nil
+	}
+	requestID := uint64(0)
+	attemptID := ""
+	switch kind := frame.Kind.(type) {
+	case *v2.RelayFrame_Heartbeat:
+		requestID = kind.Heartbeat.RequestId
+	case *v2.RelayFrame_DiscoveryPublish:
+		requestID = kind.DiscoveryPublish.RequestId
+	case *v2.RelayFrame_ResolvePeerRequest:
+		requestID = kind.ResolvePeerRequest.RequestId
+	case *v2.RelayFrame_ConnectivityOffer:
+		requestID, attemptID = kind.ConnectivityOffer.RequestId, kind.ConnectivityOffer.AttemptId
+	case *v2.RelayFrame_ConnectivityAnswer:
+		requestID, attemptID = kind.ConnectivityAnswer.RequestId, kind.ConnectivityAnswer.AttemptId
+	case *v2.RelayFrame_RelayReserveRequest:
+		requestID, attemptID = kind.RelayReserveRequest.RequestId, kind.RelayReserveRequest.AttemptId
+	case *v2.RelayFrame_RealtimeSignal:
+		requestID = kind.RealtimeSignal.RequestId
+	default:
+		// Server-direction messages and ProtocolError are handled by the
+		// direction switch below; they are not client requests.
+		return 0, nil
+	}
+	if requestID == 0 {
+		return 0, errors.New("client request must carry a non-zero request_id")
+	}
+	if attemptID == "" {
+		switch frame.Kind.(type) {
+		case *v2.RelayFrame_ConnectivityOffer, *v2.RelayFrame_ConnectivityAnswer, *v2.RelayFrame_RelayReserveRequest:
+			return requestID, errors.New("async control request must carry an attempt_id")
+		}
+	}
+	return requestID, nil
 }
 
 // sendV2ProtocolErrorSync 在 peer.writeMutex 下同步写一条 ProtocolError，用于协议

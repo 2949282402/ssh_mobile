@@ -521,7 +521,11 @@ fn runtime_delivery_active_state_survives_ttl_and_closes_with_session() {
         .expect("runtime state");
 
     runtime.handle().block_on(async {
-        let session_id = match state.sessions.begin_connect("delivery-peer").await {
+        let session_id = match state
+            .connection_sessions
+            .begin_connect("delivery-peer")
+            .await
+        {
             crate::session::ConnectDecision::Started(session_id) => session_id,
             decision => panic!("unexpected session decision: {decision:?}"),
         };
@@ -751,12 +755,12 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
                 network_protocol::PeerStateChangedEvent {
                     peer_id,
                     state,
-                    active_route,
+                    route_type,
                     ..
                 }
             )) if peer_id == "device-b"
                 && *state == PeerConnectionState::Connected as i32
-                && *active_route == RouteType::QuicDirect as i32
+                && *route_type == RouteType::QuicDirect as i32
         )
     });
     assert!(connected.is_some(), "peer never reached connected state");
@@ -826,7 +830,8 @@ fn two_runtimes_authenticate_and_transfer_a_verified_file() {
 /// 与对端协商 confirmed_offset（checkpoint）→ 从 checkpoint 继续，最终完成。
 ///
 /// 传输状态按 transfer_id + peer_id 保存在 TransferManager，不依赖 SessionId；新连接
-/// 建立后由 orchestrator 触发 `resume_transfers_for_peer` 领取暂停传输并在新连接上恢复。
+/// 建立后由 ConnectivityAttemptCoordinator 触发 `resume_transfers_for_peer`
+/// 领取暂停传输并在新连接上恢复。
 #[test]
 fn file_transfer_resumes_across_a_fresh_connection() {
     let runtime_a = NetworkRuntime::new().expect("runtime A");
@@ -914,7 +919,7 @@ fn file_transfer_resumes_across_a_fresh_connection() {
                 Some(network_event::Payload::PeerState(state))
                     if state.peer_id == "resume-b"
                         && state.state == PeerConnectionState::Connected as i32
-                        && state.active_route == RouteType::QuicDirect as i32
+                        && state.route_type == RouteType::QuicDirect as i32
             )
         })
         .is_some(),
@@ -929,7 +934,7 @@ fn file_transfer_resumes_across_a_fresh_connection() {
         .expect("runtime A state");
     let old_session_id = runtime_a.handle().block_on(async {
         state_a
-            .sessions
+            .connection_sessions
             .current_session_id("resume-b")
             .await
             .expect("first ConnectionSession id")
@@ -965,7 +970,7 @@ fn file_transfer_resumes_across_a_fresh_connection() {
     // transport 丢失：销毁 ConnectionSession（§19：ConnectionSession=DESTROYED，
     // TransferOperation=PAUSED 保留在 TransferManager）。
     runtime_a.handle().block_on(async {
-        crate::connect::orchestrator::close_session_and_registry(
+        crate::connect::connectivity_attempt::close_session_and_unregister(
             Arc::clone(&state_a),
             "resume-b".into(),
             old_session_id,
@@ -985,7 +990,8 @@ fn file_transfer_resumes_across_a_fresh_connection() {
         "receiver never observed the transport loss"
     );
 
-    // 重新建连（新 ConnectionSession）→ orchestrator 触发 ResumeTransfer(transfer_id)。
+    // 重新建连（新 ConnectionSession）→ ConnectivityAttemptCoordinator 触发
+    // ResumeTransfer(transfer_id)。
     send_and_expect_accepted(
         &runtime_a,
         NetworkCommand {
@@ -1005,7 +1011,7 @@ fn file_transfer_resumes_across_a_fresh_connection() {
                 Some(network_event::Payload::PeerState(state))
                     if state.peer_id == "resume-b"
                         && state.state == PeerConnectionState::Connected as i32
-                        && state.active_route == RouteType::QuicDirect as i32
+                        && state.route_type == RouteType::QuicDirect as i32
             )
         })
         .is_some(),
@@ -1013,7 +1019,7 @@ fn file_transfer_resumes_across_a_fresh_connection() {
     );
     let new_session_id = runtime_a.handle().block_on(async {
         state_a
-            .sessions
+            .connection_sessions
             .current_session_id("resume-b")
             .await
             .expect("fresh ConnectionSession id")
@@ -1167,7 +1173,6 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
                 channel_id: "control".into(),
                 payload: b"recover-me".to_vec(),
                 policy: DeliveryPolicyCode::AckedDeduplicated as i32,
-                crypto_mode: 0,
             })),
         },
     );
@@ -1274,7 +1279,6 @@ fn delivery_recovery_replays_same_message_after_explicit_recovery() {
                 policy: DeliveryPolicyCode::AckedDeduplicated as i32,
                 // Explicit opt-out exercises the clear application mode; the
                 // first message in this test remains the secure default.
-                crypto_mode: 1,
             })),
         },
     );
@@ -1420,7 +1424,6 @@ fn delivery_reliable_message_resends_same_message_id_after_reconnect() {
                 channel_id: "control".into(),
                 payload: b"reconnect-me".to_vec(),
                 policy: DeliveryPolicyCode::AckedDeduplicated as i32,
-                crypto_mode: 0,
             })),
         },
     );
@@ -1453,7 +1456,7 @@ fn delivery_reliable_message_resends_same_message_id_after_reconnect() {
         .expect("runtime A state");
     let original_session_id = runtime_a.handle().block_on(async {
         state_a
-            .sessions
+            .connection_sessions
             .current_session_id("reconnect-b")
             .await
             .expect("A Session ID")
@@ -1462,8 +1465,8 @@ fn delivery_reliable_message_resends_same_message_id_after_reconnect() {
     // 关闭 A→B 的当前 route：transport 丢失，A 侧 Session 被销毁；pending 保留。
     let route = runtime_a.handle().block_on(async {
         state_a
-            .sessions
-            .current_active_route("reconnect-b")
+            .connection_sessions
+            .current_route_view("reconnect-b")
             .await
             .expect("active A route")
     });
@@ -1502,7 +1505,7 @@ fn delivery_reliable_message_resends_same_message_id_after_reconnect() {
     .is_some());
     let reconnected_session_id = runtime_a.handle().block_on(async {
         state_a
-            .sessions
+            .connection_sessions
             .current_session_id("reconnect-b")
             .await
             .expect("reconnected A Session ID")
@@ -1712,7 +1715,7 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
         .expect("runtime B state");
     let old_b_session_id = runtime_b.handle().block_on(async {
         state_b
-            .sessions
+            .connection_sessions
             .current_session_id("restart-a")
             .await
             .expect("B1 Session ID")
@@ -1759,12 +1762,11 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
     // MessageId 恢复重发。
     let old_pending = runtime_b
         .handle()
-        .block_on(state_b.delivery.enqueue_with_crypto(
+        .block_on(state_b.delivery.enqueue(
             "restart-a",
             "control",
             b"old-session-pending".to_vec(),
             crate::delivery::DeliveryPolicy::AckedDeduplicated,
-            crate::crypto::CryptoMode::E2ee,
             Default::default(),
         ))
         .expect("enqueue old-session pending");
@@ -1829,7 +1831,7 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
     ));
     let new_b_session_id = runtime_b.handle().block_on(async {
         state_b
-            .sessions
+            .connection_sessions
             .current_session_id("restart-a")
             .await
             .expect("B2 Session ID")
@@ -1854,7 +1856,7 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
         .get("restart-a", &old_b_session_id.wire_key());
     let current_remote_binding = runtime_b.handle().block_on(async {
         state_b
-            .sessions
+            .connection_sessions
             .current_remote_session_binding("restart-a")
             .await
     });
@@ -1864,9 +1866,12 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
         .expect("runtime A2 state lock")
         .clone()
         .expect("runtime A2 state");
-    let current_a2_session_id = runtime_a2
-        .handle()
-        .block_on(async { state_a2.sessions.current_session_id("restart-b").await });
+    let current_a2_session_id = runtime_a2.handle().block_on(async {
+        state_a2
+            .connection_sessions
+            .current_session_id("restart-b")
+            .await
+    });
     assert!(
         stale_context.is_err(),
         "old B1 alias survived: old={old_b_session_id:?}, new={new_b_session_id:?}, remote={current_remote_binding:?}, a2={current_a2_session_id:?}, same_context={}",
@@ -1897,7 +1902,6 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
                 channel_id: "control".into(),
                 payload: b"after-peer-restart".to_vec(),
                 policy: DeliveryPolicyCode::AckedDeduplicated as i32,
-                crypto_mode: 0,
             })),
         },
     );
@@ -2057,7 +2061,7 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
         .expect("runtime A state");
     let original_session_id = runtime_a.handle().block_on(async {
         state_a
-            .sessions
+            .connection_sessions
             .current_session_id("tcp-b")
             .await
             .expect("TCP Session ID")
@@ -2073,7 +2077,6 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
                 channel_id: "control".into(),
                 payload: b"tcp-delivery".to_vec(),
                 policy: DeliveryPolicyCode::AckedDeduplicated as i32,
-                crypto_mode: 0,
             })),
         },
     );
@@ -2120,8 +2123,8 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
 
     let route = runtime_a.handle().block_on(async {
         state_a
-            .sessions
-            .current_active_route("tcp-b")
+            .connection_sessions
+            .current_route_view("tcp-b")
             .await
             .expect("active TCP route")
     });
@@ -2160,7 +2163,7 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
     .is_some());
     let reconnected_session_id = runtime_a.handle().block_on(async {
         state_a
-            .sessions
+            .connection_sessions
             .current_session_id("tcp-b")
             .await
             .expect("reconnected TCP Session ID")
@@ -2270,7 +2273,6 @@ fn websocket_fallback_authenticates_delivery_and_ack() {
                 channel_id: "control".into(),
                 payload: b"websocket-delivery".to_vec(),
                 policy: DeliveryPolicyCode::AckedDeduplicated as i32,
-                crypto_mode: 0,
             })),
         },
     );
@@ -2389,9 +2391,19 @@ fn connect_runtimes_for_stream_test(
         "connection to {} never reached {transport:?}",
         peers.device_b
     );
+    assert!(
+        wait_for_session_connected(runtime_a, &peers.device_b, Duration::from_secs(5)),
+        "connection event for {} was emitted before the Session became connected",
+        peers.device_b
+    );
+    assert!(
+        wait_for_session_connected(runtime_b, &peers.device_a, Duration::from_secs(5)),
+        "responder Session for {} was not connected before the stream test continued",
+        peers.device_a
+    );
 }
 
-/// Disables a runtime's QUIC endpoint so the orchestrator falls back to TCP.
+/// Disables a runtime's QUIC endpoint so the connectivity attempt falls back to TCP.
 fn force_tcp_fallback(runtime: &NetworkRuntime) {
     let state = runtime
         .state
@@ -2680,7 +2692,6 @@ fn stream_bytes_interleave_with_data_message_on_generic_route() {
                 channel_id: "control".into(),
                 payload: b"message-bytes".to_vec(),
                 policy: DeliveryPolicyCode::AckedDeduplicated as i32,
-                crypto_mode: 0,
             })),
         },
     );
@@ -3080,7 +3091,7 @@ fn wait_for_session_connected(runtime: &NetworkRuntime, peer_id: &str, timeout: 
     while Instant::now() < deadline {
         if runtime
             .handle()
-            .block_on(state.sessions.is_connected(peer_id))
+            .block_on(state.connection_sessions.is_connected(peer_id))
         {
             return true;
         }

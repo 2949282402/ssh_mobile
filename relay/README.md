@@ -1,4 +1,4 @@
-> Last updated: 2026-08-14
+> Last updated: 2026-08-19
 
 # SSH Mobile Control and Relay Server
 
@@ -258,6 +258,25 @@ go test -race ./...
 go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```
+
+### Network v2 Phase 0 contract matrix
+
+From the repository root, run the non-mutating characterization matrix for
+the committed Relay v2 fixtures and cross-owner evidence inventory:
+
+```sh
+bash scripts/network_v2_acceptance.sh baseline
+```
+
+The strict entry point additionally runs the owning Rust and Go selectors and
+fails while any matrix case is still `characterized` or `gap`:
+
+```sh
+bash scripts/network_v2_acceptance.sh strict
+```
+
+The baseline is not a claim that final acceptance is complete; the open cases
+remain recorded in `protocol/contract_tests/acceptance_matrix.json`.
 
 ### Storage integration tests
 

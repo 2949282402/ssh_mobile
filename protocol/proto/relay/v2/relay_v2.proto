@@ -57,7 +57,7 @@ package relay.v2;
 option go_package = "github.com/ssh-mobile/relay/internal/relay/v2;v2";
 
 // Transport capability a peer advertises in its DiscoverySnapshot.
-// Value numbers are frozen; the enum-name prefix follows the network.v1
+// Value numbers are frozen; the enum-name prefix follows the Network Protocol
 // convention so value identifiers stay unique within the package.
 enum TransportCapability {
   TRANSPORT_CAPABILITY_UNSPECIFIED = 0;
@@ -79,7 +79,7 @@ enum ResolveStatus {
 }
 
 // Real-time media signal kind. Values 1..5 intentionally mirror
-// network.v1.RealtimeSignalKind (a unit test asserts they stay in sync).
+// Network Protocol V2 RealtimeSignalKind (a unit test asserts they stay in sync).
 enum RealtimeSignalKind {
   REALTIME_SIGNAL_KIND_UNSPECIFIED = 0;
   REALTIME_SIGNAL_KIND_OFFER = 1;

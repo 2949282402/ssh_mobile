@@ -408,7 +408,7 @@ Uint8List _eventFrame(String eventId, int field, List<int> payload) {
     0x10,
     0x01, // timestamp_ms = 1
     0x18,
-    0x01, // protocol_version = 1
+    0x02, // protocol_version = 2
     ..._varint(field << 3 | 2),
     ..._varint(payload.length),
     ...payload,

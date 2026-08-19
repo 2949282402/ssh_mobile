@@ -1,10 +1,15 @@
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-19
 
 # ADR-019：Generic Transport Connection Layer
 
 ## Status
 
-Accepted for the native network v1 runtime.
+Superseded for the active runtime by Network Protocol V2 Peer/Path ownership.
+
+This ADR remains a historical record of the generic carrier capability
+decision. Current lifecycle truth belongs to `PeerSupervisor`/
+`PeerPathManager`; the old `SessionManager` and v1 projection wording is not
+an active contract.
 
 ## Context
 

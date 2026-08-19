@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-19
 
 # ADR-023：Session-owned Application E2EE
 
@@ -17,13 +17,14 @@ forward-secret Noise agreement documented in ADR-028.
 
 ## Decision
 
-- `CryptoContext`, `CryptoMode`, `CryptoSuite`, `KeyEpoch`, and bounded
+- `CryptoContext`, `CryptoSuite`, `KeyEpoch`, and bounded
   `ReplayWindow` live in native `network-core` and are keyed by
   `(peer_id, logical SessionId)`.
 - `SessionCryptoManager` owns contexts for the App Scope. A transient QUIC ↔
   Relay route change does not remove a context; explicit Session close does.
-- E2EE is the protobuf zero value and therefore the secure default. Clear
-  application payloads require an explicit `CryptoModeCode::None` request.
+- Network Protocol V2 application payloads always use ConnectionSession-owned
+  E2EE. There is no plaintext fallback and no per-message crypto-mode field;
+  a missing Session context fails closed with `E2eeRequired`.
 - E2EE installs a Session root only after the authenticated
   `Noise_XX_25519_AESGCM_SHA256` handshake and v3 Root exchange. Fresh
   ephemeral X25519 material provides forward secrecy; the pinned Ed25519
@@ -35,11 +36,11 @@ forward-secret Noise agreement documented in ADR-028.
   identity assumptions, and rejected IK/static alternatives.
 - Each E2EE envelope carries a version, suite, key epoch, structured nonce
   prefix/counter, and AEAD ciphertext. AAD binds the logical Session, channel,
-  MessageId, sequence, recovery epoch, delivery policy, and crypto mode.
+  MessageId, sequence, recovery epoch, and delivery policy.
   `MAX_MESSAGES_PER_KEY` and `MAX_BYTES_PER_KEY` trigger key rotation; a
   bounded current/recent epoch window handles reordering.
-- `PendingMessage` stores logical plaintext plus its crypto mode. Every send
-  and retry invokes the current context and gets a new nonce. Ciphertext is
+- `PendingMessage` stores logical plaintext only. Every send and retry invokes
+  the current ConnectionSession context and gets a new nonce. Ciphertext is
   never persisted in Delivery recovery state.
 - Channel `DataMessage` payloads use the context on QUIC, Relay, TCP, and
   WebSocket. Relay forwards the three Noise handshake plus RootSeed,
@@ -64,7 +65,7 @@ forward-secret Noise agreement documented in ADR-028.
 
 ## Verification
 
-Native tests cover disabled and default E2EE modes, Noise identity and
+Native tests cover mandatory E2EE, Noise identity and
 forward-secrecy properties, opaque Relay handshake framing, QUIC/TCP/WebSocket
 delivery recovery, Relay file chunks, same-context Route migration, 100,000
 structured nonces, key rotation, wrong-key and tamper rejection, replay

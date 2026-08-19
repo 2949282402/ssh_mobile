@@ -13,10 +13,10 @@ const MAX_DEVICE_ID_BYTES: usize = 128;
 const NONCE_BYTES: usize = 32;
 const SIGNATURE_BYTES: usize = 64;
 const CHANNEL_BINDING_BYTES: usize = 32;
-const INITIATOR_DOMAIN: &[u8] = b"ssh-mobile/quic-auth/initiator/v1";
-const RESPONDER_DOMAIN: &[u8] = b"ssh-mobile/quic-auth/responder/v1";
-const CHANNEL_BINDING_LABEL: &[u8] = b"ssh-mobile/quic-auth/channel-binding/v1";
-const CHANNEL_BINDING_CONTEXT: &[u8] = b"ssh-mobile/quic-auth/v1";
+const INITIATOR_DOMAIN: &[u8] = b"ssh-mobile/quic-auth/initiator/v2";
+const RESPONDER_DOMAIN: &[u8] = b"ssh-mobile/quic-auth/responder/v2";
+const CHANNEL_BINDING_LABEL: &[u8] = b"ssh-mobile/quic-auth/channel-binding/v2";
+const CHANNEL_BINDING_CONTEXT: &[u8] = b"ssh-mobile/quic-auth/v2";
 
 pub struct QuicPeerSession {
     pub connection: Connection,

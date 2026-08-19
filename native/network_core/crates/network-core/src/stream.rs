@@ -23,21 +23,21 @@
 //! without bound or be silently discarded.
 
 #[cfg(test)]
-use network_protocol::network_event;
+use network_protocol::{network_event, NetworkEvent};
 use network_protocol::{
-    NetworkError as ProtocolError, NetworkErrorCode, NetworkEvent, SshStreamCloseCommand,
-    SshStreamDataCommand, SshStreamOpenCommand, StreamHandle,
+    NetworkError as ProtocolError, NetworkErrorCode, SshStreamCloseCommand, SshStreamDataCommand,
+    SshStreamOpenCommand, StreamHandle,
 };
 use quinn::SendStream;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc::UnboundedSender, watch, Mutex};
+use tokio::sync::{watch, Mutex};
 
 use crate::connection::GenericFrameKind;
 use crate::events::{emit_stream_closed, emit_stream_data_received, protocol_error_with_peer};
-use crate::runtime::RuntimeState;
+use crate::runtime::{EventSender, RuntimeState};
 use crate::session::StreamCarrier;
 
 // ---------------------------------------------------------------------------
@@ -389,7 +389,13 @@ impl StreamEntry {
 #[derive(Default)]
 struct StreamState {
     streams: HashMap<StreamKey, StreamEntry>,
+    /// Stream identities retired by a Session teardown.  Keeping tombstones
+    /// in the per-peer manager prevents an old FFI handle from addressing a
+    /// newly-created stream with the same opener/id after reconnect.
+    retired: HashSet<StreamKey>,
 }
+
+const MAX_RETIRED_STREAM_KEYS: usize = 131_072;
 
 /// Direction-independent logical stream opener.  A per-peer manager has one
 /// local device and one authenticated remote peer, so Local/Remote is the
@@ -418,14 +424,14 @@ impl StreamKey {
 #[derive(Clone)]
 pub(crate) struct ReliableStreamManager {
     inner: Arc<Mutex<StreamState>>,
-    event_tx: UnboundedSender<NetworkEvent>,
+    event_tx: EventSender,
 }
 
 impl ReliableStreamManager {
-    pub(crate) fn new(event_tx: UnboundedSender<NetworkEvent>) -> Self {
+    pub(crate) fn new<S: Into<EventSender>>(event_tx: S) -> Self {
         Self {
             inner: Arc::new(Mutex::new(StreamState::default())),
-            event_tx,
+            event_tx: event_tx.into(),
         }
     }
 
@@ -446,6 +452,12 @@ impl ReliableStreamManager {
         let key = StreamKey::new(opener, stream_id);
         if state.streams.contains_key(&key) {
             return Err(StreamError::AlreadyOpen);
+        }
+        if state.retired.contains(&key) {
+            return Err(StreamError::Closed);
+        }
+        if state.retired.len() >= MAX_RETIRED_STREAM_KEYS {
+            return Err(StreamError::CapacityExceeded);
         }
         let (wake_tx, _) = watch::channel(0u64);
         state.streams.insert(
@@ -741,6 +753,9 @@ impl ReliableStreamManager {
             entry.wake();
             if entry.send_closed {
                 state.streams.remove(&key);
+                if state.retired.len() < MAX_RETIRED_STREAM_KEYS {
+                    state.retired.insert(key);
+                }
             }
         }
         let _ = peer_id;
@@ -771,6 +786,9 @@ impl ReliableStreamManager {
             let removed = entry.recv_closed;
             if removed {
                 state.streams.remove(&key);
+                if state.retired.len() < MAX_RETIRED_STREAM_KEYS {
+                    state.retired.insert(key);
+                }
             }
             removed
         };
@@ -871,6 +889,8 @@ impl ReliableStreamManager {
                 .keys()
                 .map(|key| (key.opener, key.stream_id))
                 .collect();
+            let retired_keys = state.streams.keys().copied().collect::<Vec<_>>();
+            state.retired.extend(retired_keys);
             state.streams.clear();
             ids
         };
@@ -972,7 +992,7 @@ pub(crate) async fn open_stream(
     // The business request's CommunicationClass is not stored on the session;
     // byte-stream admission is based only on the active route's actual profile.
     let profile = state
-        .sessions
+        .connection_sessions
         .current_profile(peer_id)
         .await
         .ok_or(StreamError::NotConnected)?;
@@ -980,23 +1000,25 @@ pub(crate) async fn open_stream(
         return Err(StreamError::UnsupportedTransport);
     }
     let carrier = state
-        .sessions
+        .connection_sessions
         .current_stream_carrier(peer_id)
         .await
         .ok_or(StreamError::NotConnected)?;
     let opener_peer_id = local_stream_opener_peer_id(state).await?;
     let manager = state.stream_manager(peer_id).await;
-    match carrier {
+    // Reserve the lease before emitting any wire bytes.  This prevents a
+    // stale handle from sending StreamOpen on a new Session before the
+    // manager rejects its retired identity.
+    manager
+        .open(StreamOpener::Local, stream_id, service, consumer)
+        .await?;
+    let result = match carrier {
         StreamCarrier::Generic(handle) => {
             let payload = encode_stream_open_frame(&opener_peer_id, stream_id, service)?;
             handle
                 .send(GenericFrameKind::StreamOpen, &payload)
                 .await
-                .map_err(|error| StreamError::Send(error.to_string()))?;
-            manager
-                .open(StreamOpener::Local, stream_id, service, consumer)
-                .await?;
-            Ok(())
+                .map_err(|error| StreamError::Send(error.to_string()))
         }
         StreamCarrier::Quic(connection) => {
             let (mut send, recv) = connection
@@ -1011,9 +1033,6 @@ pub(crate) async fn open_stream(
                 .await
                 .map_err(|error| StreamError::Send(error.to_string()))?;
             manager
-                .open(StreamOpener::Local, stream_id, service, consumer)
-                .await?;
-            manager
                 .register_quic_send(StreamOpener::Local, stream_id, send)
                 .await?;
             spawn_quic_stream_reader(state, peer_id, StreamOpener::Local, stream_id, recv).await;
@@ -1027,14 +1046,16 @@ pub(crate) async fn open_stream(
                 &payload,
             )
             .await
-            .map_err(|error| StreamError::Send(error.to_string()))?;
-            manager
-                .open(StreamOpener::Local, stream_id, service, consumer)
-                .await?;
-            Ok(())
+            .map_err(|error| StreamError::Send(error.to_string()))
         }
         StreamCarrier::Relay(None) => Err(StreamError::NotConnected),
-    }?;
+    };
+    if let Err(error) = result {
+        let _ = manager
+            .close_local(peer_id, StreamOpener::Local, stream_id)
+            .await;
+        return Err(error);
+    }
     if consumer == StreamConsumer::Event {
         spawn_stream_event_emitter(state, peer_id, StreamOpener::Local, stream_id).await;
     }
@@ -1069,7 +1090,7 @@ async fn send_stream_with_opener(
     let send_guard = manager.send_guard(opener, stream_id).await?;
     let _guard = send_guard.lock().await;
     let carrier = state
-        .sessions
+        .connection_sessions
         .current_stream_carrier(peer_id)
         .await
         .ok_or(StreamError::NotConnected)?;
@@ -1153,7 +1174,7 @@ async fn close_stream_with_opener(
     let manager = state.stream_manager(peer_id).await;
     let opener_peer_id = stream_opener_peer_id(state, peer_id, opener).await?;
     let carrier = state
-        .sessions
+        .connection_sessions
         .current_stream_carrier(peer_id)
         .await
         .ok_or(StreamError::NotConnected)?;
@@ -1333,7 +1354,7 @@ async fn spawn_stream_event_emitter(
     let manager = state.stream_manager(peer_id).await;
     let peer_id = peer_id.to_string();
     let session_key = state
-        .sessions
+        .connection_sessions
         .current_session_id(&peer_id)
         .await
         .map(|id| id.wire_key())
@@ -1359,7 +1380,7 @@ pub(crate) async fn spawn_quic_stream_reader(
     let state = Arc::clone(state);
     let peer_id = peer_id.to_string();
     let session_key = state
-        .sessions
+        .connection_sessions
         .current_session_id(&peer_id)
         .await
         .map(|id| id.wire_key())
@@ -1672,6 +1693,31 @@ mod tests {
         assert_eq!(&buf[..n], b"from-remote");
         assert!(manager.is_open(StreamOpener::Local, 1).await);
         assert!(manager.is_open(StreamOpener::Remote, 1).await);
+    }
+
+    #[tokio::test]
+    async fn session_teardown_retires_stream_identity_across_reconnect() {
+        let (manager, _event_rx) = test_manager();
+        manager
+            .open(StreamOpener::Local, 7, "ssh", StreamConsumer::Poll)
+            .await
+            .expect("initial stream open");
+        let closed = manager.close_all("peer-a", "local-a").await;
+        assert_eq!(closed, vec![(StreamOpener::Local, 7)]);
+
+        // The same logical handle cannot silently attach to a new Session.
+        // A fresh stream id remains available, so reconnect is not globally
+        // blocked while the old stream lease is retired.
+        assert!(matches!(
+            manager
+                .open(StreamOpener::Local, 7, "ssh", StreamConsumer::Poll)
+                .await,
+            Err(StreamError::Closed)
+        ));
+        manager
+            .open(StreamOpener::Local, 8, "ssh", StreamConsumer::Poll)
+            .await
+            .expect("new stream identity remains available");
     }
 
     #[tokio::test]

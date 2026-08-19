@@ -21,9 +21,9 @@ deletes or re-scopes.
 
 ## Decision
 
-### ConnectionOrchestrator 是唯一连接入口
+### ConnectivityAttemptCoordinator 是唯一连接入口
 
-所有连接必须进入 `ConnectionOrchestrator::connect()`，固定状态机：
+所有连接必须进入 `ConnectivityAttemptCoordinator::connect()`，固定状态机：
 
 ```text
 IDLE → RESOLVING → RESOLVED → COORDINATING

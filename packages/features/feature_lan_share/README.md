@@ -1,4 +1,4 @@
-最新更新时间：2026-08-13
+最新更新时间：2026-08-19
 
 # feature_lan_share
 
@@ -23,13 +23,13 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
   静默刷新凭据、`noRetry`/`identityConflict` 终止），默认 `1/2/4/8/16/30` 秒
   指数退避最多六次，传输历史记录实际的 Direct/Relay 路线。
 - Wave 1 中唯一的数据面配置仍走现有 `ConfigureRuntime`，该入口会无条件初始化直接
-  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到 v1 协议切换（Wave 2），
+  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到后续协议能力切换（Wave 2），
   当前并不存在。`NetworkCapability.runtime` 只表示 native command-worker handle
   存在，不代表 WSS 数据面已独立配置。
 
 旧 `apps/ssh_mobile_full/lib/features/lan_share/**`、
 `apps/ssh_mobile_full/lib/services/lan_share/**` 和 Relay facade 已删除；
-App Shell 只保留 `lan_share_feature_adapters.dart` 以及 native v1 network
+App Shell 只保留 `lan_share_feature_adapters.dart` 以及 Network Protocol V2 network
 创建边界。
 
 ## Package contract

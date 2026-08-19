@@ -6,6 +6,7 @@ package relay
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/ssh-mobile/relay/internal/relay/v2"
@@ -50,7 +51,7 @@ func (h *hub) broadcastPeerHintV2(frameType, deviceID string, d Discovery) {
 	var hint *v2.RelayFrame
 	switch frameType {
 	case framePeerOnline, framePeerUpdated:
-		if d.ready() {
+		if d.ready() && d.hasRuntimeEpoch() {
 			hint = &v2.RelayFrame{
 				Version: v2.RELAY_V2_VERSION,
 				Kind: &v2.RelayFrame_PeerAvailableHint{PeerAvailableHint: &v2.PeerAvailableHint{
@@ -72,6 +73,53 @@ func (h *hub) broadcastPeerHintV2(frameType, deviceID string, d Discovery) {
 	if hint != nil {
 		h.broadcastV2(deviceID, hint)
 	}
+}
+
+// sendPresenceHintSnapshotV2 sends a complete advisory presence view to a new
+// control connection.  The shared ListOnlinePeers query is deliberately the
+// same authority used by Resolve: presence and discovery ownership must agree,
+// discovery must have a non-zero revision, and a real runtime epoch must be
+// present before a peer is advertised as usable.  Backend errors produce no
+// synthetic online entries; the client can retry Resolve and wait for the next
+// edge-triggered hint.
+func (h *hub) sendPresenceHintSnapshotV2(recipient *peer) {
+	if recipient == nil || h.presence == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+	online, err := h.presence.ListOnlinePeers(ctx)
+	cancel()
+	if err != nil {
+		return
+	}
+	deviceIDs := make([]string, 0, len(online))
+	for deviceID := range online {
+		deviceIDs = append(deviceIDs, deviceID)
+	}
+	sort.Strings(deviceIDs)
+	hints := make([]*v2.PeerPresenceHint, 0, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		if deviceID == recipient.deviceID {
+			continue
+		}
+		d := online[deviceID]
+		if !d.ready() || !d.hasRuntimeEpoch() {
+			continue
+		}
+		hints = append(hints, &v2.PeerPresenceHint{
+			DeviceId:     deviceID,
+			Online:       true,
+			RuntimeEpoch: &v2.RuntimeEpoch{High: d.RuntimeEpochHigh, Low: d.RuntimeEpochLow},
+			Revision:     d.Revision,
+		})
+	}
+	h.sendV2Frame(recipient, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_PresenceHintSnapshot{PresenceHintSnapshot: &v2.PresenceHintSnapshot{
+			Peers:         hints,
+			PublishedAtMs: time.Now().UnixMilli(),
+		}},
+	})
 }
 
 // sameDiscoveryContent 比较两份 discovery 快照的候选与能力集合是否一致（无序）。

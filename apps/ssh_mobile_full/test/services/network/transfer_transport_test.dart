@@ -1,4 +1,4 @@
-// v1 原生网络服务命令/事件语义测试。
+// Network Protocol V2 原生网络服务命令/事件语义测试。
 
 import 'dart:io';
 import 'dart:typed_data';
@@ -6,12 +6,12 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import '../../../lib/services/network/network_service.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
+import '../../../lib/services/network/network_service.dart';
 
-/// 执行 v1 命令接受与终态事件语义测试。
+/// 执行 V2 命令接受与终态事件语义测试。
 void main() {
-  group('NetworkService v1 contract tests', () {
+  group('NetworkService V2 contract tests', () {
     test('route and error models expose typed state', () {
       const snapshot = RouteSnapshot(
         peerId: 'peer-1',

@@ -271,6 +271,37 @@ void main() {
   );
 
   test(
+    'Realtime gateway drops duplicate and unknown command results',
+    () async {
+      final commandGateway = _FakeCommandGateway();
+      final gateway = RuntimeNetworkRealtimeGateway(commandGateway);
+      final events = <NativeNetworkEvent>[];
+      final subscription = gateway.events.listen(events.add);
+
+      final ticket = gateway.start(
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: 'peer-a',
+      );
+      expect(ticket.queueStatus, NativeOperationStatus.success);
+
+      final resultFrame = _commandResultFrame(ticket.commandId);
+      commandGateway.emit(resultFrame);
+      commandGateway.emit(resultFrame);
+      commandGateway.emit(_commandResultFrame('not-registered'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(events.whereType<NativeCommandResultEvent>(), hasLength(1));
+      expect(
+        events.whereType<NativeCommandResultEvent>().single.commandId,
+        ticket.commandId,
+      );
+
+      await subscription.cancel();
+      await commandGateway.close();
+    },
+  );
+
+  test(
     'Dispose waits for a pending native handle and rejects later use',
     () async {
       final creation = Completer<NativeNetworkHandle>();
@@ -348,6 +379,23 @@ final class _FakeNativeNetworkHandle implements NativeNetworkHandle {
   Future<void> dispose() => close();
 }
 
+final class _FakeCommandGateway implements NetworkCommandGateway {
+  final StreamController<Uint8List> _events =
+      StreamController<Uint8List>.broadcast(sync: true);
+
+  @override
+  Stream<Uint8List> get events => _events.stream;
+
+  @override
+  TransportOperationStatus sendCommand(Uint8List command) => command.isEmpty
+      ? TransportOperationStatus.invalidArgument
+      : TransportOperationStatus.success;
+
+  void emit(Uint8List frame) => _events.add(frame);
+
+  Future<void> close() => _events.close();
+}
+
 Uint8List _connectedRealtimeStateFrame() {
   final nested = <int>[
     0x0a,
@@ -368,9 +416,31 @@ Uint8List _connectedRealtimeStateFrame() {
     0x10,
     0x01,
     0x18,
-    0x01,
+    0x02,
     0xaa,
     0x01,
+    nested.length,
+    ...nested,
+  ]);
+}
+
+Uint8List _commandResultFrame(String commandId) {
+  final nested = <int>[
+    0x0a,
+    commandId.length,
+    ...commandId.codeUnits,
+    0x10,
+    0x01,
+  ];
+  return Uint8List.fromList(<int>[
+    0x0a,
+    0x03,
+    ...'evt'.codeUnits,
+    0x10,
+    0x01,
+    0x18,
+    0x02,
+    0x6a,
     nested.length,
     ...nested,
   ]);

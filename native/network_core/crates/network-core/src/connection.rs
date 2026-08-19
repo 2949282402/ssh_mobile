@@ -97,7 +97,7 @@ impl Route {
     }
 
     /// Converts the current wire-era route projection into the composed form.
-    /// Generic transports intentionally have no flat v1 enum projection.
+    /// Generic transports intentionally have no flat legacy enum projection.
     pub const fn from_wire(route: RouteType) -> Option<Self> {
         match route {
             RouteType::QuicDirect | RouteType::Lan => Some(Self::direct(RouteTransport::Quic)),

@@ -497,7 +497,7 @@ final class _FakeRealtimeGateway implements NetworkRealtimeGateway {
       NativeCommandResultEvent(
         eventId: 'event-$commandId',
         timestampMs: 1,
-        protocolVersion: 1,
+        protocolVersion: 2,
         commandId: commandId,
         accepted: accepted,
         error: error,
@@ -510,7 +510,7 @@ final class _FakeRealtimeGateway implements NetworkRealtimeGateway {
       NativeRealtimeStateChangedEvent(
         eventId: 'state-${++_sequence}',
         timestampMs: 1,
-        protocolVersion: 1,
+        protocolVersion: 2,
         realtimeId: '00112233445566778899aabbccddeeff',
         peerId: 'peer-a',
         state: state,
@@ -528,7 +528,7 @@ final class _FakeRealtimeGateway implements NetworkRealtimeGateway {
       NativeRealtimeSnapshotEvent(
         eventId: 'snapshot-${++_sequence}',
         timestampMs: 1,
-        protocolVersion: 1,
+        protocolVersion: 2,
         realtimeId: '00112233445566778899aabbccddeeff',
         peerId: 'peer-a',
         state: state,

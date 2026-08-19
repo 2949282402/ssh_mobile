@@ -1,11 +1,12 @@
-//! 网络协议消息、帧封装与版本信息。
+//! Network Protocol V2 消息、帧封装与版本信息。
 
 use prost::Enumeration;
 use prost::Message;
 
-/// Rust 运行时、Dart 编解码器、QUIC 与文件传输 manifest 共享的版本。
-/// 项目保持当前开发线协议版本；结构变化直接在当前版本中修改。
-pub const NETWORK_PROTOCOL_VERSION: u32 = 1;
+/// Rust runtime、Dart codec and QUIC share the Network SDK/Data V2 version.
+/// Relay Bootstrap V1 has an independent version domain and is not changed by
+/// this constant.
+pub const NETWORK_PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
 #[repr(i32)]
@@ -224,10 +225,6 @@ pub struct SendMessageCommand {
     pub payload: Vec<u8>,
     #[prost(enumeration = "DeliveryPolicyCode", tag = "4")]
     pub policy: i32,
-    /// Application payload protection. The zero protobuf value is E2EE so a
-    /// caller that does not know about this field remains secure by default.
-    #[prost(enumeration = "CryptoModeCode", tag = "5")]
-    pub crypto_mode: i32,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -400,19 +397,6 @@ pub struct DataMessage {
     pub policy: i32,
     #[prost(bytes = "vec", tag = "7")]
     pub payload: Vec<u8>,
-    /// Application payload protection used for `payload`. The zero protobuf
-    /// value is E2EE; the clear mode must be explicitly requested.
-    #[prost(enumeration = "CryptoModeCode", tag = "8")]
-    pub crypto_mode: i32,
-}
-
-/// Application payload protection mode. E2EE is intentionally value zero so
-/// older callers that omit the field do not silently downgrade security.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum CryptoModeCode {
-    E2ee = 0,
-    None = 1,
 }
 
 /// 不携带业务正文的应用层 Delivery ACK。
@@ -439,7 +423,9 @@ pub struct PeerStateChangedEvent {
     #[prost(enumeration = "PeerConnectionState", tag = "2")]
     pub state: i32,
     #[prost(enumeration = "RouteType", tag = "3")]
-    pub active_route: i32,
+    /// Route metadata at the time of the Peer event; this is observational
+    /// and never a global connectivity authority.
+    pub route_type: i32,
     #[prost(message, optional, tag = "4")]
     pub error: Option<NetworkError>,
     #[prost(enumeration = "RouteTopology", tag = "5")]
@@ -478,7 +464,7 @@ pub struct IncomingTransferOfferEvent {
     pub file_name: String,
     #[prost(uint64, tag = "4")]
     pub file_size: u64,
-    /// Optional route metadata added without changing v1 field meanings.
+    /// Optional route metadata carried by the Network Protocol V2 event.
     #[prost(enumeration = "RouteType", optional, tag = "5")]
     pub route_type: Option<i32>,
 }

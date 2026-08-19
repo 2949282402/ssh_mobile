@@ -99,10 +99,11 @@ identity-bound QUIC handshake succeeds.
 
 The runtime can exchange multiple LAN, public IPv6, and server-reflexive
 candidates without changing the Flutter/client business protocol. Candidate
-updates can be applied without accepting stale NAT state. Full Relay-to-Direct
-background upgrade uses the same bounded QUIC attempt and additional native
-transports remain later integration steps; this ADR defines the candidate
-exchange and authenticated nomination boundary they will consume.
+updates can be applied without accepting stale NAT state. The former
+Relay-to-Direct background-upgrade wording is v1 history; v2 uses the
+Direct-First bounded window and selects a route for the lifetime of the
+ConnectionSession. This ADR defines the candidate exchange and authenticated
+nomination boundary consumed by the v2 lifecycle ADRs.
 
 ## Verification
 

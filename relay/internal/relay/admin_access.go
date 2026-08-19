@@ -63,6 +63,10 @@ func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request) {
 	_ = s.cache.ClearDeviceNonces(ctx, deviceID)
 
 	s.hub.disconnectDevice(deviceID)
+	// Control and data sockets have separate registries.  Revoke must close
+	// pending data endpoints as well as an active endpoint's counterpart before
+	// publishing the durable revocation event.
+	s.relayData.closeDevice(deviceID)
 	// 广播吊销事件：本实例已直接断开；事件总线是共享实时状态层，供其它连接本共享
 	// Redis 的实例收敛同一生命周期决策（设计 §26：本阶段 Relay Control/Data 单实例，
 	// 无 Global Control Routing）。

@@ -1,4 +1,4 @@
-// Native v1 Realtime command/event bindings.
+// Native Network Protocol V2 Realtime command/event bindings.
 //
 // The Rust network-protocol crate remains the wire-contract owner. This file
 // mirrors only the fields needed by the public native SDK facade and keeps
@@ -7,7 +7,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-const _protocolVersion = 1;
+const _protocolVersion = 2;
 const _maxCommandIdBytes = 128;
 const _maxEventIdBytes = 256;
 const _maxPeerIdBytes = 128;
@@ -20,6 +20,102 @@ const _maxStreamServiceBytes = 128;
 const _maxStreamId = 0xffff;
 const _maxStreamDataBytes = 384 * 1024;
 const _maxStreamHandleBytes = _maxPeerIdBytes + 16;
+const _maxTransferIdBytes = 128;
+const _maxFileNameBytes = 256;
+const _maxChannelIdBytes = 128;
+const _maxMessageIdBytes = 64;
+
+/// Native peer lifecycle values mirrored from the frozen V2 wire.
+enum NativePeerConnectionState {
+  unspecified(0),
+  connecting(1),
+  connected(2),
+  disconnected(3),
+  failed(4);
+
+  const NativePeerConnectionState(this.wireValue);
+
+  final int wireValue;
+
+  static NativePeerConnectionState fromWire(int value) =>
+      NativePeerConnectionState.values.firstWhere(
+        (state) => state.wireValue == value,
+        orElse: () => NativePeerConnectionState.unspecified,
+      );
+}
+
+/// Native route metadata is kept as abstract enums; endpoint/socket values are
+/// intentionally not part of the public typed event.
+enum NativeRouteType {
+  unspecified(0),
+  quicDirect(1),
+  relay(2),
+  lan(4);
+
+  const NativeRouteType(this.wireValue);
+
+  final int wireValue;
+
+  static NativeRouteType fromWire(int value) =>
+      NativeRouteType.values.firstWhere(
+        (route) => route.wireValue == value,
+        orElse: () => NativeRouteType.unspecified,
+      );
+}
+
+enum NativeRouteTopology {
+  unspecified(0),
+  direct(1),
+  relay(2);
+
+  const NativeRouteTopology(this.wireValue);
+
+  final int wireValue;
+
+  static NativeRouteTopology fromWire(int value) =>
+      NativeRouteTopology.values.firstWhere(
+        (topology) => topology.wireValue == value,
+        orElse: () => NativeRouteTopology.unspecified,
+      );
+}
+
+enum NativeRouteTransport {
+  unspecified(0),
+  quic(1),
+  tcp(2),
+  udp(3),
+  webSocket(4);
+
+  const NativeRouteTransport(this.wireValue);
+
+  final int wireValue;
+
+  static NativeRouteTransport fromWire(int value) =>
+      NativeRouteTransport.values.firstWhere(
+        (transport) => transport.wireValue == value,
+        orElse: () => NativeRouteTransport.unspecified,
+      );
+}
+
+enum NativeRelayConnectionState {
+  unspecified(0),
+  connecting(1),
+  connected(2),
+  disconnected(3),
+  failed(4);
+
+  const NativeRelayConnectionState(this.wireValue);
+
+  final int wireValue;
+
+  static NativeRelayConnectionState fromWire(int value) =>
+      NativeRelayConnectionState.values.firstWhere(
+        (state) => state.wireValue == value,
+        orElse: () => NativeRelayConnectionState.unspecified,
+      );
+}
+
+const _maxPendingCommandResults = 64;
 
 /// Native WebRTC Realtime session lifecycle states.
 enum NativeRealtimeSessionState {
@@ -157,6 +253,265 @@ final class NativeCommandResultEvent extends NativeNetworkEvent {
 
   /// Structured rejection, when [accepted] is false.
   final NativeNetworkError? error;
+}
+
+/// Peer-scoped native state event.  The endpoint and concrete carrier remain
+/// native diagnostics and are not exposed here.
+final class NativePeerStateChangedEvent extends NativeNetworkEvent {
+  const NativePeerStateChangedEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.peerId,
+    required this.state,
+    required this.routeType,
+    this.routeTopology = NativeRouteTopology.unspecified,
+    this.routeTransport = NativeRouteTransport.unspecified,
+    this.error,
+  });
+
+  final String peerId;
+  final NativePeerConnectionState state;
+  final NativeRouteType routeType;
+  final NativeRouteTopology routeTopology;
+  final NativeRouteTransport routeTransport;
+  final NativeNetworkError? error;
+}
+
+/// Native transfer progress.  The frozen V2 event has no peer field; the
+/// optional field makes that schema gap explicit instead of inventing scope.
+final class NativeTransferProgressEvent extends NativeNetworkEvent {
+  const NativeTransferProgressEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.transferId,
+    required this.bytesTransferred,
+    required this.totalBytes,
+    this.peerId,
+  });
+
+  final String transferId;
+  final int bytesTransferred;
+  final int totalBytes;
+  final String? peerId;
+}
+
+/// Transfer offer with the peer scope present in the frozen wire.
+final class NativeIncomingTransferOfferEvent extends NativeNetworkEvent {
+  const NativeIncomingTransferOfferEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.transferId,
+    required this.peerId,
+    required this.fileName,
+    required this.fileSize,
+    required this.routeType,
+  });
+
+  final String transferId;
+  final String peerId;
+  final String fileName;
+  final int fileSize;
+  final NativeRouteType routeType;
+}
+
+/// Transfer completion.  The V2 wire does not carry peer scope.
+final class NativeTransferCompletedEvent extends NativeNetworkEvent {
+  const NativeTransferCompletedEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.transferId,
+    required this.localPath,
+    this.peerId,
+  });
+
+  final String transferId;
+  final String localPath;
+  final String? peerId;
+}
+
+/// Transfer failure.  The V2 wire does not carry peer scope outside its
+/// nested error, so adapters must not infer it from a path or route.
+final class NativeTransferFailedEvent extends NativeNetworkEvent {
+  const NativeTransferFailedEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.transferId,
+    required this.error,
+    this.peerId,
+  });
+
+  final String transferId;
+  final NativeNetworkError? error;
+  final String? peerId;
+}
+
+/// Relay lifecycle event without exposing its WebSocket or credential.
+final class NativeRelayStateChangedEvent extends NativeNetworkEvent {
+  const NativeRelayStateChangedEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.state,
+    this.error,
+  });
+
+  final NativeRelayConnectionState state;
+  final NativeNetworkError? error;
+}
+
+/// Peer-scoped reliable message event with a bounded opaque payload.
+final class NativeChannelMessageEvent extends NativeNetworkEvent {
+  NativeChannelMessageEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.peerId,
+    required this.sessionId,
+    required this.channelId,
+    required this.messageId,
+    required this.sequence,
+    required Uint8List payload,
+  }) : payload = Uint8List.fromList(payload);
+
+  final String peerId;
+  final String sessionId;
+  final String channelId;
+  final Uint8List messageId;
+  final int sequence;
+  final Uint8List payload;
+}
+
+/// Peer-scoped application acknowledgement.
+final class NativeDeliveryAckedEvent extends NativeNetworkEvent {
+  NativeDeliveryAckedEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.peerId,
+    required this.sessionId,
+    required Uint8List messageId,
+    required this.recoveryEpoch,
+  }) : messageId = Uint8List.fromList(messageId);
+
+  final String peerId;
+  final String sessionId;
+  final Uint8List messageId;
+  final int recoveryEpoch;
+}
+
+/// Presence is a hint, not connectivity truth.
+final class NativePeerPresenceChangedEvent extends NativeNetworkEvent {
+  const NativePeerPresenceChangedEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.peerId,
+    required this.generation,
+    required this.state,
+  });
+
+  final String peerId;
+  final int generation;
+  final NativePeerPresenceState state;
+}
+
+enum NativePeerPresenceState {
+  unspecified(0),
+  online(1),
+  updated(2),
+  offline(3);
+
+  const NativePeerPresenceState(this.wireValue);
+
+  final int wireValue;
+
+  static NativePeerPresenceState fromWire(int value) =>
+      NativePeerPresenceState.values.firstWhere(
+        (state) => state.wireValue == value,
+        orElse: () => NativePeerPresenceState.unspecified,
+      );
+}
+
+/// Full presence snapshot; it remains a hint and carries no path details.
+final class NativePeerPresenceSnapshotEvent extends NativeNetworkEvent {
+  const NativePeerPresenceSnapshotEvent({
+    required super.eventId,
+    required super.timestampMs,
+    required super.protocolVersion,
+    required this.peers,
+  });
+
+  final List<NativePeerPresenceChangedEvent> peers;
+}
+
+/// Correlates registered commands with exactly one terminal result.
+///
+/// A native worker may retry or duplicate an event at a transport boundary,
+/// but a public command must complete at most once. Call [register] before
+/// submitting a command, pass every decoded event through [filterEvent], and
+/// call [cancel] when queue acceptance fails or the owner cancels the command.
+/// Unknown and duplicate command results are dropped. Pending registrations
+/// are bounded so a missing result cannot grow this guard without limit.
+final class NativeCommandResultGuard {
+  /// Creates a guard with a bounded number of in-flight command IDs.
+  NativeCommandResultGuard({
+    this.maxPendingCommands = _maxPendingCommandResults,
+  }) : assert(maxPendingCommands > 0) {
+    if (maxPendingCommands <= 0) {
+      throw ArgumentError.value(
+        maxPendingCommands,
+        'maxPendingCommands',
+        'Must be positive.',
+      );
+    }
+  }
+
+  /// Maximum number of commands that may await a terminal result.
+  final int maxPendingCommands;
+  final Set<String> _pendingCommandIds = <String>{};
+
+  /// Number of commands still waiting for a terminal result.
+  int get pendingCount => _pendingCommandIds.length;
+
+  /// Registers [commandId] before queue submission.
+  ///
+  /// Returns `false` for a duplicate ID or when the bounded pending budget is
+  /// exhausted. The caller must not submit a command when registration fails.
+  bool register(String commandId) {
+    if (commandId.isEmpty ||
+        utf8.encode(commandId).length > _maxCommandIdBytes) {
+      throw ArgumentError.value(
+        commandId,
+        'commandId',
+        'Must contain 1-$_maxCommandIdBytes bytes.',
+      );
+    }
+    if (_pendingCommandIds.contains(commandId) ||
+        _pendingCommandIds.length >= maxPendingCommands) {
+      return false;
+    }
+    _pendingCommandIds.add(commandId);
+    return true;
+  }
+
+  /// Cancels a command that will not produce a terminal result.
+  void cancel(String commandId) => _pendingCommandIds.remove(commandId);
+
+  /// Keeps non-result events and admits only the first result for a registered
+  /// command. Returns `null` for unknown or duplicate command results.
+  NativeNetworkEvent? filterEvent(NativeNetworkEvent event) {
+    if (event is! NativeCommandResultEvent) return event;
+    if (!_pendingCommandIds.remove(event.commandId)) return null;
+    return event;
+  }
+
+  /// Drops all pending registrations during owner shutdown.
+  void clear() => _pendingCommandIds.clear();
 }
 
 /// Realtime session state event.
@@ -334,7 +689,124 @@ final class NativeNetworkProtocol {
 
   const NativeNetworkProtocol._();
 
-  /// Encodes `StartRealtimeSession` into the v1 command envelope.
+  /// Encodes a Peer connect request using the existing V2 command envelope.
+  /// The v2 adapter supplies the business requirement, not a concrete socket.
+  static Uint8List connectPeerCommand({
+    required String commandId,
+    required String peerId,
+    int intent = 0,
+    int communicationClass = 2,
+  }) {
+    _validateCommandId(commandId);
+    _validatePeerId(peerId);
+    if (intent < 0 || communicationClass < 0 || communicationClass > 5) {
+      throw ArgumentError.value(
+        communicationClass,
+        'communicationClass',
+        'Communication class is outside the frozen wire range.',
+      );
+    }
+    return _command(
+      commandId,
+      10,
+      (_ProtoWriter()
+            ..string(1, peerId)
+            ..varint(2, intent)
+            ..varint(3, communicationClass))
+          .takeBytes(),
+    );
+  }
+
+  /// Encodes a Peer disconnect request using the existing V2 command.
+  static Uint8List disconnectPeerCommand({
+    required String commandId,
+    required String peerId,
+  }) {
+    _validateCommandId(commandId);
+    _validatePeerId(peerId);
+    return _command(
+      commandId,
+      17,
+      (_ProtoWriter()..string(1, peerId)).takeBytes(),
+    );
+  }
+
+  /// Encodes a reliable message through the existing V2 tag 19.
+  ///
+  /// The frozen command does not carry `message_id`; the Delivery owner must
+  /// provide that business identity at the next schema seam.
+  static Uint8List sendMessageCommand({
+    required String commandId,
+    required String peerId,
+    required String channelId,
+    required Uint8List payload,
+    int deliveryPolicy = 2,
+  }) {
+    _validateCommandId(commandId);
+    _validatePeerId(peerId);
+    if (channelId.isEmpty || _utf8ByteLength(channelId) > _maxChannelIdBytes) {
+      throw ArgumentError.value(
+        channelId,
+        'channelId',
+        'Channel ID is invalid.',
+      );
+    }
+    if (payload.length > _maxEventBytes) {
+      throw ArgumentError.value(
+        payload.length,
+        'payload',
+        'Payload is too large.',
+      );
+    }
+    return _command(
+      commandId,
+      19,
+      (_ProtoWriter()
+            ..string(1, peerId)
+            ..string(2, channelId)
+            ..bytesField(3, payload)
+            ..varint(4, deliveryPolicy))
+          .takeBytes(),
+    );
+  }
+
+  /// Encodes a transfer request through the existing V2 tag 11.
+  static Uint8List sendFileCommand({
+    required String commandId,
+    required String peerId,
+    required String transferId,
+    required String filePath,
+  }) {
+    _validateCommandId(commandId);
+    _validatePeerId(peerId);
+    _validateIdentifier(transferId, 'transferId', _maxTransferIdBytes);
+    _validateIdentifier(filePath, 'filePath', _maxEventBytes);
+    return _command(
+      commandId,
+      11,
+      (_ProtoWriter()
+            ..string(1, transferId)
+            ..string(2, peerId)
+            ..string(3, filePath))
+          .takeBytes(),
+    );
+  }
+
+  /// Encodes a transfer cancellation through the existing V2 tag 12.
+  static Uint8List cancelTransferCommand({
+    required String commandId,
+    required String transferId,
+  }) {
+    _validateCommandId(commandId);
+    _validateIdentifier(transferId, 'transferId', _maxTransferIdBytes);
+    return _command(
+      commandId,
+      12,
+      (_ProtoWriter()..string(1, transferId)).takeBytes(),
+    );
+  }
+
+  /// Encodes `StartRealtimeSession` into the V2 command envelope.
   static Uint8List startRealtimeSessionCommand({
     required String commandId,
     required String realtimeId,
@@ -353,7 +825,7 @@ final class NativeNetworkProtocol {
     );
   }
 
-  /// Encodes `StopRealtimeSession` into the v1 command envelope.
+  /// Encodes `StopRealtimeSession` into the V2 command envelope.
   static Uint8List stopRealtimeSessionCommand({
     required String commandId,
     required String realtimeId,
@@ -367,7 +839,7 @@ final class NativeNetworkProtocol {
     );
   }
 
-  /// Encodes `SendRealtimeSignal` into the v1 command envelope.
+  /// Encodes `SendRealtimeSignal` into the V2 command envelope.
   static Uint8List sendRealtimeSignalCommand({
     required String commandId,
     required String realtimeId,
@@ -403,7 +875,7 @@ final class NativeNetworkProtocol {
     );
   }
 
-  /// Encodes `SshStreamOpen` into the v1 command envelope (tag 25).
+  /// Encodes `SshStreamOpen` into the V2 command envelope (tag 25).
   static Uint8List sshStreamOpenCommand({
     required String commandId,
     required String peerId,
@@ -425,7 +897,7 @@ final class NativeNetworkProtocol {
     );
   }
 
-  /// Encodes `SshStreamData` into the v1 command envelope (tag 26).
+  /// Encodes `SshStreamData` into the V2 command envelope (tag 26).
   static Uint8List sshStreamDataCommand({
     required String commandId,
     required String peerId,
@@ -453,7 +925,7 @@ final class NativeNetworkProtocol {
     );
   }
 
-  /// Encodes `SshStreamClose` into the v1 command envelope (tag 27).
+  /// Encodes `SshStreamClose` into the V2 command envelope (tag 27).
   static Uint8List sshStreamCloseCommand({
     required String commandId,
     required String peerId,
@@ -494,6 +966,16 @@ final class NativeNetworkProtocol {
         case 3:
           protocolVersion = reader.varint(field.wireType);
         case 13:
+        case 10:
+        case 11:
+        case 14:
+        case 15:
+        case 16:
+        case 18:
+        case 19:
+        case 20:
+        case 24:
+        case 25:
         case 21:
         case 22:
         case 23:
@@ -517,13 +999,73 @@ final class NativeNetworkProtocol {
     final fieldNumber = payloadField;
     if (eventPayload == null || fieldNumber == null) return null;
     return switch (fieldNumber) {
+      10 => _decodePeerState(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      11 => _decodeTransferProgress(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
       13 => _decodeCommandResult(
         eventId,
         timestampMs,
         protocolVersion,
         eventPayload,
       ),
+      14 => _decodeIncomingTransferOffer(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      15 => _decodeTransferCompleted(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      16 => _decodeTransferFailed(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      18 => _decodeRelayState(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      19 => _decodeChannelMessage(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      20 => _decodeDeliveryAcked(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
       21 => _decodeRealtimeState(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      24 => _decodePresenceChanged(
+        eventId,
+        timestampMs,
+        protocolVersion,
+        eventPayload,
+      ),
+      25 => _decodePresenceSnapshot(
         eventId,
         timestampMs,
         protocolVersion,
@@ -597,6 +1139,380 @@ final class NativeNetworkProtocol {
       commandId: commandId,
       accepted: accepted,
       error: error,
+    );
+  }
+
+  static NativePeerStateChangedEvent _decodePeerState(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var state = 0;
+    var route = 0;
+    var topology = 0;
+    var transport = 0;
+    NativeNetworkError? error;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 2:
+          state = reader.varint(field.wireType);
+        case 3:
+          route = reader.varint(field.wireType);
+        case 4:
+          error = _decodeError(reader.bytes(field.wireType));
+        case 5:
+          topology = reader.varint(field.wireType);
+        case 6:
+          transport = reader.varint(field.wireType);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedPeerId(peerId);
+    return NativePeerStateChangedEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      peerId: peerId,
+      state: NativePeerConnectionState.fromWire(state),
+      routeType: NativeRouteType.fromWire(route),
+      routeTopology: NativeRouteTopology.fromWire(topology),
+      routeTransport: NativeRouteTransport.fromWire(transport),
+      error: error,
+    );
+  }
+
+  static NativeTransferProgressEvent _decodeTransferProgress(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var transferId = '';
+    var bytesTransferred = 0;
+    var totalBytes = 0;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          transferId = reader.string(field.wireType, _maxTransferIdBytes);
+        case 2:
+          bytesTransferred = reader.varint(field.wireType);
+        case 3:
+          totalBytes = reader.varint(field.wireType);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedIdentifier(transferId, 'transfer ID');
+    return NativeTransferProgressEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      transferId: transferId,
+      bytesTransferred: bytesTransferred,
+      totalBytes: totalBytes,
+    );
+  }
+
+  static NativeIncomingTransferOfferEvent _decodeIncomingTransferOffer(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var transferId = '';
+    var peerId = '';
+    var fileName = '';
+    var fileSize = 0;
+    var route = 0;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          transferId = reader.string(field.wireType, _maxTransferIdBytes);
+        case 2:
+          peerId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 3:
+          fileName = reader.string(field.wireType, _maxFileNameBytes);
+        case 4:
+          fileSize = reader.varint(field.wireType);
+        case 5:
+          route = reader.varint(field.wireType);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedIdentifier(transferId, 'transfer ID');
+    _validateDecodedPeerId(peerId);
+    _validateDecodedIdentifier(fileName, 'file name');
+    return NativeIncomingTransferOfferEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      transferId: transferId,
+      peerId: peerId,
+      fileName: fileName,
+      fileSize: fileSize,
+      routeType: NativeRouteType.fromWire(route),
+    );
+  }
+
+  static NativeTransferCompletedEvent _decodeTransferCompleted(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var transferId = '';
+    var localPath = '';
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          transferId = reader.string(field.wireType, _maxTransferIdBytes);
+        case 2:
+          localPath = reader.string(field.wireType, _maxEventBytes);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedIdentifier(transferId, 'transfer ID');
+    return NativeTransferCompletedEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      transferId: transferId,
+      localPath: localPath,
+    );
+  }
+
+  static NativeTransferFailedEvent _decodeTransferFailed(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var transferId = '';
+    NativeNetworkError? error;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          transferId = reader.string(field.wireType, _maxTransferIdBytes);
+        case 2:
+          error = _decodeError(reader.bytes(field.wireType));
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedIdentifier(transferId, 'transfer ID');
+    return NativeTransferFailedEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      transferId: transferId,
+      error: error,
+    );
+  }
+
+  static NativeRelayStateChangedEvent _decodeRelayState(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var state = 0;
+    NativeNetworkError? error;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          state = reader.varint(field.wireType);
+        case 2:
+          error = _decodeError(reader.bytes(field.wireType));
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    return NativeRelayStateChangedEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      state: NativeRelayConnectionState.fromWire(state),
+      error: error,
+    );
+  }
+
+  static NativeChannelMessageEvent _decodeChannelMessage(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var sessionId = '';
+    var channelId = '';
+    var messageId = Uint8List(0);
+    var sequence = 0;
+    var payload = Uint8List(0);
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 2:
+          sessionId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 3:
+          channelId = reader.string(field.wireType, _maxChannelIdBytes);
+        case 4:
+          messageId = reader.bytes(field.wireType, _maxMessageIdBytes);
+        case 5:
+          sequence = reader.varint(field.wireType);
+        case 7:
+          payload = reader.bytes(field.wireType, _maxEventBytes);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedPeerId(peerId);
+    _validateDecodedIdentifier(sessionId, 'session ID');
+    _validateDecodedIdentifier(channelId, 'channel ID');
+    if (messageId.isEmpty) {
+      throw const FormatException('Channel message has no message ID.');
+    }
+    return NativeChannelMessageEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      peerId: peerId,
+      sessionId: sessionId,
+      channelId: channelId,
+      messageId: messageId,
+      sequence: sequence,
+      payload: payload,
+    );
+  }
+
+  static NativeDeliveryAckedEvent _decodeDeliveryAcked(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var sessionId = '';
+    var messageId = Uint8List(0);
+    var recoveryEpoch = 0;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 2:
+          sessionId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 3:
+          messageId = reader.bytes(field.wireType, _maxMessageIdBytes);
+        case 4:
+          recoveryEpoch = reader.varint(field.wireType);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedPeerId(peerId);
+    _validateDecodedIdentifier(sessionId, 'session ID');
+    if (messageId.isEmpty) {
+      throw const FormatException('Delivery ACK has no message ID.');
+    }
+    return NativeDeliveryAckedEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      peerId: peerId,
+      sessionId: sessionId,
+      messageId: messageId,
+      recoveryEpoch: recoveryEpoch,
+    );
+  }
+
+  static NativePeerPresenceChangedEvent _decodePresenceChanged(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    var peerId = '';
+    var generation = 0;
+    var state = 0;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          peerId = reader.string(field.wireType, _maxPeerIdBytes);
+        case 2:
+          generation = reader.varint(field.wireType);
+        case 3:
+          state = reader.varint(field.wireType);
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    _validateDecodedPeerId(peerId);
+    return NativePeerPresenceChangedEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      peerId: peerId,
+      generation: generation,
+      state: NativePeerPresenceState.fromWire(state),
+    );
+  }
+
+  static NativePeerPresenceSnapshotEvent _decodePresenceSnapshot(
+    String eventId,
+    int timestampMs,
+    int protocolVersion,
+    Uint8List bytes,
+  ) {
+    final reader = _ProtoReader(bytes);
+    final peers = <NativePeerPresenceChangedEvent>[];
+    while (!reader.isDone) {
+      final field = reader.field();
+      if (field.number == 1) {
+        if (peers.length >= 256) {
+          throw const FormatException('Presence snapshot is too large.');
+        }
+        final nested = reader.bytes(field.wireType, _maxPeerIdBytes + 16);
+        final peer = _decodePresenceChanged(
+          eventId,
+          timestampMs,
+          protocolVersion,
+          nested,
+        );
+        peers.add(peer);
+      } else {
+        reader.skip(field.wireType);
+      }
+    }
+    return NativePeerPresenceSnapshotEvent(
+      eventId: eventId,
+      timestampMs: timestampMs,
+      protocolVersion: protocolVersion,
+      peers: List<NativePeerPresenceChangedEvent>.unmodifiable(peers),
     );
   }
 
@@ -887,6 +1803,16 @@ final class NativeNetworkProtocol {
     }
   }
 
+  static void _validateIdentifier(String value, String name, int maxBytes) {
+    if (value.isEmpty || _utf8ByteLength(value) > maxBytes) {
+      throw ArgumentError.value(
+        value,
+        name,
+        '$name must contain 1-$maxBytes bytes.',
+      );
+    }
+  }
+
   static void _validatePeerId(String value) {
     if (value.isEmpty || _utf8ByteLength(value) > _maxPeerIdBytes) {
       throw ArgumentError.value(value, 'peerId', 'Must contain 1-128 bytes.');
@@ -947,6 +1873,12 @@ final class NativeNetworkProtocol {
   static void _validateDecodedPeerId(String value) {
     if (value.isEmpty || _utf8ByteLength(value) > _maxPeerIdBytes) {
       throw const FormatException('Realtime peer ID is outside bounds.');
+    }
+  }
+
+  static void _validateDecodedIdentifier(String value, String label) {
+    if (value.isEmpty) {
+      throw FormatException('$label is required.');
     }
   }
 

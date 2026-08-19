@@ -284,7 +284,7 @@ impl RelayDataClient {
         }
 
         let (outbound, mut outbound_rx) = mpsc::channel::<Message>(DATA_QUEUE_CAPACITY);
-        self.outbound = Some(outbound);
+        self.outbound = Some(outbound.clone());
         *self.is_connected.write().await = true;
 
         let connected_for_writer = Arc::clone(&self.is_connected);
@@ -317,6 +317,7 @@ impl RelayDataClient {
         }));
 
         let inbound_tx = self.inbound_tx.clone();
+        let outbound_for_reader = outbound.clone();
         let connected_for_reader = Arc::clone(&self.is_connected);
         let notified_for_reader = Arc::clone(&self.disconnect_notified);
         let intentional_for_reader = Arc::clone(&self.intentional_disconnect);
@@ -327,6 +328,20 @@ impl RelayDataClient {
                     reason = "Relay data reader failed".to_string();
                     break;
                 };
+                if let Message::Ping(payload) = message {
+                    // The server owns the single-writer rule.  Route the
+                    // control response through the writer queue instead of
+                    // writing the WebSocket from the reader task.
+                    if outbound_for_reader
+                        .send_timeout(Message::Pong(payload), SOCKET_OPERATION_TIMEOUT)
+                        .await
+                        .is_err()
+                    {
+                        reason = "Relay data Pong response failed".to_string();
+                        break;
+                    }
+                    continue;
+                }
                 match decode_data_event(message) {
                     Ok(Some(event)) => {
                         if inbound_tx.send(event).await.is_err() {

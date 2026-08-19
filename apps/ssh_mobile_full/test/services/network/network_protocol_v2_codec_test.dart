@@ -1,18 +1,18 @@
-// 手写 Dart 网络编解码器的固定字节 v1 golden 测试。
+// Network Protocol V2 手写 Dart 编解码器的固定字节 golden 测试。
 
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import '../../../lib/services/network/network_protocol_codec.dart';
+import '../../../lib/services/network/network_protocol_v2_codec.dart';
 
-/// 执行固定字节 v1 编解码和类型化事件往返测试。
+/// 执行固定字节 V2 编解码和类型化事件往返测试。
 void main() {
-  const codec = NetworkProtocolCodec();
+  const codec = NetworkProtocolV2Codec();
 
-  test('disconnect relay command matches the v1 golden bytes', () {
+  test('disconnect relay command matches the V2 golden bytes', () {
     final bytes = codec.disconnectRelayCommand(commandId: 'c');
-    expect(bytes, <int>[0x0a, 0x01, 0x63, 0x10, 0x01, 0x92, 0x01, 0x00]);
+    expect(bytes, <int>[0x0a, 0x01, 0x63, 0x10, 0x02, 0x92, 0x01, 0x00]);
     expect(codec.commandId(bytes), 'c');
   });
 
@@ -25,7 +25,7 @@ void main() {
     // 载荷：peer_id(1)=p、intent(2)=0、communication_class(3)=ReliableStream(1)。
     expect(reliableStream, <int>[
       0x0a, 0x01, 0x63, // command_id = c
-      0x10, 0x01, // protocol_version = 1
+      0x10, 0x02, // protocol_version = 2
       0x52, 0x07, // connect peer (field 10), length 7
       0x0a, 0x01, 0x70, // peer_id = p
       0x10, 0x00, // intent = 0
@@ -42,12 +42,12 @@ void main() {
     expect(bulk, contains(0x03)); // BulkTransfer = 3
   });
 
-  test('command result event decodes from fixed v1 bytes', () {
+  test('command result event decodes from fixed V2 bytes', () {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[
         0x0a, 0x01, 0x65, // event_id = e，事件标识。
         0x10, 0x64, // timestamp_ms = 100，时间戳。
-        0x18, 0x01, // protocol_version = 1，协议版本。
+        0x18, 0x02, // protocol_version = 2，协议版本。
         0x6a, 0x05, // command_result message，命令结果消息。
         0x0a, 0x01, 0x63, // command_id = c，命令标识。
         0x10, 0x01, // accepted = true，命令已接受。
@@ -55,7 +55,7 @@ void main() {
     );
 
     expect(frame.eventId, 'e');
-    expect(frame.protocolVersion, 1);
+    expect(frame.protocolVersion, 2);
     expect(frame.commandId, 'c');
     expect(frame.commandAccepted, isTrue);
     expect(frame.event, isNull);
@@ -68,7 +68,7 @@ void main() {
         0x01,
         0x66,
         0x18,
-        0x01,
+        0x02,
         0x82,
         0x01,
         0x13,
@@ -106,7 +106,7 @@ void main() {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[
         0x0a, 0x01, 0x65, // event_id = e
-        0x18, 0x01, // protocol_version = 1
+        0x18, 0x02, // protocol_version = 2
         0x72, 0x0d, // incoming offer message
         0x0a, 0x01, 0x74, // transfer_id = t
         0x12, 0x01, 0x70, // peer_id = p
@@ -128,7 +128,7 @@ void main() {
       Uint8List.fromList(<int>[
         0x0a, 0x01, 0x66, // event_id = f
         0x10, 0x64, // timestamp_ms = 100
-        0x18, 0x01, // protocol_version = 1
+        0x18, 0x02, // protocol_version = 2
         0x82, 0x01, 0x14, // transfer failed message (len 20)
         0x0a, 0x01, 0x74, // transfer_id = t
         0x12, 0x0f, // error message (len 15)
@@ -152,7 +152,7 @@ void main() {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[
         0x0a, 0x01, 0x65, // event_id = e
-        0x18, 0x01, // protocol_version = 1
+        0x18, 0x02, // protocol_version = 2
         0x52, 0x0b, // peer state message
         0x0a, 0x01, 0x70, // peer_id = p
         0x10, 0x02, // connected
@@ -167,11 +167,11 @@ void main() {
     expect(event.routeTransport, NetworkRouteTransport.tcp);
   });
 
-  test('peer presence change event decodes from v1 bytes', () {
+  test('peer presence change event decodes from V2 bytes', () {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[
         0x0a, 0x01, 0x65, // event_id = e
-        0x18, 0x01, // protocol_version = 1
+        0x18, 0x02, // protocol_version = 2
         0xc2, 0x01, 0x07, // field 24 (peer presence change), length 7
         0x0a, 0x01, 0x70, // peer_id = p
         0x10, 0x02, // generation = 2
@@ -219,7 +219,7 @@ void main() {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[
         0x0a, 0x03, 0x65, 0x76, 0x74, // event_id = evt
-        0x18, 0x01, // protocol_version = 1
+        0x18, 0x02, // protocol_version = 2
         0xd2, 0x01, 0x1c, // field 26 key + length 28
         0x0a, 0x06, 0x70, 0x65, 0x65, 0x72, 0x2d, 0x61, // peer_id = peer-a
         0x12, 0x0c, // handle
@@ -253,7 +253,7 @@ void main() {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[
         0x0a, 0x03, 0x65, 0x76, 0x74, // event_id = evt
-        0x18, 0x01, // protocol_version = 1
+        0x18, 0x02, // protocol_version = 2
         0xda, 0x01, 0x16, // field 27 key + length 22
         0x0a, 0x06, 0x70, 0x65, 0x65, 0x72, 0x2d, 0x61, // peer_id = peer-a
         0x12,
@@ -285,7 +285,7 @@ void main() {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[
         0x0a, 0x01, 0x65, // event_id = e
-        0x18, 0x01, // protocol_version = 1
+        0x18, 0x02, // protocol_version = 2
         0xca, 0x01, 0x12, // field 25 (peer presence snapshot), length 18
         0x0a, 0x07, // peers[0] message, length 7
         0x0a, 0x01, 0x70, // peer_id = p

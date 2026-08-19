@@ -490,7 +490,7 @@ flowchart LR
   HTTPS/WebSocket transfer, Web Share, transfer history, non-secret pairing
   metadata, and the `LanShareModule` with its independent `lan_share.db`.
   The package consumes `network_sdk` client contracts plus `network_transport`,
-  `app_core`, `app_ui`, and injected App Ports; native v1 construction remains
+  `app_core`, `app_ui`, and injected App Ports; Network Protocol V2 construction remains
   in the App Shell adapter.
 - `packages/features/feature_mcp/`: the local MCP HTTP/JSON-RPC server,
   exposure and invocation policy, approval queue, activity Repository, console
@@ -566,8 +566,8 @@ aggregated by `app/navigation/` without importing Feature `/src/` code.
 The same Runtime owns one lazy `NetworkRuntime`; QUIC and WSS Relay capabilities
 share native initialization, failed initialization can retry, and disposal waits
 for and closes the native handle. The typed `network_sdk` client facade is injected
-above that runtime, while its App Shell adapter is the only bridge to the legacy
-native v1 service. Realtime command tickets are correlated with native result events
+above that runtime, while its App Shell adapter is the only bridge to the
+Network Protocol V2 service. Realtime command tickets are correlated with native result events
 inside that adapter, with bounded timeout/dispose cleanup; lifecycle states come from
 native state events and stop waits for `closed`. LAN Share still has a Feature-owned
 Module and database; old LAN paths remain compatibility surfaces during migration.

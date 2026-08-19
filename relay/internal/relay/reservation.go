@@ -14,8 +14,8 @@
 package relay
 
 import (
-	"bytes"
 	"context"
+	"crypto/hmac"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -97,6 +97,13 @@ const (
 	maxPendingRelayDataConns = 4096
 	// relayDataWriteTimeout 是数据面每次 socket 写操作的 deadline。
 	relayDataWriteTimeout = 10 * time.Second
+	// RelayData liveness is independent from reservation admission TTL once both
+	// roles have paired.  Control frames are still serialized by the same
+	// outbound writer as binary RelayData frames.
+	relayDataPingInterval            = 30 * time.Second
+	relayDataPongTimeout             = 15 * time.Second
+	relayDataPairReadyPing           = "ssh-mobile-relay-paired-v1:"
+	maxConsumedRelayDataReservations = 65536
 )
 
 // ---------------------------------------------------------------------------
@@ -231,13 +238,77 @@ type relayDataPair struct {
 // relayDataRegistry 把同一 reservation 的 initiator/responder 两个 /v2/relay
 // 端点链接起来。角色由首帧 token 决定，不能因为到达顺序而互换。
 type relayDataRegistry struct {
-	mutex        sync.Mutex
-	pairs        map[string]*relayDataPair
+	mutex sync.Mutex
+	pairs map[string]*relayDataPair
+	// consumed is process-local because this deployment deliberately has one
+	// live RelayData instance.  Once a pair has been established, the
+	// reservation token cannot create another pair; active sockets retain their
+	// in-memory reservation and are not dependent on the admission record.
+	consumed map[string]struct{}
+	// deviceRefs indexes every data endpoint after its RelayDataConnect frame
+	// has been admitted.  Revocation uses it to close pending endpoints and the
+	// counterpart of an active pair without scanning unrelated sockets.
+	deviceRefs map[string]map[*relayDataConn]struct{}
+	// upgradeRefs covers an authenticated WebSocket that has not sent its
+	// RelayDataConnect first frame yet.  Revoke must close this pending socket
+	// too; it must not be able to outlive the device authorization decision.
+	upgradeRefs  map[string]map[*relayDataConn]struct{}
 	pendingPairs int
 }
 
 func newRelayDataRegistry() *relayDataRegistry {
-	return &relayDataRegistry{pairs: make(map[string]*relayDataPair)}
+	return &relayDataRegistry{
+		pairs:       make(map[string]*relayDataPair),
+		consumed:    make(map[string]struct{}),
+		deviceRefs:  make(map[string]map[*relayDataConn]struct{}),
+		upgradeRefs: make(map[string]map[*relayDataConn]struct{}),
+	}
+}
+
+func (r *relayDataRegistry) trackUpgradeLocked(rc *relayDataConn) {
+	refs := r.upgradeRefs[rc.deviceID]
+	if refs == nil {
+		refs = make(map[*relayDataConn]struct{})
+		r.upgradeRefs[rc.deviceID] = refs
+	}
+	refs[rc] = struct{}{}
+}
+
+func (r *relayDataRegistry) trackUpgrade(rc *relayDataConn) {
+	r.mutex.Lock()
+	r.trackUpgradeLocked(rc)
+	r.mutex.Unlock()
+}
+
+func (r *relayDataRegistry) removeUpgradeLocked(rc *relayDataConn) {
+	refs := r.upgradeRefs[rc.deviceID]
+	if refs == nil {
+		return
+	}
+	delete(refs, rc)
+	if len(refs) == 0 {
+		delete(r.upgradeRefs, rc.deviceID)
+	}
+}
+
+func (r *relayDataRegistry) addDeviceRefLocked(rc *relayDataConn) {
+	refs := r.deviceRefs[rc.deviceID]
+	if refs == nil {
+		refs = make(map[*relayDataConn]struct{})
+		r.deviceRefs[rc.deviceID] = refs
+	}
+	refs[rc] = struct{}{}
+}
+
+func (r *relayDataRegistry) removeDeviceRefLocked(rc *relayDataConn) {
+	refs := r.deviceRefs[rc.deviceID]
+	if refs == nil {
+		return
+	}
+	delete(refs, rc)
+	if len(refs) == 0 {
+		delete(r.deviceRefs, rc.deviceID)
+	}
 }
 
 // register 登记一条已通过 Connect 校验的数据面连接。
@@ -248,6 +319,11 @@ func newRelayDataRegistry() *relayDataRegistry {
 // 参与新 pair 的状态变更。
 func (r *relayDataRegistry) register(rc *relayDataConn) (peer *relayDataConn, replaced []*relayDataConn, ok bool) {
 	r.mutex.Lock()
+	r.removeUpgradeLocked(rc)
+	if _, alreadyConsumed := r.consumed[rc.reservationID]; alreadyConsumed {
+		r.mutex.Unlock()
+		return nil, nil, false
+	}
 	pair := r.pairs[rc.reservationID]
 	if pair == nil {
 		if r.pendingPairs >= maxPendingRelayDataConns {
@@ -273,38 +349,20 @@ func (r *relayDataRegistry) register(rc *relayDataConn) (peer *relayDataConn, re
 		return nil, nil, false
 	}
 	if *slot != nil {
-		old := *slot
-		if pair.initiator != nil && pair.responder != nil {
-			// A completed pair is a single Ready handshake. A same-role retry
-			// therefore invalidates both old endpoints instead of reusing the
-			// opposite endpoint and delivering it a second Ready frame.
-			oldInitiator := pair.initiator
-			oldResponder := pair.responder
-			oldInitiator.clearPeer()
-			oldResponder.clearPeer()
-			oldInitiator.ready.Store(false)
-			oldResponder.ready.Store(false)
-			replaced = append(replaced, oldInitiator, oldResponder)
-			delete(r.pairs, rc.reservationID)
-			pair = &relayDataPair{}
-			r.pairs[rc.reservationID] = pair
-			r.pendingPairs++
-			switch rc.role {
-			case relayDataRoleInitiator:
-				slot = &pair.initiator
-			case relayDataRoleResponder:
-				slot = &pair.responder
-			}
-			other = nil
-		} else {
-			replaced = append(replaced, old)
-			old.clearPeer()
-			old.ready.Store(false)
-		}
+		// A role slot is one-shot.  Replacing an endpoint would let a replayed
+		// token steal a still-pending pair and made reservation consumption
+		// ambiguous.  The caller closes the duplicate outside the registry lock.
+		r.mutex.Unlock()
+		return nil, nil, false
 	}
 	*slot = rc
+	r.addDeviceRefLocked(rc)
 
 	if pair.initiator != nil && pair.responder != nil {
+		if len(r.consumed) >= maxConsumedRelayDataReservations {
+			r.mutex.Unlock()
+			return nil, nil, false
+		}
 		if r.pendingPairs > 0 {
 			r.pendingPairs--
 		}
@@ -314,8 +372,15 @@ func (r *relayDataRegistry) register(rc *relayDataConn) (peer *relayDataConn, re
 		// payload from either read loop observe that its own Ready is already
 		// ahead of business traffic in the outbound queue.
 		readyQueued := rc.enqueueReady() && peer.enqueueReady()
+		pairReadyQueued := rc.enqueuePairReadyPing() && peer.enqueuePairReadyPing()
+		readyQueued = readyQueued && pairReadyQueued
 		rc.ready.Store(readyQueued)
 		peer.ready.Store(readyQueued)
+		if readyQueued {
+			r.consumed[rc.reservationID] = struct{}{}
+			rc.paired.Store(true)
+			peer.paired.Store(true)
+		}
 	}
 	r.mutex.Unlock()
 	return peer, replaced, true
@@ -325,8 +390,10 @@ func (r *relayDataRegistry) register(rc *relayDataConn) (peer *relayDataConn, re
 func (r *relayDataRegistry) unregister(rc *relayDataConn) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
+	r.removeUpgradeLocked(rc)
 	pair := r.pairs[rc.reservationID]
 	if pair == nil {
+		r.removeDeviceRefLocked(rc)
 		return
 	}
 	wasComplete := pair.initiator != nil && pair.responder != nil
@@ -340,8 +407,10 @@ func (r *relayDataRegistry) unregister(rc *relayDataConn) {
 		removed = true
 	}
 	if !removed {
+		r.removeDeviceRefLocked(rc)
 		return
 	}
+	r.removeDeviceRefLocked(rc)
 	rc.ready.Store(false)
 	other := pair.initiator
 	if other == nil {
@@ -362,6 +431,55 @@ func (r *relayDataRegistry) unregister(rc *relayDataConn) {
 	}
 }
 
+// closeDevice closes every data endpoint authenticated as deviceID.  An active
+// endpoint also closes its counterpart; a pending endpoint is closed in place.
+// The registry lock is released before socket work so revoke cannot block
+// registration of unrelated reservations on a slow WebSocket peer.
+func (r *relayDataRegistry) closeDevice(deviceID string) {
+	r.mutex.Lock()
+	targets := make(map[*relayDataConn]struct{})
+	for rc := range r.deviceRefs[deviceID] {
+		targets[rc] = struct{}{}
+		if peer := rc.peerConn(); peer != nil {
+			targets[peer] = struct{}{}
+		}
+	}
+	for rc := range r.upgradeRefs[deviceID] {
+		targets[rc] = struct{}{}
+	}
+	r.mutex.Unlock()
+
+	for rc := range targets {
+		rc.sendCloseAndShutdown(2, "device revoked")
+	}
+}
+
+// closeAll is used during server shutdown.  It is deliberately separate from
+// closeDevice so shutdown can close every local data socket without pretending
+// that a device-level revocation occurred.
+func (r *relayDataRegistry) closeAll() {
+	r.mutex.Lock()
+	targets := make(map[*relayDataConn]struct{})
+	for _, pair := range r.pairs {
+		if pair.initiator != nil {
+			targets[pair.initiator] = struct{}{}
+		}
+		if pair.responder != nil {
+			targets[pair.responder] = struct{}{}
+		}
+	}
+	for _, refs := range r.upgradeRefs {
+		for rc := range refs {
+			targets[rc] = struct{}{}
+		}
+	}
+	r.mutex.Unlock()
+
+	for rc := range targets {
+		rc.sendCloseAndShutdown(2, "relay server shutting down")
+	}
+}
+
 // relayDataConn 是 /v2/relay/{reservation_id} 的一个端点。它没有 presence 租约，
 // 只用 reservation 校验身份；peer 是同一 reservation 的另一端点（由 registry 链接）。
 // 写侧：read goroutine 阻塞读 socket，write goroutine 从 outbound 写帧并在 close 时
@@ -369,6 +487,7 @@ func (r *relayDataRegistry) unregister(rc *relayDataConn) {
 type relayDataConn struct {
 	reservationID string
 	res           Reservation
+	deviceID      string
 	role          relayDataRole
 	registry      *relayDataRegistry
 	cache         Cache // 滑动窗口续期 reservation 存储 TTL 用
@@ -382,6 +501,8 @@ type relayDataConn struct {
 	peerMutex sync.Mutex
 	peer      *relayDataConn
 	ready     atomic.Bool
+	paired    atomic.Bool
+	lastPong  atomic.Int64
 
 	// 与 hub peer 同构的速率/积压预算字段。
 	stateMutex         sync.Mutex
@@ -396,10 +517,12 @@ type relayDataConn struct {
 	bytesInWindow      int64
 }
 
-func newRelayDataConn(registry *relayDataRegistry, res Reservation, socket *websocket.Conn, config Config, cache Cache) *relayDataConn {
+func newRelayDataConn(registry *relayDataRegistry, res Reservation, socket *websocket.Conn, config Config, cache Cache, deviceID string, role relayDataRole) *relayDataConn {
 	return &relayDataConn{
 		reservationID:      res.ReservationID,
 		res:                res,
+		deviceID:           deviceID,
+		role:               role,
 		registry:           registry,
 		cache:              cache,
 		socket:             socket,
@@ -457,12 +580,31 @@ func (rc *relayDataConn) read() {
 		<-rc.writeDone
 	}()
 	rc.socket.SetReadLimit(v2.MAX_RELAY_DATA_FRAME_BYTES)
+	// Gorilla invokes these handlers from the single read goroutine.  Responses
+	// are queued instead of calling WriteControl/WriteMessage directly, so every
+	// WebSocket write (Pong, keepalive Ping, PairReady Ping, binary frames and
+	// Close) has one owner.
+	rc.lastPong.Store(time.Now().UnixNano())
+	rc.socket.SetPingHandler(func(payload string) error {
+		rc.lastPong.Store(time.Now().UnixNano())
+		if !rc.enqueue(outboundFrame{websocket.PongMessage, []byte(payload)}) {
+			return errors.New("relay pong queue is closed")
+		}
+		return nil
+	})
+	rc.socket.SetPongHandler(func(string) error {
+		rc.lastPong.Store(time.Now().UnixNano())
+		return nil
+	})
 	// reservation 到期（含 5s 宽限）即强制关闭。到期定时器是滑动窗口：初始窗口用
 	// refreshTTL()（now+lifetime+grace，与 touch 的续期语义一致）而不是名义
 	// ExpiresAtMs——晚加入的端点拿到的是全新窗口；每次成功的数据面帧
 	// （RelayDataConnect/Payload/Ack）都重置窗口（见 touch），流量不断则连接不被
 	// 一次性定时器中断；空闲到窗口末尾仍以 reason 1 强制关闭。
 	expiryTimer := time.AfterFunc(rc.refreshTTL(), func() {
+		if rc.paired.Load() {
+			return
+		}
 		rc.sendCloseAndShutdown(1, "reservation expired")
 	})
 	defer expiryTimer.Stop()
@@ -511,6 +653,21 @@ func (rc *relayDataConn) read() {
 				rc.sendCloseAndShutdown(2, "relay data pairing ready notification failed")
 				return
 			}
+			if peer != nil && rc.ready.Load() {
+				// Pairing consumes admission.  The active sockets retain the
+				// reservation in memory and use liveness, not reservation TTL, for
+				// their lifetime.
+				if rc.cache != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+					_ = rc.cache.DeleteReservation(ctx, rc.reservationID)
+					cancel()
+				}
+				expiryTimer.Stop()
+				rc.startKeepalive()
+				if peer != nil {
+					peer.startKeepalive()
+				}
+			}
 			// Connect/Ready 成功即活跃：续期滑动窗口。
 			rc.touch(expiryTimer)
 			continue
@@ -549,11 +706,45 @@ func (rc *relayDataConn) read() {
 	}
 }
 
+// startKeepalive begins only after both endpoints have received their queued
+// PairReady frames.  It never writes to the socket directly; the existing
+// outbound writer remains the sole WebSocket writer.
+func (rc *relayDataConn) startKeepalive() {
+	if !rc.paired.Load() {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(relayDataPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-rc.done:
+				return
+			case <-ticker.C:
+				last := time.Unix(0, rc.lastPong.Load())
+				if time.Since(last) > relayDataPingInterval+relayDataPongTimeout {
+					rc.sendCloseAndShutdown(2, "relay data pong timeout")
+					return
+				}
+				if !rc.enqueue(outboundFrame{
+					messageType: websocket.PingMessage,
+					data:        []byte(relayDataPairReadyPing + rc.reservationID),
+				}) {
+					return
+				}
+			}
+		}
+	}()
+}
+
 // touch 在每次成功的数据面帧后续期滑动窗口：(a) 本地到期定时器重置到
 // now+lifetime+grace；(b) 尽力续期共享存储里 reservation 的 TTL（失败静默——数据面
 // 连接仍由本地定时器兜底关闭）。Stop 返回 false 表示定时器已触发（回调正在运行）、
 // 连接正在关闭，此时不再续期。仅 read goroutine 调用 Stop/Reset，避免与回调并发。
 func (rc *relayDataConn) touch(expiryTimer *time.Timer) {
+	if rc.paired.Load() {
+		return
+	}
 	if !expiryTimer.Stop() {
 		return
 	}
@@ -586,17 +777,25 @@ func (rc *relayDataConn) acceptConnect(connect *v2.RelayDataConnect) (relayDataR
 	if connect.ReservationId != rc.reservationID {
 		return 0, false
 	}
-	initiator := bytes.Equal(connect.LocalToken, rc.res.InitiatorToken)
-	responder := bytes.Equal(connect.LocalToken, rc.res.ResponderToken)
-	if initiator == responder {
-		// A token that matches both sides is ambiguous and cannot establish a
-		// stable reservation role.
+	var expected []byte
+	switch rc.role {
+	case relayDataRoleInitiator:
+		if rc.deviceID != rc.res.InitiatorDeviceID {
+			return 0, false
+		}
+		expected = rc.res.InitiatorToken
+	case relayDataRoleResponder:
+		if rc.deviceID != rc.res.ResponderDeviceID {
+			return 0, false
+		}
+		expected = rc.res.ResponderToken
+	default:
 		return 0, false
 	}
-	if initiator {
-		return relayDataRoleInitiator, true
+	if len(expected) == 0 || !hmac.Equal(connect.LocalToken, expected) {
+		return 0, false
 	}
-	return relayDataRoleResponder, true
+	return rc.role, true
 }
 
 // forward 把一帧 RelayDataFrame 编码后投递给对端端点。返回 false 表示对端未连接或
@@ -616,6 +815,13 @@ func (rc *relayDataConn) enqueueReady() bool {
 		Kind: &v2.RelayDataFrame_Ready{Ready: &v2.RelayDataReady{
 			ReservationId: rc.reservationID,
 		}},
+	})
+}
+
+func (rc *relayDataConn) enqueuePairReadyPing() bool {
+	return rc.enqueue(outboundFrame{
+		messageType: websocket.PingMessage,
+		data:        []byte(relayDataPairReadyPing + rc.reservationID),
 	})
 }
 
@@ -754,9 +960,9 @@ func (rc *relayDataConn) allowFrame(size int) bool {
 // HTTP：GET /v2/relay/{reservation_id}
 // ---------------------------------------------------------------------------
 
-// connectRelayData 处理 /v2/relay/{reservation_id} 升级。升级阶段校验 reservation_id
-// 格式、存在性与未过期（含宽限），并用 query/header 中的 token（hex 编码）做授权；
-// 首帧 RelayDataConnect 会再次校验 reservation_id + local_token（双保险）。
+// connectRelayData 处理 /v2/relay/{reservation_id} 升级。先完成与控制面相同的
+// authenticatedRequest，再按 authenticated device -> reservation role -> role token
+// 绑定校验 query/header token；首帧 RelayDataConnect 会再次执行同一绑定校验。
 func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 	reservationID := r.PathValue("reservation_id")
 	if !validReservationID(reservationID) {
@@ -775,11 +981,22 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "reservation not found", http.StatusNotFound)
 		return
 	}
+	claims, _, code, authenticated := s.authenticatedRequest(r)
+	if !authenticated {
+		retry := retryUnspecified
+		if code == relayErrorCredentialExpired {
+			retry = retryRefreshCredentialThenRetry
+		}
+		writeNetworkErrorRetry(w, http.StatusUnauthorized, code,
+			"Relay data-plane authentication failed.", "connect_relay_data", "", retry, 0)
+		return
+	}
 	// 不按名义 ExpiresAtMs 做升级准入：滑动窗口续期（RenewReservation/touch）只滑动
 	// 存储 TTL，从不回写 ExpiresAtMs，因此晚加入的端点即使名义到期已过、只要存储键仍
 	// 存活（GetReservation ok）就必须被接受。GetReservation 的 ok 结果已编码滑动窗口
 	// 活性（memoryStore 按滑动的 entry.expiresAt 剪除，redisStore 依赖滑动的 Redis TTL）。
-	if !validRelayToken(r, res) {
+	role, roleOK := relayDataRoleForDevice(res, claims.DeviceID)
+	if !roleOK || !validRelayTokenForRole(r, res, role) {
 		http.Error(w, "invalid reservation token", http.StatusUnauthorized)
 		return
 	}
@@ -788,10 +1005,26 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 不在升级阶段登记：只有首帧 RelayDataConnect 通过校验后才进入 registry（避免
-	// 把自身当成等待对端）。未发 Connect 的已升级连接不占 pending 容量。
-	rc := newRelayDataConn(&s.relayData, res, connection, s.config, s.cache)
+	// 把自身当成等待对端）。未发 Connect 的已升级连接不占 pending 容量，但仍
+	// 由 upgradeRefs 追踪，以便 explicit revoke 立即关闭它。
+	rc := newRelayDataConn(&s.relayData, res, connection, s.config, s.cache, claims.DeviceID, role)
+	s.relayData.trackUpgrade(rc)
 	go rc.write()
 	go rc.read()
+}
+
+func relayDataRoleForDevice(res Reservation, deviceID string) (relayDataRole, bool) {
+	if deviceID == "" || res.InitiatorDeviceID == res.ResponderDeviceID {
+		return 0, false
+	}
+	switch deviceID {
+	case res.InitiatorDeviceID:
+		return relayDataRoleInitiator, true
+	case res.ResponderDeviceID:
+		return relayDataRoleResponder, true
+	default:
+		return 0, false
+	}
 }
 
 // validReservationID 校验 reservation_id 是 16-byte hex、32 个小写字符。
@@ -809,16 +1042,35 @@ func validReservationID(id string) bool {
 // validRelayToken 从 query (?token=) 或 header (X-Relay-Token) 读取 hex 编码的
 // reservation token，并校验它匹配 A 或 B 任一端的 token。
 func validRelayToken(r *http.Request, res Reservation) bool {
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		token = r.Header.Get("X-Relay-Token")
-	}
-	if token == "" {
+	return validRelayTokenForRole(r, res, relayDataRoleInitiator) ||
+		validRelayTokenForRole(r, res, relayDataRoleResponder)
+}
+
+func validRelayTokenForRole(r *http.Request, res Reservation, role relayDataRole) bool {
+	queryToken := r.URL.Query().Get("token")
+	headerToken := r.Header.Get("X-Relay-Token")
+	if queryToken == "" && headerToken == "" {
 		return false
+	}
+	if queryToken != "" && headerToken != "" && queryToken != headerToken {
+		return false
+	}
+	token := queryToken
+	if token == "" {
+		token = headerToken
 	}
 	raw, err := hex.DecodeString(token)
 	if err != nil {
 		return false
 	}
-	return bytes.Equal(raw, res.InitiatorToken) || bytes.Equal(raw, res.ResponderToken)
+	var expected []byte
+	switch role {
+	case relayDataRoleInitiator:
+		expected = res.InitiatorToken
+	case relayDataRoleResponder:
+		expected = res.ResponderToken
+	default:
+		return false
+	}
+	return len(raw) == len(expected) && hmac.Equal(raw, expected)
 }

@@ -1,0 +1,595 @@
+{
+  "schema_version": 1,
+  "contract": "network-v2-frozen-plan",
+  "purpose": "Phase 0 characterization inventory and final acceptance gate",
+  "cases": [
+    {
+      "id": "candidate.fresh_stage_a",
+      "category": "candidate-cache",
+      "acceptance": "A fresh remote snapshot is eligible for Stage A direct candidates.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+          "contains": [
+            "cache_uses_monotonic_age_and_server_confirmed_ttl",
+            "stage_a_candidates_at"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "candidate.expired_stage_a",
+      "category": "candidate-cache",
+      "acceptance": "An expired snapshot is not returned to Stage A.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+          "contains": [
+            "cache_uses_monotonic_age_and_server_confirmed_ttl",
+            "assert!(!cache.is_fresh_at"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "candidate.expired_stage_b_refresh",
+      "category": "candidate-cache",
+      "acceptance": "After Stage A expiry, Stage B Resolve data can refresh the cache.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+          "contains": [
+            "expired_stage_b_resolve_snapshot_refreshes_cache",
+            "CacheUpdate::Refreshed"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+          "contains": [
+            "update_remote_candidate_cache",
+            "ResolvedCandidateCache::from_snapshot"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "candidate.epoch_invalidation",
+      "category": "candidate-cache",
+      "acceptance": "A remote runtime epoch change immediately invalidates the old Stage A snapshot.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+          "contains": [
+            "runtime_epoch_change_invalidates_before_new_snapshot_arrives",
+            "invalidate_for_remote_epoch"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "candidate.wall_clock_jump_monotonic",
+      "category": "candidate-cache",
+      "acceptance": "Cache age uses a native monotonic clock and is not derived from published wall time.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+          "contains": [
+            "use std::time::{Duration, Instant};",
+            "now.saturating_duration_since(self.learned_at)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "candidate.heartbeat_does_not_refresh",
+      "category": "candidate-cache",
+      "acceptance": "A control heartbeat does not move the candidate learning point.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+          "contains": [
+            "heartbeat_does_not_refresh_candidate_learning_point",
+            "learned_at = self.learned_at.max(learned_at)",
+            "published wall-clock timestamps are intentionally absent"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "candidate.ready_presence_ttl",
+      "category": "candidate-cache",
+      "acceptance": "The Ready-confirmed presence TTL is used for candidate freshness.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+          "contains": [
+            "server_presence_ttl",
+            "DEFAULT_REMOTE_CANDIDATE_CACHE_TTL"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+          "contains": [
+            "network_relay::v2::PRESENCE_TTL_S"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "candidate.equal_revision_fingerprint",
+      "category": "candidate-cache",
+      "acceptance": "An equal revision with a different candidate fingerprint is rejected.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-nat/src/candidate_v2.rs",
+          "contains": [
+            "same_revision_with_different_fingerprint_is_inconsistent",
+            "SameRevisionDifferentFingerprint"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "relay.data_env_crypto_first",
+      "category": "relay-path-handshake",
+      "acceptance": "Relay DATA_ENV_CRYPTO is the only application envelope admitted before PathHandshake Ready.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/path_handshake.rs",
+          "contains": [
+            "DATA_ENV_CRYPTO",
+            "relay_uses_data_env_crypto_after_pair_ready_and_blocks_business_until_ready"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-core/src/relay.rs",
+          "contains": [
+            "handle_relay_crypto_handshake",
+            "Relay PathHandshakeV2 is not Ready; business envelope rejected"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "relay.pre_pair_reject",
+      "category": "relay-path-handshake",
+      "acceptance": "Relay data is rejected until both roles have completed the PairReady admission.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/path_handshake.rs",
+          "contains": [
+            "all_relay_business_envelopes_are_blocked_before_ready",
+            "Err(PathHandshakeError::PairNotReady)"
+          ]
+        },
+        {
+          "path": "relay/internal/relay/control_v2_test.go",
+          "contains": [
+            "TestRelayDataReadyRequiresBothRoles"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "relay.business_before_ready_reject",
+      "category": "relay-path-handshake",
+      "acceptance": "Channel, stream, and file business envelopes are rejected before Ready.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/path_handshake.rs",
+          "contains": [
+            "all_relay_business_envelopes_are_blocked_before_ready",
+            "DATA_ENV_FILE_CHUNK"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "relay.crypto_drives_v2",
+      "category": "relay-path-handshake",
+      "acceptance": "The DATA_ENV_CRYPTO path carries the authenticated PathHandshakeV2 progression.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/path_handshake.rs",
+          "contains": [
+            "relay_uses_data_env_crypto_after_pair_ready_and_blocks_business_until_ready",
+            "EnvelopeKind::CryptoHandshake"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-core/src/relay.rs",
+          "contains": [
+            "handle_relay_path_handshake",
+            "send_relay_path_handshake"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "relay.ready_business_admission",
+      "category": "relay-path-handshake",
+      "acceptance": "Business traffic is admitted only after the authenticated path reaches Ready.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/path_handshake.rs",
+          "contains": [
+            "initiator.admit_envelope(EnvelopeKind::ChannelMessage)",
+            "PathHandshakeError::PathNotReady"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-core/src/relay.rs",
+          "contains": [
+            "relay_path_ready",
+            "complete_relay_path_admission"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "relay.opaque_payload",
+      "category": "relay-path-handshake",
+      "acceptance": "Relay forwards encrypted payload bytes without parsing their inner envelope.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "protocol/proto/relay/v2/relay_v2.proto",
+          "contains": [
+            "bytes encrypted_payload"
+          ]
+        },
+        {
+          "path": "protocol/RELAY_V2_CONTRACT.md",
+          "contains": [
+            "Relay NEVER parses",
+            "`encrypted_payload`"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "relay.route_separation",
+      "category": "relay-path-handshake",
+      "acceptance": "Control route and data route reject the other route's envelope type.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "relay/internal/relay/control_v2_test.go",
+          "contains": [
+            "TestControlV2RejectsRelayDataFrame"
+          ]
+        },
+        {
+          "path": "protocol/RELAY_V2_CONTRACT.md",
+          "contains": [
+            "Offering the wrong envelope type on a",
+            "route is a protocol violation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "revocation.expired_control_admission",
+      "category": "revocation",
+      "acceptance": "An expired credential cannot create a new control connection.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "relay/internal/relay/wave2_contract_test.go",
+          "contains": [
+            "TestConnectExpiredCredentialReturnsCode12"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "revocation.expired_data_admission",
+      "category": "revocation",
+      "acceptance": "An expired credential cannot create a new data connection.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "relay/internal/relay/network_v2_revocation_acceptance_test.go",
+          "contains": [
+            "TestNetworkV2ExpiredCredentialCannotOpenDataSocket",
+            "StatusUnauthorized"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "revocation.natural_expiry_keeps_ready",
+      "category": "revocation",
+      "acceptance": "Natural credential expiry does not tear down an already Ready data path.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "relay/internal/relay/control_v2_test.go",
+          "contains": [
+            "TestRelayDataIdleCredentialExpiryKeepsReadySessionAlive",
+            "paired idle session should remain Ready"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "revocation.pending_initiator_responder_active",
+      "category": "revocation",
+      "acceptance": "Explicit revoke closes pending initiator, pending responder, active socket, and active counterpart.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "relay/internal/relay/control_v2_test.go",
+          "contains": [
+            "TestRelayDataCloseDeviceClosesPendingActiveAndCounterpart"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "revocation.old_token_reconnect",
+      "category": "revocation",
+      "acceptance": "A revoked or mismatched old role token cannot reconnect to a new data reservation.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "relay/internal/relay/control_v2_test.go",
+          "contains": [
+            "TestRelayDataAdmissionBindsDeviceRoleAndToken",
+            "TestRelayDataConnectValidation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "revocation.persistent_failure_fails_closed",
+      "category": "revocation",
+      "acceptance": "A persistent revoke-store failure does not report false success and leaves admission revoked when the store says so.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "relay/internal/relay/fix_package_a_test.go",
+          "contains": [
+            "TestAdminRevokeReturnsErrorWhenRevokeFails"
+          ]
+        },
+        {
+          "path": "relay/internal/relay/fix_package_b_test.go",
+          "contains": [
+            "TestReconcileRevocationsDisconnectsRevokedDevice"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "revocation.nonparticipant_untouched",
+      "category": "revocation",
+      "acceptance": "Revoking one device does not clear a foreign device's presence or data path.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "relay/internal/relay/fix_package_a_test.go",
+          "contains": [
+            "TestDisconnectDeviceDoesNotClearForeignPresence"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.stage_a_pure_direct",
+      "category": "staged-connect",
+      "acceptance": "Stage A is a pure direct race using fresh cache/configured candidates before Resolve.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+          "contains": [
+            "try_stage_a_direct",
+            "Resolve/Offer are only entered after this",
+            "uncoordinated attempt fails",
+            "direct_window_constant_is_four_seconds"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.stage_b_resolve_offer",
+      "category": "staged-connect",
+      "acceptance": "Stage B performs authoritative Resolve and coordination after Stage A fails.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+          "contains": [
+            "resolve_is_the_authoritative_gate_before_connect",
+            "spawn_coordination"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.stage_c_relay_fallback",
+      "category": "staged-connect",
+      "acceptance": "Stage C enters bounded Relay fallback only after the direct window fails.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+          "contains": [
+            "DIRECT_FAILED → RELAY_RESERVING → RELAY_CONNECTING",
+            "connect_relay_fallback",
+            "Relay route does not satisfy the requested capability"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.multi_peer_gate",
+      "category": "peer-lifecycle",
+      "acceptance": "Concurrent requests for one peer share one generation while different peers remain isolated.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs",
+          "contains": [
+            "peer_ids_are_validated_and_isolated",
+            "concurrent_connects_share_one_generation_and_completion"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.role_token_pairready",
+      "category": "relay-path-handshake",
+      "acceptance": "Role/token binding, one-writer pairing, and PairReady are enforced before payload flow.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "relay/internal/relay/control_v2_test.go",
+          "contains": [
+            "TestRelayDataAdmissionBindsDeviceRoleAndToken",
+            "TestRelayDataSameRoleRetryRejectsDuplicate",
+            "TestRelayDataReadyRequiresBothRoles"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.path_lease",
+      "category": "path-lifecycle",
+      "acceptance": "Path handles are non-owning and leases release path reservations without closing the owner.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/connect/path.rs",
+          "contains": [
+            "handles_are_non_owning_and_leases_are_released",
+            "revoked_handle_cannot_be_reacquired"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.idle_ssh_240s",
+      "category": "long-lived-session",
+      "acceptance": "An idle SSH session remains usable beyond 240 seconds while control heartbeats continue.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "relay/internal/relay/control_v2_test.go",
+          "contains": [
+            "TestRelayDataIdleCredentialExpiryKeepsReadySessionAlive",
+            "Stay idle beyond the old 1s LifetimeS"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-core/src/stream.rs",
+          "contains": [
+            "MAX_PER_STREAM_BUFFER_CAPACITY",
+            "event_consumer_flood_stays_bounded_and_drains_in_order"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.delivery_retry_resume",
+      "category": "delivery",
+      "acceptance": "Reliable delivery retries and resumable transfer state remain bounded and ordered.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/delivery.rs",
+          "contains": [
+            "retry_policy_is_bounded_and_expiry_removes_pending"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-core/src/stream.rs",
+          "contains": [
+            "event_consumer_flood_stays_bounded_and_drains_in_order"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.bounded_event_mux",
+      "category": "event-delivery",
+      "acceptance": "The final EventMux has bounded memory, fairness, overflow policy, and peer isolation.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/runtime.rs",
+          "contains": [
+            "EVENT_MAILBOX_CAPACITY",
+            "MAX_EVENT_QUEUE_BYTES",
+            "EventSender::Bounded"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-ffi/src/lib.rs",
+          "contains": [
+            "event_mux_applies_bounded_control_data_fairness",
+            "SSH_NET_MAX_CONTROL_ITEMS",
+            "SSH_NET_MAX_DATA_BYTES"
+          ]
+        },
+        {
+          "path": "packages/infrastructure/network_transport/test/event_mux_test.dart",
+          "contains": [
+            "critical control is preferred but data is served after eight controls",
+            "data overflow drops oldest data and control overflow rejects"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.mobile_versioning",
+      "category": "client-compatibility",
+      "acceptance": "Dart/native version gates and mobile acceptance tests agree with the v2 wire contract.",
+      "status": "covered",
+      "evidence": [
+        {
+          "path": "packages/infrastructure/network_sdk/lib/src/network_v2.dart",
+          "contains": [
+            "NetworkV2Limits",
+            "PeerState",
+            "E2eePolicy"
+          ]
+        },
+        {
+          "path": "packages/infrastructure/network_sdk/test/network_v2_contract_test.dart",
+          "contains": [
+            "v2 requests are Peer-scoped",
+            "CommandResultTracker completes a command exactly once"
+          ]
+        },
+        {
+          "path": "packages/infrastructure/ssh_mobile_network_native/test/ssh_mobile_network_native_test.dart",
+          "contains": [
+            "unknown future realtime event tag is ignored",
+            "ABI version check"
+          ]
+        },
+        {
+          "path": "protocol/relay_v2_testdata/manifest.json",
+          "contains": [
+            "\"RELAY_V2_VERSION\": 2"
+          ]
+        }
+      ]
+    }
+  ]
+}

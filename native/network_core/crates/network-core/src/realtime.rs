@@ -20,6 +20,8 @@ use network_webrtc::{
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use tokio::sync::mpsc;
+#[cfg(test)]
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::events::{
@@ -183,7 +185,7 @@ pub(crate) async fn start_session(
     let peer_id = command.peer_id;
     // §22：PeerConnection 绑定在创建它的 ConnectionSession 上（transport 丢失时
     // 随 ConnectionSession 一并销毁）。创建时若尚无数据连接，绑定为 None。
-    let connection_session_id = state.sessions.current_session_id(&peer_id).await;
+    let connection_session_id = state.connection_sessions.current_session_id(&peer_id).await;
     let mut sessions = state.realtime.lock().await;
     if sessions.sessions.contains_key(&realtime_id) {
         // 并发下两次 start_session 都通过了开头的提前检查：这里在持锁下二次确认。
@@ -442,7 +444,7 @@ async fn handle_realtime_signal(
     };
     // §22：responder 新建会话时绑定当前 ConnectionSession；后续 transport 丢失据此
     // 关闭 RealtimeSession。
-    let connection_session_id = state.sessions.current_session_id(peer_id).await;
+    let connection_session_id = state.connection_sessions.current_session_id(peer_id).await;
 
     let pending_driver_for_spawn = pending_driver.clone();
     let outcome = {
@@ -848,7 +850,7 @@ async fn run_realtime_session_io(
     peer_id: String,
     driver: RealtimeIoDriverHandle,
 ) {
-    let (event_tx, mut event_rx) = unbounded_channel();
+    let (event_tx, mut event_rx) = mpsc::channel(network_webrtc::REALTIME_IO_EVENT_CAPACITY);
     let io = run_realtime_io(driver, event_tx);
     tokio::pin!(io);
     loop {
@@ -1298,8 +1300,9 @@ mod tests {
             .unwrap();
 
         let supervisor = crate::task_supervisor::RuntimeTaskSupervisor::new();
-        let (caller_tx, mut caller_rx) = unbounded_channel();
-        let (responder_tx, mut responder_rx) = unbounded_channel();
+        let (caller_tx, mut caller_rx) = mpsc::channel(network_webrtc::REALTIME_IO_EVENT_CAPACITY);
+        let (responder_tx, mut responder_rx) =
+            mpsc::channel(network_webrtc::REALTIME_IO_EVENT_CAPACITY);
         let caller_task_handle = Arc::clone(&caller);
         let responder_task_handle = Arc::clone(&responder);
         assert!(supervisor
@@ -1874,7 +1877,7 @@ mod tests {
         let control = RecordingControl::new();
         *state.relay_control.write().await = Some(control.clone());
         register_realtime_peer(&state, "peer-a").await;
-        let s1 = match state.sessions.begin_connect("peer-a").await {
+        let s1 = match state.connection_sessions.begin_connect("peer-a").await {
             ConnectDecision::Started(session_id) => session_id,
             decision => panic!("unexpected Session decision: {decision:?}"),
         };
@@ -1929,8 +1932,8 @@ mod tests {
         );
 
         // 新 ConnectionSession（用户重新 Resolve → Connection，§22）。
-        let _ = state.sessions.close("peer-a").await;
-        let s2 = match state.sessions.begin_connect("peer-a").await {
+        let _ = state.connection_sessions.close("peer-a").await;
+        let s2 = match state.connection_sessions.begin_connect("peer-a").await {
             ConnectDecision::Started(session_id) => session_id,
             decision => panic!("unexpected Session decision: {decision:?}"),
         };

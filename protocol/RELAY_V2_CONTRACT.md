@@ -12,10 +12,12 @@ fixtures:
 - WS-A — Go control plane (`/v2/control`, reservations)
 - WS-B — network-nat ConnectivityAttempt (offer/answer candidate shapes)
 - WS-C — network-relay split (RelayControlClient / RelayDataClient)
-- Phase 4 — network-core (DiscoveryManager, ConnectionOrchestrator, RealtimeManager)
+- Phase 4 — network-core (DiscoveryManager, ConnectivityAttemptCoordinator, RealtimeManager)
 
-Everything here is ADDITIVE. The existing v1 wire (JSON control + `0x10` binary)
-and the Go relay stay untouched until Step 11.
+Relay Protocol V2 remains additive to the Relay Bootstrap/WebSocket V1 boundary:
+the `/v1/devices/*` enrollment and `/v1/connect` data route remain explicitly
+separate. The retired Network SDK/Data Protocol V1 package and codec are not a
+compatibility target for this contract.
 
 Authoritative files:
 
@@ -31,8 +33,7 @@ Authoritative files:
   (violation → close with `ProtocolError MALFORMED_FRAME`; on `/v2/relay` →
   `RelayDataClose reason 2`).
 - `/v2/control` frames decode to `relay.v2.RelayFrame`; `/v2/relay` frames
-  decode to `relay.v2.RelayDataFrame`. Offering the wrong envelope type on a
-  route is a protocol violation → close.
+  decode to `relay.v2.RelayDataFrame`. Offering the wrong envelope type on a route is a protocol violation → close.
 - `RelayFrame.version` / `RelayDataFrame.version` MUST be 2 (else `ProtocolError
   PROTOCOL`). Unknown oneof tags are SKIPPED (proto3) for forward compatibility;
   length/size/version violations are HARD errors.
@@ -123,14 +124,14 @@ Authoritative files:
 | 13 | `RelayDataClose` | `reason` 0 normal / 1 expiry / 2 error |
 | 14 | `RelayDataReady` | Relay → both endpoints only after initiator and responder are paired |
 
-### Enums (value numbers are the frozen part; names carry the network.v1-style
+### Enums (value numbers are the frozen part; names carry the Network Protocol
 enum-name prefix so value identifiers stay unique within the package)
 
 | Enum | Values |
 |---|---|
 | `TransportCapability` | UNSPECIFIED=0, QUIC=1, TCP=2, UDP_DATAGRAM=3, WEBSOCKET=4, WEBRTC=5, RELAY_DATA=6 |
 | `ResolveStatus` | UNSPECIFIED=0, READY=1, OFFLINE=2, NOT_READY=3, UNKNOWN=4 |
-| `RealtimeSignalKind` | UNSPECIFIED=0, OFFER=1, ANSWER=2, ICE_CANDIDATE=3, ICE_RESTART=4, CLOSE=5 (mirrors network.v1 values 1..5) |
+| `RealtimeSignalKind` | UNSPECIFIED=0, OFFER=1, ANSWER=2, ICE_CANDIDATE=3, ICE_RESTART=4, CLOSE=5 (mirrors Network Protocol V2 values 1..5) |
 | `ErrorCode` | UNSPECIFIED=0, CONTROL_UNAVAILABLE=1, AUTHENTICATION_FAILED=2, PEER_OFFLINE=3, PEER_NOT_READY=4, RESOLVE_TIMEOUT=5, PROTOCOL=6, EPOCH_CONFLICT=7, REVISION_STALE=8, RESERVATION_FAILED=9, RESERVATION_EXPIRED=10, RELAY_UNAVAILABLE=11, RATE_LIMITED=12, MALFORMED_FRAME=13, FRAME_TOO_LARGE=14 |
 
 ## 5. Correlation & error model

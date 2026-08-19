@@ -21,7 +21,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 use zeroize::Zeroizing;
 
-use crate::connection::GenericConnection;
+use crate::connection::{GenericConnection, RouteTransport};
+
+// PathHandshakeV2 is the authenticated metadata/admission evolution carried
+// by this module's existing Noise/DATA_ENV_CRYPTO transport. It deliberately
+// does not introduce another key exchange or security envelope.
+#[allow(dead_code)]
+pub(crate) mod path_handshake {
+    include!("path_handshake.rs");
+}
 
 const NOISE_PATTERN: &str = "Noise_XX_25519_AESGCM_SHA256";
 const HANDSHAKE_DOMAIN: &[u8] = b"ssh-mobile/session-e2ee/noise-xx/v1";
@@ -438,6 +446,7 @@ where
     F: FnOnce(&str, &str) -> Fut,
     Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
 {
+    let path_identity = Arc::clone(&identity);
     let mut handshake = NoiseHandshake::new(identity, true)?;
     let hello = hello_payload(session_binding)?;
     connection
@@ -482,7 +491,17 @@ where
         .recv()
         .await
         .map_err(|_| CryptoHandshakeError::Failed)?;
-    Ok((initiator.accept(&encrypted_accept)?, admission))
+    let material = initiator.accept(&encrypted_accept)?;
+    complete_direct_generic_path_handshake(
+        connection,
+        path_identity,
+        expected_peer_id,
+        expected_peer_identity_key,
+        session_binding,
+        true,
+    )
+    .await?;
+    Ok((material, admission))
 }
 
 /// Performs Noise XX as the responder and resolves the claimed peer against
@@ -497,6 +516,7 @@ where
     F: FnOnce(&str, &str) -> Fut,
     Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
 {
+    let path_identity = Arc::clone(&identity);
     let mut handshake = NoiseHandshake::new(identity, false)?;
     let hello = handshake.read(
         &connection
@@ -508,7 +528,7 @@ where
     // Generic routes do not expose the authenticated peer identity until the
     // initiator proof arrives. Keep the responder proof bound to the same
     // initiator Session binding; the actual responder binding is carried in
-    // the encrypted RootSeed exchange after SessionManager admission.
+    // the encrypted RootSeed exchange after ConnectionSessionStore admission.
     let responder_proof =
         proof_payload_with_signature(&handshake, 2, &session_binding, &session_binding)?;
     connection
@@ -559,6 +579,15 @@ where
         .send(&encrypted_accept)
         .await
         .map_err(|_| CryptoHandshakeError::Failed)?;
+    complete_direct_generic_path_handshake(
+        connection,
+        path_identity,
+        &peer_id,
+        peer_key,
+        &session_binding,
+        false,
+    )
+    .await?;
     Ok((peer_id, material, admission))
 }
 
@@ -748,6 +777,9 @@ pub(crate) const RELAY_CRYPTO_FINAL: u8 = 3;
 pub(crate) const RELAY_CRYPTO_ROOT_SEED: u8 = 4;
 pub(crate) const RELAY_CRYPTO_ROOT_CONFIRM: u8 = 5;
 pub(crate) const RELAY_CRYPTO_ACCEPT: u8 = 6;
+/// Internal dispatcher tag only; the wire remains DATA_ENV_CRYPTO carrying
+/// the opaque SMPH frame.
+pub(crate) const RELAY_PATH_HANDSHAKE: u8 = 0;
 
 pub(crate) fn encode_relay_frame(
     step: u8,
@@ -808,6 +840,7 @@ where
         .open_bi()
         .await
         .map_err(|_| CryptoHandshakeError::Failed)?;
+    let path_identity = Arc::clone(&identity);
     let mut handshake = NoiseHandshake::new(identity, true)?;
     write_quic_frame(
         &mut send,
@@ -836,6 +869,16 @@ where
     write_quic_frame(&mut send, &encrypted_confirm).await?;
     let encrypted_accept = read_quic_frame(&mut recv).await?;
     let material = initiator.accept(&encrypted_accept)?;
+    complete_direct_quic_path_handshake(
+        &mut send,
+        &mut recv,
+        path_identity,
+        expected_peer_id,
+        expected_peer_identity_key,
+        session_binding,
+        true,
+    )
+    .await?;
     send.finish().map_err(|_| CryptoHandshakeError::Failed)?;
     Ok((material, admission))
 }
@@ -854,6 +897,7 @@ where
         .accept_bi()
         .await
         .map_err(|_| CryptoHandshakeError::Failed)?;
+    let path_identity = Arc::clone(&identity);
     let mut handshake = NoiseHandshake::new(identity, false)?;
     let session_binding = parse_hello(&handshake.read(&read_quic_frame(&mut recv).await?)?)?;
     // The peer identity is not available until the final Noise proof. Use the
@@ -892,8 +936,166 @@ where
     let encrypted_confirm = read_quic_frame(&mut recv).await?;
     let (encrypted_accept, material) = responder.accept_confirm(&encrypted_confirm)?;
     write_quic_frame(&mut send, &encrypted_accept).await?;
+    complete_direct_quic_path_handshake(
+        &mut send,
+        &mut recv,
+        path_identity,
+        &peer_id,
+        peer_key,
+        &session_binding,
+        false,
+    )
+    .await?;
     send.finish().map_err(|_| CryptoHandshakeError::Failed)?;
     Ok((peer_id, material, admission))
+}
+
+/// Completes PathHandshakeV2 on a Direct generic route.  It deliberately runs
+/// on the still-owned authenticated primitive, before the route is handed to
+/// the long-lived business receiver.  This keeps the existing generic frame
+/// protocol unchanged and makes a successful return the business-admission
+/// boundary.
+async fn complete_direct_generic_path_handshake(
+    connection: &mut GenericConnection,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_id: &str,
+    expected_peer_identity_key: [u8; 32],
+    session_binding: &str,
+    initiator: bool,
+) -> Result<(), CryptoHandshakeError> {
+    let connection_profile = match connection.profile().route().transport() {
+        RouteTransport::Tcp => b"direct/tcp/v2".to_vec(),
+        RouteTransport::WebSocket => b"direct/websocket/v2".to_vec(),
+        RouteTransport::Quic | RouteTransport::Udp => return Err(CryptoHandshakeError::Failed),
+    };
+    let config = path_handshake::PathHandshakeConfig::new(
+        identity.device_id.clone(),
+        expected_peer_id,
+        expected_peer_identity_key,
+        path_handshake::E2eePolicy::Required,
+        path_handshake::PathKind::Direct,
+        session_binding.as_bytes().to_vec(),
+        connection_profile,
+    )
+    .map_err(|_| CryptoHandshakeError::Failed)?;
+    let role = if initiator {
+        path_handshake::HandshakeRole::Initiator
+    } else {
+        path_handshake::HandshakeRole::Responder
+    };
+    let mut path = path_handshake::PathHandshake::new(role, identity, config)
+        .map_err(|_| CryptoHandshakeError::Failed)?;
+
+    if initiator {
+        let hello = path.start().map_err(|_| CryptoHandshakeError::Failed)?;
+        connection
+            .send(&hello)
+            .await
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+        let response = connection
+            .recv()
+            .await
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+        let final_frame = path
+            .accept(&response)
+            .map_err(|_| CryptoHandshakeError::Failed)?
+            .ok_or(CryptoHandshakeError::Failed)?;
+        connection
+            .send(&final_frame)
+            .await
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+    } else {
+        let hello = connection
+            .recv()
+            .await
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+        let response = path
+            .accept(&hello)
+            .map_err(|_| CryptoHandshakeError::Failed)?
+            .ok_or(CryptoHandshakeError::Failed)?;
+        connection
+            .send(&response)
+            .await
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+        let final_frame = connection
+            .recv()
+            .await
+            .map_err(|_| CryptoHandshakeError::Failed)?;
+        if path
+            .accept(&final_frame)
+            .map_err(|_| CryptoHandshakeError::Failed)?
+            .is_some()
+            || !path.is_ready()
+        {
+            return Err(CryptoHandshakeError::Failed);
+        }
+    }
+    if !path.is_ready() {
+        return Err(CryptoHandshakeError::Failed);
+    }
+    Ok(())
+}
+
+/// Completes PathHandshakeV2 on the same QUIC bidirectional stream used by
+/// the existing Noise/root exchange.  No additional QUIC stream or security
+/// envelope is introduced.
+async fn complete_direct_quic_path_handshake(
+    send: &mut quinn::SendStream,
+    recv: &mut quinn::RecvStream,
+    identity: Arc<DeviceIdentity>,
+    expected_peer_id: &str,
+    expected_peer_identity_key: [u8; 32],
+    session_binding: &str,
+    initiator: bool,
+) -> Result<(), CryptoHandshakeError> {
+    let config = path_handshake::PathHandshakeConfig::new(
+        identity.device_id.clone(),
+        expected_peer_id,
+        expected_peer_identity_key,
+        path_handshake::E2eePolicy::Required,
+        path_handshake::PathKind::Direct,
+        session_binding.as_bytes().to_vec(),
+        b"direct/quic/v2".to_vec(),
+    )
+    .map_err(|_| CryptoHandshakeError::Failed)?;
+    let role = if initiator {
+        path_handshake::HandshakeRole::Initiator
+    } else {
+        path_handshake::HandshakeRole::Responder
+    };
+    let mut path = path_handshake::PathHandshake::new(role, identity, config)
+        .map_err(|_| CryptoHandshakeError::Failed)?;
+
+    if initiator {
+        let hello = path.start().map_err(|_| CryptoHandshakeError::Failed)?;
+        write_quic_frame(send, &hello).await?;
+        let response = read_quic_frame(recv).await?;
+        let final_frame = path
+            .accept(&response)
+            .map_err(|_| CryptoHandshakeError::Failed)?
+            .ok_or(CryptoHandshakeError::Failed)?;
+        write_quic_frame(send, &final_frame).await?;
+    } else {
+        let hello = read_quic_frame(recv).await?;
+        let response = path
+            .accept(&hello)
+            .map_err(|_| CryptoHandshakeError::Failed)?
+            .ok_or(CryptoHandshakeError::Failed)?;
+        write_quic_frame(send, &response).await?;
+        let final_frame = read_quic_frame(recv).await?;
+        if path
+            .accept(&final_frame)
+            .map_err(|_| CryptoHandshakeError::Failed)?
+            .is_some()
+            || !path.is_ready()
+        {
+            return Err(CryptoHandshakeError::Failed);
+        }
+    }
+    if !path.is_ready() {
+        return Err(CryptoHandshakeError::Failed);
+    }
+    Ok(())
 }
 
 fn prologue() -> &'static [u8] {

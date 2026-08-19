@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-10
+> 最新更新时间：2026-08-19
 
 # SSH Mobile 模块化重构执行 Plan
 
@@ -376,7 +376,7 @@
 - Feature 仅依赖 `app_core`、`app_ui`、`network_transport` 和本包稳定 Port，
   不依赖 SSH、其他 Feature、App `/src/` 或 native FFI。App Shell 新增
   `lan_share_feature_adapters.dart`，将旧设置、日志、数据保护、QUIC 身份和
-  native v1 NetworkService 转换为 Feature Contract；生产 native 创建仍只有
+  Network Protocol V2 NetworkService 转换为 Feature Contract；生产 native 创建仍只有
   这一处。
 - App Runtime 已切换到新 Module/Package 路由和根级配对/传入传输宿主；旧
   `lanReceiverCoordinator` API 作为 Runtime 兼容 getter 保留。AppRuntimeFactory
@@ -2710,7 +2710,7 @@ packages/core/common_services/
 - SSH/SFTP、Monitoring、System Admin、Playbook、RAG、Terminal 和 LAN 的真实
   实现/Module 已分别归属 `ssh_core` 或对应 Feature；仍被旧 App 页面、App
   Runtime 或测试使用的旧入口保留为非 Owner 兼容桥。`network/**`、`relay/**`
-  和 LAN 旧协议适配同理：`network_transport` 当前只提供 native v1 Runtime/
+  和 LAN 旧协议适配同理：`network_transport` 当前只提供 Network Protocol V2 Runtime/
   Handle Facade，本 Step 不复制或重写协议实现。
 - 删除仓库生产代码和测试均无引用的三个旧 AI 导出入口：
   `agent_model_profile.dart`、`llm_provider/llm_api_format.dart`、

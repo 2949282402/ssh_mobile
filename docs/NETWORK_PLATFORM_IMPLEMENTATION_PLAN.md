@@ -209,7 +209,7 @@ lib/services/lan_share/
 - Recall
 - 设备持久身份
 
-当前 LAN HTTP endpoints 继续使用 HTTPS，并保留 512 KiB streaming buffer；文件数据发送统一由 `NetworkService` 提交给 native v1 runtime。
+当前 LAN HTTP endpoints 继续使用 HTTPS，并保留 512 KiB streaming buffer；文件数据发送统一由 `NetworkService` 提交给 Network Protocol V2 runtime。
 
 因此：
 
@@ -1297,7 +1297,7 @@ Rust QUIC / native Relay
 direct or selected relay route
 ```
 
-目标与当前实现一致：`NetworkService` 统一提交 native v1 命令，
+目标与当前实现一致：`NetworkService` 统一提交 Network Protocol V2 命令，
 typed events 统一报告进度、完成和失败。
 
 定义：
@@ -1758,7 +1758,7 @@ Android arm64-v8a
 建立：
 
 ```text
-protocol/proto/network/v1/
+protocol/proto/network/v2/
 ```
 
 ## Step 2.2

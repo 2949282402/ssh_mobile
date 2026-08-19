@@ -1,12 +1,12 @@
 //! Relay v2 控制面 + reservation 数据面（transport-network v2 §24/§25/§31/§32）。
 //!
-//! v1 单一 `RelayClient`（`/v1/connect` JSON 控制 + 0x10 二进制数据）已在 Step 11
+//! V2 单一 `RelayClient`（`/V2/connect` JSON 控制 + 0x10 二进制数据）已在 Step 11
 //! 删除。Relay 控制面（`/v2/control`）与数据面（`/v2/relay/{reservation_id}`）物理
 //! 隔离：
 //!
 //! - 控制面：`RelayControlClient`。Resolve / Discovery / Connectivity / Presence /
 //!   Realtime / Reservation 均经它路由（§31 `reserveRelay`）。
-//! - 数据面：`RelayDataClient`（§25）。Direct 失败后由 `ConnectionOrchestrator` 经
+//! - 数据面：`RelayDataClient`（§25）。Direct 失败后由 `ConnectivityAttemptCoordinator` 经
 //!   `reserve_relay` 获取 reservation，双方连接 `/v2/relay/{reservation_id}`；文件、
 //!   流与可靠消息数据以不透明信封在数据面上转发（服务器不解密业务数据）。
 
@@ -34,7 +34,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::connection::{decode_generic_frame, GenericFrameKind};
-use crate::crypto::{self, CryptoMode, APPLICATION_CRYPTO_SUITE};
+use crate::crypto::{self, APPLICATION_CRYPTO_SUITE};
 use crate::events::{
     emit_incoming_offer, emit_peer_presence_changed, emit_peer_presence_snapshot,
     emit_transfer_completed, emit_transfer_error, emit_transfer_progress, protocol_error,
@@ -186,6 +186,22 @@ pub(crate) async fn send_relay_crypto(
     body.extend_from_slice(token.as_bytes());
     body.extend_from_slice(&frame);
     send_data_envelope(data, DATA_ENV_CRYPTO, &body).await
+}
+
+/// Sends a PathHandshakeV2 frame through the existing DATA_ENV_CRYPTO
+/// envelope.  The Relay server sees only the opaque payload and never parses
+/// this frame or creates a second security envelope.
+pub(crate) async fn send_relay_path_handshake(
+    data: &RelayDataClient,
+    token: &str,
+    frame: &[u8],
+) -> Result<(), RelayError> {
+    if !crate::crypto_handshake::path_handshake::is_encoded_frame(frame) {
+        return Err(RelayError::Protocol(
+            "Relay PathHandshakeV2 frame has an invalid magic".into(),
+        ));
+    }
+    send_relay_crypto_raw(data, token, frame).await
 }
 
 /// 发送一条 Relay 可靠消息（DataMessage protobuf 封装）。
@@ -540,8 +556,12 @@ fn spawn_responder_connectivity_checks(state: Arc<RuntimeState>, offer: Connecti
         match result {
             Ok(route) => {
                 let _ = attempt.set_state(ConnectivityAttemptState::Succeeded);
-                let orchestrator = crate::connect::ConnectionOrchestrator::new(state);
-                if let Err(error) = orchestrator.attach_direct_route(&peer_id, route).await {
+                let attempt_coordinator =
+                    crate::connect::ConnectivityAttemptCoordinator::new(state);
+                if let Err(error) = attempt_coordinator
+                    .attach_direct_route(&peer_id, route)
+                    .await
+                {
                     tracing::debug!(peer_id = %peer_id, attempt_id = %offer.attempt_id, error = %error.message, "responder direct route was not attached");
                 }
             }
@@ -887,6 +907,12 @@ async fn handle_relay_data_payload(
     let Some((&kind, body)) = envelope.split_first() else {
         return Err(std::io::Error::other("relay data envelope is empty").into());
     };
+    if kind != DATA_ENV_CRYPTO && !state.relay_path_ready.read().await.contains(peer_id) {
+        return Err(std::io::Error::other(
+            "Relay PathHandshakeV2 is not Ready; business envelope rejected",
+        )
+        .into());
+    }
     match kind {
         DATA_ENV_CRYPTO => {
             // body = [token 32][step+payload]
@@ -970,6 +996,23 @@ async fn relay_data_disconnected(
     data: Arc<RelayDataClient>,
     peer_id: String,
 ) {
+    // A replacement data client may finish its old client's close event after
+    // it has become the map owner.  That stale event must not clear the new
+    // client's PathHandshake state or tear down its Session.  During explicit
+    // DisconnectRelay the map is drained first, so the active route check keeps
+    // the deliberate teardown path intact.
+    let current_data = state.relay_data.read().await.get(&peer_id).cloned();
+    if current_data
+        .as_ref()
+        .is_some_and(|current| !Arc::ptr_eq(current, &data))
+        || (current_data.is_none()
+            && !state
+                .connection_sessions
+                .is_current_relay_data(&peer_id, &data)
+                .await)
+    {
+        return;
+    }
     let mut entries = state.relay_data.write().await;
     if entries
         .get(&peer_id)
@@ -1010,9 +1053,27 @@ async fn handle_relay_crypto_handshake(
         )
         .into());
     }
+    let key = relay_crypto_key(peer_id, session_token);
+    if crate::crypto_handshake::path_handshake::is_encoded_frame(frame_bytes) {
+        if let Some(sender) = state.relay_crypto_waiters.read().await.get(&key).cloned() {
+            sender
+                .send((
+                    crate::crypto_handshake::RELAY_PATH_HANDSHAKE,
+                    frame_bytes.to_vec(),
+                ))
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "Relay PathHandshake initiator is no longer waiting",
+                    )
+                })?;
+            return Ok(());
+        }
+        return handle_relay_path_handshake(state, data, session_token, peer_id, frame_bytes).await;
+    }
     let (step, payload) = crate::crypto_handshake::decode_relay_frame(frame_bytes)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
-    let key = relay_crypto_key(peer_id, session_token);
     match step {
         crate::crypto_handshake::RELAY_CRYPTO_RESPONSE
         | crate::crypto_handshake::RELAY_CRYPTO_ROOT_SEED
@@ -1163,54 +1224,27 @@ async fn handle_relay_crypto_handshake(
                 std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
             })?;
             send_relay_crypto_raw(data, session_token, &accept).await?;
-            if admission.session_id.wire_key() != material.local_session_binding {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Interrupted,
-                    "Relay Session binding became stale",
-                )
-                .into());
-            }
-            state
-                .sessions
-                .finalize_authenticated_session(
-                    peer_id,
-                    admission.session_id,
-                    &material.remote_session_binding,
-                )
-                .await
-                .map_err(|_| {
-                    std::io::Error::other("Relay Session was replaced during handshake")
-                })?;
-            crate::peer::install_admitted_crypto(state, peer_id, &admission, &material).await?;
-            let session_id = admission.session_id;
-            if !state
-                .sessions
-                .mark_relay_route_connected(
-                    peer_id,
-                    session_id,
-                    RouteType::Relay,
-                    Some(Arc::clone(data)),
-                )
-                .await
+            // Root/Accept proves the application E2EE peer, but Relay business
+            // admission remains closed until the same DATA_ENV_CRYPTO channel
+            // carries and verifies PathHandshakeV2 Final.  Keep all mutable
+            // Session state staged so Connected cannot be observed early.
+            let mut admissions = state.relay_path_admissions.lock().await;
+            if admissions.len() >= MAX_PENDING_RELAY_CRYPTO_HANDSHAKES
+                && !admissions.contains_key(&key)
             {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Interrupted,
-                    "Relay Session was closed before E2EE completion",
-                )
-                .into());
+                return Err(
+                    std::io::Error::other("Relay PathHandshake admission queue is full").into(),
+                );
             }
-            crate::events::emit_peer_state(
-                &state.event_tx,
-                peer_id,
-                network_protocol::PeerConnectionState::Connected,
-                RouteType::Relay,
-                None,
+            admissions.insert(
+                key,
+                crate::runtime::RelayPathAdmission {
+                    peer_id: peer_id.to_string(),
+                    data: Arc::clone(data),
+                    material,
+                    admission,
+                },
             );
-            crate::channel::recover_session(Arc::clone(state), peer_id.to_string()).await;
-            // §19：业务状态（Transfer）不属于 Session；每条新连接都尝试恢复暂停传输。
-            crate::transfer::resume_transfers_for_peer(Arc::clone(state), peer_id.to_string())
-                .await;
-            // transport-network v2：Relay → Direct 后台升级已删除（§35）；路由建立后不变。
         }
         _ => {
             return Err(std::io::Error::new(
@@ -1220,6 +1254,205 @@ async fn handle_relay_crypto_handshake(
             .into());
         }
     }
+    Ok(())
+}
+
+/// Handles the responder half of PathHandshakeV2 after RelayDataReady has
+/// already been consumed by RelayDataClient::connect_reservation.  The
+/// responder state is retained only between Hello and Final; readiness is
+/// published only after the signed Final verifies.
+async fn handle_relay_path_handshake(
+    state: &Arc<RuntimeState>,
+    data: &Arc<RelayDataClient>,
+    session_token: &str,
+    peer_id: &str,
+    frame: &[u8],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let key = relay_crypto_key(peer_id, session_token);
+    if state.relay_path_ready.read().await.contains(peer_id) {
+        return Err(
+            std::io::Error::other("Relay PathHandshakeV2 frame arrived after Ready").into(),
+        );
+    }
+    if let Some(mut responder) = state.relay_path_responders.lock().await.remove(&key) {
+        if responder
+            .accept(frame)
+            .map_err(|error| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string())
+            })?
+            .is_some()
+            || !responder.is_ready()
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Relay PathHandshakeV2 final did not reach Ready",
+            )
+            .into());
+        }
+        let pending = state
+            .relay_path_admissions
+            .lock()
+            .await
+            .remove(&key)
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Relay PathHandshakeV2 final has no pending Session admission",
+                )
+            })?;
+        complete_relay_path_admission(state, peer_id, pending).await?;
+        return Ok(());
+    }
+
+    let identity = state
+        .identity
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| std::io::Error::other("runtime identity is unavailable"))?;
+    let expected_peer_identity_key = state
+        .trusted_peer_keys
+        .read()
+        .await
+        .get(peer_id)
+        .copied()
+        .ok_or_else(|| std::io::Error::other("Relay PathHandshake peer is not trusted"))?;
+    let config = crate::crypto_handshake::path_handshake::PathHandshakeConfig::new(
+        identity.device_id.clone(),
+        peer_id,
+        expected_peer_identity_key,
+        crate::crypto_handshake::path_handshake::E2eePolicy::Required,
+        crate::crypto_handshake::path_handshake::PathKind::Relay,
+        session_token.as_bytes().to_vec(),
+        b"relay-data/v2".to_vec(),
+    )
+    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    let mut responder = crate::crypto_handshake::path_handshake::PathHandshake::new(
+        crate::crypto_handshake::path_handshake::HandshakeRole::Responder,
+        identity,
+        config,
+    )
+    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    // connect_reservation() returns only after the existing RelayDataReady
+    // pairing frame, so this is an explicit lifecycle assertion rather than a
+    // new wire message.
+    responder
+        .mark_pair_ready()
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?;
+    let response = responder
+        .accept(frame)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error.to_string()))?
+        .ok_or_else(|| std::io::Error::other("Relay PathHandshake Hello produced no response"))?;
+    crate::relay::send_relay_path_handshake(data, session_token, &response).await?;
+    state
+        .relay_path_responders
+        .lock()
+        .await
+        .insert(key, responder);
+    Ok(())
+}
+
+/// Commits a Relay responder only after PathHandshakeV2 Final has verified.
+/// This is the responder-side counterpart to `establish_relay_crypto`: Root
+/// E2EE proves the peer, while this function is the sole Relay route/business
+/// admission boundary.
+async fn complete_relay_path_admission(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    pending: crate::runtime::RelayPathAdmission,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if pending.peer_id != peer_id {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Relay PathHandshake admission peer binding is stale",
+        )
+        .into());
+    }
+    let session_id = pending.admission.session_id;
+    if session_id.wire_key() != pending.material.local_session_binding {
+        state
+            .connection_sessions
+            .mark_failed(peer_id, session_id)
+            .await;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "Relay Session binding became stale before PathHandshakeV2 Ready",
+        )
+        .into());
+    }
+    let relay_profile = crate::connection::ConnectionProfile::for_route(RouteType::Relay)
+        .expect("Relay route has a composed profile");
+    if !state
+        .connection_sessions
+        .candidate_supports_required_capabilities(peer_id, session_id, relay_profile)
+        .await
+    {
+        state
+            .connection_sessions
+            .mark_failed(peer_id, session_id)
+            .await;
+        return Err(std::io::Error::other(
+            "Relay route no longer satisfies the requested capability",
+        )
+        .into());
+    }
+    if state
+        .connection_sessions
+        .finalize_authenticated_session(
+            peer_id,
+            session_id,
+            &pending.material.remote_session_binding,
+        )
+        .await
+        .is_err()
+    {
+        state
+            .connection_sessions
+            .mark_failed(peer_id, session_id)
+            .await;
+        return Err(std::io::Error::other(
+            "Relay Session was replaced before PathHandshakeV2 Ready",
+        )
+        .into());
+    }
+    crate::peer::install_admitted_crypto(state, peer_id, &pending.admission, &pending.material)
+        .await?;
+    if !state
+        .connection_sessions
+        .mark_relay_route_connected(
+            peer_id,
+            session_id,
+            RouteType::Relay,
+            Some(Arc::clone(&pending.data)),
+        )
+        .await
+    {
+        state.crypto.remove_session(peer_id, &session_id.wire_key());
+        state
+            .connection_sessions
+            .mark_failed(peer_id, session_id)
+            .await;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "Relay Session was closed before PathHandshakeV2 route commit",
+        )
+        .into());
+    }
+    state
+        .relay_path_ready
+        .write()
+        .await
+        .insert(peer_id.to_string());
+    crate::events::emit_peer_state(
+        &state.event_tx,
+        peer_id,
+        network_protocol::PeerConnectionState::Connected,
+        RouteType::Relay,
+        None,
+    );
+    crate::channel::recover_session(Arc::clone(state), peer_id.to_string()).await;
+    // §19：业务状态（Transfer）不属于 Session；每条新连接都尝试恢复暂停传输。
+    crate::transfer::resume_transfers_for_peer(Arc::clone(state), peer_id.to_string()).await;
     Ok(())
 }
 
@@ -1474,6 +1707,44 @@ async fn cleanup_relay_state(state: &RuntimeState, peer: Option<&str>) {
             confirmers.clear();
         }
     }
+    {
+        let mut responders = state.relay_path_responders.lock().await;
+        if let Some(prefix) = &crypto_prefix {
+            responders.retain(|key, _| !key.starts_with(prefix.as_str()));
+        } else {
+            responders.clear();
+        }
+    }
+    let pending_admissions = {
+        let mut admissions = state.relay_path_admissions.lock().await;
+        let keys = admissions
+            .keys()
+            .filter(|key| {
+                crypto_prefix
+                    .as_ref()
+                    .is_none_or(|prefix| key.starts_with(prefix.as_str()))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        keys.into_iter()
+            .filter_map(|key| admissions.remove(&key))
+            .collect::<Vec<_>>()
+    };
+    for pending in pending_admissions {
+        let session_id = pending.admission.session_id;
+        state
+            .connection_sessions
+            .mark_failed(&pending.peer_id, session_id)
+            .await;
+        state
+            .crypto
+            .remove_session(&pending.peer_id, &session_id.wire_key());
+    }
+    if let Some(peer) = peer {
+        state.relay_path_ready.write().await.remove(peer);
+    } else {
+        state.relay_path_ready.write().await.clear();
+    }
 }
 
 /// 在通知 UI 前解密并校验传入 Relay 申请。
@@ -1491,7 +1762,7 @@ async fn receive_relay_offer(
         .into());
     }
     // body = [session_id 32][base64(encrypted offer)]：session_id 用于派生 offer 的
-    // 加密 nonce（与 v1 同构），必须在明文中。
+    // 加密 nonce（与 V2 同构），必须在明文中。
     if body.len() < 32 {
         return Err(std::io::Error::other("Relay offer envelope is truncated").into());
     }
@@ -1932,7 +2203,6 @@ async fn receive_relay_chunk(
         .decrypt_application_payload(
             &active.offer.sender_id,
             &crypto_session_id,
-            CryptoMode::E2ee,
             &aad,
             ciphertext,
         )
@@ -2172,7 +2442,7 @@ fn relay_hash_matches(hasher: Sha256, expected: &str) -> bool {
 /// 计算稳定的 Manifest Hash；socket session token 不参与，因此重连可复用它。
 fn relay_manifest_hash(manifest: &FileManifest) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"ssh-mobile/relay-manifest/v1\0");
+    hasher.update(b"ssh-mobile/relay-manifest/V2\0");
     hasher.update(manifest.transfer_id.as_bytes());
     hasher.update([0]);
     hasher.update(manifest.file_name.as_bytes());
@@ -2257,7 +2527,7 @@ pub(crate) async fn send_file_over_relay(
     let path = transfer.source_path.clone();
     let result = async {
         let data = state
-            .sessions
+            .connection_sessions
             .current_relay_data(&peer_id)
             .await
             .ok_or_else(|| {
@@ -2301,7 +2571,7 @@ pub(crate) async fn send_file_over_relay(
             "modified_at": manifest.modified_at,
             "content_hash": manifest.content_hash,
         }))?;
-        // offer 用对端 E2E 公钥加密（与 v1 同构）；信封 = [session_id][base64(密文)]。
+        // offer 用对端 E2E 公钥加密（与 V2 同构）；信封 = [session_id][base64(密文)]。
         let encrypted_offer =
             crypto::encrypt_application_offer(&offer, peer.e2e_public_key, &session_bytes)?;
         let encoded_offer = URL_SAFE_NO_PAD.encode(encrypted_offer);
@@ -2412,7 +2682,6 @@ pub(crate) async fn send_file_over_relay(
                 .encrypt_application_payload(
                     &peer_id,
                     &transfer.session_id,
-                    CryptoMode::E2ee,
                     &aad,
                     &buffer[..read],
                 )
@@ -2476,7 +2745,7 @@ pub(crate) async fn send_file_over_relay(
             .err()
             .is_some_and(|error| !is_transient_relay_error(error.as_ref()))
     {
-        if let Some(data) = state.sessions.current_relay_data(&peer_id).await {
+        if let Some(data) = state.connection_sessions.current_relay_data(&peer_id).await {
             let _ = send_file_cancel(&data, &transfer_id).await;
         }
     }
@@ -2554,7 +2823,7 @@ mod tests {
     /// 验证 Relay offer 只接受完整的 SHA-256 十六进制摘要。
     #[test]
     fn relay_offer_requires_sha256_hash() {
-        let digest = hex::encode(Sha256::digest(b"relay-v1"));
+        let digest = hex::encode(Sha256::digest(b"relay-V2"));
         assert!(is_sha256_hash(&digest));
         assert!(!is_sha256_hash(&digest[..63]));
         let mut invalid = digest.clone();

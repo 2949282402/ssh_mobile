@@ -1,4 +1,4 @@
-//! transport-network v2：唯一连接入口 `ConnectionOrchestrator`（设计 §11/§12/§14/§15/§37）。
+//! transport-network v2：唯一连接入口 `ConnectivityAttemptCoordinator`（设计 §11/§12/§14/§15/§37）。
 //!
 //! 固定状态机（§11）：
 //!
@@ -26,11 +26,12 @@
 //!    （`RelayDataClient`），在其上完成 Relay E2EE 握手后挂载 ConnectionSession。
 
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{watch, Mutex};
 
 use network_nat::{
-    Candidate, CandidateAdvertisement, CandidateKind, ConnectivityAttempt,
+    Candidate, CandidateAdvertisement, CandidateKind, CandidatePayloadV2, CandidateTransport,
+    ConnectivityAttempt, ResolvedCandidateCache, ResolvedCandidateSnapshot,
     RuntimeEpoch as NatRuntimeEpoch, MAX_CANDIDATES_PER_SIGNAL,
 };
 use network_protocol::{
@@ -49,7 +50,7 @@ use crate::events::{
 use crate::peer::{
     connect_direct_or_generic, install_admitted_crypto, ConnectedRoute, DirectRouteAttempt,
 };
-use crate::runtime::{RuntimeState, SessionAdmissionLease};
+use crate::runtime::{ConnectionAdmissionLease, RuntimeState};
 use crate::session::{ConnectDecision, SessionId};
 
 use super::{
@@ -61,7 +62,7 @@ use super::{
 /// 当前不在 `set_stage` 中显式转换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
-pub(crate) enum OrchestratorState {
+pub(crate) enum ConnectivityAttemptState {
     Idle,
     Resolving,
     Resolved,
@@ -76,13 +77,13 @@ pub(crate) enum OrchestratorState {
 }
 
 /// 唯一连接入口。
-pub(crate) struct ConnectionOrchestrator {
+pub(crate) struct ConnectivityAttemptCoordinator {
     state: Arc<RuntimeState>,
     /// 当前状态机位置（诊断/测试）。
     stage: std::sync::atomic::AtomicU8,
 }
 
-impl ConnectionOrchestrator {
+impl ConnectivityAttemptCoordinator {
     pub(crate) fn new(state: Arc<RuntimeState>) -> Self {
         Self {
             state,
@@ -92,8 +93,8 @@ impl ConnectionOrchestrator {
 
     /// 当前状态机阶段。
     #[allow(dead_code)] // 诊断/测试查询面；生产路径通过日志观察状态机
-    pub(crate) fn stage(&self) -> OrchestratorState {
-        use OrchestratorState::*;
+    pub(crate) fn stage(&self) -> ConnectivityAttemptState {
+        use ConnectivityAttemptState::*;
         match self.stage.load(std::sync::atomic::Ordering::Acquire) {
             1 => Resolving,
             2 => Resolved,
@@ -109,8 +110,8 @@ impl ConnectionOrchestrator {
         }
     }
 
-    fn set_stage(&self, state: OrchestratorState) {
-        use OrchestratorState::*;
+    fn set_stage(&self, state: ConnectivityAttemptState) {
+        use ConnectivityAttemptState::*;
         let value = match state {
             Idle => 0,
             Resolving => 1,
@@ -181,15 +182,35 @@ impl ConnectionOrchestrator {
                 )
             })?;
 
+        let capability = communication_class_capability(class);
+
+        // Stage A is deliberately independent of the Relay control plane.  A
+        // fresh monotonic remote cache/configured endpoint is enough to start
+        // the bounded direct race; Resolve/Offer are only entered after this
+        // uncoordinated attempt fails.
+        if self
+            .try_stage_a_direct(
+                peer_id,
+                &peer,
+                endpoint.clone(),
+                identity.clone(),
+                capability,
+            )
+            .await?
+        {
+            return Ok(());
+        }
+
         // -----------------------------------------------------------------
-        // 1. RESOLVING（§10）：Resolve 是每次建连前的权威入口。
+        // 1. RESOLVING（§10）：Resolve is the Stage B coordination gate after
+        // the pure-direct Stage A has failed.
         // -----------------------------------------------------------------
-        self.set_stage(OrchestratorState::Resolving);
+        self.set_stage(ConnectivityAttemptState::Resolving);
         let resolved = self.resolve(peer_id, &peer).await?;
-        self.set_stage(OrchestratorState::Resolved);
+        self.set_stage(ConnectivityAttemptState::Resolved);
+        update_remote_candidate_cache(&state, peer_id, resolved_snapshot(&resolved)).await;
 
         let remote_epoch = resolved_runtime_epoch(&resolved);
-        let capability = communication_class_capability(class);
 
         // -----------------------------------------------------------------
         // 2. Registry 重用（§34）。
@@ -203,7 +224,7 @@ impl ConnectionOrchestrator {
             // 重用成功同样发布 Connected 终态：Dart connect() 把该事件当作成功信号
             // （失败才由命令面发 Failed），不发布会令其等待超时。
             let route = state
-                .sessions
+                .connection_sessions
                 .current_route(peer_id)
                 .await
                 .unwrap_or(RouteType::Unspecified);
@@ -214,7 +235,7 @@ impl ConnectionOrchestrator {
                 route,
                 None,
             );
-            self.set_stage(OrchestratorState::ConnectedDirect);
+            self.set_stage(ConnectivityAttemptState::ConnectedDirect);
             return Ok(());
         }
 
@@ -229,7 +250,7 @@ impl ConnectionOrchestrator {
                 // 已连接会话满足一次新的 connect()：同样发布 Connected 终态，
                 // 否则 Dart connect() 的成功信号会缺失。
                 let route = state
-                    .sessions
+                    .connection_sessions
                     .current_route(peer_id)
                     .await
                     .unwrap_or(RouteType::Unspecified);
@@ -240,14 +261,14 @@ impl ConnectionOrchestrator {
                     route,
                     None,
                 );
-                self.set_stage(OrchestratorState::ConnectedDirect);
+                self.set_stage(ConnectivityAttemptState::ConnectedDirect);
                 return Ok(());
             }
             ConnectDecision::InProgress(session_id) => {
                 // 同一物理 attempt 的后续请求并入能力并集，并等待该 attempt
                 // 提交一个覆盖最新需求的 route；不能在物理连接完成前伪成功。
                 if state
-                    .sessions
+                    .connection_sessions
                     .wait_for_capability(peer_id, session_id, capability)
                     .await
                     .is_err()
@@ -262,7 +283,7 @@ impl ConnectionOrchestrator {
                 self.register_current(state.clone(), peer_id, &remote_epoch, session_id)
                     .await;
                 let route = state
-                    .sessions
+                    .connection_sessions
                     .current_route(peer_id)
                     .await
                     .unwrap_or(RouteType::Unspecified);
@@ -273,7 +294,7 @@ impl ConnectionOrchestrator {
                     route,
                     None,
                 );
-                self.set_stage(OrchestratorState::ConnectedDirect);
+                self.set_stage(ConnectivityAttemptState::ConnectedDirect);
                 return Ok(());
             }
             ConnectDecision::Started(session_id) => session_id,
@@ -285,7 +306,7 @@ impl ConnectionOrchestrator {
         // -----------------------------------------------------------------
         // 4. Create ConnectivityAttempt（§12）+ COORDINATING（§14）。
         // -----------------------------------------------------------------
-        self.set_stage(OrchestratorState::Coordinating);
+        self.set_stage(ConnectivityAttemptState::Coordinating);
         let local_epoch = state
             .local_discovery
             .read()
@@ -378,7 +399,7 @@ impl ConnectionOrchestrator {
         // -----------------------------------------------------------------
         // 5. DIRECT_CONNECTING（§15）：Direct First 4s。
         // -----------------------------------------------------------------
-        self.set_stage(OrchestratorState::DirectConnecting);
+        self.set_stage(ConnectivityAttemptState::DirectConnecting);
         let direct_result = tokio::time::timeout(
             DIRECT_CONNECT_WINDOW,
             connect_direct_or_generic(DirectRouteAttempt {
@@ -439,7 +460,7 @@ impl ConnectionOrchestrator {
                     admission.session_id,
                 )
                 .await;
-                self.set_stage(OrchestratorState::ConnectedDirect);
+                self.set_stage(ConnectivityAttemptState::ConnectedDirect);
                 Ok(())
             }
             // Direct 失败：DIRECT_FAILED → RELAY_RESERVING → RELAY_CONNECTING（§15/§37）。
@@ -448,7 +469,7 @@ impl ConnectionOrchestrator {
                     .lock()
                     .await
                     .set_state(network_nat::ConnectivityAttemptState::Expired);
-                self.set_stage(OrchestratorState::DirectFailed);
+                self.set_stage(ConnectivityAttemptState::DirectFailed);
                 match self
                     .connect_relay_fallback(peer_id, session_id, &peer, &attempt_id)
                     .await
@@ -461,11 +482,14 @@ impl ConnectionOrchestrator {
                             admission.session_id,
                         )
                         .await;
-                        self.set_stage(OrchestratorState::ConnectedRelay);
+                        self.set_stage(ConnectivityAttemptState::ConnectedRelay);
                         Ok(())
                     }
                     Err(relay_error) => {
-                        state.sessions.mark_failed(peer_id, session_id).await;
+                        state
+                            .connection_sessions
+                            .mark_failed(peer_id, session_id)
+                            .await;
                         tracing::warn!(
                             peer_id = %peer_id,
                             relay_error = %relay_error.message,
@@ -475,6 +499,108 @@ impl ConnectionOrchestrator {
                         Err(direct_error)
                     }
                 }
+            }
+        }
+    }
+
+    /// Run the frozen pure-direct Stage A.  The method returns `true` only after
+    /// a route has been attached and registered; a failed race retires its
+    /// temporary Session and lets the caller enter Stage B.
+    async fn try_stage_a_direct(
+        &self,
+        peer_id: &str,
+        peer: &crate::runtime::PeerConfig,
+        endpoint: quinn::Endpoint,
+        identity: Arc<network_identity::DeviceIdentity>,
+        capability: u8,
+    ) -> Result<bool, ProtocolError> {
+        if self.state.connection_sessions.is_connected(peer_id).await {
+            return Ok(false);
+        }
+
+        let (mut candidates, remote_epoch) = {
+            let caches = self.state.remote_candidate_cache.read().await;
+            let (mut candidates, remote_epoch) = match caches.get(peer_id) {
+                Some(cache) => {
+                    let fresh = cache.stage_a_candidates_at(Instant::now());
+                    let candidates = fresh
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(candidate_from_v2)
+                        .collect::<Vec<_>>();
+                    let remote_epoch = fresh.map(|_| network_relay::v2::RuntimeEpoch {
+                        high: cache.runtime_epoch.high,
+                        low: cache.runtime_epoch.low,
+                    });
+                    (candidates, remote_epoch)
+                }
+                None => (Vec::new(), None),
+            };
+            append_configured_endpoint(&mut candidates, peer);
+            (candidates, remote_epoch)
+        };
+        candidates.retain(|candidate| candidate.kind != CandidateKind::Relay);
+        if candidates.is_empty() {
+            return Ok(false);
+        }
+
+        let session_id = match self.state.begin_connect(peer_id, capability).await {
+            ConnectDecision::Started(session_id) => session_id,
+            ConnectDecision::AlreadyConnected(_) | ConnectDecision::InProgress(_) => {
+                return Ok(false)
+            }
+            ConnectDecision::NeedsReplacement(_) => return Ok(false),
+        };
+        self.set_stage(ConnectivityAttemptState::DirectConnecting);
+        let (candidate_update_tx, candidate_updates) = watch::channel(None);
+        drop(candidate_update_tx);
+        let attempt_id = new_attempt_id();
+        let direct_result = tokio::time::timeout(
+            DIRECT_CONNECT_WINDOW,
+            connect_direct_or_generic(DirectRouteAttempt {
+                state: Arc::clone(&self.state),
+                endpoint,
+                candidates,
+                identity,
+                expected_peer_public_key: peer.identity_public_key,
+                peer_id: peer_id.to_string(),
+                session_binding: session_id.wire_key(),
+                session_id,
+                attempt_id,
+                connect_window: DIRECT_CONNECT_WINDOW,
+                allow_websocket: capability & super::CAPABILITY_RELIABLE_MESSAGE != 0,
+                candidate_updates,
+            }),
+        )
+        .await;
+        match direct_result {
+            Ok(Ok(route)) => {
+                let admission = self.attach_direct_route(peer_id, route).await?;
+                self.register_current(
+                    Arc::clone(&self.state),
+                    peer_id,
+                    &remote_epoch,
+                    admission.session_id,
+                )
+                .await;
+                self.set_stage(ConnectivityAttemptState::ConnectedDirect);
+                Ok(true)
+            }
+            Ok(Err(error)) => {
+                self.state
+                    .connection_sessions
+                    .mark_failed(peer_id, session_id)
+                    .await;
+                tracing::debug!(peer_id = %peer_id, error = %error.message, "pure direct Stage A failed");
+                Ok(false)
+            }
+            Err(_) => {
+                self.state
+                    .connection_sessions
+                    .mark_failed(peer_id, session_id)
+                    .await;
+                tracing::debug!(peer_id = %peer_id, "pure direct Stage A window elapsed");
+                Ok(false)
             }
         }
     }
@@ -594,7 +720,7 @@ impl ConnectionOrchestrator {
         let state = Arc::clone(&self.state);
         // epoch 换代：先关闭旧连接，再走新建（§34 Close old → New ConnectivityAttempt）。
         if let Some(obsolete) = state
-            .connection_registry
+            .ready_session_index
             .take_obsolete(peer_id, remote_epoch)
         {
             tracing::info!(
@@ -602,7 +728,7 @@ impl ConnectionOrchestrator {
                 session = ?obsolete.session_id,
                 "remote runtime epoch changed; closing obsolete connection"
             );
-            close_session_and_registry(
+            close_session_and_unregister(
                 Arc::clone(&state),
                 peer_id.to_string(),
                 obsolete.session_id,
@@ -610,19 +736,20 @@ impl ConnectionOrchestrator {
             .await;
         }
         let Some(registered) = state
-            .connection_registry
+            .ready_session_index
             .lookup(peer_id, remote_epoch, capability)
         else {
             return Ok(None);
         };
-        if state.sessions.is_connected(peer_id).await
-            && state.sessions.current_session_id(peer_id).await == Some(registered.session_id)
+        if state.connection_sessions.is_connected(peer_id).await
+            && state.connection_sessions.current_session_id(peer_id).await
+                == Some(registered.session_id)
         {
             return Ok(Some(registered.session_id));
         }
         // 登记存在但连接已不健康：移除登记，走新建。
         state
-            .connection_registry
+            .ready_session_index
             .unregister_if_session(peer_id, registered.session_id);
         Ok(None)
     }
@@ -638,7 +765,7 @@ impl ConnectionOrchestrator {
         session_id: SessionId,
     ) {
         let Some(capability) = state
-            .sessions
+            .connection_sessions
             .current_profile(peer_id)
             .await
             .map(profile_capability_mask)
@@ -646,7 +773,7 @@ impl ConnectionOrchestrator {
             return;
         };
         state
-            .connection_registry
+            .ready_session_index
             .register(peer_id, remote_epoch.clone(), capability, session_id);
     }
 
@@ -699,6 +826,7 @@ impl ConnectionOrchestrator {
                     }
                     if answer.accepted {
                         if let Some(snapshot) = answer.responder_snapshot.as_ref() {
+                            update_remote_candidate_cache(&state, &peer_id, Some(snapshot)).await;
                             let mut candidates = discovery_snapshot_candidates(snapshot);
                             candidates.extend(preserved_direct_candidates.iter().cloned());
                             let result = {
@@ -766,11 +894,11 @@ impl ConnectionOrchestrator {
         session_id: SessionId,
         peer: &crate::runtime::PeerConfig,
         attempt_id: &str,
-    ) -> Result<SessionAdmissionLease, ProtocolError> {
+    ) -> Result<ConnectionAdmissionLease, ProtocolError> {
         let state = Arc::clone(&self.state);
 
         // RELAY_RESERVING：reserve_relay 经 v2 控制面路由（§31 reserveRelay）。
-        self.set_stage(OrchestratorState::RelayReserving);
+        self.set_stage(ConnectivityAttemptState::RelayReserving);
         let reservation = {
             let control = state.relay_control.read().await.clone().ok_or_else(|| {
                 protocol_error_with_peer(
@@ -828,12 +956,15 @@ impl ConnectionOrchestrator {
         };
 
         // RELAY_CONNECTING（§25）：连接 reservation 数据面并启动事件循环。
-        self.set_stage(OrchestratorState::RelayConnecting);
+        self.set_stage(ConnectivityAttemptState::RelayConnecting);
         let data =
             match crate::relay::connect_initiator_relay_data(&state, peer_id, reservation).await {
                 Ok(data) => data,
                 Err(error) => {
-                    state.sessions.mark_failed(peer_id, session_id).await;
+                    state
+                        .connection_sessions
+                        .mark_failed(peer_id, session_id)
+                        .await;
                     return Err(error);
                 }
             };
@@ -857,7 +988,10 @@ impl ConnectionOrchestrator {
         {
             Ok(crypto) => crypto,
             Err(error) => {
-                state.sessions.mark_failed(peer_id, session_id).await;
+                state
+                    .connection_sessions
+                    .mark_failed(peer_id, session_id)
+                    .await;
                 return Err(error);
             }
         };
@@ -865,12 +999,12 @@ impl ConnectionOrchestrator {
         let relay_profile = crate::connection::ConnectionProfile::for_route(RouteType::Relay)
             .expect("Relay route has a composed profile");
         if !state
-            .sessions
+            .connection_sessions
             .candidate_supports_required_capabilities(peer_id, session_id, relay_profile)
             .await
         {
             state
-                .sessions
+                .connection_sessions
                 .release_authenticated_session(peer_id, session_id, &crypto.remote_session_binding)
                 .await;
             return Err(protocol_error_with_peer(
@@ -892,7 +1026,7 @@ impl ConnectionOrchestrator {
             ));
         }
         let attached = state
-            .sessions
+            .connection_sessions
             .mark_relay_route_connected(peer_id, session_id, RouteType::Relay, Some(data))
             .await;
         if !attached {
@@ -904,6 +1038,14 @@ impl ConnectionOrchestrator {
                 peer_id,
             ));
         }
+        // PathHandshakeV2 may have completed while the Relay event loop was
+        // still able to receive frames. Publish business admission only after
+        // the initiator's Relay route is attached to its Session.
+        state
+            .relay_path_ready
+            .write()
+            .await
+            .insert(peer_id.to_string());
         emit_peer_state(
             &state.event_tx,
             peer_id,
@@ -922,7 +1064,7 @@ impl ConnectionOrchestrator {
         &self,
         peer_id: &str,
         route: ConnectedRoute,
-    ) -> Result<SessionAdmissionLease, ProtocolError> {
+    ) -> Result<ConnectionAdmissionLease, ProtocolError> {
         let state = Arc::clone(&self.state);
         match route {
             ConnectedRoute::Quic {
@@ -935,13 +1077,13 @@ impl ConnectionOrchestrator {
                     crate::connection::ConnectionProfile::for_route(RouteType::QuicDirect)
                         .expect("QUIC direct route has a composed profile");
                 if !state
-                    .sessions
+                    .connection_sessions
                     .candidate_supports_required_capabilities(peer_id, session_id, profile)
                     .await
                 {
                     connection.close(VarInt::from_u32(0), b"candidate lacks requested capability");
                     state
-                        .sessions
+                        .connection_sessions
                         .release_authenticated_session(
                             peer_id,
                             session_id,
@@ -968,7 +1110,7 @@ impl ConnectionOrchestrator {
                     ));
                 }
                 let previous_route = match state
-                    .sessions
+                    .connection_sessions
                     .attach_connection_for_session(
                         peer_id,
                         Some(session_id),
@@ -981,7 +1123,7 @@ impl ConnectionOrchestrator {
                     Err(_) => {
                         state.crypto.remove_session(peer_id, &session_id.wire_key());
                         state
-                            .sessions
+                            .connection_sessions
                             .release_authenticated_session(
                                 peer_id,
                                 session_id,
@@ -999,10 +1141,10 @@ impl ConnectionOrchestrator {
                 if let Some(previous_route) = previous_route {
                     previous_route.close().await;
                 }
-                if state.sessions.current_session_id(peer_id).await != Some(session_id) {
+                if state.connection_sessions.current_session_id(peer_id).await != Some(session_id) {
                     state.crypto.remove_session(peer_id, &session_id.wire_key());
                     state
-                        .sessions
+                        .connection_sessions
                         .release_authenticated_session(
                             peer_id,
                             session_id,
@@ -1052,13 +1194,13 @@ impl ConnectionOrchestrator {
                 let admission = generic.admission;
                 let session_id = admission.session_id;
                 if !state
-                    .sessions
+                    .connection_sessions
                     .candidate_supports_required_capabilities(peer_id, session_id, profile)
                     .await
                 {
                     scope.close().await;
                     state
-                        .sessions
+                        .connection_sessions
                         .release_authenticated_session(
                             peer_id,
                             session_id,
@@ -1077,7 +1219,10 @@ impl ConnectionOrchestrator {
                     .is_err()
                 {
                     scope.close().await;
-                    state.sessions.mark_failed(peer_id, session_id).await;
+                    state
+                        .connection_sessions
+                        .mark_failed(peer_id, session_id)
+                        .await;
                     return Err(protocol_error_with_peer(
                         NetworkErrorCode::AuthenticationFailed,
                         "application E2EE handshake was not accepted",
@@ -1086,7 +1231,7 @@ impl ConnectionOrchestrator {
                     ));
                 }
                 let previous_route = match state
-                    .sessions
+                    .connection_sessions
                     .attach_generic_route_for_session(peer_id, Some(session_id), &mut scope)
                     .await
                 {
@@ -1095,7 +1240,7 @@ impl ConnectionOrchestrator {
                         scope.close().await;
                         state.crypto.remove_session(peer_id, &session_id.wire_key());
                         state
-                            .sessions
+                            .connection_sessions
                             .release_authenticated_session(
                                 peer_id,
                                 session_id,
@@ -1138,18 +1283,22 @@ impl ConnectionOrchestrator {
 }
 
 /// 关闭一个已登记的连接（§34 Close old）。
-pub(crate) async fn close_session_and_registry(
+pub(crate) async fn close_session_and_unregister(
     state: Arc<RuntimeState>,
     peer_id: String,
     session_id: SessionId,
 ) {
-    if let Some(route) = state.sessions.close(&peer_id).await {
+    if let Some(route) = state.connection_sessions.close(&peer_id).await {
         route.close().await;
     }
     state.cancel_session_tasks(&peer_id, session_id).await;
     state
-        .connection_registry
+        .ready_session_index
         .unregister_if_session(&peer_id, session_id);
+    // Keep the peer-owned lifecycle coordinator aligned with the destroyed
+    // ConnectionSession. Otherwise a later explicit ConnectPeer would join
+    // the stale Online generation and never start a fresh attempt_coordinator run.
+    let _ = state.peer_supervisors.disconnect(&peer_id);
     // 显式关闭连接（§34 Close old）时清理接收端 dedup/ordered 状态；transport
     // 丢失路径不清理（§20 需要跨连接去重）。
     state.delivery.close_peer(&peer_id).await;
@@ -1184,6 +1333,114 @@ fn resolved_snapshot(resolved: &ResolvedPeer) -> Option<&DiscoverySnapshot> {
         ResolvedPeer::Offline | ResolvedPeer::NotReady { .. } | ResolvedPeer::Unknown { .. } => {
             None
         }
+    }
+}
+
+fn snapshot_candidate_transports(snapshot: &DiscoverySnapshot) -> Vec<CandidateTransport> {
+    snapshot
+        .transport_capabilities
+        .iter()
+        .filter_map(|value| network_relay::v2::TransportCapability::try_from(*value).ok())
+        .filter_map(|capability| match capability {
+            network_relay::v2::TransportCapability::Quic => Some(CandidateTransport::Quic),
+            network_relay::v2::TransportCapability::Tcp => Some(CandidateTransport::Tcp),
+            network_relay::v2::TransportCapability::UdpDatagram => {
+                Some(CandidateTransport::UdpDatagram)
+            }
+            network_relay::v2::TransportCapability::Websocket => {
+                Some(CandidateTransport::Websocket)
+            }
+            network_relay::v2::TransportCapability::RelayData => Some(CandidateTransport::Relay),
+            network_relay::v2::TransportCapability::Unspecified
+            | network_relay::v2::TransportCapability::Webrtc => None,
+        })
+        .collect()
+}
+
+fn snapshot_candidate_payloads(snapshot: &DiscoverySnapshot) -> Vec<CandidatePayloadV2> {
+    let advertised_transports = snapshot_candidate_transports(snapshot);
+    snapshot
+        .candidate_bundle
+        .as_ref()
+        .into_iter()
+        .flat_map(|bundle| bundle.candidates.iter())
+        .filter_map(|bytes| serde_json::from_slice::<CandidateAdvertisement>(bytes).ok())
+        .filter_map(|advertisement| {
+            let mut transports = match advertisement.kind {
+                // A STUN server-reflexive address is a UDP mapping. Never
+                // let a global TCP/WS capability turn it into a TCP probe.
+                CandidateKind::ServerReflexive => vec![CandidateTransport::UdpDatagram],
+                CandidateKind::Relay => vec![CandidateTransport::Relay],
+                _ => advertised_transports.clone(),
+            };
+            if transports.is_empty() {
+                transports.push(CandidateTransport::Quic);
+            }
+            let candidate = CandidatePayloadV2 {
+                version: network_nat::CANDIDATE_PAYLOAD_VERSION,
+                candidate_id: advertisement.candidate_id,
+                endpoint: advertisement.endpoint,
+                kind: advertisement.kind,
+                transport_capabilities: transports,
+                priority: advertisement.priority,
+                interface: advertisement.interface,
+                generation: advertisement.generation,
+            };
+            candidate.validate().ok().map(|_| candidate)
+        })
+        .take(network_nat::MAX_CANDIDATE_PAYLOAD_ENTRIES)
+        .collect()
+}
+
+fn candidate_from_v2(candidate: &CandidatePayloadV2) -> Option<Candidate> {
+    if !candidate.is_direct_probe_eligible() {
+        return None;
+    }
+    let mut direct = Candidate::new(
+        candidate.endpoint,
+        candidate.kind,
+        candidate.interface.clone(),
+    );
+    direct.candidate_id = candidate.candidate_id.clone();
+    direct.priority = candidate.priority;
+    Some(direct)
+}
+
+async fn update_remote_candidate_cache(
+    state: &RuntimeState,
+    peer_id: &str,
+    snapshot: Option<&DiscoverySnapshot>,
+) {
+    let Some(snapshot) = snapshot else {
+        return;
+    };
+    let Some(runtime_epoch) = snapshot.runtime_epoch.as_ref() else {
+        return;
+    };
+    let candidate_snapshot = ResolvedCandidateSnapshot {
+        runtime_epoch: nat_runtime_epoch(runtime_epoch),
+        revision: u64::from(snapshot.revision),
+        candidates: snapshot_candidate_payloads(snapshot),
+        server_presence_ttl: Some(Duration::from_secs(u64::from(
+            network_relay::v2::PRESENCE_TTL_S,
+        ))),
+    };
+    let learned_at = Instant::now();
+    let mut cache = state.remote_candidate_cache.write().await;
+    match cache.get_mut(peer_id) {
+        Some(existing) => {
+            if let Err(error) = existing.apply(candidate_snapshot, learned_at) {
+                tracing::debug!(%peer_id, error = %error, "ignored inconsistent remote candidate cache snapshot");
+            }
+        }
+        None => match ResolvedCandidateCache::from_snapshot(candidate_snapshot, learned_at) {
+            Ok(value) => {
+                cache.insert(peer_id.to_string(), value);
+            }
+            Err(error) => {
+                tracing::debug!(%peer_id, error = %error, "ignored invalid remote candidate cache snapshot");
+            }
+        },
     }
 }
 
@@ -1329,32 +1586,32 @@ mod tests {
         // 状态机只允许设计定义的阶段；不允许 RECONNECTING / DIRECT_UPGRADING /
         // PATH_REPAIRING（§11）。
         let stages = [
-            OrchestratorState::Idle,
-            OrchestratorState::Resolving,
-            OrchestratorState::Resolved,
-            OrchestratorState::Coordinating,
-            OrchestratorState::DirectConnecting,
-            OrchestratorState::ConnectedDirect,
-            OrchestratorState::DirectFailed,
-            OrchestratorState::RelayReserving,
-            OrchestratorState::RelayConnecting,
-            OrchestratorState::ConnectedRelay,
-            OrchestratorState::Failed,
+            ConnectivityAttemptState::Idle,
+            ConnectivityAttemptState::Resolving,
+            ConnectivityAttemptState::Resolved,
+            ConnectivityAttemptState::Coordinating,
+            ConnectivityAttemptState::DirectConnecting,
+            ConnectivityAttemptState::ConnectedDirect,
+            ConnectivityAttemptState::DirectFailed,
+            ConnectivityAttemptState::RelayReserving,
+            ConnectivityAttemptState::RelayConnecting,
+            ConnectivityAttemptState::ConnectedRelay,
+            ConnectivityAttemptState::Failed,
         ];
         for stage in stages {
             // 编译期保证不存在缺失的变体。
             match stage {
-                OrchestratorState::Idle
-                | OrchestratorState::Resolving
-                | OrchestratorState::Resolved
-                | OrchestratorState::Coordinating
-                | OrchestratorState::DirectConnecting
-                | OrchestratorState::ConnectedDirect
-                | OrchestratorState::DirectFailed
-                | OrchestratorState::RelayReserving
-                | OrchestratorState::RelayConnecting
-                | OrchestratorState::ConnectedRelay
-                | OrchestratorState::Failed => {}
+                ConnectivityAttemptState::Idle
+                | ConnectivityAttemptState::Resolving
+                | ConnectivityAttemptState::Resolved
+                | ConnectivityAttemptState::Coordinating
+                | ConnectivityAttemptState::DirectConnecting
+                | ConnectivityAttemptState::ConnectedDirect
+                | ConnectivityAttemptState::DirectFailed
+                | ConnectivityAttemptState::RelayReserving
+                | ConnectivityAttemptState::RelayConnecting
+                | ConnectivityAttemptState::ConnectedRelay
+                | ConnectivityAttemptState::Failed => {}
             }
         }
     }
@@ -1446,8 +1703,8 @@ mod tests {
             SystemTime::now(),
             DIRECT_CONNECT_WINDOW,
         )));
-        let orchestrator = ConnectionOrchestrator::new(state);
-        let mut updates = orchestrator.spawn_coordination(
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
+        let mut updates = attempt_coordinator.spawn_coordination(
             control,
             "peer-b".into(),
             "attempt-answer".into(),
@@ -1478,14 +1735,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn new_orchestrator_starts_in_idle() {
+    async fn new_attempt_coordinator_starts_in_idle() {
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
-        let orchestrator = ConnectionOrchestrator::new(state);
-        assert_eq!(orchestrator.stage(), OrchestratorState::Idle);
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
+        assert_eq!(attempt_coordinator.stage(), ConnectivityAttemptState::Idle);
     }
 
     #[test]
@@ -1522,8 +1779,8 @@ mod tests {
         ));
         let control = StubControl::new(ResolveStatus::Offline, None);
         *state.relay_control.write().await = Some(control);
-        let orchestrator = ConnectionOrchestrator::new(state);
-        let result = orchestrator
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
+        let result = attempt_coordinator
             .resolve("peer-b", &peer_without_endpoint())
             .await;
         assert!(matches!(
@@ -1540,8 +1797,8 @@ mod tests {
             event_tx,
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
-        let orchestrator = ConnectionOrchestrator::new(state);
-        let resolved = orchestrator
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
+        let resolved = attempt_coordinator
             .resolve("peer-b", &peer_without_endpoint())
             .await
             .expect("local direct");
@@ -1559,8 +1816,8 @@ mod tests {
         ));
         let control = StubControl::new(ResolveStatus::NotReady, None);
         *state.relay_control.write().await = Some(control);
-        let orchestrator = ConnectionOrchestrator::new(state);
-        let result = orchestrator
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
+        let result = attempt_coordinator
             .resolve("peer-b", &peer_without_endpoint())
             .await;
         assert!(matches!(
@@ -1583,13 +1840,13 @@ mod tests {
         ));
         let control = StubControl::new(ResolveStatus::Offline, None);
         *state.relay_control.write().await = Some(control);
-        let orchestrator = ConnectionOrchestrator::new(state);
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
         let peer = crate::runtime::PeerConfig {
             endpoint: Some("192.168.1.20:41020".parse().expect("test endpoint")),
             identity_public_key: [7u8; 32],
             e2e_public_key: [8u8; 32],
         };
-        let resolved = orchestrator
+        let resolved = attempt_coordinator
             .resolve("peer-b", &peer)
             .await
             .expect("offline with configured endpoint should fall back to local direct");
@@ -1607,13 +1864,13 @@ mod tests {
         ));
         let control = StubControl::new(ResolveStatus::NotReady, None);
         *state.relay_control.write().await = Some(control);
-        let orchestrator = ConnectionOrchestrator::new(state);
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
         let peer = crate::runtime::PeerConfig {
             endpoint: Some("127.0.0.1:40000".parse().expect("test endpoint")),
             identity_public_key: [7u8; 32],
             e2e_public_key: [8u8; 32],
         };
-        let resolved = orchestrator
+        let resolved = attempt_coordinator
             .resolve("peer-b", &peer)
             .await
             .expect("not-ready with configured endpoint should fall back to local direct");
@@ -1631,13 +1888,13 @@ mod tests {
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
         *state.relay_control.write().await = Some(StubControl::error());
-        let orchestrator = ConnectionOrchestrator::new(state);
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
         let peer = crate::runtime::PeerConfig {
             endpoint: Some("192.168.1.20:41020".parse().expect("test endpoint")),
             identity_public_key: [7u8; 32],
             e2e_public_key: [8u8; 32],
         };
-        let resolved = orchestrator
+        let resolved = attempt_coordinator
             .resolve("peer-b", &peer)
             .await
             .expect("transport error with configured endpoint should fall back");
@@ -1652,13 +1909,13 @@ mod tests {
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
         *state.relay_control.write().await = Some(StubControl::timeout());
-        let orchestrator = ConnectionOrchestrator::new(state);
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
         let peer = crate::runtime::PeerConfig {
             endpoint: Some("127.0.0.1:40000".parse().expect("test endpoint")),
             identity_public_key: [7u8; 32],
             e2e_public_key: [8u8; 32],
         };
-        let task = tokio::spawn(async move { orchestrator.resolve("peer-b", &peer).await });
+        let task = tokio::spawn(async move { attempt_coordinator.resolve("peer-b", &peer).await });
         tokio::task::yield_now().await;
         tokio::time::advance(RESOLVE_TIMEOUT + Duration::from_millis(1)).await;
         let resolved = task
@@ -1676,9 +1933,9 @@ mod tests {
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
         *state.relay_control.write().await = Some(StubControl::timeout());
-        let orchestrator = ConnectionOrchestrator::new(state);
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
         let peer = peer_without_endpoint();
-        let task = tokio::spawn(async move { orchestrator.resolve("peer-b", &peer).await });
+        let task = tokio::spawn(async move { attempt_coordinator.resolve("peer-b", &peer).await });
         tokio::task::yield_now().await;
         tokio::time::advance(RESOLVE_TIMEOUT + Duration::from_millis(1)).await;
         let result = task.await.expect("resolve task");
@@ -1697,25 +1954,25 @@ mod tests {
         let peer_id = "peer-b";
 
         // 预置一条健康连接：ReliableMessage 会话 + 已登记（模拟先前 connect 建立）。
-        let session_id = match state.sessions.begin_connect(peer_id).await {
+        let session_id = match state.connection_sessions.begin_connect(peer_id).await {
             crate::session::ConnectDecision::Started(id) => id,
             decision => panic!("unexpected Session decision: {decision:?}"),
         };
         assert!(
             state
-                .sessions
+                .connection_sessions
                 .mark_relay_route_connected(peer_id, session_id, RouteType::Relay, None)
                 .await
         );
-        state.connection_registry.register(
+        state.ready_session_index.register(
             peer_id,
             None,
             DEFAULT_CONNECTION_CAPABILITY,
             session_id,
         );
 
-        let orchestrator = ConnectionOrchestrator::new(Arc::clone(&state));
-        let result = orchestrator
+        let attempt_coordinator = ConnectivityAttemptCoordinator::new(Arc::clone(&state));
+        let result = attempt_coordinator
             .connect_with_class(peer_id, CommunicationClass::ReliableStream)
             .await;
         assert!(result.is_ok(), "reuse path should succeed: {result:?}");
@@ -1749,7 +2006,7 @@ mod tests {
                     peer_state.state,
                     network_protocol::PeerConnectionState::Connected as i32
                 );
-                assert_eq!(peer_state.active_route, RouteType::Relay as i32);
+                assert_eq!(peer_state.route_type, RouteType::Relay as i32);
             }
             other => panic!("unexpected event payload: {other:?}"),
         }

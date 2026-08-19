@@ -1,4 +1,4 @@
-// v1 helper isolate 原生网络运行时轮询桥接。
+// Network Protocol V2 helper isolate 原生网络运行时轮询桥接。
 //
 // 原生运行时停止/销毁前必须先停止并确认 isolate，避免轮询访问已释放的运行时句柄。
 

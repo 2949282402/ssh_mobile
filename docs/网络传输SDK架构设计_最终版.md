@@ -233,7 +233,7 @@ DeliveryManager
 │                                     │                                        │
 │  ┌──────────────────────────────────▼─────────────────────────────────────┐  │
 │  │ Session Layer                                                         │  │
-│  │ SessionManager / PeerManager / Identity / Authentication              │  │
+│  │ PeerSupervisor / PeerPathManager / Identity / Authentication            │  │
 │  │ Capability Negotiation / Session State                                │  │
 │  └──────────────────────────────────┬─────────────────────────────────────┘  │
 │                                     │                                        │
@@ -1913,7 +1913,7 @@ Flutter Client Facade
             ↓
       App Shell Adapters
       ├── SdkRequestExecutor → Control Plane HTTP
-      └── NetworkCommandGateway → Runtime-owned v1 Native SDK
+      └── NetworkCommandGateway → Runtime-owned Network Protocol V2 Native SDK
 ```
 
 客户端职责建议：
@@ -1960,7 +1960,7 @@ Socket 始终由 Rust Core SDK 持有，Flutter 只消费统一状态和事件�
 当前开发实现已经将 `SdkRequestExecutor`、`JsonBootstrapClient` 和
 `JsonAuthenticatedApiClient` 放入 `packages/infrastructure/network_sdk/`；App
 Shell 负责提供真正的 HTTP/TLS 执行器，LAN Feature 只接收注入的
-`BootstrapClient`。网络数据面仍沿用 v1 `NetworkCommandGateway`，不在 Flutter
+`BootstrapClient`。网络数据面使用 Network Protocol V2 `NetworkCommandGateway`，不在 Flutter
 层新增第二套 Socket 或协议实现。
 
 ---
@@ -2546,7 +2546,7 @@ E2EE
 
 实现：
 
-- ConnectionSessionManager；
+- ConnectionSessionStore；
 - ConnectionSession = exactly one Transport Connection；
 - MessageEnvelope；
 - Protocol Codec；
@@ -3022,7 +3022,7 @@ Transport Lost
       ↓
 ConnectionSession = Destroyed
       ↓
-Resolve / ConnectionOrchestrator
+Resolve / ConnectivityAttemptCoordinator
       ↓
 Direct First → Relay fallback
       ↓

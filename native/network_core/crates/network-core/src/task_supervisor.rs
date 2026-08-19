@@ -15,6 +15,10 @@ use tokio::task::JoinHandle;
 
 pub(crate) type TaskId = u64;
 
+/// Hard cap on live supervisor records. Control-plane overload must fail at
+/// task admission instead of growing an unbounded native allocation.
+pub(crate) const MAX_SUPERVISED_TASKS: usize = 512;
+
 /// An owning capability for one supervised task.
 ///
 /// Most runtime tasks only need the supervisor's group cancellation and keep
@@ -214,6 +218,16 @@ impl RuntimeTaskSupervisor {
         if self.stopping.load(Ordering::Acquire) {
             return None;
         }
+        self.reap_finished();
+        if self
+            .tasks
+            .lock()
+            .ok()
+            .is_some_and(|tasks| tasks.len() >= MAX_SUPERVISED_TASKS)
+        {
+            tracing::warn!(task = %name, "native task supervisor capacity exhausted");
+            return None;
+        }
         let task_id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let task_token = CancellationToken::default();
         let task_token_for_future = task_token.clone();
@@ -373,7 +387,6 @@ impl RuntimeTaskSupervisor {
         self.tasks.lock().map(|tasks| tasks.len()).unwrap_or(0)
     }
 
-    #[cfg(test)]
     fn reap_finished(&self) {
         if let Ok(mut tasks) = self.tasks.lock() {
             tasks.retain(|_, record| {

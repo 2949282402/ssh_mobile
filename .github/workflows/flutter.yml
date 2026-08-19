@@ -193,6 +193,8 @@ jobs:
           fi
       - name: Run relay v2 contract check
         run: bash scripts/relay_v2_contract.sh
+      - name: Run Phase 0 network v2 characterization matrix
+        run: bash scripts/network_v2_acceptance.sh baseline
       - name: Install buf (best-effort)
         run: go install github.com/bufbuild/buf/cmd/buf@v1.47.2
         continue-on-error: true
@@ -227,6 +229,8 @@ jobs:
         run: dart run tool/check_agent_docs.dart
       - name: Test agent documentation checker
         run: dart run test/tool/agent_docs_check_test.dart
+      - name: Test CI workflow contract
+        run: dart run test/tool/ci_workflow_test.dart
       - name: Check architecture guard
         run: dart run tool/architecture_check.dart
       - name: Check module dependencies

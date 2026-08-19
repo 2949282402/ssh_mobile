@@ -1,4 +1,4 @@
-use network_nat::PathManager;
+use network_nat::{CandidateTransport, PathManager};
 use quinn::{
     crypto::rustls::QuicClientConfig, ClientConfig, Endpoint, EndpointConfig, ServerConfig,
     TokioRuntime,
@@ -8,7 +8,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
 
-pub const QUIC_ALPN_V1: &[&[u8]] = &[b"ssh-mobile/1"];
+pub const QUIC_ALPN_V2: &[&[u8]] = &[b"ssh-mobile/2"];
+
+/// A QUIC-bound UDP socket can advertise its QUIC and unreliable datagram
+/// capabilities. It must not be inferred to support TCP or WebSocket merely
+/// because it has a socket address.
+pub const QUIC_CANDIDATE_TRANSPORTS: [CandidateTransport; 2] =
+    [CandidateTransport::Quic, CandidateTransport::UdpDatagram];
 
 pub struct QuicEndpointManager {
     pub endpoint: Endpoint,
@@ -40,7 +46,7 @@ impl QuicEndpointManager {
                 vec![CertificateDer::from(cert_der)],
                 PrivateKeyDer::Pkcs8(key_der.into()),
             )?;
-        server_crypto.alpn_protocols = QUIC_ALPN_V1.iter().map(|s| s.to_vec()).collect();
+        server_crypto.alpn_protocols = QUIC_ALPN_V2.iter().map(|s| s.to_vec()).collect();
 
         let server_config = ServerConfig::with_crypto(Arc::new(
             quinn::crypto::rustls::QuicServerConfig::try_from(server_crypto)?,
@@ -56,7 +62,7 @@ impl QuicEndpointManager {
             .dangerous()
             .with_custom_certificate_verifier(ApplicationIdentityVerifier::new())
             .with_no_client_auth();
-        client_crypto.alpn_protocols = QUIC_ALPN_V1.iter().map(|s| s.to_vec()).collect();
+        client_crypto.alpn_protocols = QUIC_ALPN_V2.iter().map(|s| s.to_vec()).collect();
         endpoint.set_default_client_config(ClientConfig::new(Arc::new(
             QuicClientConfig::try_from(client_crypto)?,
         )));
@@ -145,5 +151,15 @@ mod tests {
         manager
             .endpoint
             .close(quinn::VarInt::from_u32(0), b"test complete");
+    }
+
+    #[test]
+    fn quic_candidate_capabilities_do_not_claim_stream_transports() {
+        assert_eq!(
+            QUIC_CANDIDATE_TRANSPORTS,
+            [CandidateTransport::Quic, CandidateTransport::UdpDatagram]
+        );
+        assert!(!QUIC_CANDIDATE_TRANSPORTS.contains(&CandidateTransport::Tcp));
+        assert!(!QUIC_CANDIDATE_TRANSPORTS.contains(&CandidateTransport::Websocket));
     }
 }

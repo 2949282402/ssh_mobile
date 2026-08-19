@@ -39,10 +39,64 @@ var errDiscoveryRevisionImmutable = errors.New("discovery publish rejected: same
 // revision is mandatory (>= 1) in the frozen contract.
 var errDiscoveryNoRevision = errors.New("discovery publish rejected: revision must be >= 1")
 
+// errDiscoveryInvalidSnapshot reports a missing or zero runtime_epoch.  The
+// epoch is the ownership boundary for revision ordering; synthesizing one on
+// the relay would make a malformed client snapshot look publishable and would
+// break reconnect/replay semantics.
+var errDiscoveryInvalidSnapshot = errors.New("discovery publish rejected: runtime_epoch must be non-zero")
+
 // resolveResult is the authoritative 4-state peer resolve (design §10).
 type resolveResult struct {
 	status    v2.ResolveStatus
 	discovery Discovery
+}
+
+// resolveStatusError maps the authoritative Resolve result to the stable
+// control-plane error used by async offer/reservation callers.  UNKNOWN is
+// deliberately CONTROL_UNAVAILABLE rather than PEER_OFFLINE: backend failure
+// must not become a fail-open connectivity decision.
+func resolveStatusError(status v2.ResolveStatus) (v2.ErrorCode, string) {
+	switch status {
+	case v2.ResolveStatus_RESOLVE_STATUS_OFFLINE:
+		return v2.ErrorCode_ERROR_CODE_PEER_OFFLINE, "target peer is offline"
+	case v2.ResolveStatus_RESOLVE_STATUS_NOT_READY:
+		return v2.ErrorCode_ERROR_CODE_PEER_NOT_READY, "target peer is not ready"
+	case v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN:
+		return v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE, "control backend unavailable"
+	case v2.ResolveStatus_RESOLVE_STATUS_READY:
+		return v2.ErrorCode_ERROR_CODE_UNSPECIFIED, ""
+	default:
+		return v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE, "control backend returned an unknown resolve status"
+	}
+}
+
+// validateDiscoverySnapshotV2 repeats the semantic bounds at the control
+// primitive boundary.  DecodeControl already enforces them for WebSocket
+// traffic, but publishDiscoveryV2 is also used directly by control-focused
+// tests and by future adapters; no caller should be able to bypass the frozen
+// snapshot limits by skipping the codec.
+func validateDiscoverySnapshotV2(snapshot *v2.DiscoverySnapshot) error {
+	if snapshot == nil || snapshot.Revision == 0 {
+		return errDiscoveryInvalidSnapshot
+	}
+	epoch := snapshot.GetRuntimeEpoch()
+	if epoch == nil || (epoch.High == 0 && epoch.Low == 0) {
+		return errDiscoveryInvalidSnapshot
+	}
+	if len(snapshot.TransportCapabilities) > maxDiscoveryCapabilities {
+		return errDiscoveryInvalidSnapshot
+	}
+	if bundle := snapshot.CandidateBundle; bundle != nil {
+		if len(bundle.Candidates) > maxDiscoveryCandidates {
+			return errDiscoveryInvalidSnapshot
+		}
+		for _, candidate := range bundle.Candidates {
+			if len(candidate) > maxDiscoveryCandidateBytes {
+				return errDiscoveryInvalidSnapshot
+			}
+		}
+	}
+	return nil
 }
 
 // resolvePeer 是 peer 可连性的唯一权威判定（明确版 §10），绝不 fail-open：
@@ -58,27 +112,47 @@ type resolveResult struct {
 // discovery 快照）。
 func (h *hub) resolvePeer(ctx context.Context, targetID string) resolveResult {
 	if h.presence == nil {
-		// 无共享状态层：没有 presence 租约可判定，权威判离线。
-		return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_OFFLINE}
-	}
-	presence, presenceOK, presenceErr := h.presence.GetPresence(ctx, targetID)
-	if presenceErr != nil {
-		// 后端读取故障：状态未知，NOT fail-open online。
+		// Without the shared authority we cannot distinguish an absent lease from
+		// a backend failure.  Resolve must never fail-open to OFFLINE or READY.
 		return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN}
 	}
-	if !presenceOK {
-		// presence 确定不存在 → OFFLINE。
-		return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_OFFLINE}
+	// The store exposes separate reads, so close the most important takeover
+	// window with a bounded presence→discovery→presence consistency check.  A
+	// new connection taking the lease between the reads must never inherit the
+	// previous connection's READY result.
+	for attempt := 0; attempt < 2; attempt++ {
+		presence, presenceOK, presenceErr := h.presence.GetPresence(ctx, targetID)
+		if presenceErr != nil {
+			return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN}
+		}
+		if !presenceOK {
+			return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_OFFLINE}
+		}
+		found, discOK, discErr := h.presence.GetDiscovery(ctx, targetID)
+		if discErr != nil {
+			return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN}
+		}
+		latestPresence, latestOK, latestErr := h.presence.GetPresence(ctx, targetID)
+		if latestErr != nil {
+			return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN}
+		}
+		if !latestOK {
+			return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_OFFLINE}
+		}
+		if presence.ConnectionID == "" || latestPresence.ConnectionID == "" || latestPresence.ConnectionID != presence.ConnectionID {
+			continue
+		}
+		if !discOK || !found.ready() || !found.hasRuntimeEpoch() || found.ConnectionID == "" || presence.ConnectionID != found.ConnectionID {
+			// presence 在线但 discovery 未可靠发布（缺失 / revision=0 / epoch 缺失 /
+			// owner 不一致残留）。
+			return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_NOT_READY}
+		}
+		return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_READY, discovery: found}
 	}
-	found, discOK, discErr := h.presence.GetDiscovery(ctx, targetID)
-	if discErr != nil {
-		return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN}
-	}
-	if !discOK || !found.ready() || presence.ConnectionID != found.ConnectionID {
-		// presence 在线但 discovery 未可靠发布（缺失 / revision=0 / owner 不一致残留）。
-		return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_NOT_READY}
-	}
-	return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_READY, discovery: found}
+	// Repeated owner churn means the authority cannot provide a stable answer in
+	// this bounded lookup.  Do not downgrade it to OFFLINE or use the local hub
+	// table as a fail-open fallback.
+	return resolveResult{status: v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN}
 }
 
 // discoveryFromV2 converts a frozen v2 DiscoverySnapshot into the shared storage
@@ -102,11 +176,6 @@ func discoveryFromV2(deviceID string, snapshot *v2.DiscoverySnapshot) Discovery 
 			d.Candidates = append(d.Candidates, base64.StdEncoding.EncodeToString(candidate))
 		}
 	}
-	// 若客户端未携带 epoch（协议违规，但保持原语健壮），服务端派生一个，避免
-	// 零 epoch 被 READY 判据错误接受。
-	if d.RuntimeEpochHigh == 0 && d.RuntimeEpochLow == 0 {
-		d.RuntimeEpochHigh, d.RuntimeEpochLow = newRuntimeEpoch()
-	}
 	return d
 }
 
@@ -123,6 +192,9 @@ func (h *hub) publishDiscoveryV2(requestID uint64, deviceID, connID string, snap
 	}
 	if snapshot == nil || snapshot.Revision == 0 {
 		return nil, errDiscoveryNoRevision
+	}
+	if err := validateDiscoverySnapshotV2(snapshot); err != nil {
+		return nil, err
 	}
 	d := discoveryFromV2(deviceID, snapshot)
 
@@ -151,14 +223,14 @@ func (h *hub) publishDiscoveryV2(requestID uint64, deviceID, connID string, snap
 		}
 	}
 	// 跨 epoch 的 revision 不可比较（明确版 §7），直接接受任意 >=1 的 revision。
-	wasOnline := presenceOK && hadOld && old.ready() && presence.ConnectionID == old.ConnectionID
+	wasOnline := presenceOK && hadOld && old.ready() && old.hasRuntimeEpoch() && presence.ConnectionID == old.ConnectionID
 	if err := h.presence.TakeDiscovery(ctx, deviceID, connID, d, h.presenceTTL); err != nil {
 		return nil, err
 	}
 	frameType := ""
 	if !wasOnline {
 		frameType = framePeerOnline
-	} else if old.Revision != d.Revision {
+	} else if !old.sameEpoch(d) || old.Revision != d.Revision {
 		frameType = framePeerUpdated
 	}
 	if frameType != "" {

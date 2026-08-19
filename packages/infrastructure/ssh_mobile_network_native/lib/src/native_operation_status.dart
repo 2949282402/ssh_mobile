@@ -1,4 +1,4 @@
-// v1 原生网络状态的 Dart 类型化表示。
+// Native network status 的 Dart 类型化表示。
 //
 // C ABI 仍使用整数返回值，但整数只在本文件的转换边界出现，
 // package 公共 API 和 Flutter 业务代码只接触此枚举。
@@ -10,7 +10,7 @@ enum NativeOperationStatus {
   stopped,
   failure;
 
-  /// 将 C ABI 的 v1 整数状态转换为 Dart 类型。
+  /// 将 C ABI 整数状态转换为 Dart 类型。
   static NativeOperationStatus fromNativeCode(int value) => switch (value) {
     0 => success,
     -1 || -2 => invalidArgument,

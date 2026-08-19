@@ -10,7 +10,7 @@ Native event polling runs on a helper isolate because the Rust poll call may
 block. Runtime disposal first asks that isolate to stop, waits for its exit,
 and only then destroys the Rust handle.
 
-The current v1 runtime handles peer registration with pinned Ed25519/X25519
+The current Network Protocol V2 runtime handles peer registration with pinned Ed25519/X25519
 keys, per-peer `PathManager` selection, authenticated Quinn sessions, approved
 and verified file receive, cancellation, progress/completion events, the
 native WSS Relay data path, and a WebRTC Realtime route over the current ConnectionSession. The
@@ -25,10 +25,10 @@ Each authenticated transport Connection creates exactly one ConnectionSession wi
 fresh SessionId and Noise root. Transport loss destroys it; Delivery/Transfer
 business state is retained above that boundary and resumes on a later connection.
 
-## v1 contract
+## Network Protocol V2 contract
 
-- The package is intentionally development-stage v1 only. It does not migrate
-  or fall back to another network protocol version.
+- Network Protocol V2 is the only active native SDK/Data contract. Relay
+  Bootstrap V1 remains a separate enrollment/version domain.
 - `NativeNetworkRuntime` exposes typed operation status values to Dart and
   keeps raw FFI integers private to the package.
 - `NativeNetworkRuntime.startRealtimeSession`,
@@ -50,10 +50,11 @@ business state is retained above that boundary and resumes on a later connection
   `stop()` cancels the root, closes Relay/WebRTC/QUIC resources, and waits for
   every registered task before returning.
 - Application payload crypto is ConnectionSession-owned; every new transport
-  Connection gets a fresh SessionId and Noise root. E2EE is the secure protobuf
-  default and clear payloads require an explicit opt-out. Delivery retains
-  logical plaintext and re-encrypts each retry; the same `CryptoContext` covers
-  QUIC/Relay data within one ConnectionSession, while Relay sees only ciphertext.
+  Connection gets a fresh SessionId and Noise root. Network Protocol V2
+  messages do not carry a per-message crypto mode: the native owner always
+  applies E2EE. Delivery retains logical plaintext and re-encrypts each retry;
+  the same `CryptoContext` covers QUIC/Relay data within one ConnectionSession,
+  while Relay sees only ciphertext.
 - NAT traversal uses the same native UDP socket for candidate gathering and
   Quinn. Candidate Offer/Answer carries generation, attempt ID, and a bounded
   connect window; both peers may run simultaneous authenticated QUIC Initial
@@ -111,7 +112,7 @@ cargo test -p network-webrtc --locked -- --ignored relay_only_drivers_exchange_d
 
 ## Package contract
 
-- 职责：提供 Rust `network-ffi` 的 Dart FFI facade、native asset hook 和 v1 协议绑定。
+- 职责：提供 Rust `network-ffi` 的 Dart FFI facade、native asset hook 和 Network Protocol V2 绑定。
 - 不负责：Feature 业务、App Shell 生命周期、数据库或第二套 Dart 网络协议实现。
 - Public API：`package:ssh_mobile_network_native/ssh_mobile_network_native.dart`。
 - 依赖：Dart FFI、`code_assets`、`hooks` 和 Rust `native/network_core` 构建产物。

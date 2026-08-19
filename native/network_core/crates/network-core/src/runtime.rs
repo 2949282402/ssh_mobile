@@ -1,37 +1,37 @@
-//! v1 网络运行时生命周期、共享状态与命令/事件通道。
+//! V2 网络运行时生命周期、共享状态与命令/事件通道。
 
 use network_protocol::{NetworkCommand, NetworkEvent};
+use prost::Message;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU16, AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicU16, AtomicU8, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
 use tokio::runtime::Runtime;
-use tokio::sync::{
-    mpsc::{self, unbounded_channel, UnboundedReceiver, UnboundedSender},
-    oneshot, Mutex as AsyncMutex, Notify, RwLock,
-};
+#[cfg(test)]
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex, Notify, RwLock};
 use tracing::info;
 
 use crate::commands::run_command_worker;
-use crate::crypto::{CryptoContext, CryptoError, CryptoMode, SessionCryptoManager};
+use crate::crypto::{CryptoContext, CryptoError, SessionCryptoManager};
 use crate::crypto_handshake::{
     RelayResponderConfirmation, RelayResponderHandshake, SessionCryptoMaterial,
 };
 use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
 use crate::session::{
-    ConnectDecision, SessionAdmission, SessionAdmissionError, SessionAdmissionOutcome, SessionId,
-    SessionManager,
+    ConnectDecision, ConnectionAdmission, ConnectionAdmissionError, ConnectionAdmissionOutcome,
+    ConnectionSessionStore, SessionId,
 };
 use crate::stream::ReliableStreamManager;
 use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
 use network_identity::DeviceIdentity;
-use network_nat::PathManager;
+use network_nat::{PathManager, ResolvedCandidateCache};
 use network_relay::RelayDataClient;
 use network_transfer::TransferManager;
 use quinn::Endpoint;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -43,11 +43,118 @@ pub(crate) const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_secs(15)
 pub(crate) const MAX_PENDING_INCOMING_TRANSFERS: usize = 64;
 pub(crate) const MAX_PENDING_RELAY_CRYPTO_HANDSHAKES: usize = 64;
 pub(crate) const DELIVERY_RETRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// Commands are control-plane input and must never grow an unbounded queue.
+pub(crate) const COMMAND_MAILBOX_CAPACITY: usize = 256;
+/// Native events are drained by FFI polling and must remain bounded even when
+/// the mobile consumer is temporarily paused.
+pub(crate) const EVENT_MAILBOX_CAPACITY: usize = 512;
+pub(crate) const MAX_EVENT_QUEUE_BYTES: usize = 12 * 1024 * 1024;
+pub(crate) const MAX_EVENT_BYTES: usize = 1024 * 1024;
 
 pub(crate) const RUNTIME_CREATED: u8 = 0;
 pub(crate) const RUNTIME_RUNNING: u8 = 1;
 pub(crate) const RUNTIME_STOPPING: u8 = 2;
 pub(crate) const RUNTIME_STOPPED: u8 = 3;
+
+/// A bounded production event sender with an unbounded test adapter.
+///
+/// The test adapter keeps focused unit tests able to observe events without
+/// introducing a second production queue.  `NetworkRuntime::new` always uses
+/// the bounded variant below.
+#[derive(Clone)]
+pub(crate) enum EventSender {
+    Bounded {
+        sender: mpsc::Sender<NetworkEvent>,
+        queued_bytes: Arc<AtomicUsize>,
+    },
+    #[cfg(test)]
+    Unbounded(tokio::sync::mpsc::UnboundedSender<NetworkEvent>),
+}
+
+pub(crate) struct EventReceiver {
+    receiver: mpsc::Receiver<NetworkEvent>,
+    queued_bytes: Arc<AtomicUsize>,
+}
+
+impl EventSender {
+    pub(crate) fn send(&self, event: NetworkEvent) -> Result<(), ()> {
+        let bytes = event.encoded_len();
+        if bytes > MAX_EVENT_BYTES {
+            return Err(());
+        }
+        match self {
+            Self::Bounded {
+                sender,
+                queued_bytes,
+            } => {
+                let mut current = queued_bytes.load(Ordering::Acquire);
+                loop {
+                    let next = current.saturating_add(bytes);
+                    if next > MAX_EVENT_QUEUE_BYTES {
+                        return Err(());
+                    }
+                    match queued_bytes.compare_exchange_weak(
+                        current,
+                        next,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => break,
+                        Err(observed) => current = observed,
+                    }
+                }
+                if sender.try_send(event).is_err() {
+                    queued_bytes.fetch_sub(bytes, Ordering::AcqRel);
+                    return Err(());
+                }
+                Ok(())
+            }
+            #[cfg(test)]
+            Self::Unbounded(sender) => sender.send(event).map_err(|_| ()),
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<UnboundedSender<NetworkEvent>> for EventSender {
+    fn from(sender: UnboundedSender<NetworkEvent>) -> Self {
+        Self::Unbounded(sender)
+    }
+}
+
+impl EventReceiver {
+    fn release(&self, event: &NetworkEvent) {
+        self.queued_bytes
+            .fetch_sub(event.encoded_len(), Ordering::AcqRel);
+    }
+
+    fn try_recv(&mut self) -> Option<NetworkEvent> {
+        let event = self.receiver.try_recv().ok()?;
+        self.release(&event);
+        Some(event)
+    }
+
+    async fn recv(&mut self) -> Option<NetworkEvent> {
+        let event = self.receiver.recv().await?;
+        self.release(&event);
+        Some(event)
+    }
+}
+
+fn bounded_event_channel() -> (EventSender, EventReceiver) {
+    let (sender, receiver) = mpsc::channel(EVENT_MAILBOX_CAPACITY);
+    let queued_bytes = Arc::new(AtomicUsize::new(0));
+    (
+        EventSender::Bounded {
+            sender,
+            queued_bytes: Arc::clone(&queued_bytes),
+        },
+        EventReceiver {
+            receiver,
+            queued_bytes,
+        },
+    )
+}
 
 /// 一次 authenticated Session admission 的不可变载体。
 ///
@@ -55,22 +162,33 @@ pub(crate) const RUNTIME_STOPPED: u8 = 3;
 /// 会在 admission 时立即整体销毁（route 关闭 + task group 取消 + 资源 retire），
 /// 因此不需要 drop 时机的延迟取消。
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SessionAdmissionLease {
-    admission: SessionAdmission,
+pub(crate) struct ConnectionAdmissionLease {
+    admission: ConnectionAdmission,
 }
 
-impl SessionAdmissionLease {
-    pub(crate) fn new(admission: SessionAdmission) -> Self {
+impl ConnectionAdmissionLease {
+    pub(crate) fn new(admission: ConnectionAdmission) -> Self {
         Self { admission }
     }
 }
 
-impl std::ops::Deref for SessionAdmissionLease {
-    type Target = SessionAdmission;
+impl std::ops::Deref for ConnectionAdmissionLease {
+    type Target = ConnectionAdmission;
 
     fn deref(&self) -> &Self::Target {
         &self.admission
     }
+}
+
+/// Responder-side Relay admission held between the existing application Root
+/// exchange and PathHandshakeV2 Final.  The Session is not route-visible until
+/// the latter verifies, so the data client can receive only the handshake
+/// envelopes during this interval.
+pub(crate) struct RelayPathAdmission {
+    pub(crate) peer_id: String,
+    pub(crate) data: Arc<RelayDataClient>,
+    pub(crate) material: SessionCryptoMaterial,
+    pub(crate) admission: ConnectionAdmissionLease,
 }
 
 pub(crate) type RelayCryptoMessage = (u8, Vec<u8>);
@@ -105,7 +223,9 @@ pub(crate) struct RuntimeState {
     pub(crate) local_path_manager: RwLock<Option<Arc<PathManager>>>,
     pub(crate) peers: RwLock<HashMap<String, PeerConfig>>,
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
-    pub(crate) sessions: SessionManager,
+    /// ConnectionSession storage only; logical Peer lifecycle is owned by
+    /// `PeerSupervisorRegistry` and never by this connection store.
+    pub(crate) connection_sessions: ConnectionSessionStore,
     /// Session-owned application crypto. Route changes do not replace this
     /// manager; explicit Session close removes the corresponding context.
     pub(crate) crypto: SessionCryptoManager,
@@ -113,7 +233,7 @@ pub(crate) struct RuntimeState {
     pub(crate) realtime: AsyncMutex<crate::realtime::RealtimeManager>,
     /// transport-network v2：reservation 作用域的 Relay v2 数据面客户端（§25/§31）。
     ///
-    /// 由 `ConnectionOrchestrator::connect_relay_fallback`（发起方）或控制面
+    /// 由 `ConnectivityAttemptCoordinator::connect_relay_fallback`（发起方）或控制面
     /// `IncomingRelayReservation`（应答方）建立；文件/流/消息数据经它转发。
     /// 活跃 reservation 数据面客户端，按对端 device_id 索引（§25 每条 reservation
     /// 数据面相互独立，一个对端的关闭不得切断另一个对端的活跃连接）。
@@ -131,11 +251,20 @@ pub(crate) struct RuntimeState {
     /// resolve / publish / signaling / reserve 均经此 trait 对象路由。Step 6 接线后由
     /// `relay::configure_relay_for_state` 填充。
     pub(crate) relay_control: RwLock<Option<Arc<dyn crate::discovery::DiscoveryControlPlane>>>,
-    /// transport-network v2：连接重用注册表（§34/§29）。
-    pub(crate) connection_registry: crate::connect::registry::ConnectionRegistry,
+    /// transport-network v2：已就绪 Session 摘要索引（§34/§29）；不拥有连接。
+    pub(crate) ready_session_index: crate::connect::ready_index::ReadySessionIndex,
     /// transport-network v2：Presence → UI-only 提示缓存（§23/§29）。Presence 事件
     /// 只更新本缓存，绝不修改 ConnectivityAttempt / CandidateSet / ConnectionSession。
     pub(crate) presence_hints: crate::connect::presence::PresenceHintCache,
+    /// Authoritative remote candidate cache for uncoordinated Direct Stage A.
+    /// Entries are refreshed only from accepted Resolve/answer snapshots; age is
+    /// checked with `Instant` inside `ResolvedCandidateCache`.
+    pub(crate) remote_candidate_cache: RwLock<HashMap<String, ResolvedCandidateCache>>,
+    /// V2 peer-owned lifecycle coordinator. It isolates intent generations,
+    /// waiters, and bounded control mailboxes by validated PeerId.
+    pub(crate) peer_supervisors: crate::connect::PeerSupervisorRegistry,
+    /// Runtime owner of ready-path handles. Borrowers receive leases only.
+    pub(crate) ready_paths: crate::connect::PathRegistry,
     /// ReliableStream byte-stream managers, keyed by peer（§17）。每个 peer 的
     /// receive buffer / QUIC send half / 网关桥都挂在这个 manager 上。
     pub(crate) reliable_streams: RwLock<HashMap<String, ReliableStreamManager>>,
@@ -145,8 +274,21 @@ pub(crate) struct RuntimeState {
     pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
     pub(crate) relay_crypto_confirmers:
-        AsyncMutex<HashMap<String, RelayResponderConfirmation<SessionAdmissionLease>>>,
-    /// reservation 数据面上的 Relay 文件传输业务状态（非 v1 会话协议）：
+        AsyncMutex<HashMap<String, RelayResponderConfirmation<ConnectionAdmissionLease>>>,
+    /// Relay PathHandshakeV2 responder state, keyed by peer/session token.
+    /// The data client has already consumed RelayDataReady before this state
+    /// can be created.
+    pub(crate) relay_path_responders:
+        AsyncMutex<HashMap<String, crate::crypto_handshake::path_handshake::PathHandshake>>,
+    /// Responder-side Relay Session admissions waiting for PathHandshakeV2
+    /// Final.  Keyed by peer/session token so a stale data client cannot
+    /// complete a newer connection.
+    pub(crate) relay_path_admissions: AsyncMutex<HashMap<String, RelayPathAdmission>>,
+    /// Peer-level business admission guard.  RelayDataClient owns the socket
+    /// and the Relay remains opaque; only the endpoint sets this after the
+    /// PathHandshake final frame is verified.
+    pub(crate) relay_path_ready: RwLock<HashSet<String>>,
+    /// reservation 数据面上的 Relay 文件传输业务状态（非 V2 会话协议）：
     /// - `relay_pending_incoming`：等待 UI 审批的传入 offer（transfer_id → pending）。
     /// - `relay_active_incoming`：正在接收的活跃传输（transfer_id → active）。
     /// - `relay_acceptances` / `relay_completions`：发送方按 transfer_id 等待 accept/
@@ -159,13 +301,14 @@ pub(crate) struct RuntimeState {
     pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) incoming_decisions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
     pub(crate) transfers: TransferManager,
-    pub(crate) event_tx: UnboundedSender<NetworkEvent>,
+    pub(crate) event_tx: EventSender,
     pub(crate) task_supervisor: Arc<RuntimeTaskSupervisor>,
 }
 
 impl RuntimeState {
     /// 创建由一个已启动 worker 拥有的空运行时状态。
-    pub(crate) fn new(event_tx: UnboundedSender<NetworkEvent>, bound_port: Arc<AtomicU16>) -> Self {
+    pub(crate) fn new<S: Into<EventSender>>(event_tx: S, bound_port: Arc<AtomicU16>) -> Self {
+        let task_supervisor = RuntimeTaskSupervisor::new();
         Self {
             bound_port,
             endpoint: RwLock::new(None),
@@ -178,7 +321,7 @@ impl RuntimeState {
             local_path_manager: RwLock::new(None),
             peers: RwLock::new(HashMap::new()),
             trusted_peer_keys: RwLock::new(HashMap::new()),
-            sessions: SessionManager::new(),
+            connection_sessions: ConnectionSessionStore::new(),
             crypto: SessionCryptoManager::new(),
             delivery: DeliveryManager::new(),
             realtime: AsyncMutex::new(crate::realtime::RealtimeManager::default()),
@@ -189,21 +332,29 @@ impl RuntimeState {
             relay_credential_stale: AtomicBool::new(false),
             local_discovery: RwLock::new(None),
             relay_control: RwLock::new(None),
-            connection_registry: crate::connect::registry::ConnectionRegistry::new(),
+            ready_session_index: crate::connect::ready_index::ReadySessionIndex::new(),
             presence_hints: crate::connect::presence::PresenceHintCache::new(),
+            remote_candidate_cache: RwLock::new(HashMap::new()),
+            peer_supervisors: crate::connect::PeerSupervisorRegistry::with_task_supervisor(
+                Arc::clone(&task_supervisor),
+            ),
+            ready_paths: crate::connect::PathRegistry::new(),
             reliable_streams: RwLock::new(HashMap::new()),
             stream_gateway_port: Arc::new(AtomicU16::new(crate::stream::STREAM_LOCAL_SSH_PORT)),
             relay_crypto_waiters: RwLock::new(HashMap::new()),
             relay_crypto_responders: AsyncMutex::new(HashMap::new()),
             relay_crypto_confirmers: AsyncMutex::new(HashMap::new()),
+            relay_path_responders: AsyncMutex::new(HashMap::new()),
+            relay_path_admissions: AsyncMutex::new(HashMap::new()),
+            relay_path_ready: RwLock::new(HashSet::new()),
             relay_pending_incoming: RwLock::new(HashMap::new()),
             relay_active_incoming: AsyncMutex::new(HashMap::new()),
             relay_acceptances: RwLock::new(HashMap::new()),
             relay_completions: RwLock::new(HashMap::new()),
             incoming_decisions: RwLock::new(HashMap::new()),
             transfers: TransferManager::new(),
-            event_tx,
-            task_supervisor: RuntimeTaskSupervisor::new(),
+            event_tx: event_tx.into(),
+            task_supervisor,
         }
     }
 
@@ -215,11 +366,11 @@ impl RuntimeState {
         // that transport task to finish unwinding.
         self.crypto.remove_session(peer_id, &session_key);
         // transport-network v2：Session 替换/关闭时同步注销连接登记（§34）。
-        self.connection_registry
+        self.ready_session_index
             .unregister_if_session(peer_id, session_id);
         // §17/§21：ConnectionSession 销毁时关闭该 peer 的所有 ReliableStream，
         // 并向应用发布 SshStreamClosed（SSH 不做透明恢复，客户端自行重连）。
-        if let Some(manager) = self.reliable_streams.write().await.remove(peer_id) {
+        if let Some(manager) = self.reliable_streams.read().await.get(peer_id).cloned() {
             let local_opener_device_id = self
                 .identity
                 .read()
@@ -254,13 +405,13 @@ impl RuntimeState {
     ) -> ConnectDecision {
         loop {
             match self
-                .sessions
+                .connection_sessions
                 .begin_connect_with_capability(peer_id, required_capabilities)
                 .await
             {
                 ConnectDecision::NeedsReplacement(replaced_session_id) => {
                     if let Ok(route) = self
-                        .sessions
+                        .connection_sessions
                         .close_if_current(peer_id, replaced_session_id)
                         .await
                     {
@@ -287,7 +438,7 @@ impl RuntimeState {
         peer_id: &str,
         expected_session_id: Option<SessionId>,
         remote_session_binding: &str,
-    ) -> Result<SessionAdmissionLease, SessionAdmissionError> {
+    ) -> Result<ConnectionAdmissionLease, ConnectionAdmissionError> {
         self.admit_authenticated_session_with_capability(
             peer_id,
             expected_session_id,
@@ -303,9 +454,9 @@ impl RuntimeState {
         expected_session_id: Option<SessionId>,
         remote_session_binding: &str,
         candidate_capabilities: u8,
-    ) -> Result<SessionAdmissionLease, SessionAdmissionError> {
-        let outcome: SessionAdmissionOutcome = self
-            .sessions
+    ) -> Result<ConnectionAdmissionLease, ConnectionAdmissionError> {
+        let outcome: ConnectionAdmissionOutcome = self
+            .connection_sessions
             .admit_authenticated_session_with_capability(
                 peer_id,
                 expected_session_id,
@@ -313,7 +464,7 @@ impl RuntimeState {
                 candidate_capabilities,
             )
             .await?;
-        let SessionAdmissionOutcome {
+        let ConnectionAdmissionOutcome {
             admission,
             detached_route,
         } = outcome;
@@ -324,19 +475,15 @@ impl RuntimeState {
             self.cancel_session_tasks(peer_id, replaced_session_id)
                 .await;
         }
-        Ok(SessionAdmissionLease::new(admission))
+        Ok(ConnectionAdmissionLease::new(admission))
     }
 
     pub(crate) async fn crypto_context(
         &self,
         peer_id: &str,
         session_id: &str,
-        mode: CryptoMode,
-    ) -> Result<Option<Arc<Mutex<CryptoContext>>>, CryptoError> {
-        if mode == CryptoMode::None {
-            return Ok(None);
-        }
-        self.crypto.get(peer_id, session_id).map(Some)
+    ) -> Result<Arc<Mutex<CryptoContext>>, CryptoError> {
+        self.crypto.get(peer_id, session_id)
     }
 
     pub(crate) fn install_crypto_material(
@@ -359,13 +506,10 @@ impl RuntimeState {
         &self,
         peer_id: &str,
         session_id: &str,
-        mode: CryptoMode,
         aad: &[u8],
         plaintext: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
-        let Some(context) = self.crypto_context(peer_id, session_id, mode).await? else {
-            return Ok(plaintext.to_vec());
-        };
+        let context = self.crypto_context(peer_id, session_id).await?;
         let result = context
             .lock()
             .map_err(|_| CryptoError::StateUnavailable)?
@@ -377,13 +521,10 @@ impl RuntimeState {
         &self,
         peer_id: &str,
         session_id: &str,
-        mode: CryptoMode,
         aad: &[u8],
         envelope: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
-        let Some(context) = self.crypto_context(peer_id, session_id, mode).await? else {
-            return Ok(envelope.to_vec());
-        };
+        let context = self.crypto_context(peer_id, session_id).await?;
         let result = context
             .lock()
             .map_err(|_| CryptoError::StateUnavailable)?
@@ -395,13 +536,10 @@ impl RuntimeState {
         &self,
         peer_id: &str,
         session_id: &str,
-        mode: CryptoMode,
         aad: &[u8],
         envelope: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
-        let Some(context) = self.crypto_context(peer_id, session_id, mode).await? else {
-            return Ok(envelope.to_vec());
-        };
+        let context = self.crypto_context(peer_id, session_id).await?;
         let result = context
             .lock()
             .map_err(|_| CryptoError::StateUnavailable)?
@@ -423,9 +561,9 @@ impl RuntimeState {
 /// 管理 Tokio 异步运行时生命周期与命令/事件通道。
 pub struct NetworkRuntime {
     pub(crate) runtime: Arc<Runtime>,
-    pub(crate) command_tx: Mutex<Option<UnboundedSender<NetworkCommand>>>,
-    pub(crate) event_rx: Arc<Mutex<UnboundedReceiver<NetworkEvent>>>,
-    pub(crate) event_tx: UnboundedSender<NetworkEvent>,
+    pub(crate) command_tx: Mutex<Option<mpsc::Sender<NetworkCommand>>>,
+    pub(crate) event_rx: Arc<Mutex<EventReceiver>>,
+    pub(crate) event_tx: EventSender,
     pub(crate) bound_port: Arc<AtomicU16>,
     pub(crate) lifecycle: AtomicU8,
     pub(crate) state: Mutex<Option<Arc<RuntimeState>>>,
@@ -441,7 +579,7 @@ impl NetworkRuntime {
             .thread_name("ssh-net-worker")
             .build()
             .map_err(|error| NetworkError::RuntimeInitFailed(error.to_string()))?;
-        let (event_tx, event_rx) = unbounded_channel::<NetworkEvent>();
+        let (event_tx, event_rx) = bounded_event_channel();
         let bound_port = Arc::new(AtomicU16::new(0));
         info!("NetworkRuntime initialized successfully");
         Ok(Self {
@@ -466,7 +604,7 @@ impl NetworkRuntime {
                 Ordering::Acquire,
             )
             .map_err(|_| NetworkError::RuntimeNotRunning)?;
-        let (command_tx, command_rx) = unbounded_channel::<NetworkCommand>();
+        let (command_tx, command_rx) = mpsc::channel::<NetworkCommand>(COMMAND_MAILBOX_CAPACITY);
         let state = Arc::new(RuntimeState::new(
             self.event_tx.clone(),
             Arc::clone(&self.bound_port),
@@ -551,25 +689,33 @@ impl NetworkRuntime {
         self.runtime.handle()
     }
 
-    /// 运行时处于 Running 时入队一个 v1 命令。
+    /// 运行时处于 Running 时入队一个 V2 命令。
     pub fn send_command(&self, command: NetworkCommand) -> Result<(), NetworkError> {
         if self.lifecycle.load(Ordering::Acquire) != RUNTIME_RUNNING {
             return Err(NetworkError::RuntimeNotRunning);
         }
-        self.command_tx
+        let sender = self
+            .command_tx
             .lock()
             .map_err(|_| NetworkError::CommandQueueFailed("command lock poisoned".into()))?
             .as_ref()
             .ok_or(NetworkError::RuntimeNotRunning)?
-            .send(command)
-            .map_err(|error| NetworkError::CommandQueueFailed(error.to_string()))
+            .clone();
+        sender.try_send(command).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => {
+                NetworkError::CommandQueueFailed("command mailbox is full".into())
+            }
+            mpsc::error::TrySendError::Closed(_) => {
+                NetworkError::CommandQueueFailed("command mailbox is closed".into())
+            }
+        })
     }
 
     /// 轮询一个事件，但不向调用方暴露内部 receiver。
     pub fn poll_event(&self, timeout_ms: u32) -> Option<NetworkEvent> {
         let mut receiver = self.event_rx.lock().ok()?;
         if timeout_ms == 0 {
-            receiver.try_recv().ok()
+            receiver.try_recv()
         } else {
             let handle = self.runtime.handle();
             let _guard = handle.enter();
@@ -592,6 +738,7 @@ impl NetworkRuntime {
     fn shutdown_listener(&self, state: Arc<RuntimeState>) {
         self.runtime.block_on(async move {
             state.task_supervisor.cancel_root();
+            state.peer_supervisors.stop_all();
             let relay_data = state.relay_data.write().await.drain().collect::<Vec<_>>();
             for (_, relay_data) in relay_data {
                 relay_data.request_disconnect().await;
@@ -620,7 +767,10 @@ impl NetworkRuntime {
             .clone()
             .expect("runtime state");
         self.runtime.block_on(async move {
-            let session_id = state.sessions.current_session_id(peer_id).await?;
+            let session_id = state
+                .connection_sessions
+                .current_session_id(peer_id)
+                .await?;
             let wire_key = session_id.wire_key();
             crate::channel::recover_session(Arc::clone(&state), peer_id.to_string()).await;
             Some(wire_key)
@@ -648,6 +798,7 @@ impl Drop for NetworkRuntime {
                 if let Ok(mut realtime) = state.realtime.try_lock() {
                     realtime.close_all();
                 }
+                state.peer_supervisors.stop_all();
                 state.task_supervisor.abort_all_now();
             }
         }

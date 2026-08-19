@@ -2,7 +2,8 @@
 
 # Backend Current State
 
-The maintained backend is the v1 Go control plane and WSS Relay in `relay/`.
+The maintained backend retains the v1 Go control-plane baseline while the v2
+control/data path is developed as an additive migration in `relay/`.
 Device-plane durable state (enrollment, revocation) is behind a `Storage`
 interface: the default `memory` mode is process-local and restart clears it;
 `mysql` mode persists it and requires `RedisURL` for the shared state layer
@@ -51,6 +52,23 @@ Current boundaries:
   storage keeps opaque candidates without parsing their endpoint semantics
   (ADR-017 revision boundary).
 - The V2 Relay Data registry treats `Ready` as one-shot per completed pair. If either role disconnects or is replaced, the old pair is closed and both roles must perform a fresh `Connect → Ready`; the remaining old endpoint never receives a second `Ready`.
+- V2 client requests require a non-zero `request_id`; asynchronous connectivity
+  and reservation requests also require an `attempt_id`. Resolve maps backend
+  uncertainty to `UNKNOWN`/`CONTROL_UNAVAILABLE`, never to fail-open `OFFLINE` or
+  `READY`, and a discovery snapshot with a zero `runtime_epoch` is not ready.
+- V2 Relay Data admission binds the authenticated device to its reservation role
+  and role-specific token. Device revocation closes pending endpoints, active
+  pairs, and their counterparts; server shutdown closes all registered data
+  endpoints.
+- Expired credentials are rejected at new RelayControl and RelayData admission,
+  while natural credential expiry does not terminate an already paired Ready
+  data path. Explicit revoke remains an authorization termination event and
+  closes pending/active participants plus the active counterpart; persistent
+  revoke-store failure is fail-closed.
+- After a RelayData pair is Ready, the reservation is consumed for new
+  admission while active sockets keep their in-memory authorization. PairReady
+  and 30s/15s Ping/Pong liveness control frames share the single outbound writer;
+  active RelayData is not closed by reservation TTL or natural credential expiry.
 - Process restart clears device, administrator-session, and Relay-session state
   **in memory mode**; `mysql` mode keeps enrollment and revocation durable and
   devices keep working across a restart.

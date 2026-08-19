@@ -104,6 +104,7 @@ func NewServer(config Config) *Server {
 // Close 停止 Relay hub，释放活跃设备连接与底层存储。
 func (s *Server) Close() {
 	s.eventsCancel()
+	s.relayData.closeAll()
 	s.hub.close()
 	s.eventsWG.Wait()
 	_ = s.cache.Close()

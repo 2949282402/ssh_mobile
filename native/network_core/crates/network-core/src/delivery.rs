@@ -19,10 +19,31 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::crypto::CryptoMode;
-
 const MAX_SCOPE_ID_BYTES: usize = 128;
 const MESSAGE_ID_BYTES: usize = 16;
+const MAX_TERMINAL_OUTCOMES: usize = 4096;
+
+/// Stable business recovery categories shared by Delivery, Transfer, and
+/// ReliableStream.  These names deliberately do not depend on a transport or
+/// protocol implementation so callers can retain business meaning across a
+/// fresh ConnectionSession.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub(crate) enum BusinessRecoveryError {
+    #[error("RecoverableTransportLoss")]
+    RecoverableTransportLoss,
+    #[error("OperationExpired")]
+    OperationExpired,
+    #[error("ResumeRejected")]
+    ResumeRejected,
+}
+
+pub(crate) fn is_valid_peer_id(peer_id: &str) -> bool {
+    is_valid_scope_id(peer_id)
+}
+
+fn is_valid_scope_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= MAX_SCOPE_ID_BYTES
+}
 
 /// 应用 handler 的 ACK 超时是独立的生命周期策略，不能复用 processed dedup
 /// 的 TTL。超时由 Delivery owner 显式扫描；严格有序通道会进入 Failed，不能
@@ -115,9 +136,6 @@ pub struct PendingMessage {
     pub channel_id: String,
     pub sequence: u64,
     pub payload: Vec<u8>,
-    /// Logical plaintext mode. The payload itself is never replaced with a
-    /// Route-specific ciphertext while it waits for retry/recovery.
-    pub(crate) crypto_mode: CryptoMode,
     pub policy: DeliveryPolicy,
     pub state: DeliveryState,
     pub attempts: u32,
@@ -169,9 +187,19 @@ pub enum RetryDecision {
     NotFound,
 }
 
+impl RetryDecision {
+    pub(crate) fn recovery_error(self) -> Option<BusinessRecoveryError> {
+        match self {
+            Self::RetryAt(_) => Some(BusinessRecoveryError::RecoverableTransportLoss),
+            Self::Failed | Self::Expired => Some(BusinessRecoveryError::OperationExpired),
+            Self::NotFound => None,
+        }
+    }
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DeliveryError {
-    #[error("session and channel identifiers are required")]
+    #[error("peer and channel identifiers are required")]
     InvalidScope,
     #[error("message payload exceeds the delivery limit")]
     PayloadTooLarge,
@@ -185,6 +213,35 @@ pub enum DeliveryError {
     Expired,
     #[error("message retry budget exhausted")]
     RetryExhausted,
+}
+
+impl DeliveryError {
+    pub(crate) fn recovery_error(&self) -> Option<BusinessRecoveryError> {
+        match self {
+            Self::Expired | Self::RetryExhausted => Some(BusinessRecoveryError::OperationExpired),
+            _ => None,
+        }
+    }
+}
+
+/// The single terminal transition an acknowledged reliable message may make.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DeliveryTerminalOutcome {
+    Acknowledged,
+    Expired,
+    Cancelled,
+    Failed,
+}
+
+/// A peer-scoped lease for one transport send attempt.  The attempt number is
+/// checked on completion so a late result from an older attempt cannot settle
+/// a newer one.
+#[derive(Clone, Debug)]
+pub(crate) struct DeliverySendAttempt {
+    pub(crate) peer_id: String,
+    pub(crate) message_id: MessageId,
+    pub(crate) attempt: u32,
+    pub(crate) message: PendingMessage,
 }
 
 /// Delivery 队列和去重窗口的边界。
@@ -359,6 +416,7 @@ pub(crate) struct IncomingTimeout {
 struct DeliveryStore {
     pending: HashMap<MessageId, PendingMessage>,
     pending_bytes: usize,
+    terminal_outcomes: HashMap<MessageId, (String, DeliveryTerminalOutcome)>,
     next_sequences: HashMap<(String, String), u64>,
     /// Peer 作用域连接代数（每次 Connection Ready 递增一次）。只用于 wire。
     recovery_epochs: HashMap<String, u64>,
@@ -375,6 +433,7 @@ impl DeliveryStore {
         Self {
             pending: HashMap::new(),
             pending_bytes: 0,
+            terminal_outcomes: HashMap::new(),
             next_sequences: HashMap::new(),
             recovery_epochs: HashMap::new(),
             incoming_active: HashMap::new(),
@@ -443,34 +502,11 @@ impl DeliveryManager {
         policy: DeliveryPolicy,
         retry_policy: RetryPolicy,
     ) -> Result<PendingMessage, DeliveryError> {
-        self.enqueue_with_crypto(
+        self.enqueue_at_inner(
             peer_id,
             channel_id,
             payload,
             policy,
-            CryptoMode::E2ee,
-            retry_policy,
-        )
-        .await
-    }
-
-    /// Enqueue logical plaintext together with its application crypto mode.
-    /// Every later send derives a fresh ciphertext from this stored plaintext.
-    pub(crate) async fn enqueue_with_crypto(
-        &self,
-        peer_id: &str,
-        channel_id: &str,
-        payload: Vec<u8>,
-        policy: DeliveryPolicy,
-        crypto_mode: CryptoMode,
-        retry_policy: RetryPolicy,
-    ) -> Result<PendingMessage, DeliveryError> {
-        self.enqueue_at_with_crypto(
-            peer_id,
-            channel_id,
-            payload,
-            policy,
-            crypto_mode,
             retry_policy,
             Instant::now(),
         )
@@ -487,34 +523,20 @@ impl DeliveryManager {
         retry_policy: RetryPolicy,
         now: Instant,
     ) -> Result<PendingMessage, DeliveryError> {
-        self.enqueue_at_with_crypto(
-            peer_id,
-            channel_id,
-            payload,
-            policy,
-            CryptoMode::E2ee,
-            retry_policy,
-            now,
-        )
-        .await
+        self.enqueue_at_inner(peer_id, channel_id, payload, policy, retry_policy, now)
+            .await
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn enqueue_at_with_crypto(
+    async fn enqueue_at_inner(
         &self,
         peer_id: &str,
         channel_id: &str,
         payload: Vec<u8>,
         policy: DeliveryPolicy,
-        crypto_mode: CryptoMode,
         retry_policy: RetryPolicy,
         now: Instant,
     ) -> Result<PendingMessage, DeliveryError> {
-        if peer_id.is_empty()
-            || channel_id.is_empty()
-            || peer_id.len() > MAX_SCOPE_ID_BYTES
-            || channel_id.len() > MAX_SCOPE_ID_BYTES
-        {
+        if !is_valid_scope_id(peer_id) || !is_valid_scope_id(channel_id) {
             return Err(DeliveryError::InvalidScope);
         }
         if payload.len() > self.config.max_payload_bytes {
@@ -537,6 +559,18 @@ impl DeliveryManager {
                 .map(|(message_id, _)| *message_id)
                 .collect::<Vec<_>>();
             for message_id in obsolete {
+                let peer_id = store
+                    .pending
+                    .get(&message_id)
+                    .map(|message| message.peer_id.clone());
+                if let Some(peer_id) = peer_id {
+                    record_terminal(
+                        &mut store,
+                        message_id,
+                        peer_id,
+                        DeliveryTerminalOutcome::Cancelled,
+                    );
+                }
                 remove_pending(&mut store, &message_id);
             }
         }
@@ -557,14 +591,13 @@ impl DeliveryManager {
             .get(peer_id)
             .copied()
             .unwrap_or_default();
-        let message_id = next_message_id(&store.pending);
+        let message_id = next_message_id(&store.pending, &store.terminal_outcomes);
         let message = PendingMessage {
             message_id,
             peer_id: peer_id.to_string(),
             channel_id: channel_id.to_string(),
             sequence: message_sequence,
             payload,
-            crypto_mode,
             policy,
             state: DeliveryState::Queued,
             attempts: 0,
@@ -588,12 +621,54 @@ impl DeliveryManager {
         message_id: MessageId,
         now: Instant,
     ) -> Result<Option<PendingMessage>, DeliveryError> {
+        self.begin_send_inner(None, message_id, now).await
+    }
+
+    /// Peer-scoped form of [`Self::begin_send`].  A caller that owns a
+    /// business operation must provide the peer identity explicitly; a
+    /// MessageId alone is not sufficient to claim a send lease.
+    pub(crate) async fn begin_send_for_peer(
+        &self,
+        peer_id: &str,
+        message_id: MessageId,
+        now: Instant,
+    ) -> Result<Option<DeliverySendAttempt>, DeliveryError> {
+        if !is_valid_peer_id(peer_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        let message = self
+            .begin_send_inner(Some(peer_id), message_id, now)
+            .await?;
+        Ok(message.map(|message| DeliverySendAttempt {
+            peer_id: peer_id.to_string(),
+            message_id,
+            attempt: message.attempts,
+            message,
+        }))
+    }
+
+    async fn begin_send_inner(
+        &self,
+        expected_peer_id: Option<&str>,
+        message_id: MessageId,
+        now: Instant,
+    ) -> Result<Option<PendingMessage>, DeliveryError> {
         let mut store = self.store.lock().await;
         let Some(existing) = store.pending.get(&message_id) else {
             return Err(DeliveryError::NotFound);
         };
+        if expected_peer_id.is_some_and(|peer_id| existing.peer_id != peer_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
         if is_expired(existing, now) {
+            let peer_id = existing.peer_id.clone();
             remove_pending(&mut store, &message_id);
+            record_terminal(
+                &mut store,
+                message_id,
+                peer_id,
+                DeliveryTerminalOutcome::Expired,
+            );
             return Err(DeliveryError::Expired);
         }
         let Some(message) = store.pending.get_mut(&message_id) else {
@@ -613,8 +688,15 @@ impl DeliveryManager {
         }
         let next_attempt = message.attempts.saturating_add(1);
         if next_attempt > message.retry_policy.max_attempts {
+            let peer_id = message.peer_id.clone();
             message.state = DeliveryState::Failed;
             let _ = remove_pending(&mut store, &message_id);
+            record_terminal(
+                &mut store,
+                message_id,
+                peer_id,
+                DeliveryTerminalOutcome::Failed,
+            );
             return Err(DeliveryError::RetryExhausted);
         }
         let retry_bytes = message
@@ -625,8 +707,15 @@ impl DeliveryManager {
             .max_total_retry_bytes
             .is_some_and(|limit| retry_bytes > limit)
         {
+            let peer_id = message.peer_id.clone();
             message.state = DeliveryState::Failed;
             let _ = remove_pending(&mut store, &message_id);
+            record_terminal(
+                &mut store,
+                message_id,
+                peer_id,
+                DeliveryTerminalOutcome::Failed,
+            );
             return Err(DeliveryError::RetryExhausted);
         }
         message.attempts = next_attempt;
@@ -637,11 +726,38 @@ impl DeliveryManager {
 
     /// 传输层成功写出消息后等待应用 ACK。
     pub async fn mark_sent(&self, message_id: MessageId, now: Instant) -> bool {
+        self.mark_sent_inner(None, None, message_id, now).await
+    }
+
+    pub(crate) async fn mark_sent_for_attempt(
+        &self,
+        attempt: &DeliverySendAttempt,
+        now: Instant,
+    ) -> bool {
+        self.mark_sent_inner(
+            Some(&attempt.peer_id),
+            Some(attempt.attempt),
+            attempt.message_id,
+            now,
+        )
+        .await
+    }
+
+    async fn mark_sent_inner(
+        &self,
+        expected_peer_id: Option<&str>,
+        expected_attempt: Option<u32>,
+        message_id: MessageId,
+        now: Instant,
+    ) -> bool {
         let mut store = self.store.lock().await;
         let Some(message) = store.pending.get_mut(&message_id) else {
             return false;
         };
-        if message.state != DeliveryState::Sending {
+        if message.state != DeliveryState::Sending
+            || expected_peer_id.is_some_and(|peer_id| message.peer_id != peer_id)
+            || expected_attempt.is_some_and(|attempt| message.attempts != attempt)
+        {
             return false;
         }
         message.state = DeliveryState::SentUnacked;
@@ -651,17 +767,60 @@ impl DeliveryManager {
 
     /// 传输层写失败后回到 Pending，或耗尽预算进入 Failed。
     pub async fn mark_send_failed(&self, message_id: MessageId, now: Instant) -> RetryDecision {
+        self.mark_send_failed_inner(None, None, message_id, now)
+            .await
+    }
+
+    pub(crate) async fn mark_send_failed_for_attempt(
+        &self,
+        attempt: &DeliverySendAttempt,
+        now: Instant,
+    ) -> RetryDecision {
+        self.mark_send_failed_inner(
+            Some(&attempt.peer_id),
+            Some(attempt.attempt),
+            attempt.message_id,
+            now,
+        )
+        .await
+    }
+
+    async fn mark_send_failed_inner(
+        &self,
+        expected_peer_id: Option<&str>,
+        expected_attempt: Option<u32>,
+        message_id: MessageId,
+        now: Instant,
+    ) -> RetryDecision {
         let mut store = self.store.lock().await;
         let Some(existing) = store.pending.get(&message_id) else {
             return RetryDecision::NotFound;
         };
+        if expected_peer_id.is_some_and(|peer_id| existing.peer_id != peer_id) {
+            return RetryDecision::NotFound;
+        }
         if is_expired(existing, now) {
+            let peer_id = existing.peer_id.clone();
             remove_pending(&mut store, &message_id);
+            record_terminal(
+                &mut store,
+                message_id,
+                peer_id,
+                DeliveryTerminalOutcome::Expired,
+            );
             return RetryDecision::Expired;
         }
         let Some(message) = store.pending.get_mut(&message_id) else {
             return RetryDecision::NotFound;
         };
+        // A result may arrive after recovery invalidated its lease.  Do not let
+        // that stale result requeue or fail a newer attempt.
+        if expected_attempt.is_some()
+            && (message.state != DeliveryState::Sending
+                || expected_attempt.is_some_and(|attempt| message.attempts != attempt))
+        {
+            return RetryDecision::NotFound;
+        }
         if message.attempts >= message.retry_policy.max_attempts
             || message
                 .retry_policy
@@ -673,8 +832,15 @@ impl DeliveryManager {
                         > limit
                 })
         {
+            let peer_id = message.peer_id.clone();
             message.state = DeliveryState::Failed;
             remove_pending(&mut store, &message_id);
+            record_terminal(
+                &mut store,
+                message_id,
+                peer_id,
+                DeliveryTerminalOutcome::Failed,
+            );
             return RetryDecision::Failed;
         }
         message.state = DeliveryState::Queued;
@@ -688,6 +854,9 @@ impl DeliveryManager {
     /// 不再携带 recovery_epoch 门控——连接换代后发送端以同一个 MessageId 重发，
     /// ACK 只需按 MessageId 匹配即可完成。
     pub async fn acknowledge(&self, peer_id: &str, message_id: MessageId) -> AckResult {
+        if !is_valid_peer_id(peer_id) {
+            return AckResult::Unknown;
+        }
         let mut store = self.store.lock().await;
         let Some(message) = store.pending.get(&message_id) else {
             return AckResult::Unknown;
@@ -695,8 +864,34 @@ impl DeliveryManager {
         if message.peer_id != peer_id {
             return AckResult::Unknown;
         }
+        let peer_id = message.peer_id.clone();
         remove_pending(&mut store, &message_id);
+        record_terminal(
+            &mut store,
+            message_id,
+            peer_id,
+            DeliveryTerminalOutcome::Acknowledged,
+        );
         AckResult::Acknowledged
+    }
+
+    /// Return the terminal outcome only when the caller supplies the owning
+    /// peer.  This keeps a MessageId from becoming a cross-peer capability.
+    #[allow(dead_code)]
+    pub(crate) async fn terminal_outcome(
+        &self,
+        peer_id: &str,
+        message_id: MessageId,
+    ) -> Option<DeliveryTerminalOutcome> {
+        if !is_valid_peer_id(peer_id) {
+            return None;
+        }
+        let store = self.store.lock().await;
+        store
+            .terminal_outcomes
+            .get(&message_id)
+            .filter(|(owner, _)| owner == peer_id)
+            .map(|(_, outcome)| *outcome)
     }
 
     /// 新 Connection Ready 后，重置 Peer 作用域的 in-flight 状态并返回恢复批次。
@@ -706,6 +901,16 @@ impl DeliveryManager {
     /// 当前 transport 上重发。
     pub async fn recover_peer(&self, peer_id: &str) -> RecoverySnapshot {
         self.recover_peer_at(peer_id, Instant::now()).await
+    }
+
+    pub(crate) async fn recover_peer_checked(
+        &self,
+        peer_id: &str,
+    ) -> Result<RecoverySnapshot, DeliveryError> {
+        if !is_valid_peer_id(peer_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        Ok(self.recover_peer(peer_id).await)
     }
 
     async fn recover_peer_at(&self, peer_id: &str, now: Instant) -> RecoverySnapshot {
@@ -729,7 +934,7 @@ impl DeliveryManager {
                 continue;
             };
             if is_expired(message, now) {
-                expired.push(message_id);
+                expired.push((message_id, message.peer_id.clone()));
                 continue;
             }
             message.state = DeliveryState::Queued;
@@ -737,8 +942,14 @@ impl DeliveryManager {
             message.recovery_epoch = recovery_epoch;
             messages.push(message.clone());
         }
-        for message_id in expired {
+        for (message_id, peer_id) in expired {
             remove_pending(&mut store, &message_id);
+            record_terminal(
+                &mut store,
+                message_id,
+                peer_id,
+                DeliveryTerminalOutcome::Expired,
+            );
         }
         messages.sort_by_key(|message| message.sequence);
         RecoverySnapshot {
@@ -763,7 +974,7 @@ impl DeliveryManager {
                 continue;
             };
             if is_expired(message, now) {
-                expired.push(message_id);
+                expired.push((message_id, message.peer_id.clone()));
             } else if message.state == DeliveryState::SentUnacked && now >= message.next_retry_at {
                 message.state = DeliveryState::Queued;
                 message.next_retry_at = now;
@@ -772,11 +983,28 @@ impl DeliveryManager {
                 retryable.push(message.clone());
             }
         }
-        for message_id in expired {
+        for (message_id, peer_id) in expired {
             remove_pending(&mut store, &message_id);
+            record_terminal(
+                &mut store,
+                message_id,
+                peer_id,
+                DeliveryTerminalOutcome::Expired,
+            );
         }
         retryable.sort_by_key(|message| message.sequence);
         retryable
+    }
+
+    pub(crate) async fn retryable_messages_checked(
+        &self,
+        peer_id: &str,
+        now: Instant,
+    ) -> Result<Vec<PendingMessage>, DeliveryError> {
+        if !is_valid_peer_id(peer_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        Ok(self.retryable_messages(peer_id, now).await)
     }
 
     pub async fn cancel(&self, message_id: MessageId) -> bool {
@@ -784,8 +1012,18 @@ impl DeliveryManager {
         let Some(message) = store.pending.get_mut(&message_id) else {
             return false;
         };
+        let peer_id = message.peer_id.clone();
         message.state = DeliveryState::Cancelled;
-        remove_pending(&mut store, &message_id).is_some()
+        let removed = remove_pending(&mut store, &message_id).is_some();
+        if removed {
+            record_terminal(
+                &mut store,
+                message_id,
+                peer_id,
+                DeliveryTerminalOutcome::Cancelled,
+            );
+        }
+        removed
     }
 
     /// 接收端在业务 handler 前登记 MessageId（§20）。重复消息只需再次 ACK。
@@ -844,6 +1082,22 @@ impl DeliveryManager {
         DedupDecision::New
     }
 
+    pub(crate) async fn begin_incoming_checked(
+        &self,
+        peer_id: &str,
+        channel_id: &str,
+        message_id: MessageId,
+        recovery_epoch: u64,
+        now: Instant,
+    ) -> Result<DedupDecision, DeliveryError> {
+        if !is_valid_peer_id(peer_id) || !is_valid_scope_id(channel_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        Ok(self
+            .begin_incoming(peer_id, channel_id, message_id, recovery_epoch, now)
+            .await)
+    }
+
     /// Insert a newly deduplicated message into its SessionBoundOrdered state.
     ///
     /// Only the message at `expected_sequence` becomes application-visible;
@@ -858,6 +1112,9 @@ impl DeliveryManager {
         message: OrderedMessage,
         now: Instant,
     ) -> OrderedInsertResult {
+        if !is_valid_peer_id(&message.peer_id) || !is_valid_scope_id(&message.channel_id) {
+            return OrderedInsertResult::Rejected;
+        }
         let mut store = self.store.lock().await;
         let key = (message.peer_id.clone(), message.channel_id.clone());
         if store.failed_ordered.contains(&key) {
@@ -904,6 +1161,20 @@ impl DeliveryManager {
     ) -> Option<IncomingCompletion> {
         self.complete_incoming_at(peer_id, channel_id, message_id, Instant::now())
             .await
+    }
+
+    pub(crate) async fn complete_incoming_checked(
+        &self,
+        peer_id: &str,
+        channel_id: &str,
+        message_id: MessageId,
+    ) -> Result<Option<IncomingCompletion>, DeliveryError> {
+        if !is_valid_peer_id(peer_id) || !is_valid_scope_id(channel_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        Ok(self
+            .complete_incoming(peer_id, channel_id, message_id)
+            .await)
     }
 
     async fn complete_incoming_at(
@@ -1151,15 +1422,35 @@ impl DeliveryManager {
     }
 }
 
-fn next_message_id(pending: &HashMap<MessageId, PendingMessage>) -> MessageId {
+fn next_message_id(
+    pending: &HashMap<MessageId, PendingMessage>,
+    terminal_outcomes: &HashMap<MessageId, (String, DeliveryTerminalOutcome)>,
+) -> MessageId {
     loop {
         let mut bytes = [0u8; MESSAGE_ID_BYTES];
         rand::thread_rng().fill_bytes(&mut bytes);
         let candidate = MessageId(bytes);
-        if !pending.contains_key(&candidate) {
+        if !pending.contains_key(&candidate) && !terminal_outcomes.contains_key(&candidate) {
             return candidate;
         }
     }
+}
+
+fn record_terminal(
+    store: &mut DeliveryStore,
+    message_id: MessageId,
+    peer_id: String,
+    outcome: DeliveryTerminalOutcome,
+) {
+    if store.terminal_outcomes.len() >= MAX_TERMINAL_OUTCOMES {
+        if let Some(oldest) = store.terminal_outcomes.keys().next().copied() {
+            store.terminal_outcomes.remove(&oldest);
+        }
+    }
+    store
+        .terminal_outcomes
+        .entry(message_id)
+        .or_insert((peer_id, outcome));
 }
 
 fn is_expired(message: &PendingMessage, now: Instant) -> bool {
@@ -2304,7 +2595,6 @@ mod tests {
             .expect("sendable");
         assert_eq!(sent.attempts, 1);
         assert_eq!(sent.payload, b"one");
-        assert_eq!(sent.crypto_mode, CryptoMode::E2ee);
         assert!(manager.mark_sent(first.message_id, now).await);
 
         let recovery = manager
@@ -2342,28 +2632,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pending_message_keeps_plaintext_and_explicit_crypto_mode() {
+    async fn pending_message_keeps_plaintext_for_retry() {
         let manager = DeliveryManager::with_config(config());
         let message = manager
-            .enqueue_with_crypto(
+            .enqueue(
                 "peer-a",
                 "control",
                 b"plaintext".to_vec(),
                 DeliveryPolicy::Acked,
-                CryptoMode::None,
                 retry_policy(),
             )
             .await
             .expect("enqueue message");
         assert_eq!(message.payload, b"plaintext");
-        assert_eq!(message.crypto_mode, CryptoMode::None);
         let sent = manager
             .begin_send(message.message_id, Instant::now())
             .await
             .expect("begin send")
             .expect("sendable");
         assert_eq!(sent.payload, b"plaintext");
-        assert_eq!(sent.crypto_mode, CryptoMode::None);
     }
 
     #[tokio::test]
@@ -2636,5 +2923,153 @@ mod tests {
                 .await,
             Err(DeliveryError::QueueFull)
         ));
+    }
+
+    #[tokio::test]
+    async fn peer_scoped_send_lease_and_terminal_outcome_are_idempotent() {
+        let manager = DeliveryManager::with_config(DeliveryConfig {
+            max_pending_messages: 4,
+            max_pending_bytes: 32,
+            max_payload_bytes: 16,
+            ..config()
+        });
+        let now = Instant::now();
+        let message = manager
+            .enqueue_at(
+                "peer-a",
+                "control",
+                b"payload".to_vec(),
+                DeliveryPolicy::Acked,
+                RetryPolicy {
+                    max_attempts: 1,
+                    ..retry_policy()
+                },
+                now,
+            )
+            .await
+            .expect("enqueue");
+
+        assert!(matches!(
+            manager
+                .begin_send_for_peer("peer-b", message.message_id, now)
+                .await,
+            Err(DeliveryError::InvalidScope)
+        ));
+        let attempt = manager
+            .begin_send_for_peer("peer-a", message.message_id, now)
+            .await
+            .expect("begin peer-scoped send")
+            .expect("first attempt");
+        assert!(manager
+            .begin_send_for_peer("peer-a", message.message_id, now)
+            .await
+            .expect("second lease query")
+            .is_none());
+
+        assert_eq!(
+            manager.mark_send_failed_for_attempt(&attempt, now).await,
+            RetryDecision::Failed
+        );
+        assert_eq!(
+            manager.terminal_outcome("peer-a", message.message_id).await,
+            Some(DeliveryTerminalOutcome::Failed)
+        );
+        assert_eq!(
+            manager.mark_send_failed_for_attempt(&attempt, now).await,
+            RetryDecision::NotFound
+        );
+        assert_eq!(
+            manager.terminal_outcome("peer-b", message.message_id).await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn late_send_result_cannot_settle_a_newer_attempt() {
+        let manager = DeliveryManager::with_config(config());
+        let now = Instant::now();
+        let message = manager
+            .enqueue_at(
+                "peer-a",
+                "control",
+                b"payload".to_vec(),
+                DeliveryPolicy::Acked,
+                retry_policy(),
+                now,
+            )
+            .await
+            .expect("enqueue");
+        let first = manager
+            .begin_send_for_peer("peer-a", message.message_id, now)
+            .await
+            .expect("first begin")
+            .expect("first attempt");
+        assert_eq!(
+            manager.mark_send_failed_for_attempt(&first, now).await,
+            RetryDecision::RetryAt(now + Duration::from_secs(1))
+        );
+        let second = manager
+            .begin_send_for_peer("peer-a", message.message_id, now + Duration::from_secs(1))
+            .await
+            .expect("second begin")
+            .expect("second attempt");
+        assert_ne!(first.attempt, second.attempt);
+        assert!(!manager.mark_sent_for_attempt(&first, now).await);
+        assert_eq!(
+            manager.mark_send_failed_for_attempt(&first, now).await,
+            RetryDecision::NotFound
+        );
+        assert!(manager.mark_sent_for_attempt(&second, now).await);
+    }
+
+    #[tokio::test]
+    async fn same_message_id_is_scoped_to_peer_for_incoming_ack() {
+        let manager = DeliveryManager::with_config(config());
+        let now = Instant::now();
+        let message_id = MessageId([200; MESSAGE_ID_BYTES]);
+        assert_eq!(
+            manager
+                .begin_incoming_checked("peer-a", "control", message_id, 1, now)
+                .await,
+            Ok(DedupDecision::New)
+        );
+        assert_eq!(
+            manager
+                .begin_incoming_checked("peer-b", "control", message_id, 1, now)
+                .await,
+            Ok(DedupDecision::New)
+        );
+        assert!(manager
+            .complete_incoming_checked("peer-a", "control", message_id)
+            .await
+            .expect("peer-a completion")
+            .is_some());
+        assert!(manager
+            .complete_incoming_checked("peer-b", "control", message_id)
+            .await
+            .expect("peer-b completion")
+            .is_some());
+        assert_eq!(
+            manager
+                .begin_incoming_checked("", "control", message_id, 1, now)
+                .await,
+            Err(DeliveryError::InvalidScope)
+        );
+    }
+
+    #[test]
+    fn delivery_recovery_errors_have_stable_business_names() {
+        assert_eq!(
+            BusinessRecoveryError::RecoverableTransportLoss.to_string(),
+            "RecoverableTransportLoss"
+        );
+        assert_eq!(
+            DeliveryError::Expired.recovery_error(),
+            Some(BusinessRecoveryError::OperationExpired)
+        );
+        assert_eq!(
+            RetryDecision::RetryAt(Instant::now()).recovery_error(),
+            Some(BusinessRecoveryError::RecoverableTransportLoss)
+        );
     }
 }

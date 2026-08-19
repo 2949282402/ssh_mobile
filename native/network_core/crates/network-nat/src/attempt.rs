@@ -32,6 +32,19 @@ pub enum ConnectivityAttemptState {
     Expired,
 }
 
+/// Boundary result for a candidate Answer arriving at an attempt.
+///
+/// `CacheOnly` is intentionally distinct from `Applied`: the caller may feed
+/// the fresh snapshot into the remote cache, but must not resurrect a direct
+/// probe after the one-shot window has closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CandidateUpdateDisposition {
+    Applied,
+    CacheOnly,
+    IgnoredStale,
+    Terminal,
+}
+
 impl ConnectivityAttemptState {
     /// Terminal states cannot transition back to a live state.
     pub fn is_terminal(self) -> bool {
@@ -198,6 +211,20 @@ impl ConnectivityAttempt {
         if self.state.is_terminal() {
             return Ok(false);
         }
+        // A late Answer may still be useful to a remote cache, but it must not
+        // mutate this completed Direct attempt or resurrect its probe queue.
+        if self.direct_deadline_elapsed(SystemTime::now()) {
+            return Ok(false);
+        }
+        self.apply_remote_candidates_unchecked(runtime_epoch, discovery_revision, candidates)
+    }
+
+    fn apply_remote_candidates_unchecked(
+        &mut self,
+        runtime_epoch: Option<RuntimeEpoch>,
+        discovery_revision: u64,
+        candidates: Vec<Candidate>,
+    ) -> Result<bool, String> {
         if candidates.len() > MAX_CANDIDATES_PER_SIGNAL {
             return Err("remote candidate set exceeds the attempt limit".into());
         }
@@ -282,6 +309,13 @@ impl ConnectivityAttempt {
     /// should ignore it), `Err` for a malformed signal, and `Ok(true)` when the
     /// remote discovery snapshot was applied.
     pub fn apply_signal(&mut self, signal: &CandidateSignal) -> Result<bool, String> {
+        if self.direct_deadline_elapsed(SystemTime::now()) {
+            return Ok(false);
+        }
+        self.apply_signal_unchecked(signal)
+    }
+
+    fn apply_signal_unchecked(&mut self, signal: &CandidateSignal) -> Result<bool, String> {
         signal.validate()?;
         if signal.attempt_id != self.attempt_id {
             // A signal for a different attempt is stale — never cross-attempt.
@@ -295,7 +329,31 @@ impl ConnectivityAttempt {
             .iter()
             .map(|candidate| Candidate::from_advertisement(candidate.clone()))
             .collect::<Result<Vec<_>, _>>()?;
-        self.apply_remote_candidates(signal_epoch, signal_revision, candidates)
+        self.apply_remote_candidates_unchecked(signal_epoch, signal_revision, candidates)
+    }
+
+    /// Applies a matching Answer while preserving the active-window versus
+    /// expired-cache-only boundary. This is the narrow integration seam for a
+    /// Coordinator that owns the remote cache and DirectProbe lifecycle.
+    pub fn apply_signal_with_deadline(
+        &mut self,
+        signal: &CandidateSignal,
+        now: SystemTime,
+    ) -> Result<CandidateUpdateDisposition, String> {
+        if self.state.is_terminal() {
+            return Ok(CandidateUpdateDisposition::Terminal);
+        }
+        if signal.attempt_id != self.attempt_id {
+            return Ok(CandidateUpdateDisposition::IgnoredStale);
+        }
+        if self.direct_deadline_elapsed(now) {
+            return Ok(CandidateUpdateDisposition::CacheOnly);
+        }
+        if self.apply_signal_unchecked(signal)? {
+            Ok(CandidateUpdateDisposition::Applied)
+        } else {
+            Ok(CandidateUpdateDisposition::IgnoredStale)
+        }
     }
 }
 
@@ -555,5 +613,57 @@ mod tests {
             attempt.remote_candidates()[0].candidate_id,
             first.candidate_id
         );
+    }
+
+    #[test]
+    fn late_matching_answer_is_cache_only_and_does_not_mutate_attempt() {
+        let started_at = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let mut attempt = ConnectivityAttempt::with_connect_window(
+            "attempt-late",
+            "peer-a",
+            epoch(0, 7),
+            started_at,
+            Duration::from_secs(5),
+        );
+        let initial_signal = signal(CandidateSignalKind::Answer, "attempt-late", 2, 40002);
+        let before_deadline = started_at + Duration::from_secs(4);
+        assert_eq!(
+            attempt
+                .apply_signal_with_deadline(&initial_signal, before_deadline)
+                .unwrap(),
+            CandidateUpdateDisposition::Applied
+        );
+        let candidate_count = attempt.remote_candidates().len();
+
+        let mut late = signal(CandidateSignalKind::Answer, "attempt-late", 3, 40003);
+        late.runtime_epoch = Some(epoch(1, 1));
+        late.discovery_revision = Some(3);
+        assert_eq!(
+            attempt
+                .apply_signal_with_deadline(&late, started_at + Duration::from_secs(5))
+                .unwrap(),
+            CandidateUpdateDisposition::CacheOnly
+        );
+        assert_eq!(attempt.remote_candidates().len(), candidate_count);
+    }
+
+    #[test]
+    fn wrong_attempt_answer_is_ignored_even_inside_the_direct_window() {
+        let started_at = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let mut attempt = ConnectivityAttempt::with_connect_window(
+            "attempt-current",
+            "peer-a",
+            epoch(0, 7),
+            started_at,
+            Duration::from_secs(5),
+        );
+        let stale = signal(CandidateSignalKind::Answer, "attempt-old", 2, 40002);
+        assert_eq!(
+            attempt
+                .apply_signal_with_deadline(&stale, started_at + Duration::from_secs(1))
+                .unwrap(),
+            CandidateUpdateDisposition::IgnoredStale
+        );
+        assert!(attempt.remote_candidates().is_empty());
     }
 }
