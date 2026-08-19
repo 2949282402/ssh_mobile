@@ -22,6 +22,9 @@ typedef SshNativeOpenerDeviceIdProvider = Future<String> Function();
 
 /// 基于 native ReliableStream 的 SSH 流连接器。
 final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
+  static const int _minStreamId = 1;
+  static const int _maxStreamId = 0xffff;
+
   /// 创建连接器。
   ///
   /// [gatewayProvider] 惰性打开共享 native gateway；[facade] 用于
@@ -48,7 +51,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
   Future<NetworkCommandGateway>? _gatewayFuture;
   Future<String>? _openerDeviceIdFuture;
   StreamSubscription<Uint8List>? _nativeSubscription;
-  int _nextStreamId = 1;
+  int _nextStreamId = _minStreamId;
   int _commandSequence = 0;
   bool _closed = false;
 
@@ -64,10 +67,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     final gateway = await _ensureGateway();
     if (_facade != null) await _ensurePeerConnected(peerId);
 
-    final handle = NativeStreamHandle(
-      openerDeviceId: openerDeviceId,
-      streamId: _nextStreamId++,
-    );
+    final handle = _allocateStreamHandle(openerDeviceId);
     final stream = _AppSshNativeStream(
       connector: this,
       peerId: peerId,
@@ -92,6 +92,21 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
       );
     }
     return stream;
+  }
+
+  NativeStreamHandle _allocateStreamHandle(String openerDeviceId) {
+    final firstCandidate = _nextStreamId;
+    var streamId = firstCandidate;
+    do {
+      final handle = NativeStreamHandle(
+        openerDeviceId: openerDeviceId,
+        streamId: streamId,
+      );
+      _nextStreamId = streamId == _maxStreamId ? _minStreamId : streamId + 1;
+      if (!_streams.containsKey(handle)) return handle;
+      streamId = _nextStreamId;
+    } while (streamId != firstCandidate);
+    throw StateError('ReliableStream stream ID namespace is exhausted.');
   }
 
   Future<String> _ensureOpenerDeviceId() {

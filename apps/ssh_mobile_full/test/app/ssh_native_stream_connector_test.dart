@@ -246,6 +246,69 @@ void main() {
         throwsA(isA<StateError>()),
       );
     });
+
+    test(
+      'wraps stream IDs, skips occupied handles, and fails when exhausted',
+      () async {
+        final gateway = _FakeGateway();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
+        );
+
+        final firstStream = await connector.open(peerId: 'peer-a');
+        final occupiedSecondStream = await connector.open(peerId: 'peer-a');
+        for (var streamId = 3; streamId <= 0xffff; streamId++) {
+          await connector.open(peerId: 'peer-a');
+        }
+        expect(connector.activeStreamCount, 0xffff);
+
+        await expectLater(
+          connector.open(peerId: 'peer-a'),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('namespace is exhausted'),
+            ),
+          ),
+        );
+
+        await occupiedSecondStream.close();
+        final wrappedStream = await connector.open(peerId: 'peer-a');
+        expect(connector.activeStreamCount, 0xffff);
+
+        final firstData = <Uint8List>[];
+        final wrappedData = <Uint8List>[];
+        final firstSubscription = firstStream.incoming.listen(firstData.add);
+        final wrappedSubscription = wrappedStream.incoming.listen(
+          wrappedData.add,
+        );
+        gateway.push(
+          _dataFrame(
+            eventId: 'wrapped-first',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 1,
+          ),
+        );
+        gateway.push(
+          _dataFrame(
+            eventId: 'wrapped-second',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 2,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(firstData, hasLength(1));
+        expect(wrappedData, hasLength(1));
+
+        await firstSubscription.cancel();
+        await wrappedSubscription.cancel();
+        await connector.closeAll();
+      },
+    );
   });
 }
 
