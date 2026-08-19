@@ -51,13 +51,52 @@ pub(crate) const STREAM_LOCAL_HOST: &str = "127.0.0.1";
 /// Local OS sshd port the SSH gateway bridges to (desktop sshd).
 pub(crate) const STREAM_LOCAL_SSH_PORT: u16 = 22;
 /// Maximum data bytes carried by one generic StreamBytes frame.
-pub(crate) const MAX_STREAM_FRAME_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_STREAM_FRAME_BYTES: usize = 64 * 1024;
 /// Per-stream receive buffer cap; the reader blocks while a consumer drains.
 pub(crate) const MAX_PER_STREAM_BUFFER_CAPACITY: usize = 256 * 1024;
 /// Maximum concurrent byte streams per peer.
-pub(crate) const MAX_CONCURRENT_STREAMS: usize = 256;
+pub(crate) const MAX_CONCURRENT_STREAMS: usize = 32;
 /// Maximum service-hint length in bytes.
 pub(crate) const MAX_SERVICE_BYTES: usize = 128;
+
+/// Frozen ReliableStream identity. The opener device is part of the key so a
+/// numeric stream ID can safely be reused by the two peers.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ReliableStreamIdentity {
+    pub peer_id: String,
+    pub opener_device_id: String,
+    pub stream_id: u16,
+}
+
+impl ReliableStreamIdentity {
+    #[allow(dead_code)]
+    pub(crate) fn new(
+        peer_id: impl Into<String>,
+        opener_device_id: impl Into<String>,
+        stream_id: u16,
+    ) -> Result<Self, StreamError> {
+        let identity = Self {
+            peer_id: peer_id.into(),
+            opener_device_id: opener_device_id.into(),
+            stream_id,
+        };
+        if identity.peer_id.is_empty()
+            || identity.opener_device_id.is_empty()
+            || identity.stream_id == 0
+        {
+            return Err(StreamError::InvalidArgument);
+        }
+        Ok(identity)
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReliableStreamLifecycle {
+    Open,
+    Closed,
+}
 /// Chunk size for the gateway socket pump.
 pub(crate) const STREAM_SOCKET_CHUNK_BYTES: usize = 16 * 1024;
 /// QUIC bidi preamble magic; distinguishes reliable streams from file offers
@@ -1622,6 +1661,16 @@ pub(crate) async fn handle_ssh_stream_close(
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn stream_identity_isolated_by_peer_and_opener() {
+        let first = ReliableStreamIdentity::new("peer-a", "device-a", 7).expect("identity");
+        let second = ReliableStreamIdentity::new("peer-b", "device-a", 7).expect("identity");
+        let third = ReliableStreamIdentity::new("peer-a", "device-b", 7).expect("identity");
+        assert_ne!(first, second);
+        assert_ne!(first, third);
+        assert!(ReliableStreamIdentity::new("peer-a", "device-a", 0).is_err());
+    }
 
     fn test_manager() -> (ReliableStreamManager, mpsc::UnboundedReceiver<NetworkEvent>) {
         let (event_tx, event_rx) = mpsc::unbounded_channel();

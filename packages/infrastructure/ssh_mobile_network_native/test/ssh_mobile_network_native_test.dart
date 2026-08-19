@@ -451,11 +451,9 @@ void main() {
       0x7b,
       0x18,
       0x02,
-      // Field 28 is intentionally outside the current event union.  Field
-      // 24 is PeerPresenceChanged, so using it here would test malformed
-      // presence payload handling rather than forward compatibility.
-      0xe2,
-      0x01,
+      // Field 50 is intentionally outside the current event union.
+      0x92,
+      0x03,
       0x02,
       0x08,
       0x01,

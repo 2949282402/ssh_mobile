@@ -68,8 +68,16 @@ impl DiscoveryResolver {
 #[allow(dead_code)] // forward path：Step 6 使用
 fn map_resolve_response(response: ResolvePeerResponse) -> ResolvedPeer {
     match ResolveStatus::try_from(response.status) {
-        Ok(ResolveStatus::Ready) => ResolvedPeer::Ready {
-            discovery: response.discovery,
+        Ok(ResolveStatus::Ready) => match response.discovery {
+            Some(discovery) => ResolvedPeer::Ready {
+                discovery: Some(discovery),
+            },
+            // READY without a discovery snapshot is not authoritative. Keep
+            // the connection gate fail-closed instead of manufacturing a
+            // usable peer from presence alone.
+            None => ResolvedPeer::Unknown {
+                retry_after_ms: response.retry_after_ms,
+            },
         },
         Ok(ResolveStatus::Offline) => ResolvedPeer::Offline,
         Ok(ResolveStatus::NotReady) => ResolvedPeer::NotReady {

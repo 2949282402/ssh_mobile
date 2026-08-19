@@ -62,24 +62,19 @@
       "step": 12
     },
     {
-      "file": "relay_data_ready.data.bin",
-      "note": "Relay confirms both reservation roles are connected",
+      "file": "relay_data_payload.data.bin",
+      "note": "first encrypted payload",
       "step": 13
     },
     {
       "file": "relay_data_payload.data.bin",
-      "note": "first encrypted payload",
-      "step": 14
-    },
-    {
-      "file": "relay_data_payload.data.bin",
       "note": "second encrypted payload (re-uses sequence=42 fixture; live flows increment sequence)",
-      "step": 15
+      "step": 14
     },
     {
       "file": "relay_data_close.data.bin",
       "note": "normal close",
-      "step": 16
+      "step": 15
     }
   ],
   "title": "relay v2 full-lifecycle golden sequence"

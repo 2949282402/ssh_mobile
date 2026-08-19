@@ -8,7 +8,7 @@
 //
 // 数据面连接不使用 hub peer 表，也没有 presence 租约：它是 reservation 作用域内的
 // 短命双端点连接。relayDataRegistry 负责按 initiator/responder 角色把同一 reservation
-// 的两个端点链接起来，并在配对完成后发送 RelayDataReady；之后每个端点收到的
+// 的两个端点链接起来，并在配对完成后发送 PairReady Ping；之后每个端点收到的
 // RelayDataPayload/RelayDataAck 都被原样转发到另一端，RelayDataClose 则双向关闭。
 
 package relay
@@ -314,7 +314,7 @@ func (r *relayDataRegistry) removeDeviceRefLocked(rc *relayDataConn) {
 // register 登记一条已通过 Connect 校验的数据面连接。
 //
 // 同角色重试会替换旧端点；已经完成配对的 reservation 则整体拆除旧 pair，要求
-// 两端重新完成 Connect/Ready。只有两个角色都存在时才会按顺序排入 Ready 帧，并
+// 两端重新完成 Connect。只有两个角色都存在时才会按顺序排入 PairReady Ping，并
 // 将 ready 置为 true。返回的 replaced 由调用方在解锁后关闭，避免旧连接的读循环
 // 参与新 pair 的状态变更。
 func (r *relayDataRegistry) register(rc *relayDataConn) (peer *relayDataConn, replaced []*relayDataConn, ok bool) {
@@ -368,15 +368,13 @@ func (r *relayDataRegistry) register(rc *relayDataConn) (peer *relayDataConn, re
 		}
 		peer = other
 		rc.link(peer)
-		// Enqueue Ready before publishing ready=true. This makes a subsequent
-		// payload from either read loop observe that its own Ready is already
-		// ahead of business traffic in the outbound queue.
-		readyQueued := rc.enqueueReady() && peer.enqueueReady()
+		// PairReady is the sole L1 setup signal on the frozen contract.  It is a
+		// WebSocket Ping, queued before publishing ready=true, and therefore
+		// shares the same single writer as Pong, keepalive, binary, and Close.
 		pairReadyQueued := rc.enqueuePairReadyPing() && peer.enqueuePairReadyPing()
-		readyQueued = readyQueued && pairReadyQueued
-		rc.ready.Store(readyQueued)
-		peer.ready.Store(readyQueued)
-		if readyQueued {
+		rc.ready.Store(pairReadyQueued)
+		peer.ready.Store(pairReadyQueued)
+		if pairReadyQueued {
 			r.consumed[rc.reservationID] = struct{}{}
 			rc.paired.Store(true)
 			peer.paired.Store(true)
@@ -562,7 +560,7 @@ func (rc *relayDataConn) peerConn() *relayDataConn {
 }
 
 // read 是数据面读循环：第一帧必须是 RelayDataConnect（校验 reservation_id + token），
-// Relay 在两个角色都加入后发送 RelayDataReady；之后 RelayDataPayload/RelayDataAck
+// Relay 在两个角色都加入后发送 PairReady Ping；之后 RelayDataPayload/RelayDataAck
 // 才能原样转发给对端。RelayDataClose 转发后双向关闭。任何协议违规 / 过期 / 预算
 // 超限都以 RelayDataClose(reason 1/2) 收场。
 func (rc *relayDataConn) read() {
@@ -668,7 +666,7 @@ func (rc *relayDataConn) read() {
 					peer.startKeepalive()
 				}
 			}
-			// Connect/Ready 成功即活跃：续期滑动窗口。
+			// Connect/PairReady 成功即活跃：续期滑动窗口。
 			rc.touch(expiryTimer)
 			continue
 		}
@@ -696,9 +694,6 @@ func (rc *relayDataConn) read() {
 				other.close()
 			}
 			return
-		case frame.GetReady() != nil:
-			rc.sendCloseAndShutdown(2, "relay_data_ready is server-to-client only")
-			return
 		default:
 			rc.sendCloseAndShutdown(2, "unexpected relay data frame")
 			return
@@ -714,24 +709,35 @@ func (rc *relayDataConn) startKeepalive() {
 		return
 	}
 	go func() {
-		ticker := time.NewTicker(relayDataPingInterval)
+		// Check at the pong deadline so a missed response closes 15s after the
+		// ping that elicited it, rather than waiting for the next 30s ping tick.
+		ticker := time.NewTicker(relayDataPongTimeout)
 		defer ticker.Stop()
+		var lastPing time.Time
 		for {
 			select {
 			case <-rc.done:
 				return
 			case <-ticker.C:
-				last := time.Unix(0, rc.lastPong.Load())
-				if time.Since(last) > relayDataPingInterval+relayDataPongTimeout {
-					rc.sendCloseAndShutdown(2, "relay data pong timeout")
-					return
+				now := time.Now()
+				if !lastPing.IsZero() && now.Sub(lastPing) >= relayDataPongTimeout {
+					last := time.Unix(0, rc.lastPong.Load())
+					if !last.After(lastPing) {
+						rc.sendCloseAndShutdown(2, "relay data pong timeout")
+						return
+					}
+				}
+				if !lastPing.IsZero() && now.Sub(lastPing) < relayDataPingInterval {
+					continue
 				}
 				if !rc.enqueue(outboundFrame{
 					messageType: websocket.PingMessage,
 					data:        []byte(relayDataPairReadyPing + rc.reservationID),
 				}) {
+					rc.close()
 					return
 				}
+				lastPing = now
 			}
 		}
 	}()
@@ -806,16 +812,6 @@ func (rc *relayDataConn) forward(frame *v2.RelayDataFrame) bool {
 		return false
 	}
 	return other.enqueueFrame(frame)
-}
-
-// enqueueReady places the pairing acknowledgement before business frames.
-func (rc *relayDataConn) enqueueReady() bool {
-	return rc.enqueueFrame(&v2.RelayDataFrame{
-		Version: v2.RELAY_V2_VERSION,
-		Kind: &v2.RelayDataFrame_Ready{Ready: &v2.RelayDataReady{
-			ReservationId: rc.reservationID,
-		}},
-	})
 }
 
 func (rc *relayDataConn) enqueuePairReadyPing() bool {
@@ -969,6 +965,18 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid reservation id", http.StatusNotFound)
 		return
 	}
+	// Authenticate before touching reservation state.  An unauthenticated caller
+	// must not be able to distinguish an existing reservation from a missing one.
+	claims, _, code, authenticated := s.authenticatedRequest(r)
+	if !authenticated {
+		retry := retryUnspecified
+		if code == relayErrorCredentialExpired {
+			retry = retryRefreshCredentialThenRetry
+		}
+		writeNetworkErrorRetry(w, http.StatusUnauthorized, code,
+			"Relay data-plane authentication failed.", "connect_relay_data", "", retry, 0)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), presenceLeaseTimeout)
 	res, ok, err := s.cache.GetReservation(ctx, reservationID)
 	cancel()
@@ -979,16 +987,6 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		http.Error(w, "reservation not found", http.StatusNotFound)
-		return
-	}
-	claims, _, code, authenticated := s.authenticatedRequest(r)
-	if !authenticated {
-		retry := retryUnspecified
-		if code == relayErrorCredentialExpired {
-			retry = retryRefreshCredentialThenRetry
-		}
-		writeNetworkErrorRetry(w, http.StatusUnauthorized, code,
-			"Relay data-plane authentication failed.", "connect_relay_data", "", retry, 0)
 		return
 	}
 	// 不按名义 ExpiresAtMs 做升级准入：滑动窗口续期（RenewReservation/touch）只滑动

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use crate::events::{
-    emit_command_result, emit_peer_lifecycle, emit_peer_state, emit_relay_state, protocol_error,
+    emit_command_result, emit_peer_lifecycle, emit_relay_state, protocol_error,
     protocol_error_with_peer,
 };
 use crate::peer;
@@ -14,8 +14,7 @@ use crate::transfer;
 use crate::{connect::PeerState, errors::CoreNetworkError};
 use network_protocol::{
     network_command, CommunicationClass, NetworkCommand, NetworkError as ProtocolError,
-    NetworkErrorCode, PeerConnectionState, RelayConnectionState, RouteType,
-    NETWORK_PROTOCOL_VERSION,
+    NetworkErrorCode, RelayConnectionState, NETWORK_PROTOCOL_VERSION,
 };
 
 const MAX_COMPLETED_COMMANDS: usize = 4096;
@@ -105,6 +104,22 @@ pub(crate) async fn dispatch_command(
         Some(network_command::Payload::UpsertPeer(peer_command)) => {
             peer::upsert_peer(&state, peer_command).await
         }
+        Some(network_command::Payload::UpsertPeerV2(command)) => {
+            let config = command.config.ok_or_else(|| {
+                protocol_error(NetworkErrorCode::InvalidArgument, "peer config is required")
+            })?;
+            validate_e2ee_policy(config.e2ee_policy)?;
+            peer::upsert_peer(
+                &state,
+                network_protocol::UpsertPeerCommand {
+                    peer_id: config.peer_id,
+                    endpoint_address: config.endpoint_address,
+                    identity_public_key: config.identity_public_key,
+                    e2e_public_key: config.e2e_public_key,
+                },
+            )
+            .await
+        }
         Some(network_command::Payload::ConnectPeer(connect)) => {
             let class = decode_communication_class(connect.communication_class);
             start_connect_peer(state, command_id, connect.peer_id, class).await
@@ -135,6 +150,52 @@ pub(crate) async fn dispatch_command(
         Some(network_command::Payload::DisconnectPeer(disconnect)) => {
             peer::disconnect_peer(&state, disconnect.peer_id).await
         }
+        Some(network_command::Payload::RemovePeer(remove)) => {
+            remove_peer_v2(&state, remove.peer_id).await
+        }
+        Some(network_command::Payload::SendMessageV2(message)) => {
+            validate_e2ee_policy(message.e2ee_policy)?;
+            crate::channel::start_send_message(
+                state,
+                network_protocol::SendMessageCommand {
+                    peer_id: message.peer_id,
+                    channel_id: message.channel_id,
+                    payload: message.payload,
+                    policy: message.policy,
+                },
+            )
+            .await
+        }
+        Some(network_command::Payload::Transfer(transfer)) => {
+            if transfer.peer_id.is_empty() || transfer.transfer_id.is_empty() {
+                return Err(protocol_error(
+                    NetworkErrorCode::InvalidArgument,
+                    "peer_id and transfer_id are required",
+                ));
+            }
+            transfer::dispatch_transfer_command(
+                state,
+                NetworkCommand {
+                    command_id,
+                    protocol_version: NETWORK_PROTOCOL_VERSION,
+                    payload: Some(network_command::Payload::SendFile(
+                        network_protocol::SendFileCommand {
+                            transfer_id: transfer.transfer_id,
+                            peer_id: transfer.peer_id,
+                            file_path: transfer.file_path,
+                        },
+                    )),
+                },
+            )
+            .await
+        }
+        Some(network_command::Payload::PeerDiagnostics(diagnostics)) => {
+            emit_peer_diagnostics(&state, diagnostics.peer_id).await
+        }
+        Some(network_command::Payload::NetworkEnvironmentChanged(environment)) => {
+            crate::events::emit_network_environment_changed(&state.event_tx, environment);
+            Ok(())
+        }
         Some(network_command::Payload::DisconnectRelay(_)) => relay::disconnect_relay(&state).await,
         Some(network_command::Payload::SshStreamOpen(open)) => {
             crate::stream::handle_ssh_stream_open(state, open).await
@@ -150,6 +211,72 @@ pub(crate) async fn dispatch_command(
             "network command payload is required",
         )),
     }
+}
+
+fn validate_e2ee_policy(value: i32) -> Result<(), ProtocolError> {
+    network_protocol::E2eePolicy::try_from(value)
+        .map(|_| ())
+        .map_err(|_| protocol_error(NetworkErrorCode::InvalidArgument, "unknown E2EE policy"))
+}
+
+async fn remove_peer_v2(state: &RuntimeState, peer_id: String) -> Result<(), ProtocolError> {
+    if peer_id.is_empty() || peer_id.len() > 128 {
+        return Err(protocol_error(
+            NetworkErrorCode::InvalidArgument,
+            "peer_id must contain 1-128 characters",
+        ));
+    }
+    state
+        .peer_supervisors
+        .disconnect(&peer_id)
+        .map_err(|error| protocol_error(NetworkErrorCode::Lifecycle, error.to_string()))?;
+    if let Ok(peer) = crate::connect::PeerId::new(&peer_id) {
+        state.ready_paths.revoke_peer(&peer);
+    }
+    state.connection_sessions.close(&peer_id).await;
+    state.delivery.close_peer(&peer_id).await;
+    state.peers.write().await.remove(&peer_id);
+    state.trusted_peer_keys.write().await.remove(&peer_id);
+    state.remote_candidate_cache.write().await.remove(&peer_id);
+    state.relay_data.write().await.remove(&peer_id);
+    state.reliable_streams.write().await.remove(&peer_id);
+    state.ready_session_index.unregister(&peer_id);
+    let _ = state.peer_supervisors.remove_if_evictable(&peer_id);
+    crate::events::emit_peer_lifecycle(
+        &state.event_tx,
+        &peer_id,
+        PeerState::Offline,
+        Some(protocol_error_with_peer(
+            NetworkErrorCode::Cancelled,
+            "peer removed",
+            "remove_peer",
+            &peer_id,
+        )),
+    );
+    Ok(())
+}
+
+async fn emit_peer_diagnostics(state: &RuntimeState, peer_id: String) -> Result<(), ProtocolError> {
+    if peer_id.is_empty() || peer_id.len() > 128 {
+        return Err(protocol_error(
+            NetworkErrorCode::InvalidArgument,
+            "peer_id must contain 1-128 characters",
+        ));
+    }
+    crate::events::emit_peer_diagnostics(
+        &state.event_tx,
+        network_protocol::PeerDiagnostics {
+            peer_id,
+            state: network_protocol::PeerState::Offline as i32,
+            e2ee_policy: network_protocol::E2eePolicy::Required as i32,
+            ready_path_count: 0,
+            queued_command_count: 0,
+            active_stream_count: 0,
+            active_transfer_count: 0,
+            last_error: None,
+        },
+    );
+    Ok(())
 }
 
 /// 接受对端连接请求，并分离握手任务。
@@ -181,76 +308,16 @@ async fn start_connect_peer(
             &peer_id,
         ));
     }
-    let supervisor = state
+    let intent = state
         .peer_supervisors
-        .get_or_create(&peer_id)
+        .start_connect(Arc::clone(&state), &peer_id, command_id, class)
         .map_err(|error| core_error(&peer_id, "connect", error))?;
-    let intent = supervisor
-        .begin_connect(&command_id, class)
-        .map_err(|error| core_error(&peer_id, "connect", error))?;
-    let generation = intent.generation;
     if !intent.is_new {
         intent.detach_completion();
         return Ok(());
     }
     intent.detach_completion();
     emit_peer_lifecycle(&state.event_tx, &peer_id, PeerState::Connecting, None);
-    let supervisor = Arc::clone(&state.task_supervisor);
-    let task_state = Arc::clone(&state);
-    let task_peer_id = peer_id.clone();
-    let task_started = supervisor.spawn_runtime("peer-connect", async move {
-        if !matches!(
-            task_state.peer_supervisors.get_or_create(&task_peer_id),
-            Ok(peer) if peer.is_current(generation)
-        ) {
-            return;
-        }
-        // transport-network v2（§11/§37）：唯一建连入口 ConnectivityAttemptCoordinator。
-        let attempt_coordinator =
-            crate::connect::ConnectivityAttemptCoordinator::new(Arc::clone(&task_state));
-        match attempt_coordinator
-            .connect_with_class(&task_peer_id, class)
-            .await
-        {
-            Ok(()) => {
-                if let Ok(peer) = task_state.peer_supervisors.get_or_create(&task_peer_id) {
-                    let _ = peer.complete(generation, Ok(PeerState::Online));
-                }
-            }
-            Err(error) => {
-                let Ok(peer) = task_state.peer_supervisors.get_or_create(&task_peer_id) else {
-                    return;
-                };
-                if !peer.is_current(generation) {
-                    return;
-                }
-                let code =
-                    NetworkErrorCode::try_from(error.code).unwrap_or(NetworkErrorCode::Unspecified);
-                let _ = peer.complete(generation, Err(CoreNetworkError::Cancelled));
-                emit_peer_state(
-                    &task_state.event_tx,
-                    &task_peer_id,
-                    PeerConnectionState::Failed,
-                    RouteType::Unspecified,
-                    Some(protocol_error_with_peer(
-                        code,
-                        error.message,
-                        "connect",
-                        &task_peer_id,
-                    )),
-                );
-            }
-        }
-    });
-    if task_started.is_none() {
-        if let Ok(peer) = state.peer_supervisors.get_or_create(&peer_id) {
-            let _ = peer.complete(generation, Err(CoreNetworkError::SupervisorStopping));
-        }
-        return Err(protocol_error(
-            NetworkErrorCode::Cancelled,
-            "network runtime is stopping",
-        ));
-    }
     Ok(())
 }
 

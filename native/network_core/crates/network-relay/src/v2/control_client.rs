@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::info;
@@ -90,6 +90,8 @@ pub struct RelayControlClient {
     pending: Arc<RwLock<HashMap<u64, oneshot::Sender<ControlEvent>>>>,
     /// 逐 `attempt_id` 的异步 attempt 关联表。
     attempts: Arc<RwLock<HashMap<String, AttemptTracker>>>,
+    /// Narrow gate for the frozen Resolve -> ConnectivityOffer transaction.
+    coordination_gate: Arc<Mutex<()>>,
     next_request_id: Arc<AtomicU64>,
     writer_task: Option<JoinHandle<()>>,
     reader_task: Option<JoinHandle<()>>,
@@ -141,6 +143,7 @@ impl RelayControlClient {
             inbound_tx,
             pending: Arc::new(RwLock::new(HashMap::new())),
             attempts: Arc::new(RwLock::new(HashMap::new())),
+            coordination_gate: Arc::new(Mutex::new(())),
             next_request_id: Arc::new(AtomicU64::new(1)),
             writer_task: None,
             reader_task: None,
@@ -437,14 +440,30 @@ impl RelayControlClient {
             initiator_snapshot.as_ref(),
             "initiator",
         )?;
-        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = oneshot::channel();
-        let mut attempts = self.attempts.write().await;
-        if attempts.contains_key(&attempt_id) {
+        // ConnectivityOffer has no target field on the frozen wire.  Keep the
+        // narrow gate only across the authoritative Resolve and the Offer
+        // enqueue so concurrent attempts on this shared control socket cannot
+        // cross-associate their targets.  The answer/probe window is outside
+        // the gate.
+        let coordination_guard = self.coordination_gate.lock().await;
+        if self.attempts.read().await.contains_key(&attempt_id) {
             return Err(RelayError::Protocol(
                 "connectivity attempt_id is already in use".into(),
             ));
         }
+        let resolved = self.resolve_peer(&target_device_id).await?;
+        if resolved.status != ResolveStatus::Ready as i32 {
+            drop(coordination_guard);
+            return Err(RelayError::Protocol(format!(
+                "connectivity target is not ready: {}",
+                ResolveStatus::try_from(resolved.status)
+                    .map(|status| format!("{status:?}"))
+                    .unwrap_or_else(|_| "unknown".to_string())
+            )));
+        }
+        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        let mut attempts = self.attempts.write().await;
         attempts.insert(
             attempt_id.clone(),
             AttemptTracker {
@@ -465,13 +484,13 @@ impl RelayControlClient {
                 initiator_runtime_epoch: Some(initiator_runtime_epoch),
                 initiator_revision,
                 initiator_snapshot,
-                target_device_id,
             })),
         };
         if let Err(error) = self.send_frame(&frame).await {
             self.attempts.write().await.remove(&attempt_id);
             return Err(error);
         }
+        drop(coordination_guard);
         match tokio::time::timeout(CONNECTIVITY_ATTEMPT_TIMEOUT, rx).await {
             Ok(Ok(ControlEvent::ConnectivityAnswer(answer))) => {
                 if answer.accepted {
@@ -512,9 +531,8 @@ impl RelayControlClient {
         }
     }
 
-    /// 发送一个受限的 WebRTC 信令帧（fire-and-forget，不等待应答）。客户端把
-    /// 自身 device_id 放入 `sender_device_id` 作为提示；Relay 会用认证连接身份
-    /// 覆盖该字段，接收端据此绑定远端 peer。
+    /// 发送一个受限的 WebRTC 信令帧（fire-and-forget，不等待应答）。发送方身份
+    /// 由 Relay 的认证连接上下文确定，不占用 frozen wire 字段。
     pub async fn signal_webrtc(
         &self,
         realtime_id: &str,
@@ -548,7 +566,6 @@ impl RelayControlClient {
                 kind: kind as i32,
                 revision,
                 payload: payload.to_vec(),
-                sender_device_id: self.device_id.clone(),
             })),
         };
         self.send_frame(&frame).await
@@ -605,11 +622,6 @@ impl RelayControlClient {
         if offer.attempt_id.is_empty() || offer.attempt_id.len() > MAX_ATTEMPT_ID_BYTES {
             return Err(RelayError::InvalidConfiguration(
                 "connectivity offer attempt_id is outside protocol bounds".into(),
-            ));
-        }
-        if offer.target_device_id != self.device_id {
-            return Err(RelayError::Protocol(
-                "connectivity offer is not addressed to the authenticated device".into(),
             ));
         }
         if accepted {
@@ -1119,7 +1131,6 @@ mod tests {
             }),
             initiator_revision: 7,
             initiator_snapshot: None,
-            target_device_id: "device-b".into(),
         };
         let frame = RelayFrame {
             version: RELAY_V2_VERSION,
@@ -1447,7 +1458,6 @@ mod tests {
                     initiator_runtime_epoch: None,
                     initiator_revision: 0,
                     initiator_snapshot: None,
-                    target_device_id: "device-b".into(),
                 },
                 false,
                 "spoofed-device",
@@ -1526,7 +1536,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signal_webrtc_populates_authenticated_sender_identity() {
+    async fn signal_webrtc_uses_authenticated_control_context() {
         let mut client = RelayControlClient::new(
             "https://relay.example.test".into(),
             "device-a".into(),
@@ -1556,6 +1566,5 @@ mod tests {
             panic!("expected realtime signal kind");
         };
         assert_eq!(signal.target_device_id, "device-b");
-        assert_eq!(signal.sender_device_id, "device-a");
     }
 }

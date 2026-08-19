@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-/// Dart、Rust、FFI、LAN 和 Relay 共享的开发阶段 v1 错误码。
+/// Dart、Rust、FFI、LAN 和 Relay 共享的 Network V2 public error codes.
 enum NetworkErrorCode {
   unspecified(0),
   invalidArgument(1),
@@ -14,7 +14,19 @@ enum NetworkErrorCode {
   ioError(10),
   cancelled(11),
   credentialExpired(12),
-  identityConflict(13);
+  identityConflict(13),
+  configuration(14),
+  securityPolicyMismatch(15),
+  relayRequiresE2ee(16),
+  peerNotReady(17),
+  resourceLimit(18),
+  lifecycle(19),
+  protocolMismatch(20),
+  staleOperation(21),
+  invalidState(22),
+  pathLost(23),
+  resumeRejected(24),
+  streamClosed(25);
 
   const NetworkErrorCode(this.wireValue);
 
@@ -29,7 +41,9 @@ extension NetworkErrorCodePolicy on NetworkErrorCode {
     NetworkErrorCode.timeout ||
     NetworkErrorCode.peerOffline ||
     NetworkErrorCode.noRoute ||
-    NetworkErrorCode.relayError => true,
+    NetworkErrorCode.relayError ||
+    NetworkErrorCode.pathLost ||
+    NetworkErrorCode.peerNotReady => true,
     _ => false,
   };
 }

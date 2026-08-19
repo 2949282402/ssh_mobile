@@ -7,9 +7,9 @@
 # are current by deterministically regenerating them and diffing against what is
 # committed, then runs the optional toolchain gates that are available:
 #
-#   1. regenerate golden fixtures  +  git diff --exit-code (REQUIRED)
-#   2. protoc --descriptor_set_out=/dev/null  (if protoc available)
-#   3. buf lint                      (if buf AND protocol/buf.yaml available)
+#   1. deterministically check golden fixtures without mutating the worktree (REQUIRED)
+#   2. compare the wire descriptor with the original frozen proto revision
+#   3. buf lint/breaking are run by the CI protocol job with pinned tools
 #
 # Exit code 0 = contract intact; non-zero = drift or gate failure.
 set -euo pipefail
@@ -23,15 +23,9 @@ cd "$REPO_ROOT"
 
 echo "== relay v2 contract check =="
 
-# --- 1. Golden fixtures must be current (deterministic regenerate + diff) ---
-python3 "$GENERATOR" --regenerate
-if ! git diff --exit-code -- protocol/relay_v2_testdata/ >/dev/null; then
-  echo "error: protocol/relay_v2_testdata/ is not current." >&2
-  echo "Run:  python3 protocol/relay_v2_testdata/generate_fixtures.py --regenerate" >&2
-  echo "then commit the regenerated files." >&2
-  exit 1
-fi
-echo "golden fixtures: current (23 fixtures)"
+# --- 1. Golden fixtures must be current (deterministic non-mutating check) ---
+python3 "$GENERATOR" --check
+echo "golden fixtures: current (22 fixtures)"
 
 # --- Semantic sanity: manifest shape ---
 python3 - <<'PY'
@@ -39,25 +33,53 @@ import json, sys
 with open("protocol/relay_v2_testdata/manifest.json") as f:
     m = json.load(f)
 assert m["schema_version"] == 2, "manifest schema_version != 2"
-assert len(m["fixtures"]) == 23, "expected 23 fixtures, got %d" % len(m["fixtures"])
+assert len(m["fixtures"]) == 22, "expected 22 fixtures, got %d" % len(m["fixtures"])
 assert m["constants"]["RELAY_V2_VERSION"] == 2
 print("manifest: OK (%d fixtures)" % len(m["fixtures"]))
 PY
 
-# --- 2. Compile-check the proto if protoc is available ---
+# --- Frozen wire shape: reject the known PR #48 additions explicitly. ---
+python3 - <<'PY'
+from pathlib import Path
+
+proto = Path("protocol/proto/relay/v2/relay_v2.proto").read_text(encoding="utf-8")
+
+def message_body(name: str) -> str:
+    marker = f"message {name} {{"
+    start = proto.index(marker) + len(marker)
+    end = proto.index("}\n", start)
+    return proto[start:end]
+
+offer = message_body("ConnectivityOffer")
+signal = message_body("RealtimeSignal")
+data_frame = message_body("RelayDataFrame")
+assert "target_device_id = 7" not in offer, "ConnectivityOffer target field drift"
+assert "sender_device_id = 7" not in signal, "RealtimeSignal sender field drift"
+assert "ready = 14" not in data_frame, "RelayDataFrame ready oneof drift"
+assert "message RelayDataReady" not in proto, "RelayDataReady protobuf drift"
+print("forbidden Relay V2 additions: absent")
+PY
+
+# --- 2. Descriptor equality against the original frozen proto revision. ---
+descriptor_status="NOT RUN (protoc unavailable)"
 if command -v protoc >/dev/null 2>&1; then
-  protoc --proto_path=protocol --descriptor_set_out=/dev/null protocol/proto/relay/v2/relay_v2.proto
-  echo "proto compile-check: OK"
+  frozen_commit="6ec194bb3a66a748215d3abc11d6da84bd329619"
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir"' EXIT
+  mkdir -p "$tmp_dir/protocol/proto/relay/v2"
+  git show "${frozen_commit}:protocol/proto/relay/v2/relay_v2.proto" \
+    > "$tmp_dir/protocol/proto/relay/v2/relay_v2.proto"
+  protoc --proto_path=protocol \
+    --descriptor_set_out="$tmp_dir/current.desc" \
+    protocol/proto/relay/v2/relay_v2.proto
+  protoc --proto_path="$tmp_dir" \
+    --descriptor_set_out="$tmp_dir/frozen.desc" \
+    protocol/proto/relay/v2/relay_v2.proto
+  cmp --silent "$tmp_dir/current.desc" "$tmp_dir/frozen.desc"
+  echo "relay v2 descriptor: byte-equal to frozen revision ${frozen_commit}"
+  descriptor_status="byte-equal to frozen revision ${frozen_commit}"
 else
-  echo "protoc not available; skipping proto compile-check"
+  echo "NOT RUN: protoc unavailable; frozen descriptor equality requires the CI protocol job"
 fi
 
-# --- 3. buf lint if buf + buf.yaml are available ---
-if command -v buf >/dev/null 2>&1 && [ -f protocol/buf.yaml ]; then
-  (cd protocol && buf lint)
-  echo "buf lint: OK"
-else
-  echo "buf not available; skipping buf lint"
-fi
-
-echo "== relay v2 contract check: PASS =="
+echo "== relay v2 contract check: PASS (fixture/shape gates; descriptor ${descriptor_status}) =="

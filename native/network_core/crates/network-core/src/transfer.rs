@@ -24,13 +24,68 @@ use tokio::sync::mpsc::{channel, Receiver};
 
 use crate::delivery::{is_valid_peer_id, BusinessRecoveryError};
 use crate::events::{
-    emit_incoming_offer, emit_transfer_completed, emit_transfer_error, emit_transfer_progress,
-    protocol_error, protocol_error_with_peer,
+    emit_incoming_offer, emit_transfer_completed, emit_transfer_error,
+    emit_transfer_progress_for_peer, protocol_error, protocol_error_with_peer,
 };
 use crate::runtime::{
     EventSender, RuntimeState, INCOMING_APPROVAL_TIMEOUT, MAX_PENDING_INCOMING_TRANSFERS,
     TRANSFER_COMPLETION_TIMEOUT,
 };
+
+/// Frozen logical transfer identity. ConnectionSession and route handles are
+/// intentionally absent; a path loss changes only the current attempt.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct TransferIdentity {
+    pub peer_id: String,
+    pub transfer_id: String,
+}
+
+impl TransferIdentity {
+    #[allow(dead_code)]
+    pub fn new(
+        peer_id: impl Into<String>,
+        transfer_id: impl Into<String>,
+    ) -> Result<Self, &'static str> {
+        let identity = Self {
+            peer_id: peer_id.into(),
+            transfer_id: transfer_id.into(),
+        };
+        if identity.peer_id.is_empty() || identity.transfer_id.is_empty() {
+            return Err("peer_id and transfer_id are required");
+        }
+        Ok(identity)
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransferLifecycle {
+    Queued,
+    Active,
+    Paused,
+    Resuming,
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ConfirmedOffset {
+    pub offset: u64,
+    pub total: u64,
+}
+
+impl ConfirmedOffset {
+    #[allow(dead_code)]
+    pub fn new(offset: u64, total: u64) -> Result<Self, &'static str> {
+        if offset > total {
+            return Err("confirmed offset exceeds transfer size");
+        }
+        Ok(Self { offset, total })
+    }
+}
 
 /// Progress is advisory data, but it is emitted once per transfer chunk. Keep
 /// the queue bounded so a stalled event consumer cannot retain an entire file
@@ -400,6 +455,7 @@ async fn send_file(connection: Connection, transfer: ResumableTransfer, state: A
             "file-send-progress",
             forward_progress(
                 transfer_id.clone(),
+                peer_id.clone(),
                 progress_rx,
                 state.event_tx.clone(),
                 state.transfers.clone(),
@@ -775,6 +831,7 @@ pub(crate) async fn handle_incoming_file_after_offer(
             "file-receive-progress",
             forward_progress(
                 manifest.transfer_id.clone(),
+                peer_id.clone(),
                 progress_rx,
                 state.event_tx.clone(),
                 state.transfers.clone(),
@@ -878,6 +935,7 @@ pub(crate) async fn respond_to_incoming(
 /// 将流 worker 的有界传输进度转发为事件。
 async fn forward_progress(
     transfer_id: String,
+    peer_id: String,
     mut progress: Receiver<(u64, u64)>,
     event_tx: EventSender,
     manager: TransferManager,
@@ -892,7 +950,14 @@ async fn forward_progress(
             manager.snapshot(&transfer_id).await.is_some()
         };
         if accepted {
-            emit_transfer_progress(&event_tx, &transfer_id, bytes_transferred, total_bytes);
+            emit_transfer_progress_for_peer(
+                &event_tx,
+                &peer_id,
+                &transfer_id,
+                bytes_transferred,
+                total_bytes,
+                false,
+            );
         } else {
             return;
         }
@@ -942,7 +1007,7 @@ fn transfer_failure_code(reason: TransferFailureReason) -> NetworkErrorCode {
         | TransferFailureReason::SourceChanged
         | TransferFailureReason::Io => NetworkErrorCode::IoError,
         TransferFailureReason::RetryBudgetExhausted => NetworkErrorCode::Timeout,
-        TransferFailureReason::SessionReplaced => NetworkErrorCode::Cancelled,
+        TransferFailureReason::SessionReplaced => NetworkErrorCode::PathLost,
     }
 }
 
@@ -973,5 +1038,27 @@ pub(crate) async fn dispatch_transfer_command(
             NetworkErrorCode::InvalidArgument,
             "unsupported transfer command",
         )),
+    }
+}
+
+#[cfg(test)]
+mod v2_contract_tests {
+    use super::*;
+
+    #[test]
+    fn transfer_identity_and_confirmed_offset_are_session_independent() {
+        let identity = TransferIdentity::new("peer-a", "transfer-a").expect("identity");
+        assert_eq!(identity.peer_id, "peer-a");
+        assert_eq!(identity.transfer_id, "transfer-a");
+        assert_eq!(ConfirmedOffset::new(4, 8).expect("offset").offset, 4);
+        assert!(ConfirmedOffset::new(9, 8).is_err());
+    }
+
+    #[test]
+    fn path_loss_is_a_recoverable_public_error() {
+        assert_eq!(
+            transfer_failure_code(TransferFailureReason::SessionReplaced),
+            NetworkErrorCode::PathLost
+        );
     }
 }

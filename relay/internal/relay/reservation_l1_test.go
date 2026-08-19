@@ -42,12 +42,9 @@ func TestRelayDataRegistryRejectsDuplicateRoleAndConsumesPair(t *testing.T) {
 		t.Fatal("consumed reservation must reject replayed role token")
 	}
 
-	// PairReady is the first control-plane liveness ping and is queued through
-	// the same writer-owned outbound channel as the binary Ready frame.
-	if frame := <-initiator.outbound; frame.messageType != websocket.BinaryMessage {
-		t.Fatalf("first queued frame must be binary RelayDataReady, got %d", frame.messageType)
-	}
+	// PairReady is the sole setup signal and is queued through the same
+	// writer-owned outbound channel as all later control/data frames.
 	if frame := <-initiator.outbound; frame.messageType != websocket.PingMessage {
-		t.Fatalf("second queued frame must be PairReady Ping, got %d", frame.messageType)
+		t.Fatalf("first queued frame must be PairReady Ping, got %d", frame.messageType)
 	}
 }

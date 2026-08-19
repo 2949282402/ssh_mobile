@@ -28,30 +28,39 @@ Protobuf Binary over WebSocket。
 - **Control Connection**（长期存在）只传：Auth、Heartbeat、Discovery、Resolve、
   Connectivity Signaling、Presence Hint、Realtime Signaling、Relay Reservation。
   绝不允许 File Chunk、Delivery Payload、Bulk Payload。
-- **Relay Data Connection** 只负责：Connect/Ready 配对握手、Encrypted Payload
+- **Relay Data Connection** 只负责：Connect/PairReady 配对握手、Encrypted Payload
   Forwarding、Flow Control、Close。服务器不解密业务数据；只有 reservation 的
-  initiator 与 responder 两个 token 角色都在线后，Relay 才向双方发送 Ready。
+  initiator 与 responder 两个 token 角色都在线后，Relay 才向双方发送 PairReady
+  WebSocket Ping。
 - Rust 端拆分 `RelayControlClient` / `RelayDataClient`，二者**严禁共享**
   outbound queue、rate limit budget、socket。大流量不能阻塞 heartbeat /
   signaling / Resolve。
 
 ### Relay Data 使用 Reservation 模型
 
-Direct 失败后：
+Direct 失败后，且仅在同一条 Control Connection 上完成 Resolve → Offer gate 后：
 
 ```text
 A → ReserveRelay(B) → Relay Control
    → RelayReservation { reservation_id, relay_data_endpoint, expires_at, local_token }
 B 同时收到 IncomingRelayReservation
 双方分别连接 /v2/relay/{reservation_id}
-Relay 确认两端角色后 → RelayDataReady → encrypted payload
+Relay 确认两端角色后 → WebSocket Ping PairReady → encrypted payload
 ```
 
 数据通道只负责配对握手、encrypted forwarding / flow control / close。
 `relay_data_endpoint` 与 `local_token` 由 reservation 授予；连接双方凭
 `reservation_id` 进入同一数据通道。未完成配对时，相同角色的重试替换旧端点，不会把两个
-initiator 或两个 responder 互相配对；Rust `RelayDataClient` 只有收到 Ready
-后才返回连接成功。已完成 `Ready` 握手的 pair 是一次性的：任一角色被替换或断开都会关闭当前 pair、清除另一侧的配对关系，并重新等待双方 Connect → Ready；Relay 不会向仍在线的旧客户端发送第二个 Ready。
+initiator 或两个 responder 互相配对。两端完成 Connect 后，Relay 通过单 writer 向双方
+发送一次 WebSocket Ping：`ssh-mobile-relay-paired-v1:<reservation_id>`。PairReady
+不是 protobuf `RelayDataFrame`，也不是 `RelayDataReady` 消息。已完成 PairReady 的 pair
+是一次性的：任一角色被替换或断开都会关闭当前 pair、清除另一侧的配对关系，并重新等待
+双方 Connect → PairReady；Relay 不会向仍在线的旧客户端发送第二个 PairReady。
+
+Reservation `expires_at` 只约束尚未完成配对的 admission。PairReady 之后，active Relay
+Data lifetime 与 reservation TTL、自然 credential expiry 解耦；显式 device revoke
+仍会关闭 pending、active 及其 counterpart。PairReady、30 s Ping、15 s Pong timeout、
+binary frame 与 Close 均通过同一个 outbound writer。
 
 ### Relay Protocol V2
 
@@ -73,6 +82,11 @@ ProtocolError
 - 所有 Request 必须携带 `request_id`；所有异步 attempt 必须携带 `attempt_id`。
 - **禁止继续依靠全局 Notify 判断应答归属**（删除 v1
   `candidate_signal_notify` 关联模式）。
+- `ConnectivityOffer` 不携带 `target_device_id`；目标由同一 Control Connection
+  上先前成功的 Resolve gate 绑定。Answer 与 direct probe 不持有该 gate 的锁。
+- `RealtimeSignal` 保留 `target_device_id`，但 wire schema 不携带
+  `sender_device_id`；接收方只能从既有 `realtime_id` → peer 绑定取得远端身份，未知绑定
+  必须 fail closed。
 
 ### 错误模型固定
 
@@ -106,5 +120,9 @@ live state`、`MySQL = 外部持久状态`。不得宣称 Multi-instance support
 按 Main 基线版 §40 测试矩阵的 Relay 组执行：大文件 Relay Data 满载时 Control
 heartbeat / Resolve / signaling 不受影响；Control 面禁止 File Chunk / Delivery
 Payload / Bulk Payload（静态守卫）；Relay Protocol V2 的 request_id 关联、
-attempt_id 关联、stale answer 忽略；reservation 生命周期（expires_at 过期、
-local_token 校验、角色配对、Ready 栅栏、双方连接 /v2/relay/{reservation_id}）。回归测试还必须覆盖：A1+B1 已完成 Ready 后 A1 断开，A2 连接时不得收到 Ready；只有 B2 重新 Connect 后，A2+B2 才能再次收到一次 Ready 并传输 payload。
+attempt_id 关联、stale answer 忽略；Resolve → Offer gate；reservation 生命周期
+（expires_at 仅约束 pending admission、local_token 校验、角色配对、WebSocket Ping
+PairReady、双方连接 `/v2/relay/{reservation_id}`）。回归测试还必须覆盖：A1+B1 已完成
+PairReady 后 A1 断开，A2 连接时不得收到 PairReady；只有 B2 重新 Connect 后，A2+B2
+才可再次收到一次 PairReady 并传输 payload。静态 smoke/marker 只能证明证据路径存在，
+不能把行为标记为 covered；行为覆盖必须由 owner test selector 实际执行并记录。

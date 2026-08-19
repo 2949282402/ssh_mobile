@@ -9,6 +9,7 @@ export 'src/native/native_network_adapter.dart';
 export 'src/realtime/network_realtime_gateway.dart';
 export 'src/runtime/network_capability.dart';
 export 'src/runtime/event_mux.dart';
+export 'src/runtime/resource_limiter.dart';
 export 'src/runtime/network_runtime.dart';
 export 'src/runtime/network_runtime_impl.dart';
 export 'src/transport/transport_connection.dart';

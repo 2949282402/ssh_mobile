@@ -134,7 +134,7 @@ class FrozenNetworkContractTest(unittest.TestCase):
         fixtures = manifest.get("fixtures")
         self.assertIsInstance(fixtures, list)
         assert isinstance(fixtures, list)
-        self.assertEqual(len(fixtures), 23)
+        self.assertEqual(len(fixtures), 22)
 
         max_frame_bytes = constants["MAX_RELAY_FRAME_BYTES"]
         self.assertEqual(max_frame_bytes, constants["MAX_RELAY_DATA_FRAME_BYTES"])
@@ -161,12 +161,29 @@ class FrozenNetworkContractTest(unittest.TestCase):
         self.assertIn("message RelayDataPayload", proto)
         self.assertIn("bytes encrypted_payload = 2", proto)
         self.assertIn("opaque; relay never decrypts or parses", proto)
+        self.assertNotIn("message RelayDataReady", proto)
+        self.assertNotIn("ready = 14", proto)
+
+        offer_start = proto.index("message ConnectivityOffer {")
+        offer_end = proto.index("}\n", offer_start)
+        self.assertNotIn("target_device_id", proto[offer_start:offer_end])
+
+        signal_start = proto.index("message RealtimeSignal {")
+        signal_end = proto.index("}\n", signal_start)
+        signal = proto[signal_start:signal_end]
+        self.assertIn("string target_device_id = 3", signal)
+        self.assertNotIn("sender_device_id", signal)
 
         contract = _read("protocol/RELAY_V2_CONTRACT.md")
         self.assertIn("Relay NEVER parses", contract)
         self.assertIn("`encrypted_payload`", contract)
         self.assertIn("Offering the wrong envelope type on a", contract)
         self.assertIn("route is a protocol violation", contract)
+        self.assertIn("Resolve → Offer", contract)
+        self.assertIn("WebSocket Ping", contract)
+        self.assertIn("active data lifetime", contract)
+        self.assertIn("no `RelayDataReady`", contract)
+        self.assertIn("no `sender_device_id`", contract)
 
     def test_relay_dispatch_checks_path_admission_before_business_dispatch(self) -> None:
         relay = _read("native/network_core/crates/network-core/src/relay.rs")
@@ -211,11 +228,26 @@ class FrozenNetworkContractTest(unittest.TestCase):
         self.assertIn("event_mux_applies_bounded_control_data_fairness", ffi)
         matrix = _load_matrix()
         cases = {case["id"]: case for case in matrix["cases"]}
-        self.assertEqual(cases["flow.bounded_event_mux"]["status"], "covered")
+        self.assertEqual(cases["flow.bounded_event_mux"]["status"], "characterized")
 
     def test_ci_runs_the_phase_zero_baseline(self) -> None:
         workflow = _read(".github/workflows/flutter.yml")
         self.assertIn("bash scripts/network_v2_acceptance.sh baseline", workflow)
+
+    def test_marker_evidence_is_not_behavior_coverage(self) -> None:
+        matrix = _load_matrix()
+        policy = matrix.get("evidence_policy")
+        self.assertIsInstance(policy, dict)
+        assert isinstance(policy, dict)
+        self.assertEqual(policy.get("source_markers"), "inventory_only")
+        self.assertEqual(policy.get("covered_requires"), "owner_behavior_test")
+        for case in matrix["cases"]:
+            assert isinstance(case, dict)
+            if case["status"] == "covered":
+                verification = case.get("behavioral_verification")
+                self.assertIsInstance(verification, dict)
+                assert isinstance(verification, dict)
+                self.assertEqual(verification.get("kind"), "owner_behavior_test")
 
 
 if __name__ == "__main__":

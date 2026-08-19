@@ -1,4 +1,4 @@
-最新更新时间：2026-08-19
+最新更新时间：2026-08-20
 
 # Transport Network V2 文档与验证审计
 
@@ -26,12 +26,12 @@
   role binding 与吊销关闭。
 - **本地 WSL Rust 验证已通过**：`cargo fmt --all -- --check`、
   `cargo check --workspace --locked`、workspace Clippy `-D warnings` 和
-  `cargo test --workspace --locked` 均通过；其中 `network-core` 当前为 207 项。
-- **本地 WSL Go 验证已通过**：Go 1.26.6、gofmt、`go test ./...`、
-  `go test -race ./...`、`go vet ./...` 和 `govulncheck ./...` 均通过。
-- **本地 WSL Dart 验证已通过**：Flutter 3.44.2 / Dart 3.12.2 下完成 format、
-  analyze，以及 21 个 package 的串行 `flutter test --no-pub --concurrency=1`；
-  Full App 当前 832 项测试也通过。
+  `cargo test --workspace --locked` 均通过；其中 `network-core` 当前为 215 项，
+  workspace 测试包含 network-ffi、network-nat、network-protocol、Relay 和
+  network-webrtc（1 个需要外部 coturn 的 ignored 测试）。
+- **Go/Dart 本地门禁未运行**：当前 WSL 没有 `go`/`gofmt`、`dart` 或 `flutter`；
+  对应行为套件由 CI 的 `relay-quality` 与 `sdk-dart-quality` job 执行，不能把
+  历史机器上的结果当成本次验证结果。
 - **Network SDK/Data V2 已完成切换**：native Rust/Dart wire envelope 使用协议版本
   2，schema package 为 `network.v2`，QUIC ALPN 为 `ssh-mobile/2`，App codec 为
   `NetworkProtocolV2Codec`；Relay Bootstrap `/v1/devices/*` 与 C FFI ABI `1`
@@ -66,10 +66,11 @@
 
 ## 验证边界与环境记录
 
-- PathHandshakeV2 与 Relay `DATA_ENV_CRYPTO` 的 admission 已接入真实 Rust
-  dispatch gate：PairReady 后先处理 crypto/path-handshake，只有
-  `complete_relay_path_admission` 完成后才设置 `relay_path_ready` 并发布 Connected；
-  PathHandshake、Rust workspace 和 Relay strict 选择器均有通过证据。
+- PathHandshakeV2 已折叠进既有 Noise transcript；Relay 只转发
+  `DATA_ENV_CRYPTO`，PairReady 后完成 crypto admission，只有
+  `complete_relay_admission` 完成后才设置 `relay_path_ready` 并发布 Connected。
+  Rust workspace 与 Phase 0 contract baseline 已通过；Go/Dart strict 选择器在本机
+  因工具链缺失未运行。
 - CandidatePayloadV2/cache 现在由 `RuntimeState` 持有，Stage A 会先读取 fresh
   monotonic cache/configured direct candidates，失败后才进入 Resolve→Offer；Resolve
   与 ConnectivityAnswer 会刷新 cache；过期 Stage B refresh、heartbeat 不刷新、
@@ -84,10 +85,9 @@
 - Core Runtime 对外事件根队列已改为 count+byte bounded sender；FFI/Dart EventMux
   继续执行 control/data fairness、overflow policy 和单事件硬上限。测试专用
   `UnboundedSender` 适配器不进入生产 Runtime。
-- 当前 WSL 未提供 `protoc` 或 `buf`；`bash scripts/relay_v2_contract.sh` 会明确
-  跳过这两个工具的编译/lint 子检查，Relay fixture/contract 与 Go 门禁仍已执行。
-- WSL workspace Flutter 默认并发会让多个 localhost MCP 测试争用回环 socket；按
-  package/file 串行模式复跑后 21 个 package 全部通过。该环境差异已记录，未修改
-  MCP 业务实现来掩盖测试竞争。
+- 当前 WSL 未提供 `protoc`、`buf`、Go 或 Dart/Flutter；
+  `bash scripts/relay_v2_contract.sh` 会明确报告 descriptor equality 为 NOT RUN，
+  但 fixtures/semantic shape 与 Python contract baseline 已执行。协议编译、buf
+  lint/breaking、Go Relay、Dart SDK 和 Flutter 测试由 CI 执行。
 - 未运行真实多主机/移动设备硬件部署验收：当前证据来自 WSL 本地 Rust/Go/Dart
   测试与 committed protocol fixtures，原因是本地没有外部设备/Relay 集群 endpoint。

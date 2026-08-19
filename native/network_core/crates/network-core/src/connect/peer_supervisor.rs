@@ -16,7 +16,10 @@ use std::sync::{
 use tokio::sync::{mpsc, oneshot};
 
 use crate::errors::CoreNetworkError;
-use crate::task_supervisor::RuntimeTaskSupervisor;
+use crate::events::{emit_peer_state, protocol_error_with_peer};
+use crate::runtime::RuntimeState;
+use crate::task_supervisor::{RuntimeTaskSupervisor, TaskLease};
+use network_protocol::{NetworkErrorCode, PeerConnectionState, RouteType};
 
 /// Maximum number of physical intents waiting behind one peer supervisor.
 pub(crate) const PEER_MAILBOX_CAPACITY: usize = 32;
@@ -24,8 +27,6 @@ pub(crate) const PEER_MAILBOX_CAPACITY: usize = 32;
 pub(crate) const MAX_PEER_WAITERS: usize = 64;
 /// Maximum number of peer-owned resource reservations.
 pub(crate) const MAX_PEER_RESOURCES: usize = 64;
-/// Maximum number of peer coordinators retained by one runtime.
-pub(crate) const MAX_PEER_SUPERVISORS: usize = 1024;
 
 /// Stable, validated identity used as a key by the v2 peer-owned stores.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -141,6 +142,11 @@ struct PeerInner {
     stopping: bool,
     waiters: HashMap<String, Waiter>,
     resources: usize,
+    maintain_connection: bool,
+    active_children: usize,
+    retry_scheduled: bool,
+    business_work: usize,
+    configured: bool,
 }
 
 /// One peer's bounded lifecycle coordinator.
@@ -149,6 +155,7 @@ pub(crate) struct PeerSupervisor {
     mailbox_tx: mpsc::Sender<PeerIntent>,
     mailbox_rx: Mutex<Option<mpsc::Receiver<PeerIntent>>>,
     inner: Mutex<PeerInner>,
+    connection_task: Mutex<Option<TaskLease>>,
     next_resource_id: AtomicU64,
 }
 
@@ -165,7 +172,13 @@ impl PeerSupervisor {
                 stopping: false,
                 waiters: HashMap::new(),
                 resources: 0,
+                maintain_connection: false,
+                active_children: 0,
+                retry_scheduled: false,
+                business_work: 0,
+                configured: false,
             }),
+            connection_task: Mutex::new(None),
             next_resource_id: AtomicU64::new(1),
         })
     }
@@ -199,6 +212,102 @@ impl PeerSupervisor {
         command_id: &str,
         class: CommunicationClass,
     ) -> Result<PeerConnectIntent, CoreNetworkError> {
+        self.begin_connect_with_policy(command_id, class, true)
+    }
+
+    /// Start the sole transport establishment owned by this peer supervisor.
+    ///
+    /// Command dispatch submits an intent here rather than creating a second
+    /// per-peer connectivity owner.  The bounded mailbox remains the intent
+    /// hand-off/serialization point, while this method owns the supervised
+    /// `ConnectivityAttemptCoordinator` task and its generation completion.
+    pub(crate) fn start_connect(
+        self: &Arc<Self>,
+        state: Arc<RuntimeState>,
+        command_id: String,
+        class: CommunicationClass,
+    ) -> Result<PeerConnectIntent, CoreNetworkError> {
+        let intent = self.begin_connect(&command_id, class)?;
+        if !intent.is_new {
+            return Ok(intent);
+        }
+
+        let generation = intent.generation;
+        if let Err(error) = self.mark_child_started() {
+            let _ = self.complete(generation, Err(error.clone()));
+            return Err(error);
+        }
+        let supervisor = Arc::clone(self);
+        let task_peer_id = self.peer_id.as_str().to_string();
+        let task_supervisor = Arc::clone(&state.task_supervisor);
+        let task_state = Arc::clone(&state);
+        let task_lease = task_supervisor.spawn_session_controlled(
+            format!("peer-connect/{task_peer_id}"),
+            "peer-connect",
+            async move {
+                let attempt_coordinator =
+                    crate::connect::ConnectivityAttemptCoordinator::new(Arc::clone(&task_state));
+                match attempt_coordinator
+                    .connect_with_class(&task_peer_id, class)
+                    .await
+                {
+                    Ok(()) => {
+                        if supervisor.is_current(generation) {
+                            let _ = supervisor.complete(generation, Ok(PeerState::Online));
+                        }
+                    }
+                    Err(error) => {
+                        if supervisor.is_current(generation) {
+                            let _ =
+                                supervisor.complete(generation, Err(CoreNetworkError::Cancelled));
+                            let code = NetworkErrorCode::try_from(error.code)
+                                .unwrap_or(NetworkErrorCode::Unspecified);
+                            emit_peer_state(
+                                &task_state.event_tx,
+                                &task_peer_id,
+                                PeerConnectionState::Failed,
+                                RouteType::Unspecified,
+                                Some(protocol_error_with_peer(
+                                    code,
+                                    error.message,
+                                    "connect",
+                                    &task_peer_id,
+                                )),
+                            );
+                        }
+                    }
+                }
+                supervisor.mark_child_finished();
+            },
+        );
+        let Some(task_lease) = task_lease else {
+            self.mark_child_finished();
+            let _ = self.complete(generation, Err(CoreNetworkError::SupervisorStopping));
+            return Err(CoreNetworkError::SupervisorStopping);
+        };
+        self.connection_task
+            .lock()
+            .expect("peer connection task lock")
+            .replace(task_lease);
+        Ok(intent)
+    }
+
+    /// Business operations ensure a compatible path without opting into
+    /// long-lived reconnect maintenance.
+    pub(crate) fn ensure(
+        &self,
+        command_id: &str,
+        class: CommunicationClass,
+    ) -> Result<PeerConnectIntent, CoreNetworkError> {
+        self.begin_connect_with_policy(command_id, class, false)
+    }
+
+    fn begin_connect_with_policy(
+        &self,
+        command_id: &str,
+        class: CommunicationClass,
+        maintain_connection: bool,
+    ) -> Result<PeerConnectIntent, CoreNetworkError> {
         if command_id.is_empty() || command_id.len() > 128 {
             return Err(CoreNetworkError::InvalidCommandId);
         }
@@ -207,6 +316,9 @@ impl PeerSupervisor {
             let mut inner = self.inner.lock().expect("peer supervisor lock");
             if inner.stopping {
                 return Err(CoreNetworkError::SupervisorStopping);
+            }
+            if maintain_connection {
+                inner.maintain_connection = true;
             }
             if inner.waiters.contains_key(command_id) {
                 return Err(CoreNetworkError::DuplicateCommand);
@@ -292,10 +404,12 @@ impl PeerSupervisor {
     /// Invalidate all current work and wake its waiters before the peer is
     /// removed from the active graph.
     pub(crate) fn disconnect(&self) -> usize {
+        self.cancel_connection_task();
         let (waiters, delivered) = {
             let mut inner = self.inner.lock().expect("peer supervisor lock");
             inner.generation = inner.generation.next();
             inner.state = PeerState::Offline;
+            inner.maintain_connection = false;
             let waiters = inner
                 .waiters
                 .drain()
@@ -311,11 +425,13 @@ impl PeerSupervisor {
     }
 
     pub(crate) fn stop(&self) -> usize {
+        self.cancel_connection_task();
         let (waiters, delivered) = {
             let mut inner = self.inner.lock().expect("peer supervisor lock");
             inner.stopping = true;
             inner.generation = inner.generation.next();
             inner.state = PeerState::Offline;
+            inner.maintain_connection = false;
             let waiters = inner
                 .waiters
                 .drain()
@@ -370,6 +486,83 @@ impl PeerSupervisor {
         }
     }
 
+    pub(crate) fn maintain_connection(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("peer supervisor lock")
+            .maintain_connection
+    }
+
+    /// A trusted authenticated inbound path may make a passive peer Online,
+    /// but never changes the maintenance policy or starts background recovery.
+    pub(crate) fn admit_inbound(&self, authenticated: bool) -> Result<PeerState, CoreNetworkError> {
+        if !authenticated {
+            return Err(CoreNetworkError::Cancelled);
+        }
+        let mut inner = self.inner.lock().expect("peer supervisor lock");
+        if inner.stopping {
+            return Err(CoreNetworkError::SupervisorStopping);
+        }
+        inner.state = PeerState::Online;
+        Ok(inner.state)
+    }
+
+    /// Path loss is a lifecycle observation, not a transport/session truth
+    /// leak. Passive peers go Offline; maintained peers remain Offline until a
+    /// bounded, explicit recovery trigger starts a new intent.
+    pub(crate) fn path_lost(&self) {
+        self.cancel_connection_task();
+        self.inner.lock().expect("peer supervisor lock").state = PeerState::Offline;
+    }
+
+    /// Cancel the single supervised connectivity attempt, if any. This is
+    /// deliberately separate from closing a route: the owner invalidates the
+    /// generation first, then aborts only its own establishment task.
+    fn cancel_connection_task(&self) {
+        if let Some(mut task) = self
+            .connection_task
+            .lock()
+            .expect("peer connection task lock")
+            .take()
+        {
+            task.abort_now();
+            self.mark_child_finished();
+        }
+    }
+
+    pub(crate) fn set_configured(&self, configured: bool) {
+        self.inner.lock().expect("peer supervisor lock").configured = configured;
+    }
+
+    pub(crate) fn mark_child_started(&self) -> Result<(), CoreNetworkError> {
+        let mut inner = self.inner.lock().expect("peer supervisor lock");
+        if inner.active_children >= 1 {
+            return Err(CoreNetworkError::ResourceLimit("peer establishment"));
+        }
+        inner.active_children += 1;
+        Ok(())
+    }
+
+    pub(crate) fn mark_child_finished(&self) {
+        let mut inner = self.inner.lock().expect("peer supervisor lock");
+        inner.active_children = inner.active_children.saturating_sub(1);
+    }
+
+    pub(crate) fn can_evict(&self) -> bool {
+        let inner = self.inner.lock().expect("peer supervisor lock");
+        inner.state == PeerState::Offline
+            && !inner.maintain_connection
+            && inner.waiters.is_empty()
+            && inner.active_children == 0
+            && !inner.retry_scheduled
+            && inner.resources == 0
+            && inner.business_work == 0
+    }
+
+    fn is_configured(&self) -> bool {
+        self.inner.lock().expect("peer supervisor lock").configured
+    }
+
     #[cfg(test)]
     fn waiter_count(&self) -> usize {
         self.inner
@@ -414,6 +607,14 @@ impl PeerSupervisorRegistry {
         &self,
         peer_id: &str,
     ) -> Result<Arc<PeerSupervisor>, CoreNetworkError> {
+        self.get_or_create_with_configured(peer_id, false)
+    }
+
+    pub(crate) fn get_or_create_with_configured(
+        &self,
+        peer_id: &str,
+        configured: bool,
+    ) -> Result<Arc<PeerSupervisor>, CoreNetworkError> {
         let peer_id = PeerId::new(peer_id)?;
         if let Some(supervisor) = self
             .supervisors
@@ -422,6 +623,21 @@ impl PeerSupervisorRegistry {
             .get(&peer_id)
             .cloned()
         {
+            if configured {
+                if !supervisor.is_configured()
+                    && self
+                        .supervisors
+                        .read()
+                        .expect("peer supervisor registry lock")
+                        .values()
+                        .filter(|candidate| candidate.is_configured())
+                        .count()
+                        >= super::MAX_CONFIGURED_PEERS
+                {
+                    return Err(CoreNetworkError::ResourceLimit("configured peers"));
+                }
+                supervisor.set_configured(true);
+            }
             return Ok(supervisor);
         }
         let mut supervisors = self
@@ -429,13 +645,43 @@ impl PeerSupervisorRegistry {
             .write()
             .expect("peer supervisor registry lock");
         if let Some(supervisor) = supervisors.get(&peer_id).cloned() {
+            if configured {
+                if !supervisor.is_configured()
+                    && supervisors
+                        .values()
+                        .filter(|candidate| candidate.is_configured())
+                        .count()
+                        >= super::MAX_CONFIGURED_PEERS
+                {
+                    return Err(CoreNetworkError::ResourceLimit("configured peers"));
+                }
+                supervisor.set_configured(true);
+            }
             return Ok(supervisor);
         }
-        if supervisors.len() >= MAX_PEER_SUPERVISORS {
-            return Err(CoreNetworkError::ResourceLimit("peer supervisors"));
+        if configured
+            && supervisors
+                .values()
+                .filter(|supervisor| supervisor.is_configured())
+                .count()
+                >= super::MAX_CONFIGURED_PEERS
+        {
+            return Err(CoreNetworkError::ResourceLimit("configured peers"));
+        }
+        if supervisors.len() >= super::MAX_CONFIGURED_PEERS {
+            if let Some(evict_peer) = supervisors
+                .iter()
+                .find(|(_, supervisor)| supervisor.can_evict())
+                .map(|(peer_id, _)| peer_id.clone())
+            {
+                supervisors.remove(&evict_peer);
+            } else {
+                return Err(CoreNetworkError::ResourceLimit("peer supervisors"));
+            }
         }
 
         let supervisor = PeerSupervisor::new(peer_id.clone());
+        supervisor.set_configured(configured);
         if let Some(task_supervisor) = &self.task_supervisor {
             let receiver = supervisor
                 .take_mailbox()
@@ -459,6 +705,38 @@ impl PeerSupervisorRegistry {
         Ok(supervisor)
     }
 
+    /// Start one command-owned establishment after enforcing the frozen
+    /// process-wide active-peer budget. A healthy Online/Connecting peer may
+    /// join its existing generation; only a new active peer consumes a slot.
+    pub(crate) fn start_connect(
+        &self,
+        state: Arc<RuntimeState>,
+        peer_id: &str,
+        command_id: String,
+        class: CommunicationClass,
+    ) -> Result<PeerConnectIntent, CoreNetworkError> {
+        let supervisor = self.get_or_create(peer_id)?;
+        let already_active = matches!(
+            supervisor.state(),
+            PeerState::Connecting | PeerState::Online
+        );
+        if !already_active {
+            let active_peers = self
+                .supervisors
+                .read()
+                .expect("peer supervisor registry lock")
+                .values()
+                .filter(|candidate| {
+                    matches!(candidate.state(), PeerState::Connecting | PeerState::Online)
+                })
+                .count();
+            if active_peers >= super::MAX_ACTIVE_PEERS {
+                return Err(CoreNetworkError::ResourceLimit("active peers"));
+            }
+        }
+        supervisor.start_connect(state, command_id, class)
+    }
+
     pub(crate) fn disconnect(&self, peer_id: &str) -> Result<usize, CoreNetworkError> {
         let peer_id = PeerId::new(peer_id)?;
         Ok(self
@@ -469,6 +747,22 @@ impl PeerSupervisorRegistry {
             .cloned()
             .map(|supervisor| supervisor.disconnect())
             .unwrap_or(0))
+    }
+
+    pub(crate) fn remove_if_evictable(&self, peer_id: &str) -> Result<bool, CoreNetworkError> {
+        let peer_id = PeerId::new(peer_id)?;
+        let mut supervisors = self
+            .supervisors
+            .write()
+            .expect("peer supervisor registry lock");
+        let Some(supervisor) = supervisors.get(&peer_id) else {
+            return Ok(false);
+        };
+        if !supervisor.can_evict() {
+            return Ok(false);
+        }
+        supervisors.remove(&peer_id);
+        Ok(true)
     }
 
     pub(crate) fn stop_all(&self) {
@@ -565,6 +859,36 @@ mod tests {
     }
 
     #[test]
+    fn business_ensure_does_not_enable_maintenance_but_connect_does() {
+        let supervisor = supervisor();
+        let business = supervisor
+            .ensure("business-1", CommunicationClass::ReliableMessage)
+            .expect("ensure");
+        assert!(!supervisor.maintain_connection());
+        supervisor.disconnect();
+        business.detach_completion();
+
+        let connect = supervisor
+            .begin_connect("connect-1", CommunicationClass::ReliableMessage)
+            .expect("connect");
+        assert!(supervisor.maintain_connection());
+        connect.detach_completion();
+    }
+
+    #[test]
+    fn passive_inbound_does_not_enable_maintenance_or_recovery() {
+        let supervisor = supervisor();
+        assert!(supervisor.admit_inbound(false).is_err());
+        assert_eq!(
+            supervisor.admit_inbound(true).expect("trusted inbound"),
+            PeerState::Online
+        );
+        assert!(!supervisor.maintain_connection());
+        supervisor.path_lost();
+        assert_eq!(supervisor.state(), PeerState::Offline);
+    }
+
+    #[test]
     fn stale_completion_cannot_change_a_new_generation() {
         let supervisor = supervisor();
         let first = supervisor
@@ -599,6 +923,22 @@ mod tests {
         ));
         drop(leases);
         assert!(supervisor.acquire_resource().is_ok());
+    }
+
+    #[test]
+    fn eviction_requires_offline_and_no_owned_work() {
+        let registry = PeerSupervisorRegistry::new();
+        registry.get_or_create("peer-a").expect("supervisor");
+        assert!(registry.remove_if_evictable("peer-a").expect("evict"));
+
+        let retained = registry.get_or_create("peer-b").expect("supervisor");
+        let intent = retained
+            .begin_connect("command-1", CommunicationClass::ReliableMessage)
+            .expect("connect");
+        assert!(!registry.remove_if_evictable("peer-b").expect("evict check"));
+        retained.disconnect();
+        intent.detach_completion();
+        assert!(registry.remove_if_evictable("peer-b").expect("evict"));
     }
 
     #[tokio::test]

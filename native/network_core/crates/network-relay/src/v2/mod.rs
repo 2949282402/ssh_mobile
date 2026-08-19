@@ -8,7 +8,7 @@
 //!   PresenceHint），按 `request_id` / `attempt_id` 做应答关联，不再使用全局
 //!   `Notify`。
 //! - [`RelayDataClient`]：reservation 作用域 `/v2/relay/{reservation_id}` 数据面。
-//!   先等待 RelayDataReady，再转发不透明 EncryptedPayload；拥有自己的 socket、
+//!   先等待 PairReady Ping，再转发不透明 EncryptedPayload；拥有自己的 socket、
 //!   队列与速率预算。
 //!
 //! 消息编解码与帧边界在 [`proto`] 中自包含实现，锁定冻结的 `relay_v2.proto`。
@@ -29,9 +29,8 @@ pub use proto::{
     DiscoverySnapshot, ErrorCode, Heartbeat, HeartbeatAck, IncomingRelayReservation,
     PeerAvailableHint, PeerPresenceHint, PeerUnavailableHint, PresenceHintSnapshot, ProtocolError,
     Ready, RealtimeSignal, RealtimeSignalKind, RelayDataAck, RelayDataClose, RelayDataConnect,
-    RelayDataFrame, RelayDataPayload, RelayDataReady, RelayFrame, RelayReserveRequest,
-    RelayReserveResponse, ResolvePeerRequest, ResolvePeerResponse, ResolveStatus, RuntimeEpoch,
-    TransportCapability,
+    RelayDataFrame, RelayDataPayload, RelayFrame, RelayReserveRequest, RelayReserveResponse,
+    ResolvePeerRequest, ResolvePeerResponse, ResolveStatus, RuntimeEpoch, TransportCapability,
 };
 pub use shared::RelayError;
 

@@ -196,6 +196,31 @@ Dart 侧 Relay 数据面。
 - 字节发送完毕不代表成功；只有接收端校验并返回 `complete_ack` 后，发送端才能
   报告成功。
 
+## Network Protocol v2 Relay 合同
+
+v2 控制面/数据面 wire 合同冻结在基线提交
+`6ec194bb3a66a748215d3abc11d6da84bd329619`；schema 与 golden fixture 由
+[`protocol/RELAY_V2_CONTRACT.md`](../protocol/RELAY_V2_CONTRACT.md) 统一维护。
+v2 与 Bootstrap/WebSocket v1 路由明确分离：
+
+- `ConnectivityOffer` 不含 `target_device_id`。只有同一条长期 control
+  connection 先成功完成 `ResolvePeerRequest`/READY 后才可接受 Offer（Resolve →
+  Offer gate）；该 gate 不跨越后续 answer 或 direct probe 持锁。
+- `RealtimeSignal` 保留 `target_device_id`，但不含 `sender_device_id`。接收端只能从
+  已建立的 realtime 会话绑定取得远端身份；未知绑定必须 fail closed。
+- `RelayDataFrame` 只包含 `RelayDataConnect`、`RelayDataPayload`、
+  `RelayDataAck`、`RelayDataClose`；没有 `RelayDataReady` protobuf 消息，也没有
+  `ready` oneof 字段。
+- 两个角色的 Connect 都通过后，PairReady 只发送一次 WebSocket Ping，payload 为
+  `ssh-mobile-relay-paired-v1:<reservation_id>`，不是 protobuf frame；服务端 30 秒
+  Ping / 15 秒 Pong 保活与二进制帧共用 single writer。
+- reservation TTL 只约束 pending admission。active data pair 在 reservation 过期和
+  凭据自然过期后仍保持；显式设备吊销会关闭 pending、active 端点及其 counterpart。
+
+运行 `bash scripts/relay_v2_contract.sh` 会在不修改工作树的情况下校验 22 个 frozen
+fixture。若环境缺少 `protoc`，脚本会为 descriptor equality 明确输出 `NOT RUN`；这不代表本地
+完整 descriptor gate 已通过。
+
 ## 验证
 
 ```sh

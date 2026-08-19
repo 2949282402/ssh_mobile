@@ -98,11 +98,19 @@ type hub struct {
 	// 转发 ConnectivityOffer 时登记，ConnectivityAnswer/ProtocolError 据此回路由到
 	// 发起方。条目带过期时间，由 hub.prune 惰性清理。
 	v2Attempts map[string]v2Attempt
-	admission  [admissionStripeCount]sync.Mutex
-	stop       chan struct{}
-	closeOnce  sync.Once
-	waitGroup  sync.WaitGroup
-	closed     bool
+	// The frozen ConnectivityOffer has no target field.  Keep a one-shot
+	// Resolve -> Offer ticket per authenticated control connection instead.
+	coordinationTargets map[string]coordinationTarget
+	admission           [admissionStripeCount]sync.Mutex
+	stop                chan struct{}
+	closeOnce           sync.Once
+	waitGroup           sync.WaitGroup
+	closed              bool
+}
+
+type coordinationTarget struct {
+	deviceID  string
+	expiresAt time.Time
 }
 
 // admissionStripeCount is the number of per-device admission lock stripes.
@@ -133,12 +141,13 @@ func (h *hub) lockAdmission(deviceID string) func() {
 func newHub(config Config) *hub {
 	config = withConfigDefaults(config)
 	h := &hub{
-		config:      config,
-		peers:       map[string]*peer{},
-		v2Attempts:  map[string]v2Attempt{},
-		instanceID:  config.InstanceID,
-		presenceTTL: config.PresenceTTL,
-		stop:        make(chan struct{}),
+		config:              config,
+		peers:               map[string]*peer{},
+		v2Attempts:          map[string]v2Attempt{},
+		coordinationTargets: map[string]coordinationTarget{},
+		instanceID:          config.InstanceID,
+		presenceTTL:         config.PresenceTTL,
+		stop:                make(chan struct{}),
 	}
 	h.waitGroup.Add(1)
 	go func() {
@@ -151,6 +160,34 @@ func newHub(config Config) *hub {
 		h.monitorHeartbeats()
 	}()
 	return h
+}
+
+func (h *hub) rememberCoordinationTarget(peer *peer, deviceID string) {
+	if peer == nil || deviceID == "" {
+		return
+	}
+	h.mutex.Lock()
+	h.coordinationTargets[peer.connectionID] = coordinationTarget{
+		deviceID:  deviceID,
+		expiresAt: time.Now().Add(v2AttemptLifetime),
+	}
+	h.mutex.Unlock()
+}
+
+func (h *hub) consumeCoordinationTarget(peer *peer) (string, bool) {
+	if peer == nil {
+		return "", false
+	}
+	h.mutex.Lock()
+	ticket, ok := h.coordinationTargets[peer.connectionID]
+	if ok {
+		delete(h.coordinationTargets, peer.connectionID)
+	}
+	h.mutex.Unlock()
+	if !ok || !time.Now().Before(ticket.expiresAt) {
+		return "", false
+	}
+	return ticket.deviceID, true
 }
 
 // monitorHeartbeats 是服务端心跳租约定时器（在客户端驱动的续期之外）：每
@@ -225,6 +262,7 @@ func (h *hub) close() {
 			peers = append(peers, value)
 		}
 		h.peers = map[string]*peer{}
+		h.coordinationTargets = map[string]coordinationTarget{}
 		h.mutex.Unlock()
 		for _, peer := range peers {
 			closePeer(peer)
@@ -367,6 +405,7 @@ func (h *hub) disconnectConnection(deviceID, connectionID string) bool {
 		return false
 	}
 	delete(h.peers, deviceID)
+	delete(h.coordinationTargets, connectionID)
 	h.mutex.Unlock()
 	if h.presence != nil {
 		_, _ = h.presence.ReleasePresence(context.Background(), deviceID, connectionID)
@@ -383,6 +422,7 @@ func (h *hub) remove(peer *peer) {
 	// peer's presence. The CAS ReleasePresence additionally guards the
 	// cross-instance case where a foreign connection now owns the lease.
 	isCurrent := h.peers[peer.deviceID] == peer
+	delete(h.coordinationTargets, peer.connectionID)
 	if isCurrent {
 		delete(h.peers, peer.deviceID)
 	}
@@ -421,6 +461,9 @@ func (h *hub) disconnectDevice(deviceID string) {
 	}
 	h.mutex.Unlock()
 	if peer != nil {
+		h.mutex.Lock()
+		delete(h.coordinationTargets, peer.connectionID)
+		h.mutex.Unlock()
 		// Release only this instance's current lease (CAS): the peer's deferred
 		// remove() would see isCurrent==false and never release it, so do it
 		// here. If a newer connection replaced this peer or took over the lease

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'network_models.dart';
@@ -23,6 +24,11 @@ final class NetworkV2Limits {
   static const int maxDataBytes = 8 * 1024 * 1024;
   static const int maxConsecutiveControlEvents = 8;
   static const int maxPeerCounters = 64;
+  static const int maxTransferIdBytes = 128;
+  static const int maxMessageIdBytes = 128;
+  static const int maxStreamOpenerIdBytes = 128;
+  static const int maxFilePathBytes = 1024 * 1024;
+  static const int maxPendingCommands = 64;
 }
 
 /// Application-level encryption policy.
@@ -109,8 +115,33 @@ final class ConnectPeerRequest extends PeerScopedRequest {
   ConnectPeerRequest({
     required super.peerId,
     this.e2eePolicy = E2eePolicy.required,
+    this.config,
   });
 
+  final E2eePolicy e2eePolicy;
+  final PeerConfig? config;
+}
+
+/// Immutable peer configuration carried across the V2 boundary.
+final class PeerConfig {
+  PeerConfig({
+    required String peerId,
+    required this.endpointAddress,
+    required Uint8List identityPublicKey,
+    required Uint8List e2ePublicKey,
+    this.e2eePolicy = E2eePolicy.required,
+  }) : peerId = _validateIdentifier(
+         peerId,
+         'peerId',
+         NetworkV2Limits.maxPeerIdBytes,
+       ),
+       identityPublicKey = Uint8List.fromList(identityPublicKey),
+       e2ePublicKey = Uint8List.fromList(e2ePublicKey);
+
+  final String peerId;
+  final String endpointAddress;
+  final Uint8List identityPublicKey;
+  final Uint8List e2ePublicKey;
   final E2eePolicy e2eePolicy;
 }
 
@@ -128,10 +159,15 @@ final class RemovePeerRequest extends PeerScopedRequest {
 final class SendMessageRequest extends PeerScopedRequest {
   SendMessageRequest({
     required super.peerId,
-    required this.messageId,
+    required String messageId,
     required Uint8List payload,
     this.e2eePolicy = E2eePolicy.required,
-  }) : payload = NetworkPayload(payload);
+  }) : messageId = _validateIdentifier(
+         messageId,
+         'messageId',
+         NetworkV2Limits.maxMessageIdBytes,
+       ),
+       payload = NetworkPayload(payload);
 
   final String messageId;
   final NetworkPayload payload;
@@ -143,9 +179,18 @@ final class SendMessageRequest extends PeerScopedRequest {
 final class TransferFileRequest extends PeerScopedRequest {
   TransferFileRequest({
     required super.peerId,
-    required this.transferId,
-    required this.filePath,
-  });
+    required String transferId,
+    required String filePath,
+  }) : transferId = _validateIdentifier(
+         transferId,
+         'transferId',
+         NetworkV2Limits.maxTransferIdBytes,
+       ),
+       filePath = _validateIdentifier(
+         filePath,
+         'filePath',
+         NetworkV2Limits.maxFilePathBytes,
+       );
 
   final String transferId;
   final String filePath;
@@ -156,9 +201,17 @@ final class TransferFileRequest extends PeerScopedRequest {
 final class OpenStreamRequest extends PeerScopedRequest {
   OpenStreamRequest({
     required super.peerId,
-    required this.openerDeviceId,
+    required String openerDeviceId,
     required this.streamId,
-  });
+  }) : openerDeviceId = _validateIdentifier(
+         openerDeviceId,
+         'openerDeviceId',
+         NetworkV2Limits.maxStreamOpenerIdBytes,
+       ) {
+    if (streamId < 1 || streamId > 0xffff) {
+      throw ArgumentError.value(streamId, 'streamId', 'Must be in 1..65535.');
+    }
+  }
 
   final String openerDeviceId;
   final int streamId;
@@ -267,6 +320,10 @@ final class CommandResultCompleter<T> {
 
 /// Registry for public command terminal results.
 final class CommandResultTracker {
+  CommandResultTracker({this.maxPendingCommands = NetworkV2Limits.maxPendingCommands})
+    : assert(maxPendingCommands > 0);
+
+  final int maxPendingCommands;
   final Map<String, CommandResultCompleter<Object?>> _pending =
       <String, CommandResultCompleter<Object?>>{};
 
@@ -276,6 +333,9 @@ final class CommandResultTracker {
     required String commandId,
     String? peerId,
   }) {
+    if (_pending.length >= maxPendingCommands) {
+      throw StateError('Network V2 command resource limit reached.');
+    }
     if (_pending.containsKey(commandId)) {
       throw StateError('Command ID is already pending: $commandId');
     }
@@ -292,9 +352,29 @@ final class CommandResultTracker {
   bool complete<T>(CommandResult<T> result) {
     final completer = _pending[result.commandId];
     if (completer == null) return false;
+    if (completer.peerId != null && completer.peerId != result.peerId) {
+      return false;
+    }
     final didComplete = completer.complete(result as CommandResult<Object?>);
     if (didComplete) _pending.remove(result.commandId);
     return didComplete;
+  }
+
+  bool cancel(String commandId, {NetworkError? error}) {
+    final completer = _pending.remove(commandId);
+    if (completer == null) return false;
+    completer.complete(
+      CommandResult<Object?>.cancelled(
+        commandId: commandId,
+        peerId: completer.peerId,
+        error: error ??
+            const NetworkError(
+              code: NetworkErrorCode.cancelled,
+              message: 'command cancelled',
+            ),
+      ),
+    );
+    return true;
   }
 
   /// Completes every pending command once during an owned shutdown.
@@ -372,6 +452,20 @@ final class PeerDiagnostics {
   final int activeTransferCount;
   final NetworkError? lastError;
 }
+
+/// Applies the frozen public error precedence. Transport details are only
+/// fallback diagnostics and can never replace an authoritative business error.
+NetworkError? resolvePublicNetworkError({
+  NetworkError? configOrSecurity,
+  NetworkError? peerStatus,
+  NetworkError? resourceOrLifecycle,
+  NetworkError? timeout,
+  NetworkError? noRoute,
+}) => configOrSecurity ??
+    peerStatus ??
+    resourceOrLifecycle ??
+    timeout ??
+    noRoute;
 
 /// Base class for v2-facing typed events.
 sealed class NetworkV2Event {
@@ -533,6 +627,12 @@ abstract interface class NetworkV2Facade {
     PeerDiagnosticsRequest request,
   );
 
+  Future<CommandResult<void>> sendMessage(SendMessageRequest request);
+
+  Future<CommandResult<void>> transferFile(TransferFileRequest request);
+
+  Future<CommandResult<void>> openStream(OpenStreamRequest request);
+
   Future<void> dispose();
 }
 
@@ -599,6 +699,18 @@ final class NetworkV2FacadeImpl implements NetworkV2Facade {
   }
 
   @override
+  Future<CommandResult<void>> sendMessage(SendMessageRequest request) =>
+      _execute<void>(request);
+
+  @override
+  Future<CommandResult<void>> transferFile(TransferFileRequest request) =>
+      _execute<void>(request);
+
+  @override
+  Future<CommandResult<void>> openStream(OpenStreamRequest request) =>
+      _execute<void>(request);
+
+  @override
   Future<void> dispose() async {
     if (_disposing || _lifecycle == NetworkV2LifecycleState.disposed) return;
     _disposing = true;
@@ -628,4 +740,12 @@ final class NetworkV2FacadeImpl implements NetworkV2Facade {
       throw StateError('Network v2 facade is not running.');
     }
   }
+}
+
+String _validateIdentifier(String value, String name, int maxBytes) {
+  final length = utf8.encode(value).length;
+  if (value.isEmpty || length > maxBytes) {
+    throw ArgumentError.value(value, name, 'Must contain 1-$maxBytes UTF-8 bytes.');
+  }
+  return value;
 }

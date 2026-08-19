@@ -19,8 +19,9 @@
 //!
 //! Relay 控制面（resolve / publish / signaling / reserve）经
 //! [`crate::discovery::DiscoveryControlPlane`]（`RelayControlClient` v2 protobuf wire）
-//! 路由；Relay 数据面使用 `RelayDataClient` reservation 模型，业务 admission 与
-//! PathHandshake Ready 由 RelayData 生命周期单独控制。
+//! 路由；Relay 数据面使用 `RelayDataClient` reservation 模型，PairReady 由
+//! RelayData 生命周期控制，PathHandshakeV2 元数据与 admission 则折叠在既有
+//! Noise 握手内完成。
 
 pub(crate) mod connectivity_attempt;
 #[allow(dead_code)]
@@ -32,7 +33,9 @@ pub(crate) mod ready_index;
 
 pub(crate) use connectivity_attempt::ConnectivityAttemptCoordinator;
 #[allow(unused_imports)]
-pub(crate) use path::{PathHandle, PathLease, PathRegistry};
+pub(crate) use path::{
+    DirectProbe, PathHandle, PathKind, PathLease, PathRegistry, PathSelection, PeerPathManager,
+};
 #[allow(unused_imports)]
 pub(crate) use peer_supervisor::{
     IntentGeneration, PeerConnectIntent, PeerId, PeerIntent, PeerState, PeerSupervisor,
@@ -46,17 +49,45 @@ pub(crate) use peer_supervisor::{
 use network_protocol::CommunicationClass;
 use std::time::Duration;
 
+/// Whole connect operation budget. Every child stage must be bounded by this
+/// deadline; a sequence of individually bounded stages must not extend the
+/// public operation indefinitely.
+pub(crate) const OVERALL_CONNECT_BUDGET: Duration = Duration::from_secs(20);
+
 /// Direct First 固定直连窗口（§15：`Direct connect window = 4s`）。
-pub(crate) const DIRECT_CONNECT_WINDOW: Duration = Duration::from_millis(4000);
+pub(crate) const DIRECT_CONNECT_WINDOW: Duration = Duration::from_secs(4);
+
+/// Stage A uses only configured/fresh cached direct candidates.
+pub(crate) const STAGE_A_CONNECT_BUDGET: Duration = DIRECT_CONNECT_WINDOW;
 
 /// Resolve（服务器权威解析）的应答等待上限（§10/§33 ResolveTimeout）。
-pub(crate) const RESOLVE_TIMEOUT: Duration = Duration::from_secs(8);
+pub(crate) const RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// A NOT_READY peer gets one bounded retry wait before returning PeerNotReady.
+pub(crate) const NOT_READY_WAIT: Duration = Duration::from_secs(2);
 
 /// ReserveRelay 的应答等待上限（§25/§33 RelayReservationFailed）。
-pub(crate) const RELAY_RESERVE_TIMEOUT: Duration = Duration::from_secs(8);
+pub(crate) const RELAY_RESERVE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Relay pairing and authenticated Noise/path admission retain separate child
+/// budgets even though PathHandshakeV2 itself is carried inside Noise.
+#[allow(dead_code)]
+pub(crate) const RELAY_PAIR_TIMEOUT: Duration = Duration::from_secs(4);
+#[allow(dead_code)]
+pub(crate) const PATH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Idle retirement for a non-maintained path with no borrower or business work.
+pub(crate) const EPHEMERAL_PATH_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Frozen peer admission limits. The runtime ResourceLimiter remains the
+/// cross-domain enforcement point; these values are the connectivity policy
+/// used by peer-owned admission/eviction tests.
+#[allow(dead_code)]
+pub(crate) const MAX_ACTIVE_PEERS: usize = 64;
+pub(crate) const MAX_CONFIGURED_PEERS: usize = 256;
 
 /// RelayReserveRequest 期望的数据面 reservation 生命周期（§25）。
-pub(crate) const RELAY_RESERVATION_LIFETIME_S: u32 = 300;
+pub(crate) const RELAY_RESERVATION_LIFETIME_S: u32 = 60;
 
 /// 连接能力位（§17/§34 capability）。注册表按位覆盖判定：registered 覆盖 requested
 /// 当且仅当 `(registered & requested) == requested`。

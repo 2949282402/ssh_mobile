@@ -75,4 +75,30 @@ void main() {
     expect(mux.isEmpty, isTrue);
     expect(mux.add('two', priority: EventMuxPriority.data, bytes: 1), isFalse);
   });
+
+  test('ResourceLimiter enforces item, byte, and single-payload budgets', () {
+    const limiter = ResourceLimiter.controlQueue;
+
+    expect(
+      limiter.canReserve(
+        items: ResourceLimiter.maxControlQueueItems,
+        bytes: ResourceLimiter.maxControlQueueBytes,
+      ),
+      isTrue,
+    );
+    expect(
+      limiter.canReserve(
+        items: ResourceLimiter.maxControlQueueItems + 1,
+        bytes: 0,
+      ),
+      isFalse,
+    );
+    expect(
+      limiter.canReserve(
+        items: 1,
+        bytes: ResourceLimiter.maxEventBytes + 1,
+      ),
+      isFalse,
+    );
+  });
 }

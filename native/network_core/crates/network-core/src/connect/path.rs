@@ -10,6 +10,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
+use std::time::{Duration, Instant};
 
 use crate::connection::{ConnectionProfile, RouteTopology, RouteTransport};
 use crate::errors::CoreNetworkError;
@@ -18,6 +19,42 @@ use super::peer_supervisor::PeerId;
 
 pub(crate) const MAX_READY_PATHS_PER_PEER: usize = 8;
 pub(crate) const MAX_PATH_LEASES: usize = 32;
+
+/// The two path topologies owned by one peer supervisor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PathKind {
+    Direct,
+    Relay,
+}
+
+/// A bounded Direct probe can coexist with an already Ready Direct path.
+/// Candidate execution remains in `ConnectivityAttempt`; this value is only
+/// the peer-owned lifecycle/selection record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DirectProbe {
+    pub(crate) generation: u64,
+    pub(crate) required_capabilities: u8,
+    pub(crate) deadline: Instant,
+}
+
+impl DirectProbe {
+    fn extend(&mut self, required_capabilities: u8, deadline: Instant) {
+        self.required_capabilities |= required_capabilities;
+        self.deadline = self.deadline.max(deadline);
+    }
+
+    pub(crate) fn is_expired(&self, now: Instant) -> bool {
+        now >= self.deadline
+    }
+}
+
+/// Result of selecting a path. A caller still has to acquire a `PathLease`;
+/// the enum never owns a path or transport.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PathSelection {
+    Direct,
+    Relay,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PathHandle {
@@ -48,6 +85,7 @@ impl PathHandle {
 struct PathEntry {
     handle: PathHandle,
     active: AtomicBool,
+    accepting: AtomicBool,
     leases: AtomicUsize,
 }
 
@@ -65,6 +103,13 @@ impl PathLease {
 
     pub(crate) fn profile(&self) -> ConnectionProfile {
         self.handle.profile()
+    }
+
+    /// Hard-close and normal drain both revoke future acquisition. Existing
+    /// borrowers can observe the revocation and unwind without the lease
+    /// pretending to keep a dead path usable.
+    pub(crate) fn is_active(&self) -> bool {
+        self.entry.active.load(Ordering::Acquire)
     }
 
     #[cfg(test)]
@@ -113,6 +158,7 @@ impl PathRegistry {
         let entry = Arc::new(PathEntry {
             handle: handle.clone(),
             active: AtomicBool::new(true),
+            accepting: AtomicBool::new(true),
             leases: AtomicUsize::new(0),
         });
         let mut paths = self.paths.lock().expect("path registry lock");
@@ -132,7 +178,11 @@ impl PathRegistry {
             .get(handle.peer_id())
             .and_then(|paths| paths.get(&handle.id()))
             .cloned()
-            .filter(|entry| entry.handle == *handle && entry.active.load(Ordering::Acquire))
+            .filter(|entry| {
+                entry.handle == *handle
+                    && entry.active.load(Ordering::Acquire)
+                    && entry.accepting.load(Ordering::Acquire)
+            })
             .ok_or(CoreNetworkError::StaleAttempt)?;
         reserve_lease(&entry)?;
         Ok(PathLease {
@@ -158,6 +208,7 @@ impl PathRegistry {
                     .values()
                     .filter(|entry| {
                         entry.active.load(Ordering::Acquire)
+                            && entry.accepting.load(Ordering::Acquire)
                             && (entry.handle.capability_mask() & required_capabilities)
                                 == required_capabilities
                     })
@@ -183,10 +234,53 @@ impl PathRegistry {
             .and_then(|paths| paths.remove(&handle.id()));
         if let Some(entry) = removed {
             entry.active.store(false, Ordering::Release);
+            entry.accepting.store(false, Ordering::Release);
             true
         } else {
             false
         }
+    }
+
+    /// Normal retirement: stop new leases while retaining the entry until the
+    /// owner performs final cleanup. Existing leases are allowed to drain.
+    pub(crate) fn drain(&self, handle: &PathHandle) -> bool {
+        let entry = self
+            .paths
+            .lock()
+            .expect("path registry lock")
+            .get(handle.peer_id())
+            .and_then(|paths| paths.get(&handle.id()))
+            .cloned()
+            .filter(|entry| entry.handle == *handle);
+        if let Some(entry) = entry {
+            entry.accepting.store(false, Ordering::Release);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn lease_count(&self, handle: &PathHandle) -> Option<usize> {
+        self.paths
+            .lock()
+            .expect("path registry lock")
+            .get(handle.peer_id())
+            .and_then(|paths| paths.get(&handle.id()))
+            .filter(|entry| entry.handle == *handle)
+            .map(|entry| entry.leases.load(Ordering::Acquire))
+    }
+
+    fn is_acquirable(&self, handle: &PathHandle) -> bool {
+        self.paths
+            .lock()
+            .expect("path registry lock")
+            .get(handle.peer_id())
+            .and_then(|paths| paths.get(&handle.id()))
+            .is_some_and(|entry| {
+                entry.handle == *handle
+                    && entry.active.load(Ordering::Acquire)
+                    && entry.accepting.load(Ordering::Acquire)
+            })
     }
 
     pub(crate) fn revoke_peer(&self, peer_id: &PeerId) -> usize {
@@ -200,13 +294,200 @@ impl PathRegistry {
         let count = entries.len();
         for entry in entries {
             entry.active.store(false, Ordering::Release);
+            entry.accepting.store(false, Ordering::Release);
         }
         count
     }
 }
 
+/// Per-peer path truth. It deliberately has no mutable global `active_path`:
+/// Direct Ready, Direct Probe, and Relay Ready are independent states and a
+/// selection is made only when a business request asks for a capability.
+pub(crate) struct PeerPathManager {
+    peer_id: PeerId,
+    registry: Arc<PathRegistry>,
+    direct_ready: Vec<PathHandle>,
+    relay_ready: Option<PathHandle>,
+    direct_probe: Option<DirectProbe>,
+    draining: bool,
+    hard_closed: bool,
+    last_activity: Instant,
+}
+
+impl PeerPathManager {
+    pub(crate) fn new(peer_id: PeerId, registry: Arc<PathRegistry>) -> Self {
+        Self {
+            peer_id,
+            registry,
+            direct_ready: Vec::new(),
+            relay_ready: None,
+            direct_probe: None,
+            draining: false,
+            hard_closed: false,
+            last_activity: Instant::now(),
+        }
+    }
+
+    pub(crate) fn peer_id(&self) -> &PeerId {
+        &self.peer_id
+    }
+
+    pub(crate) fn direct_ready(&self) -> &[PathHandle] {
+        &self.direct_ready
+    }
+
+    pub(crate) fn relay_ready(&self) -> Option<&PathHandle> {
+        self.relay_ready.as_ref()
+    }
+
+    pub(crate) fn direct_probe(&self) -> Option<&DirectProbe> {
+        self.direct_probe.as_ref()
+    }
+
+    pub(crate) fn publish_ready(
+        &mut self,
+        profile: ConnectionProfile,
+    ) -> Result<PathHandle, CoreNetworkError> {
+        if self.draining || self.hard_closed {
+            return Err(CoreNetworkError::Cancelled);
+        }
+        let handle = self.registry.publish_ready(&self.peer_id, profile)?;
+        self.last_activity = Instant::now();
+        match profile.topology() {
+            RouteTopology::Direct => self.direct_ready.push(handle.clone()),
+            RouteTopology::Relay => self.relay_ready = Some(handle.clone()),
+        }
+        Ok(handle)
+    }
+
+    /// Start or extend one Direct probe. A stronger request extends the
+    /// current demand rather than creating another physical establishment.
+    pub(crate) fn ensure_direct_probe(
+        &mut self,
+        generation: u64,
+        required_capabilities: u8,
+        budget: Duration,
+    ) -> Result<&DirectProbe, CoreNetworkError> {
+        if self.draining || self.hard_closed {
+            return Err(CoreNetworkError::Cancelled);
+        }
+        let deadline = Instant::now() + budget;
+        self.last_activity = Instant::now();
+        match self.direct_probe.as_mut() {
+            Some(probe) => {
+                if probe.generation != generation {
+                    return Err(CoreNetworkError::StaleAttempt);
+                }
+                probe.extend(required_capabilities, deadline);
+            }
+            None => {
+                self.direct_probe = Some(DirectProbe {
+                    generation,
+                    required_capabilities,
+                    deadline,
+                });
+            }
+        }
+        Ok(self.direct_probe.as_ref().expect("probe just installed"))
+    }
+
+    pub(crate) fn finish_direct_probe(&mut self, generation: u64) -> bool {
+        if self
+            .direct_probe
+            .as_ref()
+            .is_some_and(|probe| probe.generation == generation)
+        {
+            self.direct_probe = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Select Direct immediately when compatible. If it is unavailable, an
+    /// already Ready Relay is immediately usable while Direct recovery may
+    /// continue in `direct_probe`.
+    pub(crate) fn select(&self, required_capabilities: u8) -> Option<PathSelection> {
+        if self.direct_ready.iter().any(|handle| {
+            handle.capability_mask() & required_capabilities == required_capabilities
+                && self.registry.is_acquirable(handle)
+        }) {
+            return Some(PathSelection::Direct);
+        }
+        self.relay_ready.as_ref().and_then(|handle| {
+            (handle.capability_mask() & required_capabilities == required_capabilities
+                && self.registry.is_acquirable(handle))
+            .then_some(PathSelection::Relay)
+        })
+    }
+
+    pub(crate) fn acquire(
+        &self,
+        required_capabilities: u8,
+    ) -> Result<(PathSelection, PathLease), CoreNetworkError> {
+        match self.select(required_capabilities) {
+            Some(PathSelection::Direct) => {
+                let handle = self
+                    .direct_ready
+                    .iter()
+                    .find(|handle| {
+                        handle.capability_mask() & required_capabilities == required_capabilities
+                            && self.registry.is_acquirable(handle)
+                    })
+                    .ok_or(CoreNetworkError::NoRoute)?;
+                Ok((PathSelection::Direct, self.registry.acquire(handle)?))
+            }
+            Some(PathSelection::Relay) => {
+                let handle = self.relay_ready.as_ref().expect("relay selection handle");
+                Ok((PathSelection::Relay, self.registry.acquire(handle)?))
+            }
+            None => Err(CoreNetworkError::NoRoute),
+        }
+    }
+
+    pub(crate) fn normal_drain(&mut self) {
+        self.draining = true;
+        for handle in self.direct_ready.iter().chain(self.relay_ready.iter()) {
+            self.registry.drain(handle);
+        }
+    }
+
+    pub(crate) fn record_activity(&mut self) {
+        self.last_activity = Instant::now();
+    }
+
+    pub(crate) fn hard_close(&mut self) {
+        self.hard_closed = true;
+        self.draining = true;
+        for handle in self.direct_ready.drain(..) {
+            self.registry.revoke(&handle);
+        }
+        if let Some(handle) = self.relay_ready.take() {
+            self.registry.revoke(&handle);
+        }
+        self.direct_probe = None;
+    }
+
+    pub(crate) fn ephemeral_idle(&self, now: Instant) -> bool {
+        !self.draining
+            && !self.hard_closed
+            && self.direct_probe.is_none()
+            && self
+                .direct_ready
+                .iter()
+                .chain(self.relay_ready.iter())
+                .all(|handle| self.registry.lease_count(handle) == Some(0))
+            && self
+                .direct_probe
+                .as_ref()
+                .is_none_or(|probe| probe.is_expired(now))
+            && now.saturating_duration_since(self.last_activity)
+                >= super::EPHEMERAL_PATH_IDLE_TIMEOUT
+    }
+}
+
 fn reserve_lease(entry: &Arc<PathEntry>) -> Result<(), CoreNetworkError> {
-    if !entry.active.load(Ordering::Acquire) {
+    if !entry.active.load(Ordering::Acquire) || !entry.accepting.load(Ordering::Acquire) {
         return Err(CoreNetworkError::StaleAttempt);
     }
     loop {
@@ -219,7 +500,7 @@ fn reserve_lease(entry: &Arc<PathEntry>) -> Result<(), CoreNetworkError> {
             .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
         {
-            if entry.active.load(Ordering::Acquire) {
+            if entry.active.load(Ordering::Acquire) && entry.accepting.load(Ordering::Acquire) {
                 return Ok(());
             }
             entry.leases.fetch_sub(1, Ordering::AcqRel);
@@ -315,6 +596,81 @@ mod tests {
         assert!(matches!(
             registry.select_compatible_ready_path(&peer, 1),
             Err(CoreNetworkError::NoRoute)
+        ));
+    }
+
+    #[test]
+    fn peer_path_manager_keeps_direct_ready_and_probe_and_uses_relay_immediately() {
+        let registry = Arc::new(PathRegistry::new());
+        let peer = PeerId::new("peer-a").expect("peer id");
+        let mut manager = PeerPathManager::new(peer, Arc::clone(&registry));
+        let relay = manager
+            .publish_ready(ConnectionProfile::new(Route::relay(
+                RouteTransport::WebSocket,
+            )))
+            .expect("relay path");
+
+        assert_eq!(
+            manager.select(CAPABILITY_RELIABLE_MESSAGE),
+            Some(PathSelection::Relay)
+        );
+        let (selection, lease) = manager
+            .acquire(CAPABILITY_RELIABLE_MESSAGE)
+            .expect("ready relay is immediately usable");
+        assert_eq!(selection, PathSelection::Relay);
+        assert_eq!(lease.handle(), &relay);
+
+        manager
+            .ensure_direct_probe(7, CAPABILITY_RELIABLE_MESSAGE, Duration::from_secs(4))
+            .expect("direct recovery probe");
+        assert!(manager.direct_probe().is_some());
+        drop(lease);
+    }
+
+    #[test]
+    fn peer_path_manager_prefers_direct_without_destroying_relay() {
+        let registry = Arc::new(PathRegistry::new());
+        let peer = PeerId::new("peer-a").expect("peer id");
+        let mut manager = PeerPathManager::new(peer, Arc::clone(&registry));
+        let relay = manager
+            .publish_ready(ConnectionProfile::new(Route::relay(
+                RouteTransport::WebSocket,
+            )))
+            .expect("relay path");
+        let direct = manager
+            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Quic)))
+            .expect("direct path");
+
+        let (selection, lease) = manager
+            .acquire(CAPABILITY_RELIABLE_MESSAGE)
+            .expect("direct path");
+        assert_eq!(selection, PathSelection::Direct);
+        assert_eq!(lease.handle(), &direct);
+        drop(lease);
+        assert!(registry.acquire(&relay).is_ok());
+    }
+
+    #[test]
+    fn hard_close_revokes_existing_leases_and_normal_drain_rejects_new_ones() {
+        let registry = Arc::new(PathRegistry::new());
+        let peer = PeerId::new("peer-a").expect("peer id");
+        let mut manager = PeerPathManager::new(peer, Arc::clone(&registry));
+        let handle = manager
+            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+            .expect("direct path");
+        let lease = registry.acquire(&handle).expect("lease");
+        manager.normal_drain();
+        assert!(lease.is_active());
+        assert!(matches!(
+            registry.acquire(&handle),
+            Err(CoreNetworkError::StaleAttempt)
+        ));
+        drop(lease);
+
+        manager.hard_close();
+        assert!(matches!(
+            registry.acquire(&handle),
+            Err(CoreNetworkError::StaleAttempt)
         ));
     }
 }

@@ -210,7 +210,6 @@ fn connectivity_frames_match_the_frozen_golden_fixtures() {
             initiator_runtime_epoch: Some(epoch_a()),
             initiator_revision: REVISION_A,
             initiator_snapshot: Some(snapshot_a()),
-            target_device_id: DEVICE_B.into(),
         })),
     };
     assert_matches_golden(
@@ -360,7 +359,6 @@ fn realtime_and_error_frames_match_the_frozen_golden_fixtures() {
             revision: REVISION_A as u64,
             payload: b"sdp-mid=0;candidate:842163049 1 udp 1677729535 198.51.100.7 54321 typ srflx"
                 .to_vec(),
-            sender_device_id: DEVICE_A.into(),
         })),
     };
     assert_matches_golden(
@@ -395,17 +393,6 @@ fn relay_data_frames_match_the_frozen_golden_fixtures() {
     assert_matches_golden(
         "relay_data_connect.data.bin",
         &encode_data_frame(&connect).expect("encode"),
-    );
-
-    let ready = RelayDataFrame {
-        version: RELAY_V2_VERSION,
-        kind: Some(relay_data_frame::Kind::Ready(RelayDataReady {
-            reservation_id: RESERVATION_ID.into(),
-        })),
-    };
-    assert_matches_golden(
-        "relay_data_ready.data.bin",
-        &encode_data_frame(&ready).expect("encode"),
     );
 
     let payload = RelayDataFrame {

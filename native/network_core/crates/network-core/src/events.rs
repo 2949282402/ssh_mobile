@@ -30,6 +30,31 @@ pub(crate) fn emit_transfer_progress(
                 transfer_id: transfer_id.to_string(),
                 bytes_transferred,
                 total_bytes,
+                peer_id: String::new(),
+            },
+        )),
+    });
+}
+
+pub(crate) fn emit_transfer_progress_for_peer(
+    event_tx: &EventSender,
+    peer_id: &str,
+    transfer_id: &str,
+    confirmed_offset: u64,
+    total_bytes: u64,
+    paused: bool,
+) {
+    let _ = event_tx.send(NetworkEvent {
+        event_id: format!("{peer_id}/{transfer_id}/progress/{confirmed_offset}"),
+        timestamp_ms: unix_timestamp_ms(),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_event::Payload::PeerTransferProgress(
+            network_protocol::PeerTransferProgressEvent {
+                peer_id: peer_id.to_string(),
+                transfer_id: transfer_id.to_string(),
+                confirmed_offset,
+                total_bytes,
+                paused,
             },
         )),
     });
@@ -54,6 +79,71 @@ pub(crate) fn emit_command_result(
             accepted,
             error,
         })),
+    });
+}
+
+/// Frozen V2 resource defaults. These values are shared by producers and
+/// adapters; a lower layer may reject earlier, but may not raise a limit.
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_ACTIVE_PEERS: usize = 64;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_CONFIGURED_PEERS: usize = 256;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_ESTABLISHMENTS: usize = 8;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_UNAUTHENTICATED_INBOUND: usize = 32;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_RELAY_DATA_PATHS: usize = 64;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_COMMANDS_PER_PEER: usize = 64;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_STREAMS_PER_PEER: usize = 32;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_ACTIVE_TRANSFERS: usize = 16;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_CONTROL_QUEUE_BYTES: usize = 4 * 1024 * 1024;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_DATA_QUEUE_BYTES: usize = 8 * 1024 * 1024;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_COMMAND_BYTES: usize = 1024 * 1024;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_EVENT_BYTES: usize = 1024 * 1024;
+#[allow(dead_code)]
+pub const NETWORK_V2_MAX_STREAM_CHUNK_BYTES: usize = 64 * 1024;
+
+pub(crate) fn emit_peer_diagnostics(
+    event_tx: &EventSender,
+    diagnostics: network_protocol::PeerDiagnostics,
+) {
+    let event_id = format!(
+        "{}/diagnostics/{}",
+        diagnostics.peer_id,
+        unix_timestamp_ms()
+    );
+    let _ = event_tx.send(NetworkEvent {
+        event_id,
+        timestamp_ms: unix_timestamp_ms(),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_event::Payload::PeerDiagnostics(diagnostics)),
+    });
+}
+
+pub(crate) fn emit_network_environment_changed(
+    event_tx: &EventSender,
+    environment: network_protocol::NetworkEnvironmentChangedCommand,
+) {
+    let _ = event_tx.send(NetworkEvent {
+        event_id: format!("environment/{}", environment.generation),
+        timestamp_ms: unix_timestamp_ms(),
+        protocol_version: NETWORK_PROTOCOL_VERSION,
+        payload: Some(network_event::Payload::NetworkEnvironmentChanged(
+            network_protocol::NetworkEnvironmentChangedEvent {
+                generation: environment.generation,
+                has_connectivity: environment.has_connectivity,
+                is_foreground: environment.is_foreground,
+                is_metered: environment.is_metered,
+            },
+        )),
     });
 }
 
@@ -408,6 +498,7 @@ pub(crate) fn emit_transfer_completed(event_tx: &EventSender, transfer_id: &str,
             TransferCompletedEvent {
                 transfer_id: transfer_id.to_string(),
                 local_path: local_path.to_string(),
+                peer_id: String::new(),
             },
         )),
     });
@@ -432,6 +523,7 @@ pub(crate) fn emit_transfer_error(
                 error: Some(protocol_error_with_context(
                     code, message, operation, peer_id,
                 )),
+                peer_id: peer_id.unwrap_or_default().to_string(),
             },
         )),
     });

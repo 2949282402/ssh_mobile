@@ -213,7 +213,6 @@
         "initiator_revision": 7,
         "message": "connectivity_offer",
         "request_id": 1001,
-        "target_device_id": "22222222222222222222222222222222",
         "version": 2
       },
       "file": "connectivity_offer.control.bin",
@@ -347,7 +346,6 @@
         "realtime_id": "rt-9f8e7d6c5b4a39281706f5e4d3c2b1a0",
         "request_id": 1001,
         "revision": 7,
-        "sender_device_id": "11111111111111111111111111111111",
         "target_device_id": "22222222222222222222222222222222",
         "version": 2
       },
@@ -380,17 +378,6 @@
       },
       "file": "relay_data_connect.data.bin",
       "name": "relay_data_connect",
-      "transport": "data"
-    },
-    {
-      "direction": "relay->client",
-      "expects": {
-        "message": "relay_data_ready",
-        "reservation_id": "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d",
-        "version": 2
-      },
-      "file": "relay_data_ready.data.bin",
-      "name": "relay_data_ready",
       "transport": "data"
     },
     {

@@ -380,16 +380,24 @@ pub(crate) async fn send_signal_command(
 }
 
 /// v2 控制面信令入口（§17/§22：WebRTC signaling 经 Relay Control Plane）。
-/// `RealtimeSignal` 帧携带独立 `revision` 与原始 payload（无 v1 信封）。Relay
-/// 已将 `sender_device_id` 覆盖为认证连接身份；`target_device_id` 仅用于 Relay
-/// 路由，绝不作为本地 WebRTC 状态机的远端 peer 身份。
+/// `RealtimeSignal` 帧携带独立 `revision` 与原始 payload（无 v1 信封）。冻结 wire
+/// 不携带 sender 字段；接收端只能使用已经建立的 `realtime_id → peer_id` 会话绑定，
+/// 未知会话直接拒绝，不能把 `target_device_id` 冒充远端身份。
 pub(crate) async fn handle_v2_realtime_signal(
     state: &Arc<RuntimeState>,
     signal: &V2RealtimeSignal,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if signal.sender_device_id.is_empty() {
+    let peer_id = state
+        .realtime
+        .lock()
+        .await
+        .sessions
+        .get(&signal.realtime_id)
+        .map(|session| session.peer_id.clone())
+        .ok_or_else(|| boxed_message("v2 WebRTC signal has no established peer binding"))?;
+    if peer_id.is_empty() {
         return Err(boxed_message(
-            "v2 WebRTC signal is missing the authenticated sender device ID",
+            "v2 WebRTC signal has an empty established peer binding",
         ));
     }
     let kind = RealtimeSignalKind::try_from(signal.kind)
@@ -398,7 +406,7 @@ pub(crate) async fn handle_v2_realtime_signal(
         state,
         kind,
         &signal.realtime_id,
-        &signal.sender_device_id,
+        &peer_id,
         signal.revision,
         signal.payload.clone(),
     )
@@ -1807,7 +1815,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn inbound_v2_signal_binds_remote_peer_from_sender_not_target() {
+    async fn inbound_v2_signal_uses_established_realtime_peer_binding_not_target() {
         let (state, _event_rx) = realtime_test_state().await;
         register_realtime_peer(&state, "peer-a").await;
 
@@ -1847,7 +1855,6 @@ mod tests {
                 kind: V2RealtimeSignalKind::Answer as i32,
                 revision: offer_revision + 1,
                 payload: answer.sdp.into_bytes(),
-                sender_device_id: "peer-a".into(),
             },
         )
         .await;

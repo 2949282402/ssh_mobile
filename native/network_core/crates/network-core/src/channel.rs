@@ -16,7 +16,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::crypto;
-use crate::crypto_handshake::path_handshake::{EnvelopeKind, PathHandshake, PathHandshakeError};
 use crate::delivery::{
     AckResult, DedupDecision, DeliveryError, DeliveryPolicy, OrderedInsertResult, OrderedMessage,
     PendingMessage, RecoverySnapshot,
@@ -26,47 +25,6 @@ use crate::runtime::{RuntimeState, DELIVERY_RETRY_POLL_INTERVAL};
 use crate::session::SessionId;
 
 const MAX_DELIVERY_MESSAGE_PAYLOAD_BYTES: usize = MAX_CHANNEL_FRAME_BYTES - 1024;
-
-/// Generic/direct channel envelopes must pass this boundary after the
-/// transport has completed PathHandshakeV2.  The existing receive loops in
-/// `peer.rs` are the integration owners; this adapter keeps business dispatch
-/// from being coupled to a concrete carrier.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code)]
-pub(crate) enum ChannelEnvelopeKind {
-    DataMessage,
-    DeliveryAck,
-    Stream,
-}
-
-#[allow(dead_code)]
-pub(crate) fn admit_channel_envelope(
-    handshake: &PathHandshake,
-    envelope: ChannelEnvelopeKind,
-) -> Result<(), PathHandshakeError> {
-    let kind = match envelope {
-        ChannelEnvelopeKind::DataMessage => EnvelopeKind::ChannelMessage,
-        ChannelEnvelopeKind::DeliveryAck => EnvelopeKind::ChannelAck,
-        ChannelEnvelopeKind::Stream => EnvelopeKind::Stream,
-    };
-    handshake.admit_envelope(kind)
-}
-
-/// RelayData must admit the existing `DATA_ENV_CRYPTO` envelope while the
-/// path handshake is pending, and reject every business envelope until Ready.
-/// The Relay remains an opaque forwarder; only the native endpoint calls this.
-#[allow(dead_code)]
-pub(crate) fn admit_relay_data_envelope(
-    handshake: &PathHandshake,
-    envelope: &[u8],
-) -> Result<(), PathHandshakeError> {
-    let kind = envelope
-        .first()
-        .copied()
-        .ok_or(PathHandshakeError::InvalidFrame)
-        .and_then(EnvelopeKind::from_relay_type)?;
-    handshake.admit_envelope(kind)
-}
 
 /// 将 Dart/Protobuf 命令转换为 Delivery 消息并立即排入当前逻辑 Session。
 pub(crate) async fn start_send_message(

@@ -180,17 +180,6 @@ impl std::ops::Deref for ConnectionAdmissionLease {
     }
 }
 
-/// Responder-side Relay admission held between the existing application Root
-/// exchange and PathHandshakeV2 Final.  The Session is not route-visible until
-/// the latter verifies, so the data client can receive only the handshake
-/// envelopes during this interval.
-pub(crate) struct RelayPathAdmission {
-    pub(crate) peer_id: String,
-    pub(crate) data: Arc<RelayDataClient>,
-    pub(crate) material: SessionCryptoMaterial,
-    pub(crate) admission: ConnectionAdmissionLease,
-}
-
 pub(crate) type RelayCryptoMessage = (u8, Vec<u8>);
 type RelayCryptoSender = mpsc::Sender<RelayCryptoMessage>;
 
@@ -275,18 +264,9 @@ pub(crate) struct RuntimeState {
     pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
     pub(crate) relay_crypto_confirmers:
         AsyncMutex<HashMap<String, RelayResponderConfirmation<ConnectionAdmissionLease>>>,
-    /// Relay PathHandshakeV2 responder state, keyed by peer/session token.
-    /// The data client has already consumed RelayDataReady before this state
-    /// can be created.
-    pub(crate) relay_path_responders:
-        AsyncMutex<HashMap<String, crate::crypto_handshake::path_handshake::PathHandshake>>,
-    /// Responder-side Relay Session admissions waiting for PathHandshakeV2
-    /// Final.  Keyed by peer/session token so a stale data client cannot
-    /// complete a newer connection.
-    pub(crate) relay_path_admissions: AsyncMutex<HashMap<String, RelayPathAdmission>>,
     /// Peer-level business admission guard.  RelayDataClient owns the socket
     /// and the Relay remains opaque; only the endpoint sets this after the
-    /// PathHandshake final frame is verified.
+    /// authenticated Noise/PathHandshakeV2 admission is complete.
     pub(crate) relay_path_ready: RwLock<HashSet<String>>,
     /// reservation 数据面上的 Relay 文件传输业务状态（非 V2 会话协议）：
     /// - `relay_pending_incoming`：等待 UI 审批的传入 offer（transfer_id → pending）。
@@ -344,8 +324,6 @@ impl RuntimeState {
             relay_crypto_waiters: RwLock::new(HashMap::new()),
             relay_crypto_responders: AsyncMutex::new(HashMap::new()),
             relay_crypto_confirmers: AsyncMutex::new(HashMap::new()),
-            relay_path_responders: AsyncMutex::new(HashMap::new()),
-            relay_path_admissions: AsyncMutex::new(HashMap::new()),
             relay_path_ready: RwLock::new(HashSet::new()),
             relay_pending_incoming: RwLock::new(HashMap::new()),
             relay_active_incoming: AsyncMutex::new(HashMap::new()),
@@ -403,28 +381,12 @@ impl RuntimeState {
         peer_id: &str,
         required_capabilities: u8,
     ) -> ConnectDecision {
-        loop {
-            match self
-                .connection_sessions
-                .begin_connect_with_capability(peer_id, required_capabilities)
-                .await
-            {
-                ConnectDecision::NeedsReplacement(replaced_session_id) => {
-                    if let Ok(route) = self
-                        .connection_sessions
-                        .close_if_current(peer_id, replaced_session_id)
-                        .await
-                    {
-                        if let Some(route) = route {
-                            route.close().await;
-                        }
-                        self.cancel_session_tasks(peer_id, replaced_session_id)
-                            .await;
-                    }
-                }
-                decision => return decision,
-            }
-        }
+        // Session admission owns transport lifecycle only. A business
+        // capability is selected by the caller's path/attempt; it must not
+        // cause a healthy Connected session to be closed and replaced.
+        self.connection_sessions
+            .begin_connect_with_capability(peer_id, required_capabilities)
+            .await
     }
 
     /// Admit authenticated Noise material for a 1:1 ConnectionSession（§18）。

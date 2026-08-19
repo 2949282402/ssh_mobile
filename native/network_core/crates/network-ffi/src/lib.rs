@@ -24,6 +24,7 @@ pub const SSH_NET_MAX_CONTROL_BYTES: usize = 4 * 1024 * 1024;
 pub const SSH_NET_MAX_DATA_ITEMS: usize = 128;
 pub const SSH_NET_MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
 pub const SSH_NET_MAX_CONSECUTIVE_CONTROL_EVENTS: usize = 8;
+pub const SSH_NET_MAX_PENDING_COMMANDS: usize = 64;
 
 /// 跨 FFI 边界传递的不透明运行时句柄。
 pub type SshNetRuntimeHandle = *mut c_void;
@@ -230,12 +231,24 @@ impl SshNetRuntime {
         if pending.contains(command_id) || terminal.contains(command_id) {
             return Err(-6);
         }
+        if pending.len() >= SSH_NET_MAX_PENDING_COMMANDS {
+            return Err(-7);
+        }
         pending.insert(command_id.to_string());
         Ok(())
     }
 
     fn admit_event(&self, event: NetworkEvent) -> Option<NetworkEvent> {
         if let Some(network_event::Payload::CommandResult(result)) = &event.payload {
+            let mut pending = self.pending_commands.lock().ok()?;
+            let mut terminal = self.terminal_commands.lock().ok()?;
+            if terminal.contains(&result.command_id) {
+                return None;
+            }
+            pending.remove(&result.command_id);
+            terminal.insert(result.command_id.clone());
+        }
+        if let Some(network_event::Payload::CommandResultV2(result)) = &event.payload {
             let mut pending = self.pending_commands.lock().ok()?;
             let mut terminal = self.terminal_commands.lock().ok()?;
             if terminal.contains(&result.command_id) {
@@ -251,9 +264,11 @@ impl SshNetRuntime {
 fn event_lane(event: &NetworkEvent) -> EventLane {
     match event.payload.as_ref() {
         Some(network_event::Payload::CommandResult(_))
+        | Some(network_event::Payload::CommandResultV2(_))
         | Some(network_event::Payload::PeerState(_))
         | Some(network_event::Payload::RelayStateChanged(_)) => EventLane::CriticalControl,
         Some(network_event::Payload::TransferProgress(_))
+        | Some(network_event::Payload::PeerTransferProgress(_))
         | Some(network_event::Payload::ChannelMessage(_))
         | Some(network_event::Payload::SshStreamDataReceived(_)) => EventLane::Data,
         _ => EventLane::NormalControl,
@@ -796,6 +811,17 @@ mod tests {
             .lock()
             .expect("terminal lock")
             .contains("command-a"));
+    }
+
+    #[test]
+    fn ffi_pending_commands_have_a_frozen_resource_cap() {
+        let runtime = SshNetRuntime::new().expect("runtime");
+        for index in 0..SSH_NET_MAX_PENDING_COMMANDS {
+            assert!(runtime
+                .remember_command(&format!("command-{index}"))
+                .is_ok());
+        }
+        assert_eq!(runtime.remember_command("command-over-cap"), Err(-7));
     }
 
     #[test]

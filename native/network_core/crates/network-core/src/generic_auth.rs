@@ -13,7 +13,8 @@ use tokio::sync::RwLock;
 
 use crate::connection::GenericConnection;
 use crate::crypto_handshake::{
-    initiate_generic, respond_generic, CryptoHandshakeError, SessionCryptoMaterial,
+    initiate_generic_with_policy, path_handshake::E2eePolicy, respond_generic_with_policy,
+    CryptoHandshakeError, SessionCryptoMaterial,
 };
 
 pub(crate) struct AuthenticatedPeer<T> {
@@ -35,12 +36,38 @@ where
     F: FnOnce(&str, &str) -> Fut,
     Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
 {
-    initiate_generic(
+    authenticate_initiator_with_policy(
         connection,
         local_identity,
         expected_peer_id,
         expected_peer_public_key,
         session_binding,
+        E2eePolicy::Required,
+        resolve_remote_session,
+    )
+    .await
+}
+
+pub(crate) async fn authenticate_initiator_with_policy<F, Fut, T>(
+    connection: &mut GenericConnection,
+    local_identity: Arc<DeviceIdentity>,
+    expected_peer_id: &str,
+    expected_peer_public_key: [u8; 32],
+    session_binding: &str,
+    e2ee_policy: E2eePolicy,
+    resolve_remote_session: F,
+) -> Result<(SessionCryptoMaterial, T), CryptoHandshakeError>
+where
+    F: FnOnce(&str, &str) -> Fut,
+    Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
+{
+    initiate_generic_with_policy(
+        connection,
+        local_identity,
+        expected_peer_id,
+        expected_peer_public_key,
+        session_binding,
+        e2ee_policy,
         resolve_remote_session,
     )
     .await
@@ -56,10 +83,32 @@ where
     F: FnOnce(&str, &str) -> Fut,
     Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
 {
-    let (peer_id, crypto, admission) = respond_generic(
+    authenticate_responder_with_policy(
         connection,
         local_identity,
         trusted_peer_keys,
+        E2eePolicy::Required,
+        resolve_local_session_binding,
+    )
+    .await
+}
+
+pub(crate) async fn authenticate_responder_with_policy<F, Fut, T>(
+    connection: &mut GenericConnection,
+    local_identity: Arc<DeviceIdentity>,
+    trusted_peer_keys: &RwLock<HashMap<String, [u8; 32]>>,
+    e2ee_policy: E2eePolicy,
+    resolve_local_session_binding: F,
+) -> Result<AuthenticatedPeer<T>, CryptoHandshakeError>
+where
+    F: FnOnce(&str, &str) -> Fut,
+    Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
+{
+    let (peer_id, crypto, admission) = respond_generic_with_policy(
+        connection,
+        local_identity,
+        trusted_peer_keys,
+        e2ee_policy,
         resolve_local_session_binding,
     )
     .await?;

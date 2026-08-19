@@ -20,6 +20,18 @@ enum NetworkErrorCode {
   ERROR_CODE_CANCELLED = 11;
   ERROR_CODE_CREDENTIAL_EXPIRED = 12;
   ERROR_CODE_IDENTITY_CONFLICT = 13;
+  ERROR_CODE_CONFIGURATION = 14;
+  ERROR_CODE_SECURITY_POLICY_MISMATCH = 15;
+  ERROR_CODE_RELAY_REQUIRES_E2EE = 16;
+  ERROR_CODE_PEER_NOT_READY = 17;
+  ERROR_CODE_RESOURCE_LIMIT = 18;
+  ERROR_CODE_LIFECYCLE = 19;
+  ERROR_CODE_PROTOCOL_MISMATCH = 20;
+  ERROR_CODE_STALE_OPERATION = 21;
+  ERROR_CODE_INVALID_STATE = 22;
+  ERROR_CODE_PATH_LOST = 23;
+  ERROR_CODE_RESUME_REJECTED = 24;
+  ERROR_CODE_STREAM_CLOSED = 25;
 }
 
 // 服务端建议的重试策略；默认 Unspecified 表示未指定。
@@ -37,6 +49,30 @@ enum PeerConnectionState {
   PEER_CONNECTION_STATE_CONNECTED = 2;
   PEER_CONNECTION_STATE_DISCONNECTED = 3;
   PEER_CONNECTION_STATE_FAILED = 4;
+}
+
+// The only peer lifecycle exposed to business clients. Transport/session
+// states remain native implementation details.
+enum PeerState {
+  PEER_STATE_OFFLINE = 0;
+  PEER_STATE_CONNECTING = 1;
+  PEER_STATE_ONLINE = 2;
+}
+
+enum E2eePolicy {
+  E2EE_POLICY_REQUIRED = 0;
+  E2EE_POLICY_DISABLED = 1;
+}
+
+enum CommandResultState {
+  COMMAND_RESULT_STATE_SUCCEEDED = 0;
+  COMMAND_RESULT_STATE_FAILED = 1;
+  COMMAND_RESULT_STATE_CANCELLED = 2;
+}
+
+enum NetworkEventLane {
+  NETWORK_EVENT_LANE_CONTROL = 0;
+  NETWORK_EVENT_LANE_DATA = 1;
 }
 
 enum RouteType {
@@ -89,6 +125,15 @@ enum RealtimeSignalKind {
   REALTIME_SIGNAL_KIND_WEBRTC_CLOSE = 5;
 }
 
+enum DeliveryPolicyCode {
+  DELIVERY_POLICY_BEST_EFFORT = 0;
+  DELIVERY_POLICY_LATEST_STATE = 1;
+  DELIVERY_POLICY_ACKED = 2;
+  DELIVERY_POLICY_ACKED_DEDUPLICATED = 3;
+  DELIVERY_POLICY_SESSION_BOUND_ORDERED = 4;
+  DELIVERY_POLICY_RESUMABLE_TRANSFER = 5;
+}
+
 message NetworkError {
   NetworkErrorCode code = 1;
   string message = 2;
@@ -137,6 +182,50 @@ message RespondIncomingTransferCommand {
   bool accept = 2;
 }
 
+message PeerConfig {
+  string peer_id = 1;
+  string endpoint_address = 2;
+  bytes identity_public_key = 3;
+  bytes e2e_public_key = 4;
+  E2eePolicy e2ee_policy = 5;
+}
+
+message UpsertPeerV2Command {
+  PeerConfig config = 1;
+}
+
+message RemovePeerCommand {
+  string peer_id = 1;
+}
+
+message SendMessageV2Command {
+  string peer_id = 1;
+  string message_id = 2;
+  string channel_id = 3;
+  bytes payload = 4;
+  DeliveryPolicyCode policy = 5;
+  E2eePolicy e2ee_policy = 6;
+}
+
+message TransferCommand {
+  string peer_id = 1;
+  string transfer_id = 2;
+  string file_path = 3;
+  uint64 confirmed_offset = 4;
+  bool resume = 5;
+}
+
+message PeerDiagnosticsCommand {
+  string peer_id = 1;
+}
+
+message NetworkEnvironmentChangedCommand {
+  uint64 generation = 1;
+  bool has_connectivity = 2;
+  bool is_foreground = 3;
+  bool is_metered = 4;
+}
+
 message ConfigureRelayCommand {
   string relay_url = 1;
   string relay_credential = 2;
@@ -178,6 +267,12 @@ message NetworkCommand {
     StartRealtimeSessionCommand start_realtime_session = 21;
     StopRealtimeSessionCommand stop_realtime_session = 22;
     SendRealtimeSignalCommand send_realtime_signal = 23;
+    UpsertPeerV2Command upsert_peer_v2 = 28;
+    RemovePeerCommand remove_peer = 29;
+    SendMessageV2Command send_message_v2 = 30;
+    TransferCommand transfer = 31;
+    PeerDiagnosticsCommand peer_diagnostics = 32;
+    NetworkEnvironmentChangedCommand network_environment_changed = 33;
   }
 }
 
@@ -202,6 +297,46 @@ message CommandResultEvent {
   string command_id = 1;
   bool accepted = 2;
   NetworkError error = 3;
+}
+
+message CommandResult {
+  string command_id = 1;
+  string peer_id = 2;
+  CommandResultState state = 3;
+  NetworkError error = 4;
+}
+
+message PeerLifecycleEvent {
+  string peer_id = 1;
+  PeerState state = 2;
+  E2eePolicy e2ee_policy = 3;
+  NetworkError error = 4;
+}
+
+message PeerDiagnostics {
+  string peer_id = 1;
+  PeerState state = 2;
+  E2eePolicy e2ee_policy = 3;
+  uint32 ready_path_count = 4;
+  uint32 queued_command_count = 5;
+  uint32 active_stream_count = 6;
+  uint32 active_transfer_count = 7;
+  NetworkError last_error = 8;
+}
+
+message NetworkEnvironmentChangedEvent {
+  uint64 generation = 1;
+  bool has_connectivity = 2;
+  bool is_foreground = 3;
+  bool is_metered = 4;
+}
+
+message PeerTransferProgressEvent {
+  string peer_id = 1;
+  string transfer_id = 2;
+  uint64 confirmed_offset = 3;
+  uint64 total_bytes = 4;
+  bool paused = 5;
 }
 
 message IncomingTransferOfferEvent {
@@ -277,5 +412,10 @@ message NetworkEvent {
     RealtimeStateChangedEvent realtime_state = 21;
     RealtimeSignalEvent realtime_signal = 22;
     RealtimeSnapshotEvent realtime_snapshot = 23;
+    PeerLifecycleEvent peer_lifecycle = 28;
+    CommandResult command_result_v2 = 29;
+    PeerDiagnostics peer_diagnostics = 30;
+    NetworkEnvironmentChangedEvent network_environment_changed = 31;
+    PeerTransferProgressEvent peer_transfer_progress = 32;
   }
 }

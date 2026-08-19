@@ -24,6 +24,18 @@ pub enum NetworkErrorCode {
     Cancelled = 11,
     CredentialExpired = 12,
     IdentityConflict = 13,
+    Configuration = 14,
+    SecurityPolicyMismatch = 15,
+    RelayRequiresE2ee = 16,
+    PeerNotReady = 17,
+    ResourceLimit = 18,
+    Lifecycle = 19,
+    ProtocolMismatch = 20,
+    StaleOperation = 21,
+    InvalidState = 22,
+    PathLost = 23,
+    ResumeRejected = 24,
+    StreamClosed = 25,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
@@ -44,6 +56,38 @@ pub enum PeerConnectionState {
     Connected = 2,
     Disconnected = 3,
     Failed = 4,
+}
+
+/// Stable, business-level peer lifecycle. Transport/session states are not
+/// part of this public truth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum PeerState {
+    Offline = 0,
+    Connecting = 1,
+    Online = 2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum E2eePolicy {
+    Required = 0,
+    Disabled = 1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum CommandResultState {
+    Succeeded = 0,
+    Failed = 1,
+    Cancelled = 2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
+#[repr(i32)]
+pub enum NetworkEventLane {
+    Control = 0,
+    Data = 1,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Enumeration)]
@@ -215,6 +259,82 @@ pub struct RespondIncomingTransferCommand {
     pub accept: bool,
 }
 
+/// Stable peer configuration owned by the Network V2 peer supervisor.
+#[derive(Clone, PartialEq, Message)]
+pub struct PeerConfig {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(string, tag = "2")]
+    pub endpoint_address: String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub identity_public_key: Vec<u8>,
+    #[prost(bytes = "vec", tag = "4")]
+    pub e2e_public_key: Vec<u8>,
+    #[prost(enumeration = "E2eePolicy", tag = "5")]
+    pub e2ee_policy: i32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct UpsertPeerV2Command {
+    #[prost(message, optional, tag = "1")]
+    pub config: Option<PeerConfig>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct RemovePeerCommand {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+}
+
+/// V2 message command whose identity is explicitly `(peer_id, message_id)`.
+#[derive(Clone, PartialEq, Message)]
+pub struct SendMessageV2Command {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(string, tag = "2")]
+    pub message_id: String,
+    #[prost(string, tag = "3")]
+    pub channel_id: String,
+    #[prost(bytes = "vec", tag = "4")]
+    pub payload: Vec<u8>,
+    #[prost(enumeration = "DeliveryPolicyCode", tag = "5")]
+    pub policy: i32,
+    #[prost(enumeration = "E2eePolicy", tag = "6")]
+    pub e2ee_policy: i32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct TransferCommand {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(string, tag = "2")]
+    pub transfer_id: String,
+    #[prost(string, tag = "3")]
+    pub file_path: String,
+    #[prost(uint64, tag = "4")]
+    pub confirmed_offset: u64,
+    #[prost(bool, tag = "5")]
+    pub resume: bool,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct PeerDiagnosticsCommand {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct NetworkEnvironmentChangedCommand {
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+    #[prost(bool, tag = "2")]
+    pub has_connectivity: bool,
+    #[prost(bool, tag = "3")]
+    pub is_foreground: bool,
+    #[prost(bool, tag = "4")]
+    pub is_metered: bool,
+}
+
 #[derive(Clone, PartialEq, Message)]
 pub struct SendMessageCommand {
     #[prost(string, tag = "1")]
@@ -333,7 +453,7 @@ pub struct NetworkCommand {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_command::Payload",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33"
     )]
     pub payload: Option<network_command::Payload>,
 }
@@ -377,6 +497,18 @@ pub mod network_command {
         SshStreamData(SshStreamDataCommand),
         #[prost(message, tag = "27")]
         SshStreamClose(SshStreamCloseCommand),
+        #[prost(message, tag = "28")]
+        UpsertPeerV2(UpsertPeerV2Command),
+        #[prost(message, tag = "29")]
+        RemovePeer(RemovePeerCommand),
+        #[prost(message, tag = "30")]
+        SendMessageV2(SendMessageV2Command),
+        #[prost(message, tag = "31")]
+        Transfer(TransferCommand),
+        #[prost(message, tag = "32")]
+        PeerDiagnostics(PeerDiagnosticsCommand),
+        #[prost(message, tag = "33")]
+        NetworkEnvironmentChanged(NetworkEnvironmentChangedCommand),
     }
 }
 
@@ -442,6 +574,10 @@ pub struct TransferProgressEvent {
     pub bytes_transferred: u64,
     #[prost(uint64, tag = "3")]
     pub total_bytes: u64,
+    /// Peer scope is mandatory for V2 business consumers. Empty is retained
+    /// only for legacy relay progress producers during the cutover.
+    #[prost(string, tag = "4")]
+    pub peer_id: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -452,6 +588,76 @@ pub struct CommandResultEvent {
     pub accepted: bool,
     #[prost(message, optional, tag = "3")]
     pub error: Option<NetworkError>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct CommandResult {
+    #[prost(string, tag = "1")]
+    pub command_id: String,
+    #[prost(string, tag = "2")]
+    pub peer_id: String,
+    #[prost(enumeration = "CommandResultState", tag = "3")]
+    pub state: i32,
+    #[prost(message, optional, tag = "4")]
+    pub error: Option<NetworkError>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct PeerLifecycleEvent {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(enumeration = "PeerState", tag = "2")]
+    pub state: i32,
+    #[prost(enumeration = "E2eePolicy", tag = "3")]
+    pub e2ee_policy: i32,
+    #[prost(message, optional, tag = "4")]
+    pub error: Option<NetworkError>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct PeerDiagnostics {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(enumeration = "PeerState", tag = "2")]
+    pub state: i32,
+    #[prost(enumeration = "E2eePolicy", tag = "3")]
+    pub e2ee_policy: i32,
+    #[prost(uint32, tag = "4")]
+    pub ready_path_count: u32,
+    #[prost(uint32, tag = "5")]
+    pub queued_command_count: u32,
+    #[prost(uint32, tag = "6")]
+    pub active_stream_count: u32,
+    #[prost(uint32, tag = "7")]
+    pub active_transfer_count: u32,
+    #[prost(message, optional, tag = "8")]
+    pub last_error: Option<NetworkError>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct NetworkEnvironmentChangedEvent {
+    #[prost(uint64, tag = "1")]
+    pub generation: u64,
+    #[prost(bool, tag = "2")]
+    pub has_connectivity: bool,
+    #[prost(bool, tag = "3")]
+    pub is_foreground: bool,
+    #[prost(bool, tag = "4")]
+    pub is_metered: bool,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct PeerTransferProgressEvent {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(string, tag = "2")]
+    pub transfer_id: String,
+    #[prost(uint64, tag = "3")]
+    pub confirmed_offset: u64,
+    #[prost(uint64, tag = "4")]
+    pub total_bytes: u64,
+    #[prost(bool, tag = "5")]
+    pub paused: bool,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -475,6 +681,8 @@ pub struct TransferCompletedEvent {
     pub transfer_id: String,
     #[prost(string, tag = "2")]
     pub local_path: String,
+    #[prost(string, tag = "3")]
+    pub peer_id: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -483,6 +691,8 @@ pub struct TransferFailedEvent {
     pub transfer_id: String,
     #[prost(message, optional, tag = "2")]
     pub error: Option<NetworkError>,
+    #[prost(string, tag = "3")]
+    pub peer_id: String,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -642,7 +852,7 @@ pub struct NetworkEvent {
     pub protocol_version: u32,
     #[prost(
         oneof = "network_event::Payload",
-        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27"
+        tags = "10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32"
     )]
     pub payload: Option<network_event::Payload>,
 }
@@ -686,6 +896,16 @@ pub mod network_event {
         SshStreamDataReceived(SshStreamDataReceivedEvent),
         #[prost(message, tag = "27")]
         SshStreamClosed(SshStreamClosedEvent),
+        #[prost(message, tag = "28")]
+        PeerLifecycle(PeerLifecycleEvent),
+        #[prost(message, tag = "29")]
+        CommandResultV2(CommandResult),
+        #[prost(message, tag = "30")]
+        PeerDiagnostics(PeerDiagnostics),
+        #[prost(message, tag = "31")]
+        NetworkEnvironmentChanged(NetworkEnvironmentChangedEvent),
+        #[prost(message, tag = "32")]
+        PeerTransferProgress(PeerTransferProgressEvent),
     }
 }
 
@@ -968,5 +1188,83 @@ mod tests {
             decoded.payload,
             Some(network_event::Payload::SshStreamClosed(closed)) if closed.handle.as_ref().is_some_and(|handle| handle.stream_id == 7 && handle.opener_device_id == "device-a")
         ));
+    }
+
+    #[test]
+    fn v2_peer_config_remove_and_message_preserve_business_identity() {
+        let command = NetworkCommand {
+            command_id: "v2-message".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::SendMessageV2(
+                SendMessageV2Command {
+                    peer_id: "peer-a".into(),
+                    message_id: "message-a".into(),
+                    channel_id: "control".into(),
+                    payload: b"hello".to_vec(),
+                    policy: DeliveryPolicyCode::Acked as i32,
+                    e2ee_policy: E2eePolicy::Required as i32,
+                },
+            )),
+        };
+        let decoded = NetworkCommand::decode(command.encode_to_vec().as_slice()).expect("decode");
+        let Some(network_command::Payload::SendMessageV2(message)) = decoded.payload else {
+            panic!("expected V2 message command");
+        };
+        assert_eq!(message.peer_id, "peer-a");
+        assert_eq!(message.message_id, "message-a");
+        assert_eq!(message.e2ee_policy, E2eePolicy::Required as i32);
+    }
+
+    #[test]
+    fn v2_lifecycle_diagnostics_and_environment_events_round_trip() {
+        let event = NetworkEvent {
+            event_id: "peer-a/lifecycle".into(),
+            timestamp_ms: 1,
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_event::Payload::PeerLifecycle(PeerLifecycleEvent {
+                peer_id: "peer-a".into(),
+                state: PeerState::Online as i32,
+                e2ee_policy: E2eePolicy::Required as i32,
+                error: None,
+            })),
+        };
+        let decoded = NetworkEvent::decode(event.encode_to_vec().as_slice()).expect("decode");
+        assert!(matches!(
+            decoded.payload,
+            Some(network_event::Payload::PeerLifecycle(PeerLifecycleEvent {
+                state,
+                ..
+            })) if state == PeerState::Online as i32
+        ));
+
+        let environment = NetworkCommand {
+            command_id: "environment".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::NetworkEnvironmentChanged(
+                NetworkEnvironmentChangedCommand {
+                    generation: 4,
+                    has_connectivity: true,
+                    is_foreground: false,
+                    is_metered: true,
+                },
+            )),
+        };
+        let decoded =
+            NetworkCommand::decode(environment.encode_to_vec().as_slice()).expect("decode");
+        assert!(matches!(
+            decoded.payload,
+            Some(network_command::Payload::NetworkEnvironmentChanged(command))
+                if command.generation == 4 && command.is_metered
+        ));
+    }
+
+    #[test]
+    fn v2_public_error_codes_are_stable_and_distinct() {
+        assert_eq!(NetworkErrorCode::Configuration as i32, 14);
+        assert_eq!(NetworkErrorCode::SecurityPolicyMismatch as i32, 15);
+        assert_eq!(NetworkErrorCode::RelayRequiresE2ee as i32, 16);
+        assert_eq!(NetworkErrorCode::ResourceLimit as i32, 18);
+        assert_eq!(NetworkErrorCode::ResumeRejected as i32, 24);
+        assert_eq!(NetworkErrorCode::StreamClosed as i32, 25);
     }
 }

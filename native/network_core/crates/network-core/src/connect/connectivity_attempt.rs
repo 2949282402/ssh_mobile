@@ -55,7 +55,7 @@ use crate::session::{ConnectDecision, SessionId};
 
 use super::{
     communication_class_capability, default_communication_class, profile_capability_mask,
-    DIRECT_CONNECT_WINDOW, RELAY_RESERVE_TIMEOUT, RESOLVE_TIMEOUT,
+    DIRECT_CONNECT_WINDOW, RELAY_RESERVE_TIMEOUT, RESOLVE_TIMEOUT, STAGE_A_CONNECT_BUDGET,
 };
 
 /// 编排器状态机的可观察状态（§11）。`Idle`/`Failed` 是诊断端点（初始/终态），
@@ -144,6 +144,27 @@ impl ConnectivityAttemptCoordinator {
     /// 调用方指定本次业务所需能力，连接层只用它查询/选择实际 ConnectionProfile；
     /// ConnectionSession 不保存最近一次业务类别。
     pub(crate) async fn connect_with_class(
+        &self,
+        peer_id: &str,
+        class: CommunicationClass,
+    ) -> Result<(), ProtocolError> {
+        match tokio::time::timeout(
+            super::OVERALL_CONNECT_BUDGET,
+            self.connect_with_class_bounded(peer_id, class),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(protocol_error_with_peer(
+                NetworkErrorCode::Timeout,
+                "overall connectivity budget elapsed",
+                "connect",
+                peer_id,
+            )),
+        }
+    }
+
+    async fn connect_with_class_bounded(
         &self,
         peer_id: &str,
         class: CommunicationClass,
@@ -265,20 +286,50 @@ impl ConnectivityAttemptCoordinator {
                 return Ok(());
             }
             ConnectDecision::InProgress(session_id) => {
-                // 同一物理 attempt 的后续请求并入能力并集，并等待该 attempt
-                // 提交一个覆盖最新需求的 route；不能在物理连接完成前伪成功。
-                if state
-                    .connection_sessions
-                    .wait_for_capability(peer_id, session_id, capability)
-                    .await
-                    .is_err()
-                {
-                    return Err(protocol_error_with_peer(
-                        NetworkErrorCode::NoRoute,
-                        "shared connection attempt did not satisfy the requested capability",
-                        "connect",
-                        peer_id,
-                    ));
+                // Do not merge this request into Session state. Wait for the
+                // existing attempt, then evaluate this request against the
+                // route it actually produced.
+                loop {
+                    if state.connection_sessions.current_session_id(peer_id).await
+                        != Some(session_id)
+                    {
+                        return Err(protocol_error_with_peer(
+                            NetworkErrorCode::NoRoute,
+                            "shared connection attempt became stale",
+                            "connect",
+                            peer_id,
+                        ));
+                    }
+                    if state.connection_sessions.is_connected(peer_id).await {
+                        let supported = state
+                            .connection_sessions
+                            .current_profile(peer_id)
+                            .await
+                            .map(profile_capability_mask)
+                            .is_some_and(|mask| mask & capability == capability);
+                        if !supported {
+                            return Err(protocol_error_with_peer(
+                                NetworkErrorCode::NoRoute,
+                                "existing route does not satisfy this path capability",
+                                "connect",
+                                peer_id,
+                            ));
+                        }
+                        break;
+                    }
+                    if !state
+                        .connection_sessions
+                        .admission_can_retry(peer_id, Some(session_id))
+                        .await
+                    {
+                        return Err(protocol_error_with_peer(
+                            NetworkErrorCode::NoRoute,
+                            "shared connection attempt did not produce a route",
+                            "connect",
+                            peer_id,
+                        ));
+                    }
+                    state.connection_sessions.wait_for_admission_change().await;
                 }
                 self.register_current(state.clone(), peer_id, &remote_epoch, session_id)
                     .await;
@@ -298,9 +349,6 @@ impl ConnectivityAttemptCoordinator {
                 return Ok(());
             }
             ConnectDecision::Started(session_id) => session_id,
-            ConnectDecision::NeedsReplacement(_) => {
-                unreachable!("RuntimeState::begin_connect resolves replacements")
-            }
         };
 
         // -----------------------------------------------------------------
@@ -471,7 +519,7 @@ impl ConnectivityAttemptCoordinator {
                     .set_state(network_nat::ConnectivityAttemptState::Expired);
                 self.set_stage(ConnectivityAttemptState::DirectFailed);
                 match self
-                    .connect_relay_fallback(peer_id, session_id, &peer, &attempt_id)
+                    .connect_relay_fallback(peer_id, session_id, &peer, &attempt_id, capability)
                     .await
                 {
                     Ok(admission) => {
@@ -549,14 +597,13 @@ impl ConnectivityAttemptCoordinator {
             ConnectDecision::AlreadyConnected(_) | ConnectDecision::InProgress(_) => {
                 return Ok(false)
             }
-            ConnectDecision::NeedsReplacement(_) => return Ok(false),
         };
         self.set_stage(ConnectivityAttemptState::DirectConnecting);
         let (candidate_update_tx, candidate_updates) = watch::channel(None);
         drop(candidate_update_tx);
         let attempt_id = new_attempt_id();
         let direct_result = tokio::time::timeout(
-            DIRECT_CONNECT_WINDOW,
+            STAGE_A_CONNECT_BUDGET,
             connect_direct_or_generic(DirectRouteAttempt {
                 state: Arc::clone(&self.state),
                 endpoint,
@@ -567,7 +614,7 @@ impl ConnectivityAttemptCoordinator {
                 session_binding: session_id.wire_key(),
                 session_id,
                 attempt_id,
-                connect_window: DIRECT_CONNECT_WINDOW,
+                connect_window: STAGE_A_CONNECT_BUDGET,
                 allow_websocket: capability & super::CAPABILITY_RELIABLE_MESSAGE != 0,
                 candidate_updates,
             }),
@@ -605,13 +652,9 @@ impl ConnectivityAttemptCoordinator {
         }
     }
 
-    /// Resolve 阶段：控制面可用时走服务器权威解析（§10），否则退化为本地直连。
-    ///
-    /// §13 v1 LAN 回退：Resolve 仍是 peer discovery/candidates 的权威入口，但
-    /// OFFLINE / NOT_READY / UNKNOWN 且本地 PeerConfig 配置了直连 endpoint 时，退化为
-    /// 一次有界本地直连（remote_epoch = None，候选 = 配置 endpoint，仍在同一个
-    /// DIRECT_CONNECT_WINDOW 内）；仅当既无控制面结果也无配置 endpoint 时才返回类型化
-    /// 错误（保持 fail-closed）。
+    /// Resolve 阶段：控制面可用时走服务器权威解析（§10）。Configured/local
+    /// candidates belong only to Stage A; a non-READY Resolve result never
+    /// becomes a synthetic READY and therefore cannot unlock Stage C Relay.
     async fn resolve(
         &self,
         peer_id: &str,
@@ -627,6 +670,23 @@ impl ConnectivityAttemptCoordinator {
         }
         let resolver = DiscoveryResolver::new(control);
         let result = match tokio::time::timeout(RESOLVE_TIMEOUT, resolver.resolve(peer_id)).await {
+            Ok(Ok(ResolvedPeer::NotReady { retry_after_ms })) => {
+                // NOT_READY is the only status with a bounded retry. A second
+                // NOT_READY remains authoritative and must not become READY.
+                let retry =
+                    Duration::from_millis(u64::from(retry_after_ms)).min(super::NOT_READY_WAIT);
+                tokio::time::sleep(retry).await;
+                match tokio::time::timeout(RESOLVE_TIMEOUT, resolver.resolve(peer_id)).await {
+                    Ok(Ok(resolved)) => Ok(resolved),
+                    Ok(Err(error)) => Err(relay_resolve_error(&error, peer_id)),
+                    Err(_) => Err(protocol_error_with_peer(
+                        NetworkErrorCode::Timeout,
+                        "Resolve retry timed out",
+                        "connect",
+                        peer_id,
+                    )),
+                }
+            }
             Ok(Ok(resolved)) => Ok(resolved),
             Ok(Err(error)) => Err(relay_resolve_error(&error, peer_id)),
             Err(_) => Err(protocol_error_with_peer(
@@ -636,77 +696,51 @@ impl ConnectivityAttemptCoordinator {
                 peer_id,
             )),
         };
-        self.fallback_to_local_direct_or_error(peer_id, peer, result)
+        self.authoritative_resolve_or_error(peer_id, peer, result)
     }
 
-    /// Preserve a configured local endpoint when the authoritative Resolve path
-    /// returns a non-ready status, transport error, or timeout. This is a local
-    /// direct attempt only; it never converts Relay UNKNOWN/OFFLINE into an
-    /// online result or fabricates remote discovery.
-    fn fallback_to_local_direct_or_error(
+    /// Preserve the authoritative Resolve status after Stage A has already
+    /// tried configured/fresh direct candidates. In particular, a configured
+    /// endpoint cannot turn OFFLINE/NOT_READY/UNKNOWN into a synthetic READY.
+    fn authoritative_resolve_or_error(
         &self,
         peer_id: &str,
-        peer: &crate::runtime::PeerConfig,
+        _peer: &crate::runtime::PeerConfig,
         result: Result<ResolvedPeer, ProtocolError>,
     ) -> Result<ResolvedPeer, ProtocolError> {
         match result {
-            Ok(resolved @ ResolvedPeer::Ready { .. }) => Ok(resolved),
-            Ok(non_ready) => self.local_endpoint_fallback(peer_id, peer, non_ready),
-            Err(error) if peer.endpoint.is_some() => {
-                tracing::debug!(
-                    peer_id = %peer_id,
-                    error = %error.message,
-                    "Resolve failed but peer has a configured direct endpoint; attempting local direct"
-                );
-                Ok(ResolvedPeer::Ready { discovery: None })
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    /// §13：控制面返回 OFFLINE/NOT_READY/UNKNOWN 时的 v1 LAN 回退。对端配置了直连
-    /// endpoint → 退化为本地直连（Ready + discovery=None）；否则返回权威类型化错误。
-    fn local_endpoint_fallback(
-        &self,
-        peer_id: &str,
-        peer: &crate::runtime::PeerConfig,
-        resolved: ResolvedPeer,
-    ) -> Result<ResolvedPeer, ProtocolError> {
-        if peer.endpoint.is_some() {
-            tracing::debug!(
-                peer_id = %peer_id,
-                ?resolved,
-                "resolve is not READY but peer has a configured direct endpoint; attempting local direct"
-            );
-            return Ok(ResolvedPeer::Ready { discovery: None });
-        }
-        match resolved {
-            ResolvedPeer::Offline => Err(protocol_error_with_peer(
+            Ok(ResolvedPeer::Ready {
+                discovery: Some(discovery),
+            }) => Ok(ResolvedPeer::Ready {
+                discovery: Some(discovery),
+            }),
+            Ok(ResolvedPeer::Ready { discovery: None }) => Err(protocol_error_with_peer(
+                NetworkErrorCode::RelayError,
+                "Relay returned READY without an authoritative discovery snapshot",
+                "connect",
+                peer_id,
+            )),
+            Ok(ResolvedPeer::Offline) => Err(protocol_error_with_peer(
                 NetworkErrorCode::PeerOffline,
                 "Relay peer is offline",
                 "connect",
                 peer_id,
             )),
-            // §33 错误模型（PeerNotReady / ControlUnavailable / RelayUnavailable）在
-            // 本轮 wire 协议（network-protocol）中尚不存在；映射到最接近的既有码：
-            // NotReady → Timeout + RetryAfter；Unknown → RelayError。
-            ResolvedPeer::NotReady { retry_after_ms } => Err(protocol_error_with_retry(
+            Ok(ResolvedPeer::NotReady { retry_after_ms }) => Err(protocol_error_with_retry(
                 NetworkErrorCode::Timeout,
                 "Relay peer discovery is not ready",
                 "connect",
                 Some(peer_id),
                 network_protocol::RetryDisposition::RetryAfter,
-                retry_after_ms / 1000,
+                (retry_after_ms / 1000).max(1),
             )),
-            ResolvedPeer::Unknown { .. } => Err(protocol_error_with_peer(
+            Ok(ResolvedPeer::Unknown { .. }) => Err(protocol_error_with_peer(
                 NetworkErrorCode::RelayError,
                 "Relay peer resolution is unavailable",
                 "connect",
                 peer_id,
             )),
-            ResolvedPeer::Ready { .. } => {
-                unreachable!("local_endpoint_fallback is only invoked for non-READY statuses")
-            }
+            Err(error) => Err(error),
         }
     }
 
@@ -894,6 +928,7 @@ impl ConnectivityAttemptCoordinator {
         session_id: SessionId,
         peer: &crate::runtime::PeerConfig,
         attempt_id: &str,
+        capability: u8,
     ) -> Result<ConnectionAdmissionLease, ProtocolError> {
         let state = Arc::clone(&self.state);
 
@@ -1000,7 +1035,7 @@ impl ConnectivityAttemptCoordinator {
             .expect("Relay route has a composed profile");
         if !state
             .connection_sessions
-            .candidate_supports_required_capabilities(peer_id, session_id, relay_profile)
+            .candidate_supports_capability(peer_id, session_id, relay_profile, capability)
             .await
         {
             state
@@ -1830,9 +1865,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn offline_resolve_with_configured_endpoint_falls_back_to_local_direct() {
-        // §13：Resolve 仍是权威入口，但 OFFLINE + 本地配置直连 endpoint → 退化为本地
-        // 直连（remote_epoch = None，候选 = 配置 endpoint），连接仍可经 Direct 成功。
+    async fn offline_resolve_with_configured_endpoint_remains_authoritative() {
+        // Stage A already owns configured-endpoint direct probing. Once it
+        // fails, OFFLINE must not be converted into a synthetic READY.
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
@@ -1846,17 +1881,17 @@ mod tests {
             identity_public_key: [7u8; 32],
             e2e_public_key: [8u8; 32],
         };
-        let resolved = attempt_coordinator
-            .resolve("peer-b", &peer)
-            .await
-            .expect("offline with configured endpoint should fall back to local direct");
-        assert_eq!(resolved_runtime_epoch(&resolved), None);
-        assert!(matches!(resolved, ResolvedPeer::Ready { discovery: None }));
+        let result = attempt_coordinator.resolve("peer-b", &peer).await;
+        assert!(matches!(
+            result,
+            Err(error) if error.code == NetworkErrorCode::PeerOffline as i32
+        ));
     }
 
     #[tokio::test]
-    async fn not_ready_resolve_with_configured_endpoint_falls_back_to_local_direct() {
-        // §13：NOT_READY + 本地配置直连 endpoint → 同样退化为一次有界本地直连。
+    async fn not_ready_resolve_with_configured_endpoint_remains_authoritative() {
+        // A configured endpoint cannot make NOT_READY eligible for Relay
+        // fallback or fabricate an authoritative discovery snapshot.
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
@@ -1870,18 +1905,17 @@ mod tests {
             identity_public_key: [7u8; 32],
             e2e_public_key: [8u8; 32],
         };
-        let resolved = attempt_coordinator
-            .resolve("peer-b", &peer)
-            .await
-            .expect("not-ready with configured endpoint should fall back to local direct");
-        assert_eq!(resolved_runtime_epoch(&resolved), None);
-        assert!(matches!(resolved, ResolvedPeer::Ready { discovery: None }));
+        let result = attempt_coordinator.resolve("peer-b", &peer).await;
+        assert!(matches!(
+            result,
+            Err(error) if error.code == NetworkErrorCode::Timeout as i32
+        ));
     }
 
     #[tokio::test]
-    async fn resolve_transport_error_with_configured_endpoint_falls_back_to_local_direct() {
-        // Resolve transport errors do not make a locally configured endpoint
-        // unusable; they only remove authoritative discovery for this attempt.
+    async fn resolve_transport_error_with_configured_endpoint_does_not_fail_open() {
+        // A transport error is not permission to fabricate a peer discovery
+        // result from a configured endpoint.
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
@@ -1894,15 +1928,15 @@ mod tests {
             identity_public_key: [7u8; 32],
             e2e_public_key: [8u8; 32],
         };
-        let resolved = attempt_coordinator
-            .resolve("peer-b", &peer)
-            .await
-            .expect("transport error with configured endpoint should fall back");
-        assert!(matches!(resolved, ResolvedPeer::Ready { discovery: None }));
+        let result = attempt_coordinator.resolve("peer-b", &peer).await;
+        assert!(matches!(
+            result,
+            Err(error) if error.code == NetworkErrorCode::RelayError as i32
+        ));
     }
 
     #[tokio::test(start_paused = true)]
-    async fn resolve_timeout_with_configured_endpoint_falls_back_to_local_direct() {
+    async fn resolve_timeout_with_configured_endpoint_does_not_fail_open() {
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
@@ -1918,11 +1952,11 @@ mod tests {
         let task = tokio::spawn(async move { attempt_coordinator.resolve("peer-b", &peer).await });
         tokio::task::yield_now().await;
         tokio::time::advance(RESOLVE_TIMEOUT + Duration::from_millis(1)).await;
-        let resolved = task
-            .await
-            .expect("resolve task")
-            .expect("timeout with configured endpoint should fall back");
-        assert!(matches!(resolved, ResolvedPeer::Ready { discovery: None }));
+        let result = task.await.expect("resolve task");
+        assert!(matches!(
+            result,
+            Err(error) if error.code == NetworkErrorCode::Timeout as i32
+        ));
     }
 
     #[tokio::test(start_paused = true)]

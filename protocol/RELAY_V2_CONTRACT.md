@@ -60,27 +60,35 @@ Authoritative files:
 
 - Token validated at upgrade AND optionally re-confirmed by the first
   `RelayDataConnect` (must match path segment + token).
-- Carries ONLY: `RelayDataConnect` (first), Relay-only `RelayDataReady`,
-  `RelayDataPayload` (encrypted forwarding), `RelayDataAck` (flow control),
-  `RelayDataClose`.
+- Carries ONLY: `RelayDataConnect` (first), `RelayDataPayload` (encrypted
+  forwarding), `RelayDataAck` (flow control), and `RelayDataClose`.
 - Relay enforces per-connection byte/rate budgets, frame size, reservation
   expiry (close when now > expires_at + 5 s grace). Relay NEVER parses
   `encrypted_payload`; it is a stateless opaque forwarder.
 - Lifecycle: A `RelayReserveRequest` → server stores reservation (TTL=expires_at)
   → `RelayReserveResponse` to A + `IncomingRelayReservation` to B → both connect
-  `/v2/relay/{id}` with role-specific tokens → Relay queues `RelayDataReady` to
-  both endpoints → encrypted payload flows → `RelayDataClose` or TTL expiry.
+  `/v2/relay/{id}` with role-specific tokens → Relay sends one WebSocket Ping
+  carrying `ssh-mobile-relay-paired-v1:<reservation_id>` to both endpoints →
+  encrypted payload flows → `RelayDataClose` or explicit revocation. PairReady
+  is a WebSocket control frame, not a protobuf message.
 - `RelayDataConnect` authenticates the initiator/responder role from its token;
   same-role retries replace an unpaired endpoint. Once a pair has completed
-  the `Ready` handshake, replacing either role invalidates the whole old pair:
-  Relay closes both old endpoints with `RelayDataClose(reason=2)`, creates a
-  fresh pending pair, and never sends a second `Ready` to the endpoint that
-  remained connected. Both roles must complete a new `Connect → Ready`
-  handshake before payload or ack traffic resumes.
+  PairReady, replacing either role invalidates the whole old pair: Relay closes
+  both old endpoints with `RelayDataClose(reason=2)`, creates a fresh pending
+  pair, and never sends a second PairReady to the endpoint that remained
+  connected. Both roles must complete a new `Connect → PairReady` sequence
+  before payload or ack traffic resumes.
 - `RelayDataPayload` and `RelayDataAck` are rejected until the two roles are
-  paired and `Ready` has been queued. `Ready` is a one-shot event for one
-  paired data connection; a client must wait for it before treating the data
-  plane as connected.
+  paired and the PairReady WebSocket Ping has been sent. PairReady is one-shot
+  for one paired data connection; a client must wait for that Ping before
+  treating the data plane as connected. A 30 s server Ping / 15 s Pong timeout
+  uses the same single writer as binary frames.
+- There is no `RelayDataReady` protobuf message and no `ready` oneof field in
+  the frozen `RelayDataFrame`.
+- The reservation TTL governs pending admission only. Once PairReady has been
+  established, active data lifetime is independent of reservation TTL and
+  natural credential expiry. Explicit device revocation closes pending and
+  active endpoints, including the active counterpart.
 
 ## 4. Message inventory
 
@@ -103,7 +111,7 @@ Authoritative files:
 | 14 | `DiscoveryAck` | echoes `request_id`, epoch, revision |
 | 15 | `ResolvePeerRequest` | `request_id`, `target_device_id` |
 | 16 | `ResolvePeerResponse` | 4-state `status` (no fail-open `online=true`); discovery iff READY; `retry_after_ms` hint (NOT_READY 2000 / UNKNOWN 5000) |
-| 17 | `ConnectivityOffer` | explicit `target_device_id`; `attempt_id`-keyed; initiator epoch/revision/snapshot |
+| 17 | `ConnectivityOffer` | `attempt_id`-keyed; target is the preceding successful Resolve on the shared control connection; initiator epoch/revision/snapshot |
 | 18 | `ConnectivityAnswer` | echoes `attempt_id`; accepted; responder epoch/revision/snapshot |
 | 19 | `PresenceHintSnapshot` | `repeated PeerPresenceHint` — advisory, UI cache only |
 | 20 | `PeerAvailableHint` | device online/updated |
@@ -111,10 +119,10 @@ Authoritative files:
 | 22 | `RelayReserveRequest` | `attempt_id`, target, desired lifetime (server clamps [15, 120]) |
 | 23 | `RelayReserveResponse` | reservation_id (16-byte hex / 32 chars), self-contained endpoint, expires_at_ms, 32-byte local_token |
 | 24 | `IncomingRelayReservation` | pushed to B; receiver-specific token |
-| 25 | `RealtimeSignal` | `realtime_id`, authenticated sender, target, kind, revision, payload ≤ 256 KiB |
+| 25 | `RealtimeSignal` | `realtime_id`, target, kind, revision, payload ≤ 256 KiB; no sender field on the wire |
 | 26 | `ProtocolError` | echoes failing `request_id` (0 = server-initiated), `attempt_id`, `code`, `message` |
 
-### Relay data (`RelayDataFrame` oneof tags 10–14; reserved 30–63)
+### Relay data (`RelayDataFrame` oneof tags 10–13; reserved 14, 30–63)
 
 | Tag | Message | Notes |
 |---|---|---|
@@ -122,7 +130,6 @@ Authoritative files:
 | 11 | `RelayDataPayload` | `sequence` (monotonic per direction), `encrypted_payload` opaque |
 | 12 | `RelayDataAck` | echoes `sequence` (receipt/flow control) |
 | 13 | `RelayDataClose` | `reason` 0 normal / 1 expiry / 2 error |
-| 14 | `RelayDataReady` | Relay → both endpoints only after initiator and responder are paired |
 
 ### Enums (value numbers are the frozen part; names carry the Network Protocol
 enum-name prefix so value identifiers stay unique within the package)
@@ -142,10 +149,14 @@ enum-name prefix so value identifiers stay unique within the package)
   RelayReserveResponse, ProtocolError). Async attempts correlate by `attempt_id`;
   stale/mismatched answers are dropped. No global Notify.
 - `RealtimeSignal.target_device_id` is the device that should receive the frame.
-  The client may leave `sender_device_id` empty or populate it locally, but the
-  Relay always overwrites it with the authenticated control-connection device
-  ID before forwarding. The receiving runtime binds its remote WebRTC peer to
-  `sender_device_id`; it must never use `target_device_id` for that identity.
+  The frozen wire message has no `sender_device_id`: the receiving runtime
+  obtains the remote identity from its established `realtime_id` → peer binding
+  and rejects an unknown binding. It must never use `target_device_id` as the
+  sender identity.
+- `ConnectivityOffer` has no target field. It is accepted only after a
+  successful `ResolvePeerRequest`/READY response on the same control
+  connection; the server forwards it through that Resolve → Offer gate. The
+  gate does not hold a lock across the later answer or direct-probe work.
 - Error mapping: OFFLINE/NOT_READY/UNKNOWN → `ResolvePeerResponse.status`;
   unknown backend failure → `ProtocolError CONTROL_UNAVAILABLE`; discovery CAS
   conflict → `EPOCH_CONFLICT`; reservation failure/expiry → `RESERVATION_FAILED`/
@@ -185,15 +196,16 @@ be mirrored in the Rust and Go codecs with a test asserting they match.
 
 Location: `protocol/relay_v2_testdata/`
 
-- 23 full-wire-frame `.bin` files (each = 4-byte BE length + protobuf) named
+- 22 full-wire-frame `.bin` files (each = 4-byte BE length + protobuf) named
   `<message>.control.bin` / `<message>.data.bin`.
 - `manifest.json` — shared semantic expectations (schema_version 2): constants,
   seed values, enum maps, and per-fixture `expects` (epoch hex, revision,
   request_id, status, reservation fields, token hex, sequence).
 - `session_sequence.golden.json` — ordered full lifecycle:
   ready → heartbeat/ack → discovery_publish/ack → resolve_ready →
-  connectivity_offer/answer → reserve/incoming → relay_data_connect/ready →
-  relay_data_payload ×2 → close.
+  connectivity_offer/answer → reserve/incoming → relay_data_connect →
+  relay_data_payload ×2 → close. PairReady is a WebSocket Ping and therefore
+  has no golden protobuf fixture.
 
 Deterministic seed values:
 
@@ -213,8 +225,8 @@ The fixtures are produced deterministically by
 `protocol/relay_v2_testdata/generate_fixtures.py` (minimal protobuf wire
 encoding, no external deps). Regenerate with
 `python3 protocol/relay_v2_testdata/generate_fixtures.py --regenerate`, or run
-`scripts/relay_v2_contract.sh` which regenerates and asserts the committed files
-are current via `git diff --exit-code`.
+`scripts/relay_v2_contract.sh`, which checks the committed files without
+mutating the worktree.
 
 Cross-language tests (WS-P-R Rust, WS-P-G Go): decode each fixture → assert the
 `expects` in `manifest.json` → re-encode → assert byte-identical. Framing

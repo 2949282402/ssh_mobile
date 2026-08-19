@@ -257,15 +257,10 @@ async fn run_data_connection(
         .await
         .register(&reservation_id, initiator, tx);
     if let Some(ready_targets) = ready_targets {
-        let ready = Message::Binary(
-            encode_data_frame(&RelayDataFrame {
-                version: RELAY_V2_VERSION,
-                kind: Some(relay_data_frame::Kind::Ready(RelayDataReady {
-                    reservation_id: reservation_id.clone(),
-                })),
-            })
-            .expect("encode Ready frame")
-            .into(),
+        let ready = Message::Ping(
+            format!("ssh-mobile-relay-paired-v1:{reservation_id}")
+                .into_bytes()
+                .into(),
         );
         for target in ready_targets {
             let _ = target.send(ready.clone()).await;

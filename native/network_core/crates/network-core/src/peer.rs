@@ -29,9 +29,6 @@ use crate::connection::{
     prepare_generic_route, ConnectionProfile, GenericConnection, GenericFrameKind,
     GenericInboundFrame, GenericRouteHandle, GenericRouteRuntime, RouteTopology, RouteTransport,
 };
-use crate::crypto_handshake::path_handshake::{
-    E2eePolicy, HandshakeRole, PathHandshake, PathHandshakeConfig, PathKind,
-};
 use crate::crypto_handshake::SessionCryptoMaterial;
 use crate::events::{
     emit_peer_state, emit_peer_state_profile, emit_route_changed, protocol_error,
@@ -330,7 +327,7 @@ pub(crate) async fn upsert_peer(
     })?;
     state
         .peer_supervisors
-        .get_or_create(&command.peer_id)
+        .get_or_create_with_configured(&command.peer_id, true)
         .map_err(|error| protocol_error(NetworkErrorCode::InvalidArgument, error.to_string()))?;
     // transport-network v2：upsert 只保存配置 endpoint 与可信密钥；对端候选不再存
     // 全局 path_manager（§12/§29）。每次 connect 前由 ConnectivityAttemptCoordinator 经 Resolve
@@ -1483,7 +1480,6 @@ pub(crate) async fn establish_relay_crypto(
     expected_peer_public_key: [u8; 32],
 ) -> Result<(SessionCryptoMaterial, ConnectionAdmissionLease), ProtocolError> {
     let session_token = session_id.wire_key();
-    let path_identity = Arc::clone(&identity);
     let (mut handshake, hello) =
         crate::crypto_handshake::RelayInitiatorHandshake::start(identity, &session_token).map_err(
             |_| {
@@ -1625,102 +1621,18 @@ pub(crate) async fn establish_relay_crypto(
                 peer_id,
             )
         })?;
-        let config = PathHandshakeConfig::new(
-            path_identity.device_id.clone(),
-            peer_id,
-            expected_peer_public_key,
-            E2eePolicy::Required,
-            PathKind::Relay,
-            session_token.as_bytes().to_vec(),
-            b"relay-data/v2".to_vec(),
-        )
-        .map_err(|_| {
-            protocol_error_with_peer(
-                NetworkErrorCode::AuthenticationFailed,
-                "Relay PathHandshake configuration is invalid",
-                "connect",
-                peer_id,
-            )
-        })?;
-        let mut path = PathHandshake::new(HandshakeRole::Initiator, path_identity, config)
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::AuthenticationFailed,
-                    "Relay PathHandshake could not start",
-                    "connect",
-                    peer_id,
-                )
-            })?;
-        // RelayDataClient::connect_reservation() returns only after the
-        // existing RelayDataReady pairing frame. Keep that lifecycle gate
-        // explicit in the PathHandshake state machine.
-        path.mark_pair_ready().map_err(|_| {
-            protocol_error_with_peer(
-                NetworkErrorCode::RelayError,
-                "Relay PathHandshake started before PairReady",
-                "connect",
-                peer_id,
-            )
-        })?;
-        let path_hello = path.start().map_err(|_| {
-            protocol_error_with_peer(
-                NetworkErrorCode::AuthenticationFailed,
-                "Relay PathHandshake hello could not be encoded",
-                "connect",
-                peer_id,
-            )
-        })?;
-        crate::relay::send_relay_path_handshake(&data, &session_token, &path_hello)
-            .await
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay PathHandshake hello could not be sent",
-                    "connect",
-                    peer_id,
-                )
-            })?;
-        let path_response = receive_relay_path_frame(&mut response_rx, peer_id).await?;
-        let path_final = path
-            .accept(&path_response)
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::AuthenticationFailed,
-                    "Relay PathHandshake response was rejected",
-                    "connect",
-                    peer_id,
-                )
-            })?
-            .ok_or_else(|| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::AuthenticationFailed,
-                    "Relay PathHandshake response produced no final frame",
-                    "connect",
-                    peer_id,
-                )
-            })?;
-        crate::relay::send_relay_path_handshake(&data, &session_token, &path_final)
-            .await
-            .map_err(|_| {
-                protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay PathHandshake final could not be sent",
-                    "connect",
-                    peer_id,
-                )
-            })?;
-        if !path.is_ready() {
+        if material.local_session_binding != admission.session_id.wire_key() {
             return Err(protocol_error_with_peer(
                 NetworkErrorCode::AuthenticationFailed,
-                "Relay PathHandshake did not reach Ready",
+                "Relay application E2EE local Session binding is invalid",
                 "connect",
                 peer_id,
             ));
         }
-        // The coordinator publishes relay_path_ready only after it attaches
-        // the admitted route to Session. Keeping this flag false here closes
-        // the small interval in which inbound business frames could outrun
-        // route attachment even though PathHandshake itself was Ready.
+        // RelayDataClient::connect_reservation() has already consumed the
+        // reservation's PairReady lifecycle frame. PathHandshakeV2 metadata
+        // and proof were authenticated inside this Noise exchange; there is
+        // no independent wire handshake or extra business gate here.
         Ok((material, admission))
     }
     .await;
@@ -1744,32 +1656,6 @@ async fn receive_relay_crypto_step(
         _ => Err(protocol_error_with_peer(
             NetworkErrorCode::Timeout,
             "Relay application E2EE handshake timed out",
-            "connect",
-            peer_id,
-        )),
-    }
-}
-
-async fn receive_relay_path_frame(
-    receiver: &mut mpsc::Receiver<(u8, Vec<u8>)>,
-    peer_id: &str,
-) -> Result<Vec<u8>, ProtocolError> {
-    match timeout(PEER_CONNECT_TIMEOUT, receiver.recv()).await {
-        Ok(Some((step, payload)))
-            if step == crate::crypto_handshake::RELAY_PATH_HANDSHAKE
-                && crate::crypto_handshake::path_handshake::is_encoded_frame(&payload) =>
-        {
-            Ok(payload)
-        }
-        Ok(Some(_)) => Err(protocol_error_with_peer(
-            NetworkErrorCode::AuthenticationFailed,
-            "Relay PathHandshake response is out of order",
-            "connect",
-            peer_id,
-        )),
-        _ => Err(protocol_error_with_peer(
-            NetworkErrorCode::Timeout,
-            "Relay PathHandshake response timed out",
             "connect",
             peer_id,
         )),

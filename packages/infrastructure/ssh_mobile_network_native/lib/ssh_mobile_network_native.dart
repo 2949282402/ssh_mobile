@@ -126,6 +126,81 @@ class NativeNetworkRuntime {
     return _poller.sendCommand(command);
   }
 
+  /// Queues an explicit V2 peer configuration without exposing native state.
+  NativeOperationStatus upsertPeerV2(NativePeerConfig config) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.upsertPeerV2Command(
+          commandId: _nextCommandId('peer-upsert-v2'),
+          config: config,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
+  }
+
+  NativeOperationStatus removePeerV2({required String peerId}) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.removePeerCommand(
+          commandId: _nextCommandId('peer-remove-v2'),
+          peerId: peerId,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
+  }
+
+  NativeOperationStatus sendMessageV2({
+    required String peerId,
+    required String messageId,
+    required String channelId,
+    required Uint8List payload,
+    int deliveryPolicy = 2,
+    NativeE2eePolicy e2eePolicy = NativeE2eePolicy.required,
+  }) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.sendMessageV2Command(
+          commandId: _nextCommandId('message-v2'),
+          peerId: peerId,
+          messageId: messageId,
+          channelId: channelId,
+          payload: payload,
+          deliveryPolicy: deliveryPolicy,
+          e2eePolicy: e2eePolicy,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
+  }
+
+  NativeOperationStatus transferV2({
+    required String peerId,
+    required String transferId,
+    required String filePath,
+    int confirmedOffset = 0,
+    bool resume = false,
+  }) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.transferCommand(
+          commandId: _nextCommandId('transfer-v2'),
+          peerId: peerId,
+          transferId: transferId,
+          filePath: filePath,
+          confirmedOffset: confirmedOffset,
+          resume: resume,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
+  }
+
   /// Starts a Session-owned WebRTC Realtime route.
   NativeOperationStatus startRealtimeSession({
     required String realtimeId,

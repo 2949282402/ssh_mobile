@@ -64,6 +64,28 @@ impl MessageId {
     }
 }
 
+/// Frozen Delivery identity. A transport/session or path is deliberately not
+/// part of this key; each send attempt may acquire and release its own path
+/// lease while the ACK wait remains peer-scoped.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct DeliveryIdentity {
+    pub peer_id: String,
+    pub message_id: MessageId,
+}
+
+impl DeliveryIdentity {
+    pub fn new(peer_id: impl Into<String>, message_id: MessageId) -> Result<Self, DeliveryError> {
+        let peer_id = peer_id.into();
+        if !is_valid_peer_id(&peer_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        Ok(Self {
+            peer_id,
+            message_id,
+        })
+    }
+}
+
 /// 业务对消息的可靠性要求。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeliveryPolicy {
@@ -2981,6 +3003,18 @@ mod tests {
         assert_eq!(
             manager.terminal_outcome("peer-b", message.message_id).await,
             None
+        );
+    }
+
+    #[test]
+    fn delivery_identity_requires_peer_scope_and_excludes_session() {
+        let message_id = MessageId([7; MESSAGE_ID_BYTES]);
+        let identity = DeliveryIdentity::new("peer-a", message_id).expect("identity");
+        assert_eq!(identity.peer_id, "peer-a");
+        assert_eq!(identity.message_id, message_id);
+        assert_eq!(
+            DeliveryIdentity::new("", message_id),
+            Err(DeliveryError::InvalidScope)
         );
     }
 

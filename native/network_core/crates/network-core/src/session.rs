@@ -50,7 +50,6 @@ pub(crate) enum ConnectDecision {
     Started(SessionId),
     AlreadyConnected(SessionId),
     InProgress(SessionId),
-    NeedsReplacement(SessionId),
 }
 
 /// 握手材料安装的决策。Session 与 connection 一一对应（§18），因此唯一允许的
@@ -91,7 +90,6 @@ impl Deref for ConnectionAdmissionOutcome {
 pub(crate) enum ConnectionAdmissionError {
     StaleSession,
     InvalidRemoteBinding,
-    UnsupportedCapability,
 }
 
 /// Session 聚合根只放置 Connection 生命周期和当前 Route；Delivery/Crypto/
@@ -99,7 +97,6 @@ pub(crate) enum ConnectionAdmissionError {
 struct Session {
     id: SessionId,
     remote_session_binding: Option<String>,
-    required_capabilities: u8,
     state: SessionState,
     route: Option<ActiveRoute>,
 }
@@ -356,14 +353,14 @@ impl RouteView {
 /// App Scope 内唯一的 Session owner。
 pub(crate) struct ConnectionSessionStore {
     sessions: RwLock<HashMap<String, Session>>,
-    capability_notify: Notify,
+    admission_notify: Notify,
 }
 
 impl ConnectionSessionStore {
     pub(crate) fn new() -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
-            capability_notify: Notify::new(),
+            admission_notify: Notify::new(),
         }
     }
 
@@ -381,29 +378,18 @@ impl ConnectionSessionStore {
     pub(crate) async fn begin_connect_with_capability(
         &self,
         peer_id: &str,
-        required_capabilities: u8,
+        _required_capabilities: u8,
     ) -> ConnectDecision {
         let mut sessions = self.sessions.write().await;
         let decision = if let Some(session) = sessions.get_mut(peer_id) {
             match session.state {
-                SessionState::Connected => {
-                    let compatible = session.route.as_ref().is_some_and(|route| {
-                        profile_capability_mask(route.profile()) & required_capabilities
-                            == required_capabilities
-                    });
-                    if compatible {
-                        ConnectDecision::AlreadyConnected(session.id)
-                    } else {
-                        ConnectDecision::NeedsReplacement(session.id)
-                    }
-                }
-                SessionState::Connecting => {
-                    session.required_capabilities |= required_capabilities;
-                    ConnectDecision::InProgress(session.id)
-                }
+                // A healthy Session is transport truth. A stronger business
+                // request is selected by its own path/attempt and never
+                // replaces the already-connected Session.
+                SessionState::Connected => ConnectDecision::AlreadyConnected(session.id),
+                SessionState::Connecting => ConnectDecision::InProgress(session.id),
                 SessionState::Closed | SessionState::Failed | SessionState::Idle => {
                     let mut replacement = Self::new_session();
-                    replacement.required_capabilities = required_capabilities;
                     replacement.state = SessionState::Connecting;
                     let id = replacement.id;
                     *session = replacement;
@@ -412,57 +398,18 @@ impl ConnectionSessionStore {
             }
         } else {
             let mut session = Self::new_session();
-            session.required_capabilities = required_capabilities;
             session.state = SessionState::Connecting;
             let id = session.id;
             sessions.insert(peer_id.to_string(), session);
             ConnectDecision::Started(id)
         };
         drop(sessions);
-        self.capability_notify.notify_waiters();
+        self.admission_notify.notify_waiters();
         decision
     }
 
-    /// Wait until the current in-flight Session either reaches a route that
-    /// covers `required_capabilities` or reaches a terminal/replaced state.
-    /// The notification is registered before reading state, so a transition
-    /// cannot be missed between the check and the await.
-    pub(crate) async fn wait_for_capability(
-        &self,
-        peer_id: &str,
-        expected_session_id: SessionId,
-        required_capabilities: u8,
-    ) -> Result<(), ()> {
-        loop {
-            let notified = self.capability_notify.notified();
-            let ready = {
-                let sessions = self.sessions.read().await;
-                let Some(session) = sessions.get(peer_id) else {
-                    return Err(());
-                };
-                if session.id != expected_session_id {
-                    return Err(());
-                }
-                match session.state {
-                    SessionState::Connected => session.route.as_ref().is_some_and(|route| {
-                        profile_capability_mask(route.profile()) & required_capabilities
-                            == required_capabilities
-                    }),
-                    SessionState::Connecting => false,
-                    SessionState::Idle | SessionState::Closed | SessionState::Failed => {
-                        return Err(())
-                    }
-                }
-            };
-            if ready {
-                return Ok(());
-            }
-            notified.await;
-        }
-    }
-
-    pub(crate) async fn wait_for_admission_change(&self) {
-        self.capability_notify.notified().await;
+    pub(crate) fn wait_for_admission_change(&self) -> impl std::future::Future<Output = ()> + '_ {
+        self.admission_notify.notified()
     }
     pub(crate) async fn admission_can_retry(
         &self,
@@ -491,9 +438,36 @@ impl ConnectionSessionStore {
             .get(peer_id)
             .is_some_and(|session| {
                 session.id == expected_session_id
-                    && session.state == SessionState::Connecting
-                    && profile_capability_mask(profile) & session.required_capabilities
-                        == session.required_capabilities
+                    && matches!(
+                        session.state,
+                        SessionState::Connecting | SessionState::Connected
+                    )
+                    && profile_capability_mask(profile) != 0
+            })
+    }
+
+    /// Checks one candidate against the capability requested by the current
+    /// path/attempt. The request is deliberately passed by the caller and is
+    /// never stored in `Session` or merged with another request.
+    pub(crate) async fn candidate_supports_capability(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        profile: ConnectionProfile,
+        required_capabilities: u8,
+    ) -> bool {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|session| {
+                session.id == expected_session_id
+                    && matches!(
+                        session.state,
+                        SessionState::Connecting | SessionState::Connected
+                    )
+                    && profile_capability_mask(profile) & required_capabilities
+                        == required_capabilities
             })
     }
 
@@ -522,27 +496,9 @@ impl ConnectionSessionStore {
             true
         };
         if released {
-            self.capability_notify.notify_waiters();
+            self.admission_notify.notify_waiters();
         }
         released
-    }
-
-    pub(crate) async fn close_if_current(
-        &self,
-        peer_id: &str,
-        expected_session_id: SessionId,
-    ) -> Result<Option<ActiveRoute>, ()> {
-        let route = {
-            let mut sessions = self.sessions.write().await;
-            let session = sessions.get_mut(peer_id).ok_or(())?;
-            if session.id != expected_session_id {
-                return Err(());
-            }
-            session.state = SessionState::Closed;
-            session.route.take()
-        };
-        self.capability_notify.notify_waiters();
-        Ok(route)
     }
 
     /// Admit a completed application handshake into a 1:1 ConnectionSession
@@ -592,7 +548,7 @@ impl ConnectionSessionStore {
                 replaced_session_id: None,
             };
             sessions.insert(peer_id.to_string(), session);
-            self.capability_notify.notify_waiters();
+            self.admission_notify.notify_waiters();
             return Ok(ConnectionAdmissionOutcome {
                 admission,
                 detached_route: None,
@@ -616,12 +572,10 @@ impl ConnectionSessionStore {
         {
             return Err(ConnectionAdmissionError::StaleSession);
         }
-        if current.state == SessionState::Connecting
-            && candidate_capabilities & current.required_capabilities
-                != current.required_capabilities
-        {
-            return Err(ConnectionAdmissionError::UnsupportedCapability);
-        }
+        // `candidate_capabilities` is retained in this compatibility API so
+        // existing callers do not need a flag-day change. It is an
+        // attempt-local observation; no capability is stored on Session.
+        let _ = candidate_capabilities;
 
         // §18/§40 单赢者语义（写锁内的权威 guard）：期望的 Session 仍在 Connecting 时，
         // 同一次 attempt 的 admit 走 Initialize；一旦 winner 已把 route 挂到它上面
@@ -654,7 +608,7 @@ impl ConnectionSessionStore {
                 && current.remote_session_binding.is_none();
         if in_flight_initialize {
             current.remote_session_binding = Some(new_remote_binding.to_string());
-            self.capability_notify.notify_waiters();
+            self.admission_notify.notify_waiters();
             return Ok(ConnectionAdmissionOutcome {
                 admission: ConnectionAdmission {
                     session_id: current.id,
@@ -676,7 +630,7 @@ impl ConnectionSessionStore {
             replaced_session_id: Some(replaced_session_id),
         };
         *current = replacement;
-        self.capability_notify.notify_waiters();
+        self.admission_notify.notify_waiters();
         Ok(ConnectionAdmissionOutcome {
             admission,
             detached_route: old_route,
@@ -711,7 +665,7 @@ impl ConnectionSessionStore {
             return Err(ConnectionAdmissionError::StaleSession);
         }
         session.remote_session_binding = Some(remote_session_binding.to_string());
-        self.capability_notify.notify_waiters();
+        self.admission_notify.notify_waiters();
         Ok(())
     }
 
@@ -728,7 +682,7 @@ impl ConnectionSessionStore {
         route: RouteType,
     ) -> Result<Option<ActiveRoute>, ()> {
         let mut sessions = self.sessions.write().await;
-        let profile = ConnectionProfile::for_route(route).ok_or(())?;
+        let _profile = ConnectionProfile::for_route(route).ok_or(())?;
         let session = match sessions.get_mut(peer_id) {
             Some(session) => session,
             None if expected_session_id.is_none() => sessions
@@ -745,13 +699,6 @@ impl ConnectionSessionStore {
         {
             drop(sessions);
             connection.close(VarInt::from_u32(0), b"session replaced");
-            return Err(());
-        }
-        if profile_capability_mask(profile) & session.required_capabilities
-            != session.required_capabilities
-        {
-            drop(sessions);
-            connection.close(VarInt::from_u32(0), b"candidate lacks requested capability");
             return Err(());
         }
         if session.state == SessionState::Connected && session.route.is_some() {
@@ -795,14 +742,9 @@ impl ConnectionSessionStore {
         {
             return Err(());
         }
-        if profile_capability_mask(profile) & session.required_capabilities
-            != session.required_capabilities
-        {
-            return Err(());
-        }
         let owner = scope.commit_and_take_owner()?;
         session.state = SessionState::Connected;
-        self.capability_notify.notify_waiters();
+        self.admission_notify.notify_waiters();
         Ok(session.route.replace(ActiveRoute::generic(owner)))
     }
 
@@ -818,14 +760,9 @@ impl ConnectionSessionStore {
         if session.id != expected_session_id || session.state == SessionState::Closed {
             return Err(());
         }
-        if profile_capability_mask(handle.profile()) & session.required_capabilities
-            != session.required_capabilities
-        {
-            return Err(());
-        }
         session.state = SessionState::Connected;
         session.route = Some(ActiveRoute::generic_test(handle));
-        self.capability_notify.notify_waiters();
+        self.admission_notify.notify_waiters();
         Ok(())
     }
 
@@ -836,10 +773,9 @@ impl ConnectionSessionStore {
         route: RouteType,
         relay: Option<Arc<RelayDataClient>>,
     ) -> bool {
-        let profile = match ConnectionProfile::for_route(route) {
-            Some(profile) => profile,
-            None => return false,
-        };
+        if ConnectionProfile::for_route(route).is_none() {
+            return false;
+        }
         let mut sessions = self.sessions.write().await;
         let Some(session) = sessions.get_mut(peer_id) else {
             return false;
@@ -847,17 +783,12 @@ impl ConnectionSessionStore {
         if session.state == SessionState::Closed || session.id != expected_session_id {
             return false;
         }
-        if profile_capability_mask(profile) & session.required_capabilities
-            != session.required_capabilities
-        {
-            return false;
-        }
         session.state = SessionState::Connected;
         session.route = match route {
             RouteType::Relay => Some(ActiveRoute::relay(relay)),
             _ => None,
         };
-        self.capability_notify.notify_waiters();
+        self.admission_notify.notify_waiters();
         true
     }
 
@@ -1082,7 +1013,7 @@ impl ConnectionSessionStore {
             .take()
             .expect("current QUIC session must own a route");
         sessions.remove(peer_id);
-        self.capability_notify.notify_waiters();
+        self.admission_notify.notify_waiters();
         Some((session_id, route))
     }
 
@@ -1119,7 +1050,7 @@ impl ConnectionSessionStore {
             .take()
             .expect("current generic session must own a route");
         sessions.remove(peer_id);
-        self.capability_notify.notify_waiters();
+        self.admission_notify.notify_waiters();
         Some((session_id, route))
     }
 
@@ -1131,7 +1062,7 @@ impl ConnectionSessionStore {
                 session.state = SessionState::Failed;
             }
         }
-        self.capability_notify.notify_waiters();
+        self.admission_notify.notify_waiters();
     }
 
     /// 显式断开结束 Session，并把绑定的 route owner 返回给 Runtime 做
@@ -1143,7 +1074,7 @@ impl ConnectionSessionStore {
             session.state = SessionState::Closed;
             session.route.take()
         };
-        self.capability_notify.notify_waiters();
+        self.admission_notify.notify_waiters();
         route
     }
 
@@ -1169,7 +1100,6 @@ impl ConnectionSessionStore {
         Session {
             id: SessionId::random(),
             remote_session_binding: None,
-            required_capabilities: 0,
             state: SessionState::Idle,
             route: None,
         }
@@ -1256,7 +1186,7 @@ mod tests {
         ));
     }
     #[tokio::test]
-    async fn concurrent_connect_merges_required_capabilities_and_rejects_narrow_candidates() {
+    async fn concurrent_connect_keeps_capabilities_attempt_local() {
         let manager = ConnectionSessionStore::new();
         let peer_id = "peer-capability-union";
         let first = match manager
@@ -1273,21 +1203,29 @@ mod tests {
             ConnectDecision::InProgress(session_id) if session_id == first
         ));
 
-        let quic_profile =
-            ConnectionProfile::for_route(RouteType::QuicDirect).expect("QUIC route profile");
-        assert!(
-            manager
-                .candidate_supports_required_capabilities(peer_id, first, quic_profile)
-                .await
-        );
         let websocket_profile = ConnectionProfile::new(Route::direct(RouteTransport::WebSocket));
         assert!(
             !manager
-                .candidate_supports_required_capabilities(peer_id, first, websocket_profile)
+                .candidate_supports_capability(
+                    peer_id,
+                    first,
+                    websocket_profile,
+                    CAPABILITY_RELIABLE_STREAM,
+                )
+                .await
+        );
+        assert!(
+            manager
+                .candidate_supports_capability(
+                    peer_id,
+                    first,
+                    websocket_profile,
+                    CAPABILITY_RELIABLE_MESSAGE,
+                )
                 .await
         );
 
-        let narrow = manager
+        let admitted = manager
             .admit_authenticated_session_with_capability(
                 peer_id,
                 Some(first),
@@ -1295,26 +1233,14 @@ mod tests {
                 CAPABILITY_RELIABLE_MESSAGE,
             )
             .await;
-        assert!(matches!(
-            narrow,
-            Err(ConnectionAdmissionError::UnsupportedCapability)
-        ));
-        let admitted = manager
-            .admit_authenticated_session_with_capability(
-                peer_id,
-                Some(first),
-                "remote-capability",
-                DEFAULT_CONNECTION_CAPABILITY,
-            )
-            .await
-            .expect("wide candidate should satisfy the merged demand");
+        let admitted = admitted.expect("candidate capability is checked by this attempt");
         assert_eq!(admitted.session_id, first);
         assert_eq!(admitted.decision, SessionCryptoDecision::Initialize);
         manager.close(peer_id).await;
     }
 
     #[tokio::test]
-    async fn incompatible_connected_route_requests_a_fresh_session() {
+    async fn stronger_request_does_not_replace_healthy_connected_session() {
         let manager = ConnectionSessionStore::new();
         let peer_id = "peer-capability-replace";
         let first = match manager
@@ -1337,7 +1263,7 @@ mod tests {
                     crate::connect::CAPABILITY_UNRELIABLE_DATAGRAM,
                 )
                 .await,
-            ConnectDecision::NeedsReplacement(session_id) if session_id == first
+            ConnectDecision::AlreadyConnected(session_id) if session_id == first
         ));
         let route = manager.close(peer_id).await.expect("close connected route");
         route.close().await;

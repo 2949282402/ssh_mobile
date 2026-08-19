@@ -1,6 +1,6 @@
 //! Relay v2 数据面客户端（`/v2/relay/{reservation_id}`）。
 //!
-//! reservation 作用域：先完成 RelayDataConnect/RelayDataReady 配对握手，再转发
+//! reservation 作用域：先完成 RelayDataConnect/PairReady Ping 配对握手，再转发
 //! 不透明的 EncryptedPayload、流控 Ack 与 Close。拥有自己的 socket、outbound 队列
 //! 与速率预算，绝不与
 //! [`super::RelayControlClient`] 共享任何资源。
@@ -29,6 +29,7 @@ const MAX_DATA_PAYLOAD_BYTES: usize = 512 * 1024;
 const DEFAULT_RATE_BYTES_PER_SEC: f64 = 512.0 * 1024.0;
 /// 默认突发容量：512 KiB。
 const DEFAULT_BURST_BYTES: f64 = 512.0 * 1024.0;
+const PAIR_READY_PING_PREFIX: &str = "ssh-mobile-relay-paired-v1:";
 
 /// Relay v2 数据面事件。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,7 +165,7 @@ impl RelayDataClient {
         })
     }
 
-    /// 连接数据面端点，发送 RelayDataConnect，并等待 RelayDataReady。
+    /// 连接数据面端点，发送 RelayDataConnect，并等待唯一的 PairReady WS Ping。
     ///
     /// WebSocket 建立或 Connect 写入成功都不代表 reservation 已经可用；只有
     /// Relay 确认 initiator/responder 两个角色都已加入后，调用方才能立即发送
@@ -204,7 +205,7 @@ impl RelayDataClient {
         .map_err(|_| RelayError::Socket("Relay data connect timed out".into()))?
         .map_err(|error| RelayError::Socket(error.to_string()))?;
 
-        // Connect 只完成本端认证。RelayDataReady 才表示另一端也已加入；在此之前
+        // Connect 只完成本端认证。PairReady Ping 才表示另一端也已加入；在此之前
         // 不启动业务 writer/reader，也不暴露 is_connected=true。
         let reservation_id = self.reservation_id.clone();
         let ready = tokio::time::timeout(SOCKET_OPERATION_TIMEOUT, async {
@@ -227,15 +228,6 @@ impl RelayDataClient {
                                 "Relay v2 data frame is missing its message kind".into(),
                             )
                         })? {
-                            relay_data_frame::Kind::Ready(ready) => {
-                                if ready.reservation_id != reservation_id {
-                                    return Err(RelayError::Protocol(
-                                        "RelayDataReady reservation does not match the client"
-                                            .into(),
-                                    ));
-                                }
-                                break Ok(());
-                            }
                             relay_data_frame::Kind::Close(close) => {
                                 return Err(RelayError::Socket(format!(
                                     "Relay closed data pairing: {}",
@@ -249,15 +241,26 @@ impl RelayDataClient {
                             }
                             relay_data_frame::Kind::Payload(_) | relay_data_frame::Kind::Ack(_) => {
                                 return Err(RelayError::Protocol(
-                                    "Relay sent business data before RelayDataReady".into(),
+                                    "Relay sent business data before PairReady".into(),
                                 ))
                             }
                         }
                     }
-                    Message::Ping(_) | Message::Pong(_) => {}
+                    Message::Ping(payload) => {
+                        let is_pair_ready = payload.as_ref()
+                            == format!("{PAIR_READY_PING_PREFIX}{reservation_id}").as_bytes();
+                        writer
+                            .send(Message::Pong(payload))
+                            .await
+                            .map_err(|error| RelayError::Socket(error.to_string()))?;
+                        if is_pair_ready {
+                            break Ok(());
+                        }
+                    }
+                    Message::Pong(_) => {}
                     Message::Close(_) => {
                         return Err(RelayError::Socket(
-                            "Relay closed data pairing before Ready".into(),
+                            "Relay closed data pairing before PairReady Ping".into(),
                         ))
                     }
                     Message::Text(_) | Message::Frame(_) => {
@@ -278,7 +281,7 @@ impl RelayDataClient {
             Err(_) => {
                 let _ = writer.send(Message::Close(None)).await;
                 return Err(RelayError::Socket(
-                    "Relay data pairing timed out waiting for Ready".into(),
+                    "Relay data pairing timed out waiting for PairReady Ping".into(),
                 ));
             }
         }
@@ -394,8 +397,8 @@ impl RelayDataClient {
             .ok_or_else(|| RelayError::Protocol("Relay data events were already consumed".into()))
     }
 
-    /// 接收下一条数据面事件（Payload / Ack / Close / Disconnected）。Ready 只在
-    /// `connect_reservation` 建立后台 worker 前消费，不会作为业务事件暴露。
+    /// 接收下一条数据面事件（Payload / Ack / Close / Disconnected）。PairReady Ping
+    /// 只在 `connect_reservation` 建立后台 worker 前消费，不会作为业务事件暴露。
     pub async fn recv(&mut self) -> Option<DataEvent> {
         self.inbound.as_mut()?.recv().await
     }
@@ -603,11 +606,6 @@ fn data_event_from_frame(frame: RelayDataFrame) -> Result<DataEvent, RelayError>
                 "Relay server must not send RelayDataConnect frames".into(),
             ))
         }
-        relay_data_frame::Kind::Ready(_) => {
-            return Err(RelayError::Protocol(
-                "RelayDataReady is only valid during data connection setup".into(),
-            ))
-        }
         relay_data_frame::Kind::Payload(message) => DataEvent::Payload {
             sequence: message.sequence,
             encrypted_payload: message.encrypted_payload,
@@ -697,17 +695,18 @@ mod tests {
     }
 
     #[test]
-    fn data_ready_frame_is_a_setup_handshake_not_a_business_event() {
+    fn pair_ready_is_a_websocket_control_signal_not_a_business_frame() {
         let frame = RelayDataFrame {
             version: RELAY_V2_VERSION,
-            kind: Some(relay_data_frame::Kind::Ready(RelayDataReady {
-                reservation_id: "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            kind: Some(relay_data_frame::Kind::Payload(RelayDataPayload {
+                sequence: 1,
+                encrypted_payload: b"payload".to_vec(),
             })),
         };
         let encoded = encode_data_frame(&frame).expect("encode");
-        let decoded = decode_data_frame(&encoded).expect("decode");
-        assert_eq!(decoded, frame);
-        assert!(data_event_from_frame(decoded).is_err());
+        assert!(!encoded
+            .windows(b"ssh-mobile-relay-paired-v1:".len())
+            .any(|window| window == b"ssh-mobile-relay-paired-v1:"));
     }
 
     #[test]

@@ -313,6 +313,11 @@ func (h *hub) handleResolvePeerRequestV2(sender *peer, req *v2.ResolvePeerReques
 	switch result.status {
 	case v2.ResolveStatus_RESOLVE_STATUS_READY:
 		resp.Discovery = discoveryToV2(result.discovery)
+		// ConnectivityOffer deliberately has no target field on the frozen
+		// wire.  Record the authoritative target for the next offer on this
+		// control connection; the Rust client holds its narrow gate only through
+		// Resolve + Offer, never through the answer/probe window.
+		h.rememberCoordinationTarget(sender, req.TargetDeviceId)
 	case v2.ResolveStatus_RESOLVE_STATUS_NOT_READY:
 		resp.RetryAfterMs = v2.RESOLVE_RETRY_HINT_NOT_READY_MS
 	case v2.ResolveStatus_RESOLVE_STATUS_UNKNOWN:
@@ -324,12 +329,16 @@ func (h *hub) handleResolvePeerRequestV2(sender *peer, req *v2.ResolvePeerReques
 	})
 }
 
-// handleConnectivityOfferV2 按 offer 自带的显式 target_device_id 转发
-// （设计 §14：A ConnectivityOffer(target=B) → B）。转发前服务端用 A 当前已发布的
-// discovery 覆盖 initiator_snapshot，并登记 attempt_id → initiator，供对端
-// ConnectivityAnswer / ProtocolError 回路由。
+// handleConnectivityOfferV2 consumes the one-shot target recorded by the
+// preceding authoritative Resolve on this control connection.  The target is
+// intentionally absent from ConnectivityOffer's frozen wire shape.
 func (h *hub) handleConnectivityOfferV2(sender *peer, offer *v2.ConnectivityOffer) {
-	targetID := offer.TargetDeviceId
+	targetID, coordinated := h.consumeCoordinationTarget(sender)
+	if !coordinated {
+		h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, v2.ErrorCode_ERROR_CODE_PROTOCOL,
+			"connectivity offer requires a preceding resolve")
+		return
+	}
 	if targetID == "" || targetID == sender.deviceID {
 		h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, v2.ErrorCode_ERROR_CODE_PROTOCOL,
 			"connectivity offer requires a different target device")
@@ -436,8 +445,7 @@ func (h *hub) handleConnectivityAnswerV2(sender *peer, ans *v2.ConnectivityAnswe
 }
 
 // handleRealtimeSignalV2 转发 WebRTC 风格的信令（不透明 payload，Relay 不解析）到
-// target_device_id 的 v2 控制面连接。sender_device_id 始终由认证连接覆盖，接收端
-// 只能据此识别远端 peer，绝不能把 target_device_id 当作发送方。
+// target_device_id 的 v2 控制面连接。发送方身份由接收方的认证连接上下文确定。
 func (h *hub) handleRealtimeSignalV2(sender *peer, sig *v2.RealtimeSignal) {
 	if sig.TargetDeviceId == "" || sig.TargetDeviceId == sender.deviceID {
 		h.sendV2ProtocolError(sender, sig.RequestId, v2.ErrorCode_ERROR_CODE_PROTOCOL, "invalid realtime target")
@@ -450,8 +458,6 @@ func (h *hub) handleRealtimeSignalV2(sender *peer, sig *v2.RealtimeSignal) {
 		h.sendV2ProtocolError(sender, sig.RequestId, v2.ErrorCode_ERROR_CODE_PEER_OFFLINE, "target peer is not connected on the v2 control plane")
 		return
 	}
-	// 客户端提供的 sender_device_id 仅是提示字段；认证连接身份是唯一可信来源。
-	sig.SenderDeviceId = sender.deviceID
 	h.sendV2Frame(target, &v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
 		Kind:    &v2.RelayFrame_RealtimeSignal{RealtimeSignal: sig},

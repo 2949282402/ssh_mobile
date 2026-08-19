@@ -249,6 +249,37 @@ compatibility fallback, a `/v1/control` route, or a Dart-side Relay data path.
 - Sending all bytes is not success. The sender reports success only after the
   receiver validates the transfer and returns `complete_ack`.
 
+## Network Protocol v2 Relay contract
+
+The v2 control/data wire contract is frozen at baseline commit
+`6ec194bb3a66a748215d3abc11d6da84bd329619`; its schema and golden fixtures are
+owned by [`protocol/RELAY_V2_CONTRACT.md`](../protocol/RELAY_V2_CONTRACT.md).
+The v2 boundary is distinct from the Bootstrap/WebSocket v1 route:
+
+- `ConnectivityOffer` has no `target_device_id`. It is accepted only after a
+  successful `ResolvePeerRequest`/READY response on the same long-lived control
+  connection (Resolve → Offer gate). The gate is not held across the answer or
+  direct-probe work.
+- `RealtimeSignal` retains `target_device_id` and has no
+  `sender_device_id`. The receiving runtime obtains the remote identity from
+  its established realtime session binding and fails closed for an unknown
+  binding.
+- `RelayDataFrame` contains `RelayDataConnect`, `RelayDataPayload`,
+  `RelayDataAck`, and `RelayDataClose`. There is no `RelayDataReady` protobuf
+  message and no `ready` oneof field.
+- After both role-specific Connect frames are admitted, PairReady is exactly
+  one WebSocket Ping with payload
+  `ssh-mobile-relay-paired-v1:<reservation_id>`. It is not a protobuf frame;
+  the server's 30 s Ping / 15 s Pong liveness uses the single outbound writer.
+- Reservation TTL controls pending admission only. An active data pair remains
+  alive across reservation expiry and natural credential expiry; explicit
+  device revocation closes pending endpoints, active endpoints, and the
+  counterpart.
+
+Run `bash scripts/relay_v2_contract.sh` to check the 22 frozen fixtures without
+mutating the worktree. If `protoc` is unavailable, the script prints `NOT RUN` for descriptor
+equality; that local result does not claim the complete descriptor gate passed.
+
 ## Validation
 
 ```sh
