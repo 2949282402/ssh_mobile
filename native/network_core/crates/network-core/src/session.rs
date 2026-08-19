@@ -431,6 +431,20 @@ impl SessionManager {
             return Err(SessionAdmissionError::StaleSession);
         }
 
+        // A remote binding is the stable identity of the peer's current
+        // ConnectionSession. Once an active Session has claimed it, a second
+        // authenticated transport carrying the same binding is a duplicate
+        // candidate, not a reconnect or replacement. Keep this decision under
+        // the Session write lock so Connecting races are covered as well as
+        // already Connected late candidates.
+        if matches!(
+            current.state,
+            SessionState::Connecting | SessionState::Connected
+        ) && current.remote_session_binding.as_deref() == Some(new_remote_binding)
+        {
+            return Err(SessionAdmissionError::StaleSession);
+        }
+
         // §18/§40 单赢者语义（写锁内的权威 guard）：期望的 Session 仍在 Connecting 时，
         // 同一次 attempt 的 admit 走 Initialize；一旦 winner 已把 route 挂到它上面
         // （Connected），或它已被显式关闭/失败，同一次 attempt 的迟到 admit 是 loser，
@@ -507,6 +521,13 @@ impl SessionManager {
             return Err(SessionAdmissionError::StaleSession);
         };
         if session.id != expected_session_id || session.state == SessionState::Closed {
+            return Err(SessionAdmissionError::StaleSession);
+        }
+        if session
+            .remote_session_binding
+            .as_deref()
+            .is_some_and(|existing| existing != remote_session_binding)
+        {
             return Err(SessionAdmissionError::StaleSession);
         }
         session.remote_session_binding = Some(remote_session_binding.to_string());
@@ -1069,9 +1090,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn responder_admits_into_an_in_flight_connecting_session() {
-        // §18：simultaneous connect 时，responder 直接 admit 本端出站 connect 创建、
-        // 尚未绑定 remote binding 的 Connecting Session，避免替换掉它。
+    async fn responder_second_candidate_with_same_binding_is_rejected() {
+        // §18/§40：simultaneous connect 时，第一个 responder candidate 可以 claim
+        // 本端出站 connect 创建、尚未绑定 remote binding 的 Connecting Session；第二个
+        // candidate 携带相同 remote binding 时必须是 race loser，不能再次 admit。
         let manager = SessionManager::new();
         let peer_id = "peer-simultaneous";
         let session_id = match manager.begin_connect(peer_id).await {
@@ -1085,12 +1107,22 @@ mod tests {
         assert_eq!(admission.session_id, session_id);
         assert_eq!(admission.decision, SessionCryptoDecision::Initialize);
         assert_eq!(admission.replaced_session_id, None);
-        // 出站 connect 的 admit 仍然成功（同一个 Session）。
-        let outbound = manager
+        assert_eq!(
+            manager
+                .current_remote_session_binding(peer_id)
+                .await
+                .as_deref(),
+            Some("remote-a")
+        );
+
+        let duplicate = manager
             .admit_authenticated_session(peer_id, Some(session_id), "remote-a")
-            .await
-            .expect("outbound admit after responder admit");
-        assert_eq!(outbound.session_id, session_id);
+            .await;
+        assert!(matches!(
+            duplicate,
+            Err(SessionAdmissionError::StaleSession)
+        ));
+        assert_eq!(manager.session_id(peer_id).await, Some(session_id));
     }
 
     #[tokio::test]
@@ -1173,6 +1205,12 @@ mod tests {
         assert!(matches!(
             manager
                 .admit_authenticated_session(peer_id, Some(session_id), "remote-a")
+                .await,
+            Err(SessionAdmissionError::StaleSession)
+        ));
+        assert!(matches!(
+            manager
+                .admit_authenticated_session(peer_id, None, "remote-a")
                 .await,
             Err(SessionAdmissionError::StaleSession)
         ));
