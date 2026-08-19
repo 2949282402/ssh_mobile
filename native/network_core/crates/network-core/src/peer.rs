@@ -3216,7 +3216,9 @@ mod tests {
             session_id,
             attempt_id: "generic-budget-test".into(),
             connect_window: crate::connect::DIRECT_CONNECT_WINDOW,
-            allow_websocket: true,
+            // This fixture intentionally exposes only TCP; transport racing has
+            // a separate regression test below.
+            allow_websocket: false,
             candidate_updates,
         };
 
