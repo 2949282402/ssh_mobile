@@ -21,7 +21,8 @@ use crate::crypto_handshake::{
 use crate::delivery::DeliveryManager;
 use crate::errors::NetworkError;
 use crate::session::{
-    SessionAdmission, SessionAdmissionError, SessionAdmissionOutcome, SessionId, SessionManager,
+    ConnectDecision, SessionAdmission, SessionAdmissionError, SessionAdmissionOutcome, SessionId,
+    SessionManager,
 };
 use crate::stream::ReliableStreamManager;
 use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
@@ -246,21 +247,71 @@ impl RuntimeState {
         crate::realtime::close_realtime_sessions_for_session(self, peer_id, session_id).await;
         self.task_supervisor.cancel_session(&session_key).await;
     }
+    pub(crate) async fn begin_connect(
+        &self,
+        peer_id: &str,
+        required_capabilities: u8,
+    ) -> ConnectDecision {
+        loop {
+            match self
+                .sessions
+                .begin_connect_with_capability(peer_id, required_capabilities)
+                .await
+            {
+                ConnectDecision::NeedsReplacement(replaced_session_id) => {
+                    if let Ok(route) = self
+                        .sessions
+                        .close_if_current(peer_id, replaced_session_id)
+                        .await
+                    {
+                        if let Some(route) = route {
+                            route.close().await;
+                        }
+                        self.cancel_session_tasks(peer_id, replaced_session_id)
+                            .await;
+                    }
+                }
+                decision => return decision,
+            }
+        }
+    }
 
     /// Admit authenticated Noise material for a 1:1 ConnectionSession（§18）。
     ///
     /// 被替换的旧 Session 在这里立即整体销毁（关闭 detached route + retire 资源 +
     /// 取消其 task group）。因为 Session 与 connection 一一对应，旧 Session 属于另一条
     /// connection，取消其任务组不会中断当前新连接的握手。
+    #[allow(dead_code)]
     pub(crate) async fn admit_authenticated_session(
         &self,
         peer_id: &str,
         expected_session_id: Option<SessionId>,
         remote_session_binding: &str,
     ) -> Result<SessionAdmissionLease, SessionAdmissionError> {
+        self.admit_authenticated_session_with_capability(
+            peer_id,
+            expected_session_id,
+            remote_session_binding,
+            u8::MAX,
+        )
+        .await
+    }
+
+    pub(crate) async fn admit_authenticated_session_with_capability(
+        &self,
+        peer_id: &str,
+        expected_session_id: Option<SessionId>,
+        remote_session_binding: &str,
+        candidate_capabilities: u8,
+    ) -> Result<SessionAdmissionLease, SessionAdmissionError> {
         let outcome: SessionAdmissionOutcome = self
             .sessions
-            .admit_authenticated_session(peer_id, expected_session_id, remote_session_binding)
+            .admit_authenticated_session_with_capability(
+                peer_id,
+                expected_session_id,
+                remote_session_binding,
+                candidate_capabilities,
+            )
             .await?;
         let SessionAdmissionOutcome {
             admission,

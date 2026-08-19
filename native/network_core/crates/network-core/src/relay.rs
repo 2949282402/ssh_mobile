@@ -1090,10 +1090,11 @@ async fn handle_relay_crypto_handshake(
                         let remote_session_binding = remote_session_binding.to_string();
                         async move {
                             let admission = binding_state
-                                .admit_authenticated_session(
+                                .admit_authenticated_session_with_capability(
                                     &authenticated_peer_id,
                                     None,
                                     &remote_session_binding,
+                                    crate::connect::DEFAULT_CONNECTION_CAPABILITY,
                                 )
                                 .await
                                 .map_err(|_| {

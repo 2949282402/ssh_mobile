@@ -17,9 +17,10 @@ use std::sync::{
     Arc,
 };
 use std::time::Duration;
-use tokio::sync::{oneshot, RwLock};
+use tokio::sync::{oneshot, Notify, RwLock};
 use tokio::time::timeout;
 
+use crate::connect::profile_capability_mask;
 use crate::connection::{
     ConnectionCapability, ConnectionProfile, GenericFrameKind, GenericRouteHandle, Route,
     RouteTransport,
@@ -49,6 +50,7 @@ pub(crate) enum ConnectDecision {
     Started(SessionId),
     AlreadyConnected(SessionId),
     InProgress(SessionId),
+    NeedsReplacement(SessionId),
 }
 
 /// 握手材料安装的决策。Session 与 connection 一一对应（§18），因此唯一允许的
@@ -89,6 +91,7 @@ impl Deref for SessionAdmissionOutcome {
 pub(crate) enum SessionAdmissionError {
     StaleSession,
     InvalidRemoteBinding,
+    UnsupportedCapability,
 }
 
 /// Session 聚合根只放置 Connection 生命周期和当前 Route；Delivery/Crypto/
@@ -96,6 +99,7 @@ pub(crate) enum SessionAdmissionError {
 struct Session {
     id: SessionId,
     remote_session_binding: Option<String>,
+    required_capabilities: u8,
     state: SessionState,
     route: Option<ActiveRoute>,
 }
@@ -352,12 +356,14 @@ impl RouteView {
 /// App Scope 内唯一的 Session owner。
 pub(crate) struct SessionManager {
     sessions: RwLock<HashMap<String, Session>>,
+    capability_notify: Notify,
 }
 
 impl SessionManager {
     pub(crate) fn new() -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
+            capability_notify: Notify::new(),
         }
     }
 
@@ -366,29 +372,177 @@ impl SessionManager {
     /// §18：Session 与 transport connection 一一对应。终态（`Closed` / `Failed`）
     /// 或已销毁（不在注册表）的 Session 都会生成一个**全新** SessionId；不存在
     /// 复用旧 SessionId 的 reconnect。
+    #[allow(dead_code)]
     pub(crate) async fn begin_connect(&self, peer_id: &str) -> ConnectDecision {
+        self.begin_connect_with_capability(peer_id, crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+            .await
+    }
+
+    pub(crate) async fn begin_connect_with_capability(
+        &self,
+        peer_id: &str,
+        required_capabilities: u8,
+    ) -> ConnectDecision {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(peer_id) {
+        let decision = if let Some(session) = sessions.get_mut(peer_id) {
             match session.state {
-                SessionState::Connected => return ConnectDecision::AlreadyConnected(session.id),
+                SessionState::Connected => {
+                    let compatible = session.route.as_ref().is_some_and(|route| {
+                        profile_capability_mask(route.profile()) & required_capabilities
+                            == required_capabilities
+                    });
+                    if compatible {
+                        ConnectDecision::AlreadyConnected(session.id)
+                    } else {
+                        ConnectDecision::NeedsReplacement(session.id)
+                    }
+                }
                 SessionState::Connecting => {
-                    return ConnectDecision::InProgress(session.id);
+                    session.required_capabilities |= required_capabilities;
+                    ConnectDecision::InProgress(session.id)
                 }
                 SessionState::Closed | SessionState::Failed | SessionState::Idle => {
                     let mut replacement = Self::new_session();
+                    replacement.required_capabilities = required_capabilities;
                     replacement.state = SessionState::Connecting;
                     let id = replacement.id;
                     *session = replacement;
-                    return ConnectDecision::Started(id);
+                    ConnectDecision::Started(id)
                 }
             }
-        }
+        } else {
+            let mut session = Self::new_session();
+            session.required_capabilities = required_capabilities;
+            session.state = SessionState::Connecting;
+            let id = session.id;
+            sessions.insert(peer_id.to_string(), session);
+            ConnectDecision::Started(id)
+        };
+        drop(sessions);
+        self.capability_notify.notify_waiters();
+        decision
+    }
 
-        let mut session = Self::new_session();
-        session.state = SessionState::Connecting;
-        let id = session.id;
-        sessions.insert(peer_id.to_string(), session);
-        ConnectDecision::Started(id)
+    /// Wait until the current in-flight Session either reaches a route that
+    /// covers `required_capabilities` or reaches a terminal/replaced state.
+    /// The notification is registered before reading state, so a transition
+    /// cannot be missed between the check and the await.
+    pub(crate) async fn wait_for_capability(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        required_capabilities: u8,
+    ) -> Result<(), ()> {
+        loop {
+            let notified = self.capability_notify.notified();
+            let ready = {
+                let sessions = self.sessions.read().await;
+                let Some(session) = sessions.get(peer_id) else {
+                    return Err(());
+                };
+                if session.id != expected_session_id {
+                    return Err(());
+                }
+                match session.state {
+                    SessionState::Connected => session.route.as_ref().is_some_and(|route| {
+                        profile_capability_mask(route.profile()) & required_capabilities
+                            == required_capabilities
+                    }),
+                    SessionState::Connecting => false,
+                    SessionState::Idle | SessionState::Closed | SessionState::Failed => {
+                        return Err(())
+                    }
+                }
+            };
+            if ready {
+                return Ok(());
+            }
+            notified.await;
+        }
+    }
+
+    pub(crate) async fn wait_for_admission_change(&self) {
+        self.capability_notify.notified().await;
+    }
+    pub(crate) async fn admission_can_retry(
+        &self,
+        peer_id: &str,
+        expected_session_id: Option<SessionId>,
+    ) -> bool {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|session| {
+                session.state == SessionState::Connecting
+                    && expected_session_id.is_none_or(|expected| expected == session.id)
+            })
+    }
+
+    pub(crate) async fn candidate_supports_required_capabilities(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        profile: ConnectionProfile,
+    ) -> bool {
+        self.sessions
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|session| {
+                session.id == expected_session_id
+                    && session.state == SessionState::Connecting
+                    && profile_capability_mask(profile) & session.required_capabilities
+                        == session.required_capabilities
+            })
+    }
+
+    /// Releases a provisional binding claim when a candidate authenticated but
+    /// became incompatible with a demand that joined before route commit.
+    /// Another candidate waiting on the same binding can then retry admission.
+    pub(crate) async fn release_authenticated_session(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+        remote_session_binding: &str,
+    ) -> bool {
+        let released = {
+            let mut sessions = self.sessions.write().await;
+            let Some(session) = sessions.get_mut(peer_id) else {
+                return false;
+            };
+            if session.id != expected_session_id
+                || session.state != SessionState::Connecting
+                || session.route.is_some()
+                || session.remote_session_binding.as_deref() != Some(remote_session_binding)
+            {
+                return false;
+            }
+            session.remote_session_binding = None;
+            true
+        };
+        if released {
+            self.capability_notify.notify_waiters();
+        }
+        released
+    }
+
+    pub(crate) async fn close_if_current(
+        &self,
+        peer_id: &str,
+        expected_session_id: SessionId,
+    ) -> Result<Option<ActiveRoute>, ()> {
+        let route = {
+            let mut sessions = self.sessions.write().await;
+            let session = sessions.get_mut(peer_id).ok_or(())?;
+            if session.id != expected_session_id {
+                return Err(());
+            }
+            session.state = SessionState::Closed;
+            session.route.take()
+        };
+        self.capability_notify.notify_waiters();
+        Ok(route)
     }
 
     /// Admit a completed application handshake into a 1:1 ConnectionSession
@@ -396,11 +550,28 @@ impl SessionManager {
     /// gate. A new connection either admits the in-flight `begin_connect`
     /// Session (fresh root, same SessionId) or replaces an existing Session
     /// with a fresh SessionId + fresh root. There is no ContinueExisting.
+    #[allow(dead_code)]
     pub(crate) async fn admit_authenticated_session(
         &self,
         peer_id: &str,
         expected_session_id: Option<SessionId>,
         new_remote_binding: &str,
+    ) -> Result<SessionAdmissionOutcome, SessionAdmissionError> {
+        self.admit_authenticated_session_with_capability(
+            peer_id,
+            expected_session_id,
+            new_remote_binding,
+            u8::MAX,
+        )
+        .await
+    }
+
+    pub(crate) async fn admit_authenticated_session_with_capability(
+        &self,
+        peer_id: &str,
+        expected_session_id: Option<SessionId>,
+        new_remote_binding: &str,
+        candidate_capabilities: u8,
     ) -> Result<SessionAdmissionOutcome, SessionAdmissionError> {
         if new_remote_binding.is_empty() {
             return Err(SessionAdmissionError::InvalidRemoteBinding);
@@ -421,6 +592,7 @@ impl SessionManager {
                 replaced_session_id: None,
             };
             sessions.insert(peer_id.to_string(), session);
+            self.capability_notify.notify_waiters();
             return Ok(SessionAdmissionOutcome {
                 admission,
                 detached_route: None,
@@ -443,6 +615,12 @@ impl SessionManager {
         ) && current.remote_session_binding.as_deref() == Some(new_remote_binding)
         {
             return Err(SessionAdmissionError::StaleSession);
+        }
+        if current.state == SessionState::Connecting
+            && candidate_capabilities & current.required_capabilities
+                != current.required_capabilities
+        {
+            return Err(SessionAdmissionError::UnsupportedCapability);
         }
 
         // §18/§40 单赢者语义（写锁内的权威 guard）：期望的 Session 仍在 Connecting 时，
@@ -476,6 +654,7 @@ impl SessionManager {
                 && current.remote_session_binding.is_none();
         if in_flight_initialize {
             current.remote_session_binding = Some(new_remote_binding.to_string());
+            self.capability_notify.notify_waiters();
             return Ok(SessionAdmissionOutcome {
                 admission: SessionAdmission {
                     session_id: current.id,
@@ -497,6 +676,7 @@ impl SessionManager {
             replaced_session_id: Some(replaced_session_id),
         };
         *current = replacement;
+        self.capability_notify.notify_waiters();
         Ok(SessionAdmissionOutcome {
             admission,
             detached_route: old_route,
@@ -531,6 +711,7 @@ impl SessionManager {
             return Err(SessionAdmissionError::StaleSession);
         }
         session.remote_session_binding = Some(remote_session_binding.to_string());
+        self.capability_notify.notify_waiters();
         Ok(())
     }
 
@@ -547,6 +728,7 @@ impl SessionManager {
         route: RouteType,
     ) -> Result<Option<ActiveRoute>, ()> {
         let mut sessions = self.sessions.write().await;
+        let profile = ConnectionProfile::for_route(route).ok_or(())?;
         let session = match sessions.get_mut(peer_id) {
             Some(session) => session,
             None if expected_session_id.is_none() => sessions
@@ -563,6 +745,13 @@ impl SessionManager {
         {
             drop(sessions);
             connection.close(VarInt::from_u32(0), b"session replaced");
+            return Err(());
+        }
+        if profile_capability_mask(profile) & session.required_capabilities
+            != session.required_capabilities
+        {
+            drop(sessions);
+            connection.close(VarInt::from_u32(0), b"candidate lacks requested capability");
             return Err(());
         }
         if session.state == SessionState::Connected && session.route.is_some() {
@@ -606,8 +795,14 @@ impl SessionManager {
         {
             return Err(());
         }
+        if profile_capability_mask(profile) & session.required_capabilities
+            != session.required_capabilities
+        {
+            return Err(());
+        }
         let owner = scope.commit_and_take_owner()?;
         session.state = SessionState::Connected;
+        self.capability_notify.notify_waiters();
         Ok(session.route.replace(ActiveRoute::generic(owner)))
     }
 
@@ -623,8 +818,14 @@ impl SessionManager {
         if session.id != expected_session_id || session.state == SessionState::Closed {
             return Err(());
         }
+        if profile_capability_mask(handle.profile()) & session.required_capabilities
+            != session.required_capabilities
+        {
+            return Err(());
+        }
         session.state = SessionState::Connected;
         session.route = Some(ActiveRoute::generic_test(handle));
+        self.capability_notify.notify_waiters();
         Ok(())
     }
 
@@ -635,6 +836,10 @@ impl SessionManager {
         route: RouteType,
         relay: Option<Arc<RelayDataClient>>,
     ) -> bool {
+        let profile = match ConnectionProfile::for_route(route) {
+            Some(profile) => profile,
+            None => return false,
+        };
         let mut sessions = self.sessions.write().await;
         let Some(session) = sessions.get_mut(peer_id) else {
             return false;
@@ -642,11 +847,17 @@ impl SessionManager {
         if session.state == SessionState::Closed || session.id != expected_session_id {
             return false;
         }
+        if profile_capability_mask(profile) & session.required_capabilities
+            != session.required_capabilities
+        {
+            return false;
+        }
         session.state = SessionState::Connected;
         session.route = match route {
             RouteType::Relay => Some(ActiveRoute::relay(relay)),
             _ => None,
         };
+        self.capability_notify.notify_waiters();
         true
     }
 
@@ -871,6 +1082,7 @@ impl SessionManager {
             .take()
             .expect("current QUIC session must own a route");
         sessions.remove(peer_id);
+        self.capability_notify.notify_waiters();
         Some((session_id, route))
     }
 
@@ -907,6 +1119,7 @@ impl SessionManager {
             .take()
             .expect("current generic session must own a route");
         sessions.remove(peer_id);
+        self.capability_notify.notify_waiters();
         Some((session_id, route))
     }
 
@@ -918,17 +1131,20 @@ impl SessionManager {
                 session.state = SessionState::Failed;
             }
         }
+        self.capability_notify.notify_waiters();
     }
 
     /// 显式断开结束 Session，并把绑定的 route owner 返回给 Runtime 做
     /// 有界关闭与 supervised task join。
     pub(crate) async fn close(&self, peer_id: &str) -> Option<ActiveRoute> {
-        {
+        let route = {
             let mut sessions = self.sessions.write().await;
             let session = sessions.get_mut(peer_id)?;
             session.state = SessionState::Closed;
             session.route.take()
-        }
+        };
+        self.capability_notify.notify_waiters();
+        route
     }
 
     #[cfg(test)]
@@ -953,6 +1169,7 @@ impl SessionManager {
         Session {
             id: SessionId::random(),
             remote_session_binding: None,
+            required_capabilities: 0,
             state: SessionState::Idle,
             route: None,
         }
@@ -982,6 +1199,9 @@ impl SessionId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connect::{
+        CAPABILITY_RELIABLE_MESSAGE, CAPABILITY_RELIABLE_STREAM, DEFAULT_CONNECTION_CAPABILITY,
+    };
     use crate::connection::TestBlockingGenericRoute;
 
     #[tokio::test]
@@ -1035,7 +1255,93 @@ mod tests {
             ConnectDecision::AlreadyConnected(session_id) if session_id == first
         ));
     }
+    #[tokio::test]
+    async fn concurrent_connect_merges_required_capabilities_and_rejects_narrow_candidates() {
+        let manager = SessionManager::new();
+        let peer_id = "peer-capability-union";
+        let first = match manager
+            .begin_connect_with_capability(peer_id, CAPABILITY_RELIABLE_MESSAGE)
+            .await
+        {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+        assert!(matches!(
+            manager
+                .begin_connect_with_capability(peer_id, CAPABILITY_RELIABLE_STREAM)
+                .await,
+            ConnectDecision::InProgress(session_id) if session_id == first
+        ));
 
+        let quic_profile =
+            ConnectionProfile::for_route(RouteType::QuicDirect).expect("QUIC route profile");
+        assert!(
+            manager
+                .candidate_supports_required_capabilities(peer_id, first, quic_profile)
+                .await
+        );
+        let websocket_profile = ConnectionProfile::new(Route::direct(RouteTransport::WebSocket));
+        assert!(
+            !manager
+                .candidate_supports_required_capabilities(peer_id, first, websocket_profile)
+                .await
+        );
+
+        let narrow = manager
+            .admit_authenticated_session_with_capability(
+                peer_id,
+                Some(first),
+                "remote-capability",
+                CAPABILITY_RELIABLE_MESSAGE,
+            )
+            .await;
+        assert!(matches!(
+            narrow,
+            Err(SessionAdmissionError::UnsupportedCapability)
+        ));
+        let admitted = manager
+            .admit_authenticated_session_with_capability(
+                peer_id,
+                Some(first),
+                "remote-capability",
+                DEFAULT_CONNECTION_CAPABILITY,
+            )
+            .await
+            .expect("wide candidate should satisfy the merged demand");
+        assert_eq!(admitted.session_id, first);
+        assert_eq!(admitted.decision, SessionCryptoDecision::Initialize);
+        manager.close(peer_id).await;
+    }
+
+    #[tokio::test]
+    async fn incompatible_connected_route_requests_a_fresh_session() {
+        let manager = SessionManager::new();
+        let peer_id = "peer-capability-replace";
+        let first = match manager
+            .begin_connect_with_capability(peer_id, DEFAULT_CONNECTION_CAPABILITY)
+            .await
+        {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected decision: {decision:?}"),
+        };
+
+        assert!(
+            manager
+                .mark_relay_route_connected(peer_id, first, RouteType::Relay, None)
+                .await
+        );
+        assert!(matches!(
+            manager
+                .begin_connect_with_capability(
+                    peer_id,
+                    crate::connect::CAPABILITY_UNRELIABLE_DATAGRAM,
+                )
+                .await,
+            ConnectDecision::NeedsReplacement(session_id) if session_id == first
+        ));
+        let route = manager.close(peer_id).await.expect("close connected route");
+        route.close().await;
+    }
     #[tokio::test]
     async fn transport_loss_destroys_session_and_reconnect_gets_a_new_id() {
         // §18/§40：transport 丢失即销毁 Session；重新 begin_connect 得到全新 SessionId，

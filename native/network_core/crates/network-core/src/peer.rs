@@ -9,7 +9,7 @@ use network_protocol::{
 use network_quic::{read_channel_frame, ChannelFrameKind, QuicEndpointManager, QuicPeerSession};
 use network_relay::RelayDataClient;
 use network_transport::{TcpTransport, Transport, WebSocketTransport};
-use quinn::{Connection, Endpoint};
+use quinn::{Connection, Endpoint, VarInt};
 use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::net::SocketAddr;
@@ -21,9 +21,13 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 
+use crate::connect::{
+    profile_capability_mask, CAPABILITY_RELIABLE_MESSAGE, CAPABILITY_UNRELIABLE_DATAGRAM,
+    DEFAULT_CONNECTION_CAPABILITY,
+};
 use crate::connection::{
-    prepare_generic_route, GenericConnection, GenericFrameKind, GenericInboundFrame,
-    GenericRouteHandle, GenericRouteRuntime, RouteTopology, RouteTransport,
+    prepare_generic_route, ConnectionProfile, GenericConnection, GenericFrameKind,
+    GenericInboundFrame, GenericRouteHandle, GenericRouteRuntime, RouteTopology, RouteTransport,
 };
 use crate::crypto_handshake::SessionCryptoMaterial;
 use crate::events::{
@@ -464,6 +468,7 @@ pub(crate) async fn connect_direct_with_crypto(
         .min(PEER_CONNECT_TIMEOUT)
         .saturating_sub(started.elapsed());
     let expected_peer_id_for_resolver = peer_id.clone();
+    let admission_state = Arc::clone(&state);
     let (crypto, admission) = tokio::time::timeout(
         remaining,
         crate::crypto_handshake::initiate_quic(
@@ -473,7 +478,7 @@ pub(crate) async fn connect_direct_with_crypto(
             expected_peer_public_key,
             session_binding,
             move |authenticated_peer_id, remote_session_binding| {
-                let state = Arc::clone(&state);
+                let state = Arc::clone(&admission_state);
                 let authenticated_peer_id = authenticated_peer_id.to_string();
                 let remote_session_binding = remote_session_binding.to_string();
                 async move {
@@ -485,6 +490,7 @@ pub(crate) async fn connect_direct_with_crypto(
                         &authenticated_peer_id,
                         expected_session_id,
                         &remote_session_binding,
+                        DEFAULT_CONNECTION_CAPABILITY | CAPABILITY_UNRELIABLE_DATAGRAM,
                     )
                     .await
                     .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
@@ -510,6 +516,29 @@ pub(crate) async fn connect_direct_with_crypto(
             &peer_id,
         )
     })?;
+    let quic_profile =
+        ConnectionProfile::for_route(RouteType::QuicDirect).expect("QUIC route profile");
+    if !state
+        .sessions
+        .candidate_supports_required_capabilities(&peer_id, admission.session_id, quic_profile)
+        .await
+    {
+        state
+            .sessions
+            .release_authenticated_session(
+                &peer_id,
+                admission.session_id,
+                &crypto.remote_session_binding,
+            )
+            .await;
+        connection.close(VarInt::from_u32(0), b"candidate lacks requested capability");
+        return Err(protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            "QUIC candidate no longer satisfies the requested capability",
+            "connect",
+            &peer_id,
+        ));
+    }
     Ok((connection, crypto, admission))
 }
 
@@ -526,20 +555,41 @@ async fn admit_single_winner(
     peer_id: &str,
     expected_session_id: Option<SessionId>,
     remote_session_binding: &str,
+    candidate_capabilities: u8,
 ) -> Result<SessionAdmissionLease, SessionAdmissionError> {
-    // Session 已 Connected（winner 已挂载 route）：后来的 candidate 是 loser，拒绝。
-    if state.sessions.is_connected(peer_id).await {
-        return Err(SessionAdmissionError::StaleSession);
-    }
-    // 期望的 Session 已被替换/销毁：同样是 loser。
-    if let Some(expected) = expected_session_id {
-        if state.sessions.current_session_id(peer_id).await != Some(expected) {
+    loop {
+        // Session 已 Connected（winner 已挂载 route）：后来的 candidate 是 loser，拒绝。
+        if state.sessions.is_connected(peer_id).await {
             return Err(SessionAdmissionError::StaleSession);
         }
+        // 期望的 Session 已被替换/销毁：同样是 loser。
+        if let Some(expected) = expected_session_id {
+            if state.sessions.current_session_id(peer_id).await != Some(expected) {
+                return Err(SessionAdmissionError::StaleSession);
+            }
+        }
+        let notified = state.sessions.wait_for_admission_change();
+        match state
+            .admit_authenticated_session_with_capability(
+                peer_id,
+                expected_session_id,
+                remote_session_binding,
+                candidate_capabilities,
+            )
+            .await
+        {
+            Ok(admission) => return Ok(admission),
+            Err(SessionAdmissionError::StaleSession)
+                if state
+                    .sessions
+                    .admission_can_retry(peer_id, expected_session_id)
+                    .await =>
+            {
+                notified.await;
+            }
+            Err(error) => return Err(error),
+        }
     }
-    state
-        .admit_authenticated_session(peer_id, expected_session_id, remote_session_binding)
-        .await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -873,7 +923,7 @@ async fn connect_generic_candidate(
                 expected_peer_public_key,
                 peer_id.clone(),
                 session_binding,
-                state,
+                Arc::clone(&state),
                 expected_session_id,
             ));
         }
@@ -882,6 +932,33 @@ async fn connect_generic_candidate(
         while let Some(result) = transports.join_next().await {
             match result {
                 Ok(Ok(route)) => {
+                    let session_id = route.admission.session_id;
+                    let remote_binding = route.crypto.remote_session_binding.clone();
+                    let compatible = match route.scope.profile() {
+                        Some(profile) => {
+                            state
+                                .sessions
+                                .candidate_supports_required_capabilities(
+                                    &peer_id, session_id, profile,
+                                )
+                                .await
+                        }
+                        None => false,
+                    };
+                    if !compatible {
+                        route.scope.close().await;
+                        state
+                            .sessions
+                            .release_authenticated_session(&peer_id, session_id, &remote_binding)
+                            .await;
+                        last_error = Some(protocol_error_with_peer(
+                            NetworkErrorCode::NoRoute,
+                            "generic candidate no longer satisfies the requested capability",
+                            "connect",
+                            &peer_id,
+                        ));
+                        continue;
+                    }
                     transports.abort_all();
                     return Ok(route);
                 }
@@ -1163,6 +1240,7 @@ async fn connect_tcp_route(
                         &resolver_peer_id,
                         Some(expected_session_id),
                         &remote_session_binding,
+                        DEFAULT_CONNECTION_CAPABILITY,
                     )
                     .await
                     .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
@@ -1180,13 +1258,49 @@ async fn connect_tcp_route(
             )
         })?;
         let transport = connection.route().transport();
-        let scope = supervise_generic_route(
+        let scope = match supervise_generic_route(
             Arc::clone(&state),
             &peer_id,
             admission.session_id,
             prepare_generic_route(connection),
         )
-        .await?;
+        .await
+        {
+            Ok(scope) => scope,
+            Err(error) => {
+                state
+                    .sessions
+                    .release_authenticated_session(
+                        &peer_id,
+                        admission.session_id,
+                        &crypto.remote_session_binding,
+                    )
+                    .await;
+                return Err(error);
+            }
+        };
+        let profile = scope.profile().expect("supervised TCP route profile");
+        if !state
+            .sessions
+            .candidate_supports_required_capabilities(&peer_id, admission.session_id, profile)
+            .await
+        {
+            scope.close().await;
+            state
+                .sessions
+                .release_authenticated_session(
+                    &peer_id,
+                    admission.session_id,
+                    &crypto.remote_session_binding,
+                )
+                .await;
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "TCP candidate no longer satisfies the requested capability",
+                "connect",
+                &peer_id,
+            ));
+        }
         debug_assert_eq!(transport, RouteTransport::Tcp);
         Ok(AuthenticatedGenericRoute {
             scope,
@@ -1252,6 +1366,7 @@ async fn connect_websocket_route(
                         &resolver_peer_id,
                         Some(expected_session_id),
                         &remote_session_binding,
+                        CAPABILITY_RELIABLE_MESSAGE,
                     )
                     .await
                     .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
@@ -1268,13 +1383,49 @@ async fn connect_websocket_route(
                 &peer_id,
             )
         })?;
-        let scope = supervise_generic_route(
+        let scope = match supervise_generic_route(
             Arc::clone(&state),
             &peer_id,
             admission.session_id,
             prepare_generic_route(connection),
         )
-        .await?;
+        .await
+        {
+            Ok(scope) => scope,
+            Err(error) => {
+                state
+                    .sessions
+                    .release_authenticated_session(
+                        &peer_id,
+                        admission.session_id,
+                        &crypto.remote_session_binding,
+                    )
+                    .await;
+                return Err(error);
+            }
+        };
+        let profile = scope.profile().expect("supervised WebSocket route profile");
+        if !state
+            .sessions
+            .candidate_supports_required_capabilities(&peer_id, admission.session_id, profile)
+            .await
+        {
+            scope.close().await;
+            state
+                .sessions
+                .release_authenticated_session(
+                    &peer_id,
+                    admission.session_id,
+                    &crypto.remote_session_binding,
+                )
+                .await;
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "WebSocket candidate no longer satisfies the requested capability",
+                "connect",
+                &peer_id,
+            ));
+        }
         Ok(AuthenticatedGenericRoute {
             scope,
             endpoint,
@@ -1401,7 +1552,12 @@ pub(crate) async fn establish_relay_crypto(
         })?;
         let remote_session_binding = confirmation.remote_session_binding().to_string();
         let admission = state
-            .admit_authenticated_session(peer_id, Some(session_id), &remote_session_binding)
+            .admit_authenticated_session_with_capability(
+                peer_id,
+                Some(session_id),
+                &remote_session_binding,
+                DEFAULT_CONNECTION_CAPABILITY,
+            )
             .await
             .map_err(|_| {
                 protocol_error_with_peer(
@@ -1544,10 +1700,12 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                                 let remote_session_binding = remote_session_binding.to_string();
                                 async move {
                                     let admission = binding_state
-                                        .admit_authenticated_session(
+                                        .admit_authenticated_session_with_capability(
                                             &authenticated_peer_id,
                                             None,
                                             &remote_session_binding,
+                                            DEFAULT_CONNECTION_CAPABILITY
+                                                | CAPABILITY_UNRELIABLE_DATAGRAM,
                                         )
                                         .await
                                         .map_err(|_| {
@@ -1574,12 +1732,32 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                     .into());
                 }
                 let session_id = admission.session_id;
-                attempted_session = Some((peer_id.clone(), session_id));
                 if session_id.wire_key() != crypto.local_session_binding {
                     return Err(
                         std::io::Error::other("responder Session binding became stale").into(),
                     );
                 }
+                let quic_profile = ConnectionProfile::for_route(RouteType::QuicDirect)
+                    .expect("QUIC route profile");
+                if !state
+                    .sessions
+                    .candidate_supports_required_capabilities(&peer_id, session_id, quic_profile)
+                    .await
+                {
+                    state
+                        .sessions
+                        .release_authenticated_session(
+                            &peer_id,
+                            session_id,
+                            &crypto.remote_session_binding,
+                        )
+                        .await;
+                    return Err(std::io::Error::other(
+                        "inbound QUIC route lacks the requested capability",
+                    )
+                    .into());
+                }
+                attempted_session = Some((peer_id.clone(), session_id));
                 state
                     .sessions
                     .finalize_authenticated_session(
@@ -1755,6 +1933,7 @@ async fn accept_authenticated_generic(
         .await
         .clone()
         .ok_or_else(|| std::io::Error::other("runtime identity is unavailable"))?;
+    let candidate_capabilities = profile_capability_mask(connection.profile());
     let binding_state = Arc::clone(&state);
     let authenticated = tokio::time::timeout(
         GENERIC_ROUTE_CONNECT_TIMEOUT,
@@ -1771,7 +1950,12 @@ async fn accept_authenticated_generic(
                         return Err(crate::crypto_handshake::CryptoHandshakeError::Failed);
                     }
                     let admission = binding_state
-                        .admit_authenticated_session(&peer_id, None, &remote_session_binding)
+                        .admit_authenticated_session_with_capability(
+                            &peer_id,
+                            None,
+                            &remote_session_binding,
+                            candidate_capabilities,
+                        )
                         .await
                         .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
                     Ok((admission.session_id.wire_key(), admission))
@@ -1796,6 +1980,21 @@ async fn accept_authenticated_generic(
         .into());
     }
     let session_id = admission.session_id;
+    let profile = connection.profile();
+    if !state
+        .sessions
+        .candidate_supports_required_capabilities(&peer_id, session_id, profile)
+        .await
+    {
+        state
+            .sessions
+            .release_authenticated_session(&peer_id, session_id, &crypto.remote_session_binding)
+            .await;
+        return Err(std::io::Error::other(
+            "generic route no longer satisfies the requested capability",
+        )
+        .into());
+    }
     state
         .sessions
         .finalize_authenticated_session(&peer_id, session_id, &crypto.remote_session_binding)
@@ -2575,9 +2774,15 @@ mod tests {
         let binding = "11".repeat(16);
 
         // winner：第一次 admit 成功，保持 in-flight Session（Initialize）。
-        let winner = admit_single_winner(&state, peer_id, Some(session_id), &binding)
-            .await
-            .expect("winner admission should succeed");
+        let winner = admit_single_winner(
+            &state,
+            peer_id,
+            Some(session_id),
+            &binding,
+            DEFAULT_CONNECTION_CAPABILITY,
+        )
+        .await
+        .expect("winner admission should succeed");
         assert_eq!(winner.session_id, session_id);
 
         // winner 挂载一条 generic route（Session → Connected）。
@@ -2592,9 +2797,15 @@ mod tests {
 
         // loser：同 (peer, expected_session_id) 的迟到 admit 必须被拒绝，绝不替换。
         assert!(
-            admit_single_winner(&state, peer_id, Some(session_id), &binding)
-                .await
-                .is_err(),
+            admit_single_winner(
+                &state,
+                peer_id,
+                Some(session_id),
+                &binding,
+                DEFAULT_CONNECTION_CAPABILITY
+            )
+            .await
+            .is_err(),
             "losing candidate must not trigger a Session replacement"
         );
 
@@ -2731,7 +2942,14 @@ mod tests {
             [92u8; 32],
         ));
         let remote_public_key = remote_identity.public_identity_key().to_bytes();
-        let session_id = started_session(&state, peer_id).await;
+        let session_id = match state
+            .sessions
+            .begin_connect_with_capability(peer_id, crate::connect::CAPABILITY_RELIABLE_MESSAGE)
+            .await
+        {
+            ConnectDecision::Started(session_id) => session_id,
+            decision => panic!("unexpected Session decision: {decision:?}"),
+        };
         let (endpoint, release_tx, responder_task) =
             spawn_mixed_generic_responder(peer_id, local_peer_id).await;
         let route = tokio::time::timeout(

@@ -54,7 +54,7 @@ use crate::session::{ConnectDecision, SessionId};
 
 use super::{
     communication_class_capability, default_communication_class, profile_capability_mask,
-    DEFAULT_CONNECTION_CAPABILITY, DIRECT_CONNECT_WINDOW, RELAY_RESERVE_TIMEOUT, RESOLVE_TIMEOUT,
+    DIRECT_CONNECT_WINDOW, RELAY_RESERVE_TIMEOUT, RESOLVE_TIMEOUT,
 };
 
 /// 编排器状态机的可观察状态（§11）。`Idle`/`Failed` 是诊断端点（初始/终态），
@@ -221,7 +221,7 @@ impl ConnectionOrchestrator {
         // -----------------------------------------------------------------
         // 3. Session 门控：同 peer 并发 connect 合并（§40 Concurrency）。
         // -----------------------------------------------------------------
-        let session_id = match state.sessions.begin_connect(peer_id).await {
+        let session_id = match state.begin_connect(peer_id, capability).await {
             ConnectDecision::AlreadyConnected(session_id) => {
                 // 有健康连接但未登记（例如被动端 accept 建立的 Session）→ 登记并重用。
                 self.register_current(state.clone(), peer_id, &remote_epoch, session_id)
@@ -243,12 +243,43 @@ impl ConnectionOrchestrator {
                 self.set_stage(OrchestratorState::ConnectedDirect);
                 return Ok(());
             }
-            ConnectDecision::InProgress(_) => {
-                // 已有连接任务在途：合并，不做重复建连；每个调用方的 required
-                // capability 只影响自己的 registry 查询，不写共享 Session 状态。
+            ConnectDecision::InProgress(session_id) => {
+                // 同一物理 attempt 的后续请求并入能力并集，并等待该 attempt
+                // 提交一个覆盖最新需求的 route；不能在物理连接完成前伪成功。
+                if state
+                    .sessions
+                    .wait_for_capability(peer_id, session_id, capability)
+                    .await
+                    .is_err()
+                {
+                    return Err(protocol_error_with_peer(
+                        NetworkErrorCode::NoRoute,
+                        "shared connection attempt did not satisfy the requested capability",
+                        "connect",
+                        peer_id,
+                    ));
+                }
+                self.register_current(state.clone(), peer_id, &remote_epoch, session_id)
+                    .await;
+                let route = state
+                    .sessions
+                    .current_route(peer_id)
+                    .await
+                    .unwrap_or(RouteType::Unspecified);
+                emit_peer_state(
+                    &state.event_tx,
+                    peer_id,
+                    PeerConnectionState::Connected,
+                    route,
+                    None,
+                );
+                self.set_stage(OrchestratorState::ConnectedDirect);
                 return Ok(());
             }
             ConnectDecision::Started(session_id) => session_id,
+            ConnectDecision::NeedsReplacement(_) => {
+                unreachable!("RuntimeState::begin_connect resolves replacements")
+            }
         };
 
         // -----------------------------------------------------------------
@@ -361,7 +392,7 @@ impl ConnectionOrchestrator {
                 session_id,
                 attempt_id: attempt_id.clone(),
                 connect_window: DIRECT_CONNECT_WINDOW,
-                allow_websocket: matches!(class, CommunicationClass::ReliableMessage),
+                allow_websocket: capability & super::CAPABILITY_RELIABLE_MESSAGE != 0,
                 candidate_updates,
             }),
         )
@@ -606,12 +637,14 @@ impl ConnectionOrchestrator {
         remote_epoch: &Option<RuntimeEpoch>,
         session_id: SessionId,
     ) {
-        let capability = state
+        let Some(capability) = state
             .sessions
             .current_profile(peer_id)
             .await
             .map(profile_capability_mask)
-            .unwrap_or(DEFAULT_CONNECTION_CAPABILITY);
+        else {
+            return;
+        };
         state
             .connection_registry
             .register(peer_id, remote_epoch.clone(), capability, session_id);
@@ -828,6 +861,25 @@ impl ConnectionOrchestrator {
                 return Err(error);
             }
         };
+        let session_id = admission.session_id;
+        let relay_profile = crate::connection::ConnectionProfile::for_route(RouteType::Relay)
+            .expect("Relay route has a composed profile");
+        if !state
+            .sessions
+            .candidate_supports_required_capabilities(peer_id, session_id, relay_profile)
+            .await
+        {
+            state
+                .sessions
+                .release_authenticated_session(peer_id, session_id, &crypto.remote_session_binding)
+                .await;
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "Relay route does not satisfy the requested capability",
+                "connect",
+                peer_id,
+            ));
+        }
         if install_admitted_crypto(&state, peer_id, &admission, &crypto)
             .await
             .is_err()
@@ -839,13 +891,12 @@ impl ConnectionOrchestrator {
                 peer_id,
             ));
         }
-        let session_id = admission.session_id;
         let attached = state
             .sessions
             .mark_relay_route_connected(peer_id, session_id, RouteType::Relay, Some(data))
             .await;
         if !attached {
-            state.sessions.mark_failed(peer_id, session_id).await;
+            state.crypto.remove_session(peer_id, &session_id.wire_key());
             return Err(protocol_error_with_peer(
                 NetworkErrorCode::Cancelled,
                 "Relay route completed after Session was closed",
@@ -880,6 +931,30 @@ impl ConnectionOrchestrator {
                 admission,
             } => {
                 let session_id = admission.session_id;
+                let profile =
+                    crate::connection::ConnectionProfile::for_route(RouteType::QuicDirect)
+                        .expect("QUIC direct route has a composed profile");
+                if !state
+                    .sessions
+                    .candidate_supports_required_capabilities(peer_id, session_id, profile)
+                    .await
+                {
+                    connection.close(VarInt::from_u32(0), b"candidate lacks requested capability");
+                    state
+                        .sessions
+                        .release_authenticated_session(
+                            peer_id,
+                            session_id,
+                            &crypto.remote_session_binding,
+                        )
+                        .await;
+                    return Err(protocol_error_with_peer(
+                        NetworkErrorCode::NoRoute,
+                        "QUIC route does not satisfy the requested capability",
+                        "connect",
+                        peer_id,
+                    ));
+                }
                 if install_admitted_crypto(&state, peer_id, &admission, &crypto)
                     .await
                     .is_err()
@@ -892,7 +967,7 @@ impl ConnectionOrchestrator {
                         peer_id,
                     ));
                 }
-                let previous_route = state
+                let previous_route = match state
                     .sessions
                     .attach_connection_for_session(
                         peer_id,
@@ -901,19 +976,39 @@ impl ConnectionOrchestrator {
                         RouteType::QuicDirect,
                     )
                     .await
-                    .map_err(|_| {
-                        protocol_error_with_peer(
+                {
+                    Ok(previous_route) => previous_route,
+                    Err(_) => {
+                        state.crypto.remove_session(peer_id, &session_id.wire_key());
+                        state
+                            .sessions
+                            .release_authenticated_session(
+                                peer_id,
+                                session_id,
+                                &crypto.remote_session_binding,
+                            )
+                            .await;
+                        return Err(protocol_error_with_peer(
                             NetworkErrorCode::Cancelled,
                             "connection completed after Session was closed",
                             "connect",
                             peer_id,
-                        )
-                    })?;
+                        ));
+                    }
+                };
                 if let Some(previous_route) = previous_route {
                     previous_route.close().await;
                 }
                 if state.sessions.current_session_id(peer_id).await != Some(session_id) {
-                    state.sessions.mark_failed(peer_id, session_id).await;
+                    state.crypto.remove_session(peer_id, &session_id.wire_key());
+                    state
+                        .sessions
+                        .release_authenticated_session(
+                            peer_id,
+                            session_id,
+                            &crypto.remote_session_binding,
+                        )
+                        .await;
                     return Err(protocol_error_with_peer(
                         NetworkErrorCode::Cancelled,
                         "connection completed after Session was closed",
@@ -956,6 +1051,27 @@ impl ConnectionOrchestrator {
                     .expect("supervised GenericRoute scope has a profile");
                 let admission = generic.admission;
                 let session_id = admission.session_id;
+                if !state
+                    .sessions
+                    .candidate_supports_required_capabilities(peer_id, session_id, profile)
+                    .await
+                {
+                    scope.close().await;
+                    state
+                        .sessions
+                        .release_authenticated_session(
+                            peer_id,
+                            session_id,
+                            &generic.crypto.remote_session_binding,
+                        )
+                        .await;
+                    return Err(protocol_error_with_peer(
+                        NetworkErrorCode::NoRoute,
+                        "generic route does not satisfy the requested capability",
+                        "connect",
+                        peer_id,
+                    ));
+                }
                 if install_admitted_crypto(&state, peer_id, &admission, &generic.crypto)
                     .await
                     .is_err()
@@ -977,7 +1093,15 @@ impl ConnectionOrchestrator {
                     Ok(previous_route) => previous_route,
                     Err(_) => {
                         scope.close().await;
-                        state.sessions.mark_failed(peer_id, session_id).await;
+                        state.crypto.remove_session(peer_id, &session_id.wire_key());
+                        state
+                            .sessions
+                            .release_authenticated_session(
+                                peer_id,
+                                session_id,
+                                &generic.crypto.remote_session_binding,
+                            )
+                            .await;
                         return Err(protocol_error_with_peer(
                             NetworkErrorCode::Cancelled,
                             "generic connection completed after Session was closed",
@@ -1159,6 +1283,7 @@ fn relay_resolve_error(error: &RelayError, peer_id: &str) -> ProtocolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connect::DEFAULT_CONNECTION_CAPABILITY;
     use network_nat::PathManager;
     use network_relay::v2::ResolveStatus;
     use std::time::Duration;
