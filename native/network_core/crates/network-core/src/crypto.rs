@@ -48,6 +48,16 @@ pub(crate) const MAX_MESSAGES_PER_KEY: u64 = 1_048_576;
 pub(crate) const MAX_BYTES_PER_KEY: u64 = 1 << 30;
 const NONCE_PREFIX_BYTES: usize = 4;
 
+/// Whether bytes carry the frozen application E2EE envelope marker.
+///
+/// Disabled Direct paths intentionally carry the authenticated application
+/// payload unchanged. Receivers use this marker only to reject an encrypted
+/// payload arriving under a Disabled policy; transport identity/authentication
+/// remains mandatory in both modes.
+pub(crate) fn is_application_envelope(bytes: &[u8]) -> bool {
+    bytes.len() >= ENVELOPE_MAGIC.len() && bytes[..ENVELOPE_MAGIC.len()] == *ENVELOPE_MAGIC
+}
+
 /// Numeric suite marker in the application envelope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CryptoSuite {

@@ -1737,6 +1737,28 @@ pub(crate) fn candidate_kind_for(endpoint: SocketAddr) -> CandidateKind {
     }
 }
 
+async fn admit_authenticated_inbound(
+    state: &RuntimeState,
+    peer_id: &str,
+    capabilities: u8,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if !state.peers.read().await.contains_key(peer_id) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "authenticated inbound peer is not configured",
+        )
+        .into());
+    }
+    let supervisor = state
+        .peer_supervisors
+        .get_or_create(peer_id)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    supervisor
+        .admit_inbound_with_capabilities(true, capabilities)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(())
+}
+
 /// 接受配置运行时的传入 QUIC 连接。
 pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeState>) {
     while let Some(incoming) = endpoint.accept().await {
@@ -1867,6 +1889,12 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                 {
                     return Err(std::io::Error::other("Session was closed").into());
                 }
+                admit_authenticated_inbound(
+                    &state,
+                    &peer_id,
+                    profile_capability_mask(quic_profile),
+                )
+                .await?;
                 emit_peer_state(
                     &state.event_tx,
                     &peer_id,
@@ -2121,6 +2149,7 @@ async fn accept_authenticated_generic(
                 return Err(std::io::Error::other("TCP route lost its Session race").into());
             }
         };
+        admit_authenticated_inbound(&state, &peer_id, profile_capability_mask(profile)).await?;
         emit_peer_state_profile(
             &state.event_tx,
             &peer_id,
@@ -2578,11 +2607,11 @@ mod tests {
             .await
             .expect("attach GenericRoute");
 
-        let route = state
+        state
             .close_transport_path("generic-close-peer")
             .await
             .expect("Session close should detach GenericRoute owner");
-        route.close().await;
+        wait_for_active_task_count(&state.task_supervisor, 0).await;
         assert_eq!(state.task_supervisor.active_count(), 0);
 
         let mut buffer = [0u8; 1];
@@ -2616,11 +2645,11 @@ mod tests {
             .is_err());
         second_scope.close().await;
 
-        let closed_route = state
+        state
             .close_transport_path(peer_id)
             .await
             .expect("close Session");
-        closed_route.close().await;
+        wait_for_active_task_count(&state.task_supervisor, 0).await;
         assert_eq!(state.task_supervisor.active_count(), 0);
     }
 
@@ -2780,15 +2809,15 @@ mod tests {
         expected_frame.extend_from_slice(payload);
         assert_eq!(received_frame, expected_frame);
 
-        let closed_route = state
+        state
             .close_transport_path(peer_id)
             .await
             .expect("close replacement GenericRoute");
-        closed_route.close().await;
         let _ = release_tx.send(());
         responder_task
             .await
             .expect("outbound GenericRoute responder should exit");
+        wait_for_active_task_count(&state.task_supervisor, 0).await;
         assert_eq!(state.task_supervisor.active_count(), 0);
     }
 
@@ -2918,11 +2947,11 @@ mod tests {
         );
         assert!(state.path_is_connected(peer_id).await);
 
-        let closed_route = state
+        state
             .close_transport_path(peer_id)
             .await
             .expect("close Session");
-        closed_route.close().await;
+        wait_for_active_task_count(&state.task_supervisor, 0).await;
         assert_eq!(state.task_supervisor.active_count(), 0);
     }
 
@@ -3191,12 +3220,10 @@ mod tests {
         .endpoint;
         let session_id = started_session(&client_state, peer_id).await;
 
-        // C1 never responds. The Direct phase must keep its coordination receiver alive
-        // long enough for the authenticated ConnectivityAnswer to add C2.
-        let blackhole = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind UDP blackhole");
-        let blackhole_address = blackhole.local_addr().expect("blackhole address");
+        // C1 fails immediately. The Direct phase must still keep its coordination
+        // receiver alive long enough for the authenticated ConnectivityAnswer to add C2.
         let first_candidate = Candidate::new(
-            blackhole_address,
+            "127.0.0.1:0".parse().expect("invalid direct endpoint"),
             CandidateKind::Lan,
             "late-candidate-c1".into(),
         );
@@ -3223,15 +3250,19 @@ mod tests {
             session_binding: session_id.wire_key(),
             session_id,
             attempt_id: "late-quic-candidate-test".into(),
-            connect_window: Duration::from_secs(2),
+            // Exercise the production Direct window so a busy test runner does not
+            // turn the candidate-update assertion into a scheduler race.
+            connect_window: crate::connect::DIRECT_CONNECT_WINDOW,
             allow_websocket: true,
             candidate_updates,
         };
-        let route =
-            tokio::time::timeout(Duration::from_secs(4), connect_direct_or_generic(attempt))
-                .await
-                .expect("late QUIC candidate should finish within Direct window")
-                .expect("late reachable QUIC candidate should win Direct race");
+        let route = tokio::time::timeout(
+            crate::connect::DIRECT_CONNECT_WINDOW + Duration::from_secs(2),
+            connect_direct_or_generic(attempt),
+        )
+        .await
+        .expect("late QUIC candidate should finish within Direct window")
+        .expect("late reachable QUIC candidate should win Direct race");
         update_task
             .await
             .expect("candidate update task should finish");

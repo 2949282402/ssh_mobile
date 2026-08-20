@@ -833,17 +833,17 @@
           {
             "owner": "rust",
             "path": "native/network_core/crates/network-core/src/connect/path.rs",
-            "name": "physical_path_owns_carrier_and_handle_is_non_owning"
+            "name": "physical_path_is_sole_carrier_owner"
           },
           {
             "owner": "rust",
             "path": "native/network_core/crates/network-core/src/connect/path.rs",
-            "name": "normal_retire_drains_leases_and_closes_unleased_paths"
+            "name": "normal_retire_waits_for_active_lease"
           },
           {
             "owner": "rust",
             "path": "native/network_core/crates/network-core/src/connect/path.rs",
-            "name": "hard_close_and_security_failure_revoke_immediately"
+            "name": "hard_close_revokes_active_lease"
           }
         ]
       },
@@ -851,9 +851,9 @@
         {
           "path": "native/network_core/crates/network-core/src/connect/path.rs",
           "contains": [
-            "physical_path_owns_carrier_and_handle_is_non_owning",
-            "normal_retire_drains_leases_and_closes_unleased_paths",
-            "hard_close_and_security_failure_revoke_immediately"
+            "physical_path_is_sole_carrier_owner",
+            "normal_retire_waits_for_active_lease",
+            "hard_close_revokes_active_lease"
           ]
         }
       ]
@@ -951,12 +951,12 @@
           {
             "owner": "rust",
             "path": "native/network_core/crates/network-ffi/src/lib.rs",
-            "name": "event_mux_applies_bounded_control_data_fairness"
+            "name": "eight_control_fairness"
           },
           {
             "owner": "dart",
             "path": "packages/infrastructure/network_transport/test/event_mux_test.dart",
-            "name": "critical control is preferred but data is served after eight controls"
+            "name": "eight_control_fairness"
           },
           {
             "owner": "dart",
@@ -977,7 +977,7 @@
         {
           "path": "native/network_core/crates/network-ffi/src/lib.rs",
           "contains": [
-            "event_mux_applies_bounded_control_data_fairness",
+            "eight_control_fairness",
             "SSH_NET_MAX_CONTROL_ITEMS",
             "SSH_NET_MAX_DATA_BYTES"
           ]
@@ -985,7 +985,7 @@
         {
           "path": "packages/infrastructure/network_transport/test/event_mux_test.dart",
           "contains": [
-            "critical control is preferred but data is served after eight controls",
+            "eight_control_fairness",
             "data overflow drops oldest data and control overflow rejects"
           ]
         }
@@ -1051,6 +1051,230 @@
           ]
         }
       ]
+    },
+    {
+      "id": "ensure.stronger_requirement_extends_active_probe",
+      "category": "peer-supervisor",
+      "acceptance": "A stronger concurrent requirement extends the active probe demand.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs", "name": "stronger_requirement_extends_active_generation"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs", "contains": ["stronger_requirement_extends_active_generation"]}]
+    },
+    {
+      "id": "ensure.weaker_path_does_not_complete_stronger_waiter",
+      "category": "peer-supervisor",
+      "acceptance": "A ready path that is weaker than a waiter requirement does not complete that waiter.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs", "name": "weaker_ready_path_does_not_complete_stronger_waiter"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs", "contains": ["weaker_ready_path_does_not_complete_stronger_waiter"]}]
+    },
+    {
+      "id": "ensure.business_keeps_maintain_false",
+      "category": "peer-supervisor",
+      "acceptance": "Business ensure obtains connectivity without enabling persistent maintenance.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs", "name": "business_ensure_does_not_enable_maintenance"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs", "contains": ["business_ensure_does_not_enable_maintenance"]}]
+    },
+    {
+      "id": "business.message_auto_ensure",
+      "category": "business-admission",
+      "acceptance": "Message delivery asks the peer owner for a compatible path when no path is ready.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/channel.rs", "name": "message_auto_ensures_without_connect_peer"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/channel.rs", "contains": ["message_auto_ensures_without_connect_peer"]}]
+    },
+    {
+      "id": "business.transfer_auto_ensure",
+      "category": "business-admission",
+      "acceptance": "Transfer operations ensure a compatible path before sending or resuming.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/transfer.rs", "name": "transfer_auto_ensures_path"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/transfer.rs", "contains": ["transfer_auto_ensures_path"]}]
+    },
+    {
+      "id": "business.stream_auto_ensure",
+      "category": "business-admission",
+      "acceptance": "Stream operations ensure a compatible path before opening or using a stream.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/stream.rs", "name": "stream_auto_ensures_reliable_stream"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/stream.rs", "contains": ["stream_auto_ensures_reliable_stream"]}]
+    },
+    {
+      "id": "ownership.peer_path_manager_sole_carrier_owner",
+      "category": "path-ownership",
+      "acceptance": "PhysicalPath owns the carrier and PathHandle remains non-owning.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/connect/path.rs", "name": "physical_path_is_sole_carrier_owner"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/connect/path.rs", "contains": ["physical_path_is_sole_carrier_owner"]}]
+    },
+    {
+      "id": "ownership.no_second_strong_carrier_truth",
+      "category": "path-ownership",
+      "acceptance": "Runtime keeps only a non-owning path projection beside PeerPathManager.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/runtime.rs", "name": "runtime_path_projection_is_non_owning"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/runtime.rs", "contains": ["OwnedPathProjection", "path_projections"]}]
+    },
+    {
+      "id": "security.direct_disabled_business",
+      "category": "e2ee-policy",
+      "acceptance": "Direct Disabled permits identity-authenticated business plaintext without an application root.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/channel.rs", "name": "disabled_direct_message_succeeds_without_crypto_context"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/channel.rs", "contains": ["disabled_direct_message_succeeds_without_crypto_context"]}]
+    },
+    {
+      "id": "security.required_disabled_mismatch",
+      "category": "e2ee-policy",
+      "acceptance": "A Required/Disabled policy mismatch fails closed.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/channel.rs", "name": "required_disabled_mismatch_fails"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/channel.rs", "contains": ["required_disabled_mismatch_fails"]}]
+    },
+    {
+      "id": "security.relay_disabled_rejected",
+      "category": "e2ee-policy",
+      "acceptance": "Relay Disabled is rejected before the application root exchange.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/channel.rs", "name": "relay_disabled_fails_with_relay_requires_e2ee"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/channel.rs", "contains": ["relay_disabled_fails_with_relay_requires_e2ee"]}]
+    },
+    {
+      "id": "transfer.resume_with_new_session_id",
+      "category": "transfer",
+      "acceptance": "Transfer resumes from the confirmed offset across a fresh ConnectionSession.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/transfer.rs", "name": "transfer_resume_survives_new_connection_session_id"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/transfer.rs", "contains": ["transfer_resume_survives_new_connection_session_id"]}]
+    },
+    {
+      "id": "stream.lifetime_path_lease",
+      "category": "stream",
+      "acceptance": "A stream keeps its path lease for its lifetime and does not silently migrate.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/stream.rs", "name": "stream_holds_lease_until_close"}, {"owner": "rust", "path": "native/network_core/crates/network-core/src/stream.rs", "name": "stream_does_not_transparently_migrate"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/stream.rs", "contains": ["stream_holds_lease_until_close", "stream_does_not_transparently_migrate"]}]
+    },
+    {
+      "id": "stream.normal_retire_drain",
+      "category": "stream",
+      "acceptance": "Normal path retirement rejects new leases and drains existing leases before close.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/stream.rs", "name": "normal_retire_waits_for_stream"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/stream.rs", "contains": ["normal_retire_waits_for_stream"]}]
+    },
+    {
+      "id": "stream.hard_close_revocation",
+      "category": "stream",
+      "acceptance": "Hard close revokes active leases immediately and closes the path.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/stream.rs", "name": "hard_close_closes_stream"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/stream.rs", "contains": ["hard_close_closes_stream"]}]
+    },
+    {
+      "id": "peer.passive_inbound_online",
+      "category": "peer-admission",
+      "acceptance": "A trusted passive inbound admission makes the peer Online.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs", "name": "passive_inbound_does_not_enable_maintenance_or_recovery"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs", "contains": ["passive_inbound_does_not_enable_maintenance_or_recovery"]}]
+    },
+    {
+      "id": "peer.passive_inbound_no_maintenance",
+      "category": "peer-admission",
+      "acceptance": "Passive inbound admission does not enable persistent maintenance or recovery.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs", "name": "passive_inbound_does_not_enable_maintenance_or_recovery"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/connect/peer_supervisor.rs", "contains": ["passive_inbound_does_not_enable_maintenance_or_recovery"]}]
+    },
+    {
+      "id": "environment.maintain_false_preserved",
+      "category": "environment",
+      "acceptance": "An environment change preserves maintain=false.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/discovery/mod.rs", "name": "environment_change_preserves_maintain_false"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/discovery/mod.rs", "contains": ["environment_change_preserves_maintain_false"]}]
+    },
+    {
+      "id": "environment.maintain_true_preserved",
+      "category": "environment",
+      "acceptance": "An environment change preserves maintain=true.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/discovery/mod.rs", "name": "environment_change_preserves_maintain_true"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/discovery/mod.rs", "contains": ["environment_change_preserves_maintain_true"]}]
+    },
+    {
+      "id": "environment.relay_survives",
+      "category": "environment",
+      "acceptance": "A healthy Relay path survives an environment notification without an unnecessary lifecycle reset.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/discovery/mod.rs", "name": "environment_change_without_connectivity_still_publishes_and_preserves_relay"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/discovery/mod.rs", "contains": ["environment_change_without_connectivity_still_publishes_and_preserves_relay"]}]
+    },
+    {
+      "id": "environment.realtime_survives",
+      "category": "environment",
+      "acceptance": "A healthy Realtime path survives an environment notification without an unnecessary lifecycle reset.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/realtime.rs", "name": "healthy_realtime_survives_environment_reprobe"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/realtime.rs", "contains": ["healthy_realtime_survives_environment_reprobe"]}]
+    },
+    {
+      "id": "recovery.relay_ready_not_blocked",
+      "category": "recovery",
+      "acceptance": "A healthy Relay-ready path is not blocked by unrelated recovery work.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/discovery/recovery.rs", "name": "direct_recovery_requires_relay_ready_and_keeps_relay_business_available"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/discovery/recovery.rs", "contains": ["direct_recovery_requires_relay_ready_and_keeps_relay_business_available"]}]
+    },
+    {
+      "id": "recovery.direct_backoff",
+      "category": "recovery",
+      "acceptance": "Direct recovery applies the bounded retry backoff policy.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/discovery/recovery.rs", "name": "direct_recovery_backoff_matches_frozen_schedule"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/discovery/recovery.rs", "contains": ["direct_recovery_backoff_matches_frozen_schedule"]}]
+    },
+    {
+      "id": "path.equivalent_loser",
+      "category": "path-selection",
+      "acceptance": "An equivalent late path loses to the already-ready winner.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/connect/path.rs", "name": "equivalent_late_direct_loses"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/connect/path.rs", "contains": ["equivalent_late_direct_loses"]}]
+    },
+    {
+      "id": "path.weaker_loser",
+      "category": "path-selection",
+      "acceptance": "A weaker late path loses to the already-ready winner.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/connect/path.rs", "name": "weaker_late_direct_loses"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/connect/path.rs", "contains": ["weaker_late_direct_loses"]}]
+    },
+    {
+      "id": "path.strict_superset_promotion",
+      "category": "path-selection",
+      "acceptance": "A needed strict capability superset may promote while retiring the old path.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/connect/path.rs", "name": "needed_strict_superset_can_promote"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/connect/path.rs", "contains": ["needed_strict_superset_can_promote"]}]
+    },
+    {
+      "id": "event.control_not_starved_by_data",
+      "category": "event-delivery",
+      "acceptance": "Control events are served before data starvation can block the EventMux.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "dart", "path": "packages/infrastructure/network_transport/test/event_mux_test.dart", "name": "eight_control_fairness"}]},
+      "evidence": [{"path": "packages/infrastructure/network_transport/test/event_mux_test.dart", "contains": ["eight_control_fairness"]}]
+    },
+    {
+      "id": "diagnostics.real_owner_counts",
+      "category": "diagnostics",
+      "acceptance": "Diagnostics read live PeerSupervisor and PeerPathManager owner state.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/commands.rs", "name": "diagnostics_reads_live_supervisor_and_path_manager"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/commands.rs", "contains": ["diagnostics_reads_live_supervisor_and_path_manager"]}]
     }
   ]
 }

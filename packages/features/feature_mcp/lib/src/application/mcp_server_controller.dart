@@ -80,16 +80,106 @@ class McpSelfTestResult {
       serverReachable && authenticated && initialized && toolsListed;
 }
 
-class _McpSelfTestRequestResult {
+/// Result of one request made by the MCP self-test transport.
+final class McpSelfTestResponse {
   final bool reachable;
   final int? statusCode;
   final bool succeeded;
 
-  const _McpSelfTestRequestResult({
+  const McpSelfTestResponse({
     required this.reachable,
     required this.statusCode,
     required this.succeeded,
   });
+}
+
+/// Transport used by [McpServerController.runSelfTest].
+abstract interface class McpSelfTestTransport {
+  Future<McpSelfTestResponse> postJson({
+    required Uri url,
+    required String token,
+    required Map<String, dynamic> body,
+  });
+}
+
+/// Factory used by the controller to own the MCP HTTP server lifecycle.
+typedef McpHttpServerFactory =
+    Future<McpHttpServerHandle> Function({
+      required String host,
+      required int port,
+      required String token,
+      required McpJsonRpcRouter router,
+      required McpActivityRecorder? activityRecorder,
+      required McpLoggerPort? logger,
+    });
+
+Future<McpHttpServerHandle> _bindMcpHttpServer({
+  required String host,
+  required int port,
+  required String token,
+  required McpJsonRpcRouter router,
+  required McpActivityRecorder? activityRecorder,
+  required McpLoggerPort? logger,
+}) {
+  return McpHttpServer.bind(
+    host: host,
+    port: port,
+    token: token,
+    router: router,
+    activityRecorder: activityRecorder,
+    logger: logger,
+  );
+}
+
+final class _HttpMcpSelfTestTransport implements McpSelfTestTransport {
+  const _HttpMcpSelfTestTransport();
+
+  @override
+  Future<McpSelfTestResponse> postJson({
+    required Uri url,
+    required String token,
+    required Map<String, dynamic> body,
+  }) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 5)
+      ..findProxy = (_) => 'DIRECT';
+    try {
+      final request = await client
+          .postUrl(url)
+          .timeout(const Duration(seconds: 5));
+      request.headers.contentType = ContentType.json;
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+      request.write(jsonEncode(body));
+      final response = await request.close().timeout(
+        const Duration(seconds: 5),
+      );
+      final responseText = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != HttpStatus.ok) {
+        return McpSelfTestResponse(
+          reachable: true,
+          statusCode: response.statusCode,
+          succeeded: false,
+        );
+      }
+      final decoded = jsonDecode(responseText);
+      return McpSelfTestResponse(
+        reachable: true,
+        statusCode: response.statusCode,
+        succeeded: decoded is Map && decoded['error'] == null,
+      );
+    } catch (_) {
+      return const McpSelfTestResponse(
+        reachable: false,
+        statusCode: null,
+        succeeded: false,
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
 }
 
 class McpServerStatusSnapshot {
@@ -121,11 +211,13 @@ class McpServerController extends ChangeNotifier {
   final McpSettingsPort settings;
   final McpToolExecutor Function() toolServiceFactory;
   final McpPortProbe portProbe;
+  final McpHttpServerFactory serverFactory;
+  final McpSelfTestTransport selfTestTransport;
   final McpActivityRepository activityRepository;
   final McpLoggerPort logger;
   final McpApprovalQueue approvalQueue;
 
-  McpHttpServer? _server;
+  McpHttpServerHandle? _server;
   McpServerRunStatus _status = McpServerRunStatus.stopped;
   String? _boundHost;
   int? _boundPort;
@@ -145,6 +237,8 @@ class McpServerController extends ChangeNotifier {
     required this.activityRepository,
     required this.logger,
     this.portProbe = const McpPortProbe(),
+    this.serverFactory = _bindMcpHttpServer,
+    this.selfTestTransport = const _HttpMcpSelfTestTransport(),
     McpApprovalQueue? approvalQueue,
   }) : approvalQueue = approvalQueue ?? McpApprovalQueue(logger: logger) {
     _lastApprovalMode = settings.mcpSettings.approvalMode;
@@ -345,7 +439,7 @@ class McpServerController extends ChangeNotifier {
           logger: logger,
         ),
       );
-      _server = await McpHttpServer.bind(
+      _server = await serverFactory(
         host: settings.host,
         port: settings.port,
         token: token,
@@ -520,41 +614,12 @@ class McpServerController extends ChangeNotifier {
     return result;
   }
 
-  Future<_McpSelfTestRequestResult> _postJsonRpc(
+  Future<McpSelfTestResponse> _postJsonRpc(
     Uri url,
     String token,
     Map<String, dynamic> body,
   ) async {
-    final client = HttpClient();
-    try {
-      final request = await client.postUrl(url);
-      request.headers.contentType = ContentType.json;
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-      request.write(jsonEncode(body));
-      final response = await request.close();
-      final responseText = await utf8.decoder.bind(response).join();
-      if (response.statusCode != HttpStatus.ok) {
-        return _McpSelfTestRequestResult(
-          reachable: true,
-          statusCode: response.statusCode,
-          succeeded: false,
-        );
-      }
-      final decoded = jsonDecode(responseText);
-      return _McpSelfTestRequestResult(
-        reachable: true,
-        statusCode: response.statusCode,
-        succeeded: decoded is Map && decoded['error'] == null,
-      );
-    } catch (_) {
-      return const _McpSelfTestRequestResult(
-        reachable: false,
-        statusCode: null,
-        succeeded: false,
-      );
-    } finally {
-      client.close(force: true);
-    }
+    return selfTestTransport.postJson(url: url, token: token, body: body);
   }
 
   McpSelfTestResult _selfTestFailure(

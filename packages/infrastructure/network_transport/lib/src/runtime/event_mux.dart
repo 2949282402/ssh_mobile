@@ -1,5 +1,7 @@
 import 'dart:collection';
 
+import 'resource_limiter.dart';
+
 /// Priority assigned by the typed adapter before an event enters [EventMux].
 ///
 /// The adapter owns the classification because it knows which decoded event
@@ -40,12 +42,13 @@ final class EventMuxEntry<T> {
 /// runtime, a stream subscription, or a socket.
 final class EventMux<T> {
   EventMux({
-    this.maxControlItems = 256,
-    this.maxControlBytes = 4 * 1024 * 1024,
-    this.maxDataItems = 128,
-    this.maxDataBytes = 8 * 1024 * 1024,
-    this.maxSinglePayloadBytes = 1024 * 1024,
-    this.maxConsecutiveControlEvents = 8,
+    this.maxControlItems = ResourceLimiter.maxControlQueueItems,
+    this.maxControlBytes = ResourceLimiter.maxControlQueueBytes,
+    this.maxDataItems = ResourceLimiter.maxDataQueueItems,
+    this.maxDataBytes = ResourceLimiter.maxDataQueueBytes,
+    this.maxSinglePayloadBytes = ResourceLimiter.maxEventBytes,
+    this.maxConsecutiveControlEvents =
+        ResourceLimiter.maxConsecutiveControlEvents,
   }) : assert(maxControlItems > 0),
        assert(maxControlBytes > 0),
        assert(maxDataItems > 0),
@@ -156,16 +159,16 @@ final class EventMux<T> {
   }
 
   bool _addData(EventMuxEntry<T> entry) {
+    if (entry.bytes > maxDataBytes) {
+      _rejectedOversizeItems++;
+      return false;
+    }
     while (_data.isNotEmpty &&
         (_data.length >= maxDataItems ||
             _dataBytes + entry.bytes > maxDataBytes)) {
       final dropped = _data.removeFirst();
       _dataBytes -= dropped.bytes;
       _droppedDataItems++;
-    }
-    if (entry.bytes > maxDataBytes) {
-      _rejectedOversizeItems++;
-      return false;
     }
     _data.addLast(entry);
     _dataBytes += entry.bytes;

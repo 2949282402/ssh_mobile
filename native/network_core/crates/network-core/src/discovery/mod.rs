@@ -17,6 +17,7 @@
 
 mod local_discovery;
 mod publisher;
+mod recovery;
 pub(crate) mod resolver;
 mod snapshot;
 
@@ -27,6 +28,8 @@ use crate::runtime::RuntimeState;
 
 pub(crate) use local_discovery::LocalDiscoveryManager;
 pub(crate) use publisher::{DiscoveryControlPlane, DiscoveryPublisher};
+#[allow(unused_imports)]
+pub(crate) use recovery::{DirectRecoveryPolicy, DIRECT_RECOVERY_BASE_BACKOFF};
 use snapshot::{candidate_bundle_from_local, local_transport_capabilities};
 
 // 以下仅在测试中使用；非测试构建不引用它们（Step 6 接线 resolver 后再收紧）。
@@ -46,6 +49,18 @@ pub(crate) const DISCOVERY_PUBLISH_RETRY_BACKOFF_MS: [u64; 5] = [500, 1000, 2000
 /// 单次 DiscoveryPublish 的应答等待上限。`RelayControlClient` 内部已有 8s 请求
 /// 超时，这里是发布者层的双保险（timeout → 视为 ACK 丢失 → 重试）。
 pub(crate) const DISCOVERY_PUBLISH_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// The result of a local network-environment transition.  It is an
+/// invalidation/republication fact, not a disconnect instruction: callers
+/// must preserve healthy Relay/Realtime resources and let the peer owner
+/// decide which Direct probe to restart.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct EnvironmentChangeResult {
+    pub(crate) generation: u64,
+    pub(crate) has_connectivity: bool,
+    pub(crate) runtime_epoch: network_relay::v2::RuntimeEpoch,
+    pub(crate) revision: u32,
+}
 
 // ---------------------------------------------------------------------------
 // 运行时接线 hooks（peer.rs / relay.rs 调用）
@@ -80,9 +95,36 @@ pub(crate) async fn on_local_candidates_changed(state: &Arc<RuntimeState>) {
     let Some(manager) = state.local_discovery.read().await.clone() else {
         return;
     };
-    refresh_local_discovery(state, &manager).await;
     manager.bump_revision();
+    refresh_local_discovery(state, &manager).await;
     trigger_publish(state, manager, "candidates-changed").await;
+}
+
+/// Apply a network-environment lifecycle trigger without disconnecting any
+/// peer, path, Relay control/data route, or Realtime session.  The returned
+/// epoch/revision is the coordinator's stale-Direct invalidation token.
+///
+/// The peer owner should reset its Direct recovery policy using the same
+/// trigger, preserve `maintain_connection`, and schedule any reprobe only
+/// through its normal bounded connect intent.  This function deliberately has
+/// no access to those mutable owners.
+pub(crate) async fn on_network_environment_changed(
+    state: &Arc<RuntimeState>,
+    generation: u64,
+    has_connectivity: bool,
+) -> Option<EnvironmentChangeResult> {
+    let manager = state.local_discovery.read().await.clone()?;
+    manager.bump_revision();
+    refresh_local_discovery(state, &manager).await;
+    let snapshot = manager.snapshot();
+    let result = EnvironmentChangeResult {
+        generation,
+        has_connectivity,
+        runtime_epoch: snapshot.runtime_epoch.clone()?,
+        revision: snapshot.revision,
+    };
+    trigger_publish(state, manager, "network-environment-changed").await;
+    Some(result)
 }
 
 /// 在受监督的后台任务里执行 [`on_control_connected`]（供 relay connect/reconnect
@@ -122,6 +164,8 @@ async fn trigger_publish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connect::{PeerId, PeerState, PeerSupervisor};
+    use network_protocol::CommunicationClass;
     use network_relay::v2::{DiscoveryAck, DiscoverySnapshot, ResolvePeerResponse, ResolveStatus};
     use network_relay::RelayError;
     use std::future::Future;
@@ -251,6 +295,136 @@ mod tests {
         let published = control.published.lock().unwrap().clone();
         assert_eq!(published.len(), 1);
         assert_eq!(published[0].revision, 2);
+    }
+
+    #[tokio::test]
+    async fn environment_change_is_a_non_destructive_discovery_transition() {
+        let state = test_state().await;
+        begin_epoch(&state).await;
+        let control = RecordingControl::new();
+        *state.relay_control.write().await = Some(control.clone());
+        state
+            .relay_path_ready
+            .write()
+            .await
+            .insert("peer-a".to_string());
+
+        let result = on_network_environment_changed(&state, 42, true)
+            .await
+            .expect("local discovery transition");
+
+        assert_eq!(result.generation, 42);
+        assert!(result.has_connectivity);
+        assert_eq!(result.revision, 2);
+        assert_eq!(
+            state
+                .local_discovery
+                .read()
+                .await
+                .as_ref()
+                .unwrap()
+                .revision(),
+            2
+        );
+        assert!(state.relay_path_ready.read().await.contains("peer-a"));
+        assert!(control.is_usable().await);
+        assert_eq!(control.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            control.published.lock().unwrap()[0].revision,
+            result.revision
+        );
+    }
+
+    #[tokio::test]
+    async fn environment_change_without_connectivity_still_publishes_and_preserves_relay() {
+        let state = test_state().await;
+        begin_epoch(&state).await;
+        let control = RecordingControl::new();
+        *state.relay_control.write().await = Some(control.clone());
+        state.relay_path_ready.write().await.insert("peer-a".into());
+
+        let result = on_network_environment_changed(&state, 43, false)
+            .await
+            .expect("local discovery transition");
+
+        assert!(!result.has_connectivity);
+        assert!(state.relay_path_ready.read().await.contains("peer-a"));
+        assert_eq!(control.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            state.local_discovery.read().await.as_ref().unwrap().state(),
+            LocalDiscoveryState::Published
+        );
+    }
+
+    #[test]
+    fn passive_inbound_sets_online() {
+        let supervisor = PeerSupervisor::new(PeerId::new("passive-peer").expect("peer id"));
+
+        assert_eq!(supervisor.admit_inbound(true), Ok(PeerState::Online));
+        assert_eq!(supervisor.state(), PeerState::Online);
+    }
+
+    #[test]
+    fn passive_inbound_keeps_maintain_false() {
+        let supervisor = PeerSupervisor::new(PeerId::new("passive-peer").expect("peer id"));
+
+        supervisor
+            .admit_inbound(true)
+            .expect("authenticated inbound");
+
+        assert!(!supervisor.maintain_connection());
+    }
+
+    #[test]
+    fn passive_path_loss_does_not_reconnect() {
+        let supervisor = PeerSupervisor::new(PeerId::new("passive-peer").expect("peer id"));
+
+        supervisor
+            .admit_inbound(true)
+            .expect("authenticated inbound");
+        supervisor.path_lost();
+
+        assert_eq!(supervisor.state(), PeerState::Offline);
+        assert!(!supervisor.maintain_connection());
+        assert!(
+            supervisor.can_evict(),
+            "passive loss must not schedule recovery"
+        );
+    }
+
+    #[tokio::test]
+    async fn environment_change_preserves_maintain_false() {
+        let state = test_state().await;
+        begin_epoch(&state).await;
+        let supervisor = state
+            .peer_supervisors
+            .get_or_create("passive-peer")
+            .expect("peer supervisor");
+        supervisor
+            .admit_inbound(true)
+            .expect("authenticated inbound");
+
+        on_network_environment_changed(&state, 44, true).await;
+
+        assert!(!supervisor.maintain_connection());
+    }
+
+    #[tokio::test]
+    async fn environment_change_preserves_maintain_true() {
+        let state = test_state().await;
+        begin_epoch(&state).await;
+        let supervisor = state
+            .peer_supervisors
+            .get_or_create("maintained-peer")
+            .expect("peer supervisor");
+        let intent = supervisor
+            .begin_connect("environment-test", CommunicationClass::ReliableMessage)
+            .expect("connect intent");
+        intent.detach_completion();
+
+        on_network_environment_changed(&state, 45, true).await;
+
+        assert!(supervisor.maintain_connection());
     }
 
     #[tokio::test]

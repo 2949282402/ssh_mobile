@@ -25,8 +25,8 @@
 #[cfg(test)]
 use network_protocol::{network_event, NetworkEvent};
 use network_protocol::{
-    NetworkError as ProtocolError, NetworkErrorCode, SshStreamCloseCommand, SshStreamDataCommand,
-    SshStreamOpenCommand, StreamHandle,
+    CommunicationClass, NetworkError as ProtocolError, NetworkErrorCode, SshStreamCloseCommand,
+    SshStreamDataCommand, SshStreamOpenCommand, StreamHandle,
 };
 use quinn::SendStream;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -36,7 +36,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
 
 use crate::channel::{select_business_path_lease, send_business_frame};
-use crate::connect::CAPABILITY_RELIABLE_STREAM;
+use crate::connect::{PathLease, CAPABILITY_RELIABLE_STREAM};
 use crate::connection::GenericFrameKind;
 use crate::connection::RouteTransport;
 use crate::events::{emit_stream_closed, emit_stream_data_received, protocol_error_with_peer};
@@ -409,8 +409,9 @@ struct StreamEntry {
     next_send_seq: u64,
     send_closed: bool,
     send_lock: Arc<Mutex<()>>,
-    session_key: Option<String>,
-    path_id: Option<u64>,
+    /// One business path reservation held from StreamOpen through StreamClose.
+    /// It is never replaced by a later path/session selection.
+    path_lease: Option<PathLease>,
 }
 
 impl StreamEntry {
@@ -479,6 +480,10 @@ impl ReliableStreamManager {
         }
     }
 
+    pub(crate) async fn active_count(&self) -> u32 {
+        self.inner.lock().await.streams.len().min(u32::MAX as usize) as u32
+    }
+
     pub(crate) async fn open(
         &self,
         opener: StreamOpener,
@@ -518,46 +523,67 @@ impl ReliableStreamManager {
                 next_send_seq: 0,
                 send_closed: false,
                 send_lock: Arc::new(Mutex::new(())),
-                session_key: None,
-                path_id: None,
+                path_lease: None,
             },
         );
         Ok(())
     }
 
-    /// Binds a logical stream to the ConnectionSession and path used for its
-    /// opening attempt. A later path/session change closes the stream instead
-    /// of transparently writing SSH bytes into a new connection.
-    pub(crate) async fn bind_attempt(
+    /// Stores the one path lease that belongs to this stream's entire
+    /// Open..Close lifetime.
+    pub(crate) async fn bind_lease(
         &self,
         opener: StreamOpener,
         stream_id: u16,
-        session_key: String,
-        path_id: u64,
+        lease: PathLease,
     ) -> Result<(), StreamError> {
         let mut state = self.inner.lock().await;
         let entry = state
             .streams
             .get_mut(&StreamKey::new(opener, stream_id))
             .ok_or(StreamError::NotFound)?;
-        entry.session_key = Some(session_key);
-        entry.path_id = Some(path_id);
+        if entry.path_lease.is_some() {
+            return Err(StreamError::AlreadyOpen);
+        }
+        entry.path_lease = Some(lease);
         Ok(())
     }
 
-    pub(crate) async fn attempt_matches(
+    async fn take_lease(
         &self,
         opener: StreamOpener,
         stream_id: u16,
-        session_key: &str,
-        path_id: u64,
-    ) -> Result<bool, StreamError> {
-        let state = self.inner.lock().await;
+    ) -> Result<PathLease, StreamError> {
+        let mut state = self.inner.lock().await;
         let entry = state
             .streams
-            .get(&StreamKey::new(opener, stream_id))
+            .get_mut(&StreamKey::new(opener, stream_id))
             .ok_or(StreamError::NotFound)?;
-        Ok(entry.session_key.as_deref() == Some(session_key) && entry.path_id == Some(path_id))
+        if entry.send_closed {
+            return Err(StreamError::Closed);
+        }
+        entry.path_lease.take().ok_or(StreamError::NotConnected)
+    }
+
+    async fn restore_lease(&self, opener: StreamOpener, stream_id: u16, lease: PathLease) -> bool {
+        let mut state = self.inner.lock().await;
+        let Some(entry) = state.streams.get_mut(&StreamKey::new(opener, stream_id)) else {
+            return false;
+        };
+        if entry.recv_closed || entry.path_lease.is_some() {
+            return false;
+        }
+        entry.path_lease = Some(lease);
+        true
+    }
+
+    #[cfg(test)]
+    async fn has_lease(&self, opener: StreamOpener, stream_id: u16) -> bool {
+        let state = self.inner.lock().await;
+        state
+            .streams
+            .get(&StreamKey::new(opener, stream_id))
+            .is_some_and(|entry| entry.path_lease.is_some())
     }
 
     pub(crate) async fn register_quic_send(
@@ -984,6 +1010,48 @@ impl ReliableStreamManager {
         }
         ids
     }
+
+    /// Revoke streams whose retained path lease has been hard-closed. Normal
+    /// retirement leaves the lease active, so existing streams are not
+    /// interrupted and new opens are rejected by path selection.
+    #[allow(dead_code)]
+    pub(crate) async fn close_inactive(
+        &self,
+        peer_id: &str,
+        local_opener_device_id: &str,
+    ) -> Vec<(StreamOpener, u16)> {
+        let ids = {
+            let mut state = self.inner.lock().await;
+            let ids = state
+                .streams
+                .iter()
+                .filter_map(|(key, entry)| {
+                    entry
+                        .path_lease
+                        .as_ref()
+                        .is_some_and(|lease| !lease.is_active())
+                        .then_some(*key)
+                })
+                .collect::<Vec<_>>();
+            for key in &ids {
+                state.streams.remove(key);
+                if state.retired.len() < MAX_RETIRED_STREAM_KEYS {
+                    state.retired.insert(*key);
+                }
+            }
+            ids.into_iter()
+                .map(|key| (key.opener, key.stream_id))
+                .collect::<Vec<_>>()
+        };
+        for (opener, stream_id) in &ids {
+            let opener_device_id = match opener {
+                StreamOpener::Local => local_opener_device_id,
+                StreamOpener::Remote => peer_id,
+            };
+            emit_stream_closed(&self.event_tx, peer_id, opener_device_id, *stream_id);
+        }
+        ids
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1082,12 +1150,6 @@ async fn bind_inbound_attempt(
     opener: StreamOpener,
     stream_id: u16,
 ) -> Result<(), StreamError> {
-    let session_key = state
-        .connection_sessions
-        .current_session_id(peer_id)
-        .await
-        .map(|session_id| session_id.wire_key())
-        .ok_or(StreamError::NotConnected)?;
     let lease = match select_business_path_lease(state, peer_id, CAPABILITY_RELIABLE_STREAM).await {
         Ok(lease) => lease,
         Err(_) => {
@@ -1097,9 +1159,7 @@ async fn bind_inbound_attempt(
     if !lease.is_active() {
         return Err(StreamError::NotConnected);
     }
-    manager
-        .bind_attempt(opener, stream_id, session_key, lease.handle().id())
-        .await
+    manager.bind_lease(opener, stream_id, lease).await
 }
 
 /// Opens a byte stream to a peer. `consumer` selects how inbound bytes are
@@ -1111,11 +1171,15 @@ pub(crate) async fn open_stream(
     service: &str,
     consumer: StreamConsumer,
 ) -> Result<(), StreamError> {
-    let session_id = state
-        .connection_sessions
-        .current_session_id(peer_id)
-        .await
-        .ok_or(StreamError::NotConnected)?;
+    crate::transfer::ensure_business_path(
+        state,
+        peer_id,
+        &format!("stream-{stream_id}"),
+        CommunicationClass::ReliableStream,
+        CAPABILITY_RELIABLE_STREAM,
+    )
+    .await
+    .map_err(|_| StreamError::NotConnected)?;
     let lease = select_business_path_lease(state, peer_id, CAPABILITY_RELIABLE_STREAM)
         .await
         .map_err(|_| StreamError::NotConnected)?;
@@ -1128,18 +1192,11 @@ pub(crate) async fn open_stream(
         .open(StreamOpener::Local, stream_id, service, consumer)
         .await?;
     manager
-        .bind_attempt(
-            StreamOpener::Local,
-            stream_id,
-            session_id.wire_key(),
-            lease.handle().id(),
-        )
+        .bind_lease(StreamOpener::Local, stream_id, lease)
         .await?;
-    if state.connection_sessions.current_session_id(peer_id).await != Some(session_id) {
-        let _ =
-            close_stream_after_path_loss(&manager, peer_id, StreamOpener::Local, stream_id).await;
-        return Err(StreamError::Closed);
-    }
+    // Keep the lease in the entry between operations; temporarily borrow it
+    // only while the opening frame is written.
+    let lease = manager.take_lease(StreamOpener::Local, stream_id).await?;
     let result = match lease.profile().transport() {
         RouteTransport::Quic => {
             async {
@@ -1196,7 +1253,16 @@ pub(crate) async fn open_stream(
     if let Err(error) = result {
         let _ =
             close_stream_after_path_loss(&manager, peer_id, StreamOpener::Local, stream_id).await;
+        drop(lease);
         return Err(error);
+    }
+    if !manager
+        .restore_lease(StreamOpener::Local, stream_id, lease)
+        .await
+    {
+        let _ =
+            close_stream_after_path_loss(&manager, peer_id, StreamOpener::Local, stream_id).await;
+        return Err(StreamError::Closed);
     }
     if consumer == StreamConsumer::Event {
         spawn_stream_event_emitter(state, peer_id, StreamOpener::Local, stream_id).await;
@@ -1231,26 +1297,13 @@ async fn send_stream_with_opener(
     let opener_peer_id = stream_opener_peer_id(state, peer_id, opener).await?;
     let send_guard = manager.send_guard(opener, stream_id).await?;
     let _guard = send_guard.lock().await;
-    let Some(session_key) = state
-        .connection_sessions
-        .current_session_id(peer_id)
-        .await
-        .map(|session_id| session_id.wire_key())
-    else {
-        return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await);
-    };
-    let lease = match select_business_path_lease(state, peer_id, CAPABILITY_RELIABLE_STREAM).await {
+    let lease = match manager.take_lease(opener, stream_id).await {
         Ok(lease) => lease,
-        Err(_) => {
-            return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await)
+        Err(error) => {
+            let _ = close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await;
+            return Err(error);
         }
     };
-    if !manager
-        .attempt_matches(opener, stream_id, &session_key, lease.handle().id())
-        .await?
-    {
-        return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await);
-    }
     let result = match lease.profile().transport() {
         RouteTransport::Quic => {
             if !lease.is_active() {
@@ -1285,12 +1338,18 @@ async fn send_stream_with_opener(
         }
     };
     if !lease.is_active() {
+        drop(lease);
         let _ = close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await;
         return Err(StreamError::Closed);
     }
     if let Err(error) = result {
+        drop(lease);
         let _ = close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await;
         return Err(error);
+    }
+    if !manager.restore_lease(opener, stream_id, lease).await {
+        let _ = close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await;
+        return Err(StreamError::Closed);
     }
     Ok(())
 }
@@ -1335,26 +1394,13 @@ async fn close_stream_with_opener(
 ) -> Result<(), StreamError> {
     let manager = state.stream_manager(peer_id).await;
     let opener_peer_id = stream_opener_peer_id(state, peer_id, opener).await?;
-    let Some(session_key) = state
-        .connection_sessions
-        .current_session_id(peer_id)
-        .await
-        .map(|session_id| session_id.wire_key())
-    else {
-        return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await);
-    };
-    let lease = match select_business_path_lease(state, peer_id, CAPABILITY_RELIABLE_STREAM).await {
+    let lease = match manager.take_lease(opener, stream_id).await {
         Ok(lease) => lease,
-        Err(_) => {
-            return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await)
+        Err(error) => {
+            let _ = close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await;
+            return Err(error);
         }
     };
-    if !manager
-        .attempt_matches(opener, stream_id, &session_key, lease.handle().id())
-        .await?
-    {
-        return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await);
-    }
     let result = match lease.profile().transport() {
         RouteTransport::Quic => {
             if !lease.is_active() {
@@ -1382,9 +1428,14 @@ async fn close_stream_with_opener(
         }
     };
     if !lease.is_active() || result.is_err() {
+        drop(lease);
         return Err(close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await);
     }
-    manager.close_local(peer_id, opener, stream_id).await
+    // A graceful local close keeps the reservation if the receive half is
+    // still draining; the final remote close drops it.
+    manager.close_local(peer_id, opener, stream_id).await?;
+    let _ = manager.restore_lease(opener, stream_id, lease).await;
+    Ok(())
 }
 
 /// Routes an inbound generic stream frame (from the generic-route receiver or
@@ -1543,15 +1594,10 @@ async fn spawn_stream_event_emitter(
     };
     let manager = state.stream_manager(peer_id).await;
     let peer_id = peer_id.to_string();
-    let session_key = state
-        .connection_sessions
-        .current_session_id(&peer_id)
-        .await
-        .map(|id| id.wire_key())
-        .unwrap_or_default();
+    let task_key = format!("stream:{peer_id}:{stream_id}");
     let _ = state
         .task_supervisor
-        .spawn_session(session_key, "stream-event-emitter", async move {
+        .spawn_session(task_key, "stream-event-emitter", async move {
             manager
                 .drain_events(&peer_id, opener, stream_id, &opener_device_id)
                 .await
@@ -1569,14 +1615,9 @@ pub(crate) async fn spawn_quic_stream_reader(
 ) {
     let state = Arc::clone(state);
     let peer_id = peer_id.to_string();
-    let session_key = state
-        .connection_sessions
-        .current_session_id(&peer_id)
-        .await
-        .map(|id| id.wire_key())
-        .unwrap_or_default();
+    let task_key = format!("stream:{peer_id}:{stream_id}");
     let supervisor = Arc::clone(&state.task_supervisor);
-    let _ = supervisor.spawn_session(session_key, "reliable-stream-reader", async move {
+    let _ = supervisor.spawn_session(task_key, "reliable-stream-reader", async move {
         let manager = state.stream_manager(&peer_id).await;
         let mut buf = vec![0u8; MAX_STREAM_FRAME_BYTES];
         let mut seq = 0u64;
@@ -1811,7 +1852,53 @@ pub(crate) async fn handle_ssh_stream_close(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connect::{PathRegistry, PeerId, PeerPathManager};
+    use crate::connection::{ConnectionProfile, Route, RouteTransport};
+    use std::sync::Mutex as StdMutex;
     use tokio::sync::mpsc;
+
+    fn ready_stream_path() -> (
+        Arc<PathRegistry>,
+        PeerPathManager,
+        crate::connect::PathHandle,
+    ) {
+        let registry = Arc::new(PathRegistry::new());
+        let mut paths =
+            PeerPathManager::new(PeerId::new("peer-a").expect("peer"), Arc::clone(&registry));
+        let handle = paths
+            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+            .expect("ready path");
+        (registry, paths, handle)
+    }
+
+    #[tokio::test]
+    async fn stream_auto_ensures_reliable_stream() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        let registry = Arc::new(PathRegistry::new());
+        let mut paths =
+            PeerPathManager::new(PeerId::new("peer-a").expect("peer"), Arc::clone(&registry));
+        paths
+            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+            .expect("ready path");
+        state
+            .peer_path_managers
+            .write()
+            .await
+            .insert("peer-a".to_string(), Arc::new(StdMutex::new(paths)));
+        crate::transfer::ensure_business_path(
+            &state,
+            "peer-a",
+            "stream-7",
+            CommunicationClass::ReliableStream,
+            CAPABILITY_RELIABLE_STREAM,
+        )
+        .await
+        .expect("stream should ensure a reliable stream path");
+    }
 
     #[test]
     fn stream_identity_isolated_by_peer_and_opener() {
@@ -1830,15 +1917,6 @@ mod tests {
             .open(StreamOpener::Local, 9, "ssh", StreamConsumer::Poll)
             .await
             .expect("open");
-        manager
-            .bind_attempt(StreamOpener::Local, 9, "session-a".to_string(), 11)
-            .await
-            .expect("bind attempt");
-
-        assert!(!manager
-            .attempt_matches(StreamOpener::Local, 9, "session-a", 12)
-            .await
-            .expect("attempt lookup"));
         assert!(matches!(
             close_stream_after_path_loss(&manager, "peer-a", StreamOpener::Local, 9).await,
             StreamError::Closed
@@ -1850,6 +1928,110 @@ mod tests {
                 .await,
             Err(StreamError::Closed)
         ));
+    }
+
+    #[tokio::test]
+    async fn stream_holds_lease_until_close() {
+        let (registry, _paths, handle) = ready_stream_path();
+        let (manager, _event_rx) = test_manager();
+        manager
+            .open(StreamOpener::Local, 10, "ssh", StreamConsumer::Poll)
+            .await
+            .expect("open");
+        manager
+            .bind_lease(
+                StreamOpener::Local,
+                10,
+                registry.acquire(&handle).expect("stream lease"),
+            )
+            .await
+            .expect("bind lease");
+        assert!(manager.has_lease(StreamOpener::Local, 10).await);
+        manager
+            .handle_close("peer-a", StreamOpener::Local, 10)
+            .await
+            .expect("peer close");
+        manager
+            .close_local("peer-a", StreamOpener::Local, 10)
+            .await
+            .expect("local close");
+        assert!(!manager.has_lease(StreamOpener::Local, 10).await);
+    }
+
+    #[tokio::test]
+    async fn normal_retire_waits_for_stream() {
+        let (registry, mut paths, handle) = ready_stream_path();
+        let (manager, _event_rx) = test_manager();
+        manager
+            .open(StreamOpener::Local, 11, "ssh", StreamConsumer::Poll)
+            .await
+            .expect("open");
+        manager
+            .bind_lease(
+                StreamOpener::Local,
+                11,
+                registry.acquire(&handle).expect("stream lease"),
+            )
+            .await
+            .expect("bind lease");
+        paths.normal_drain();
+        assert!(manager.has_lease(StreamOpener::Local, 11).await);
+        assert!(
+            registry.acquire(&handle).is_err(),
+            "new streams are rejected"
+        );
+        manager.close_all("peer-a", "local-a").await;
+        assert!(!manager.is_open(StreamOpener::Local, 11).await);
+    }
+
+    #[tokio::test]
+    async fn hard_close_closes_stream() {
+        let (registry, mut paths, handle) = ready_stream_path();
+        let (manager, _event_rx) = test_manager();
+        manager
+            .open(StreamOpener::Local, 12, "ssh", StreamConsumer::Poll)
+            .await
+            .expect("open");
+        manager
+            .bind_lease(
+                StreamOpener::Local,
+                12,
+                registry.acquire(&handle).expect("stream lease"),
+            )
+            .await
+            .expect("bind lease");
+        paths.hard_close();
+        let closed = manager.close_inactive("peer-a", "local-a").await;
+        assert_eq!(closed, vec![(StreamOpener::Local, 12)]);
+        assert!(!manager.is_open(StreamOpener::Local, 12).await);
+    }
+
+    #[tokio::test]
+    async fn stream_does_not_transparently_migrate() {
+        let (registry, mut paths, old_handle) = ready_stream_path();
+        let (manager, _event_rx) = test_manager();
+        manager
+            .open(StreamOpener::Local, 13, "ssh", StreamConsumer::Poll)
+            .await
+            .expect("open");
+        manager
+            .bind_lease(
+                StreamOpener::Local,
+                13,
+                registry.acquire(&old_handle).expect("old lease"),
+            )
+            .await
+            .expect("bind old lease");
+        registry.drain(&old_handle);
+        let new_handle = paths
+            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+            .expect("new path");
+        assert_ne!(old_handle, new_handle);
+        assert!(manager.has_lease(StreamOpener::Local, 13).await);
+        assert!(registry.acquire(&new_handle).is_ok());
+        // The existing stream retained the old lease; it was not rebound to the
+        // newly published path.
+        assert!(manager.has_lease(StreamOpener::Local, 13).await);
     }
 
     fn test_manager() -> (ReliableStreamManager, mpsc::UnboundedReceiver<NetworkEvent>) {

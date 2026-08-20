@@ -12,7 +12,10 @@ use crate::relay;
 use crate::runtime::RuntimeState;
 use crate::transfer;
 use crate::{
-    connect::{IntentGeneration, PeerId, PeerState, PeerSupervisor},
+    connect::{
+        ConnectivityAttemptCoordinator, IntentGeneration, PeerId, PeerState, PeerSupervisor,
+        CAPABILITY_RELIABLE_MESSAGE, DIRECT_CONNECT_WINDOW,
+    },
     errors::CoreNetworkError,
 };
 use network_protocol::{
@@ -363,7 +366,12 @@ async fn emit_peer_diagnostics(state: &RuntimeState, peer_id: String) -> Result<
         .is_some_and(|supervisor| supervisor.state() == PeerState::Connecting)
         as u32;
     let ready_path_count = ready_path_count(state, &peer_id).await;
-    let active_stream_count = state.reliable_streams.read().await.contains_key(&peer_id) as u32;
+    let active_stream_count =
+        if let Some(manager) = state.reliable_streams.read().await.get(&peer_id).cloned() {
+            manager.active_count().await
+        } else {
+            0
+        };
     let active_transfer_count = active_transfer_count(state, &peer_id).await;
     let e2ee_policy = state
         .peers
@@ -547,7 +555,12 @@ async fn ready_path_count(state: &RuntimeState, peer_id: &str) -> u32 {
 /// boundary.  Relay pending/active and completion waiters are all real
 /// TransferManager-owned identities; no synthetic fixed counter is reported.
 async fn active_transfer_count(state: &RuntimeState, peer_id: &str) -> u32 {
-    let mut transfer_ids = HashSet::new();
+    let mut transfer_ids = state
+        .transfers
+        .active_ids_for_peer(peer_id)
+        .await
+        .into_iter()
+        .collect::<HashSet<_>>();
     transfer_ids.extend(
         state
             .relay_pending_incoming
@@ -588,15 +601,19 @@ async fn active_transfer_count(state: &RuntimeState, peer_id: &str) -> u32 {
     transfer_ids.len().min(u32::MAX as usize) as u32
 }
 
-/// Apply an environment transition to the owning lifecycle graph.  Local
-/// candidate refresh/revision/publish happens first; active peer generations
-/// are then cancelled and, when connectivity is available, restarted through
-/// the PeerSupervisor so stale retries cannot revive an old path.
+/// Apply an environment transition to the owning lifecycle graph.  Discovery
+/// refresh and Direct recovery are independent of healthy Relay/Realtime
+/// owners; passive peers never acquire persistent recovery maintenance.
 async fn handle_network_environment_changed(
     state: &Arc<RuntimeState>,
     environment: &network_protocol::NetworkEnvironmentChangedCommand,
 ) -> Result<(), ProtocolError> {
-    crate::discovery::on_local_candidates_changed(state).await;
+    let _ = crate::discovery::on_network_environment_changed(
+        state,
+        environment.generation,
+        environment.has_connectivity,
+    )
+    .await;
     // A local interface/NAT change invalidates the remote Stage-A pairing
     // opportunity as well.  The next supervisor generation must resolve or
     // gather fresh candidates instead of reusing this retry snapshot.
@@ -604,45 +621,59 @@ async fn handle_network_environment_changed(
 
     let peer_ids = state.peers.read().await.keys().cloned().collect::<Vec<_>>();
     let mut first_error = None;
-    for (index, peer_id) in peer_ids.into_iter().enumerate() {
+    for peer_id in peer_ids {
         let supervisor = state
             .peer_supervisors
             .get_or_create(&peer_id)
             .map_err(|error| core_error(&peer_id, "environment_changed", error))?;
-        let should_reprobe = matches!(
-            supervisor.state(),
-            PeerState::Online | PeerState::Connecting
-        ) || supervisor.maintain_connection();
-        if !should_reprobe {
-            continue;
-        }
+        let maintain = supervisor.maintain_connection();
+        state.reset_direct_recovery(&peer_id);
+        let has_relay = state.has_ready_relay_path(&peer_id).await;
+        let has_direct = state.has_ready_direct_path(&peer_id).await;
 
-        // Disconnect invalidates all joined waiters and increments the intent
-        // generation.  This is the retry reset/stale guard for the new network
-        // environment; closing the session then retires its physical path,
-        // stream, realtime, and session task owners.
-        let _ = supervisor.disconnect();
-        close_peer_connection(state, &peer_id).await;
-        if !environment.has_connectivity {
-            continue;
-        }
-
-        let command_id = format!("environment-reprobe-{}-{index}", environment.generation);
-        match state.peer_supervisors.start_connect(
-            Arc::clone(state),
-            &peer_id,
-            command_id,
-            CommunicationClass::ReliableMessage,
-        ) {
-            Ok(intent) => {
-                if intent.is_new {
-                    emit_peer_lifecycle(&state.event_tx, &peer_id, PeerState::Connecting, None);
-                }
-                intent.detach_completion();
+        if has_relay {
+            // Direct is an optimisation. Retire only the stale Direct slot;
+            // the Relay carrier, Session, and Realtime owner remain usable.
+            let _ = crate::realtime::preserve_for_environment_reprobe(state, &peer_id).await;
+            if has_direct {
+                let _ = state.close_direct_path(&peer_id, None).await;
             }
-            Err(error) => {
-                if first_error.is_none() {
-                    first_error = Some(core_error(&peer_id, "environment_changed", error));
+            if maintain && environment.has_connectivity {
+                spawn_direct_recovery(Arc::clone(state), peer_id);
+            }
+            continue;
+        }
+
+        if has_direct
+            || matches!(
+                supervisor.state(),
+                PeerState::Online | PeerState::Connecting
+            )
+        {
+            // This invalidates the peer generation while preserving the
+            // maintenance bit; explicit recovery below is the only reconnect
+            // trigger for a maintained peer.
+            supervisor.path_lost();
+            close_peer_connection(state, &peer_id).await;
+        }
+        if maintain && environment.has_connectivity {
+            let command_id = format!("environment-reprobe-{}-{peer_id}", environment.generation);
+            match state.peer_supervisors.start_connect(
+                Arc::clone(state),
+                &peer_id,
+                command_id,
+                CommunicationClass::ReliableMessage,
+            ) {
+                Ok(intent) => {
+                    if intent.is_new {
+                        emit_peer_lifecycle(&state.event_tx, &peer_id, PeerState::Connecting, None);
+                    }
+                    intent.detach_completion();
+                }
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(core_error(&peer_id, "environment_changed", error));
+                    }
                 }
             }
         }
@@ -651,6 +682,63 @@ async fn handle_network_environment_changed(
         return Err(error);
     }
     Ok(())
+}
+
+fn spawn_direct_recovery(state: Arc<RuntimeState>, peer_id: String) {
+    let task_state = Arc::clone(&state);
+    let task_peer_id = peer_id.clone();
+    let _ = state
+        .task_supervisor
+        .spawn_runtime("direct-recovery", async move {
+            loop {
+                let Ok(supervisor) = task_state.peer_supervisors.get_or_create(&task_peer_id)
+                else {
+                    return;
+                };
+                if !supervisor.maintain_connection()
+                    || !task_state.has_ready_relay_path(&task_peer_id).await
+                {
+                    return;
+                }
+                let Some(delay) = task_state.next_direct_recovery_delay(&task_peer_id) else {
+                    return;
+                };
+                let generation = supervisor.generation();
+                if !task_state
+                    .arm_direct_probe(
+                        &task_peer_id,
+                        generation,
+                        delay.saturating_add(DIRECT_CONNECT_WINDOW),
+                        CAPABILITY_RELIABLE_MESSAGE,
+                    )
+                    .await
+                {
+                    return;
+                }
+                tokio::time::sleep(delay).await;
+                if supervisor.generation() != generation
+                    || !supervisor.maintain_connection()
+                    || !task_state.has_ready_relay_path(&task_peer_id).await
+                {
+                    task_state
+                        .finish_direct_probe(&task_peer_id, generation)
+                        .await;
+                    return;
+                }
+                let result = ConnectivityAttemptCoordinator::new(Arc::clone(&task_state))
+                    .probe_direct(&task_peer_id, CommunicationClass::ReliableMessage)
+                    .await;
+                if task_state.has_ready_direct_path(&task_peer_id).await {
+                    return;
+                }
+                task_state
+                    .finish_direct_probe(&task_peer_id, generation)
+                    .await;
+                if result.is_ok() {
+                    return;
+                }
+            }
+        });
 }
 
 /// Submit a peer intent and await the supervisor-owned completion.  Queueing

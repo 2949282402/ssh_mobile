@@ -53,6 +53,34 @@ REQUIRED_CASE_IDS = {
     "flow.delivery_retry_resume",
     "flow.bounded_event_mux",
     "flow.mobile_versioning",
+    "ensure.stronger_requirement_extends_active_probe",
+    "ensure.weaker_path_does_not_complete_stronger_waiter",
+    "ensure.business_keeps_maintain_false",
+    "business.message_auto_ensure",
+    "business.transfer_auto_ensure",
+    "business.stream_auto_ensure",
+    "ownership.peer_path_manager_sole_carrier_owner",
+    "ownership.no_second_strong_carrier_truth",
+    "security.direct_disabled_business",
+    "security.required_disabled_mismatch",
+    "security.relay_disabled_rejected",
+    "transfer.resume_with_new_session_id",
+    "stream.lifetime_path_lease",
+    "stream.normal_retire_drain",
+    "stream.hard_close_revocation",
+    "peer.passive_inbound_online",
+    "peer.passive_inbound_no_maintenance",
+    "environment.maintain_false_preserved",
+    "environment.maintain_true_preserved",
+    "environment.relay_survives",
+    "environment.realtime_survives",
+    "recovery.relay_ready_not_blocked",
+    "recovery.direct_backoff",
+    "path.equivalent_loser",
+    "path.weaker_loser",
+    "path.strict_superset_promotion",
+    "event.control_not_starved_by_data",
+    "diagnostics.real_owner_counts",
 }
 
 
@@ -69,6 +97,31 @@ def _load_matrix() -> dict[str, object]:
     if not isinstance(value, dict):
         raise TypeError("acceptance matrix must be a JSON object")
     return value
+
+
+def _production_sources() -> list[Path]:
+    roots = (
+        ROOT / "native/network_core/crates",
+        ROOT / "relay/internal",
+        ROOT / "packages/infrastructure",
+        ROOT / "protocol/proto",
+    )
+    suffixes = {".rs", ".go", ".dart", ".proto"}
+    sources: list[Path] = []
+    for root in roots:
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix not in suffixes:
+                continue
+            if path.name.endswith("_test.go") or path.name == "tests.rs":
+                continue
+            if "test" in path.parts:
+                continue
+            sources.append(path)
+    return sources
+
+
+def _without_comments(source: str) -> str:
+    return re.sub(r"//[^\n]*|/\*.*?\*/", "", source, flags=re.DOTALL)
 
 
 class FrozenNetworkContractTest(unittest.TestCase):
@@ -226,7 +279,8 @@ class FrozenNetworkContractTest(unittest.TestCase):
         self.assertIn("EVENT_MAILBOX_CAPACITY", runtime)
         self.assertIn("MAX_EVENT_QUEUE_BYTES", runtime)
         ffi = _read("native/network_core/crates/network-ffi/src/lib.rs")
-        self.assertIn("event_mux_applies_bounded_control_data_fairness", ffi)
+        self.assertIn("EventMux", ffi)
+        self.assertIn("SSH_NET_MAX_CONSECUTIVE_CONTROL_EVENTS", ffi)
         matrix = _load_matrix()
         cases = {case["id"]: case for case in matrix["cases"]}
         self.assertEqual(cases["flow.bounded_event_mux"]["status"], "covered")
@@ -276,6 +330,62 @@ class FrozenNetworkContractTest(unittest.TestCase):
                         pattern,
                         f"behavior test {test['name']!r} is not a test declaration in {path}",
                     )
+
+    def test_forbidden_stale_production_concepts_are_absent(self) -> None:
+        """Static drift guard; this does not assert runtime lifecycle behavior."""
+        if os.environ.get("SSH_MOBILE_ACCEPTANCE_STRICT") != "1":
+            self.skipTest("architecture guards run in strict acceptance")
+        forbidden = (
+            "network.v1",
+            "ConnectionRegistry",
+            "NeedsReplacement",
+            "RelayDataReady",
+        )
+        offenders = []
+        for path in _production_sources():
+            source = _without_comments(path.read_text(encoding="utf-8"))
+            for concept in forbidden:
+                if concept in source:
+                    offenders.append(f"{path.relative_to(ROOT)}: {concept}")
+        self.assertEqual([], offenders, "stale production concepts: " + ", ".join(offenders))
+
+        session_source = _without_comments(
+            _read("native/network_core/crates/network-core/src/session.rs")
+        )
+        self.assertNotRegex(
+            session_source,
+            r"required_capabilities|current_route|current_relay_data",
+        )
+
+    def test_frozen_field_shapes_have_no_stale_compatibility_fields(self) -> None:
+        if os.environ.get("SSH_MOBILE_ACCEPTANCE_STRICT") != "1":
+            self.skipTest("architecture guards run in strict acceptance")
+        proto = _without_comments(_read("protocol/proto/relay/v2/relay_v2.proto"))
+        offer = re.search(
+            r"message\s+ConnectivityOffer\s*\{(.*?)\n\}", proto, flags=re.DOTALL
+        )
+        signal = re.search(
+            r"message\s+RealtimeSignal\s*\{(.*?)\n\}", proto, flags=re.DOTALL
+        )
+        self.assertIsNotNone(offer)
+        self.assertIsNotNone(signal)
+        assert offer is not None and signal is not None
+        self.assertNotIn("target_device_id", offer.group(1))
+        self.assertNotIn("sender_device_id", signal.group(1))
+
+    def test_runtime_has_no_obvious_second_strong_physical_path_registry(self) -> None:
+        """A source-shape guard for duplicate carrier ownership, not a lifecycle proof."""
+        if os.environ.get("SSH_MOBILE_ACCEPTANCE_STRICT") != "1":
+            self.skipTest("architecture guards run in strict acceptance")
+        runtime = _read("native/network_core/crates/network-core/src/runtime.rs")
+        self.assertNotRegex(
+            runtime,
+            r"struct\s+OwnedTransportPath\s*\{.*?\broute:\s*Arc<PhysicalRoute>",
+        )
+        self.assertNotIn(
+            "transport_paths: RwLock<HashMap<String, Vec<OwnedTransportPath>>>",
+            runtime,
+        )
 
 
 if __name__ == "__main__":

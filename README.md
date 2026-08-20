@@ -63,7 +63,7 @@ ICE, SDP, sockets, and Relay signaling remain native/App Shell owned.
 
 ### Requirements
 
-- Flutter `>=3.44.0`; CI is pinned to Flutter `3.44.2`.
+- Flutter `>=3.47.0`; CI is pinned to Flutter `3.47.0`.
 - Dart SDK `>=3.12.0 <4.0.0`.
 - Android Studio and Android SDK, or the corresponding platform toolchain.
 - Visual Studio with `Desktop development with C++` for Windows builds.

@@ -704,4 +704,33 @@ mod tests {
             "terminal must be emitted once"
         );
     }
+
+    #[test]
+    fn peer_diagnostics_preserves_authoritative_owner_counts() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let event_sender = EventSender::from(sender);
+        emit_peer_diagnostics(
+            &event_sender,
+            network_protocol::PeerDiagnostics {
+                peer_id: "peer-a".into(),
+                state: PeerConnectionState::Connected as i32,
+                e2ee_policy: 1,
+                ready_path_count: 3,
+                queued_command_count: 5,
+                active_stream_count: 7,
+                active_transfer_count: 11,
+                last_error: None,
+            },
+        );
+
+        let Some(network_event::Payload::PeerDiagnostics(diagnostics)) =
+            receiver.try_recv().expect("diagnostics event").payload
+        else {
+            panic!("expected PeerDiagnostics");
+        };
+        assert_eq!(diagnostics.ready_path_count, 3);
+        assert_eq!(diagnostics.queued_command_count, 5);
+        assert_eq!(diagnostics.active_stream_count, 7);
+        assert_eq!(diagnostics.active_transfer_count, 11);
+    }
 }

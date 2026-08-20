@@ -2,7 +2,9 @@
 
 # SSH Mobile 跨平台 P2P 网络平台实施计划
 
-**Status:** In progress; WireGuard scope removed from the current project
+**Status:** Network Protocol V2 ownership closeout complete (2026-08-20); the
+broader future platform roadmap remains explicitly out of current release scope
+where marked below. WireGuard scope is removed from the current project.
 **Target Repository:** `hejulian2004/ssh_mobile`
 **Plan Type:** Architecture + Implementation + Protocol + Engineering Specification
 
@@ -13,6 +15,35 @@
 本文件同时保留完整目标架构与后续阶段；以下状态只描述已经接入生产调用链的部分。
 旧阶段中的 v1 Session/Connection 方案保留为历史设计，当前生命周期以 v2 ADR 为准。
 
+## Network Protocol V2 ownership closeout（2026-08-20）
+
+本节是本文件中当前 Network Protocol V2 实现状态的权威补充；与后续历史阶段
+中冲突的 v1 生命周期、透明迁移或后台升级描述均不再代表当前实现。
+
+- `PeerSupervisor` 是每个 Peer 唯一的可变 connectivity owner。并发 waiter
+  按能力完成；更强需求扩展当前 attempt，业务 ensure 不开启 maintenance，只有
+  显式 `ConnectPeer` 才会保持连接。
+- `PeerPathManager` 是 Direct/Relay `PhysicalPath` 与 carrier 的唯一强 owner。
+  `PathHandle`/projection 不持有 carrier，业务操作按一次发送或一次 Stream/Transfer
+  生命周期取得 `PathLease`；Direct Ready、Direct Probe 和 Relay Ready 可以共存，
+  normal drain 与 hard close/revoke 的语义分离。
+- Delivery 每次发送取得并释放一个 lease，ACK 不持有 lease；Transfer 身份是
+  `(peer_id, transfer_id)`，断线按 confirmed offset 在新 ConnectionSession 恢复；
+  ReliableStream 按 `(opener_device_id, stream_id)` 定址并绑定原路径，不透明迁移。
+- Required E2EE 在新连接安装 fresh application root；Direct Disabled 只允许
+  authenticated identity-only plaintext，Relay Disabled、加密/明文策略不匹配均
+  fail closed。Relay 只转发 opaque payload，Frozen Relay V2 wire semantics 未改变。
+- authenticated passive inbound 进入 Online 但不启用 maintenance。环境变化刷新
+  discovery、保留健康 Relay/Realtime，并只为 maintained peer 在 Relay Ready 后按
+  `1/2/4/8/15/30s + jitter` 做有限 Direct recovery；无业务 lease 的临时路径闲置
+  60 秒后回收。
+- Native/FFI/Dart 事件 lane 使用 Control `256/4 MiB`、Data `128/8 MiB`、单事件
+  `1 MiB` 和最多连续 8 个 Control；diagnostics 从 PeerSupervisor、PathManager、
+  Stream/Transfer owner 读取实时计数。
+- `protocol/contract_tests/acceptance_matrix.json` 的 60/60 案例均有行为测试或
+  contract-test evidence；source-only marker 不计为覆盖。CI 的 pinned protocol
+  工具为 `protoc 27.1` 与 `buf 1.47.2`。
+
 - 已完成 Rust Tokio runtime、版本化 Protobuf command/event FFI 和 Dart
   helper-isolate 生命周期。
 - 已完成 Quinn 直连、固定 Ed25519 peer 身份握手、显式接收审批、512 KiB
@@ -22,7 +53,9 @@
 - peer 公布的 candidate 会进入每 peer `ConnectivityAttempt`；PathManager 只
   保留已建立连接的 RTT/loss metrics，不保存远端 discovery truth。
   Candidate Offer/Answer 与 Direct race 受 attempt 版本边界约束，Direct First
-  在固定窗口内选择一次 transport；Relay 不再后台升级到 Direct。
+  在固定窗口内选择一次 transport；Relay 不进行无触发的透明升级到 Direct。
+  仅在独立的 network-environment change 触发下，maintained peer 才会在 Relay
+  Ready 后按 bounded recovery schedule 重新探测 Direct。
   Transport loss 销毁当前 ConnectionSession，下一次业务连接重新 Resolve。
 - Network Protocol V2 ownership cutover 已完成：`PeerSupervisor` 是唯一的
   Peer connectivity owner，`PeerPathManager` 实际持有 Direct/Relay
@@ -80,9 +113,10 @@
   `PeerSupervisor` result, not from task startup. RemovePeer, environment-change
   recovery, diagnostics, and duplicate command correlation use the live
   supervisor/path/business owners.
-- The acceptance matrix has 32/32 cases covered. Local Rust workspace gates and
-  the strict gate's Python/Rust/Relay-proto/FFI portion pass; Go, Dart/Flutter,
-  pinned `protoc`, and `buf` remain CI-only on hosts without those toolchains.
+- The acceptance matrix has 60/60 cases covered. Local Rust workspace gates,
+  the strict Python/Rust/Go/Dart/Relay-proto/FFI gate, and selected architecture/
+  protocol/SDK jobs pass; the broader App/feature/device/integration matrix remains
+  a CI responsibility.
 - `network_sdk.RealtimeClient` now provides a Feature-safe `RealtimeSession` boundary;
   the App Shell maps native lifecycle events while Features cannot encode SDP/ICE or
   touch PeerConnection, sockets, or native handles. Native DataChannel media remains
@@ -1485,7 +1519,10 @@ enum ConnectionIntent {
 Connectivity > Throughput
 ```
 
-可以先建立 Relay，再后台尝试升级为 Direct。
+当前 V2 先使用满足能力的现有路径；健康 Relay 不等待 Direct 恢复。网络环境
+变化是独立触发器：maintained peer 在 Relay Ready 后才可按
+`1/2/4/8/15/30s + jitter` 进行有限 Direct recovery，且不透明迁移正在使用的
+Stream/Transfer 路径。
 
 ---
 

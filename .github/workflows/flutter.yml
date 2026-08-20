@@ -12,8 +12,8 @@ env:
   FLUTTER_VERSION: '3.47.0'
   NODE_VERSION: '24.19.0'
   GO_VERSION: '1.27.0'
-  PROTOC_VERSION: '35.1'
-  BUF_VERSION: '1.72.0'
+  PROTOC_VERSION: '27.1'
+  BUF_VERSION: '1.47.2'
   RUST_TOOLCHAIN: '1.97.1'
 
 concurrency:
@@ -72,7 +72,7 @@ jobs:
           --no-tls --no-dtls --min-port=49160 --max-port=49200
           --no-multicast-peers
       - name: Test Rust workspace
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked -- --test-threads=1
       - name: Test WebRTC TURN fallback
         run: >-
           cargo test -p network-webrtc --locked --

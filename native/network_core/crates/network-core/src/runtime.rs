@@ -1,6 +1,6 @@
 //! V2 网络运行时生命周期、共享状态与命令/事件通道。
 
-use network_protocol::{NetworkCommand, NetworkEvent};
+use network_protocol::{network_event, NetworkCommand, NetworkEvent};
 use prost::Message;
 use std::sync::{
     atomic::{AtomicBool, AtomicU16, AtomicU8, AtomicUsize, Ordering},
@@ -15,8 +15,7 @@ use tracing::info;
 
 use crate::commands::run_command_worker;
 use crate::connect::{
-    callback_path_carrier, profile_capability_mask, PathHandle, PeerId, PeerPathManager,
-    PhysicalRoute,
+    profile_capability_mask, PathHandle, PathProjection, PeerId, PeerPathManager,
 };
 use crate::crypto::{CryptoContext, CryptoError, SessionCryptoManager};
 use crate::crypto_handshake::{
@@ -49,11 +48,37 @@ pub(crate) const MAX_PENDING_RELAY_CRYPTO_HANDSHAKES: usize = 64;
 pub(crate) const DELIVERY_RETRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Commands are control-plane input and must never grow an unbounded queue.
 pub(crate) const COMMAND_MAILBOX_CAPACITY: usize = 256;
-/// Native events are drained by FFI polling and must remain bounded even when
-/// the mobile consumer is temporarily paused.
-pub(crate) const EVENT_MAILBOX_CAPACITY: usize = 512;
-pub(crate) const MAX_EVENT_QUEUE_BYTES: usize = 12 * 1024 * 1024;
+/// Native events are split before FFI polling so a data flood cannot block
+/// command results, peer state, or relay lifecycle events.
+pub(crate) const CONTROL_EVENT_MAILBOX_CAPACITY: usize = 256;
+pub(crate) const DATA_EVENT_MAILBOX_CAPACITY: usize = 128;
+pub(crate) const MAX_CONTROL_EVENT_QUEUE_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_DATA_EVENT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
+/// Compatibility names retained for the contract inventory; the actual
+/// limits are enforced independently by the two lanes above.
+#[allow(dead_code)]
+pub(crate) const EVENT_MAILBOX_CAPACITY: usize = CONTROL_EVENT_MAILBOX_CAPACITY;
+#[allow(dead_code)]
+pub(crate) const MAX_EVENT_QUEUE_BYTES: usize =
+    MAX_CONTROL_EVENT_QUEUE_BYTES + MAX_DATA_EVENT_QUEUE_BYTES;
 pub(crate) const MAX_EVENT_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_CONSECUTIVE_CONTROL_EVENTS: usize = 8;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RuntimeEventLane {
+    Control,
+    Data,
+}
+
+fn event_lane(event: &NetworkEvent) -> RuntimeEventLane {
+    match event.payload.as_ref() {
+        Some(network_event::Payload::TransferProgress(_))
+        | Some(network_event::Payload::PeerTransferProgress(_))
+        | Some(network_event::Payload::ChannelMessage(_))
+        | Some(network_event::Payload::SshStreamDataReceived(_)) => RuntimeEventLane::Data,
+        _ => RuntimeEventLane::Control,
+    }
+}
 
 pub(crate) const RUNTIME_CREATED: u8 = 0;
 pub(crate) const RUNTIME_RUNNING: u8 = 1;
@@ -68,16 +93,23 @@ pub(crate) const RUNTIME_STOPPED: u8 = 3;
 #[derive(Clone)]
 pub(crate) enum EventSender {
     Bounded {
-        sender: mpsc::Sender<NetworkEvent>,
-        queued_bytes: Arc<AtomicUsize>,
+        control_sender: mpsc::Sender<NetworkEvent>,
+        data_sender: mpsc::Sender<NetworkEvent>,
+        control_queued_bytes: Arc<AtomicUsize>,
+        data_queued_bytes: Arc<AtomicUsize>,
     },
     #[cfg(test)]
     Unbounded(tokio::sync::mpsc::UnboundedSender<NetworkEvent>),
 }
 
 pub(crate) struct EventReceiver {
-    receiver: mpsc::Receiver<NetworkEvent>,
-    queued_bytes: Arc<AtomicUsize>,
+    control_receiver: mpsc::Receiver<NetworkEvent>,
+    data_receiver: mpsc::Receiver<NetworkEvent>,
+    control_queued_bytes: Arc<AtomicUsize>,
+    data_queued_bytes: Arc<AtomicUsize>,
+    consecutive_control: usize,
+    control_closed: bool,
+    data_closed: bool,
 }
 
 impl EventSender {
@@ -88,13 +120,25 @@ impl EventSender {
         }
         match self {
             Self::Bounded {
-                sender,
-                queued_bytes,
+                control_sender,
+                data_sender,
+                control_queued_bytes,
+                data_queued_bytes,
             } => {
+                let (sender, queued_bytes, max_bytes) = match event_lane(&event) {
+                    RuntimeEventLane::Control => (
+                        control_sender,
+                        control_queued_bytes,
+                        MAX_CONTROL_EVENT_QUEUE_BYTES,
+                    ),
+                    RuntimeEventLane::Data => {
+                        (data_sender, data_queued_bytes, MAX_DATA_EVENT_QUEUE_BYTES)
+                    }
+                };
                 let mut current = queued_bytes.load(Ordering::Acquire);
                 loop {
                     let next = current.saturating_add(bytes);
-                    if next > MAX_EVENT_QUEUE_BYTES {
+                    if next > max_bytes {
                         return Err(());
                     }
                     match queued_bytes.compare_exchange_weak(
@@ -128,34 +172,104 @@ impl From<UnboundedSender<NetworkEvent>> for EventSender {
 
 impl EventReceiver {
     fn release(&self, event: &NetworkEvent) {
-        self.queued_bytes
-            .fetch_sub(event.encoded_len(), Ordering::AcqRel);
+        let counter = match event_lane(event) {
+            RuntimeEventLane::Control => &self.control_queued_bytes,
+            RuntimeEventLane::Data => &self.data_queued_bytes,
+        };
+        counter.fetch_sub(event.encoded_len(), Ordering::AcqRel);
+    }
+
+    fn received(&mut self, event: NetworkEvent) -> NetworkEvent {
+        match event_lane(&event) {
+            RuntimeEventLane::Control => {
+                self.consecutive_control = self.consecutive_control.saturating_add(1);
+            }
+            RuntimeEventLane::Data => {
+                self.consecutive_control = 0;
+            }
+        }
+        self.release(&event);
+        event
     }
 
     fn try_recv(&mut self) -> Option<NetworkEvent> {
-        let event = self.receiver.try_recv().ok()?;
-        self.release(&event);
-        Some(event)
+        if self.consecutive_control >= MAX_CONSECUTIVE_CONTROL_EVENTS {
+            if let Ok(event) = self.data_receiver.try_recv() {
+                return Some(self.received(event));
+            }
+        }
+        if let Ok(event) = self.control_receiver.try_recv() {
+            return Some(self.received(event));
+        }
+        self.data_receiver
+            .try_recv()
+            .ok()
+            .map(|event| self.received(event))
     }
 
     async fn recv(&mut self) -> Option<NetworkEvent> {
-        let event = self.receiver.recv().await?;
-        self.release(&event);
-        Some(event)
+        loop {
+            if let Some(event) = self.try_recv() {
+                return Some(event);
+            }
+            if self.control_closed && self.data_closed {
+                return None;
+            }
+
+            let prefer_data = self.consecutive_control >= MAX_CONSECUTIVE_CONTROL_EVENTS;
+            let (event, lane) = match (self.control_closed, self.data_closed, prefer_data) {
+                (true, false, _) => (self.data_receiver.recv().await, RuntimeEventLane::Data),
+                (false, true, _) => (
+                    self.control_receiver.recv().await,
+                    RuntimeEventLane::Control,
+                ),
+                (false, false, true) => {
+                    tokio::select! {
+                        biased;
+                        event = self.data_receiver.recv() => (event, RuntimeEventLane::Data),
+                        event = self.control_receiver.recv() => (event, RuntimeEventLane::Control),
+                    }
+                }
+                (false, false, false) => {
+                    tokio::select! {
+                        biased;
+                        event = self.control_receiver.recv() => (event, RuntimeEventLane::Control),
+                        event = self.data_receiver.recv() => (event, RuntimeEventLane::Data),
+                    }
+                }
+                (true, true, _) => unreachable!(),
+            };
+            match event {
+                Some(event) => return Some(self.received(event)),
+                None => match lane {
+                    RuntimeEventLane::Control => self.control_closed = true,
+                    RuntimeEventLane::Data => self.data_closed = true,
+                },
+            }
+        }
     }
 }
 
 fn bounded_event_channel() -> (EventSender, EventReceiver) {
-    let (sender, receiver) = mpsc::channel(EVENT_MAILBOX_CAPACITY);
-    let queued_bytes = Arc::new(AtomicUsize::new(0));
+    let (control_sender, control_receiver) = mpsc::channel(CONTROL_EVENT_MAILBOX_CAPACITY);
+    let (data_sender, data_receiver) = mpsc::channel(DATA_EVENT_MAILBOX_CAPACITY);
+    let control_queued_bytes = Arc::new(AtomicUsize::new(0));
+    let data_queued_bytes = Arc::new(AtomicUsize::new(0));
     (
         EventSender::Bounded {
-            sender,
-            queued_bytes: Arc::clone(&queued_bytes),
+            control_sender,
+            data_sender,
+            control_queued_bytes: Arc::clone(&control_queued_bytes),
+            data_queued_bytes: Arc::clone(&data_queued_bytes),
         },
         EventReceiver {
-            receiver,
-            queued_bytes,
+            control_receiver,
+            data_receiver,
+            control_queued_bytes,
+            data_queued_bytes,
+            consecutive_control: 0,
+            control_closed: false,
+            data_closed: false,
         },
     )
 }
@@ -181,10 +295,13 @@ pub(crate) enum ConnectDecision {
     InProgress(SessionId),
 }
 
-struct OwnedTransportPath {
+/// Non-owning runtime projection of a path owned by `PeerPathManager`.
+///
+/// RuntimeState keeps this only for session-scoped lookup and stale guards. It
+/// never retains an `Arc<PhysicalRoute>` or any other carrier lifetime owner.
+struct OwnedPathProjection {
     session_id: SessionId,
-    handle: PathHandle,
-    route: Arc<PhysicalRoute>,
+    projection: PathProjection,
 }
 
 impl ConnectionAdmissionLease {
@@ -272,10 +389,12 @@ pub(crate) struct RuntimeState {
     /// Strong peer-owned path managers. `ready_paths` is only a weak index;
     /// these managers own the corresponding PhysicalPath and its carrier.
     pub(crate) peer_path_managers: RwLock<HashMap<String, Arc<Mutex<PeerPathManager>>>>,
-    /// Runtime lookup for the exact admitted carriers behind published
-    /// PathHandles. Direct and Relay entries may coexist; this is an I/O
-    /// projection, never SessionStore state.
-    transport_paths: RwLock<HashMap<String, Vec<OwnedTransportPath>>>,
+    /// Runtime lookup for non-owning path projections. Direct and Relay
+    /// entries may coexist; the peer path manager owns every carrier.
+    path_projections: RwLock<HashMap<String, Vec<OwnedPathProjection>>>,
+    /// Direct recovery policy is a scheduler gate only. It never owns a path
+    /// or a session and Relay business availability is tracked independently.
+    direct_recovery: Mutex<HashMap<String, crate::discovery::DirectRecoveryPolicy>>,
     /// ReliableStream byte-stream managers, keyed by peer（§17）。每个 peer 的
     /// receive buffer / QUIC send half / 网关桥都挂在这个 manager 上。
     pub(crate) reliable_streams: RwLock<HashMap<String, ReliableStreamManager>>,
@@ -341,7 +460,8 @@ impl RuntimeState {
             ),
             ready_paths: Arc::new(crate::connect::PathRegistry::new()),
             peer_path_managers: RwLock::new(HashMap::new()),
-            transport_paths: RwLock::new(HashMap::new()),
+            path_projections: RwLock::new(HashMap::new()),
+            direct_recovery: Mutex::new(HashMap::new()),
             reliable_streams: RwLock::new(HashMap::new()),
             stream_gateway_port: Arc::new(AtomicU16::new(crate::stream::STREAM_LOCAL_SSH_PORT)),
             relay_crypto_waiters: RwLock::new(HashMap::new()),
@@ -499,37 +619,195 @@ impl RuntimeState {
             .clone())
     }
 
+    /// Acquire one explicit business lease from the sole peer path owner.
+    /// RuntimeState exposes the lookup boundary; it never stores or returns a
+    /// second strong carrier owner.
+    pub(crate) async fn acquire_path_lease(
+        &self,
+        peer_id: &str,
+        required_capabilities: u8,
+    ) -> Result<crate::connect::PathLease, CoreNetworkError> {
+        let _peer_id = PeerId::new(peer_id)?;
+        let manager = self
+            .peer_path_managers
+            .read()
+            .await
+            .get(peer_id)
+            .cloned()
+            .ok_or(CoreNetworkError::NoRoute)?;
+        let manager = manager.lock().expect("peer path manager lock");
+        let selected = manager
+            .select(required_capabilities)
+            .ok_or(CoreNetworkError::NoRoute)?;
+        let (acquired, lease) = manager.acquire(required_capabilities)?;
+        if acquired != selected {
+            lease.release();
+            return Err(CoreNetworkError::StaleAttempt);
+        }
+        Ok(lease)
+    }
+
+    /// Ensure one business capability through the peer supervisor. This path
+    /// starts the supervisor mailbox worker but never enables maintenance;
+    /// only an explicit ConnectPeer intent may do that.
+    pub(crate) async fn ensure_business_path(
+        state: Arc<Self>,
+        peer_id: &str,
+        command_id: &str,
+        class: network_protocol::CommunicationClass,
+        required_capabilities: u8,
+    ) -> Result<SessionId, CoreNetworkError> {
+        if let Some(session_id) = state.connection_sessions.current_session_id(peer_id).await {
+            if state
+                .acquire_path_lease(peer_id, required_capabilities)
+                .await
+                .is_ok()
+            {
+                return Ok(session_id);
+            }
+        }
+
+        let supervisor = state.peer_supervisors.get_or_create(peer_id)?;
+        let intent = state.peer_supervisors.start_business(
+            Arc::clone(&state),
+            peer_id,
+            command_id.to_string(),
+            class,
+        )?;
+        match intent.completion().await {
+            Ok(Ok(crate::connect::PeerState::Online)) => {
+                let session_id = state
+                    .connection_sessions
+                    .current_session_id(peer_id)
+                    .await
+                    .ok_or(CoreNetworkError::NoRoute)?;
+                if state
+                    .acquire_path_lease(peer_id, required_capabilities)
+                    .await
+                    .is_err()
+                {
+                    supervisor.path_lost();
+                    return Err(CoreNetworkError::NoRoute);
+                }
+                Ok(session_id)
+            }
+            Ok(Ok(_)) | Ok(Err(CoreNetworkError::NoRoute)) => Err(CoreNetworkError::NoRoute),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(CoreNetworkError::Cancelled),
+        }
+    }
+
     async fn publish_transport_path(
         &self,
         peer_id: &str,
         session_id: SessionId,
         route: crate::connect::ActiveRoute,
-    ) -> Result<Option<Arc<PhysicalRoute>>, CoreNetworkError> {
+    ) -> Result<Option<PathHandle>, CoreNetworkError> {
         let profile = route.profile();
-        let physical = PhysicalRoute::new(route);
-        let close_target = Arc::clone(&physical);
-        let carrier = callback_path_carrier(move |_reason| {
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                handle.spawn(async move { close_target.close().await });
-            }
-        });
         let manager = self.peer_path_manager(peer_id).await?;
-        let handle = manager
-            .lock()
-            .expect("peer path manager lock")
-            .publish_ready_with_carrier(profile, carrier)?;
-        let mut paths = self.transport_paths.write().await;
+        let (old_handle, projection) = {
+            let mut manager = manager.lock().expect("peer path manager lock");
+            let old_handle = match profile.topology() {
+                crate::connection::RouteTopology::Direct => manager.direct_ready().first().cloned(),
+                crate::connection::RouteTopology::Relay => manager.relay_ready().cloned(),
+            };
+            let handle = manager.publish_ready_with_route(route)?;
+            let projection = manager
+                .projection(&handle)
+                .ok_or(CoreNetworkError::StaleAttempt)?;
+            (old_handle, projection)
+        };
+        let mut paths = self.path_projections.write().await;
         let entries = paths.entry(peer_id.to_string()).or_default();
-        let old = entries
-            .iter()
-            .position(|entry| entry.handle.profile().topology() == profile.topology())
-            .map(|index| entries.remove(index).route);
-        entries.push(OwnedTransportPath {
+        entries
+            .retain(|entry| entry.projection.handle().profile().topology() != profile.topology());
+        entries.push(OwnedPathProjection {
             session_id,
-            handle,
-            route: physical,
+            projection,
         });
-        Ok(old)
+        let mut recovery = self.direct_recovery.lock().expect("recovery policy lock");
+        let policy = recovery.entry(peer_id.to_string()).or_default();
+        match profile.topology() {
+            crate::connection::RouteTopology::Direct => policy.mark_direct_ready(),
+            crate::connection::RouteTopology::Relay => policy.mark_relay_ready(),
+        }
+        Ok(old_handle)
+    }
+
+    pub(crate) async fn has_ready_direct_path(&self, peer_id: &str) -> bool {
+        self.peer_path_managers
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|manager| {
+                !manager
+                    .lock()
+                    .expect("peer path manager lock")
+                    .direct_ready()
+                    .is_empty()
+            })
+    }
+
+    pub(crate) async fn has_ready_relay_path(&self, peer_id: &str) -> bool {
+        self.peer_path_managers
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|manager| {
+                manager
+                    .lock()
+                    .expect("peer path manager lock")
+                    .relay_ready()
+                    .is_some()
+            })
+    }
+
+    pub(crate) fn reset_direct_recovery(&self, peer_id: &str) {
+        let mut recovery = self.direct_recovery.lock().expect("recovery policy lock");
+        recovery
+            .entry(peer_id.to_string())
+            .or_default()
+            .reset_after_environment_change();
+    }
+
+    pub(crate) fn next_direct_recovery_delay(&self, peer_id: &str) -> Option<Duration> {
+        self.direct_recovery
+            .lock()
+            .expect("recovery policy lock")
+            .get_mut(peer_id)
+            .and_then(crate::discovery::DirectRecoveryPolicy::next_delay)
+    }
+
+    pub(crate) async fn arm_direct_probe(
+        &self,
+        peer_id: &str,
+        generation: crate::connect::IntentGeneration,
+        budget: Duration,
+        required_capabilities: u8,
+    ) -> bool {
+        let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() else {
+            return false;
+        };
+        let mut manager = manager.lock().expect("peer path manager lock");
+        if manager.direct_probe().is_some() {
+            return false;
+        }
+        manager
+            .ensure_direct_probe(generation.get(), required_capabilities, budget)
+            .is_ok()
+    }
+
+    pub(crate) async fn finish_direct_probe(
+        &self,
+        peer_id: &str,
+        generation: crate::connect::IntentGeneration,
+    ) {
+        if let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() {
+            manager
+                .lock()
+                .expect("peer path manager lock")
+                .finish_direct_probe(generation.get());
+        }
     }
 
     pub(crate) async fn attach_connection_for_session(
@@ -538,7 +816,7 @@ impl RuntimeState {
         expected_session_id: Option<SessionId>,
         connection: quinn::Connection,
         route: network_protocol::RouteType,
-    ) -> Result<Option<Arc<PhysicalRoute>>, ()> {
+    ) -> Result<Option<PathHandle>, ()> {
         let session_id = match self.connection_sessions.current_session_id(peer_id).await {
             Some(session_id) => {
                 if expected_session_id.is_some_and(|expected| expected != session_id) {
@@ -574,7 +852,7 @@ impl RuntimeState {
         peer_id: &str,
         expected_session_id: Option<SessionId>,
         scope: &mut crate::connect::GenericRouteScope,
-    ) -> Result<Option<Arc<PhysicalRoute>>, ()> {
+    ) -> Result<Option<PathHandle>, ()> {
         let session_id = self
             .connection_sessions
             .current_session_id(peer_id)
@@ -619,20 +897,13 @@ impl RuntimeState {
         &self,
         peer_id: &str,
     ) -> Option<crate::connection::ConnectionProfile> {
-        self.transport_paths
-            .read()
-            .await
-            .get(peer_id)
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .find(|entry| {
-                        entry.handle.profile().topology()
-                            == crate::connection::RouteTopology::Direct
-                    })
-                    .or_else(|| entries.first())
-                    .and_then(|entry| entry.route.profile())
-            })
+        let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
+        let manager = manager.lock().expect("peer path manager lock");
+        manager
+            .direct_ready()
+            .first()
+            .or_else(|| manager.relay_ready())
+            .map(PathHandle::profile)
     }
 
     pub(crate) async fn e2ee_policy(
@@ -658,20 +929,14 @@ impl RuntimeState {
 
     #[allow(dead_code)] // retained for runtime diagnostics and focused tests
     pub(crate) async fn path_connection(&self, peer_id: &str) -> Option<quinn::Connection> {
-        self.transport_paths
-            .read()
-            .await
-            .get(peer_id)
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .find(|entry| {
-                        entry.handle.profile().topology()
-                            == crate::connection::RouteTopology::Direct
-                    })
-                    .or_else(|| entries.first())
-                    .and_then(|entry| entry.route.connection())
-            })
+        let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
+        let lease = manager
+            .lock()
+            .expect("peer path manager lock")
+            .acquire(crate::connect::CAPABILITY_RELIABLE_MESSAGE)
+            .ok()?
+            .1;
+        lease.connection()
     }
 
     pub(crate) async fn path_connection_for_lease(
@@ -681,17 +946,7 @@ impl RuntimeState {
         if !lease.is_active() {
             return None;
         }
-        let handle = lease.handle().clone();
-        self.transport_paths
-            .read()
-            .await
-            .get(handle.peer_id().as_str())
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .find(|entry| entry.handle == handle)
-                    .and_then(|entry| entry.route.connection())
-            })
+        lease.connection()
     }
 
     #[allow(dead_code)] // retained for runtime diagnostics and focused tests
@@ -699,35 +954,25 @@ impl RuntimeState {
         &self,
         peer_id: &str,
     ) -> Option<crate::connect::StreamCarrier> {
-        self.transport_paths
-            .read()
-            .await
-            .get(peer_id)
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .find(|entry| {
-                        entry.handle.profile().topology()
-                            == crate::connection::RouteTopology::Direct
-                    })
-                    .or_else(|| entries.first())
-                    .and_then(|entry| entry.route.stream_carrier())
-            })
+        let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
+        let lease = manager
+            .lock()
+            .expect("peer path manager lock")
+            .acquire(crate::connect::CAPABILITY_RELIABLE_STREAM)
+            .ok()?
+            .1;
+        lease.stream_carrier()
     }
 
     pub(crate) async fn path_relay_data(&self, peer_id: &str) -> Option<Arc<RelayDataClient>> {
-        self.transport_paths
-            .read()
-            .await
-            .get(peer_id)
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .find(|entry| {
-                        entry.handle.profile().topology() == crate::connection::RouteTopology::Relay
-                    })
-                    .and_then(|entry| entry.route.relay_data())
-            })
+        let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
+        let projection = {
+            let manager = manager.lock().expect("peer path manager lock");
+            manager
+                .relay_ready()
+                .and_then(|handle| manager.projection(handle))
+        }?;
+        projection.acquire().ok()?.relay_data()
     }
 
     pub(crate) async fn path_relay_data_for_lease(
@@ -737,17 +982,7 @@ impl RuntimeState {
         if !lease.is_active() {
             return None;
         }
-        let handle = lease.handle().clone();
-        self.transport_paths
-            .read()
-            .await
-            .get(handle.peer_id().as_str())
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .find(|entry| entry.handle == handle)
-                    .and_then(|entry| entry.route.relay_data())
-            })
+        lease.relay_data()
     }
 
     pub(crate) async fn path_is_current_relay_data(
@@ -755,11 +990,9 @@ impl RuntimeState {
         peer_id: &str,
         data: &Arc<RelayDataClient>,
     ) -> bool {
-        self.transport_paths
-            .read()
+        self.path_relay_data(peer_id)
             .await
-            .get(peer_id)
-            .is_some_and(|entries| entries.iter().any(|entry| entry.route.is_relay_data(data)))
+            .is_some_and(|current| Arc::ptr_eq(&current, data))
     }
 
     #[allow(dead_code)] // retained for runtime diagnostics and focused tests
@@ -773,45 +1006,27 @@ impl RuntimeState {
         let required_capability = match kind {
             crate::connection::GenericFrameKind::DataMessage
             | crate::connection::GenericFrameKind::DeliveryAck => {
-                crate::connection::ConnectionCapability::ReliableMessage
+                crate::connect::CAPABILITY_RELIABLE_MESSAGE
             }
             crate::connection::GenericFrameKind::StreamOpen
             | crate::connection::GenericFrameKind::StreamBytes
             | crate::connection::GenericFrameKind::StreamClose => {
-                crate::connection::ConnectionCapability::ReliableStream
+                crate::connect::CAPABILITY_RELIABLE_STREAM
             }
         };
-        let route =
-            self.transport_paths
-                .read()
-                .await
-                .get(peer_id)
-                .and_then(|entries| {
-                    entries
-                        .iter()
-                        .filter(|entry| {
-                            entry.route.profile().is_some_and(|profile| {
-                                profile.topology() == crate::connection::RouteTopology::Direct
-                                    && profile.supports(required_capability)
-                            })
-                        })
-                        .map(|entry| Arc::clone(&entry.route))
-                        .next()
-                        .or_else(|| {
-                            entries
-                                .iter()
-                                .find(|entry| {
-                                    entry.route.profile().is_some_and(|profile| {
-                                        profile.supports(required_capability)
-                                    })
-                                })
-                                .map(|entry| Arc::clone(&entry.route))
-                        })
-                })
-                .ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::NotConnected, "path unavailable")
-                })?;
-        route.send_channel_frame(relay_token, kind, payload).await
+        let manager = self.peer_path_managers.read().await.get(peer_id).cloned();
+        let Some(manager) = manager else {
+            return Err(
+                std::io::Error::new(std::io::ErrorKind::NotConnected, "path unavailable").into(),
+            );
+        };
+        let lease = manager
+            .lock()
+            .expect("peer path manager lock")
+            .acquire(required_capability)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotConnected, "path unavailable"))?
+            .1;
+        lease.send_channel_frame(relay_token, kind, payload).await
     }
 
     pub(crate) async fn path_send_channel_frame_for_lease(
@@ -828,22 +1043,7 @@ impl RuntimeState {
             )
             .into());
         }
-        let handle = lease.handle().clone();
-        let route = self
-            .transport_paths
-            .read()
-            .await
-            .get(handle.peer_id().as_str())
-            .and_then(|entries| {
-                entries
-                    .iter()
-                    .find(|entry| entry.handle == handle)
-                    .map(|entry| Arc::clone(&entry.route))
-            })
-            .ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::NotConnected, "path lease is stale")
-            })?;
-        let result = route.send_channel_frame(relay_token, kind, payload).await;
+        let result = lease.send_channel_frame(relay_token, kind, payload).await;
         if result.is_ok() && !lease.is_active() {
             return Err(
                 std::io::Error::new(std::io::ErrorKind::NotConnected, "path lease lost").into(),
@@ -854,16 +1054,17 @@ impl RuntimeState {
 
     pub(crate) async fn path_is_connected(&self, peer_id: &str) -> bool {
         let current_session = self.connection_sessions.current_session_id(peer_id).await;
-        self.transport_paths
+        let Some(session_id) = current_session else {
+            return false;
+        };
+        self.path_projections
             .read()
             .await
             .get(peer_id)
             .is_some_and(|entries| {
-                current_session.is_some_and(|session_id| {
-                    entries.iter().any(|entry| {
-                        entry.session_id == session_id && entry.route.profile().is_some()
-                    })
-                })
+                entries
+                    .iter()
+                    .any(|entry| entry.session_id == session_id && entry.projection.is_alive())
             })
     }
 
@@ -922,20 +1123,19 @@ impl RuntimeState {
         }
     }
 
-    pub(crate) async fn close_transport_path(&self, peer_id: &str) -> Option<Arc<PhysicalRoute>> {
-        let entries = self.transport_paths.write().await.remove(peer_id);
-        let entries = entries?;
-        if let Ok(manager) = self.peer_path_manager(peer_id).await {
+    pub(crate) async fn close_transport_path(&self, peer_id: &str) -> Option<PathHandle> {
+        let manager = self.peer_path_managers.write().await.remove(peer_id);
+        let entries = self.path_projections.write().await.remove(peer_id);
+        self.direct_recovery
+            .lock()
+            .expect("recovery policy lock")
+            .remove(peer_id);
+        let first = entries
+            .as_ref()
+            .and_then(|entries| entries.first())
+            .map(|entry| entry.projection.handle().clone());
+        if let Some(manager) = manager {
             manager.lock().expect("peer path manager lock").hard_close();
-        }
-        self.peer_path_managers.write().await.remove(peer_id);
-        let mut routes = entries.into_iter().map(|entry| entry.route);
-        let first = routes.next();
-        for route in routes {
-            route.close().await;
-        }
-        if let Some(route) = &first {
-            route.close().await;
         }
         first
     }
@@ -944,109 +1144,102 @@ impl RuntimeState {
         &self,
         peer_id: &str,
         data: Option<&Arc<RelayDataClient>>,
-    ) -> Option<Arc<PhysicalRoute>> {
-        let wanted_data = data.cloned();
-        let (route, has_remaining) = {
-            let mut paths = self.transport_paths.write().await;
-            let entries = paths.get_mut(peer_id)?;
-            let index = entries.iter().position(|entry| {
-                entry.handle.profile().topology() == crate::connection::RouteTopology::Relay
-                    && wanted_data
-                        .as_ref()
-                        .is_none_or(|wanted| entry.route.is_relay_data(wanted))
-            })?;
-            let route = entries.remove(index).route;
-            let has_remaining = !entries.is_empty();
-            if !has_remaining {
-                paths.remove(peer_id);
+    ) -> Option<PathHandle> {
+        let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
+        let relay_handle = {
+            let manager = manager.lock().expect("peer path manager lock");
+            let handle = manager.relay_ready()?.clone();
+            if let Some(wanted) = data {
+                let projection = manager.projection(&handle)?;
+                let lease = projection.acquire().ok()?;
+                let current = lease.relay_data()?;
+                if !Arc::ptr_eq(&current, wanted) {
+                    return None;
+                }
             }
-            (route, has_remaining)
+            handle
         };
-        if let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() {
-            manager
-                .lock()
-                .expect("peer path manager lock")
-                .hard_close_relay();
+        manager
+            .lock()
+            .expect("peer path manager lock")
+            .hard_close_relay();
+        self.close_inactive_streams(peer_id).await;
+        if let Ok(mut recovery) = self.direct_recovery.lock() {
+            if let Some(policy) = recovery.get_mut(peer_id) {
+                policy.mark_relay_lost();
+            }
         }
-        if !has_remaining {
+        self.remove_path_projections(peer_id, crate::connection::RouteTopology::Relay)
+            .await;
+        if !self.manager_has_ready_path(&manager).await {
             self.peer_path_managers.write().await.remove(peer_id);
+            self.path_projections.write().await.remove(peer_id);
         }
-        route.close().await;
-        Some(route)
+        Some(relay_handle)
     }
 
     pub(crate) async fn close_direct_path(
         &self,
         peer_id: &str,
         route_id: Option<u64>,
-    ) -> Option<Arc<PhysicalRoute>> {
-        let (route, has_remaining) = {
-            let mut paths = self.transport_paths.write().await;
-            let entries = paths.get_mut(peer_id)?;
-            let index = entries.iter().position(|entry| {
-                entry.handle.profile().topology() == crate::connection::RouteTopology::Direct
-                    && route_id.is_none_or(|id| entry.handle.id() == id)
-            })?;
-            let route = entries.remove(index).route;
-            let has_remaining = !entries.is_empty();
-            if !has_remaining {
-                paths.remove(peer_id);
+    ) -> Option<PathHandle> {
+        let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
+        let direct_handle = {
+            let manager = manager.lock().expect("peer path manager lock");
+            let handle = manager.direct_ready().first()?.clone();
+            if route_id.is_some_and(|id| id != handle.id()) {
+                return None;
             }
-            (route, has_remaining)
+            handle
         };
-        if let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() {
-            manager
-                .lock()
-                .expect("peer path manager lock")
-                .hard_close_direct();
+        manager
+            .lock()
+            .expect("peer path manager lock")
+            .hard_close_direct();
+        self.close_inactive_streams(peer_id).await;
+        if let Ok(mut recovery) = self.direct_recovery.lock() {
+            if let Some(policy) = recovery.get_mut(peer_id) {
+                policy.mark_direct_unavailable();
+            }
         }
-        if !has_remaining {
+        self.remove_path_projections(peer_id, crate::connection::RouteTopology::Direct)
+            .await;
+        if !self.manager_has_ready_path(&manager).await {
             self.peer_path_managers.write().await.remove(peer_id);
+            self.path_projections.write().await.remove(peer_id);
         }
-        route.close().await;
-        Some(route)
+        Some(direct_handle)
     }
 
     pub(crate) async fn close_direct_path_for_connection(
         &self,
         peer_id: &str,
         connection: &quinn::Connection,
-    ) -> Option<Arc<PhysicalRoute>> {
-        if std::env::var_os("SSH_MOBILE_TEST_EVENTS").is_some() {
-            eprintln!(
-                "CLOSE DIRECT LOOKUP peer={peer_id} connection={}",
-                connection.stable_id()
-            );
-        }
-        let route_id = self
-            .transport_paths
-            .read()
-            .await
-            .get(peer_id)
-            .and_then(|entries| {
-                entries.iter().find_map(|entry| {
-                    let candidate = (entry.handle.profile().topology()
-                        == crate::connection::RouteTopology::Direct)
-                        .then(|| entry.route.connection())
-                        .flatten();
-                    candidate
-                        .filter(|candidate| candidate.stable_id() == connection.stable_id())
-                        .map(|_| entry.handle.id())
-                })
-            });
+    ) -> Option<PathHandle> {
+        let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
+        let route_id = {
+            let manager = manager.lock().expect("peer path manager lock");
+            let handle = manager.direct_ready().first()?.clone();
+            let projection = manager.projection(&handle)?;
+            let lease = projection.acquire().ok()?;
+            let candidate = lease.connection()?;
+            (candidate.stable_id() == connection.stable_id()).then_some(handle.id())
+        };
         self.close_direct_path(peer_id, route_id).await
     }
 
     pub(crate) async fn close_all_relay_paths(&self) {
         let peers = self
-            .transport_paths
+            .peer_path_managers
             .read()
             .await
             .iter()
-            .filter(|(_, entries)| {
-                entries.iter().any(|entry| {
-                    entry.handle.profile().topology() == crate::connection::RouteTopology::Relay
-                })
+            .filter(|(_, manager)| {
+                manager
+                    .lock()
+                    .expect("peer path manager lock")
+                    .relay_ready()
+                    .is_some()
             })
             .map(|(peer_id, _)| peer_id.clone())
             .collect::<Vec<_>>();
@@ -1057,7 +1250,7 @@ impl RuntimeState {
 
     pub(crate) async fn close_all_transport_paths(&self) {
         let peers = self
-            .transport_paths
+            .peer_path_managers
             .read()
             .await
             .keys()
@@ -1066,6 +1259,25 @@ impl RuntimeState {
         for peer_id in peers {
             let _ = self.close_transport_path(&peer_id).await;
         }
+    }
+
+    async fn remove_path_projections(
+        &self,
+        peer_id: &str,
+        topology: crate::connection::RouteTopology,
+    ) {
+        let mut projections = self.path_projections.write().await;
+        if let Some(entries) = projections.get_mut(peer_id) {
+            entries.retain(|entry| entry.projection.handle().profile().topology() != topology);
+            if entries.is_empty() {
+                projections.remove(peer_id);
+            }
+        }
+    }
+
+    async fn manager_has_ready_path(&self, manager: &Arc<Mutex<PeerPathManager>>) -> bool {
+        let manager = manager.lock().expect("peer path manager lock");
+        !manager.direct_ready().is_empty() || manager.relay_ready().is_some()
     }
 
     #[cfg(test)]
@@ -1188,6 +1400,26 @@ impl RuntimeState {
         map.entry(peer_id.to_string())
             .or_insert_with(|| ReliableStreamManager::new(self.event_tx.clone()))
             .clone()
+    }
+
+    /// Close streams whose long-lived path lease was revoked by a hard path
+    /// close. Normal retirement leaves the lease active and therefore does not
+    /// reach this boundary; the stream remains bound to its original path
+    /// until the operation closes normally.
+    pub(crate) async fn close_inactive_streams(&self, peer_id: &str) {
+        let Some(manager) = self.reliable_streams.read().await.get(peer_id).cloned() else {
+            return;
+        };
+        let local_opener_device_id = self
+            .identity
+            .read()
+            .await
+            .as_ref()
+            .map(|identity| identity.device_id.clone())
+            .unwrap_or_default();
+        let _ = manager
+            .close_inactive(peer_id, &local_opener_device_id)
+            .await;
     }
 }
 
@@ -1432,5 +1664,55 @@ impl Drop for NetworkRuntime {
         self.bound_port.store(0, Ordering::Release);
         self.lifecycle.store(RUNTIME_STOPPED, Ordering::Release);
         self.stop_notify.notify_waiters();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::connect::{PeerId, PeerPathManager};
+    use crate::connection::{ConnectionProfile, Route, RouteTransport};
+    use std::sync::atomic::AtomicU16;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn runtime_path_projection_is_non_owning() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+        let peer_id = "projection-peer";
+        let session_id = SessionId::new();
+        state
+            .connection_sessions
+            .register_pending_session(peer_id, session_id)
+            .await
+            .expect("register session");
+
+        let mut manager = PeerPathManager::new(
+            PeerId::new(peer_id).expect("peer id"),
+            Arc::clone(&state.ready_paths),
+        );
+        let handle = manager
+            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+            .expect("publish path");
+        let projection = manager.projection(&handle).expect("projection");
+        state
+            .peer_path_managers
+            .write()
+            .await
+            .insert(peer_id.to_string(), Arc::new(Mutex::new(manager)));
+        state.path_projections.write().await.insert(
+            peer_id.to_string(),
+            vec![OwnedPathProjection {
+                session_id,
+                projection: projection.clone(),
+            }],
+        );
+
+        assert!(state.path_is_connected(peer_id).await);
+        state.peer_path_managers.write().await.remove(peer_id);
+        assert!(
+            !projection.is_alive(),
+            "projection must not own the carrier"
+        );
     }
 }

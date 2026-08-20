@@ -1019,6 +1019,22 @@ pub(crate) async fn close_realtime_sessions_for_session(
     }
 }
 
+/// Observe whether a peer has a live Realtime session before an environment
+/// reprobe.  Environment changes are discovery invalidations, not Realtime
+/// close events; the coordinator can use this owner-side hook to preserve a
+/// healthy PeerConnection while it refreshes Direct candidates.  A genuine
+/// transport loss still goes through [`close_realtime_sessions_for_session`]
+/// and creates a fresh Realtime session on the next explicit request.
+pub(crate) async fn preserve_for_environment_reprobe(state: &RuntimeState, peer_id: &str) -> bool {
+    state
+        .realtime
+        .lock()
+        .await
+        .sessions
+        .values()
+        .any(|session| session.peer_id == peer_id)
+}
+
 async fn session_revision(state: &RuntimeState, realtime_id: &str) -> u64 {
     state
         .realtime
@@ -2111,6 +2127,45 @@ mod tests {
             Arc::strong_count(&first_driver),
             baseline_refs,
             "no extra bound driver handle may be retained by the rejected start"
+        );
+    }
+
+    #[tokio::test]
+    async fn healthy_realtime_survives_environment_reprobe() {
+        let (state, _event_rx) = realtime_test_state().await;
+        register_realtime_peer(&state, "peer-a").await;
+        crate::discovery::begin_epoch(&state).await;
+        let control = RecordingControl::new();
+        *state.relay_control.write().await = Some(control);
+        let realtime_id = "00112233445566778899aabbccddeeff";
+        let peer = WebRtcPeer::new(WebRtcConfig::default()).expect("realtime peer");
+
+        state.realtime.lock().await.sessions.insert(
+            realtime_id.into(),
+            RealtimeSession {
+                peer_id: "peer-a".into(),
+                connection_session_id: None,
+                peer: Some(peer),
+                driver: None,
+                revision: 1,
+                remote_revision: 0,
+                ice_revision: 1,
+                seen_candidates: HashSet::new(),
+            },
+        );
+
+        crate::discovery::on_network_environment_changed(&state, 7, true)
+            .await
+            .expect("environment reprobe");
+        assert!(preserve_for_environment_reprobe(&state, "peer-a").await);
+        assert!(
+            state
+                .realtime
+                .lock()
+                .await
+                .sessions
+                .contains_key(realtime_id),
+            "discovery reprobe must not remove the healthy Realtime owner"
         );
     }
 }

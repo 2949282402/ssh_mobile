@@ -53,7 +53,7 @@ SDP、Socket 与 Relay signaling 继续由 Rust/native/App Shell 持有。
 
 ### 环境要求
 
-- Flutter `>=3.44.0`，CI 固定使用 Flutter `3.44.2`。
+- Flutter `>=3.47.0`，CI 固定使用 Flutter `3.47.0`。
 - Dart SDK `>=3.12.0 <4.0.0`。
 - Android Studio、Android SDK 或对应目标平台的开发工具链。
 - Windows 构建需要 Visual Studio 的 `Desktop development with C++`。

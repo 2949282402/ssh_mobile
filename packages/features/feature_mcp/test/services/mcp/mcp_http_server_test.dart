@@ -6,18 +6,15 @@ import 'package:feature_mcp/feature_mcp.dart';
 
 void main() {
   group('McpHttpServer', () {
-    late McpHttpServer server;
-    late HttpClient client;
+    late McpHttpRequestHandler handler;
     late _MemoryActivityRepository activityRepository;
 
     setUp(() async {
-      client = HttpClient();
       activityRepository = _MemoryActivityRepository();
       final activityRecorder = McpActivityRecorder(activityRepository);
       final executor = _FakeToolExecutor();
-      server = await McpHttpServer.bind(
-        host: '127.0.0.1',
-        port: 0,
+      handler = McpHttpRequestHandler(
+        port: 38321,
         token: 'secret',
         router: McpJsonRpcRouter(
           lifecycleHandler: const McpLifecycleHandler(),
@@ -31,24 +28,38 @@ void main() {
       );
     });
 
-    tearDown(() async {
-      client.close(force: true);
-      await server.close();
-    });
-
     Future<_JsonResponse> postJson(Map<String, dynamic> body) async {
-      final request = await client.postUrl(
-        Uri.parse('http://127.0.0.1:${server.port}/mcp'),
+      final response = await handler.handle(
+        McpHttpRequestData(
+          path: '/mcp',
+          method: 'POST',
+          contentType: ContentType.json,
+          authorization: 'Bearer secret',
+          origin: null,
+          body: Future.value(jsonEncode(body)),
+        ),
       );
-      request.headers.contentType = ContentType.json;
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer secret');
-      request.write(jsonEncode(body));
-      final response = await request.close();
-      final rawBody = await utf8.decoder.bind(response).join();
+      final rawBody = response.body ?? '';
       return _JsonResponse(
         statusCode: response.statusCode,
         rawBody: rawBody,
         body: rawBody.isEmpty ? const {} : jsonDecode(rawBody) as Map,
+      );
+    }
+
+    McpHttpRequestData requestData({
+      required String path,
+      required String method,
+      String authorization = 'Bearer secret',
+      Map<String, dynamic> body = const {},
+    }) {
+      return McpHttpRequestData(
+        path: path,
+        method: method,
+        contentType: ContentType.json,
+        authorization: authorization,
+        origin: null,
+        body: Future.value(jsonEncode(body)),
       );
     }
 
@@ -457,32 +468,31 @@ void main() {
     );
 
     test('GET /mcp returns 405', () async {
-      final request = await client.getUrl(
-        Uri.parse('http://127.0.0.1:${server.port}/mcp'),
+      final response = await handler.handle(
+        requestData(path: '/mcp', method: 'GET'),
       );
-      final response = await request.close();
 
       expect(response.statusCode, 405);
+      expect(response.headers[HttpHeaders.allowHeader], 'POST');
     });
 
     test('wrong path returns 404', () async {
-      final request = await client.getUrl(
-        Uri.parse('http://127.0.0.1:${server.port}/wrong'),
+      final response = await handler.handle(
+        requestData(path: '/wrong', method: 'GET'),
       );
-      final response = await request.close();
 
       expect(response.statusCode, 404);
     });
 
     test('invalid token returns 401', () async {
-      final request = await client.postUrl(
-        Uri.parse('http://127.0.0.1:${server.port}/mcp'),
+      final response = await handler.handle(
+        requestData(
+          path: '/mcp',
+          method: 'POST',
+          authorization: 'Bearer wrong',
+          body: {'jsonrpc': '2.0', 'id': 5, 'method': 'ping'},
+        ),
       );
-      request.headers.contentType = ContentType.json;
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer wrong');
-      request.write(jsonEncode({'jsonrpc': '2.0', 'id': 5, 'method': 'ping'}));
-
-      final response = await request.close();
 
       expect(response.statusCode, 401);
       await Future<void>.delayed(Duration.zero);

@@ -19,7 +19,7 @@
   `protocol-v2-contract`、`native-network-quality`、`relay-quality` 和
   `sdk-dart-quality` 覆盖协议 fixtures、Rust、Go Relay 与 Dart SDK。现有
   `scripts/relay_v2_contract.sh` 负责 fixtures/proto/buf 合同检查，不应被误读为
-  Rust/Go 单元测试替代品；`acceptance_matrix.json` 当前 32/32 为
+  Rust/Go 单元测试替代品；`acceptance_matrix.json` 当前 60/60 为
   `covered`，后者由对应 CI job 执行。
 - **Memory 已补齐当前高成本事实**：SDK Memory 记录 command-result 去重、peer
   connect intent、CandidatePayloadV2 cache 和 Delivery attempt 边界；Backend
@@ -30,13 +30,13 @@
   `PhysicalPath`，`ConnectionSessionStore` 只保存 identity/admission/security，
   业务操作通过 `PathLease` 取得一次性路径。`cargo fmt --all -- --check`、
   `cargo check --workspace --locked`、workspace Clippy `-D warnings` 和
-  `cargo test --workspace --locked` 均通过；其中 `network-core` 为 235 项，
+  `cargo test --workspace --locked` 均通过；其中 `network-core` 为 273 项，
   workspace 测试包含 network-ffi、network-nat、network-protocol、Relay 和
   network-webrtc（1 个需要外部 coturn 的 ignored 测试）。
-- **Go/Dart 本地门禁未完成**：当前 WSL 没有 `go`/`gofmt`、`dart` 或 `flutter`；
-  strict acceptance 已执行到 Go selector 并因 `go: command not found` 停止，
-  对应行为套件由 CI 的 `relay-quality` 与 `sdk-dart-quality` job 执行，不能把
-  历史机器上的结果当成本次验证结果。
+- **Go/Dart 本地门禁已完成**：strict acceptance 的 Go Relay selector 与三组
+  Flutter owner suite 均通过；`protocol-v2-contract` 也通过 protoc、buf lint
+  和 frozen Relay breaking checks。完整 App/feature 矩阵仍属于更广的 CI 门禁，
+  不在本次 ownership closeout 的选定本地 jobs 内。
 - **Network SDK/Data V2 已完成切换**：native Rust/Dart wire envelope 使用协议版本
   2，schema package 为 `network.v2`，QUIC ALPN 为 `ssh-mobile/2`，App codec 为
   `NetworkProtocolV2Codec`；Relay Bootstrap `/v1/devices/*` 与 C FFI ABI `1`
@@ -76,8 +76,8 @@
 - PathHandshakeV2 已折叠进既有 Noise transcript；Relay 只转发
   `DATA_ENV_CRYPTO`，PairReady 后完成 crypto admission，只有
   `complete_relay_admission` 完成后才设置 `relay_path_ready` 并发布 Connected。
-  Rust workspace 与 Phase 0 contract baseline 已通过；strict selector 已运行至
-  Go 边界，Go/Dart 后续选择器因工具链缺失未运行。
+  Rust workspace、Phase 0 contract baseline、Go Relay selector 和 Dart owner
+  suites 均已通过。
 - CandidatePayloadV2/cache 现在由 `RuntimeState` 持有，Stage A 会先读取 fresh
   monotonic cache/configured direct candidates，失败后才进入 Resolve→Offer；Resolve
   与 ConnectivityAnswer 会刷新 cache；过期 Stage B refresh、heartbeat 不刷新、
@@ -92,9 +92,8 @@
 - Core Runtime 对外事件根队列已改为 count+byte bounded sender；FFI/Dart EventMux
   继续执行 control/data fairness、overflow policy 和单事件硬上限。测试专用
   `UnboundedSender` 适配器不进入生产 Runtime。
-- 当前 WSL 未提供 `protoc`、`buf`、Go 或 Dart/Flutter；
-  `bash scripts/relay_v2_contract.sh` 会明确报告 descriptor equality 为 NOT RUN，
-  但 fixtures/semantic shape 与 Python contract baseline 已执行。协议编译、buf
-  lint/breaking、Go Relay、Dart SDK 和 Flutter 测试由 CI 执行。
+- 本次本地 protocol job 已执行 `protoc` descriptor、`buf lint`、frozen Relay
+  `buf breaking`、Go Relay 和 Dart/Flutter owner tests；完整 App/feature 矩阵仍
+  由 CI 的其他 job 覆盖。
 - 未运行真实多主机/移动设备硬件部署验收：当前证据来自 WSL 本地 Rust/Go/Dart
   测试与 committed protocol fixtures，原因是本地没有外部设备/Relay 集群 endpoint。

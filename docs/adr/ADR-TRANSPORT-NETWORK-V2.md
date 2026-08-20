@@ -144,8 +144,10 @@ Redis 仍是共享 live state 层（其键结构天然支持跨实例 presence/d
 runtime_epoch + revision 且有 ACK、Resolve 四态、Candidate 完全 attempt
 scoped、PathManager 不保存远端长期 Discovery Truth、Direct First 固定 4s、
 Control/Relay Data 物理分离、ConnectionSession 与 Transport 同生命周期、
-Delivery/Transfer 自行恢复、SSH/WebRTC 新建 Session、Relay→Direct 后台升级
-移除，以及 Rust / Go / Dart / Flutter 测试全部通过。当前提交的
-`protocol/contract_tests/acceptance_matrix.json` 已将 32 个案例标记为
-`covered`；完整 strict、Go、Dart、buf 和 pinned descriptor 门禁仍由 CI
-执行。
+Delivery/Transfer 自行恢复、SSH/WebRTC 新建 Session、Relay→Direct 无触发透明
+升级移除（环境变化触发的 bounded Direct recovery 除外），以及 Rust / Go / Dart /
+Flutter 测试全部通过。当前提交的
+`protocol/contract_tests/acceptance_matrix.json` 已将 60 个案例标记为
+`covered`；本地 `scripts/network_v2_acceptance.sh strict`、Go/Dart owner
+套件、buf 和 descriptor 门禁，以及选定的 architecture/protocol/SDK CI jobs
+均已通过；完整 App/feature/设备与服务集成门禁仍由 CI 执行。

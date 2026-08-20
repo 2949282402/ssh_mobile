@@ -1,6 +1,31 @@
+import 'dart:async';
 import 'dart:io';
 
 import '../domain/mcp_server_settings.dart';
+
+/// A short-lived reservation created while checking whether a port is free.
+abstract interface class McpPortReservation {
+  Future<void> close();
+}
+
+/// Binds a port for [McpPortProbe].
+typedef McpPortBinder =
+    Future<McpPortReservation> Function(String host, int port);
+
+Future<McpPortReservation> _bindPort(String host, int port) async {
+  return _ServerSocketReservation(
+    await ServerSocket.bind(host, port, shared: false),
+  );
+}
+
+final class _ServerSocketReservation implements McpPortReservation {
+  _ServerSocketReservation(this._socket);
+
+  final ServerSocket _socket;
+
+  @override
+  Future<void> close() => _socket.close();
+}
 
 /// 只允许回环地址的端口探测器；探测 socket 会在 finally 中关闭。
 enum McpPortProbeReason {
@@ -36,7 +61,9 @@ class McpPortProbeResult {
 }
 
 class McpPortProbe {
-  const McpPortProbe();
+  const McpPortProbe({this.bind = _bindPort});
+
+  final McpPortBinder bind;
 
   Future<McpPortProbeResult> check({
     required String host,
@@ -54,9 +81,30 @@ class McpPortProbe {
       );
     }
 
-    ServerSocket? socket;
+    McpPortReservation? reservation;
     try {
-      socket = await ServerSocket.bind(normalizedHost, port, shared: false);
+      final pendingReservation = bind(normalizedHost, port);
+      try {
+        reservation = await pendingReservation.timeout(
+          const Duration(seconds: 5),
+        );
+      } on TimeoutException {
+        // A timed-out bind may still complete later. Close that late
+        // reservation so the bounded probe does not leak a listening socket.
+        unawaited(
+          pendingReservation.then<void>(
+            (lateReservation) => lateReservation.close(),
+            onError: (Object _, StackTrace _) {},
+          ),
+        );
+        return McpPortProbeResult(
+          host: normalizedHost,
+          port: port,
+          available: false,
+          reason: McpPortProbeReason.portOccupiedOrUnavailable,
+          message: 'port_probe_timeout',
+        );
+      }
       return McpPortProbeResult(
         host: normalizedHost,
         port: port,
@@ -72,7 +120,7 @@ class McpPortProbe {
         message: e.message,
       );
     } finally {
-      await socket?.close();
+      await reservation?.close();
     }
   }
 }

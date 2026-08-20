@@ -39,6 +39,16 @@ Ownership rules:
 - New transport connections always create a fresh SessionId and application
   root. Required E2EE is the normal business path; Disabled is Direct
   identity-only and cannot fall through to Relay.
+- `PeerPathManager` may hold one Direct and one Relay ready path concurrently;
+  `PathHandle`/projection entries are weak, while a `PathLease` is the only
+  business lifetime reservation. Delivery releases a per-send lease before ACK
+  wait, Transfer retains its lease for one attempt, and ReliableStream retains
+  one lease through open/close without path migration.
+- Passive inbound admission is Online-only and does not enable maintenance.
+  Network-environment changes preserve healthy Relay/Realtime and schedule
+  maintained-peer Direct recovery only after Relay readiness. Native/FFI/Dart
+  event lanes are bounded at Control `256/4 MiB`, Data `128/8 MiB`, `1 MiB`
+  per event, with an eight-control fairness cap.
 
 The complete rationale remains in the
 [network design](../../docs/网络传输SDK架构设计_最终版.md) and

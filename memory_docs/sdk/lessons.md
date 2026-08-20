@@ -1,4 +1,4 @@
-> Last updated: 2026-08-19
+> Last updated: 2026-08-20
 
 # SDK Lessons
 
@@ -21,3 +21,9 @@
   [forward-secret E2EE ADR](../../docs/adr/ADR-028-forward-secret-session-e2ee.md).
 - Relay forwards opaque protocol stages; it does not own plaintext, RootSeed,
   or Application Root.
+- A `PathHandle` or runtime projection is not a carrier owner. Direct/Relay
+  path ownership stays in `PeerPathManager`; business code must hold a
+  `PathLease`, and hard close must close streams bound to an inactive lease.
+- Passive inbound is not a reconnect request. Preserve maintenance only when it
+  was explicitly enabled, and gate Direct recovery on a ready Relay path so a
+  Direct optimisation cannot interrupt healthy Relay/Realtime service.

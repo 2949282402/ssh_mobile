@@ -1,7 +1,7 @@
 //! V2 直连文件传输任务分发及类型化完成/失败事件。
 
 use network_protocol::{
-    NetworkCommand, NetworkError as ProtocolError, NetworkErrorCode,
+    CommunicationClass, NetworkCommand, NetworkError as ProtocolError, NetworkErrorCode,
     RespondIncomingTransferCommand, RouteType, SendFileCommand,
 };
 use network_quic::{
@@ -26,6 +26,7 @@ use crate::channel::select_business_path_lease;
 use crate::connect::{PathLease, CAPABILITY_RELIABLE_STREAM};
 use crate::connection::RouteTransport;
 use crate::delivery::{is_valid_peer_id, BusinessRecoveryError};
+use crate::errors::CoreNetworkError;
 use crate::events::{
     emit_incoming_offer, emit_transfer_completed, emit_transfer_error,
     emit_transfer_progress_for_peer, protocol_error, protocol_error_with_peer,
@@ -119,6 +120,22 @@ impl TransferDispatcher {
         &self,
         identity: &TransferIdentity,
     ) -> Result<(TransferRoute, PathLease), ProtocolError> {
+        ensure_business_path(
+            &self.state,
+            &identity.peer_id,
+            &identity.transfer_id,
+            CommunicationClass::BulkTransfer,
+            CAPABILITY_RELIABLE_STREAM,
+        )
+        .await
+        .map_err(|error| {
+            protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                error.to_string(),
+                "send",
+                &identity.peer_id,
+            )
+        })?;
         let lease =
             select_business_path_lease(&self.state, &identity.peer_id, CAPABILITY_RELIABLE_STREAM)
                 .await
@@ -296,16 +313,33 @@ fn valid_transfer_identity(transfer_id: &str, peer_id: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
-async fn transfer_attempt_is_current(
-    state: &RuntimeState,
+/// Ensure a business-capable path without enabling long-lived peer maintenance.
+///
+/// SessionId is deliberately absent from this decision: it is only attached
+/// later when a concrete transport attempt needs a current wire/task key.
+pub(crate) async fn ensure_business_path(
+    state: &Arc<RuntimeState>,
     peer_id: &str,
-    session_key: &str,
-) -> bool {
-    state
-        .connection_sessions
-        .current_session_id(peer_id)
+    command_id: &str,
+    class: CommunicationClass,
+    required_capabilities: u8,
+) -> Result<(), CoreNetworkError> {
+    if let Ok(lease) = state
+        .acquire_path_lease(peer_id, required_capabilities)
         .await
-        .is_some_and(|session_id| session_id.wire_key() == session_key)
+    {
+        drop(lease);
+        return Ok(());
+    }
+    RuntimeState::ensure_business_path(
+        Arc::clone(state),
+        peer_id,
+        command_id,
+        class,
+        required_capabilities,
+    )
+    .await
+    .map(|_| ())
 }
 
 /// 校验源文件，并交给当前逻辑 Session 的 Route Dispatcher。
@@ -348,18 +382,6 @@ pub(crate) async fn start_file_send(
             &command.peer_id,
         ));
     }
-    let session_id = state
-        .connection_sessions
-        .current_session_id(&command.peer_id)
-        .await
-        .ok_or_else(|| {
-            protocol_error_with_peer(
-                NetworkErrorCode::NoRoute,
-                "peer has no logical Session",
-                "send",
-                &command.peer_id,
-            )
-        })?;
     let manifest = build_file_manifest(command.transfer_id.clone(), &path)
         .await
         .map_err(|_| {
@@ -390,8 +412,7 @@ pub(crate) async fn start_file_send(
     let dispatcher = TransferDispatcher::new(Arc::clone(&state));
     let (route, lease) = dispatcher.select_attempt(&identity).await?;
     // §19：TransferOperation 按 transfer_id + peer_id 注册，SessionId 不进入
-    // 持久化的业务状态；`ResumableTransfer.session_id` 在派发时从当前
-    // ConnectionSession 附加（用于 Relay E2EE 与任务分组）。
+    // 持久化的业务状态；仅为本次 transport attempt 附加当前 wire/task key。
     if !state
         .transfers
         .register_outgoing(manifest.clone(), path.clone(), command.peer_id.clone())
@@ -404,10 +425,16 @@ pub(crate) async fn start_file_send(
             &command.peer_id,
         ));
     }
+    let session_key = state
+        .connection_sessions
+        .current_session_id(&identity.peer_id)
+        .await
+        .map(|session_id| session_id.wire_key())
+        .unwrap_or_else(|| format!("transfer:{}", identity.transfer_id));
     let transfer = ResumableTransfer {
         transfer_id: manifest.transfer_id.clone(),
-        peer_id: command.peer_id,
-        session_id: session_id.wire_key(),
+        peer_id: identity.peer_id.clone(),
+        session_id: session_key,
         source_path: path,
         manifest,
         offset: 0,
@@ -434,11 +461,6 @@ async fn send_file(
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
                 std::io::Error::new(std::io::ErrorKind::NotConnected, "business path was lost")
                     .into(),
-            );
-        }
-        if !transfer_attempt_is_current(&state, &peer_id, &transfer.session_id).await {
-            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced).into(),
             );
         }
         let current_manifest =
@@ -479,11 +501,6 @@ async fn send_file(
                     message: "invalid resume offset",
                 }
                 .into(),
-            );
-        }
-        if !transfer_attempt_is_current(&state, &peer_id, &transfer.session_id).await {
-            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced).into(),
             );
         }
         if !state.transfers.mark_transferring(&transfer_id).await {
@@ -532,15 +549,10 @@ async fn send_file(
                     .into(),
             );
         }
-        if !transfer_attempt_is_current(&state, &peer_id, &transfer.session_id).await {
-            return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced).into(),
-            );
-        }
         send.finish()?;
         if !state.transfers.mark_verifying(&transfer_id).await {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced).into(),
+                TransferAttemptError::stale_attempt(TransferFailureReason::Protocol).into(),
             );
         }
         tokio::time::timeout(
@@ -551,15 +563,14 @@ async fn send_file(
         .map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::TimedOut, "file completion timed out")
         })??;
-        if !transfer_attempt_is_current(&state, &peer_id, &transfer.session_id).await
-            || !state
-                .transfers
-                .update_progress(&transfer_id, transfer.manifest.file_size)
-                .await
+        if !state
+            .transfers
+            .update_progress(&transfer_id, transfer.manifest.file_size)
+            .await
             || !state.transfers.mark_completed(&transfer_id).await
         {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced).into(),
+                TransferAttemptError::stale_attempt(TransferFailureReason::Protocol).into(),
             );
         }
         emit_transfer_completed(&state.event_tx, &transfer_id, "");
@@ -570,19 +581,17 @@ async fn send_file(
         Ok(()) => state.transfers.remove_transfer(&transfer_id).await,
         Err(error)
             if !state.transfers.is_cancelled(&transfer_id).await
-                && transfer_attempt_is_current(&state, &peer_id, &transfer.session_id).await
                 && is_transient_transport_error(error.as_ref())
                 && state.transfers.pause_for_network(&transfer_id).await =>
         {
-            // 保留源文件、TransferId、SessionId 和接收端的 `.part`，等待
-            // 同一逻辑 Session 的下一次 Route Ready。
+            // 保留源文件、TransferId 和接收端的 `.part`，等待
+            // 同一 Peer 的下一次兼容 PathLease。
             tracing::debug!(transfer_id = %transfer_id, error = %error, "native QUIC transfer paused for resume");
         }
         Err(error) => {
-            if !transfer_attempt_is_current(&state, &peer_id, &transfer.session_id).await
-                || error
-                    .downcast_ref::<TransferAttemptError>()
-                    .is_some_and(|attempt| !attempt.terminal)
+            if error
+                .downcast_ref::<TransferAttemptError>()
+                .is_some_and(|attempt| !attempt.terminal)
             {
                 return;
             }
@@ -759,13 +768,14 @@ pub(crate) async fn handle_incoming_file_after_offer(
     let mut registered_transfer = false;
     let result = async {
         active_transfer_id = Some(manifest.transfer_id.clone());
-        let session_id = state
+        // SessionId is only a transport-local task grouping key. The incoming
+        // business operation remains keyed by (peer_id, transfer_id).
+        let session_key = state
             .connection_sessions
             .current_session_id(&peer_id)
             .await
-            .ok_or_else(|| std::io::Error::other("logical Session is unavailable"))?;
-        let session_key = session_id.wire_key();
-        // §19：注册按 transfer_id + peer_id；SessionId 只用于本地任务分组键。
+            .map(|session_id| session_id.wire_key())
+            .unwrap_or_else(|| format!("transfer:{}", manifest.transfer_id));
         if !state
             .transfers
             .register_incoming(manifest.clone(), peer_id.clone())
@@ -846,18 +856,14 @@ pub(crate) async fn handle_incoming_file_after_offer(
                 || !state.transfers.mark_verifying(&manifest.transfer_id).await
             {
                 return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                    TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced)
-                        .into(),
+                    TransferAttemptError::stale_attempt(TransferFailureReason::Protocol).into(),
                 );
             }
             write_file_completion(&mut send).await?;
             send.finish()?;
-            if !transfer_attempt_is_current(&state, &peer_id, &session_key).await
-                || !state.transfers.mark_completed(&manifest.transfer_id).await
-            {
+            if !state.transfers.mark_completed(&manifest.transfer_id).await {
                 return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                    TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced)
-                        .into(),
+                    TransferAttemptError::stale_attempt(TransferFailureReason::Protocol).into(),
                 );
             }
             state.transfers.remove_transfer(&manifest.transfer_id).await;
@@ -907,20 +913,16 @@ pub(crate) async fn handle_incoming_file_after_offer(
             cancellation.as_ref(),
         )
         .await?;
-        if !transfer_attempt_is_current(&state, &peer_id, &session_key).await
-            || !state.transfers.mark_verifying(&manifest.transfer_id).await
-        {
+        if !state.transfers.mark_verifying(&manifest.transfer_id).await {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced).into(),
+                TransferAttemptError::stale_attempt(TransferFailureReason::Protocol).into(),
             );
         }
         write_file_completion(&mut send).await?;
         send.finish()?;
-        if !transfer_attempt_is_current(&state, &peer_id, &session_key).await
-            || !state.transfers.mark_completed(&manifest.transfer_id).await
-        {
+        if !state.transfers.mark_completed(&manifest.transfer_id).await {
             return Err::<(), Box<dyn std::error::Error + Send + Sync>>(
-                TransferAttemptError::stale_attempt(TransferFailureReason::SessionReplaced).into(),
+                TransferAttemptError::stale_attempt(TransferFailureReason::Protocol).into(),
             );
         }
         state.transfers.remove_transfer(&manifest.transfer_id).await;
@@ -1104,6 +1106,48 @@ pub(crate) async fn dispatch_transfer_command(
 #[cfg(test)]
 mod v2_contract_tests {
     use super::*;
+    use network_protocol::NetworkEvent;
+    use std::sync::Mutex;
+    use tokio::sync::mpsc::unbounded_channel;
+
+    async fn state_with_ready_stream_path() -> (Arc<RuntimeState>, Arc<crate::connect::PathRegistry>)
+    {
+        let (event_tx, _event_rx) = unbounded_channel::<NetworkEvent>();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        let registry = Arc::new(crate::connect::PathRegistry::new());
+        let mut manager = crate::connect::PeerPathManager::new(
+            crate::connect::PeerId::new("peer-a").expect("peer"),
+            Arc::clone(&registry),
+        );
+        manager
+            .publish_ready(crate::connection::ConnectionProfile::new(
+                crate::connection::Route::direct(crate::connection::RouteTransport::Tcp),
+            ))
+            .expect("ready path");
+        state
+            .peer_path_managers
+            .write()
+            .await
+            .insert("peer-a".to_string(), Arc::new(Mutex::new(manager)));
+        (state, registry)
+    }
+
+    #[tokio::test]
+    async fn transfer_auto_ensures_path() {
+        let (state, _registry) = state_with_ready_stream_path().await;
+        ensure_business_path(
+            &state,
+            "peer-a",
+            "transfer-auto",
+            CommunicationClass::BulkTransfer,
+            CAPABILITY_RELIABLE_STREAM,
+        )
+        .await
+        .expect("bulk transfer should use the compatible ready path");
+    }
 
     #[test]
     fn transfer_identity_and_confirmed_offset_are_session_independent() {
@@ -1124,5 +1168,78 @@ mod v2_contract_tests {
             transfer_failure_code(TransferFailureReason::SessionReplaced),
             NetworkErrorCode::PathLost
         );
+    }
+
+    #[tokio::test]
+    async fn transfer_resume_survives_new_connection_session_id() {
+        let manager = network_transfer::TransferManager::new();
+        let manifest = FileManifest {
+            transfer_id: "transfer-session-independent".to_string(),
+            file_name: "payload.bin".to_string(),
+            file_size: 8,
+            modified_at: 0,
+            content_hash: "00".repeat(32),
+            protocol_version: NETWORK_TRANSFER_PROTOCOL_VERSION,
+        };
+        assert!(
+            manager
+                .register_outgoing(manifest, PathBuf::from("payload.bin"), "peer-a".to_string(),)
+                .await
+        );
+        assert!(
+            manager
+                .mark_transferring("transfer-session-independent")
+                .await
+        );
+        assert!(
+            manager
+                .update_progress("transfer-session-independent", 4)
+                .await
+        );
+        assert!(
+            manager
+                .pause_for_network("transfer-session-independent")
+                .await
+        );
+
+        let old_session_id = "session-old";
+        let new_session_id = "session-new";
+        assert_ne!(old_session_id, new_session_id);
+        let resumed = manager
+            .take_resumable_for_peer("peer-a", new_session_id)
+            .await;
+        assert_eq!(resumed.len(), 1);
+        assert_eq!(resumed[0].peer_id, "peer-a");
+        assert_eq!(resumed[0].transfer_id, "transfer-session-independent");
+        assert_eq!(resumed[0].session_id, new_session_id);
+        assert_eq!(resumed[0].offset, 4);
+    }
+
+    #[test]
+    fn transfer_path_loss_acquires_fresh_lease() {
+        let registry = Arc::new(crate::connect::PathRegistry::new());
+        let mut manager = crate::connect::PeerPathManager::new(
+            crate::connect::PeerId::new("peer-a").expect("peer"),
+            Arc::clone(&registry),
+        );
+        let old_handle = manager
+            .publish_ready(crate::connection::ConnectionProfile::new(
+                crate::connection::Route::direct(crate::connection::RouteTransport::Tcp),
+            ))
+            .expect("old path");
+        let old_lease = registry.acquire(&old_handle).expect("old lease");
+        registry.drain(&old_handle);
+        let new_handle = manager
+            .publish_ready(crate::connection::ConnectionProfile::new(
+                crate::connection::Route::direct(crate::connection::RouteTransport::Tcp),
+            ))
+            .expect("fresh path");
+        let new_lease = registry.acquire(&new_handle).expect("fresh lease");
+        assert_ne!(old_handle, new_handle);
+        assert!(
+            old_lease.is_active(),
+            "normal retire drains the old attempt"
+        );
+        assert!(new_lease.is_active());
     }
 }

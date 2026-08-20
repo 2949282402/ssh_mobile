@@ -32,6 +32,12 @@ fi
 (cd native/network_core && cargo test -p network-core 'connect::connectivity_attempt::tests::' --locked)
 (cd native/network_core && cargo test -p network-core 'connect::peer_supervisor::tests::' --locked)
 (cd native/network_core && cargo test -p network-core 'connect::path::tests::' --locked)
+(cd native/network_core && cargo test -p network-core 'commands::tests::' --locked)
+(cd native/network_core && cargo test -p network-core 'channel::tests::' --locked)
+(cd native/network_core && cargo test -p network-core 'transfer::tests::' --locked)
+(cd native/network_core && cargo test -p network-core 'discovery::tests::' --locked)
+(cd native/network_core && cargo test -p network-core 'discovery::recovery::tests::' --locked)
+(cd native/network_core && cargo test -p network-core 'realtime::tests::' --locked)
 (cd native/network_core && cargo test -p network-core 'delivery::tests::' --locked)
 (cd native/network_core && cargo test -p network-core 'stream::tests::' --locked)
 (cd native/network_core && cargo test -p network-core 'relay_data_clients_forward_envelopes_over_reservation' --locked)
@@ -47,8 +53,11 @@ fi
     'Test(ConnectExpiredCredentialReturnsCode12|NetworkV2ExpiredCredentialCannotOpenDataSocket|RelayDataAdmissionBindsDeviceRoleAndToken|RelayDataCloseDeviceClosesPendingActiveAndCounterpart|RelayDataSameRoleRetryRejectsDuplicate|RelayDataPairReadyRequiresBothRoles|RelayDataRegistryRejectsDuplicateRoleAndConsumesPair|ControlV2RejectsRelayDataFrame|ControlV2ReservationAndRelayData|AdminRevokeReturnsErrorWhenRevokeFails|ReconcileRevocationsDisconnectsRevokedDevice|DisconnectDeviceDoesNotClearForeignPresence|RelayDataSlidingExpiryKeepsActiveSessionAlive|RelayDataIdleCredentialExpiryKeepsReadySessionAlive|RelayDataConnectValidation)$'
 )
 
-# Dart/mobile owns its package-level gates; the final matrix check below keeps
-# those results coupled to the same strict acceptance entry point.
+# Dart/mobile owner tests are part of the same strict entry point so matrix
+# cases cannot be marked covered without executable package evidence.
+(cd packages/infrastructure/network_transport && flutter test test/event_mux_test.dart)
+(cd packages/infrastructure/network_sdk && flutter test test/network_v2_contract_test.dart)
+(cd packages/infrastructure/ssh_mobile_network_native && flutter test test/ssh_mobile_network_native_test.dart)
 SSH_MOBILE_ACCEPTANCE_STRICT=1 python3 -m unittest discover \
   -s protocol/contract_tests \
   -p 'test_*.py'

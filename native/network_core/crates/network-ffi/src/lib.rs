@@ -25,6 +25,7 @@ pub const SSH_NET_MAX_DATA_ITEMS: usize = 128;
 pub const SSH_NET_MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
 pub const SSH_NET_MAX_CONSECUTIVE_CONTROL_EVENTS: usize = 8;
 pub const SSH_NET_MAX_PENDING_COMMANDS: usize = 64;
+const SSH_NET_RUNTIME_DRAIN_BATCH: usize = 512;
 
 /// 跨 FFI 边界传递的不透明运行时句柄。
 pub type SshNetRuntimeHandle = *mut c_void;
@@ -76,6 +77,26 @@ impl<T> EventMux<T> {
 
     fn is_empty(&self) -> bool {
         self.critical.is_empty() && self.normal.is_empty() && self.data.is_empty()
+    }
+
+    #[cfg(test)]
+    fn control_items(&self) -> usize {
+        self.critical.len() + self.normal.len()
+    }
+
+    #[cfg(test)]
+    fn data_items(&self) -> usize {
+        self.data.len()
+    }
+
+    #[cfg(test)]
+    fn control_bytes(&self) -> usize {
+        self.control_bytes
+    }
+
+    #[cfg(test)]
+    fn data_bytes(&self) -> usize {
+        self.data_bytes
     }
 
     fn enqueue(&mut self, value: T, lane: EventLane, bytes: usize) -> bool {
@@ -258,6 +279,31 @@ impl SshNetRuntime {
             terminal.insert(result.command_id.clone());
         }
         Some(event)
+    }
+
+    fn drain_runtime_events(&self, timeout_ms: u32) -> Result<(), i32> {
+        for index in 0..SSH_NET_RUNTIME_DRAIN_BATCH {
+            let Some(event) = self
+                .runtime
+                .poll_event(if index == 0 { timeout_ms } else { 0 })
+            else {
+                break;
+            };
+            let bytes = event.encode_to_vec().len();
+            if bytes > SSH_NET_MAX_EVENT_BYTES {
+                continue;
+            }
+            let lane = event_lane(&event);
+            if let Some(event) = self.admit_event(event) {
+                match self.drained_events.lock() {
+                    Ok(mut mux) => {
+                        let _ = mux.enqueue(event, lane, bytes);
+                    }
+                    Err(_) => return Err(-3),
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -482,21 +528,10 @@ pub unsafe extern "C" fn ssh_net_runtime_poll_event(
             Ok(events) => events.is_empty(),
             Err(_) => return -3,
         };
-        if drained_is_empty {
-            if let Some(event) = runtime.runtime.poll_event(timeout_ms) {
-                let bytes = event.encode_to_vec();
-                let lane = event_lane(&event);
-                if bytes.len() <= SSH_NET_MAX_EVENT_BYTES {
-                    if let Some(event) = runtime.admit_event(event) {
-                        match runtime.drained_events.lock() {
-                            Ok(mut mux) => {
-                                let _ = mux.enqueue(event, lane, bytes.len());
-                            }
-                            Err(_) => return -3,
-                        }
-                    }
-                }
-            }
+        if let Err(code) =
+            runtime.drain_runtime_events(if drained_is_empty { timeout_ms } else { 0 })
+        {
+            return code;
         }
 
         let event = match runtime.drained_events.lock() {
@@ -770,7 +805,17 @@ mod tests {
     }
 
     #[test]
-    fn event_mux_applies_bounded_control_data_fairness() {
+    fn data_flood_cannot_starve_critical_control() {
+        let mut mux = EventMux::new();
+        for value in 0..(SSH_NET_MAX_DATA_ITEMS * 4) {
+            assert!(mux.enqueue(value, EventLane::Data, 1));
+        }
+        assert!(mux.enqueue(100, EventLane::CriticalControl, 1));
+        assert_eq!(mux.pop(), Some(100));
+    }
+
+    #[test]
+    fn eight_control_fairness() {
         let mut mux = EventMux::new();
         for value in 0..10 {
             assert!(mux.enqueue(value, EventLane::CriticalControl, 1));
@@ -783,6 +828,37 @@ mod tests {
         assert_eq!(mux.pop(), Some(100));
         assert_eq!(mux.pop(), Some(8));
         assert_eq!(mux.pop(), Some(9));
+    }
+
+    #[test]
+    fn control_byte_limit() {
+        let mut mux = EventMux::new();
+        for value in 0..4 {
+            assert!(mux.enqueue(value, EventLane::NormalControl, SSH_NET_MAX_EVENT_BYTES));
+        }
+        assert_eq!(mux.control_items(), 4);
+        assert_eq!(mux.control_bytes(), SSH_NET_MAX_CONTROL_BYTES);
+        assert!(!mux.enqueue(4, EventLane::CriticalControl, SSH_NET_MAX_EVENT_BYTES));
+        assert_eq!(mux.control_items(), 4);
+        assert_eq!(mux.control_bytes(), SSH_NET_MAX_CONTROL_BYTES);
+    }
+
+    #[test]
+    fn data_byte_limit() {
+        let mut mux = EventMux::new();
+        for value in 0..9 {
+            assert!(mux.enqueue(value, EventLane::Data, SSH_NET_MAX_EVENT_BYTES));
+        }
+        assert_eq!(mux.data_items(), 8);
+        assert_eq!(mux.data_bytes(), SSH_NET_MAX_DATA_BYTES);
+        assert_eq!(mux.pop(), Some(1));
+    }
+
+    #[test]
+    fn single_event_limit() {
+        let mut mux = EventMux::new();
+        assert!(!mux.enqueue(1, EventLane::CriticalControl, SSH_NET_MAX_EVENT_BYTES + 1));
+        assert!(mux.is_empty());
     }
 
     #[test]

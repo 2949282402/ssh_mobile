@@ -380,6 +380,45 @@ impl TransferManager {
             })
     }
 
+    /// Count non-terminal transfer identities for one peer.  Diagnostics use
+    /// this owner-backed view instead of inferring activity from transport
+    /// sessions or Relay waiter maps.
+    pub async fn active_count_for_peer(&self, peer_id: &str) -> u32 {
+        self.transfers
+            .read()
+            .await
+            .values()
+            .filter(|item| {
+                item.peer_id == peer_id
+                    && !matches!(
+                        item.state,
+                        TransferState::Completed
+                            | TransferState::Cancelled
+                            | TransferState::Failed(_)
+                    )
+            })
+            .count()
+            .min(u32::MAX as usize) as u32
+    }
+
+    pub async fn active_ids_for_peer(&self, peer_id: &str) -> Vec<String> {
+        self.transfers
+            .read()
+            .await
+            .values()
+            .filter(|item| {
+                item.peer_id == peer_id
+                    && !matches!(
+                        item.state,
+                        TransferState::Completed
+                            | TransferState::Cancelled
+                            | TransferState::Failed(_)
+                    )
+            })
+            .map(|item| item.transfer_id.clone())
+            .collect()
+    }
+
     pub async fn remove_transfer(&self, transfer_id: &str) {
         self.transfers.write().await.remove(transfer_id);
     }

@@ -97,6 +97,19 @@ winner 和 security decision，不保存 route/carrier/lifecycle truth。Require
 Relay Disabled fail closed。Stage A/B/C 依次执行纯 Direct 候选、authoritative
 Resolve→Offer Direct window 和受策略/预算约束的 Relay fallback。
 
+V2 closeout also fixes the operation boundaries: Direct Ready, Direct Probe and Relay
+Ready may coexist; the first compatible path wins, an equivalent/weaker late path is
+rejected, and only a demanded strict capability superset promotes the active Direct
+path. Normal retirement drains existing leases, while hard close/security revoke
+invalidates them immediately. Delivery acquires one lease per send and releases it
+before waiting for an application ACK. Transfer resumes by `(peer_id, transfer_id)`
+and confirmed offset on a new ConnectionSession; ReliableStream keeps one lease from
+open through close and never transparently migrates. Authenticated passive inbound
+is Online without maintenance, and maintained peers use the bounded `1/2/4/8/15/30s`
+Direct recovery schedule only after Relay is ready. Native, FFI and Dart event lanes
+are bounded at Control `256/4 MiB`, Data `128/8 MiB`, `1 MiB` per event, with at most
+eight consecutive Control events. The frozen Relay V2 wire contract is unchanged.
+
 ### 2.3 Transport 与业务协议解耦
 
 文件传输协议不应该写成 `QuicFilePacket`、`TcpFilePacket`。

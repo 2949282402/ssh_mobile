@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-20
 
 # feature_mcp
 
@@ -27,8 +27,12 @@ AppRuntime 注册、初始化并激活 `McpModule`，应用生命周期在退出
 ```text
 dart format --output=none --set-exit-if-changed lib test
 dart analyze
-flutter test
+flutter test --no-pub --exclude-tags native-loopback
 ```
+
+`test/services/mcp/mcp_http_server_native_test.dart` 是真实回环 HTTP 集成测试，
+在原生 Linux CI 中运行；WSL 的 Flutter tester 不运行该标签测试。生产 Server
+仍只允许绑定 `localhost`/`127.0.0.1`。
 
 ## Package contract
 
@@ -42,4 +46,6 @@ flutter test
 - 生命周期与资源 Owner：Module 负责数据库、Server、审批队列和 Repository；Route
   Scope 负责 ViewModel；AppRuntime 注入设置、日志和 AI Tool Runtime。
 - 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
-  `flutter analyze --no-pub`、`flutter test --no-pub`。
+  `flutter analyze --no-pub`、`flutter test --no-pub --exclude-tags
+  native-loopback`；原生 Linux 额外运行 `flutter test --tags native-loopback
+  test/services/mcp/mcp_http_server_native_test.dart`。

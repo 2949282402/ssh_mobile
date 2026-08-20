@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,22 +8,42 @@ void main() {
   test(
     'self-test checks initialize and tools/list without executing tools',
     () async {
-      final reservation = await ServerSocket.bind(
-        InternetAddress.loopbackIPv4,
-        0,
-      );
-      final port = reservation.port;
-      await reservation.close();
+      final server = _FakeHttpServerHandle();
+      final selfTestTransport = _FakeSelfTestTransport([
+        const McpSelfTestResponse(
+          reachable: true,
+          statusCode: 200,
+          succeeded: true,
+        ),
+        const McpSelfTestResponse(
+          reachable: true,
+          statusCode: 200,
+          succeeded: true,
+        ),
+      ]);
       final settings = _FakeSettings(
-        value: McpServerSettings(
+        value: const McpServerSettings(
           enabled: true,
           host: '127.0.0.1',
-          port: port,
+          port: 38321,
           token: 'test-token',
         ),
       );
       final executor = _FakeToolExecutor();
-      final controller = _createController(settings, () => executor);
+      final controller = _createController(
+        settings,
+        () => executor,
+        serverFactory:
+            ({
+              required host,
+              required port,
+              required token,
+              required router,
+              required activityRecorder,
+              required logger,
+            }) async => server,
+        selfTestTransport: selfTestTransport,
+      );
       addTearDown(() {
         controller.dispose();
         settings.dispose();
@@ -39,6 +58,8 @@ void main() {
       expect(result.initialized, isTrue);
       expect(result.toolsListed, isTrue);
       expect(executor.executedTools, isEmpty);
+      expect(selfTestTransport.requests, 2);
+      expect(server.closed, isFalse);
     },
   );
 
@@ -166,6 +187,9 @@ McpServerController _createController(
   McpSettingsPort settings,
   McpToolExecutor Function() factory, {
   McpApprovalQueue? approvalQueue,
+  McpPortProbe? portProbe,
+  McpHttpServerFactory? serverFactory,
+  McpSelfTestTransport? selfTestTransport,
 }) {
   return McpServerController(
     settings: settings,
@@ -173,6 +197,20 @@ McpServerController _createController(
     activityRepository: _MemoryActivityRepository(),
     logger: const _FakeLogger(),
     approvalQueue: approvalQueue,
+    portProbe:
+        portProbe ??
+        McpPortProbe(bind: (host, port) async => _FakePortReservation()),
+    serverFactory:
+        serverFactory ??
+        ({
+          required host,
+          required port,
+          required token,
+          required router,
+          required activityRecorder,
+          required logger,
+        }) async => _FakeHttpServerHandle(),
+    selfTestTransport: selfTestTransport ?? _FakeSelfTestTransport([]),
   );
 }
 
@@ -311,6 +349,44 @@ class _FakeLogger implements McpLoggerPort {
     StackTrace? stackTrace,
     String? details,
   }) {}
+}
+
+class _FakePortReservation implements McpPortReservation {
+  @override
+  Future<void> close() async {}
+}
+
+class _FakeHttpServerHandle implements McpHttpServerHandle {
+  var closed = false;
+
+  @override
+  Future<void> close({bool force = true}) async {
+    closed = true;
+  }
+}
+
+class _FakeSelfTestTransport implements McpSelfTestTransport {
+  _FakeSelfTestTransport(this._responses);
+
+  final List<McpSelfTestResponse> _responses;
+  var requests = 0;
+
+  @override
+  Future<McpSelfTestResponse> postJson({
+    required Uri url,
+    required String token,
+    required Map<String, dynamic> body,
+  }) async {
+    requests++;
+    if (_responses.isEmpty) {
+      return const McpSelfTestResponse(
+        reachable: false,
+        statusCode: null,
+        succeeded: false,
+      );
+    }
+    return _responses.removeAt(0);
+  }
 }
 
 class _FakeToolExecutor implements McpToolExecutor {

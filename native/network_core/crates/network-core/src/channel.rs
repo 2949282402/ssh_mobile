@@ -5,17 +5,8 @@
 //! 所有发送都以逻辑 SessionId 为边界，不把 MessageId、Sequence 或
 //! RecoveryEpoch 存进具体 Connection。
 
-use network_protocol::{
-    network_event, AcknowledgeMessageCommand, ChannelMessageEvent, DataMessage, DeliveryAck,
-    DeliveryAckedEvent, DeliveryPolicyCode, NetworkError as ProtocolError, NetworkErrorCode,
-    NetworkEvent, SendMessageCommand, NETWORK_PROTOCOL_VERSION,
-};
-use network_quic::MAX_CHANNEL_FRAME_BYTES;
-use prost::Message;
-use std::sync::Arc;
-use std::time::Instant;
-
-use crate::connect::{PathLease, PeerId, CAPABILITY_RELIABLE_MESSAGE};
+use crate::connect::{PathLease, CAPABILITY_RELIABLE_MESSAGE};
+use crate::connection::RouteTopology;
 use crate::crypto;
 use crate::delivery::{
     AckResult, DedupDecision, DeliveryError, DeliveryPolicy, OrderedInsertResult, OrderedMessage,
@@ -25,8 +16,127 @@ use crate::errors::CoreNetworkError;
 use crate::events::{protocol_error, protocol_error_with_peer};
 use crate::runtime::{RuntimeState, DELIVERY_RETRY_POLL_INTERVAL};
 use crate::session::SessionId;
+use network_protocol::{
+    network_event, AcknowledgeMessageCommand, ChannelMessageEvent, DataMessage, DeliveryAck,
+    DeliveryAckedEvent, DeliveryPolicyCode, NetworkError as ProtocolError, NetworkErrorCode,
+    NetworkEvent, SendMessageCommand, NETWORK_PROTOCOL_VERSION,
+};
+use network_quic::MAX_CHANNEL_FRAME_BYTES;
+use prost::Message;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+use std::time::Instant;
 
 const MAX_DELIVERY_MESSAGE_PAYLOAD_BYTES: usize = MAX_CHANNEL_FRAME_BYTES - 1024;
+static NEXT_BUSINESS_ENSURE_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ApplicationPayloadMode {
+    Encrypted,
+    Plaintext,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ApplicationPolicyError {
+    SecurityPolicyMismatch,
+    RelayRequiresE2ee,
+}
+
+impl std::fmt::Display for ApplicationPolicyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SecurityPolicyMismatch => formatter.write_str("security policy mismatch"),
+            Self::RelayRequiresE2ee => formatter.write_str("Relay paths require E2EE"),
+        }
+    }
+}
+
+impl std::error::Error for ApplicationPolicyError {}
+
+fn application_payload_mode(
+    policy: crate::crypto_handshake::path_handshake::E2eePolicy,
+    topology: RouteTopology,
+    has_crypto_context: bool,
+) -> Result<ApplicationPayloadMode, ApplicationPolicyError> {
+    if topology == RouteTopology::Relay
+        && policy == crate::crypto_handshake::path_handshake::E2eePolicy::Disabled
+    {
+        return Err(ApplicationPolicyError::RelayRequiresE2ee);
+    }
+    match policy {
+        crate::crypto_handshake::path_handshake::E2eePolicy::Required => {
+            if has_crypto_context {
+                Ok(ApplicationPayloadMode::Encrypted)
+            } else {
+                Err(ApplicationPolicyError::SecurityPolicyMismatch)
+            }
+        }
+        crate::crypto_handshake::path_handshake::E2eePolicy::Disabled => {
+            if has_crypto_context {
+                Err(ApplicationPolicyError::SecurityPolicyMismatch)
+            } else {
+                Ok(ApplicationPayloadMode::Plaintext)
+            }
+        }
+    }
+}
+
+fn next_business_ensure_id(peer_id: &str) -> String {
+    let sequence = NEXT_BUSINESS_ENSURE_ID.fetch_add(1, Ordering::Relaxed);
+    format!("delivery/{peer_id}/{sequence}")
+}
+
+/// Ensure a Ready ReliableMessage path for one business operation.
+///
+/// `RuntimeState::ensure_business_path` starts the supervisor mailbox worker
+/// while keeping maintenance disabled; the peer supervisor remains the sole
+/// owner of the establishment attempt.
+async fn ensure_reliable_message_path(
+    state: Arc<RuntimeState>,
+    peer_id: &str,
+    command_id: &str,
+) -> Result<SessionId, CoreNetworkError> {
+    RuntimeState::ensure_business_path(
+        state,
+        peer_id,
+        command_id,
+        network_protocol::CommunicationClass::ReliableMessage,
+        CAPABILITY_RELIABLE_MESSAGE,
+    )
+    .await
+}
+
+async fn validate_business_application_policy(
+    state: &RuntimeState,
+    peer_id: &str,
+    session_id: SessionId,
+) -> Result<(), ProtocolError> {
+    let profile = state.path_profile(peer_id).await.ok_or_else(|| {
+        protocol_error_with_peer(
+            NetworkErrorCode::NoRoute,
+            "peer has no compatible ready path",
+            "send_message",
+            peer_id,
+        )
+    })?;
+    let policy = state.e2ee_policy(peer_id).await;
+    let has_context = state
+        .crypto_context(peer_id, &session_id.wire_key())
+        .await
+        .is_ok();
+    application_payload_mode(policy, profile.topology(), has_context).map_err(|error| {
+        let code = match error {
+            ApplicationPolicyError::SecurityPolicyMismatch => {
+                NetworkErrorCode::SecurityPolicyMismatch
+            }
+            ApplicationPolicyError::RelayRequiresE2ee => NetworkErrorCode::RelayRequiresE2ee,
+        };
+        protocol_error_with_peer(code, error.to_string(), "send_message", peer_id)
+    })?;
+    Ok(())
+}
 
 /// Select one peer-owned ready path for one business attempt.
 ///
@@ -39,24 +149,9 @@ pub(crate) async fn select_business_path_lease(
     peer_id: &str,
     required_capabilities: u8,
 ) -> Result<PathLease, CoreNetworkError> {
-    let _peer_id = PeerId::new(peer_id)?;
-    let manager = state
-        .peer_path_managers
-        .read()
+    state
+        .acquire_path_lease(peer_id, required_capabilities)
         .await
-        .get(peer_id)
-        .cloned()
-        .ok_or(CoreNetworkError::NoRoute)?;
-    let manager = manager.lock().expect("peer path manager lock");
-    let selected = manager
-        .select(required_capabilities)
-        .ok_or(CoreNetworkError::NoRoute)?;
-    let (acquired, lease) = manager.acquire(required_capabilities)?;
-    if acquired != selected {
-        lease.release();
-        return Err(CoreNetworkError::StaleAttempt);
-    }
-    Ok(lease)
 }
 
 /// Send one already-encoded business frame while its path lease is active.
@@ -133,18 +228,23 @@ pub(crate) async fn start_send_message(
             &command.peer_id,
         )
     })?;
-    let Some(session_id) = state
-        .connection_sessions
-        .current_session_id(&command.peer_id)
-        .await
-    else {
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::NoRoute,
-            "peer has no connected logical Session",
-            "send_message",
-            &command.peer_id,
-        ));
-    };
+    let session_id = ensure_reliable_message_path(
+        Arc::clone(&state),
+        &command.peer_id,
+        &next_business_ensure_id(&command.peer_id),
+    )
+    .await
+    .map_err(|error| {
+        let code = match error {
+            CoreNetworkError::NoRoute => NetworkErrorCode::NoRoute,
+            CoreNetworkError::Cancelled | CoreNetworkError::SupervisorStopping => {
+                NetworkErrorCode::Cancelled
+            }
+            _ => NetworkErrorCode::Lifecycle,
+        };
+        protocol_error_with_peer(code, error.to_string(), "send_message", &command.peer_id)
+    })?;
+    validate_business_application_policy(&state, &command.peer_id, session_id).await?;
     // §20：投递状态按 Peer 业务作用域保存，绝不使用每连接的 SessionId。
     let message = state
         .delivery
@@ -160,8 +260,7 @@ pub(crate) async fn start_send_message(
     ensure_retry_worker(Arc::clone(&state), command.peer_id.clone()).await;
     let supervisor = Arc::clone(&state.task_supervisor);
     if supervisor
-        .spawn_session(
-            session_id.wire_key(),
+        .spawn_runtime(
             "delivery-send",
             deliver_pending_message(state, command.peer_id.clone(), message),
         )
@@ -188,9 +287,26 @@ async fn deliver_pending_message(
     message: PendingMessage,
 ) {
     if message.policy == DeliveryPolicy::BestEffort {
-        let Some(session_id) = state.connection_sessions.current_session_id(&peer_id).await else {
-            return;
+        let session_id = match ensure_reliable_message_path(
+            Arc::clone(&state),
+            &peer_id,
+            &format!(
+                "delivery-best-effort/{}",
+                hex::encode(message.message_id.to_bytes())
+            ),
+        )
+        .await
+        {
+            Ok(session_id) => session_id,
+            Err(error) => {
+                tracing::debug!(peer_id = %peer_id, error = %error, "best-effort ensure failed");
+                return;
+            }
         };
+        /*
+         * The lease is intentionally acquired below and dropped after this
+         * single send. Waiting for an application ACK never owns a lease.
+         */
         let lease = match select_business_path_lease(&state, &peer_id, CAPABILITY_RELIABLE_MESSAGE)
             .await
         {
@@ -228,13 +344,23 @@ async fn deliver_pending_message(
         }
     };
     let message = &sendable.message;
-    let Some(session_id) = state.connection_sessions.current_session_id(&peer_id).await else {
-        // 连接在领取与发送之间丢失：退回重试队列，等待下一次 ConnectionSession。
-        let _ = state
-            .delivery
-            .mark_send_failed_for_attempt(&sendable, Instant::now())
-            .await;
-        return;
+    let session_id = match ensure_reliable_message_path(
+        Arc::clone(&state),
+        &peer_id,
+        &format!("delivery/{}", hex::encode(message.message_id.to_bytes())),
+    )
+    .await
+    {
+        Ok(session_id) => session_id,
+        Err(error) => {
+            // 连接在领取与发送之间丢失：退回重试队列，等待下一次 ConnectionSession。
+            let _ = state
+                .delivery
+                .mark_send_failed_for_attempt(&sendable, Instant::now())
+                .await;
+            tracing::debug!(peer_id = %peer_id, error = %error, "delivery ensure failed");
+            return;
+        }
     };
     let lease = match select_business_path_lease(&state, &peer_id, CAPABILITY_RELIABLE_MESSAGE)
         .await
@@ -405,9 +531,19 @@ async fn send_data_message(
         data.recovery_epoch,
         data.policy,
     );
-    data.payload = state
-        .encrypt_application_payload(peer_id, &session_key, &aad, &message.payload)
-        .await?;
+    let e2ee_policy = state.e2ee_policy(peer_id).await;
+    let has_crypto_context = state.crypto_context(peer_id, &session_key).await.is_ok();
+    let mode =
+        application_payload_mode(e2ee_policy, lease.profile().topology(), has_crypto_context)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::PermissionDenied, error))?;
+    data.payload = match mode {
+        ApplicationPayloadMode::Encrypted => {
+            state
+                .encrypt_application_payload(peer_id, &session_key, &aad, &message.payload)
+                .await?
+        }
+        ApplicationPayloadMode::Plaintext => message.payload.clone(),
+    };
     let encoded = data.encode_to_vec();
     if encoded.len() > MAX_CHANNEL_FRAME_BYTES {
         return Err(std::io::Error::new(
@@ -541,19 +677,60 @@ pub(crate) async fn handle_data_message(
         message.recovery_epoch,
         message.policy,
     );
-    message.payload = if policy == DeliveryPolicy::BestEffort {
+    let e2ee_policy = state.e2ee_policy(peer_id).await;
+    let has_crypto_context = state
+        .crypto_context(peer_id, &message.session_id)
+        .await
+        .is_ok();
+    let mode = application_payload_mode(
+        e2ee_policy,
         state
-            .decrypt_application_payload(peer_id, &message.session_id, &aad, &message.payload)
-            .await?
-    } else {
-        state
-            .decrypt_application_payload_for_delivery(
-                peer_id,
-                &message.session_id,
-                &aad,
-                &message.payload,
-            )
-            .await?
+            .path_profile(peer_id)
+            .await
+            .map(|profile| profile.topology())
+            .unwrap_or(RouteTopology::Direct),
+        has_crypto_context,
+    )
+    .map_err(|error| std::io::Error::new(std::io::ErrorKind::PermissionDenied, error))?;
+    message.payload = match mode {
+        ApplicationPayloadMode::Encrypted => {
+            if !crypto::is_application_envelope(&message.payload) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "required application E2EE payload is missing",
+                )
+                .into());
+            }
+            if policy == DeliveryPolicy::BestEffort {
+                state
+                    .decrypt_application_payload(
+                        peer_id,
+                        &message.session_id,
+                        &aad,
+                        &message.payload,
+                    )
+                    .await?
+            } else {
+                state
+                    .decrypt_application_payload_for_delivery(
+                        peer_id,
+                        &message.session_id,
+                        &aad,
+                        &message.payload,
+                    )
+                    .await?
+            }
+        }
+        ApplicationPayloadMode::Plaintext => {
+            if crypto::is_application_envelope(&message.payload) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "disabled application E2EE policy received ciphertext",
+                )
+                .into());
+            }
+            message.payload
+        }
     };
     let message_id: [u8; 16] =
         message.message_id.as_slice().try_into().map_err(|_| {
@@ -699,6 +876,13 @@ pub(crate) async fn handle_delivery_ack(
     encoded: &[u8],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ack = DeliveryAck::decode(encoded)?;
+    if ack.session_id.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "DeliveryAck session_id is required",
+        )
+        .into());
+    }
     let message_id: [u8; 16] = ack
         .message_id
         .as_slice()
@@ -788,22 +972,150 @@ fn delivery_error(peer_id: &str, error: DeliveryError) -> ProtocolError {
 
 #[cfg(test)]
 mod tests {
-    use super::{acknowledge_message, select_business_path_lease};
+    use super::{
+        acknowledge_message, application_payload_mode, ensure_reliable_message_path,
+        select_business_path_lease, ApplicationPayloadMode, ApplicationPolicyError,
+    };
     use crate::connect::{PathRegistry, PeerId, PeerPathManager, CAPABILITY_RELIABLE_MESSAGE};
     use crate::connection::{
-        test_blocking_generic_route, ConnectionProfile, Route, RouteTransport,
+        test_blocking_generic_route, ConnectionProfile, Route, RouteTopology, RouteTransport,
         TestBlockingGenericRoute,
     };
+    use crate::crypto::CryptoContext;
     use crate::delivery::{
         DedupDecision, DeliveryPolicy, MessageId, OrderedInsertResult, OrderedMessage,
     };
     use crate::runtime::RuntimeState;
+    use crate::session::SessionId;
+    use network_protocol::CommunicationClass;
     use network_protocol::{network_event, AcknowledgeMessageCommand};
     use std::sync::{atomic::AtomicU16, Arc, Mutex};
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+    #[tokio::test]
+    async fn message_auto_ensures_without_connect_peer() {
+        let peer_id = "message-auto-peer";
+        let peer = PeerId::new(peer_id).expect("peer id");
+        let registry = Arc::new(PathRegistry::new());
+        let manager = Arc::new(Mutex::new(PeerPathManager::new(
+            peer,
+            Arc::clone(&registry),
+        )));
+        manager
+            .lock()
+            .expect("path manager lock")
+            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+            .expect("ready message path");
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+        state
+            .peer_path_managers
+            .write()
+            .await
+            .insert(peer_id.to_string(), manager);
+        let session_id = SessionId::new();
+        state
+            .connection_sessions
+            .register_pending_session(peer_id, session_id)
+            .await
+            .expect("pending session");
+
+        let ensured =
+            ensure_reliable_message_path(Arc::clone(&state), peer_id, "message-auto-ensure")
+                .await
+                .expect("business message path");
+        assert_eq!(ensured, session_id);
+        assert!(!state
+            .peer_supervisors
+            .get_or_create(peer_id)
+            .expect("supervisor")
+            .maintain_connection());
+    }
+
+    #[tokio::test]
+    async fn message_auto_ensure_keeps_maintain_false() {
+        let peer_id = "message-maintain-peer";
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+        let supervisor = state
+            .peer_supervisors
+            .get_or_create(peer_id)
+            .expect("supervisor");
+        supervisor.admit_inbound(true).expect("admit test peer");
+        let intent = supervisor
+            .ensure(
+                "message-business-ensure",
+                CommunicationClass::ReliableMessage,
+            )
+            .expect("business ensure");
+        assert!(matches!(
+            intent.completion().await,
+            Ok(Ok(crate::connect::PeerState::Online))
+        ));
+        assert!(!supervisor.maintain_connection());
+    }
+
+    #[test]
+    fn required_direct_message_is_encrypted() {
+        let mut sender = CryptoContext::from_session_root([0x37; 32], true);
+        let mut receiver = CryptoContext::from_session_root([0x37; 32], false);
+        let payload = b"required-message";
+        let envelope = sender
+            .encrypt(b"message-aad", payload)
+            .expect("encrypt payload");
+        assert_ne!(envelope, payload);
+        assert!(crate::crypto::is_application_envelope(&envelope));
+        assert_eq!(
+            receiver.decrypt(b"message-aad", &envelope).unwrap(),
+            payload
+        );
+    }
+
+    #[test]
+    fn disabled_direct_message_succeeds_without_crypto_context() {
+        let mode = application_payload_mode(
+            crate::crypto_handshake::path_handshake::E2eePolicy::Disabled,
+            RouteTopology::Direct,
+            false,
+        )
+        .expect("Disabled Direct policy");
+        assert_eq!(mode, ApplicationPayloadMode::Plaintext);
+    }
+
+    #[test]
+    fn required_disabled_mismatch_fails() {
+        assert_eq!(
+            application_payload_mode(
+                crate::crypto_handshake::path_handshake::E2eePolicy::Required,
+                RouteTopology::Direct,
+                false,
+            ),
+            Err(ApplicationPolicyError::SecurityPolicyMismatch)
+        );
+        assert_eq!(
+            application_payload_mode(
+                crate::crypto_handshake::path_handshake::E2eePolicy::Disabled,
+                RouteTopology::Direct,
+                true,
+            ),
+            Err(ApplicationPolicyError::SecurityPolicyMismatch)
+        );
+    }
+
+    #[test]
+    fn relay_disabled_fails_with_relay_requires_e2ee() {
+        assert_eq!(
+            application_payload_mode(
+                crate::crypto_handshake::path_handshake::E2eePolicy::Disabled,
+                RouteTopology::Relay,
+                false,
+            ),
+            Err(ApplicationPolicyError::RelayRequiresE2ee)
+        );
+    }
 
     #[tokio::test]
     async fn business_selection_uses_peer_manager_and_fresh_lease_after_loss() {

@@ -142,6 +142,61 @@ impl ConnectivityAttemptCoordinator {
             .await
     }
 
+    /// Run only the bounded Direct stage for a recovery probe.  A healthy
+    /// Relay path remains available while this operation runs; this method
+    /// never enters Resolve or Relay fallback.
+    pub(crate) async fn probe_direct(
+        &self,
+        peer_id: &str,
+        class: CommunicationClass,
+    ) -> Result<(), ProtocolError> {
+        let endpoint = self.state.endpoint.read().await.clone().ok_or_else(|| {
+            protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "runtime is not configured",
+                "direct_probe",
+                peer_id,
+            )
+        })?;
+        let identity = self.state.identity.read().await.clone().ok_or_else(|| {
+            protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "runtime is not configured",
+                "direct_probe",
+                peer_id,
+            )
+        })?;
+        let peer = self
+            .state
+            .peers
+            .read()
+            .await
+            .get(peer_id)
+            .cloned()
+            .ok_or_else(|| {
+                protocol_error_with_peer(
+                    NetworkErrorCode::NoRoute,
+                    "peer has no configured route",
+                    "direct_probe",
+                    peer_id,
+                )
+            })?;
+        let capability = communication_class_capability(default_communication_class(class));
+        if self
+            .try_stage_a_direct(peer_id, &peer, endpoint, identity, capability)
+            .await?
+        {
+            Ok(())
+        } else {
+            Err(protocol_error_with_peer(
+                NetworkErrorCode::NoRoute,
+                "direct recovery probe did not produce a path",
+                "direct_probe",
+                peer_id,
+            ))
+        }
+    }
+
     /// 带 CommunicationClass 的建连入口（§17/§37）。这是 FFI 面向的连接表面：
     /// 调用方指定本次业务所需能力，连接层只用它查询/选择实际 ConnectionProfile；
     /// ConnectionSession 不保存最近一次业务类别。
@@ -586,8 +641,8 @@ impl ConnectivityAttemptCoordinator {
         identity: Arc<network_identity::DeviceIdentity>,
         capability: u8,
     ) -> Result<bool, ProtocolError> {
-        if self.state.path_is_connected(peer_id).await {
-            return Ok(false);
+        if self.state.has_ready_direct_path(peer_id).await {
+            return Ok(true);
         }
 
         let (candidates, remote_epoch) = {
@@ -598,11 +653,18 @@ impl ConnectivityAttemptCoordinator {
             return Ok(false);
         }
 
-        let session_id = match self.state.begin_connect(peer_id, capability).await {
-            ConnectDecision::Started(session_id) => session_id,
-            ConnectDecision::AlreadyConnected(_) | ConnectDecision::InProgress(_) => {
-                return Ok(false)
-            }
+        let (session_id, owns_session) = match self
+            .state
+            .connection_sessions
+            .current_session_id(peer_id)
+            .await
+        {
+            Some(session_id) => (session_id, false),
+            None => match self.state.begin_connect(peer_id, capability).await {
+                ConnectDecision::Started(session_id) => (session_id, true),
+                ConnectDecision::AlreadyConnected(session_id) => (session_id, false),
+                ConnectDecision::InProgress(_) => return Ok(false),
+            },
         };
         self.set_stage(ConnectivityAttemptState::DirectConnecting);
         let (candidate_update_tx, candidate_updates) = watch::channel(None);
@@ -640,12 +702,16 @@ impl ConnectivityAttemptCoordinator {
                 Ok(true)
             }
             Ok(Err(error)) => {
-                self.state.fail_session(peer_id, session_id).await;
+                if owns_session {
+                    self.state.fail_session(peer_id, session_id).await;
+                }
                 tracing::debug!(peer_id = %peer_id, error = %error.message, "pure direct Stage A failed");
                 Ok(false)
             }
             Err(_) => {
-                self.state.fail_session(peer_id, session_id).await;
+                if owns_session {
+                    self.state.fail_session(peer_id, session_id).await;
+                }
                 tracing::debug!(peer_id = %peer_id, "pure direct Stage A window elapsed");
                 Ok(false)
             }

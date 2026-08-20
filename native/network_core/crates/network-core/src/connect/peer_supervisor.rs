@@ -108,6 +108,66 @@ pub(crate) struct PeerIntent {
     pub(crate) class: CommunicationClass,
 }
 
+/// Capability demand carried by a peer-owned connectivity intent.
+///
+/// Reliable streams also require the reliable-message baseline: a stream-capable
+/// route can carry both shapes, while a message-only route cannot satisfy a
+/// stream waiter.  Keeping this requirement in the supervisor prevents the
+/// Session store from becoming a second capability-union owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PeerRequirement(u8);
+
+impl PeerRequirement {
+    const RELIABLE_MESSAGE: u8 = super::CAPABILITY_RELIABLE_MESSAGE;
+    const RELIABLE_STREAM: u8 = super::CAPABILITY_RELIABLE_STREAM;
+    const UNRELIABLE_DATAGRAM: u8 = super::CAPABILITY_UNRELIABLE_DATAGRAM;
+
+    fn from_class(class: CommunicationClass) -> Self {
+        let class = super::default_communication_class(class);
+        let capabilities = match class {
+            CommunicationClass::ReliableStream | CommunicationClass::BulkTransfer => {
+                Self::RELIABLE_MESSAGE | Self::RELIABLE_STREAM
+            }
+            CommunicationClass::ReliableMessage => Self::RELIABLE_MESSAGE,
+            CommunicationClass::UnreliableDatagram => Self::UNRELIABLE_DATAGRAM,
+            CommunicationClass::RealtimeMedia | CommunicationClass::Unspecified => {
+                super::DEFAULT_CONNECTION_CAPABILITY
+            }
+        };
+        Self(capabilities)
+    }
+
+    fn from_capability_mask(mask: u8) -> Self {
+        Self(mask & (Self::RELIABLE_MESSAGE | Self::RELIABLE_STREAM | Self::UNRELIABLE_DATAGRAM))
+    }
+
+    fn is_satisfied_by(self, provided: Self) -> bool {
+        provided.0 & self.0 == self.0
+    }
+
+    fn is_strictly_stronger_than(self, current: Self) -> bool {
+        current.is_satisfied_by(self) && self != current
+    }
+
+    fn extend(self, requested: Self) -> Self {
+        if requested.is_strictly_stronger_than(self) {
+            Self(self.0 | requested.0)
+        } else {
+            self
+        }
+    }
+
+    fn communication_class(self) -> CommunicationClass {
+        if self.0 & Self::RELIABLE_STREAM != 0 {
+            CommunicationClass::ReliableStream
+        } else if self.0 & Self::UNRELIABLE_DATAGRAM != 0 {
+            CommunicationClass::UnreliableDatagram
+        } else {
+            CommunicationClass::ReliableMessage
+        }
+    }
+}
+
 /// A connect request's native completion waiter.
 pub(crate) type PeerCompletion = Result<PeerState, CoreNetworkError>;
 
@@ -131,13 +191,17 @@ impl PeerConnectIntent {
 }
 
 struct Waiter {
+    command_id: String,
     generation: IntentGeneration,
+    requirement: PeerRequirement,
     sender: oneshot::Sender<PeerCompletion>,
 }
 
 struct PeerInner {
     state: PeerState,
     generation: IntentGeneration,
+    active_requirement: Option<PeerRequirement>,
+    ready_requirement: Option<PeerRequirement>,
     stopping: bool,
     waiters: HashMap<String, Waiter>,
     resources: usize,
@@ -150,6 +214,8 @@ struct PeerInner {
 
 struct ConnectionTask {
     generation: IntentGeneration,
+    attempt_id: u64,
+    requirement: PeerRequirement,
     lease: TaskLease,
 }
 
@@ -172,6 +238,7 @@ pub(crate) struct PeerSupervisor {
     inner: Mutex<PeerInner>,
     connection_task: Mutex<Option<ConnectionTask>>,
     next_resource_id: AtomicU64,
+    next_attempt_id: AtomicU64,
 }
 
 impl PeerSupervisor {
@@ -185,6 +252,8 @@ impl PeerSupervisor {
             inner: Mutex::new(PeerInner {
                 state: PeerState::Offline,
                 generation: IntentGeneration::INITIAL,
+                active_requirement: None,
+                ready_requirement: None,
                 stopping: false,
                 waiters: HashMap::new(),
                 resources: 0,
@@ -196,6 +265,7 @@ impl PeerSupervisor {
             }),
             connection_task: Mutex::new(None),
             next_resource_id: AtomicU64::new(1),
+            next_attempt_id: AtomicU64::new(1),
         })
     }
 
@@ -241,6 +311,19 @@ impl PeerSupervisor {
     ) -> Result<PeerConnectIntent, CoreNetworkError> {
         self.start_mailbox_worker(Arc::clone(&state))?;
         self.begin_connect(&command_id, class)
+    }
+
+    /// Start or join a business-owned establishment without enabling
+    /// long-lived maintenance. The mailbox worker is still the only caller
+    /// allowed to launch `ConnectivityAttemptCoordinator`.
+    pub(crate) fn start_business(
+        self: &Arc<Self>,
+        state: Arc<RuntimeState>,
+        command_id: String,
+        class: CommunicationClass,
+    ) -> Result<PeerConnectIntent, CoreNetworkError> {
+        self.start_mailbox_worker(state)?;
+        self.ensure(&command_id, class)
     }
 
     /// Start the only worker that consumes this peer's intents.  The worker
@@ -297,16 +380,20 @@ impl PeerSupervisor {
             return;
         }
 
-        {
+        let attempt_requirement = {
             let mut inner = self.inner.lock().expect("peer supervisor lock");
             if inner.stopping || inner.generation != intent.generation {
                 return;
             }
             inner.retry_scheduled = false;
-        }
+            inner
+                .active_requirement
+                .unwrap_or_else(|| PeerRequirement::from_class(intent.class))
+        };
 
-        // A new generation always cancels the previous attempt before its
-        // candidate race is started.  The generation guard remains the only
+        // A newly queued attempt cancels the previous attempt before its
+        // candidate race is started.  This can be a stronger replacement in
+        // the same generation; the generation plus attempt token remains the
         // authority for deciding whether a completion may update peer state.
         self.cancel_connection_task();
         if let Err(error) = self.mark_child_started() {
@@ -317,6 +404,7 @@ impl PeerSupervisor {
         let supervisor = Arc::clone(self);
         let peer_id = self.peer_id.as_str().to_string();
         let generation = intent.generation;
+        let attempt_id = self.next_attempt_id.fetch_add(1, Ordering::Relaxed);
         let task_state = Arc::clone(&state);
         let task = task_supervisor.spawn_session_controlled(
             format!(
@@ -328,9 +416,9 @@ impl PeerSupervisor {
                 let attempt_coordinator =
                     crate::connect::ConnectivityAttemptCoordinator::new(Arc::clone(&task_state));
                 let result = attempt_coordinator
-                    .connect_with_class(&peer_id, intent.class)
+                    .connect_with_class(&peer_id, attempt_requirement.communication_class())
                     .await;
-                supervisor.finish_attempt(generation, result, task_state);
+                supervisor.finish_attempt(generation, attempt_id, result, task_state);
             },
         );
         let Some(task) = task else {
@@ -346,6 +434,8 @@ impl PeerSupervisor {
             .expect("peer connection task lock")
             .replace(ConnectionTask {
                 generation,
+                attempt_id,
+                requirement: attempt_requirement,
                 lease: task,
             });
         if !self.is_current(generation) {
@@ -356,6 +446,7 @@ impl PeerSupervisor {
     fn finish_attempt(
         &self,
         generation: IntentGeneration,
+        attempt_id: u64,
         result: Result<(), ProtocolError>,
         state: Arc<RuntimeState>,
     ) {
@@ -373,17 +464,24 @@ impl PeerSupervisor {
         // Take the task lease before completing the generation.  This closes
         // the race where a new intent could observe Offline and start while
         // the previous child is still counted as active.
-        let task_owned = self.take_connection_task(generation);
-        let task_was_owned = task_owned.is_some();
+        let Some(task_owned) = self.take_connection_task(generation, attempt_id) else {
+            // This attempt was superseded within the same generation.  A
+            // generation guard alone is insufficient when a stronger demand
+            // replaces a weaker attempt without creating a new generation.
+            return;
+        };
+        let attempt_requirement = task_owned.requirement;
         drop(task_owned);
-        if task_was_owned {
-            self.mark_child_finished();
-        }
+        self.mark_child_finished();
 
-        // `complete` performs the generation/stopping check.  Do not add a
-        // session id, route id, or connection-store check here: a late result
-        // is stale solely when its intent generation is no longer current.
-        if self.complete(generation, completion).is_ok() {
+        // `complete_ready` performs the generation/stopping check.  Do not add
+        // a session id, route id, or connection-store check here: a late
+        // result is stale when its intent generation or attempt token is no
+        // longer current.
+        if self
+            .complete_ready(generation, attempt_requirement, completion)
+            .is_ok()
+        {
             if let Some((code, message)) = failure {
                 emit_peer_state(
                     &state.event_tx,
@@ -433,7 +531,8 @@ impl PeerSupervisor {
             return Err(CoreNetworkError::InvalidCommandId);
         }
 
-        let (generation, is_new, receiver) = {
+        let requirement = PeerRequirement::from_class(class);
+        let (generation, is_new, queue_intent, receiver) = {
             let mut inner = self.inner.lock().expect("peer supervisor lock");
             if inner.stopping {
                 return Err(CoreNetworkError::SupervisorStopping);
@@ -449,7 +548,10 @@ impl PeerSupervisor {
             }
 
             let (sender, receiver) = oneshot::channel();
-            if inner.state == PeerState::Online {
+            if inner
+                .ready_requirement
+                .is_some_and(|ready| requirement.is_satisfied_by(ready))
+            {
                 sender
                     .send(Ok(PeerState::Online))
                     .expect("newly-created peer waiter receiver exists");
@@ -459,22 +561,75 @@ impl PeerSupervisor {
                     completion: receiver,
                 });
             }
+            if inner.state == PeerState::Online {
+                let ready_requirement = inner
+                    .ready_requirement
+                    .or(inner.active_requirement)
+                    .unwrap_or(PeerRequirement::from_class(class));
+                if requirement.is_satisfied_by(ready_requirement) {
+                    sender
+                        .send(Ok(PeerState::Online))
+                        .expect("newly-created peer waiter receiver exists");
+                    return Ok(PeerConnectIntent {
+                        generation: inner.generation,
+                        is_new: false,
+                        completion: receiver,
+                    });
+                }
+            }
 
-            let is_new = inner.state != PeerState::Connecting;
-            if is_new {
+            // A healthy weaker path cannot complete a stronger demand.  Keep
+            // the supervisor as the sole owner and start a fresh attempt
+            // generation for the stronger requirement.
+            let mut is_new = false;
+            let queue_intent = if inner.state != PeerState::Connecting {
                 inner.generation = inner.generation.next();
                 inner.state = PeerState::Connecting;
+                inner.active_requirement = Some(requirement);
+                inner.ready_requirement = None;
+                inner.retry_scheduled = true;
+                is_new = true;
+                true
+            } else {
+                let active_requirement = inner
+                    .active_requirement
+                    .unwrap_or_else(|| PeerRequirement::from_class(class));
+                let stronger = requirement.is_strictly_stronger_than(active_requirement);
+                if stronger {
+                    inner.active_requirement = Some(active_requirement.extend(requirement));
+                }
+                // An intent already waiting in the mailbox will observe the
+                // extended active requirement.  Only enqueue another intent
+                // when the current attempt is already running.
+                stronger && !inner.retry_scheduled
+            };
+            let generation = inner.generation;
+            if queue_intent {
                 inner.retry_scheduled = true;
             }
-            let generation = inner.generation;
-            inner
-                .waiters
-                .insert(command_id.to_string(), Waiter { generation, sender });
-            (generation, is_new, receiver)
+            inner.waiters.insert(
+                command_id.to_string(),
+                Waiter {
+                    command_id: command_id.to_string(),
+                    generation,
+                    requirement,
+                    sender,
+                },
+            );
+            (generation, is_new, queue_intent, receiver)
         };
 
-        if is_new {
-            let intent = PeerIntent { generation, class };
+        if queue_intent {
+            let intent = PeerIntent {
+                generation,
+                class: self
+                    .inner
+                    .lock()
+                    .expect("peer supervisor lock")
+                    .active_requirement
+                    .unwrap_or(requirement)
+                    .communication_class(),
+            };
             if let Err(error) = self.mailbox_tx.try_send(intent) {
                 let reason = match error {
                     mpsc::error::TrySendError::Full(_) => CoreNetworkError::MailboxFull,
@@ -492,34 +647,104 @@ impl PeerSupervisor {
         })
     }
 
-    /// Complete exactly the current generation and wake every joined waiter.
+    /// Complete exactly the current generation, evaluating each waiter against
+    /// the capability of the Ready path rather than broadcasting success.
     pub(crate) fn complete(
         &self,
         generation: IntentGeneration,
         result: PeerCompletion,
     ) -> Result<usize, CoreNetworkError> {
-        let (waiters, delivered) = {
+        let ready_requirement = self
+            .inner
+            .lock()
+            .expect("peer supervisor lock")
+            .active_requirement
+            .unwrap_or(PeerRequirement::from_class(
+                CommunicationClass::ReliableMessage,
+            ));
+        self.complete_ready(generation, ready_requirement, result)
+    }
+
+    fn complete_ready(
+        &self,
+        generation: IntentGeneration,
+        ready_requirement: PeerRequirement,
+        result: PeerCompletion,
+    ) -> Result<usize, CoreNetworkError> {
+        let (waiters, delivered, retry_class) = {
             let mut inner = self.inner.lock().expect("peer supervisor lock");
             if inner.stopping || inner.generation != generation {
                 return Err(CoreNetworkError::StaleIntent);
             }
-            inner.state = match &result {
-                Ok(state) => *state,
-                Err(_) => PeerState::Offline,
-            };
-            inner.retry_scheduled = false;
-            let waiters = inner
-                .waiters
-                .drain()
-                .filter(|(_, waiter)| waiter.generation == generation)
-                .map(|(_, waiter)| waiter.sender)
-                .collect::<Vec<_>>();
-            let delivered = waiters.len();
-            (waiters, delivered)
+
+            match &result {
+                Err(_) => {
+                    inner.state = PeerState::Offline;
+                    inner.active_requirement = None;
+                    inner.ready_requirement = None;
+                    inner.retry_scheduled = false;
+                    let waiters = inner
+                        .waiters
+                        .drain()
+                        .filter(|(_, waiter)| waiter.generation == generation)
+                        .map(|(_, waiter)| waiter.sender)
+                        .collect::<Vec<_>>();
+                    let delivered = waiters.len();
+                    (waiters, delivered, None)
+                }
+                Ok(state) => {
+                    inner.ready_requirement = Some(ready_requirement);
+                    let mut pending = HashMap::new();
+                    let mut waiters = Vec::new();
+                    for (command_id, waiter) in inner.waiters.drain() {
+                        if waiter.generation == generation
+                            && waiter.requirement.is_satisfied_by(ready_requirement)
+                        {
+                            waiters.push(waiter.sender);
+                        } else {
+                            pending.insert(command_id, waiter);
+                        }
+                    }
+                    inner.waiters = pending;
+                    let pending_current = inner
+                        .waiters
+                        .values()
+                        .any(|waiter| waiter.generation == generation);
+                    if pending_current {
+                        inner.state = PeerState::Connecting;
+                        let should_queue = !inner.retry_scheduled;
+                        inner.retry_scheduled = true;
+                        let retry_class = inner
+                            .active_requirement
+                            .unwrap_or(ready_requirement)
+                            .communication_class();
+                        let delivered = waiters.len();
+                        (waiters, delivered, should_queue.then_some(retry_class))
+                    } else {
+                        inner.state = *state;
+                        inner.active_requirement = Some(ready_requirement);
+                        inner.retry_scheduled = false;
+                        let delivered = waiters.len();
+                        (waiters, delivered, None)
+                    }
+                }
+            }
         };
 
         for waiter in waiters {
             let _ = waiter.send(result.clone());
+        }
+
+        if let Some(class) = retry_class {
+            let intent = PeerIntent { generation, class };
+            if let Err(error) = self.mailbox_tx.try_send(intent) {
+                let reason = match error {
+                    mpsc::error::TrySendError::Full(_) => CoreNetworkError::MailboxFull,
+                    mpsc::error::TrySendError::Closed(_) => CoreNetworkError::SupervisorStopping,
+                };
+                self.fail_generation(generation, reason.clone());
+                return Err(reason);
+            }
         }
         Ok(delivered)
     }
@@ -566,6 +791,8 @@ impl PeerSupervisor {
                 return;
             }
             inner.state = PeerState::Offline;
+            inner.active_requirement = None;
+            inner.ready_requirement = None;
             inner.retry_scheduled = false;
             inner
                 .waiters
@@ -588,6 +815,14 @@ impl PeerSupervisor {
     /// A trusted authenticated inbound path may make a passive peer Online,
     /// but never changes the maintenance policy or starts background recovery.
     pub(crate) fn admit_inbound(&self, authenticated: bool) -> Result<PeerState, CoreNetworkError> {
+        self.admit_inbound_with_capabilities(authenticated, super::DEFAULT_CONNECTION_CAPABILITY)
+    }
+
+    pub(crate) fn admit_inbound_with_capabilities(
+        &self,
+        authenticated: bool,
+        capabilities: u8,
+    ) -> Result<PeerState, CoreNetworkError> {
         if !authenticated {
             return Err(CoreNetworkError::Cancelled);
         }
@@ -596,6 +831,9 @@ impl PeerSupervisor {
             return Err(CoreNetworkError::SupervisorStopping);
         }
         inner.state = PeerState::Online;
+        let requirement = PeerRequirement::from_capability_mask(capabilities);
+        inner.active_requirement = Some(requirement);
+        inner.ready_requirement = Some(requirement);
         Ok(inner.state)
     }
 
@@ -626,6 +864,8 @@ impl PeerSupervisor {
             let previous_generation = inner.generation;
             inner.generation = inner.generation.next();
             inner.state = PeerState::Offline;
+            inner.active_requirement = None;
+            inner.ready_requirement = None;
             inner.retry_scheduled = false;
             if clear_maintenance {
                 inner.maintain_connection = false;
@@ -695,16 +935,20 @@ impl PeerSupervisor {
         }
     }
 
-    fn take_connection_task(&self, generation: IntentGeneration) -> Option<TaskLease> {
+    fn take_connection_task(
+        &self,
+        generation: IntentGeneration,
+        attempt_id: u64,
+    ) -> Option<ConnectionTask> {
         let mut task = self
             .connection_task
             .lock()
             .expect("peer connection task lock");
         if task
             .as_ref()
-            .is_some_and(|task| task.generation == generation)
+            .is_some_and(|task| task.generation == generation && task.attempt_id == attempt_id)
         {
-            task.take().map(|task| task.lease)
+            task.take()
         } else {
             None
         }
@@ -750,6 +994,14 @@ impl PeerSupervisor {
             .expect("peer supervisor lock")
             .waiters
             .len()
+    }
+
+    #[cfg(test)]
+    fn active_requirement(&self) -> Option<PeerRequirement> {
+        self.inner
+            .lock()
+            .expect("peer supervisor lock")
+            .active_requirement
     }
 }
 
@@ -895,6 +1147,17 @@ impl PeerSupervisorRegistry {
         supervisor.start_connect(state, command_id, class)
     }
 
+    pub(crate) fn start_business(
+        &self,
+        state: Arc<RuntimeState>,
+        peer_id: &str,
+        command_id: String,
+        class: CommunicationClass,
+    ) -> Result<PeerConnectIntent, CoreNetworkError> {
+        let supervisor = self.get_or_create(peer_id)?;
+        supervisor.start_business(state, command_id, class)
+    }
+
     pub(crate) fn disconnect(&self, peer_id: &str) -> Result<usize, CoreNetworkError> {
         let peer_id = PeerId::new(peer_id)?;
         Ok(self
@@ -1024,6 +1287,104 @@ mod tests {
             Ok(PeerState::Online)
         );
         assert_eq!(supervisor.state(), PeerState::Online);
+    }
+
+    #[test]
+    fn stronger_requirement_extends_active_generation() {
+        let supervisor = supervisor();
+        let message = supervisor
+            .ensure("message", CommunicationClass::ReliableMessage)
+            .expect("message ensure");
+        let stream = supervisor
+            .ensure("stream", CommunicationClass::ReliableStream)
+            .expect("stream ensure");
+
+        assert!(message.is_new);
+        assert!(!stream.is_new);
+        assert_eq!(message.generation, stream.generation);
+        assert_eq!(
+            supervisor.active_requirement(),
+            Some(PeerRequirement::from_class(
+                CommunicationClass::ReliableStream
+            ))
+        );
+        message.detach_completion();
+        stream.detach_completion();
+    }
+
+    #[tokio::test]
+    async fn weaker_ready_path_does_not_complete_stronger_waiter() {
+        let supervisor = supervisor();
+        let message = supervisor
+            .ensure("message", CommunicationClass::ReliableMessage)
+            .expect("message ensure");
+        let stream = supervisor
+            .ensure("stream", CommunicationClass::ReliableStream)
+            .expect("stream ensure");
+
+        assert_eq!(
+            supervisor.complete_ready(
+                message.generation,
+                PeerRequirement::from_class(CommunicationClass::ReliableMessage),
+                Ok(PeerState::Online),
+            ),
+            Ok(1)
+        );
+        assert_eq!(
+            message.completion().await.expect("message completion"),
+            Ok(PeerState::Online)
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), stream.completion(),)
+                .await
+                .is_err()
+        );
+        assert_eq!(supervisor.waiter_count(), 1);
+    }
+
+    #[test]
+    fn business_ensure_does_not_enable_maintenance() {
+        let supervisor = supervisor();
+        let intent = supervisor
+            .ensure("business", CommunicationClass::ReliableMessage)
+            .expect("business ensure");
+
+        assert!(!supervisor.maintain_connection());
+        intent.detach_completion();
+    }
+
+    #[test]
+    fn connect_peer_enables_maintenance() {
+        let supervisor = supervisor();
+        let intent = supervisor
+            .begin_connect("connect", CommunicationClass::ReliableMessage)
+            .expect("explicit connect");
+
+        assert!(supervisor.maintain_connection());
+        intent.detach_completion();
+    }
+
+    #[tokio::test]
+    async fn concurrent_equivalent_requirements_share_attempt() {
+        let supervisor = supervisor();
+        let first = supervisor
+            .ensure("first", CommunicationClass::ReliableMessage)
+            .expect("first ensure");
+        let second = supervisor
+            .ensure("second", CommunicationClass::ReliableMessage)
+            .expect("second ensure");
+        let mut mailbox = supervisor.take_mailbox().expect("mailbox");
+
+        assert!(first.is_new);
+        assert!(!second.is_new);
+        assert_eq!(first.generation, second.generation);
+        assert_eq!(
+            mailbox.recv().await.expect("one queued attempt").generation,
+            first.generation
+        );
+        assert!(mailbox.try_recv().is_err());
+        first.detach_completion();
+        second.detach_completion();
     }
 
     #[tokio::test]

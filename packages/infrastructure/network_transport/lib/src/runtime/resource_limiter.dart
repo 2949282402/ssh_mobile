@@ -24,6 +24,7 @@ final class ResourceLimiter {
   static const int maxControlQueueBytes = 4 * 1024 * 1024;
   static const int maxDataQueueItems = 128;
   static const int maxDataQueueBytes = 8 * 1024 * 1024;
+  static const int maxConsecutiveControlEvents = 8;
   static const int maxCommandBytes = 1024 * 1024;
   static const int maxEventBytes = 1024 * 1024;
   static const int maxStreamChunkBytes = 64 * 1024;

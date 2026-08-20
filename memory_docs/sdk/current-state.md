@@ -36,6 +36,15 @@ the retired v1 route/session owner model.
   separate from the legacy wire adapter. Native Runtime event ingress is count+
   byte bounded; FFI and transport EventMux apply control/data fairness and
   overflow policy before events reach feature adapters.
+- Passive authenticated inbound admits a peer as Online without enabling
+  maintenance. Environment changes refresh discovery while preserving healthy
+  Relay/Realtime; only maintained peers schedule bounded Direct recovery after
+  Relay is ready, using `1/2/4/8/15/30s` backoff plus jitter. Unleased idle paths
+  are ephemeral and retire after 60 seconds.
+- Direct and Relay physical paths may coexist. Direct selection wins when
+  compatible, business `ensure` does not opt into maintenance, and hard path
+  revocation closes streams bound to the revoked lease; normal retirement drains
+  those leases instead of transparently migrating them.
 - CandidatePayloadV2 validates candidate transport capabilities before direct
   probing. Relay candidates never enter a DirectProbe; resolved candidate cache
   freshness uses a monotonic clock, server-confirmed TTL, and
