@@ -165,7 +165,7 @@ class SystemAdminService extends ChangeNotifier {
         );
       }
 
-      return compute(parseActiveSessions, result.stdout);
+      return await compute(parseActiveSessions, result.stdout);
     } catch (e, stack) {
       _logger.error(
         'Failed to get active sessions',
@@ -211,7 +211,7 @@ class SystemAdminService extends ChangeNotifier {
         throw Exception('Failed to query passwd: ${result.stderr}');
       }
 
-      return compute(parseLinuxUserAccounts, result.stdout);
+      return await compute(parseLinuxUserAccounts, result.stdout);
     } catch (e, stack) {
       _logger.error('Failed to get user accounts', error: e, stackTrace: stack);
       return [];
@@ -401,7 +401,7 @@ class SystemAdminService extends ChangeNotifier {
         return [];
       }
 
-      return compute(parseLinuxUserProcesses, result.stdout);
+      return await compute(parseLinuxUserProcesses, result.stdout);
     } catch (e, stack) {
       _logger.error(
         'Failed to get processes for user $username',
@@ -422,7 +422,7 @@ class SystemAdminService extends ChangeNotifier {
         throw Exception('systemctl command failed: ${result.stderr}');
       }
 
-      return compute(parseSystemdServices, result.stdout);
+      return await compute(parseSystemdServices, result.stdout);
     } catch (e, stack) {
       _logger.error(
         'Failed to get systemd services',
@@ -472,7 +472,7 @@ class SystemAdminService extends ChangeNotifier {
         result = await _runCommand('netstat -tulpn 2>/dev/null');
       }
 
-      return compute(parseListeningPorts, result.stdout);
+      return await compute(parseListeningPorts, result.stdout);
     } catch (e, stack) {
       _logger.error(
         'Failed to query listening ports',

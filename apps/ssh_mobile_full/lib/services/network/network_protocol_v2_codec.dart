@@ -309,6 +309,11 @@ final class NetworkProtocolV2Codec {
           commandId = result.commandId;
           commandAccepted = result.accepted;
           commandError = result.error;
+        case 29:
+          final result = _decodeCommandResultV2(reader.bytes(field.wireType));
+          commandId = result.commandId;
+          commandAccepted = result.accepted;
+          commandError = result.error;
         case 14:
           event = _decodeOffer(
             eventId,
@@ -487,6 +492,39 @@ final class NetworkProtocolV2Codec {
       }
     }
     return _CommandResult(commandId, accepted, error);
+  }
+
+  /// 解码 Network V2 的类型化命令结果载荷。
+  ///
+  /// Native Protocol V2 使用 `CommandResult.state` 表达成功、失败或取消；
+  /// App 内部仍以 [NetworkProtocolFrame.commandAccepted] 和 [commandError]
+  /// 完成待处理命令，因此在此处统一转换两种结果格式。
+  _CommandResult _decodeCommandResultV2(Uint8List bytes) {
+    final reader = _ProtoReader(bytes);
+    var commandId = '';
+    var state = 0;
+    NetworkError? error;
+    while (!reader.isDone) {
+      final field = reader.field();
+      switch (field.number) {
+        case 1:
+          commandId = utf8.decode(reader.bytes(field.wireType));
+        case 2:
+          // peer_id is carried for scoped diagnostics but is not needed by the
+          // command completer here.
+          reader.bytes(field.wireType);
+        case 3:
+          state = reader.varint(field.wireType);
+        case 4:
+          error = _decodeError(reader.bytes(field.wireType));
+        default:
+          reader.skip(field.wireType);
+      }
+    }
+    if (commandId.isEmpty) {
+      throw const FormatException('V2 command result has no command ID.');
+    }
+    return _CommandResult(commandId, state == 0, error);
   }
 
   /// 解码传入传输申请载荷。

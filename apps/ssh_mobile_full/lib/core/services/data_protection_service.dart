@@ -78,7 +78,7 @@ class DataProtectionService {
         nonce: base64Decode(payload['n'] as String),
         mac: Mac(base64Decode(payload['m'] as String)),
       );
-      return _algorithm.decryptString(box, secretKey: key);
+      return await _algorithm.decryptString(box, secretKey: key);
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'Failed to decrypt string',

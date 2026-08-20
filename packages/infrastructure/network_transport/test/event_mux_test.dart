@@ -94,10 +94,7 @@ void main() {
       isFalse,
     );
     expect(
-      limiter.canReserve(
-        items: 1,
-        bytes: ResourceLimiter.maxEventBytes + 1,
-      ),
+      limiter.canReserve(items: 1, bytes: ResourceLimiter.maxEventBytes + 1),
       isFalse,
     );
   });

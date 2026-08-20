@@ -447,11 +447,10 @@ void main() {
           const Duration(seconds: 2),
         );
 
-        expect(
-          concurrentSsh.executedCommands,
-          ['old-first', 'new-first'],
-          reason: 'The old loop must not execute a command from the new run.',
-        );
+        expect(concurrentSsh.executedCommands, [
+          'old-first',
+          'new-first',
+        ], reason: 'The old loop must not execute a command from the new run.');
         expect(concurrentService.activePlaybook?.id, newPlaybook.id);
         expect(concurrentService.currentStepIndex, 0);
         expect(concurrentService.isRunning, isTrue);

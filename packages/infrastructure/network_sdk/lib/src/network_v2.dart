@@ -119,12 +119,12 @@ final class ConnectPeerRequest extends PeerScopedRequest {
   });
 
   final E2eePolicy e2eePolicy;
-  final PeerConfig? config;
+  final NetworkV2PeerConfig? config;
 }
 
 /// Immutable peer configuration carried across the V2 boundary.
-final class PeerConfig {
-  PeerConfig({
+final class NetworkV2PeerConfig {
+  NetworkV2PeerConfig({
     required String peerId,
     required this.endpointAddress,
     required Uint8List identityPublicKey,
@@ -320,8 +320,9 @@ final class CommandResultCompleter<T> {
 
 /// Registry for public command terminal results.
 final class CommandResultTracker {
-  CommandResultTracker({this.maxPendingCommands = NetworkV2Limits.maxPendingCommands})
-    : assert(maxPendingCommands > 0);
+  CommandResultTracker({
+    this.maxPendingCommands = NetworkV2Limits.maxPendingCommands,
+  }) : assert(maxPendingCommands > 0);
 
   final int maxPendingCommands;
   final Map<String, CommandResultCompleter<Object?>> _pending =
@@ -367,7 +368,8 @@ final class CommandResultTracker {
       CommandResult<Object?>.cancelled(
         commandId: commandId,
         peerId: completer.peerId,
-        error: error ??
+        error:
+            error ??
             const NetworkError(
               code: NetworkErrorCode.cancelled,
               message: 'command cancelled',
@@ -461,11 +463,8 @@ NetworkError? resolvePublicNetworkError({
   NetworkError? resourceOrLifecycle,
   NetworkError? timeout,
   NetworkError? noRoute,
-}) => configOrSecurity ??
-    peerStatus ??
-    resourceOrLifecycle ??
-    timeout ??
-    noRoute;
+}) =>
+    configOrSecurity ?? peerStatus ?? resourceOrLifecycle ?? timeout ?? noRoute;
 
 /// Base class for v2-facing typed events.
 sealed class NetworkV2Event {
@@ -745,7 +744,11 @@ final class NetworkV2FacadeImpl implements NetworkV2Facade {
 String _validateIdentifier(String value, String name, int maxBytes) {
   final length = utf8.encode(value).length;
   if (value.isEmpty || length > maxBytes) {
-    throw ArgumentError.value(value, name, 'Must contain 1-$maxBytes UTF-8 bytes.');
+    throw ArgumentError.value(
+      value,
+      name,
+      'Must contain 1-$maxBytes UTF-8 bytes.',
+    );
   }
   return value;
 }

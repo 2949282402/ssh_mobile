@@ -50,9 +50,9 @@ mixin RagRetrievalMixin implements RagCapability {
         _targetDocumentIds(filterDocumentIds),
       );
       if (mode == RagSearchMode.vector) {
-        return _retrieveVector(query, apiKey, effectiveLimit, chunks);
+        return await _retrieveVector(query, apiKey, effectiveLimit, chunks);
       }
-      return _retrieveHybrid(query, apiKey, effectiveLimit, chunks);
+      return await _retrieveHybrid(query, apiKey, effectiveLimit, chunks);
     } catch (error, stackTrace) {
       _logger.error(
         'RAG retrieval failed',

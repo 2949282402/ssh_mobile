@@ -8,9 +8,9 @@ final class ResourceLimiter {
     required this.maxItems,
     required this.maxBytes,
     required this.maxSinglePayloadBytes,
-  })  : assert(maxItems > 0),
-        assert(maxBytes > 0),
-        assert(maxSinglePayloadBytes > 0);
+  }) : assert(maxItems > 0),
+       assert(maxBytes > 0),
+       assert(maxSinglePayloadBytes > 0);
 
   static const int maxActivePeers = 64;
   static const int maxConfiguredPeers = 256;
@@ -44,9 +44,12 @@ final class ResourceLimiter {
   final int maxSinglePayloadBytes;
 
   bool canReserve({required int items, required int bytes}) {
-    if (items < 0 || bytes < 0 || bytes > maxSinglePayloadBytes) {
+    if (items < 0 || bytes < 0) {
       return false;
     }
+    // `bytes` is the aggregate reservation when more than one item is being
+    // reserved. Only a single-item reservation is also a single payload.
+    if (items == 1 && bytes > maxSinglePayloadBytes) return false;
     return items <= maxItems && bytes <= maxBytes;
   }
 }

@@ -61,6 +61,24 @@ void main() {
     expect(frame.event, isNull);
   });
 
+  test('typed V2 command result event completes the pending command', () {
+    final frame = codec.decodeEvent(
+      Uint8List.fromList(<int>[
+        0x0a, 0x01, 0x65, // event_id = e
+        0x18, 0x02, // protocol_version = 2
+        0xea, 0x01, 0x0a, // command_result_v2, length 10
+        0x0a, 0x01, 0x63, // command_id = c
+        0x12, 0x01, 0x70, // peer_id = p
+        0x18, 0x01, // state = failed
+        0x22, 0x00, // error is optional for the decoder contract
+      ]),
+    );
+
+    expect(frame.commandId, 'c');
+    expect(frame.commandAccepted, isFalse);
+    expect(frame.commandError, isNotNull);
+  });
+
   test('typed transfer failure preserves stable error context', () {
     final frame = codec.decodeEvent(
       Uint8List.fromList(<int>[

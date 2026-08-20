@@ -245,8 +245,8 @@ final class NativePeerConfig {
     required Uint8List identityPublicKey,
     required Uint8List e2ePublicKey,
     this.e2eePolicy = NativeE2eePolicy.required,
-  })  : identityPublicKey = Uint8List.fromList(identityPublicKey),
-        e2ePublicKey = Uint8List.fromList(e2ePublicKey);
+  }) : identityPublicKey = Uint8List.fromList(identityPublicKey),
+       e2ePublicKey = Uint8List.fromList(e2ePublicKey);
 
   final String peerId;
   final String endpointAddress;
@@ -641,8 +641,13 @@ final class NativeCommandResultGuard {
   /// Keeps non-result events and admits only the first result for a registered
   /// command. Returns `null` for unknown or duplicate command results.
   NativeNetworkEvent? filterEvent(NativeNetworkEvent event) {
-    if (event is! NativeCommandResultEvent) return event;
-    if (!_pendingCommandIds.remove(event.commandId)) return null;
+    final commandId = switch (event) {
+      NativeCommandResultEvent() => event.commandId,
+      NativeCommandResultV2Event() => event.commandId,
+      _ => null,
+    };
+    if (commandId == null) return event;
+    if (!_pendingCommandIds.remove(commandId)) return null;
     return event;
   }
 
@@ -922,7 +927,11 @@ final class NativeNetworkProtocol {
     _validateIdentifier(messageId, 'messageId', _maxMessageIdBytes);
     _validateIdentifier(channelId, 'channelId', _maxChannelIdBytes);
     if (payload.length > _maxEventBytes) {
-      throw ArgumentError.value(payload.length, 'payload', 'Payload is too large.');
+      throw ArgumentError.value(
+        payload.length,
+        'payload',
+        'Payload is too large.',
+      );
     }
     return _command(
       commandId,
@@ -944,21 +953,24 @@ final class NativeNetworkProtocol {
   }) {
     _validateCommandId(commandId);
     _validatePeerId(config.peerId);
-    _validateIdentifier(config.endpointAddress, 'endpointAddress', _maxEventIdBytes);
+    _validateIdentifier(
+      config.endpointAddress,
+      'endpointAddress',
+      _maxEventIdBytes,
+    );
     return _command(
       commandId,
       28,
-      (_ProtoWriter()
-            ..message(
-              1,
-              (_ProtoWriter()
-                    ..string(1, config.peerId)
-                    ..string(2, config.endpointAddress)
-                    ..bytesField(3, config.identityPublicKey)
-                    ..bytesField(4, config.e2ePublicKey)
-                    ..varint(5, config.e2eePolicy.wireValue))
-                  .takeBytes(),
-            ))
+      (_ProtoWriter()..message(
+            1,
+            (_ProtoWriter()
+                  ..string(1, config.peerId)
+                  ..string(2, config.endpointAddress)
+                  ..bytesField(3, config.identityPublicKey)
+                  ..bytesField(4, config.e2ePublicKey)
+                  ..varint(5, config.e2eePolicy.wireValue))
+                .takeBytes(),
+          ))
           .takeBytes(),
     );
   }
@@ -969,7 +981,11 @@ final class NativeNetworkProtocol {
   }) {
     _validateCommandId(commandId);
     _validatePeerId(peerId);
-    return _command(commandId, 29, (_ProtoWriter()..string(1, peerId)).takeBytes());
+    return _command(
+      commandId,
+      29,
+      (_ProtoWriter()..string(1, peerId)).takeBytes(),
+    );
   }
 
   static Uint8List transferCommand({
@@ -1006,7 +1022,11 @@ final class NativeNetworkProtocol {
   }) {
     _validateCommandId(commandId);
     _validatePeerId(peerId);
-    return _command(commandId, 32, (_ProtoWriter()..string(1, peerId)).takeBytes());
+    return _command(
+      commandId,
+      32,
+      (_ProtoWriter()..string(1, peerId)).takeBytes(),
+    );
   }
 
   static Uint8List networkEnvironmentChangedCommand({
@@ -1504,7 +1524,9 @@ final class NativeNetworkProtocol {
       }
     }
     if (commandId.isEmpty) {
-      throw const FormatException('Native V2 command result has no command ID.');
+      throw const FormatException(
+        'Native V2 command result has no command ID.',
+      );
     }
     return NativeCommandResultV2Event(
       eventId: eventId,

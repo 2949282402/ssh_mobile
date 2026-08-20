@@ -507,8 +507,12 @@ func relayDataReadPumpFor(t *testing.T, conn *websocket.Conn) *relayDataReadPump
 	if loaded {
 		return actual.(*relayDataReadPump)
 	}
+	t.Cleanup(func() {
+		if value, ok := relayDataReadPumps.Load(conn); ok && value == pump {
+			relayDataReadPumps.Delete(conn)
+		}
+	})
 	go func() {
-		defer relayDataReadPumps.Delete(conn)
 		for {
 			kind, data, err := conn.ReadMessage()
 			pump.messages <- relayDataReadMessage{kind: kind, data: data, err: err}

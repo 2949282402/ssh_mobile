@@ -5,13 +5,19 @@
 # 模块根必须为 `proto/`（PACKAGE_DIRECTORY_MATCH：包 relay.v2 需位于
 # relay/v2/ 目录）；Network Protocol V2 与 Relay Protocol V2 同属当前冻结
 # 合同，不保留旧 Network Protocol 兼容 schema。
-# Run from protocol/:  buf lint  /  buf breaking --against <ref>
+# Run from protocol/:  buf lint  /  buf breaking . --against <repo-ref>
 version: v2
 modules:
   - path: proto
 lint:
   use:
     - STANDARD
+  # These zero values are intentionally wire-stable domain defaults matching
+  # the hand-written Rust/Dart bindings; keep the exception scoped to this
+  # schema while retaining the other STANDARD checks.
+  ignore_only:
+    ENUM_ZERO_VALUE_SUFFIX:
+      - proto/network/v2/network.proto
 breaking:
   use:
     - FILE

@@ -72,9 +72,12 @@ if command -v protoc >/dev/null 2>&1; then
   protoc --proto_path=protocol \
     --descriptor_set_out="$tmp_dir/current.desc" \
     protocol/proto/relay/v2/relay_v2.proto
-  protoc --proto_path="$tmp_dir" \
-    --descriptor_set_out="$tmp_dir/frozen.desc" \
-    protocol/proto/relay/v2/relay_v2.proto
+  (
+    cd "$tmp_dir"
+    protoc --proto_path=protocol \
+      --descriptor_set_out=frozen.desc \
+      protocol/proto/relay/v2/relay_v2.proto
+  )
   cmp --silent "$tmp_dir/current.desc" "$tmp_dir/frozen.desc"
   echo "relay v2 descriptor: byte-equal to frozen revision ${frozen_commit}"
   descriptor_status="byte-equal to frozen revision ${frozen_commit}"

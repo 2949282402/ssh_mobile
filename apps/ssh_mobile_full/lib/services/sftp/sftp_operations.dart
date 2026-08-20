@@ -82,7 +82,7 @@ extension SftpServiceOperations on SftpService {
           bytes,
         );
 
-        return compute(SftpService._decodeUtf8, bytes);
+        return await compute(SftpService._decodeUtf8, bytes);
       } finally {
         await _closeFileQuietly(file);
       }

@@ -164,7 +164,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                   'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
 
-            return complete(
+            return await complete(
               LlmProviderRequest(
                 baseUrl: request.baseUrl,
                 apiKey: request.apiKey,
@@ -191,7 +191,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                   'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
 
-            return complete(
+            return await complete(
               LlmProviderRequest(
                 baseUrl: request.baseUrl,
                 apiKey: request.apiKey,
@@ -406,7 +406,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                   'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
 
-            return streamChat(
+            return await streamChat(
               LlmProviderRequest(
                 baseUrl: request.baseUrl,
                 apiKey: request.apiKey,
@@ -435,7 +435,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                   'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
 
-            return streamChat(
+            return await streamChat(
               LlmProviderRequest(
                 baseUrl: request.baseUrl,
                 apiKey: request.apiKey,
@@ -464,7 +464,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                   'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
 
-            return streamChat(
+            return await streamChat(
               LlmProviderRequest(
                 baseUrl: request.baseUrl,
                 apiKey: request.apiKey,

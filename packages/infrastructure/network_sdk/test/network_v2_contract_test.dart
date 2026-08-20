@@ -142,10 +142,7 @@ void main() {
       isFalse,
     );
     expect(tracker.pendingCount, 1);
-    expect(
-      tracker.cancel('command-peer'),
-      isTrue,
-    );
+    expect(tracker.cancel('command-peer'), isTrue);
     expect((await completer.future).isCancelled, isTrue);
   });
 

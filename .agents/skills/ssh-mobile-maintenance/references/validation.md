@@ -1,4 +1,4 @@
-> Last updated: 2026-08-14
+> Last updated: 2026-08-20
 
 # Validation Matrix
 
@@ -26,6 +26,24 @@ git status --short
 
 Review the final diff for unrelated work, secrets, generated noise, stale
 documentation, and accidental public API/dependency changes.
+
+## Repository local CI
+
+Use [`scripts/full_test.sh`](../../../../scripts/full_test.sh) as the WSL entry
+point for the Linux-runnable CI gates spanning the Front, SDK/native/protocol,
+Relay, architecture, Core/Feature, Full App, and Android owners:
+
+```bash
+bash scripts/full_test.sh
+```
+
+For repeat runs with unchanged dependencies, `--no-bootstrap` avoids redundant
+dependency installation. The script's default WSL profile keeps known
+platform/toolchain gaps explicit; a `GAP` is incomplete validation, not a
+passing check. When tests, package membership, project structure, CI jobs,
+generated checks, exclusions, timeouts, or Linux environment assumptions
+change, update `scripts/full_test.sh` in the same change and run the affected
+jobs with `--only` before broader validation.
 
 ## Formatting
 

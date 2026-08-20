@@ -87,8 +87,8 @@ void main() {
       addTearDown(runtime.dispose);
 
       final resultFuture = runtime.events
-          .where((event) => event is NativeCommandResultEvent)
-          .cast<NativeCommandResultEvent>()
+          .where((event) => event is NativeCommandResultV2Event)
+          .cast<NativeCommandResultV2Event>()
           .first
           .timeout(const Duration(seconds: 2));
       expect(
@@ -96,7 +96,7 @@ void main() {
         NativeOperationStatus.success,
       );
       final result = await resultFuture;
-      expect(result.accepted, isFalse);
+      expect(result.state, 1);
       expect(result.error?.code, isNotNull);
       expect(
         runtime.sendRealtimeSignal(

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-14
+> Last updated: 2026-08-20
 
 # Repository Bootstrap
 
@@ -87,6 +87,13 @@ Use the canonical Skill's
 proportional to the touched owner and risk. Package-local commands remain in the
 owning README/AGENTS. Always run `git diff --check`, inspect the final status and
 diff, report checks actually run, and state exact environmental or scope gaps.
+
+Before creating or updating a PR, run `scripts/full_test.sh` and the applicable
+focused checks from WSL. A failing or incomplete check blocks submission unless
+the user explicitly accepts the documented environment gap. When tests, package
+membership, project structure, CI scope, or test-selection rules change, update
+`scripts/full_test.sh` in the same change. The canonical Skill and Project
+Memory define the detailed PR gate and script-maintenance rules.
 
 `CLAUDE.md` is the Claude-specific thin bootstrap entry. It delegates repository
 entry and memory routing to this `AGENTS.md` and the canonical `.agents` Skill,
