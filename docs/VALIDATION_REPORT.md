@@ -5,7 +5,7 @@
 - Latest contract validation: 2026-08-20
 - Host: WSL2/Linux only
 - Frozen Relay V2 baseline: `6ec194bb3a66a748215d3abc11d6da84bd329619`
-- Worktree: uncommitted multi-agent implementation changes; no commit created
+- Worktree: committed on `agent/network-v2-final-20260819` at `05a079b`
 
 ## Network Protocol V2 contract closeout
 
@@ -94,6 +94,5 @@ recovery uses business identifiers on a fresh connection.
 - Full physical mobile-device deployment, external Relay clusters, and
   platform-only macOS/iOS/Windows smoke jobs.
 
-The worktree contains the requested multi-agent implementation changes across
-Rust, Go, protocol fixtures, Dart/FFI, CI, and documentation. No commit was
-made.
+The requested multi-agent implementation changes across Rust, Go, protocol
+fixtures, Dart/FFI, CI, and documentation are committed on the PR branch.
