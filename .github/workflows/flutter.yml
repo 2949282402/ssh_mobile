@@ -205,6 +205,15 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
         with:
           version: ${{ env.BUF_VERSION }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
       - name: Compile-check all Network V2 protos
         run: |
           protoc --proto_path=protocol \
@@ -604,6 +613,11 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      - name: Diagnose Rust target toolchain
+        working-directory: native/network_core
+        run: |
+          rustup show active-toolchain
+          rustup target list --installed
       - name: Install dependencies
         working-directory: .
         run: dart pub get
@@ -658,6 +672,11 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      - name: Diagnose Rust target toolchain
+        working-directory: native/network_core
+        run: |
+          rustup show active-toolchain
+          rustup target list --installed
       - name: Enable macOS desktop
         run: flutter config --enable-macos-desktop
       - name: Install dependencies
@@ -685,6 +704,11 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      - name: Diagnose Rust target toolchain
+        working-directory: native/network_core
+        run: |
+          rustup show active-toolchain
+          rustup target list --installed
       - name: Install dependencies
         working-directory: .
         run: dart pub get

@@ -10,6 +10,9 @@ void main() {
   final workflow = File(
     '${root.path}/.github/workflows/flutter.yml',
   ).readAsStringSync();
+  final rustToolchain = File(
+    '${root.path}/native/network_core/rust-toolchain.toml',
+  ).readAsStringSync();
 
   _expect(pubspec.contains('\nmelos:\n'), '根 pubspec 必须声明 Melos 配置');
   _expect(pubspec.contains('    format:'), 'Melos 必须提供 format 脚本');
@@ -45,6 +48,36 @@ void main() {
     !workflow.contains('analyze-and-test:'),
     'CI 不应保留已拆分的 analyze-and-test job',
   );
+  _expect(
+    rustToolchain.contains('channel = "1.97.1"'),
+    'Rust toolchain pin 必须与 CI 的 RUST_TOOLCHAIN 对齐',
+  );
+
+  final protocolV2Contract = _jobSection(workflow, 'protocol-v2-contract');
+  _expect(
+    protocolV2Contract.contains('subosito/flutter-action@v2'),
+    'protocol-v2-contract 必须安装 Flutter 后运行 Dart owner tests',
+  );
+  _expect(
+    protocolV2Contract.contains('run: dart pub get'),
+    'protocol-v2-contract 必须安装 workspace dependencies',
+  );
+  _expect(
+    protocolV2Contract.contains(
+          'working-directory: packages/infrastructure/ssh_mobile_network_native',
+        ) &&
+        protocolV2Contract.contains('run: flutter pub get'),
+    'protocol-v2-contract 必须安装 native Dart package dependencies',
+  );
+
+  for (final jobName in const ['android-build', 'macos-build', 'ios-build']) {
+    final job = _jobSection(workflow, jobName);
+    _expect(
+      job.contains('rustup show active-toolchain') &&
+          job.contains('rustup target list --installed'),
+      '$jobName 必须输出 Rust toolchain 与已安装 target 诊断',
+    );
+  }
 
   final workspaceCoreQuality = _jobSection(workflow, 'workspace-core-quality');
   for (final packageName in _corePackageNames) {
