@@ -75,12 +75,18 @@ async fn common_transport_reports_its_kind() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let peer = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
-        let _ = listener.accept().await.unwrap();
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut transport = TcpTransport::from_stream(stream);
+        assert_eq!(transport.recv_frame().await.unwrap(), b"common-tcp");
+        transport.send_frame(b"common-ack").await.unwrap();
     });
-    let transport = Transport::connect_tcp("0.0.0.0:0".parse().unwrap(), peer)
+    let mut transport = Transport::connect_tcp("0.0.0.0:0".parse().unwrap(), peer)
         .await
         .unwrap();
     assert_eq!(transport.kind(), TransportKind::Tcp);
+    assert_eq!(transport.send(b"common-tcp").await.unwrap(), 10);
+    assert_eq!(transport.recv().await.unwrap(), b"common-ack");
+    transport.close().await.unwrap();
     server.await.unwrap();
 }
 
@@ -237,6 +243,14 @@ async fn websocket_split_halves_deliver_duplex_binary_frames() {
         .await
         .unwrap();
     let (mut reader, mut writer) = transport.into_split();
+    assert!(matches!(
+        writer.send(&[]).await,
+        Err(TransportError::FrameTooLarge)
+    ));
+    assert!(matches!(
+        writer.send(&vec![0; MAX_WEBSOCKET_MESSAGE_BYTES + 1]).await,
+        Err(TransportError::FrameTooLarge)
+    ));
     // The halves are independent: send and receive concurrently (duplex).
     let write = tokio::spawn(async move {
         let sent = writer.send(b"websocket-split").await?;
@@ -482,4 +496,112 @@ async fn udp_split_halves_share_the_connected_datagram_socket() {
     );
     assert_eq!(left_reader.recv().await.unwrap(), b"still-live");
     right_writer.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn websocket_accept_and_connection_failures_are_typed() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let peer = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut transport = WebSocketTransport::accept(stream).await.unwrap();
+        assert_eq!(transport.recv_binary().await.unwrap(), b"accepted");
+        transport.send_binary(b"accepted-reply").await.unwrap();
+        transport.close().await.unwrap();
+    });
+    let mut client = Transport::connect_websocket(&format!("ws://{peer}/accepted"))
+        .await
+        .unwrap();
+    assert_eq!(client.send(b"accepted").await.unwrap(), 8);
+    assert_eq!(client.recv().await.unwrap(), b"accepted-reply");
+    client.close().await.unwrap();
+    server.await.unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let peer = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream
+            .write_all(b"not a websocket handshake")
+            .await
+            .unwrap();
+    });
+    let raw = tokio::net::TcpStream::connect(peer).await.unwrap();
+    assert!(matches!(
+        WebSocketTransport::accept(raw).await,
+        Err(TransportError::WebSocket(_))
+    ));
+    server.await.unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let closed_peer = listener.local_addr().unwrap();
+    drop(listener);
+    assert!(matches!(
+        Transport::connect_tcp("0.0.0.0:0".parse().unwrap(), closed_peer).await,
+        Err(TransportError::Io(_))
+    ));
+    assert!(matches!(
+        WebSocketTransport::connect(&format!("ws://{closed_peer}/missing")).await,
+        Err(TransportError::WebSocket(_))
+    ));
+}
+
+#[tokio::test]
+async fn split_websocket_reader_maps_binary_text_and_close_boundaries() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let peer = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket: WebSocketStream<_> = accept_async(stream).await.unwrap();
+        futures_util::SinkExt::send(
+            &mut socket,
+            Message::Binary(vec![0; MAX_WEBSOCKET_MESSAGE_BYTES + 1].into()),
+        )
+        .await
+        .unwrap();
+    });
+    let transport = Transport::connect_websocket(&format!("ws://{peer}/oversized"))
+        .await
+        .unwrap();
+    let (mut reader, _writer) = transport.into_split();
+    assert!(matches!(
+        reader.recv().await,
+        Err(TransportError::FrameTooLarge)
+    ));
+    server.await.unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let peer = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket: WebSocketStream<_> = accept_async(stream).await.unwrap();
+        futures_util::SinkExt::send(&mut socket, Message::Text("text".into()))
+            .await
+            .unwrap();
+    });
+    let transport = Transport::connect_websocket(&format!("ws://{peer}/text"))
+        .await
+        .unwrap();
+    let (mut reader, _writer) = transport.into_split();
+    assert!(matches!(
+        reader.recv().await,
+        Err(TransportError::InvalidFrame)
+    ));
+    server.await.unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let peer = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket: WebSocketStream<_> = accept_async(stream).await.unwrap();
+        futures_util::SinkExt::send(&mut socket, Message::Close(None))
+            .await
+            .unwrap();
+    });
+    let transport = Transport::connect_websocket(&format!("ws://{peer}/close"))
+        .await
+        .unwrap();
+    let (mut reader, _writer) = transport.into_split();
+    assert!(matches!(reader.recv().await, Err(TransportError::Closed)));
+    server.await.unwrap();
 }
