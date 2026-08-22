@@ -189,6 +189,39 @@ fn coordinator_stage_setter_round_trips_every_terminal_and_live_state() {
 }
 
 #[tokio::test]
+async fn session_cleanup_guard_only_retires_an_armed_exact_session() {
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        event_tx,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    let session_id = match state
+        .begin_connect("peer-a", DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected session decision: {decision:?}"),
+    };
+    {
+        let mut guard = SessionCleanupGuard::new(Arc::clone(&state), "peer-a", session_id);
+        guard.disarm();
+    }
+    assert_eq!(
+        state.connection_sessions.current_session_id("peer-a").await,
+        Some(session_id)
+    );
+    {
+        let _guard = SessionCleanupGuard::new(Arc::clone(&state), "peer-a", session_id);
+    }
+    tokio::task::yield_now().await;
+    assert!(state
+        .connection_sessions
+        .current_session_id("peer-a")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
 async fn connect_and_probe_reject_missing_runtime_inputs_fail_closed() {
     let (state, _event_rx, _control) = configured_reuse_state().await;
     let coordinator = ConnectivityAttemptCoordinator::new(Arc::clone(&state));
