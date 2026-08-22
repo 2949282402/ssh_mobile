@@ -272,3 +272,78 @@ async fn responding_to_unknown_relay_offer_returns_typed_invalid_argument() {
         .expect_err("unknown offer cannot be approved");
     assert_eq!(error.code, NetworkErrorCode::InvalidArgument as i32);
 }
+
+#[tokio::test]
+async fn relay_offer_admission_rejects_unregistered_and_malformed_envelopes() {
+    let state = state();
+    let data = Arc::new(data_client());
+    let error = receive_relay_offer(&state, &data, "peer-a", b"")
+        .await
+        .expect_err("unknown Relay sender must be rejected");
+    assert!(error.to_string().contains("registered peer"));
+
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let error = receive_relay_offer(&state, &data, "peer-a", &[0; 31])
+        .await
+        .expect_err("short Relay offers must be rejected");
+    assert!(error.to_string().contains("truncated"));
+
+    let mut invalid_session = b"A0000000000000000000000000000000".to_vec();
+    invalid_session.extend_from_slice(b"payload");
+    let error = receive_relay_offer(&state, &data, "peer-a", &invalid_session)
+        .await
+        .expect_err("uppercase Relay session IDs must be rejected");
+    assert!(error.to_string().contains("session ID"));
+
+    let mut invalid_base64 = b"00000000000000000000000000000000".to_vec();
+    invalid_base64.extend_from_slice(b"!");
+    let error = receive_relay_offer(&state, &data, "peer-a", &invalid_base64)
+        .await
+        .expect_err("malformed Relay offer payloads must be rejected");
+    assert!(!error.to_string().is_empty());
+
+    let state_without_identity = self::state();
+    state_without_identity.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let error = receive_relay_offer(
+        &state_without_identity,
+        &data,
+        "peer-a",
+        b"00000000000000000000000000000000",
+    )
+    .await
+    .expect_err("Relay offers require the local runtime identity");
+    assert!(error.to_string().contains("identity"));
+
+    let pending = manifest("pending-without-path");
+    state.relay.pending_incoming.write().await.insert(
+        pending.transfer_id.clone(),
+        PendingRelayIncoming {
+            transfer_id: pending.transfer_id.clone(),
+            session_id: "00000000000000000000000000000000".into(),
+            sender_id: "peer-a".into(),
+            manifest: pending,
+            manifest_hash: "a".repeat(64),
+            crypto_session_id: "crypto-session".into(),
+        },
+    );
+    let error = respond_to_relay_incoming(&state, "pending-without-path", true)
+        .await
+        .expect_err("Relay approval must require the current data path");
+    assert_eq!(error.code, NetworkErrorCode::RelayError as i32);
+}
