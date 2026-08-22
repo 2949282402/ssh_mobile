@@ -442,3 +442,53 @@ async fn responder_connectivity_checks_stop_before_endpoint_is_available() {
     tokio::time::sleep(Duration::from_millis(10)).await;
     state.task_supervisor.shutdown().await;
 }
+
+#[tokio::test]
+async fn responder_connectivity_checks_fail_closed_for_empty_offer() {
+    let state = state();
+    let endpoint = network_quic::QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("responder endpoint address"),
+        Arc::new(network_nat::PathManager::new()),
+    )
+    .expect("responder endpoint")
+    .endpoint;
+    let endpoint_for_cleanup = endpoint.clone();
+    *state.lifecycle.endpoint.write().await = Some(endpoint);
+    *state.lifecycle.identity.write().await = Some(Arc::new(
+        network_identity::DeviceIdentity::from_private_keys(
+            "device-a".into(),
+            [5u8; 32],
+            [6u8; 32],
+        ),
+    ));
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [7u8; 32],
+            e2e_public_key: [8u8; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+
+    spawn_responder_connectivity_checks(
+        Arc::clone(&state),
+        ConnectivityOffer {
+            attempt_id: "empty-offer".into(),
+            initiator_device_id: "peer-a".into(),
+            ..Default::default()
+        },
+    );
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if state.task_supervisor.active_count() == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("empty responder offer should finish without a live task");
+    assert_eq!(state.task_supervisor.active_count(), 0);
+    endpoint_for_cleanup.close(quinn::VarInt::from_u32(0), b"test complete");
+}
