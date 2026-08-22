@@ -304,3 +304,61 @@ async fn relay_cache_invalidation_is_noop_for_equal_or_unknown_epochs() {
     .await;
     assert!(state.remote_candidate_cache.read().await.is_empty());
 }
+
+#[tokio::test]
+async fn configured_control_consumer_handles_offer_reservation_and_signal_failures() {
+    let state = state();
+    *state.lifecycle.identity.write().await = Some(Arc::new(
+        network_identity::DeviceIdentity::from_private_keys("device-a".into(), [3; 32], [4; 32]),
+    ));
+    *state.relay.config.write().await = Some(RelayReconnectConfig {
+        relay_url: "ws://127.0.0.1:9".into(),
+        credential: "credential".into(),
+        signing_seed: [0; 32],
+    });
+    let control = control_client();
+    let (events_tx, events_rx) = mpsc::channel(8);
+    let consumer = tokio::spawn(consume_control_events(
+        Arc::clone(&state),
+        control,
+        events_rx,
+    ));
+    events_tx
+        .send(ControlEvent::ConnectivityOffer(ConnectivityOffer {
+            attempt_id: "attempt".into(),
+            initiator_device_id: "unconfigured-peer".into(),
+            initiator_runtime_epoch: Some(RuntimeEpoch { high: 1, low: 1 }),
+            initiator_revision: 1,
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+    events_tx
+        .send(ControlEvent::IncomingRelayReservation(
+            network_relay::v2::IncomingRelayReservation {
+                attempt_id: "attempt".into(),
+                reservation_id: "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+                initiator_device_id: "peer-a".into(),
+                relay_data_endpoint: "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d"
+                    .into(),
+                expires_at_ms: 0,
+                local_token: vec![0; 32],
+            },
+        ))
+        .await
+        .unwrap();
+    events_tx
+        .send(ControlEvent::RealtimeSignal(RealtimeSignal {
+            realtime_id: "missing".into(),
+            target_device_id: "peer-a".into(),
+            kind: network_relay::v2::RealtimeSignalKind::Offer as i32,
+            revision: 1,
+            payload: b"offer".to_vec(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+    drop(events_tx);
+    consumer.await.unwrap();
+    state.task_supervisor.shutdown().await;
+}
