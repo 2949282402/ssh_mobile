@@ -25,6 +25,87 @@ fn peer_ids_are_validated_and_isolated() {
 }
 
 #[test]
+fn supervisor_registry_enforces_budgets_and_evicts_idle_entries() {
+    let registry = PeerSupervisorRegistry::with_task_supervisor(
+        crate::task_supervisor::RuntimeTaskSupervisor::new(),
+    );
+    assert!(registry.disconnect("missing").expect("missing disconnect") == 0);
+    assert!(!registry
+        .remove_if_evictable("missing")
+        .expect("missing eviction"));
+    assert!(registry.get_or_create("peer\n").is_err());
+
+    for index in 0..crate::connect::MAX_CONFIGURED_PEERS {
+        registry
+            .get_or_create_with_configured(&format!("idle-{index}"), false)
+            .expect("idle supervisor");
+    }
+    assert_eq!(registry.len(), crate::connect::MAX_CONFIGURED_PEERS);
+    registry
+        .get_or_create("evicted-peer")
+        .expect("an idle supervisor is evictable");
+    assert_eq!(registry.len(), crate::connect::MAX_CONFIGURED_PEERS);
+
+    let configured = PeerSupervisorRegistry::new();
+    for index in 0..crate::connect::MAX_CONFIGURED_PEERS {
+        configured
+            .get_or_create_with_configured(&format!("configured-{index}"), true)
+            .expect("configured supervisor");
+    }
+    assert!(matches!(
+        configured.get_or_create_with_configured("configured-overflow", true),
+        Err(CoreNetworkError::ResourceLimit("configured peers"))
+    ));
+
+    let active = PeerSupervisorRegistry::new();
+    let state = runtime_state();
+    for index in 0..crate::connect::MAX_ACTIVE_PEERS {
+        let peer = active
+            .get_or_create(&format!("active-{index}"))
+            .expect("active supervisor");
+        peer.begin_connect(
+            &format!("active-command-{index}"),
+            CommunicationClass::ReliableMessage,
+        )
+        .expect("active intent")
+        .detach_completion();
+    }
+    assert!(matches!(
+        active.start_connect(
+            state,
+            "active-overflow",
+            "active-overflow-command".into(),
+            CommunicationClass::ReliableMessage,
+        ),
+        Err(CoreNetworkError::ResourceLimit("active peers"))
+    ));
+}
+
+#[test]
+fn supervisor_accessors_and_child_budget_are_consistent() {
+    let supervisor = supervisor();
+    assert_eq!(supervisor.peer_id().as_str(), "peer-a");
+    let generation = supervisor.generation();
+    assert_eq!(generation.get(), 0);
+    assert!(supervisor.is_current(generation));
+    assert!(supervisor.take_mailbox().is_some());
+    assert!(supervisor.take_mailbox().is_none());
+
+    assert!(supervisor.mark_child_started().is_ok());
+    assert!(matches!(
+        supervisor.mark_child_started(),
+        Err(CoreNetworkError::ResourceLimit("peer establishment"))
+    ));
+    supervisor.mark_child_finished();
+    assert!(supervisor.can_evict());
+
+    supervisor.set_configured(true);
+    assert!(supervisor.can_evict());
+    supervisor.stop();
+    assert!(!supervisor.is_current(generation));
+}
+
+#[test]
 fn peer_id_traits_and_requirement_mapping_are_stable() {
     let peer = PeerId::try_from(String::from("peer-a")).expect("valid peer id");
     assert_eq!(peer.as_ref(), "peer-a");
