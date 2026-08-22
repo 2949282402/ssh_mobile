@@ -2,8 +2,9 @@ use super::{
     acknowledge_message, application_payload_mode, decode_policy, delivery_error,
     ensure_reliable_message_path, handle_data_message, handle_delivery_ack,
     next_business_ensure_id, policy_code, select_business_path_lease, send_business_frame,
-    start_send_message, validate_business_application_policy, validate_data_message,
-    ApplicationPayloadMode, ApplicationPolicyError,
+    send_data_message, start_send_message, validate_business_application_policy,
+    validate_data_message, ApplicationPayloadMode, ApplicationPolicyError,
+    MAX_DELIVERY_MESSAGE_PAYLOAD_BYTES,
 };
 use crate::connect::{PathRegistry, PeerId, PeerPathManager, CAPABILITY_RELIABLE_MESSAGE};
 use crate::connection::{
@@ -528,6 +529,55 @@ async fn channel_command_boundaries_fail_before_starting_network_work() {
 }
 
 #[tokio::test]
+async fn sending_message_reports_cancellation_when_delivery_task_cannot_start() {
+    let peer_id = "cancelled-delivery-peer";
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+    state.peers.write().await.insert(
+        peer_id.into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Disabled,
+        },
+    );
+    let manager = Arc::new(Mutex::new(PeerPathManager::new(
+        PeerId::new(peer_id).expect("peer id"),
+        Arc::clone(&state.ready_paths),
+    )));
+    manager
+        .lock()
+        .expect("path manager lock")
+        .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+        .expect("ready path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert(peer_id.into(), manager);
+    state
+        .connection_sessions
+        .register_pending_session(peer_id, SessionId::new())
+        .await
+        .expect("pending session");
+    state.task_supervisor.cancel_root();
+
+    let error = start_send_message(
+        Arc::clone(&state),
+        SendMessageCommand {
+            peer_id: peer_id.into(),
+            channel_id: "channel".into(),
+            payload: b"payload".to_vec(),
+            policy: DeliveryPolicyCode::Acked as i32,
+        },
+    )
+    .await
+    .expect_err("a stopping runtime must reject delivery task admission");
+    assert_eq!(error.code, NetworkErrorCode::Cancelled as i32);
+}
+
+#[tokio::test]
 async fn application_policy_validation_requires_a_ready_path_and_matching_crypto() {
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
     let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
@@ -675,4 +725,208 @@ async fn inbound_plaintext_delivery_emits_once_and_deduplicates_replays() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn required_inbound_messages_decrypt_and_reject_missing_application_e2ee() {
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let root = [0x41; 32];
+    state
+        .install_crypto_material(
+            "peer-a",
+            "session-a",
+            &crate::crypto_handshake::SessionCryptoMaterial {
+                root_key: root,
+                local_session_binding: "session-a".into(),
+                remote_session_binding: "session-a".into(),
+                initiator: false,
+                e2ee_policy: crate::crypto_handshake::path_handshake::E2eePolicy::Required,
+                path_security: crate::crypto_handshake::path_handshake::PathSecurity::E2ee,
+            },
+        )
+        .expect("install receiving crypto context");
+
+    let mut missing = DataMessage {
+        session_id: "session-a".into(),
+        channel_id: "channel-a".into(),
+        message_id: vec![9; 16],
+        sequence: 0,
+        recovery_epoch: 0,
+        policy: DeliveryPolicyCode::BestEffort as i32,
+        payload: b"plaintext is not allowed".to_vec(),
+    };
+    let error = handle_data_message(&state, "peer-a", &missing.encode_to_vec())
+        .await
+        .expect_err("Required policy must reject an unencrypted application payload");
+    assert!(error.to_string().contains("E2EE payload"));
+
+    let mut sender = CryptoContext::from_session_root(root, true);
+    let base_aad = crate::crypto::data_message_aad(
+        &missing.session_id,
+        &missing.channel_id,
+        &missing.message_id,
+        missing.sequence,
+        missing.recovery_epoch,
+        missing.policy,
+    );
+    missing.payload = sender
+        .encrypt(&base_aad, b"encrypted best effort")
+        .expect("encrypt best-effort payload");
+    handle_data_message(&state, "peer-a", &missing.encode_to_vec())
+        .await
+        .expect("Required best-effort payload should decrypt");
+    let event = event_rx.recv().await.expect("best-effort event");
+    assert!(matches!(
+        event.payload,
+        Some(network_event::Payload::ChannelMessage(message))
+            if message.payload == b"encrypted best effort"
+    ));
+
+    let mut acked = DataMessage {
+        session_id: "session-a".into(),
+        channel_id: "channel-a".into(),
+        message_id: vec![10; 16],
+        sequence: 1,
+        recovery_epoch: 0,
+        policy: DeliveryPolicyCode::Acked as i32,
+        payload: Vec::new(),
+    };
+    let acked_aad = crate::crypto::data_message_aad(
+        &acked.session_id,
+        &acked.channel_id,
+        &acked.message_id,
+        acked.sequence,
+        acked.recovery_epoch,
+        acked.policy,
+    );
+    acked.payload = sender
+        .encrypt(&acked_aad, b"encrypted acked")
+        .expect("encrypt acked payload");
+    handle_data_message(&state, "peer-a", &acked.encode_to_vec())
+        .await
+        .expect("Required Acked payload should decrypt");
+    let event = event_rx.recv().await.expect("acked event");
+    assert!(matches!(
+        event.payload,
+        Some(network_event::Payload::ChannelMessage(message))
+            if message.payload == b"encrypted acked"
+    ));
+}
+
+#[tokio::test]
+async fn delivery_send_rejects_a_replaced_connection_session_before_encoding() {
+    let peer_id = "session-replaced-peer";
+    let registry = Arc::new(PathRegistry::new());
+    let manager = Arc::new(Mutex::new(PeerPathManager::new(
+        PeerId::new(peer_id).expect("peer id"),
+        Arc::clone(&registry),
+    )));
+    manager
+        .lock()
+        .expect("path manager lock")
+        .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+        .expect("ready path");
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert(peer_id.into(), manager);
+    let lease = select_business_path_lease(&state, peer_id, CAPABILITY_RELIABLE_MESSAGE)
+        .await
+        .expect("path lease");
+    let message = state
+        .delivery
+        .enqueue(
+            peer_id,
+            "channel",
+            b"payload".to_vec(),
+            DeliveryPolicy::Acked,
+            Default::default(),
+        )
+        .await
+        .expect("queue message");
+    let attempt = state
+        .delivery
+        .begin_send_for_peer(peer_id, message.message_id, Instant::now())
+        .await
+        .expect("begin send")
+        .expect("queued message");
+    let error = send_data_message(&state, peer_id, SessionId::new(), &lease, &attempt.message)
+        .await
+        .expect_err("a replaced connection session must fail before encoding");
+    assert!(error.to_string().contains("session changed"));
+}
+
+#[tokio::test]
+async fn delivery_send_rejects_an_encoded_message_over_the_frame_limit() {
+    let peer_id = "oversized-delivery-peer";
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    state.peers.write().await.insert(
+        peer_id.into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Disabled,
+        },
+    );
+    let manager = Arc::new(Mutex::new(PeerPathManager::new(
+        PeerId::new(peer_id).expect("peer id"),
+        Arc::clone(&state.ready_paths),
+    )));
+    manager
+        .lock()
+        .expect("path manager lock")
+        .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+        .expect("ready path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert(peer_id.into(), manager);
+    let session_id = SessionId::new();
+    state
+        .connection_sessions
+        .register_pending_session(peer_id, session_id)
+        .await
+        .expect("pending session");
+    let lease = select_business_path_lease(&state, peer_id, CAPABILITY_RELIABLE_MESSAGE)
+        .await
+        .expect("path lease");
+    let message = state
+        .delivery
+        .enqueue(
+            peer_id,
+            "channel",
+            vec![0; MAX_DELIVERY_MESSAGE_PAYLOAD_BYTES],
+            DeliveryPolicy::Acked,
+            Default::default(),
+        )
+        .await
+        .expect("queue oversized wire message");
+    let mut attempt = state
+        .delivery
+        .begin_send_for_peer(peer_id, message.message_id, Instant::now())
+        .await
+        .expect("begin send")
+        .expect("queued message");
+    attempt.message.payload = vec![0; MAX_CHANNEL_FRAME_BYTES];
+
+    let error = send_data_message(&state, peer_id, session_id, &lease, &attempt.message)
+        .await
+        .expect_err("encoded message must be rejected before transport");
+    assert!(error.to_string().contains("frame limit"), "{error}");
 }
