@@ -382,6 +382,86 @@ async fn stage_a_compatible_ready_direct_path_makes_no_control_plane_calls() {
 }
 
 #[tokio::test]
+async fn in_progress_admission_retries_after_the_owned_session_is_retired() {
+    let (state, _event_rx, control) = configured_reuse_state().await;
+    let session_id = match state
+        .begin_connect("peer-b", DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("expected an in-progress owner session, got {decision:?}"),
+    };
+
+    let task_state = Arc::clone(&state);
+    let task = tokio::spawn(async move {
+        ConnectivityAttemptCoordinator::new(task_state)
+            .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
+            .await
+    });
+
+    // Let the second coordinator observe the first owner's in-progress
+    // session, then retire that exact admission as a failed attempt would.
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    state.fail_session("peer-b", session_id).await;
+
+    let result = task.await.expect("connect task");
+    assert!(
+        result.is_err(),
+        "the stub control plane has no usable route"
+    );
+    assert_eq!(control.resolve_calls(), 1);
+    assert_eq!(control.connectivity_calls(), 1);
+    assert_eq!(control.reserve_calls(), 0);
+    assert_eq!(control.call_order(), vec!["resolve", "offer"]);
+    assert!(
+        state
+            .connection_sessions
+            .current_session_id("peer-b")
+            .await
+            .is_none(),
+        "failed retry must retire the replacement session"
+    );
+}
+
+#[tokio::test]
+async fn in_progress_admission_reuses_a_route_that_appears_before_retry() {
+    let (state, _event_rx, control) = configured_reuse_state().await;
+    let session_id = match state
+        .begin_connect("peer-b", DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("expected an in-progress owner session, got {decision:?}"),
+    };
+
+    let task_state = Arc::clone(&state);
+    let task = tokio::spawn(async move {
+        ConnectivityAttemptCoordinator::new(task_state)
+            .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
+            .await
+    });
+
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert!(
+        state
+            .mark_relay_route_connected("peer-b", session_id, None)
+            .await,
+        "the in-progress owner should be able to publish the replacement route"
+    );
+
+    assert!(task.await.expect("connect task").is_ok());
+    assert_eq!(control.resolve_calls(), 0);
+    assert_eq!(control.connectivity_calls(), 0);
+    assert_eq!(control.reserve_calls(), 0);
+    assert!(state.path_is_connected("peer-b").await);
+    state.close_transport_path("peer-b").await;
+    state
+        .connection_sessions
+        .retire_session("peer-b", session_id)
+        .await;
+}
+
+#[tokio::test]
 async fn stage_b_resolves_and_offers_before_relay_reservation() {
     let (state, _event_rx, _configured_control) = configured_reuse_state().await;
     let stage_b_candidate = Candidate::new(
