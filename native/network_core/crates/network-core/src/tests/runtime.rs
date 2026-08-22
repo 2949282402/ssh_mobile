@@ -329,6 +329,37 @@ async fn runtime_path_lease_lookup_is_exact_and_rejects_stale_or_missing_routes(
 }
 
 #[tokio::test]
+async fn failing_an_exact_session_closes_its_owned_direct_projection() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    let peer_id = "runtime-fail-session-peer";
+    let session_id = SessionId::new();
+    state
+        .connection_sessions
+        .register_pending_session(peer_id, session_id)
+        .await
+        .expect("register session");
+    let route = crate::connection::test_blocking_generic_route();
+    state
+        .attach_test_generic_route(peer_id, session_id, route.handle.clone())
+        .await
+        .expect("publish direct projection");
+    assert!(state.path_is_connected(peer_id).await);
+
+    state.fail_session(peer_id, session_id).await;
+
+    assert!(state
+        .connection_sessions
+        .current_session_id(peer_id)
+        .await
+        .is_none());
+    assert!(!state.path_is_connected(peer_id).await);
+    assert!(state.peer_path_managers.read().await.get(peer_id).is_none());
+    let _ = route.release.send(());
+    route.worker.abort();
+}
+
+#[tokio::test]
 async fn path_admission_retry_only_allows_the_current_unbound_session() {
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
     let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
