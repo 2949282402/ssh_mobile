@@ -1089,3 +1089,171 @@ fn monotonic_candidate_generation_never_moves_backward() {
     assert!(first >= 1);
     assert!(second >= first);
 }
+
+#[tokio::test]
+async fn peer_configuration_boundaries_fail_closed_before_binding_resources() {
+    let state = new_test_state().await;
+
+    let invalid_device = configure_runtime(
+        Arc::clone(&state),
+        network_protocol::ConfigureRuntimeCommand::default(),
+    )
+    .await
+    .expect_err("empty runtime device id must fail");
+    assert_eq!(
+        invalid_device.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    let invalid_identity = configure_runtime(
+        Arc::clone(&state),
+        network_protocol::ConfigureRuntimeCommand {
+            device_id: "device-a".into(),
+            identity_private_key: vec![0; 31],
+            e2e_private_key: vec![0; 32],
+            listen_address: "127.0.0.1:0".into(),
+            receive_directory: "/tmp/receive".into(),
+        },
+    )
+    .await
+    .expect_err("identity key length must be checked");
+    assert_eq!(
+        invalid_identity.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    let invalid_e2e = configure_runtime(
+        Arc::clone(&state),
+        network_protocol::ConfigureRuntimeCommand {
+            device_id: "device-a".into(),
+            identity_private_key: vec![0; 32],
+            e2e_private_key: vec![0; 31],
+            listen_address: "127.0.0.1:0".into(),
+            receive_directory: "/tmp/receive".into(),
+        },
+    )
+    .await
+    .expect_err("E2E key length must be checked");
+    assert_eq!(invalid_e2e.code, NetworkErrorCode::InvalidArgument as i32);
+
+    let invalid_address = configure_runtime(
+        Arc::clone(&state),
+        network_protocol::ConfigureRuntimeCommand {
+            device_id: "device-a".into(),
+            identity_private_key: vec![0; 32],
+            e2e_private_key: vec![0; 32],
+            listen_address: "not-an-address".into(),
+            receive_directory: "/tmp/receive".into(),
+        },
+    )
+    .await
+    .expect_err("listen address must be parsed before binding");
+    assert_eq!(
+        invalid_address.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    let relative_directory = configure_runtime(
+        Arc::clone(&state),
+        network_protocol::ConfigureRuntimeCommand {
+            device_id: "device-a".into(),
+            identity_private_key: vec![0; 32],
+            e2e_private_key: vec![0; 32],
+            listen_address: "127.0.0.1:0".into(),
+            receive_directory: "relative".into(),
+        },
+    )
+    .await
+    .expect_err("receive directory must be absolute");
+    assert_eq!(
+        relative_directory.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+}
+
+#[tokio::test]
+async fn peer_upsert_and_disconnect_preserve_identity_and_route_boundaries() {
+    let state = new_test_state().await;
+    let invalid_peer = upsert_peer(
+        &state,
+        UpsertPeerCommand {
+            peer_id: String::new(),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("empty peer id must fail");
+    assert_eq!(invalid_peer.code, NetworkErrorCode::InvalidArgument as i32);
+
+    let invalid_endpoint = upsert_peer(
+        &state,
+        UpsertPeerCommand {
+            peer_id: "peer-a".into(),
+            endpoint_address: "invalid".into(),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("peer endpoint must be a socket address");
+    assert_eq!(
+        invalid_endpoint.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    let invalid_identity = upsert_peer(
+        &state,
+        UpsertPeerCommand {
+            peer_id: "peer-a".into(),
+            endpoint_address: "127.0.0.1:22".into(),
+            identity_public_key: vec![0; 31],
+            e2e_public_key: vec![0; 32],
+        },
+    )
+    .await
+    .expect_err("peer identity key must be 32 bytes");
+    assert_eq!(
+        invalid_identity.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    let invalid_e2e = upsert_peer(
+        &state,
+        UpsertPeerCommand {
+            peer_id: "peer-a".into(),
+            endpoint_address: "127.0.0.1:22".into(),
+            identity_public_key: vec![0; 32],
+            e2e_public_key: vec![0; 31],
+        },
+    )
+    .await
+    .expect_err("peer E2E key must be 32 bytes");
+    assert_eq!(invalid_e2e.code, NetworkErrorCode::InvalidArgument as i32);
+
+    upsert_peer_with_policy(
+        &state,
+        UpsertPeerCommand {
+            peer_id: "peer-a".into(),
+            endpoint_address: "127.0.0.1:22".into(),
+            identity_public_key: vec![1; 32],
+            e2e_public_key: vec![2; 32],
+        },
+        network_protocol::E2eePolicy::Disabled,
+    )
+    .await
+    .expect("valid peer configuration");
+    let config = state.peers.read().await.get("peer-a").cloned().unwrap();
+    assert_eq!(config.endpoint.unwrap().port(), 22);
+    assert_eq!(config.e2ee_policy, network_protocol::E2eePolicy::Disabled);
+    assert_eq!(state.trusted_peer_keys.read().await["peer-a"], [1; 32]);
+
+    let empty_disconnect = disconnect_peer(&state, String::new())
+        .await
+        .expect_err("empty disconnect peer must fail");
+    assert_eq!(
+        empty_disconnect.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+    disconnect_peer(&state, "peer-a".into())
+        .await
+        .expect("configured peer can be explicitly disconnected");
+}
