@@ -241,10 +241,18 @@ pub(crate) async fn start_session(
         .spawn_session(
             realtime_task_key(&realtime_id),
             "realtime-io",
-            run_realtime_session_io(state.clone(), realtime_id.clone(), peer_id.clone(), driver),
+            run_realtime_session_io(
+                state.clone(),
+                realtime_id.clone(),
+                peer_id.clone(),
+                driver.clone(),
+            ),
         )
         .is_none()
     {
+        if let Ok(mut driver) = driver.lock() {
+            let _ = driver.close();
+        }
         state.realtime.lock().await.sessions.remove(&realtime_id);
         return Err(realtime_error(
             network_protocol::NetworkErrorCode::Cancelled,

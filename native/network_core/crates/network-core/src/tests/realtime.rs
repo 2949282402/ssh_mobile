@@ -178,6 +178,66 @@ async fn realtime_io_event_matrix_maps_lifecycle_and_failure_boundaries() {
 }
 
 #[tokio::test]
+async fn realtime_session_io_removes_owner_after_driver_failure() {
+    let (state, mut event_rx) = realtime_test_state().await;
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    state.realtime.lock().await.sessions.insert(
+        realtime_id.into(),
+        RealtimeSession {
+            peer_id: "peer-a".into(),
+            connection_session_id: None,
+            peer: None,
+            driver: None,
+            revision: 5,
+            remote_revision: 1,
+            ice_revision: 5,
+            seen_candidates: HashSet::new(),
+        },
+    );
+    let driver = RealtimeIoDriver::bind(
+        WebRtcPeer::new(WebRtcConfig::default()).expect("driver peer"),
+        "127.0.0.1:0".parse().expect("driver bind address"),
+    )
+    .await
+    .expect("driver");
+    let driver = driver.into_handle();
+    let poison = Arc::clone(&driver);
+    let poison_task = std::thread::spawn(move || {
+        let _guard = poison.lock().expect("driver lock");
+        panic!("inject driver owner failure");
+    });
+    assert!(poison_task.join().is_err());
+
+    run_realtime_session_io(
+        Arc::clone(&state),
+        realtime_id.into(),
+        "peer-a".into(),
+        driver,
+    )
+    .await;
+    assert!(!state
+        .realtime
+        .lock()
+        .await
+        .sessions
+        .contains_key(realtime_id));
+    let mut failed = false;
+    while let Ok(event) = event_rx.try_recv() {
+        if matches!(
+            event.payload,
+            Some(network_event::Payload::RealtimeState(ref state))
+                if state.state == RealtimeSessionState::Failed as i32
+        ) {
+            failed = true;
+        }
+    }
+    assert!(
+        failed,
+        "driver failure must emit a Failed state before removal"
+    );
+}
+
+#[tokio::test]
 async fn task_supervisor_drives_two_runtime_realtime_data_channels() {
     let caller = RealtimeIoDriver::bind(
         WebRtcPeer::new(WebRtcConfig::default()).expect("caller peer"),
@@ -1256,6 +1316,15 @@ async fn realtime_command_boundaries_reject_invalid_identity_peer_and_revision()
     assert!(stop_session(&state, StopRealtimeSessionCommand::default(),)
         .await
         .is_err());
+    let missing_stop = stop_session(
+        &state,
+        StopRealtimeSessionCommand {
+            realtime_id: valid_id.into(),
+        },
+    )
+    .await
+    .expect_err("a valid but unknown realtime id must be rejected");
+    assert_eq!(missing_stop.code, NetworkErrorCode::InvalidArgument as i32);
     assert!(send_signal_command(
         &state,
         SendRealtimeSignalCommand {
@@ -1295,9 +1364,9 @@ async fn realtime_command_boundaries_reject_invalid_identity_peer_and_revision()
         SendRealtimeSignalCommand {
             realtime_id: "missing-session".into(),
             peer_id: "peer-a".into(),
-            kind: RealtimeSignalKind::WebRtcOffer as i32,
+            kind: RealtimeSignalKind::WebRtcClose as i32,
             revision: 1,
-            payload: b"offer".to_vec(),
+            payload: Vec::new(),
         },
     ] {
         assert!(send_signal_command(&state, command).await.is_err());
@@ -1379,6 +1448,132 @@ async fn realtime_command_boundaries_reject_invalid_identity_peer_and_revision()
     )
     .await;
     assert!(invalid_v2.is_err());
+}
+
+#[tokio::test]
+async fn start_realtime_cancellation_closes_driver_when_supervisor_is_stopping() {
+    let (state, _event_rx) = realtime_test_state().await;
+    let control = RecordingControl::new();
+    *state.relay.control.write().await = Some(control);
+    register_realtime_peer(&state, "peer-a").await;
+    state.task_supervisor.cancel_root();
+
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    let error = start_session(
+        Arc::clone(&state),
+        StartRealtimeSessionCommand {
+            realtime_id: realtime_id.into(),
+            peer_id: "peer-a".into(),
+        },
+    )
+    .await
+    .expect_err("a stopping supervisor must reject realtime startup");
+    assert_eq!(error.code, NetworkErrorCode::Cancelled as i32);
+    assert!(!state
+        .realtime
+        .lock()
+        .await
+        .sessions
+        .contains_key(realtime_id));
+}
+
+#[tokio::test]
+async fn stop_realtime_ignores_close_signal_loss_after_removing_owner() {
+    let (state, _event_rx) = realtime_test_state().await;
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    state.realtime.lock().await.sessions.insert(
+        realtime_id.into(),
+        RealtimeSession {
+            peer_id: "peer-a".into(),
+            connection_session_id: None,
+            peer: None,
+            driver: None,
+            revision: 4,
+            remote_revision: 1,
+            ice_revision: 4,
+            seen_candidates: HashSet::new(),
+        },
+    );
+    stop_session(
+        &state,
+        StopRealtimeSessionCommand {
+            realtime_id: realtime_id.into(),
+        },
+    )
+    .await
+    .expect("local realtime owner must close even if Relay signaling is gone");
+    assert!(state.realtime.lock().await.sessions.is_empty());
+}
+
+#[test]
+fn apply_signal_rejects_unknown_peer_and_restores_failed_offer_state() {
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    let mut manager = RealtimeManager::default();
+    let missing = match apply_signal_with_driver(
+        &mut manager,
+        realtime_id,
+        "peer-a",
+        InboundSignal {
+            kind: RealtimeSignalKind::WebRtcAnswer,
+            revision: 1,
+            payload: b"answer".to_vec(),
+        },
+        None,
+        None,
+    ) {
+        Ok(_) => panic!("an answer for an unknown realtime session unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(missing.to_string().contains("does not exist"));
+
+    let invalid_offer = match apply_signal_with_driver(
+        &mut manager,
+        realtime_id,
+        "peer-a",
+        InboundSignal {
+            kind: RealtimeSignalKind::WebRtcOffer,
+            revision: 1,
+            payload: b"not-an-sdp".to_vec(),
+        },
+        None,
+        None,
+    ) {
+        Ok(_) => panic!("a malformed offer unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(!invalid_offer.to_string().is_empty());
+    assert!(!manager.sessions.contains_key(realtime_id));
+
+    manager.sessions.insert(
+        realtime_id.into(),
+        RealtimeSession {
+            peer_id: "peer-a".into(),
+            connection_session_id: None,
+            peer: Some(WebRtcPeer::new(WebRtcConfig::default()).expect("peer")),
+            driver: None,
+            revision: 1,
+            remote_revision: 0,
+            ice_revision: 1,
+            seen_candidates: HashSet::new(),
+        },
+    );
+    let mismatch = match apply_signal_with_driver(
+        &mut manager,
+        realtime_id,
+        "peer-b",
+        InboundSignal {
+            kind: RealtimeSignalKind::WebRtcAnswer,
+            revision: 2,
+            payload: b"not-an-answer".to_vec(),
+        },
+        None,
+        None,
+    ) {
+        Ok(_) => panic!("a mismatched peer signal unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert!(mismatch.to_string().contains("peer does not match"));
+    assert_eq!(manager.sessions[realtime_id].peer_id, "peer-a");
 }
 
 #[tokio::test]
