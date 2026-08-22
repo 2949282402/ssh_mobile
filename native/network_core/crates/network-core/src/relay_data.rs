@@ -350,7 +350,7 @@ pub(super) async fn relay_data_disconnected(
     data: Arc<RelayDataClient>,
     peer_id: String,
 ) {
-    // The PhysicalRoute is the sole owner of an admitted Relay data client.
+    // The peer path owner is the sole owner of an admitted Relay data client.
     // A close event from a pre-admission/stale client must not tear down a
     // different current route.
     if !state.path_is_current_relay_data(&peer_id, &data).await {

@@ -298,7 +298,7 @@ pub(crate) enum ConnectDecision {
 /// Non-owning runtime projection of a path owned by `PeerPathManager`.
 ///
 /// RuntimeState keeps this only for session-scoped lookup and stale guards. It
-/// never retains an `Arc<PhysicalRoute>` or any other carrier lifetime owner.
+/// never retains an independent carrier lifetime owner.
 struct OwnedPathProjection {
     session_id: SessionId,
     projection: PathProjection,
@@ -1133,7 +1133,7 @@ impl RuntimeState {
             })
     }
 
-    /// Validate an authenticated candidate before its PhysicalRoute is
+    /// Validate an authenticated candidate before its peer-owned path is
     /// published. This is an admission check, not a connectivity truth read:
     /// the candidate owns no Runtime path until the caller commits it.
     pub(crate) async fn candidate_supports_required(

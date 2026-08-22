@@ -35,8 +35,7 @@ pub(crate) use connectivity_attempt::ConnectivityAttemptCoordinator;
 #[allow(unused_imports)]
 pub(crate) use path::{
     callback_path_carrier, ActiveRoute, DirectProbe, GenericRouteScope, PathHandle, PathKind,
-    PathLease, PathProjection, PathRegistry, PathSelection, PeerPathManager, PhysicalRoute,
-    StreamCarrier,
+    PathLease, PathProjection, PathRegistry, PathSelection, PeerPathManager, StreamCarrier,
 };
 #[allow(unused_imports)]
 pub(crate) use peer_supervisor::{

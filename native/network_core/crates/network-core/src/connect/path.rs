@@ -347,83 +347,6 @@ async fn send_route_view(
     }
 }
 
-/// Shared physical route handle used by RuntimeState and the PathCarrier
-/// callback. The callback closes this exact carrier when the owning path is
-/// revoked or drained after its leases finish.
-pub(crate) struct PhysicalRoute {
-    route: Mutex<Option<ActiveRoute>>,
-}
-
-impl PhysicalRoute {
-    pub(crate) fn new(route: ActiveRoute) -> Arc<Self> {
-        Arc::new(Self {
-            route: Mutex::new(Some(route)),
-        })
-    }
-
-    pub(crate) fn profile(&self) -> Option<ConnectionProfile> {
-        self.route
-            .lock()
-            .expect("physical route lock")
-            .as_ref()
-            .map(ActiveRoute::profile)
-    }
-
-    fn view(&self) -> Option<RouteView> {
-        self.route
-            .lock()
-            .expect("physical route lock")
-            .as_ref()
-            .map(ActiveRoute::view)
-    }
-
-    pub(crate) fn connection(&self) -> Option<Connection> {
-        self.view().and_then(|view| match view.carrier {
-            RouteViewCarrier::Quic(connection) => Some(connection),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn stream_carrier(&self) -> Option<StreamCarrier> {
-        self.view().map(|view| match view.carrier {
-            RouteViewCarrier::Quic(connection) => StreamCarrier::Quic(connection),
-            RouteViewCarrier::Generic(handle) => StreamCarrier::Generic(handle),
-            #[cfg(test)]
-            RouteViewCarrier::GenericTest(handle) => StreamCarrier::GenericTest(handle),
-            RouteViewCarrier::Relay(client) => StreamCarrier::Relay(client),
-        })
-    }
-
-    pub(crate) fn relay_data(&self) -> Option<Arc<RelayDataClient>> {
-        self.view().and_then(|view| match view.carrier {
-            RouteViewCarrier::Relay(client) => client,
-            _ => None,
-        })
-    }
-
-    pub(crate) async fn send_channel_frame(
-        &self,
-        relay_token: &str,
-        kind: GenericFrameKind,
-        payload: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let view = self.view().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotConnected,
-                "physical path unavailable",
-            )
-        })?;
-        send_route_view(view, relay_token, kind, payload).await
-    }
-
-    pub(crate) async fn close(&self) {
-        let route = { self.route.lock().expect("physical route lock").take() };
-        if let Some(route) = route {
-            route.close().await;
-        }
-    }
-}
-
 /// The two path topologies owned by one peer supervisor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PathKind {
@@ -904,8 +827,8 @@ impl PathLease {
     }
 
     /// Borrow the underlying QUIC connection for the duration of this lease.
-    /// The returned connection is an I/O handle, never an `Arc<PhysicalRoute>`
-    /// or an independent path owner.
+    /// The returned connection is an I/O handle, never an independent path
+    /// owner.
     pub(crate) fn connection(&self) -> Option<Connection> {
         self.path.connection()
     }
@@ -1213,7 +1136,7 @@ impl PeerPathManager {
 
     /// Return a weak projection tied to this manager's path identity. This is
     /// the integration seam for RuntimeState: it can index a PathHandle or
-    /// PathProjection without retaining a second `Arc<PhysicalRoute>`.
+    /// PathProjection without retaining a second carrier lifetime owner.
     pub(crate) fn projection(&self, handle: &PathHandle) -> Option<PathProjection> {
         self.path_for_handle(handle).map(|path| PathProjection {
             handle: path.handle().clone(),

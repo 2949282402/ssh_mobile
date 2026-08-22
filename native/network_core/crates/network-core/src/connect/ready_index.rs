@@ -13,7 +13,7 @@
 //! 关闭旧连接并创建新的 ConnectivityAttempt（§34）。
 //!
 //! 该索引只保存映射（peer → epoch/capability/session），不持有 Connection 本体；
-//! 真正的 Connection 归 Runtime 的 PeerPathManager/PhysicalRoute 所有，健康判断也只能由
+//! 真正的 Connection 归 Runtime 的 PeerPathManager 所有，健康判断也只能由
 //! 路径 owner 完成。索引是纯映射，可在单元测试中独立验证复用规则。
 
 use std::collections::HashMap;
