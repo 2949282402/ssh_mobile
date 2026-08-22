@@ -113,6 +113,46 @@ async fn path_lease_exposes_owner_io_without_a_route_owner_clone() {
         .is_err());
 }
 
+#[tokio::test]
+async fn relay_path_routes_all_business_frame_kinds_through_its_data_client() {
+    let registry = Arc::new(PathRegistry::new());
+    let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+    let data = Arc::new(
+        RelayDataClient::new(
+            "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            vec![0u8; 32],
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("valid Relay data client"),
+    );
+    let handle = manager
+        .publish_ready_with_route(ActiveRoute::relay(Some(Arc::clone(&data))))
+        .expect("Relay path");
+    let lease = manager
+        .projection(&handle)
+        .expect("path projection")
+        .acquire()
+        .expect("path lease");
+
+    for kind in [
+        GenericFrameKind::DataMessage,
+        GenericFrameKind::DeliveryAck,
+        GenericFrameKind::StreamOpen,
+    ] {
+        assert!(lease
+            .send_channel_frame("token", kind, b"payload")
+            .await
+            .is_err());
+    }
+    assert!(lease
+        .relay_data()
+        .is_some_and(|current| Arc::ptr_eq(&current, &data)));
+    drop(lease);
+    manager.hard_close();
+}
+
 #[test]
 fn direct_and_relay_can_coexist() {
     let registry = Arc::new(PathRegistry::new());
