@@ -100,6 +100,7 @@ final class CompatibilityAuditor {
           .toList();
       if (module.state == CompatibilityModuleState.closed) {
         for (final reference in moduleReferences) {
+          if (_isApprovedAppShellAdapterTest(module, reference)) continue;
           violations.add(
             CompatibilityViolation(
               rule: 'legacy-import-closed',
@@ -196,6 +197,31 @@ final class CompatibilityAuditor {
 
   String _join(String parent, String child) =>
       '$parent${Platform.pathSeparator}$child';
+
+  bool _isApprovedAppShellAdapterTest(
+    CompatibilityModule module,
+    CompatibilityReference reference,
+  ) {
+    // App Shell adapters are compatibility owners, so their behavior tests
+    // may import the adapter directly. Keep this exception narrow: only test
+    // sources under apps/*/test may use a target explicitly listed in the
+    // module inventory. Production callers and unlisted legacy paths remain
+    // rejected by the closed-module gate.
+    if (!reference.path.startsWith('apps/') ||
+        !reference.path.contains('/test/')) {
+      return false;
+    }
+    return module.appShellAdapters
+        .map(_appShellAdapterImportUri)
+        .whereType<String>()
+        .contains(reference.importUri);
+  }
+
+  String? _appShellAdapterImportUri(String path) {
+    const appLibPrefix = 'apps/ssh_mobile_full/lib/';
+    if (!path.startsWith(appLibPrefix)) return null;
+    return 'package:ssh_mobile/${path.substring(appLibPrefix.length)}';
+  }
 }
 
 const _scanRoots = <String>[
