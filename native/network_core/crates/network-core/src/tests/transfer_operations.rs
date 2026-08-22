@@ -896,3 +896,87 @@ fn transient_transport_errors_walk_sources_and_keep_validation_errors_terminal()
         std::io::ErrorKind::InvalidData,
     )));
 }
+
+#[test]
+fn transfer_identity_and_failure_codes_are_typed_at_the_boundary() {
+    assert!(valid_transfer_identity("transfer-1", "peer-a"));
+    assert!(valid_transfer_identity("transfer_1", "peer-a"));
+    for transfer_id in ["", "bad id", "bad/slash", "bad.dot"] {
+        assert!(!valid_transfer_identity(transfer_id, "peer-a"));
+    }
+    assert!(!valid_transfer_identity("transfer", ""));
+    assert!(!valid_transfer_identity("transfer", &"x".repeat(129)));
+
+    for (reason, code) in [
+        (
+            TransferFailureReason::UserRejected,
+            NetworkErrorCode::Cancelled,
+        ),
+        (
+            TransferFailureReason::Permission,
+            NetworkErrorCode::InvalidArgument,
+        ),
+        (
+            TransferFailureReason::Protocol,
+            NetworkErrorCode::InvalidArgument,
+        ),
+        (
+            TransferFailureReason::HashMismatch,
+            NetworkErrorCode::IoError,
+        ),
+        (
+            TransferFailureReason::SourceChanged,
+            NetworkErrorCode::IoError,
+        ),
+        (TransferFailureReason::Io, NetworkErrorCode::IoError),
+        (
+            TransferFailureReason::RetryBudgetExhausted,
+            NetworkErrorCode::Timeout,
+        ),
+        (
+            TransferFailureReason::SessionReplaced,
+            NetworkErrorCode::PathLost,
+        ),
+    ] {
+        assert_eq!(transfer_failure_code(reason), code);
+    }
+}
+
+#[tokio::test]
+async fn dispatch_transfer_command_cancels_an_active_transfer() {
+    let state = state();
+    assert!(
+        state
+            .transfer
+            .manager
+            .register_outgoing(
+                manifest("cancel-active"),
+                PathBuf::from("source.bin"),
+                "peer-a".into(),
+            )
+            .await
+    );
+    dispatch_transfer_command(
+        Arc::clone(&state),
+        NetworkCommand {
+            command_id: "cancel-active-command".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_protocol::network_command::Payload::CancelTransfer(
+                network_protocol::CancelTransferCommand {
+                    transfer_id: "cancel-active".into(),
+                },
+            )),
+        },
+    )
+    .await
+    .expect("active transfer should be cancelled");
+    assert!(
+        state
+            .transfer
+            .manager
+            .snapshot("cancel-active")
+            .await
+            .is_none(),
+        "explicit cancellation removes the transfer after cancelling it"
+    );
+}
