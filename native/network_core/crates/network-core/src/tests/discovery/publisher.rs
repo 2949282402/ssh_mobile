@@ -133,6 +133,18 @@ fn manager_at_revision(revision: u32) -> LocalDiscoveryManager {
     manager
 }
 
+fn unconnected_control_client() -> Arc<RelayControlClient> {
+    Arc::new(
+        RelayControlClient::new(
+            "ws://127.0.0.1:9".into(),
+            "device-a".into(),
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("valid unconnected control client"),
+    )
+}
+
 #[tokio::test(start_paused = true)]
 async fn publish_success_marks_published_and_uses_the_current_snapshot() {
     let manager = manager_at_revision(3);
@@ -458,4 +470,55 @@ async fn default_control_plane_operations_fail_closed() {
         Err(RelayError::NotConnected)
     ));
     assert_eq!(mock.ready_presence_ttl(), None);
+}
+
+#[tokio::test]
+async fn relay_control_plane_adapter_forwards_operations_and_preserves_errors() {
+    let control = unconnected_control_client();
+    let plane: &dyn DiscoveryControlPlane = control.as_ref();
+    let snapshot = DiscoverySnapshot {
+        runtime_epoch: Some(RuntimeEpoch { high: 1, low: 1 }),
+        revision: 1,
+        ..Default::default()
+    };
+    assert!(plane.publish_discovery(1, snapshot).await.is_err());
+    assert!(plane.resolve_peer("peer-a").await.is_err());
+    assert!(!plane.is_usable().await);
+    assert_eq!(plane.ready_presence_ttl(), None);
+    assert!(plane
+        .start_connectivity_attempt(
+            "attempt".into(),
+            "peer-a".into(),
+            "device-a".into(),
+            RuntimeEpoch { high: 1, low: 1 },
+            1,
+            None,
+        )
+        .await
+        .is_err());
+    assert!(plane
+        .begin_connectivity_attempt(
+            "attempt".into(),
+            "peer-a".into(),
+            "device-a".into(),
+            RuntimeEpoch { high: 1, low: 1 },
+            1,
+            None,
+        )
+        .await
+        .is_err());
+    assert!(plane
+        .reserve_relay("attempt".into(), "peer-a".into(), 60)
+        .await
+        .is_err());
+    assert!(plane
+        .signal_webrtc(
+            "realtime",
+            "peer-a",
+            network_relay::v2::RealtimeSignalKind::Offer,
+            1,
+            b"payload",
+        )
+        .await
+        .is_err());
 }
