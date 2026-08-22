@@ -65,6 +65,119 @@ async fn realtime_snapshot_carries_authoritative_state_and_revision_after_connec
 }
 
 #[tokio::test]
+async fn realtime_io_event_matrix_maps_lifecycle_and_failure_boundaries() {
+    let (event_tx, mut event_rx) = unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(std::sync::atomic::AtomicU16::new(0)));
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    {
+        let mut manager = state.realtime.lock().await;
+        manager.sessions.insert(
+            realtime_id.into(),
+            RealtimeSession {
+                peer_id: "peer-a".into(),
+                connection_session_id: None,
+                peer: None,
+                driver: None,
+                revision: 4,
+                remote_revision: 2,
+                ice_revision: 3,
+                seen_candidates: HashSet::new(),
+            },
+        );
+    }
+
+    assert!(
+        !handle_io_event(
+            &state,
+            realtime_id,
+            "peer-a",
+            RealtimeIoEvent::LocalIceCandidate(
+                network_webrtc::IceCandidate::new(
+                    "candidate:1 1 UDP 1 127.0.0.1 9 typ host".into(),
+                    None,
+                    None,
+                    None,
+                )
+                .expect("valid local candidate"),
+            ),
+        )
+        .await
+    );
+    assert!(
+        !handle_io_event(
+            &state,
+            realtime_id,
+            "wrong-peer",
+            RealtimeIoEvent::LocalIceCandidate(network_webrtc::IceCandidate::end_of_candidates()),
+        )
+        .await
+    );
+    assert!(
+        !handle_io_event(
+            &state,
+            realtime_id,
+            "peer-a",
+            RealtimeIoEvent::PeerConnected,
+        )
+        .await
+    );
+    assert!(
+        !handle_io_event(
+            &state,
+            realtime_id,
+            "peer-a",
+            RealtimeIoEvent::PeerDisconnected,
+        )
+        .await
+    );
+    assert!(
+        !handle_io_event(
+            &state,
+            realtime_id,
+            "peer-a",
+            RealtimeIoEvent::DataChannelMessage {
+                channel_id: 7,
+                is_string: false,
+                payload: b"ignored-by-signaling-owner".to_vec(),
+            },
+        )
+        .await
+    );
+    for event in [
+        RealtimeIoEvent::IceConnected,
+        RealtimeIoEvent::DataChannelOpened(7),
+        RealtimeIoEvent::DataChannelClosed(7),
+    ] {
+        assert!(!handle_io_event(&state, realtime_id, "peer-a", event).await);
+    }
+
+    let mut state_events = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        state_events.push(event);
+    }
+    assert!(state_events.iter().any(|event| matches!(
+        event.payload,
+        Some(network_event::Payload::RealtimeState(ref state))
+            if state.state == RealtimeSessionState::Connected as i32
+    )));
+    assert!(state_events.iter().any(|event| matches!(
+        event.payload,
+        Some(network_event::Payload::RealtimeState(ref state))
+            if state.state == RealtimeSessionState::Negotiating as i32
+    )));
+
+    assert!(handle_io_event(&state, realtime_id, "peer-a", RealtimeIoEvent::PeerFailed,).await);
+    assert!(handle_io_event(&state, realtime_id, "peer-a", RealtimeIoEvent::IceFailed,).await);
+    remove_realtime_session(&state, realtime_id, "peer-a").await;
+    assert!(!state
+        .realtime
+        .lock()
+        .await
+        .sessions
+        .contains_key(realtime_id));
+}
+
+#[tokio::test]
 async fn task_supervisor_drives_two_runtime_realtime_data_channels() {
     let caller = RealtimeIoDriver::bind(
         WebRtcPeer::new(WebRtcConfig::default()).expect("caller peer"),
