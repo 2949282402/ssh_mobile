@@ -6,6 +6,8 @@ use std::sync::atomic::AtomicU16;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::runtime::PeerConfig;
+
 async fn quic_pair() -> (quinn::Endpoint, quinn::Connection, quinn::Connection) {
     let server = network_quic::QuicEndpointManager::new(
         "127.0.0.1:0".parse().unwrap(),
@@ -551,6 +553,157 @@ async fn outgoing_transfer_pauses_on_lost_path_and_fails_on_source_change() {
 }
 
 #[tokio::test]
+async fn transfer_dispatcher_maps_path_failure_and_stopping_runtime() {
+    let state = state();
+    let identity = TransferIdentity::new("peer-a", "missing-path-transfer").unwrap();
+    let error = match TransferDispatcher::new(Arc::clone(&state))
+        .select_attempt(&identity)
+        .await
+    {
+        Ok(_) => panic!("missing business path unexpectedly selected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
+    assert_eq!(error.peer_id, "peer-a");
+
+    let (endpoint, connection, _server) = quic_pair().await;
+    let lease = ready_stream_lease(&state).await;
+    state.task_supervisor.shutdown().await;
+    let transfer = ResumableTransfer {
+        transfer_id: "stopping-transfer".into(),
+        peer_id: "peer-a".into(),
+        session_id: "stopping-session".into(),
+        source_path: PathBuf::from("source.bin"),
+        manifest: manifest("stopping-transfer"),
+        offset: 0,
+    };
+    let error = TransferDispatcher::new(state)
+        .dispatch_outgoing(TransferRoute::QuicDirect(connection), lease, transfer)
+        .await
+        .expect_err("stopping runtime must reject a new file worker");
+    assert_eq!(error.code, NetworkErrorCode::Cancelled as i32);
+    endpoint.close(quinn::VarInt::from_u32(0), b"dispatcher boundary complete");
+}
+
+#[tokio::test]
+async fn transfer_dispatcher_starts_relay_worker_for_registered_peer() {
+    let state = state();
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let lease = ready_stream_lease(&state).await;
+    let transfer = ResumableTransfer {
+        transfer_id: "relay-dispatch-worker".into(),
+        peer_id: "peer-a".into(),
+        session_id: "relay-session".into(),
+        source_path: PathBuf::from("source.bin"),
+        manifest: manifest("relay-dispatch-worker"),
+        offset: 0,
+    };
+    TransferDispatcher::new(Arc::clone(&state))
+        .dispatch_outgoing(TransferRoute::Relay, lease, transfer)
+        .await
+        .expect("registered peer should admit the Relay worker");
+    state.task_supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn outgoing_quic_transfer_completes_and_removes_business_state() {
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
+    let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+    let root = std::env::temp_dir().join(format!(
+        "ssh-mobile-outgoing-transfer-success-{}",
+        std::process::id()
+    ));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    let source = root.join("payload.bin");
+    let payload = b"quic-transfer-payload";
+    let expected_payload = payload.to_vec();
+    tokio::fs::write(&source, payload).await.unwrap();
+    let transfer_id = "outgoing-success";
+    let transfer_manifest = network_transfer::build_file_manifest(transfer_id.into(), &source)
+        .await
+        .unwrap();
+    let expected_manifest = transfer_manifest.clone();
+    assert!(
+        state
+            .transfer
+            .manager
+            .register_outgoing(transfer_manifest.clone(), source.clone(), "peer-a".into())
+            .await
+    );
+
+    let (endpoint, client, server) = quic_pair().await;
+    state
+        .attach_connection_for_session(
+            "peer-a",
+            None,
+            client.clone(),
+            network_protocol::RouteType::QuicDirect,
+        )
+        .await
+        .expect("QUIC path should be admitted for the transfer");
+    let lease = state
+        .acquire_path_lease("peer-a", CAPABILITY_RELIABLE_STREAM)
+        .await
+        .expect("QUIC transfer lease");
+    assert!(lease.is_active(), "QUIC transfer lease must start active");
+    let server_task = tokio::spawn(async move {
+        let (mut send, mut receive) = server.accept_bi().await.unwrap();
+        let received_manifest = network_quic::read_file_offer(&mut receive).await.unwrap();
+        assert_eq!(received_manifest, expected_manifest);
+        network_quic::write_file_decision(&mut send, true, 0)
+            .await
+            .unwrap();
+        let received = receive.read_to_end(1024 * 1024).await.unwrap();
+        assert_eq!(received, expected_payload);
+        network_quic::write_file_completion(&mut send)
+            .await
+            .unwrap();
+        send.finish().unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    });
+    send_file(
+        client,
+        ResumableTransfer {
+            transfer_id: transfer_id.into(),
+            peer_id: "peer-a".into(),
+            session_id: "outgoing-session".into(),
+            source_path: source.clone(),
+            manifest: transfer_manifest,
+            offset: 0,
+        },
+        Arc::clone(&state),
+        lease,
+    )
+    .await;
+    server_task.await.unwrap();
+    let mut events = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        events.push(event);
+    }
+    assert!(events.iter().any(|event| matches!(
+        event.payload,
+        Some(network_event::Payload::TransferCompleted(ref completed))
+            if completed.transfer_id == transfer_id
+    )));
+    let snapshot = state.transfer.manager.snapshot(transfer_id).await;
+    assert!(
+        snapshot.is_none(),
+        "outgoing transfer remained: {snapshot:?}; events={events:?}"
+    );
+    state.close_transport_path("peer-a").await;
+    endpoint.close(quinn::VarInt::from_u32(0), b"outgoing transfer complete");
+    tokio::fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
 async fn incoming_file_offer_rejection_cleans_pending_transfer_state() {
     let state = state();
     let lease = ready_stream_lease(&state).await;
@@ -659,6 +812,72 @@ async fn incoming_file_offer_accepts_stream_and_emits_completion() {
     );
     tokio::fs::remove_dir_all(root).await.unwrap();
     endpoint.close(quinn::VarInt::from_u32(0), b"accepted offer test complete");
+}
+
+#[tokio::test]
+async fn incoming_file_offer_reuses_a_verified_completed_file() {
+    let state = state();
+    let root = std::env::temp_dir().join(format!(
+        "ssh-mobile-incoming-transfer-completed-{}",
+        std::process::id()
+    ));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    *state.lifecycle.receive_directory.write().await = Some(root.clone());
+    let payload = b"data";
+    let mut completed_manifest = manifest("completed-incoming");
+    completed_manifest.content_hash = hex::encode(sha2::Sha256::digest(payload));
+    tokio::fs::write(root.join(&completed_manifest.file_name), payload)
+        .await
+        .unwrap();
+
+    let lease = ready_stream_lease(&state).await;
+    let (endpoint, client, server) = quic_pair().await;
+    let (mut client_send, mut client_receive) = client.open_bi().await.unwrap();
+    client_send.finish().unwrap();
+    let (server_send, server_receive) = server.accept_bi().await.unwrap();
+    let transfer_id = completed_manifest.transfer_id.clone();
+    let task = tokio::spawn(handle_incoming_file_after_offer(
+        "peer-a".into(),
+        server_send,
+        server_receive,
+        completed_manifest.clone(),
+        Arc::clone(&state),
+        lease,
+    ));
+    wait_for_incoming_decision(&state, &transfer_id).await;
+    respond_to_incoming(
+        &state,
+        RespondIncomingTransferCommand {
+            transfer_id: transfer_id.clone(),
+            accept: true,
+        },
+    )
+    .await
+    .expect("accept completed incoming transfer");
+    assert_eq!(
+        network_quic::read_file_decision(&mut client_receive)
+            .await
+            .expect("completed decision"),
+        Some(payload.len() as u64)
+    );
+    network_quic::read_file_completion(&mut client_receive)
+        .await
+        .expect("completed acknowledgement");
+    task.await.unwrap();
+    assert!(state
+        .transfer
+        .manager
+        .snapshot(&transfer_id)
+        .await
+        .is_none());
+    assert_eq!(
+        tokio::fs::read(root.join(&completed_manifest.file_name))
+            .await
+            .unwrap(),
+        payload
+    );
+    endpoint.close(quinn::VarInt::from_u32(0), b"completed offer test complete");
+    tokio::fs::remove_dir_all(root).await.unwrap();
 }
 
 #[test]
