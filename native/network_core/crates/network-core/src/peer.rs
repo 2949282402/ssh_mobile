@@ -110,6 +110,10 @@ pub(crate) async fn install_admitted_crypto(
     if !crypto.has_application_e2ee() {
         return Ok(());
     }
+    if state.connection_sessions.current_session_id(peer_id).await != Some(admission.session_id) {
+        state.fail_session(peer_id, admission.session_id).await;
+        return Err(std::io::Error::other("application E2EE admission is stale").into());
+    }
     if state
         .install_crypto_material(peer_id, &admission.session_id.wire_key(), crypto)
         .is_err()

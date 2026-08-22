@@ -604,6 +604,311 @@ async fn generic_candidate_races_tcp_and_websocket_concurrently() {
     state.task_supervisor.shutdown().await;
 }
 
+#[tokio::test]
+async fn generic_candidate_authentication_failure_is_typed_and_cleans_session() {
+    let state = new_test_state().await;
+    let peer_id = "generic-auth-peer";
+    let local_peer_id = "generic-auth-local";
+    let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+        local_peer_id.to_string(),
+        [101u8; 32],
+        [111u8; 32],
+    ));
+    let expected_remote =
+        DeviceIdentity::from_private_keys(peer_id.to_string(), [102u8; 32], [112u8; 32]);
+    let wrong_remote = Arc::new(DeviceIdentity::from_private_keys(
+        "not-the-configured-peer".into(),
+        [103u8; 32],
+        [113u8; 32],
+    ));
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind authentication failure responder");
+    let endpoint = listener
+        .local_addr()
+        .expect("authentication failure responder address");
+    let local_public_key = local_identity.public_identity_key().to_bytes();
+    let responder_task = tokio::spawn(async move {
+        let (stream, _) = listener
+            .accept()
+            .await
+            .expect("accept authentication failure connection");
+        let mut connection =
+            GenericConnection::from_transport(Transport::Tcp(TcpTransport::from_stream(stream)));
+        let trusted_peer_keys = tokio::sync::RwLock::new(HashMap::from([(
+            local_peer_id.to_string(),
+            local_public_key,
+        )]));
+        let _ =
+            authenticate_responder(
+                &mut connection,
+                wrong_remote,
+                &trusted_peer_keys,
+                |_authenticated_peer_id, _remote_session_binding| async move {
+                    Ok(("44".repeat(16), ()))
+                },
+            )
+            .await;
+    });
+    let session_id = started_session(&state, peer_id).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        connect_generic_candidate(
+            endpoint,
+            local_identity,
+            expected_remote.public_identity_key().to_bytes(),
+            peer_id.to_string(),
+            session_id.wire_key(),
+            Arc::clone(&state),
+            session_id,
+            CAPABILITY_RELIABLE_MESSAGE,
+            false,
+            Duration::from_secs(1),
+        ),
+    )
+    .await
+    .expect("generic authentication failure should finish within the window");
+    let error = match result {
+        Ok(_) => panic!("a mismatched generic identity unexpectedly authenticated"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::AuthenticationFailed as i32);
+    responder_task
+        .await
+        .expect("authentication failure responder should exit");
+    state.cancel_session_tasks(peer_id, session_id).await;
+}
+
+#[tokio::test]
+async fn generic_candidate_timeout_closes_unauthenticated_socket() {
+    let state = new_test_state().await;
+    let peer_id = "generic-timeout-peer";
+    let local_peer_id = "generic-timeout-local";
+    let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+        local_peer_id.to_string(),
+        [121u8; 32],
+        [131u8; 32],
+    ));
+    let expected_remote =
+        DeviceIdentity::from_private_keys(peer_id.to_string(), [122u8; 32], [132u8; 32]);
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind generic timeout responder");
+    let endpoint = listener
+        .local_addr()
+        .expect("generic timeout responder address");
+    let (release_tx, release_rx) = oneshot::channel();
+    let responder_task = tokio::spawn(async move {
+        let (_stream, _) = listener
+            .accept()
+            .await
+            .expect("accept generic timeout connection");
+        let _ = release_rx.await;
+    });
+    let session_id = started_session(&state, peer_id).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        connect_generic_candidate(
+            endpoint,
+            local_identity,
+            expected_remote.public_identity_key().to_bytes(),
+            peer_id.to_string(),
+            session_id.wire_key(),
+            Arc::clone(&state),
+            session_id,
+            CAPABILITY_RELIABLE_MESSAGE,
+            false,
+            Duration::from_millis(20),
+        ),
+    )
+    .await
+    .expect("generic timeout should finish within the test bound");
+    let error = match result {
+        Ok(_) => panic!("an unauthenticated generic socket unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::Timeout as i32);
+    let _ = release_tx.send(());
+    responder_task
+        .await
+        .expect("generic timeout responder should exit");
+    state.cancel_session_tasks(peer_id, session_id).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn websocket_candidate_without_stream_capability_does_not_admit_route() {
+    let state = new_test_state().await;
+    let peer_id = "generic-capability-peer";
+    let local_peer_id = "generic-capability-local";
+    let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+        local_peer_id.to_string(),
+        [81u8; 32],
+        [91u8; 32],
+    ));
+    let remote_identity =
+        DeviceIdentity::from_private_keys(peer_id.to_string(), [82u8; 32], [92u8; 32]);
+    let (endpoint, release_tx, responder_task) =
+        spawn_mixed_generic_responder(peer_id, local_peer_id).await;
+    let session_id = started_session(&state, peer_id).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        connect_generic_candidate(
+            endpoint,
+            local_identity,
+            remote_identity.public_identity_key().to_bytes(),
+            peer_id.to_string(),
+            session_id.wire_key(),
+            Arc::clone(&state),
+            session_id,
+            CAPABILITY_RELIABLE_STREAM,
+            true,
+            Duration::from_millis(100),
+        ),
+    )
+    .await
+    .expect("capability rejection should finish within the candidate window");
+    let error = match result {
+        Ok(_) => panic!("WebSocket must not be admitted as a stream-capable route"),
+        Err(error) => error,
+    };
+    // The companion TCP attempt is deliberately held open by the mixed
+    // responder, so the bounded race reports Timeout after the authenticated
+    // WebSocket route is rejected for lacking ReliableStream.
+    assert_eq!(error.code, NetworkErrorCode::Timeout as i32);
+    let _ = release_tx.send(());
+    responder_task
+        .await
+        .expect("capability rejection responder should exit");
+    state.cancel_session_tasks(peer_id, session_id).await;
+}
+
+fn unconnected_relay_data_client() -> Arc<RelayDataClient> {
+    Arc::new(
+        RelayDataClient::new(
+            "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            vec![0u8; 32],
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("valid unconnected Relay data client"),
+    )
+}
+
+#[tokio::test]
+async fn relay_crypto_rejects_disabled_policy_and_cleans_session() {
+    let state = new_test_state().await;
+    let peer_id = "relay-disabled-peer";
+    state.peers.write().await.insert(
+        peer_id.into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [141u8; 32],
+            e2e_public_key: [151u8; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Disabled,
+        },
+    );
+    let session_id = started_session(&state, peer_id).await;
+    let identity = Arc::new(DeviceIdentity::from_private_keys(
+        "device-a".into(),
+        [142u8; 32],
+        [152u8; 32],
+    ));
+    let result = establish_relay_crypto(
+        &state,
+        unconnected_relay_data_client(),
+        peer_id,
+        session_id,
+        identity,
+        [153u8; 32],
+    )
+    .await;
+    let error = match result {
+        Ok(_) => panic!("Relay E2EE unexpectedly started for a disabled policy"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::AuthenticationFailed as i32);
+    assert!(state.relay.crypto_waiters.read().await.is_empty());
+    assert!(state
+        .connection_sessions
+        .current_session_id(peer_id)
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn relay_crypto_send_failure_removes_waiter_without_leaking_state() {
+    let state = new_test_state().await;
+    let peer_id = "relay-send-failure-peer";
+    state.peers.write().await.insert(
+        peer_id.into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [161u8; 32],
+            e2e_public_key: [171u8; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let session_id = started_session(&state, peer_id).await;
+    let identity = Arc::new(DeviceIdentity::from_private_keys(
+        "device-a".into(),
+        [162u8; 32],
+        [172u8; 32],
+    ));
+    let result = establish_relay_crypto(
+        &state,
+        unconnected_relay_data_client(),
+        peer_id,
+        session_id,
+        identity,
+        [173u8; 32],
+    )
+    .await;
+    let error = match result {
+        Ok(_) => panic!("an unconnected Relay data client unexpectedly sent a hello"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::RelayError as i32);
+    assert!(state.relay.crypto_waiters.read().await.is_empty());
+    assert_eq!(
+        state.connection_sessions.current_session_id(peer_id).await,
+        Some(session_id)
+    );
+    state.cancel_session_tasks(peer_id, session_id).await;
+}
+
+#[tokio::test]
+async fn inbound_admission_requires_configured_peer_and_marks_supervisor_online() {
+    let state = new_test_state().await;
+    let missing =
+        admit_authenticated_inbound(&state, "unknown-peer", DEFAULT_CONNECTION_CAPABILITY)
+            .await
+            .expect_err("inbound authentication must require peer configuration");
+    assert!(missing.to_string().contains("not configured"));
+
+    let peer_id = "inbound-configured-peer";
+    state.peers.write().await.insert(
+        peer_id.into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [181u8; 32],
+            e2e_public_key: [191u8; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    admit_authenticated_inbound(&state, peer_id, CAPABILITY_RELIABLE_MESSAGE)
+        .await
+        .expect("configured inbound peer should be admitted");
+    assert_eq!(
+        state
+            .peer_supervisors
+            .get_or_create(peer_id)
+            .expect("peer supervisor")
+            .state(),
+        crate::connect::PeerState::Online
+    );
+}
+
 #[test]
 fn candidate_snapshot_requeues_changed_endpoint_and_drops_deleted_pending() {
     let mut old = Candidate::new(
@@ -1441,6 +1746,38 @@ async fn admitted_crypto_install_skips_identity_only_and_installs_fresh_e2ee() {
 }
 
 #[tokio::test]
+async fn admitted_crypto_install_failure_retires_the_stale_session() {
+    let state = new_test_state().await;
+    let admission = state
+        .admit_authenticated_session("peer-install-failure", None, "remote")
+        .await
+        .expect("admit session before invalidating it");
+    assert!(
+        state
+            .connection_sessions
+            .retire_session("peer-install-failure", admission.session_id)
+            .await
+    );
+    let material = SessionCryptoMaterial {
+        root_key: [57; 32],
+        local_session_binding: admission.session_id.wire_key(),
+        remote_session_binding: "remote".into(),
+        initiator: true,
+        e2ee_policy: crate::crypto_handshake::path_handshake::E2eePolicy::Required,
+        path_security: crate::crypto_handshake::path_handshake::PathSecurity::E2ee,
+    };
+    let error = install_admitted_crypto(&state, "peer-install-failure", &admission, &material)
+        .await
+        .expect_err("stale admission must not install application crypto");
+    assert!(error.to_string().contains("admission is stale"));
+    assert!(state
+        .connection_sessions
+        .current_session_id("peer-install-failure")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
 async fn direct_and_generic_candidate_races_fail_closed_on_empty_snapshots() {
     let endpoint = QuicEndpointManager::new(
         "127.0.0.1:0".parse().expect("client bind address"),
@@ -1498,5 +1835,83 @@ async fn direct_and_generic_candidate_races_fail_closed_on_empty_snapshots() {
         Err(error) => error,
     };
     assert_eq!(generic_error.code, NetworkErrorCode::NoRoute as i32);
+    endpoint.close(VarInt::from_u32(0), b"test complete");
+}
+
+#[tokio::test]
+async fn direct_route_zero_window_skips_probe_before_expiry() {
+    // A cancelled/expired Direct budget must not start either QUIC or generic
+    // probing; the empty candidate result remains a typed NoRoute failure.
+    let endpoint = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("client bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("create client endpoint")
+    .endpoint;
+    let state = new_test_state().await;
+    let identity = Arc::new(DeviceIdentity::from_private_keys(
+        "device-a".into(),
+        [45; 32],
+        [46; 32],
+    ));
+    let (candidate_update_tx, candidate_updates) = watch::channel(None);
+    drop(candidate_update_tx);
+    let result = connect_direct_or_generic(DirectRouteAttempt {
+        state,
+        endpoint: endpoint.clone(),
+        candidates: Vec::new(),
+        identity,
+        expected_peer_public_key: [47; 32],
+        peer_id: "peer-a".into(),
+        session_binding: "session".into(),
+        session_id: SessionId::new(),
+        attempt_id: "zero-window".into(),
+        connect_window: Duration::ZERO,
+        required_capabilities: DEFAULT_CONNECTION_CAPABILITY,
+        allow_websocket: true,
+        candidate_updates,
+    })
+    .await;
+    let error = match result {
+        Ok(_) => panic!("an expired Direct budget unexpectedly produced a route"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
+    endpoint.close(VarInt::from_u32(0), b"test complete");
+}
+
+#[tokio::test]
+async fn responder_direct_rejects_empty_advertised_candidates() {
+    // An inbound ConnectivityOffer with no usable candidates must fail closed
+    // before a responder route or Session admission is created.
+    let endpoint = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("responder bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("create responder endpoint")
+    .endpoint;
+    let state = new_test_state().await;
+    let identity = Arc::new(DeviceIdentity::from_private_keys(
+        "device-responder".into(),
+        [48; 32],
+        [49; 32],
+    ));
+    let result = connect_responder_direct(
+        endpoint.clone(),
+        Vec::new(),
+        identity,
+        [50; 32],
+        "peer-a".into(),
+        "empty-offer".into(),
+        "session".into(),
+        state,
+        Duration::ZERO,
+    )
+    .await;
+    let error = match result {
+        Ok(_) => panic!("empty responder offer unexpectedly produced a route"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
     endpoint.close(VarInt::from_u32(0), b"test complete");
 }
