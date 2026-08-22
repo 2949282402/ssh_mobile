@@ -1,8 +1,41 @@
 use super::*;
 
 use network_protocol::{network_event, NetworkEvent, NETWORK_PROTOCOL_VERSION};
+use sha2::Digest;
 use std::sync::atomic::AtomicU16;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
+
+async fn quic_pair() -> (quinn::Endpoint, quinn::Connection, quinn::Connection) {
+    let server = network_quic::QuicEndpointManager::new(
+        "127.0.0.1:0".parse().unwrap(),
+        Arc::new(network_nat::PathManager::new()),
+    )
+    .unwrap();
+    let client = network_quic::QuicEndpointManager::new(
+        "127.0.0.1:0".parse().unwrap(),
+        Arc::new(network_nat::PathManager::new()),
+    )
+    .unwrap();
+    let server_addr = server.endpoint.local_addr().unwrap();
+    let server_endpoint = server.endpoint;
+    let server_connection = tokio::spawn(async move {
+        server_endpoint
+            .accept()
+            .await
+            .expect("incoming file test connection")
+            .await
+            .expect("file test server connection")
+    });
+    let client_endpoint = client.endpoint;
+    let client_connection = client_endpoint
+        .connect(server_addr, "ssh-mobile")
+        .unwrap()
+        .await
+        .unwrap();
+    let server_connection = server_connection.await.unwrap();
+    (client_endpoint, client_connection, server_connection)
+}
 
 fn state() -> Arc<RuntimeState> {
     let (event_tx, _event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
@@ -18,6 +51,44 @@ fn manifest(transfer_id: &str) -> network_transfer::FileManifest {
         content_hash: "a".repeat(64),
         protocol_version: network_transfer::NETWORK_TRANSFER_PROTOCOL_VERSION,
     }
+}
+
+async fn ready_stream_lease(state: &Arc<RuntimeState>) -> crate::connect::PathLease {
+    let registry = Arc::new(crate::connect::PathRegistry::new());
+    let mut manager = crate::connect::PeerPathManager::new(
+        crate::connect::PeerId::new("peer-a").expect("peer"),
+        Arc::clone(&registry),
+    );
+    let handle = manager
+        .publish_ready(crate::connection::ConnectionProfile::new(
+            crate::connection::Route::direct(crate::connection::RouteTransport::Tcp),
+        ))
+        .expect("ready incoming transfer path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert("peer-a".into(), Arc::new(std::sync::Mutex::new(manager)));
+    registry.acquire(&handle).expect("incoming transfer lease")
+}
+
+async fn wait_for_incoming_decision(state: &RuntimeState, transfer_id: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if state
+                .transfer
+                .incoming_decisions
+                .read()
+                .await
+                .contains_key(transfer_id)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("incoming transfer approval waiter");
 }
 
 #[tokio::test]
@@ -215,6 +286,248 @@ async fn resume_helpers_ignore_invalid_peer_and_missing_session() {
     resume_transfers_for_peer(Arc::clone(&state), String::new()).await;
     resume_transfers_for_peer(Arc::clone(&state), "peer-a".into()).await;
     resume_relay_transfers(Arc::clone(&state)).await;
+}
+
+#[tokio::test]
+async fn file_offer_parser_rejects_bad_protocol_lengths_and_utf8() {
+    let (endpoint, client, server) = quic_pair().await;
+    let (mut send, _) = client.open_bi().await.unwrap();
+    send.write_u32(NETWORK_TRANSFER_PROTOCOL_VERSION + 1)
+        .await
+        .unwrap();
+    send.finish().unwrap();
+    let (_, mut receive) = server.accept_bi().await.unwrap();
+    assert!(read_file_offer_after_magic(&mut receive).await.is_err());
+
+    let (mut send, _) = client.open_bi().await.unwrap();
+    send.write_u32(NETWORK_TRANSFER_PROTOCOL_VERSION)
+        .await
+        .unwrap();
+    send.write_u16(0).await.unwrap();
+    send.finish().unwrap();
+    let (_, mut receive) = server.accept_bi().await.unwrap();
+    assert!(read_file_offer_after_magic(&mut receive).await.is_err());
+
+    let (mut send, _) = client.open_bi().await.unwrap();
+    send.write_u16(2).await.unwrap();
+    send.write_all(&[0xff, 0xff]).await.unwrap();
+    send.finish().unwrap();
+    let (_, mut receive) = server.accept_bi().await.unwrap();
+    assert!(read_bounded_utf8(&mut receive, 8, "transfer ID")
+        .await
+        .is_err());
+
+    let (mut send, _) = client.open_bi().await.unwrap();
+    send.write_u16(9).await.unwrap();
+    send.write_all(b"too-long!").await.unwrap();
+    send.finish().unwrap();
+    let (_, mut receive) = server.accept_bi().await.unwrap();
+    assert!(read_bounded_utf8(&mut receive, 8, "file name")
+        .await
+        .is_err());
+    endpoint.close(quinn::VarInt::from_u32(0), b"file parser test complete");
+}
+
+#[tokio::test]
+async fn file_offer_parser_accepts_a_valid_manifest_after_magic() {
+    let (endpoint, client, server) = quic_pair().await;
+    let (mut send, _) = client.open_bi().await.unwrap();
+    send.write_u32(NETWORK_TRANSFER_PROTOCOL_VERSION)
+        .await
+        .unwrap();
+    send.write_u16(10).await.unwrap();
+    send.write_all(b"transfer-a").await.unwrap();
+    send.write_u16(8).await.unwrap();
+    send.write_all(b"file.bin").await.unwrap();
+    send.write_u64(4).await.unwrap();
+    send.write_i64(7).await.unwrap();
+    send.write_all(&[0xab; 32]).await.unwrap();
+    send.finish().unwrap();
+    let (_, mut receive) = server.accept_bi().await.unwrap();
+    let manifest = read_file_offer_after_magic(&mut receive)
+        .await
+        .expect("valid file offer");
+    assert_eq!(manifest.transfer_id, "transfer-a");
+    assert_eq!(manifest.file_name, "file.bin");
+    assert_eq!(manifest.file_size, 4);
+    assert_eq!(manifest.modified_at, 7);
+    assert_eq!(manifest.content_hash, "ab".repeat(32));
+    endpoint.close(quinn::VarInt::from_u32(0), b"file parser test complete");
+}
+
+#[tokio::test]
+async fn incoming_file_offer_rejects_inactive_carriers_and_invalid_identity() {
+    let state = state();
+    let lease = ready_stream_lease(&state).await;
+    state.close_transport_path("peer-a").await;
+    assert!(
+        !lease.is_active(),
+        "closed path must invalidate the incoming lease"
+    );
+    let (endpoint, client, server) = quic_pair().await;
+    let (mut client_send, mut client_receive) = client.open_bi().await.unwrap();
+    client_send.write_all(b"x").await.unwrap();
+    let (server_send, server_receive) = server.accept_bi().await.unwrap();
+    let task = tokio::spawn(handle_incoming_file_after_offer(
+        "peer-a".into(),
+        server_send,
+        server_receive,
+        manifest("inactive-transfer"),
+        Arc::clone(&state),
+        lease,
+    ));
+    drop(client_send);
+    assert_eq!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            network_quic::read_file_decision(&mut client_receive),
+        )
+        .await
+        .expect("inactive decision timeout")
+        .expect("inactive decision"),
+        None
+    );
+    task.await.unwrap();
+    endpoint.close(quinn::VarInt::from_u32(0), b"inactive offer test complete");
+
+    let state = self::state();
+    let lease = ready_stream_lease(&state).await;
+    let (endpoint, client, server) = quic_pair().await;
+    let (mut client_send, mut client_receive) = client.open_bi().await.unwrap();
+    client_send.write_all(b"x").await.unwrap();
+    let (server_send, server_receive) = server.accept_bi().await.unwrap();
+    let task = tokio::spawn(handle_incoming_file_after_offer(
+        String::new(),
+        server_send,
+        server_receive,
+        manifest("invalid-peer-transfer"),
+        Arc::clone(&state),
+        lease,
+    ));
+    drop(client_send);
+    assert_eq!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            network_quic::read_file_decision(&mut client_receive),
+        )
+        .await
+        .expect("invalid identity decision timeout")
+        .expect("invalid identity decision"),
+        None
+    );
+    task.await.unwrap();
+    endpoint.close(quinn::VarInt::from_u32(0), b"invalid offer test complete");
+}
+
+#[tokio::test]
+async fn incoming_file_offer_rejection_cleans_pending_transfer_state() {
+    let state = state();
+    let lease = ready_stream_lease(&state).await;
+    let (endpoint, client, server) = quic_pair().await;
+    let (mut client_send, mut client_receive) = client.open_bi().await.unwrap();
+    client_send.write_all(b"x").await.unwrap();
+    let (server_send, server_receive) = server.accept_bi().await.unwrap();
+    let transfer_id = "rejected-transfer";
+    let task = tokio::spawn(handle_incoming_file_after_offer(
+        "peer-a".into(),
+        server_send,
+        server_receive,
+        manifest(transfer_id),
+        Arc::clone(&state),
+        lease,
+    ));
+    wait_for_incoming_decision(&state, transfer_id).await;
+    respond_to_incoming(
+        &state,
+        RespondIncomingTransferCommand {
+            transfer_id: transfer_id.into(),
+            accept: false,
+        },
+    )
+    .await
+    .expect("reject incoming transfer");
+    drop(client_send);
+    assert_eq!(
+        network_quic::read_file_decision(&mut client_receive)
+            .await
+            .expect("rejection decision"),
+        None
+    );
+    task.await.unwrap();
+    assert!(state.transfer.manager.snapshot(transfer_id).await.is_none());
+    endpoint.close(quinn::VarInt::from_u32(0), b"rejection test complete");
+}
+
+#[tokio::test]
+async fn incoming_file_offer_accepts_stream_and_emits_completion() {
+    let state = state();
+    let root = std::env::temp_dir().join(format!(
+        "ssh-mobile-incoming-transfer-{}-{}",
+        std::process::id(),
+        "stream"
+    ));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    *state.lifecycle.receive_directory.write().await = Some(root.clone());
+    let payload = b"data";
+    let mut accepted_manifest = manifest("accepted-transfer");
+    accepted_manifest.content_hash = hex::encode(sha2::Sha256::digest(payload));
+    let lease = ready_stream_lease(&state).await;
+    let (endpoint, client, server) = quic_pair().await;
+    let (mut client_send, mut client_receive) = client.open_bi().await.unwrap();
+    client_send.write_all(payload).await.unwrap();
+    let (server_send, server_receive) = server.accept_bi().await.unwrap();
+    let task = tokio::spawn(handle_incoming_file_after_offer(
+        "peer-a".into(),
+        server_send,
+        server_receive,
+        accepted_manifest.clone(),
+        Arc::clone(&state),
+        lease,
+    ));
+    wait_for_incoming_decision(&state, &accepted_manifest.transfer_id).await;
+    respond_to_incoming(
+        &state,
+        RespondIncomingTransferCommand {
+            transfer_id: accepted_manifest.transfer_id.clone(),
+            accept: true,
+        },
+    )
+    .await
+    .expect("accept incoming transfer");
+    let decision = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        network_quic::read_file_decision(&mut client_receive),
+    )
+    .await
+    .expect("acceptance decision timeout")
+    .expect("acceptance decision");
+    assert_eq!(decision, Some(0));
+    client_send.finish().unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        network_quic::read_file_completion(&mut client_receive),
+    )
+    .await
+    .expect("completion acknowledgement timeout")
+    .expect("completion acknowledgement");
+    tokio::time::timeout(std::time::Duration::from_secs(2), task)
+        .await
+        .expect("incoming handler timeout")
+        .unwrap();
+    assert!(state
+        .transfer
+        .manager
+        .snapshot(&accepted_manifest.transfer_id)
+        .await
+        .is_none());
+    assert_eq!(
+        tokio::fs::read(root.join(&accepted_manifest.file_name))
+            .await
+            .unwrap(),
+        payload
+    );
+    tokio::fs::remove_dir_all(root).await.unwrap();
+    endpoint.close(quinn::VarInt::from_u32(0), b"accepted offer test complete");
 }
 
 #[test]

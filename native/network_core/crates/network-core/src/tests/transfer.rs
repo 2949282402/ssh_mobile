@@ -1,4 +1,5 @@
 use super::*;
+use crate::session::SessionId;
 use network_protocol::{network_event, NetworkEvent, NETWORK_PROTOCOL_VERSION};
 use std::sync::Mutex;
 use tokio::sync::mpsc::unbounded_channel;
@@ -40,6 +41,68 @@ async fn transfer_auto_ensures_path() {
     )
     .await
     .expect("bulk transfer should use the compatible ready path");
+}
+
+async fn state_with_route_profile(route: crate::connection::Route) -> Arc<RuntimeState> {
+    let (event_tx, _event_rx) = unbounded_channel::<NetworkEvent>();
+    let state = Arc::new(RuntimeState::new(
+        event_tx,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    let registry = Arc::new(crate::connect::PathRegistry::new());
+    let mut manager = crate::connect::PeerPathManager::new(
+        crate::connect::PeerId::new("peer-a").expect("peer"),
+        Arc::clone(&registry),
+    );
+    manager
+        .publish_ready(crate::connection::ConnectionProfile::new(route))
+        .expect("ready test route");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert("peer-a".into(), Arc::new(Mutex::new(manager)));
+    let session_id = SessionId::new();
+    state
+        .connection_sessions
+        .register_pending_session("peer-a", session_id)
+        .await
+        .expect("pending transfer session");
+    state
+        .admit_authenticated_session("peer-a", Some(session_id), "remote-transfer")
+        .await
+        .expect("admit transfer session");
+    state
+}
+
+#[tokio::test]
+async fn transfer_dispatcher_rejects_routes_without_a_usable_file_carrier() {
+    let identity = TransferIdentity::new("peer-a", "transfer-route-boundary").unwrap();
+    for (route, expected) in [
+        (
+            crate::connection::Route::direct(crate::connection::RouteTransport::Tcp),
+            "selected path cannot carry file transfer",
+        ),
+        (
+            crate::connection::Route::direct(crate::connection::RouteTransport::Quic),
+            "selected QUIC path has no active Connection",
+        ),
+        (
+            crate::connection::Route::relay(crate::connection::RouteTransport::WebSocket),
+            "selected Relay path has no active data reservation",
+        ),
+    ] {
+        let state = state_with_route_profile(route).await;
+        let error = match TransferDispatcher::new(Arc::clone(&state))
+            .select_attempt(&identity)
+            .await
+        {
+            Ok(_) => panic!("unusable file route unexpectedly selected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
+        assert!(error.message.contains(expected), "{error:?}");
+    }
 }
 
 #[test]
