@@ -28,7 +28,7 @@ use tokio_tungstenite::{accept_hdr_async, tungstenite::Message};
 mod relay_transfer_integration;
 
 /// 构造一个合法的 /v2/relay/{32-hex} 数据面地址（测试用 loopback）。
-fn v2_relay_data_endpoint(address: SocketAddr, reservation_id: &str) -> String {
+pub(crate) fn v2_relay_data_endpoint(address: SocketAddr, reservation_id: &str) -> String {
     format!("ws://{address}/v2/relay/{reservation_id}")
 }
 
@@ -36,14 +36,14 @@ fn v2_relay_data_endpoint(address: SocketAddr, reservation_id: &str) -> String {
 ///
 /// 校验首帧 RelayDataConnect（reservation_id + local_token），把同一 reservation 的
 /// 两个端点链接起来；对端未链接时把 Payload/Ack 缓冲到 reservation，链接后冲刷。
-struct FakeRelayV2Server {
-    address: SocketAddr,
+pub(crate) struct FakeRelayV2Server {
+    pub(crate) address: SocketAddr,
     shutdown: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
 }
 
 impl FakeRelayV2Server {
-    async fn start(reservations: HashMap<String, (Vec<u8>, Vec<u8>)>) -> Self {
+    pub(crate) async fn start(reservations: HashMap<String, (Vec<u8>, Vec<u8>)>) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .expect("bind fake Relay v2 listener");

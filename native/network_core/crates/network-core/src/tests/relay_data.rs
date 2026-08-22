@@ -746,6 +746,86 @@ async fn relay_data_connectors_fail_closed_without_config_or_socket() {
 }
 
 #[tokio::test]
+async fn relay_data_connectors_pair_over_fake_v2_and_replace_stale_readiness() {
+    let reservation_id = "8a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d";
+    let initiator_token = vec![0x11; 32];
+    let responder_token = vec![0x22; 32];
+    let relay_server = crate::tests::FakeRelayV2Server::start(std::collections::HashMap::from([(
+        reservation_id.to_string(),
+        (initiator_token.clone(), responder_token.clone()),
+    )]))
+    .await;
+    let endpoint = crate::tests::v2_relay_data_endpoint(relay_server.address, reservation_id);
+    let reserve = network_relay::v2::RelayReserveResponse {
+        request_id: 1,
+        attempt_id: "attempt".into(),
+        reservation_id: reservation_id.into(),
+        relay_data_endpoint: endpoint.clone(),
+        expires_at_ms: 0,
+        local_token: initiator_token,
+    };
+
+    let initiator_state = state();
+    *initiator_state.relay.config.write().await = Some(RelayReconnectConfig {
+        relay_url: "ws://fake-relay".into(),
+        credential: "credential".into(),
+        signing_seed: [1; 32],
+    });
+    initiator_state
+        .relay
+        .relay_path_ready
+        .write()
+        .await
+        .insert("peer-a".into());
+
+    let responder_state = state();
+    *responder_state.relay.config.write().await = Some(RelayReconnectConfig {
+        relay_url: "ws://fake-relay".into(),
+        credential: "credential".into(),
+        signing_seed: [2; 32],
+    });
+    responder_state
+        .relay
+        .relay_path_ready
+        .write()
+        .await
+        .insert("peer-a".into());
+
+    let incoming = network_relay::v2::IncomingRelayReservation {
+        attempt_id: "attempt".into(),
+        reservation_id: reservation_id.into(),
+        initiator_device_id: "peer-a".into(),
+        relay_data_endpoint: endpoint,
+        expires_at_ms: 0,
+        local_token: responder_token,
+    };
+    let (initiator, _) = tokio::join!(
+        connect_initiator_relay_data(&initiator_state, "peer-a", reserve),
+        async {
+            connect_incoming_relay_data(&responder_state, incoming).await;
+            Ok::<(), ()>(())
+        }
+    );
+    let initiator = initiator.expect("initiator connector should pair");
+    assert!(!initiator_state
+        .relay
+        .relay_path_ready
+        .read()
+        .await
+        .contains("peer-a"));
+    assert!(!responder_state
+        .relay
+        .relay_path_ready
+        .read()
+        .await
+        .contains("peer-a"));
+    assert!(initiator_state.task_supervisor.active_count() >= 1);
+    initiator_state.task_supervisor.shutdown().await;
+    responder_state.task_supervisor.shutdown().await;
+    drop(initiator);
+}
+
+#[tokio::test]
 async fn relay_crypto_response_reports_a_closed_initiator_waiter() {
     let state = state();
     let data = Arc::new(data_client());
