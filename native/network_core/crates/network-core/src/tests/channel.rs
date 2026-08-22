@@ -1,7 +1,8 @@
 use super::{
     acknowledge_message, application_payload_mode, decode_policy, delivery_error,
-    ensure_reliable_message_path, next_business_ensure_id, policy_code, select_business_path_lease,
-    validate_data_message, ApplicationPayloadMode, ApplicationPolicyError,
+    ensure_reliable_message_path, handle_data_message, handle_delivery_ack,
+    next_business_ensure_id, policy_code, select_business_path_lease, send_business_frame,
+    start_send_message, validate_data_message, ApplicationPayloadMode, ApplicationPolicyError,
 };
 use crate::connect::{PathRegistry, PeerId, PeerPathManager, CAPABILITY_RELIABLE_MESSAGE};
 use crate::connection::{
@@ -15,11 +16,12 @@ use crate::delivery::{
 };
 use crate::runtime::RuntimeState;
 use crate::session::SessionId;
-use network_protocol::CommunicationClass;
 use network_protocol::{
     network_event, AcknowledgeMessageCommand, DataMessage, DeliveryPolicyCode, NetworkErrorCode,
 };
+use network_protocol::{CommunicationClass, SendMessageCommand};
 use network_quic::MAX_CHANNEL_FRAME_BYTES;
+use prost::Message;
 use std::sync::{atomic::AtomicU16, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -412,4 +414,147 @@ fn channel_delivery_errors_map_to_stable_protocol_codes() {
             NetworkErrorCode::IoError as i32
         );
     }
+}
+
+#[tokio::test]
+async fn channel_command_boundaries_fail_before_starting_network_work() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+
+    for command in [
+        SendMessageCommand {
+            peer_id: String::new(),
+            channel_id: "channel".into(),
+            payload: b"payload".to_vec(),
+            policy: DeliveryPolicyCode::Acked as i32,
+        },
+        SendMessageCommand {
+            peer_id: "peer-a".into(),
+            channel_id: String::new(),
+            payload: b"payload".to_vec(),
+            policy: DeliveryPolicyCode::Acked as i32,
+        },
+        SendMessageCommand {
+            peer_id: "peer-a".into(),
+            channel_id: "channel".into(),
+            payload: vec![0; MAX_CHANNEL_FRAME_BYTES],
+            policy: DeliveryPolicyCode::Acked as i32,
+        },
+        SendMessageCommand {
+            peer_id: "peer-a".into(),
+            channel_id: "channel".into(),
+            payload: b"payload".to_vec(),
+            policy: 99,
+        },
+    ] {
+        assert!(start_send_message(Arc::clone(&state), command)
+            .await
+            .is_err());
+    }
+
+    for command in [
+        AcknowledgeMessageCommand {
+            peer_id: "peer-a".into(),
+            session_id: "session".into(),
+            channel_id: "channel".into(),
+            message_id: vec![0; 15],
+        },
+        AcknowledgeMessageCommand {
+            peer_id: String::new(),
+            session_id: "session".into(),
+            channel_id: "channel".into(),
+            message_id: vec![0; 16],
+        },
+        AcknowledgeMessageCommand {
+            peer_id: "peer-a".into(),
+            session_id: String::new(),
+            channel_id: "channel".into(),
+            message_id: vec![0; 16],
+        },
+        AcknowledgeMessageCommand {
+            peer_id: "peer-a".into(),
+            session_id: "session".into(),
+            channel_id: String::new(),
+            message_id: vec![0; 16],
+        },
+    ] {
+        assert!(acknowledge_message(&state, command).await.is_err());
+    }
+
+    let mut ack = network_protocol::DeliveryAck {
+        session_id: String::new(),
+        message_id: vec![0; 16],
+        recovery_epoch: 0,
+    };
+    assert!(handle_delivery_ack(&state, "peer-a", &ack.encode_to_vec())
+        .await
+        .is_err());
+    ack.session_id = "session".into();
+    ack.message_id = vec![0; 15];
+    assert!(handle_delivery_ack(&state, "peer-a", &ack.encode_to_vec())
+        .await
+        .is_err());
+    assert!(handle_delivery_ack(&state, "peer-a", b"not-protobuf")
+        .await
+        .is_err());
+    let message = DataMessage {
+        session_id: "session".into(),
+        channel_id: "channel".into(),
+        message_id: vec![0; 16],
+        sequence: 0,
+        recovery_epoch: 0,
+        policy: DeliveryPolicyCode::Acked as i32,
+        payload: b"plaintext".to_vec(),
+    };
+    assert!(
+        handle_data_message(&state, "peer-a", &message.encode_to_vec())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn business_frame_rejects_wrong_peer_and_inactive_lease() {
+    let peer_id = "frame-peer";
+    let registry = Arc::new(PathRegistry::new());
+    let manager = Arc::new(Mutex::new(PeerPathManager::new(
+        PeerId::new(peer_id).expect("peer id"),
+        Arc::clone(&registry),
+    )));
+    manager
+        .lock()
+        .expect("path manager lock")
+        .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+        .expect("ready path");
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert(peer_id.into(), manager.clone());
+    let lease = select_business_path_lease(&state, peer_id, CAPABILITY_RELIABLE_MESSAGE)
+        .await
+        .expect("active lease");
+    assert!(send_business_frame(
+        &state,
+        "other-peer",
+        &lease,
+        "token",
+        crate::connection::GenericFrameKind::DataMessage,
+        b"payload",
+    )
+    .await
+    .is_err());
+    manager.lock().expect("path manager lock").hard_close();
+    assert!(send_business_frame(
+        &state,
+        peer_id,
+        &lease,
+        "token",
+        crate::connection::GenericFrameKind::DataMessage,
+        b"payload",
+    )
+    .await
+    .is_err());
 }
