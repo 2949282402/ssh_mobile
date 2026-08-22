@@ -1373,3 +1373,102 @@ async fn realtime_command_boundaries_reject_invalid_identity_peer_and_revision()
     .await;
     assert!(invalid_v2.is_err());
 }
+
+#[tokio::test]
+async fn send_realtime_signal_routes_valid_revision_and_emits_event() {
+    let (state, mut event_rx) = realtime_test_state().await;
+    let control = RecordingControl::new();
+    *state.relay.control.write().await = Some(control.clone());
+    register_realtime_peer(&state, "peer-a").await;
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    state.realtime.lock().await.sessions.insert(
+        realtime_id.into(),
+        RealtimeSession {
+            peer_id: "peer-a".into(),
+            connection_session_id: None,
+            peer: None,
+            driver: None,
+            revision: 3,
+            remote_revision: 2,
+            ice_revision: 3,
+            seen_candidates: HashSet::new(),
+        },
+    );
+
+    send_signal_command(
+        &state,
+        SendRealtimeSignalCommand {
+            realtime_id: realtime_id.into(),
+            peer_id: "peer-a".into(),
+            kind: RealtimeSignalKind::WebRtcOffer as i32,
+            revision: 4,
+            payload: b"offer".to_vec(),
+        },
+    )
+    .await
+    .expect("valid signaling command");
+
+    let calls = control.signal_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].realtime_id, realtime_id);
+    assert_eq!(calls[0].target_device_id, "peer-a");
+    assert_eq!(calls[0].kind, V2RealtimeSignalKind::Offer);
+    assert_eq!(calls[0].revision, 4);
+    assert_eq!(calls[0].payload, b"offer");
+
+    let event = event_rx.try_recv().expect("signal event");
+    let Some(network_event::Payload::RealtimeSignal(event)) = event.payload else {
+        panic!("expected realtime signal event");
+    };
+    assert_eq!(event.realtime_id, realtime_id);
+    assert_eq!(event.peer_id, "peer-a");
+    assert_eq!(event.kind, RealtimeSignalKind::WebRtcOffer as i32);
+    assert_eq!(event.revision, 4);
+    assert_eq!(event.payload, b"offer");
+}
+
+#[tokio::test]
+async fn stop_realtime_session_closes_session_routes_close_and_emits_event() {
+    let (state, mut event_rx) = realtime_test_state().await;
+    let control = RecordingControl::new();
+    *state.relay.control.write().await = Some(control.clone());
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    state.realtime.lock().await.sessions.insert(
+        realtime_id.into(),
+        RealtimeSession {
+            peer_id: "peer-a".into(),
+            connection_session_id: None,
+            peer: None,
+            driver: None,
+            revision: 7,
+            remote_revision: 5,
+            ice_revision: 7,
+            seen_candidates: HashSet::new(),
+        },
+    );
+
+    stop_session(
+        &state,
+        StopRealtimeSessionCommand {
+            realtime_id: realtime_id.into(),
+        },
+    )
+    .await
+    .expect("existing realtime session stops");
+
+    assert!(state.realtime.lock().await.sessions.is_empty());
+    let calls = control.signal_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].kind, V2RealtimeSignalKind::Close);
+    assert_eq!(calls[0].revision, 8);
+    assert_eq!(calls[0].payload, b"close");
+
+    let event = event_rx.try_recv().expect("closed state event");
+    let Some(network_event::Payload::RealtimeState(event)) = event.payload else {
+        panic!("expected realtime state event");
+    };
+    assert_eq!(event.realtime_id, realtime_id);
+    assert_eq!(event.peer_id, "peer-a");
+    assert_eq!(event.state, RealtimeSessionState::Closed as i32);
+    assert_eq!(event.revision, 8);
+}
