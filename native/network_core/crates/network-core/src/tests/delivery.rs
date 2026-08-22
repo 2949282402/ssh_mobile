@@ -106,6 +106,60 @@ fn ordered_channel_rejects_sequence_gap_and_reorder_overflow() {
 }
 
 #[tokio::test]
+async fn zero_dedup_window_releases_the_message_after_ack() {
+    let manager = DeliveryManager::with_config(DeliveryConfig {
+        dedup_max_entries: 0,
+        ..config()
+    });
+    let message_id = MessageId([210; MESSAGE_ID_BYTES]);
+    let now = Instant::now();
+
+    assert_eq!(
+        manager
+            .begin_incoming("peer-a", "control", message_id, 1, now)
+            .await,
+        DedupDecision::New
+    );
+    assert!(manager
+        .complete_incoming("peer-a", "control", message_id)
+        .await
+        .is_some());
+    assert_eq!(
+        manager
+            .begin_incoming("peer-a", "control", message_id, 1, now)
+            .await,
+        DedupDecision::New,
+        "a zero-sized processed history must not retain ACKed duplicates"
+    );
+}
+
+#[test]
+fn terminal_history_stays_bounded_at_the_configured_limit() {
+    let mut store = DeliveryStore::new();
+    let message_id = MessageId([211; MESSAGE_ID_BYTES]);
+    for index in 0..MAX_TERMINAL_OUTCOMES {
+        record_terminal(
+            &mut store,
+            DeliveryIdentity::new(format!("peer-{index}"), message_id).expect("peer identity"),
+            DeliveryTerminalOutcome::Acknowledged,
+        );
+    }
+
+    let newest = DeliveryIdentity::new("peer-new", message_id).expect("new identity");
+    record_terminal(
+        &mut store,
+        newest.clone(),
+        DeliveryTerminalOutcome::Cancelled,
+    );
+
+    assert_eq!(store.terminal_outcomes.len(), MAX_TERMINAL_OUTCOMES);
+    assert_eq!(
+        store.terminal_outcomes.get(&newest),
+        Some(&DeliveryTerminalOutcome::Cancelled)
+    );
+}
+
+#[tokio::test]
 async fn ordered_delivery_waits_for_application_ack_before_releasing_buffer() {
     let manager = DeliveryManager::with_config(config());
     let now = Instant::now();
@@ -1455,16 +1509,31 @@ async fn same_message_id_is_scoped_to_peer_for_incoming_ack() {
 
 #[test]
 fn delivery_recovery_errors_have_stable_business_names() {
+    let _manager = DeliveryManager::default();
     assert_eq!(
         BusinessRecoveryError::RecoverableTransportLoss.to_string(),
         "RecoverableTransportLoss"
     );
+    assert_eq!(DeliveryError::InvalidScope.recovery_error(), None);
     assert_eq!(
         DeliveryError::Expired.recovery_error(),
+        Some(BusinessRecoveryError::OperationExpired)
+    );
+    assert_eq!(
+        DeliveryError::RetryExhausted.recovery_error(),
         Some(BusinessRecoveryError::OperationExpired)
     );
     assert_eq!(
         RetryDecision::RetryAt(Instant::now()).recovery_error(),
         Some(BusinessRecoveryError::RecoverableTransportLoss)
     );
+    assert_eq!(
+        RetryDecision::Failed.recovery_error(),
+        Some(BusinessRecoveryError::OperationExpired)
+    );
+    assert_eq!(
+        RetryDecision::Expired.recovery_error(),
+        Some(BusinessRecoveryError::OperationExpired)
+    );
+    assert_eq!(RetryDecision::NotFound.recovery_error(), None);
 }
