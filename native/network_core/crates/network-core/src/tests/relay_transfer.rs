@@ -35,6 +35,22 @@ fn data_client() -> RelayDataClient {
     .expect("valid unconnected Relay data client")
 }
 
+async fn install_relay_path(state: &Arc<RuntimeState>, data: Arc<RelayDataClient>) {
+    let registry = Arc::clone(&state.ready_paths);
+    let mut manager = crate::connect::PeerPathManager::new(
+        crate::connect::PeerId::new("peer-a").expect("valid peer"),
+        registry,
+    );
+    manager
+        .publish_ready_with_route(crate::connect::ActiveRoute::relay(Some(data)))
+        .expect("relay path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert("peer-a".into(), Arc::new(std::sync::Mutex::new(manager)));
+}
+
 fn manifest(transfer_id: &str) -> FileManifest {
     FileManifest {
         transfer_id: transfer_id.into(),
@@ -262,6 +278,135 @@ async fn send_file_over_relay_without_a_current_path_fails_closed() {
         offset: 0,
     };
     send_file_over_relay(peer, transfer, state).await;
+}
+
+#[tokio::test]
+async fn relay_send_checks_source_manifest_and_offset_before_socket_work() {
+    let root = std::env::temp_dir().join(format!(
+        "ssh-mobile-relay-send-boundary-{}",
+        std::process::id()
+    ));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    let source = root.join("payload.bin");
+    tokio::fs::write(&source, b"payload!").await.unwrap();
+    let offset_source = root.join("offset.bin");
+    tokio::fs::write(&offset_source, b"payload!").await.unwrap();
+
+    let make_state = || async {
+        let state = state();
+        *state.lifecycle.identity.write().await = Some(Arc::new(
+            network_identity::DeviceIdentity::from_private_keys("sender".into(), [9; 32], [10; 32]),
+        ));
+        install_relay_path(&state, Arc::new(data_client())).await;
+        state
+    };
+    let peer = PeerConfig {
+        endpoint: None,
+        identity_public_key: [1; 32],
+        e2e_public_key: [2; 32],
+        e2ee_policy: network_protocol::E2eePolicy::Required,
+    };
+    let actual_manifest = network_transfer::build_file_manifest("relay-send".into(), &source)
+        .await
+        .expect("source manifest");
+
+    let paused_state = make_state().await;
+    assert!(
+        paused_state
+            .transfer
+            .manager
+            .register_outgoing(actual_manifest.clone(), source.clone(), "peer-a".into())
+            .await
+    );
+    send_file_over_relay(
+        peer.clone(),
+        ResumableTransfer {
+            transfer_id: "relay-send".into(),
+            peer_id: "peer-a".into(),
+            session_id: "session-a".into(),
+            source_path: source.clone(),
+            manifest: actual_manifest.clone(),
+            offset: 0,
+        },
+        Arc::clone(&paused_state),
+    )
+    .await;
+    assert_eq!(
+        paused_state
+            .transfer
+            .manager
+            .snapshot("relay-send")
+            .await
+            .expect("socket loss should retain resumable transfer")
+            .state,
+        network_transfer::TransferState::Paused
+    );
+
+    let changed_state = make_state().await;
+    assert!(
+        changed_state
+            .transfer
+            .manager
+            .register_outgoing(actual_manifest.clone(), source.clone(), "peer-a".into())
+            .await
+    );
+    tokio::fs::write(&source, b"changed!").await.unwrap();
+    send_file_over_relay(
+        peer.clone(),
+        ResumableTransfer {
+            transfer_id: "relay-send".into(),
+            peer_id: "peer-a".into(),
+            session_id: "session-b".into(),
+            source_path: source.clone(),
+            manifest: actual_manifest.clone(),
+            offset: 0,
+        },
+        Arc::clone(&changed_state),
+    )
+    .await;
+    assert!(changed_state
+        .transfer
+        .manager
+        .snapshot("relay-send")
+        .await
+        .is_none());
+
+    let offset_state = make_state().await;
+    let offset_manifest =
+        network_transfer::build_file_manifest("relay-send".into(), &offset_source)
+            .await
+            .expect("offset source manifest");
+    assert!(
+        offset_state
+            .transfer
+            .manager
+            .register_outgoing(
+                offset_manifest.clone(),
+                offset_source.clone(),
+                "peer-a".into()
+            )
+            .await
+    );
+    send_file_over_relay(
+        peer,
+        ResumableTransfer {
+            transfer_id: "relay-send".into(),
+            peer_id: "peer-a".into(),
+            session_id: "session-c".into(),
+            source_path: offset_source,
+            manifest: offset_manifest,
+            offset: 1,
+        },
+        Arc::clone(&offset_state),
+    )
+    .await;
+    assert!(offset_state
+        .transfer
+        .manager
+        .snapshot("relay-send")
+        .await
+        .is_none());
+    tokio::fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
