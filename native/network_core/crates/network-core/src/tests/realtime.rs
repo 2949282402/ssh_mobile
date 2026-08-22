@@ -1236,3 +1236,140 @@ async fn realtime_signal_route_reports_missing_control_plane() {
         .expect_err("missing Relay control plane must reject signaling");
     assert_eq!(error.code, NetworkErrorCode::RelayError as i32);
 }
+
+#[tokio::test]
+async fn realtime_command_boundaries_reject_invalid_identity_peer_and_revision() {
+    let (state, _event_rx) = realtime_test_state().await;
+    let valid_id = "00112233445566778899aabbccddeeff";
+    assert!(
+        start_session(Arc::clone(&state), StartRealtimeSessionCommand::default(),)
+            .await
+            .is_err()
+    );
+    assert!(stop_session(&state, StopRealtimeSessionCommand::default(),)
+        .await
+        .is_err());
+    assert!(send_signal_command(
+        &state,
+        SendRealtimeSignalCommand {
+            realtime_id: valid_id.into(),
+            peer_id: "missing-peer".into(),
+            kind: RealtimeSignalKind::WebRtcOffer as i32,
+            revision: 1,
+            payload: b"offer".to_vec(),
+        },
+    )
+    .await
+    .is_err());
+
+    register_realtime_peer(&state, "peer-a").await;
+    for command in [
+        SendRealtimeSignalCommand {
+            realtime_id: valid_id.into(),
+            peer_id: "peer-a".into(),
+            kind: 99,
+            revision: 1,
+            payload: b"offer".to_vec(),
+        },
+        SendRealtimeSignalCommand {
+            realtime_id: valid_id.into(),
+            peer_id: "peer-a".into(),
+            kind: RealtimeSignalKind::WebRtcOffer as i32,
+            revision: 0,
+            payload: b"offer".to_vec(),
+        },
+        SendRealtimeSignalCommand {
+            realtime_id: valid_id.into(),
+            peer_id: "peer-a".into(),
+            kind: RealtimeSignalKind::WebRtcOffer as i32,
+            revision: 1,
+            payload: Vec::new(),
+        },
+        SendRealtimeSignalCommand {
+            realtime_id: "missing-session".into(),
+            peer_id: "peer-a".into(),
+            kind: RealtimeSignalKind::WebRtcOffer as i32,
+            revision: 1,
+            payload: b"offer".to_vec(),
+        },
+    ] {
+        assert!(send_signal_command(&state, command).await.is_err());
+    }
+
+    state.realtime.lock().await.sessions.insert(
+        valid_id.into(),
+        RealtimeSession {
+            peer_id: "peer-a".into(),
+            connection_session_id: None,
+            peer: None,
+            driver: None,
+            revision: 3,
+            remote_revision: 2,
+            ice_revision: 2,
+            seen_candidates: HashSet::new(),
+        },
+    );
+    for command in [
+        SendRealtimeSignalCommand {
+            realtime_id: valid_id.into(),
+            peer_id: "other-peer".into(),
+            kind: RealtimeSignalKind::WebRtcOffer as i32,
+            revision: 4,
+            payload: b"offer".to_vec(),
+        },
+        SendRealtimeSignalCommand {
+            realtime_id: valid_id.into(),
+            peer_id: "peer-a".into(),
+            kind: RealtimeSignalKind::WebRtcOffer as i32,
+            revision: 3,
+            payload: b"offer".to_vec(),
+        },
+        SendRealtimeSignalCommand {
+            realtime_id: valid_id.into(),
+            peer_id: "peer-a".into(),
+            kind: RealtimeSignalKind::IceCandidate as i32,
+            revision: 1,
+            payload: b"candidate".to_vec(),
+        },
+    ] {
+        assert!(send_signal_command(&state, command).await.is_err());
+    }
+    let missing_control = send_signal_command(
+        &state,
+        SendRealtimeSignalCommand {
+            realtime_id: valid_id.into(),
+            peer_id: "peer-a".into(),
+            kind: RealtimeSignalKind::WebRtcOffer as i32,
+            revision: 4,
+            payload: b"offer".to_vec(),
+        },
+    )
+    .await
+    .expect_err("valid signal must still require the Relay control route");
+    assert_eq!(missing_control.code, NetworkErrorCode::RelayError as i32);
+
+    let unknown_v2 = handle_v2_realtime_signal(
+        &state,
+        &V2RealtimeSignal {
+            realtime_id: "unknown".into(),
+            kind: V2RealtimeSignalKind::Offer as i32,
+            revision: 1,
+            payload: b"offer".to_vec(),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(unknown_v2.is_err());
+    let invalid_v2 = handle_v2_realtime_signal(
+        &state,
+        &V2RealtimeSignal {
+            realtime_id: valid_id.into(),
+            kind: 99,
+            revision: 4,
+            payload: b"offer".to_vec(),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(invalid_v2.is_err());
+}
