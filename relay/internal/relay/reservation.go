@@ -967,7 +967,7 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 	}
 	// Authenticate before touching reservation state.  An unauthenticated caller
 	// must not be able to distinguish an existing reservation from a missing one.
-	claims, _, code, authenticated := s.authenticatedRequest(r)
+	claims, publicKey, code, authenticated := s.authenticatedRequest(r)
 	if !authenticated {
 		retry := retryUnspecified
 		if code == relayErrorCredentialExpired {
@@ -977,6 +977,26 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 			"Relay data-plane authentication failed.", "connect_relay_data", "", retry, 0)
 		return
 	}
+	unlockAdmission, admissionCode, admitted := s.admitAuthenticatedDevice(r.Context(), claims, publicKey)
+	if !admitted {
+		retry := retryUnspecified
+		if admissionCode == relayErrorCredentialExpired {
+			retry = retryRefreshCredentialThenRetry
+		}
+		writeNetworkErrorRetry(w, http.StatusUnauthorized, admissionCode,
+			"Relay data-plane authentication failed.", "connect_relay_data", "", retry, 0)
+		return
+	}
+	// Hold the device admission lock through reservation/token validation,
+	// websocket upgrade, and upgrade-registry insertion only. The data socket is
+	// long-lived, so retaining the lock for its whole lifetime would delay
+	// revoke/re-enroll indefinitely; after trackUpgrade, revoke can find and
+	// close this endpoint directly.
+	defer func() {
+		if unlockAdmission != nil {
+			unlockAdmission()
+		}
+	}()
 	ctx, cancel := context.WithTimeout(r.Context(), presenceLeaseTimeout)
 	res, ok, err := s.cache.GetReservation(ctx, reservationID)
 	cancel()
@@ -1007,6 +1027,8 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 	// 由 upgradeRefs 追踪，以便 explicit revoke 立即关闭它。
 	rc := newRelayDataConn(&s.relayData, res, connection, s.config, s.cache, claims.DeviceID, role)
 	s.relayData.trackUpgrade(rc)
+	unlockAdmission()
+	unlockAdmission = nil
 	go rc.write()
 	go rc.read()
 }

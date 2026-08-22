@@ -42,8 +42,10 @@ func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	// 吊销的 store 部分是单事务（MySQL：device 行 FOR UPDATE + tombstone + 删除），
-	// 跨实例与并发 re-enroll 严格串行，不需要进程内锁兜底原子性；分片锁仍用于把
-	// 同设备在本实例内的 store 调用与 cache 清理 / hub 断开 / 事件发布串行化。
+	// 跨实例与并发 re-enroll 严格串行；分片锁还必须覆盖到本实例所有 admission
+	// registry 的断开与事件发布。控制面/数据面会在 upgrade 前取得同一把锁并再次
+	// 校验 enrollment，因此 revoke 先取得锁时，新 socket 只能在锁释放后重新校验，
+	// 不会从认证成功与 socket 登记之间的 TOCTOU 窗口穿透。
 	unlock := s.lockDevice(deviceID)
 	defer unlock()
 	outcome, err := s.store.RevokeEnrollment(ctx, deviceID, s.config.CredentialTTL)

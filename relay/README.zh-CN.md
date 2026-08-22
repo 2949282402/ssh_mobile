@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-19
+> 最新更新时间：2026-08-21
 
 # SSH Mobile 控制与中继服务器
 
@@ -107,7 +107,7 @@ Caddy 在内网终止 HTTPS/WSS 并反向代理到 Relay。仓库自带的 Compo
 - 注册只接受协议版本 1，并将凭据绑定到设备 ID 与 Ed25519 公钥。
 - WebSocket 鉴权证明覆盖 HTTP 方法、路径和新的 32 字节随机数，重复随机数会被
   拒绝。
-- 凭据仅在当前进程中存在匹配设备注册时有效；撤销设备会立即关闭活动连接。
+- 凭据必须匹配当前有效的设备注册；撤销设备会立即关闭活动连接，并拒绝后续控制面与数据面准入。
 - 浏览器 WebSocket 使用标准同源校验；不携带 `Origin` 的原生客户端仍受支持。
 - 管理 API 必须具有 HttpOnly Cookie 会话。所有改变状态的管理员请求都会拒绝跨站
   Origin 或 Fetch Metadata；携带请求体时必须使用 `application/json`。登录按客户端
@@ -135,8 +135,10 @@ Caddy 在内网终止 HTTPS/WSS 并反向代理到 Relay。仓库自带的 Compo
 - `POST /api/admin/v1/access/enrollment-token/rotate`：需要登录的 Token 轮换
 - 旧的 `/api/*` 管理路由已移除，不提供兼容别名。
 - `POST /v1/devices/enroll`：协议版本 1 的设备注册
-- `GET /v1/connect`：已认证的中继 WebSocket
-- 不提供独立 control WebSocket 路由；设备数据使用 v1 已认证中继连接。
+- `POST /v1/devices/refresh`：为已注册设备重新签发短期凭据，不需要注册 Token
+- `GET /v2/control`：已认证的长连接控制 WebSocket
+- `GET /v2/relay/{reservation_id}`：按 Reservation 隔离、只承载不透明加密数据的 WebSocket
+- 不提供 `/v1/connect`；传输流量仅使用物理分离的 v2 控制面与数据面。
 - `GET /healthz`：健康检查（`204`）
 
 设备 HTTP 失败统一使用稳定的 v1 网络错误结构，不暴露底层异常文本：

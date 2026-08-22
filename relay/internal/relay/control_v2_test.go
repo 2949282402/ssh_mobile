@@ -1752,6 +1752,10 @@ func TestRelayDataSlidingExpiryKeepsActiveSessionAlive(t *testing.T) {
 // admission lifetime. WebSocket liveness owns the active socket lifetime.
 func TestRelayDataIdleCredentialExpiryKeepsReadySessionAlive(t *testing.T) {
 	server, httpServer := newV2TestServer(t)
+	// Use a genuinely short device credential lifetime. Once the data socket is
+	// paired and Ready, its WebSocket liveness—not the original credential's
+	// admission TTL—owns the active session lifetime.
+	server.config.CredentialTTL = 2 * time.Second
 	ctx := context.Background()
 	reservationID := hex.EncodeToString(randomBytes(16))
 	initiatorToken := randomBytes(32)

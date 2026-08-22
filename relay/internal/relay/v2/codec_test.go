@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -675,6 +676,214 @@ func TestErrorCodeOfNil(t *testing.T) {
 	}
 	if got := ErrorCodeOf(fmt.Errorf("unrelated")); got != ErrorCode_ERROR_CODE_UNSPECIFIED {
 		t.Errorf("ErrorCodeOf(unrelated) = %v, want UNSPECIFIED", got)
+	}
+}
+
+func TestFrameErrorFormattingAndWrapping(t *testing.T) {
+	underlying := errors.New("underlying")
+	withCause := &FrameError{Code: ErrorCode_ERROR_CODE_PROTOCOL, Err: underlying}
+	if got, want := withCause.Error(), "v2: ERROR_CODE_PROTOCOL: underlying"; got != want {
+		t.Fatalf("FrameError.Error() = %q, want %q", got, want)
+	}
+	if !errors.Is(withCause, underlying) {
+		t.Fatal("FrameError does not unwrap its cause")
+	}
+	if got := ErrorCodeOf(fmt.Errorf("wrapped: %w", withCause)); got != ErrorCode_ERROR_CODE_PROTOCOL {
+		t.Fatalf("ErrorCodeOf(wrapped) = %v, want protocol", got)
+	}
+	withoutCause := &FrameError{Code: ErrorCode_ERROR_CODE_MALFORMED_FRAME}
+	if got, want := withoutCause.Error(), "v2: ERROR_CODE_MALFORMED_FRAME"; got != want {
+		t.Fatalf("FrameError without cause = %q, want %q", got, want)
+	}
+	if withoutCause.Unwrap() != nil {
+		t.Fatal("nil FrameError cause unexpectedly unwrapped to a value")
+	}
+}
+
+func TestValidateControlBoundaryMatrix(t *testing.T) {
+	maxDevice := strings.Repeat("d", MAX_DEVICE_ID_BYTES)
+	tooManyDevice := maxDevice + "x"
+	maxAttempt := strings.Repeat("a", MAX_ATTEMPT_ID_BYTES)
+	tooManyAttempt := maxAttempt + "x"
+	maxRealtime := strings.Repeat("r", MAX_REALTIME_ID_BYTES)
+	tooManyRealtime := maxRealtime + "x"
+	maxReservation := strings.Repeat("0", RESERVATION_ID_HEX_CHARS)
+	maxToken := bytes.Repeat([]byte{0x42}, RESERVATION_TOKEN_BYTES)
+	validSnapshot := &DiscoverySnapshot{
+		TransportCapabilities: make([]TransportCapability, MAX_DISCOVERY_CAPABILITIES),
+		CandidateBundle: &CandidateBundle{
+			Candidates: make([][]byte, MAX_DISCOVERY_CANDIDATES),
+		},
+	}
+	for i := range validSnapshot.CandidateBundle.Candidates {
+		validSnapshot.CandidateBundle.Candidates[i] = bytes.Repeat([]byte{'c'}, MAX_DISCOVERY_CANDIDATE_BYTES)
+	}
+
+	cases := []struct {
+		name    string
+		msg     *RelayFrame
+		want    error
+		wantErr bool
+	}{
+		{name: "nil", msg: nil, wantErr: true},
+		{name: "empty oneof", msg: &RelayFrame{}, want: nil},
+		{name: "ready at limit", msg: &RelayFrame{Kind: &RelayFrame_Ready{Ready: &Ready{DeviceId: maxDevice}}}, want: nil},
+		{name: "ready over limit", msg: &RelayFrame{Kind: &RelayFrame_Ready{Ready: &Ready{DeviceId: tooManyDevice}}}, want: ErrInvalidBounds},
+		{name: "discovery snapshot at limits", msg: &RelayFrame{Kind: &RelayFrame_DiscoveryPublish{DiscoveryPublish: &DiscoveryPublish{Snapshot: validSnapshot}}}, want: nil},
+		{name: "discovery capabilities over limit", msg: &RelayFrame{Kind: &RelayFrame_DiscoveryPublish{DiscoveryPublish: &DiscoveryPublish{Snapshot: &DiscoverySnapshot{TransportCapabilities: make([]TransportCapability, MAX_DISCOVERY_CAPABILITIES+1)}}}}, want: ErrInvalidBounds},
+		{name: "discovery candidates over limit", msg: &RelayFrame{Kind: &RelayFrame_DiscoveryPublish{DiscoveryPublish: &DiscoveryPublish{Snapshot: &DiscoverySnapshot{CandidateBundle: &CandidateBundle{Candidates: make([][]byte, MAX_DISCOVERY_CANDIDATES+1)}}}}}, want: ErrInvalidBounds},
+		{name: "discovery candidate over limit", msg: &RelayFrame{Kind: &RelayFrame_DiscoveryPublish{DiscoveryPublish: &DiscoveryPublish{Snapshot: &DiscoverySnapshot{CandidateBundle: &CandidateBundle{Candidates: [][]byte{bytes.Repeat([]byte{'x'}, MAX_DISCOVERY_CANDIDATE_BYTES+1)}}}}}}, want: ErrInvalidBounds},
+		{name: "resolve request at limit", msg: &RelayFrame{Kind: &RelayFrame_ResolvePeerRequest{ResolvePeerRequest: &ResolvePeerRequest{TargetDeviceId: maxDevice}}}, want: nil},
+		{name: "resolve request over limit", msg: &RelayFrame{Kind: &RelayFrame_ResolvePeerRequest{ResolvePeerRequest: &ResolvePeerRequest{TargetDeviceId: tooManyDevice}}}, want: ErrInvalidBounds},
+		{name: "resolve response nil snapshot", msg: &RelayFrame{Kind: &RelayFrame_ResolvePeerResponse{ResolvePeerResponse: &ResolvePeerResponse{}}}, want: nil},
+		{name: "offer at limits", msg: &RelayFrame{Kind: &RelayFrame_ConnectivityOffer{ConnectivityOffer: &ConnectivityOffer{AttemptId: maxAttempt, InitiatorDeviceId: maxDevice, InitiatorSnapshot: validSnapshot}}}, want: nil},
+		{name: "offer attempt over limit", msg: &RelayFrame{Kind: &RelayFrame_ConnectivityOffer{ConnectivityOffer: &ConnectivityOffer{AttemptId: tooManyAttempt}}}, want: ErrInvalidBounds},
+		{name: "offer device over limit", msg: &RelayFrame{Kind: &RelayFrame_ConnectivityOffer{ConnectivityOffer: &ConnectivityOffer{InitiatorDeviceId: tooManyDevice}}}, want: ErrInvalidBounds},
+		{name: "answer at limits", msg: &RelayFrame{Kind: &RelayFrame_ConnectivityAnswer{ConnectivityAnswer: &ConnectivityAnswer{AttemptId: maxAttempt, ResponderDeviceId: maxDevice, ResponderSnapshot: validSnapshot}}}, want: nil},
+		{name: "answer attempt over limit", msg: &RelayFrame{Kind: &RelayFrame_ConnectivityAnswer{ConnectivityAnswer: &ConnectivityAnswer{AttemptId: tooManyAttempt}}}, want: ErrInvalidBounds},
+		{name: "answer device over limit", msg: &RelayFrame{Kind: &RelayFrame_ConnectivityAnswer{ConnectivityAnswer: &ConnectivityAnswer{ResponderDeviceId: tooManyDevice}}}, want: ErrInvalidBounds},
+		{name: "presence peers at limit", msg: &RelayFrame{Kind: &RelayFrame_PresenceHintSnapshot{PresenceHintSnapshot: &PresenceHintSnapshot{Peers: []*PeerPresenceHint{{DeviceId: maxDevice}}}}}, want: nil},
+		{name: "presence peer over limit", msg: &RelayFrame{Kind: &RelayFrame_PresenceHintSnapshot{PresenceHintSnapshot: &PresenceHintSnapshot{Peers: []*PeerPresenceHint{{DeviceId: tooManyDevice}}}}}, want: ErrInvalidBounds},
+		{name: "peer available at limit", msg: &RelayFrame{Kind: &RelayFrame_PeerAvailableHint{PeerAvailableHint: &PeerAvailableHint{DeviceId: maxDevice}}}, want: nil},
+		{name: "peer available over limit", msg: &RelayFrame{Kind: &RelayFrame_PeerAvailableHint{PeerAvailableHint: &PeerAvailableHint{DeviceId: tooManyDevice}}}, want: ErrInvalidBounds},
+		{name: "peer unavailable over limit", msg: &RelayFrame{Kind: &RelayFrame_PeerUnavailableHint{PeerUnavailableHint: &PeerUnavailableHint{DeviceId: tooManyDevice}}}, want: ErrInvalidBounds},
+		{name: "reserve request at limits", msg: &RelayFrame{Kind: &RelayFrame_RelayReserveRequest{RelayReserveRequest: &RelayReserveRequest{AttemptId: maxAttempt, TargetDeviceId: maxDevice}}}, want: nil},
+		{name: "reserve request attempt over limit", msg: &RelayFrame{Kind: &RelayFrame_RelayReserveRequest{RelayReserveRequest: &RelayReserveRequest{AttemptId: tooManyAttempt}}}, want: ErrInvalidBounds},
+		{name: "reserve request target over limit", msg: &RelayFrame{Kind: &RelayFrame_RelayReserveRequest{RelayReserveRequest: &RelayReserveRequest{TargetDeviceId: tooManyDevice}}}, want: ErrInvalidBounds},
+		{name: "reserve response at exact lengths", msg: &RelayFrame{Kind: &RelayFrame_RelayReserveResponse{RelayReserveResponse: &RelayReserveResponse{AttemptId: maxAttempt, ReservationId: maxReservation, LocalToken: maxToken}}}, want: nil},
+		{name: "reserve response bad reservation length", msg: &RelayFrame{Kind: &RelayFrame_RelayReserveResponse{RelayReserveResponse: &RelayReserveResponse{ReservationId: maxReservation[:len(maxReservation)-1]}}}, want: ErrInvalidBounds},
+		{name: "reserve response bad token length", msg: &RelayFrame{Kind: &RelayFrame_RelayReserveResponse{RelayReserveResponse: &RelayReserveResponse{ReservationId: maxReservation, LocalToken: maxToken[:len(maxToken)-1]}}}, want: ErrInvalidBounds},
+		{name: "incoming at exact lengths", msg: &RelayFrame{Kind: &RelayFrame_IncomingRelayReservation{IncomingRelayReservation: &IncomingRelayReservation{AttemptId: maxAttempt, InitiatorDeviceId: maxDevice, ReservationId: maxReservation, LocalToken: maxToken}}}, want: nil},
+		{name: "incoming attempt over limit", msg: &RelayFrame{Kind: &RelayFrame_IncomingRelayReservation{IncomingRelayReservation: &IncomingRelayReservation{AttemptId: tooManyAttempt}}}, want: ErrInvalidBounds},
+		{name: "incoming device over limit", msg: &RelayFrame{Kind: &RelayFrame_IncomingRelayReservation{IncomingRelayReservation: &IncomingRelayReservation{InitiatorDeviceId: tooManyDevice}}}, want: ErrInvalidBounds},
+		{name: "incoming bad reservation length", msg: &RelayFrame{Kind: &RelayFrame_IncomingRelayReservation{IncomingRelayReservation: &IncomingRelayReservation{ReservationId: "short"}}}, want: ErrInvalidBounds},
+		{name: "incoming bad token length", msg: &RelayFrame{Kind: &RelayFrame_IncomingRelayReservation{IncomingRelayReservation: &IncomingRelayReservation{ReservationId: maxReservation, LocalToken: maxToken[:1]}}}, want: ErrInvalidBounds},
+		{name: "realtime at limits", msg: &RelayFrame{Kind: &RelayFrame_RealtimeSignal{RealtimeSignal: &RealtimeSignal{RealtimeId: maxRealtime, TargetDeviceId: maxDevice, Payload: bytes.Repeat([]byte{'p'}, MAX_REALTIME_SIGNAL_PAYLOAD_BYTES)}}}, want: nil},
+		{name: "realtime id over limit", msg: &RelayFrame{Kind: &RelayFrame_RealtimeSignal{RealtimeSignal: &RealtimeSignal{RealtimeId: tooManyRealtime}}}, want: ErrInvalidBounds},
+		{name: "realtime target over limit", msg: &RelayFrame{Kind: &RelayFrame_RealtimeSignal{RealtimeSignal: &RealtimeSignal{TargetDeviceId: tooManyDevice}}}, want: ErrInvalidBounds},
+		{name: "realtime payload over limit", msg: &RelayFrame{Kind: &RelayFrame_RealtimeSignal{RealtimeSignal: &RealtimeSignal{Payload: bytes.Repeat([]byte{'p'}, MAX_REALTIME_SIGNAL_PAYLOAD_BYTES+1)}}}, want: ErrInvalidBounds},
+		{name: "protocol error at limit", msg: &RelayFrame{Kind: &RelayFrame_ProtocolError{ProtocolError: &ProtocolError{AttemptId: maxAttempt}}}, want: nil},
+		{name: "protocol error over limit", msg: &RelayFrame{Kind: &RelayFrame_ProtocolError{ProtocolError: &ProtocolError{AttemptId: tooManyAttempt}}}, want: ErrInvalidBounds},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateControl(tc.msg)
+			if tc.want == nil {
+				if tc.wantErr && err == nil {
+					t.Fatal("ValidateControl() = nil, want an error")
+				}
+				if !tc.wantErr && err != nil {
+					t.Fatalf("ValidateControl() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !errors.Is(err, tc.want) {
+				t.Fatalf("ValidateControl() = %v, want %v", err, tc.want)
+			}
+			if ErrorCodeOf(err) != ErrorCode_ERROR_CODE_PROTOCOL && tc.want == ErrInvalidBounds {
+				t.Fatalf("bounds error code = %v, want protocol", ErrorCodeOf(err))
+			}
+		})
+	}
+}
+
+func TestValidateDataFrameBoundaryMatrix(t *testing.T) {
+	validReservation := strings.Repeat("a", RESERVATION_ID_HEX_CHARS)
+	validToken := bytes.Repeat([]byte{0x01}, RESERVATION_TOKEN_BYTES)
+	cases := []struct {
+		name    string
+		msg     *RelayDataFrame
+		want    error
+		wantErr bool
+	}{
+		{name: "nil", msg: nil, wantErr: true},
+		{name: "empty oneof", msg: &RelayDataFrame{}, want: nil},
+		{name: "connect exact lengths", msg: &RelayDataFrame{Kind: &RelayDataFrame_Connect{Connect: &RelayDataConnect{ReservationId: validReservation, LocalToken: validToken}}}, want: nil},
+		{name: "connect short reservation", msg: &RelayDataFrame{Kind: &RelayDataFrame_Connect{Connect: &RelayDataConnect{ReservationId: "short", LocalToken: validToken}}}, want: ErrInvalidBounds},
+		{name: "connect long reservation", msg: &RelayDataFrame{Kind: &RelayDataFrame_Connect{Connect: &RelayDataConnect{ReservationId: validReservation + "x", LocalToken: validToken}}}, want: ErrInvalidBounds},
+		{name: "connect short token", msg: &RelayDataFrame{Kind: &RelayDataFrame_Connect{Connect: &RelayDataConnect{ReservationId: validReservation, LocalToken: validToken[:1]}}}, want: ErrInvalidBounds},
+		{name: "payload unbounded by fields", msg: &RelayDataFrame{Kind: &RelayDataFrame_Payload{Payload: &RelayDataPayload{EncryptedPayload: bytes.Repeat([]byte{'x'}, MAX_RELAY_DATA_FRAME_BYTES)}}}, want: nil},
+		{name: "ack", msg: &RelayDataFrame{Kind: &RelayDataFrame_Ack{Ack: &RelayDataAck{Sequence: 1}}}, want: nil},
+		{name: "close", msg: &RelayDataFrame{Kind: &RelayDataFrame_Close{Close: &RelayDataClose{Reason: 1}}}, want: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateDataFrame(tc.msg)
+			if tc.want == nil {
+				if tc.wantErr && err == nil {
+					t.Fatal("ValidateDataFrame() = nil, want an error")
+				}
+				if !tc.wantErr && err != nil {
+					t.Fatalf("ValidateDataFrame() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !errors.Is(err, tc.want) {
+				t.Fatalf("ValidateDataFrame() = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestKindNameAndDataKindNameHandleEveryOneofAndNil(t *testing.T) {
+	control := []struct {
+		name string
+		msg  *RelayFrame
+	}{
+		{"ready", &RelayFrame{Kind: &RelayFrame_Ready{Ready: &Ready{}}}},
+		{"heartbeat", &RelayFrame{Kind: &RelayFrame_Heartbeat{Heartbeat: &Heartbeat{}}}},
+		{"heartbeat_ack", &RelayFrame{Kind: &RelayFrame_HeartbeatAck{HeartbeatAck: &HeartbeatAck{}}}},
+		{"discovery_publish", &RelayFrame{Kind: &RelayFrame_DiscoveryPublish{DiscoveryPublish: &DiscoveryPublish{}}}},
+		{"discovery_ack", &RelayFrame{Kind: &RelayFrame_DiscoveryAck{DiscoveryAck: &DiscoveryAck{}}}},
+		{"resolve_peer_request", &RelayFrame{Kind: &RelayFrame_ResolvePeerRequest{ResolvePeerRequest: &ResolvePeerRequest{}}}},
+		{"resolve_peer_response", &RelayFrame{Kind: &RelayFrame_ResolvePeerResponse{ResolvePeerResponse: &ResolvePeerResponse{}}}},
+		{"connectivity_offer", &RelayFrame{Kind: &RelayFrame_ConnectivityOffer{ConnectivityOffer: &ConnectivityOffer{}}}},
+		{"connectivity_answer", &RelayFrame{Kind: &RelayFrame_ConnectivityAnswer{ConnectivityAnswer: &ConnectivityAnswer{}}}},
+		{"presence_hint_snapshot", &RelayFrame{Kind: &RelayFrame_PresenceHintSnapshot{PresenceHintSnapshot: &PresenceHintSnapshot{}}}},
+		{"peer_available_hint", &RelayFrame{Kind: &RelayFrame_PeerAvailableHint{PeerAvailableHint: &PeerAvailableHint{}}}},
+		{"peer_unavailable_hint", &RelayFrame{Kind: &RelayFrame_PeerUnavailableHint{PeerUnavailableHint: &PeerUnavailableHint{}}}},
+		{"relay_reserve_request", &RelayFrame{Kind: &RelayFrame_RelayReserveRequest{RelayReserveRequest: &RelayReserveRequest{}}}},
+		{"relay_reserve_response", &RelayFrame{Kind: &RelayFrame_RelayReserveResponse{RelayReserveResponse: &RelayReserveResponse{}}}},
+		{"incoming_relay_reservation", &RelayFrame{Kind: &RelayFrame_IncomingRelayReservation{IncomingRelayReservation: &IncomingRelayReservation{}}}},
+		{"realtime_signal", &RelayFrame{Kind: &RelayFrame_RealtimeSignal{RealtimeSignal: &RealtimeSignal{}}}},
+		{"protocol_error", &RelayFrame{Kind: &RelayFrame_ProtocolError{ProtocolError: &ProtocolError{}}}},
+	}
+	for _, tc := range control {
+		if got := KindName(tc.msg); got != tc.name {
+			t.Errorf("KindName(%s) = %q, want %q", tc.name, got, tc.name)
+		}
+	}
+	if KindName(nil) != "" || KindName(&RelayFrame{}) != "" {
+		t.Fatal("KindName should return empty for nil and empty frames")
+	}
+
+	data := []struct {
+		name string
+		msg  *RelayDataFrame
+	}{
+		{"relay_data_connect", &RelayDataFrame{Kind: &RelayDataFrame_Connect{Connect: &RelayDataConnect{}}}},
+		{"relay_data_payload", &RelayDataFrame{Kind: &RelayDataFrame_Payload{Payload: &RelayDataPayload{}}}},
+		{"relay_data_ack", &RelayDataFrame{Kind: &RelayDataFrame_Ack{Ack: &RelayDataAck{}}}},
+		{"relay_data_close", &RelayDataFrame{Kind: &RelayDataFrame_Close{Close: &RelayDataClose{}}}},
+	}
+	for _, tc := range data {
+		if got := DataKindName(tc.msg); got != tc.name {
+			t.Errorf("DataKindName(%s) = %q, want %q", tc.name, got, tc.name)
+		}
+	}
+	if DataKindName(nil) != "" || DataKindName(&RelayDataFrame{}) != "" {
+		t.Fatal("DataKindName should return empty for nil and empty frames")
+	}
+}
+
+func TestEncodeDataFrameNilAndDecodeDataMalformedPayload(t *testing.T) {
+	if _, err := EncodeDataFrame(nil); err == nil {
+		t.Fatal("EncodeDataFrame(nil) succeeded, want error")
+	}
+	truncated := buildFrame([]byte{0x0a})
+	if _, err := DecodeData(truncated); ErrorCodeOf(err) != ErrorCode_ERROR_CODE_MALFORMED_FRAME {
+		t.Fatalf("truncated data protobuf error code = %v, want malformed frame", ErrorCodeOf(err))
 	}
 }
 

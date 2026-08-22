@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -66,6 +67,77 @@ func TestConnectExpiredCredentialReturnsCode12(t *testing.T) {
 	}
 	if body.RetryDisposition != retryRefreshCredentialThenRetry {
 		t.Fatalf("expected retry_disposition 4, got %d", body.RetryDisposition)
+	}
+}
+
+func TestReadyReportsConfiguredPresenceTTL(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	server.config.PresenceTTL = 7 * time.Second
+	credential, privateKey := enrollV2(t, httpServer.URL, "device-a")
+	conn := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x44, privateKey)
+	defer conn.Close()
+	ready := readV2ControlFrame(t, conn).GetReady()
+	if ready == nil || ready.PresenceTtlS != 7 {
+		t.Fatalf("Ready did not report configured presence TTL: %+v", ready)
+	}
+}
+
+func TestShortCredentialTTLExpiresBeforeReadyAdmission(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const shortCredentialTTL = 2 * time.Second
+	server := NewServer(Config{
+		CredentialKey: []byte("01234567890123456789012345678901"),
+		CredentialTTL: shortCredentialTTL,
+	})
+	defer server.Close()
+	if _, err := server.store.PutEnrollment(context.Background(), &EnrolledDevice{
+		DeviceID:        "device-a",
+		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
+		ProtocolVersion: 1,
+		EnrolledAt:      time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, shortCredentialTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, _, verifyErr := verifyCredential(server.config.CredentialKey, credential)
+		if errors.Is(verifyErr, errCredentialExpired) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("short credential TTL did not expire: err=%v", verifyErr)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x43}, 32))
+	request := httptest.NewRequest("GET", "/v2/control", nil)
+	request.Header.Set("Authorization", "Bearer "+credential)
+	request.Header.Set("X-Relay-Nonce", nonce)
+	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
+		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
+	))
+	mux := http.NewServeMux()
+	server.RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, request)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expired short-TTL credential opened Ready admission: %d", rec.Code)
+	}
+	var body networkErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Code != relayErrorCredentialExpired || body.RetryDisposition != retryRefreshCredentialThenRetry {
+		t.Fatalf("unexpected short-TTL expiry response: %+v", body)
 	}
 }
 

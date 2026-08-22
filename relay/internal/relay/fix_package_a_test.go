@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // TestRefreshRejectsRevokedButStillEnrolledDevice verifies a device whose
@@ -76,6 +78,112 @@ type failingRevokeStore struct {
 
 func (failingRevokeStore) RevokeEnrollment(context.Context, string, time.Duration) (revokeResult, error) {
 	return revokeNotEnrolled, errors.New("injected revoke failure")
+}
+
+// failingNonceCache models a replay-protection backend outage. Authentication
+// must reject the request instead of accepting it without recording the nonce.
+type failingNonceCache struct {
+	Cache
+}
+
+func (failingNonceCache) ConsumeNonce(context.Context, string, string, time.Time) (bool, error) {
+	return false, errors.New("injected nonce cache failure")
+}
+
+func TestAuthenticatedRequestFailsClosedWhenNonceCacheUnavailable(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+		CredentialTTL:   time.Minute,
+	})
+	defer server.Close()
+	if result := server.replaceEnrollment(
+		"device-a",
+		base64.RawURLEncoding.EncodeToString(publicKey),
+		"test",
+		1,
+		time.Now(),
+	); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x41}, 32))
+	request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	request.Header.Set("Authorization", "Bearer "+credential)
+	request.Header.Set("X-Relay-Nonce", nonce)
+	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
+		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
+	))
+	server.cache = failingNonceCache{Cache: server.cache}
+
+	if _, _, code, ok := server.authenticatedRequest(request); ok || code != relayErrorAuthenticationFailed {
+		t.Fatalf("nonce cache outage must fail closed: ok=%v code=%d", ok, code)
+	}
+}
+
+func TestAuthenticatedDeviceAdmissionRechecksRevocation(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+		CredentialTTL:   time.Minute,
+	})
+	defer server.Close()
+	if result := server.replaceEnrollment(
+		"device-a",
+		base64.RawURLEncoding.EncodeToString(publicKey),
+		"test",
+		1,
+		time.Now(),
+	); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))
+	request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	request.Header.Set("Authorization", "Bearer "+credential)
+	request.Header.Set("X-Relay-Nonce", nonce)
+	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
+		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
+	))
+	claims, authenticatedKey, code, ok := server.authenticatedRequest(request)
+	if !ok || code != relayErrorUnspecified {
+		t.Fatalf("valid proof was rejected before revoke: ok=%v code=%d", ok, code)
+	}
+
+	revokeRequest := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
+	revokeRequest.SetPathValue("deviceId", "device-a")
+	revokeResponse := httptest.NewRecorder()
+	server.adminRevokeDevice(revokeResponse, revokeRequest)
+	if revokeResponse.Code != http.StatusNoContent {
+		t.Fatalf("revoke failed: got %d", revokeResponse.Code)
+	}
+
+	unlock, admissionCode, admitted := server.admitAuthenticatedDevice(
+		context.Background(),
+		claims,
+		authenticatedKey,
+	)
+	if admitted {
+		unlock()
+		t.Fatal("socket admission bypassed the revocation re-check")
+	}
+	if admissionCode != relayErrorAuthenticationFailed {
+		t.Fatalf("revoked socket admission returned code %d", admissionCode)
+	}
 }
 
 // TestAdminRevokeReturnsErrorWhenRevokeFails verifies the revoke handler reports
@@ -234,10 +342,14 @@ func TestHubAddSerializesConcurrentSameDeviceClaims(t *testing.T) {
 	defer connA1.Close()
 	<-gate.blocked
 
-	// A2 connects while A1's claim is in flight: it must block at the admission
-	// lock (not reach the map or Redis) until A1's claim completes.
-	connA2 := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x11, privateKey)
-	defer connA2.Close()
+	// A2 connects while A1's claim is in flight: it must block on the same
+	// per-device admission lock until A1's claim completes.  Dial asynchronously
+	// because the fail-closed admission lock intentionally covers authentication
+	// re-check and hub registration as one serialized operation.
+	connA2Ch := make(chan *websocket.Conn, 1)
+	go func() {
+		connA2Ch <- dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x11, privateKey)
+	}()
 	time.Sleep(100 * time.Millisecond)
 	server.hub.mutex.Lock()
 	current := server.hub.peers["device-a"]
@@ -247,6 +359,13 @@ func TestHubAddSerializesConcurrentSameDeviceClaims(t *testing.T) {
 	}
 
 	close(gate.release)
+	var connA2 *websocket.Conn
+	select {
+	case connA2 = <-connA2Ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("A2 did not complete after A1 admission was released")
+	}
+	defer connA2.Close()
 
 	// A2's admission completes only after A1's claim; read A2's ready frame.
 	_ = connA2.SetReadDeadline(time.Now().Add(3 * time.Second))

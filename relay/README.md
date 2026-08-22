@@ -1,4 +1,4 @@
-> Last updated: 2026-08-19
+> Last updated: 2026-08-21
 
 # SSH Mobile Control and Relay Server
 
@@ -150,12 +150,14 @@ database credentials and the durable enrollment data as sensitive state.
 - `GET /api/admin/v1/access/enrollment-token`: authenticated enrollment-token read
 - `POST /api/admin/v1/access/enrollment-token/rotate`: authenticated token rotation
 - Legacy `/api/*` dashboard routes are removed; they are not compatibility aliases.
-- `POST /v1/devices/enroll`: protocol-v1 device enrollment
+- `POST /v1/devices/enroll`: device credential enrollment endpoint
 - `POST /v1/devices/refresh`: re-issue a short-lived credential for an
   enrolled device, without requiring the enrollment token
-- `GET /v1/connect`: authenticated relay WebSocket
-- No separate control WebSocket route is exposed; device traffic uses the v1
-  authenticated Relay connection.
+- `GET /v2/control`: authenticated long-lived control WebSocket
+- `GET /v2/relay/{reservation_id}`: authenticated reservation-scoped opaque
+  data WebSocket
+- There is no `/v1/connect` route. Transport traffic is v2-only and uses the
+  physically separate control and data WebSockets above.
 - `GET /healthz`: health check (`204`)
 
 Device HTTP failures use the stable v1 network error shape and never expose
@@ -228,33 +230,22 @@ shutdown budget so Docker does not SIGKILL the process mid-sequence.
 The service rejects unsupported protocol versions and does not provide a v1
 compatibility fallback, a `/v1/control` route, or a Dart-side Relay data path.
 
-## WebSocket protocol v1
+## Transport WebSockets
 
-- The server sends `{"type":"ready","protocol_version":1,"device_id":"..."}`
-  after authentication and hub admission. Clients must not report a connection
-  before validating this frame.
-- `heartbeat` receives `heartbeat_ack`. Transfer control types are `offer`,
-  `accept`, `resume`, `complete`, `complete_ack`, and `cancel`.
-- `crypto_handshake` is an additional bounded opaque control type for the
-  Session's Noise XX application E2EE exchange; the Relay only validates the
-  routing envelope and never parses Noise payloads or Session keys.
-- The server removes client-supplied identity fields and adds the authenticated
-  `sender_id` to every forwarded transfer control frame.
-- A 32-character lowercase hexadecimal `session_id` identifies one in-memory
-  transfer. Only the sender may offer, stream binary chunks, and complete; only
-  the receiver may accept, resume, and acknowledge completion. Either side may
-  cancel.
-- Binary frames use a 25-byte header: one kind byte (`0x10`), 16 session bytes,
-  and an unsigned 64-bit big-endian sequence, followed by opaque ciphertext.
-- Sending all bytes is not success. The sender reports success only after the
-  receiver validates the transfer and returns `complete_ack`.
+Transport traffic is v2-only. `/v2/control` carries authenticated protobuf
+`RelayFrame` messages for control, discovery, signaling, and reservations;
+`/v2/relay/{reservation_id}` carries only reservation-scoped `RelayDataFrame`
+messages with opaque encrypted payloads. The two routes have separate writers,
+admission rules, and lifetimes; a data frame on the control route (or a control
+frame on the data route) is a protocol violation.
 
 ## Network Protocol v2 Relay contract
 
 The v2 control/data wire contract is frozen at baseline commit
 `6ec194bb3a66a748215d3abc11d6da84bd329619`; its schema and golden fixtures are
 owned by [`protocol/RELAY_V2_CONTRACT.md`](../protocol/RELAY_V2_CONTRACT.md).
-The v2 boundary is distinct from the Bootstrap/WebSocket v1 route:
+The v2 transport boundary is separate from the `/v1/devices/*` credential
+endpoints; `/v1/connect` is not registered:
 
 - `ConnectivityOffer` has no `target_device_id`. It is accepted only after a
   successful `ResolvePeerRequest`/READY response on the same long-lived control

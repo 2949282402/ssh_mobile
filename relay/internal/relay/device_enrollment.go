@@ -232,15 +232,40 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 	}
 	unlock()
 	if nonceErr != nil {
-		// fail-open：防重放降级但不阻断连接，日志告警（Redis 故障时的既定行为）。
-		s.logger.Warn("replay-protection cache unavailable during connect; degraded",
+		// Replay protection is part of the authentication decision.  If the cache
+		// cannot record the nonce, accepting the request would turn a transient
+		// Redis outage into a replay window, so authentication must fail closed.
+		s.logger.Warn("replay-protection cache unavailable during authentication; rejecting",
 			"device_id", claims.DeviceID, "error", nonceErr)
 	}
-	if storeErr != nil || getErr != nil || revoked || !keyMatches || replayed {
+	if storeErr != nil || getErr != nil || nonceErr != nil || revoked || !keyMatches || replayed {
 		// 内存实现不返回错误；存储故障时在此 fail closed，与吊销/不匹配同等拒绝。
 		return credentialClaims{}, nil, relayErrorAuthenticationFailed, false
 	}
 	return claims, publicKey, relayErrorUnspecified, true
+}
+
+// admitAuthenticatedDevice serializes the interval between successful proof
+// authentication and socket admission with admin revocation/re-enrollment.
+// authenticatedRequest intentionally releases its lock after consuming the
+// nonce; callers must take this second, admission-scoped lock before upgrading
+// or registering a socket.  The enrollment/revocation re-check closes the
+// TOCTOU window where revoke could otherwise complete after authentication but
+// before a new control/data socket became reachable.
+func (s *Server) admitAuthenticatedDevice(ctx context.Context, claims credentialClaims, publicKey []byte) (func(), relayErrorCode, bool) {
+	unlock := s.lockDevice(claims.DeviceID)
+	if claims.ExpiresAt <= time.Now().Unix() {
+		unlock()
+		return nil, relayErrorCredentialExpired, false
+	}
+	revoked, revokeErr := s.store.IsRevoked(ctx, claims.DeviceID, time.Now())
+	device, enrollmentErr := s.store.GetEnrollment(ctx, claims.DeviceID)
+	keyMatches := device != nil && device.PublicKey == base64.RawURLEncoding.EncodeToString(publicKey)
+	if revokeErr != nil || enrollmentErr != nil || revoked || !keyMatches {
+		unlock()
+		return nil, relayErrorAuthenticationFailed, false
+	}
+	return unlock, relayErrorUnspecified, true
 }
 
 func (s *Server) validEnrollmentToken(token string) bool {

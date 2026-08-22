@@ -414,10 +414,10 @@ func (erroringCache) Publish(context.Context, RelayEvent) error {
 	return errors.New("cache unavailable")
 }
 
-// TestAuthFailsOpenWhenCacheUnavailable verifies that device authentication
-// still succeeds when the cache (nonce replay protection) is unavailable: MySQL
-// enrollment/revocation remains the authority and nonce protection degrades.
-func TestAuthFailsOpenWhenCacheUnavailable(t *testing.T) {
+// TestAuthFailsClosedWhenCacheUnavailable verifies that device authentication
+// rejects the request when the nonce replay-protection cache is unavailable.
+// Accepting here would turn a transient cache outage into a replay window.
+func TestAuthFailsClosedWhenCacheUnavailable(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -445,8 +445,8 @@ func TestAuthFailsOpenWhenCacheUnavailable(t *testing.T) {
 	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
 		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
 	))
-	if _, _, _, ok := server.authenticatedRequest(request); !ok {
-		t.Fatal("authentication failed closed when the cache was unavailable")
+	if _, _, code, ok := server.authenticatedRequest(request); ok || code != relayErrorAuthenticationFailed {
+		t.Fatalf("authentication did not fail closed when the cache was unavailable: ok=%v code=%d", ok, code)
 	}
 }
 

@@ -58,7 +58,7 @@ type v2Attempt struct {
 // 升级后服务端先发 Ready（protocol_version=2 + heartbeat/ttl 等），随后按 v2 控制面
 // 读循环运行。Ready 在 hub.add 之前入队，保证它是客户端收到的第一帧。
 func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
-	claims, _, code, ok := s.authenticatedRequest(r)
+	claims, publicKey, code, ok := s.authenticatedRequest(r)
 	if !ok {
 		retry := retryUnspecified
 		if code == relayErrorCredentialExpired {
@@ -68,6 +68,24 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 			"Relay control-plane authentication failed.", "connect_relay_v2", "", retry, 0)
 		return
 	}
+	unlockAdmission, admissionCode, admitted := s.admitAuthenticatedDevice(r.Context(), claims, publicKey)
+	if !admitted {
+		retry := retryUnspecified
+		if admissionCode == relayErrorCredentialExpired {
+			retry = retryRefreshCredentialThenRetry
+		}
+		writeNetworkErrorRetry(w, http.StatusUnauthorized, admissionCode,
+			"Relay control-plane authentication failed.", "connect_relay_v2", "", retry, 0)
+		return
+	}
+	// Keep the admission lock only until the upgraded socket is registered. A
+	// long-lived control connection must not block revoke/re-enroll forever;
+	// once hub.add has recorded the socket, revoke can find and close it.
+	defer func() {
+		if unlockAdmission != nil {
+			unlockAdmission()
+		}
+	}()
 	connection, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -84,6 +102,10 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 		maxBytesPerSecond:  s.config.MaxBytesPerSecondPerDevice,
 		relayHost:          r.Host,
 	}
+	presenceTTLSeconds := uint32(s.config.PresenceTTL / time.Second)
+	if presenceTTLSeconds == 0 {
+		presenceTTLSeconds = 1
+	}
 	ready, err := v2.EncodeFrame(&v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
 		Kind: &v2.RelayFrame_Ready{Ready: &v2.Ready{
@@ -91,7 +113,7 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 			DeviceId:           claims.DeviceID,
 			ServerTimeMs:       time.Now().UnixMilli(),
 			HeartbeatIntervalS: v2.HEARTBEAT_INTERVAL_S,
-			PresenceTtlS:       v2.PRESENCE_TTL_S,
+			PresenceTtlS:       presenceTTLSeconds,
 		}},
 	})
 	if err != nil {
@@ -109,6 +131,8 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 		_ = connection.Close()
 		return
 	}
+	unlockAdmission()
+	unlockAdmission = nil
 	if !s.hub.controlLeaseCurrentV2(peer) {
 		// hub.add historically kept a socket alive when the shared lease store
 		// failed.  A control connection without an authoritative presence lease

@@ -393,6 +393,9 @@ func checkLen(what string, got, want int) error {
 // KindName returns the canonical wire message name for the control frame's
 // oneof kind ("ready", "heartbeat", ...), or "" when no kind is set.
 func KindName(msg *RelayFrame) string {
+	if msg == nil {
+		return ""
+	}
 	switch msg.Kind.(type) {
 	case *RelayFrame_Ready:
 		return "ready"
@@ -436,6 +439,9 @@ func KindName(msg *RelayFrame) string {
 // DataKindName returns the canonical wire message name for a relay-data frame's
 // oneof kind ("relay_data_connect", ...), or "" when no kind is set.
 func DataKindName(msg *RelayDataFrame) string {
+	if msg == nil {
+		return ""
+	}
 	switch msg.Kind.(type) {
 	case *RelayDataFrame_Connect:
 		return "relay_data_connect"
