@@ -333,6 +333,42 @@ async fn relay_business_payloads_bind_peer_tokens_and_stream_identity() {
         .await
         .expect_err("malformed generic stream frames must be rejected");
     assert!(!error.to_string().is_empty());
+
+    let generic_frame = |kind: GenericFrameKind, body: &[u8]| {
+        let mut frame = b"SMGF".to_vec();
+        frame.extend_from_slice(&NETWORK_PROTOCOL_VERSION.to_be_bytes());
+        frame.push(kind as u8);
+        frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        frame.extend_from_slice(body);
+        frame
+    };
+    let non_stream = generic_frame(GenericFrameKind::DataMessage, b"message");
+    let error = receive_relay_stream_frame(&state, &data, "peer-a", "stream:peer-a:7", &non_stream)
+        .await
+        .expect_err("the stream envelope must reject non-stream generic frames");
+    assert!(error.to_string().contains("stream frame"));
+
+    let malformed_stream = generic_frame(GenericFrameKind::StreamOpen, &[1]);
+    let error = receive_relay_stream_frame(
+        &state,
+        &data,
+        "peer-a",
+        "stream:peer-a:7",
+        &malformed_stream,
+    )
+    .await
+    .expect_err("the stream envelope must reject malformed stream payloads");
+    assert!(!error.to_string().is_empty());
+    let error = receive_relay_stream_frame(
+        &state,
+        &data,
+        "missing-peer",
+        "stream:peer-a:7",
+        &malformed_stream,
+    )
+    .await
+    .expect_err("Relay stream frames must require a registered peer");
+    assert!(error.to_string().contains("registered peer"));
 }
 
 #[tokio::test]
