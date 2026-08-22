@@ -342,6 +342,91 @@ async fn outbound_generic_peer_restart_replaces_session_and_cancels_old_tasks() 
 }
 
 #[tokio::test]
+async fn inbound_authenticated_generic_route_commits_a_fresh_session() {
+    let state = new_test_state().await;
+    let peer_id = "generic-inbound-success-peer";
+    let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+        "generic-inbound-local".into(),
+        [231u8; 32],
+        [241u8; 32],
+    ));
+    let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+        peer_id.into(),
+        [232u8; 32],
+        [242u8; 32],
+    ));
+    *state.lifecycle.identity.write().await = Some(Arc::clone(&local_identity));
+    state.peers.write().await.insert(
+        peer_id.into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: remote_identity.public_identity_key().to_bytes(),
+            e2e_public_key: remote_identity.public_e2e_key().to_bytes(),
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    state.trusted_peer_keys.write().await.insert(
+        peer_id.into(),
+        remote_identity.public_identity_key().to_bytes(),
+    );
+
+    let (mut client, server_stream) = generic_connection_pair().await;
+    let server =
+        GenericConnection::from_transport(Transport::Tcp(TcpTransport::from_stream(server_stream)));
+    let session_binding = "33".repeat(16);
+    let callback_binding = session_binding.clone();
+    let client_identity = Arc::clone(&remote_identity);
+    let expected_local_key = local_identity.public_identity_key().to_bytes();
+    let (release_tx, release_rx) = oneshot::channel();
+    let client_task = tokio::spawn(async move {
+        let result = authenticate_initiator_with_policy(
+            &mut client,
+            client_identity,
+            "generic-inbound-local",
+            expected_local_key,
+            &session_binding,
+            crate::crypto_handshake::path_handshake::E2eePolicy::Required,
+            move |_peer_id, _remote_binding| {
+                let callback_binding = callback_binding.clone();
+                async move { Ok((callback_binding, ())) }
+            },
+        )
+        .await;
+        release_rx.await.expect("hold authenticated client route");
+        result
+    });
+    let server_result = accept_authenticated_generic(
+        Arc::clone(&state),
+        server,
+        "127.0.0.1:39001".parse().expect("peer address"),
+    )
+    .await;
+    server_result.expect("authenticated inbound GenericRoute should be admitted");
+    assert!(state.path_is_connected(peer_id).await);
+    let session_id = state
+        .connection_sessions
+        .current_session_id(peer_id)
+        .await
+        .expect("inbound route session");
+    assert!(state
+        .crypto_context(peer_id, &session_id.wire_key())
+        .await
+        .is_ok());
+
+    state
+        .close_transport_path(peer_id)
+        .await
+        .expect("close inbound GenericRoute");
+    state.task_supervisor.cancel_root();
+    state.task_supervisor.shutdown().await;
+    let _ = release_tx.send(());
+    client_task
+        .await
+        .expect("client auth task")
+        .expect("outbound side should authenticate");
+}
+
+#[tokio::test]
 async fn failed_generic_attach_drops_staged_scope_without_orphan_tasks() {
     let state = new_test_state().await;
     let session_id = started_session(&state, "generic-failed-attach-peer").await;
@@ -1944,4 +2029,199 @@ async fn responder_direct_rejects_empty_advertised_candidates() {
     };
     assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
     endpoint.close(VarInt::from_u32(0), b"test complete");
+}
+
+#[tokio::test]
+async fn candidate_race_empty_and_expired_windows_fail_before_network_work() {
+    let state = new_test_state().await;
+    let identity = Arc::new(DeviceIdentity::from_private_keys(
+        "device-a".into(),
+        [51; 32],
+        [52; 32],
+    ));
+    let endpoint = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("client bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("create client endpoint")
+    .endpoint;
+    let (direct_tx, direct_updates) = watch::channel(None);
+    drop(direct_tx);
+    let direct_result = connect_direct_candidates_with_crypto(
+        endpoint.clone(),
+        Vec::new(),
+        Arc::clone(&identity),
+        [0u8; 32],
+        "peer-a".into(),
+        "empty-direct".into(),
+        Instant::now() + Duration::from_secs(1),
+        "session".into(),
+        Arc::clone(&state),
+        None,
+        DEFAULT_CONNECTION_CAPABILITY,
+        direct_updates,
+    )
+    .await;
+    let direct_error = match direct_result {
+        Ok(_) => panic!("empty candidate set unexpectedly connected"),
+        Err(error) => error,
+    };
+    assert_eq!(direct_error.code, NetworkErrorCode::NoRoute as i32);
+
+    let candidate = Candidate::new(
+        "127.0.0.1:9".parse().expect("candidate endpoint"),
+        CandidateKind::Lan,
+        "expired-candidate".into(),
+    );
+    let (expired_tx, expired_updates) = watch::channel(None);
+    drop(expired_tx);
+    let expired_result = connect_direct_candidates_with_crypto(
+        endpoint.clone(),
+        vec![candidate],
+        identity,
+        [0u8; 32],
+        "peer-a".into(),
+        "expired-direct".into(),
+        Instant::now(),
+        "session".into(),
+        state,
+        None,
+        DEFAULT_CONNECTION_CAPABILITY,
+        expired_updates,
+    )
+    .await;
+    let expired_error = match expired_result {
+        Ok(_) => panic!("expired candidate window unexpectedly connected"),
+        Err(error) => error,
+    };
+    assert_eq!(expired_error.code, NetworkErrorCode::NoRoute as i32);
+    endpoint.close(VarInt::from_u32(0), b"candidate race test complete");
+}
+
+#[tokio::test]
+async fn generic_candidate_race_empty_and_expired_windows_fail_closed() {
+    let state = new_test_state().await;
+    let identity = Arc::new(DeviceIdentity::from_private_keys(
+        "device-a".into(),
+        [53; 32],
+        [54; 32],
+    ));
+    let (empty_tx, empty_updates) = watch::channel(None);
+    drop(empty_tx);
+    let empty_result = connect_generic_candidates(
+        Vec::new(),
+        Arc::clone(&identity),
+        [0u8; 32],
+        "peer-a".into(),
+        "session".into(),
+        Arc::clone(&state),
+        SessionId::new(),
+        DEFAULT_CONNECTION_CAPABILITY,
+        false,
+        Instant::now() + Duration::from_secs(1),
+        empty_updates,
+    )
+    .await;
+    let empty_error = match empty_result {
+        Ok(_) => panic!("empty generic candidates unexpectedly connected"),
+        Err(error) => error,
+    };
+    assert_eq!(empty_error.code, NetworkErrorCode::NoRoute as i32);
+
+    let candidate = Candidate::new(
+        "127.0.0.1:9".parse().expect("candidate endpoint"),
+        CandidateKind::Lan,
+        "expired-generic".into(),
+    );
+    let (expired_tx, expired_updates) = watch::channel(None);
+    drop(expired_tx);
+    let expired_result = connect_generic_candidates(
+        vec![candidate],
+        identity,
+        [0u8; 32],
+        "peer-a".into(),
+        "session".into(),
+        state,
+        SessionId::new(),
+        DEFAULT_CONNECTION_CAPABILITY,
+        false,
+        Instant::now(),
+        expired_updates,
+    )
+    .await;
+    let expired_error = match expired_result {
+        Ok(_) => panic!("expired generic window unexpectedly connected"),
+        Err(error) => error,
+    };
+    assert_eq!(expired_error.code, NetworkErrorCode::NoRoute as i32);
+}
+
+#[tokio::test]
+async fn generic_tcp_candidate_releases_a_route_that_lacks_requested_datagrams() {
+    let state = new_test_state().await;
+    let peer_id = "generic-capability-peer";
+    let local_peer_id = "generic-capability-local";
+    let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+        local_peer_id.into(),
+        [41u8; 32],
+        [51u8; 32],
+    ));
+    let expected_remote = DeviceIdentity::from_private_keys(peer_id.into(), [42u8; 32], [52u8; 32]);
+    let session_id = started_session(&state, peer_id).await;
+    let (endpoint, release_tx, responder_task) =
+        spawn_tcp_generic_responder(peer_id, local_peer_id).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        connect_generic_candidate(
+            endpoint,
+            local_identity,
+            expected_remote.public_identity_key().to_bytes(),
+            peer_id.into(),
+            session_id.wire_key(),
+            Arc::clone(&state),
+            session_id,
+            crate::connect::CAPABILITY_UNRELIABLE_DATAGRAM,
+            false,
+            Duration::from_secs(1),
+        ),
+    )
+    .await
+    .expect("capability mismatch should finish within the candidate window");
+    let error = match result {
+        Ok(route) => {
+            route.scope.close().await;
+            panic!("TCP must not claim an unreliable datagram capability")
+        }
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
+    let _ = release_tx.send(());
+    responder_task
+        .await
+        .expect("capability responder should exit");
+    state.cancel_session_tasks(peer_id, session_id).await;
+}
+
+#[tokio::test]
+async fn explicit_runtime_port_conflict_fails_before_claiming_runtime_state() {
+    let state = new_test_state().await;
+    let blocker = std::net::TcpListener::bind("127.0.0.1:0").expect("bind TCP blocker");
+    let address = blocker.local_addr().expect("TCP blocker address");
+    let error = configure_runtime(
+        Arc::clone(&state),
+        network_protocol::ConfigureRuntimeCommand {
+            device_id: "device-conflict".into(),
+            identity_private_key: vec![1; 32],
+            e2e_private_key: vec![2; 32],
+            listen_address: address.to_string(),
+            receive_directory: std::env::temp_dir()
+                .join("ssh-mobile-conflict-receive")
+                .to_string_lossy()
+                .into_owned(),
+        },
+    )
+    .await
+    .expect_err("an occupied TCP fallback port must fail closed");
+    assert_eq!(error.code, NetworkErrorCode::IoError as i32);
+    assert!(state.lifecycle.endpoint.read().await.is_none());
 }

@@ -54,7 +54,130 @@ fn stream_identity_isolated_by_peer_and_opener() {
     let third = ReliableStreamIdentity::new("peer-a", "device-b", 7).expect("identity");
     assert_ne!(first, second);
     assert_ne!(first, third);
+    assert!(ReliableStreamIdentity::new("", "device-a", 7).is_err());
+    assert!(ReliableStreamIdentity::new("peer-a", "", 7).is_err());
     assert!(ReliableStreamIdentity::new("peer-a", "device-a", 0).is_err());
+}
+
+#[tokio::test]
+async fn stream_manager_rejects_invalid_duplicate_closed_and_missing_operations() {
+    let (manager, _event_rx) = test_manager();
+    let (registry, _paths, handle) = ready_stream_path();
+    assert!(matches!(
+        manager
+            .open(StreamOpener::Local, 1, "", StreamConsumer::Poll)
+            .await,
+        Err(StreamError::InvalidArgument)
+    ));
+    assert!(matches!(
+        manager
+            .open(
+                StreamOpener::Local,
+                1,
+                &"x".repeat(MAX_SERVICE_BYTES + 1),
+                StreamConsumer::Poll,
+            )
+            .await,
+        Err(StreamError::InvalidArgument)
+    ));
+    let missing_lease = registry.acquire(&handle).expect("lease");
+    assert!(matches!(
+        manager
+            .bind_lease(StreamOpener::Local, 1, missing_lease)
+            .await,
+        Err(StreamError::NotFound)
+    ));
+    assert!(matches!(
+        manager
+            .quic_send_bytes(StreamOpener::Local, 1, b"data")
+            .await,
+        Err(StreamError::NotFound)
+    ));
+    assert!(matches!(
+        manager.quic_finish_send(StreamOpener::Local, 1).await,
+        Err(StreamError::NotFound)
+    ));
+
+    manager
+        .open(StreamOpener::Local, 1, "ssh", StreamConsumer::Poll)
+        .await
+        .expect("open");
+    assert_eq!(manager.active_count().await, 1);
+    assert!(matches!(
+        manager
+            .open(StreamOpener::Local, 1, "ssh", StreamConsumer::Poll)
+            .await,
+        Err(StreamError::AlreadyOpen)
+    ));
+    assert!(matches!(
+        manager.take_lease(StreamOpener::Local, 1).await,
+        Err(StreamError::NotConnected)
+    ));
+    let first = registry.acquire(&handle).expect("first lease");
+    manager
+        .bind_lease(StreamOpener::Local, 1, first)
+        .await
+        .expect("bind lease");
+    let second = registry.acquire(&handle).expect("second lease");
+    assert!(matches!(
+        manager.bind_lease(StreamOpener::Local, 1, second).await,
+        Err(StreamError::AlreadyOpen)
+    ));
+    let lease = manager
+        .take_lease(StreamOpener::Local, 1)
+        .await
+        .expect("take lease");
+    assert!(!manager.has_lease(StreamOpener::Local, 1).await);
+    assert!(manager.restore_lease(StreamOpener::Local, 1, lease).await);
+    assert!(manager.has_lease(StreamOpener::Local, 1).await);
+
+    assert!(manager.send_guard(StreamOpener::Remote, 99).await.is_err());
+    assert!(manager
+        .next_send_seq(StreamOpener::Remote, 99)
+        .await
+        .is_err());
+    assert!(manager
+        .bump_send_seq(StreamOpener::Remote, 99, 1)
+        .await
+        .is_err());
+    assert!(manager
+        .receive(StreamOpener::Remote, 99, &mut [0u8; 1])
+        .await
+        .is_err());
+    assert!(manager
+        .close_local("peer-a", StreamOpener::Remote, 99)
+        .await
+        .is_ok());
+    assert!(manager
+        .handle_close("peer-a", StreamOpener::Remote, 99)
+        .await
+        .is_ok());
+
+    manager
+        .close_local("peer-a", StreamOpener::Local, 1)
+        .await
+        .expect("close local");
+    assert!(matches!(
+        manager.send_guard(StreamOpener::Local, 1).await,
+        Err(StreamError::Closed)
+    ));
+    assert!(matches!(
+        manager.next_send_seq(StreamOpener::Local, 1).await,
+        Err(StreamError::Closed)
+    ));
+    assert!(matches!(
+        manager.bump_send_seq(StreamOpener::Local, 1, 1).await,
+        Err(StreamError::Closed)
+    ));
+    assert!(matches!(
+        manager.take_lease(StreamOpener::Local, 1).await,
+        Err(StreamError::Closed)
+    ));
+    manager
+        .handle_close("peer-a", StreamOpener::Local, 1)
+        .await
+        .expect("close receive side");
+    assert!(!manager.is_open(StreamOpener::Local, 1).await);
 }
 
 #[tokio::test]
@@ -327,6 +450,135 @@ fn stream_wire_boundaries_reject_invalid_lengths_identity_and_services() {
     );
 }
 
+#[test]
+fn stream_command_handles_validate_presence_identity_and_range() {
+    let missing = parse_stream_handle(None, "peer-a", "ssh_stream_data").expect_err("missing");
+    assert_eq!(missing.code, NetworkErrorCode::InvalidArgument as i32);
+
+    for handle in [
+        StreamHandle {
+            opener_device_id: String::new(),
+            stream_id: 1,
+        },
+        StreamHandle {
+            opener_device_id: "peer-a".repeat(129),
+            stream_id: 1,
+        },
+        StreamHandle {
+            opener_device_id: "peer-a".into(),
+            stream_id: 0,
+        },
+        StreamHandle {
+            opener_device_id: "peer-a".into(),
+            stream_id: u32::from(u16::MAX) + 1,
+        },
+    ] {
+        let error = parse_stream_handle(Some(handle), "peer-a", "ssh_stream_data")
+            .expect_err("invalid handle");
+        assert_eq!(error.code, NetworkErrorCode::InvalidArgument as i32);
+    }
+    let (handle, stream_id) = parse_stream_handle(
+        Some(StreamHandle {
+            opener_device_id: "peer-a".into(),
+            stream_id: 7,
+        }),
+        "peer-a",
+        "ssh_stream_data",
+    )
+    .expect("valid handle");
+    assert_eq!(handle.opener_device_id, "peer-a");
+    assert_eq!(stream_id, 7);
+    assert!(!validate_peer("") && !validate_peer(&"x".repeat(129)));
+    assert!(validate_peer("peer-a"));
+}
+
+#[tokio::test]
+async fn stream_command_handlers_reject_invalid_arguments_before_network() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        event_tx,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    let handle = Some(StreamHandle {
+        opener_device_id: "peer-a".into(),
+        stream_id: 1,
+    });
+
+    let open_invalid_peer = handle_ssh_stream_open(
+        Arc::clone(&state),
+        SshStreamOpenCommand {
+            peer_id: String::new(),
+            handle: handle.clone(),
+            service: "ssh".into(),
+        },
+    )
+    .await
+    .expect_err("invalid peer");
+    assert_eq!(
+        open_invalid_peer.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    let open_invalid_service = handle_ssh_stream_open(
+        Arc::clone(&state),
+        SshStreamOpenCommand {
+            peer_id: "peer-a".into(),
+            handle: handle.clone(),
+            service: String::new(),
+        },
+    )
+    .await
+    .expect_err("invalid service");
+    assert_eq!(
+        open_invalid_service.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    let open_missing_handle = handle_ssh_stream_open(
+        Arc::clone(&state),
+        SshStreamOpenCommand {
+            peer_id: "peer-a".into(),
+            handle: None,
+            service: "ssh".into(),
+        },
+    )
+    .await
+    .expect_err("missing handle");
+    assert_eq!(
+        open_missing_handle.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    let data_invalid_peer = handle_ssh_stream_data(
+        Arc::clone(&state),
+        SshStreamDataCommand {
+            peer_id: String::new(),
+            handle: handle.clone(),
+            data: b"data".to_vec(),
+        },
+    )
+    .await
+    .expect_err("invalid peer");
+    assert_eq!(
+        data_invalid_peer.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    let close_missing_handle = handle_ssh_stream_close(
+        state,
+        SshStreamCloseCommand {
+            peer_id: "peer-a".into(),
+            handle: None,
+        },
+    )
+    .await
+    .expect_err("missing handle");
+    assert_eq!(
+        close_missing_handle.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+}
+
 #[tokio::test]
 async fn same_stream_id_isolated_by_opener_direction() {
     let (manager, _event_rx) = test_manager();
@@ -449,6 +701,67 @@ async fn inbound_frames_route_same_id_by_wire_opener() {
         .await
         .expect("receive remote opener");
     assert_eq!(&buf[..n], b"remote-bytes");
+}
+
+#[tokio::test]
+async fn inbound_stream_frames_reject_unknown_opener_and_kind() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        event_tx,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    *state.lifecycle.identity.write().await = Some(Arc::new(
+        network_identity::DeviceIdentity::from_private_keys("local-a".into(), [1u8; 32], [2u8; 32]),
+    ));
+    let peer_id = "peer-b";
+
+    let open = encode_stream_open_frame("stranger", 1, "custom").expect("open frame");
+    assert!(matches!(
+        handle_inbound_stream_frame(
+            &state,
+            peer_id,
+            GenericFrameKind::StreamOpen,
+            &open,
+            InboundPath::Current,
+        )
+        .await,
+        Err(StreamError::InvalidFrame)
+    ));
+    let bytes = encode_stream_bytes_frame("stranger", 1, 0, b"data").expect("bytes frame");
+    assert!(matches!(
+        handle_inbound_stream_frame(
+            &state,
+            peer_id,
+            GenericFrameKind::StreamBytes,
+            &bytes,
+            InboundPath::Current,
+        )
+        .await,
+        Err(StreamError::InvalidFrame)
+    ));
+    let close = encode_stream_close_frame("stranger", 1).expect("close frame");
+    assert!(matches!(
+        handle_inbound_stream_frame(
+            &state,
+            peer_id,
+            GenericFrameKind::StreamClose,
+            &close,
+            InboundPath::Current,
+        )
+        .await,
+        Err(StreamError::InvalidFrame)
+    ));
+    assert!(matches!(
+        handle_inbound_stream_frame(
+            &state,
+            peer_id,
+            GenericFrameKind::DataMessage,
+            &[],
+            InboundPath::Current,
+        )
+        .await,
+        Err(StreamError::InvalidFrame)
+    ));
 }
 
 #[test]
