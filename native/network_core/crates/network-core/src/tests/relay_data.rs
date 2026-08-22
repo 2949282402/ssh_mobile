@@ -601,3 +601,72 @@ async fn relay_admission_checks_policy_binding_path_and_commits_current_route() 
         .await
         .is_ok());
 }
+
+#[tokio::test]
+async fn relay_data_connectors_fail_closed_without_config_or_socket() {
+    let state = state();
+    let reserve = network_relay::v2::RelayReserveResponse {
+        request_id: 1,
+        attempt_id: "attempt".into(),
+        reservation_id: "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+        relay_data_endpoint: "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+        expires_at_ms: 0,
+        local_token: vec![0; 32],
+    };
+    let error = match connect_initiator_relay_data(&state, "peer-a", reserve.clone()).await {
+        Ok(_) => panic!("Relay data unexpectedly connected without configuration"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::RelayError as i32);
+
+    *state.relay.config.write().await = Some(RelayReconnectConfig {
+        relay_url: "ws://127.0.0.1:9".into(),
+        credential: "credential".into(),
+        signing_seed: [0; 32],
+    });
+    let error = match connect_initiator_relay_data(&state, "peer-a", reserve).await {
+        Ok(_) => panic!("unreachable Relay data endpoint unexpectedly connected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::RelayError as i32);
+
+    connect_incoming_relay_data(
+        &state,
+        network_relay::v2::IncomingRelayReservation {
+            attempt_id: "attempt".into(),
+            reservation_id: "7a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            initiator_device_id: "peer-a".into(),
+            relay_data_endpoint: "ws://127.0.0.1:9/v2/relay/7a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d"
+                .into(),
+            expires_at_ms: 0,
+            local_token: vec![0; 32],
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn relay_business_envelopes_reject_malformed_token_and_stream_frames() {
+    let state = state();
+    let data = Arc::new(data_client());
+    state
+        .relay
+        .relay_path_ready
+        .write()
+        .await
+        .insert("peer-a".into());
+
+    for envelope in [
+        vec![DATA_ENV_CHANNEL, 3, b'a'],
+        vec![DATA_ENV_CHANNEL_ACK, 1, b'x', 0xff],
+        vec![DATA_ENV_STREAM, 1, b'x', 0xff],
+    ] {
+        let error = handle_relay_data_payload(&state, &data, "peer-a", &envelope)
+            .await
+            .expect_err("malformed business envelope must fail closed");
+        assert!(!error.to_string().is_empty());
+    }
+
+    let stale = Arc::new(data_client());
+    relay_data_disconnected(state, stale, "peer-a".into()).await;
+}
