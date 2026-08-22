@@ -282,6 +282,21 @@ async fn relay_configuration_and_setup_fail_closed_before_claiming_a_control_rou
 }
 
 #[tokio::test]
+async fn relay_control_setup_rejects_invalid_url_before_opening_socket() {
+    let state = state();
+    let config = RelayReconnectConfig {
+        relay_url: "not-a-relay-url".into(),
+        credential: "credential".into(),
+        signing_seed: [0; 32],
+    };
+    let error = setup_v2_control_plane(&state, "device-a", &config)
+        .await
+        .expect_err("invalid Relay URL must fail before connect");
+    assert_eq!(error.code, NetworkErrorCode::RelayError as i32);
+    assert!(state.relay.control.read().await.is_none());
+}
+
+#[tokio::test]
 async fn relay_cache_invalidation_is_noop_for_equal_or_unknown_epochs() {
     let state = state();
     clear_remote_candidate_cache_if_ready_ttl_changed(
@@ -361,4 +376,37 @@ async fn configured_control_consumer_handles_offer_reservation_and_signal_failur
     drop(events_tx);
     consumer.await.unwrap();
     state.task_supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn control_consumer_reconnects_after_hint_without_epoch_and_disconnect() {
+    let state = state();
+    let control = control_client();
+    let (events_tx, events_rx) = mpsc::channel(4);
+    let consumer = tokio::spawn(consume_control_events(
+        Arc::clone(&state),
+        control,
+        events_rx,
+    ));
+    events_tx
+        .send(ControlEvent::PeerAvailableHint(PeerAvailableHint {
+            device_id: "peer-a".into(),
+            runtime_epoch: None,
+            revision: 2,
+        }))
+        .await
+        .unwrap();
+    events_tx
+        .send(ControlEvent::Disconnected {
+            reason: "test disconnect".into(),
+        })
+        .await
+        .unwrap();
+    consumer.await.unwrap();
+    assert!(state.relay.control.read().await.is_none());
+    assert!(state
+        .relay
+        .reconnect_active
+        .load(std::sync::atomic::Ordering::Acquire));
+    stop_relay_reconnect_task(&state).await;
 }
