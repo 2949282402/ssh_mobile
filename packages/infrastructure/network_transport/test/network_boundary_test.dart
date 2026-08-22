@@ -11,17 +11,10 @@ void main() {
       maxSinglePayloadBytes: 10,
     );
     expect(
-      mux.add(
-        'normal',
-        priority: EventMuxPriority.normalControl,
-        bytes: 1,
-      ),
+      mux.add('normal', priority: EventMuxPriority.normalControl, bytes: 1),
       isTrue,
     );
-    expect(
-      mux.add('data', priority: EventMuxPriority.data, bytes: 1),
-      isTrue,
-    );
+    expect(mux.add('data', priority: EventMuxPriority.data, bytes: 1), isTrue);
     expect(mux.takeEntry()!.value, 'normal');
     expect(mux.takeEntry()!.value, 'data');
 
@@ -42,49 +35,55 @@ void main() {
     expect(mux.takeEntry(), isNull);
   });
 
-  test('Realtime gateway maps malformed command inputs to invalidArgument', () async {
-    final handle = _BoundaryNativeHandle();
-    final runtime = NetworkRuntimeImpl(
-      nativeAdapter: _BoundaryNativeAdapter(handle),
-    );
-    final gateway = await runtime.openRealtimeGateway();
+  test(
+    'Realtime gateway maps malformed command inputs to invalidArgument',
+    () async {
+      final handle = _BoundaryNativeHandle();
+      final runtime = NetworkRuntimeImpl(
+        nativeAdapter: _BoundaryNativeAdapter(handle),
+      );
+      final gateway = await runtime.openRealtimeGateway();
 
-    final start = gateway.start(realtimeId: '', peerId: 'peer-a');
-    final stop = gateway.stop(realtimeId: '');
-    expect(start.queueStatus, NativeOperationStatus.invalidArgument);
-    expect(stop.queueStatus, NativeOperationStatus.invalidArgument);
-    await runtime.dispose();
-  });
+      final start = gateway.start(realtimeId: '', peerId: 'peer-a');
+      final stop = gateway.stop(realtimeId: '');
+      expect(start.queueStatus, NativeOperationStatus.invalidArgument);
+      expect(stop.queueStatus, NativeOperationStatus.invalidArgument);
+      await runtime.dispose();
+    },
+  );
 
-  test('Realtime gateway maps queue failures and drops malformed events', () async {
-    final failureRuntime = NetworkRuntimeImpl(
-      nativeAdapter: _BoundaryNativeAdapter(
-        _BoundaryNativeHandle(status: TransportOperationStatus.failure),
-      ),
-    );
-    final failureGateway = await failureRuntime.openRealtimeGateway();
-    expect(
-      failureGateway
-          .start(
-            realtimeId: '00112233445566778899aabbccddeeff',
-            peerId: 'peer-a',
-          )
-          .queueStatus,
-      NativeOperationStatus.failure,
-    );
-    await failureRuntime.dispose();
-
-    final malformedRuntime = NetworkRuntimeImpl(
-      nativeAdapter: _BoundaryNativeAdapter(
-        _BoundaryNativeHandle(
-          events: Stream<Uint8List>.value(Uint8List.fromList(<int>[0xff])),
+  test(
+    'Realtime gateway maps queue failures and drops malformed events',
+    () async {
+      final failureRuntime = NetworkRuntimeImpl(
+        nativeAdapter: _BoundaryNativeAdapter(
+          _BoundaryNativeHandle(status: TransportOperationStatus.failure),
         ),
-      ),
-    );
-    final malformedGateway = await malformedRuntime.openRealtimeGateway();
-    expect(await malformedGateway.events.toList(), isEmpty);
-    await malformedRuntime.dispose();
-  });
+      );
+      final failureGateway = await failureRuntime.openRealtimeGateway();
+      expect(
+        failureGateway
+            .start(
+              realtimeId: '00112233445566778899aabbccddeeff',
+              peerId: 'peer-a',
+            )
+            .queueStatus,
+        NativeOperationStatus.failure,
+      );
+      await failureRuntime.dispose();
+
+      final malformedRuntime = NetworkRuntimeImpl(
+        nativeAdapter: _BoundaryNativeAdapter(
+          _BoundaryNativeHandle(
+            events: Stream<Uint8List>.value(Uint8List.fromList(<int>[0xff])),
+          ),
+        ),
+      );
+      final malformedGateway = await malformedRuntime.openRealtimeGateway();
+      expect(await malformedGateway.events.toList(), isEmpty);
+      await malformedRuntime.dispose();
+    },
+  );
 }
 
 final class _BoundaryNativeAdapter implements NativeNetworkAdapter {
