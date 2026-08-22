@@ -2,6 +2,7 @@ use super::*;
 
 use sha2::Digest;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::sync::oneshot;
 
 use crate::stream::{ReliableStreamManager, StreamConsumer, StreamOpener};
@@ -205,6 +206,68 @@ async fn connect_command_rejects_missing_runtime_and_unknown_peer_before_attempt
 }
 
 #[tokio::test]
+async fn connect_command_maps_unsuccessful_attempt_cancellation_to_io_error() {
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        event_tx,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    let endpoint = network_quic::QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("endpoint address"),
+        Arc::new(network_nat::PathManager::new()),
+    )
+    .expect("endpoint");
+    *state.lifecycle.endpoint.write().await = Some(endpoint.endpoint);
+    *state.lifecycle.identity.write().await = Some(Arc::new(
+        network_identity::DeviceIdentity::from_private_keys(
+            "device-a".into(),
+            [1u8; 32],
+            [2u8; 32],
+        ),
+    ));
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [3; 32],
+            e2e_public_key: [4; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let supervisor = state
+        .peer_supervisors
+        .get_or_create_with_configured("peer-a", true)
+        .expect("supervisor");
+
+    let connect = tokio::spawn(start_connect_peer(
+        Arc::clone(&state),
+        "connect-cancelled".into(),
+        "peer-a".into(),
+        CommunicationClass::ReliableMessage,
+    ));
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if state.task_supervisor.active_count() > 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("connect command should start a supervised task");
+    state.task_supervisor.cancel_root();
+    supervisor.stop();
+
+    let error = tokio::time::timeout(Duration::from_secs(1), connect)
+        .await
+        .expect("cancelled connect should complete")
+        .expect("connect task should join")
+        .expect_err("cancelled connect must return an error");
+    state.task_supervisor.shutdown().await;
+    assert_eq!(error.code, NetworkErrorCode::IoError as i32);
+}
+
+#[tokio::test]
 async fn environment_change_refreshes_discovery_revision() {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     let state = Arc::new(RuntimeState::new(
@@ -356,6 +419,147 @@ async fn environment_change_preserves_relay_and_retires_only_direct_path() {
 
     assert!(!state.has_ready_direct_path("peer-a").await);
     assert!(state.has_ready_relay_path("peer-a").await);
+}
+
+#[tokio::test]
+async fn environment_change_restarts_a_maintained_direct_supervisor() {
+    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        sender,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let supervisor = state
+        .peer_supervisors
+        .get_or_create_with_configured("peer-a", true)
+        .expect("supervisor");
+    let intent = supervisor
+        .begin_connect("maintenance-seed", CommunicationClass::ReliableMessage)
+        .expect("maintenance intent");
+    intent.detach_completion();
+    supervisor.admit_inbound(true).expect("online supervisor");
+
+    let peer = PeerId::new("peer-a").expect("valid peer");
+    let mut manager = crate::connect::PeerPathManager::new(peer, Arc::clone(&state.ready_paths));
+    manager
+        .publish_ready(
+            crate::connection::ConnectionProfile::for_route(
+                network_protocol::RouteType::QuicDirect,
+            )
+            .expect("direct profile"),
+        )
+        .expect("direct path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert("peer-a".into(), Arc::new(std::sync::Mutex::new(manager)));
+
+    handle_network_environment_changed(
+        &state,
+        &network_protocol::NetworkEnvironmentChangedCommand {
+            generation: 9,
+            has_connectivity: true,
+            is_foreground: true,
+            is_metered: false,
+        },
+    )
+    .await
+    .expect("maintained environment transition");
+
+    assert!(!state.has_ready_direct_path("peer-a").await);
+    assert!(supervisor.maintain_connection());
+    assert!(matches!(
+        supervisor.state(),
+        PeerState::Offline | PeerState::Connecting
+    ));
+    state.task_supervisor.cancel_root();
+    supervisor.stop();
+    state.task_supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn environment_change_starts_relay_backed_direct_recovery() {
+    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        sender,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let supervisor = state
+        .peer_supervisors
+        .get_or_create_with_configured("peer-a", true)
+        .expect("supervisor");
+    let intent = supervisor
+        .begin_connect("maintenance-seed", CommunicationClass::ReliableMessage)
+        .expect("maintenance intent");
+    intent.detach_completion();
+    let session_id = crate::session::SessionId::new();
+    state
+        .connection_sessions
+        .register_pending_session("peer-a", session_id)
+        .await
+        .expect("pending session");
+    assert!(
+        state
+            .mark_relay_route_connected("peer-a", session_id, None)
+            .await
+    );
+
+    handle_network_environment_changed(
+        &state,
+        &network_protocol::NetworkEnvironmentChangedCommand {
+            generation: 10,
+            has_connectivity: true,
+            is_foreground: true,
+            is_metered: false,
+        },
+    )
+    .await
+    .expect("relay-backed environment transition");
+
+    let probe_started = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let started = state
+                .peer_path_managers
+                .read()
+                .await
+                .get("peer-a")
+                .is_some_and(|manager| {
+                    manager
+                        .lock()
+                        .expect("peer path manager lock")
+                        .direct_probe()
+                        .is_some()
+                });
+            if started {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .is_ok();
+    state.task_supervisor.cancel_root();
+    supervisor.stop();
+    state.task_supervisor.shutdown().await;
+    assert!(probe_started, "environment change must arm a Direct probe");
 }
 
 #[tokio::test]
@@ -958,6 +1162,61 @@ async fn relay_command_validation_checks_runtime_identity_and_credentials() {
     .await
     .expect_err("Relay configure must reject a stopping runtime");
     assert_eq!(stopping.code, NetworkErrorCode::Cancelled as i32);
+}
+
+#[tokio::test]
+async fn relay_command_reports_async_control_connect_failure() {
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        event_tx,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    state.lifecycle.identity.write().await.replace(Arc::new(
+        network_identity::DeviceIdentity::from_private_keys(
+            "device-a".into(),
+            [1u8; 32],
+            [2u8; 32],
+        ),
+    ));
+
+    start_configure_relay(
+        Arc::clone(&state),
+        network_protocol::ConfigureRelayCommand {
+            relay_url: "ws://127.0.0.1:9".into(),
+            relay_credential: "credential".into(),
+            relay_signing_seed: vec![0; 32],
+        },
+    )
+    .await
+    .expect("valid Relay command should queue its async task");
+
+    let mut saw_connecting = false;
+    let mut saw_failed = false;
+    let mut saw_connected = false;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(event) = event_rx.recv().await {
+            let Some(network_protocol::network_event::Payload::RelayStateChanged(change)) =
+                event.payload
+            else {
+                continue;
+            };
+            match network_protocol::RelayConnectionState::try_from(change.state) {
+                Ok(network_protocol::RelayConnectionState::Connecting) => saw_connecting = true,
+                Ok(network_protocol::RelayConnectionState::Failed) => {
+                    saw_failed = true;
+                    break;
+                }
+                Ok(network_protocol::RelayConnectionState::Connected) => saw_connected = true,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("Relay failure event should arrive");
+    state.task_supervisor.shutdown().await;
+    assert!(saw_connecting);
+    assert!(saw_failed);
+    assert!(!saw_connected, "failed Relay setup must not emit Connected");
 }
 
 #[tokio::test]
