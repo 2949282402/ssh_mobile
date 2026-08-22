@@ -1292,3 +1292,96 @@ async fn peer_upsert_and_disconnect_preserve_identity_and_route_boundaries() {
         .await
         .expect("configured peer can be explicitly disconnected");
 }
+
+#[tokio::test]
+async fn direct_quic_connection_failures_map_to_typed_errors() {
+    let endpoint = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("client bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("create client endpoint")
+    .endpoint;
+    let identity = Arc::new(DeviceIdentity::from_private_keys(
+        "device-a".into(),
+        [31; 32],
+        [32; 32],
+    ));
+    let error = connect_direct(
+        endpoint.clone(),
+        "127.0.0.1:9".parse().unwrap(),
+        identity,
+        [33; 32],
+        "peer-a".into(),
+        "attempt".into(),
+        Duration::from_millis(20),
+    )
+    .await
+    .expect_err("unreachable QUIC candidate must fail");
+    assert!(matches!(
+        error.code,
+        code if code == NetworkErrorCode::QuicError as i32
+            || code == NetworkErrorCode::Timeout as i32
+    ));
+    endpoint.close(VarInt::from_u32(0), b"test complete");
+}
+
+#[tokio::test]
+async fn direct_and_generic_candidate_races_fail_closed_on_empty_snapshots() {
+    let endpoint = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("client bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("create client endpoint")
+    .endpoint;
+    let identity = Arc::new(DeviceIdentity::from_private_keys(
+        "device-a".into(),
+        [41; 32],
+        [42; 32],
+    ));
+    let state = new_test_state().await;
+    let (updates_tx, updates) = watch::channel(None);
+    drop(updates_tx);
+    let direct_error = match connect_direct_candidates_with_crypto(
+        endpoint.clone(),
+        Vec::new(),
+        Arc::clone(&identity),
+        [43; 32],
+        "peer-a".into(),
+        "attempt".into(),
+        Instant::now() + Duration::from_secs(1),
+        "session".into(),
+        Arc::clone(&state),
+        None,
+        DEFAULT_CONNECTION_CAPABILITY,
+        updates,
+    )
+    .await
+    {
+        Ok(_) => panic!("empty QUIC candidate snapshot unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(direct_error.code, NetworkErrorCode::NoRoute as i32);
+
+    let (updates_tx, updates) = watch::channel(None);
+    drop(updates_tx);
+    let generic_error = match connect_generic_candidates(
+        Vec::new(),
+        identity,
+        [44; 32],
+        "peer-a".into(),
+        "session".into(),
+        state,
+        SessionId::new(),
+        DEFAULT_CONNECTION_CAPABILITY,
+        true,
+        Instant::now(),
+        updates,
+    )
+    .await
+    {
+        Ok(_) => panic!("empty generic candidate snapshot unexpectedly succeeded"),
+        Err(error) => error,
+    };
+    assert_eq!(generic_error.code, NetworkErrorCode::NoRoute as i32);
+    endpoint.close(VarInt::from_u32(0), b"test complete");
+}
