@@ -1,5 +1,7 @@
 use super::*;
-use crate::connect::{CAPABILITY_RELIABLE_MESSAGE, CAPABILITY_RELIABLE_STREAM};
+use crate::connect::{
+    CAPABILITY_RELIABLE_MESSAGE, CAPABILITY_RELIABLE_STREAM, CAPABILITY_UNRELIABLE_DATAGRAM,
+};
 use crate::connection::{Route, RouteTransport};
 
 fn test_peer() -> PeerId {
@@ -26,6 +28,7 @@ fn physical_path_is_sole_carrier_owner() {
     let registry = Arc::new(PathRegistry::new());
     let closes = Arc::new(Mutex::new(Vec::new()));
     let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+    assert_eq!(manager.peer_id(), &test_peer());
     let handle = manager
         .publish_ready_with_carrier(
             profile(PathKind::Direct, RouteTransport::Tcp),
@@ -53,6 +56,27 @@ fn physical_path_is_sole_carrier_owner() {
         closes.lock().expect("close log lock").as_slice(),
         &[PathCloseReason::NormalRetire]
     );
+}
+
+#[tokio::test]
+async fn metadata_only_path_exposes_no_transport_io() {
+    let registry = Arc::new(PathRegistry::new());
+    let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+    let handle = manager
+        .publish_ready(profile(PathKind::Direct, RouteTransport::Tcp))
+        .expect("metadata-only path");
+    let lease = registry.acquire(&handle).expect("path lease");
+
+    assert!(lease.connection().is_none());
+    assert!(lease.stream_carrier().is_none());
+    assert!(lease.relay_data().is_none());
+    let error = lease
+        .send_channel_frame("", GenericFrameKind::DataMessage, b"payload")
+        .await
+        .expect_err("metadata-only path cannot send");
+    assert!(error.to_string().contains("physical path I/O unavailable"));
+
+    manager.hard_close();
 }
 
 #[test]
@@ -314,25 +338,41 @@ fn hard_close_revokes_active_lease() {
 #[test]
 fn ephemeral_paths_retire_after_sixty_seconds_without_sleeping() {
     let registry = Arc::new(PathRegistry::new());
-    let closes = Arc::new(Mutex::new(Vec::new()));
+    let direct_closes = Arc::new(Mutex::new(Vec::new()));
+    let relay_closes = Arc::new(Mutex::new(Vec::new()));
     let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
     let now = Instant::now();
-    let handle = manager
+    let direct = manager
         .publish_ready_with_carrier_at(
             profile(PathKind::Direct, RouteTransport::Tcp),
-            recording_carrier(&closes),
+            recording_carrier(&direct_closes),
             now - super::super::EPHEMERAL_PATH_IDLE_TIMEOUT - Duration::from_secs(1),
         )
         .expect("ephemeral direct path");
+    let relay = manager
+        .publish_ready_with_carrier_at(
+            profile(PathKind::Relay, RouteTransport::WebSocket),
+            recording_carrier(&relay_closes),
+            now - super::super::EPHEMERAL_PATH_IDLE_TIMEOUT - Duration::from_secs(1),
+        )
+        .expect("ephemeral relay path");
 
     assert!(manager.ephemeral_idle(now));
-    assert_eq!(manager.retire_ephemeral(now), 1);
+    assert_eq!(manager.retire_ephemeral(now), 2);
     assert!(matches!(
-        registry.acquire(&handle),
+        registry.acquire(&direct),
+        Err(CoreNetworkError::StaleAttempt)
+    ));
+    assert!(matches!(
+        registry.acquire(&relay),
         Err(CoreNetworkError::StaleAttempt)
     ));
     assert_eq!(
-        closes.lock().expect("close log lock").as_slice(),
+        direct_closes.lock().expect("direct close log").as_slice(),
+        &[PathCloseReason::NormalRetire]
+    );
+    assert_eq!(
+        relay_closes.lock().expect("relay close log").as_slice(),
         &[PathCloseReason::NormalRetire]
     );
 }
@@ -376,6 +416,15 @@ fn registry_selection_skips_incompatible_paths_and_prefers_direct() {
     assert_eq!(relay_lease.handle(), &relay);
     assert_ne!(relay_lease.handle(), &direct_message);
     drop(relay_lease);
+    assert!(matches!(
+        registry.select_compatible_ready_path(&test_peer(), CAPABILITY_UNRELIABLE_DATAGRAM),
+        Err(CoreNetworkError::NoRoute)
+    ));
+    let missing_peer = PeerId::new("missing-peer").expect("peer id");
+    assert!(matches!(
+        registry.select_compatible_ready_path(&missing_peer, CAPABILITY_RELIABLE_MESSAGE),
+        Err(CoreNetworkError::NoRoute)
+    ));
 
     manager
         .ensure_direct_probe(7, CAPABILITY_RELIABLE_STREAM, Duration::from_secs(4))
@@ -395,6 +444,37 @@ fn registry_selection_skips_incompatible_paths_and_prefers_direct() {
         .expect("direct message path");
     assert_eq!(message_lease.profile().topology(), RouteTopology::Direct);
     drop(message_lease);
+}
+
+#[test]
+fn registry_selection_orders_tcp_and_handles_datagram_only_routes() {
+    let registry = PathRegistry::new();
+    let tcp = registry
+        .create_path(
+            &test_peer(),
+            profile(PathKind::Direct, RouteTransport::Tcp),
+            Box::new(NoopPathCarrier),
+            Instant::now(),
+        )
+        .expect("TCP path");
+    let udp = registry
+        .create_path(
+            &test_peer(),
+            profile(PathKind::Direct, RouteTransport::Udp),
+            Box::new(NoopPathCarrier),
+            Instant::now(),
+        )
+        .expect("UDP path");
+
+    let stream = registry
+        .select_compatible_ready_path(&test_peer(), CAPABILITY_RELIABLE_STREAM)
+        .expect("TCP stream path");
+    assert_eq!(stream.handle(), tcp.handle());
+    drop(stream);
+    let datagram = registry
+        .select_compatible_ready_path(&test_peer(), CAPABILITY_UNRELIABLE_DATAGRAM)
+        .expect("UDP datagram path");
+    assert_eq!(datagram.handle(), udp.handle());
 }
 
 #[test]
@@ -660,6 +740,7 @@ fn manager_rejects_incompatible_or_stopped_publication() {
     assert!(manager.direct_probe().is_some());
 
     manager.normal_drain();
+    assert_eq!(manager.retire_ephemeral(Instant::now()), 0);
     assert_eq!(
         manager.publish_ready(profile(PathKind::Relay, RouteTransport::WebSocket)),
         Err(CoreNetworkError::Cancelled)
@@ -667,6 +748,7 @@ fn manager_rejects_incompatible_or_stopped_publication() {
 
     let mut hard_closed = PeerPathManager::new(test_peer(), registry);
     hard_closed.hard_close();
+    assert_eq!(hard_closed.retire_ephemeral(Instant::now()), 0);
     assert_eq!(
         hard_closed.publish_ready(profile(PathKind::Direct, RouteTransport::Tcp)),
         Err(CoreNetworkError::Cancelled)
@@ -738,4 +820,17 @@ async fn route_view_rejects_stream_frames_without_stream_capability() {
         .await
         .expect_err("message-only path must reject stream frames");
     assert!(error.to_string().contains("lacks requested capability"));
+}
+
+#[tokio::test]
+async fn detached_active_routes_report_unavailable_io_and_close_safely() {
+    let carrier = ActiveRouteCarrier { route: None };
+    let error = carrier
+        .send_channel_frame("", GenericFrameKind::DataMessage, b"payload")
+        .await
+        .expect_err("detached route cannot send");
+    assert!(error.to_string().contains("physical path unavailable"));
+    Box::new(carrier).close(PathCloseReason::HardClose);
+
+    ActiveRoute::relay(None).close().await;
 }
