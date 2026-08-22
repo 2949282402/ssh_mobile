@@ -1,5 +1,7 @@
 use super::*;
 use network_identity::DeviceIdentity;
+use network_transport::{TcpTransport, Transport};
+use tokio::net::TcpListener;
 
 fn identities() -> (Arc<DeviceIdentity>, Arc<DeviceIdentity>) {
     (
@@ -476,6 +478,196 @@ fn repeated_noise_sessions_have_different_roots() {
     let first = complete_pair(&initiator_identity, &responder_identity, "0000000000000001");
     let second = complete_pair(&initiator_identity, &responder_identity, "0000000000000001");
     assert_ne!(first, second);
+}
+
+#[test]
+fn relay_frames_and_exchange_payloads_enforce_wire_boundaries() {
+    for step in [
+        RELAY_CRYPTO_HELLO,
+        RELAY_CRYPTO_RESPONSE,
+        RELAY_CRYPTO_FINAL,
+        RELAY_CRYPTO_ROOT_SEED,
+        RELAY_CRYPTO_ROOT_CONFIRM,
+        RELAY_CRYPTO_ACCEPT,
+    ] {
+        let frame = encode_relay_frame(step, b"payload").expect("valid relay frame");
+        let decoded = decode_relay_frame(&frame).expect("decode relay frame");
+        assert_eq!(decoded, (step, b"payload".as_slice()));
+    }
+    assert!(encode_relay_frame(0, b"payload").is_err());
+    assert!(encode_relay_frame(RELAY_CRYPTO_HELLO, &[]).is_err());
+    assert!(
+        encode_relay_frame(RELAY_CRYPTO_HELLO, &vec![0; MAX_HANDSHAKE_FRAME_BYTES + 1]).is_err()
+    );
+    assert!(decode_relay_frame(&[]).is_err());
+    assert!(decode_relay_frame(&[0, 1]).is_err());
+
+    let binding = "00112233445566778899aabbccddeeff";
+    let root = root_exchange_payload(ROOT_EXCHANGE_ROOT_SEED, binding, b"seed")
+        .expect("root exchange payload");
+    assert_eq!(
+        parse_root_exchange_payload(&root, ROOT_EXCHANGE_ROOT_SEED, binding).unwrap(),
+        b"seed"
+    );
+    assert!(parse_root_exchange_payload(&root, ROOT_EXCHANGE_ROOT_CONFIRM, binding).is_err());
+    assert!(root_exchange_payload(0, binding, b"seed").is_err());
+    assert!(root_exchange_payload(
+        ROOT_EXCHANGE_ROOT_SEED,
+        binding,
+        &vec![0; MAX_HANDSHAKE_PAYLOAD_BYTES + 1]
+    )
+    .is_err());
+
+    let seed = [7u8; ROOT_SEED_BYTES];
+    let seed_with_binding = root_seed_payload(&seed, binding).expect("root seed");
+    assert!(seed_with_binding.len() > ROOT_SEED_BYTES);
+    let encoded_seed =
+        root_exchange_payload(ROOT_EXCHANGE_ROOT_SEED, binding, &seed).expect("encoded root seed");
+    assert_eq!(
+        parse_fixed_root_exchange_payload::<ROOT_SEED_BYTES>(
+            &encoded_seed,
+            ROOT_EXCHANGE_ROOT_SEED,
+            binding,
+        )
+        .unwrap()
+        .as_slice(),
+        seed.as_slice(),
+    );
+    let identity_only = identity_only_binding_payload(binding).expect("identity binding");
+    assert_eq!(
+        parse_identity_only_binding_payload(&identity_only).unwrap(),
+        binding
+    );
+    assert!(parse_identity_only_binding_payload(&[0, 1, b'x']).is_err());
+    assert!(validate_binding("").is_err());
+    assert!(validate_binding("not-hex").is_err());
+}
+
+#[test]
+fn relay_path_metadata_rejects_wrong_kind_and_policy() {
+    let binding = "00112233445566778899aabbccddeeff";
+    let relay =
+        relay_path_metadata(binding, path_handshake::E2eePolicy::Required).expect("relay metadata");
+    assert_eq!(
+        validate_relay_path_metadata(&relay, path_handshake::E2eePolicy::Required)
+            .expect("relay security"),
+        path_handshake::PathSecurity::E2ee
+    );
+    assert!(relay_path_metadata(binding, path_handshake::E2eePolicy::Disabled).is_err());
+
+    let direct = direct_path_metadata(
+        binding,
+        b"direct/quic/v2".to_vec(),
+        path_handshake::E2eePolicy::Required,
+    )
+    .expect("direct metadata");
+    assert!(validate_relay_path_metadata(&direct, path_handshake::E2eePolicy::Required).is_err());
+    assert!(validate_direct_path_metadata(
+        &relay,
+        b"direct/quic/v2",
+        path_handshake::E2eePolicy::Required,
+    )
+    .is_err());
+}
+
+#[tokio::test]
+async fn generic_identity_only_handshake_round_trips_without_application_root() {
+    let (initiator_identity, responder_identity) = identities();
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let address = listener.local_addr().expect("listener address");
+    let trusted_key = initiator_identity.public_identity_key().to_bytes();
+    let responder_for_task = Arc::clone(&responder_identity);
+    let responder_task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept generic peer");
+        let mut connection =
+            GenericConnection::from_transport(Transport::Tcp(TcpTransport::from_stream(stream)));
+        let trusted = RwLock::new(HashMap::from([("initiator".into(), trusted_key)]));
+        respond_generic_with_policy(
+            &mut connection,
+            responder_for_task,
+            &trusted,
+            path_handshake::E2eePolicy::Disabled,
+            |_peer_id, _remote_binding| async move { Ok(("0022".into(), ())) },
+        )
+        .await
+    });
+
+    let mut initiator = GenericConnection::connect_tcp("0.0.0.0:0".parse().unwrap(), address)
+        .await
+        .expect("connect generic peer");
+    let (material, ()) = initiate_generic_with_policy(
+        &mut initiator,
+        Arc::clone(&initiator_identity),
+        "responder",
+        responder_identity.public_identity_key().to_bytes(),
+        "0011",
+        path_handshake::E2eePolicy::Disabled,
+        |_peer_id, _remote_binding| async move { Ok(("0011".into(), ())) },
+    )
+    .await
+    .expect("identity-only generic handshake");
+    let (peer_id, responder_material, ()) = responder_task
+        .await
+        .expect("responder task")
+        .expect("responder handshake");
+
+    assert_eq!(peer_id, "initiator");
+    assert_eq!(material.root_key, [0; 32]);
+    assert_eq!(responder_material.root_key, [0; 32]);
+    assert!(!material.has_application_e2ee());
+    assert!(!responder_material.has_application_e2ee());
+}
+
+#[tokio::test]
+async fn generic_e2ee_handshake_round_trips_a_fresh_application_root() {
+    let (initiator_identity, responder_identity) = identities();
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let address = listener.local_addr().expect("listener address");
+    let trusted_key = initiator_identity.public_identity_key().to_bytes();
+    let responder_for_task = Arc::clone(&responder_identity);
+    let responder_task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept generic peer");
+        let mut connection =
+            GenericConnection::from_transport(Transport::Tcp(TcpTransport::from_stream(stream)));
+        let trusted = RwLock::new(HashMap::from([("initiator".into(), trusted_key)]));
+        respond_generic_with_policy(
+            &mut connection,
+            responder_for_task,
+            &trusted,
+            path_handshake::E2eePolicy::Required,
+            |_peer_id, _remote_binding| async move { Ok(("0022".into(), ())) },
+        )
+        .await
+    });
+
+    let mut initiator = GenericConnection::connect_tcp("0.0.0.0:0".parse().unwrap(), address)
+        .await
+        .expect("connect generic peer");
+    let (material, ()) = initiate_generic_with_policy(
+        &mut initiator,
+        Arc::clone(&initiator_identity),
+        "responder",
+        responder_identity.public_identity_key().to_bytes(),
+        "0011",
+        path_handshake::E2eePolicy::Required,
+        |_peer_id, _remote_binding| async move { Ok(("0011".into(), ())) },
+    )
+    .await
+    .expect("E2EE generic handshake");
+    let (peer_id, responder_material, ()) = responder_task
+        .await
+        .expect("responder task")
+        .expect("responder handshake");
+
+    assert_eq!(peer_id, "initiator");
+    assert_eq!(material.root_key, responder_material.root_key);
+    assert_ne!(material.root_key, [0; 32]);
+    assert!(material.has_application_e2ee());
+    assert!(responder_material.has_application_e2ee());
 }
 
 fn complete_pair(

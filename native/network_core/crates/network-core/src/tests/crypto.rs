@@ -238,3 +238,45 @@ fn sequence_cannot_wrap() {
     assert_eq!(next_sequence(0).unwrap(), 1);
     assert_eq!(next_sequence(u64::MAX), Err(CryptoError::SequenceOverflow));
 }
+
+#[test]
+fn data_message_aad_binds_every_cleartext_field_and_offer_rejects_truncation() {
+    let base = data_message_aad("session", "channel", &[1, 2, 3], 4, 5, 6);
+    assert_ne!(
+        base,
+        data_message_aad("other", "channel", &[1, 2, 3], 4, 5, 6)
+    );
+    assert_ne!(
+        base,
+        data_message_aad("session", "other", &[1, 2, 3], 4, 5, 6)
+    );
+    assert_ne!(
+        base,
+        data_message_aad("session", "channel", &[9, 2, 3], 4, 5, 6)
+    );
+    assert_ne!(
+        base,
+        data_message_aad("session", "channel", &[1, 2, 3], 7, 5, 6)
+    );
+    assert_ne!(
+        base,
+        data_message_aad("session", "channel", &[1, 2, 3], 4, 8, 6)
+    );
+    assert_ne!(
+        base,
+        data_message_aad("session", "channel", &[1, 2, 3], 4, 5, 7)
+    );
+
+    let recipient = StaticSecret::random_from_rng(rand::rngs::OsRng);
+    let session_id = [0x52; 16];
+    let envelope = encrypt_application_offer(
+        b"offer",
+        *X25519PublicKey::from(&recipient).as_bytes(),
+        &session_id,
+    )
+    .unwrap();
+    assert!(
+        decrypt_application_offer(&envelope[..envelope.len() - 1], &recipient, &session_id)
+            .is_err()
+    );
+}

@@ -165,6 +165,48 @@ fn capability_mapping_and_route_selection_are_explicit() {
     assert_eq!(Route::direct(RouteTransport::Tcp).to_wire(), None);
 }
 
+#[test]
+fn generic_frame_codec_rejects_bad_magic_version_kind_and_lengths() {
+    let encoded = encode_generic_frame(GenericFrameKind::DataMessage, b"payload")
+        .expect("valid generic frame");
+    let decoded = decode_generic_frame(&encoded).expect("decode generic frame");
+    assert_eq!(decoded.kind, GenericFrameKind::DataMessage);
+    assert_eq!(decoded.payload, b"payload");
+
+    assert!(matches!(
+        encode_generic_frame(GenericFrameKind::DataMessage, &[]),
+        Err(ConnectionError::FrameTooLarge)
+    ));
+    let mut bad_magic = encoded.clone();
+    bad_magic[0] ^= 1;
+    assert!(matches!(
+        decode_generic_frame(&bad_magic),
+        Err(ConnectionError::InvalidFrame)
+    ));
+    let mut bad_version = encoded.clone();
+    bad_version[7] ^= 1;
+    assert!(matches!(
+        decode_generic_frame(&bad_version),
+        Err(ConnectionError::InvalidFrame)
+    ));
+    let mut bad_kind = encoded.clone();
+    bad_kind[8] = 0xff;
+    assert!(matches!(
+        decode_generic_frame(&bad_kind),
+        Err(ConnectionError::InvalidFrame)
+    ));
+    let mut bad_length = encoded;
+    bad_length[12] = 1;
+    assert!(matches!(
+        decode_generic_frame(&bad_length),
+        Err(ConnectionError::FrameTooLarge)
+    ));
+    assert!(matches!(
+        decode_generic_frame(&[0; 4]),
+        Err(ConnectionError::InvalidFrame)
+    ));
+}
+
 #[tokio::test]
 async fn generic_connection_lifecycle_and_message_limit_are_enforced() {
     let left_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
