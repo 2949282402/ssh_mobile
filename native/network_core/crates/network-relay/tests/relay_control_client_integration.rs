@@ -18,6 +18,7 @@ use network_relay::v2::{
 use rand::RngCore;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
@@ -72,10 +73,22 @@ struct AttemptRoute {
     target: String,
 }
 
+struct ResolveObservation {
+    request_id: u64,
+    target_device_id: String,
+}
+
+struct ResolveGate {
+    hold_next: AtomicBool,
+    observed: mpsc::UnboundedSender<ResolveObservation>,
+}
+
 #[derive(Default)]
 struct ControlState {
     peers: HashMap<String, ControlPeer>,
     attempts: HashMap<String, AttemptRoute>,
+    deferred_resolves: HashMap<u64, (mpsc::Sender<Message>, RelayFrame)>,
+    resolve_gate: Option<Arc<ResolveGate>>,
     resolve_count: usize,
     offer_count: usize,
     sequence: Vec<String>,
@@ -92,11 +105,35 @@ struct LocalControlServer {
 
 impl LocalControlServer {
     async fn start(identities: Vec<TestIdentity>) -> Self {
+        Self::start_with_gate(identities, None).await
+    }
+
+    async fn start_with_resolve_gate(
+        identities: Vec<TestIdentity>,
+    ) -> (Self, mpsc::UnboundedReceiver<ResolveObservation>) {
+        let (observed, observations) = mpsc::unbounded_channel();
+        let gate = Arc::new(ResolveGate {
+            hold_next: AtomicBool::new(true),
+            observed,
+        });
+        (
+            Self::start_with_gate(identities, Some(gate)).await,
+            observations,
+        )
+    }
+
+    async fn start_with_gate(
+        identities: Vec<TestIdentity>,
+        resolve_gate: Option<Arc<ResolveGate>>,
+    ) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .expect("bind local v2 control listener");
         let address = listener.local_addr().expect("local v2 control address");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(ControlState {
+            resolve_gate,
+            ..ControlState::default()
+        }));
         let (shutdown, shutdown_rx) = oneshot::channel();
         let task = tokio::spawn(run_control_server(
             listener,
@@ -114,6 +151,24 @@ impl LocalControlServer {
 
     fn base_url(&self) -> String {
         format!("ws://{}", self.address)
+    }
+
+    async fn release_resolve(&self, request_id: u64) {
+        let (target, frame) = self
+            .state
+            .lock()
+            .await
+            .deferred_resolves
+            .remove(&request_id)
+            .expect("deferred resolve response");
+        target
+            .send(Message::Binary(
+                network_relay::v2::proto::encode_control_frame(&frame)
+                    .expect("encode deferred resolve response")
+                    .into(),
+            ))
+            .await
+            .expect("send deferred resolve response");
     }
 
     async fn shutdown(&mut self) {
@@ -398,7 +453,8 @@ async fn dispatch_client_frame(
             state
                 .sequence
                 .push(format!("resolve:{}", request.target_device_id));
-            let Some(target) = state.peers.get(&request.target_device_id) else {
+            let target_device_id = request.target_device_id.clone();
+            let Some(target) = state.peers.get(&target_device_id) else {
                 return vec![resolve_response(
                     sender_outbound,
                     ResolvePeerResponse {
@@ -421,9 +477,9 @@ async fn dispatch_client_frame(
                 )];
             };
             if let Some(sender) = state.peers.get_mut(sender_id) {
-                sender.coordination_target = Some(request.target_device_id);
+                sender.coordination_target = Some(target_device_id.clone());
             }
-            vec![resolve_response(
+            let response = resolve_response(
                 sender_outbound,
                 ResolvePeerResponse {
                     request_id: request.request_id,
@@ -431,11 +487,29 @@ async fn dispatch_client_frame(
                     discovery: Some(snapshot),
                     retry_after_ms: 0,
                 },
-            )]
+            );
+            let defer_response = state
+                .resolve_gate
+                .as_ref()
+                .is_some_and(|gate| gate.hold_next.swap(false, Ordering::AcqRel));
+            if let Some(gate) = state.resolve_gate.as_ref() {
+                let _ = gate.observed.send(ResolveObservation {
+                    request_id: request.request_id,
+                    target_device_id: target_device_id.clone(),
+                });
+            }
+            if defer_response {
+                let (target, frame) = response;
+                state
+                    .deferred_resolves
+                    .insert(request.request_id, (target, frame));
+                Vec::new()
+            } else {
+                vec![response]
+            }
         }
         relay_frame::Kind::ConnectivityOffer(offer) => {
             state.offer_count += 1;
-            state.sequence.push("offer".to_string());
             let Some(target_id) = state
                 .peers
                 .get_mut(sender_id)
@@ -448,6 +522,9 @@ async fn dispatch_client_frame(
                     "connectivity offer requires a preceding resolve",
                 )];
             };
+            state
+                .sequence
+                .push(format!("offer:{target_id}:{}", offer.attempt_id));
             let Some(target_outbound) = state
                 .peers
                 .get(&target_id)
@@ -598,6 +675,48 @@ async fn next_event(events: &mut mpsc::Receiver<ControlEvent>) -> ControlEvent {
         .expect("control event stream closed")
 }
 
+async fn connect_and_publish(
+    base_url: &str,
+    identity: &TestIdentity,
+    snapshot: DiscoverySnapshot,
+) -> (RelayControlClient, mpsc::Receiver<ControlEvent>) {
+    let mut client = RelayControlClient::new(
+        base_url.to_string(),
+        identity.device_id.clone(),
+        identity.credential.clone(),
+        identity.signing_seed,
+    )
+    .expect("construct local control client");
+    client.connect().await.expect("local control connect");
+    let mut events = client.take_events().expect("local control event stream");
+    let _initial_presence = next_event(&mut events).await;
+    client
+        .publish_discovery(snapshot)
+        .await
+        .expect("publish local discovery");
+    (client, events)
+}
+
+fn begin_attempt<'a>(
+    client: &'a RelayControlClient,
+    attempt_id: &'a str,
+    target_device_id: &'a str,
+    snapshot: &'a DiscoverySnapshot,
+) -> impl std::future::Future<Output = Result<network_relay::v2::ConnectivityAttemptStart, RelayError>>
+       + 'a {
+    client.begin_connectivity_attempt(
+        attempt_id.to_string(),
+        target_device_id.to_string(),
+        "spoofed-initiator".to_string(),
+        snapshot
+            .runtime_epoch
+            .clone()
+            .expect("initiator runtime epoch"),
+        snapshot.revision,
+        Some(snapshot.clone()),
+    )
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn relay_control_client_exercises_concrete_local_control_server() {
     let identity_a = TestIdentity::ephemeral("device-a");
@@ -713,12 +832,346 @@ async fn relay_control_client_exercises_concrete_local_control_server() {
     assert_eq!(state.offer_count, 1);
     assert_eq!(
         state.sequence,
-        vec!["resolve:device-b".to_string(), "offer".to_string()]
+        vec![
+            "resolve:device-b".to_string(),
+            "offer:device-b:local-attempt-0001".to_string()
+        ]
     );
     drop(state);
 
     client_a.disconnect().await;
     client_b.disconnect().await;
     let mut server = server;
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dropped_connectivity_attempt_start_releases_answer_tracker() {
+    let identity_a = TestIdentity::ephemeral("device-a");
+    let identity_b = TestIdentity::ephemeral("device-b");
+    let server = LocalControlServer::start(vec![identity_a.clone(), identity_b.clone()]).await;
+    let base_url = server.base_url();
+    let snapshot_a = discovery_snapshot(0xA, 0x01, 1);
+    let snapshot_b = discovery_snapshot(0xB, 0x02, 2);
+
+    let (client_a, _events_a) =
+        connect_and_publish(&base_url, &identity_a, snapshot_a.clone()).await;
+    let (mut client_b, mut events_b) =
+        connect_and_publish(&base_url, &identity_b, snapshot_b.clone()).await;
+    let attempt_id = "dropped-start";
+
+    let start = begin_attempt(&client_a, attempt_id, &identity_b.device_id, &snapshot_a)
+        .await
+        .expect("initial connectivity attempt start");
+    let ControlEvent::ConnectivityOffer(old_offer) = next_event(&mut events_b).await else {
+        panic!("device-b must receive the initial connectivity offer");
+    };
+    assert_eq!(old_offer.attempt_id, attempt_id);
+    drop(start);
+
+    let retry = begin_attempt(&client_a, attempt_id, &identity_b.device_id, &snapshot_a)
+        .await
+        .expect("a dropped ConnectivityAttemptStart must release its tracker");
+    let ControlEvent::ConnectivityOffer(new_offer) = next_event(&mut events_b).await else {
+        panic!("device-b must receive the retry connectivity offer");
+    };
+    assert_eq!(new_offer.attempt_id, attempt_id);
+    client_b
+        .send_connectivity_answer(
+            &new_offer,
+            true,
+            "spoofed-responder",
+            snapshot_b.runtime_epoch.clone().expect("device-b epoch"),
+            snapshot_b.revision,
+            Some(snapshot_b.clone()),
+        )
+        .await
+        .expect("send retry connectivity answer");
+    let answer = retry
+        .wait_for_answer()
+        .await
+        .expect("retry connectivity answer");
+    assert_eq!(answer.attempt_id, attempt_id);
+    assert_eq!(answer.responder_device_id, identity_b.device_id);
+
+    let mut client_a = client_a;
+    client_a.disconnect().await;
+    client_b.disconnect().await;
+    let mut server = server;
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_connectivity_answer_waiter_releases_answer_tracker() {
+    let identity_a = TestIdentity::ephemeral("device-a");
+    let identity_b = TestIdentity::ephemeral("device-b");
+    let server = LocalControlServer::start(vec![identity_a.clone(), identity_b.clone()]).await;
+    let base_url = server.base_url();
+    let snapshot_a = discovery_snapshot(0xA, 0x01, 1);
+    let snapshot_b = discovery_snapshot(0xB, 0x02, 2);
+
+    let (client_a, _events_a) =
+        connect_and_publish(&base_url, &identity_a, snapshot_a.clone()).await;
+    let (mut client_b, mut events_b) =
+        connect_and_publish(&base_url, &identity_b, snapshot_b.clone()).await;
+    let attempt_id = "cancelled-answer-waiter";
+
+    let start = begin_attempt(&client_a, attempt_id, &identity_b.device_id, &snapshot_a)
+        .await
+        .expect("initial connectivity attempt start");
+    let ControlEvent::ConnectivityOffer(offer) = next_event(&mut events_b).await else {
+        panic!("device-b must receive the connectivity offer");
+    };
+    assert_eq!(offer.attempt_id, attempt_id);
+
+    let wait_task = tokio::spawn(async move { start.wait_for_answer().await });
+    tokio::task::yield_now().await;
+    wait_task.abort();
+    assert!(
+        wait_task
+            .await
+            .expect_err("cancelled waiter task")
+            .is_cancelled(),
+        "answer waiter task must be cancelled"
+    );
+
+    let retry = begin_attempt(&client_a, attempt_id, &identity_b.device_id, &snapshot_a)
+        .await
+        .expect("cancelling an answer waiter must release its tracker");
+    let ControlEvent::ConnectivityOffer(retry_offer) = next_event(&mut events_b).await else {
+        panic!("device-b must receive the retry connectivity offer");
+    };
+    client_b
+        .send_connectivity_answer(
+            &retry_offer,
+            true,
+            "spoofed-responder",
+            snapshot_b.runtime_epoch.clone().expect("device-b epoch"),
+            snapshot_b.revision,
+            Some(snapshot_b.clone()),
+        )
+        .await
+        .expect("send retry connectivity answer");
+    let answer = retry
+        .wait_for_answer()
+        .await
+        .expect("retry connectivity answer");
+    assert_eq!(answer.attempt_id, attempt_id);
+    assert_eq!(answer.responder_device_id, identity_b.device_id);
+
+    let mut client_a = client_a;
+    client_a.disconnect().await;
+    client_b.disconnect().await;
+    let mut server = server;
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_connectivity_attempts_keep_targets_isolated_and_ordered() {
+    let identity_a = TestIdentity::ephemeral("device-a");
+    let identity_b = TestIdentity::ephemeral("device-b");
+    let identity_c = TestIdentity::ephemeral("device-c");
+    let (server, mut resolves) = LocalControlServer::start_with_resolve_gate(vec![
+        identity_a.clone(),
+        identity_b.clone(),
+        identity_c.clone(),
+    ])
+    .await;
+    let base_url = server.base_url();
+    let snapshot_a = discovery_snapshot(0xA, 0x01, 1);
+    let snapshot_b = discovery_snapshot(0xB, 0x02, 2);
+    let snapshot_c = discovery_snapshot(0xC, 0x03, 3);
+
+    let (client_a, _events_a) =
+        connect_and_publish(&base_url, &identity_a, snapshot_a.clone()).await;
+    let (client_b, mut events_b) =
+        connect_and_publish(&base_url, &identity_b, snapshot_b.clone()).await;
+    let (client_c, mut events_c) =
+        connect_and_publish(&base_url, &identity_c, snapshot_c.clone()).await;
+    let client_a = Arc::new(client_a);
+
+    let begin_b = {
+        let client = Arc::clone(&client_a);
+        let snapshot = snapshot_a.clone();
+        tokio::spawn(async move {
+            begin_attempt(client.as_ref(), "attempt-b", "device-b", &snapshot).await
+        })
+    };
+    let first_resolve = tokio::time::timeout(Duration::from_secs(2), resolves.recv())
+        .await
+        .expect("device-b Resolve observation timeout")
+        .expect("resolve observation stream closed");
+    assert_eq!(first_resolve.target_device_id, "device-b");
+
+    let begin_c = {
+        let client = Arc::clone(&client_a);
+        let snapshot = snapshot_a.clone();
+        tokio::spawn(async move {
+            begin_attempt(client.as_ref(), "attempt-c", "device-c", &snapshot).await
+        })
+    };
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), resolves.recv())
+            .await
+            .is_err(),
+        "the second target must not Resolve before the first Offer is enqueued"
+    );
+
+    server.release_resolve(first_resolve.request_id).await;
+    let second_resolve = tokio::time::timeout(Duration::from_secs(2), resolves.recv())
+        .await
+        .expect("device-c Resolve observation timeout")
+        .expect("resolve observation stream closed");
+    assert_eq!(second_resolve.target_device_id, "device-c");
+
+    let start_b = begin_b
+        .await
+        .expect("device-b begin task")
+        .expect("device-b connectivity attempt start");
+    let start_c = begin_c
+        .await
+        .expect("device-c begin task")
+        .expect("device-c connectivity attempt start");
+    assert_eq!(start_b.resolved.discovery, Some(snapshot_b.clone()));
+    assert_eq!(start_c.resolved.discovery, Some(snapshot_c.clone()));
+
+    let ControlEvent::ConnectivityOffer(offer_b) = next_event(&mut events_b).await else {
+        panic!("device-b must receive its own connectivity offer");
+    };
+    let ControlEvent::ConnectivityOffer(offer_c) = next_event(&mut events_c).await else {
+        panic!("device-c must receive its own connectivity offer");
+    };
+    assert_eq!(offer_b.attempt_id, "attempt-b");
+    assert_eq!(offer_c.attempt_id, "attempt-c");
+    assert_eq!(offer_b.initiator_device_id, identity_a.device_id);
+    assert_eq!(offer_c.initiator_device_id, identity_a.device_id);
+
+    client_b
+        .send_connectivity_answer(
+            &offer_b,
+            true,
+            "spoofed-responder",
+            snapshot_b.runtime_epoch.clone().expect("device-b epoch"),
+            snapshot_b.revision,
+            Some(snapshot_b.clone()),
+        )
+        .await
+        .expect("send device-b connectivity answer");
+    client_c
+        .send_connectivity_answer(
+            &offer_c,
+            true,
+            "spoofed-responder",
+            snapshot_c.runtime_epoch.clone().expect("device-c epoch"),
+            snapshot_c.revision,
+            Some(snapshot_c.clone()),
+        )
+        .await
+        .expect("send device-c connectivity answer");
+    let (answer_b, answer_c) = tokio::join!(start_b.wait_for_answer(), start_c.wait_for_answer());
+    assert_eq!(answer_b.expect("device-b answer").attempt_id, "attempt-b");
+    assert_eq!(answer_c.expect("device-c answer").attempt_id, "attempt-c");
+
+    let state = server.state.lock().await;
+    assert_eq!(state.resolve_count, 2);
+    assert_eq!(state.offer_count, 2);
+    assert_eq!(
+        state.sequence,
+        vec![
+            "resolve:device-b".to_string(),
+            "offer:device-b:attempt-b".to_string(),
+            "resolve:device-c".to_string(),
+            "offer:device-c:attempt-c".to_string(),
+        ]
+    );
+    drop(state);
+
+    client_a.request_disconnect().await;
+    let mut client_b = client_b;
+    client_b.disconnect().await;
+    let mut client_c = client_c;
+    client_c.disconnect().await;
+    let mut server = server;
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn control_authentication_failure_never_enters_ready_state() {
+    let identity = TestIdentity::ephemeral("device-a");
+    let mut server = LocalControlServer::start(vec![identity.clone()]).await;
+    let mut client = RelayControlClient::new(
+        server.base_url(),
+        identity.device_id.clone(),
+        "wrong-credential".into(),
+        identity.signing_seed,
+    )
+    .expect("construct client");
+
+    let error = client
+        .connect()
+        .await
+        .expect_err("invalid credential must not receive Ready");
+    assert!(
+        matches!(error, RelayError::Authentication(_) | RelayError::Socket(_)),
+        "authentication failure must remain fail-closed: {error:?}"
+    );
+    assert!(!client.is_usable().await);
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_control_disconnect_is_observable_and_cleans_client_state() {
+    let identity = TestIdentity::ephemeral("device-a");
+    let mut server = LocalControlServer::start(vec![identity.clone()]).await;
+    let mut client = RelayControlClient::new(
+        server.base_url(),
+        identity.device_id.clone(),
+        identity.credential.clone(),
+        identity.signing_seed,
+    )
+    .expect("construct client");
+    client.connect().await.expect("control connect");
+    let mut events = client.take_events().expect("event stream");
+
+    server.shutdown().await;
+    let disconnected = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(event) = events.recv().await {
+            if matches!(event, ControlEvent::Disconnected { .. }) {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .expect("disconnect event timeout");
+    assert!(
+        disconnected,
+        "remote close must be observable as Disconnected"
+    );
+    assert!(!client.is_usable().await);
+    client.disconnect().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn control_client_disconnect_then_reconnect_succeeds() {
+    let identity = TestIdentity::ephemeral("device-a");
+    let mut server = LocalControlServer::start(vec![identity.clone()]).await;
+    let mut client = RelayControlClient::new(
+        server.base_url(),
+        identity.device_id.clone(),
+        identity.credential.clone(),
+        identity.signing_seed,
+    )
+    .expect("construct client");
+
+    let first_ready = client.connect().await.expect("initial control connect");
+    assert_eq!(first_ready.device_id, identity.device_id);
+    client.disconnect().await;
+    assert!(!client.is_usable().await);
+
+    let second_ready = client.connect().await.expect("reconnect must succeed");
+    assert_eq!(second_ready.device_id, identity.device_id);
+    assert!(client.is_usable().await);
+    client.disconnect().await;
     server.shutdown().await;
 }

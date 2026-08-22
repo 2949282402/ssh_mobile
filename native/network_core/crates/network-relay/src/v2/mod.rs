@@ -19,6 +19,7 @@ pub mod proto;
 mod shared;
 
 #[cfg(test)]
+#[path = "../tests/v2/golden_tests.rs"]
 mod golden_tests;
 
 pub use control_client::{ConnectivityAttemptStart, ControlEvent, RelayControlClient};
