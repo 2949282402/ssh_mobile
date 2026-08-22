@@ -23,6 +23,13 @@ async fn lookup_reuses_same_epoch_and_capability() {
     registry.register("device-b", epoch(1, 2), 0, session_b);
     let found = registry.lookup("device-b", &epoch(1, 2), 0).expect("reuse");
     assert_eq!(found.session_id, session_b);
+    assert!(registry
+        .lookup(
+            "device-b",
+            &epoch(1, 2),
+            super::super::CAPABILITY_RELIABLE_STREAM
+        )
+        .is_none());
 }
 
 #[test]

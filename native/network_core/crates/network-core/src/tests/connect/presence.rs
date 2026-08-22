@@ -8,6 +8,8 @@ fn hints_are_ui_only_and_track_online_offline() {
     cache.mark_offline("device-b");
     assert_eq!(cache.get("device-b"), Some(PresenceHint::new(false, 0)));
     assert_eq!(cache.get("device-c"), None);
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.peer_ids(), vec!["device-b".to_string()]);
 }
 
 #[test]
