@@ -305,3 +305,87 @@ fn wrong_attempt_answer_is_ignored_even_inside_the_direct_window() {
     );
     assert!(attempt.remote_candidates().is_empty());
 }
+
+#[test]
+fn attempt_accessors_and_signal_validation_fail_closed() {
+    let started_at = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+    let local = Candidate::new(
+        "192.168.1.21:41021".parse().unwrap(),
+        CandidateKind::Lan,
+        "wifi".into(),
+    );
+    let current_attempt = ConnectivityAttempt::new(
+        "attempt-accessors",
+        "peer-a",
+        epoch(4, 5),
+        started_at,
+        Some(started_at + Duration::from_secs(5)),
+    )
+    .with_local_candidates(vec![local.clone()]);
+    assert_eq!(current_attempt.attempt_id(), "attempt-accessors");
+    assert_eq!(current_attempt.peer_id(), "peer-a");
+    assert_eq!(current_attempt.started_at(), started_at);
+    assert_eq!(current_attempt.local_runtime_epoch(), epoch(4, 5));
+    assert_eq!(current_attempt.local_candidates().len(), 1);
+    assert!(current_attempt.remote_candidates().is_empty());
+    assert!(!current_attempt.direct_deadline_elapsed(started_at + Duration::from_secs(4)));
+    assert!(current_attempt.direct_deadline_elapsed(started_at + Duration::from_secs(5)));
+
+    let mut validation_attempt = attempt("attempt-validation");
+    let mut bad_version = signal(CandidateSignalKind::Offer, "attempt-validation", 1, 41022);
+    bad_version.version = 9;
+    assert!(validation_attempt.apply_signal(&bad_version).is_err());
+    let mut bad_id = signal(CandidateSignalKind::Offer, "attempt-validation", 1, 41022);
+    bad_id.attempt_id.clear();
+    assert!(validation_attempt.apply_signal(&bad_id).is_err());
+    let mut bad_window = signal(CandidateSignalKind::Offer, "attempt-validation", 1, 41022);
+    bad_window.connect_window_ms = 0;
+    assert!(validation_attempt.apply_signal(&bad_window).is_err());
+
+    let duplicate = Candidate::new(
+        "192.168.1.22:41022".parse().unwrap(),
+        CandidateKind::Lan,
+        "wifi".into(),
+    );
+    assert!(validation_attempt
+        .apply_remote_candidates(None, 1, vec![duplicate.clone(), duplicate])
+        .is_err());
+    let too_many = (0..=MAX_CANDIDATES_PER_SIGNAL)
+        .map(|index| {
+            Candidate::new(
+                format!("192.168.1.{}:{}", (index % 200) + 1, 42000 + index as u16)
+                    .parse()
+                    .unwrap(),
+                CandidateKind::Lan,
+                format!("interface-{index}"),
+            )
+        })
+        .collect();
+    assert!(validation_attempt
+        .apply_remote_candidates(None, 2, too_many)
+        .is_err());
+
+    let mut terminal = attempt("terminal-signal");
+    terminal.state = ConnectivityAttemptState::Failed;
+    assert_eq!(
+        terminal
+            .apply_signal_with_deadline(
+                &signal(CandidateSignalKind::Answer, "terminal-signal", 1, 41023),
+                SystemTime::now(),
+            )
+            .unwrap(),
+        CandidateUpdateDisposition::Terminal
+    );
+
+    let mut expired = ConnectivityAttempt::with_connect_window(
+        "expired",
+        "peer-a",
+        epoch(1, 1),
+        SystemTime::UNIX_EPOCH,
+        Duration::from_secs(1),
+    );
+    assert!(!expired
+        .apply_signal(&signal(CandidateSignalKind::Answer, "expired", 1, 41024))
+        .unwrap());
+    assert_eq!(expired.state(), ConnectivityAttemptState::Created);
+}

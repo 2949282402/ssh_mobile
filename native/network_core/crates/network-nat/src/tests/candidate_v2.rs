@@ -296,3 +296,249 @@ fn relay_payload_is_rejected_if_it_claims_a_direct_transport() {
             .is_empty()
     );
 }
+
+#[test]
+fn candidate_payload_validation_rejects_malformed_identity_endpoint_and_transport_edges() {
+    let base = candidate("valid", 41001, CandidateKind::Lan);
+
+    let mut unsupported = base.clone();
+    unsupported.version = 1;
+    assert_eq!(
+        unsupported.validate(),
+        Err(CandidatePayloadError::UnsupportedVersion(1))
+    );
+
+    for invalid_id in [
+        String::new(),
+        "bad\nidentity".into(),
+        "x".repeat(MAX_CANDIDATE_ID_BYTES + 1),
+    ] {
+        let mut value = base.clone();
+        value.candidate_id = invalid_id;
+        assert_eq!(
+            value.validate(),
+            Err(CandidatePayloadError::InvalidIdentity)
+        );
+    }
+    for invalid_interface in [
+        String::new(),
+        "bad\tinterface".into(),
+        "x".repeat(MAX_INTERFACE_BYTES + 1),
+    ] {
+        let mut value = base.clone();
+        value.interface = invalid_interface;
+        assert_eq!(
+            value.validate(),
+            Err(CandidatePayloadError::InvalidIdentity)
+        );
+    }
+
+    let mut unspecified = base.clone();
+    unspecified.endpoint = "0.0.0.0:41001".parse().unwrap();
+    assert_eq!(
+        unspecified.validate(),
+        Err(CandidatePayloadError::InvalidEndpoint)
+    );
+    let mut missing_port = base.clone();
+    missing_port.endpoint = "192.168.1.10:0".parse().unwrap();
+    assert_eq!(
+        missing_port.validate(),
+        Err(CandidatePayloadError::InvalidEndpoint)
+    );
+    let mut no_transport = base.clone();
+    no_transport.transport_capabilities.clear();
+    assert_eq!(
+        no_transport.validate(),
+        Err(CandidatePayloadError::MissingTransportCapability)
+    );
+    let mut duplicate_transport = base.clone();
+    duplicate_transport.transport_capabilities =
+        vec![CandidateTransport::Quic, CandidateTransport::Quic];
+    assert_eq!(
+        duplicate_transport.validate(),
+        Err(CandidatePayloadError::DuplicateTransport)
+    );
+    let mut invalid_generation = base.clone();
+    invalid_generation.generation = 0;
+    assert_eq!(
+        invalid_generation.validate(),
+        Err(CandidatePayloadError::InvalidGeneration)
+    );
+    let mut direct_with_relay = base.clone();
+    direct_with_relay.transport_capabilities =
+        vec![CandidateTransport::Quic, CandidateTransport::Relay];
+    assert_eq!(
+        direct_with_relay.validate(),
+        Err(CandidatePayloadError::RelayTransportMismatch)
+    );
+
+    for error in [
+        CandidatePayloadError::UnsupportedVersion(1),
+        CandidatePayloadError::InvalidIdentity,
+        CandidatePayloadError::InvalidEndpoint,
+        CandidatePayloadError::MissingTransportCapability,
+        CandidatePayloadError::DuplicateTransport,
+        CandidatePayloadError::DuplicateCandidateId,
+        CandidatePayloadError::InvalidGeneration,
+        CandidatePayloadError::SrflxTransportMismatch,
+        CandidatePayloadError::RelayTransportMismatch,
+        CandidatePayloadError::CandidateSetTooLarge,
+        CandidatePayloadError::CandidatePayloadTooLarge,
+        CandidatePayloadError::MalformedEncoding,
+    ] {
+        assert!(!error.to_string().is_empty());
+    }
+    assert!(CandidatePayloadV2::decode(b"not-json").is_err());
+    assert_eq!(
+        CandidatePayloadV2::decode(&vec![0; MAX_CANDIDATE_PAYLOAD_BYTES + 1]),
+        Err(CandidatePayloadError::CandidatePayloadTooLarge)
+    );
+}
+
+#[test]
+fn candidate_fingerprints_are_canonical_and_invalid_inputs_fail_closed() {
+    let first = candidate("first", 41001, CandidateKind::Lan);
+    let second = candidate("second", 41002, CandidateKind::PublicIpv6);
+    let forward =
+        CandidateFingerprint::from_candidates(&[first.clone(), second.clone(), first.clone()])
+            .expect("fingerprint");
+    let reverse = CandidateFingerprint::from_candidates(&[second, first.clone()]).expect("reverse");
+    assert_eq!(forward, reverse);
+    assert!(!forward.is_empty());
+    assert!(CandidateFingerprint::from_candidates(&[CandidatePayloadV2 {
+        version: 1,
+        ..first
+    },])
+    .is_err());
+
+    let legacy = Candidate::new(
+        "192.168.1.20:41003".parse().unwrap(),
+        CandidateKind::Lan,
+        "ethernet".into(),
+    )
+    .with_generation(9);
+    let adapted = CandidatePayloadV2::from_candidate(
+        &legacy,
+        vec![CandidateTransport::Websocket, CandidateTransport::Quic],
+    );
+    assert_eq!(adapted.candidate_id, legacy.candidate_id);
+    assert_eq!(adapted.generation, 9);
+    assert!(adapted.is_direct_probe_eligible());
+}
+
+#[test]
+fn direct_probe_queue_and_snapshot_limits_are_bounded() {
+    let mut queue = DirectProbeQueue::default();
+    assert!(queue.is_empty());
+    assert!(queue.pop_next().is_none());
+
+    let mut direct = candidate("direct", 41001, CandidateKind::Lan);
+    direct.transport_capabilities = vec![
+        CandidateTransport::Websocket,
+        CandidateTransport::Tcp,
+        CandidateTransport::Quic,
+    ];
+    let qualified = qualify_direct_probe(vec![direct.clone()]).expect("qualified transports");
+    assert_eq!(qualified.len(), 3);
+    assert_eq!(qualified[0].transport, CandidateTransport::Quic);
+    assert_eq!(qualified[1].transport, CandidateTransport::Tcp);
+    assert_eq!(qualified[2].transport, CandidateTransport::Websocket);
+    queue
+        .reconcile(vec![direct.clone()])
+        .expect("direct snapshot");
+    // The queue keys one candidate attempt by candidate ID/endpoint/generation;
+    // transport expansion is consumed by the probe adapter after this point.
+    assert_eq!(queue.pending().len(), 1);
+    assert_eq!(
+        queue.pop_next().unwrap().transport,
+        CandidateTransport::Quic
+    );
+    assert!(queue.pop_next().is_none());
+    queue
+        .reconcile(vec![direct.clone()])
+        .expect("started snapshot");
+    assert!(queue.is_empty());
+    queue
+        .reconcile(Vec::<CandidatePayloadV2>::new())
+        .expect("empty snapshot");
+    assert!(queue.is_empty());
+
+    let duplicate = snapshot(epoch(1, 1), 1, None);
+    let mut duplicate = duplicate.clone();
+    duplicate.candidates.push(duplicate.candidates[0].clone());
+    assert_eq!(
+        ResolvedCandidateCache::from_snapshot(duplicate, Instant::now()),
+        Err(CandidateCacheError::InvalidSnapshot(
+            CandidatePayloadError::DuplicateCandidateId
+        ))
+    );
+
+    let too_many = (0..=MAX_CANDIDATE_PAYLOAD_ENTRIES)
+        .map(|index| {
+            let mut value = candidate(
+                &format!("candidate-{index}"),
+                42000 + index as u16,
+                CandidateKind::Lan,
+            );
+            value.generation = 1;
+            value
+        })
+        .collect();
+    assert_eq!(
+        ResolvedCandidateCache::from_snapshot(
+            ResolvedCandidateSnapshot {
+                runtime_epoch: epoch(1, 1),
+                revision: 1,
+                candidates: too_many,
+                server_presence_ttl: None,
+            },
+            Instant::now(),
+        ),
+        Err(CandidateCacheError::InvalidSnapshot(
+            CandidatePayloadError::CandidateSetTooLarge
+        ))
+    );
+}
+
+#[test]
+fn cache_epoch_fences_retire_old_snapshots_and_handle_empty_candidates() {
+    let now = Instant::now();
+    let mut cache =
+        ResolvedCandidateCache::from_snapshot(snapshot(epoch(1, 1), 1, None), now).expect("cache");
+    assert!(!cache.invalidate_for_remote_epoch(epoch(1, 1), now));
+    assert!(cache.invalidate_for_remote_epoch(epoch(2, 1), now + Duration::from_secs(1)));
+    assert_eq!(cache.pending_remote_epoch(), Some(epoch(2, 1)));
+    assert_eq!(
+        cache.apply(snapshot(epoch(3, 1), 1, None), now + Duration::from_secs(2)),
+        Ok(CacheUpdate::Replaced)
+    );
+    assert_eq!(cache.pending_remote_epoch(), None);
+    assert_eq!(
+        cache.apply(snapshot(epoch(2, 1), 2, None), now + Duration::from_secs(3)),
+        Ok(CacheUpdate::IgnoredStale)
+    );
+
+    let empty = ResolvedCandidateCache::from_snapshot(
+        ResolvedCandidateSnapshot {
+            runtime_epoch: epoch(9, 9),
+            revision: 1,
+            candidates: Vec::new(),
+            server_presence_ttl: None,
+        },
+        now,
+    )
+    .expect("empty cache is representable");
+    assert!(!empty.is_fresh_at(now));
+    assert!(empty.stage_a_candidates_at(now).is_none());
+
+    for index in 10..=20 {
+        let next = epoch(index, 1);
+        cache.invalidate_for_remote_epoch(next, now + Duration::from_secs(index));
+        cache
+            .apply(
+                snapshot(next, index, None),
+                now + Duration::from_secs(index + 1),
+            )
+            .expect("epoch replacement");
+    }
+}
