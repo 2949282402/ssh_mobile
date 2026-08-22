@@ -1094,7 +1094,7 @@ impl RuntimeState {
             .is_some_and(|current| Arc::ptr_eq(&current, data))
     }
 
-    #[allow(dead_code)] // retained for runtime diagnostics and focused tests
+    #[cfg(test)]
     pub(crate) async fn path_send_channel_frame(
         &self,
         peer_id: &str,
