@@ -1172,6 +1172,41 @@ async fn peer_configuration_boundaries_fail_closed_before_binding_resources() {
 }
 
 #[tokio::test]
+async fn valid_runtime_configuration_binds_native_and_fallback_listeners_once() {
+    let state = new_test_state().await;
+    let receive_directory =
+        std::env::temp_dir().join(format!("ssh-mobile-runtime-config-{}", std::process::id()));
+    let command = network_protocol::ConfigureRuntimeCommand {
+        device_id: "device-a".into(),
+        identity_private_key: vec![1; 32],
+        e2e_private_key: vec![2; 32],
+        listen_address: "127.0.0.1:0".into(),
+        receive_directory: receive_directory.to_string_lossy().into_owned(),
+    };
+    configure_runtime(Arc::clone(&state), command.clone())
+        .await
+        .expect("valid runtime configuration");
+    assert!(state.lifecycle.bound_port.load(Ordering::Acquire) > 0);
+    assert_eq!(
+        state
+            .lifecycle
+            .identity
+            .read()
+            .await
+            .as_ref()
+            .map(|identity| identity.device_id.as_str()),
+        Some("device-a")
+    );
+    assert!(state.local_discovery.read().await.is_some());
+
+    let duplicate = configure_runtime(state.clone(), command)
+        .await
+        .expect_err("runtime can only be configured once");
+    assert_eq!(duplicate.code, NetworkErrorCode::InvalidArgument as i32);
+    state.task_supervisor.shutdown().await;
+}
+
+#[tokio::test]
 async fn peer_upsert_and_disconnect_preserve_identity_and_route_boundaries() {
     let state = new_test_state().await;
     let invalid_peer = upsert_peer(
