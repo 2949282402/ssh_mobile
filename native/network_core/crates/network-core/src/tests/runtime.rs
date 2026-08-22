@@ -388,6 +388,62 @@ async fn stale_session_retirement_is_idempotent_and_path_wait_is_bounded() {
         .expect("path wait must remain bounded");
 }
 
+#[tokio::test]
+async fn relay_data_path_lease_requires_the_current_client_identity() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    let peer_id = "relay-lease-peer";
+    let session_id = match state
+        .begin_connect(peer_id, crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected session decision: {decision:?}"),
+    };
+    let data = Arc::new(
+        RelayDataClient::new(
+            "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            vec![0u8; 32],
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("valid Relay data client"),
+    );
+    assert!(
+        state
+            .mark_relay_route_connected(peer_id, session_id, Some(Arc::clone(&data)))
+            .await
+    );
+
+    let lease = state
+        .acquire_path_lease_for_relay_data(peer_id, &data, CAPABILITY_RELIABLE_STREAM)
+        .await
+        .expect("current Relay data client should be leaseable");
+    assert!(lease
+        .relay_data()
+        .is_some_and(|current| Arc::ptr_eq(&current, &data)));
+    assert!(state.path_is_current_relay_data(peer_id, &data).await);
+
+    let stale = Arc::new(
+        RelayDataClient::new(
+            "ws://127.0.0.1:9/v2/relay/7a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            "7a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+            vec![0u8; 32],
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("valid stale Relay data client"),
+    );
+    assert!(state
+        .acquire_path_lease_for_relay_data(peer_id, &stale, CAPABILITY_RELIABLE_STREAM)
+        .await
+        .is_err());
+    assert!(!state.path_is_current_relay_data(peer_id, &stale).await);
+    lease.release();
+    state.close_transport_path(peer_id).await;
+}
+
 #[test]
 fn runtime_lifecycle_rejects_commands_before_start_and_stops_idempotently() {
     let runtime = NetworkRuntime::new().expect("runtime");
