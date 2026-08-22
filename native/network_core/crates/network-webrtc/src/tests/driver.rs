@@ -1,7 +1,112 @@
 use super::*;
 use crate::{DataChannelReliability, IceServerConfig, WebRtcConfig};
+use rtc::peer_connection::event::{
+    RTCDataChannelEvent, RTCPeerConnectionEvent, RTCPeerConnectionIceEvent,
+};
+use rtc::peer_connection::state::{RTCIceConnectionState, RTCPeerConnectionState};
+use rtc::peer_connection::transport::{RTCIceCandidate, RTCIceCandidateType, RTCIceProtocol};
 use std::time::Duration;
 use tokio::sync::mpsc::channel;
+
+fn host_rtc_candidate(address: impl Into<String>) -> RTCIceCandidate {
+    RTCIceCandidate {
+        id: "host".to_owned(),
+        foundation: "1".to_owned(),
+        priority: 2_130_706_431,
+        address: address.into(),
+        protocol: RTCIceProtocol::Udp,
+        port: 45_000,
+        typ: RTCIceCandidateType::Host,
+        component: 1,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn peer_events_map_to_runtime_events_and_ignore_unowned_variants() {
+    let candidate = map_peer_event(RTCPeerConnectionEvent::OnIceCandidateEvent(
+        RTCPeerConnectionIceEvent {
+            candidate: host_rtc_candidate("192.0.2.10"),
+            url: String::new(),
+        },
+    ))
+    .expect("host candidate maps");
+    assert!(matches!(
+        candidate.as_slice(),
+        [RealtimeIoEvent::LocalIceCandidate(IceCandidate { candidate, .. })]
+            if candidate.starts_with("candidate:")
+    ));
+
+    let invalid = map_peer_event(RTCPeerConnectionEvent::OnIceCandidateEvent(
+        RTCPeerConnectionIceEvent {
+            candidate: RTCIceCandidate {
+                typ: RTCIceCandidateType::Unspecified,
+                ..Default::default()
+            },
+            url: String::new(),
+        },
+    ));
+    assert!(matches!(invalid, Err(WebRtcError::Rtc(_))));
+
+    let cases = [
+        (
+            RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(
+                RTCIceConnectionState::Connected,
+            ),
+            RealtimeIoEvent::IceConnected,
+        ),
+        (
+            RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(
+                RTCIceConnectionState::Completed,
+            ),
+            RealtimeIoEvent::IceConnected,
+        ),
+        (
+            RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(RTCIceConnectionState::Failed),
+            RealtimeIoEvent::IceFailed,
+        ),
+        (
+            RTCPeerConnectionEvent::OnConnectionStateChangeEvent(RTCPeerConnectionState::Connected),
+            RealtimeIoEvent::PeerConnected,
+        ),
+        (
+            RTCPeerConnectionEvent::OnConnectionStateChangeEvent(
+                RTCPeerConnectionState::Disconnected,
+            ),
+            RealtimeIoEvent::PeerDisconnected,
+        ),
+        (
+            RTCPeerConnectionEvent::OnConnectionStateChangeEvent(RTCPeerConnectionState::Closed),
+            RealtimeIoEvent::PeerDisconnected,
+        ),
+        (
+            RTCPeerConnectionEvent::OnConnectionStateChangeEvent(RTCPeerConnectionState::Failed),
+            RealtimeIoEvent::PeerFailed,
+        ),
+        (
+            RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnOpen(7)),
+            RealtimeIoEvent::DataChannelOpened(7),
+        ),
+        (
+            RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnClose(7)),
+            RealtimeIoEvent::DataChannelClosed(7),
+        ),
+    ];
+    for (event, expected) in cases {
+        assert_eq!(map_peer_event(event).expect("event maps"), vec![expected]);
+    }
+
+    for event in [
+        RTCPeerConnectionEvent::default(),
+        RTCPeerConnectionEvent::OnIceConnectionStateChangeEvent(RTCIceConnectionState::New),
+        RTCPeerConnectionEvent::OnConnectionStateChangeEvent(RTCPeerConnectionState::New),
+        RTCPeerConnectionEvent::OnDataChannel(RTCDataChannelEvent::OnError(7)),
+    ] {
+        assert!(map_peer_event(event)
+            .expect("unowned event is ignored")
+            .is_empty());
+    }
+}
 
 #[tokio::test]
 async fn two_local_drivers_exchange_data_channel_payloads() {
