@@ -247,6 +247,103 @@ async fn connect_and_probe_reject_missing_runtime_inputs_fail_closed() {
 }
 
 #[tokio::test]
+async fn direct_probe_reports_no_route_when_no_candidate_is_available() {
+    let (state, _event_rx, _control) = configured_reuse_state().await;
+    let coordinator = ConnectivityAttemptCoordinator::new(Arc::clone(&state));
+
+    let error = coordinator
+        .probe_direct("peer-b", CommunicationClass::ReliableMessage)
+        .await
+        .expect_err("a configured runtime without candidates must fail closed");
+
+    assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
+    assert_eq!(
+        state.connection_sessions.current_session_id("peer-b").await,
+        None,
+        "a probe with no candidate must not reserve a Session"
+    );
+}
+
+#[tokio::test]
+async fn direct_probe_retires_its_temporary_session_after_a_failed_race() {
+    let (state, _event_rx, _control) = configured_reuse_state().await;
+    let candidate = Candidate::new(
+        "127.0.0.1:9".parse().expect("closed direct endpoint"),
+        CandidateKind::Lan,
+        "probe-unreachable".into(),
+    )
+    .with_generation(1);
+    let cache = ResolvedCandidateCache::from_snapshot(
+        ResolvedCandidateSnapshot {
+            runtime_epoch: NatRuntimeEpoch { high: 41, low: 42 },
+            revision: 1,
+            candidates: vec![CandidatePayloadV2::from_candidate(
+                &candidate,
+                vec![CandidateTransport::Quic],
+            )],
+            server_presence_ttl: Some(Duration::from_secs(30)),
+        },
+        Instant::now(),
+    )
+    .expect("valid probe cache");
+    state
+        .remote_candidate_cache
+        .write()
+        .await
+        .insert("peer-b".into(), cache);
+
+    let error = coordinator_for(&state)
+        .probe_direct("peer-b", CommunicationClass::ReliableMessage)
+        .await
+        .expect_err("closed direct candidate must fail");
+
+    assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
+    assert_eq!(
+        state.connection_sessions.current_session_id("peer-b").await,
+        None,
+        "failed pure Direct probing must retire its temporary Session"
+    );
+}
+
+fn coordinator_for(state: &Arc<RuntimeState>) -> ConnectivityAttemptCoordinator {
+    ConnectivityAttemptCoordinator::new(Arc::clone(state))
+}
+
+#[tokio::test]
+async fn capability_mismatch_is_rejected_before_a_second_control_transaction() {
+    let (state, _event_rx, control) = configured_reuse_state().await;
+    let peer_id = "peer-b";
+    let session_id = match state
+        .begin_connect(peer_id, crate::connect::CAPABILITY_RELIABLE_MESSAGE)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected Session decision: {decision:?}"),
+    };
+    let _admission = state
+        .admit_authenticated_session(peer_id, Some(session_id), "remote-session")
+        .await
+        .expect("authenticate the existing route");
+    assert!(
+        state
+            .mark_relay_route_connected(peer_id, session_id, None)
+            .await
+    );
+
+    let error = coordinator_for(&state)
+        .connect_with_class(peer_id, CommunicationClass::UnreliableDatagram)
+        .await
+        .expect_err("a message-only route cannot satisfy a datagram request");
+
+    assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
+    assert_eq!(control.resolve_calls(), 0);
+    assert_eq!(control.connectivity_calls(), 0);
+    assert_eq!(control.reserve_calls(), 0);
+    state.close_transport_path(peer_id).await;
+    state.fail_session(peer_id, session_id).await;
+}
+
+#[tokio::test]
 async fn stage_a_reuses_only_a_compatible_ready_direct_path() {
     let (state, _event_rx, _ready_control) = configured_reuse_state().await;
     let control = StubControl::new(ResolveStatus::Offline, None);
@@ -1731,6 +1828,181 @@ async fn relay_fallback_without_control_plane_fails_closed() {
 }
 
 #[tokio::test]
+async fn relay_fallback_rejects_an_unusable_control_plane_before_reservation() {
+    let (state, _event_rx, control) = configured_reuse_state().await;
+    control.set_usable(false);
+    let peer_id = "peer-b";
+    let session_id = match state
+        .begin_connect(peer_id, DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected Session decision: {decision:?}"),
+    };
+    let peer = state
+        .peers
+        .read()
+        .await
+        .get(peer_id)
+        .cloned()
+        .expect("configured peer");
+
+    let result = coordinator_for(&state)
+        .connect_relay_fallback(
+            peer_id,
+            session_id,
+            &peer,
+            "unusable-control",
+            crate::connect::CAPABILITY_RELIABLE_MESSAGE,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(ref error) if error.code == NetworkErrorCode::RelayError as i32
+    ));
+    assert_eq!(control.reserve_calls(), 0);
+    state.fail_session(peer_id, session_id).await;
+}
+
+#[tokio::test]
+async fn relay_fallback_maps_reservation_failure_and_retires_session() {
+    let (state, _event_rx, control) = configured_reuse_state().await;
+    let peer_id = "peer-b";
+    let session_id = match state
+        .begin_connect(peer_id, DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected Session decision: {decision:?}"),
+    };
+    let peer = state
+        .peers
+        .read()
+        .await
+        .get(peer_id)
+        .cloned()
+        .expect("configured peer");
+
+    let result = coordinator_for(&state)
+        .connect_relay_fallback(
+            peer_id,
+            session_id,
+            &peer,
+            "reserve-error",
+            crate::connect::CAPABILITY_RELIABLE_MESSAGE,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(ref error) if error.code == NetworkErrorCode::RelayError as i32
+    ));
+    assert_eq!(control.reserve_calls(), 1);
+    assert_eq!(control.call_order(), vec!["reserve"]);
+    state.fail_session(peer_id, session_id).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn relay_fallback_maps_a_hanging_reservation_to_timeout() {
+    let (state, _event_rx, _configured_control) = configured_reuse_state().await;
+    let control = StubControl::timeout();
+    *state.relay.control.write().await = Some(control.clone());
+    let peer_id = "peer-b";
+    let session_id = match state
+        .begin_connect(peer_id, DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected Session decision: {decision:?}"),
+    };
+    let peer = state
+        .peers
+        .read()
+        .await
+        .get(peer_id)
+        .cloned()
+        .expect("configured peer");
+    let task_state = Arc::clone(&state);
+    let task = tokio::spawn(async move {
+        coordinator_for(&task_state)
+            .connect_relay_fallback(
+                peer_id,
+                session_id,
+                &peer,
+                "reserve-timeout",
+                crate::connect::CAPABILITY_RELIABLE_MESSAGE,
+                Instant::now() + Duration::from_secs(10),
+            )
+            .await
+    });
+    tokio::task::yield_now().await;
+    tokio::time::advance(RELAY_RESERVE_TIMEOUT + Duration::from_millis(1)).await;
+    let result = task.await.expect("reservation task");
+    assert!(
+        matches!(
+            result,
+            Err(ref error) if error.code == NetworkErrorCode::Timeout as i32
+        ),
+        "unexpected hanging reservation result: {result:?}"
+    );
+    assert_eq!(control.reserve_calls(), 1);
+    state.fail_session(peer_id, session_id).await;
+}
+
+#[tokio::test]
+async fn relay_fallback_retires_session_when_data_plane_cannot_start() {
+    let (state, _event_rx, control) = configured_reuse_state().await;
+    control.set_relay_reservation(network_relay::v2::RelayReserveResponse {
+        request_id: 1,
+        attempt_id: "data-failure".into(),
+        reservation_id: "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+        relay_data_endpoint: "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+        expires_at_ms: 0,
+        local_token: vec![0; 32],
+    });
+    let peer_id = "peer-b";
+    let session_id = match state
+        .begin_connect(peer_id, DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected Session decision: {decision:?}"),
+    };
+    let peer = state
+        .peers
+        .read()
+        .await
+        .get(peer_id)
+        .cloned()
+        .expect("configured peer");
+
+    let result = coordinator_for(&state)
+        .connect_relay_fallback(
+            peer_id,
+            session_id,
+            &peer,
+            "data-failure",
+            crate::connect::CAPABILITY_RELIABLE_MESSAGE,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(ref error) if error.code == NetworkErrorCode::RelayError as i32
+    ));
+    assert_eq!(control.call_order(), vec!["reserve"]);
+    assert_eq!(
+        state.connection_sessions.current_session_id(peer_id).await,
+        None,
+        "data-plane admission failure must retire its Session"
+    );
+}
+
+#[tokio::test]
 async fn connect_wrapper_and_missing_control_plane_fail_closed() {
     let (state, _event_rx, _control) = configured_reuse_state().await;
     *state.relay.control.write().await = None;
@@ -2056,6 +2328,7 @@ struct StubControl {
     not_ready_once: std::sync::atomic::AtomicBool,
     usable: std::sync::atomic::AtomicBool,
     connectivity_answer: std::sync::Mutex<Option<network_relay::v2::ConnectivityAnswer>>,
+    relay_reservation: std::sync::Mutex<Option<network_relay::v2::RelayReserveResponse>>,
     calls: std::sync::Mutex<Vec<&'static str>>,
     ownership_state: std::sync::Mutex<Option<Arc<RuntimeState>>>,
     first_resolve_saw_owned_session: Arc<std::sync::atomic::AtomicBool>,
@@ -2077,6 +2350,7 @@ impl StubControl {
             not_ready_once: std::sync::atomic::AtomicBool::new(false),
             usable: std::sync::atomic::AtomicBool::new(true),
             connectivity_answer: std::sync::Mutex::new(None),
+            relay_reservation: std::sync::Mutex::new(None),
             calls: std::sync::Mutex::new(Vec::new()),
             ownership_state: std::sync::Mutex::new(None),
             first_resolve_saw_owned_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -2095,6 +2369,7 @@ impl StubControl {
             not_ready_once: std::sync::atomic::AtomicBool::new(false),
             usable: std::sync::atomic::AtomicBool::new(true),
             connectivity_answer: std::sync::Mutex::new(None),
+            relay_reservation: std::sync::Mutex::new(None),
             calls: std::sync::Mutex::new(Vec::new()),
             ownership_state: std::sync::Mutex::new(None),
             first_resolve_saw_owned_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -2113,6 +2388,7 @@ impl StubControl {
             not_ready_once: std::sync::atomic::AtomicBool::new(false),
             usable: std::sync::atomic::AtomicBool::new(true),
             connectivity_answer: std::sync::Mutex::new(None),
+            relay_reservation: std::sync::Mutex::new(None),
             calls: std::sync::Mutex::new(Vec::new()),
             ownership_state: std::sync::Mutex::new(None),
             first_resolve_saw_owned_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -2141,6 +2417,13 @@ impl StubControl {
             .connectivity_answer
             .lock()
             .expect("stub connectivity answer lock") = Some(answer);
+    }
+
+    fn set_relay_reservation(&self, reservation: network_relay::v2::RelayReserveResponse) {
+        *self
+            .relay_reservation
+            .lock()
+            .expect("stub relay reservation lock") = Some(reservation);
     }
 
     fn first_resolve_saw_owned_session(&self) -> bool {
@@ -2359,6 +2642,20 @@ impl crate::discovery::DiscoveryControlPlane for StubControl {
             .push("reserve");
         self.reserve_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Box::pin(async { Err(RelayError::NotConnected) })
+        let reservation = self
+            .relay_reservation
+            .lock()
+            .expect("stub relay reservation lock")
+            .clone();
+        let reserve_never = self.resolve_never;
+        Box::pin(async move {
+            if reserve_never {
+                return std::future::pending::<
+                    Result<network_relay::v2::RelayReserveResponse, RelayError>,
+                >()
+                .await;
+            }
+            reservation.ok_or(RelayError::NotConnected)
+        })
     }
 }
