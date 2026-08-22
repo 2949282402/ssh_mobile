@@ -892,6 +892,13 @@ async fn relay_disconnect_cleanup_is_scoped_to_the_disconnecting_peer() {
             .register_incoming(manifest_c.clone(), "peer-c".into())
             .await
     );
+    assert!(
+        state
+            .transfer
+            .manager
+            .mark_transferring("relay-transfer-b")
+            .await
+    );
     state.relay.active_incoming.lock().await.insert(
         "relay-transfer-b".into(),
         relay_test_active(PendingRelayIncoming {

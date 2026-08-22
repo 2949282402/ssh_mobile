@@ -63,6 +63,10 @@ async fn data_envelope_helpers_validate_tokens_before_touching_socket() {
 
     let valid_token = "a".repeat(32);
     assert!(matches!(
+        send_relay_crypto(&data, &valid_token, 0, b"hello").await,
+        Err(RelayError::Protocol(_))
+    ));
+    assert!(matches!(
         send_relay_crypto(&data, &valid_token, 1, b"hello").await,
         Err(RelayError::NotConnected)
     ));
