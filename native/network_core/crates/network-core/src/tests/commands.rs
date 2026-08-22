@@ -115,6 +115,50 @@ fn connect_cancellation_requires_generation_invalidation() {
 }
 
 #[tokio::test]
+async fn connect_command_rejects_missing_runtime_and_unknown_peer_before_attempt() {
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        event_tx,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    let not_configured = start_connect_peer(
+        Arc::clone(&state),
+        "connect-unconfigured".into(),
+        "peer-a".into(),
+        CommunicationClass::ReliableMessage,
+    )
+    .await
+    .expect_err("connect must require runtime identity and endpoint");
+    assert_eq!(
+        not_configured.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    let endpoint = network_quic::QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("endpoint address"),
+        Arc::new(network_nat::PathManager::new()),
+    )
+    .expect("endpoint");
+    *state.lifecycle.endpoint.write().await = Some(endpoint.endpoint);
+    *state.lifecycle.identity.write().await = Some(Arc::new(
+        network_identity::DeviceIdentity::from_private_keys(
+            "device-a".into(),
+            [1u8; 32],
+            [2u8; 32],
+        ),
+    ));
+    let unknown_peer = start_connect_peer(
+        state,
+        "connect-unknown-peer".into(),
+        "peer-a".into(),
+        CommunicationClass::ReliableMessage,
+    )
+    .await
+    .expect_err("connect must require a configured peer");
+    assert_eq!(unknown_peer.code, NetworkErrorCode::NoRoute as i32);
+}
+
+#[tokio::test]
 async fn environment_change_refreshes_discovery_revision() {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     let state = Arc::new(RuntimeState::new(
