@@ -309,27 +309,29 @@ async fn bind_and_gather_candidates(
 fn configured_stun_servers() -> Vec<SocketAddr> {
     std::env::var(STUN_SERVERS_ENV)
         .ok()
-        .map(|value| {
-            value
-                .split(',')
-                .filter_map(|entry| {
-                    let entry = entry.trim();
-                    if entry.is_empty() {
-                        None
-                    } else {
-                        match entry.parse() {
-                            Ok(server) => Some(server),
-                            Err(error) => {
-                                tracing::debug!(%entry, %error, "ignoring invalid STUN server");
-                                None
-                            }
-                        }
-                    }
-                })
-                .take(8)
-                .collect()
-        })
+        .map(|value| parse_stun_servers(&value))
         .unwrap_or_default()
+}
+
+fn parse_stun_servers(value: &str) -> Vec<SocketAddr> {
+    value
+        .split(',')
+        .filter_map(|entry| {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                None
+            } else {
+                match entry.parse() {
+                    Ok(server) => Some(server),
+                    Err(error) => {
+                        tracing::debug!(%entry, %error, "ignoring invalid STUN server");
+                        None
+                    }
+                }
+            }
+        })
+        .take(8)
+        .collect()
 }
 
 /// 校验并保存一个对端路由及其可信身份密钥。

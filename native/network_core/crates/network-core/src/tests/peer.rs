@@ -1001,6 +1001,28 @@ fn candidate_fixture_classification_covers_lan_ipv6_and_reflexive_paths() {
 }
 
 #[test]
+fn stun_server_parser_ignores_invalid_entries_and_caps_configuration() {
+    let mut entries = vec![
+        " 192.168.1.10:3478 ".to_string(),
+        "not-an-address".to_string(),
+        String::new(),
+        "[2001:db8::10]:3479".to_string(),
+    ];
+    entries.extend((0..10).map(|index| format!("192.0.2.{index}:3478")));
+    let servers = parse_stun_servers(&entries.join(","));
+    assert_eq!(servers.len(), 8);
+    assert_eq!(
+        servers[0],
+        "192.168.1.10:3478".parse::<SocketAddr>().unwrap()
+    );
+    assert_eq!(
+        servers[1],
+        "[2001:db8::10]:3479".parse::<SocketAddr>().unwrap()
+    );
+    assert!(parse_stun_servers(" , invalid ").is_empty());
+}
+
+#[test]
 fn direct_candidate_queue_never_starts_a_relay_candidate() {
     let relay = Candidate::new(
         "203.0.113.20:41023".parse().unwrap(),
