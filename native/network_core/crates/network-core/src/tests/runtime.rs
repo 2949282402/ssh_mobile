@@ -328,6 +328,66 @@ async fn runtime_path_lease_lookup_is_exact_and_rejects_stale_or_missing_routes(
     route.worker.abort();
 }
 
+#[tokio::test]
+async fn path_admission_retry_only_allows_the_current_unbound_session() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    assert!(state.path_admission_can_retry("peer-a", None).await);
+    assert!(
+        !state
+            .path_admission_can_retry("peer-a", Some(SessionId::new()))
+            .await
+    );
+
+    let session_id = SessionId::new();
+    state
+        .connection_sessions
+        .register_pending_session("peer-a", session_id)
+        .await
+        .expect("pending session");
+    assert!(
+        state
+            .path_admission_can_retry("peer-a", Some(session_id))
+            .await
+    );
+    state
+        .connection_sessions
+        .admit_authenticated_session("peer-a", Some(session_id), "remote-binding")
+        .await
+        .expect("admit session");
+    assert!(
+        !state
+            .path_admission_can_retry("peer-a", Some(session_id))
+            .await
+    );
+}
+
+#[tokio::test]
+async fn stale_session_retirement_is_idempotent_and_path_wait_is_bounded() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    let session_id = SessionId::new();
+    state
+        .connection_sessions
+        .register_pending_session("peer-a", session_id)
+        .await
+        .expect("pending session");
+
+    assert!(
+        state
+            .retire_session_without_transport("peer-a", session_id)
+            .await
+    );
+    assert!(
+        !state
+            .retire_session_without_transport("peer-a", session_id)
+            .await
+    );
+    tokio::time::timeout(Duration::from_secs(1), state.wait_for_path_change())
+        .await
+        .expect("path wait must remain bounded");
+}
+
 #[test]
 fn runtime_lifecycle_rejects_commands_before_start_and_stops_idempotently() {
     let runtime = NetworkRuntime::new().expect("runtime");
