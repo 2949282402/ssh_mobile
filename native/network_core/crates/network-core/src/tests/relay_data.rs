@@ -825,6 +825,160 @@ async fn relay_data_connectors_pair_over_fake_v2_and_replace_stale_readiness() {
     drop(initiator);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn relay_noise_handshake_round_trips_and_admits_both_sessions() {
+    let reservation_id = "7a8b6c5d4e3f2a1b9c8d7e6f5a4b3c2d";
+    let initiator_token = vec![0x31; 32];
+    let responder_token = vec![0x32; 32];
+    let relay_server = crate::tests::FakeRelayV2Server::start(std::collections::HashMap::from([(
+        reservation_id.to_string(),
+        (initiator_token.clone(), responder_token.clone()),
+    )]))
+    .await;
+    let endpoint = crate::tests::v2_relay_data_endpoint(relay_server.address, reservation_id);
+    let mut initiator_data = RelayDataClient::new(
+        endpoint.clone(),
+        reservation_id.into(),
+        initiator_token,
+        "credential".into(),
+        [41; 32],
+    )
+    .expect("initiator data client");
+    let mut responder_data = RelayDataClient::new(
+        endpoint,
+        reservation_id.into(),
+        responder_token,
+        "credential".into(),
+        [42; 32],
+    )
+    .expect("responder data client");
+    let (initiator_connect, responder_connect) = tokio::join!(
+        initiator_data.connect_reservation(),
+        responder_data.connect_reservation()
+    );
+    initiator_connect.expect("initiator relay reservation");
+    responder_connect.expect("responder relay reservation");
+    let responder_events = responder_data
+        .take_events()
+        .expect("responder events should be available");
+    let initiator_events = initiator_data
+        .take_events()
+        .expect("initiator events should be available");
+    let initiator_data = Arc::new(initiator_data);
+    let responder_data = Arc::new(responder_data);
+
+    let initiator_identity = Arc::new(network_identity::DeviceIdentity::from_private_keys(
+        "initiator".into(),
+        [51; 32],
+        [61; 32],
+    ));
+    let responder_identity = Arc::new(network_identity::DeviceIdentity::from_private_keys(
+        "responder".into(),
+        [52; 32],
+        [62; 32],
+    ));
+    let initiator_state = state();
+    *initiator_state.lifecycle.identity.write().await = Some(Arc::clone(&initiator_identity));
+    initiator_state.peers.write().await.insert(
+        "responder".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: responder_identity.public_identity_key().to_bytes(),
+            e2e_public_key: responder_identity.public_e2e_key().to_bytes(),
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let responder_state = state();
+    *responder_state.lifecycle.identity.write().await = Some(Arc::clone(&responder_identity));
+    responder_state.peers.write().await.insert(
+        "initiator".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: initiator_identity.public_identity_key().to_bytes(),
+            e2e_public_key: initiator_identity.public_e2e_key().to_bytes(),
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    responder_state.trusted_peer_keys.write().await.insert(
+        "initiator".into(),
+        initiator_identity.public_identity_key().to_bytes(),
+    );
+    let session_id = match initiator_state
+        .begin_connect("responder", crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        crate::runtime::ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected initiator admission decision: {decision:?}"),
+    };
+
+    let initiator_loop = {
+        let state = Arc::clone(&initiator_state);
+        let data = Arc::clone(&initiator_data);
+        tokio::spawn(async move {
+            let mut events = initiator_events;
+            while let Some(event) = events.recv().await {
+                if let DataEvent::Payload {
+                    encrypted_payload, ..
+                } = event
+                {
+                    handle_relay_data_payload(&state, &data, "responder", &encrypted_payload)
+                        .await
+                        .expect("initiator crypto response should be accepted");
+                }
+            }
+        })
+    };
+    let responder_loop = {
+        let state = Arc::clone(&responder_state);
+        let data = Arc::clone(&responder_data);
+        let mut events = responder_events;
+        tokio::spawn(async move {
+            while let Some(event) = events.recv().await {
+                if let DataEvent::Payload {
+                    encrypted_payload, ..
+                } = event
+                {
+                    handle_relay_data_payload(&state, &data, "initiator", &encrypted_payload)
+                        .await
+                        .expect("responder crypto request should be accepted");
+                }
+            }
+        })
+    };
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        crate::peer::establish_relay_crypto(
+            &initiator_state,
+            Arc::clone(&initiator_data),
+            "responder",
+            session_id,
+            initiator_identity,
+            responder_identity.public_identity_key().to_bytes(),
+        ),
+    )
+    .await
+    .expect("Relay Noise handshake should complete");
+    let (material, admission) = result.expect("initiator admission");
+    assert_eq!(material.local_session_binding, session_id.wire_key());
+    crate::peer::install_admitted_crypto(&initiator_state, "responder", &admission, &material)
+        .await
+        .expect("initiator application crypto install");
+    assert!(initiator_state
+        .crypto_context("responder", &session_id.wire_key())
+        .await
+        .is_ok());
+    assert!(responder_state
+        .connection_sessions
+        .current_session_id("initiator")
+        .await
+        .is_some());
+    assert_eq!(admission.session_id, session_id);
+
+    initiator_loop.abort();
+    responder_loop.abort();
+}
+
 #[tokio::test]
 async fn relay_crypto_response_reports_a_closed_initiator_waiter() {
     let state = state();
