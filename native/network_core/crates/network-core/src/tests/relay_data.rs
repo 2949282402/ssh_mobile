@@ -308,6 +308,10 @@ async fn relay_business_payloads_bind_peer_tokens_and_stream_identity() {
         .await
         .expect_err("Relay ACK token must bind MessageId");
     assert!(error.to_string().contains("MessageId"));
+    let valid_token = hex::encode(&ack.message_id);
+    receive_relay_delivery_ack(&state, &data, "peer-a", &valid_token, &ack_bytes)
+        .await
+        .expect("an unknown ACK is an idempotent no-op");
 
     let open_payload = crate::stream::encode_stream_open_frame("peer-a", 7, "ssh")
         .expect("encode stream open frame");
