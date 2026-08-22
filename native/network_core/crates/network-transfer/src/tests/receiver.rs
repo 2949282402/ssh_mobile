@@ -1,5 +1,25 @@
 use super::*;
 use crate::manifest::NETWORK_TRANSFER_PROTOCOL_VERSION;
+use std::io::Cursor;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, ReadBuf};
+
+struct CancelOnRead {
+    reader: Cursor<Vec<u8>>,
+    cancellation: TransferCancellation,
+}
+
+impl AsyncRead for CancelOnRead {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        self.cancellation.cancel();
+        Pin::new(&mut self.reader).poll_read(context, buffer)
+    }
+}
 
 fn manifest(file_name: &str, data: &[u8]) -> FileManifest {
     FileManifest {
@@ -98,6 +118,32 @@ async fn ignores_a_partial_file_larger_than_the_manifest() {
 }
 
 #[tokio::test]
+async fn partial_offset_handles_missing_and_non_regular_checkpoints() {
+    let data = b"payload";
+    let file_manifest = manifest("received.txt", data);
+    let directory = test_directory();
+    assert_eq!(
+        existing_partial_offset(&file_manifest, &directory)
+            .await
+            .unwrap(),
+        0
+    );
+
+    fs::create_dir_all(&directory).await.unwrap();
+    fs::create_dir(directory.join(format!("{}.part", file_manifest.transfer_id)))
+        .await
+        .unwrap();
+    let result = existing_partial_offset(&file_manifest, &directory).await;
+    assert!(matches!(
+        result,
+        Err(error) if error
+            .downcast_ref::<Error>()
+            .is_some_and(|error| error.kind() == ErrorKind::InvalidData)
+    ));
+    fs::remove_dir_all(directory).await.ok();
+}
+
+#[tokio::test]
 async fn recognizes_an_already_completed_file() {
     let data = b"payload";
     let file_manifest = manifest("received.txt", data);
@@ -111,6 +157,32 @@ async fn recognizes_an_already_completed_file() {
             .unwrap(),
         Some(final_path.to_string_lossy().to_string())
     );
+    fs::remove_dir_all(directory).await.ok();
+}
+
+#[tokio::test]
+async fn completed_file_lookup_handles_missing_and_non_regular_destinations() {
+    let data = b"payload";
+    let file_manifest = manifest("received.txt", data);
+    let directory = test_directory();
+    assert_eq!(
+        existing_completed_file(&file_manifest, &directory)
+            .await
+            .unwrap(),
+        None
+    );
+
+    fs::create_dir_all(&directory).await.unwrap();
+    fs::create_dir(directory.join("received.txt"))
+        .await
+        .unwrap();
+    let result = existing_completed_file(&file_manifest, &directory).await;
+    assert!(matches!(
+        result,
+        Err(error) if error
+            .downcast_ref::<Error>()
+            .is_some_and(|error| error.kind() == ErrorKind::InvalidData)
+    ));
     fs::remove_dir_all(directory).await.ok();
 }
 
@@ -131,6 +203,49 @@ async fn resumes_from_a_matching_partial_file_and_finalizes_atomically() {
         .unwrap();
     assert_eq!(fs::read(&local_path).await.unwrap(), data);
     assert!(!directory.join("received.txt.part").exists());
+    fs::remove_dir_all(directory).await.ok();
+}
+
+#[tokio::test]
+async fn resume_requires_a_matching_partial_file_and_offset_zero_replaces_stale_data() {
+    let data = b"payload";
+    let file_manifest = manifest("received.txt", data);
+    let directory = test_directory();
+    fs::create_dir_all(&directory).await.unwrap();
+    let partial_path = directory.join(format!("{}.part", file_manifest.transfer_id));
+    fs::write(&partial_path, b"wrong-size").await.unwrap();
+    let result = stream_receive_file(&file_manifest, &directory, 3, &data[3..], None).await;
+    assert!(matches!(
+        result,
+        Err(error) if error
+            .downcast_ref::<Error>()
+            .is_some_and(|error| error.kind() == ErrorKind::InvalidData)
+    ));
+
+    fs::write(&partial_path, b"stale").await.unwrap();
+    let local_path = stream_receive_file(&file_manifest, &directory, 0, &data[..], None)
+        .await
+        .unwrap();
+    assert_eq!(fs::read(local_path).await.unwrap(), data);
+    fs::remove_dir_all(directory).await.ok();
+}
+
+#[tokio::test]
+async fn offset_zero_rejects_a_directory_at_the_checkpoint_path() {
+    let data = b"payload";
+    let file_manifest = manifest("received.txt", data);
+    let directory = test_directory();
+    fs::create_dir_all(&directory).await.unwrap();
+    fs::create_dir(directory.join(format!("{}.part", file_manifest.transfer_id)))
+        .await
+        .unwrap();
+    let result = stream_receive_file(&file_manifest, &directory, 0, &data[..], None).await;
+    assert!(matches!(
+        result,
+        Err(error) if error
+            .downcast_ref::<Error>()
+            .is_some_and(|error| error.kind() != ErrorKind::NotFound)
+    ));
     fs::remove_dir_all(directory).await.ok();
 }
 
@@ -171,6 +286,61 @@ async fn rejects_bad_resume_offset_checksum_and_cancellation() {
         Err(error) if error
             .downcast_ref::<Error>()
             .is_some_and(|error| error.kind() == ErrorKind::Interrupted)
+    ));
+    fs::remove_dir_all(directory).await.ok();
+}
+
+#[tokio::test]
+async fn reports_progress_and_checks_cancellation_after_checksum() {
+    let data = b"payload";
+    let file_manifest = manifest("received.txt", data);
+    let directory = test_directory();
+    let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(1);
+    drop(progress_rx);
+    let local_path =
+        stream_receive_file(&file_manifest, &directory, 0, &data[..], Some(progress_tx))
+            .await
+            .unwrap();
+    assert_eq!(fs::read(local_path).await.unwrap(), data);
+    fs::remove_dir_all(&directory).await.ok();
+
+    let cancellation = TransferCancellation::default();
+    let result = stream_receive_file_cancellable(
+        &file_manifest,
+        &directory,
+        0,
+        CancelOnRead {
+            reader: Cursor::new(data.to_vec()),
+            cancellation: cancellation.clone(),
+        },
+        None,
+        Some(&cancellation),
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(error) if error
+            .downcast_ref::<Error>()
+            .is_some_and(|error| error.kind() == ErrorKind::Interrupted)
+    ));
+    fs::remove_dir_all(directory).await.ok();
+}
+
+#[tokio::test]
+async fn refuses_to_overwrite_an_existing_destination() {
+    let data = b"payload";
+    let file_manifest = manifest("received.txt", data);
+    let directory = test_directory();
+    fs::create_dir_all(&directory).await.unwrap();
+    fs::write(directory.join("received.txt"), b"existing")
+        .await
+        .unwrap();
+    let result = stream_receive_file(&file_manifest, &directory, 0, &data[..], None).await;
+    assert!(matches!(
+        result,
+        Err(error) if error
+            .downcast_ref::<Error>()
+            .is_some_and(|error| error.kind() == ErrorKind::AlreadyExists)
     ));
     fs::remove_dir_all(directory).await.ok();
 }
