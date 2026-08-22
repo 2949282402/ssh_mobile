@@ -1094,40 +1094,6 @@ impl RuntimeState {
             .is_some_and(|current| Arc::ptr_eq(&current, data))
     }
 
-    #[cfg(test)]
-    pub(crate) async fn path_send_channel_frame(
-        &self,
-        peer_id: &str,
-        relay_token: &str,
-        kind: crate::connection::GenericFrameKind,
-        payload: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let required_capability = match kind {
-            crate::connection::GenericFrameKind::DataMessage
-            | crate::connection::GenericFrameKind::DeliveryAck => {
-                crate::connect::CAPABILITY_RELIABLE_MESSAGE
-            }
-            crate::connection::GenericFrameKind::StreamOpen
-            | crate::connection::GenericFrameKind::StreamBytes
-            | crate::connection::GenericFrameKind::StreamClose => {
-                crate::connect::CAPABILITY_RELIABLE_STREAM
-            }
-        };
-        let manager = self.peer_path_managers.read().await.get(peer_id).cloned();
-        let Some(manager) = manager else {
-            return Err(
-                std::io::Error::new(std::io::ErrorKind::NotConnected, "path unavailable").into(),
-            );
-        };
-        let lease = manager
-            .lock()
-            .expect("peer path manager lock")
-            .acquire(required_capability)
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotConnected, "path unavailable"))?
-            .1;
-        lease.send_channel_frame(relay_token, kind, payload).await
-    }
-
     pub(crate) async fn path_send_channel_frame_for_lease(
         &self,
         lease: &crate::connect::PathLease,

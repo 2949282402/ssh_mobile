@@ -29,6 +29,36 @@ async fn new_test_state() -> Arc<RuntimeState> {
     Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))))
 }
 
+async fn send_channel_frame_for_test(
+    state: &RuntimeState,
+    peer_id: &str,
+    relay_token: &str,
+    kind: GenericFrameKind,
+    payload: &[u8],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let required_capability = match kind {
+        GenericFrameKind::DataMessage | GenericFrameKind::DeliveryAck => {
+            crate::connect::CAPABILITY_RELIABLE_MESSAGE
+        }
+        GenericFrameKind::StreamOpen
+        | GenericFrameKind::StreamBytes
+        | GenericFrameKind::StreamClose => crate::connect::CAPABILITY_RELIABLE_STREAM,
+    };
+    let manager = state.peer_path_managers.read().await.get(peer_id).cloned();
+    let Some(manager) = manager else {
+        return Err(
+            std::io::Error::new(std::io::ErrorKind::NotConnected, "path unavailable").into(),
+        );
+    };
+    let lease = manager
+        .lock()
+        .expect("peer path manager lock")
+        .acquire(required_capability)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotConnected, "path unavailable"))?
+        .1;
+    lease.send_channel_frame(relay_token, kind, payload).await
+}
+
 async fn started_generic_scope(
     state: &Arc<RuntimeState>,
     peer_id: &str,
@@ -283,7 +313,7 @@ async fn outbound_generic_peer_restart_replaces_session_and_cancels_old_tasks() 
     let payload = b"replacement-route-still-alive";
     timeout(
         Duration::from_secs(1),
-        state.path_send_channel_frame(peer_id, "", GenericFrameKind::DataMessage, payload),
+        send_channel_frame_for_test(&state, peer_id, "", GenericFrameKind::DataMessage, payload),
     )
     .await
     .expect("sending through replacement GenericRoute timed out")
