@@ -1,4 +1,4 @@
-> Last updated: 2026-08-20
+> Last updated: 2026-08-22
 
 # SDK Current State
 
@@ -69,6 +69,31 @@ the retired v1 route/session owner model.
   stale connection.
 - Feature-facing Realtime does not expose native signaling or media resources;
   decoded media availability remains defined by the public package contract.
+
+## Validation gates
+
+Run the package-local checks required by each SDK contract:
+
+```bash
+(cd packages/infrastructure/network_sdk && flutter analyze --no-pub && flutter test --no-pub)
+(cd packages/infrastructure/network_transport && flutter analyze --no-pub && flutter test --no-pub)
+(cd packages/infrastructure/ssh_mobile_network_native && dart analyze && dart test)
+(cd native/network_core && cargo fmt --all -- --check && cargo test --workspace --locked && cargo clippy --workspace --all-targets --locked -- -D warnings)
+```
+
+The public SDK coverage gate is independent from the daily regression gate:
+
+```bash
+bash scripts/sdk_coverage.sh
+```
+
+It measures the public Dart facades and public Rust SDK crates; internal
+`network-core` and Relay implementation coverage remains part of the ordinary
+Rust workspace checks. Cross-owner protocol and ABI acceptance is checked with:
+
+```bash
+bash scripts/network_v2_acceptance.sh strict
+```
 
 Do not copy test-run results here. Automated and device-dependent coverage is
 tracked in the [network fault matrix](../../docs/NETWORK_FAULT_MATRIX.md).

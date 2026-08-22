@@ -1,4 +1,4 @@
-> Last updated: 2026-08-20
+> Last updated: 2026-08-22
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -299,6 +299,32 @@ flutter analyze --no-fatal-infos
 flutter test
 ```
 
+For the normal post-change local regression gate, use the repository wrapper
+from the root directory:
+
+```bash
+bash scripts/full_test.sh --no-bootstrap
+```
+
+This daily gate checks the runnable formatting, analysis, contract, workspace,
+App test, and build jobs without collecting Flutter coverage. Coverage is a
+periodic review because Flutter instrumentation substantially increases WSL
+runtime. Run the four owner-specific gates:
+
+```bash
+bash scripts/front_coverage.sh
+bash scripts/backend_coverage.sh
+bash scripts/client_coverage.sh
+bash scripts/sdk_coverage.sh
+```
+
+Each gate enforces an 80% threshold on its documented owner scope. The client
+gate covers the App-owned Network V2 service boundary; it does not represent
+coverage for unrelated Full App UI features. See
+[Coverage policy](docs/COVERAGE_POLICY.md) for the exact scopes and the
+meaningful-boundary-test rule. `scripts/coverage_test.sh --no-bootstrap`
+remains as a compatibility alias for `scripts/client_coverage.sh`.
+
 ### Workspace module gate
 
 For a pull request, run the changed package and its dependent packages through
@@ -331,8 +357,10 @@ dart run tool/generate_app_icons.dart
 dart run build_runner build
 dart format --output=none --set-exit-if-changed lib test tool
 flutter analyze
-flutter test --coverage --reporter expanded
-dart run tool/check_coverage.dart --minimum=35
+bash ../../scripts/front_coverage.sh
+bash ../../scripts/backend_coverage.sh
+bash ../../scripts/client_coverage.sh
+bash ../../scripts/sdk_coverage.sh
 ```
 
 Check generated files and agent skills:

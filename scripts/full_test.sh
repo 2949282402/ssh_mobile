@@ -15,14 +15,22 @@ SKIP_STATUS=125
 # WSL measurements on 2026-08-20:
 #   * architecture/core gates: about 5m45s
 #   * feature gate serialised: about 4m07s (parallel Melos reached 8m35s)
-#   * Full App shards: about 117s/102s when run one at a time
-# Keep one Flutter test process active in this shared WSL workspace. Two App
-# shards started together contend for build/test_cache and can stall before the
-# first test loads, so App shard scheduling is serialized below.
+#   * Full App shards without coverage: about 117s/102s when run one at a time
+#   * Full App coverage shards are substantially slower under WSL because
+#     Flutter instruments the whole App isolate; allow a long local window.
+# App shards use per-shard Flutter build directories so their expensive test
+# processes can run together without contending for the shared build/test cache.
+# The daily gate deliberately skips coverage; the four domain-specific
+# coverage scripts keep the slower instrumented reviews separate from ordinary
+# regression feedback.
 DEFAULT_APP_TIMEOUT="${FULL_TEST_APP_TIMEOUT:-8m}"
 DEFAULT_FLUTTER_CONCURRENCY="${FULL_TEST_FLUTTER_CONCURRENCY:-1}"
 DEFAULT_MELOS_CONCURRENCY="${FULL_TEST_MELOS_CONCURRENCY:-1}"
 DEFAULT_MELOS_TEST_CONCURRENCY="${FULL_TEST_MELOS_TEST_CONCURRENCY:-1}"
+DEFAULT_APP_SHARD_COUNT="${FULL_TEST_APP_SHARDS:-2}"
+# CI keeps coverage as a separate job. Local full_test.sh is the daily basic
+# regression gate; scripts/client_coverage.sh is the focused client review.
+# --with-coverage remains available for the historical full-App aggregate.
 DEFAULT_APP_COVERAGE="${FULL_TEST_COVERAGE:-0}"
 DEFAULT_WORKSPACE_TEST_TIMEOUT="${FULL_TEST_WORKSPACE_TEST_TIMEOUT:-5m}"
 
@@ -36,13 +44,35 @@ FLUTTER_CONCURRENCY="$DEFAULT_FLUTTER_CONCURRENCY"
 MELOS_CONCURRENCY="$DEFAULT_MELOS_CONCURRENCY"
 MELOS_TEST_CONCURRENCY="$DEFAULT_MELOS_TEST_CONCURRENCY"
 APP_TIMEOUT="$DEFAULT_APP_TIMEOUT"
+APP_TIMEOUT_EXPLICIT=0
+if [[ -n "${FULL_TEST_APP_TIMEOUT:-}" ]]; then
+  APP_TIMEOUT_EXPLICIT=1
+fi
 APP_COVERAGE_ENABLED="$DEFAULT_APP_COVERAGE"
+APP_SHARDS_PARALLEL="${FULL_TEST_APP_SHARDS_PARALLEL:-}"
+APP_SHARD_COUNT="$DEFAULT_APP_SHARD_COUNT"
 WORKSPACE_TEST_TIMEOUT="$DEFAULT_WORKSPACE_TEST_TIMEOUT"
 FEATURE_LOOPBACK_ENABLED="${FULL_TEST_FEATURE_LOOPBACK:-0}"
 SKIP_BOOTSTRAP=0
 DOCKER_ENABLED=1
 VERBOSE=0
 ONLY_JOBS=""
+
+# Flutter's test runner starts a local VM service and coverage endpoint. A
+# WSL-local HTTP(S) proxy must not receive those loopback requests; dependency
+# bootstrap and artifact downloads intentionally keep the caller's proxy
+# environment unchanged.
+FLUTTER_LOCAL_TEST_ENV=(
+  HTTP_PROXY=
+  HTTPS_PROXY=
+  http_proxy=
+  https_proxy=
+  ALL_PROXY=
+  all_proxy=
+  SSH_MOBILE_WINDOWS_PROXY=
+  NO_PROXY=localhost,127.0.0.1,::1
+  no_proxy=localhost,127.0.0.1,::1
+)
 
 usage() {
   cat <<'EOF'
@@ -53,14 +83,15 @@ output is kept in a log directory; failures and environment gaps are printed.
 
 Options:
   --jobs N                  Maximum independent CI jobs running at once (default: 4).
-  --serial                  Equivalent to --jobs 1.
+  --serial                  Equivalent to --jobs 1 and serial App shards.
   --flutter-concurrency N   Flutter test workers per App test process (default: 1).
   --melos-concurrency N     Workspace packages tested by Melos at once (default: 1).
   --melos-test-concurrency N
                             Test cases per workspace Flutter package (default: 1).
-  --app-timeout DURATION    Timeout for one App test attempt (default: 8m).
-  --with-coverage            Collect Flutter coverage and enforce the App coverage gate.
-  --no-coverage              Skip Flutter coverage collection (default in WSL).
+  --app-timeout DURATION    Timeout for one App test attempt (default: 8m; coverage: 30m).
+  --app-shards N            App test file partitions (default: 2; local tuning: 4).
+  --with-coverage            Opt into Flutter coverage and the App coverage gate.
+  --no-coverage              Skip Flutter coverage (default for the daily gate).
   --with-feature-loopback    Include the native MCP loopback integration test.
   --workspace-test-timeout DURATION
                             Timeout for one Melos package test process (default: 5m).
@@ -73,9 +104,13 @@ Options:
 Examples:
   bash scripts/full_test.sh
   bash scripts/full_test.sh --jobs 4 --flutter-concurrency 4
-  bash scripts/full_test.sh --no-coverage --jobs 4
+  bash scripts/full_test.sh --no-bootstrap --jobs 4
+  bash scripts/client_coverage.sh --no-bootstrap
   bash scripts/full_test.sh --only protocol-v2-contract,architecture-check
   FULL_TEST_APP_TIMEOUT=8m bash scripts/full_test.sh --serial
+  FULL_TEST_APP_SHARDS_PARALLEL=1 bash scripts/full_test.sh --with-coverage --no-bootstrap
+  FULL_TEST_APP_SHARDS_PARALLEL=0 bash scripts/full_test.sh --with-coverage --no-bootstrap
+  FULL_TEST_APP_SHARDS=4 FULL_TEST_APP_SHARDS_PARALLEL=1 bash scripts/full_test.sh --with-coverage --no-bootstrap
 
 Exit status:
   0  All selected checks passed.
@@ -102,6 +137,7 @@ while (($# > 0)); do
       ;;
     --serial)
       JOB_LIMIT=1
+      APP_SHARDS_PARALLEL=0
       shift
       ;;
     --flutter-concurrency)
@@ -134,10 +170,21 @@ while (($# > 0)); do
     --app-timeout)
       (($# >= 2)) || { echo "--app-timeout requires a value" >&2; exit 64; }
       APP_TIMEOUT="$2"
+      APP_TIMEOUT_EXPLICIT=1
       shift 2
       ;;
     --app-timeout=*)
       APP_TIMEOUT="${1#*=}"
+      APP_TIMEOUT_EXPLICIT=1
+      shift
+      ;;
+    --app-shards)
+      (($# >= 2)) || { echo "--app-shards requires a value" >&2; exit 64; }
+      APP_SHARD_COUNT="$2"
+      shift 2
+      ;;
+    --app-shards=*)
+      APP_SHARD_COUNT="${1#*=}"
       shift
       ;;
     --with-coverage)
@@ -222,8 +269,26 @@ if [[ ! "$APP_TIMEOUT" =~ ^[0-9]+[smhd]$ ]]; then
   echo "--app-timeout must look like 60s, 20m, or 1h: $APP_TIMEOUT" >&2
   exit 64
 fi
+if ! is_positive_int "$APP_SHARD_COUNT" || ((APP_SHARD_COUNT > 4)); then
+  echo "--app-shards must be an integer from 1 through 4: $APP_SHARD_COUNT" >&2
+  exit 64
+fi
 if [[ "$APP_COVERAGE_ENABLED" != 0 && "$APP_COVERAGE_ENABLED" != 1 ]]; then
   echo "FULL_TEST_COVERAGE/coverage option must be 0 or 1: $APP_COVERAGE_ENABLED" >&2
+  exit 64
+fi
+if ((APP_COVERAGE_ENABLED)) && ((APP_TIMEOUT_EXPLICIT == 0)); then
+  APP_TIMEOUT=30m
+fi
+if [[ -z "$APP_SHARDS_PARALLEL" ]]; then
+  if ((APP_COVERAGE_ENABLED)); then
+    APP_SHARDS_PARALLEL=0
+  else
+    APP_SHARDS_PARALLEL=1
+  fi
+fi
+if [[ "$APP_SHARDS_PARALLEL" != 0 && "$APP_SHARDS_PARALLEL" != 1 ]]; then
+  echo "FULL_TEST_APP_SHARDS_PARALLEL must be 0 or 1: $APP_SHARDS_PARALLEL" >&2
   exit 64
 fi
 if [[ "$FEATURE_LOOPBACK_ENABLED" != 0 && "$FEATURE_LOOPBACK_ENABLED" != 1 ]]; then
@@ -317,6 +382,8 @@ printf 'Melos package concurrency: %s\n' "$MELOS_CONCURRENCY"
 printf 'Melos test-case concurrency: %s\n' "$MELOS_TEST_CONCURRENCY"
 printf 'App test attempt timeout: %s\n' "$APP_TIMEOUT"
 printf 'App coverage: %s\n' "$([[ $APP_COVERAGE_ENABLED -eq 1 ]] && echo enabled || echo disabled)"
+printf 'App shard scheduling: %s\n' "$([[ $APP_SHARDS_PARALLEL -eq 1 ]] && echo parallel-with-isolated-builds || echo serial)"
+printf 'App shard count: %s\n' "$APP_SHARD_COUNT"
 printf 'Workspace package test timeout: %s\n' "$WORKSPACE_TEST_TIMEOUT"
 printf 'Feature loopback tests: %s\n' "$([[ $FEATURE_LOOPBACK_ENABLED -eq 1 ]] && echo enabled || echo skipped-for-WSL)"
 printf 'Docker-backed checks: %s\n' "$([[ $DOCKER_AVAILABLE -eq 1 ]] && echo available || echo unavailable)"
@@ -547,12 +614,69 @@ collect_app_tests() {
   done
 }
 
+partition_app_tests() {
+  local -n input_array="$1"
+  local shard="$2"
+  local -n output_array="$3"
+  local index candidate file_size target file_path
+  local -a sorted_indices=()
+  local -a shard_sizes=()
+  for ((index = 0; index < APP_SHARD_COUNT; index++)); do
+    shard_sizes+=(0)
+  done
+  # Flutter's --total-shards/--shard-index keeps every test path on each
+  # command line and lets the test package discard work at runtime. The daily
+  # no-coverage path splits the file list before invoking Flutter so each
+  # process compiles only its own partition of the App suite. A size-balanced
+  # greedy assignment keeps the slowest process from becoming the wall-clock
+  # tail.
+  mapfile -t sorted_indices < <(
+    for index in "${!input_array[@]}"; do
+      file_path="$ROOT_DIR/apps/ssh_mobile_full/${input_array[$index]}"
+      printf '%s\t%s\n' "$(wc -c < "$file_path")" "$index"
+    done | sort -nr | cut -f2
+  )
+  for index in "${sorted_indices[@]}"; do
+    file_path="$ROOT_DIR/apps/ssh_mobile_full/${input_array[$index]}"
+    file_size="$(wc -c < "$file_path")"
+    target=0
+    for ((candidate = 1; candidate < APP_SHARD_COUNT; candidate++)); do
+      if ((shard_sizes[candidate] < shard_sizes[target])); then
+        target="$candidate"
+      fi
+    done
+    if ((target == shard)); then
+      output_array+=("${input_array[$index]}")
+    fi
+    shard_sizes[target]=$((shard_sizes[target] + file_size))
+  done
+}
+
+flutter_test_config_root() {
+  local shard="$1"
+  printf '%s/flutter-config-shard-%s\n' "$LOG_DIR" "$shard"
+}
+
+prepare_flutter_test_config() {
+  local shard="$1"
+  local config_root
+  config_root="$(flutter_test_config_root "$shard")"
+  mkdir -p "$config_root"
+  # Flutter reads its Linux config from XDG_CONFIG_HOME. A distinct build-dir
+  # per App shard prevents concurrent frontend/test-cache writes while keeping
+  # the shared Flutter artifact and pub caches warm.
+  XDG_CONFIG_HOME="$config_root" env "${FLUTTER_LOCAL_TEST_ENV[@]}" \
+    flutter config --build-dir "build/full-test-shard-$shard" >/dev/null
+}
+
 run_app_test_with_retry() {
   local shard="$1"
   local coverage_path="$2"
   shift 2
-  local attempt status
+  local attempt status flutter_config_root
   local -a coverage_args=()
+  flutter_config_root="$(flutter_test_config_root "$shard")"
+  prepare_flutter_test_config "$shard"
   if ((APP_COVERAGE_ENABLED)); then
     coverage_args=(--coverage --coverage-path "$coverage_path")
   fi
@@ -562,10 +686,10 @@ run_app_test_with_retry() {
     fi
     printf 'Running App shard %s (attempt %s) with Flutter concurrency %s.\n' "$shard" "$attempt" "$FLUTTER_CONCURRENCY"
     if timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
-      flutter test --no-pub --no-test-assets "${coverage_args[@]}" \
+      env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub --no-test-assets "${coverage_args[@]}" \
       --reporter compact --fail-fast --timeout 60s \
       --concurrency "$FLUTTER_CONCURRENCY" \
-      --total-shards 2 --shard-index "$shard" "$@"; then
+      "$@"; then
       return 0
     else
       status=$?
@@ -581,15 +705,29 @@ job_app_unit() {
   local shard="$1"
   need flutter || return "$SKIP_STATUS"
   local -a coverage_test_files=()
+  local -a app_test_files=()
+  local -a app_shard_args=()
   collect_app_tests coverage_test_files
-  if ((${#coverage_test_files[@]} == 0)); then
-    echo 'No Full App coverage test files were discovered.'
+  if ((APP_COVERAGE_ENABLED)); then
+    # Keep the established Flutter runtime sharding for coverage. It avoids
+    # changing coverage semantics while the no-coverage path uses pre-split
+    # file lists for a faster local feedback loop.
+    app_test_files=("${coverage_test_files[@]}")
+    app_shard_args=(--total-shards "$APP_SHARD_COUNT" --shard-index "$shard")
+  else
+    partition_app_tests coverage_test_files "$shard" app_test_files
+  fi
+  if ((${#app_test_files[@]} == 0)); then
+    echo 'No Full App test files were discovered.'
     return 1
   fi
 
   local coverage_dir="$LOG_DIR/coverage/full-test-shard-$shard"
   mkdir -p "$coverage_dir"
-  run_in apps/ssh_mobile_full run_app_test_with_retry "$shard" "$coverage_dir/lcov.info" "${coverage_test_files[@]}"
+  local flutter_config_root
+  flutter_config_root="$(flutter_test_config_root "$shard")"
+  run_in apps/ssh_mobile_full run_app_test_with_retry "$shard" "$coverage_dir/lcov.info" \
+    "${app_shard_args[@]}" "${app_test_files[@]}"
   local test_status=$?
   if ((test_status != 0)); then
     return "$test_status"
@@ -606,26 +744,28 @@ job_app_unit() {
     system_admin_coverage_args=(--coverage --coverage-path "$isolated_system_admin")
   fi
   step "Run isolated startup test for shard $shard" run_in apps/ssh_mobile_full timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
-    flutter test --no-pub --no-test-assets "${startup_coverage_args[@]}" --reporter compact --fail-fast \
-    --timeout 60s --concurrency "$FLUTTER_CONCURRENCY" --total-shards 2 --shard-index "$shard" \
+    env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub --no-test-assets "${startup_coverage_args[@]}" --reporter compact --fail-fast \
+    --timeout 60s --concurrency "$FLUTTER_CONCURRENCY" --total-shards "$APP_SHARD_COUNT" --shard-index "$shard" \
     test/features/startup/views/startup_screen_test.dart
   step "Run isolated system-admin test for shard $shard" run_in apps/ssh_mobile_full timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
-    flutter test --no-pub --no-test-assets "${system_admin_coverage_args[@]}" --reporter compact --fail-fast \
-    --timeout 60s --concurrency "$FLUTTER_CONCURRENCY" --total-shards 2 --shard-index "$shard" \
+    env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub --no-test-assets "${system_admin_coverage_args[@]}" --reporter compact --fail-fast \
+    --timeout 60s --concurrency "$FLUTTER_CONCURRENCY" --total-shards "$APP_SHARD_COUNT" --shard-index "$shard" \
     test/screens/system_admin/system_admin_snapshot_tabs_test.dart
   step "Run native transfer test for shard $shard" run_in apps/ssh_mobile_full timeout --signal=TERM --kill-after=30s "$APP_TIMEOUT" \
-    flutter test --no-pub --no-test-assets --reporter compact --fail-fast --timeout 60s --concurrency "$FLUTTER_CONCURRENCY" \
-    --total-shards 2 --shard-index "$shard" "$non_coverage_file"
+    env "XDG_CONFIG_HOME=$flutter_config_root" "${FLUTTER_LOCAL_TEST_ENV[@]}" flutter test --no-pub --no-test-assets --reporter compact --fail-fast --timeout 60s --concurrency "$FLUTTER_CONCURRENCY" \
+    --total-shards "$APP_SHARD_COUNT" --shard-index "$shard" "$non_coverage_file"
 }
 
 job_app_unit_0() { job_app_unit 0; }
 job_app_unit_1() { job_app_unit 1; }
+job_app_unit_2() { job_app_unit 2; }
+job_app_unit_3() { job_app_unit 3; }
 
 job_app_coverage() {
   need dart || return "$SKIP_STATUS"
   local -a coverage_args=()
   local shard isolated
-  for shard in 0 1; do
+  for ((shard = 0; shard < APP_SHARD_COUNT; shard++)); do
     coverage_args+=("--file=$LOG_DIR/coverage/full-test-shard-$shard/lcov.info")
     for isolated in startup system-admin; do
       coverage_args+=("--file=$LOG_DIR/coverage/full-test-shard-$shard/isolated-$isolated-lcov.info")
@@ -775,7 +915,10 @@ job_relay() {
 }
 
 job_protocol() {
-  need bash cargo go python3 protoc buf || return "$SKIP_STATUS"
+  # network_v2_acceptance.sh strict runs Flutter owner selectors. Preflight
+  # dart/flutter here so missing Linux SDK tools are classified as an
+  # environment GAP by the job runner.
+  need bash cargo go python3 protoc buf dart flutter || return "$SKIP_STATUS"
   step 'Compile-check Network V2 protos' protoc --proto_path=protocol \
     --descriptor_set_out="$LOG_DIR/network-v2-$RUN_ID.desc" \
     protocol/proto/relay/v2/relay_v2.proto \
@@ -926,20 +1069,20 @@ if should_run workspace-features-quality; then
   run_single workspace-features-quality job_features
 fi
 
-APP_JOBS=(
-  'app-unit-shard-0:job_app_unit_0'
-  'app-unit-shard-1:job_app_unit_1'
-)
-# The two App shards intentionally share one Flutter build/test cache in this
-# WSL checkout. Running them concurrently can leave both frontend servers in
-# the loading phase indefinitely; CI matrix jobs remain parallel on isolated
-# runners. Keep local App shards deterministic while preserving parallelism for
-# independent Linux gates.
-if should_run app-unit-shard-0; then
-  run_single app-unit-shard-0 job_app_unit_0
-fi
-if should_run app-unit-shard-1; then
-  run_single app-unit-shard-1 job_app_unit_1
+APP_JOBS=()
+for ((shard = 0; shard < APP_SHARD_COUNT; shard++)); do
+  APP_JOBS+=("app-unit-shard-$shard:job_app_unit_$shard")
+done
+if ((APP_SHARDS_PARALLEL)); then
+  run_batch "${APP_JOBS[@]}"
+else
+  for spec in "${APP_JOBS[@]}"; do
+    name="${spec%%:*}"
+    function_name="${spec#*:}"
+    if should_run "$name"; then
+      run_single "$name" "$function_name"
+    fi
+  done
 fi
 
 run_batch 'android-build:job_android'
@@ -947,14 +1090,23 @@ run_batch 'android-build:job_android'
 if should_run app-coverage; then
   if ((APP_COVERAGE_ENABLED == 0)); then
     if [[ -n "$ONLY_JOBS" ]]; then
-      record_skip app-coverage 'Flutter coverage was disabled; rerun with --with-coverage to enforce the App coverage gate.'
+      record_skip app-coverage 'Flutter coverage was not enabled for this explicit app-coverage selection. Use scripts/client_coverage.sh or --with-coverage.'
     else
-      printf '[SKIP] app-coverage (--no-coverage requested; use --with-coverage to enforce the App coverage gate)\n\n'
+      printf '[SKIP] app-coverage (daily gate; run scripts/client_coverage.sh for the periodic client review)\n\n'
     fi
-  elif [[ "${RESULTS[app-unit-shard-0]:-1}" == 0 && "${RESULTS[app-unit-shard-1]:-1}" == 0 ]]; then
-    run_single app-coverage job_app_coverage
   else
-    record_skip app-coverage 'Full App coverage depends on both App test shards passing.'
+    all_app_shards_passed=1
+    for ((shard = 0; shard < APP_SHARD_COUNT; shard++)); do
+      if [[ "${RESULTS[app-unit-shard-$shard]:-1}" != 0 ]]; then
+        all_app_shards_passed=0
+        break
+      fi
+    done
+    if ((all_app_shards_passed)); then
+      run_single app-coverage job_app_coverage
+    else
+      record_skip app-coverage 'Full App coverage depends on every App test shard passing.'
+    fi
   fi
 fi
 

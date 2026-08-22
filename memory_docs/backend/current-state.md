@@ -1,4 +1,4 @@
-> Last updated: 2026-08-19
+> Last updated: 2026-08-22
 
 # Backend Current State
 
@@ -87,3 +87,28 @@ For route and cryptographic semantics, read:
 - [Candidate exchange ADR](../../docs/adr/ADR-017-candidate-exchange.md)
 - [Direct First ADR](../../docs/adr/ADR-008-direct-relay-race.md)
 - [Forward-secret Session E2EE ADR](../../docs/adr/ADR-028-forward-secret-session-e2ee.md)
+
+## Validation gates
+
+Run the Go backend checks from the Relay directory:
+
+```bash
+cd relay
+go test ./...
+go test -race ./...
+go vet ./...
+```
+
+The periodic backend coverage gate is run from the repository root:
+
+```bash
+bash scripts/backend_coverage.sh
+```
+
+When test DSNs are not supplied, the script provisions temporary
+`mysql:8.4` and `redis:7-alpine` containers and removes them on exit. The
+cross-owner Network V2 contract gate is:
+
+```bash
+bash scripts/network_v2_acceptance.sh strict
+```

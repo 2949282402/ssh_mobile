@@ -3,12 +3,18 @@ import 'dart:io';
 void main(List<String> arguments) {
   var minimum = 0.0;
   final coveragePaths = <String>[];
+  final includePrefixes = <String>[];
+  var showDetails = false;
 
   for (final argument in arguments) {
     if (argument.startsWith('--minimum=')) {
       minimum = double.parse(argument.substring('--minimum='.length));
     } else if (argument.startsWith('--file=')) {
       coveragePaths.add(argument.substring('--file='.length));
+    } else if (argument.startsWith('--include=')) {
+      includePrefixes.add(argument.substring('--include='.length));
+    } else if (argument == '--details') {
+      showDetails = true;
     } else {
       stderr.writeln('Unknown argument: $argument');
       exitCode = 64;
@@ -29,6 +35,7 @@ void main(List<String> arguments) {
 
   final summary = summarizeLcovFiles(
     paths.map((path) => File(path).readAsLinesSync()),
+    includePrefixes: includePrefixes,
   );
   if (summary.linesFound == 0) {
     stderr.writeln('Coverage file contains no coverable lines.');
@@ -38,8 +45,15 @@ void main(List<String> arguments) {
 
   stdout.writeln(
     'Line coverage: ${summary.percentage.toStringAsFixed(1)}% '
-    '(${summary.linesHit}/${summary.linesFound}, generated files excluded)',
+    '(${summary.linesHit}/${summary.linesFound}, generated files excluded'
+    '${includePrefixes.isEmpty ? '' : ', scoped to ${includePrefixes.join(', ')}'})',
   );
+
+  if (showDetails || summary.percentage + 0.000001 < minimum) {
+    for (final entry in summary.uncoveredLinesBySource.entries) {
+      stdout.writeln('Uncovered ${entry.key}: ${entry.value.join(', ')}');
+    }
+  }
 
   if (summary.percentage + 0.000001 < minimum) {
     stderr.writeln(
@@ -49,13 +63,23 @@ void main(List<String> arguments) {
   }
 }
 
-CoverageSummary summarizeLcov(Iterable<String> lines) {
-  return summarizeLcovFiles([lines]);
+CoverageSummary summarizeLcov(
+  Iterable<String> lines, {
+  Iterable<String> includePrefixes = const <String>[],
+}) {
+  return summarizeLcovFiles([lines], includePrefixes: includePrefixes);
 }
 
-CoverageSummary summarizeLcovFiles(Iterable<Iterable<String>> files) {
+CoverageSummary summarizeLcovFiles(
+  Iterable<Iterable<String>> files, {
+  Iterable<String> includePrefixes = const <String>[],
+}) {
   final foundLines = <String, Set<int>>{};
   final hitLines = <String, Set<int>>{};
+  final normalizedPrefixes = includePrefixes
+      .map(_normalizeCoveragePath)
+      .where((prefix) => prefix.isNotEmpty)
+      .toList(growable: false);
 
   for (final lines in files) {
     String? currentSource;
@@ -68,7 +92,11 @@ CoverageSummary summarizeLcovFiles(Iterable<Iterable<String>> files) {
         skipCurrentFile =
             source.endsWith('.g.dart') ||
             source.startsWith('third_party/') ||
-            source.contains('/third_party/');
+            source.contains('/third_party/') ||
+            (normalizedPrefixes.isNotEmpty &&
+                !normalizedPrefixes.any(
+                  (prefix) => _coveragePathMatches(source, prefix),
+                ));
       } else if (line == 'end_of_record') {
         currentSource = null;
         skipCurrentFile = false;
@@ -103,14 +131,46 @@ CoverageSummary summarizeLcovFiles(Iterable<Iterable<String>> files) {
     linesHit += sourceLines.length;
   }
 
-  return CoverageSummary(linesFound: linesFound, linesHit: linesHit);
+  final uncoveredLinesBySource = <String, List<int>>{};
+  for (final entry in foundLines.entries) {
+    final uncovered =
+        entry.value.difference(hitLines[entry.key] ?? <int>{}).toList()..sort();
+    if (uncovered.isNotEmpty) {
+      uncoveredLinesBySource[entry.key] = List<int>.unmodifiable(uncovered);
+    }
+  }
+
+  return CoverageSummary(
+    linesFound: linesFound,
+    linesHit: linesHit,
+    uncoveredLinesBySource: Map<String, List<int>>.unmodifiable(
+      uncoveredLinesBySource,
+    ),
+  );
+}
+
+String _normalizeCoveragePath(String path) {
+  return path.replaceAll('\\', '/').replaceFirst(RegExp(r'^\./'), '');
+}
+
+bool _coveragePathMatches(String source, String prefix) {
+  final normalizedSource = _normalizeCoveragePath(source);
+  final normalizedPrefix = prefix.replaceFirst(RegExp(r'/+$'), '');
+  return normalizedSource == normalizedPrefix ||
+      normalizedSource.startsWith('$normalizedPrefix/') ||
+      normalizedSource.contains('/$normalizedPrefix/');
 }
 
 class CoverageSummary {
-  const CoverageSummary({required this.linesFound, required this.linesHit});
+  const CoverageSummary({
+    required this.linesFound,
+    required this.linesHit,
+    this.uncoveredLinesBySource = const <String, List<int>>{},
+  });
 
   final int linesFound;
   final int linesHit;
+  final Map<String, List<int>> uncoveredLinesBySource;
 
   double get percentage => linesFound == 0 ? 0 : (linesHit * 100) / linesFound;
 }

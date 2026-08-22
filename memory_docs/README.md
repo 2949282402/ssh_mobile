@@ -1,4 +1,4 @@
-> Last updated: 2026-08-20
+> Last updated: 2026-08-22
 
 # Project Memory
 
@@ -46,6 +46,25 @@ bash scripts/full_test.sh \
   --app-timeout 20m \
   --no-bootstrap
 ```
+
+## Periodic coverage review
+
+`full_test.sh` is the daily basic regression gate and does not collect Flutter
+coverage by default. For a large refactor, a new feature, or release review,
+run the independent owner gates from the repository root:
+
+```bash
+bash scripts/front_coverage.sh
+bash scripts/backend_coverage.sh
+bash scripts/client_coverage.sh
+bash scripts/sdk_coverage.sh
+```
+
+Each gate enforces an 80% threshold on its documented scope. The former
+`scripts/coverage_test.sh` name remains a compatibility alias for the client
+gate. Scope, failure interpretation, Docker-backed services, and the WSL
+Flutter runner workaround are maintained in
+[`docs/COVERAGE_POLICY.md`](../docs/COVERAGE_POLICY.md).
 
 Maintenance rules are defined by
 [Skill & Memory Maintenance](../docs/agent/skill-memory-maintenance.md).

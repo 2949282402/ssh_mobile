@@ -67,4 +67,33 @@ void main() {
     expect(summary.linesFound, 2);
     expect(summary.linesHit, 2);
   });
+
+  test('can scope coverage to an owner path and reports missed lines', () {
+    final summary = summarizeLcov(
+      const [
+        'SF:/workspace/apps/ssh_mobile_full/lib/services/network/foo.dart',
+        'DA:10,1',
+        'DA:11,0',
+        'end_of_record',
+        'SF:lib/features/other.dart',
+        'DA:20,0',
+        'end_of_record',
+      ],
+      includePrefixes: const ['lib/services/network/'],
+    );
+
+    expect(summary.linesFound, 2);
+    expect(summary.linesHit, 1);
+    expect(
+      summary.uncoveredLinesBySource,
+      containsPair(
+        '/workspace/apps/ssh_mobile_full/lib/services/network/foo.dart',
+        [11],
+      ),
+    );
+    expect(
+      summary.uncoveredLinesBySource,
+      isNot(contains('lib/features/other.dart')),
+    );
+  });
 }

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-20
+> Last updated: 2026-08-22
 
 # Repository Bootstrap
 
@@ -89,9 +89,17 @@ owning README/AGENTS. Always run `git diff --check`, inspect the final status an
 diff, report checks actually run, and state exact environmental or scope gaps.
 
 Before creating or updating a PR, run `scripts/full_test.sh` and the applicable
-focused checks from WSL. A failing or incomplete check blocks submission unless
-the user explicitly accepts the documented environment gap. When tests, package
-membership, project structure, CI scope, or test-selection rules change, update
+focused checks from WSL. `full_test.sh` is the daily basic regression gate and
+does not collect Flutter coverage by default. For coverage-affecting changes,
+large refactors, new feature review, or release acceptance, run the four
+domain-specific gates: `scripts/front_coverage.sh`,
+`scripts/backend_coverage.sh`, `scripts/client_coverage.sh`, and
+`scripts/sdk_coverage.sh`. Each gate enforces an 80% line/metric threshold on
+its documented owner scope and prints uncovered locations when it fails.
+`scripts/coverage_test.sh` remains a compatibility alias for the client gate.
+A failing or incomplete check blocks submission unless the user explicitly
+accepts the documented environment gap. When tests, package membership,
+project structure, CI scope, or test-selection rules change, update
 `scripts/full_test.sh` in the same change. The canonical Skill and Project
 Memory define the detailed PR gate and script-maintenance rules.
 

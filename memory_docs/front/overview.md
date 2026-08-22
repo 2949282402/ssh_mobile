@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-22
 
 # Front Overview
 
@@ -19,3 +19,24 @@ Start with:
 Administrator credentials, enrollment tokens, and sessions must not be stored
 in browser storage or URLs. Use the Front README and code as the current-state
 source rather than duplicating endpoint or polling details here.
+
+## Validation gates
+
+Run the Front checks from the `front/` directory:
+
+```bash
+npm run typecheck
+npm run lint
+npm run test:run
+npm run build
+```
+
+The periodic Front coverage gate is independent from the daily full regression
+gate and runs from the repository root:
+
+```bash
+bash scripts/front_coverage.sh
+```
+
+It enforces the documented statements, lines, functions, and branches
+thresholds for `front/src`.
