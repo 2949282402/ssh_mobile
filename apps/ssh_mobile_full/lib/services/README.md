@@ -1,4 +1,4 @@
-最新更新时间：2026-08-19
+最新更新时间：2026-08-21
 
 # App Shell Services 分类
 
@@ -42,7 +42,10 @@ RAG 和 Network 的旧 Feature/业务入口已经完成零引用收口；剩余�
   的会话、Lease、Pool idle Timer 和后台订阅计数也只是诊断读取面，不改变
   其仍由 AppRuntime/SSH Manager 统一关闭的 Owner 关系。
 - 旧协议适配：`network/**`。LAN Feature 已有独立实现和 Module；`network/**`
-  仅承载 App Scope Network Protocol V2 协议调用面。新的 `network_transport` 负责
+  仅承载 App Scope Network Protocol V2 协议调用面。`network_service.dart` 只保留
+  `NetworkService` 兼容入口和组合根；命令协调、事件路由、Runtime 生命周期、
+  Peer、Relay、Route projection、Transfer 分别由相邻的
+  `network_service_*` 内部 part 所有。新的 `network_transport` 负责
   Runtime/Handle Facade，不复制或重写 TCP/UDP/QUIC/WebShare 协议。
 - 内部拆分文件：被 `part of` 或条件导出引用的文件不是独立 Service，必须
   与其主库一起维护，不能按“零直接引用”误删。

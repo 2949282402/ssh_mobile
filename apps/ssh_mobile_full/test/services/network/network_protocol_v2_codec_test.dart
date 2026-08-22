@@ -1,10 +1,11 @@
 // Network Protocol V2 手写 Dart 编解码器的固定字节 golden 测试。
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
-import '../../../lib/services/network/network_protocol_v2_codec.dart';
+import 'package:ssh_mobile/services/network/network_protocol_v2_codec.dart';
 
 /// 执行固定字节 V2 编解码和类型化事件往返测试。
 void main() {
@@ -323,4 +324,339 @@ void main() {
     expect(event.peers.last.generation, 3);
     expect(event.peers.last.state, PeerPresenceState.updated);
   });
+
+  test('control commands encode every V2 command payload boundary', () {
+    final commands = <Uint8List>[
+      codec.configureRuntimeCommand(
+        commandId: 'configure',
+        config: NetworkRuntimeConfig(
+          deviceId: 'device-a',
+          identityPrivateKey: Uint8List.fromList(List.filled(32, 1)),
+          e2ePrivateKey: Uint8List.fromList(List.filled(32, 2)),
+          listenAddress: '127.0.0.1:0',
+          receiveDirectory: '/tmp/receive',
+        ),
+      ),
+      codec.upsertPeerCommand(
+        commandId: 'upsert',
+        peer: PeerConfig(
+          peerId: 'peer-a',
+          endpointAddress: '127.0.0.1:4433',
+          identityPublicKey: Uint8List.fromList(List.filled(32, 3)),
+          e2ePublicKey: Uint8List.fromList(List.filled(32, 4)),
+        ),
+      ),
+      codec.disconnectPeerCommand(commandId: 'disconnect', peerId: 'peer-a'),
+      codec.sendFileCommand(
+        commandId: 'send',
+        transferId: 'transfer-a',
+        peerId: 'peer-a',
+        filePath: '/tmp/payload.bin',
+      ),
+      codec.cancelTransferCommand(
+        commandId: 'cancel',
+        transferId: 'transfer-a',
+      ),
+      codec.respondIncomingTransferCommand(
+        commandId: 'accept',
+        transferId: 'transfer-a',
+        accept: true,
+      ),
+      codec.respondIncomingTransferCommand(
+        commandId: 'reject',
+        transferId: 'transfer-a',
+        accept: false,
+      ),
+      codec.configureRelayCommand(
+        commandId: 'relay',
+        config: RelayConfig(
+          relayUrl: 'wss://relay.example.test/ws',
+          relayCredential: 'credential',
+          relaySigningSeed: Uint8List.fromList(List.filled(32, 5)),
+        ),
+      ),
+    ];
+
+    expect(commands, everyElement(isNotEmpty));
+    expect(
+      commands.map(codec.commandId),
+      containsAll(<String>[
+        'configure',
+        'upsert',
+        'disconnect',
+        'send',
+        'cancel',
+        'accept',
+        'reject',
+        'relay',
+      ]),
+    );
+  });
+
+  test(
+    'remaining V2 event families preserve optional fields and unknown data',
+    () {
+      final error = <int>[
+        ..._varintField(1, NetworkErrorCode.peerOffline.wireValue),
+        ..._bytesField(2, utf8.encode('peer is offline')),
+        ..._bytesField(3, utf8.encode(NetworkOperation.connect.wireName)),
+        ..._bytesField(4, utf8.encode('peer-a')),
+        ..._varintField(5, RetryDisposition.retryAfter.wireValue),
+        ..._varintField(6, 9),
+        ..._unknownFields(),
+      ];
+
+      final peerState = codec.decodeEvent(
+        Uint8List.fromList(
+          _frame(10, <int>[
+            ..._bytesField(1, utf8.encode('peer-a')),
+            ..._varintField(2, PeerConnectionState.failed.wireValue),
+            ..._varintField(3, NetworkRouteType.relay.wireValue),
+            ..._bytesField(4, error),
+            ..._varintField(5, NetworkRouteTopology.relay.wireValue),
+            ..._varintField(6, NetworkRouteTransport.webSocket.wireValue),
+            ..._unknownFields(),
+          ]),
+        ),
+      );
+      expect(peerState.event, isA<PeerStateChanged>());
+      final peerEvent = peerState.event! as PeerStateChanged;
+      expect(peerEvent.error?.retryAfterSeconds, 9);
+      expect(peerEvent.routeType, NetworkRouteType.relay);
+
+      final progress =
+          codec
+                  .decodeEvent(
+                    Uint8List.fromList(
+                      _frame(11, <int>[
+                        ..._bytesField(1, utf8.encode('transfer-a')),
+                        ..._varintField(2, 10),
+                        ..._varintField(3, 100),
+                        ..._unknownFields(),
+                      ]),
+                    ),
+                  )
+                  .event!
+              as TransferProgress;
+      expect(progress.bytesTransferred, 10);
+      expect(progress.totalBytes, 100);
+
+      final offer =
+          codec
+                  .decodeEvent(
+                    Uint8List.fromList(
+                      _frame(14, <int>[
+                        ..._bytesField(1, utf8.encode('transfer-a')),
+                        ..._bytesField(2, utf8.encode('peer-a')),
+                        ..._bytesField(3, utf8.encode('payload.bin')),
+                        ..._varintField(4, 4096),
+                        ..._varintField(5, NetworkRouteType.relay.wireValue),
+                        ..._unknownFields(),
+                      ]),
+                    ),
+                  )
+                  .event!
+              as IncomingTransferOffer;
+      expect(offer.fileName, 'payload.bin');
+      expect(offer.fileSize, 4096);
+      expect(offer.routeType, NetworkRouteType.relay);
+
+      final completed =
+          codec
+                  .decodeEvent(
+                    Uint8List.fromList(
+                      _frame(15, <int>[
+                        ..._bytesField(1, utf8.encode('transfer-a')),
+                        ..._bytesField(2, utf8.encode('/receive/payload.bin')),
+                        ..._unknownFields(),
+                      ]),
+                    ),
+                  )
+                  .event!
+              as TransferCompleted;
+      expect(completed.localPath, '/receive/payload.bin');
+
+      final failed =
+          codec
+                  .decodeEvent(
+                    Uint8List.fromList(
+                      _frame(16, <int>[
+                        ..._bytesField(1, utf8.encode('transfer-a')),
+                        ..._bytesField(2, error),
+                        ..._unknownFields(),
+                      ]),
+                    ),
+                  )
+                  .event!
+              as TransferFailed;
+      expect(failed.error.code, NetworkErrorCode.peerOffline);
+      expect(failed.error.operation, NetworkOperation.connect);
+
+      final route =
+          codec
+                  .decodeEvent(
+                    Uint8List.fromList(
+                      _frame(17, <int>[
+                        ..._bytesField(1, utf8.encode('peer-a')),
+                        ..._varintField(
+                          2,
+                          NetworkRouteType.quicDirect.wireValue,
+                        ),
+                        ..._bytesField(3, utf8.encode('203.0.113.8:4433')),
+                        ..._varintField(4, 26),
+                        ..._varintField(5, 7),
+                        ..._varintField(
+                          6,
+                          NetworkRouteTopology.direct.wireValue,
+                        ),
+                        ..._varintField(
+                          7,
+                          NetworkRouteTransport.quic.wireValue,
+                        ),
+                        ..._unknownFields(),
+                      ]),
+                    ),
+                  )
+                  .event!
+              as RouteChanged;
+      expect(route.snapshot.endpoint, '203.0.113.8:4433');
+      expect(route.snapshot.rtt, const Duration(milliseconds: 26));
+      expect(route.snapshot.loss, 0.007);
+      expect(route.snapshot.transport, NetworkRouteTransport.quic);
+
+      final relay =
+          codec
+                  .decodeEvent(
+                    Uint8List.fromList(
+                      _frame(18, <int>[
+                        ..._varintField(
+                          1,
+                          RelayConnectionState.failed.wireValue,
+                        ),
+                        ..._bytesField(2, error),
+                        ..._unknownFields(),
+                      ]),
+                    ),
+                  )
+                  .event!
+              as RelayStateChanged;
+      expect(relay.state, RelayConnectionState.failed);
+      expect(relay.error?.peerId, 'peer-a');
+
+      final legacyResult = codec.decodeEvent(
+        Uint8List.fromList(
+          _frame(13, <int>[
+            ..._bytesField(1, utf8.encode('command-a')),
+            ..._varintField(2, 0),
+            ..._bytesField(3, error),
+            ..._unknownFields(),
+          ]),
+        ),
+      );
+      expect(legacyResult.commandId, 'command-a');
+      expect(legacyResult.commandAccepted, isFalse);
+      expect(legacyResult.commandError?.code, NetworkErrorCode.peerOffline);
+    },
+  );
+
+  test('malformed protobuf and stream handles fail closed at the boundary', () {
+    expect(
+      () => codec.commandId(Uint8List(0)),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(<int>[0x0a])),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(<int>[0x12, 0x00])),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(<int>[0x08, 0x01])),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(<int>[0x0a, 0x05, 0x01])),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(<int>[0x0b])),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(<int>[0x80])),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(List<int>.filled(10, 0x80))),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(<int>[0x09, 0x01])),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(<int>[0x0d, 0x01])),
+      throwsA(isA<FormatException>()),
+    );
+
+    final missingHandle = _frame(26, <int>[
+      ..._bytesField(1, utf8.encode('peer-a')),
+    ]);
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(missingHandle)),
+      throwsA(isA<FormatException>()),
+    );
+
+    final invalidHandle = _frame(27, <int>[
+      ..._bytesField(1, utf8.encode('peer-a')),
+      ..._bytesField(2, <int>[
+        ..._bytesField(1, <int>[]),
+        ..._varintField(2, 0),
+      ]),
+    ]);
+    expect(
+      () => codec.decodeEvent(Uint8List.fromList(invalidHandle)),
+      throwsA(isA<FormatException>()),
+    );
+  });
 }
+
+List<int> _frame(int eventField, List<int> payload) => <int>[
+  ..._bytesField(1, utf8.encode('event-a')),
+  ..._varintField(2, 123),
+  ..._varintField(3, 2),
+  ..._bytesField(eventField, payload),
+];
+
+List<int> _varintField(int fieldNumber, int value) => <int>[
+  ..._varint(fieldNumber << 3),
+  ..._varint(value),
+];
+
+List<int> _bytesField(int fieldNumber, List<int> value) => <int>[
+  ..._varint((fieldNumber << 3) | 2),
+  ..._varint(value.length),
+  ...value,
+];
+
+List<int> _varint(int value) {
+  final bytes = <int>[];
+  var remaining = value;
+  do {
+    final next = remaining & 0x7f;
+    remaining >>= 7;
+    bytes.add(remaining == 0 ? next : next | 0x80);
+  } while (remaining != 0);
+  return bytes;
+}
+
+List<int> _unknownFields() => <int>[
+  ..._varintField(50, 1),
+  ..._varint((51 << 3) | 1),
+  ...List<int>.filled(8, 0xab),
+  ..._bytesField(52, <int>[0xcd, 0xef]),
+  ..._varint((53 << 3) | 5),
+  ...List<int>.filled(4, 0x12),
+];

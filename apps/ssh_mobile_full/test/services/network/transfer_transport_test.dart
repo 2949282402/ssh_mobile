@@ -1,13 +1,17 @@
 // Network Protocol V2 原生网络服务命令/事件语义测试。
 
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:network_sdk/network_sdk.dart';
+import 'package:network_transport/network_transport.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
-import '../../../lib/services/network/network_service.dart';
+import 'package:ssh_mobile/services/network/network_protocol_v2_codec.dart';
+import 'package:ssh_mobile/services/network/network_service.dart';
 
 /// 执行 V2 命令接受与终态事件语义测试。
 void main() {
@@ -261,7 +265,243 @@ void main() {
         'native verified payload',
       );
     });
+
+    test(
+      'gateway facade covers invalid input, status mapping, and lifecycle',
+      () async {
+        final statusCases = <(TransportOperationStatus, NetworkErrorCode)>[
+          (
+            TransportOperationStatus.invalidArgument,
+            NetworkErrorCode.invalidArgument,
+          ),
+          (TransportOperationStatus.stopped, NetworkErrorCode.cancelled),
+          (TransportOperationStatus.failure, NetworkErrorCode.ioError),
+        ];
+        for (final (status, expectedCode) in statusCases) {
+          final gateway = _FakeCommandGateway(status: status);
+          final service = NativeNetworkService.fromGateway(gateway);
+          final result = await service.disconnect('peer-a');
+          expect(result, isA<NetworkFailure<void>>());
+          expect((result as NetworkFailure<void>).error.code, expectedCode);
+          await service.dispose();
+          await gateway.close();
+        }
+
+        final gateway = _FakeCommandGateway();
+        final service = NativeNetworkService.fromGateway(gateway);
+        addTearDown(() async {
+          await service.dispose();
+          await gateway.close();
+        });
+
+        expect(
+          (await service.connect('')).errorCode,
+          NetworkErrorCode.invalidArgument,
+        );
+        expect(
+          (await service.disconnect('')).errorCode,
+          NetworkErrorCode.invalidArgument,
+        );
+        expect(
+          (await service.cancel('')).errorCode,
+          NetworkErrorCode.invalidArgument,
+        );
+        expect(
+          (await service.send(
+            transferId: '',
+            peerId: 'peer-a',
+            filePath: '/missing/payload.bin',
+          )).errorCode,
+          NetworkErrorCode.invalidArgument,
+        );
+        expect(
+          (await service.send(
+            transferId: 'transfer-a',
+            peerId: 'peer-a',
+            filePath: '/missing/payload.bin',
+          )).errorCode,
+          NetworkErrorCode.ioError,
+        );
+        expect(
+          (await service.state('')).errorCode,
+          NetworkErrorCode.invalidArgument,
+        );
+        expect(
+          (await service.state('peer-a')).errorCode,
+          NetworkErrorCode.noRoute,
+        );
+
+        final root = await Directory.systemTemp.createTemp(
+          'ssh-mobile-gateway-',
+        );
+        addTearDown(() => root.delete(recursive: true));
+        final startConfig = NetworkRuntimeConfig(
+          deviceId: 'gateway-device',
+          identityPrivateKey: Uint8List.fromList(List.filled(32, 1)),
+          e2ePrivateKey: Uint8List.fromList(List.filled(32, 2)),
+          listenAddress: '127.0.0.1:0',
+          receiveDirectory: root.path,
+        );
+        expect((await service.start(startConfig)).isSuccess, isTrue);
+        expect((await service.start(startConfig)).isSuccess, isTrue);
+        expect((await service.disconnect('peer-a')).isSuccess, isTrue);
+
+        final routeFrame = _eventFrame(17, <int>[
+          ..._bytesField(1, utf8.encode('peer-a')),
+          ..._varintField(2, NetworkRouteType.relay.wireValue),
+          ..._bytesField(3, utf8.encode('relay.example.test:443')),
+        ]);
+        gateway.emit(routeFrame);
+        await Future<void>.delayed(Duration.zero);
+        final route = await service.state('peer-a');
+        expect(route, isA<NetworkSuccess<RouteSnapshot>>());
+        expect(
+          (route as NetworkSuccess<RouteSnapshot>).data.routeType,
+          NetworkRouteType.relay,
+        );
+        expect((await service.connect('peer-a')).isSuccess, isTrue);
+
+        final configureRelayFuture = service.configureRelay(
+          RelayConfig(
+            relayUrl: 'wss://relay.example.test/ws',
+            relayCredential: 'credential',
+            relaySigningSeed: Uint8List.fromList(<int>[1, 2, 3]),
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        gateway.emit(
+          _eventFrame(18, <int>[
+            ..._varintField(1, RelayConnectionState.connected.wireValue),
+          ]),
+        );
+        expect((await configureRelayFuture).isSuccess, isTrue);
+        expect((await service.disconnectRelay()).isSuccess, isTrue);
+        expect((await service.stop()).isSuccess, isTrue);
+        expect((await service.stop()).isSuccess, isTrue);
+        expect(
+          (await service.cancel('transfer-a')).errorCode,
+          NetworkErrorCode.cancelled,
+        );
+      },
+    );
+
+    test(
+      'gateway events drive failed peer and relay terminal states',
+      () async {
+        final gateway = _FakeCommandGateway();
+        final service = NativeNetworkService.fromGateway(gateway);
+        addTearDown(() async {
+          await service.dispose();
+          await gateway.close();
+        });
+
+        final connectFuture = service.connect('peer-failed');
+        await Future<void>.delayed(Duration.zero);
+        gateway.emit(
+          _eventFrame(10, <int>[
+            ..._bytesField(1, utf8.encode('peer-failed')),
+            ..._varintField(2, PeerConnectionState.failed.wireValue),
+            ..._bytesField(4, <int>[
+              ..._varintField(1, NetworkErrorCode.noRoute.wireValue),
+              ..._bytesField(2, utf8.encode('route unavailable')),
+            ]),
+          ]),
+        );
+        final connectResult = await connectFuture;
+        expect(connectResult.errorCode, NetworkErrorCode.noRoute);
+
+        final relayFuture = service.configureRelay(
+          RelayConfig(
+            relayUrl: 'wss://relay.example.test/ws',
+            relayCredential: 'credential',
+            relaySigningSeed: Uint8List.fromList(<int>[4, 5, 6]),
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        gateway.emit(
+          _eventFrame(18, <int>[
+            ..._varintField(1, RelayConnectionState.failed.wireValue),
+            ..._bytesField(2, <int>[
+              ..._varintField(1, NetworkErrorCode.relayError.wireValue),
+              ..._bytesField(2, utf8.encode('relay unavailable')),
+            ]),
+          ]),
+        );
+        final relayResult = await relayFuture;
+        expect(relayResult.errorCode, NetworkErrorCode.relayError);
+      },
+    );
   });
+}
+
+extension on NetworkResult<Object?> {
+  NetworkErrorCode get errorCode => switch (this) {
+    NetworkFailure<Object?> failure => failure.error.code,
+    _ => fail('Expected a network failure, got $runtimeType'),
+  };
+}
+
+final class _FakeCommandGateway implements NetworkCommandGateway {
+  _FakeCommandGateway({this.status = TransportOperationStatus.success});
+
+  final TransportOperationStatus status;
+  final StreamController<Uint8List> _events =
+      StreamController<Uint8List>.broadcast();
+  final NetworkProtocolV2Codec _codec = const NetworkProtocolV2Codec();
+
+  @override
+  Stream<Uint8List> get events => _events.stream;
+
+  @override
+  TransportOperationStatus sendCommand(Uint8List command) {
+    if (status != TransportOperationStatus.success) return status;
+    final commandId = _codec.commandId(command);
+    scheduleMicrotask(() {
+      if (!_events.isClosed) _events.add(_commandResultFrame(commandId));
+    });
+    return status;
+  }
+
+  void emit(Uint8List frame) => _events.add(frame);
+
+  Future<void> close() => _events.close();
+}
+
+Uint8List _commandResultFrame(String commandId) => Uint8List.fromList(
+  _eventFrame(13, <int>[
+    ..._bytesField(1, utf8.encode(commandId)),
+    ..._varintField(2, 1),
+  ]),
+);
+
+Uint8List _eventFrame(int eventField, List<int> payload) =>
+    Uint8List.fromList(<int>[
+      ..._bytesField(1, utf8.encode('event-a')),
+      ..._varintField(2, 1),
+      ..._varintField(3, 2),
+      ..._bytesField(eventField, payload),
+    ]);
+
+List<int> _varintField(int fieldNumber, int value) => <int>[
+  ..._varint(fieldNumber << 3),
+  ..._varint(value),
+];
+
+List<int> _bytesField(int fieldNumber, List<int> value) => <int>[
+  ..._varint((fieldNumber << 3) | 2),
+  ..._varint(value.length),
+  ...value,
+];
+
+List<int> _varint(int value) {
+  final bytes = <int>[];
+  var remaining = value;
+  do {
+    final next = remaining & 0x7f;
+    remaining >>= 7;
+    bytes.add(remaining == 0 ? next : next | 0x80);
+  } while (remaining != 0);
+  return bytes;
 }
 
 Future<PeerStateChanged> _firstPeerEvent(
