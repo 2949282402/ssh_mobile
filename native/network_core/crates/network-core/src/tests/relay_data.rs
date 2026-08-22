@@ -32,6 +32,15 @@ async fn data_envelope_helpers_validate_tokens_before_touching_socket() {
         Err(RelayError::NotConnected)
     ));
 
+    for result in [
+        send_data_envelope_with_token(&data, DATA_ENV_CHANNEL, "token", b"payload").await,
+        send_relay_channel_message(&data, "token", b"payload").await,
+        send_relay_channel_ack(&data, "token", b"payload").await,
+        send_relay_stream_frame(&data, "token", b"payload").await,
+    ] {
+        assert!(matches!(result, Err(RelayError::NotConnected)));
+    }
+
     let oversized = "x".repeat(256);
     for result in [
         send_data_envelope_with_token(&data, DATA_ENV_CHANNEL, &oversized, b"payload").await,
@@ -649,6 +658,15 @@ async fn relay_data_connectors_fail_closed_without_config_or_socket() {
 async fn relay_business_envelopes_reject_malformed_token_and_stream_frames() {
     let state = state();
     let data = Arc::new(data_client());
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [1u8; 32],
+            e2e_public_key: [2u8; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
     state
         .relay
         .relay_path_ready
@@ -666,6 +684,11 @@ async fn relay_business_envelopes_reject_malformed_token_and_stream_frames() {
             .expect_err("malformed business envelope must fail closed");
         assert!(!error.to_string().is_empty());
     }
+
+    let error = handle_relay_data_payload(&state, &data, "peer-a", &[DATA_ENV_CHANNEL, 1, b'x', 0])
+        .await
+        .expect_err("a decoded Relay channel payload must reach channel validation");
+    assert!(!error.to_string().is_empty());
 
     let stale = Arc::new(data_client());
     relay_data_disconnected(state, stale, "peer-a".into()).await;
