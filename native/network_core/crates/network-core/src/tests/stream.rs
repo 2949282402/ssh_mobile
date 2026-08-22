@@ -210,6 +210,113 @@ fn stream_wire_frames_round_trip() {
     assert!(decode_stream_bytes_frame(&[0u8; 8]).is_err());
 }
 
+#[test]
+fn stream_wire_boundaries_reject_invalid_lengths_identity_and_services() {
+    assert!(matches!(
+        encode_stream_bytes_frame("", 1, 0, b"x"),
+        Err(StreamError::InvalidArgument)
+    ));
+    assert!(matches!(
+        encode_stream_bytes_frame(&"x".repeat(129), 1, 0, b"x"),
+        Err(StreamError::InvalidArgument)
+    ));
+    assert!(matches!(
+        encode_stream_bytes_frame("peer-a", 1, 0, &[]),
+        Err(StreamError::InvalidArgument)
+    ));
+
+    assert!(matches!(
+        decode_stream_bytes_frame(&[0u8; 15]),
+        Err(StreamError::InvalidFrame)
+    ));
+    let mut invalid_opener = vec![1, 0xff];
+    invalid_opener.resize(15, 0);
+    assert!(matches!(
+        decode_stream_bytes_frame(&invalid_opener),
+        Err(StreamError::InvalidFrame)
+    ));
+    let mut long_opener = vec![129];
+    long_opener.resize(15, 0);
+    assert!(matches!(
+        decode_stream_bytes_frame(&long_opener),
+        Err(StreamError::InvalidFrame)
+    ));
+    let valid_bytes = encode_stream_bytes_frame("peer-a", 1, 0, b"x").unwrap();
+    let mut extra_bytes = valid_bytes.clone();
+    extra_bytes.push(0);
+    assert!(matches!(
+        decode_stream_bytes_frame(&extra_bytes),
+        Err(StreamError::InvalidFrame)
+    ));
+
+    assert!(matches!(
+        encode_stream_open_frame("peer-a", 1, ""),
+        Err(StreamError::InvalidArgument)
+    ));
+    assert!(matches!(
+        encode_stream_open_frame("peer-a", 1, &"x".repeat(MAX_SERVICE_BYTES + 1)),
+        Err(StreamError::InvalidArgument)
+    ));
+    let valid_open = encode_stream_open_frame("peer-a", 1, "ssh").unwrap();
+    assert!(matches!(
+        decode_stream_open_frame(&valid_open[..3]),
+        Err(StreamError::InvalidFrame)
+    ));
+    let mut zero_service = valid_open.clone();
+    zero_service[9..11].copy_from_slice(&0u16.to_be_bytes());
+    assert!(matches!(
+        decode_stream_open_frame(&zero_service),
+        Err(StreamError::InvalidFrame)
+    ));
+    let mut invalid_service = valid_open.clone();
+    invalid_service[11] = 0xff;
+    assert!(matches!(
+        decode_stream_open_frame(&invalid_service),
+        Err(StreamError::InvalidFrame)
+    ));
+    let mut extra_service = valid_open.clone();
+    extra_service.push(0);
+    assert!(matches!(
+        decode_stream_open_frame(&extra_service),
+        Err(StreamError::InvalidFrame)
+    ));
+
+    let valid_close = encode_stream_close_frame("peer-a", 1).unwrap();
+    assert!(matches!(
+        decode_stream_close_frame(&valid_close[..2]),
+        Err(StreamError::InvalidFrame)
+    ));
+    let mut extra_close = valid_close.clone();
+    extra_close.push(0);
+    assert!(matches!(
+        decode_stream_close_frame(&extra_close),
+        Err(StreamError::InvalidFrame)
+    ));
+    assert!(matches!(
+        decode_stream_frame_identity(GenericFrameKind::DataMessage, &valid_open),
+        Err(StreamError::InvalidFrame)
+    ));
+    assert!(matches!(
+        encode_quic_stream_preamble(1, ""),
+        Err(StreamError::InvalidArgument)
+    ));
+    assert!(matches!(
+        encode_quic_stream_preamble(1, &"x".repeat(MAX_SERVICE_BYTES + 1)),
+        Err(StreamError::InvalidArgument)
+    ));
+
+    assert_eq!(
+        StreamError::InvalidArgument
+            .into_protocol("peer-a", "stream")
+            .code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+    assert_eq!(
+        StreamError::Closed.into_protocol("peer-a", "stream").code,
+        NetworkErrorCode::IoError as i32
+    );
+}
+
 #[tokio::test]
 async fn same_stream_id_isolated_by_opener_direction() {
     let (manager, _event_rx) = test_manager();
