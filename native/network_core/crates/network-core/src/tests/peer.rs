@@ -143,6 +143,25 @@ async fn session_close_stops_and_joins_generic_route_tasks() {
 }
 
 #[tokio::test]
+async fn generic_route_supervision_rejects_registration_after_runtime_shutdown() {
+    let state = new_test_state().await;
+    state.task_supervisor.cancel_root();
+    let (connection, _server) = generic_connection_pair().await;
+    let result = supervise_generic_route(
+        Arc::clone(&state),
+        "generic-shutdown-peer",
+        SessionId::new(),
+        prepare_generic_route(connection),
+    )
+    .await;
+    let error = match result {
+        Ok(_) => panic!("stopping supervisor must reject generic route registration"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::Cancelled as i32);
+}
+
+#[tokio::test]
 async fn connected_session_rejects_a_second_route_to_enforce_one_to_one() {
     // §18 1:1：Session 已 Connected 且持有 route 时，拒绝再挂第二条 route。
     let state = new_test_state().await;
@@ -908,6 +927,51 @@ fn unconnected_relay_data_client() -> Arc<RelayDataClient> {
         )
         .expect("valid unconnected Relay data client"),
     )
+}
+
+#[tokio::test]
+async fn relay_crypto_step_receiver_rejects_out_of_order_and_closed_channels() {
+    let (sender, mut receiver) = mpsc::channel(1);
+    sender
+        .send((crate::crypto_handshake::RELAY_CRYPTO_FINAL, vec![1, 2, 3]))
+        .await
+        .expect("queue out-of-order Relay crypto step");
+    let out_of_order = receive_relay_crypto_step(
+        &mut receiver,
+        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
+        "relay-step-peer",
+    )
+    .await
+    .expect_err("out-of-order Relay crypto step must fail closed");
+    assert_eq!(
+        out_of_order.code,
+        NetworkErrorCode::AuthenticationFailed as i32
+    );
+
+    let (sender, mut receiver) = mpsc::channel(1);
+    drop(sender);
+    let closed = receive_relay_crypto_step(
+        &mut receiver,
+        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
+        "relay-step-peer",
+    )
+    .await
+    .expect_err("closed Relay crypto waiter must map to timeout");
+    assert_eq!(closed.code, NetworkErrorCode::Timeout as i32);
+
+    let (sender, mut receiver) = mpsc::channel(1);
+    sender
+        .send((crate::crypto_handshake::RELAY_CRYPTO_RESPONSE, vec![4, 5]))
+        .await
+        .expect("queue expected Relay crypto step");
+    let payload = receive_relay_crypto_step(
+        &mut receiver,
+        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
+        "relay-step-peer",
+    )
+    .await
+    .expect("expected Relay crypto step should be returned");
+    assert_eq!(payload, vec![4, 5]);
 }
 
 #[tokio::test]
