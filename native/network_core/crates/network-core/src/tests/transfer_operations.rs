@@ -180,7 +180,7 @@ async fn start_file_send_rejects_invalid_source_and_missing_route_before_dispatc
 
 #[tokio::test]
 async fn business_path_fallback_returns_a_typed_no_route_error() {
-    let state = state();
+    let state = self::state();
     let error = ensure_business_path(
         &state,
         "peer-a",
@@ -1235,4 +1235,71 @@ async fn incoming_offer_duplicate_keeps_the_existing_business_transfer_owned() {
         quinn::VarInt::from_u32(0),
         b"duplicate incoming offer complete",
     );
+}
+
+#[tokio::test]
+async fn incoming_offer_rejects_duplicate_waiters_and_pending_capacity() {
+    let state = state();
+    let duplicate_id = "incoming-waiter-duplicate";
+    let (existing_tx, _existing_rx) = oneshot::channel();
+    state
+        .transfer
+        .incoming_decisions
+        .write()
+        .await
+        .insert(duplicate_id.into(), existing_tx);
+    let lease = ready_stream_lease(&state).await;
+    let (endpoint, client, server) = quic_pair().await;
+    let (mut client_send, _) = client.open_bi().await.unwrap();
+    client_send.write_all(b"duplicate").await.unwrap();
+    let (server_send, server_receive) = server.accept_bi().await.unwrap();
+    handle_incoming_file_after_offer(
+        "peer-a".into(),
+        server_send,
+        server_receive,
+        manifest(duplicate_id),
+        Arc::clone(&state),
+        lease,
+    )
+    .await;
+    assert!(state
+        .transfer
+        .manager
+        .snapshot(duplicate_id)
+        .await
+        .is_none());
+    endpoint.close(quinn::VarInt::from_u32(0), b"duplicate waiter complete");
+
+    let state2 = self::state();
+    for index in 0..MAX_PENDING_INCOMING_TRANSFERS {
+        let (sender, _receiver) = oneshot::channel();
+        state2
+            .transfer
+            .incoming_decisions
+            .write()
+            .await
+            .insert(format!("pending-{index}"), sender);
+    }
+    let lease = ready_stream_lease(&state2).await;
+    let (endpoint, client, server) = quic_pair().await;
+    let (mut client_send, _) = client.open_bi().await.unwrap();
+    client_send.write_all(b"capacity").await.unwrap();
+    let (server_send, server_receive) = server.accept_bi().await.unwrap();
+    let capacity_id = "incoming-capacity";
+    handle_incoming_file_after_offer(
+        "peer-a".into(),
+        server_send,
+        server_receive,
+        manifest(capacity_id),
+        Arc::clone(&state2),
+        lease,
+    )
+    .await;
+    assert!(state2
+        .transfer
+        .manager
+        .snapshot(capacity_id)
+        .await
+        .is_none());
+    endpoint.close(quinn::VarInt::from_u32(0), b"incoming capacity complete");
 }
