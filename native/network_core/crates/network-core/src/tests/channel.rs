@@ -2,7 +2,8 @@ use super::{
     acknowledge_message, application_payload_mode, decode_policy, delivery_error,
     ensure_reliable_message_path, handle_data_message, handle_delivery_ack,
     next_business_ensure_id, policy_code, select_business_path_lease, send_business_frame,
-    start_send_message, validate_data_message, ApplicationPayloadMode, ApplicationPolicyError,
+    start_send_message, validate_business_application_policy, validate_data_message,
+    ApplicationPayloadMode, ApplicationPolicyError,
 };
 use crate::connect::{PathRegistry, PeerId, PeerPathManager, CAPABILITY_RELIABLE_MESSAGE};
 use crate::connection::{
@@ -481,6 +482,19 @@ async fn channel_command_boundaries_fail_before_starting_network_work() {
         assert!(acknowledge_message(&state, command).await.is_err());
     }
 
+    let missing_ack = acknowledge_message(
+        &state,
+        AcknowledgeMessageCommand {
+            peer_id: "peer-a".into(),
+            session_id: "session".into(),
+            channel_id: "channel".into(),
+            message_id: vec![0; 16],
+        },
+    )
+    .await
+    .expect_err("an ACK for an unknown message must fail closed");
+    assert_eq!(missing_ack.code, NetworkErrorCode::InvalidArgument as i32);
+
     let mut ack = network_protocol::DeliveryAck {
         session_id: String::new(),
         message_id: vec![0; 16],
@@ -510,6 +524,38 @@ async fn channel_command_boundaries_fail_before_starting_network_work() {
         handle_data_message(&state, "peer-a", &message.encode_to_vec())
             .await
             .is_err()
+    );
+}
+
+#[tokio::test]
+async fn application_policy_validation_requires_a_ready_path_and_matching_crypto() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    let session_id = SessionId::new();
+    let no_path = validate_business_application_policy(&state, "peer-a", session_id)
+        .await
+        .expect_err("business policy cannot be checked without a path");
+    assert_eq!(no_path.code, NetworkErrorCode::NoRoute as i32);
+
+    let registry = Arc::new(PathRegistry::new());
+    let mut manager = PeerPathManager::new(
+        PeerId::new("peer-a").expect("peer id"),
+        Arc::clone(&registry),
+    );
+    manager
+        .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+        .expect("ready path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert("peer-a".into(), Arc::new(Mutex::new(manager)));
+    let mismatch = validate_business_application_policy(&state, "peer-a", session_id)
+        .await
+        .expect_err("Required policy needs an application crypto context");
+    assert_eq!(
+        mismatch.code,
+        NetworkErrorCode::SecurityPolicyMismatch as i32
     );
 }
 
