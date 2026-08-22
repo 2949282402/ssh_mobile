@@ -737,22 +737,26 @@ fn install_relay_test_crypto(
         .expect("install test Relay application crypto");
 }
 
+struct RelayCompletionSetup<'a> {
+    session_id: &'a str,
+    sender_id: &'a str,
+    root: &'a std::path::Path,
+    payload: Option<&'a [u8]>,
+    already_completed: bool,
+    final_path: std::path::PathBuf,
+}
+
 async fn setup_relay_completion_active(
     state: &Arc<RuntimeState>,
     manifest: &FileManifest,
-    session_id: &str,
-    sender_id: &str,
-    root: &std::path::Path,
-    payload: Option<&[u8]>,
-    already_completed: bool,
-    final_path: std::path::PathBuf,
+    setup: RelayCompletionSetup<'_>,
 ) -> std::path::PathBuf {
-    tokio::fs::create_dir_all(root).await.unwrap();
+    tokio::fs::create_dir_all(setup.root).await.unwrap();
     assert!(
         state
             .transfer
             .manager
-            .register_incoming(manifest.clone(), sender_id.into())
+            .register_incoming(manifest.clone(), setup.sender_id.into())
             .await
     );
     assert!(
@@ -762,8 +766,8 @@ async fn setup_relay_completion_active(
             .mark_transferring(&manifest.transfer_id)
             .await
     );
-    let temporary_path = root.join(format!("{}.part", manifest.transfer_id));
-    let (file, hasher, received_bytes) = if let Some(payload) = payload {
+    let temporary_path = setup.root.join(format!("{}.part", manifest.transfer_id));
+    let (file, hasher, received_bytes) = if let Some(payload) = setup.payload {
         tokio::fs::write(&temporary_path, payload).await.unwrap();
         let file = tokio::fs::OpenOptions::new()
             .read(true)
@@ -780,14 +784,14 @@ async fn setup_relay_completion_active(
     state.relay.active_incoming.lock().await.insert(
         manifest.transfer_id.clone(),
         ActiveRelayIncoming {
-            offer: relay_pending_for(manifest.clone(), session_id, sender_id),
+            offer: relay_pending_for(manifest.clone(), setup.session_id, setup.sender_id),
             file,
             temporary_path: temporary_path.clone(),
-            final_path,
+            final_path: setup.final_path,
             next_sequence: 0,
             received_bytes,
             hasher,
-            already_completed,
+            already_completed: setup.already_completed,
         },
     );
     temporary_path
@@ -1932,12 +1936,14 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
     let incomplete_temp = setup_relay_completion_active(
         &incomplete_state,
         &manifest,
-        "00000000000000000000000000000051",
-        "sender",
-        &incomplete_root,
-        Some(payload),
-        false,
-        incomplete_root.join("final.bin"),
+        RelayCompletionSetup {
+            session_id: "00000000000000000000000000000051",
+            sender_id: "sender",
+            root: &incomplete_root,
+            payload: Some(payload),
+            already_completed: false,
+            final_path: incomplete_root.join("final.bin"),
+        },
     )
     .await;
     {
@@ -1971,12 +1977,14 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
     let _already_temp = setup_relay_completion_active(
         &already_state,
         &already_manifest,
-        "00000000000000000000000000000052",
-        "sender",
-        &already_root,
-        None,
-        true,
-        already_root.join("already.bin"),
+        RelayCompletionSetup {
+            session_id: "00000000000000000000000000000052",
+            sender_id: "sender",
+            root: &already_root,
+            payload: None,
+            already_completed: true,
+            final_path: already_root.join("already.bin"),
+        },
     )
     .await;
     let error = complete_relay_incoming(
@@ -2005,12 +2013,14 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
     let hash_temp = setup_relay_completion_active(
         &hash_state,
         &hash_manifest,
-        "00000000000000000000000000000053",
-        "sender",
-        &hash_root,
-        Some(payload),
-        false,
-        hash_root.join("hash.bin"),
+        RelayCompletionSetup {
+            session_id: "00000000000000000000000000000053",
+            sender_id: "sender",
+            root: &hash_root,
+            payload: Some(payload),
+            already_completed: false,
+            final_path: hash_root.join("hash.bin"),
+        },
     )
     .await;
     {
@@ -2035,12 +2045,14 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
     setup_relay_completion_active(
         &unavailable_state,
         &unavailable_manifest,
-        "00000000000000000000000000000054",
-        "sender",
-        &unavailable_root,
-        None,
-        false,
-        unavailable_root.join("unavailable.bin"),
+        RelayCompletionSetup {
+            session_id: "00000000000000000000000000000054",
+            sender_id: "sender",
+            root: &unavailable_root,
+            payload: None,
+            already_completed: false,
+            final_path: unavailable_root.join("unavailable.bin"),
+        },
     )
     .await;
     let error = complete_relay_incoming(
@@ -2061,12 +2073,14 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
     let existing_temp = setup_relay_completion_active(
         &existing_state,
         &existing_manifest,
-        "00000000000000000000000000000055",
-        "sender",
-        &existing_root,
-        Some(payload),
-        false,
-        existing_final.clone(),
+        RelayCompletionSetup {
+            session_id: "00000000000000000000000000000055",
+            sender_id: "sender",
+            root: &existing_root,
+            payload: Some(payload),
+            already_completed: false,
+            final_path: existing_final.clone(),
+        },
     )
     .await;
     tokio::fs::write(&existing_final, b"different")
@@ -2090,12 +2104,14 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
     let rename_temp = setup_relay_completion_active(
         &rename_state,
         &rename_manifest,
-        "00000000000000000000000000000056",
-        "sender",
-        &rename_root,
-        Some(payload),
-        false,
-        rename_root.join("missing-parent").join("final.bin"),
+        RelayCompletionSetup {
+            session_id: "00000000000000000000000000000056",
+            sender_id: "sender",
+            root: &rename_root,
+            payload: Some(payload),
+            already_completed: false,
+            final_path: rename_root.join("missing-parent").join("final.bin"),
+        },
     )
     .await;
     let error = complete_relay_incoming(
@@ -2117,12 +2133,14 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
     let success_temp = setup_relay_completion_active(
         &success_state,
         &success_manifest,
-        "00000000000000000000000000000057",
-        "sender",
-        &success_root,
-        Some(payload),
-        false,
-        success_final.clone(),
+        RelayCompletionSetup {
+            session_id: "00000000000000000000000000000057",
+            sender_id: "sender",
+            root: &success_root,
+            payload: Some(payload),
+            already_completed: false,
+            final_path: success_final.clone(),
+        },
     )
     .await;
     let error = complete_relay_incoming(
@@ -2154,12 +2172,14 @@ async fn relay_completion_validates_sender_hash_destination_and_ack_boundary() {
     let idem_temp = setup_relay_completion_active(
         &idem_state,
         &idem_manifest,
-        "00000000000000000000000000000058",
-        "sender",
-        &idem_root,
-        Some(payload),
-        false,
-        idem_final.clone(),
+        RelayCompletionSetup {
+            session_id: "00000000000000000000000000000058",
+            sender_id: "sender",
+            root: &idem_root,
+            payload: Some(payload),
+            already_completed: false,
+            final_path: idem_final.clone(),
+        },
     )
     .await;
     tokio::fs::write(&idem_final, payload).await.unwrap();

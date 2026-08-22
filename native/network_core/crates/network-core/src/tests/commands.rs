@@ -257,7 +257,7 @@ fn command_peer_scope_mapping_covers_peer_and_runtime_commands() {
             | network_command::Payload::NetworkEnvironmentChanged(_)
             | network_command::Payload::CancelTransfer(_) => None,
             network_command::Payload::UpsertPeerV2(command) => {
-                Some(peer.clone()).filter(|_| command.config.is_some())
+                command.config.as_ref().map(|_| peer.clone())
             }
             _ => Some(peer.clone()),
         };
