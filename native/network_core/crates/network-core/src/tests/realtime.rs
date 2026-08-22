@@ -1018,6 +1018,33 @@ async fn signaling_lost_mid_negotiation_closes_cleanly_and_re_request_succeeds()
 }
 
 #[tokio::test]
+async fn start_realtime_cleans_the_driver_when_supervisor_is_stopping() {
+    let (state, _event_rx) = realtime_test_state().await;
+    let control = RecordingControl::new();
+    *state.relay.control.write().await = Some(control);
+    register_realtime_peer(&state, "peer-a").await;
+    state.task_supervisor.cancel_root();
+
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    let error = start_session(
+        Arc::clone(&state),
+        StartRealtimeSessionCommand {
+            realtime_id: realtime_id.into(),
+            peer_id: "peer-a".into(),
+        },
+    )
+    .await
+    .expect_err("stopping supervisor must reject the realtime worker");
+    assert_eq!(error.code, NetworkErrorCode::Cancelled as i32);
+    assert!(!state
+        .realtime
+        .lock()
+        .await
+        .sessions
+        .contains_key(realtime_id));
+}
+
+#[tokio::test]
 async fn duplicate_start_realtime_rejects_without_retaining_a_bound_driver() {
     let (state, _event_rx) = realtime_test_state().await;
     let control = RecordingControl::new();
@@ -1962,4 +1989,19 @@ fn realtime_close_and_unsupported_signal_boundaries_fail_closed() {
         Err(error) => error,
     };
     assert!(unsupported.to_string().contains("unsupported"));
+}
+
+#[test]
+fn realtime_protocol_error_boxing_preserves_the_wire_message() {
+    let error = realtime_error(
+        NetworkErrorCode::InvalidArgument,
+        "invalid realtime payload",
+        "test_realtime",
+        "peer-a",
+    );
+    let boxed = boxed_protocol_error(error);
+    assert_eq!(boxed.to_string(), "invalid realtime payload");
+
+    let boxed_message = boxed_message("standalone realtime error");
+    assert_eq!(boxed_message.to_string(), "standalone realtime error");
 }
