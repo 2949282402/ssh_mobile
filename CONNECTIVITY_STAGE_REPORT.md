@@ -26,16 +26,21 @@ document name is **Network V2 Connectivity Stage Audit**.
   24/24 passed, including one bounded active NOT_READY retry, exact
   `Resolve → Offer → Reserve` ordering, and the one Resolve/Offer call-count
   assertion.
-- `cargo test -p network-relay --locked`: 37/37 passed.
-- The concrete integration selector passed 1/1 and the server recorded exactly
-  `Resolve → Offer` for the attempt.
-- `bash scripts/network_v2_acceptance.sh strict` passed: 17 contract checks,
-  3 documented environment skips, the selected Rust/Go/Dart owner suites, and
-  the concrete integration selector.
+- `cargo test -p network-relay --locked`: 39/39 passed, including tracker
+  lease/drop and stale-owner cleanup tests.
+- The concrete integration selector passed 4/4, including dropped-start,
+  waiter-cancellation, and concurrent target-isolation cases; the server
+  recorded target-specific `Resolve → Offer` sequences.
+- `bash scripts/network_v2_acceptance.sh strict` passed: the initial contract
+  inventory ran 17 checks with 3 test-defined architecture-guard skips, and
+  the final strict pass ran all 17 checks; the selected Rust/Go/Dart owner
+  suites and concrete integration selector also passed.
 
 ## Remaining evidence
 
-Stage C remains a deliberate predicate-only boundary in this working tree.
-Real Redis/MySQL cross-instance behavior, physical-device lifecycle behavior,
-and native platform CI remain environment-dependent and are recorded in the
-final acceptance report rather than inferred from the local owner tests.
+Stage C is complete only to the executable eligibility-predicate evidence in
+this working tree; the complete Direct-failure → READY/E2EE/resource-eligible →
+Relay reservation/data flow remains deferred. Real Redis/MySQL cross-instance
+behavior, physical-device lifecycle behavior, and native platform CI remain
+environment-dependent and are recorded in the final acceptance report rather
+than inferred from the local owner tests.

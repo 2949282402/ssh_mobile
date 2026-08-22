@@ -15,19 +15,19 @@ points. `PR48` (baseline) and `PR49`
 (hardening/final-fix workstream) are internal labels only; canonical document
 names use the `Network V2` titles and stable filenames in this repository.
 
-Validation base commit: `b61347cbbb062a079ef1e6daa7f82c50123a799f` with the
-final-fix changes intentionally uncommitted in the working tree.
+Validation base commit: `85663c93fd1881ad32a1924f6ca51623d6373640`; the final-fix
+changes are captured in the subsequent functional commits on this branch.
 
 ## Required final-deliverable fields
 
 ```text
 Architecture: COMPLETED — current App, Runtime lifecycle, Relay, and Transfer owners remain in place
 Cutover: PARTIAL — runnable owner cutover is complete; native/client/deployment validation remains host-dependent
-Legacy Retirement: DEFERRED — compatibility aliases remain until an external-consumer inventory authorizes removal
+Legacy Retirement: DEFERRED (non-blocking) — compatibility aliases remain until an external-consumer inventory authorizes removal
 SDK Architecture Cleanup: COMPLETED
 API Compatibility: PASS — no frozen public SDK or wire-contract change
-Performance: PASS (local smoke only) — production benchmark evidence remains pending
-Tests: PASS — runnable Linux mirror, strict owner selectors, and concrete Stage B integration; native-platform/client-VM evidence remains host-dependent
+Performance: PASS (local smoke only) — production benchmark evidence is deferred and non-blocking for runnable owner gates
+Tests: PARTIAL — strict owner selectors, workspace tests, and concrete Stage B integration pass; the coverage-enabled App aggregate stalled in WSL and native-platform/client-VM evidence remains host-dependent
 ```
 
 ## Phase results
@@ -42,7 +42,7 @@ Tests: PASS — runnable Linux mirror, strict owner selectors, and concrete Stag
 | 5. Compatibility and graph | PASS | `SDK_API_COMPATIBILITY_REPORT.md`, `architecture_dependency_graph.md`, and `OWNERSHIP_LOCK.md` |
 | 6. Dead code | PASS WITH DEFERRED ALIASES | `DEAD_CODE_REPORT.md`; compatibility aliases remain intentionally retained |
 | 7. Performance | PASS (local smoke) | `PERFORMANCE_REGRESSION_REPORT.md`; Stage C and production performance claims remain qualified |
-| 8. Final validation | PASS (Linux/runnable selectors) | Strict acceptance, concrete Relay integration, full Linux mirror, and front/backend/SDK coverage gates pass; App client VM and native platform jobs remain open |
+| 8. Final validation | PASS WITH ENVIRONMENT GAP | Strict acceptance, workspace tests, concrete Relay integration, and front/backend/SDK coverage gates pass; the coverage-enabled App aggregate stalled in WSL and native platform jobs remain open |
 
 ## Final-fix evidence
 
@@ -50,21 +50,23 @@ Tests: PASS — runnable Linux mirror, strict owner selectors, and concrete Stag
   24/24 passed, including Stage A zero-control-call assertions, one bounded
   active NOT_READY retry, and exact `Resolve → Offer → Reserve` ordering with
   one Resolve and one Offer, plus epoch-hint fencing of pre-control reuse.
-- `cargo test -p network-relay --locked`: 37/37 passed.
-- `cargo test -p network-relay --features test-support --test relay_control_client_integration --locked -- --test-threads=1`: 1/1 passed with two real clients, authenticated Ready/presence, discovery, heartbeat, Offer forwarding, and Answer routing.
-- `bash scripts/network_v2_acceptance.sh strict`: passed with 17 contract checks,
-  3 documented skips, selected Rust/Go/Dart owner suites, and the concrete
-  integration selector.
-- `bash scripts/full_test.sh --no-bootstrap --no-coverage --serial`: passed all
-  12 runnable Linux jobs in 731 seconds; its terminal-smoke, Windows, macOS,
-  and iOS jobs were explicitly skipped by the script.
+- `cargo test -p network-relay --locked`: 39/39 passed.
+- `cargo test -p network-relay --features test-support --test relay_control_client_integration --locked -- --test-threads=1`: 4/4 passed with real clients, authenticated Ready/presence, discovery, heartbeat, Offer forwarding, Answer routing, cleanup retries, and concurrent target isolation.
+- `bash scripts/network_v2_acceptance.sh strict`: passed with an initial 17-case
+  contract inventory containing 3 test-defined architecture-guard skips, then
+  a final strict pass of all 17 cases; selected Rust/Go/Dart owner suites and
+  the concrete integration selector also passed.
+- `bash scripts/full_test.sh --no-bootstrap --with-coverage --serial`: attempted;
+  front/native/SDK/Relay/protocol/workspace jobs passed, but the App Flutter
+  shard stalled loading tests in WSL and the retry was stopped. This aggregate
+  gate remains an environment gap, not a product PASS.
 
 ## Coverage evidence
 
 - `bash scripts/front_coverage.sh`: 48 tests; 95.78% line coverage.
 - `bash scripts/backend_coverage.sh`: Docker-backed MySQL/Redis run; 82.1%
   filtered Go line coverage.
-- `bash scripts/sdk_coverage.sh`: 84.46% Dart and 84.32% Rust SDK line
+- `bash scripts/sdk_coverage.sh`: 84.46% Dart and 83.54% Rust SDK line
   coverage.
 - `CLIENT_FLUTTER_COVERAGE_TIMEOUT=2m bash scripts/client_coverage.sh
   --no-bootstrap`: not accepted; the Flutter VM Service did not become ready in
@@ -75,21 +77,21 @@ Tests: PASS — runnable Linux mirror, strict owner selectors, and concrete Stag
 The SDK surface retains explicit regression coverage in
 `packages/infrastructure/network_sdk/test/` and the native facade tests. The
 strict selector and SDK coverage gate passed the runnable Dart/Rust owner
-suites. Compatibility aliases remain until an external-consumer migration
-inventory authorizes removal.
+suites. Compatibility aliases remain deferred and non-blocking until an
+external-consumer migration inventory authorizes removal.
 
 ## Remaining risks and environment evidence
 
 - Execute `terminal-smoke-build`/Windows on a Windows host, and macOS/Xcode
   `macos-build`/`ios-build` on a macOS host with CocoaPods.
-- Run the focused App client coverage gate where the Flutter VM Service is
-  available; the Linux mirror intentionally leaves this periodic job skipped.
+- Run the focused App client coverage gate and aggregate full test where the
+  Flutter VM Service is available; both reproduce a WSL startup gap here.
 - Run real Redis/MySQL cross-instance, physical-device lifecycle, and broader
   transport fault-injection coverage for release acceptance.
-- Stage C still has predicate coverage rather than a complete local
-  Direct-failure → READY/E2EE/resource-eligible → reservation/data integration
-  flow.
+- Stage C is complete only to the executable eligibility-predicate coverage;
+  the complete local Direct-failure → READY/E2EE/resource-eligible →
+  reservation/data integration flow remains deferred.
 
-`git diff --check` passed, and the final worktree/diff review found no
-unrelated staged or generated changes; the working tree remains intentionally
-uncommitted for handoff.
+`git diff --check` passed, and the functional commits contain no unrelated
+staged or generated changes; this report records the committed validation
+state.

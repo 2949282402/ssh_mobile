@@ -726,9 +726,71 @@
       ]
     },
     {
+      "id": "flow.stage_b_ownership_before_offer",
+      "category": "staged-connect",
+      "acceptance": "A local Session owner exists before authoritative Resolve/Offer, and concurrent target transactions remain isolated and ordered.",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "stage_b_resolves_and_offers_before_relay_reservation"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/tests/relay_control_client_integration.rs",
+            "name": "concurrent_connectivity_attempts_keep_targets_isolated_and_ordered"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+          "contains": [
+            "state.begin_connect(peer_id, capability)",
+            "first_resolve_saw_owned_session"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-relay/tests/relay_control_client_integration.rs",
+          "contains": [
+            "concurrent_connectivity_attempts_keep_targets_isolated_and_ordered",
+            "the second target must not Resolve before the first Offer is enqueued"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.late_quic_candidate",
+      "category": "staged-connect",
+      "acceptance": "A QUIC candidate arriving before the direct deadline can still win the live direct race.",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/peer.rs",
+            "name": "late_quic_candidate_arriving_before_direct_deadline_can_win"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/peer.rs",
+          "contains": [
+            "late_quic_candidate_arriving_before_direct_deadline_can_win",
+            "before_direct_deadline"
+          ]
+        }
+      ]
+    },
+    {
       "id": "flow.stage_c_relay_fallback",
       "category": "staged-connect",
-      "acceptance": "Stage C enters bounded Relay fallback only after the direct window fails.",
+      "acceptance": "The Stage C eligibility predicate admits bounded Relay fallback only for an authoritative READY peer, RelayData policy, and remaining budget; the end-to-end transition is not claimed here.",
       "status": "covered",
       "behavioral_verification": {
         "kind": "owner_behavior_test",
@@ -749,9 +811,197 @@
         {
           "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
           "contains": [
-            "DIRECT_FAILED → RELAY_RESERVING → RELAY_CONNECTING",
-            "connect_relay_fallback",
+            "relay_fallback_is_eligible",
             "Relay route does not satisfy the requested capability"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ownership.relay_tracker_drop_cleanup",
+      "category": "relay-control-lifecycle",
+      "acceptance": "Dropping an unpolled ConnectivityAttemptStart releases its tracker and permits a same-ID retry.",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/src/v2/control_client.rs",
+            "name": "dropping_unpolled_connectivity_attempt_start_releases_tracker"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/tests/relay_control_client_integration.rs",
+            "name": "dropped_connectivity_attempt_start_releases_answer_tracker"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-relay/src/v2/control_client.rs",
+          "contains": [
+            "dropping_unpolled_connectivity_attempt_start_releases_tracker",
+            "drop(start)"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-relay/tests/relay_control_client_integration.rs",
+          "contains": [
+            "dropped_connectivity_attempt_start_releases_answer_tracker",
+            "a dropped ConnectivityAttemptStart must release its tracker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ownership.relay_tracker_waiter_cancellation",
+      "category": "relay-control-lifecycle",
+      "acceptance": "Cancelling a connectivity answer waiter releases its tracker and permits a same-ID retry.",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/tests/relay_control_client_integration.rs",
+            "name": "cancelled_connectivity_answer_waiter_releases_answer_tracker"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-relay/tests/relay_control_client_integration.rs",
+          "contains": [
+            "cancelled_connectivity_answer_waiter_releases_answer_tracker",
+            "cancelling an answer waiter must release its tracker"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ownership.relay_tracker_stale_owner",
+      "category": "relay-control-lifecycle",
+      "acceptance": "Cleanup from an old waiter cannot remove a newer tracker that reuses the same attempt ID.",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/src/v2/control_client.rs",
+            "name": "old_waiter_cleanup_cannot_remove_new_same_id_tracker"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-relay/src/v2/control_client.rs",
+          "contains": [
+            "old_waiter_cleanup_cannot_remove_new_same_id_tracker",
+            "Arc::ptr_eq(&tracker.token, &self.token)"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "relay.control_auth_disconnect_reconnect",
+      "category": "relay-control-lifecycle",
+      "acceptance": "Invalid credentials stay fail-closed; a remote close is observable and a deliberate disconnect can reconnect cleanly.",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/tests/relay_control_client_integration.rs",
+            "name": "control_authentication_failure_never_enters_ready_state"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/tests/relay_control_client_integration.rs",
+            "name": "remote_control_disconnect_is_observable_and_cleans_client_state"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/tests/relay_control_client_integration.rs",
+            "name": "control_client_disconnect_then_reconnect_succeeds"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-relay/tests/relay_control_client_integration.rs",
+          "contains": [
+            "control_authentication_failure_never_enters_ready_state",
+            "remote_control_disconnect_is_observable_and_cleans_client_state",
+            "control_client_disconnect_then_reconnect_succeeds"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.connection_boundary_failures",
+      "category": "staged-connect",
+      "acceptance": "Malformed discovery, cancelled coordination admission, and missing Relay control all release or reject the local attempt owner.",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "invalid_resolve_candidate_snapshot_retires_owned_session"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "cancelled_task_supervisor_retires_owned_session_after_offer"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "relay_fallback_without_control_plane_fails_closed"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+          "contains": [
+            "invalid_resolve_candidate_snapshot_retires_owned_session",
+            "cancelled_task_supervisor_retires_owned_session_after_offer",
+            "relay_fallback_without_control_plane_fails_closed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "relay.protocol_frame_validation",
+      "category": "relay-control-protocol",
+      "acceptance": "Malformed, wrong-direction, wrong-version, and inconsistent discovery frames fail closed before routing.",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/src/v2/control_client.rs",
+            "name": "control_event_decoder_rejects_malformed_and_direction_invalid_frames"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-relay/src/v2/control_client.rs",
+            "name": "ready_and_discovery_validation_rejects_missing_zero_and_mismatched_fields"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-relay/src/v2/control_client.rs",
+          "contains": [
+            "control_event_decoder_rejects_malformed_and_direction_invalid_frames",
+            "ready_and_discovery_validation_rejects_missing_zero_and_mismatched_fields"
           ]
         }
       ]
@@ -1115,6 +1365,14 @@
       "status": "covered",
       "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/runtime.rs", "name": "runtime_path_projection_is_non_owning"}]},
       "evidence": [{"path": "native/network_core/crates/network-core/src/runtime.rs", "contains": ["OwnedPathProjection", "path_projections"]}]
+    },
+    {
+      "id": "ownership.stale_session_preserves_replacement_path",
+      "category": "session-ownership",
+      "acceptance": "A stale coordinator failure retires only its exact session and cannot close a replacement physical path.",
+      "status": "covered",
+      "behavioral_verification": {"kind": "owner_behavior_test", "tests": [{"owner": "rust", "path": "native/network_core/crates/network-core/src/runtime.rs", "name": "stale_session_failure_does_not_close_replacement_path"}]},
+      "evidence": [{"path": "native/network_core/crates/network-core/src/runtime.rs", "contains": ["close_transport_path_for_session", "stale_session_failure_does_not_close_replacement_path"]}]
     },
     {
       "id": "security.direct_disabled_business",

@@ -3,13 +3,13 @@
 # Network V2 Validation Report
 
 This report is the current validation index for branch
-`agent/network-v2-final-20260819`. The validation base commit is
-`b61347cbbb062a079ef1e6daa7f82c50123a799f`; final-fix changes remain
-intentionally uncommitted in the working tree.
+`agent/network-v2-final-20260819`. Validation is anchored to base commit
+`85663c93fd1881ad32a1924f6ca51623d6373640`; the final-fix changes are captured
+in the subsequent functional commits on this branch.
 
 ## Contract and owner closeout
 
-`protocol/contract_tests/acceptance_matrix.json` records 60/60 cases as
+`protocol/contract_tests/acceptance_matrix.json` records 66/66 cases as
 `covered`. `bash scripts/network_v2_acceptance.sh strict` is the strict entry
 point and preserves the frozen Relay V2 wire shape: target-less
 `ConnectivityOffer`, request/attempt correlation, fail-closed Resolve status,
@@ -21,26 +21,29 @@ used by the connectivity coordinator. The additive transaction type is an
 internal Rust `network-relay` adapter surface; no protobuf fixture or public
 Dart/FFI SDK surface was changed.
 
-## Checks run on the final-fix working tree
+## Checks run for the final-fix working tree
 
 - `python3 -m json.tool protocol/contract_tests/acceptance_matrix.json` — passed.
-- `bash scripts/network_v2_acceptance.sh strict` — passed: 17 contract checks,
-  3 documented skips, selected Rust/Go/Dart owner suites, and the concrete
-  RelayControlClient integration selector.
+- `bash scripts/network_v2_acceptance.sh strict` — passed: the initial
+  17-case contract inventory had 3 test-defined architecture-guard skips; the
+  final strict pass ran all 17 cases, plus the selected Rust/Go/Dart owner
+  suites and concrete RelayControlClient integration selector.
 - `cargo fmt --all -- --check` — passed.
 - `cargo check --workspace --locked` — passed.
 - `cargo test -p network-core 'connect::connectivity_attempt::tests::' --locked` —
   passed: 24/24, including healthy-path Offer suppression, bounded active
   NOT_READY retry, and epoch-hint fencing.
-- `cargo test -p network-relay --locked` — passed: 37/37.
-- Concrete integration selector — passed: 1/1.
-- `bash scripts/full_test.sh --no-bootstrap --no-coverage --serial` — passed all
-  12 runnable Linux jobs in 731 seconds; terminal-smoke, Windows, macOS, and
-  iOS were explicitly skipped by the WSL profile.
+- `cargo test -p network-relay --locked` — passed: 39/39.
+- `cargo test -p network-relay --features test-support --test relay_control_client_integration --locked -- --test-threads=1` — passed: 4/4.
+- `cargo test --workspace --locked` — passed: all workspace crates.
+- `bash scripts/full_test.sh --no-bootstrap --with-coverage --serial` —
+  attempted; front/native/SDK/Relay/protocol/workspace jobs passed, but the
+  App Flutter shard stalled while loading tests in WSL. The run was stopped
+  after the retry began and is not counted as a pass.
 - `bash scripts/front_coverage.sh` — passed at 95.78% line coverage.
 - `bash scripts/backend_coverage.sh` — passed at 82.1% filtered Go lines with
   Docker-backed MySQL/Redis.
-- `bash scripts/sdk_coverage.sh` — passed at 84.46% Dart and 84.32% Rust lines.
+- `bash scripts/sdk_coverage.sh` — passed at 84.46% Dart and 83.54% Rust lines.
 - Focused App client coverage — attempted with a bounded 2-minute timeout; the
   Flutter VM Service did not become ready in WSL, so no client tests ran.
 - `git diff --check` — passed.

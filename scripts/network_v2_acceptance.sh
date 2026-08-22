@@ -46,10 +46,13 @@ require_tools dart flutter
 (cd native/network_core && cargo test -p network-core 'path_handshake::tests::' --locked)
 (cd native/network_core && cargo test -p network-core 'crypto_handshake::tests::' --locked)
 (cd native/network_core && cargo test -p network-core 'connect::connectivity_attempt::tests::' --locked)
+(cd native/network_core && cargo test -p network-core 'connect::connectivity_attempt::tests::stage_b_resolves_and_offers_before_relay_reservation' --locked)
 (cd native/network_core && cargo test -p network-core 'connect::peer_supervisor::tests::' --locked)
+(cd native/network_core && cargo test -p network-core 'peer::tests::late_quic_candidate_arriving_before_direct_deadline_can_win' --locked)
 (cd native/network_core && cargo test -p network-core 'connect::path::tests::' --locked)
 (cd native/network_core && cargo test -p network-core 'relay::tests::remote_candidate_cache_invalidates_on_epoch_and_ready_ttl_change' --locked)
 (cd native/network_core && cargo test -p network-core 'runtime::tests::runtime_path_projection_is_non_owning' --locked)
+(cd native/network_core && cargo test -p network-core 'runtime::tests::stale_session_failure_does_not_close_replacement_path' --locked)
 (cd native/network_core && cargo test -p network-core 'commands::tests::' --locked)
 (cd native/network_core && cargo test -p network-core 'channel::tests::' --locked)
 (cd native/network_core && cargo test -p network-core 'transfer::tests::' --locked)
@@ -63,7 +66,21 @@ require_tools dart flutter
 (cd native/network_core && cargo test -p network-core 'delivery_recovery_replays_same_message_after_explicit_recovery' --locked)
 (cd native/network_core && cargo test -p network-core 'peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery' --locked)
 (cd native/network_core && cargo test -p network-relay 'v2::' --locked)
+(cd native/network_core && cargo test -p network-relay 'v2::control_client::tests::dropping_unpolled_connectivity_attempt_start_releases_tracker' --locked)
+(cd native/network_core && cargo test -p network-relay 'v2::control_client::tests::old_waiter_cleanup_cannot_remove_new_same_id_tracker' --locked)
 (cd native/network_core && cargo test -p network-relay --features test-support --test relay_control_client_integration --locked -- --test-threads=1)
+for integration_selector in \
+  dropped_connectivity_attempt_start_releases_answer_tracker \
+  cancelled_connectivity_answer_waiter_releases_answer_tracker \
+  concurrent_connectivity_attempts_keep_targets_isolated_and_ordered \
+  control_authentication_failure_never_enters_ready_state \
+  remote_control_disconnect_is_observable_and_cleans_client_state \
+  control_client_disconnect_then_reconnect_succeeds
+do
+  (cd native/network_core && cargo test -p network-relay --features test-support \
+    --test relay_control_client_integration --locked "$integration_selector" \
+    -- --test-threads=1)
+done
 (cd native/network_core && cargo test -p network-relay-proto --locked)
 (cd native/network_core && cargo test -p network-ffi --locked)
 

@@ -8,8 +8,8 @@ benchmark**
 This is the canonical performance report for the Network V2 final-fix
 workstream. `PR48`/`PR49` are internal labels only. Validation used branch
 `agent/network-v2-final-20260819` at base commit
-`b61347cbbb062a079ef1e6daa7f82c50123a799f` plus the uncommitted working-tree
-fixes.
+`85663c93fd1881ad32a1924f6ca51623d6373640`; the final-fix changes are present
+in the subsequent functional commits on this branch.
 
 The repository does not contain a stable production benchmark harness or a
 cross-device throughput baseline. The checks below are regression-smoke
@@ -21,9 +21,10 @@ evidence, not claims about production hardware latency.
 | --- | --- | --- |
 | Connection/runtime | `cargo test -p network-core --locked --lib` and the strict connectivity selector | PASS; full library and 24 connectivity tests completed |
 | Stage ordering | `stage_b_resolves_and_offers_before_relay_reservation` | PASS; one Resolve, one Offer, then reservation |
-| Relay client | `cargo test -p network-relay --locked` plus concrete WebSocket integration | PASS; 37 unit/golden and 1 integration test |
-| Linux mirror | `bash scripts/full_test.sh --no-bootstrap --no-coverage --serial` | PASS; 12 runnable jobs, 731s |
-| Front/backend/SDK coverage | `front_coverage.sh`, `backend_coverage.sh`, `sdk_coverage.sh` | PASS; 95.78% front lines, 82.1% filtered Go lines, 84.46% Dart and 84.32% Rust SDK lines |
+| Relay client | `cargo test -p network-relay --locked` plus concrete WebSocket integration | PASS; 39 unit/golden and 4 integration tests |
+| Linux owner/workspace smoke | strict selectors plus `cargo test --workspace --locked` | PASS; 283 `network-core` tests and all workspace crates passed |
+| Coverage gates | `front_coverage.sh`, `backend_coverage.sh`, `sdk_coverage.sh` | PASS; 95.78% front lines, 82.1% filtered Go lines, 84.46% Dart and 83.54% Rust SDK lines |
+| Full aggregate coverage | `bash scripts/full_test.sh --no-bootstrap --with-coverage --serial` | Environment gap; App shard stalled loading Flutter tests in WSL and was stopped after the configured retry began |
 
 ## Required performance dimensions
 
@@ -43,8 +44,9 @@ evidence, not claims about production hardware latency.
 
 ## Gate result
 
-No local performance regression or unbounded-queue signal was observed after
-the Network V2 fixes. The performance gate is **PASS for repository smoke
-coverage only**. Real-device latency, sustained Relay throughput, CPU, RSS,
-and cross-instance load remain release-environment evidence and are not
-silently treated as measured here.
+No regression signal or unbounded-queue signal was observed in the deterministic
+repository smoke after the Network V2 fixes. The performance gate is **PASS for
+repository smoke coverage only**. Production benchmarking is deferred and
+non-blocking for the runnable owner gate: real-device latency, sustained Relay
+throughput, CPU, RSS, and cross-instance load remain release-environment
+evidence and are not silently treated as measured here.

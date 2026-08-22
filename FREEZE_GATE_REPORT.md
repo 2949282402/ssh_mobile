@@ -9,8 +9,8 @@ Branch: `agent/network-v2-final-20260819`
 
 Baseline commit: `929a711cbf82de26a24f9aa4f8fa18c707c01f38`
 
-Validation base commit: `b61347cbbb062a079ef1e6daa7f82c50123a799f` (working tree
-changes are intentionally uncommitted)
+Validation base commit: `85663c93fd1881ad32a1924f6ca51623d6373640`; the final-fix
+changes are captured in the subsequent functional commits on this branch.
 
 ## Gate decision
 
@@ -23,18 +23,20 @@ changes are intentionally uncommitted)
 
 ## Acceptance evidence
 
-- Strict contract checks: 17 passed, with 3 documented external/platform skips.
+- Strict contract checks: the initial inventory ran 17 checks with 3
+  test-defined architecture-guard skips; the final strict pass ran all 17
+  checks with no skips.
 - Connectivity owner selector: 24/24 tests passed, including capability-aware
   Stage A, zero-call Stage A reuse, one-Resolve Stage B ordering, bounded
   active NOT_READY retry, and Stage C eligibility predicates.
-- Relay v2 unit/golden selector: 37/37 tests passed. The concrete integration
-  selector passed 1/1 with two real `RelayControlClient` instances and a local
+- Relay v2 unit/golden selector: 39/39 tests passed. The concrete integration
+  selector passed 4/4 with real `RelayControlClient` instances and a local
   authenticated `/v2/control` WebSocket server.
-- The final Linux mirror passed all 12 runnable jobs in 731 seconds. Its script
-  explicitly skipped terminal-smoke, Windows, macOS, iOS, and daily App
-  coverage jobs because they require separate hosts or the periodic gate.
+- `cargo test --workspace --locked` passed all workspace crates. The requested
+  coverage-enabled full Linux aggregate reached the App Flutter shard but
+  stalled loading tests in WSL and is recorded as an environment gap.
 - Domain coverage gates passed for front (95.78% lines), backend (82.1% filtered
-  Go lines), and SDK (84.46% Dart / 84.32% Rust lines). The focused App client
+  Go lines), and SDK (84.46% Dart / 83.54% Rust lines). The focused App client
   coverage gate was attempted with a bounded 2-minute VM-service wait and did
   not start tests in this WSL environment.
 
@@ -66,15 +68,15 @@ The following cleanup is complete and did not alter the frozen wire contract:
   domain owners and typed ports;
 - Relay/Transfer extraction avoids a dependency cycle.
 
-Compatibility aliases remain deferred until an external-consumer migration
-inventory authorizes their removal.
+Compatibility aliases remain deferred, and their retirement is non-blocking,
+until an external-consumer migration inventory authorizes their removal.
 
 ## Known environment limits
 
 Windows desktop, macOS/Xcode, iOS/CocoaPods, physical mobile lifecycle, and
 real Redis/MySQL cross-instance evidence require their native or deployment
 hosts. The focused App client coverage gate also requires a working Flutter VM
-Service in this environment. These are explicit follow-ups, not local product
-failures.
+Service in this environment; the aggregate App shard reproduced the same WSL
+startup stall. These are explicit follow-ups, not local product failures.
 
 **FREEZE_GATE: PASS FOR RUNNABLE OWNER GATES**

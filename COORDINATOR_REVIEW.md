@@ -9,8 +9,8 @@ snapshots and records current closure evidence. It does not authorize changes
 to the frozen protocol or public SDK surface.
 
 Validation base: branch `agent/network-v2-final-20260819`, commit
-`b61347cbbb062a079ef1e6daa7f82c50123a799f`, with the final-fix working tree
-changes uncommitted.
+`85663c93fd1881ad32a1924f6ca51623d6373640`; the final-fix changes are captured
+in the subsequent functional commits on this branch.
 
 ## PASS
 
@@ -39,6 +39,9 @@ changes uncommitted.
 
 - Stage C still has predicate coverage rather than a complete local
   Direct-failure → READY/E2EE/resource-eligible → Relay reservation/data flow.
+- The coverage-enabled aggregate `scripts/full_test.sh` reached the App Flutter
+  shard but stalled while loading tests in WSL; owner/workspace and domain
+  coverage gates remain independently green.
 - Real Redis/MySQL-backed admission, cross-instance revocation delivery, and
   physical Android/iOS lifecycle runs remain environment-dependent follow-ups.
 - ReadySessionIndex draining/reacquisition and full production transport fault
@@ -75,9 +78,13 @@ changes uncommitted.
 
 ## Coordinator decision
 
-The final-fix owner gates are **PASS for runnable Linux evidence**. The Stage B
+The final-fix owner gates are **PASS for runnable Linux evidence**, with the
+coverage-enabled aggregate App shard recorded as an environment gap. The Stage B
 double-Resolve architecture defect and stub-only confidence gap are closed;
-Stage C and native-platform/environment evidence remain explicit follow-ups.
-Phase 4 SDK cleanup is already complete under the freeze gate, while public
-compatibility-alias retirement remains deferred. Network V2 protocol direction,
-PeerSupervisor ownership, and PathLease semantics remain frozen.
+Stage C is complete only to its executable eligibility-predicate evidence, while
+the end-to-end Stage C flow and native-platform/environment evidence remain
+explicit follow-ups. Phase 4 SDK cleanup is already complete under the freeze
+gate, while public compatibility-alias retirement remains deferred and is
+non-blocking pending an external-consumer migration inventory. Network V2
+protocol direction, PeerSupervisor ownership, and PathLease semantics remain
+frozen.

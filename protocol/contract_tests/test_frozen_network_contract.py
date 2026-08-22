@@ -46,6 +46,8 @@ REQUIRED_CASE_IDS = {
     "revocation.nonparticipant_untouched",
     "flow.stage_a_pure_direct",
     "flow.stage_b_resolve_offer",
+    "flow.stage_b_ownership_before_offer",
+    "flow.late_quic_candidate",
     "flow.stage_c_relay_fallback",
     "flow.multi_peer_gate",
     "flow.role_token_pairready",
@@ -62,6 +64,13 @@ REQUIRED_CASE_IDS = {
     "business.stream_auto_ensure",
     "ownership.peer_path_manager_sole_carrier_owner",
     "ownership.no_second_strong_carrier_truth",
+    "ownership.stale_session_preserves_replacement_path",
+    "ownership.relay_tracker_drop_cleanup",
+    "ownership.relay_tracker_waiter_cancellation",
+    "ownership.relay_tracker_stale_owner",
+    "relay.control_auth_disconnect_reconnect",
+    "flow.connection_boundary_failures",
+    "relay.protocol_frame_validation",
     "security.direct_disabled_business",
     "security.required_disabled_mismatch",
     "security.relay_disabled_rejected",
@@ -87,6 +96,47 @@ REQUIRED_CASE_IDS = {
 
 def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def _source_paths(path: Path) -> list[Path]:
+    """Return a source file and any extracted Rust test sidecar(s).
+
+    The acceptance matrix names the owning production module, while Rust test
+    implementations live under ``src/tests``.  Static evidence and behavior
+    checks must inspect both locations after that migration.
+    """
+    paths: list[Path] = []
+    if path.is_file():
+        paths.append(path)
+
+    src_root = next((parent for parent in path.parents if parent.name == "src"), None)
+    if src_root is None:
+        return paths
+
+    if path.name == "tests.rs":
+        sidecar_root = src_root / "tests"
+        if sidecar_root.is_dir():
+            paths.extend(sorted(sidecar_root.rglob("*.rs")))
+        return list(dict.fromkeys(paths))
+
+    relative = path.relative_to(src_root)
+    if relative.name == "lib.rs":
+        relative = relative.with_name("mod.rs")
+    sidecar_root = src_root / "tests"
+    for sidecar in (sidecar_root / relative, sidecar_root / relative.name):
+        if sidecar.is_file():
+            paths.append(sidecar)
+    return list(dict.fromkeys(paths))
+
+
+def _read_with_tests(relative_path: str) -> str:
+    path = ROOT / relative_path
+    paths = _source_paths(path)
+    if not paths:
+        # Preserve Path.read_text's useful missing-target error for a genuinely
+        # invalid matrix entry.
+        return path.read_text(encoding="utf-8")
+    return "\n".join(source.read_text(encoding="utf-8") for source in paths)
 
 
 def _load_json(path: Path) -> object:
@@ -164,8 +214,11 @@ class FrozenNetworkContractTest(unittest.TestCase):
                 assert isinstance(evidence, dict)
                 relative_path = evidence["path"]
                 path = ROOT / relative_path
-                self.assertTrue(path.is_file(), f"missing evidence file: {path}")
-                source = path.read_text(encoding="utf-8")
+                sources = _source_paths(path)
+                self.assertTrue(sources, f"missing evidence file: {path}")
+                source = "\n".join(
+                    candidate.read_text(encoding="utf-8") for candidate in sources
+                )
                 for marker in evidence.get("contains", []):
                     self.assertIn(
                         marker,
@@ -250,7 +303,9 @@ class FrozenNetworkContractTest(unittest.TestCase):
         self.assertIn("business envelope rejected", guard)
 
     def test_candidate_cache_evidence_uses_monotonic_ttl_and_epoch_rules(self) -> None:
-        cache = _read("native/network_core/crates/network-nat/src/candidate_v2.rs")
+        cache = _read_with_tests(
+            "native/network_core/crates/network-nat/src/candidate_v2.rs"
+        )
         self.assertIn("Instant", cache)
         self.assertIn("now.saturating_duration_since(self.learned_at)", cache)
         self.assertIn("server_presence_ttl", cache)
@@ -267,7 +322,7 @@ class FrozenNetworkContractTest(unittest.TestCase):
         self.assertIn("TestDisconnectDeviceDoesNotClearForeignPresence", storage)
 
     def test_bounded_peer_supervisor_and_event_mux_are_bounded(self) -> None:
-        supervisor = _read(
+        supervisor = _read_with_tests(
             "native/network_core/crates/network-core/src/connect/peer_supervisor.rs"
         )
         self.assertIn("PEER_MAILBOX_CAPACITY", supervisor)
@@ -324,6 +379,19 @@ class FrozenNetworkContractTest(unittest.TestCase):
                 self.assertEqual(owner, "rust")
                 crate = path.split("/crates/", 1)[1].split("/", 1)[0]
                 self.assertIn(f"cargo test -p {crate}", script)
+                if "/tests/" in path:
+                    integration_test = path.split("/tests/", 1)[1].removesuffix(".rs")
+                    self.assertIn(
+                        f"--test {integration_test}",
+                        script,
+                        f"Rust integration target {integration_test!r} is not selected",
+                    )
+                    self.assertIn(
+                        name,
+                        script,
+                        f"Rust integration test {name!r} is not selected",
+                    )
+                    continue
                 source = path.split("/src/", 1)[1]
                 if source == "tests.rs":
                     self.assertIn(
@@ -421,8 +489,11 @@ class FrozenNetworkContractTest(unittest.TestCase):
                     assert isinstance(test, dict)
                     self.assertIn(test.get("owner"), {"rust", "go", "dart"})
                     path = ROOT / test["path"]
-                    self.assertTrue(path.is_file(), f"missing behavior test: {path}")
-                    source = path.read_text(encoding="utf-8")
+                    sources = _source_paths(path)
+                    self.assertTrue(sources, f"missing behavior test: {path}")
+                    source = "\n".join(
+                        candidate.read_text(encoding="utf-8") for candidate in sources
+                    )
                     name = re.escape(test["name"])
                     if test["owner"] == "rust":
                         pattern = (
