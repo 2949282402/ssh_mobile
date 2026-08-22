@@ -714,6 +714,16 @@ async fn relay_data_connectors_fail_closed_without_config_or_socket() {
         credential: "credential".into(),
         signing_seed: [0; 32],
     });
+    let malformed_reserve = network_relay::v2::RelayReserveResponse {
+        reservation_id: "not-a-reservation".into(),
+        ..reserve.clone()
+    };
+    let error = match connect_initiator_relay_data(&state, "peer-a", malformed_reserve).await {
+        Ok(_) => panic!("invalid reservation metadata unexpectedly connected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::RelayError as i32);
+
     let error = match connect_initiator_relay_data(&state, "peer-a", reserve).await {
         Ok(_) => panic!("unreachable Relay data endpoint unexpectedly connected"),
         Err(error) => error,
@@ -729,10 +739,54 @@ async fn relay_data_connectors_fail_closed_without_config_or_socket() {
             relay_data_endpoint: "ws://127.0.0.1:9/v2/relay/7a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d"
                 .into(),
             expires_at_ms: 0,
-            local_token: vec![0; 32],
+            local_token: vec![0; 31],
         },
     )
     .await;
+}
+
+#[tokio::test]
+async fn relay_crypto_response_reports_a_closed_initiator_waiter() {
+    let state = state();
+    let data = Arc::new(data_client());
+    let token = "a".repeat(32);
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [3u8; 32],
+            e2e_public_key: [4u8; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let (sender, receiver) = mpsc::channel(1);
+    drop(receiver);
+    state
+        .relay
+        .crypto_waiters
+        .write()
+        .await
+        .insert(relay_crypto_key("peer-a", &token), sender);
+    let response = crate::crypto_handshake::encode_relay_frame(
+        crate::crypto_handshake::RELAY_CRYPTO_RESPONSE,
+        b"response",
+    )
+    .expect("encoded response");
+
+    let error = handle_relay_crypto_handshake(&state, &data, &token, "peer-a", &response)
+        .await
+        .expect_err("closed initiator waiter must be reported");
+    assert!(error.to_string().contains("no longer waiting"));
+}
+
+#[tokio::test]
+async fn relay_delivery_ack_rejects_unknown_peer_before_decoding() {
+    let state = state();
+    let data = Arc::new(data_client());
+    let error = receive_relay_delivery_ack(&state, &data, "missing-peer", "token", b"bad")
+        .await
+        .expect_err("ACKs from unknown peers must fail closed");
+    assert!(error.to_string().contains("registered peer"));
 }
 
 #[tokio::test]
