@@ -105,6 +105,55 @@ async fn transfer_dispatcher_rejects_routes_without_a_usable_file_carrier() {
     }
 }
 
+#[tokio::test]
+async fn transfer_dispatcher_rejects_relay_dispatch_for_an_unregistered_peer() {
+    let state = state_with_route_profile(crate::connection::Route::direct(
+        crate::connection::RouteTransport::Tcp,
+    ))
+    .await;
+    let registry = Arc::new(crate::connect::PathRegistry::new());
+    let mut manager = crate::connect::PeerPathManager::new(
+        crate::connect::PeerId::new("peer-a").expect("peer"),
+        Arc::clone(&registry),
+    );
+    let handle = manager
+        .publish_ready(crate::connection::ConnectionProfile::new(
+            crate::connection::Route::direct(crate::connection::RouteTransport::Tcp),
+        ))
+        .expect("dispatch test path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert("peer-a".into(), Arc::new(Mutex::new(manager)));
+    let lease = registry.acquire(&handle).expect("dispatch test lease");
+    let manifest = network_transfer::FileManifest {
+        transfer_id: "relay-dispatch".into(),
+        file_name: "payload.bin".into(),
+        file_size: 0,
+        modified_at: 0,
+        content_hash: "00".repeat(32),
+        protocol_version: NETWORK_TRANSFER_PROTOCOL_VERSION,
+    };
+    let transfer = ResumableTransfer {
+        transfer_id: manifest.transfer_id.clone(),
+        peer_id: "unregistered-peer".into(),
+        session_id: "session".into(),
+        source_path: PathBuf::from("payload.bin"),
+        manifest,
+        offset: 0,
+    };
+    let error = match TransferDispatcher::new(Arc::clone(&state))
+        .dispatch_outgoing(TransferRoute::Relay, lease, transfer)
+        .await
+    {
+        Ok(()) => panic!("Relay transfer dispatched for an unregistered peer"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
+    assert!(error.message.contains("not registered"));
+}
+
 #[test]
 fn transfer_identity_and_confirmed_offset_are_session_independent() {
     let identity = TransferIdentity::new("peer-a", "transfer-a").expect("identity");
