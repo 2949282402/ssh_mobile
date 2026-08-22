@@ -726,7 +726,7 @@ where
     }
 }
 
-#[allow(dead_code)] // compatibility helper retained for focused handshake tests
+#[cfg(test)]
 pub(crate) async fn respond_generic_with_policy<F, Fut, T>(
     connection: &mut GenericConnection,
     identity: Arc<DeviceIdentity>,
@@ -904,7 +904,7 @@ pub(crate) struct RelayInitiatorConfirmation {
 }
 
 impl RelayInitiatorHandshake {
-    #[allow(dead_code)] // compatibility helper retained for focused handshake tests
+    #[cfg(test)]
     pub(crate) fn start(
         identity: Arc<DeviceIdentity>,
         session_binding: &str,

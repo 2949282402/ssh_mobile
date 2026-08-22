@@ -72,13 +72,6 @@ pub(crate) const NOT_READY_WAIT: Duration = Duration::from_secs(2);
 /// ReserveRelay 的应答等待上限（§25/§33 RelayReservationFailed）。
 pub(crate) const RELAY_RESERVE_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// Relay pairing and authenticated Noise/path admission retain separate child
-/// budgets even though PathHandshakeV2 itself is carried inside Noise.
-#[allow(dead_code)]
-pub(crate) const RELAY_PAIR_TIMEOUT: Duration = Duration::from_secs(4);
-#[allow(dead_code)]
-pub(crate) const PATH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
-
 /// Idle retirement for a non-maintained path with no borrower or business work.
 pub(crate) const EPHEMERAL_PATH_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 

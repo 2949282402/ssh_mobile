@@ -12,9 +12,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::connection::GenericConnection;
+#[cfg(test)]
+use crate::crypto_handshake::respond_generic_with_policy;
 use crate::crypto_handshake::{
-    initiate_generic_with_policy, path_handshake::E2eePolicy, respond_generic_with_policy,
-    CryptoHandshakeError, SessionCryptoMaterial,
+    initiate_generic_with_policy, path_handshake::E2eePolicy, CryptoHandshakeError,
+    SessionCryptoMaterial,
 };
 
 pub(crate) struct AuthenticatedPeer<T> {
@@ -49,7 +51,7 @@ where
     .await
 }
 
-#[allow(dead_code)] // compatibility helper retained for focused handshake tests
+#[cfg(test)]
 pub(crate) async fn authenticate_responder<F, Fut, T>(
     connection: &mut GenericConnection,
     local_identity: Arc<DeviceIdentity>,
@@ -70,7 +72,7 @@ where
     .await
 }
 
-#[allow(dead_code)] // compatibility helper retained for focused handshake tests
+#[cfg(test)]
 pub(crate) async fn authenticate_responder_with_policy<F, Fut, T>(
     connection: &mut GenericConnection,
     local_identity: Arc<DeviceIdentity>,
