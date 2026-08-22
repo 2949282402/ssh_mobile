@@ -24,6 +24,146 @@ fn peer_ids_are_validated_and_isolated() {
     assert_eq!(registry.len(), 2);
 }
 
+#[test]
+fn peer_id_traits_and_requirement_mapping_are_stable() {
+    let peer = PeerId::try_from(String::from("peer-a")).expect("valid peer id");
+    assert_eq!(peer.as_ref(), "peer-a");
+    assert_eq!(peer.to_string(), "peer-a");
+    assert!(PeerId::try_from("peer\n-a").is_err());
+
+    for (class, expected) in [
+        (
+            CommunicationClass::ReliableMessage,
+            crate::connect::CAPABILITY_RELIABLE_MESSAGE,
+        ),
+        (
+            CommunicationClass::ReliableStream,
+            crate::connect::DEFAULT_CONNECTION_CAPABILITY,
+        ),
+        (
+            CommunicationClass::BulkTransfer,
+            crate::connect::DEFAULT_CONNECTION_CAPABILITY,
+        ),
+        (
+            CommunicationClass::UnreliableDatagram,
+            crate::connect::CAPABILITY_UNRELIABLE_DATAGRAM,
+        ),
+        (
+            CommunicationClass::RealtimeMedia,
+            crate::connect::DEFAULT_CONNECTION_CAPABILITY,
+        ),
+        (
+            CommunicationClass::Unspecified,
+            crate::connect::CAPABILITY_RELIABLE_MESSAGE,
+        ),
+    ] {
+        let requirement = PeerRequirement::from_class(class);
+        assert_eq!(requirement.capability_mask(), expected);
+        assert_eq!(
+            requirement.communication_class(),
+            match class {
+                CommunicationClass::ReliableStream | CommunicationClass::BulkTransfer => {
+                    CommunicationClass::ReliableStream
+                }
+                CommunicationClass::UnreliableDatagram => CommunicationClass::UnreliableDatagram,
+                CommunicationClass::RealtimeMedia => CommunicationClass::ReliableStream,
+                CommunicationClass::Unspecified | CommunicationClass::ReliableMessage => {
+                    CommunicationClass::ReliableMessage
+                }
+            }
+        );
+    }
+    let combined = PeerRequirement::from_capability_mask(u8::MAX);
+    assert_eq!(combined.capability_mask(), 0b111);
+    assert!(combined.is_satisfied_by(combined));
+    assert!(combined
+        .extend(PeerRequirement::from_class(
+            CommunicationClass::ReliableMessage
+        ))
+        .is_satisfied_by(combined));
+}
+
+#[test]
+fn supervisor_rejects_invalid_duplicate_and_stopped_commands() {
+    let supervisor = supervisor();
+    assert!(matches!(
+        supervisor.begin_connect("", CommunicationClass::ReliableMessage),
+        Err(CoreNetworkError::InvalidCommandId)
+    ));
+    assert!(matches!(
+        supervisor.begin_connect(&"x".repeat(129), CommunicationClass::ReliableMessage),
+        Err(CoreNetworkError::InvalidCommandId)
+    ));
+    let first = supervisor
+        .ensure("duplicate", CommunicationClass::ReliableMessage)
+        .expect("first intent");
+    assert!(matches!(
+        supervisor.ensure("duplicate", CommunicationClass::ReliableMessage),
+        Err(CoreNetworkError::DuplicateCommand)
+    ));
+    first.detach_completion();
+    supervisor.stop();
+    assert!(matches!(
+        supervisor.ensure("after-stop", CommunicationClass::ReliableMessage),
+        Err(CoreNetworkError::SupervisorStopping)
+    ));
+}
+
+#[test]
+fn online_message_path_queues_a_stronger_stream_generation() {
+    let supervisor = supervisor();
+    assert_eq!(
+        supervisor
+            .admit_inbound_with_capabilities(true, crate::connect::CAPABILITY_RELIABLE_MESSAGE,)
+            .expect("admit message path"),
+        PeerState::Online
+    );
+    let stream = supervisor
+        .ensure("stream-upgrade", CommunicationClass::ReliableStream)
+        .expect("stronger stream requirement");
+    assert!(stream.is_new);
+    assert_eq!(supervisor.state(), PeerState::Connecting);
+    stream.detach_completion();
+}
+
+#[tokio::test]
+async fn complete_ready_requeues_pending_stronger_waiters_when_retry_is_clear() {
+    let supervisor = supervisor();
+    let message = supervisor
+        .ensure("message", CommunicationClass::ReliableMessage)
+        .expect("message ensure");
+    let stream = supervisor
+        .ensure("stream", CommunicationClass::ReliableStream)
+        .expect("stream ensure");
+    let generation = message.generation;
+    let mut mailbox = supervisor.take_mailbox().expect("mailbox");
+    mailbox.try_recv().expect("initial attempt");
+    {
+        let mut inner = supervisor.inner.lock().expect("peer supervisor lock");
+        inner.retry_scheduled = false;
+    }
+    assert_eq!(
+        supervisor.complete_ready(
+            generation,
+            PeerRequirement::from_class(CommunicationClass::ReliableMessage),
+            Ok(PeerState::Online),
+        ),
+        Ok(1)
+    );
+    assert_eq!(
+        message.completion().await.expect("message completion"),
+        Ok(PeerState::Online)
+    );
+    assert_eq!(
+        mailbox
+            .try_recv()
+            .expect("retry intent")
+            .required_capabilities,
+        crate::connect::DEFAULT_CONNECTION_CAPABILITY | crate::connect::CAPABILITY_RELIABLE_STREAM
+    );
+    stream.detach_completion();
+}
+
 #[tokio::test]
 async fn concurrent_connects_share_one_generation_and_completion() {
     let supervisor = supervisor();
