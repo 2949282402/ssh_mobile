@@ -271,6 +271,27 @@ func TestMemoryCacheLeaseAndReservationBoundaries(t *testing.T) {
 	if _, present, err := store.GetReservation(ctx, reservation.ReservationID); err != nil || present {
 		t.Fatalf("deleted reservation = present=%v err=%v", present, err)
 	}
+
+	// Online-peer enumeration requires both leases, matching owners, and a
+	// published revision; stale and partial entries are filtered in one pass.
+	store.mu.Lock()
+	now := time.Now()
+	store.presence["online"] = presenceEntry{presence: Presence{ConnectionID: "online-conn"}, expiresAt: now.Add(time.Minute)}
+	store.presence["not-ready"] = presenceEntry{presence: Presence{ConnectionID: "not-ready-conn"}, expiresAt: now.Add(time.Minute)}
+	store.presence["owner-mismatch"] = presenceEntry{presence: Presence{ConnectionID: "new-conn"}, expiresAt: now.Add(time.Minute)}
+	store.presence["expired"] = presenceEntry{presence: Presence{ConnectionID: "expired-conn"}, expiresAt: now.Add(-time.Second)}
+	store.discovery["online"] = discoveryEntry{discovery: Discovery{ConnectionID: "online-conn", Revision: 1}, expiresAt: now.Add(time.Minute)}
+	store.discovery["not-ready"] = discoveryEntry{discovery: Discovery{ConnectionID: "not-ready-conn"}, expiresAt: now.Add(time.Minute)}
+	store.discovery["owner-mismatch"] = discoveryEntry{discovery: Discovery{ConnectionID: "old-conn", Revision: 1}, expiresAt: now.Add(time.Minute)}
+	store.discovery["expired"] = discoveryEntry{discovery: Discovery{ConnectionID: "expired-conn", Revision: 1}, expiresAt: now.Add(-time.Second)}
+	store.mu.Unlock()
+	online, err := store.ListOnlinePeers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(online) != 1 || online["online"].ConnectionID != "online-conn" {
+		t.Fatalf("memory online peers = %+v, want only matching published lease", online)
+	}
 }
 
 func TestRedisStoreGetDiscoveriesBatchBoundaries(t *testing.T) {
@@ -367,6 +388,38 @@ func TestRedisStoreLeaseAndReservationBoundaries(t *testing.T) {
 	}
 	if _, present, err := store.GetDiscovery(ctx, deviceID); err == nil || present {
 		t.Fatalf("corrupt redis discovery = present=%v err=%v", present, err)
+	}
+
+	for _, id := range []string{"online-boundary", "not-ready-boundary", "mismatch-boundary"} {
+		_ = store.forceDeletePresence(ctx, id)
+		_ = store.client.Del(ctx, store.discoveryKey(id)).Err()
+		defer func(deviceID string) {
+			_ = store.forceDeletePresence(ctx, deviceID)
+			_ = store.client.Del(ctx, store.discoveryKey(deviceID)).Err()
+		}(id)
+	}
+	if _, _, err := store.TakePresence(ctx, "online-boundary", "online-conn", Presence{}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.TakeDiscovery(ctx, "online-boundary", "online-conn", Discovery{ConnectionID: "online-conn", Revision: 1}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.TakePresence(ctx, "not-ready-boundary", "not-ready-conn", Presence{}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.TakeDiscovery(ctx, "not-ready-boundary", "not-ready-conn", Discovery{ConnectionID: "not-ready-conn"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.TakePresence(ctx, "mismatch-boundary", "new-conn", Presence{}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	store.mustForceDiscoveryOwner(t, "mismatch-boundary", "old-conn", 1)
+	online, err := store.ListOnlinePeers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(online) != 1 || online["online-boundary"].ConnectionID != "online-conn" {
+		t.Fatalf("redis online peers = %+v, want only matching published lease", online)
 	}
 
 	reservation := Reservation{ReservationID: reservationID, ExpiresAtMs: time.Now().Add(time.Minute).UnixMilli()}
