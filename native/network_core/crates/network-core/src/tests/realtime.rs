@@ -646,6 +646,7 @@ struct SignalCall {
 struct RecordingControl {
     signals: Mutex<Vec<SignalCall>>,
     fail_signals: AtomicBool,
+    usable: AtomicBool,
 }
 
 impl RecordingControl {
@@ -653,11 +654,16 @@ impl RecordingControl {
         Arc::new(Self {
             signals: Mutex::new(Vec::new()),
             fail_signals: AtomicBool::new(false),
+            usable: AtomicBool::new(true),
         })
     }
 
     fn signal_calls(&self) -> Vec<SignalCall> {
         self.signals.lock().unwrap().clone()
+    }
+
+    fn set_usable(&self, usable: bool) {
+        self.usable.store(usable, Ordering::Release);
     }
 }
 
@@ -678,7 +684,8 @@ impl DiscoveryControlPlane for RecordingControl {
     }
 
     fn is_usable(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
-        Box::pin(async move { true })
+        let usable = self.usable.load(Ordering::Acquire);
+        Box::pin(async move { usable })
     }
 
     fn signal_webrtc(
@@ -1471,4 +1478,122 @@ async fn stop_realtime_session_closes_session_routes_close_and_emits_event() {
     assert_eq!(event.peer_id, "peer-a");
     assert_eq!(event.state, RealtimeSessionState::Closed as i32);
     assert_eq!(event.revision, 8);
+}
+
+#[tokio::test]
+async fn realtime_signal_route_rejects_disconnected_control_and_forwards_local_candidate() {
+    let (state, mut event_rx) = realtime_test_state().await;
+    let control = RecordingControl::new();
+    *state.relay.control.write().await = Some(control.clone());
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    state.realtime.lock().await.sessions.insert(
+        realtime_id.into(),
+        RealtimeSession {
+            peer_id: "peer-a".into(),
+            connection_session_id: None,
+            peer: None,
+            driver: None,
+            revision: 3,
+            remote_revision: 2,
+            ice_revision: 3,
+            seen_candidates: HashSet::new(),
+        },
+    );
+
+    control.set_usable(false);
+    let error = send_signal(
+        &state,
+        &OutboundSignal {
+            realtime_id: realtime_id.into(),
+            peer_id: "peer-a".into(),
+            kind: RealtimeSignalKind::WebRtcOffer,
+            revision: 4,
+            payload: b"offer".to_vec(),
+        },
+    )
+    .await
+    .expect_err("a disconnected Relay control route must fail closed");
+    assert_eq!(error.code, NetworkErrorCode::RelayError as i32);
+
+    control.set_usable(true);
+    forward_local_candidate(
+        &state,
+        realtime_id,
+        "peer-a",
+        network_webrtc::IceCandidate::new(
+            "candidate:1 1 UDP 1 127.0.0.1 9 typ host".into(),
+            None,
+            None,
+            None,
+        )
+        .expect("valid candidate"),
+    )
+    .await;
+    assert_eq!(control.signal_calls().len(), 1);
+    let event = event_rx.try_recv().expect("forwarded ICE event");
+    let Some(network_event::Payload::RealtimeSignal(signal)) = event.payload else {
+        panic!("expected realtime signal event");
+    };
+    assert_eq!(signal.kind, RealtimeSignalKind::IceCandidate as i32);
+    assert_eq!(signal.revision, 3);
+}
+
+#[test]
+fn realtime_validation_and_wire_kind_mapping_cover_all_signal_boundaries() {
+    for invalid_id in [
+        "",
+        "00112233445566778899aabbccddeef",
+        "00112233445566778899aabbccddeeff0",
+        "00112233445566778899AABBCCDDEEFF",
+        "zz112233445566778899aabbccddeeff",
+    ] {
+        assert!(validate_realtime_id(invalid_id).is_err(), "{invalid_id:?}");
+    }
+    validate_realtime_id("00112233445566778899aabbccddeeff").expect("valid realtime id");
+
+    assert!(validate_signal(RealtimeSignalKind::WebRtcOffer, 1, b"offer").is_ok());
+    assert!(validate_signal(RealtimeSignalKind::WebRtcClose, 1, &[]).is_ok());
+    assert!(validate_signal(RealtimeSignalKind::IceRestart, 1, &[]).is_ok());
+    assert!(validate_signal(RealtimeSignalKind::WebRtcOffer, 1, &[]).is_err());
+    assert!(validate_signal(RealtimeSignalKind::IceCandidate, 1, b"candidate").is_ok());
+
+    for (kind, expected) in [
+        (
+            RealtimeSignalKind::Unspecified,
+            V2RealtimeSignalKind::Unspecified,
+        ),
+        (RealtimeSignalKind::WebRtcOffer, V2RealtimeSignalKind::Offer),
+        (
+            RealtimeSignalKind::WebRtcAnswer,
+            V2RealtimeSignalKind::Answer,
+        ),
+        (
+            RealtimeSignalKind::IceCandidate,
+            V2RealtimeSignalKind::IceCandidate,
+        ),
+        (
+            RealtimeSignalKind::IceRestart,
+            V2RealtimeSignalKind::IceRestart,
+        ),
+        (RealtimeSignalKind::WebRtcClose, V2RealtimeSignalKind::Close),
+    ] {
+        assert_eq!(to_v2_signal_kind(kind), expected);
+    }
+}
+
+#[test]
+fn realtime_session_without_peer_owner_fails_closed() {
+    let mut session = RealtimeSession {
+        peer_id: "peer-a".into(),
+        connection_session_id: None,
+        peer: None,
+        driver: None,
+        revision: 0,
+        remote_revision: 0,
+        ice_revision: 0,
+        seen_candidates: HashSet::new(),
+    };
+    let error = with_session_peer(&mut session, WebRtcPeer::close)
+        .expect_err("session without a peer owner must be rejected");
+    assert!(error.to_string().contains("no WebRTC peer owner"));
 }
