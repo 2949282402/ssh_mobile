@@ -1,6 +1,6 @@
 use super::{
-    acknowledge_message, application_payload_mode, decode_policy, delivery_error,
-    ensure_reliable_message_path, handle_data_message, handle_delivery_ack,
+    acknowledge_message, application_payload_mode, decode_policy, deliver_pending_message,
+    delivery_error, ensure_reliable_message_path, handle_data_message, handle_delivery_ack,
     next_business_ensure_id, policy_code, select_business_path_lease, send_business_frame,
     send_data_message, start_send_message, validate_business_application_policy,
     validate_data_message, ApplicationPayloadMode, ApplicationPolicyError,
@@ -353,6 +353,274 @@ async fn ordered_next_is_published_before_transport_ack_completes() {
     );
     assert!(route_closed, "test route did not close during cleanup");
     assert!(worker_completed, "test transport worker did not terminate");
+}
+
+#[tokio::test]
+async fn best_effort_delivery_sends_once_over_a_live_generic_route() {
+    let peer_id = "best-effort-route-peer";
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+    state.peers.write().await.insert(
+        peer_id.into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [61; 32],
+            e2e_public_key: [62; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Disabled,
+        },
+    );
+    let session_id = match state
+        .begin_connect(peer_id, crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        crate::runtime::ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected session decision: {decision:?}"),
+    };
+    let crate::connection::TestBlockingGenericRoute {
+        handle,
+        mut started,
+        release,
+        mut worker,
+    } = test_blocking_generic_route();
+    state
+        .attach_test_generic_route(peer_id, session_id, handle)
+        .await
+        .expect("attach live generic route");
+    let message = state
+        .delivery
+        .enqueue(
+            peer_id,
+            "channel",
+            b"best-effort".to_vec(),
+            DeliveryPolicy::BestEffort,
+            Default::default(),
+        )
+        .await
+        .expect("enqueue best-effort message");
+
+    let send_task = tokio::spawn(deliver_pending_message(
+        Arc::clone(&state),
+        peer_id.to_string(),
+        message,
+    ));
+    tokio::time::timeout(TEST_TIMEOUT, &mut started)
+        .await
+        .expect("best-effort send did not reach the route")
+        .expect("best-effort route start signal was dropped");
+    release.send(()).expect("release best-effort send");
+    send_task
+        .await
+        .expect("best-effort send task should complete");
+    state
+        .close_transport_path(peer_id)
+        .await
+        .expect("close best-effort route");
+    tokio::time::timeout(TEST_TIMEOUT, &mut worker)
+        .await
+        .expect("best-effort route worker did not stop")
+        .expect("best-effort route worker failed");
+}
+
+#[tokio::test]
+async fn ordered_inbound_conflicts_fail_the_channel_and_reject_followups() {
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    state.peers.write().await.insert(
+        "ordered-input-peer".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [63; 32],
+            e2e_public_key: [64; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Disabled,
+        },
+    );
+
+    let message = |message_id: u8, sequence: u64| DataMessage {
+        session_id: "ordered-session".into(),
+        channel_id: "ordered-channel".into(),
+        message_id: vec![message_id; 16],
+        sequence,
+        recovery_epoch: 1,
+        policy: DeliveryPolicyCode::SessionBoundOrdered as i32,
+        payload: vec![message_id],
+    };
+    let first = message(1, 0);
+    handle_data_message(&state, "ordered-input-peer", &first.encode_to_vec())
+        .await
+        .expect("first ordered message should be ready");
+    let _ = event_rx.recv().await.expect("first ordered event");
+
+    let buffered = message(2, 1);
+    handle_data_message(&state, "ordered-input-peer", &buffered.encode_to_vec())
+        .await
+        .expect("next ordered message should be buffered");
+    assert!(event_rx.try_recv().is_err());
+
+    let conflicting = message(3, 0);
+    let error = handle_data_message(&state, "ordered-input-peer", &conflicting.encode_to_vec())
+        .await
+        .expect_err("conflicting in-flight sequence must be rejected");
+    assert!(error.to_string().contains("reorder limits"));
+
+    let expired = state
+        .delivery
+        .expire_incoming(
+            "ordered-input-peer",
+            Instant::now() + Duration::from_secs(5 * 60 + 1),
+        )
+        .await;
+    assert_eq!(expired.len(), 2, "ordered timeout should fail the channel");
+    let follow_up = message(4, 1);
+    let error = handle_data_message(&state, "ordered-input-peer", &follow_up.encode_to_vec())
+        .await
+        .expect_err("failed ordered channel must reject follow-up frames");
+    assert!(error
+        .to_string()
+        .contains("ordered delivery channel failed"));
+}
+
+#[tokio::test]
+async fn inbound_delivery_capacity_is_rejected_without_evicting_active_handlers() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    state.peers.write().await.insert(
+        "capacity-peer".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [67; 32],
+            e2e_public_key: [68; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Disabled,
+        },
+    );
+    for index in 0..4096u16 {
+        assert_eq!(
+            state
+                .delivery
+                .begin_incoming(
+                    "capacity-peer",
+                    "channel",
+                    MessageId::from_bytes(index.to_be_bytes().repeat(8).try_into().unwrap()),
+                    1,
+                    Instant::now(),
+                )
+                .await,
+            DedupDecision::New
+        );
+    }
+    let message = DataMessage {
+        session_id: "session".into(),
+        channel_id: "channel".into(),
+        message_id: vec![255; 16],
+        sequence: 0,
+        recovery_epoch: 1,
+        policy: DeliveryPolicyCode::Acked as i32,
+        payload: b"capacity".to_vec(),
+    };
+    let error = handle_data_message(&state, "capacity-peer", &message.encode_to_vec())
+        .await
+        .expect_err("active incoming capacity must fail closed");
+    assert!(error.to_string().contains("capacity exceeded"), "{error}");
+}
+
+#[tokio::test]
+async fn valid_send_message_maps_no_route_and_supervisor_stop_errors() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+    let command = || SendMessageCommand {
+        peer_id: "unreachable-message-peer".into(),
+        channel_id: "channel".into(),
+        payload: b"payload".to_vec(),
+        policy: DeliveryPolicyCode::Acked as i32,
+    };
+    let no_route = tokio::time::timeout(
+        TEST_TIMEOUT,
+        start_send_message(Arc::clone(&state), command()),
+    )
+    .await
+    .expect("no-route send should be bounded")
+    .expect_err("valid send without a route must fail");
+    assert_eq!(no_route.code, NetworkErrorCode::Cancelled as i32);
+
+    let invalid_peer = start_send_message(
+        Arc::clone(&state),
+        SendMessageCommand {
+            peer_id: "x".repeat(129),
+            ..command()
+        },
+    )
+    .await
+    .expect_err("an invalid peer scope must fail before network work");
+    assert_eq!(invalid_peer.code, NetworkErrorCode::Lifecycle as i32);
+}
+
+#[tokio::test]
+async fn acknowledge_message_maps_missing_transport_to_no_route() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    let message_id = MessageId::from_bytes([77; 16]);
+    assert_eq!(
+        state
+            .delivery
+            .begin_incoming(
+                "ack-no-route-peer",
+                "channel",
+                message_id,
+                1,
+                Instant::now()
+            )
+            .await,
+        DedupDecision::New
+    );
+    let error = acknowledge_message(
+        &state,
+        AcknowledgeMessageCommand {
+            peer_id: "ack-no-route-peer".into(),
+            session_id: "session".into(),
+            channel_id: "channel".into(),
+            message_id: message_id.to_bytes().to_vec(),
+        },
+    )
+    .await
+    .expect_err("ACK without a ready route must fail");
+    assert_eq!(error.code, NetworkErrorCode::NoRoute as i32);
+}
+
+#[tokio::test]
+async fn relay_policy_validation_maps_disabled_policy_to_typed_error() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    state.peers.write().await.insert(
+        "relay-policy-peer".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [65; 32],
+            e2e_public_key: [66; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Disabled,
+        },
+    );
+    let session_id = SessionId::new();
+    state
+        .connection_sessions
+        .register_pending_session("relay-policy-peer", session_id)
+        .await
+        .expect("register relay policy session");
+    let mut manager = crate::connect::PeerPathManager::new(
+        PeerId::new("relay-policy-peer").expect("peer id"),
+        Arc::clone(&state.ready_paths),
+    );
+    manager
+        .publish_ready_with_route(crate::connect::ActiveRoute::relay(None))
+        .expect("publish relay path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert("relay-policy-peer".into(), Arc::new(Mutex::new(manager)));
+
+    let error = validate_business_application_policy(&state, "relay-policy-peer", session_id)
+        .await
+        .expect_err("Disabled policy must be rejected on Relay");
+    assert_eq!(error.code, NetworkErrorCode::RelayRequiresE2ee as i32);
 }
 
 #[test]

@@ -464,8 +464,10 @@ pub(crate) fn test_blocking_generic_route() -> TestBlockingGenericRoute {
         let mut release_rx = Some(release_rx);
         while let Some(command) = command_rx.recv().await {
             match command {
-                GenericRouteCommand::Send { kind, result, .. } => {
-                    debug_assert_eq!(kind, GenericFrameKind::DeliveryAck);
+                GenericRouteCommand::Send { result, .. } => {
+                    // The blocking test carrier is shared by message and ACK
+                    // boundary tests; keep the frame kind opaque here and
+                    // only model the transport completion barrier.
                     if let Some(sender) = started_tx.take() {
                         let _ = sender.send(());
                     }
