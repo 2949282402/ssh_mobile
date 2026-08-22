@@ -28,7 +28,8 @@ use network_protocol::{
     CommunicationClass, NetworkError as ProtocolError, NetworkErrorCode, SshStreamCloseCommand,
     SshStreamDataCommand, SshStreamOpenCommand, StreamHandle,
 };
-use quinn::SendStream;
+use network_relay::RelayDataClient;
+use quinn::{Connection, SendStream};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -1064,6 +1065,7 @@ fn validate_peer(peer_id: &str) -> bool {
 
 async fn local_stream_opener_peer_id(state: &Arc<RuntimeState>) -> Result<String, StreamError> {
     state
+        .lifecycle
         .identity
         .read()
         .await
@@ -1149,8 +1151,34 @@ async fn bind_inbound_attempt(
     manager: &ReliableStreamManager,
     opener: StreamOpener,
     stream_id: u16,
+    path: &InboundPath,
 ) -> Result<(), StreamError> {
-    let lease = match select_business_path_lease(state, peer_id, CAPABILITY_RELIABLE_STREAM).await {
+    let lease_result = match path {
+        InboundPath::Quic(connection) => {
+            state
+                .acquire_path_lease_for_connection(peer_id, connection, CAPABILITY_RELIABLE_STREAM)
+                .await
+        }
+        InboundPath::Generic(route_id) => {
+            state
+                .acquire_path_lease_for_generic_route(
+                    peer_id,
+                    *route_id,
+                    CAPABILITY_RELIABLE_STREAM,
+                )
+                .await
+        }
+        InboundPath::Relay(data) => {
+            state
+                .acquire_path_lease_for_relay_data(peer_id, data, CAPABILITY_RELIABLE_STREAM)
+                .await
+        }
+        #[cfg(test)]
+        InboundPath::Current => {
+            select_business_path_lease(state, peer_id, CAPABILITY_RELIABLE_STREAM).await
+        }
+    };
+    let lease = match lease_result {
         Ok(lease) => lease,
         Err(_) => {
             return Err(close_stream_after_path_loss(manager, peer_id, opener, stream_id).await)
@@ -1160,6 +1188,19 @@ async fn bind_inbound_attempt(
         return Err(StreamError::NotConnected);
     }
     manager.bind_lease(opener, stream_id, lease).await
+}
+
+/// Identifies the physical carrier that delivered an inbound stream frame.
+/// The identity is deliberately stronger than a route preference: a path
+/// replacement must not rebind an already-arrived stream to a different
+/// carrier.
+#[derive(Clone)]
+pub(crate) enum InboundPath {
+    Quic(Connection),
+    Generic(u64),
+    Relay(Arc<RelayDataClient>),
+    #[cfg(test)]
+    Current,
 }
 
 /// Opens a byte stream to a peer. `consumer` selects how inbound bytes are
@@ -1446,6 +1487,7 @@ pub(crate) async fn handle_inbound_stream_frame(
     peer_id: &str,
     kind: GenericFrameKind,
     payload: &[u8],
+    path: InboundPath,
 ) -> Result<(), StreamError> {
     match kind {
         GenericFrameKind::StreamOpen => {
@@ -1454,7 +1496,15 @@ pub(crate) async fn handle_inbound_stream_frame(
             {
                 return Err(StreamError::InvalidFrame);
             }
-            handle_inbound_open(state, peer_id, StreamOpener::Remote, stream_id, &service).await
+            handle_inbound_open(
+                state,
+                peer_id,
+                StreamOpener::Remote,
+                stream_id,
+                &service,
+                path,
+            )
+            .await
         }
         GenericFrameKind::StreamBytes => {
             let (opener_peer_id, stream_id, seq, data) = decode_stream_bytes_frame(payload)?;
@@ -1483,6 +1533,7 @@ async fn handle_inbound_open(
     opener: StreamOpener,
     stream_id: u16,
     service: &str,
+    path: InboundPath,
 ) -> Result<(), StreamError> {
     let consumer = if service == STREAM_SERVICE_SSH {
         StreamConsumer::Bridge
@@ -1503,7 +1554,9 @@ async fn handle_inbound_open(
         }
         Err(error) => return Err(error),
     }
-    if let Err(error) = bind_inbound_attempt(state, peer_id, &manager, opener, stream_id).await {
+    if let Err(error) =
+        bind_inbound_attempt(state, peer_id, &manager, opener, stream_id, &path).await
+    {
         let _ = close_stream_after_path_loss(&manager, peer_id, opener, stream_id).await;
         return Err(error);
     }
@@ -1524,6 +1577,7 @@ pub(crate) async fn handle_incoming_quic_stream(
     peer_id: String,
     stream_id: u16,
     service: String,
+    connection: Connection,
     send: quinn::SendStream,
     receive: quinn::RecvStream,
 ) {
@@ -1545,9 +1599,16 @@ pub(crate) async fn handle_incoming_quic_stream(
         }
         Err(_) => return,
     }
-    if bind_inbound_attempt(&state, &peer_id, &manager, StreamOpener::Remote, stream_id)
-        .await
-        .is_err()
+    if bind_inbound_attempt(
+        &state,
+        &peer_id,
+        &manager,
+        StreamOpener::Remote,
+        stream_id,
+        &InboundPath::Quic(connection),
+    )
+    .await
+    .is_err()
     {
         let _ =
             close_stream_after_path_loss(&manager, &peer_id, StreamOpener::Remote, stream_id).await;
@@ -2138,7 +2199,7 @@ mod tests {
             event_tx,
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
-        *state.identity.write().await = Some(Arc::new(
+        *state.lifecycle.identity.write().await = Some(Arc::new(
             network_identity::DeviceIdentity::from_private_keys(
                 "local-a".into(),
                 [1u8; 32],
@@ -2158,9 +2219,15 @@ mod tests {
 
         let local_frame =
             encode_stream_bytes_frame("local-a", 1, 0, b"local-bytes").expect("encode local frame");
-        handle_inbound_stream_frame(&state, peer_id, GenericFrameKind::StreamBytes, &local_frame)
-            .await
-            .expect("route local opener");
+        handle_inbound_stream_frame(
+            &state,
+            peer_id,
+            GenericFrameKind::StreamBytes,
+            &local_frame,
+            InboundPath::Current,
+        )
+        .await
+        .expect("route local opener");
         let remote_frame = encode_stream_bytes_frame("peer-b", 1, 0, b"remote-bytes")
             .expect("encode remote frame");
         handle_inbound_stream_frame(
@@ -2168,6 +2235,7 @@ mod tests {
             peer_id,
             GenericFrameKind::StreamBytes,
             &remote_frame,
+            InboundPath::Current,
         )
         .await
         .expect("route remote opener");
@@ -2344,15 +2412,23 @@ mod tests {
             .await
             .expect("register stream test session");
         let route = crate::connection::test_blocking_generic_route();
+        let route_id = route.handle.id();
         state
             .attach_test_generic_route(peer_id, session_id, route.handle)
             .await
             .expect("attach stream test path");
         route.worker.abort();
         // 首次 open 注册一条活动流（Event 消费者，数据以事件形式交付）。
-        handle_inbound_open(&state, peer_id, StreamOpener::Remote, 42, "custom")
-            .await
-            .expect("first open");
+        handle_inbound_open(
+            &state,
+            peer_id,
+            StreamOpener::Remote,
+            42,
+            "custom",
+            InboundPath::Generic(route_id),
+        )
+        .await
+        .expect("first open");
         let manager = state.stream_manager(peer_id).await;
         assert!(
             manager.is_open(StreamOpener::Remote, 42).await,
@@ -2361,9 +2437,16 @@ mod tests {
 
         // 同一 stream_id 的重复 open：必须被忽略，绝不能把现有活动流当作
         // 关闭处理（修复 #5：原先会 handle_close 关掉现有流的接收侧）。
-        handle_inbound_open(&state, peer_id, StreamOpener::Remote, 42, "custom")
-            .await
-            .expect("duplicate open is ignored");
+        handle_inbound_open(
+            &state,
+            peer_id,
+            StreamOpener::Remote,
+            42,
+            "custom",
+            InboundPath::Generic(route_id),
+        )
+        .await
+        .expect("duplicate open is ignored");
         assert!(
             manager.is_open(StreamOpener::Remote, 42).await,
             "existing stream must stay open"
@@ -2387,6 +2470,47 @@ mod tests {
             Some(network_event::Payload::SshStreamDataReceived(recv))
                 if recv.handle.as_ref().is_some_and(|handle| handle.opener_device_id == "peer-a" && handle.stream_id == 42) && recv.data == b"still-live"
         ));
+    }
+
+    #[tokio::test]
+    async fn inbound_open_rejects_carrier_mismatch_without_rebinding() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(RuntimeState::new(
+            event_tx,
+            Arc::new(std::sync::atomic::AtomicU16::new(0)),
+        ));
+        let peer_id = "peer-a";
+        let session_id = crate::session::SessionId::new();
+        state
+            .connection_sessions
+            .register_pending_session(peer_id, session_id)
+            .await
+            .expect("register stream test session");
+        let route = crate::connection::test_blocking_generic_route();
+        let route_id = route.handle.id();
+        state
+            .attach_test_generic_route(peer_id, session_id, route.handle)
+            .await
+            .expect("attach stream test path");
+        route.worker.abort();
+
+        let result = handle_inbound_open(
+            &state,
+            peer_id,
+            StreamOpener::Remote,
+            43,
+            "custom",
+            InboundPath::Generic(route_id.wrapping_add(1)),
+        )
+        .await;
+        assert!(matches!(result, Err(StreamError::Closed)));
+        assert!(
+            !state
+                .stream_manager(peer_id)
+                .await
+                .is_open(StreamOpener::Remote, 43)
+                .await
+        );
     }
 
     #[tokio::test]

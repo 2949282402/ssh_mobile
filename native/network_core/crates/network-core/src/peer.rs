@@ -23,9 +23,10 @@ use tokio::time::timeout;
 
 use crate::connect::GenericRouteScope;
 use crate::connect::{
-    profile_capability_mask, CAPABILITY_RELIABLE_MESSAGE, CAPABILITY_UNRELIABLE_DATAGRAM,
-    DEFAULT_CONNECTION_CAPABILITY,
+    profile_capability_mask, CAPABILITY_UNRELIABLE_DATAGRAM, DEFAULT_CONNECTION_CAPABILITY,
 };
+#[cfg(test)]
+use crate::connect::{CAPABILITY_RELIABLE_MESSAGE, CAPABILITY_RELIABLE_STREAM};
 use crate::connection::{
     prepare_generic_route, ConnectionProfile, GenericConnection, GenericFrameKind,
     GenericInboundFrame, GenericRouteHandle, GenericRouteRuntime, RouteTopology, RouteTransport,
@@ -86,6 +87,10 @@ pub(crate) struct DirectRouteAttempt {
     pub(crate) session_id: SessionId,
     pub(crate) attempt_id: String,
     pub(crate) connect_window: Duration,
+    /// Exact capability demand carried by this attempt.  A supervisor may
+    /// merge concurrent business requests, so route admission must validate
+    /// this mask instead of relying on the legacy class projection.
+    pub(crate) required_capabilities: u8,
     pub(crate) allow_websocket: bool,
     /// Candidate snapshots arriving from the authenticated ConnectivityAnswer
     /// while the bounded Direct race is still running.
@@ -147,7 +152,7 @@ pub(crate) async fn configure_runtime(
             "receive_directory must be absolute",
         ));
     }
-    if state.endpoint.read().await.is_some() {
+    if state.lifecycle.endpoint.read().await.is_some() {
         return Err(protocol_error(
             NetworkErrorCode::InvalidArgument,
             "network runtime is already configured",
@@ -223,12 +228,13 @@ pub(crate) async fn configure_runtime(
         .map_err(|error| protocol_error(NetworkErrorCode::QuicError, error.to_string()))?;
     let endpoint = manager.endpoint;
     state
+        .lifecycle
         .bound_port
         .store(bound_address.port(), Ordering::Release);
-    *state.identity.write().await = Some(identity);
-    *state.receive_directory.write().await = Some(receive_directory);
+    *state.lifecycle.identity.write().await = Some(identity);
+    *state.lifecycle.receive_directory.write().await = Some(receive_directory);
     *state.local_path_manager.write().await = Some(path_manager);
-    *state.endpoint.write().await = Some(endpoint.clone());
+    *state.lifecycle.endpoint.write().await = Some(endpoint.clone());
     tracing::info!(%bound_address, "native UDP socket is shared by candidate discovery and QUIC");
     let task_id = state
         .task_supervisor
@@ -241,7 +247,7 @@ pub(crate) async fn configure_runtime(
         })?;
     {
         // 作用域限定 MutexGuard 生命周期，避免跨 await 持有非 Send 的 guard。
-        let mut accept_task = state.accept_task.lock().map_err(|_| {
+        let mut accept_task = state.lifecycle.accept_task.lock().map_err(|_| {
             protocol_error(NetworkErrorCode::QuicError, "accept task lock poisoned")
         })?;
         *accept_task = Some(task_id);
@@ -256,7 +262,7 @@ pub(crate) async fn configure_runtime(
             protocol_error(NetworkErrorCode::Cancelled, "network runtime is stopping")
         })?;
     {
-        let mut tcp_accept_task = state.tcp_accept_task.lock().map_err(|_| {
+        let mut tcp_accept_task = state.lifecycle.tcp_accept_task.lock().map_err(|_| {
             protocol_error(NetworkErrorCode::IoError, "TCP accept task lock poisoned")
         })?;
         *tcp_accept_task = Some(tcp_task_id);
@@ -510,6 +516,7 @@ pub(crate) async fn connect_direct_with_crypto(
     session_binding: &str,
     state: Arc<RuntimeState>,
     expected_session_id: Option<SessionId>,
+    required_capabilities: u8,
 ) -> Result<(Connection, SessionCryptoMaterial, ConnectionAdmissionLease), ProtocolError> {
     let started = Instant::now();
     let connection = connect_direct(
@@ -550,7 +557,7 @@ pub(crate) async fn connect_direct_with_crypto(
                         &authenticated_peer_id,
                         expected_session_id,
                         &remote_session_binding,
-                        DEFAULT_CONNECTION_CAPABILITY | CAPABILITY_UNRELIABLE_DATAGRAM,
+                        required_capabilities,
                     )
                     .await
                     .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
@@ -579,7 +586,12 @@ pub(crate) async fn connect_direct_with_crypto(
     let quic_profile =
         ConnectionProfile::for_route(RouteType::QuicDirect).expect("QUIC route profile");
     if !state
-        .candidate_supports_required(&peer_id, admission.session_id, quic_profile)
+        .candidate_supports(
+            &peer_id,
+            admission.session_id,
+            quic_profile,
+            required_capabilities,
+        )
         .await
     {
         state
@@ -710,6 +722,7 @@ async fn connect_direct_candidates_with_crypto(
     session_binding: String,
     state: Arc<RuntimeState>,
     expected_session_id: Option<SessionId>,
+    required_capabilities: u8,
     mut candidate_updates: watch::Receiver<Option<Vec<Candidate>>>,
 ) -> Result<(Connection, SessionCryptoMaterial, ConnectionAdmissionLease), ProtocolError> {
     let mut pending = VecDeque::new();
@@ -746,6 +759,7 @@ async fn connect_direct_candidates_with_crypto(
                     &session_binding,
                     state,
                     expected_session_id,
+                    required_capabilities,
                 )
                 .await
             });
@@ -837,6 +851,7 @@ pub(crate) async fn connect_direct_or_generic(
         session_id,
         attempt_id,
         connect_window,
+        required_capabilities,
         allow_websocket,
         candidate_updates,
     } = attempt;
@@ -861,6 +876,7 @@ pub(crate) async fn connect_direct_or_generic(
             session_binding.clone(),
             Arc::clone(&state),
             Some(session_id),
+            required_capabilities,
             candidate_updates.clone(),
         ),
     )
@@ -895,6 +911,7 @@ pub(crate) async fn connect_direct_or_generic(
             session_binding,
             state,
             session_id,
+            required_capabilities,
             allow_websocket,
             direct_deadline,
             candidate_updates,
@@ -943,6 +960,7 @@ pub(crate) async fn connect_responder_direct(
         session_binding,
         state,
         None,
+        DEFAULT_CONNECTION_CAPABILITY | CAPABILITY_UNRELIABLE_DATAGRAM,
         candidate_updates,
     )
     .await?;
@@ -962,6 +980,7 @@ async fn connect_generic_candidate(
     session_binding: String,
     state: Arc<RuntimeState>,
     expected_session_id: SessionId,
+    required_capabilities: u8,
     allow_websocket: bool,
     candidate_window: Duration,
 ) -> Result<AuthenticatedGenericRoute, ProtocolError> {
@@ -976,6 +995,7 @@ async fn connect_generic_candidate(
             session_binding.clone(),
             Arc::clone(&state),
             expected_session_id,
+            required_capabilities,
         ));
         if allow_websocket {
             transports.spawn(connect_websocket_route(
@@ -986,6 +1006,7 @@ async fn connect_generic_candidate(
                 session_binding,
                 Arc::clone(&state),
                 expected_session_id,
+                required_capabilities,
             ));
         }
 
@@ -998,7 +1019,12 @@ async fn connect_generic_candidate(
                     let compatible = match route.scope.profile() {
                         Some(profile) => {
                             state
-                                .candidate_supports_required(&peer_id, session_id, profile)
+                                .candidate_supports(
+                                    &peer_id,
+                                    session_id,
+                                    profile,
+                                    required_capabilities,
+                                )
                                 .await
                         }
                         None => false,
@@ -1061,6 +1087,7 @@ async fn connect_generic_candidates(
     session_binding: String,
     state: Arc<RuntimeState>,
     expected_session_id: SessionId,
+    required_capabilities: u8,
     allow_websocket: bool,
     deadline: Instant,
     mut candidate_updates: watch::Receiver<Option<Vec<Candidate>>>,
@@ -1094,6 +1121,7 @@ async fn connect_generic_candidates(
                 session_binding_for_task,
                 state_for_task,
                 expected_session_id,
+                required_capabilities,
                 allow_websocket,
                 candidate_window,
             ));
@@ -1155,7 +1183,6 @@ async fn connect_generic_candidates(
         )
     }))
 }
-
 /// Register both halves of one GenericRoute with the Session supervisor and
 /// wait for their deterministic startup barriers. The returned scope remains
 /// staged until ConnectionSessionStore sends its atomic commit signal.
@@ -1252,6 +1279,7 @@ pub(crate) async fn supervise_generic_route(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn connect_tcp_route(
     endpoint: SocketAddr,
     identity: Arc<DeviceIdentity>,
@@ -1260,6 +1288,7 @@ async fn connect_tcp_route(
     session_binding: String,
     state: Arc<RuntimeState>,
     expected_session_id: SessionId,
+    required_capabilities: u8,
 ) -> Result<AuthenticatedGenericRoute, ProtocolError> {
     let timeout_peer_id = peer_id.clone();
     let result = tokio::time::timeout(GENERIC_ROUTE_CONNECT_TIMEOUT, async move {
@@ -1300,7 +1329,7 @@ async fn connect_tcp_route(
                         &resolver_peer_id,
                         Some(expected_session_id),
                         &remote_session_binding,
-                        DEFAULT_CONNECTION_CAPABILITY,
+                        required_capabilities,
                     )
                     .await
                     .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
@@ -1341,7 +1370,12 @@ async fn connect_tcp_route(
         };
         let profile = scope.profile().expect("supervised TCP route profile");
         if !state
-            .candidate_supports_required(&peer_id, admission.session_id, profile)
+            .candidate_supports(
+                &peer_id,
+                admission.session_id,
+                profile,
+                required_capabilities,
+            )
             .await
         {
             scope.close().await;
@@ -1380,6 +1414,7 @@ async fn connect_tcp_route(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn connect_websocket_route(
     endpoint: SocketAddr,
     identity: Arc<DeviceIdentity>,
@@ -1388,6 +1423,7 @@ async fn connect_websocket_route(
     session_binding: String,
     state: Arc<RuntimeState>,
     expected_session_id: SessionId,
+    required_capabilities: u8,
 ) -> Result<AuthenticatedGenericRoute, ProtocolError> {
     let url = format!("ws://{endpoint}/V2/transport");
     let timeout_peer_id = peer_id.clone();
@@ -1427,7 +1463,7 @@ async fn connect_websocket_route(
                         &resolver_peer_id,
                         Some(expected_session_id),
                         &remote_session_binding,
-                        CAPABILITY_RELIABLE_MESSAGE,
+                        required_capabilities,
                     )
                     .await
                     .map_err(|_| crate::crypto_handshake::CryptoHandshakeError::Failed)?;
@@ -1467,7 +1503,12 @@ async fn connect_websocket_route(
         };
         let profile = scope.profile().expect("supervised WebSocket route profile");
         if !state
-            .candidate_supports_required(&peer_id, admission.session_id, profile)
+            .candidate_supports(
+                &peer_id,
+                admission.session_id,
+                profile,
+                required_capabilities,
+            )
             .await
         {
             scope.close().await;
@@ -1551,7 +1592,7 @@ pub(crate) async fn establish_relay_crypto(
         })?;
     let key = format!("{peer_id}/{session_token}");
     let (response_tx, mut response_rx) = mpsc::channel(3);
-    let mut waiters = state.relay_crypto_waiters.write().await;
+    let mut waiters = state.relay.crypto_waiters.write().await;
     if waiters.len() >= MAX_PENDING_RELAY_CRYPTO_HANDSHAKES && !waiters.contains_key(&key) {
         return Err(protocol_error_with_peer(
             NetworkErrorCode::RelayError,
@@ -1694,7 +1735,7 @@ pub(crate) async fn establish_relay_crypto(
         Ok((material, admission))
     }
     .await;
-    state.relay_crypto_waiters.write().await.remove(&key);
+    state.relay.crypto_waiters.write().await.remove(&key);
     result
 }
 
@@ -1769,6 +1810,7 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
             let result = async {
                 let connection = incoming.await?;
                 let identity = state
+                    .lifecycle
                     .identity
                     .read()
                     .await
@@ -1793,45 +1835,48 @@ pub(crate) async fn accept_connections(endpoint: Endpoint, state: Arc<RuntimeSta
                 let connection = session.connection.clone();
                 let e2ee_policy = state.e2ee_policy(&peer_id).await;
                 let binding_state = Arc::clone(&state);
-                let crypto =
-                    tokio::time::timeout(
-                        PEER_CONNECT_TIMEOUT,
-                        crate::crypto_handshake::respond_quic_with_policy(
-                            &connection,
-                            state.identity.read().await.clone().ok_or_else(|| {
-                                std::io::Error::other("runtime identity unavailable")
-                            })?,
-                            &state.trusted_peer_keys,
-                            e2ee_policy,
-                            move |authenticated_peer_id, remote_session_binding| {
-                                let binding_state = Arc::clone(&binding_state);
-                                let authenticated_peer_id = authenticated_peer_id.to_string();
-                                let remote_session_binding = remote_session_binding.to_string();
-                                async move {
-                                    let admission = binding_state
-                                        .admit_authenticated_session_with_capability(
-                                            &authenticated_peer_id,
-                                            None,
-                                            &remote_session_binding,
-                                            DEFAULT_CONNECTION_CAPABILITY
-                                                | CAPABILITY_UNRELIABLE_DATAGRAM,
-                                        )
-                                        .await
-                                        .map_err(|_| {
-                                            crate::crypto_handshake::CryptoHandshakeError::Failed
-                                        })?;
-                                    Ok((admission.session_id.wire_key(), admission))
-                                }
-                            },
-                        ),
+                let crypto = tokio::time::timeout(
+                    PEER_CONNECT_TIMEOUT,
+                    crate::crypto_handshake::respond_quic_with_policy(
+                        &connection,
+                        state
+                            .lifecycle
+                            .identity
+                            .read()
+                            .await
+                            .clone()
+                            .ok_or_else(|| std::io::Error::other("runtime identity unavailable"))?,
+                        &state.trusted_peer_keys,
+                        e2ee_policy,
+                        move |authenticated_peer_id, remote_session_binding| {
+                            let binding_state = Arc::clone(&binding_state);
+                            let authenticated_peer_id = authenticated_peer_id.to_string();
+                            let remote_session_binding = remote_session_binding.to_string();
+                            async move {
+                                let admission = binding_state
+                                    .admit_authenticated_session_with_capability(
+                                        &authenticated_peer_id,
+                                        None,
+                                        &remote_session_binding,
+                                        DEFAULT_CONNECTION_CAPABILITY
+                                            | CAPABILITY_UNRELIABLE_DATAGRAM,
+                                    )
+                                    .await
+                                    .map_err(|_| {
+                                        crate::crypto_handshake::CryptoHandshakeError::Failed
+                                    })?;
+                                Ok((admission.session_id.wire_key(), admission))
+                            }
+                        },
+                    ),
+                )
+                .await
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "application E2EE handshake timed out",
                     )
-                    .await
-                    .map_err(|_| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "application E2EE handshake timed out",
-                        )
-                    })??;
+                })??;
                 let (authenticated_peer_id, crypto, admission) = crypto;
                 if authenticated_peer_id != peer_id {
                     return Err(std::io::Error::new(
@@ -1999,7 +2044,9 @@ async fn accept_tcp_loop(
                     .and_then(Result::ok)
                     .is_some_and(|length| length == probe.len() && &probe == b"GET ");
             #[cfg(test)]
-            if !looks_like_websocket && !state.tcp_fallback_enabled.load(Ordering::Acquire) {
+            if !looks_like_websocket
+                && !state.lifecycle.tcp_fallback_enabled.load(Ordering::Acquire)
+            {
                 return;
             }
             let connection = if looks_like_websocket {
@@ -2039,6 +2086,7 @@ async fn accept_authenticated_generic(
     peer_address: SocketAddr,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let identity = state
+        .lifecycle
         .identity
         .read()
         .await
@@ -2185,6 +2233,7 @@ pub(crate) async fn receive_file_streams(
             Ok((send, mut receive)) => {
                 let state = Arc::clone(&state);
                 let peer_id = peer_id.clone();
+                let inbound_connection = connection.clone();
                 let supervisor = Arc::clone(&state.task_supervisor);
                 let _ = supervisor.spawn_session(
                     session_id.wire_key(),
@@ -2205,8 +2254,26 @@ pub(crate) async fn receive_file_streams(
                         if magic == crate::stream::FILE_OFFER_MAGIC {
                             match crate::transfer::read_file_offer_after_magic(&mut receive).await {
                                 Ok(manifest) => {
+                                    let path_lease = match state
+                                        .acquire_path_lease_for_connection(
+                                            &peer_id,
+                                            &inbound_connection,
+                                            crate::connect::CAPABILITY_RELIABLE_STREAM,
+                                        )
+                                        .await
+                                    {
+                                        Ok(lease) => lease,
+                                        Err(error) => {
+                                            tracing::debug!(
+                                                peer_id = %peer_id,
+                                                error = %error,
+                                                "rejected QUIC file offer without its carrier path"
+                                            );
+                                            return;
+                                        }
+                                    };
                                     crate::transfer::handle_incoming_file_after_offer(
-                                        peer_id, send, receive, manifest, state,
+                                        peer_id, send, receive, manifest, state, path_lease,
                                     )
                                     .await;
                                 }
@@ -2224,7 +2291,13 @@ pub(crate) async fn receive_file_streams(
                             {
                                 Ok((stream_id, service)) => {
                                     crate::stream::handle_incoming_quic_stream(
-                                        state, peer_id, stream_id, service, send, receive,
+                                        state,
+                                        peer_id,
+                                        stream_id,
+                                        service,
+                                        inbound_connection,
+                                        send,
+                                        receive,
                                     )
                                     .await;
                                 }
@@ -2395,6 +2468,7 @@ fn generic_route_receiver_task(
                             &peer_id,
                             frame.kind,
                             &frame.payload,
+                            crate::stream::InboundPath::Generic(route_id),
                         )
                         .await
                         .map_err(|error| std::io::Error::other(error.to_string())),
@@ -2762,6 +2836,7 @@ mod tests {
             old_session_id.wire_key(),
             Arc::clone(&state),
             old_session_id,
+            DEFAULT_CONNECTION_CAPABILITY,
         )
         .await
         .expect("outbound TCP GenericRoute should authenticate");
@@ -3095,6 +3170,7 @@ mod tests {
                 session_id.wire_key(),
                 Arc::clone(&state),
                 session_id,
+                CAPABILITY_RELIABLE_MESSAGE,
                 true,
                 Duration::from_secs(1),
             ),
@@ -3188,8 +3264,8 @@ mod tests {
             [72u8; 32],
         ));
         let remote_public_key = remote_identity.public_identity_key().to_bytes();
-        *client_state.identity.write().await = Some(Arc::clone(&local_identity));
-        *server_state.identity.write().await = Some(remote_identity);
+        *client_state.lifecycle.identity.write().await = Some(Arc::clone(&local_identity));
+        *server_state.lifecycle.identity.write().await = Some(remote_identity);
         server_state.trusted_peer_keys.write().await.insert(
             local_peer_id.to_string(),
             local_identity.public_identity_key().to_bytes(),
@@ -3253,6 +3329,7 @@ mod tests {
             // Exercise the production Direct window so a busy test runner does not
             // turn the candidate-update assertion into a scheduler race.
             connect_window: crate::connect::DIRECT_CONNECT_WINDOW,
+            required_capabilities: DEFAULT_CONNECTION_CAPABILITY | CAPABILITY_UNRELIABLE_DATAGRAM,
             allow_websocket: true,
             candidate_updates,
         };
@@ -3353,6 +3430,7 @@ mod tests {
             connect_window: crate::connect::DIRECT_CONNECT_WINDOW,
             // This fixture intentionally exposes only TCP; transport racing has
             // a separate regression test below.
+            required_capabilities: CAPABILITY_RELIABLE_STREAM,
             allow_websocket: false,
             candidate_updates,
         };

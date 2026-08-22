@@ -3,24 +3,22 @@
 use network_protocol::{network_event, NetworkCommand, NetworkEvent};
 use prost::Message;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU16, AtomicU8, AtomicUsize, Ordering},
+    atomic::{AtomicU16, AtomicU8, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
 use tokio::runtime::Runtime;
 #[cfg(test)]
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex, Notify, RwLock};
+use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify, RwLock};
 use tracing::info;
 
 use crate::commands::run_command_worker;
 use crate::connect::{
-    profile_capability_mask, PathHandle, PathProjection, PeerId, PeerPathManager,
+    profile_capability_mask, PathHandle, PathLease, PathProjection, PeerId, PeerPathManager,
 };
 use crate::crypto::{CryptoContext, CryptoError, SessionCryptoManager};
-use crate::crypto_handshake::{
-    RelayResponderConfirmation, RelayResponderHandshake, SessionCryptoMaterial,
-};
+use crate::crypto_handshake::SessionCryptoMaterial;
 use crate::delivery::DeliveryManager;
 use crate::errors::{CoreNetworkError, NetworkError};
 use crate::session::{
@@ -28,15 +26,16 @@ use crate::session::{
     ConnectionSessionStore, SessionId,
 };
 use crate::stream::ReliableStreamManager;
-use crate::task_supervisor::{RuntimeTaskSupervisor, TaskId};
-use network_identity::DeviceIdentity;
+use crate::task_supervisor::RuntimeTaskSupervisor;
 use network_nat::{PathManager, ResolvedCandidateCache};
 use network_relay::RelayDataClient;
-use network_transfer::TransferManager;
-use quinn::Endpoint;
-use std::collections::{HashMap, HashSet};
+#[path = "runtime_lifecycle.rs"]
+mod runtime_lifecycle;
+use runtime_lifecycle::RuntimeLifecycleState;
+use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::pin::Pin;
 
 pub(crate) const PEER_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 pub(crate) const RECONNECT_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
@@ -292,6 +291,7 @@ pub(crate) struct ConnectionAdmissionLease {
 pub(crate) enum ConnectDecision {
     Started(SessionId),
     AlreadyConnected(SessionId),
+    CapabilityMismatch(SessionId),
     InProgress(SessionId),
 }
 
@@ -318,9 +318,6 @@ impl std::ops::Deref for ConnectionAdmissionLease {
     }
 }
 
-pub(crate) type RelayCryptoMessage = (u8, Vec<u8>);
-type RelayCryptoSender = mpsc::Sender<RelayCryptoMessage>;
-
 #[derive(Clone)]
 pub(crate) struct PeerConfig {
     pub(crate) endpoint: Option<SocketAddr>,
@@ -329,25 +326,50 @@ pub(crate) struct PeerConfig {
     pub(crate) e2ee_policy: network_protocol::E2eePolicy,
 }
 
+/// Typed bridge owned by the Runtime boundary for Relay-backed transfer work.
+///
+/// Transfer dispatch must not import the Relay implementation directly: the
+/// Runtime exposes the narrow business capability while Relay provides the
+/// concrete adapter. Borrowed path leases remain owned by the caller and are
+/// kept alive by the returned transfer future.
+pub(crate) trait RelayTransferPort {
+    fn dispatch_relay_transfer(
+        self: Arc<Self>,
+        peer: PeerConfig,
+        transfer: network_transfer::ResumableTransfer,
+        lease: PathLease,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+    fn respond_to_relay_incoming<'a>(
+        &'a self,
+        transfer_id: &'a str,
+        accepted: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<(), network_protocol::NetworkError>> + Send + 'a>>;
+
+    fn cancel_relay_transfer<'a>(
+        &'a self,
+        transfer_id: &'a str,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+}
+
+/// Typed bridge for Relay-triggered transfer recovery.
+///
+/// Relay only requests recovery; the Transfer domain owns the resume policy
+/// and remains the sole implementation of these operations.
+pub(crate) trait TransferRelayPort {
+    fn resume_relay_transfers(
+        self: Arc<Self>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
+    fn resume_transfers_for_peer(
+        self: Arc<Self>,
+        peer_id: String,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+}
+
 pub(crate) struct RuntimeState {
-    /// Native bind 完成后发布实际 UDP 端口，供受控 FFI 诊断读取。
-    ///
-    /// 该快照只描述当前 Runtime 的监听资源，不把 socket 或 Quinn handle
-    /// 暴露给 Dart，也不参与 Session/Peer 的业务状态。
-    pub(crate) bound_port: Arc<AtomicU16>,
-    pub(crate) endpoint: RwLock<Option<Endpoint>>,
-    /// Runtime-owned QUIC accept loop task id.  The task itself lives only in
-    /// `RuntimeTaskSupervisor`; this field is a cancellation lookup, not a
-    /// second ownership path.
-    pub(crate) accept_task: Mutex<Option<TaskId>>,
-    /// Runtime-owned TCP fallback accept loop. TCP shares the configured port
-    /// with QUIC's UDP socket because TCP and UDP have independent bind
-    /// namespaces.
-    pub(crate) tcp_accept_task: Mutex<Option<TaskId>>,
-    #[cfg(test)]
-    pub(crate) tcp_fallback_enabled: AtomicBool,
-    pub(crate) identity: RwLock<Option<Arc<DeviceIdentity>>>,
-    pub(crate) receive_directory: RwLock<Option<PathBuf>>,
+    /// Resources created and released by the Runtime start/stop lifecycle.
+    pub(crate) lifecycle: RuntimeLifecycleState,
     pub(crate) local_path_manager: RwLock<Option<Arc<PathManager>>>,
     pub(crate) peers: RwLock<HashMap<String, PeerConfig>>,
     pub(crate) trusted_peer_keys: RwLock<HashMap<String, [u8; 32]>>,
@@ -359,19 +381,10 @@ pub(crate) struct RuntimeState {
     pub(crate) crypto: SessionCryptoManager,
     pub(crate) delivery: DeliveryManager,
     pub(crate) realtime: AsyncMutex<crate::realtime::RealtimeManager>,
-    pub(crate) relay_config: RwLock<Option<crate::relay::RelayReconnectConfig>>,
-    pub(crate) relay_reconnect_task: Mutex<Option<TaskId>>,
-    pub(crate) relay_reconnect_active: AtomicBool,
-    /// 当前 Relay 凭据已被服务端判定过期/冲突；在 Dart 下发新的
-    /// ConfigureRelayCommand 前抑制所有自动重连。
-    pub(crate) relay_credential_stale: AtomicBool,
+    /// Runtime-owned Relay control/data/transfer state.
+    pub(crate) relay: crate::relay_state::RelayDomainState,
     /// transport-network v2：本地 Discovery 生命周期 owner（§9/§29）。
     pub(crate) local_discovery: RwLock<Option<Arc<crate::discovery::LocalDiscoveryManager>>>,
-    /// transport-network v2：v2 控制面客户端 sink（§31 `RelayControlClient` 抽象）。
-    ///
-    /// resolve / publish / signaling / reserve 均经此 trait 对象路由。Step 6 接线后由
-    /// `relay::configure_relay_for_state` 填充。
-    pub(crate) relay_control: RwLock<Option<Arc<dyn crate::discovery::DiscoveryControlPlane>>>,
     /// transport-network v2：已就绪 Session 摘要索引（§34/§29）；不拥有连接。
     pub(crate) ready_session_index: crate::connect::ready_index::ReadySessionIndex,
     /// transport-network v2：Presence → UI-only 提示缓存（§23/§29）。Presence 事件
@@ -401,27 +414,8 @@ pub(crate) struct RuntimeState {
     /// SSH 网关桥接的本地 sshd 端口（§21 option B）。生产默认 22；测试可覆盖指向
     /// 本地 echo server。
     pub(crate) stream_gateway_port: Arc<AtomicU16>,
-    pub(crate) relay_crypto_waiters: RwLock<HashMap<String, RelayCryptoSender>>,
-    pub(crate) relay_crypto_responders: AsyncMutex<HashMap<String, RelayResponderHandshake>>,
-    pub(crate) relay_crypto_confirmers:
-        AsyncMutex<HashMap<String, RelayResponderConfirmation<ConnectionAdmissionLease>>>,
-    /// Peer-level business admission guard.  RelayDataClient owns the socket
-    /// and the Relay remains opaque; only the endpoint sets this after the
-    /// authenticated Noise/PathHandshakeV2 admission is complete.
-    pub(crate) relay_path_ready: RwLock<HashSet<String>>,
-    /// reservation 数据面上的 Relay 文件传输业务状态（非 V2 会话协议）：
-    /// - `relay_pending_incoming`：等待 UI 审批的传入 offer（transfer_id → pending）。
-    /// - `relay_active_incoming`：正在接收的活跃传输（transfer_id → active）。
-    /// - `relay_acceptances` / `relay_completions`：发送方按 transfer_id 等待 accept/
-    ///   complete_ack 应答的 oneshot（由数据面事件循环投递）。
-    pub(crate) relay_pending_incoming: RwLock<HashMap<String, crate::relay::PendingRelayIncoming>>,
-    pub(crate) relay_active_incoming:
-        AsyncMutex<HashMap<String, crate::relay::ActiveRelayIncoming>>,
-    pub(crate) relay_acceptances:
-        RwLock<HashMap<String, oneshot::Sender<Option<crate::relay::RelayAcceptance>>>>,
-    pub(crate) relay_completions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
-    pub(crate) incoming_decisions: RwLock<HashMap<String, oneshot::Sender<bool>>>,
-    pub(crate) transfers: TransferManager,
+    /// Runtime-owned Transfer domain state.
+    pub(crate) transfer: crate::transfer::TransferDomainState,
     pub(crate) event_tx: EventSender,
     pub(crate) task_supervisor: Arc<RuntimeTaskSupervisor>,
 }
@@ -431,14 +425,7 @@ impl RuntimeState {
     pub(crate) fn new<S: Into<EventSender>>(event_tx: S, bound_port: Arc<AtomicU16>) -> Self {
         let task_supervisor = RuntimeTaskSupervisor::new();
         Self {
-            bound_port,
-            endpoint: RwLock::new(None),
-            accept_task: Mutex::new(None),
-            tcp_accept_task: Mutex::new(None),
-            #[cfg(test)]
-            tcp_fallback_enabled: AtomicBool::new(true),
-            identity: RwLock::new(None),
-            receive_directory: RwLock::new(None),
+            lifecycle: RuntimeLifecycleState::new(bound_port),
             local_path_manager: RwLock::new(None),
             peers: RwLock::new(HashMap::new()),
             trusted_peer_keys: RwLock::new(HashMap::new()),
@@ -446,12 +433,8 @@ impl RuntimeState {
             crypto: SessionCryptoManager::new(),
             delivery: DeliveryManager::new(),
             realtime: AsyncMutex::new(crate::realtime::RealtimeManager::default()),
-            relay_config: RwLock::new(None),
-            relay_reconnect_task: Mutex::new(None),
-            relay_reconnect_active: AtomicBool::new(false),
-            relay_credential_stale: AtomicBool::new(false),
+            relay: crate::relay_state::RelayDomainState::new(),
             local_discovery: RwLock::new(None),
-            relay_control: RwLock::new(None),
             ready_session_index: crate::connect::ready_index::ReadySessionIndex::new(),
             presence_hints: crate::connect::presence::PresenceHintCache::new(),
             remote_candidate_cache: RwLock::new(HashMap::new()),
@@ -464,16 +447,7 @@ impl RuntimeState {
             direct_recovery: Mutex::new(HashMap::new()),
             reliable_streams: RwLock::new(HashMap::new()),
             stream_gateway_port: Arc::new(AtomicU16::new(crate::stream::STREAM_LOCAL_SSH_PORT)),
-            relay_crypto_waiters: RwLock::new(HashMap::new()),
-            relay_crypto_responders: AsyncMutex::new(HashMap::new()),
-            relay_crypto_confirmers: AsyncMutex::new(HashMap::new()),
-            relay_path_ready: RwLock::new(HashSet::new()),
-            relay_pending_incoming: RwLock::new(HashMap::new()),
-            relay_active_incoming: AsyncMutex::new(HashMap::new()),
-            relay_acceptances: RwLock::new(HashMap::new()),
-            relay_completions: RwLock::new(HashMap::new()),
-            incoming_decisions: RwLock::new(HashMap::new()),
-            transfers: TransferManager::new(),
+            transfer: crate::transfer::TransferDomainState::new(),
             event_tx: event_tx.into(),
             task_supervisor,
         }
@@ -493,6 +467,7 @@ impl RuntimeState {
         // 并向应用发布 SshStreamClosed（SSH 不做透明恢复，客户端自行重连）。
         if let Some(manager) = self.reliable_streams.read().await.get(peer_id).cloned() {
             let local_opener_device_id = self
+                .lifecycle
                 .identity
                 .read()
                 .await
@@ -513,7 +488,7 @@ impl RuntimeState {
         // §19：ConnectionSession 销毁（transport 丢失 / 显式断开 / 被新连接替换）
         // 时把该 Peer 的非终态 TransferOperation 置为 Paused。业务状态保留在
         // TransferManager，等待下一次连接上的 ResumeTransfer(transfer_id) 恢复。
-        self.transfers.pause_peer_transfers(peer_id).await;
+        self.transfer.manager.pause_peer_transfers(peer_id).await;
         // §22：RealtimeSession 绑定在 ConnectionSession 上，transport 丢失即随
         // ConnectionSession 销毁（发出 Closed、销毁 PeerConnection）；不做透明恢复。
         crate::realtime::close_realtime_sessions_for_session(self, peer_id, session_id).await;
@@ -522,7 +497,7 @@ impl RuntimeState {
     pub(crate) async fn begin_connect(
         &self,
         peer_id: &str,
-        _required_capabilities: u8,
+        required_capabilities: u8,
     ) -> ConnectDecision {
         // SessionStore only reserves a fresh identity. It deliberately does
         // not know whether a peer is Connecting or Online; that decision is
@@ -535,7 +510,14 @@ impl RuntimeState {
                 .await
                 .is_some()
             {
-                ConnectDecision::AlreadyConnected(session_id)
+                if self
+                    .path_supports_capability(peer_id, required_capabilities)
+                    .await
+                {
+                    ConnectDecision::AlreadyConnected(session_id)
+                } else {
+                    ConnectDecision::CapabilityMismatch(session_id)
+                }
             } else {
                 ConnectDecision::InProgress(session_id)
             }
@@ -647,6 +629,107 @@ impl RuntimeState {
         Ok(lease)
     }
 
+    /// Acquire the lease for the exact QUIC carrier that delivered an inbound
+    /// stream. Inbound work must not silently move to whichever path happens
+    /// to be preferred after the frame was received.
+    pub(crate) async fn acquire_path_lease_for_connection(
+        &self,
+        peer_id: &str,
+        connection: &quinn::Connection,
+        required_capabilities: u8,
+    ) -> Result<crate::connect::PathLease, CoreNetworkError> {
+        self.acquire_matching_path_lease(peer_id, required_capabilities, |lease| {
+            lease
+                .connection()
+                .is_some_and(|candidate| candidate.stable_id() == connection.stable_id())
+        })
+        .await
+    }
+
+    /// Acquire the lease for the exact generic route that delivered an
+    /// inbound frame. The route id is the generic carrier identity, not a
+    /// current-path selection hint.
+    pub(crate) async fn acquire_path_lease_for_generic_route(
+        &self,
+        peer_id: &str,
+        route_id: u64,
+        required_capabilities: u8,
+    ) -> Result<crate::connect::PathLease, CoreNetworkError> {
+        self.acquire_matching_path_lease(peer_id, required_capabilities, |lease| {
+            match lease.stream_carrier() {
+                Some(crate::connect::StreamCarrier::Generic(handle)) => handle.id() == route_id,
+                #[cfg(test)]
+                Some(crate::connect::StreamCarrier::GenericTest(handle)) => handle.id() == route_id,
+                _ => false,
+            }
+        })
+        .await
+    }
+
+    /// Acquire the lease for the exact Relay data client that delivered an
+    /// inbound frame. Relay data clients are compared by identity because a
+    /// new reservation may exist while an old one is still draining.
+    pub(crate) async fn acquire_path_lease_for_relay_data(
+        &self,
+        peer_id: &str,
+        data: &Arc<RelayDataClient>,
+        required_capabilities: u8,
+    ) -> Result<crate::connect::PathLease, CoreNetworkError> {
+        self.acquire_matching_path_lease(peer_id, required_capabilities, |lease| {
+            lease
+                .relay_data()
+                .is_some_and(|candidate| Arc::ptr_eq(&candidate, data))
+        })
+        .await
+    }
+
+    async fn acquire_matching_path_lease<F>(
+        &self,
+        peer_id: &str,
+        required_capabilities: u8,
+        matches: F,
+    ) -> Result<crate::connect::PathLease, CoreNetworkError>
+    where
+        F: Fn(&crate::connect::PathLease) -> bool,
+    {
+        let _peer_id = PeerId::new(peer_id)?;
+        let manager = self
+            .peer_path_managers
+            .read()
+            .await
+            .get(peer_id)
+            .cloned()
+            .ok_or(CoreNetworkError::NoRoute)?;
+        let handles = {
+            let manager = manager.lock().expect("peer path manager lock");
+            let mut handles = manager.direct_ready().to_vec();
+            if let Some(handle) = manager.relay_ready() {
+                handles.push(handle.clone());
+            }
+            handles
+        };
+        for handle in handles {
+            if handle.capability_mask() & required_capabilities != required_capabilities {
+                continue;
+            }
+            let projection = manager
+                .lock()
+                .expect("peer path manager lock")
+                .projection(&handle);
+            let Some(projection) = projection else {
+                continue;
+            };
+            let Ok(lease) = projection.acquire() else {
+                continue;
+            };
+            if matches(&lease) {
+                return Ok(lease);
+            }
+            lease.release();
+        }
+        Err(CoreNetworkError::NoRoute)
+    }
+
     /// Ensure one business capability through the peer supervisor. This path
     /// starts the supervisor mailbox worker but never enables maintenance;
     /// only an explicit ConnectPeer intent may do that.
@@ -745,6 +828,30 @@ impl RuntimeState {
                     .expect("peer path manager lock")
                     .direct_ready()
                     .is_empty()
+            })
+    }
+
+    /// Return whether an already-ready Direct path satisfies the requested
+    /// capability mask.  A ready path with a different capability is not a
+    /// successful Stage A reuse candidate.
+    pub(crate) async fn has_ready_direct_path_for_capability(
+        &self,
+        peer_id: &str,
+        required_capabilities: u8,
+    ) -> bool {
+        self.peer_path_managers
+            .read()
+            .await
+            .get(peer_id)
+            .is_some_and(|manager| {
+                manager
+                    .lock()
+                    .expect("peer path manager lock")
+                    .direct_ready()
+                    .iter()
+                    .any(|handle| {
+                        handle.capability_mask() & required_capabilities == required_capabilities
+                    })
             })
     }
 
@@ -904,6 +1011,25 @@ impl RuntimeState {
             .first()
             .or_else(|| manager.relay_ready())
             .map(PathHandle::profile)
+    }
+
+    /// Check the currently ready physical paths against a business capability
+    /// without allowing the ConnectionSession admission store to answer the
+    /// route question.
+    pub(crate) async fn path_supports_capability(
+        &self,
+        peer_id: &str,
+        required_capabilities: u8,
+    ) -> bool {
+        let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() else {
+            return false;
+        };
+        let supports = manager
+            .lock()
+            .expect("peer path manager lock")
+            .select(required_capabilities)
+            .is_some();
+        supports
     }
 
     pub(crate) async fn e2ee_policy(
@@ -1411,6 +1537,7 @@ impl RuntimeState {
             return;
         };
         let local_opener_device_id = self
+            .lifecycle
             .identity
             .read()
             .await
@@ -1607,9 +1734,9 @@ impl NetworkRuntime {
             state.close_all_transport_paths().await;
             // 控制面 Drop 会中止后台读写 worker（RelayControlClient::drop）；显式
             // take 释放共享引用即可。
-            state.relay_control.write().await.take();
+            state.relay.control.write().await.take();
             state.realtime.lock().await.close_all();
-            if let Some(endpoint) = state.endpoint.write().await.take() {
+            if let Some(endpoint) = state.lifecycle.endpoint.write().await.take() {
                 endpoint.close(quinn::VarInt::from_u32(0), b"runtime stopping");
             }
             state.task_supervisor.shutdown().await;
@@ -1649,7 +1776,7 @@ impl Drop for NetworkRuntime {
         }
         if let Ok(mut state) = self.state.lock() {
             if let Some(state) = state.take() {
-                if let Ok(mut endpoint) = state.endpoint.try_write() {
+                if let Ok(mut endpoint) = state.lifecycle.endpoint.try_write() {
                     if let Some(endpoint) = endpoint.take() {
                         endpoint.close(quinn::VarInt::from_u32(0), b"runtime dropped");
                     }
@@ -1713,6 +1840,55 @@ mod tests {
         assert!(
             !projection.is_alive(),
             "projection must not own the carrier"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticated_session_rejects_an_incompatible_connected_path() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+        let peer_id = "capability-peer";
+        let session_id = SessionId::new();
+        state
+            .connection_sessions
+            .register_pending_session(peer_id, session_id)
+            .await
+            .expect("register session");
+        state
+            .connection_sessions
+            .admit_authenticated_session(peer_id, Some(session_id), "remote-binding")
+            .await
+            .expect("admit session");
+        state
+            .connection_sessions
+            .finalize_authenticated_session(peer_id, session_id, "remote-binding")
+            .await
+            .expect("finalize session");
+
+        let mut manager = PeerPathManager::new(
+            PeerId::new(peer_id).expect("peer id"),
+            Arc::clone(&state.ready_paths),
+        );
+        manager
+            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+            .expect("publish TCP path");
+        state
+            .peer_path_managers
+            .write()
+            .await
+            .insert(peer_id.to_string(), Arc::new(Mutex::new(manager)));
+
+        assert_eq!(
+            state
+                .begin_connect(peer_id, crate::connect::CAPABILITY_UNRELIABLE_DATAGRAM)
+                .await,
+            ConnectDecision::CapabilityMismatch(session_id)
+        );
+        assert_eq!(
+            state
+                .begin_connect(peer_id, crate::connect::CAPABILITY_RELIABLE_STREAM)
+                .await,
+            ConnectDecision::AlreadyConnected(session_id)
         );
     }
 }

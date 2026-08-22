@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:network_sdk/network_sdk.dart';
 
 void main() {
@@ -160,4 +160,102 @@ void main() {
       same(security),
     );
   });
+
+  test(
+    'domain ports route V2 commands and facade disposal keeps owner resources',
+    () async {
+      final port = _RecordingNetworkV2CommandPort();
+      final facade = NetworkV2FacadeImpl(port);
+
+      await facade.start();
+      await facade.connectPeer(ConnectPeerRequest(peerId: 'peer-a'));
+      await facade.disconnectPeer(DisconnectPeerRequest(peerId: 'peer-a'));
+      await facade.removePeer(RemovePeerRequest(peerId: 'peer-a'));
+      await facade.peerDiagnostics(PeerDiagnosticsRequest(peerId: 'peer-a'));
+      await facade.transferFile(
+        TransferFileRequest(
+          peerId: 'peer-a',
+          transferId: 'transfer-a',
+          filePath: '/tmp/file',
+        ),
+      );
+      await facade.sendMessage(
+        SendMessageRequest(
+          peerId: 'peer-a',
+          messageId: 'message-a',
+          payload: Uint8List.fromList(<int>[1]),
+        ),
+      );
+      await facade.openStream(
+        OpenStreamRequest(
+          peerId: 'peer-a',
+          openerDeviceId: 'device-a',
+          streamId: 1,
+        ),
+      );
+
+      expect(
+        port.requests.map((request) => request.runtimeType),
+        containsAll(<Type>[
+          ConnectPeerRequest,
+          DisconnectPeerRequest,
+          RemovePeerRequest,
+          TransferFileRequest,
+          SendMessageRequest,
+          OpenStreamRequest,
+        ]),
+      );
+      await facade.dispose();
+
+      expect(facade.lifecycle, NetworkV2LifecycleState.disposed);
+      expect(port.stopCalls, 0);
+      expect(port.disposeCalls, 0);
+    },
+  );
+}
+
+final class _RecordingNetworkV2CommandPort implements NetworkV2CommandPort {
+  final List<PeerScopedRequest> requests = <PeerScopedRequest>[];
+  int startCalls = 0;
+  int stopCalls = 0;
+  int disposeCalls = 0;
+
+  @override
+  Stream<NetworkV2Event> get events => const Stream<NetworkV2Event>.empty();
+
+  @override
+  Future<void> start() async {
+    startCalls++;
+  }
+
+  @override
+  Future<void> stop() async {
+    stopCalls++;
+  }
+
+  @override
+  Future<CommandResult<T>> execute<T>(PeerScopedRequest request) async {
+    requests.add(request);
+    return CommandResult<T>.success(
+      commandId: 'command-${requests.length}',
+      peerId: request.peerId,
+    );
+  }
+
+  @override
+  Future<CommandResult<PeerDiagnostics>> diagnostics(String peerId) async =>
+      CommandResult<PeerDiagnostics>.success(
+        commandId: 'diagnostics',
+        peerId: peerId,
+        value: PeerDiagnostics(
+          peerId: peerId,
+          state: PeerState.online,
+          e2eePolicy: E2eePolicy.required,
+        ),
+      );
+
+  @override
+  Future<void> dispose() async {
+    disposeCalls++;
+  }
 }

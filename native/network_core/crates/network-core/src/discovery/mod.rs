@@ -12,7 +12,7 @@
 //!
 //! transport-network v2 之后：v1 的 `upload_discovery` 命令、`peer_presence`
 //! 处理、`lookup` 路径已在 Step 11 删除；本模块是 Discovery 生命周期唯一实现。
-//! `state.relay_control`（v2 控制面 sink）承载 DiscoveryPublish/DiscoveryAck；
+//! `state.relay.control`（v2 控制面 sink）承载 DiscoveryPublish/DiscoveryAck；
 //! 控制面未接线时 hooks 是安全的 no-op。
 
 mod local_discovery;
@@ -78,7 +78,7 @@ pub(crate) async fn begin_epoch(state: &Arc<RuntimeState>) {
 /// 控制连接建立**或重连**（control_connection_id C1→C2，§8）后重新发布完整 Snapshot：
 /// epoch 与 revision **不变**（owner 在服务端随 control_connection_id 改变）。
 ///
-/// 当前 `state.relay_control`（v2 控制面 sink）尚未接线（Step 6/7），sink 不存在时是
+/// 当前 `state.relay.control`（v2 控制面 sink）尚未接线（Step 6/7），sink 不存在时是
 /// 安全的 no-op。
 pub(crate) async fn on_control_connected(state: &Arc<RuntimeState>) {
     let Some(manager) = state.local_discovery.read().await.clone() else {
@@ -150,7 +150,7 @@ async fn trigger_publish(
     manager: Arc<LocalDiscoveryManager>,
     reason: &'static str,
 ) {
-    let Some(control) = state.relay_control.read().await.clone() else {
+    let Some(control) = state.relay.control.read().await.clone() else {
         return;
     };
     if !control.is_usable().await {
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(manager.revision(), 3);
 
         let control = RecordingControl::new();
-        *state.relay_control.write().await = Some(control.clone());
+        *state.relay.control.write().await = Some(control.clone());
 
         on_control_connected(&state).await;
 
@@ -284,7 +284,7 @@ mod tests {
         let state = test_state().await;
         begin_epoch(&state).await;
         let control = RecordingControl::new();
-        *state.relay_control.write().await = Some(control.clone());
+        *state.relay.control.write().await = Some(control.clone());
         let manager = state.local_discovery.read().await.clone().unwrap();
 
         on_local_candidates_changed(&state).await;
@@ -302,8 +302,9 @@ mod tests {
         let state = test_state().await;
         begin_epoch(&state).await;
         let control = RecordingControl::new();
-        *state.relay_control.write().await = Some(control.clone());
+        *state.relay.control.write().await = Some(control.clone());
         state
+            .relay
             .relay_path_ready
             .write()
             .await
@@ -326,7 +327,7 @@ mod tests {
                 .revision(),
             2
         );
-        assert!(state.relay_path_ready.read().await.contains("peer-a"));
+        assert!(state.relay.relay_path_ready.read().await.contains("peer-a"));
         assert!(control.is_usable().await);
         assert_eq!(control.calls.load(Ordering::SeqCst), 1);
         assert_eq!(
@@ -340,15 +341,20 @@ mod tests {
         let state = test_state().await;
         begin_epoch(&state).await;
         let control = RecordingControl::new();
-        *state.relay_control.write().await = Some(control.clone());
-        state.relay_path_ready.write().await.insert("peer-a".into());
+        *state.relay.control.write().await = Some(control.clone());
+        state
+            .relay
+            .relay_path_ready
+            .write()
+            .await
+            .insert("peer-a".into());
 
         let result = on_network_environment_changed(&state, 43, false)
             .await
             .expect("local discovery transition");
 
         assert!(!result.has_connectivity);
-        assert!(state.relay_path_ready.read().await.contains("peer-a"));
+        assert!(state.relay.relay_path_ready.read().await.contains("peer-a"));
         assert_eq!(control.calls.load(Ordering::SeqCst), 1);
         assert_eq!(
             state.local_discovery.read().await.as_ref().unwrap().state(),

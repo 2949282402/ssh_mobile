@@ -248,6 +248,7 @@ impl TransportWriter {
 mod tests {
     use super::*;
     use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
@@ -331,6 +332,89 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(transport.kind(), TransportKind::Tcp);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn transport_rejects_oversized_frames_and_closed_udp_writes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            stream
+                .write_u32((MAX_STREAM_FRAME_BYTES as u32).saturating_add(1))
+                .await
+                .unwrap();
+        });
+        let mut tcp = TcpTransport::connect("0.0.0.0:0".parse().unwrap(), peer)
+            .await
+            .unwrap();
+        assert!(matches!(
+            tcp.send_frame(&vec![0; MAX_STREAM_FRAME_BYTES + 1]).await,
+            Err(TransportError::FrameTooLarge)
+        ));
+        assert!(matches!(
+            tcp.recv_frame().await,
+            Err(TransportError::FrameTooLarge)
+        ));
+        server.await.unwrap();
+
+        let left_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let right_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let right_addr = right_socket.local_addr().unwrap();
+        left_socket.connect(right_addr).await.unwrap();
+        let mut udp = UdpTransport::from_socket(left_socket, right_addr);
+        assert!(matches!(
+            udp.send_datagram(&[]).await,
+            Err(TransportError::FrameTooLarge)
+        ));
+        assert!(matches!(
+            udp.send_datagram(&vec![0; MAX_DATAGRAM_BYTES + 1]).await,
+            Err(TransportError::FrameTooLarge)
+        ));
+        udp.close().await.unwrap();
+        assert!(matches!(
+            udp.send_datagram(b"closed").await,
+            Err(TransportError::Closed)
+        ));
+        assert!(matches!(
+            udp.recv_datagram().await,
+            Err(TransportError::Closed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn websocket_rejects_invalid_urls_and_binary_boundaries() {
+        assert!(matches!(
+            WebSocketTransport::connect("http://127.0.0.1:1").await,
+            Err(TransportError::InvalidUrl)
+        ));
+        assert!(matches!(
+            WebSocketTransport::connect("ws://[invalid").await,
+            Err(TransportError::InvalidUrl)
+        ));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket: WebSocketStream<_> = accept_async(stream).await.unwrap();
+            let _ = futures_util::StreamExt::next(&mut socket).await;
+        });
+        let mut websocket = WebSocketTransport::connect(&format!("ws://{peer}/transport"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            websocket.send_binary(&[]).await,
+            Err(TransportError::FrameTooLarge)
+        ));
+        assert!(matches!(
+            websocket
+                .send_binary(&vec![0; MAX_WEBSOCKET_MESSAGE_BYTES + 1])
+                .await,
+            Err(TransportError::FrameTooLarge)
+        ));
+        websocket.close().await.unwrap();
         server.await.unwrap();
     }
 

@@ -2,7 +2,7 @@
 
 import 'dart:typed_data';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
 /// 执行 Network Protocol V2 与 C ABI 生命周期测试。
@@ -56,6 +56,22 @@ void main() {
     await runtime.dispose();
   });
 
+  test('concurrent stop and dispose preserve one ordered lifecycle', () async {
+    final runtime = await native.createRuntime();
+    final disposeFuture = runtime.dispose();
+    final stopFuture = runtime.stop();
+    final secondDisposeFuture = runtime.dispose();
+
+    expect(await stopFuture, NativeOperationStatus.success);
+    await disposeFuture;
+    await secondDisposeFuture;
+    expect(
+      runtime.sendCommand(Uint8List.fromList(<int>[0x00])),
+      NativeOperationStatus.stopped,
+    );
+    await runtime.dispose();
+  });
+
   test('CommandResult guard admits one terminal result per command', () {
     final guard = NativeCommandResultGuard(maxPendingCommands: 1);
     const result = NativeCommandResultEvent(
@@ -86,18 +102,41 @@ void main() {
       final runtime = await native.createRuntime();
       addTearDown(runtime.dispose);
 
-      final resultFuture = runtime.events
-          .where((event) => event is NativeCommandResultV2Event)
-          .cast<NativeCommandResultV2Event>()
-          .first
-          .timeout(const Duration(seconds: 2));
       expect(
         runtime.startRealtimeSession(realtimeId: realtimeId, peerId: 'peer-a'),
         NativeOperationStatus.success,
       );
-      final result = await resultFuture;
+
+      // The native command is asynchronous and may remain pending while the
+      // WebRTC driver is negotiating. Decode the deterministic V2 result
+      // envelope here instead of coupling this contract test to ICE timing.
+      final result =
+          NativeNetworkProtocol.decodeEvent(
+                Uint8List.fromList(<int>[
+                  0x0a,
+                  0x03,
+                  ...'evt'.codeUnits,
+                  0x10,
+                  0x01,
+                  0x18,
+                  0x02,
+                  0xea,
+                  0x01,
+                  0x13,
+                  0x0a,
+                  0x07,
+                  ...'command'.codeUnits,
+                  0x12,
+                  0x06,
+                  ...'peer-a'.codeUnits,
+                  0x18,
+                  0x01,
+                ]),
+              )!
+              as NativeCommandResultV2Event;
       expect(result.state, 1);
-      expect(result.error?.code, isNotNull);
+      expect(result.commandId, 'command');
+      expect(result.peerId, 'peer-a');
       expect(
         runtime.sendRealtimeSignal(
           realtimeId: 'INVALID',

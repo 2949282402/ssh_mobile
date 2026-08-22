@@ -310,7 +310,7 @@ async fn remove_peer_v2(state: &RuntimeState, peer_id: String) -> Result<(), Pro
     // business state must not remain resumable under a deleted peer.
     cancel_peer_transfers(state, &peer_id).await;
 
-    state.relay_path_ready.write().await.remove(&peer_id);
+    state.relay.relay_path_ready.write().await.remove(&peer_id);
     clear_peer_relay_crypto(state, &peer_id).await;
 
     state.delivery.close_peer(&peer_id).await;
@@ -421,7 +421,7 @@ async fn close_peer_connection(state: &RuntimeState, peer_id: &str) {
     }
     state.ready_session_index.unregister(peer_id);
 
-    state.relay_path_ready.write().await.remove(peer_id);
+    state.relay.relay_path_ready.write().await.remove(peer_id);
     clear_peer_relay_crypto(state, peer_id).await;
 }
 
@@ -432,6 +432,7 @@ async fn close_peer_streams(state: &RuntimeState, peer_id: &str) {
     let manager = state.reliable_streams.read().await.get(peer_id).cloned();
     if let Some(manager) = manager {
         let local_opener_device_id = state
+            .lifecycle
             .identity
             .read()
             .await
@@ -449,7 +450,8 @@ async fn close_peer_streams(state: &RuntimeState, peer_id: &str) {
 /// and lets the Relay owner remove its own socket/file state.
 async fn cancel_peer_transfers(state: &RuntimeState, peer_id: &str) {
     let mut transfer_ids = state
-        .transfers
+        .transfer
+        .manager
         .pause_peer_transfers(peer_id)
         .await
         .into_iter()
@@ -457,7 +459,8 @@ async fn cancel_peer_transfers(state: &RuntimeState, peer_id: &str) {
 
     transfer_ids.extend(
         state
-            .relay_pending_incoming
+            .relay
+            .pending_incoming
             .read()
             .await
             .values()
@@ -466,7 +469,8 @@ async fn cancel_peer_transfers(state: &RuntimeState, peer_id: &str) {
     );
     transfer_ids.extend(
         state
-            .relay_active_incoming
+            .relay
+            .active_incoming
             .lock()
             .await
             .values()
@@ -475,16 +479,18 @@ async fn cancel_peer_transfers(state: &RuntimeState, peer_id: &str) {
     );
 
     let relay_waiter_ids = state
-        .relay_acceptances
+        .relay
+        .acceptances
         .read()
         .await
         .keys()
-        .chain(state.relay_completions.read().await.keys())
+        .chain(state.relay.completions.read().await.keys())
         .cloned()
         .collect::<Vec<_>>();
     for transfer_id in relay_waiter_ids {
         if state
-            .transfers
+            .transfer
+            .manager
             .snapshot(&transfer_id)
             .await
             .is_some_and(|snapshot| snapshot.peer_id == peer_id)
@@ -494,9 +500,14 @@ async fn cancel_peer_transfers(state: &RuntimeState, peer_id: &str) {
     }
 
     for transfer_id in transfer_ids {
-        state.transfers.cancel_transfer(&transfer_id).await;
+        state.transfer.manager.cancel_transfer(&transfer_id).await;
         relay::cancel_transfer(state, &transfer_id).await;
-        state.incoming_decisions.write().await.remove(&transfer_id);
+        state
+            .transfer
+            .incoming_decisions
+            .write()
+            .await
+            .remove(&transfer_id);
     }
 }
 
@@ -505,17 +516,20 @@ async fn cancel_peer_transfers(state: &RuntimeState, peer_id: &str) {
 async fn clear_peer_relay_crypto(state: &RuntimeState, peer_id: &str) {
     let prefix = format!("{peer_id}/");
     state
-        .relay_crypto_waiters
+        .relay
+        .crypto_waiters
         .write()
         .await
         .retain(|key, _| !key.starts_with(&prefix));
     state
-        .relay_crypto_responders
+        .relay
+        .crypto_responders
         .lock()
         .await
         .retain(|key, _| !key.starts_with(&prefix));
     state
-        .relay_crypto_confirmers
+        .relay
+        .crypto_confirmers
         .lock()
         .await
         .retain(|key, _| !key.starts_with(&prefix));
@@ -556,14 +570,16 @@ async fn ready_path_count(state: &RuntimeState, peer_id: &str) -> u32 {
 /// TransferManager-owned identities; no synthetic fixed counter is reported.
 async fn active_transfer_count(state: &RuntimeState, peer_id: &str) -> u32 {
     let mut transfer_ids = state
-        .transfers
+        .transfer
+        .manager
         .active_ids_for_peer(peer_id)
         .await
         .into_iter()
         .collect::<HashSet<_>>();
     transfer_ids.extend(
         state
-            .relay_pending_incoming
+            .relay
+            .pending_incoming
             .read()
             .await
             .values()
@@ -572,7 +588,8 @@ async fn active_transfer_count(state: &RuntimeState, peer_id: &str) -> u32 {
     );
     transfer_ids.extend(
         state
-            .relay_active_incoming
+            .relay
+            .active_incoming
             .lock()
             .await
             .values()
@@ -581,16 +598,18 @@ async fn active_transfer_count(state: &RuntimeState, peer_id: &str) -> u32 {
     );
 
     let waiter_ids = state
-        .relay_acceptances
+        .relay
+        .acceptances
         .read()
         .await
         .keys()
-        .chain(state.relay_completions.read().await.keys())
+        .chain(state.relay.completions.read().await.keys())
         .cloned()
         .collect::<Vec<_>>();
     for transfer_id in waiter_ids {
         if state
-            .transfers
+            .transfer
+            .manager
             .snapshot(&transfer_id)
             .await
             .is_some_and(|snapshot| snapshot.peer_id == peer_id)
@@ -757,7 +776,9 @@ async fn start_connect_peer(
             "peer_id is required",
         ));
     }
-    if state.endpoint.read().await.is_none() || state.identity.read().await.is_none() {
+    if state.lifecycle.endpoint.read().await.is_none()
+        || state.lifecycle.identity.read().await.is_none()
+    {
         return Err(protocol_error_with_peer(
             NetworkErrorCode::InvalidArgument,
             "runtime is not configured",
@@ -864,7 +885,7 @@ async fn start_configure_relay(
     state: Arc<RuntimeState>,
     command: network_protocol::ConfigureRelayCommand,
 ) -> Result<(), ProtocolError> {
-    if state.identity.read().await.is_none() {
+    if state.lifecycle.identity.read().await.is_none() {
         return Err(protocol_error(
             NetworkErrorCode::InvalidArgument,
             "runtime must be configured before Relay",

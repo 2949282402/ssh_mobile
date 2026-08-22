@@ -17,6 +17,7 @@ mod generic_auth;
 mod peer;
 mod realtime;
 mod relay;
+pub(crate) mod relay_state;
 mod runtime;
 mod session;
 mod stream;

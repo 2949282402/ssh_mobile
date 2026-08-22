@@ -335,4 +335,73 @@ mod tests {
         assert!(!directory.join("received.txt.part").exists());
         fs::remove_dir_all(directory).await.ok();
     }
+
+    #[tokio::test]
+    async fn rejects_bad_resume_offset_checksum_and_cancellation() {
+        let data = b"payload";
+        let file_manifest = manifest("received.txt", data);
+        let directory = test_directory();
+        let result = stream_receive_file(&file_manifest, &directory, 99, &data[..], None).await;
+        assert!(matches!(
+            result,
+            Err(error) if error
+                .downcast_ref::<Error>()
+                .is_some_and(|error| error.kind() == ErrorKind::InvalidInput)
+        ));
+
+        let wrong_manifest = FileManifest {
+            content_hash: "00".repeat(32),
+            ..file_manifest.clone()
+        };
+        let result = stream_receive_file(&wrong_manifest, &directory, 0, &data[..], None).await;
+        assert!(result.is_err());
+        assert!(!directory.join("received.txt").exists());
+
+        let cancellation = TransferCancellation::default();
+        cancellation.cancel();
+        let result = stream_receive_file_cancellable(
+            &file_manifest,
+            &directory,
+            0,
+            &data[..],
+            None,
+            Some(&cancellation),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(error) if error
+                .downcast_ref::<Error>()
+                .is_some_and(|error| error.kind() == ErrorKind::Interrupted)
+        ));
+        fs::remove_dir_all(directory).await.ok();
+    }
+
+    #[tokio::test]
+    async fn completed_file_with_wrong_size_or_hash_is_not_reused() {
+        let data = b"payload";
+        let file_manifest = manifest("received.txt", data);
+        let directory = test_directory();
+        fs::create_dir_all(&directory).await.unwrap();
+        let final_path = directory.join("received.txt");
+        fs::write(&final_path, b"wrong").await.unwrap();
+        assert_eq!(
+            existing_completed_file(&file_manifest, &directory)
+                .await
+                .unwrap(),
+            None
+        );
+        fs::write(&final_path, b"payload").await.unwrap();
+        let wrong_hash_manifest = FileManifest {
+            content_hash: "00".repeat(32),
+            ..file_manifest
+        };
+        assert_eq!(
+            existing_completed_file(&wrong_hash_manifest, &directory)
+                .await
+                .unwrap(),
+            None
+        );
+        fs::remove_dir_all(directory).await.ok();
+    }
 }

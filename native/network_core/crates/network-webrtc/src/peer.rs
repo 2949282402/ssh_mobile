@@ -452,4 +452,83 @@ mod tests {
             .send_data(channel, &[0; MAX_DATA_CHANNEL_PAYLOAD_BYTES + 1])
             .is_err());
     }
+
+    #[test]
+    fn peer_configuration_and_data_channel_boundaries_fail_closed() {
+        let too_many_servers = WebRtcConfig {
+            ice_servers: (0..9)
+                .map(|index| IceServerConfig::stun(format!("stun:server-{index}")))
+                .collect(),
+            ..Default::default()
+        };
+        assert!(matches!(
+            WebRtcPeer::new(too_many_servers),
+            Err(WebRtcError::InvalidConfiguration(message)) if message.contains("eight")
+        ));
+        assert!(WebRtcPeer::new(WebRtcConfig {
+            ice_servers: vec![IceServerConfig::stun(String::new())],
+            ..Default::default()
+        })
+        .is_err());
+        assert!(WebRtcPeer::new(WebRtcConfig {
+            ice_servers: vec![IceServerConfig::stun("x".repeat(2049))],
+            ..Default::default()
+        })
+        .is_err());
+
+        let mut peer = WebRtcPeer::new(WebRtcConfig::default()).unwrap();
+        assert!(peer
+            .create_data_channel("", DataChannelReliability::default())
+            .is_err());
+        assert!(peer
+            .create_data_channel(&"x".repeat(257), DataChannelReliability::default())
+            .is_err());
+        assert!(peer
+            .create_data_channel(
+                "conflicting",
+                DataChannelReliability {
+                    max_packet_life_time: Some(1),
+                    max_retransmits: Some(1),
+                    ..Default::default()
+                },
+            )
+            .is_err());
+        assert!(matches!(
+            peer.send_data(99, b"missing"),
+            Err(WebRtcError::DataChannelNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn peer_media_directions_and_signaling_types_cover_invalid_branches() {
+        let mut peer = WebRtcPeer::new(WebRtcConfig::default()).unwrap();
+        assert!(matches!(
+            peer.add_media_transceiver(MediaKind::DataChannel, MediaDirection::Recvonly, None),
+            Err(WebRtcError::InvalidConfiguration(message)) if message.contains("RTP")
+        ));
+        assert!(peer
+            .add_media_transceiver(MediaKind::Audio, MediaDirection::Sendonly, None)
+            .is_err());
+        assert!(peer
+            .add_media_transceiver(MediaKind::Video, MediaDirection::Sendrecv, Some(42))
+            .is_ok());
+        assert!(peer
+            .add_media_transceiver(MediaKind::Audio, MediaDirection::Recvonly, None)
+            .is_ok());
+
+        let offer = SessionDescription::new(DescriptionType::Offer, "v=0\r\n".into()).unwrap();
+        let answer = SessionDescription::new(DescriptionType::Answer, "v=0\r\n".into()).unwrap();
+        assert!(matches!(
+            peer.accept_remote_offer(answer.clone()),
+            Err(WebRtcError::InvalidConfiguration(message)) if message.contains("offer")
+        ));
+        assert!(matches!(
+            peer.accept_remote_answer(offer),
+            Err(WebRtcError::InvalidConfiguration(message)) if message.contains("answer")
+        ));
+        assert!(peer.restart_ice().is_ok());
+        assert_eq!(peer.signaling_state(), SignalingState::Restarting);
+        peer.close().unwrap();
+        assert_eq!(peer.signaling_state(), SignalingState::Closed);
+    }
 }

@@ -836,6 +836,7 @@ async fn create_io_driver(
     config: WebRtcConfig,
 ) -> Result<RealtimeIoDriver, WebRtcError> {
     let bind_ip = state
+        .lifecycle
         .endpoint
         .read()
         .await
@@ -1151,7 +1152,7 @@ async fn send_signal(
     state: &RuntimeState,
     signal: &OutboundSignal,
 ) -> Result<(), network_protocol::NetworkError> {
-    let Some(control) = state.relay_control.read().await.clone() else {
+    let Some(control) = state.relay.control.read().await.clone() else {
         return Err(protocol_error(
             network_protocol::NetworkErrorCode::RelayError,
             "Relay signaling route is unavailable",
@@ -1899,7 +1900,7 @@ mod tests {
     async fn signaling_flows_over_v2_control_plane_and_transport_loss_then_reestablishes() {
         let (state, mut event_rx) = realtime_test_state().await;
         let control = RecordingControl::new();
-        *state.relay_control.write().await = Some(control.clone());
+        *state.relay.control.write().await = Some(control.clone());
         register_realtime_peer(&state, "peer-a").await;
         let s1 = match state
             .begin_connect("peer-a", crate::connect::DEFAULT_CONNECTION_CAPABILITY)
@@ -2011,7 +2012,7 @@ mod tests {
         let (state, _event_rx) = realtime_test_state().await;
         let control = RecordingControl::new();
         control.fail_signals.store(true, Ordering::Release);
-        *state.relay_control.write().await = Some(control.clone());
+        *state.relay.control.write().await = Some(control.clone());
         register_realtime_peer(&state, "peer-a").await;
         let realtime_id = "00112233445566778899aabbccddeeff";
 
@@ -2062,7 +2063,7 @@ mod tests {
     async fn duplicate_start_realtime_rejects_without_retaining_a_bound_driver() {
         let (state, _event_rx) = realtime_test_state().await;
         let control = RecordingControl::new();
-        *state.relay_control.write().await = Some(control.clone());
+        *state.relay.control.write().await = Some(control.clone());
         register_realtime_peer(&state, "peer-a").await;
         let realtime_id = "00112233445566778899aabbccddeeff";
 
@@ -2136,7 +2137,7 @@ mod tests {
         register_realtime_peer(&state, "peer-a").await;
         crate::discovery::begin_epoch(&state).await;
         let control = RecordingControl::new();
-        *state.relay_control.write().await = Some(control);
+        *state.relay.control.write().await = Some(control);
         let realtime_id = "00112233445566778899aabbccddeeff";
         let peer = WebRtcPeer::new(WebRtcConfig::default()).expect("realtime peer");
 

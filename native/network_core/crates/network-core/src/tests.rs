@@ -397,7 +397,7 @@ fn relay_data_reservations_for_two_peers_coexist_and_close_independently() {
             event_tx,
             Arc::new(std::sync::atomic::AtomicU16::new(0)),
         ));
-        *state.relay_config.write().await = Some(crate::relay::RelayReconnectConfig {
+        *state.relay.config.write().await = Some(crate::relay::RelayReconnectConfig {
             relay_url: "wss://relay.example.test/v2/control".into(),
             credential: "credential".into(),
             signing_seed: [11u8; 32],
@@ -976,18 +976,32 @@ fn file_transfer_resumes_across_a_fresh_connection() {
     runtime_a.handle().block_on(async {
         assert!(
             state_a
-                .transfers
+                .transfer
+                .manager
                 .register_outgoing(manifest, source_path.clone(), "resume-b".into())
                 .await
         );
-        assert!(state_a.transfers.mark_transferring(TRANSFER_ID).await);
         assert!(
             state_a
-                .transfers
+                .transfer
+                .manager
+                .mark_transferring(TRANSFER_ID)
+                .await
+        );
+        assert!(
+            state_a
+                .transfer
+                .manager
                 .update_progress(TRANSFER_ID, CONFIRMED_OFFSET)
                 .await
         );
-        assert!(state_a.transfers.pause_for_network(TRANSFER_ID).await);
+        assert!(
+            state_a
+                .transfer
+                .manager
+                .pause_for_network(TRANSFER_ID)
+                .await
+        );
     });
     // 接收端保留同 checkpoint 的 `.part` 文件。
     fs::write(
@@ -1764,19 +1778,22 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
     runtime_b.handle().block_on(async {
         assert!(
             state_b
-                .transfers
+                .transfer
+                .manager
                 .register_outgoing(orphaned_manifest, orphaned_source_path, "restart-a".into())
                 .await
         );
         assert!(
             state_b
-                .transfers
+                .transfer
+                .manager
                 .mark_transferring(orphaned_transfer_id)
                 .await
         );
         assert!(
             state_b
-                .transfers
+                .transfer
+                .manager
                 .pause_for_network(orphaned_transfer_id)
                 .await
         );
@@ -1910,7 +1927,8 @@ fn peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery() {
     assert!(!Arc::ptr_eq(&old_context, &new_context));
     assert!(runtime_b.handle().block_on(async {
         state_b
-            .transfers
+            .transfer
+            .manager
             .snapshot(orphaned_transfer_id)
             .await
             .is_some()
@@ -2025,6 +2043,7 @@ fn tcp_fallback_authenticates_delivery_and_gets_a_fresh_session_on_reconnect() {
         .expect("runtime B state");
     runtime_b.handle().block_on(async {
         state_b
+            .lifecycle
             .endpoint
             .read()
             .await
@@ -2242,6 +2261,7 @@ fn websocket_fallback_authenticates_delivery_and_ack() {
         .expect("runtime B state");
     runtime_b.handle().block_on(async {
         state_b
+            .lifecycle
             .endpoint
             .read()
             .await
@@ -2249,6 +2269,7 @@ fn websocket_fallback_authenticates_delivery_and_ack() {
             .expect("B endpoint")
             .close(quinn::VarInt::from_u32(0), b"WebSocket fallback test");
         state_b
+            .lifecycle
             .tcp_fallback_enabled
             .store(false, std::sync::atomic::Ordering::Release);
     });
@@ -2432,6 +2453,7 @@ fn force_tcp_fallback(runtime: &NetworkRuntime) {
         .expect("runtime state");
     runtime.handle().block_on(async {
         state
+            .lifecycle
             .endpoint
             .read()
             .await

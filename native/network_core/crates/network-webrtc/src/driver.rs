@@ -373,6 +373,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn driver_bind_uses_explicit_advertised_ip_and_closes_cleanly() {
+        let driver = RealtimeIoDriver::bind_with_advertised_ip(
+            WebRtcPeer::new(WebRtcConfig::default()).expect("peer"),
+            "127.0.0.1:0".parse().unwrap(),
+            Some("192.0.2.44".parse().unwrap()),
+        )
+        .await
+        .expect("driver");
+        assert_eq!(
+            driver.local_addr().ip(),
+            "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
+        );
+        let handle = driver.into_handle();
+        let mut driver = handle.lock().unwrap();
+        driver.peer_mut().create_offer().expect("offer");
+        driver.close().expect("close");
+    }
+
+    #[tokio::test]
+    async fn unspecified_bind_advertises_loopback_as_safe_fallback() {
+        let mut driver = RealtimeIoDriver::bind(
+            WebRtcPeer::new(WebRtcConfig::default()).expect("peer"),
+            "0.0.0.0:0".parse().unwrap(),
+        )
+        .await
+        .expect("driver");
+        driver.peer_mut().create_offer().expect("offer");
+        driver.close().expect("close");
+    }
+
+    #[tokio::test]
     #[ignore = "requires a local coturn server at 127.0.0.1:3478"]
     async fn relay_only_drivers_exchange_data_channel_payloads() {
         let config = WebRtcConfig {

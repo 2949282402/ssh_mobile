@@ -106,6 +106,7 @@ impl IntentGeneration {
 pub(crate) struct PeerIntent {
     pub(crate) generation: IntentGeneration,
     pub(crate) class: CommunicationClass,
+    pub(crate) required_capabilities: u8,
 }
 
 /// Capability demand carried by a peer-owned connectivity intent.
@@ -145,16 +146,12 @@ impl PeerRequirement {
         provided.0 & self.0 == self.0
     }
 
-    fn is_strictly_stronger_than(self, current: Self) -> bool {
-        current.is_satisfied_by(self) && self != current
+    fn extend(self, requested: Self) -> Self {
+        Self(self.0 | requested.0)
     }
 
-    fn extend(self, requested: Self) -> Self {
-        if requested.is_strictly_stronger_than(self) {
-            Self(self.0 | requested.0)
-        } else {
-            self
-        }
+    fn capability_mask(self) -> u8 {
+        self.0
     }
 
     fn communication_class(self) -> CommunicationClass {
@@ -386,9 +383,9 @@ impl PeerSupervisor {
                 return;
             }
             inner.retry_scheduled = false;
-            inner
-                .active_requirement
-                .unwrap_or_else(|| PeerRequirement::from_class(intent.class))
+            inner.active_requirement.unwrap_or_else(|| {
+                PeerRequirement::from_capability_mask(intent.required_capabilities)
+            })
         };
 
         // A newly queued attempt cancels the previous attempt before its
@@ -416,7 +413,7 @@ impl PeerSupervisor {
                 let attempt_coordinator =
                     crate::connect::ConnectivityAttemptCoordinator::new(Arc::clone(&task_state));
                 let result = attempt_coordinator
-                    .connect_with_class(&peer_id, attempt_requirement.communication_class())
+                    .connect_with_capabilities(&peer_id, attempt_requirement.capability_mask())
                     .await;
                 supervisor.finish_attempt(generation, attempt_id, result, task_state);
             },
@@ -594,14 +591,15 @@ impl PeerSupervisor {
                 let active_requirement = inner
                     .active_requirement
                     .unwrap_or_else(|| PeerRequirement::from_class(class));
-                let stronger = requirement.is_strictly_stronger_than(active_requirement);
-                if stronger {
-                    inner.active_requirement = Some(active_requirement.extend(requirement));
+                let combined_requirement = active_requirement.extend(requirement);
+                let changed = combined_requirement != active_requirement;
+                if changed {
+                    inner.active_requirement = Some(combined_requirement);
                 }
                 // An intent already waiting in the mailbox will observe the
                 // extended active requirement.  Only enqueue another intent
                 // when the current attempt is already running.
-                stronger && !inner.retry_scheduled
+                changed && !inner.retry_scheduled
             };
             let generation = inner.generation;
             if queue_intent {
@@ -620,15 +618,16 @@ impl PeerSupervisor {
         };
 
         if queue_intent {
+            let active_requirement = self
+                .inner
+                .lock()
+                .expect("peer supervisor lock")
+                .active_requirement
+                .unwrap_or(requirement);
             let intent = PeerIntent {
                 generation,
-                class: self
-                    .inner
-                    .lock()
-                    .expect("peer supervisor lock")
-                    .active_requirement
-                    .unwrap_or(requirement)
-                    .communication_class(),
+                class: active_requirement.communication_class(),
+                required_capabilities: active_requirement.capability_mask(),
             };
             if let Err(error) = self.mailbox_tx.try_send(intent) {
                 let reason = match error {
@@ -671,7 +670,7 @@ impl PeerSupervisor {
         ready_requirement: PeerRequirement,
         result: PeerCompletion,
     ) -> Result<usize, CoreNetworkError> {
-        let (waiters, delivered, retry_class) = {
+        let (waiters, delivered, retry_intent) = {
             let mut inner = self.inner.lock().expect("peer supervisor lock");
             if inner.stopping || inner.generation != generation {
                 return Err(CoreNetworkError::StaleIntent);
@@ -714,12 +713,15 @@ impl PeerSupervisor {
                         inner.state = PeerState::Connecting;
                         let should_queue = !inner.retry_scheduled;
                         inner.retry_scheduled = true;
-                        let retry_class = inner
-                            .active_requirement
-                            .unwrap_or(ready_requirement)
-                            .communication_class();
+                        let retry_requirement =
+                            inner.active_requirement.unwrap_or(ready_requirement);
                         let delivered = waiters.len();
-                        (waiters, delivered, should_queue.then_some(retry_class))
+                        let retry_intent = should_queue.then_some(PeerIntent {
+                            generation,
+                            class: retry_requirement.communication_class(),
+                            required_capabilities: retry_requirement.capability_mask(),
+                        });
+                        (waiters, delivered, retry_intent)
                     } else {
                         inner.state = *state;
                         inner.active_requirement = Some(ready_requirement);
@@ -735,8 +737,7 @@ impl PeerSupervisor {
             let _ = waiter.send(result.clone());
         }
 
-        if let Some(class) = retry_class {
-            let intent = PeerIntent { generation, class };
+        if let Some(intent) = retry_intent {
             if let Err(error) = self.mailbox_tx.try_send(intent) {
                 let reason = match error {
                     mpsc::error::TrySendError::Full(_) => CoreNetworkError::MailboxFull,
@@ -1287,6 +1288,29 @@ mod tests {
             Ok(PeerState::Online)
         );
         assert_eq!(supervisor.state(), PeerState::Online);
+    }
+
+    #[tokio::test]
+    async fn incompatible_requirements_are_unioned_before_attempt() {
+        let supervisor = supervisor();
+        let stream = supervisor
+            .ensure("stream", CommunicationClass::ReliableStream)
+            .expect("stream ensure");
+        let datagram = supervisor
+            .ensure("datagram", CommunicationClass::UnreliableDatagram)
+            .expect("datagram ensure");
+
+        assert!(stream.is_new);
+        assert!(!datagram.is_new);
+        assert_eq!(stream.generation, datagram.generation);
+        let expected = PeerRequirement::from_capability_mask(
+            crate::connect::DEFAULT_CONNECTION_CAPABILITY
+                | crate::connect::CAPABILITY_UNRELIABLE_DATAGRAM,
+        );
+        assert_eq!(supervisor.active_requirement(), Some(expected));
+
+        stream.detach_completion();
+        datagram.detach_completion();
     }
 
     #[test]

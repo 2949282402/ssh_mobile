@@ -256,7 +256,7 @@
           ]
         },
         {
-          "path": "native/network_core/crates/network-core/src/relay.rs",
+          "path": "native/network_core/crates/network-core/src/relay_data.rs",
           "contains": [
             "handle_relay_crypto_handshake",
             "business envelope rejected"
@@ -286,7 +286,7 @@
       },
       "evidence": [
         {
-          "path": "native/network_core/crates/network-core/src/relay.rs",
+          "path": "native/network_core/crates/network-core/src/relay_data.rs",
           "contains": [
             "relay_path_ready",
             "complete_relay_admission"
@@ -322,7 +322,7 @@
       },
       "evidence": [
         {
-          "path": "native/network_core/crates/network-core/src/relay.rs",
+          "path": "native/network_core/crates/network-core/src/relay_data.rs",
           "contains": [
             "if kind != DATA_ENV_CRYPTO",
             "business envelope rejected"
@@ -354,7 +354,7 @@
           ]
         },
         {
-          "path": "native/network_core/crates/network-core/src/relay.rs",
+          "path": "native/network_core/crates/network-core/src/relay_data.rs",
           "contains": [
             "handle_relay_crypto_handshake",
             "complete_relay_admission"
@@ -391,7 +391,7 @@
           ]
         },
         {
-          "path": "native/network_core/crates/network-core/src/relay.rs",
+          "path": "native/network_core/crates/network-core/src/relay_data.rs",
           "contains": [
             "relay_path_ready",
             "complete_relay_admission"

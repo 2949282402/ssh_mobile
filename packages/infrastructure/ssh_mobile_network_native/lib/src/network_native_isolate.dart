@@ -14,6 +14,8 @@ import 'ssh_net_buffer.dart';
 
 const _nativeAssetId =
     'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
+const _gracefulWorkerShutdownTimeout = Duration(seconds: 2);
+const _forcedWorkerShutdownTimeout = Duration(seconds: 2);
 
 /// 向原生运行时发送一个已编码命令。
 @Native<Int32 Function(Pointer<Void>, Pointer<Uint8>, Size)>(
@@ -56,6 +58,8 @@ class NetworkNativeIsolate {
   ReceivePort? _exitPort;
   Isolate? _worker;
   SendPort? _workerControlPort;
+  Completer<void>? _workerExit;
+  Future<void>? _stopFuture;
   bool _isPolling = false;
 
   /// 发布工作 isolate 收到的原始事件帧。
@@ -65,13 +69,23 @@ class NetworkNativeIsolate {
   Future<void> startPolling({
     Duration interval = const Duration(milliseconds: 50),
   }) async {
-    if (_isPolling || handle == nullptr) return;
+    if (_isPolling ||
+        _worker != null ||
+        _eventController.isClosed ||
+        handle == nullptr) {
+      return;
+    }
     _isPolling = true;
     final receivePort = ReceivePort();
     final exitPort = ReceivePort();
     final controlPortReady = Completer<SendPort>();
+    final workerExit = Completer<void>();
     _receivePort = receivePort;
     _exitPort = exitPort;
+    _workerExit = workerExit;
+    exitPort.listen((_) {
+      if (!workerExit.isCompleted) workerExit.complete();
+    });
     receivePort.listen((message) {
       if (message is Uint8List && !_eventController.isClosed) {
         _eventController.add(message);
@@ -94,16 +108,10 @@ class NetworkNativeIsolate {
         debugName: 'ssh-network-native-events',
       );
       await controlPortReady.future.timeout(const Duration(seconds: 2));
-    } catch (_) {
+    } catch (error, stackTrace) {
       _isPolling = false;
-      _worker?.kill(priority: Isolate.immediate);
-      _worker = null;
-      receivePort.close();
-      exitPort.close();
-      _receivePort = null;
-      _exitPort = null;
-      _workerControlPort = null;
-      rethrow;
+      await _stopWorker();
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 
@@ -125,25 +133,53 @@ class NetworkNativeIsolate {
   }
 
   /// 关闭事件流前停止并等待工作 isolate 退出。
-  Future<void> stop() async {
-    if (!_isPolling && _worker == null) {
-      if (!_eventController.isClosed) await _eventController.close();
-      return;
-    }
+  Future<void> stop() {
+    final inFlight = _stopFuture;
+    if (inFlight != null) return inFlight;
+
+    final future = _stopWorker();
+    _stopFuture = future;
+    unawaited(
+      future.then<void>(
+        (_) {
+          if (identical(_stopFuture, future)) _stopFuture = null;
+        },
+        onError: (Object _, StackTrace _) {
+          if (identical(_stopFuture, future)) _stopFuture = null;
+        },
+      ),
+    );
+    return future;
+  }
+
+  Future<void> _stopWorker() async {
     _isPolling = false;
     final worker = _worker;
-    final exitPort = _exitPort;
-    if (worker != null && exitPort != null) {
+    if (worker != null) {
+      final workerExit = _workerExit?.future;
+      if (workerExit == null) {
+        throw StateError('Native event isolate exit signal is unavailable.');
+      }
       _workerControlPort?.send('stop');
       try {
-        await exitPort.first.timeout(const Duration(seconds: 2));
+        await workerExit.timeout(_gracefulWorkerShutdownTimeout);
       } on TimeoutException {
         worker.kill(priority: Isolate.immediate);
+        try {
+          await workerExit.timeout(_forcedWorkerShutdownTimeout);
+        } on TimeoutException {
+          // Keep the isolate and its ports live so a later stop() can retry.
+          // Destroying the native handle before this future completes is unsafe.
+          throw StateError(
+            'Native event isolate exit was not confirmed after kill.',
+          );
+        }
       }
+      _worker = null;
+      _workerExit = null;
     }
-    _worker = null;
     _workerControlPort = null;
-    exitPort?.close();
+    _exitPort?.close();
     _exitPort = null;
     _receivePort?.close();
     _receivePort = null;
@@ -172,26 +208,53 @@ void _pollEvents(List<Object> arguments) {
         final result = _NativePollStatus.fromNativeCode(
           _sshNetRuntimePollEventNative(handle, timeoutMs, outBuffer),
         );
-        if (result == _NativePollStatus.eventAvailable) {
-          final buffer = outBuffer.ref;
-          if (buffer.ptr != nullptr) {
-            if (buffer.len > 0) {
-              events.send(
-                Uint8List.fromList(buffer.ptr.asTypedList(buffer.len)),
-              );
+        // Copy the fields before clearing the FFI struct. `outBuffer.ref` is a
+        // view over native memory, not an independent Dart value; mutating
+        // the struct first would also mutate the apparent `buffer` and drop
+        // the event pointer before it can be copied or freed.
+        final bufferPtr = outBuffer.ref.ptr;
+        final bufferLen = outBuffer.ref.len;
+        if (bufferPtr != nullptr) {
+          try {
+            if (result == _NativePollStatus.eventAvailable && bufferLen > 0) {
+              events.send(Uint8List.fromList(bufferPtr.asTypedList(bufferLen)));
             }
-            _sshNetBufferFreeNative(buffer);
+          } finally {
+            outBuffer.ref.ptr = nullptr;
+            outBuffer.ref.len = 0;
+            _freeNativeBuffer(bufferPtr, bufferLen);
           }
-        } else if (result == _NativePollStatus.failure) {
+        }
+        if (result == _NativePollStatus.failure) {
           running = false;
         }
       } finally {
+        final bufferPtr = outBuffer.ref.ptr;
+        final bufferLen = outBuffer.ref.len;
+        if (bufferPtr != nullptr) {
+          outBuffer.ref.ptr = nullptr;
+          outBuffer.ref.len = 0;
+          _freeNativeBuffer(bufferPtr, bufferLen);
+        }
         calloc.free(outBuffer);
       }
       await Future<void>.delayed(Duration.zero);
     }
     controlPort.close();
   }());
+}
+
+/// Pass a copied buffer value across the by-value C ABI and release the small
+/// temporary Dart struct immediately afterward.
+void _freeNativeBuffer(Pointer<Uint8> ptr, int len) {
+  final buffer = calloc<SshNetBuffer>();
+  try {
+    buffer.ref.ptr = ptr;
+    buffer.ref.len = len;
+    _sshNetBufferFreeNative(buffer.ref);
+  } finally {
+    calloc.free(buffer);
+  }
 }
 
 /// 表示原生轮询函数的私有返回状态。

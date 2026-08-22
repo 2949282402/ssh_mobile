@@ -25,6 +25,7 @@ pub const SSH_NET_MAX_DATA_ITEMS: usize = 128;
 pub const SSH_NET_MAX_DATA_BYTES: usize = 8 * 1024 * 1024;
 pub const SSH_NET_MAX_CONSECUTIVE_CONTROL_EVENTS: usize = 8;
 pub const SSH_NET_MAX_PENDING_COMMANDS: usize = 64;
+pub const SSH_NET_MAX_TERMINAL_COMMANDS: usize = 1024;
 const SSH_NET_RUNTIME_DRAIN_BATCH: usize = 512;
 
 /// 跨 FFI 边界传递的不透明运行时句柄。
@@ -178,10 +179,49 @@ impl<T> EventMux<T> {
     }
 }
 
+/// Bounded exactly-once history for completed command IDs. Older IDs are
+/// evicted in insertion order so a long-running runtime cannot retain every
+/// command ever submitted.
+struct BoundedCommandHistory {
+    ids: HashSet<String>,
+    order: VecDeque<String>,
+}
+
+impl BoundedCommandHistory {
+    fn new() -> Self {
+        Self {
+            ids: HashSet::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn contains(&self, command_id: &str) -> bool {
+        self.ids.contains(command_id)
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    fn insert(&mut self, command_id: String) -> bool {
+        if !self.ids.insert(command_id.clone()) {
+            return false;
+        }
+        self.order.push_back(command_id);
+        while self.order.len() > SSH_NET_MAX_TERMINAL_COMMANDS {
+            if let Some(evicted) = self.order.pop_front() {
+                self.ids.remove(&evicted);
+            }
+        }
+        true
+    }
+}
+
 struct SshNetRuntime {
     runtime: NetworkRuntime,
     pending_commands: Mutex<HashSet<String>>,
-    terminal_commands: Mutex<HashSet<String>>,
+    terminal_commands: Mutex<BoundedCommandHistory>,
     synthetic_events: Mutex<EventMux<NetworkEvent>>,
     drained_events: Mutex<EventMux<NetworkEvent>>,
 }
@@ -191,7 +231,7 @@ impl SshNetRuntime {
         Ok(Self {
             runtime: NetworkRuntime::new()?,
             pending_commands: Mutex::new(HashSet::new()),
-            terminal_commands: Mutex::new(HashSet::new()),
+            terminal_commands: Mutex::new(BoundedCommandHistory::new()),
             synthetic_events: Mutex::new(EventMux::new()),
             drained_events: Mutex::new(EventMux::new()),
         })
@@ -566,7 +606,7 @@ pub unsafe extern "C" fn ssh_net_runtime_poll_event(
 /// `buffer.ptr` 必须来自 Rust FFI，释放后不得继续使用。
 #[no_mangle]
 pub unsafe extern "C" fn ssh_net_buffer_free(buffer: SshNetBuffer) {
-    if !buffer.ptr.is_null() && buffer.len > 0 {
+    if !buffer.ptr.is_null() {
         let _ = unsafe { Vec::from_raw_parts(buffer.ptr, buffer.len, buffer.len) };
     }
 }
@@ -583,10 +623,11 @@ pub unsafe extern "C" fn ssh_net_runtime_destroy(handle: SshNetRuntimeHandle) ->
     }
 
     let result = catch_unwind(|| {
-        unsafe {
-            let runtime = Box::from_raw(handle as *mut SshNetRuntime);
-            let _ = runtime.stop();
+        let runtime = unsafe { &*(handle as *const SshNetRuntime) };
+        if runtime.stop().is_err() {
+            return -3;
         }
+        unsafe { drop(Box::from_raw(handle as *mut SshNetRuntime)) };
         0
     });
 
@@ -603,6 +644,7 @@ mod tests {
         StartRealtimeSessionCommand, StreamHandle, NETWORK_PROTOCOL_VERSION,
     };
     use prost::Message;
+    use std::mem::{align_of, offset_of, size_of};
     use std::ptr;
 
     /// 验证 V2 FFI 对空句柄和空 buffer 的确定性拒绝。
@@ -626,6 +668,27 @@ mod tests {
                 len: 0,
             });
         }
+    }
+
+    #[test]
+    fn ffi_buffer_keeps_the_c_layout_and_free_contract() {
+        assert_eq!(offset_of!(SshNetBuffer, ptr), 0);
+        assert_eq!(offset_of!(SshNetBuffer, len), size_of::<*mut u8>(),);
+        assert_eq!(
+            size_of::<SshNetBuffer>(),
+            size_of::<*mut u8>() + size_of::<usize>(),
+        );
+        assert_eq!(
+            align_of::<SshNetBuffer>(),
+            align_of::<*mut u8>().max(align_of::<usize>()),
+        );
+
+        let bytes = vec![1_u8, 2, 3].into_boxed_slice();
+        let buffer = SshNetBuffer {
+            ptr: Box::into_raw(bytes) as *mut u8,
+            len: 3,
+        };
+        unsafe { ssh_net_buffer_free(buffer) };
     }
 
     /// 验证 V2 运行时的创建、启动、重复停止、停止后命令和销毁顺序。
@@ -898,6 +961,19 @@ mod tests {
                 .is_ok());
         }
         assert_eq!(runtime.remember_command("command-over-cap"), Err(-7));
+    }
+
+    #[test]
+    fn ffi_terminal_command_history_is_bounded_and_evicts_oldest_ids() {
+        let mut history = BoundedCommandHistory::new();
+        for index in 0..=SSH_NET_MAX_TERMINAL_COMMANDS {
+            assert!(history.insert(format!("terminal-{index}")));
+        }
+
+        assert_eq!(history.len(), SSH_NET_MAX_TERMINAL_COMMANDS);
+        assert!(!history.contains("terminal-0"));
+        assert!(history.contains(&format!("terminal-{SSH_NET_MAX_TERMINAL_COMMANDS}")));
+        assert!(!history.insert(format!("terminal-{SSH_NET_MAX_TERMINAL_COMMANDS}")));
     }
 
     #[test]

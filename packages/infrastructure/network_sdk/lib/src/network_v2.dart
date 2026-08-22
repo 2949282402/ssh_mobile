@@ -4,6 +4,9 @@ import 'dart:typed_data';
 
 import 'network_models.dart';
 
+part 'network_v2_domains.dart';
+part 'network_v2_facade.dart';
+
 /// Hard limits shared by the v2-facing Flutter contract.
 ///
 /// These limits are deliberately expressed in bytes/items rather than in
@@ -98,16 +101,8 @@ sealed class PeerScopedRequest {
 
   final String peerId;
 
-  static String _validatePeerId(String value) {
-    if (value.isEmpty || value.length > NetworkV2Limits.maxPeerIdBytes) {
-      throw ArgumentError.value(
-        value,
-        'peerId',
-        'Peer ID must contain 1-${NetworkV2Limits.maxPeerIdBytes} characters.',
-      );
-    }
-    return value;
-  }
+  static String _validatePeerId(String value) =>
+      _validateIdentifier(value, 'peerId', NetworkV2Limits.maxPeerIdBytes);
 }
 
 /// Requests that make a Peer maintain a usable path.
@@ -275,16 +270,11 @@ final class CommandResult<T> {
   bool get isSuccess => state == CommandTerminalState.succeeded;
   bool get isCancelled => state == CommandTerminalState.cancelled;
 
-  static String _validateCommandId(String value) {
-    if (value.isEmpty || value.length > NetworkV2Limits.maxCommandIdBytes) {
-      throw ArgumentError.value(
-        value,
-        'commandId',
-        'Command ID must contain 1-${NetworkV2Limits.maxCommandIdBytes} characters.',
-      );
-    }
-    return value;
-  }
+  static String _validateCommandId(String value) => _validateIdentifier(
+    value,
+    'commandId',
+    NetworkV2Limits.maxCommandIdBytes,
+  );
 }
 
 /// A result projected back into a Peer-scoped API.
@@ -581,164 +571,6 @@ final class PeerStreamDataEvent extends NetworkV2Event {
   final String openerDeviceId;
   final int streamId;
   final NetworkPayload data;
-}
-
-/// Typed command boundary owned by the App/native adapter.
-///
-/// Implementations may map supported requests to the frozen Network Protocol
-/// V2 wire, but they must return an explicit failure for requests whose schema
-/// is not yet owned by the Coordinator. They must never expose the native
-/// handle or socket.
-abstract interface class NetworkV2CommandPort {
-  Stream<NetworkV2Event> get events;
-
-  Future<void> start();
-
-  Future<void> stop();
-
-  Future<CommandResult<T>> execute<T>(PeerScopedRequest request);
-
-  Future<CommandResult<PeerDiagnostics>> diagnostics(String peerId);
-
-  Future<void> dispose();
-}
-
-/// Public v2 facade lifecycle states.
-enum NetworkV2LifecycleState { created, running, stopping, stopped, disposed }
-
-/// Feature-facing v2 facade.  It owns no native resource; the injected port
-/// remains the App/native lifecycle owner.
-abstract interface class NetworkV2Facade {
-  NetworkV2LifecycleState get lifecycle;
-  Stream<NetworkV2Event> get events;
-
-  Future<void> start();
-
-  Future<void> stop();
-
-  Future<CommandResult<void>> connectPeer(ConnectPeerRequest request);
-
-  Future<CommandResult<void>> disconnectPeer(DisconnectPeerRequest request);
-
-  Future<CommandResult<void>> removePeer(RemovePeerRequest request);
-
-  Future<CommandResult<PeerDiagnostics>> peerDiagnostics(
-    PeerDiagnosticsRequest request,
-  );
-
-  Future<CommandResult<void>> sendMessage(SendMessageRequest request);
-
-  Future<CommandResult<void>> transferFile(TransferFileRequest request);
-
-  Future<CommandResult<void>> openStream(OpenStreamRequest request);
-
-  Future<void> dispose();
-}
-
-/// Small adapter that keeps lifecycle and command correlation out of Features.
-final class NetworkV2FacadeImpl implements NetworkV2Facade {
-  NetworkV2FacadeImpl(this._port);
-
-  final NetworkV2CommandPort _port;
-  NetworkV2LifecycleState _lifecycle = NetworkV2LifecycleState.created;
-  bool _disposing = false;
-
-  @override
-  NetworkV2LifecycleState get lifecycle => _lifecycle;
-
-  @override
-  Stream<NetworkV2Event> get events => _port.events;
-
-  @override
-  Future<void> start() async {
-    _ensureNotDisposed();
-    if (_lifecycle == NetworkV2LifecycleState.running) return;
-    if (_lifecycle == NetworkV2LifecycleState.stopping) {
-      throw StateError('Network v2 facade is stopping.');
-    }
-    await _port.start();
-    _lifecycle = NetworkV2LifecycleState.running;
-  }
-
-  @override
-  Future<void> stop() async {
-    _ensureNotDisposed();
-    if (_lifecycle == NetworkV2LifecycleState.stopped ||
-        _lifecycle == NetworkV2LifecycleState.created) {
-      _lifecycle = NetworkV2LifecycleState.stopped;
-      return;
-    }
-    if (_lifecycle == NetworkV2LifecycleState.stopping) return;
-    _lifecycle = NetworkV2LifecycleState.stopping;
-    try {
-      await _port.stop();
-    } finally {
-      _lifecycle = NetworkV2LifecycleState.stopped;
-    }
-  }
-
-  @override
-  Future<CommandResult<void>> connectPeer(ConnectPeerRequest request) =>
-      _execute<void>(request);
-
-  @override
-  Future<CommandResult<void>> disconnectPeer(DisconnectPeerRequest request) =>
-      _execute<void>(request);
-
-  @override
-  Future<CommandResult<void>> removePeer(RemovePeerRequest request) =>
-      _execute<void>(request);
-
-  @override
-  Future<CommandResult<PeerDiagnostics>> peerDiagnostics(
-    PeerDiagnosticsRequest request,
-  ) async {
-    _ensureRunning();
-    return _port.diagnostics(request.peerId);
-  }
-
-  @override
-  Future<CommandResult<void>> sendMessage(SendMessageRequest request) =>
-      _execute<void>(request);
-
-  @override
-  Future<CommandResult<void>> transferFile(TransferFileRequest request) =>
-      _execute<void>(request);
-
-  @override
-  Future<CommandResult<void>> openStream(OpenStreamRequest request) =>
-      _execute<void>(request);
-
-  @override
-  Future<void> dispose() async {
-    if (_disposing || _lifecycle == NetworkV2LifecycleState.disposed) return;
-    _disposing = true;
-    _lifecycle = NetworkV2LifecycleState.stopping;
-    try {
-      await _port.stop();
-    } finally {
-      await _port.dispose();
-      _lifecycle = NetworkV2LifecycleState.disposed;
-    }
-  }
-
-  Future<CommandResult<T>> _execute<T>(PeerScopedRequest request) async {
-    _ensureRunning();
-    return _port.execute<T>(request);
-  }
-
-  void _ensureNotDisposed() {
-    if (_lifecycle == NetworkV2LifecycleState.disposed) {
-      throw const SdkClientDisposedException();
-    }
-  }
-
-  void _ensureRunning() {
-    _ensureNotDisposed();
-    if (_lifecycle != NetworkV2LifecycleState.running) {
-      throw StateError('Network v2 facade is not running.');
-    }
-  }
 }
 
 String _validateIdentifier(String value, String name, int maxBytes) {

@@ -6,7 +6,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:network_transport/network_transport.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
 
