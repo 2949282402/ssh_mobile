@@ -231,3 +231,76 @@ async fn control_consumer_ignores_unconfigured_offer_reservation_and_signal() {
     drop(events_tx);
     consumer.await.unwrap();
 }
+
+#[tokio::test]
+async fn relay_configuration_and_setup_fail_closed_before_claiming_a_control_route() {
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
+    let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+    let missing_identity = configure_relay_for_state(
+        Arc::clone(&state),
+        network_protocol::ConfigureRelayCommand {
+            relay_url: "ws://127.0.0.1:9".into(),
+            relay_credential: "credential".into(),
+            relay_signing_seed: vec![0; 32],
+        },
+    )
+    .await
+    .expect_err("Relay requires an initialized runtime identity");
+    assert_eq!(
+        missing_identity.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
+
+    *state.lifecycle.identity.write().await = Some(Arc::new(
+        network_identity::DeviceIdentity::from_private_keys("device-a".into(), [1; 32], [2; 32]),
+    ));
+    let invalid_seed = configure_relay_for_state(
+        Arc::clone(&state),
+        network_protocol::ConfigureRelayCommand {
+            relay_url: "ws://127.0.0.1:9".into(),
+            relay_credential: "credential".into(),
+            relay_signing_seed: vec![0; 31],
+        },
+    )
+    .await
+    .expect_err("Relay signing seed length must be checked");
+    assert_eq!(invalid_seed.code, NetworkErrorCode::InvalidArgument as i32);
+
+    let unreachable = configure_relay_for_state(
+        Arc::clone(&state),
+        network_protocol::ConfigureRelayCommand {
+            relay_url: "ws://127.0.0.1:9".into(),
+            relay_credential: "credential".into(),
+            relay_signing_seed: vec![0; 32],
+        },
+    )
+    .await
+    .expect_err("unreachable Relay control must fail closed");
+    assert_eq!(unreachable.code, NetworkErrorCode::RelayError as i32);
+    assert!(event_rx.try_recv().is_ok());
+    stop_relay_reconnect_task(&state).await;
+}
+
+#[tokio::test]
+async fn relay_cache_invalidation_is_noop_for_equal_or_unknown_epochs() {
+    let state = state();
+    clear_remote_candidate_cache_if_ready_ttl_changed(
+        &state,
+        Some(Duration::from_secs(60)),
+        Some(Duration::from_secs(60)),
+    )
+    .await;
+    invalidate_remote_candidate_cache_for_epoch(
+        &state,
+        "missing-peer",
+        &RuntimeEpoch { high: 0, low: 0 },
+    )
+    .await;
+    invalidate_remote_candidate_cache_for_epoch(
+        &state,
+        "missing-peer",
+        &RuntimeEpoch { high: 1, low: 1 },
+    )
+    .await;
+    assert!(state.remote_candidate_cache.read().await.is_empty());
+}
