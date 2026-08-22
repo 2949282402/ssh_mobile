@@ -278,3 +278,17 @@ async fn hooks_are_noop_without_a_wired_control_plane() {
     assert_eq!(manager.revision(), 2); // candidates-changed 已 bump
     assert_eq!(manager.state(), LocalDiscoveryState::Idle);
 }
+
+#[tokio::test]
+async fn discovery_hooks_fail_closed_without_local_epoch_and_spawn_safely() {
+    let state = test_state().await;
+    on_control_connected(&state).await;
+    on_local_candidates_changed(&state).await;
+    assert!(on_network_environment_changed(&state, 99, true)
+        .await
+        .is_none());
+
+    spawn_control_connected(&state);
+    tokio::task::yield_now().await;
+    state.task_supervisor.shutdown().await;
+}
