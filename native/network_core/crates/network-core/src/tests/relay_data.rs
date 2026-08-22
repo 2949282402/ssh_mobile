@@ -347,6 +347,11 @@ async fn relay_business_payloads_bind_peer_tokens_and_stream_identity() {
         frame
     };
     let non_stream = generic_frame(GenericFrameKind::DataMessage, b"message");
+    let error =
+        receive_relay_channel_message(&state, &data, "peer-a", "stream:peer-a:7", &non_stream)
+            .await
+            .expect_err("non-stream generic frames must fall through to the message decoder");
+    assert!(!error.to_string().is_empty());
     let error = receive_relay_stream_frame(&state, &data, "peer-a", "stream:peer-a:7", &non_stream)
         .await
         .expect_err("the stream envelope must reject non-stream generic frames");
