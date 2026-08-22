@@ -24,31 +24,6 @@ pub(crate) struct AuthenticatedPeer<T> {
     pub(crate) admission: T,
 }
 
-#[allow(dead_code)] // compatibility helper retained for focused handshake tests
-pub(crate) async fn authenticate_initiator<F, Fut, T>(
-    connection: &mut GenericConnection,
-    local_identity: Arc<DeviceIdentity>,
-    expected_peer_id: &str,
-    expected_peer_public_key: [u8; 32],
-    session_binding: &str,
-    resolve_remote_session: F,
-) -> Result<(SessionCryptoMaterial, T), CryptoHandshakeError>
-where
-    F: FnOnce(&str, &str) -> Fut,
-    Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
-{
-    authenticate_initiator_with_policy(
-        connection,
-        local_identity,
-        expected_peer_id,
-        expected_peer_public_key,
-        session_binding,
-        E2eePolicy::Required,
-        resolve_remote_session,
-    )
-    .await
-}
-
 pub(crate) async fn authenticate_initiator_with_policy<F, Fut, T>(
     connection: &mut GenericConnection,
     local_identity: Arc<DeviceIdentity>,
