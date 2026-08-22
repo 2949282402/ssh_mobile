@@ -517,6 +517,51 @@ async fn relay_crypto_handshake_rejects_unbound_steps_and_policy_downgrades() {
 }
 
 #[tokio::test]
+async fn relay_crypto_hello_stages_a_responder_before_socket_failure() {
+    let state = state();
+    let data = Arc::new(data_client());
+    let token = "a".repeat(32);
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [3u8; 32],
+            e2e_public_key: [4u8; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    *state.lifecycle.identity.write().await = Some(Arc::new(
+        network_identity::DeviceIdentity::from_private_keys("peer-a".into(), [5u8; 32], [6u8; 32]),
+    ));
+    let initiator = network_identity::DeviceIdentity::from_private_keys(
+        "initiator".into(),
+        [7u8; 32],
+        [8u8; 32],
+    );
+    let (_handshake, hello) = crate::crypto_handshake::RelayInitiatorHandshake::start(
+        Arc::new(initiator),
+        "0000000000000001",
+    )
+    .expect("valid Relay hello");
+    let frame = crate::crypto_handshake::encode_relay_frame(
+        crate::crypto_handshake::RELAY_CRYPTO_HELLO,
+        &hello,
+    )
+    .expect("encoded hello");
+
+    let error = handle_relay_crypto_handshake(&state, &data, &token, "peer-a", &frame)
+        .await
+        .expect_err("the unconnected data client must fail after staging the responder");
+    assert!(error.to_string().contains("not connected"));
+    assert!(state
+        .relay
+        .crypto_responders
+        .lock()
+        .await
+        .contains_key(&relay_crypto_key("peer-a", &token)));
+}
+
+#[tokio::test]
 async fn relay_admission_checks_policy_binding_path_and_commits_current_route() {
     let data = Arc::new(data_client());
     let root_key = [17u8; 32];

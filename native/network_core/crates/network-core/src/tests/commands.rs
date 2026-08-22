@@ -83,6 +83,52 @@ async fn command_worker_emits_a_terminal_error_for_duplicate_envelopes() {
     }));
 }
 
+#[tokio::test]
+async fn command_worker_reports_a_terminal_error_when_ledger_reaches_its_bound() {
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        event_tx,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    let (command_tx, command_rx) = tokio::sync::mpsc::channel(8);
+    let worker = tokio::spawn(run_command_worker(command_rx, Arc::clone(&state)));
+
+    for index in 0..=MAX_COMPLETED_COMMANDS {
+        command_tx
+            .send(NetworkCommand {
+                command_id: format!("ledger-bound-{index}"),
+                protocol_version: NETWORK_PROTOCOL_VERSION,
+                payload: None,
+            })
+            .await
+            .expect("command worker is alive");
+    }
+    drop(command_tx);
+    worker.await.expect("command worker joins");
+
+    let mut results = 0usize;
+    let mut saw_resource_limit = false;
+    while let Ok(event) = event_rx.try_recv() {
+        let Some(network_protocol::network_event::Payload::CommandResultV2(result)) = event.payload
+        else {
+            continue;
+        };
+        results += 1;
+        if result
+            .error
+            .as_ref()
+            .is_some_and(|error| error.code == NetworkErrorCode::IoError as i32)
+        {
+            saw_resource_limit = true;
+        }
+    }
+    assert_eq!(results, MAX_COMPLETED_COMMANDS + 1);
+    assert!(
+        saw_resource_limit,
+        "ledger overflow must emit an IO terminal error"
+    );
+}
+
 #[test]
 fn connect_cancellation_requires_generation_invalidation() {
     let supervisor = PeerSupervisor::new(PeerId::new("peer-a").expect("valid peer"));
@@ -200,6 +246,116 @@ async fn environment_change_refreshes_discovery_revision() {
         Some(network_protocol::network_event::Payload::NetworkEnvironmentChanged(event))
             if event.generation == 7 && !event.has_connectivity
     ));
+}
+
+#[tokio::test]
+async fn environment_change_retires_an_unmaintained_direct_owner() {
+    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        sender,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let supervisor = state
+        .peer_supervisors
+        .get_or_create_with_configured("peer-a", false)
+        .expect("supervisor");
+    supervisor.admit_inbound(true).expect("online supervisor");
+
+    let peer = PeerId::new("peer-a").expect("valid peer");
+    let mut manager = crate::connect::PeerPathManager::new(peer, Arc::clone(&state.ready_paths));
+    manager
+        .publish_ready(
+            crate::connection::ConnectionProfile::for_route(
+                network_protocol::RouteType::QuicDirect,
+            )
+            .expect("direct profile"),
+        )
+        .expect("direct path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert("peer-a".into(), Arc::new(std::sync::Mutex::new(manager)));
+
+    handle_network_environment_changed(
+        &state,
+        &network_protocol::NetworkEnvironmentChangedCommand {
+            generation: 7,
+            has_connectivity: false,
+            is_foreground: true,
+            is_metered: false,
+        },
+    )
+    .await
+    .expect("environment transition");
+
+    assert!(!state.has_ready_direct_path("peer-a").await);
+    assert_eq!(supervisor.state(), PeerState::Offline);
+}
+
+#[tokio::test]
+async fn environment_change_preserves_relay_and_retires_only_direct_path() {
+    let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        sender,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    state
+        .peer_supervisors
+        .get_or_create_with_configured("peer-a", false)
+        .expect("supervisor");
+
+    let peer = PeerId::new("peer-a").expect("valid peer");
+    let mut manager = crate::connect::PeerPathManager::new(peer, Arc::clone(&state.ready_paths));
+    manager
+        .publish_ready(
+            crate::connection::ConnectionProfile::for_route(
+                network_protocol::RouteType::QuicDirect,
+            )
+            .expect("direct profile"),
+        )
+        .expect("direct path");
+    manager
+        .publish_ready_with_route(crate::connect::ActiveRoute::relay(None))
+        .expect("relay path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert("peer-a".into(), Arc::new(std::sync::Mutex::new(manager)));
+
+    handle_network_environment_changed(
+        &state,
+        &network_protocol::NetworkEnvironmentChangedCommand {
+            generation: 8,
+            has_connectivity: false,
+            is_foreground: true,
+            is_metered: false,
+        },
+    )
+    .await
+    .expect("environment transition");
+
+    assert!(!state.has_ready_direct_path("peer-a").await);
+    assert!(state.has_ready_relay_path("peer-a").await);
 }
 
 #[tokio::test]
@@ -367,6 +523,31 @@ async fn diagnostics_reads_live_supervisor_and_path_manager() {
         .write()
         .await
         .insert("peer-a".into(), stream_manager);
+    assert!(
+        state
+            .transfer
+            .manager
+            .register_outgoing(
+                manifest("diagnostic-transfer"),
+                PathBuf::from("/tmp/diagnostic-transfer.bin"),
+                "peer-a".into(),
+            )
+            .await
+    );
+    let (acceptance_tx, _acceptance_rx) = oneshot::channel();
+    state
+        .relay
+        .acceptances
+        .write()
+        .await
+        .insert("diagnostic-transfer".into(), acceptance_tx);
+    let (completion_tx, _completion_rx) = oneshot::channel();
+    state
+        .relay
+        .completions
+        .write()
+        .await
+        .insert("diagnostic-transfer".into(), completion_tx);
 
     emit_peer_diagnostics(&state, "peer-a".into())
         .await
@@ -382,6 +563,7 @@ async fn diagnostics_reads_live_supervisor_and_path_manager() {
     );
     assert_eq!(diagnostics.ready_path_count, 1);
     assert_eq!(diagnostics.active_stream_count, 1);
+    assert_eq!(diagnostics.active_transfer_count, 1);
     assert_eq!(
         diagnostics.e2ee_policy,
         network_protocol::E2eePolicy::Required as i32

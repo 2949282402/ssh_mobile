@@ -1505,6 +1505,58 @@ async fn stop_realtime_ignores_close_signal_loss_after_removing_owner() {
     assert!(state.realtime.lock().await.sessions.is_empty());
 }
 
+#[tokio::test]
+async fn v2_signal_rejects_an_empty_established_peer_binding() {
+    let (state, _event_rx) = realtime_test_state().await;
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    state.realtime.lock().await.sessions.insert(
+        realtime_id.into(),
+        RealtimeSession {
+            peer_id: String::new(),
+            connection_session_id: None,
+            peer: None,
+            driver: None,
+            revision: 1,
+            remote_revision: 0,
+            ice_revision: 1,
+            seen_candidates: HashSet::new(),
+        },
+    );
+
+    let error = handle_v2_realtime_signal(
+        &state,
+        &V2RealtimeSignal {
+            realtime_id: realtime_id.into(),
+            kind: V2RealtimeSignalKind::Close as i32,
+            revision: 1,
+            payload: Vec::new(),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("a signal must not use an empty established peer binding");
+    assert!(error.to_string().contains("empty established peer"));
+}
+
+#[tokio::test]
+async fn local_ice_candidate_without_a_realtime_owner_is_dropped() {
+    let (state, mut event_rx) = realtime_test_state().await;
+    forward_local_candidate(
+        &state,
+        "00112233445566778899aabbccddeeff",
+        "peer-a",
+        network_webrtc::IceCandidate::new(
+            "candidate:1 1 UDP 1 127.0.0.1 9 typ host".into(),
+            None,
+            None,
+            None,
+        )
+        .expect("valid candidate"),
+    )
+    .await;
+    assert!(event_rx.try_recv().is_err());
+}
+
 #[test]
 fn apply_signal_rejects_unknown_peer_and_restores_failed_offer_state() {
     let realtime_id = "00112233445566778899aabbccddeeff";
