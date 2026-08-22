@@ -9,7 +9,10 @@ void main() {
   final handle = NativeStreamHandle(openerDeviceId: 'device-a', streamId: 7);
 
   test('native operation status maps every C ABI terminal code', () {
-    expect(NativeOperationStatus.fromNativeCode(0), NativeOperationStatus.success);
+    expect(
+      NativeOperationStatus.fromNativeCode(0),
+      NativeOperationStatus.success,
+    );
     expect(
       NativeOperationStatus.fromNativeCode(-1),
       NativeOperationStatus.invalidArgument,
@@ -18,8 +21,14 @@ void main() {
       NativeOperationStatus.fromNativeCode(-2),
       NativeOperationStatus.invalidArgument,
     );
-    expect(NativeOperationStatus.fromNativeCode(-4), NativeOperationStatus.stopped);
-    expect(NativeOperationStatus.fromNativeCode(99), NativeOperationStatus.failure);
+    expect(
+      NativeOperationStatus.fromNativeCode(-4),
+      NativeOperationStatus.stopped,
+    );
+    expect(
+      NativeOperationStatus.fromNativeCode(99),
+      NativeOperationStatus.failure,
+    );
   });
 
   test('all public V2 command builders accept bounded edge values', () {
@@ -371,123 +380,160 @@ void main() {
     },
   );
 
-  test('native enum wire mappings round-trip and default unknown values safely', () {
-    for (final value in NativePeerConnectionState.values) {
-      expect(NativePeerConnectionState.fromWire(value.wireValue), value);
-    }
-    for (final value in NativePeerState.values) {
-      expect(NativePeerState.fromWire(value.wireValue), value);
-    }
-    for (final value in NativeRouteType.values) {
-      expect(NativeRouteType.fromWire(value.wireValue), value);
-    }
-    for (final value in NativeRouteTopology.values) {
-      expect(NativeRouteTopology.fromWire(value.wireValue), value);
-    }
-    for (final value in NativeRouteTransport.values) {
-      expect(NativeRouteTransport.fromWire(value.wireValue), value);
-    }
-    for (final value in NativeRelayConnectionState.values) {
-      expect(NativeRelayConnectionState.fromWire(value.wireValue), value);
-    }
-    for (final value in NativeRealtimeSessionState.values) {
-      expect(NativeRealtimeSessionState.fromWire(value.wireValue), value);
-    }
-    for (final value in NativeRealtimeSignalKind.values) {
-      expect(NativeRealtimeSignalKind.fromWire(value.wireValue), value);
-    }
-    for (final value in NativeRetryDisposition.values) {
-      expect(NativeRetryDisposition.fromWire(value.wireValue), value);
-    }
-    for (final value in NativePeerPresenceState.values) {
-      expect(NativePeerPresenceState.fromWire(value.wireValue), value);
-    }
-    expect(NativePeerConnectionState.fromWire(-1), NativePeerConnectionState.unspecified);
-    expect(NativePeerState.fromWire(-1), NativePeerState.offline);
-    expect(NativeRouteType.fromWire(-1), NativeRouteType.unspecified);
-    expect(NativeRouteTopology.fromWire(-1), NativeRouteTopology.unspecified);
-    expect(NativeRouteTransport.fromWire(-1), NativeRouteTransport.unspecified);
-    expect(NativeRelayConnectionState.fromWire(-1), NativeRelayConnectionState.unspecified);
-    expect(
-      NativeRealtimeSessionState.fromWire(-1),
-      NativeRealtimeSessionState.unspecified,
-    );
-    expect(NativeRealtimeSignalKind.fromWire(-1), NativeRealtimeSignalKind.unspecified);
-    expect(NativeRetryDisposition.fromWire(-1), NativeRetryDisposition.unspecified);
-    expect(NativePeerPresenceState.fromWire(-1), NativePeerPresenceState.unspecified);
-  });
+  test(
+    'native enum wire mappings round-trip and default unknown values safely',
+    () {
+      for (final value in NativePeerConnectionState.values) {
+        expect(NativePeerConnectionState.fromWire(value.wireValue), value);
+      }
+      for (final value in NativePeerState.values) {
+        expect(NativePeerState.fromWire(value.wireValue), value);
+      }
+      for (final value in NativeRouteType.values) {
+        expect(NativeRouteType.fromWire(value.wireValue), value);
+      }
+      for (final value in NativeRouteTopology.values) {
+        expect(NativeRouteTopology.fromWire(value.wireValue), value);
+      }
+      for (final value in NativeRouteTransport.values) {
+        expect(NativeRouteTransport.fromWire(value.wireValue), value);
+      }
+      for (final value in NativeRelayConnectionState.values) {
+        expect(NativeRelayConnectionState.fromWire(value.wireValue), value);
+      }
+      for (final value in NativeRealtimeSessionState.values) {
+        expect(NativeRealtimeSessionState.fromWire(value.wireValue), value);
+      }
+      for (final value in NativeRealtimeSignalKind.values) {
+        expect(NativeRealtimeSignalKind.fromWire(value.wireValue), value);
+      }
+      for (final value in NativeRetryDisposition.values) {
+        expect(NativeRetryDisposition.fromWire(value.wireValue), value);
+      }
+      for (final value in NativePeerPresenceState.values) {
+        expect(NativePeerPresenceState.fromWire(value.wireValue), value);
+      }
+      expect(
+        NativePeerConnectionState.fromWire(-1),
+        NativePeerConnectionState.unspecified,
+      );
+      expect(NativePeerState.fromWire(-1), NativePeerState.offline);
+      expect(NativeRouteType.fromWire(-1), NativeRouteType.unspecified);
+      expect(NativeRouteTopology.fromWire(-1), NativeRouteTopology.unspecified);
+      expect(
+        NativeRouteTransport.fromWire(-1),
+        NativeRouteTransport.unspecified,
+      );
+      expect(
+        NativeRelayConnectionState.fromWire(-1),
+        NativeRelayConnectionState.unspecified,
+      );
+      expect(
+        NativeRealtimeSessionState.fromWire(-1),
+        NativeRealtimeSessionState.unspecified,
+      );
+      expect(
+        NativeRealtimeSignalKind.fromWire(-1),
+        NativeRealtimeSignalKind.unspecified,
+      );
+      expect(
+        NativeRetryDisposition.fromWire(-1),
+        NativeRetryDisposition.unspecified,
+      );
+      expect(
+        NativePeerPresenceState.fromWire(-1),
+        NativePeerPresenceState.unspecified,
+      );
+    },
+  );
 
-  test('command guards and bounded builders reject invalid ownership inputs', () {
-    expect(
-      () => NativeCommandResultGuard(maxPendingCommands: 0),
-      throwsA(anyOf(isA<ArgumentError>(), isA<AssertionError>())),
-    );
-    final guard = NativeCommandResultGuard();
-    expect(() => guard.register(''), throwsArgumentError);
-    expect(() => guard.register('x' * 129), throwsArgumentError);
+  test(
+    'command guards and bounded builders reject invalid ownership inputs',
+    () {
+      expect(
+        () => NativeCommandResultGuard(maxPendingCommands: 0),
+        throwsA(anyOf(isA<ArgumentError>(), isA<AssertionError>())),
+      );
+      final guard = NativeCommandResultGuard();
+      expect(() => guard.register(''), throwsArgumentError);
+      expect(() => guard.register('x' * 129), throwsArgumentError);
 
-    expect(
-      () => NativeNetworkProtocol.sendMessageCommand(
-        commandId: 'message',
-        peerId: 'peer-a',
-        channelId: '',
-        payload: Uint8List(0),
-      ),
-      throwsArgumentError,
-    );
-    expect(
-      () => NativeNetworkProtocol.sendMessageCommand(
-        commandId: 'message',
-        peerId: 'peer-a',
-        channelId: 'channel-a',
-        payload: Uint8List(384 * 1024 + 1),
-      ),
-      throwsArgumentError,
-    );
-    expect(
-      () => NativeNetworkProtocol.sendMessageV2Command(
-        commandId: 'message-v2',
-        peerId: 'peer-a',
-        messageId: 'message-a',
-        channelId: 'channel-a',
-        payload: Uint8List(384 * 1024 + 1),
-      ),
-      throwsArgumentError,
-    );
-    expect(
-      () => NativeNetworkProtocol.transferCommand(
-        commandId: 'transfer',
-        peerId: 'peer-a',
-        transferId: 'transfer-a',
-        filePath: '/tmp/file.bin',
-        confirmedOffset: -1,
-      ),
-      throwsArgumentError,
-    );
+      expect(
+        () => NativeNetworkProtocol.sendMessageCommand(
+          commandId: 'message',
+          peerId: 'peer-a',
+          channelId: '',
+          payload: Uint8List(0),
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => NativeNetworkProtocol.sendMessageCommand(
+          commandId: 'message',
+          peerId: 'peer-a',
+          channelId: 'channel-a',
+          payload: Uint8List(384 * 1024 + 1),
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => NativeNetworkProtocol.sendMessageV2Command(
+          commandId: 'message-v2',
+          peerId: 'peer-a',
+          messageId: 'message-a',
+          channelId: 'channel-a',
+          payload: Uint8List(384 * 1024 + 1),
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => NativeNetworkProtocol.transferCommand(
+          commandId: 'transfer',
+          peerId: 'peer-a',
+          transferId: 'transfer-a',
+          filePath: '/tmp/file.bin',
+          confirmedOffset: -1,
+        ),
+        throwsArgumentError,
+      );
 
-    const handle = NativeStreamHandle(openerDeviceId: 'device-a', streamId: 7);
-    expect(handle == const NativeStreamHandle(openerDeviceId: 'device-a', streamId: 7), isTrue);
-    expect(handle.hashCode, const NativeStreamHandle(openerDeviceId: 'device-a', streamId: 7).hashCode);
-    final dataEvent = NativeSshStreamDataReceivedEvent(
-      eventId: 'event',
-      timestampMs: 1,
-      protocolVersion: NativeNetworkProtocol.protocolVersion,
-      peerId: 'peer-a',
-      handle: handle,
-      data: Uint8List.fromList(<int>[1]),
-    );
-    expect(dataEvent.openerDeviceId, 'device-a');
-    expect(dataEvent.streamId, 7);
-    const closedEvent = NativeSshStreamClosedEvent(
-      eventId: 'event',
-      timestampMs: 1,
-      protocolVersion: NativeNetworkProtocol.protocolVersion,
-      peerId: 'peer-a',
-      handle: handle,
-    );
-    expect(closedEvent.openerDeviceId, 'device-a');
-    expect(closedEvent.streamId, 7);
-  });
+      const handle = NativeStreamHandle(
+        openerDeviceId: 'device-a',
+        streamId: 7,
+      );
+      expect(
+        handle ==
+            const NativeStreamHandle(openerDeviceId: 'device-a', streamId: 7),
+        isTrue,
+      );
+      expect(
+        handle.hashCode,
+        const NativeStreamHandle(
+          openerDeviceId: 'device-a',
+          streamId: 7,
+        ).hashCode,
+      );
+      final dataEvent = NativeSshStreamDataReceivedEvent(
+        eventId: 'event',
+        timestampMs: 1,
+        protocolVersion: NativeNetworkProtocol.protocolVersion,
+        peerId: 'peer-a',
+        handle: handle,
+        data: Uint8List.fromList(<int>[1]),
+      );
+      expect(dataEvent.openerDeviceId, 'device-a');
+      expect(dataEvent.streamId, 7);
+      const closedEvent = NativeSshStreamClosedEvent(
+        eventId: 'event',
+        timestampMs: 1,
+        protocolVersion: NativeNetworkProtocol.protocolVersion,
+        peerId: 'peer-a',
+        handle: handle,
+      );
+      expect(closedEvent.openerDeviceId, 'device-a');
+      expect(closedEvent.streamId, 7);
+    },
+  );
 }
 
 Uint8List _event(int payloadField, List<int> payload) =>
