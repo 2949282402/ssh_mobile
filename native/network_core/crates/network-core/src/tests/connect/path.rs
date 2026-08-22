@@ -488,3 +488,254 @@ fn needed_strict_superset_can_promote() {
         Err(CoreNetworkError::StaleAttempt)
     ));
 }
+
+#[test]
+fn direct_probe_merges_demands_and_rejects_stale_generations() {
+    let registry = Arc::new(PathRegistry::new());
+    let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+
+    let first = manager
+        .ensure_direct_probe(7, CAPABILITY_RELIABLE_MESSAGE, Duration::from_millis(1))
+        .expect("initial direct probe")
+        .clone();
+    assert_eq!(manager.direct_state(), DirectPathState::Probe);
+    assert_eq!(first.generation, 7);
+    assert_eq!(first.required_capabilities, CAPABILITY_RELIABLE_MESSAGE);
+    assert!(!first.is_expired(Instant::now()));
+
+    let extended = manager
+        .ensure_direct_probe(7, CAPABILITY_RELIABLE_STREAM, Duration::from_secs(10))
+        .expect("stronger direct probe")
+        .clone();
+    assert_eq!(
+        extended.required_capabilities,
+        CAPABILITY_RELIABLE_MESSAGE | CAPABILITY_RELIABLE_STREAM
+    );
+    assert!(extended.deadline >= first.deadline);
+    assert!(extended.is_expired(extended.deadline));
+    assert_eq!(
+        manager.ensure_direct_probe(8, CAPABILITY_RELIABLE_MESSAGE, Duration::from_secs(1)),
+        Err(CoreNetworkError::StaleAttempt)
+    );
+    assert!(!manager.finish_direct_probe(8));
+    assert!(manager.finish_direct_probe(7));
+    assert_eq!(manager.direct_state(), DirectPathState::None);
+
+    manager.normal_drain();
+    assert_eq!(
+        manager.ensure_direct_probe(9, CAPABILITY_RELIABLE_MESSAGE, Duration::from_secs(1)),
+        Err(CoreNetworkError::Cancelled)
+    );
+}
+
+#[test]
+fn path_registry_enforces_capacity_and_reclaims_stale_weak_entries() {
+    let registry = Arc::new(PathRegistry::new());
+    let mut paths = Vec::new();
+    for _ in 0..MAX_READY_PATHS_PER_PEER {
+        paths.push(
+            registry
+                .create_path(
+                    &test_peer(),
+                    profile(PathKind::Direct, RouteTransport::Tcp),
+                    Box::new(NoopPathCarrier),
+                    Instant::now(),
+                )
+                .expect("path within registry limit"),
+        );
+    }
+    let overflow_closes = Arc::new(Mutex::new(Vec::new()));
+    assert!(matches!(
+        registry.create_path(
+            &test_peer(),
+            profile(PathKind::Direct, RouteTransport::Tcp),
+            recording_carrier(&overflow_closes),
+            Instant::now(),
+        ),
+        Err(CoreNetworkError::ResourceLimit("ready paths"))
+    ));
+    assert_eq!(
+        overflow_closes
+            .lock()
+            .expect("overflow close log")
+            .as_slice(),
+        &[PathCloseReason::HardClose]
+    );
+
+    let first_handle = paths[0].handle().clone();
+    assert!(registry.lookup(&first_handle).is_some());
+    assert!(registry.is_acquirable(&first_handle));
+    drop(paths.remove(0));
+    let replacement = registry
+        .create_path(
+            &test_peer(),
+            profile(PathKind::Direct, RouteTransport::Tcp),
+            Box::new(NoopPathCarrier),
+            Instant::now(),
+        )
+        .expect("stale weak entry is reclaimed");
+    paths.push(replacement);
+
+    let existing = paths[0].handle().clone();
+    let missing = PathHandle {
+        id: existing.id() + 1000,
+        peer_id: existing.peer_id().clone(),
+        profile: existing.profile(),
+        capability_mask: existing.capability_mask(),
+    };
+    assert!(!registry.revoke(&missing));
+    assert!(!registry.drain(&missing));
+    assert!(!registry.security_failure(&missing));
+    assert_eq!(registry.lease_count(&missing), None);
+    assert_eq!(registry.revoke_peer(&test_peer()), MAX_READY_PATHS_PER_PEER);
+}
+
+#[test]
+fn path_leases_enforce_borrower_limit_and_projection_identity() {
+    let registry = Arc::new(PathRegistry::new());
+    let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+    let direct = manager
+        .publish_ready(profile(PathKind::Direct, RouteTransport::Tcp))
+        .expect("direct path");
+    let relay = manager
+        .publish_ready(profile(PathKind::Relay, RouteTransport::WebSocket))
+        .expect("relay path");
+    let projection = manager.projection(&direct).expect("direct projection");
+
+    let mut leases = Vec::new();
+    for _ in 0..MAX_PATH_LEASES {
+        leases.push(projection.acquire().expect("lease within limit"));
+    }
+    assert_eq!(registry.lease_count(&direct), Some(MAX_PATH_LEASES));
+    assert!(matches!(
+        projection.acquire(),
+        Err(CoreNetworkError::ResourceLimit("path leases"))
+    ));
+    drop(leases.pop());
+    let replacement_lease = projection.acquire().expect("released lease slot");
+    assert_eq!(replacement_lease.handle(), &direct);
+
+    let mut mismatched = projection.clone();
+    mismatched.handle = manager.relay_ready().expect("relay handle").clone();
+    assert!(matches!(
+        mismatched.acquire(),
+        Err(CoreNetworkError::StaleAttempt)
+    ));
+    projection
+        .path
+        .upgrade()
+        .expect("physical path")
+        .release_lease();
+    drop(replacement_lease);
+    drop(leases);
+    manager.hard_close();
+    assert!(matches!(
+        registry.acquire(&relay),
+        Err(CoreNetworkError::StaleAttempt)
+    ));
+}
+
+#[test]
+fn manager_rejects_incompatible_or_stopped_publication() {
+    let registry = Arc::new(PathRegistry::new());
+    let rejected_closes = Arc::new(Mutex::new(Vec::new()));
+    let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+    manager
+        .ensure_direct_probe(1, CAPABILITY_RELIABLE_STREAM, Duration::from_secs(4))
+        .expect("stream probe");
+    assert_eq!(
+        manager.publish_ready_with_carrier(
+            profile(PathKind::Direct, RouteTransport::WebSocket),
+            recording_carrier(&rejected_closes),
+        ),
+        Err(CoreNetworkError::CapabilityUnavailable)
+    );
+    assert_eq!(
+        rejected_closes
+            .lock()
+            .expect("rejected close log")
+            .as_slice(),
+        &[PathCloseReason::HardClose]
+    );
+    assert!(manager.direct_probe().is_some());
+
+    manager.normal_drain();
+    assert_eq!(
+        manager.publish_ready(profile(PathKind::Relay, RouteTransport::WebSocket)),
+        Err(CoreNetworkError::Cancelled)
+    );
+
+    let mut hard_closed = PeerPathManager::new(test_peer(), registry);
+    hard_closed.hard_close();
+    assert_eq!(
+        hard_closed.publish_ready(profile(PathKind::Direct, RouteTransport::Tcp)),
+        Err(CoreNetworkError::Cancelled)
+    );
+}
+
+#[test]
+fn manager_retires_stale_and_ephemeral_paths_by_topology() {
+    let registry = Arc::new(PathRegistry::new());
+    let direct_closes = Arc::new(Mutex::new(Vec::new()));
+    let relay_closes = Arc::new(Mutex::new(Vec::new()));
+    let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+    let now = Instant::now();
+    let direct = manager
+        .publish_ready_with_carrier_at(
+            profile(PathKind::Direct, RouteTransport::Tcp),
+            recording_carrier(&direct_closes),
+            now - super::super::EPHEMERAL_PATH_IDLE_TIMEOUT - Duration::from_secs(1),
+        )
+        .expect("direct path");
+    let relay = manager
+        .publish_ready_with_carrier_at(
+            profile(PathKind::Relay, RouteTransport::WebSocket),
+            recording_carrier(&relay_closes),
+            now - super::super::EPHEMERAL_PATH_IDLE_TIMEOUT - Duration::from_secs(1),
+        )
+        .expect("relay path");
+    assert!(manager.ephemeral_idle(now));
+    manager.record_activity();
+    assert!(!manager.ephemeral_idle(now));
+    assert_eq!(manager.retire_ephemeral(now), 0);
+
+    assert!(registry.revoke(&direct));
+    assert_eq!(
+        manager
+            .publish_ready_with_carrier(
+                profile(PathKind::Direct, RouteTransport::Tcp),
+                recording_carrier(&direct_closes),
+            )
+            .expect("replace externally closed direct path")
+            .kind(),
+        PathKind::Direct
+    );
+    manager.hard_close_direct();
+    assert_eq!(manager.direct_state(), DirectPathState::None);
+    manager.hard_close_relay();
+    assert_eq!(manager.relay_state(), RelayPathState::None);
+    assert!(matches!(
+        registry.acquire(&relay),
+        Err(CoreNetworkError::StaleAttempt)
+    ));
+    assert_eq!(
+        direct_closes.lock().expect("direct close log").as_slice(),
+        &[PathCloseReason::HardClose, PathCloseReason::HardClose]
+    );
+    assert_eq!(
+        relay_closes.lock().expect("relay close log").as_slice(),
+        &[PathCloseReason::HardClose]
+    );
+}
+
+#[tokio::test]
+async fn route_view_rejects_stream_frames_without_stream_capability() {
+    let view = RouteView {
+        profile: profile(PathKind::Direct, RouteTransport::WebSocket),
+        carrier: RouteViewCarrier::Relay(None),
+    };
+    let error = send_route_view(view, "", GenericFrameKind::StreamOpen, b"payload")
+        .await
+        .expect_err("message-only path must reject stream frames");
+    assert!(error.to_string().contains("lacks requested capability"));
+}
