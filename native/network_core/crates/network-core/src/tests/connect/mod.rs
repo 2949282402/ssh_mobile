@@ -24,6 +24,10 @@ fn communication_class_maps_to_capability_bits_per_design_17() {
         communication_class_capability(CommunicationClass::RealtimeMedia),
         DEFAULT_CONNECTION_CAPABILITY
     );
+    assert_eq!(
+        communication_class_capability(CommunicationClass::Unspecified),
+        DEFAULT_CONNECTION_CAPABILITY
+    );
     // 旧调用方（Unspecified/0）按默认 ReliableMessage。
     assert_eq!(
         default_communication_class(CommunicationClass::Unspecified),
