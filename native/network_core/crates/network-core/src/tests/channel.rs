@@ -558,3 +558,75 @@ async fn business_frame_rejects_wrong_peer_and_inactive_lease() {
     .await
     .is_err());
 }
+
+#[tokio::test]
+async fn inbound_plaintext_delivery_emits_once_and_deduplicates_replays() {
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Disabled,
+        },
+    );
+
+    let best_effort = DataMessage {
+        session_id: "session-a".into(),
+        channel_id: "channel-a".into(),
+        message_id: vec![1; 16],
+        sequence: 0,
+        recovery_epoch: 0,
+        policy: DeliveryPolicyCode::BestEffort as i32,
+        payload: b"plaintext".to_vec(),
+    };
+    handle_data_message(&state, "peer-a", &best_effort.encode_to_vec())
+        .await
+        .expect("Disabled Direct plaintext should be delivered");
+    let event = event_rx.recv().await.expect("plaintext delivery event");
+    assert!(matches!(
+        event.payload,
+        Some(network_event::Payload::ChannelMessage(message))
+            if message.message_id == vec![1; 16] && message.payload == b"plaintext"
+    ));
+
+    let mut ciphertext = best_effort.clone();
+    ciphertext.message_id = vec![2; 16];
+    ciphertext.payload = b"SME1ciphertext".to_vec();
+    assert!(
+        handle_data_message(&state, "peer-a", &ciphertext.encode_to_vec())
+            .await
+            .is_err()
+    );
+
+    let mut acked = best_effort;
+    acked.message_id = vec![3; 16];
+    acked.policy = DeliveryPolicyCode::Acked as i32;
+    handle_data_message(&state, "peer-a", &acked.encode_to_vec())
+        .await
+        .expect("first Acked message should be accepted");
+    handle_data_message(&state, "peer-a", &acked.encode_to_vec())
+        .await
+        .expect("in-flight Acked replay should be ignored");
+    let event = event_rx.recv().await.expect("acked delivery event");
+    assert!(matches!(
+        event.payload,
+        Some(network_event::Payload::ChannelMessage(message))
+            if message.message_id == vec![3; 16]
+    ));
+    assert!(event_rx.try_recv().is_err());
+    assert!(matches!(
+        state
+            .delivery
+            .complete_incoming_checked("peer-a", "channel-a", MessageId::from_bytes([3; 16]),)
+            .await,
+        Ok(Some(_))
+    ));
+    assert!(
+        handle_data_message(&state, "peer-a", &acked.encode_to_vec())
+            .await
+            .is_err()
+    );
+}
