@@ -910,3 +910,7 @@ impl TransferRelayPort for RuntimeState {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "tests/transfer_operations.rs"]
+mod tests;

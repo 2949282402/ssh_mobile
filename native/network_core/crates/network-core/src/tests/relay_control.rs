@@ -1,0 +1,233 @@
+use super::*;
+
+use crate::connect::presence::PresenceHint;
+use crate::discovery::LocalDiscoveryManager;
+use network_protocol::NetworkEvent;
+use network_relay::v2::{
+    CandidateBundle, ConnectivityOffer, ControlEvent, PeerAvailableHint, PeerPresenceHint,
+    PeerUnavailableHint, PresenceHintSnapshot, RealtimeSignal, RuntimeEpoch,
+};
+use std::sync::atomic::AtomicU16;
+use tokio::sync::mpsc;
+
+fn state() -> Arc<RuntimeState> {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
+    Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))))
+}
+
+fn control_client() -> Arc<RelayControlClient> {
+    Arc::new(
+        RelayControlClient::new(
+            "ws://127.0.0.1:9".into(),
+            "device-a".into(),
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("valid unconnected control client"),
+    )
+}
+
+#[test]
+fn connectivity_offer_candidates_accepts_only_valid_advertisements() {
+    let candidate = network_nat::Candidate::new(
+        "192.168.1.20:41000".parse().unwrap(),
+        network_nat::CandidateKind::Lan,
+        "wifi".into(),
+    )
+    .with_generation(2)
+    .advertisement();
+    let valid = serde_json::to_vec(&candidate).unwrap();
+    let mut invalid = valid.clone();
+    invalid[0] = b'!';
+    let offer = ConnectivityOffer {
+        initiator_snapshot: Some(network_relay::v2::DiscoverySnapshot {
+            candidate_bundle: Some(CandidateBundle {
+                candidates: vec![valid, invalid, vec![0xff]],
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let candidates = connectivity_offer_candidates(&offer);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(
+        candidates[0].endpoint,
+        "192.168.1.20:41000"
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+    );
+
+    assert!(connectivity_offer_candidates(&ConnectivityOffer::default()).is_empty());
+}
+
+#[tokio::test]
+async fn local_discovery_tuple_has_safe_defaults_and_reads_manager_snapshot() {
+    let state = state();
+    assert_eq!(
+        local_discovery_tuple(&state).await,
+        (RuntimeEpoch { high: 0, low: 0 }, 1, None)
+    );
+
+    let manager = LocalDiscoveryManager::with_epoch(9, 10, 4);
+    *state.local_discovery.write().await = Some(Arc::new(manager));
+    let (epoch, revision, snapshot) = local_discovery_tuple(&state).await;
+    assert_eq!(epoch, RuntimeEpoch { high: 9, low: 10 });
+    assert_eq!(revision, 4);
+    assert_eq!(snapshot.expect("manager snapshot").revision, 4);
+}
+
+#[tokio::test]
+async fn control_events_update_presence_cache_and_emit_typed_presence_events() {
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
+    let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+    state.presence_hints.mark_online("stale-peer", 1);
+    let control = control_client();
+    let (events_tx, events_rx) = mpsc::channel(8);
+    let consumer_state = Arc::clone(&state);
+    let consumer = tokio::spawn(async move {
+        consume_control_events(consumer_state, control, events_rx).await;
+    });
+
+    events_tx
+        .send(ControlEvent::PresenceHintSnapshot(PresenceHintSnapshot {
+            peers: vec![PeerPresenceHint {
+                device_id: "peer-a".into(),
+                online: true,
+                runtime_epoch: Some(RuntimeEpoch { high: 2, low: 3 }),
+                revision: 7,
+            }],
+            published_at_ms: 1,
+        }))
+        .await
+        .unwrap();
+    events_tx
+        .send(ControlEvent::PeerAvailableHint(PeerAvailableHint {
+            device_id: "peer-a".into(),
+            runtime_epoch: None,
+            revision: 0,
+        }))
+        .await
+        .unwrap();
+    events_tx
+        .send(ControlEvent::PeerUnavailableHint(PeerUnavailableHint {
+            device_id: "peer-a".into(),
+            reason: "offline".into(),
+        }))
+        .await
+        .unwrap();
+    events_tx
+        .send(ControlEvent::ProtocolError(
+            network_relay::v2::ProtocolError {
+                request_id: 1,
+                attempt_id: "attempt".into(),
+                code: 13,
+                message: "ignored event".into(),
+            },
+        ))
+        .await
+        .unwrap();
+    drop(events_tx);
+    consumer.await.unwrap();
+
+    assert_eq!(
+        state.presence_hints.get("peer-a"),
+        Some(PresenceHint::new(false, 0))
+    );
+    assert!(state.presence_hints.get("stale-peer").is_none());
+    let mut events = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        events.push(event);
+    }
+    assert!(events.iter().any(|event| matches!(
+        event.payload,
+        Some(network_protocol::network_event::Payload::PeerPresenceSnapshot(_))
+    )));
+    assert!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event.payload,
+                Some(network_protocol::network_event::Payload::PeerPresenceChanged(_))
+            ))
+            .count()
+            >= 3
+    );
+}
+
+#[tokio::test]
+async fn control_helpers_disconnect_without_leaving_config_or_reconnect_tasks() {
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<NetworkEvent>();
+    let disconnect_state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+    *disconnect_state.relay.config.write().await = Some(RelayReconnectConfig {
+        relay_url: "ws://127.0.0.1:9".into(),
+        credential: "credential".into(),
+        signing_seed: [0u8; 32],
+    });
+    disconnect_relay(&disconnect_state)
+        .await
+        .expect("disconnect is idempotent");
+    assert!(disconnect_state.relay.config.read().await.is_none());
+    let event = event_rx.recv().await.expect("disconnect event");
+    assert!(matches!(
+        event.payload,
+        Some(network_protocol::network_event::Payload::RelayStateChanged(change))
+            if change.state == network_protocol::RelayConnectionState::Disconnected as i32
+    ));
+
+    let state2 = state();
+    schedule_relay_reconnect(Arc::clone(&state2));
+    assert!(state2
+        .relay
+        .reconnect_active
+        .load(std::sync::atomic::Ordering::Acquire));
+    stop_relay_reconnect_task(&state2).await;
+    assert!(!state2
+        .relay
+        .reconnect_active
+        .load(std::sync::atomic::Ordering::Acquire));
+    assert!(state2.relay.reconnect_task.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn control_consumer_ignores_unconfigured_offer_reservation_and_signal() {
+    let state = state();
+    let control = control_client();
+    let (events_tx, events_rx) = mpsc::channel(8);
+    let consumer_state = Arc::clone(&state);
+    let consumer = tokio::spawn(async move {
+        consume_control_events(consumer_state, control, events_rx).await;
+    });
+    events_tx
+        .send(ControlEvent::ConnectivityOffer(ConnectivityOffer {
+            attempt_id: "attempt".into(),
+            initiator_device_id: "peer-a".into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+    events_tx
+        .send(ControlEvent::IncomingRelayReservation(
+            network_relay::v2::IncomingRelayReservation {
+                attempt_id: "attempt".into(),
+                reservation_id: "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+                initiator_device_id: "peer-a".into(),
+                relay_data_endpoint: "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d"
+                    .into(),
+                expires_at_ms: 0,
+                local_token: vec![0; 32],
+            },
+        ))
+        .await
+        .unwrap();
+    events_tx
+        .send(ControlEvent::RealtimeSignal(RealtimeSignal {
+            realtime_id: "missing".into(),
+            target_device_id: "peer-a".into(),
+            payload: vec![0xff],
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+    drop(events_tx);
+    consumer.await.unwrap();
+}

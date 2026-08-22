@@ -145,5 +145,5 @@ pub(super) use relay_data::*;
 pub(super) use relay_transfer::*;
 
 #[cfg(test)]
-#[path = "relay_tests.rs"]
+#[path = "tests/relay.rs"]
 mod tests;

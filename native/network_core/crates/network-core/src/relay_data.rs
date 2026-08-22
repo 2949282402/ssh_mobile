@@ -935,3 +935,7 @@ pub(super) async fn cleanup_relay_state(state: &RuntimeState, peer: Option<&str>
         state.relay.relay_path_ready.write().await.clear();
     }
 }
+
+#[cfg(test)]
+#[path = "tests/relay_data.rs"]
+mod tests;

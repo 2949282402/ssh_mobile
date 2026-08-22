@@ -1239,13 +1239,166 @@ impl RuntimeState {
     }
 
     pub(crate) async fn fail_session(&self, peer_id: &str, session_id: SessionId) {
-        self.close_transport_path(peer_id).await;
+        // A stale coordinator must only hard-close projections that still
+        // belong to its exact session.  The peer may already have admitted a
+        // replacement path by the time the failure is observed.
+        self.close_transport_path_for_session(peer_id, session_id)
+            .await;
         if self
             .connection_sessions
             .retire_session(peer_id, session_id)
             .await
         {
             self.cancel_session_tasks(peer_id, session_id).await;
+        }
+    }
+
+    /// Hard-close only the physical projections owned by `session_id`.
+    ///
+    /// `PeerPathManager` is the carrier owner and can hold independent Direct
+    /// and Relay paths.  The projection index supplies the session binding;
+    /// the manager handle check prevents a stale coordinator from closing a
+    /// newer path that reused the same topology slot.
+    async fn close_transport_path_for_session(&self, peer_id: &str, session_id: SessionId) -> bool {
+        let Some(manager) = self.peer_path_managers.read().await.get(peer_id).cloned() else {
+            return false;
+        };
+
+        let (direct_handle, relay_handle) = {
+            // The projection index is only a snapshot.  We deliberately do
+            // not hold the synchronous path-manager lock across this await;
+            // the manager handles are rechecked immediately before close.
+            let projections = self.path_projections.read().await;
+            let Some(entries) = projections.get(peer_id) else {
+                return false;
+            };
+            let direct = entries
+                .iter()
+                .find(|entry| {
+                    entry.session_id == session_id
+                        && entry.projection.handle().profile().topology()
+                            == crate::connection::RouteTopology::Direct
+                })
+                .map(|entry| entry.projection.handle().clone());
+            let relay = entries
+                .iter()
+                .find(|entry| {
+                    entry.session_id == session_id
+                        && entry.projection.handle().profile().topology()
+                            == crate::connection::RouteTopology::Relay
+                })
+                .map(|entry| entry.projection.handle().clone());
+            (direct, relay)
+        };
+
+        let (direct_closed, relay_closed) = {
+            let mut manager = manager.lock().expect("peer path manager lock");
+            let direct_closed = direct_handle.as_ref().is_some_and(|expected| {
+                if manager.direct_ready().first() == Some(expected) {
+                    manager.hard_close_direct();
+                    true
+                } else {
+                    false
+                }
+            });
+            let relay_closed = relay_handle.as_ref().is_some_and(|expected| {
+                if manager.relay_ready() == Some(expected) {
+                    manager.hard_close_relay();
+                    true
+                } else {
+                    false
+                }
+            });
+            (direct_closed, relay_closed)
+        };
+        if !direct_closed && !relay_closed {
+            return false;
+        }
+
+        self.close_inactive_streams(peer_id).await;
+        if let Ok(mut recovery) = self.direct_recovery.lock() {
+            if direct_closed {
+                recovery
+                    .entry(peer_id.to_string())
+                    .or_default()
+                    .mark_direct_unavailable();
+            }
+            if relay_closed {
+                recovery
+                    .entry(peer_id.to_string())
+                    .or_default()
+                    .mark_relay_lost();
+            }
+        }
+
+        {
+            let mut projections = self.path_projections.write().await;
+            if let Some(entries) = projections.get_mut(peer_id) {
+                entries.retain(|entry| {
+                    if entry.session_id != session_id {
+                        return true;
+                    }
+                    let handle = entry.projection.handle();
+                    !(direct_closed
+                        && direct_handle.as_ref().is_some_and(|expected| {
+                            handle.profile().topology() == crate::connection::RouteTopology::Direct
+                                && handle == expected
+                        }))
+                        && !(relay_closed
+                            && relay_handle.as_ref().is_some_and(|expected| {
+                                handle.profile().topology()
+                                    == crate::connection::RouteTopology::Relay
+                                    && handle == expected
+                            }))
+                });
+                if entries.is_empty() {
+                    projections.remove(peer_id);
+                }
+            }
+        }
+
+        // Remove an empty manager only after taking the map write lock and
+        // rechecking the same manager, so a concurrent replacement cannot be
+        // erased after it publishes a new ready path.
+        let mut managers = self.peer_path_managers.write().await;
+        let remove_manager = managers.get(peer_id).is_some_and(|current| {
+            if !Arc::ptr_eq(current, &manager) {
+                return false;
+            }
+            let manager = manager.lock().expect("peer path manager lock");
+            manager.direct_ready().is_empty() && manager.relay_ready().is_none()
+        });
+        if remove_manager {
+            managers.remove(peer_id);
+        }
+        drop(managers);
+        if remove_manager {
+            self.path_projections.write().await.remove(peer_id);
+        }
+        true
+    }
+
+    /// Retire an exact stale admission without closing the peer's current
+    /// physical path or invalidating its `PeerSupervisor` generation.
+    ///
+    /// A replacement attempt may have reserved the current Session while a
+    /// Resolve response still exposes an older `ReadySessionIndex` entry. In
+    /// that case the old admission is no longer the path owner, so the
+    /// attempt coordinator must only retire its session-scoped resources.
+    pub(crate) async fn retire_session_without_transport(
+        &self,
+        peer_id: &str,
+        session_id: SessionId,
+    ) -> bool {
+        if self
+            .connection_sessions
+            .retire_session(peer_id, session_id)
+            .await
+        {
+            self.cancel_session_tasks(peer_id, session_id).await;
+            true
+        } else {
+            false
         }
     }
 
@@ -1795,100 +1948,5 @@ impl Drop for NetworkRuntime {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::connect::{PeerId, PeerPathManager};
-    use crate::connection::{ConnectionProfile, Route, RouteTransport};
-    use std::sync::atomic::AtomicU16;
-    use tokio::sync::mpsc;
-
-    #[tokio::test]
-    async fn runtime_path_projection_is_non_owning() {
-        let (event_tx, _event_rx) = mpsc::unbounded_channel();
-        let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
-        let peer_id = "projection-peer";
-        let session_id = SessionId::new();
-        state
-            .connection_sessions
-            .register_pending_session(peer_id, session_id)
-            .await
-            .expect("register session");
-
-        let mut manager = PeerPathManager::new(
-            PeerId::new(peer_id).expect("peer id"),
-            Arc::clone(&state.ready_paths),
-        );
-        let handle = manager
-            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
-            .expect("publish path");
-        let projection = manager.projection(&handle).expect("projection");
-        state
-            .peer_path_managers
-            .write()
-            .await
-            .insert(peer_id.to_string(), Arc::new(Mutex::new(manager)));
-        state.path_projections.write().await.insert(
-            peer_id.to_string(),
-            vec![OwnedPathProjection {
-                session_id,
-                projection: projection.clone(),
-            }],
-        );
-
-        assert!(state.path_is_connected(peer_id).await);
-        state.peer_path_managers.write().await.remove(peer_id);
-        assert!(
-            !projection.is_alive(),
-            "projection must not own the carrier"
-        );
-    }
-
-    #[tokio::test]
-    async fn authenticated_session_rejects_an_incompatible_connected_path() {
-        let (event_tx, _event_rx) = mpsc::unbounded_channel();
-        let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
-        let peer_id = "capability-peer";
-        let session_id = SessionId::new();
-        state
-            .connection_sessions
-            .register_pending_session(peer_id, session_id)
-            .await
-            .expect("register session");
-        state
-            .connection_sessions
-            .admit_authenticated_session(peer_id, Some(session_id), "remote-binding")
-            .await
-            .expect("admit session");
-        state
-            .connection_sessions
-            .finalize_authenticated_session(peer_id, session_id, "remote-binding")
-            .await
-            .expect("finalize session");
-
-        let mut manager = PeerPathManager::new(
-            PeerId::new(peer_id).expect("peer id"),
-            Arc::clone(&state.ready_paths),
-        );
-        manager
-            .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
-            .expect("publish TCP path");
-        state
-            .peer_path_managers
-            .write()
-            .await
-            .insert(peer_id.to_string(), Arc::new(Mutex::new(manager)));
-
-        assert_eq!(
-            state
-                .begin_connect(peer_id, crate::connect::CAPABILITY_UNRELIABLE_DATAGRAM)
-                .await,
-            ConnectDecision::CapabilityMismatch(session_id)
-        );
-        assert_eq!(
-            state
-                .begin_connect(peer_id, crate::connect::CAPABILITY_RELIABLE_STREAM)
-                .await,
-            ConnectDecision::AlreadyConnected(session_id)
-        );
-    }
-}
+#[path = "tests/runtime.rs"]
+mod tests;

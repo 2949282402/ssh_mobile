@@ -635,3 +635,7 @@ pub(super) fn relay_connect_protocol_error(error: &RelayError, operation: &str) 
         ),
     }
 }
+
+#[cfg(test)]
+#[path = "tests/relay_control.rs"]
+mod tests;

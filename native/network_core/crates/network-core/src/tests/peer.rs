@@ -1,0 +1,1091 @@
+use super::*;
+use crate::generic_auth::authenticate_responder;
+use crate::runtime::ConnectDecision;
+use network_transport::{TcpTransport, Transport, WebSocketTransport};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use tokio::io::AsyncReadExt;
+use tokio::net::{TcpListener, TcpStream};
+
+async fn generic_connection_pair() -> (GenericConnection, TcpStream) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind generic route test listener");
+    let address = listener
+        .local_addr()
+        .expect("generic route listener address");
+    let (server_result, client_result) =
+        tokio::join!(listener.accept(), TcpStream::connect(address));
+    let server = server_result.expect("accept generic route test socket").0;
+    let client = client_result.expect("connect generic route test socket");
+    (
+        GenericConnection::from_transport(Transport::Tcp(TcpTransport::from_stream(client))),
+        server,
+    )
+}
+
+async fn new_test_state() -> Arc<RuntimeState> {
+    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))))
+}
+
+async fn started_generic_scope(
+    state: &Arc<RuntimeState>,
+    peer_id: &str,
+    session_id: SessionId,
+    connection: GenericConnection,
+) -> GenericRouteScope {
+    supervise_generic_route(
+        Arc::clone(state),
+        peer_id,
+        session_id,
+        prepare_generic_route(connection),
+    )
+    .await
+    .expect("generic route tasks should start")
+}
+
+async fn started_session(state: &RuntimeState, peer_id: &str) -> SessionId {
+    match state
+        .begin_connect(peer_id, crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected Session decision: {decision:?}"),
+    }
+}
+
+struct CancellationSignal {
+    started: Option<oneshot::Sender<()>>,
+    cancelled: Option<oneshot::Sender<()>>,
+}
+
+impl Drop for CancellationSignal {
+    fn drop(&mut self) {
+        if let Some(sender) = self.cancelled.take() {
+            let _ = sender.send(());
+        }
+    }
+}
+
+async fn wait_for_active_task_count(
+    supervisor: &crate::task_supervisor::RuntimeTaskSupervisor,
+    expected: usize,
+) {
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if supervisor.active_count() == expected {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("supervisor did not reach {expected} active tasks"));
+}
+
+#[tokio::test]
+async fn session_close_stops_and_joins_generic_route_tasks() {
+    let state = new_test_state().await;
+    let session_id = started_session(&state, "generic-close-peer").await;
+    let (connection, mut server) = generic_connection_pair().await;
+    let mut scope =
+        started_generic_scope(&state, "generic-close-peer", session_id, connection).await;
+    assert_eq!(state.task_supervisor.active_count(), 2);
+    state
+        .attach_generic_route_for_session("generic-close-peer", Some(session_id), &mut scope)
+        .await
+        .expect("attach GenericRoute");
+
+    state
+        .close_transport_path("generic-close-peer")
+        .await
+        .expect("Session close should detach GenericRoute owner");
+    wait_for_active_task_count(&state.task_supervisor, 0).await;
+    assert_eq!(state.task_supervisor.active_count(), 0);
+
+    let mut buffer = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(1), server.read(&mut buffer))
+        .await
+        .expect("underlying TCP socket should close")
+        .expect("read server-side socket");
+    assert_eq!(read, 0);
+}
+
+#[tokio::test]
+async fn connected_session_rejects_a_second_route_to_enforce_one_to_one() {
+    // §18 1:1：Session 已 Connected 且持有 route 时，拒绝再挂第二条 route。
+    let state = new_test_state().await;
+    let peer_id = "generic-one-to-one-peer";
+    let session_id = started_session(&state, peer_id).await;
+    let (first_connection, _server) = generic_connection_pair().await;
+    let mut first_scope =
+        started_generic_scope(&state, peer_id, session_id, first_connection).await;
+    state
+        .attach_generic_route_for_session(peer_id, Some(session_id), &mut first_scope)
+        .await
+        .expect("attach first GenericRoute");
+
+    let (second_connection, _second_server) = generic_connection_pair().await;
+    let mut second_scope =
+        started_generic_scope(&state, peer_id, session_id, second_connection).await;
+    assert!(state
+        .attach_generic_route_for_session(peer_id, Some(session_id), &mut second_scope)
+        .await
+        .is_err());
+    second_scope.close().await;
+
+    state
+        .close_transport_path(peer_id)
+        .await
+        .expect("close Session");
+    wait_for_active_task_count(&state.task_supervisor, 0).await;
+    assert_eq!(state.task_supervisor.active_count(), 0);
+}
+
+#[tokio::test]
+async fn outbound_generic_peer_restart_replaces_session_and_cancels_old_tasks() {
+    // §18：peer restart（新 remote binding）会让新连接整体替换旧 Session（新
+    // SessionId + 新 root），并且旧 Session 的 task group 在 admission 时立即取消。
+    let state = new_test_state().await;
+    let peer_id = "generic-outbound-restart-peer";
+    let local_peer_id = "generic-outbound-local";
+    let old_session_id = started_session(&state, peer_id).await;
+    let old_remote_binding = "11".repeat(16);
+    let new_remote_binding = "22".repeat(16);
+    state
+        .connection_sessions
+        .admit_authenticated_session(peer_id, Some(old_session_id), &old_remote_binding)
+        .await
+        .expect("seed the old remote Session binding");
+    state
+        .connection_sessions
+        .finalize_authenticated_session(peer_id, old_session_id, &old_remote_binding)
+        .await
+        .expect("finalize the old remote Session binding");
+
+    // 在握手前把哨兵放进旧 Session 组，验证被替换后立即取消。
+    let (sentinel_started_tx, sentinel_started_rx) = oneshot::channel();
+    let (sentinel_cancelled_tx, sentinel_cancelled_rx) = oneshot::channel();
+    let sentinel_task = state.task_supervisor.spawn_session(
+        old_session_id.wire_key(),
+        "old-session-sentinel",
+        async move {
+            let mut signal = CancellationSignal {
+                started: Some(sentinel_started_tx),
+                cancelled: Some(sentinel_cancelled_tx),
+            };
+            if let Some(sender) = signal.started.take() {
+                let _ = sender.send(());
+            }
+            std::future::pending::<()>().await;
+        },
+    );
+    assert!(sentinel_task.is_some(), "old Session sentinel should start");
+    timeout(Duration::from_secs(1), sentinel_started_rx)
+        .await
+        .expect("old Session sentinel did not start")
+        .expect("old Session sentinel start signal was dropped");
+
+    let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+        local_peer_id.to_string(),
+        [201u8; 32],
+        [211u8; 32],
+    ));
+    let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+        peer_id.to_string(),
+        [202u8; 32],
+        [212u8; 32],
+    ));
+    let local_public_key = local_identity.public_identity_key().to_bytes();
+    let remote_public_key = remote_identity.public_identity_key().to_bytes();
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind outbound GenericRoute test listener");
+    let endpoint = listener
+        .local_addr()
+        .expect("outbound GenericRoute test endpoint");
+    let (release_tx, release_rx) = oneshot::channel();
+    let (received_frame_tx, received_frame_rx) = oneshot::channel();
+    let expected_old_binding = old_session_id.wire_key();
+    let expected_local_peer_id = local_peer_id.to_string();
+    let responder_task = tokio::spawn(async move {
+        let (stream, _) = listener
+            .accept()
+            .await
+            .expect("accept outbound GenericRoute test connection");
+        let mut connection =
+            GenericConnection::from_transport(Transport::Tcp(TcpTransport::from_stream(stream)));
+        let trusted_peer_keys = tokio::sync::RwLock::new(HashMap::from([(
+            expected_local_peer_id.clone(),
+            local_public_key,
+        )]));
+        let authenticated = authenticate_responder(
+            &mut connection,
+            remote_identity,
+            &trusted_peer_keys,
+            move |authenticated_peer_id, remote_session_binding| {
+                assert_eq!(authenticated_peer_id, expected_local_peer_id);
+                assert_eq!(remote_session_binding, expected_old_binding);
+                async move { Ok((new_remote_binding, ())) }
+            },
+        )
+        .await
+        .expect("complete outbound GenericRoute authentication");
+        assert_eq!(authenticated.peer_id, local_peer_id);
+        let received_frame = timeout(Duration::from_secs(1), connection.recv())
+            .await
+            .expect("outbound GenericRoute frame was not received")
+            .expect("read outbound GenericRoute frame");
+        received_frame_tx
+            .send(received_frame)
+            .expect("send received GenericRoute frame to test");
+        release_rx.await.expect("release responder connection");
+    });
+
+    let route = connect_tcp_route(
+        endpoint,
+        local_identity,
+        remote_public_key,
+        peer_id.to_string(),
+        old_session_id.wire_key(),
+        Arc::clone(&state),
+        old_session_id,
+        DEFAULT_CONNECTION_CAPABILITY,
+    )
+    .await
+    .expect("outbound TCP GenericRoute should authenticate");
+    // 握手期间 admission 已经取消了旧 Session 组（含哨兵）。
+    timeout(Duration::from_secs(1), sentinel_cancelled_rx)
+        .await
+        .expect("old Session cancellation did not complete during admission")
+        .expect("old Session sentinel signal was dropped");
+
+    let AuthenticatedGenericRoute {
+        mut scope,
+        admission,
+        ..
+    } = route;
+    let new_session_id = admission.session_id;
+    assert_ne!(new_session_id, old_session_id);
+
+    state
+        .attach_generic_route_for_session(peer_id, Some(new_session_id), &mut scope)
+        .await
+        .expect("attach outbound GenericRoute to replacement Session");
+
+    wait_for_active_task_count(&state.task_supervisor, 2).await;
+    assert_eq!(
+        state.connection_sessions.current_session_id(peer_id).await,
+        Some(new_session_id)
+    );
+
+    let payload = b"replacement-route-still-alive";
+    timeout(
+        Duration::from_secs(1),
+        state.path_send_channel_frame(peer_id, "", GenericFrameKind::DataMessage, payload),
+    )
+    .await
+    .expect("sending through replacement GenericRoute timed out")
+    .expect("replacement GenericRoute should still send frames");
+    let received_frame = timeout(Duration::from_secs(1), received_frame_rx)
+        .await
+        .expect("replacement GenericRoute frame confirmation timed out")
+        .expect("replacement GenericRoute frame confirmation was dropped");
+    let mut expected_frame = b"SMGF".to_vec();
+    expected_frame.extend_from_slice(&network_protocol::NETWORK_PROTOCOL_VERSION.to_be_bytes());
+    expected_frame.push(GenericFrameKind::DataMessage as u8);
+    expected_frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    expected_frame.extend_from_slice(payload);
+    assert_eq!(received_frame, expected_frame);
+
+    state
+        .close_transport_path(peer_id)
+        .await
+        .expect("close replacement GenericRoute");
+    let _ = release_tx.send(());
+    responder_task
+        .await
+        .expect("outbound GenericRoute responder should exit");
+    wait_for_active_task_count(&state.task_supervisor, 0).await;
+    assert_eq!(state.task_supervisor.active_count(), 0);
+}
+
+#[tokio::test]
+async fn failed_generic_attach_drops_staged_scope_without_orphan_tasks() {
+    let state = new_test_state().await;
+    let session_id = started_session(&state, "generic-failed-attach-peer").await;
+    let (connection, mut server) = generic_connection_pair().await;
+    let mut scope =
+        started_generic_scope(&state, "generic-failed-attach-peer", session_id, connection).await;
+    state
+        .close_transport_path("generic-failed-attach-peer")
+        .await;
+    let _ = state
+        .connection_sessions
+        .retire_session("generic-failed-attach-peer", session_id)
+        .await;
+    assert!(state
+        .attach_generic_route_for_session(
+            "generic-failed-attach-peer",
+            Some(session_id),
+            &mut scope,
+        )
+        .await
+        .is_err());
+    scope.close().await;
+    assert_eq!(state.task_supervisor.active_count(), 0);
+
+    let mut buffer = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(2), server.read(&mut buffer))
+        .await
+        .expect("failed attach should close staged socket")
+        .expect("read failed attach socket");
+    assert_eq!(read, 0);
+}
+
+#[test]
+fn runtime_stop_joins_generic_route_tasks() {
+    let runtime = crate::runtime::NetworkRuntime::new().expect("create runtime");
+    runtime.start().expect("start runtime");
+    let state = runtime
+        .state
+        .lock()
+        .expect("runtime state lock")
+        .clone()
+        .expect("runtime state");
+    let (server, scope) = runtime.handle().block_on(async {
+        let session_id = started_session(&state, "generic-runtime-stop-peer").await;
+        let (connection, server) = generic_connection_pair().await;
+        let mut scope =
+            started_generic_scope(&state, "generic-runtime-stop-peer", session_id, connection)
+                .await;
+        state
+            .attach_generic_route_for_session(
+                "generic-runtime-stop-peer",
+                Some(session_id),
+                &mut scope,
+            )
+            .await
+            .expect("attach runtime GenericRoute");
+        (server, scope)
+    });
+    drop(scope);
+    runtime.stop().expect("stop runtime");
+    assert_eq!(state.task_supervisor.active_count(), 0);
+    runtime.handle().block_on(async {
+        let mut server = server;
+        let mut buffer = [0u8; 1];
+        let read = tokio::time::timeout(Duration::from_secs(1), server.read(&mut buffer))
+            .await
+            .expect("runtime stop should close GenericRoute socket")
+            .expect("read runtime-stop socket");
+        assert_eq!(read, 0);
+    });
+}
+
+#[tokio::test]
+async fn losing_candidate_admit_never_replaces_attached_winner_session() {
+    // §18/§40：race 两个 candidate 时，winner 已 attach route（Session Connected）后，
+    // loser 迟到的 admit 不得触发 ReplaceWithNew——否则拆掉刚挂载的 winning route，
+    // 双方都掉线。
+    let state = new_test_state().await;
+    let peer_id = "candidate-race-peer";
+    let session_id = started_session(&state, peer_id).await;
+    let binding = "11".repeat(16);
+
+    // winner：第一次 admit 成功，保持 in-flight Session（Initialize）。
+    let winner = admit_single_winner(
+        &state,
+        peer_id,
+        Some(session_id),
+        &binding,
+        DEFAULT_CONNECTION_CAPABILITY,
+    )
+    .await
+    .expect("winner admission should succeed");
+    assert_eq!(winner.session_id, session_id);
+
+    // winner 挂载一条 generic route（Session → Connected）。
+    let (connection, _server) = generic_connection_pair().await;
+    let mut scope = started_generic_scope(&state, peer_id, session_id, connection).await;
+    state
+        .attach_generic_route_for_session(peer_id, Some(session_id), &mut scope)
+        .await
+        .expect("attach winner generic route");
+    assert!(state.path_is_connected(peer_id).await);
+
+    // loser：同 (peer, expected_session_id) 的迟到 admit 必须被拒绝，绝不替换。
+    assert!(
+        admit_single_winner(
+            &state,
+            peer_id,
+            Some(session_id),
+            &binding,
+            DEFAULT_CONNECTION_CAPABILITY
+        )
+        .await
+        .is_err(),
+        "losing candidate must not trigger a Session replacement"
+    );
+
+    // winner 的 Session 与 route 仍然存活（无 disconnect）。
+    assert_eq!(
+        state.connection_sessions.current_session_id(peer_id).await,
+        Some(session_id)
+    );
+    assert!(state.path_is_connected(peer_id).await);
+
+    state
+        .close_transport_path(peer_id)
+        .await
+        .expect("close Session");
+    wait_for_active_task_count(&state.task_supervisor, 0).await;
+    assert_eq!(state.task_supervisor.active_count(), 0);
+}
+
+#[tokio::test]
+async fn tcp_fallback_accept_loop_survives_transient_accept_errors() {
+    // §40：瞬态 accept 错误（EMFILE/aborted/reset 等）只退避重试，不得终止 inbound
+    // TCP/WS 回退；后续真实连接仍被接受。
+    let state = new_test_state().await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind accept listener");
+    let address = listener.local_addr().expect("accept listener address");
+    let loop_task = tokio::spawn(accept_tcp_loop(
+        listener,
+        Arc::clone(&state),
+        Box::new(InjectOnceTransientAcceptError { injected: true }),
+    ));
+    // 等循环处理注入的错误 + 退避。
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // 建立一条真实连接：循环必须继续 accept 并派生 handshake 任务。
+    let _client = TcpStream::connect(address)
+        .await
+        .expect("connect after transient accept error");
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if state.task_supervisor.active_count() >= 1 {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("accept loop did not process the connection after the transient error");
+    loop_task.abort();
+}
+
+#[tokio::test]
+async fn tcp_fallback_accept_loop_exits_on_fatal_listener_error() {
+    // §40：只有致命错误（listener 已关闭 / fd 失效）才终止 accept 循环。
+    let state = new_test_state().await;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind accept listener");
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(1),
+        accept_tcp_loop(listener, Arc::clone(&state), Box::new(FatalAcceptError)),
+    )
+    .await;
+    assert!(
+        outcome.is_ok(),
+        "fatal accept errors must terminate the TCP fallback accept loop"
+    );
+}
+
+/// 注入一次瞬态 accept 错误，之后委托真实 `TcpListener::accept` 的测试 accept 步骤。
+struct InjectOnceTransientAcceptError {
+    injected: bool,
+}
+
+impl TcpAcceptStep for InjectOnceTransientAcceptError {
+    fn accept<'a>(
+        &'a mut self,
+        listener: &'a TcpListener,
+    ) -> Pin<
+        Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>,
+    > {
+        if self.injected {
+            self.injected = false;
+            Box::pin(async {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionAborted,
+                    "injected transient accept error",
+                ))
+            })
+        } else {
+            Box::pin(listener.accept())
+        }
+    }
+}
+
+/// 始终返回致命 accept 错误的测试 accept 步骤（listener 已关闭）。
+struct FatalAcceptError;
+
+impl TcpAcceptStep for FatalAcceptError {
+    fn accept<'a>(
+        &'a mut self,
+        _listener: &'a TcpListener,
+    ) -> Pin<
+        Box<dyn Future<Output = std::io::Result<(tokio::net::TcpStream, SocketAddr)>> + Send + 'a>,
+    > {
+        Box::pin(async {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "listener closed",
+            ))
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn generic_candidate_races_tcp_and_websocket_concurrently() {
+    let state = new_test_state().await;
+    let peer_id = "generic-race-peer";
+    let local_peer_id = "generic-race-local";
+    let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+        local_peer_id.to_string(),
+        [81u8; 32],
+        [91u8; 32],
+    ));
+    let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+        peer_id.to_string(),
+        [82u8; 32],
+        [92u8; 32],
+    ));
+    let remote_public_key = remote_identity.public_identity_key().to_bytes();
+    let session_id = match state
+        .begin_connect(peer_id, crate::connect::CAPABILITY_RELIABLE_MESSAGE)
+        .await
+    {
+        ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected Session decision: {decision:?}"),
+    };
+    let (endpoint, release_tx, responder_task) =
+        spawn_mixed_generic_responder(peer_id, local_peer_id).await;
+    let route = tokio::time::timeout(
+        Duration::from_secs(3),
+        connect_generic_candidate(
+            endpoint,
+            local_identity,
+            remote_public_key,
+            peer_id.to_string(),
+            session_id.wire_key(),
+            Arc::clone(&state),
+            session_id,
+            CAPABILITY_RELIABLE_MESSAGE,
+            true,
+            Duration::from_secs(1),
+        ),
+    )
+    .await
+    .expect("TCP/WS candidate race should finish within the candidate window")
+    .expect("WebSocket should win while TCP is blackholed");
+
+    let AuthenticatedGenericRoute { scope, .. } = route;
+    assert_eq!(
+        scope
+            .profile()
+            .expect("staged generic route profile")
+            .transport(),
+        RouteTransport::WebSocket,
+        "WebSocket must race TCP instead of waiting for TCP to fail"
+    );
+    scope.close().await;
+    state.cancel_session_tasks(peer_id, session_id).await;
+    let _ = release_tx.send(());
+    responder_task
+        .await
+        .expect("mixed generic responder should exit");
+    state.task_supervisor.cancel_root();
+    state.task_supervisor.shutdown().await;
+}
+
+#[test]
+fn candidate_snapshot_requeues_changed_endpoint_and_drops_deleted_pending() {
+    let mut old = Candidate::new(
+        "192.0.2.10:41000".parse().expect("old endpoint"),
+        CandidateKind::Lan,
+        "same-interface".into(),
+    )
+    .with_generation(1);
+    old.candidate_id = "same-candidate".into();
+    let mut deleted = Candidate::new(
+        "192.0.2.11:41001".parse().expect("deleted endpoint"),
+        CandidateKind::Lan,
+        "deleted-interface".into(),
+    );
+    deleted.candidate_id = "deleted-candidate".into();
+
+    let mut pending = VecDeque::new();
+    let mut started = HashSet::new();
+    enqueue_candidates(&mut pending, &mut started, vec![old, deleted]);
+    let launched = pending.pop_front().expect("old candidate should be queued");
+    started.insert(candidate_attempt_key(&launched));
+
+    let mut updated = Candidate::new(
+        "198.51.100.10:42000".parse().expect("updated endpoint"),
+        CandidateKind::Lan,
+        "same-interface".into(),
+    )
+    .with_generation(2);
+    updated.candidate_id = "same-candidate".into();
+    enqueue_candidates(&mut pending, &mut started, vec![updated.clone()]);
+
+    assert_eq!(pending.len(), 1, "the updated candidate should be requeued");
+    let queued = pending
+        .front()
+        .expect("updated candidate should remain pending");
+    assert_eq!(queued.candidate_id, updated.candidate_id);
+    assert_eq!(queued.endpoint, updated.endpoint);
+    assert_eq!(queued.generation, updated.generation);
+    assert!(!started.contains(&candidate_attempt_key(&updated)));
+
+    enqueue_candidates(&mut pending, &mut started, vec![updated]);
+    assert_eq!(
+        pending.len(),
+        1,
+        "the same snapshot must not duplicate a pending candidate"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn late_quic_candidate_arriving_before_direct_deadline_can_win() {
+    let client_state = new_test_state().await;
+    let server_state = new_test_state().await;
+    let local_peer_id = "late-candidate-local";
+    let peer_id = "late-candidate-peer";
+
+    let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+        local_peer_id.to_string(),
+        [61u8; 32],
+        [71u8; 32],
+    ));
+    let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+        peer_id.to_string(),
+        [62u8; 32],
+        [72u8; 32],
+    ));
+    let remote_public_key = remote_identity.public_identity_key().to_bytes();
+    *client_state.lifecycle.identity.write().await = Some(Arc::clone(&local_identity));
+    *server_state.lifecycle.identity.write().await = Some(remote_identity);
+    server_state.peers.write().await.insert(
+        local_peer_id.to_string(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: local_identity.public_identity_key().to_bytes(),
+            e2e_public_key: local_identity.public_e2e_key().to_bytes(),
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    server_state.trusted_peer_keys.write().await.insert(
+        local_peer_id.to_string(),
+        local_identity.public_identity_key().to_bytes(),
+    );
+
+    let server_endpoint = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("server bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("create server QUIC endpoint")
+    .endpoint;
+    let server_address = server_endpoint
+        .local_addr()
+        .expect("server endpoint address");
+    server_state
+        .task_supervisor
+        .spawn_runtime(
+            "late-candidate-quic-accept",
+            accept_connections(server_endpoint.clone(), Arc::clone(&server_state)),
+        )
+        .expect("start server QUIC accept loop");
+
+    let client_endpoint = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("client bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("create client QUIC endpoint")
+    .endpoint;
+    let session_id = started_session(&client_state, peer_id).await;
+
+    // C1 fails immediately. The Direct phase must still keep its coordination
+    // receiver alive long enough for the authenticated ConnectivityAnswer to add C2.
+    let first_candidate = Candidate::new(
+        "127.0.0.1:0".parse().expect("invalid direct endpoint"),
+        CandidateKind::Lan,
+        "late-candidate-c1".into(),
+    );
+    let reachable_candidate = Candidate::new(
+        server_address,
+        CandidateKind::Lan,
+        "late-candidate-c2".into(),
+    );
+    let (candidate_update_tx, candidate_updates) = watch::channel(None);
+    let update_task = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        candidate_update_tx
+            .send(Some(vec![reachable_candidate]))
+            .expect("late candidate update receiver should remain alive");
+    });
+
+    let attempt = DirectRouteAttempt {
+        state: Arc::clone(&client_state),
+        endpoint: client_endpoint.clone(),
+        candidates: vec![first_candidate],
+        identity: local_identity,
+        expected_peer_public_key: remote_public_key,
+        peer_id: peer_id.to_string(),
+        session_binding: session_id.wire_key(),
+        session_id,
+        attempt_id: "late-quic-candidate-test".into(),
+        // Exercise the production Direct window so a busy test runner does not
+        // turn the candidate-update assertion into a scheduler race.
+        connect_window: crate::connect::DIRECT_CONNECT_WINDOW,
+        required_capabilities: DEFAULT_CONNECTION_CAPABILITY | CAPABILITY_UNRELIABLE_DATAGRAM,
+        allow_websocket: true,
+        candidate_updates,
+    };
+    let route = tokio::time::timeout(
+        crate::connect::DIRECT_CONNECT_WINDOW + Duration::from_secs(2),
+        connect_direct_or_generic(attempt),
+    )
+    .await
+    .expect("late QUIC candidate should finish within Direct window")
+    .expect("late reachable QUIC candidate should win Direct race");
+    update_task
+        .await
+        .expect("candidate update task should finish");
+
+    let ConnectedRoute::Quic { connection, .. } = route else {
+        panic!("expected the late candidate to produce a QUIC route");
+    };
+    connection.close(quinn::VarInt::from_u32(0), b"test complete");
+
+    client_state.cancel_session_tasks(peer_id, session_id).await;
+    if let Some(server_session_id) = server_state
+        .connection_sessions
+        .current_session_id(local_peer_id)
+        .await
+    {
+        server_state
+            .cancel_session_tasks(local_peer_id, server_session_id)
+            .await;
+    }
+    client_endpoint.close(quinn::VarInt::from_u32(0), b"test complete");
+    server_endpoint.close(quinn::VarInt::from_u32(0), b"test complete");
+    client_state.task_supervisor.cancel_root();
+    server_state.task_supervisor.cancel_root();
+    client_state.task_supervisor.shutdown().await;
+    server_state.task_supervisor.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn generic_direct_route_gets_budget_when_quic_candidates_are_blackholed() {
+    // §15/§37：QUIC 候选被黑洞（UDP socket 收包但不响应）时不得耗尽整个 Direct 窗口——
+    // generic（TCP/WebSocket）候选应拿到自己的时间片；仅 TCP 可达的 peer 在窗口内走
+    // generic 成功，而不是直接超时回退 Relay。
+    let state = new_test_state().await;
+    let peer_id = "generic-budget-peer";
+    let local_peer_id = "generic-budget-local";
+
+    // QUIC 黑洞：绑定 UDP socket 但从不读取/响应 → QUIC candidate 挂到子预算超时。
+    let blackhole = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind UDP blackhole");
+    let blackhole_address = blackhole.local_addr().expect("blackhole address");
+
+    // 可用的 generic（TCP）路由。
+    let (responder_address, release_tx, responder_task) =
+        spawn_tcp_generic_responder(peer_id, local_peer_id).await;
+
+    // 发起方 QUIC endpoint（仅用于发起 candidate 连接）。
+    let endpoint_manager = network_quic::QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("wildcard address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("create QUIC endpoint");
+    let endpoint = endpoint_manager.endpoint;
+    let endpoint_for_cleanup = endpoint.clone();
+
+    let local_identity = Arc::new(DeviceIdentity::from_private_keys(
+        local_peer_id.to_string(),
+        [41u8; 32],
+        [51u8; 32],
+    ));
+    let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+        peer_id.to_string(),
+        [42u8; 32],
+        [52u8; 32],
+    ));
+    let remote_public_key = remote_identity.public_identity_key().to_bytes();
+    let session_id = started_session(&state, peer_id).await;
+
+    let candidates = vec![
+        Candidate::new(
+            blackhole_address,
+            CandidateKind::Lan,
+            "test-blackhole".into(),
+        ),
+        Candidate::new(responder_address, CandidateKind::Lan, "test-tcp".into()),
+    ];
+    let (candidate_update_tx, candidate_updates) = watch::channel(None);
+    drop(candidate_update_tx);
+
+    let attempt = DirectRouteAttempt {
+        state: Arc::clone(&state),
+        endpoint,
+        candidates,
+        identity: local_identity,
+        expected_peer_public_key: remote_public_key,
+        peer_id: peer_id.to_string(),
+        session_binding: session_id.wire_key(),
+        session_id,
+        attempt_id: "generic-budget-test".into(),
+        connect_window: crate::connect::DIRECT_CONNECT_WINDOW,
+        // This fixture intentionally exposes only TCP; transport racing has
+        // a separate regression test below.
+        required_capabilities: CAPABILITY_RELIABLE_STREAM,
+        allow_websocket: false,
+        candidate_updates,
+    };
+
+    // QUIC 被黑洞耗掉自己的子预算后，generic 用窗口剩余预算走 TCP 成功。
+    let route = tokio::time::timeout(Duration::from_secs(5), connect_direct_or_generic(attempt))
+        .await
+        .expect("direct phase must finish within the window")
+        .expect("peer reachable only via TCP must succeed via the generic path within the window");
+
+    let ConnectedRoute::Generic(generic) = route else {
+        panic!("expected a generic route for a TCP-only reachable peer");
+    };
+    generic.scope.close().await;
+
+    let _ = release_tx.send(());
+    responder_task.await.expect("generic responder should exit");
+    endpoint_for_cleanup.close(quinn::VarInt::from_u32(0), b"test complete");
+}
+
+/// 在同一个 endpoint 上把 TCP 连接保持为黑洞，并为 WebSocket 连接完成认证。
+/// 这样可以验证同一个 candidate 内两种 generic transport 会并发 race。
+async fn spawn_mixed_generic_responder(
+    peer_id: &str,
+    local_peer_id: &str,
+) -> (SocketAddr, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mixed generic responder");
+    let address = listener.local_addr().expect("mixed responder address");
+    let peer_id = peer_id.to_string();
+    let local_peer_id = local_peer_id.to_string();
+    let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+        peer_id, [82u8; 32], [92u8; 32],
+    ));
+    let local_public_key =
+        DeviceIdentity::from_private_keys(local_peer_id.clone(), [81u8; 32], [91u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let (release_tx, release_rx) = oneshot::channel();
+    let responder_task = tokio::spawn(async move {
+        let trusted_peer_keys =
+            tokio::sync::RwLock::new(HashMap::from([(local_peer_id, local_public_key)]));
+        let mut release_rx = release_rx;
+        let mut raw_connections = Vec::new();
+        let mut websocket_authenticated = false;
+        loop {
+            tokio::select! {
+                _ = &mut release_rx => break,
+                accepted = listener.accept() => {
+                    let (stream, _) = accepted.expect("accept mixed generic connection");
+                    let mut probe = [0u8; 4];
+                    let looks_like_websocket = tokio::time::timeout(
+                        Duration::from_secs(1),
+                        stream.peek(&mut probe),
+                    )
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .is_some_and(|length| length == probe.len() && &probe == b"GET ");
+                    if looks_like_websocket {
+                        let socket = WebSocketTransport::accept(stream)
+                            .await
+                            .expect("accept WebSocket transport");
+                        let mut connection = GenericConnection::from_transport(
+                            Transport::WebSocket(Box::new(socket)),
+                        );
+                        authenticate_responder(
+                            &mut connection,
+                            Arc::clone(&remote_identity),
+                            &trusted_peer_keys,
+                            |_authenticated_peer_id, _remote_session_binding| async move {
+                                Ok(("33".repeat(16), ()))
+                            },
+                        )
+                        .await
+                        .expect("authenticate WebSocket responder");
+                        websocket_authenticated = true;
+                    } else {
+                        // TCP has connected but the responder never sends the generic
+                        // handshake, so the TCP race remains a blackhole.
+                        raw_connections.push(stream);
+                    }
+                }
+            }
+        }
+        assert!(
+            websocket_authenticated,
+            "the mixed responder should observe a WebSocket attempt"
+        );
+        drop(raw_connections);
+    });
+    (address, release_tx, responder_task)
+}
+
+/// 启动一个接受单条 TCP 连接并完成 generic responder 握手的测试对端。
+async fn spawn_tcp_generic_responder(
+    peer_id: &str,
+    local_peer_id: &str,
+) -> (SocketAddr, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind generic responder");
+    let address = listener.local_addr().expect("responder address");
+    let peer_id = peer_id.to_string();
+    let local_peer_id = local_peer_id.to_string();
+    let remote_identity = Arc::new(DeviceIdentity::from_private_keys(
+        peer_id, [42u8; 32], [52u8; 32],
+    ));
+    let local_public_key =
+        DeviceIdentity::from_private_keys(local_peer_id.clone(), [41u8; 32], [51u8; 32])
+            .public_identity_key()
+            .to_bytes();
+    let (release_tx, release_rx) = oneshot::channel();
+    let responder_task = tokio::spawn(async move {
+        let (stream, _) = listener
+            .accept()
+            .await
+            .expect("accept generic responder connection");
+        let mut connection =
+            GenericConnection::from_transport(Transport::Tcp(TcpTransport::from_stream(stream)));
+        let trusted_peer_keys =
+            tokio::sync::RwLock::new(HashMap::from([(local_peer_id, local_public_key)]));
+        let _ = authenticate_responder(
+            &mut connection,
+            remote_identity,
+            &trusted_peer_keys,
+            move |_authenticated_peer_id, _remote_session_binding| async move {
+                Ok(("33".repeat(16), ()))
+            },
+        )
+        .await;
+        // 保持连接存活直到测试释放。
+        let _ = release_rx.await;
+    });
+    (address, release_tx, responder_task)
+}
+
+#[test]
+fn candidate_fixture_classification_covers_lan_ipv6_and_reflexive_paths() {
+    assert_eq!(
+        candidate_kind_for("192.168.1.20:41020".parse().unwrap()),
+        CandidateKind::Lan
+    );
+    assert_eq!(
+        candidate_kind_for("[2001:db8::20]:41021".parse().unwrap()),
+        CandidateKind::PublicIpv6
+    );
+    assert_eq!(
+        candidate_kind_for("198.51.100.20:41022".parse().unwrap()),
+        CandidateKind::ServerReflexive
+    );
+}
+
+#[test]
+fn direct_candidate_queue_never_starts_a_relay_candidate() {
+    let relay = Candidate::new(
+        "203.0.113.20:41023".parse().unwrap(),
+        CandidateKind::Relay,
+        "relay".into(),
+    );
+    let lan = Candidate::new(
+        "192.168.1.20:41024".parse().unwrap(),
+        CandidateKind::Lan,
+        "wifi".into(),
+    );
+    let mut pending = std::collections::VecDeque::new();
+    let mut started = std::collections::HashSet::new();
+    enqueue_candidates(&mut pending, &mut started, vec![relay, lan.clone()]);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        pending.front().map(|candidate| candidate.kind),
+        Some(lan.kind)
+    );
+}
+
+#[test]
+fn peer_candidate_keys_include_endpoint_and_generation() {
+    let candidate = Candidate::new(
+        "192.168.1.20:41024".parse().unwrap(),
+        CandidateKind::Lan,
+        "wifi".into(),
+    )
+    .with_generation(3);
+    let key = candidate_attempt_key(&candidate);
+    assert_eq!(key.candidate_id, candidate.candidate_id);
+    assert_eq!(key.endpoint, candidate.endpoint);
+    assert_eq!(key.generation, 3);
+    let changed = Candidate {
+        generation: 4,
+        ..candidate.clone()
+    };
+    assert_ne!(key, candidate_attempt_key(&changed));
+}
+
+#[test]
+fn accept_error_policy_retries_transient_listener_failures() {
+    for kind in [
+        std::io::ErrorKind::Interrupted,
+        std::io::ErrorKind::WouldBlock,
+        std::io::ErrorKind::ConnectionReset,
+        std::io::ErrorKind::AddrInUse,
+    ] {
+        assert!(!accept_error_is_fatal(&std::io::Error::from(kind)));
+    }
+    assert!(accept_error_is_fatal(&std::io::Error::from(
+        std::io::ErrorKind::InvalidInput,
+    )));
+    assert!(accept_error_is_fatal(&std::io::Error::from(
+        std::io::ErrorKind::Unsupported,
+    )));
+}
+
+#[test]
+fn generic_receiver_stop_guard_only_cancels_when_route_is_not_stopping() {
+    let token = crate::task_supervisor::CancellationToken::default();
+    let stopping = Arc::new(AtomicBool::new(false));
+    {
+        let _guard = GenericReceiverStopGuard {
+            route_stop: token.clone(),
+            stopping: Arc::clone(&stopping),
+        };
+    }
+    assert!(token.is_cancelled());
+
+    let token = crate::task_supervisor::CancellationToken::default();
+    stopping.store(true, Ordering::Release);
+    {
+        let _guard = GenericReceiverStopGuard {
+            route_stop: token.clone(),
+            stopping: Arc::clone(&stopping),
+        };
+    }
+    assert!(!token.is_cancelled());
+}
+
+#[test]
+fn monotonic_candidate_generation_never_moves_backward() {
+    let first = monotonic_candidate_generation();
+    let second = monotonic_candidate_generation();
+    assert!(first >= 1);
+    assert!(second >= first);
+}

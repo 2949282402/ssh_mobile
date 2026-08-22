@@ -1103,3 +1103,7 @@ pub(crate) async fn send_file_over_relay(
         tracing::debug!(transfer_id = %transfer_id, error = %error, "native Relay file transfer failed");
     }
 }
+
+#[cfg(test)]
+#[path = "tests/relay_transfer.rs"]
+mod tests;

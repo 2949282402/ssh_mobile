@@ -87,6 +87,45 @@ pub(crate) struct ConnectivityAttemptCoordinator {
     stage: std::sync::atomic::AtomicU8,
 }
 
+/// Owns the local Session reserved at the Offer boundary until the
+/// coordinator has attached a route successfully.  A timeout or task abort
+/// drops this guard and asynchronously retires the exact Session, preventing
+/// a cancelled attempt from poisoning the next connect admission.
+struct SessionCleanupGuard {
+    state: Arc<RuntimeState>,
+    peer_id: String,
+    session_id: Option<SessionId>,
+}
+
+impl SessionCleanupGuard {
+    fn new(state: Arc<RuntimeState>, peer_id: &str, session_id: SessionId) -> Self {
+        Self {
+            state,
+            peer_id: peer_id.to_string(),
+            session_id: Some(session_id),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.session_id = None;
+    }
+}
+
+impl Drop for SessionCleanupGuard {
+    fn drop(&mut self) {
+        let Some(session_id) = self.session_id.take() else {
+            return;
+        };
+        let state = Arc::clone(&self.state);
+        let peer_id = self.peer_id.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                state.fail_session(&peer_id, session_id).await;
+            });
+        }
+    }
+}
+
 /// Inputs shared by the bounded Stage B Resolve transaction and its optional
 /// NOT_READY retry. Keeping the request as one value also makes the retry
 /// carry the exact same local discovery snapshot and identity binding.
@@ -347,7 +386,6 @@ impl ConnectivityAttemptCoordinator {
         // the Resolve snapshot plus an answer waiter. This keeps the target
         // binding coherent on the target-less ConnectivityOffer wire frame.
         // -----------------------------------------------------------------
-        self.set_stage(ConnectivityAttemptState::Resolving);
         let (control, ready_presence_ttl) = {
             let control = self
                 .state
@@ -388,7 +426,88 @@ impl ConnectivityAttemptCoordinator {
                 })
                 .unwrap_or((RuntimeEpoch { high: 0, low: 0 }, 1, None))
         };
-        let (attempt_id, coordination) = self
+
+        // Reserve the local ConnectionSession before the atomic Resolve → Offer
+        // transaction.  ConnectivityOffer carries no target, so every request
+        // that reaches the Offer boundary must already have a local attempt
+        // owner; reuse and concurrent-admission decisions must return before it.
+        // A concurrent connect is observed rather than merged into the local
+        // attempt. If that admission becomes stale or cannot retry, perform
+        // one fresh ownership/Stage-B evaluation before returning failure.
+        let mut re_evaluated_in_progress = false;
+        let session_id = loop {
+            match state.begin_connect(peer_id, capability).await {
+                ConnectDecision::AlreadyConnected(session_id) => {
+                    self.finish_reuse(peer_id, session_id).await;
+                    return Ok(());
+                }
+                ConnectDecision::CapabilityMismatch(_) => {
+                    return Err(protocol_error_with_peer(
+                        NetworkErrorCode::NoRoute,
+                        "existing connection does not satisfy this path capability",
+                        "connect",
+                        peer_id,
+                    ));
+                }
+                ConnectDecision::Started(session_id) => break session_id,
+                ConnectDecision::InProgress(session_id) => {
+                    // Do not merge this request into Session state. Wait for
+                    // the existing attempt, then evaluate this request against
+                    // the route it actually produced. This branch is before
+                    // Resolve/Offer, so it cannot orphan a coordination ticket.
+                    let retry_admission = loop {
+                        if state.connection_sessions.current_session_id(peer_id).await
+                            != Some(session_id)
+                        {
+                            break true;
+                        }
+                        if state.path_is_connected(peer_id).await {
+                            let supported =
+                                state.path_supports_capability(peer_id, capability).await;
+                            if !supported {
+                                return Err(protocol_error_with_peer(
+                                    NetworkErrorCode::NoRoute,
+                                    "existing route does not satisfy this path capability",
+                                    "connect",
+                                    peer_id,
+                                ));
+                            }
+                            self.finish_reuse(peer_id, session_id).await;
+                            return Ok(());
+                        }
+                        if !state
+                            .path_admission_can_retry(peer_id, Some(session_id))
+                            .await
+                        {
+                            break true;
+                        }
+                        if Instant::now() >= connect_deadline {
+                            return Err(protocol_error_with_peer(
+                                NetworkErrorCode::Timeout,
+                                "shared connection attempt exceeded the connect budget",
+                                "connect",
+                                peer_id,
+                            ));
+                        }
+                        state.wait_for_path_change().await;
+                    };
+                    if retry_admission && !re_evaluated_in_progress {
+                        re_evaluated_in_progress = true;
+                        continue;
+                    }
+                    return Err(protocol_error_with_peer(
+                        NetworkErrorCode::NoRoute,
+                        "shared connection attempt did not produce a route",
+                        "connect",
+                        peer_id,
+                    ));
+                }
+            }
+        };
+        let mut session_cleanup = SessionCleanupGuard::new(Arc::clone(&state), peer_id, session_id);
+
+        self.set_stage(ConnectivityAttemptState::Resolving);
+        let (attempt_id, coordination) = match self
             .begin_stage_b_transaction(
                 Arc::clone(&control),
                 StageBTransactionRequest {
@@ -400,8 +519,21 @@ impl ConnectivityAttemptCoordinator {
                     connect_deadline,
                 },
             )
-            .await?;
-        let resolved = ready_peer_from_coordination(&coordination.resolved, peer_id)?;
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                state.fail_session(peer_id, session_id).await;
+                return Err(error);
+            }
+        };
+        let resolved = match ready_peer_from_coordination(&coordination.resolved, peer_id) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                state.fail_session(peer_id, session_id).await;
+                return Err(error);
+            }
+        };
         self.set_stage(ConnectivityAttemptState::Resolved);
         update_remote_candidate_cache(
             &state,
@@ -413,107 +545,31 @@ impl ConnectivityAttemptCoordinator {
 
         let remote_epoch = resolved_runtime_epoch(&resolved);
 
-        // -----------------------------------------------------------------
-        // 2. Registry 重用（§34）。
-        // -----------------------------------------------------------------
-        if let Some(reused) = self.try_reuse(peer_id, &remote_epoch, capability).await? {
-            self.finish_reuse(peer_id, reused).await;
-            return Ok(());
+        // Resolve remains authoritative for epoch/index reconciliation, but
+        // the Offer is already committed and this coordinator owns a fresh
+        // local Session. Never turn this point back into a reuse return path.
+        if let Some(obsolete) = state
+            .ready_session_index
+            .take_obsolete(peer_id, &remote_epoch)
+        {
+            tracing::info!(
+                peer_id = %peer_id,
+                session = ?obsolete.session_id,
+                "remote runtime epoch changed; retiring obsolete ready index entry"
+            );
+            // `Started(session_id)` means the current admission was empty when
+            // ownership was acquired. Retire only an exact stale admission if
+            // one still exists; do not close the current path or invalidate the
+            // PeerSupervisor that owns this coordinator.
+            if obsolete.session_id != session_id {
+                state
+                    .retire_session_without_transport(peer_id, obsolete.session_id)
+                    .await;
+            }
         }
 
         // -----------------------------------------------------------------
-        // 3. Session 门控：同 peer 并发 connect 合并（§40 Concurrency）。
-        // -----------------------------------------------------------------
-        let session_id = match state.begin_connect(peer_id, capability).await {
-            ConnectDecision::AlreadyConnected(session_id) => {
-                // 有健康连接但未登记（例如被动端 accept 建立的 Session）→ 登记并重用。
-                self.register_current(state.clone(), peer_id, &remote_epoch, session_id)
-                    .await;
-                // 已连接会话满足一次新的 connect()：同样发布 Connected 终态，
-                // 否则 Dart connect() 的成功信号会缺失。
-                let route = state
-                    .path_route(peer_id)
-                    .await
-                    .unwrap_or(RouteType::Unspecified);
-                emit_peer_state(
-                    &state.event_tx,
-                    peer_id,
-                    PeerConnectionState::Connected,
-                    route,
-                    None,
-                );
-                self.set_stage(ConnectivityAttemptState::ConnectedDirect);
-                return Ok(());
-            }
-            ConnectDecision::CapabilityMismatch(_) => {
-                return Err(protocol_error_with_peer(
-                    NetworkErrorCode::NoRoute,
-                    "existing connection does not satisfy this path capability",
-                    "connect",
-                    peer_id,
-                ));
-            }
-            ConnectDecision::InProgress(session_id) => {
-                // Do not merge this request into Session state. Wait for the
-                // existing attempt, then evaluate this request against the
-                // route it actually produced.
-                loop {
-                    if state.connection_sessions.current_session_id(peer_id).await
-                        != Some(session_id)
-                    {
-                        return Err(protocol_error_with_peer(
-                            NetworkErrorCode::NoRoute,
-                            "shared connection attempt became stale",
-                            "connect",
-                            peer_id,
-                        ));
-                    }
-                    if state.path_is_connected(peer_id).await {
-                        let supported = state.path_supports_capability(peer_id, capability).await;
-                        if !supported {
-                            return Err(protocol_error_with_peer(
-                                NetworkErrorCode::NoRoute,
-                                "existing route does not satisfy this path capability",
-                                "connect",
-                                peer_id,
-                            ));
-                        }
-                        break;
-                    }
-                    if !state
-                        .path_admission_can_retry(peer_id, Some(session_id))
-                        .await
-                    {
-                        return Err(protocol_error_with_peer(
-                            NetworkErrorCode::NoRoute,
-                            "shared connection attempt did not produce a route",
-                            "connect",
-                            peer_id,
-                        ));
-                    }
-                    state.wait_for_path_change().await;
-                }
-                self.register_current(state.clone(), peer_id, &remote_epoch, session_id)
-                    .await;
-                let route = state
-                    .path_route(peer_id)
-                    .await
-                    .unwrap_or(RouteType::Unspecified);
-                emit_peer_state(
-                    &state.event_tx,
-                    peer_id,
-                    PeerConnectionState::Connected,
-                    route,
-                    None,
-                );
-                self.set_stage(ConnectivityAttemptState::ConnectedDirect);
-                return Ok(());
-            }
-            ConnectDecision::Started(session_id) => session_id,
-        };
-
-        // -----------------------------------------------------------------
-        // 4. Create ConnectivityAttempt（§12）+ COORDINATING（§14）。
+        // 2. Create ConnectivityAttempt（§12）+ COORDINATING（§14）。
         // -----------------------------------------------------------------
         self.set_stage(ConnectivityAttemptState::Coordinating);
         // 一次性 ConnectivityAttempt（§12）：candidate 完全 attempt-scoped。
@@ -539,6 +595,7 @@ impl ConnectivityAttemptCoordinator {
                 .unwrap_or(0),
             initial_remote_candidates,
         ) {
+            state.fail_session(peer_id, session_id).await;
             return Err(protocol_error_with_peer(
                 NetworkErrorCode::InvalidArgument,
                 format!("invalid remote candidate snapshot: {error}"),
@@ -560,14 +617,20 @@ impl ConnectivityAttemptCoordinator {
         }
 
         // 发 offer 的异步任务：不阻塞 Direct 窗口（§14 双方 simultaneous checks）。
-        let candidate_updates = self.spawn_coordination(
+        let candidate_updates = match self.spawn_coordination(
             coordination,
             peer_id.to_string(),
             attempt_id.clone(),
             Arc::clone(&attempt),
             preserved_direct_candidates,
             ready_presence_ttl,
-        );
+        ) {
+            Ok(candidate_updates) => candidate_updates,
+            Err(error) => {
+                state.fail_session(peer_id, session_id).await;
+                return Err(error);
+            }
+        };
         let remote_candidates = attempt.lock().await.remote_candidates().to_vec();
         let _ = attempt
             .lock()
@@ -631,7 +694,13 @@ impl ConnectivityAttemptCoordinator {
                     .lock()
                     .await
                     .set_state(network_nat::ConnectivityAttemptState::Succeeded);
-                let admission = self.attach_direct_route(peer_id, route).await?;
+                let admission = match self.attach_direct_route(peer_id, route).await {
+                    Ok(admission) => admission,
+                    Err(error) => {
+                        state.fail_session(peer_id, session_id).await;
+                        return Err(error);
+                    }
+                };
                 let final_remote_epoch = attempt
                     .lock()
                     .await
@@ -646,6 +715,7 @@ impl ConnectivityAttemptCoordinator {
                 )
                 .await;
                 self.set_stage(ConnectivityAttemptState::ConnectedDirect);
+                session_cleanup.disarm();
                 Ok(())
             }
             // Direct 失败：DIRECT_FAILED → RELAY_RESERVING → RELAY_CONNECTING（§15/§37）。
@@ -690,6 +760,7 @@ impl ConnectivityAttemptCoordinator {
                         )
                         .await;
                         self.set_stage(ConnectivityAttemptState::ConnectedRelay);
+                        session_cleanup.disarm();
                         Ok(())
                     }
                     Err(relay_error) => {
@@ -837,7 +908,15 @@ impl ConnectivityAttemptCoordinator {
         .await;
         match direct_result {
             Ok(Ok(route)) => {
-                let admission = self.attach_direct_route(peer_id, route).await?;
+                let admission = match self.attach_direct_route(peer_id, route).await {
+                    Ok(admission) => admission,
+                    Err(error) => {
+                        if owns_session {
+                            self.state.fail_session(peer_id, session_id).await;
+                        }
+                        return Err(error);
+                    }
+                };
                 self.register_current(
                     Arc::clone(&self.state),
                     peer_id,
@@ -967,51 +1046,6 @@ impl ConnectivityAttemptCoordinator {
         }
     }
 
-    /// Registry 重用（§34）：同 epoch + capability 且健康 → 重用；新 epoch → 关旧建新。
-    async fn try_reuse(
-        &self,
-        peer_id: &str,
-        remote_epoch: &Option<RuntimeEpoch>,
-        capability: u8,
-    ) -> Result<Option<SessionId>, ProtocolError> {
-        let state = Arc::clone(&self.state);
-        // epoch 换代：先关闭旧连接，再走新建（§34 Close old → New ConnectivityAttempt）。
-        if let Some(obsolete) = state
-            .ready_session_index
-            .take_obsolete(peer_id, remote_epoch)
-        {
-            tracing::info!(
-                peer_id = %peer_id,
-                session = ?obsolete.session_id,
-                "remote runtime epoch changed; closing obsolete connection"
-            );
-            close_session_and_unregister(
-                Arc::clone(&state),
-                peer_id.to_string(),
-                obsolete.session_id,
-            )
-            .await;
-        }
-        let Some(registered) = state
-            .ready_session_index
-            .lookup(peer_id, remote_epoch, capability)
-        else {
-            return Ok(None);
-        };
-        if state.path_is_connected(peer_id).await
-            && state.connection_sessions.current_session_id(peer_id).await
-                == Some(registered.session_id)
-            && state.path_supports_capability(peer_id, capability).await
-        {
-            return Ok(Some(registered.session_id));
-        }
-        // 登记存在但连接已不健康：移除登记，走新建。
-        state
-            .ready_session_index
-            .unregister_if_session(peer_id, registered.session_id);
-        Ok(None)
-    }
-
     /// Reuse an already healthy path before opening the Stage B Resolve →
     /// Offer transaction.  The physical path owner is authoritative for this
     /// fast path: a connected session with the requested capability is already
@@ -1053,12 +1087,11 @@ impl ConnectivityAttemptCoordinator {
                         false
                     };
                 if epoch_changed {
-                    close_session_and_unregister(
-                        Arc::clone(&state),
-                        peer_id.to_string(),
-                        session_id,
-                    )
-                    .await;
+                    // This coordinator runs under the peer supervisor's
+                    // generation. Retire the attempt-local session and path
+                    // without disconnecting that supervisor from inside its
+                    // own connectivity task.
+                    state.fail_session(peer_id, session_id).await;
                     return Ok(None);
                 }
             }
@@ -1066,8 +1099,8 @@ impl ConnectivityAttemptCoordinator {
         Ok(Some(session_id))
     }
 
-    /// Publish the single success signal for either pre-control or
-    /// post-Resolve registry reuse.
+    /// Publish the single success signal for a pre-control or shared
+    /// in-progress admission reuse.
     async fn finish_reuse(&self, peer_id: &str, session_id: SessionId) {
         let state = Arc::clone(&self.state);
         tracing::info!(
@@ -1123,11 +1156,12 @@ impl ConnectivityAttemptCoordinator {
         attempt: Arc<Mutex<ConnectivityAttempt>>,
         preserved_direct_candidates: Vec<Candidate>,
         ready_presence_ttl: Option<Duration>,
-    ) -> watch::Receiver<Option<Vec<Candidate>>> {
+    ) -> Result<watch::Receiver<Option<Vec<Candidate>>>, ProtocolError> {
         let (candidate_update_tx, candidate_updates) = watch::channel(None);
         let state = Arc::clone(&self.state);
         let supervisor = Arc::clone(&state.task_supervisor);
-        let _ = supervisor.spawn_runtime("connectivity-coordination", async move {
+        let error_peer_id = peer_id.clone();
+        let task = supervisor.spawn_runtime("connectivity-coordination", async move {
             match coordination.wait_for_answer().await {
                 Ok(answer) => {
                     if answer.attempt_id != attempt_id {
@@ -1201,7 +1235,15 @@ impl ConnectivityAttemptCoordinator {
                 }
             }
         });
-        candidate_updates
+        if task.is_none() {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::RelayError,
+                "connectivity coordination task could not be started",
+                "connect",
+                &error_peer_id,
+            ));
+        }
+        Ok(candidate_updates)
     }
 
     /// Relay 回退：DIRECT_FAILED → RELAY_RESERVING → RELAY_CONNECTING → CONNECTED_RELAY。
@@ -1603,7 +1645,12 @@ impl ConnectivityAttemptCoordinator {
     }
 }
 
-/// 关闭一个已登记的连接（§34 Close old）。
+/// 关闭一个已登记的 connection for the lifecycle regression harness.
+///
+/// Production coordination retires stale admissions through `RuntimeState`
+/// without disconnecting the owning `PeerSupervisor`; this legacy helper is
+/// retained only by the transfer-resume test fixture.
+#[cfg(test)]
 pub(crate) async fn close_session_and_unregister(
     state: Arc<RuntimeState>,
     peer_id: String,
@@ -1993,1189 +2040,5 @@ fn relay_resolve_error(error: &RelayError, peer_id: &str) -> ProtocolError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::connect::{PeerId, PeerPathManager, DEFAULT_CONNECTION_CAPABILITY};
-    use crate::connection::{ConnectionProfile, Route, RouteTransport};
-    use network_nat::PathManager;
-    use network_relay::v2::ResolveStatus;
-    use std::time::Duration;
-
-    /// 构造一个可跑通 `connect_with_class` 前段（配置校验 + Resolve + try_reuse）
-    /// 的 RuntimeState：配置了 endpoint/identity/peer，并注入权威 READY mock。
-    async fn configured_reuse_state() -> (
-        Arc<RuntimeState>,
-        tokio::sync::mpsc::UnboundedReceiver<network_protocol::NetworkEvent>,
-        Arc<StubControl>,
-    ) {
-        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        let path_manager = Arc::new(PathManager::new());
-        let manager = network_quic::QuicEndpointManager::new(
-            "127.0.0.1:0".parse().expect("test bind address"),
-            path_manager,
-        )
-        .expect("create test QUIC endpoint");
-        *state.lifecycle.endpoint.write().await = Some(manager.endpoint);
-        *state.lifecycle.identity.write().await = Some(Arc::new(
-            network_identity::DeviceIdentity::from_private_keys(
-                "device-a".into(),
-                [21u8; 32],
-                [31u8; 32],
-            ),
-        ));
-        state.peers.write().await.insert(
-            "peer-b".to_string(),
-            crate::runtime::PeerConfig {
-                endpoint: None,
-                identity_public_key: [7u8; 32],
-                e2e_public_key: [8u8; 32],
-                e2ee_policy: network_protocol::E2eePolicy::Required,
-            },
-        );
-        let control = StubControl::new(
-            ResolveStatus::Ready,
-            Some(DiscoverySnapshot {
-                runtime_epoch: None,
-                revision: 1,
-                transport_capabilities: Vec::new(),
-                candidate_bundle: None,
-                published_at_ms: 0,
-            }),
-        );
-        *state.relay.control.write().await = Some(control.clone());
-        (state, event_rx, control)
-    }
-
-    async fn install_ready_direct_path(
-        state: &RuntimeState,
-        peer_id: &str,
-        transport: RouteTransport,
-    ) {
-        let mut manager = PeerPathManager::new(
-            PeerId::new(peer_id).expect("peer id"),
-            Arc::clone(&state.ready_paths),
-        );
-        manager
-            .publish_ready(ConnectionProfile::new(Route::direct(transport)))
-            .expect("publish ready direct path");
-        state.peer_path_managers.write().await.insert(
-            peer_id.to_string(),
-            Arc::new(std::sync::Mutex::new(manager)),
-        );
-    }
-
-    #[test]
-    fn stage_machine_follows_the_design_skeleton() {
-        // 状态机只允许设计定义的阶段；不允许 RECONNECTING / DIRECT_UPGRADING /
-        // PATH_REPAIRING（§11）。
-        let stages = [
-            ConnectivityAttemptState::Idle,
-            ConnectivityAttemptState::Resolving,
-            ConnectivityAttemptState::Resolved,
-            ConnectivityAttemptState::Coordinating,
-            ConnectivityAttemptState::DirectConnecting,
-            ConnectivityAttemptState::ConnectedDirect,
-            ConnectivityAttemptState::DirectFailed,
-            ConnectivityAttemptState::RelayReserving,
-            ConnectivityAttemptState::RelayConnecting,
-            ConnectivityAttemptState::ConnectedRelay,
-            ConnectivityAttemptState::Failed,
-        ];
-        for stage in stages {
-            // 编译期保证不存在缺失的变体。
-            match stage {
-                ConnectivityAttemptState::Idle
-                | ConnectivityAttemptState::Resolving
-                | ConnectivityAttemptState::Resolved
-                | ConnectivityAttemptState::Coordinating
-                | ConnectivityAttemptState::DirectConnecting
-                | ConnectivityAttemptState::ConnectedDirect
-                | ConnectivityAttemptState::DirectFailed
-                | ConnectivityAttemptState::RelayReserving
-                | ConnectivityAttemptState::RelayConnecting
-                | ConnectivityAttemptState::ConnectedRelay
-                | ConnectivityAttemptState::Failed => {}
-            }
-        }
-    }
-
-    #[test]
-    fn direct_window_constant_is_four_seconds() {
-        assert_eq!(DIRECT_CONNECT_WINDOW, Duration::from_millis(4000));
-    }
-
-    #[tokio::test]
-    async fn stage_a_reuses_only_a_compatible_ready_direct_path() {
-        let (state, _event_rx, _ready_control) = configured_reuse_state().await;
-        let control = StubControl::new(ResolveStatus::Offline, None);
-        *state.relay.control.write().await = Some(control.clone());
-        install_ready_direct_path(&state, "peer-b", RouteTransport::Tcp).await;
-
-        let result = ConnectivityAttemptCoordinator::new(Arc::clone(&state))
-            .connect_with_class("peer-b", CommunicationClass::UnreliableDatagram)
-            .await;
-
-        assert!(
-            matches!(result, Err(ref error) if error.code == NetworkErrorCode::PeerOffline as i32),
-            "an incompatible ready Direct path must not satisfy the request: {result:?}"
-        );
-        assert_eq!(control.resolve_calls(), 1);
-        assert_eq!(control.connectivity_calls(), 0);
-        assert_eq!(control.reserve_calls(), 0);
-    }
-
-    #[tokio::test]
-    async fn stage_a_compatible_ready_direct_path_makes_no_control_plane_calls() {
-        let (state, _event_rx, control) = configured_reuse_state().await;
-        install_ready_direct_path(&state, "peer-b", RouteTransport::Tcp).await;
-
-        let result = ConnectivityAttemptCoordinator::new(Arc::clone(&state))
-            .connect_with_class("peer-b", CommunicationClass::ReliableStream)
-            .await;
-
-        assert!(
-            result.is_ok(),
-            "compatible Stage A reuse should succeed: {result:?}"
-        );
-        assert_eq!(control.resolve_calls(), 0);
-        assert_eq!(control.connectivity_calls(), 0);
-        assert_eq!(control.reserve_calls(), 0);
-    }
-
-    #[tokio::test]
-    async fn stage_b_resolves_and_offers_before_relay_reservation() {
-        let (state, _event_rx, _configured_control) = configured_reuse_state().await;
-        let stage_b_candidate = Candidate::new(
-            "127.0.0.1:9".parse().expect("candidate endpoint"),
-            CandidateKind::Lan,
-            "stage-b-candidate".into(),
-        )
-        .with_generation(1);
-        let stale_cache = ResolvedCandidateCache::from_snapshot(
-            ResolvedCandidateSnapshot {
-                runtime_epoch: NatRuntimeEpoch { high: 1, low: 1 },
-                revision: 1,
-                candidates: vec![CandidatePayloadV2::from_candidate(
-                    &stage_b_candidate,
-                    vec![CandidateTransport::Quic],
-                )],
-                server_presence_ttl: Some(Duration::from_secs(1)),
-            },
-            Instant::now() - Duration::from_secs(10),
-        )
-        .expect("valid stale Stage A cache");
-        state
-            .remote_candidate_cache
-            .write()
-            .await
-            .insert("peer-b".into(), stale_cache);
-        let control = StubControl::new(
-            ResolveStatus::Ready,
-            Some(DiscoverySnapshot {
-                runtime_epoch: Some(RuntimeEpoch { high: 3, low: 4 }),
-                revision: 1,
-                transport_capabilities: vec![
-                    network_relay::v2::TransportCapability::Quic as i32,
-                    network_relay::v2::TransportCapability::RelayData as i32,
-                ],
-                candidate_bundle: Some(network_relay::v2::CandidateBundle {
-                    candidates: vec![serde_json::to_vec(&stage_b_candidate.advertisement())
-                        .expect("candidate advertisement")],
-                }),
-                published_at_ms: 0,
-            }),
-        );
-        *state.relay.control.write().await = Some(control.clone());
-
-        let result = ConnectivityAttemptCoordinator::new(Arc::clone(&state))
-            .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
-            .await;
-        assert!(result.is_err(), "test control has no usable transport");
-        assert_eq!(
-            control.call_order(),
-            vec!["resolve", "offer", "reserve"],
-            "Stage B must complete Resolve → Offer/Answer coordination before Stage C reserve"
-        );
-        assert_eq!(
-            control.resolve_calls(),
-            1,
-            "Stage B must issue exactly one authoritative Resolve"
-        );
-        assert_eq!(
-            control.connectivity_calls(),
-            1,
-            "Stage B must enqueue exactly one ConnectivityOffer"
-        );
-        let cache = state
-            .remote_candidate_cache
-            .read()
-            .await
-            .get("peer-b")
-            .cloned()
-            .expect("Stage B must refresh the remote candidate cache");
-        assert_eq!(cache.runtime_epoch, NatRuntimeEpoch { high: 3, low: 4 });
-        assert_eq!(cache.revision, 1);
-        assert!(
-            cache.stage_a_candidates_at(Instant::now()).is_some(),
-            "refreshed cache is not fresh: candidates={}, ttl={:?}, age={:?}",
-            cache.candidates.len(),
-            cache.ttl(),
-            cache.age_at(Instant::now())
-        );
-    }
-
-    #[test]
-    fn direct_candidates_are_ranked_before_the_staggered_race() {
-        let mut candidates = [
-            Candidate::new(
-                "198.51.100.4:41004".parse().unwrap(),
-                CandidateKind::ServerReflexive,
-                "srflx".into(),
-            ),
-            Candidate::new(
-                "192.168.1.4:41001".parse().unwrap(),
-                CandidateKind::Lan,
-                "lan".into(),
-            ),
-            Candidate::new(
-                "127.0.0.1:41000".parse().unwrap(),
-                CandidateKind::Lan,
-                "peer-configured".into(),
-            ),
-            Candidate::new(
-                "[2001:db8::4]:41002".parse().unwrap(),
-                CandidateKind::PublicIpv6,
-                "ipv6".into(),
-            ),
-        ];
-        candidates.sort_by(|left, right| {
-            candidate_order(left)
-                .cmp(&candidate_order(right))
-                .then_with(|| right.priority.cmp(&left.priority))
-                .then_with(|| left.candidate_id.cmp(&right.candidate_id))
-        });
-        assert_eq!(candidates[0].interface_name, "lan");
-        assert_eq!(candidates[1].interface_name, "ipv6");
-        assert_eq!(candidates[2].interface_name, "srflx");
-        assert_eq!(candidates[3].interface_name, "peer-configured");
-    }
-
-    #[test]
-    fn stage_a_uses_fresh_cache_and_configured_direct_candidates_only() {
-        let learned_at = Instant::now();
-        let cache = ResolvedCandidateCache::from_snapshot(
-            ResolvedCandidateSnapshot {
-                runtime_epoch: NatRuntimeEpoch { high: 11, low: 12 },
-                revision: 4,
-                candidates: vec![
-                    CandidatePayloadV2 {
-                        version: network_nat::CANDIDATE_PAYLOAD_VERSION,
-                        candidate_id: "lan-remote".into(),
-                        endpoint: "192.168.1.10:41001".parse().unwrap(),
-                        kind: CandidateKind::Lan,
-                        transport_capabilities: vec![CandidateTransport::Quic],
-                        priority: 100,
-                        interface: "wifi".into(),
-                        generation: 1,
-                    },
-                    CandidatePayloadV2 {
-                        version: network_nat::CANDIDATE_PAYLOAD_VERSION,
-                        candidate_id: "srflx-remote".into(),
-                        endpoint: "198.51.100.10:41002".parse().unwrap(),
-                        kind: CandidateKind::ServerReflexive,
-                        transport_capabilities: network_nat::STUN_SRFLX_TRANSPORTS.to_vec(),
-                        priority: 40,
-                        interface: "stun".into(),
-                        generation: 7,
-                    },
-                ],
-                server_presence_ttl: Some(Duration::from_secs(5)),
-            },
-            learned_at,
-        )
-        .expect("valid Stage A cache");
-        let peer = crate::runtime::PeerConfig {
-            endpoint: Some("192.168.1.20:41003".parse().unwrap()),
-            identity_public_key: [0u8; 32],
-            e2e_public_key: [1u8; 32],
-            e2ee_policy: network_protocol::E2eePolicy::Required,
-        };
-
-        let (fresh, remote_epoch) =
-            stage_a_direct_candidates(Some(&cache), &peer, learned_at + Duration::from_secs(4));
-        assert_eq!(remote_epoch, Some(RuntimeEpoch { high: 11, low: 12 }));
-        assert_eq!(
-            fresh
-                .iter()
-                .map(|candidate| candidate.interface_name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["wifi", "stun", "peer-configured"]
-        );
-        assert_eq!(fresh[1].generation, 7);
-        assert!(fresh
-            .iter()
-            .all(|candidate| candidate.kind != CandidateKind::Relay));
-
-        let (stale, stale_epoch) = stage_a_direct_candidates(
-            Some(&cache),
-            &peer,
-            learned_at + Duration::from_secs(5) + Duration::from_nanos(1),
-        );
-        assert_eq!(stale_epoch, None);
-        assert_eq!(stale.len(), 1);
-        assert_eq!(stale[0].interface_name, "peer-configured");
-    }
-
-    #[test]
-    fn snapshot_candidate_capabilities_keep_srflx_udp_only_and_drop_relay_from_direct() {
-        let lan = Candidate::new(
-            "192.168.1.30:41004".parse().unwrap(),
-            CandidateKind::Lan,
-            "wifi".into(),
-        )
-        .with_generation(1);
-        let srflx = Candidate::new(
-            "198.51.100.30:41005".parse().unwrap(),
-            CandidateKind::ServerReflexive,
-            "stun".into(),
-        )
-        .with_generation(1);
-        let snapshot = DiscoverySnapshot {
-            runtime_epoch: Some(RuntimeEpoch { high: 13, low: 14 }),
-            revision: 2,
-            transport_capabilities: vec![
-                network_relay::v2::TransportCapability::Quic as i32,
-                network_relay::v2::TransportCapability::Tcp as i32,
-                network_relay::v2::TransportCapability::Websocket as i32,
-                network_relay::v2::TransportCapability::UdpDatagram as i32,
-                network_relay::v2::TransportCapability::RelayData as i32,
-            ],
-            candidate_bundle: Some(network_relay::v2::CandidateBundle {
-                candidates: vec![
-                    serde_json::to_vec(&lan.advertisement()).unwrap(),
-                    serde_json::to_vec(&srflx.advertisement()).unwrap(),
-                ],
-            }),
-            published_at_ms: 0,
-        };
-
-        let payloads = snapshot_candidate_payloads(&snapshot);
-        let lan_payload = payloads
-            .iter()
-            .find(|candidate| candidate.kind == CandidateKind::Lan)
-            .expect("LAN payload");
-        assert!(!lan_payload
-            .transport_capabilities
-            .contains(&CandidateTransport::Relay));
-        let srflx_payload = payloads
-            .iter()
-            .find(|candidate| candidate.kind == CandidateKind::ServerReflexive)
-            .expect("STUN payload");
-        assert_eq!(
-            srflx_payload.transport_capabilities,
-            network_nat::STUN_SRFLX_TRANSPORTS.to_vec()
-        );
-    }
-
-    #[test]
-    fn relay_fallback_gate_requires_ready_relay_policy_and_budget() {
-        let ready = ResolvedPeer::Ready {
-            discovery: Some(DiscoverySnapshot {
-                runtime_epoch: Some(RuntimeEpoch { high: 15, low: 16 }),
-                revision: 3,
-                transport_capabilities: vec![
-                    network_relay::v2::TransportCapability::RelayData as i32,
-                ],
-                candidate_bundle: None,
-                published_at_ms: 0,
-            }),
-        };
-        let deadline = Instant::now() + Duration::from_secs(1);
-        assert!(relay_fallback_is_eligible(
-            &ready,
-            crate::connect::CAPABILITY_RELIABLE_MESSAGE,
-            network_protocol::E2eePolicy::Required,
-            deadline,
-        ));
-        assert!(!relay_fallback_is_eligible(
-            &ready,
-            crate::connect::CAPABILITY_RELIABLE_MESSAGE,
-            network_protocol::E2eePolicy::Disabled,
-            deadline,
-        ));
-        assert!(!relay_fallback_is_eligible(
-            &ready,
-            crate::connect::CAPABILITY_UNRELIABLE_DATAGRAM,
-            network_protocol::E2eePolicy::Required,
-            deadline,
-        ));
-        let no_relay_capability = ResolvedPeer::Ready {
-            discovery: Some(DiscoverySnapshot {
-                runtime_epoch: Some(RuntimeEpoch { high: 17, low: 18 }),
-                revision: 4,
-                transport_capabilities: Vec::new(),
-                candidate_bundle: None,
-                published_at_ms: 0,
-            }),
-        };
-        assert!(!relay_fallback_is_eligible(
-            &no_relay_capability,
-            crate::connect::CAPABILITY_RELIABLE_MESSAGE,
-            network_protocol::E2eePolicy::Required,
-            deadline,
-        ));
-        assert!(!relay_fallback_is_eligible(
-            &ResolvedPeer::NotReady { retry_after_ms: 0 },
-            crate::connect::CAPABILITY_RELIABLE_MESSAGE,
-            network_protocol::E2eePolicy::Required,
-            deadline,
-        ));
-        assert!(!relay_fallback_is_eligible(
-            &ready,
-            crate::connect::CAPABILITY_RELIABLE_MESSAGE,
-            network_protocol::E2eePolicy::Required,
-            Instant::now() - Duration::from_secs(1),
-        ));
-    }
-
-    #[tokio::test]
-    async fn connectivity_answer_merges_candidates_into_the_live_attempt() {
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        *state.lifecycle.identity.write().await = Some(Arc::new(
-            network_identity::DeviceIdentity::from_private_keys(
-                "local-a".into(),
-                [1u8; 32],
-                [2u8; 32],
-            ),
-        ));
-        let candidate = Candidate::new(
-            "198.51.100.20:42020".parse().expect("candidate endpoint"),
-            CandidateKind::Lan,
-            "answer-lan".into(),
-        )
-        .with_generation(7);
-        let snapshot = DiscoverySnapshot {
-            runtime_epoch: Some(RuntimeEpoch { high: 3, low: 4 }),
-            revision: 7,
-            transport_capabilities: Vec::new(),
-            candidate_bundle: Some(network_relay::v2::CandidateBundle {
-                candidates: vec![serde_json::to_vec(&candidate.advertisement()).expect("candidate")],
-            }),
-            published_at_ms: 1,
-        };
-        let answer = network_relay::v2::ConnectivityAnswer {
-            request_id: 1,
-            attempt_id: "attempt-answer".into(),
-            accepted: true,
-            responder_device_id: "peer-b".into(),
-            responder_runtime_epoch: snapshot.runtime_epoch.clone(),
-            responder_revision: snapshot.revision,
-            responder_snapshot: Some(snapshot.clone()),
-        };
-        let coordination = ConnectivityAttemptStart::new(
-            ResolvePeerResponse {
-                request_id: 1,
-                status: network_relay::v2::ResolveStatus::Ready as i32,
-                discovery: Some(snapshot),
-                retry_after_ms: 0,
-            },
-            async move { Ok(answer) },
-        );
-        let attempt = Arc::new(Mutex::new(ConnectivityAttempt::with_connect_window(
-            "attempt-answer",
-            "peer-b",
-            nat_runtime_epoch(&RuntimeEpoch { high: 1, low: 2 }),
-            SystemTime::now(),
-            DIRECT_CONNECT_WINDOW,
-        )));
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        let mut updates = attempt_coordinator.spawn_coordination(
-            coordination,
-            "peer-b".into(),
-            "attempt-answer".into(),
-            Arc::clone(&attempt),
-            Vec::new(),
-            Some(Duration::from_secs(60)),
-        );
-        tokio::time::timeout(Duration::from_secs(1), updates.changed())
-            .await
-            .expect("candidate update timeout")
-            .expect("coordination sender dropped");
-        let updates = updates.borrow().clone().expect("candidate update");
-        assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].endpoint.port(), 42020);
-        let attempt = attempt.lock().await;
-        assert_eq!(attempt.remote_candidates().len(), 1);
-        assert_eq!(attempt.remote_discovery_revision(), Some(7));
-        assert_eq!(
-            attempt.remote_runtime_epoch(),
-            Some(nat_runtime_epoch(&RuntimeEpoch { high: 3, low: 4 })),
-        );
-        assert_eq!(
-            attempt.state(),
-            network_nat::ConnectivityAttemptState::Connecting
-        );
-    }
-
-    #[tokio::test]
-    async fn new_attempt_coordinator_starts_in_idle() {
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        assert_eq!(attempt_coordinator.stage(), ConnectivityAttemptState::Idle);
-    }
-
-    #[test]
-    fn resolved_runtime_epoch_is_read_from_ready_discovery() {
-        let discovery = DiscoverySnapshot {
-            runtime_epoch: Some(RuntimeEpoch { high: 7, low: 8 }),
-            revision: 3,
-            transport_capabilities: vec![],
-            candidate_bundle: None,
-            published_at_ms: 0,
-        };
-        let resolved = ResolvedPeer::Ready {
-            discovery: Some(discovery),
-        };
-        assert_eq!(
-            resolved_runtime_epoch(&resolved),
-            Some(RuntimeEpoch { high: 7, low: 8 })
-        );
-        assert_eq!(resolved_runtime_epoch(&ResolvedPeer::Offline), None);
-        assert_eq!(
-            resolved_runtime_epoch(&ResolvedPeer::Ready { discovery: None }),
-            None
-        );
-    }
-
-    #[tokio::test]
-    async fn resolve_is_the_authoritative_gate_before_connect() {
-        // Legacy resolver seam: an authoritative OFFLINE result with no local
-        // configured endpoint fails closed and never fabricates a Direct path.
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        let control = StubControl::new(ResolveStatus::Offline, None);
-        *state.relay.control.write().await = Some(control);
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        let result = attempt_coordinator
-            .resolve("peer-b", &peer_without_endpoint())
-            .await;
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::PeerOffline as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn resolve_without_control_plane_fails_closed() {
-        // Stage A owns local LAN/configured direct probing. Once it fails, the
-        // authoritative Stage B Resolve cannot be replaced by local candidate
-        // availability or a synthetic READY.
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        let result = attempt_coordinator
-            .resolve("peer-b", &peer_without_endpoint())
-            .await;
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::RelayError as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn resolve_not_ready_retries_once_then_maps_to_peer_not_ready() {
-        // §10：NOT_READY gets one bounded retry; a second NOT_READY remains
-        // authoritative and maps to PeerNotReady, never READY or Timeout.
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        let control = StubControl::new(ResolveStatus::NotReady, None);
-        *state.relay.control.write().await = Some(control.clone());
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        let result = attempt_coordinator
-            .resolve("peer-b", &peer_without_endpoint())
-            .await;
-        assert_eq!(control.resolve_calls(), 2);
-        assert!(matches!(
-            result,
-            Err(error)
-                if error.code == NetworkErrorCode::PeerNotReady as i32
-                    && error.retry_disposition
-                        == network_protocol::RetryDisposition::RetryAfter as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn active_connect_not_ready_retries_once_then_maps_to_peer_not_ready() {
-        // The production connect path must apply the same bounded retry as the
-        // legacy resolver seam, while never enqueueing an Offer for either
-        // non-READY transaction.
-        let (state, _event_rx, _configured_control) = configured_reuse_state().await;
-        let control = StubControl::new(ResolveStatus::NotReady, None);
-        *state.relay.control.write().await = Some(control.clone());
-
-        let result = ConnectivityAttemptCoordinator::new(Arc::clone(&state))
-            .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
-            .await;
-
-        assert!(matches!(
-            result,
-            Err(error)
-                if error.code == NetworkErrorCode::PeerNotReady as i32
-                    && error.retry_disposition
-                        == network_protocol::RetryDisposition::RetryAfter as i32
-        ));
-        assert_eq!(control.resolve_calls(), 2);
-        assert_eq!(
-            control.connectivity_calls(),
-            0,
-            "NOT_READY transactions must not enqueue ConnectivityOffer"
-        );
-    }
-
-    #[tokio::test]
-    async fn resolve_unknown_fails_closed_without_retry() {
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        let control = StubControl::new(ResolveStatus::Unknown, None);
-        *state.relay.control.write().await = Some(control.clone());
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        let result = attempt_coordinator
-            .resolve("peer-b", &peer_without_endpoint())
-            .await;
-        assert_eq!(control.resolve_calls(), 1);
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::RelayError as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn offline_resolve_with_configured_endpoint_remains_authoritative() {
-        // Stage A already owns configured-endpoint direct probing. Once it
-        // fails, OFFLINE must not be converted into a synthetic READY.
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        let control = StubControl::new(ResolveStatus::Offline, None);
-        *state.relay.control.write().await = Some(control);
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        let peer = crate::runtime::PeerConfig {
-            endpoint: Some("192.168.1.20:41020".parse().expect("test endpoint")),
-            identity_public_key: [7u8; 32],
-            e2e_public_key: [8u8; 32],
-            e2ee_policy: network_protocol::E2eePolicy::Required,
-        };
-        let result = attempt_coordinator.resolve("peer-b", &peer).await;
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::PeerOffline as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn not_ready_resolve_with_configured_endpoint_remains_authoritative() {
-        // A configured endpoint cannot make NOT_READY eligible for Relay
-        // fallback or fabricate an authoritative discovery snapshot.
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        let control = StubControl::new(ResolveStatus::NotReady, None);
-        *state.relay.control.write().await = Some(control);
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        let peer = crate::runtime::PeerConfig {
-            endpoint: Some("127.0.0.1:40000".parse().expect("test endpoint")),
-            identity_public_key: [7u8; 32],
-            e2e_public_key: [8u8; 32],
-            e2ee_policy: network_protocol::E2eePolicy::Required,
-        };
-        let result = attempt_coordinator.resolve("peer-b", &peer).await;
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::PeerNotReady as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn resolve_transport_error_with_configured_endpoint_does_not_fail_open() {
-        // A transport error is not permission to fabricate a peer discovery
-        // result from a configured endpoint.
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        *state.relay.control.write().await = Some(StubControl::error());
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        let peer = crate::runtime::PeerConfig {
-            endpoint: Some("192.168.1.20:41020".parse().expect("test endpoint")),
-            identity_public_key: [7u8; 32],
-            e2e_public_key: [8u8; 32],
-            e2ee_policy: network_protocol::E2eePolicy::Required,
-        };
-        let result = attempt_coordinator.resolve("peer-b", &peer).await;
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::RelayError as i32
-        ));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn resolve_timeout_with_configured_endpoint_does_not_fail_open() {
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        *state.relay.control.write().await = Some(StubControl::timeout());
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        let peer = crate::runtime::PeerConfig {
-            endpoint: Some("127.0.0.1:40000".parse().expect("test endpoint")),
-            identity_public_key: [7u8; 32],
-            e2e_public_key: [8u8; 32],
-            e2ee_policy: network_protocol::E2eePolicy::Required,
-        };
-        let task = tokio::spawn(async move { attempt_coordinator.resolve("peer-b", &peer).await });
-        tokio::task::yield_now().await;
-        tokio::time::advance(RESOLVE_TIMEOUT + Duration::from_millis(1)).await;
-        let result = task.await.expect("resolve task");
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::Timeout as i32
-        ));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn resolve_timeout_without_endpoint_remains_a_timeout_error() {
-        let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let state = Arc::new(RuntimeState::new(
-            event_tx,
-            Arc::new(std::sync::atomic::AtomicU16::new(0)),
-        ));
-        *state.relay.control.write().await = Some(StubControl::timeout());
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
-        let peer = peer_without_endpoint();
-        let task = tokio::spawn(async move { attempt_coordinator.resolve("peer-b", &peer).await });
-        tokio::task::yield_now().await;
-        tokio::time::advance(RESOLVE_TIMEOUT + Duration::from_millis(1)).await;
-        let result = task.await.expect("resolve task");
-        assert!(matches!(
-            result,
-            Err(error) if error.code == NetworkErrorCode::Timeout as i32
-        ));
-    }
-
-    #[tokio::test]
-    async fn reused_session_uses_route_profile_and_emits_connected() {
-        // §17/§40：Registry 重用路径依据已登记的实际 capability；后续
-        // ReliableStream 请求复用同一条同时支持 message/stream 的 Relay route 时，
-        // 不需要覆盖 Session 上的任何业务类别状态。
-        let (state, mut event_rx, control) = configured_reuse_state().await;
-        let peer_id = "peer-b";
-
-        // 预置一条健康连接：ReliableMessage 会话 + 已登记（模拟先前 connect 建立）。
-        let session_id = match state
-            .begin_connect(peer_id, DEFAULT_CONNECTION_CAPABILITY)
-            .await
-        {
-            ConnectDecision::Started(id) => id,
-            decision => panic!("unexpected Session decision: {decision:?}"),
-        };
-        assert!(
-            state
-                .mark_relay_route_connected(peer_id, session_id, None)
-                .await
-        );
-        state.ready_session_index.register(
-            peer_id,
-            None,
-            DEFAULT_CONNECTION_CAPABILITY,
-            session_id,
-        );
-
-        let attempt_coordinator = ConnectivityAttemptCoordinator::new(Arc::clone(&state));
-        let result = attempt_coordinator
-            .connect_with_class(peer_id, CommunicationClass::ReliableStream)
-            .await;
-        assert!(result.is_ok(), "reuse path should succeed: {result:?}");
-        assert_eq!(
-            control.resolve_calls(),
-            0,
-            "healthy Relay reuse must not open a new Resolve transaction"
-        );
-        assert_eq!(
-            control.connectivity_calls(),
-            0,
-            "healthy Relay reuse must not emit an unsolicited ConnectivityOffer"
-        );
-        assert_eq!(control.reserve_calls(), 0);
-
-        // 重用的 Relay route profile 支持 ReliableStream；Relay(None) 载体只会因
-        // 未连接而失败，不能因为此前的业务类别阻止 open_stream。
-        let stream_result = crate::stream::open_stream(
-            &state,
-            peer_id,
-            1,
-            "shell",
-            crate::stream::StreamConsumer::Event,
-        )
-        .await;
-        assert!(
-            !matches!(
-                stream_result,
-                Err(crate::stream::StreamError::UnsupportedTransport)
-            ),
-            "reused ReliableStream session must not gate byte streams"
-        );
-
-        // 重用路径发布 Connected 终态（Dart connect() 的成功信号）。
-        let event = event_rx
-            .try_recv()
-            .expect("Connected event must be emitted on the reuse path");
-        match event.payload {
-            Some(network_protocol::network_event::Payload::PeerState(peer_state)) => {
-                assert_eq!(peer_state.peer_id, peer_id);
-                assert_eq!(
-                    peer_state.state,
-                    network_protocol::PeerConnectionState::Connected as i32
-                );
-                assert_eq!(peer_state.route_type, RouteType::Relay as i32);
-            }
-            other => panic!("unexpected event payload: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn healthy_reuse_retires_path_after_remote_epoch_hint() {
-        let (state, _event_rx, _control) = configured_reuse_state().await;
-        let peer_id = "peer-b";
-        let session_id = match state
-            .begin_connect(peer_id, DEFAULT_CONNECTION_CAPABILITY)
-            .await
-        {
-            ConnectDecision::Started(id) => id,
-            decision => panic!("unexpected Session decision: {decision:?}"),
-        };
-        assert!(
-            state
-                .mark_relay_route_connected(peer_id, session_id, None)
-                .await
-        );
-        let remote_epoch = RuntimeEpoch { high: 3, low: 4 };
-        state.ready_session_index.register(
-            peer_id,
-            Some(remote_epoch.clone()),
-            DEFAULT_CONNECTION_CAPABILITY,
-            session_id,
-        );
-        let candidate = Candidate::new(
-            "127.0.0.1:41020".parse().expect("candidate endpoint"),
-            CandidateKind::Lan,
-            "epoch-fence".into(),
-        )
-        .with_generation(1);
-        let cache = ResolvedCandidateCache::from_snapshot(
-            ResolvedCandidateSnapshot {
-                runtime_epoch: nat_runtime_epoch(&remote_epoch),
-                revision: 1,
-                candidates: vec![CandidatePayloadV2::from_candidate(
-                    &candidate,
-                    vec![CandidateTransport::Quic],
-                )],
-                server_presence_ttl: Some(Duration::from_secs(60)),
-            },
-            Instant::now(),
-        )
-        .expect("cache");
-        state
-            .remote_candidate_cache
-            .write()
-            .await
-            .insert(peer_id.into(), cache);
-        state
-            .remote_candidate_cache
-            .write()
-            .await
-            .get_mut(peer_id)
-            .expect("cache entry")
-            .invalidate_for_remote_epoch(NatRuntimeEpoch { high: 5, low: 6 }, Instant::now());
-
-        let coordinator = ConnectivityAttemptCoordinator::new(Arc::clone(&state));
-        assert_eq!(
-            coordinator
-                .try_reuse_before_control(peer_id, DEFAULT_CONNECTION_CAPABILITY)
-                .await
-                .expect("reuse check"),
-            None,
-            "an epoch hint must fence pre-control reuse"
-        );
-        assert!(!state.path_is_connected(peer_id).await);
-        assert_eq!(
-            state.connection_sessions.current_session_id(peer_id).await,
-            None
-        );
-    }
-
-    /// 构造一个没有配置直连 endpoint 的 PeerConfig（测试 resolve 权威失败路径用）。
-    fn peer_without_endpoint() -> crate::runtime::PeerConfig {
-        crate::runtime::PeerConfig {
-            endpoint: None,
-            identity_public_key: [0u8; 32],
-            e2e_public_key: [0u8; 32],
-            e2ee_policy: network_protocol::E2eePolicy::Required,
-        }
-    }
-
-    /// 预置 Resolve 状态的 mock 控制面（测试用）。
-    struct StubControl {
-        status: network_relay::v2::ResolveStatus,
-        discovery: Option<DiscoverySnapshot>,
-        resolve_calls: std::sync::atomic::AtomicUsize,
-        connectivity_calls: std::sync::atomic::AtomicUsize,
-        reserve_calls: std::sync::atomic::AtomicUsize,
-        resolve_error: bool,
-        resolve_never: bool,
-        connectivity_answer: Option<network_relay::v2::ConnectivityAnswer>,
-        calls: std::sync::Mutex<Vec<&'static str>>,
-    }
-
-    impl StubControl {
-        fn new(
-            status: network_relay::v2::ResolveStatus,
-            discovery: Option<DiscoverySnapshot>,
-        ) -> Arc<Self> {
-            Arc::new(Self {
-                status,
-                discovery,
-                resolve_calls: std::sync::atomic::AtomicUsize::new(0),
-                connectivity_calls: std::sync::atomic::AtomicUsize::new(0),
-                reserve_calls: std::sync::atomic::AtomicUsize::new(0),
-                resolve_error: false,
-                resolve_never: false,
-                connectivity_answer: None,
-                calls: std::sync::Mutex::new(Vec::new()),
-            })
-        }
-
-        fn error() -> Arc<Self> {
-            Arc::new(Self {
-                status: ResolveStatus::Unknown,
-                discovery: None,
-                resolve_calls: std::sync::atomic::AtomicUsize::new(0),
-                connectivity_calls: std::sync::atomic::AtomicUsize::new(0),
-                reserve_calls: std::sync::atomic::AtomicUsize::new(0),
-                resolve_error: true,
-                resolve_never: false,
-                connectivity_answer: None,
-                calls: std::sync::Mutex::new(Vec::new()),
-            })
-        }
-
-        fn timeout() -> Arc<Self> {
-            Arc::new(Self {
-                status: ResolveStatus::Unknown,
-                discovery: None,
-                resolve_calls: std::sync::atomic::AtomicUsize::new(0),
-                connectivity_calls: std::sync::atomic::AtomicUsize::new(0),
-                reserve_calls: std::sync::atomic::AtomicUsize::new(0),
-                resolve_error: false,
-                resolve_never: true,
-                connectivity_answer: None,
-                calls: std::sync::Mutex::new(Vec::new()),
-            })
-        }
-
-        fn resolve_calls(&self) -> usize {
-            self.resolve_calls.load(std::sync::atomic::Ordering::SeqCst)
-        }
-
-        fn connectivity_calls(&self) -> usize {
-            self.connectivity_calls
-                .load(std::sync::atomic::Ordering::SeqCst)
-        }
-
-        fn reserve_calls(&self) -> usize {
-            self.reserve_calls.load(std::sync::atomic::Ordering::SeqCst)
-        }
-
-        fn call_order(&self) -> Vec<&'static str> {
-            self.calls.lock().expect("stub call log lock").clone()
-        }
-    }
-
-    impl crate::discovery::DiscoveryControlPlane for StubControl {
-        fn publish_discovery(
-            &self,
-            _request_id: u64,
-            _snapshot: DiscoverySnapshot,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<network_relay::v2::DiscoveryAck, RelayError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async { Err(RelayError::NotConnected) })
-        }
-
-        fn resolve_peer(
-            &self,
-            _target_device_id: &str,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<network_relay::v2::ResolvePeerResponse, RelayError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            self.calls
-                .lock()
-                .expect("stub call log lock")
-                .push("resolve");
-            self.resolve_calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if self.resolve_error {
-                return Box::pin(async { Err(RelayError::NotConnected) });
-            }
-            if self.resolve_never {
-                return Box::pin(async {
-                    std::future::pending::<
-                        Result<network_relay::v2::ResolvePeerResponse, RelayError>,
-                    >()
-                    .await
-                });
-            }
-            let status = self.status;
-            let discovery = self.discovery.clone();
-            Box::pin(async move {
-                Ok(network_relay::v2::ResolvePeerResponse {
-                    request_id: 1,
-                    status: status as i32,
-                    discovery,
-                    retry_after_ms: 500,
-                })
-            })
-        }
-
-        fn is_usable(
-            &self,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + '_>> {
-            Box::pin(async { true })
-        }
-
-        fn begin_connectivity_attempt(
-            &self,
-            _attempt_id: String,
-            target_device_id: String,
-            _initiator_device_id: String,
-            _initiator_runtime_epoch: RuntimeEpoch,
-            _initiator_revision: u32,
-            _initiator_snapshot: Option<DiscoverySnapshot>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<network_relay::v2::ConnectivityAttemptStart, RelayError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            let answer = self.connectivity_answer.clone();
-            Box::pin(async move {
-                let resolved = self.resolve_peer(&target_device_id).await?;
-                let status = resolved.status;
-                let retry_after_ms = resolved.retry_after_ms;
-                if resolved.status != ResolveStatus::Ready as i32 {
-                    return Ok(network_relay::v2::ConnectivityAttemptStart::new(
-                        resolved,
-                        async move {
-                            Err(RelayError::Protocol(format!(
-                                "connectivity attempt not started: resolve status={status} retry_after_ms={retry_after_ms}"
-                            )))
-                        },
-                    ));
-                }
-                self.calls.lock().expect("stub call log lock").push("offer");
-                self.connectivity_calls
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Ok(network_relay::v2::ConnectivityAttemptStart::new(
-                    resolved,
-                    async move { answer.ok_or(RelayError::NotConnected) },
-                ))
-            })
-        }
-
-        fn start_connectivity_attempt(
-            &self,
-            _attempt_id: String,
-            _target_device_id: String,
-            _initiator_device_id: String,
-            _initiator_runtime_epoch: RuntimeEpoch,
-            _initiator_revision: u32,
-            _initiator_snapshot: Option<DiscoverySnapshot>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<network_relay::v2::ConnectivityAnswer, RelayError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            self.calls.lock().expect("stub call log lock").push("offer");
-            self.connectivity_calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let answer = self.connectivity_answer.clone();
-            Box::pin(async move { answer.ok_or(RelayError::NotConnected) })
-        }
-
-        fn reserve_relay(
-            &self,
-            _attempt_id: String,
-            _target_device_id: String,
-            _desired_lifetime_s: u32,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<network_relay::v2::RelayReserveResponse, RelayError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            self.calls
-                .lock()
-                .expect("stub call log lock")
-                .push("reserve");
-            self.reserve_calls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Box::pin(async { Err(RelayError::NotConnected) })
-        }
-    }
-}
+#[path = "../tests/connectivity_attempt.rs"]
+mod tests;

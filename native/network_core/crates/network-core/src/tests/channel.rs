@@ -1,0 +1,415 @@
+use super::{
+    acknowledge_message, application_payload_mode, decode_policy, delivery_error,
+    ensure_reliable_message_path, next_business_ensure_id, policy_code, select_business_path_lease,
+    validate_data_message, ApplicationPayloadMode, ApplicationPolicyError,
+};
+use crate::connect::{PathRegistry, PeerId, PeerPathManager, CAPABILITY_RELIABLE_MESSAGE};
+use crate::connection::{
+    test_blocking_generic_route, ConnectionProfile, Route, RouteTopology, RouteTransport,
+    TestBlockingGenericRoute,
+};
+use crate::crypto::CryptoContext;
+use crate::delivery::DeliveryError;
+use crate::delivery::{
+    DedupDecision, DeliveryPolicy, MessageId, OrderedInsertResult, OrderedMessage,
+};
+use crate::runtime::RuntimeState;
+use crate::session::SessionId;
+use network_protocol::CommunicationClass;
+use network_protocol::{
+    network_event, AcknowledgeMessageCommand, DataMessage, DeliveryPolicyCode, NetworkErrorCode,
+};
+use network_quic::MAX_CHANNEL_FRAME_BYTES;
+use std::sync::{atomic::AtomicU16, Arc, Mutex};
+use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
+
+const TEST_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[tokio::test]
+async fn message_auto_ensures_without_connect_peer() {
+    let peer_id = "message-auto-peer";
+    let peer = PeerId::new(peer_id).expect("peer id");
+    let registry = Arc::new(PathRegistry::new());
+    let manager = Arc::new(Mutex::new(PeerPathManager::new(
+        peer,
+        Arc::clone(&registry),
+    )));
+    manager
+        .lock()
+        .expect("path manager lock")
+        .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+        .expect("ready message path");
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert(peer_id.to_string(), manager);
+    let session_id = SessionId::new();
+    state
+        .connection_sessions
+        .register_pending_session(peer_id, session_id)
+        .await
+        .expect("pending session");
+
+    let ensured = ensure_reliable_message_path(Arc::clone(&state), peer_id, "message-auto-ensure")
+        .await
+        .expect("business message path");
+    assert_eq!(ensured, session_id);
+    assert!(!state
+        .peer_supervisors
+        .get_or_create(peer_id)
+        .expect("supervisor")
+        .maintain_connection());
+}
+
+#[tokio::test]
+async fn message_auto_ensure_keeps_maintain_false() {
+    let peer_id = "message-maintain-peer";
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    let supervisor = state
+        .peer_supervisors
+        .get_or_create(peer_id)
+        .expect("supervisor");
+    supervisor.admit_inbound(true).expect("admit test peer");
+    let intent = supervisor
+        .ensure(
+            "message-business-ensure",
+            CommunicationClass::ReliableMessage,
+        )
+        .expect("business ensure");
+    assert!(matches!(
+        intent.completion().await,
+        Ok(Ok(crate::connect::PeerState::Online))
+    ));
+    assert!(!supervisor.maintain_connection());
+}
+
+#[test]
+fn required_direct_message_is_encrypted() {
+    let mut sender = CryptoContext::from_session_root([0x37; 32], true);
+    let mut receiver = CryptoContext::from_session_root([0x37; 32], false);
+    let payload = b"required-message";
+    let envelope = sender
+        .encrypt(b"message-aad", payload)
+        .expect("encrypt payload");
+    assert_ne!(envelope, payload);
+    assert!(crate::crypto::is_application_envelope(&envelope));
+    assert_eq!(
+        receiver.decrypt(b"message-aad", &envelope).unwrap(),
+        payload
+    );
+}
+
+#[test]
+fn disabled_direct_message_succeeds_without_crypto_context() {
+    let mode = application_payload_mode(
+        crate::crypto_handshake::path_handshake::E2eePolicy::Disabled,
+        RouteTopology::Direct,
+        false,
+    )
+    .expect("Disabled Direct policy");
+    assert_eq!(mode, ApplicationPayloadMode::Plaintext);
+}
+
+#[test]
+fn required_disabled_mismatch_fails() {
+    assert_eq!(
+        application_payload_mode(
+            crate::crypto_handshake::path_handshake::E2eePolicy::Required,
+            RouteTopology::Direct,
+            false,
+        ),
+        Err(ApplicationPolicyError::SecurityPolicyMismatch)
+    );
+    assert_eq!(
+        application_payload_mode(
+            crate::crypto_handshake::path_handshake::E2eePolicy::Disabled,
+            RouteTopology::Direct,
+            true,
+        ),
+        Err(ApplicationPolicyError::SecurityPolicyMismatch)
+    );
+}
+
+#[test]
+fn relay_disabled_fails_with_relay_requires_e2ee() {
+    assert_eq!(
+        application_payload_mode(
+            crate::crypto_handshake::path_handshake::E2eePolicy::Disabled,
+            RouteTopology::Relay,
+            false,
+        ),
+        Err(ApplicationPolicyError::RelayRequiresE2ee)
+    );
+}
+
+#[tokio::test]
+async fn business_selection_uses_peer_manager_and_fresh_lease_after_loss() {
+    let peer_id = "lease-peer";
+    let peer = PeerId::new(peer_id).expect("peer id");
+    let registry = Arc::new(PathRegistry::new());
+    let manager = Arc::new(Mutex::new(PeerPathManager::new(
+        peer.clone(),
+        Arc::clone(&registry),
+    )));
+    let old_handle = manager
+        .lock()
+        .expect("path manager lock")
+        .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+        .expect("old ready path");
+
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert(peer_id.to_string(), Arc::clone(&manager));
+
+    let old_lease = select_business_path_lease(&state, peer_id, CAPABILITY_RELIABLE_MESSAGE)
+        .await
+        .expect("old lease");
+    assert_eq!(old_lease.handle().id(), old_handle.id());
+
+    manager.lock().expect("path manager lock").hard_close();
+    assert!(!old_lease.is_active());
+    drop(old_lease);
+
+    let fresh_manager = Arc::new(Mutex::new(PeerPathManager::new(
+        peer,
+        Arc::clone(&registry),
+    )));
+    let fresh_handle = fresh_manager
+        .lock()
+        .expect("fresh path manager lock")
+        .publish_ready(ConnectionProfile::new(Route::direct(RouteTransport::Tcp)))
+        .expect("fresh ready path");
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert(peer_id.to_string(), fresh_manager);
+
+    let fresh_lease = select_business_path_lease(&state, peer_id, CAPABILITY_RELIABLE_MESSAGE)
+        .await
+        .expect("fresh lease");
+    assert_eq!(fresh_lease.handle().id(), fresh_handle.id());
+    assert_ne!(fresh_lease.handle().id(), old_handle.id());
+}
+
+#[tokio::test]
+async fn ordered_next_is_published_before_transport_ack_completes() {
+    let peer_id = "ordered-peer";
+    let channel_id = "control";
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))));
+
+    let session_id = match state
+        .begin_connect(peer_id, crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        crate::runtime::ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected session decision: {decision:?}"),
+    };
+    let session_key = session_id.wire_key();
+
+    let TestBlockingGenericRoute {
+        handle,
+        mut started,
+        release,
+        mut worker,
+    } = test_blocking_generic_route();
+    state
+        .attach_test_generic_route(peer_id, session_id, handle)
+        .await
+        .expect("attach test route");
+
+    let now = Instant::now();
+    for (sequence, message_id, payload, expected_result) in [
+        (
+            0,
+            MessageId::from_bytes([0; 16]),
+            b"ordered-zero".to_vec(),
+            OrderedInsertResult::Ready,
+        ),
+        (
+            1,
+            MessageId::from_bytes([1; 16]),
+            b"ordered-one".to_vec(),
+            OrderedInsertResult::Buffered,
+        ),
+    ] {
+        // 投递去重/有序状态按 Peer 业务作用域 key，不使用 session_key。
+        assert_eq!(
+            state
+                .delivery
+                .begin_incoming(peer_id, channel_id, message_id, 1, now)
+                .await,
+            DedupDecision::New
+        );
+        assert_eq!(
+            state
+                .delivery
+                .accept_ordered(OrderedMessage {
+                    peer_id: peer_id.to_string(),
+                    session_id: session_key.clone(),
+                    channel_id: channel_id.to_string(),
+                    message_id,
+                    sequence,
+                    policy: DeliveryPolicy::SessionBoundOrdered,
+                    payload,
+                })
+                .await,
+            expected_result
+        );
+    }
+
+    let command = AcknowledgeMessageCommand {
+        peer_id: peer_id.to_string(),
+        session_id: session_key,
+        channel_id: channel_id.to_string(),
+        message_id: [0; 16].to_vec(),
+    };
+    let state_for_ack = Arc::clone(&state);
+    let mut acknowledge_task =
+        tokio::spawn(async move { acknowledge_message(&state_for_ack, command).await });
+
+    let observation = async {
+        let event = tokio::time::timeout(TEST_TIMEOUT, event_rx.recv())
+            .await
+            .map_err(|_| "#1 was not published while ACK transport was blocked")?
+            .ok_or("event channel closed before #1 was published")?;
+        let expected = matches!(
+            event.payload,
+            Some(network_event::Payload::ChannelMessage(message))
+                if message.peer_id == peer_id
+                    && message.channel_id == channel_id
+                    && message.sequence == 1
+                    && message.message_id == [1; 16].to_vec()
+                    && message.payload == b"ordered-one".to_vec()
+        );
+        if !expected {
+            return Err("unexpected event received before ordered #1".to_string());
+        }
+
+        tokio::time::timeout(TEST_TIMEOUT, &mut started)
+            .await
+            .map_err(|_| "ACK transport did not start")?
+            .map_err(|_| "ACK transport start signal was dropped")?;
+        if acknowledge_task.is_finished() {
+            return Err("ACK completed before its release barrier".to_string());
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+
+    let _ = release.send(());
+    let acknowledge_completed =
+        match tokio::time::timeout(TEST_TIMEOUT, &mut acknowledge_task).await {
+            Ok(Ok(Ok(()))) => true,
+            Ok(Ok(Err(error))) => {
+                eprintln!("acknowledge_message returned an error: {error:?}");
+                false
+            }
+            Ok(Err(error)) => {
+                eprintln!("acknowledge_message task failed: {error}");
+                false
+            }
+            Err(_) => {
+                acknowledge_task.abort();
+                let _ = acknowledge_task.await;
+                false
+            }
+        };
+
+    let route_closed = tokio::time::timeout(TEST_TIMEOUT, state.close_transport_path(peer_id))
+        .await
+        .is_ok();
+    let worker_completed = match tokio::time::timeout(TEST_TIMEOUT, &mut worker).await {
+        Ok(Ok(())) => true,
+        Ok(Err(error)) => {
+            eprintln!("test transport worker failed: {error}");
+            false
+        }
+        Err(_) => {
+            worker.abort();
+            let _ = worker.await;
+            false
+        }
+    };
+
+    assert!(observation.is_ok(), "{observation:?}");
+    assert!(
+        acknowledge_completed,
+        "acknowledge_message did not complete successfully"
+    );
+    assert!(route_closed, "test route did not close during cleanup");
+    assert!(worker_completed, "test transport worker did not terminate");
+}
+
+#[test]
+fn channel_wire_validation_and_policy_mapping_cover_all_boundaries() {
+    let mut message = DataMessage {
+        session_id: "session-a".into(),
+        channel_id: "channel-a".into(),
+        message_id: vec![0; 16],
+        sequence: 1,
+        recovery_epoch: 2,
+        policy: DeliveryPolicyCode::Acked as i32,
+        payload: b"payload".to_vec(),
+    };
+    assert!(validate_data_message(&message).is_ok());
+    message.message_id = vec![0; 15];
+    assert!(validate_data_message(&message).is_err());
+    message.message_id = vec![0; 16];
+    message.session_id.clear();
+    assert!(validate_data_message(&message).is_err());
+    message.session_id = "session-a".into();
+    message.policy = 99;
+    assert!(validate_data_message(&message).is_err());
+    message.policy = DeliveryPolicyCode::Acked as i32;
+    message.payload = vec![0; MAX_CHANNEL_FRAME_BYTES];
+    assert!(validate_data_message(&message).is_err());
+
+    for policy in [
+        DeliveryPolicy::BestEffort,
+        DeliveryPolicy::LatestState,
+        DeliveryPolicy::Acked,
+        DeliveryPolicy::AckedDeduplicated,
+        DeliveryPolicy::SessionBoundOrdered,
+        DeliveryPolicy::ResumableTransfer,
+    ] {
+        assert_eq!(decode_policy(policy_code(policy)), Some(policy));
+    }
+    assert_eq!(decode_policy(-1), None);
+    assert!(next_business_ensure_id("peer-a").starts_with("delivery/peer-a/"));
+}
+
+#[test]
+fn channel_delivery_errors_map_to_stable_protocol_codes() {
+    for error in [
+        DeliveryError::QueueFull,
+        DeliveryError::PayloadTooLarge,
+        DeliveryError::InvalidScope,
+        DeliveryError::InvalidRetryPolicy,
+    ] {
+        assert_eq!(
+            delivery_error("peer-a", error).code,
+            NetworkErrorCode::InvalidArgument as i32
+        );
+    }
+    for error in [
+        DeliveryError::NotFound,
+        DeliveryError::Expired,
+        DeliveryError::RetryExhausted,
+    ] {
+        assert_eq!(
+            delivery_error("peer-a", error).code,
+            NetworkErrorCode::IoError as i32
+        );
+    }
+}
