@@ -83,18 +83,6 @@ impl TransferIdentity {
 
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TransferLifecycle {
-    Queued,
-    Active,
-    Paused,
-    Resuming,
-    Completed,
-    Cancelled,
-    Failed,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ConfirmedOffset {
     pub offset: u64,
     pub total: u64,
