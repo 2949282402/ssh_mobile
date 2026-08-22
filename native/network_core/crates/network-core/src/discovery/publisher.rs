@@ -28,8 +28,8 @@ use std::sync::{
 use std::time::Duration;
 
 use network_relay::v2::{
-    ConnectivityAnswer, DiscoveryAck, DiscoverySnapshot, RelayReserveResponse, ResolvePeerResponse,
-    RuntimeEpoch,
+    ConnectivityAnswer, ConnectivityAttemptStart, DiscoveryAck, DiscoverySnapshot,
+    RelayReserveResponse, ResolvePeerResponse, RuntimeEpoch,
 };
 use network_relay::{RelayControlClient, RelayError};
 
@@ -73,6 +73,7 @@ pub(crate) trait DiscoveryControlPlane: Send + Sync {
     /// 开启一个异步 connectivity attempt，按 `attempt_id` 关联应答（§14/§31）。
     ///
     /// 默认实现：未接线的 mock 返回 NotConnected。
+    #[allow(dead_code)] // retained as an adapter for pre-transaction callers
     fn start_connectivity_attempt(
         &self,
         _attempt_id: String,
@@ -82,6 +83,23 @@ pub(crate) trait DiscoveryControlPlane: Send + Sync {
         _initiator_revision: u32,
         _initiator_snapshot: Option<DiscoverySnapshot>,
     ) -> Pin<Box<dyn Future<Output = Result<ConnectivityAnswer, RelayError>> + Send + '_>> {
+        Box::pin(async move { Err(RelayError::NotConnected) })
+    }
+
+    /// Enqueue one authoritative Resolve → ConnectivityOffer transaction and
+    /// return its validated Resolve response plus an asynchronous answer
+    /// waiter.  The default keeps test-only control-plane mocks disconnected;
+    /// production callers can opt into the non-blocking transaction path.
+    fn begin_connectivity_attempt(
+        &self,
+        _attempt_id: String,
+        _target_device_id: String,
+        _initiator_device_id: String,
+        _initiator_runtime_epoch: RuntimeEpoch,
+        _initiator_revision: u32,
+        _initiator_snapshot: Option<DiscoverySnapshot>,
+    ) -> Pin<Box<dyn Future<Output = Result<ConnectivityAttemptStart, RelayError>> + Send + '_>>
+    {
         Box::pin(async move { Err(RelayError::NotConnected) })
     }
 
@@ -162,6 +180,30 @@ impl DiscoveryControlPlane for RelayControlClient {
     ) -> Pin<Box<dyn Future<Output = Result<ConnectivityAnswer, RelayError>> + Send + '_>> {
         Box::pin(async move {
             RelayControlClient::start_connectivity_attempt(
+                self,
+                attempt_id,
+                target_device_id,
+                initiator_device_id,
+                initiator_runtime_epoch,
+                initiator_revision,
+                initiator_snapshot,
+            )
+            .await
+        })
+    }
+
+    fn begin_connectivity_attempt(
+        &self,
+        attempt_id: String,
+        target_device_id: String,
+        initiator_device_id: String,
+        initiator_runtime_epoch: RuntimeEpoch,
+        initiator_revision: u32,
+        initiator_snapshot: Option<DiscoverySnapshot>,
+    ) -> Pin<Box<dyn Future<Output = Result<ConnectivityAttemptStart, RelayError>> + Send + '_>>
+    {
+        Box::pin(async move {
+            RelayControlClient::begin_connectivity_attempt(
                 self,
                 attempt_id,
                 target_device_id,

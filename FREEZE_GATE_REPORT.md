@@ -1,40 +1,52 @@
-> Last updated: 2026-08-21
+> Last updated: 2026-08-22
 
-# PR49 Architecture Freeze Gate
+# Network V2 Architecture Freeze Gate
 
-This gate records the decision between Network V2 acceptance and SDK
-architecture cleanup. It is based on branch `agent/network-v2-final-20260819`
-at baseline commit `929a711cbf82de26a24f9aa4f8fa18c707c01f38`.
+This is the canonical freeze-gate report. `PR48` (baseline) and `PR49`
+(hardening/final-fix workstream) are internal labels, not repository metadata.
+
+Branch: `agent/network-v2-final-20260819`
+
+Baseline commit: `929a711cbf82de26a24f9aa4f8fa18c707c01f38`
+
+Validation base commit: `b61347cbbb062a079ef1e6daa7f82c50123a799f` (working tree
+changes are intentionally uncommitted)
 
 ## Gate decision
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| Network Contract | PASS | `docs/NETWORK_V2_PR48_BASELINE.md`, the eight Phase 1 audits, and `COORDINATOR_REVIEW.md` |
+| Network Contract | PASS | Frozen protocol fixtures, acceptance matrix, and owner selectors |
 | Ownership | PASS | `OWNERSHIP_LOCK.md`; PeerSupervisor remains the connectivity owner and inbound operations bind to physical carriers |
-| Protocol | PASS | `bash scripts/network_v2_acceptance.sh strict` passed: 17 Python checks, 3 documented skips, all selected Rust/Go/Dart owner suites, and the final strict matrix check |
-| Allowed Cleanup | YES | Network V2 acceptance is green; Phase 4 SDK cleanup may begin under the migration strategy below |
+| Protocol | PASS | `bash scripts/network_v2_acceptance.sh strict` passed, including the concrete Resolve → Offer integration selector |
+| Allowed Cleanup | COMPLETED | Phase 4 SDK/domain cleanup is already present; only compatibility-alias retirement remains deferred |
 
 ## Acceptance evidence
 
-- Strict protocol and matrix checks: 17 passed, 3 skipped because they require
-  external service or platform coverage.
-- Rust selected suites passed, including capability-aware connectivity,
-  PathLease/carrier binding, candidate-cache invalidation, delivery, stream,
-  relay, protocol, and FFI ABI coverage.
-- Go Relay strict selectors passed, including fail-closed nonce handling,
-  revocation admission, credential expiry, configured presence TTL, and role /
-  token binding.
-- `network_transport` event-mux tests passed 8/8; `network_sdk` V2 contract
-  tests passed 8/8; native facade tests passed 17/17.
-- `git diff --check` passed after the Phase 2 integration.
+- Strict contract checks: 17 passed, with 3 documented external/platform skips.
+- Connectivity owner selector: 24/24 tests passed, including capability-aware
+  Stage A, zero-call Stage A reuse, one-Resolve Stage B ordering, bounded
+  active NOT_READY retry, and Stage C eligibility predicates.
+- Relay v2 unit/golden selector: 37/37 tests passed. The concrete integration
+  selector passed 1/1 with two real `RelayControlClient` instances and a local
+  authenticated `/v2/control` WebSocket server.
+- The final Linux mirror passed all 12 runnable jobs in 731 seconds. Its script
+  explicitly skipped terminal-smoke, Windows, macOS, iOS, and daily App
+  coverage jobs because they require separate hosts or the periodic gate.
+- Domain coverage gates passed for front (95.78% lines), backend (82.1% filtered
+  Go lines), and SDK (84.46% Dart / 84.32% Rust lines). The focused App client
+  coverage gate was attempted with a bounded 2-minute VM-service wait and did
+  not start tests in this WSL environment.
 
 ## Frozen Network V2 invariants
 
 - PeerSupervisor is the sole connectivity-attempt owner.
-- Stage A reuses only a fresh, capability-compatible direct path; Stage B
-  orders Resolve → Offer → Direct probing within the four-second window before
-  Relay reservation; no transparent migration is introduced.
+- Stage A handles capability-compatible Direct reuse and fresh/configured Direct
+  candidates; before Stage B, any other healthy ready path (including Relay) is
+  also reused. Only when reuse and Direct both fail does Stage B enter one
+  authoritative `Resolve → Offer` transaction using the same Resolve snapshot
+  for candidate setup; Stage C reserves Relay only after Direct failure and all
+  policy/budget gates pass.
 - Candidate cache freshness is monotonic and invalidated by runtime epoch and
   configured Ready TTL changes.
 - PathLease is the only operation lease; inbound Stream and Transfer work is
@@ -44,30 +56,25 @@ at baseline commit `929a711cbf82de26a24f9aa4f8fa18c707c01f38`.
 - Native stop/dispose ordering, isolate exit, bounded terminal history, and C
   buffer ownership remain part of the accepted FFI contract.
 
-## Deferred architecture risks
+## Phase 4 disposition
 
-The following are explicitly deferred to Phase 4 and are not protocol changes:
+The following cleanup is complete and did not alter the frozen wire contract:
 
-- Overlapping Dart V2 boundary and compatibility aliases.
-- Ownership of the injected `NetworkV2CommandPort` lifecycle.
-- Domain extraction boundaries around native service, RuntimeState, relay, and
-  transfer code.
-- Relay/Transfer typed interfaces needed to avoid a dependency cycle.
+- overlapping Dart V2 boundaries and compatibility aliases remain documented;
+- injected `NetworkV2CommandPort` ownership remains explicit;
+- native service, RuntimeState, Relay, and Transfer boundaries use the current
+  domain owners and typed ports;
+- Relay/Transfer extraction avoids a dependency cycle.
 
-Each cleanup must follow: define interface → move implementation → update
-callers → add regression tests → remove the old path. No SDK cleanup may alter
-the frozen wire contract or introduce transparent connection migration.
+Compatibility aliases remain deferred until an external-consumer migration
+inventory authorizes their removal.
 
 ## Known environment limits
 
-The repository-wide baseline records external fetch/toolchain failures in the
-full gate (Docker Hub token EOF, `vuln.go.dev` fetch EOF, and the protocol Dart
-dependency handshake). Real Redis/MySQL cross-instance runs and physical mobile
-lifecycle runs also remain environment-dependent. These limits do not change
-the local strict Network V2 acceptance result; they remain required evidence
-for the final Phase 8 merge decision.
+Windows desktop, macOS/Xcode, iOS/CocoaPods, physical mobile lifecycle, and
+real Redis/MySQL cross-instance evidence require their native or deployment
+hosts. The focused App client coverage gate also requires a working Flutter VM
+Service in this environment. These are explicit follow-ups, not local product
+failures.
 
-**FREEZE_GATE: PASS**
-
-Network V2 cleanup is authorized. Protocol changes, ownership broadening, and
-mechanical SDK file splitting remain out of scope.
+**FREEZE_GATE: PASS FOR RUNNABLE OWNER GATES**

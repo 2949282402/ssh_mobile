@@ -1,8 +1,10 @@
 //! transport-network v2：已就绪 Session 摘要索引（设计 §34/§40）。
 //!
-//! 每次新的 `connect()` 都 Resolve（§10/§34）。Resolve 之后，如果
-//! [`ReadySessionIndex`] 已为该 peer 登记了一条连接摘要（健康由调用方通过
-//! Runtime 的 PeerPathManager 确认），且：
+//! 新的 `connect()` 在进入控制面前先让 Runtime 的路径 owner 复用已经健康且
+//! capability-compatible 的现有 path；这条 fast path 不会发出 target-less
+//! ConnectivityOffer。若需要创建/替换连接，Stage B 仍然先 Resolve（§10/§34）。
+//! Resolve 之后，如果 [`ReadySessionIndex`] 已为该 peer 登记了一条连接摘要
+//! （健康由调用方通过 Runtime 的 PeerPathManager 确认），且：
 //!
 //! - peer `runtime_epoch` == Resolve 返回的 epoch，且
 //! - 连接 capability 满足本次业务
@@ -67,6 +69,20 @@ impl ReadySessionIndex {
             return None;
         }
         Some(registered.clone())
+    }
+
+    /// Return the current capability-compatible registration without applying
+    /// a new Resolve epoch. This is only for the pre-control healthy-path
+    /// fast path; new/replacement attempts must continue to use [`Self::lookup`]
+    /// with the authoritative Resolve epoch.
+    pub(crate) fn lookup_registered(
+        &self,
+        peer_id: &str,
+        capability: u8,
+    ) -> Option<RegisteredConnection> {
+        let inner = self.inner.read().expect("ready session index lock");
+        let registered = inner.get(peer_id)?;
+        capability_covers(registered.capability, capability).then(|| registered.clone())
     }
 
     /// 登记一条新建立的连接（替换旧条目）。

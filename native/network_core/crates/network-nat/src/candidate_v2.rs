@@ -574,6 +574,14 @@ impl ResolvedCandidateCache {
         self.is_fresh_at(now).then_some(self.candidates.as_slice())
     }
 
+    /// Return the remote epoch announced by an invalidation hint that has not
+    /// yet been replaced by a matching authoritative snapshot. Callers that
+    /// own an already-established path can use this fence to retire the old
+    /// transport before attempting a pre-Resolve reuse.
+    pub fn pending_remote_epoch(&self) -> Option<RuntimeEpoch> {
+        self.expected_epoch
+    }
+
     /// Applies an authoritative snapshot or matching live answer.
     pub fn apply(
         &mut self,
@@ -887,6 +895,7 @@ mod tests {
         let mut cache = ResolvedCandidateCache::from_snapshot(snapshot(epoch(1, 1), 1, None), now)
             .expect("cache");
         assert!(cache.invalidate_for_remote_epoch(epoch(2, 1), now + Duration::from_secs(1)));
+        assert_eq!(cache.pending_remote_epoch(), Some(epoch(2, 1)));
         assert!(cache
             .stage_a_candidates_at(now + Duration::from_secs(1))
             .is_none());
@@ -899,6 +908,7 @@ mod tests {
             cache.apply(snapshot(epoch(2, 1), 1, None), now + Duration::from_secs(3)),
             Ok(CacheUpdate::Replaced)
         );
+        assert_eq!(cache.pending_remote_epoch(), None);
     }
 
     #[test]

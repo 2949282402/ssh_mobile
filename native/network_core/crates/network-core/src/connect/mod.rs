@@ -63,6 +63,7 @@ pub(crate) const DIRECT_CONNECT_WINDOW: Duration = Duration::from_secs(4);
 pub(crate) const STAGE_A_CONNECT_BUDGET: Duration = DIRECT_CONNECT_WINDOW;
 
 /// Resolve（服务器权威解析）的应答等待上限（§10/§33 ResolveTimeout）。
+#[allow(dead_code)] // retained by the legacy resolver unit-test seam
 pub(crate) const RESOLVE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// A NOT_READY peer gets one bounded retry wait before returning PeerNotReady.

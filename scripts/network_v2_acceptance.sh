@@ -63,6 +63,7 @@ require_tools dart flutter
 (cd native/network_core && cargo test -p network-core 'delivery_recovery_replays_same_message_after_explicit_recovery' --locked)
 (cd native/network_core && cargo test -p network-core 'peer_runtime_restart_replaces_session_and_keeps_e2ee_delivery' --locked)
 (cd native/network_core && cargo test -p network-relay 'v2::' --locked)
+(cd native/network_core && cargo test -p network-relay --features test-support --test relay_control_client_integration --locked -- --test-threads=1)
 (cd native/network_core && cargo test -p network-relay-proto --locked)
 (cd native/network_core && cargo test -p network-ffi --locked)
 

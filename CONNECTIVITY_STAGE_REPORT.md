@@ -1,47 +1,41 @@
-> Last updated: 2026-08-21
+> Last updated: 2026-08-22
 
-# Connectivity Stage Audit
+# Network V2 Connectivity Stage Audit
 
-Status: BLOCKED
+Status: **Phase 1 historical findings closed where runnable; Stage A/B owner
+gates pass; Stage C remains predicate-only**
 
-Scope: connectivity attempts, candidate exchange, and Relay selection. This
-was a read-only audit; no implementation files were changed.
+This report keeps the original read-only audit scope while recording the final
+fix round. `PR48` and `PR49` are internal workstream labels only; the canonical
+document name is **Network V2 Connectivity Stage Audit**.
 
-## Findings
+## Findings and disposition
 
-- TEST GAP: Stage A is Direct-only before Resolve
-  (`connect/connectivity_attempt.rs:266-280,648-688`), but
-  `stage_a_uses_fresh_cache_and_configured_direct_candidates_only`
-  (`:1859-1922`) does not assert zero Resolve, Offer, or Reservation calls.
-- TEST GAP: Stage B flow exists (`:283-305,489-533`), while the Resolve gate,
-  answer merge, and lower-level late-candidate tests are isolated rather than
-  an end-to-end Resolve → Offer → fixed four-second Direct window test.
-- ARCHITECTURE RISK: Stage B performs an outer Resolve and
-  `start_connectivity_attempt` performs another Resolve before Offer
-  (`connect/connectivity_attempt.rs:287-288`; `network-relay/src/v2/control_client.rs:454-498`),
-  producing Resolve → Resolve → Offer without call-count coverage.
-- BUG: `try_stage_a_direct` returns success when any Direct path exists without
-  checking requested capability (`connect/connectivity_attempt.rs:644-645`).
-- TEST GAP: Stage C predicate coverage exists in
-  `relay_fallback_gate_requires_ready_relay_policy_and_budget`
-  (`connectivity_attempt.rs:1975-2034`), but no full flow proves Relay
-  reservation only follows Direct failure, Ready state, eligibility, Required
-  E2EE, and available resources.
+| Finding | Disposition | Evidence |
+| --- | --- | --- |
+| Stage A could accept a direct path without checking the requested capability | Resolved | `stage_a_reuses_only_a_compatible_ready_direct_path` and `stage_a_compatible_ready_direct_path_makes_no_control_plane_calls` |
+| Stage A forbidden control-plane calls were not counted | Resolved | The compatible-ready Stage A test asserts zero Resolve, Offer, and Reserve calls |
+| Healthy Relay reuse could emit Offer before returning the existing session | Resolved | `reused_session_uses_route_profile_and_emits_connected` reuses the healthy Relay path before control and asserts zero Resolve/Offer/Reserve calls; `take_obsolete_closes_old_when_epoch_changed` retains the new-epoch close-old guard |
+| Production Stage B issued Resolve → Resolve → Offer | Resolved | `RelayControlClient::begin_connectivity_attempt` performs one authoritative Resolve, holds the narrow target-binding gate through Offer enqueue, and returns the same Resolve snapshot to the coordinator |
+| Rust owner tests could pass through a control-plane stub without exercising a socket | Resolved | `network-relay/tests/relay_control_client_integration.rs` uses two concrete `RelayControlClient`s and a loopback `/v2/control` WebSocket server |
+| Full Direct-failure → Relay eligibility flow | Still open | Stage C has predicate coverage, but no complete local flow proves Direct failure, READY/E2EE/resource eligibility, reservation, and Relay data admission together |
 
-## Required Changes
+## Current runnable evidence
 
-- Add deterministic fake-control-plane tests equivalent to
-  `stage_a_direct_only_test`, `stage_b_timeout_test`, and
-  `stage_b_candidate_test`, including forbidden-call counters.
-- Assert Stage C order and every negative gate, including unavailable Relay
-  resources.
-- Unify or formally account for the duplicate Stage B Resolve and test one
-  authoritative sequence.
-- Make Stage A reuse capability-aware and add weaker-route/stronger-request
-  regression coverage.
+- `cargo test -p network-core 'connect::connectivity_attempt::tests::' --locked`:
+  24/24 passed, including one bounded active NOT_READY retry, exact
+  `Resolve → Offer → Reserve` ordering, and the one Resolve/Offer call-count
+  assertion.
+- `cargo test -p network-relay --locked`: 37/37 passed.
+- The concrete integration selector passed 1/1 and the server recorded exactly
+  `Resolve → Offer` for the attempt.
+- `bash scripts/network_v2_acceptance.sh strict` passed: 17 contract checks,
+  3 documented environment skips, the selected Rust/Go/Dart owner suites, and
+  the concrete integration selector.
 
-## Risk
+## Remaining evidence
 
-Focused tests pass, but they do not prove forbidden Stage A calls, exact Stage B
-ordering/timeout, or full Stage C eligibility. A weaker route can be reported
-as satisfying a stronger request.
+Stage C remains a deliberate predicate-only boundary in this working tree.
+Real Redis/MySQL cross-instance behavior, physical-device lifecycle behavior,
+and native platform CI remain environment-dependent and are recorded in the
+final acceptance report rather than inferred from the local owner tests.

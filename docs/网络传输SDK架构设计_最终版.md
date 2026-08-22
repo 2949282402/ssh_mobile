@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-20
+> 最新更新时间：2026-08-22
 
 # 网络传输 SDK 架构设计
 
@@ -1327,7 +1327,8 @@ Direct 默认有偏好，但不是绝对优先。
 > Happy Eyeballs 并行竞速**不再作为权威**。以 Main 基线版
 > 《SSH_Mobile 传输网络架构重构设计 Main 基线版》§15 与
 > [ADR-008](adr/ADR-008-direct-relay-race.md) 修订为准：**顺序 Direct First**——
-> 连接前先 `ResolvePeer`（2s 上限），再 Direct 建连窗口固定 **4s**；4s 内
+> 先执行不依赖控制面的 Stage A fresh/configured Direct/reuse；Stage A 失败后
+> 完成一次 authoritative `Resolve → Offer`，再进入固定 **4s** Direct 窗口；4s 内
 > Direct Ready 用 Direct，超时（`DIRECT_FAILED`）后才启动 Relay Data。**Relay
 > 不再和 Direct 并行抢跑**，也不存在 Relay→Direct 后台迁移（v2 见
 > [ADR-CONNECTION-LIFECYCLE-V2](adr/ADR-CONNECTION-LIFECYCLE-V2.md)）。以下原文

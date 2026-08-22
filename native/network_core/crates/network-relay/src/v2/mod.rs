@@ -21,7 +21,7 @@ mod shared;
 #[cfg(test)]
 mod golden_tests;
 
-pub use control_client::{ControlEvent, RelayControlClient};
+pub use control_client::{ConnectivityAttemptStart, ControlEvent, RelayControlClient};
 pub use data_client::{DataEvent, RelayDataClient};
 pub use proto::{
     relay_data_frame::Kind as RelayDataFrameKind, relay_frame::Kind as RelayFrameKind,

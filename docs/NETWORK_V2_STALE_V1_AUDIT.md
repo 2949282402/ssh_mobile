@@ -1,12 +1,14 @@
-最新更新时间：2026-08-20
+最新更新时间：2026-08-22
 
-# Transport Network V2 文档与验证审计
+# Transport Network V2 文档与验证审计（历史记录）
 
 ## 审计范围
 
-本记录审计当前工作树中新增的 v2 相关实现，覆盖 Rust `network-core` 与
+本记录保存迁移期间对 v2 相关实现的审计快照，覆盖 Rust `network-core` 与
 `network-nat`、Dart native/transport、Go Relay 以及 Relay Protocol V2 的测试
 入口。它是迁移期间的审计记录，不替代代码、测试、协议契约或 Accepted ADR。
+当前 final-fix 验证以 `docs/NETWORK_V2_FINAL_ACCEPTANCE_REPORT.md` 与代码/测试
+为准。
 
 ## 结论
 

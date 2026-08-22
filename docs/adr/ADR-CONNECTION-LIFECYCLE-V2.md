@@ -1,11 +1,12 @@
-> 最新更新时间：2026-08-19
+> 最新更新时间：2026-08-22
 
 # ADR-CONNECTION-LIFECYCLE-V2：连接生命周期重构（ConnectivityAttempt 一次性、ConnectionSession 可丢弃）
 
 ## Status
 
-Accepted for the transport-network v2 breaking refactor (2026-08-15). Companion
-to ADR-TRANSPORT-NETWORK-V2; implements design doc §11-§15, §18, §34-§37 and
+Accepted for the transport-network v2 breaking refactor (2026-08-15), clarified
+2026-08-22 to match the implemented Stage A/B ordering. Companion to
+ADR-TRANSPORT-NETWORK-V2; implements design doc §11-§15, §18, §34-§37 and
 Steps 5-6, 8.
 
 ## Context
@@ -13,17 +14,17 @@ Steps 5-6, 8.
 v1 has many connect entry points (`connect_peer`, `run_candidate_punch`,
 `direct_upgrade_loop`, `migrate_direct_path`, `accept_connections`,
 `accept_tcp_connections`), a global `candidate_attempts` map, a `PathManager`
-that persists remote discovery truth (`remote_generation` +
-`remote_attempt_id` + the whole remote candidate set), a logical `Session` that
-survives transport loss with crypto-root continuity, and background
-reconnect / direct-upgrade / path-migration tasks. Every one of these v2
-deletes or re-scopes.
+that persists remote discovery truth, a logical `Session` that survives
+transport loss with crypto-root continuity, and background reconnect/direct
+upgrade/path migration tasks. V2 deletes or re-scopes each of these.
 
 ## Decision
 
 ### ConnectivityAttemptCoordinator 是唯一连接入口
 
-所有连接必须进入 `ConnectivityAttemptCoordinator::connect()`，固定状态机：
+所有连接必须进入 `ConnectivityAttemptCoordinator::connect()`。每次请求先做
+不依赖控制面的 Stage A Direct 复用/候选探测；只有 Stage A 失败才进入下面的
+Resolve 状态机：
 
 ```text
 IDLE → RESOLVING → RESOLVED → COORDINATING
@@ -50,8 +51,10 @@ ConnectivityAttempt {
 }
 ```
 
-- 生命周期：`Resolve → 创建 Attempt → Candidate coordination → Direct connect
-  → 成功/失败 → Attempt 销毁`。
+- 生命周期：`Stage A Direct/reuse → Resolve → 创建 Attempt → Candidate
+  coordination → Direct connect → 成功/失败 → Attempt 销毁`。任何健康且
+  capability-compatible 的 ready path（包括 Relay）在进入控制面前即可复用；
+  复用成功时不发送 Resolve、Offer 或 Relay reservation。
 - Candidate 完全 attempt scoped：`CandidateSet` 只属于本次连接尝试。
 - **禁止**：Attempt 1 的 remote_generation 影响 Attempt 2；Attempt 1 的
   remote_attempt_id 留在全局 PathManager；Presence Event 删除当前 Attempt。
@@ -63,56 +66,62 @@ ConnectivityAttempt {
 
 ### PathManager 仅保留 metrics
 
-- 拆分出 `ConnectionPathMetrics`（只属于已建立连接的 RTT / Jitter / Loss /
-  Endpoint）。
-- 允许 `HistoricalPathMetrics` 作为性能提示，但**历史性能永远不能决定
-  Candidate 是否仍然有效**。
-- PathManager 不再保存远端 Discovery Truth；远端候选权威来自 Resolve 返回的
+- `ConnectionPathMetrics` 只属于已建立连接的 RTT / Jitter / Loss / Endpoint。
+- `HistoricalPathMetrics` 只能作为性能提示，不能决定 Candidate 是否仍然有效。
+- PathManager 不保存远端 Discovery Truth；远端候选权威来自 Resolve 返回的
   `DiscoverySnapshot`。
 
 ### ConnectionSession 与 Transport 同生命周期（可丢弃）
 
-- `Transport Connection 建立 → Identity Auth → Noise E2EE → ConnectionSession →
+- `Transport Connection → Identity Auth → Noise E2EE → ConnectionSession →
   Transport Lost → ConnectionSession Destroyed`。
 - 重新建立 = `New Connection → New ConnectionSessionId → New Noise Root`。
-- **禁止试图恢复旧 Socket 的 CryptoContext**，禁止跨 Transport 的 Session
-  连续性 / route migration 连续性 / crypto root 连续性。
-- `Delivery` 与 `Transfer` 的业务状态不属于 `ConnectionSession`：未确认消息按
-  `MessageId`/业务 channel 恢复，文件按 `transfer_id` 与
-  `confirmed_offset` 恢复；它们可以在新的 ConnectionSession 上继续。
-- 删除 `SessionState::Disconnected` 存活 + `should_reconnect` + `reconnect_loop`
-  复用同一 `SessionId` + `SessionCryptoDecision::ContinueExisting` 的 crypto
-  root 复用。
+- 禁止恢复旧 Socket 的 `CryptoContext` 或跨 Transport 复用 Session/route/crypto
+  root 连续性。
+- Delivery 与 Transfer 的业务状态不属于 ConnectionSession；未确认消息按
+  `MessageId`/业务 channel 恢复，文件按 `transfer_id` 与 `confirmed_offset`
+  恢复。
 
 ### Direct First 顺序建连（4s 窗口）
 
-- 连接前先 `ResolvePeer`（2s 上限），再候选信令，再 **Direct First 4s**。
-- 4s 内任一 identity-authenticated + E2EE-ready 的 Direct 成功 → `CONNECTED_DIRECT`。
-- 4s 超时 → `DIRECT_FAILED` → `ReserveRelay` → Relay Data。**Relay 不再和
-  Direct 并行抢跑**（无 happy-eyeballs 并行 Relay 启动）。
+- Stage A 只使用 fresh cache/configured candidates 和
+  capability-compatible ready-path reuse；它不调用控制面。若已有健康 Relay
+  path，物理路径 owner 也在 Stage B 之前完成复用，避免对 target-less Offer
+  产生无主的控制面 ticket。
+- 这是对新建/替换连接的 Resolve 权威规则的明确复用例外：已认证的当前
+  transport path 由其 owner 以 `path_is_connected + capability` 判定可复用，
+  不再为同一条健康连接发出另一个 Offer。远端 runtime restart 会使该认证
+  transport/session 失效；一旦进入新建/替换路径，`ReadySessionIndex` 仍以
+  Resolve epoch 做 `Close old → New`（`take_obsolete_closes_old_when_epoch_changed`）。
+- Stage A 失败后，Stage B 在同一条 Control Connection 上完成一次权威
+  `Resolve → Offer` transaction，再使用该 Resolve snapshot 建立 Attempt 和
+  **Direct First 4s** 窗口。Offer 入队前保持窄 target-binding gate，但不把
+  answer/direct race 锁在 gate 内。
+- 4s 内任一 identity-authenticated + E2EE-ready Direct 成功 → `CONNECTED_DIRECT`。
+- 4s 超时 → `DIRECT_FAILED` → `ReserveRelay` → Relay Data。Relay 不和 Direct
+  并行抢跑。
 
-Direct race 以单个 candidate 为边界：QUIC 候选按 Direct deadline 竞争；支持 generic WebSocket 的路由中，TCP 与 WebSocket 在同一个 candidate window 内并行启动，不允许 TCP 黑洞把 WebSocket 机会变成串行 fallback。待启动 candidate 的身份是 `(candidate_id, endpoint, generation)`；同 ID 但 endpoint 或 generation 更新时必须重新尝试，权威 snapshot 删除的未启动 candidate 必须丢弃。
+Direct race 以 `(candidate_id, endpoint, generation)` 为边界；同 ID 但 endpoint 或 generation 更新时必须重新尝试，权威 snapshot 删除的未启动 candidate 必须丢弃。支持 generic WebSocket 的路由中，TCP 与 WebSocket 在同一 candidate window 内并行启动。
 
 ### 不再进行 Relay → Direct 后台升级
 
-- 第一阶段删除 `schedule_direct_upgrade` / `direct_upgrade_loop` / 2s
-  background direct probe / Relay → Direct auto migration。
-- Connection 建立时选定 Direct 或 Relay，之后直到连接结束 **Route 不变**；
-  Relay 断线后重新 Resolve，下一次可能直接变成 Direct。
-- 未来如需性能优化，单独实现 `RouteOptimizer`，它只能是 optimization、
-  不能成为正确性依赖。QUIC 自身 Path Migration（WiFi→5G 同一 authenticated
-  QUIC Connection 内）是 Transport 内部优化，第一轮重构不要求实现。
+- 删除 `schedule_direct_upgrade` / `direct_upgrade_loop` / background direct
+  probe / Relay → Direct auto migration。
+- Connection 选定 Direct 或 Relay 后直到连接结束 Route 不变；Relay 断线后
+  显式重新 Resolve，下一次可能直接变成 Direct。
+- 未来若需性能优化，单独实现 `RouteOptimizer`，不能成为正确性依赖。
 
 ### 连接重用规则
 
-每次新的 `connect()` 都 Resolve；Resolve 后若当前已有 Healthy Connection 且
-peer `runtime_epoch == Resolve 返回 epoch` 且 capability 满足本次业务，允许
-重用现有 Connection。epoch 不一致 → Close old → New ConnectivityAttempt。
+每次新的 `connect()` 先尝试 capability-compatible 的健康 ready path 复用或
+Stage A fresh Direct 探测；只有这些路径失败才 Resolve。进入 Stage B 后，
+Resolve 返回的 epoch 仍用于候选/新 Attempt 的权威绑定；若索引发现旧 epoch，
+必须 Close old → New ConnectivityAttempt。
 
 ## Consequences
 
-- 没有隐藏的透明重连 / DirectUpgrade / RepairPath / RestoreRoute；每次
-  Transport 断开后业务显式重新 Resolve。
+- 没有隐藏的透明重连 / DirectUpgrade / RepairPath / RestoreRoute；Transport
+  断开后业务显式重新 Resolve。
 - Presence Event 无权修改 ConnectivityAttempt / CandidateSet /
   ConnectionSession；UI 提示与实际建连状态解耦。
 - 大流量 Relay Data 不会与 signaling 共享 socket/queue（见
@@ -120,8 +129,10 @@ peer `runtime_epoch == Resolve 返回 epoch` 且 capability 满足本次业务�
 
 ## Verification
 
-按 Main 基线版 §40 测试矩阵的 Connection / NAT / Concurrency 组执行：每次
-新 connection 先 Resolve、existing connection + same epoch reuse、existing
-connection + new epoch 不复用、QUIC direct success/timeout、TCP / WebSocket /
+按 Main 基线版 §40 测试矩阵的 Connection / NAT / Concurrency 组执行：Stage A
+compatible reuse 的控制面零调用、Stage A 失败后的单次 Resolve → Offer、same
+epoch reuse、new epoch 不复用、QUIC direct success/timeout、TCP / WebSocket /
 Relay fallback、identity mismatch、同时连接多个 peer、同 peer 多 connect 合并、
-stale/delayed attempt answer、同 ID candidate endpoint/generation 更新、删除未启动 candidate、TCP blackhole + WebSocket reachable，以及 Direct window 内延迟 answer 新增 QUIC candidate。
+stale/delayed attempt answer、同 ID candidate endpoint/generation 更新、删除未启动
+candidate、TCP blackhole + WebSocket reachable，以及 Direct window 内延迟 answer
+新增 QUIC candidate。

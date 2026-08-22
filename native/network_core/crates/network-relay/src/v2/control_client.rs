@@ -15,6 +15,8 @@
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -66,6 +68,103 @@ pub enum ControlEvent {
 struct AttemptTracker {
     created_at: Instant,
     response_tx: oneshot::Sender<ControlEvent>,
+}
+
+/// Internal Rust adapter result of one authoritative Resolve →
+/// ConnectivityOffer transaction. This type is consumed by `network-core`; it
+/// is not part of the Dart/FFI SDK surface.
+///
+/// A READY response has its Offer enqueued before the response is returned;
+/// non-READY responses are returned without an Offer so the caller can retain
+/// the authoritative status. The coordination gate is released as soon as
+/// the Resolve/Offer step finishes; [`Self::wait_for_answer`] therefore never
+/// holds the gate across the answer/direct-probe window.
+pub struct ConnectivityAttemptStart {
+    /// The authoritative Resolve response for this transaction.
+    pub resolved: ResolvePeerResponse,
+    answer: Pin<Box<dyn Future<Output = Result<ConnectivityAnswer, RelayError>> + Send>>,
+}
+
+struct ConnectivityAnswerWaiter {
+    attempt_id: String,
+    response_rx: oneshot::Receiver<ControlEvent>,
+    attempts: Arc<RwLock<HashMap<String, AttemptTracker>>>,
+}
+
+impl ConnectivityAttemptStart {
+    /// Construct a transaction result for control-plane implementations and
+    /// test doubles that provide their own answer future.
+    pub fn new<F>(resolved: ResolvePeerResponse, answer: F) -> Self
+    where
+        F: Future<Output = Result<ConnectivityAnswer, RelayError>> + Send + 'static,
+    {
+        Self {
+            resolved,
+            answer: Box::pin(answer),
+        }
+    }
+
+    /// Wait for and validate the asynchronous answer associated with this
+    /// attempt.  Dropping the returned future does not hold any control-plane
+    /// lock; timeout/error paths remove the attempt tracker.
+    pub async fn wait_for_answer(self) -> Result<ConnectivityAnswer, RelayError> {
+        self.answer.await
+    }
+}
+
+impl ConnectivityAnswerWaiter {
+    async fn wait(self) -> Result<ConnectivityAnswer, RelayError> {
+        let ConnectivityAnswerWaiter {
+            attempt_id,
+            response_rx,
+            attempts,
+        } = self;
+        match tokio::time::timeout(CONNECTIVITY_ATTEMPT_TIMEOUT, response_rx).await {
+            Ok(Ok(ControlEvent::ConnectivityAnswer(answer))) => {
+                if answer.accepted {
+                    let Some(epoch) = answer.responder_runtime_epoch.as_ref() else {
+                        attempts.write().await.remove(&attempt_id);
+                        return Err(RelayError::Protocol(
+                            "accepted connectivity answer is missing responder runtime_epoch"
+                                .into(),
+                        ));
+                    };
+                    if let Err(error) = validate_discovery_tuple(
+                        epoch,
+                        answer.responder_revision,
+                        answer.responder_snapshot.as_ref(),
+                        "responder",
+                    ) {
+                        attempts.write().await.remove(&attempt_id);
+                        return Err(error);
+                    }
+                }
+                Ok(answer)
+            }
+            Ok(Ok(ControlEvent::ProtocolError(error))) => {
+                attempts.write().await.remove(&attempt_id);
+                Err(RelayError::Protocol(error.to_string()))
+            }
+            Ok(Ok(ControlEvent::Disconnected { .. })) => {
+                attempts.write().await.remove(&attempt_id);
+                Err(RelayError::NotConnected)
+            }
+            Ok(Ok(_)) => {
+                attempts.write().await.remove(&attempt_id);
+                Err(RelayError::Protocol(
+                    "unexpected response to connectivity attempt".into(),
+                ))
+            }
+            Ok(Err(_)) => {
+                attempts.write().await.remove(&attempt_id);
+                Err(RelayError::NotConnected)
+            }
+            Err(_) => {
+                attempts.write().await.remove(&attempt_id);
+                Err(RelayError::Timeout("connectivity attempt timed out".into()))
+            }
+        }
+    }
 }
 
 /// 控制面应答归属判定。
@@ -395,6 +494,18 @@ impl RelayControlClient {
         &self,
         target_device_id: &str,
     ) -> Result<ResolvePeerResponse, RelayError> {
+        // ConnectivityOffer has no target field. Serialize every public
+        // Resolve with the same narrow gate used by Resolve → Offer so a
+        // status lookup cannot overwrite the server's one-shot target ticket
+        // between the authoritative Resolve and its Offer.
+        let _coordination_guard = self.coordination_gate.lock().await;
+        self.resolve_peer_unlocked(target_device_id).await
+    }
+
+    async fn resolve_peer_unlocked(
+        &self,
+        target_device_id: &str,
+    ) -> Result<ResolvePeerResponse, RelayError> {
         if target_device_id.is_empty() || target_device_id.len() > MAX_DEVICE_ID_BYTES {
             return Err(RelayError::InvalidConfiguration(
                 "resolve target must contain 1-128 characters".into(),
@@ -417,11 +528,15 @@ impl RelayControlClient {
         }
     }
 
-    /// 开启一个异步 connectivity attempt，并按 `attempt_id` 关联应答。
+    /// Enqueue one authoritative Resolve → ConnectivityOffer transaction.
     ///
-    /// 返回对端的 ConnectivityAnswer（其 `request_id` 是对端自己的，因此本方法
-    /// 只依赖 `attempts: HashMap<attempt_id, tracker>` 完成关联）。
-    pub async fn start_connectivity_attempt(
+    /// The returned [`ConnectivityAttemptStart`] carries the authoritative
+    /// ResolvePeerResponse together with an answer waiter. READY responses
+    /// enqueue the Offer before returning; non-READY responses carry no Offer
+    /// and let the caller map the status without losing authority. The
+    /// coordination gate covers exactly the Resolve request/response and
+    /// Offer enqueue; it is released before the caller waits for an answer.
+    pub async fn begin_connectivity_attempt(
         &self,
         attempt_id: String,
         target_device_id: String,
@@ -429,7 +544,7 @@ impl RelayControlClient {
         initiator_runtime_epoch: RuntimeEpoch,
         initiator_revision: u32,
         initiator_snapshot: Option<DiscoverySnapshot>,
-    ) -> Result<ConnectivityAnswer, RelayError> {
+    ) -> Result<ConnectivityAttemptStart, RelayError> {
         if attempt_id.is_empty() || attempt_id.len() > MAX_ATTEMPT_ID_BYTES {
             return Err(RelayError::InvalidConfiguration(
                 "attempt_id must contain 1-128 characters".into(),
@@ -462,15 +577,16 @@ impl RelayControlClient {
                 "connectivity attempt_id is already in use".into(),
             ));
         }
-        let resolved = self.resolve_peer(&target_device_id).await?;
+        let resolved = self.resolve_peer_unlocked(&target_device_id).await?;
         if resolved.status != ResolveStatus::Ready as i32 {
+            let status = resolved.status;
+            let retry_after_ms = resolved.retry_after_ms;
             drop(coordination_guard);
-            return Err(RelayError::Protocol(format!(
-                "connectivity target is not ready: {}",
-                ResolveStatus::try_from(resolved.status)
-                    .map(|status| format!("{status:?}"))
-                    .unwrap_or_else(|_| "unknown".to_string())
-            )));
+            return Ok(ConnectivityAttemptStart::new(resolved, async move {
+                Err(RelayError::Protocol(format!(
+                    "connectivity attempt not started: resolve status={status} retry_after_ms={retry_after_ms}"
+                )))
+            }));
         }
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
@@ -502,44 +618,44 @@ impl RelayControlClient {
             return Err(error);
         }
         drop(coordination_guard);
-        match tokio::time::timeout(CONNECTIVITY_ATTEMPT_TIMEOUT, rx).await {
-            Ok(Ok(ControlEvent::ConnectivityAnswer(answer))) => {
-                if answer.accepted {
-                    let epoch = answer.responder_runtime_epoch.as_ref().ok_or_else(|| {
-                        RelayError::Protocol(
-                            "accepted connectivity answer is missing responder runtime_epoch"
-                                .into(),
-                        )
-                    })?;
-                    validate_discovery_tuple(
-                        epoch,
-                        answer.responder_revision,
-                        answer.responder_snapshot.as_ref(),
-                        "responder",
-                    )?;
-                }
-                Ok(answer)
+        let attempts = Arc::clone(&self.attempts);
+        Ok(ConnectivityAttemptStart::new(resolved, async move {
+            ConnectivityAnswerWaiter {
+                attempt_id,
+                response_rx: rx,
+                attempts,
             }
-            Ok(Ok(ControlEvent::ProtocolError(error))) => {
-                self.attempts.write().await.remove(&attempt_id);
-                Err(RelayError::Protocol(error.to_string()))
-            }
-            Ok(Ok(ControlEvent::Disconnected { .. })) => Err(RelayError::NotConnected),
-            Ok(Ok(_)) => {
-                self.attempts.write().await.remove(&attempt_id);
-                Err(RelayError::Protocol(
-                    "unexpected response to connectivity attempt".into(),
-                ))
-            }
-            Ok(Err(_)) => {
-                self.attempts.write().await.remove(&attempt_id);
-                Err(RelayError::NotConnected)
-            }
-            Err(_) => {
-                self.attempts.write().await.remove(&attempt_id);
-                Err(RelayError::Timeout("connectivity attempt timed out".into()))
-            }
-        }
+            .wait()
+            .await
+        }))
+    }
+
+    /// 开启一个异步 connectivity attempt，并按 `attempt_id` 关联应答。
+    ///
+    /// This compatibility wrapper preserves the original API: callers that do
+    /// not need the authoritative Resolve response can await the answer
+    /// directly.  The Resolve → Offer transaction itself is implemented by
+    /// [`Self::begin_connectivity_attempt`].
+    pub async fn start_connectivity_attempt(
+        &self,
+        attempt_id: String,
+        target_device_id: String,
+        initiator_device_id: String,
+        initiator_runtime_epoch: RuntimeEpoch,
+        initiator_revision: u32,
+        initiator_snapshot: Option<DiscoverySnapshot>,
+    ) -> Result<ConnectivityAnswer, RelayError> {
+        self.begin_connectivity_attempt(
+            attempt_id,
+            target_device_id,
+            initiator_device_id,
+            initiator_runtime_epoch,
+            initiator_revision,
+            initiator_snapshot,
+        )
+        .await?
+        .wait_for_answer()
+        .await
     }
 
     /// 发送一个受限的 WebRTC 信令帧（fire-and-forget，不等待应答）。发送方身份
@@ -1473,6 +1589,250 @@ mod tests {
             .expect_err("duplicate attempt must fail");
         assert!(matches!(error, RelayError::Protocol(_)));
         assert_eq!(client.attempts.read().await.len(), 1);
+    }
+
+    fn begin_test_client(capacity: usize) -> (Arc<RelayControlClient>, mpsc::Receiver<Message>) {
+        let mut client = RelayControlClient::new(
+            "https://relay.example.test".into(),
+            "device-a".into(),
+            "credential".into(),
+            [0u8; 32],
+        )
+        .expect("client");
+        let (outbound, frames) = mpsc::channel(capacity);
+        client.outbound = Some(outbound);
+        (Arc::new(client), frames)
+    }
+
+    fn begin_test_initiator() -> (RuntimeEpoch, DiscoverySnapshot) {
+        let epoch = RuntimeEpoch { high: 1, low: 2 };
+        let snapshot = DiscoverySnapshot {
+            runtime_epoch: Some(epoch.clone()),
+            revision: 1,
+            transport_capabilities: Vec::new(),
+            candidate_bundle: None,
+            published_at_ms: 0,
+        };
+        (epoch, snapshot)
+    }
+
+    #[tokio::test]
+    async fn begin_connectivity_attempt_performs_one_resolve_then_offer() {
+        let (client, mut frames) = begin_test_client(8);
+        let (initiator_epoch, initiator_snapshot) = begin_test_initiator();
+        let attempt_id = "begin-one-resolve".to_string();
+        let begin_task = {
+            let client = Arc::clone(&client);
+            let attempt_id = attempt_id.clone();
+            let initiator_epoch = initiator_epoch.clone();
+            let initiator_snapshot = initiator_snapshot.clone();
+            tokio::spawn(async move {
+                client
+                    .begin_connectivity_attempt(
+                        attempt_id,
+                        "device-b".into(),
+                        "device-a".into(),
+                        initiator_epoch,
+                        1,
+                        Some(initiator_snapshot),
+                    )
+                    .await
+            })
+        };
+
+        let Message::Binary(frame) = frames.recv().await.expect("resolve frame") else {
+            panic!("expected binary resolve frame");
+        };
+        let frame = decode_control_frame(&frame).expect("decode resolve frame");
+        let relay_frame::Kind::ResolvePeerRequest(resolve) = frame.kind.expect("resolve kind")
+        else {
+            panic!("expected ResolvePeerRequest");
+        };
+        assert_eq!(resolve.target_device_id, "device-b");
+        let resolved = ResolvePeerResponse {
+            request_id: resolve.request_id,
+            status: ResolveStatus::Ready as i32,
+            discovery: Some(DiscoverySnapshot {
+                runtime_epoch: Some(RuntimeEpoch { high: 3, low: 4 }),
+                revision: 7,
+                transport_capabilities: Vec::new(),
+                candidate_bundle: None,
+                published_at_ms: 0,
+            }),
+            retry_after_ms: 0,
+        };
+        let (events_tx, _events_rx) = mpsc::channel(4);
+        route_control_event(
+            ControlEvent::ResolvePeerResponse(resolved.clone()),
+            &client.pending,
+            &client.attempts,
+            &events_tx,
+        )
+        .await;
+
+        let Message::Binary(frame) = frames.recv().await.expect("offer frame") else {
+            panic!("expected binary connectivity offer");
+        };
+        let frame = decode_control_frame(&frame).expect("decode offer frame");
+        let relay_frame::Kind::ConnectivityOffer(offer) = frame.kind.expect("offer kind") else {
+            panic!("expected ConnectivityOffer");
+        };
+        assert_eq!(offer.attempt_id, attempt_id);
+        assert_eq!(offer.initiator_device_id, "device-a");
+        assert!(
+            frames.try_recv().is_err(),
+            "one begin must enqueue one Offer"
+        );
+
+        let start = begin_task
+            .await
+            .expect("begin task")
+            .expect("begin success");
+        assert_eq!(start.resolved, resolved);
+
+        let answer = ConnectivityAnswer {
+            request_id: offer.request_id + 1,
+            attempt_id: attempt_id.clone(),
+            accepted: false,
+            responder_device_id: "device-b".into(),
+            responder_runtime_epoch: None,
+            responder_revision: 0,
+            responder_snapshot: None,
+        };
+        route_control_event(
+            ControlEvent::ConnectivityAnswer(answer.clone()),
+            &client.pending,
+            &client.attempts,
+            &events_tx,
+        )
+        .await;
+        assert_eq!(start.wait_for_answer().await.expect("answer"), answer);
+        assert!(client.attempts.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn begin_connectivity_attempt_non_ready_resolve_does_not_enqueue_offer() {
+        let (client, mut frames) = begin_test_client(8);
+        let (initiator_epoch, initiator_snapshot) = begin_test_initiator();
+        let begin_task = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move {
+                client
+                    .begin_connectivity_attempt(
+                        "begin-not-ready".into(),
+                        "device-b".into(),
+                        "device-a".into(),
+                        initiator_epoch,
+                        1,
+                        Some(initiator_snapshot),
+                    )
+                    .await
+            })
+        };
+
+        let Message::Binary(frame) = frames.recv().await.expect("resolve frame") else {
+            panic!("expected binary resolve frame");
+        };
+        let frame = decode_control_frame(&frame).expect("decode resolve frame");
+        let relay_frame::Kind::ResolvePeerRequest(resolve) = frame.kind.expect("resolve kind")
+        else {
+            panic!("expected ResolvePeerRequest");
+        };
+        let (events_tx, _events_rx) = mpsc::channel(4);
+        route_control_event(
+            ControlEvent::ResolvePeerResponse(ResolvePeerResponse {
+                request_id: resolve.request_id,
+                status: ResolveStatus::Offline as i32,
+                discovery: None,
+                retry_after_ms: 0,
+            }),
+            &client.pending,
+            &client.attempts,
+            &events_tx,
+        )
+        .await;
+
+        let start = begin_task
+            .await
+            .expect("begin task")
+            .expect("non-ready Resolve response is authoritative");
+        assert_eq!(start.resolved.status, ResolveStatus::Offline as i32);
+        assert!(matches!(
+            start.wait_for_answer().await,
+            Err(RelayError::Protocol(_))
+        ));
+        assert!(
+            frames.try_recv().is_err(),
+            "non-READY resolve must not enqueue Offer"
+        );
+        assert!(client.attempts.read().await.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connectivity_answer_waiter_cleans_tracker_after_timeout() {
+        let (client, mut frames) = begin_test_client(8);
+        let (initiator_epoch, initiator_snapshot) = begin_test_initiator();
+        let begin_task = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move {
+                client
+                    .begin_connectivity_attempt(
+                        "begin-timeout".into(),
+                        "device-b".into(),
+                        "device-a".into(),
+                        initiator_epoch,
+                        1,
+                        Some(initiator_snapshot),
+                    )
+                    .await
+            })
+        };
+
+        let Message::Binary(frame) = frames.recv().await.expect("resolve frame") else {
+            panic!("expected binary resolve frame");
+        };
+        let frame = decode_control_frame(&frame).expect("decode resolve frame");
+        let relay_frame::Kind::ResolvePeerRequest(resolve) = frame.kind.expect("resolve kind")
+        else {
+            panic!("expected ResolvePeerRequest");
+        };
+        let (events_tx, _events_rx) = mpsc::channel(4);
+        route_control_event(
+            ControlEvent::ResolvePeerResponse(ResolvePeerResponse {
+                request_id: resolve.request_id,
+                status: ResolveStatus::Ready as i32,
+                discovery: Some(DiscoverySnapshot {
+                    runtime_epoch: Some(RuntimeEpoch { high: 3, low: 4 }),
+                    revision: 7,
+                    transport_capabilities: Vec::new(),
+                    candidate_bundle: None,
+                    published_at_ms: 0,
+                }),
+                retry_after_ms: 0,
+            }),
+            &client.pending,
+            &client.attempts,
+            &events_tx,
+        )
+        .await;
+        let Message::Binary(_frame) = frames.recv().await.expect("offer frame") else {
+            panic!("expected binary connectivity offer");
+        };
+
+        let start = begin_task
+            .await
+            .expect("begin task")
+            .expect("begin success");
+        assert_eq!(client.attempts.read().await.len(), 1);
+        let wait_task = tokio::spawn(async move { start.wait_for_answer().await });
+        tokio::task::yield_now().await;
+        tokio::time::advance(CONNECTIVITY_ATTEMPT_TIMEOUT + Duration::from_millis(1)).await;
+        let error = wait_task
+            .await
+            .expect("wait task")
+            .expect_err("answer wait must time out");
+        assert!(matches!(error, RelayError::Timeout(_)));
+        assert!(client.attempts.read().await.is_empty());
     }
 
     #[tokio::test]

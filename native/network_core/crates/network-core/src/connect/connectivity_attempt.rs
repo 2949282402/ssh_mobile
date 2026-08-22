@@ -13,9 +13,9 @@
 //!
 //! 主链（§37）：
 //!
-//! 1. **Stage A**（§10）：先以 fresh cache + configured endpoint 做纯 Direct 尝试；
-//!    失败后才经 `DiscoveryResolver` 解析对端 4-state，只有 authoritative `READY`
-//!    允许进入 Stage B。
+//! 1. **Stage A**（§10）：先以 fresh cache + configured endpoint 做纯 Direct 尝试，
+//!    并在进入控制面前复用已健康且 capability-compatible 的现有路径；只有找不到
+//!    可复用路径才经 `DiscoveryResolver` 解析对端 4-state。
 //! 2. **Registry 重用**（§34）：同 epoch + capability 且连接健康 → 重用；新 epoch → 关旧建新。
 //! 3. **Create ConnectivityAttempt**（§12）：一次性对象，candidate 完全 attempt-scoped。
 //! 4. **Coordinate**（§14）：ConnectivityOffer 经控制面发给对端，按 attempt_id 关联应答；
@@ -39,7 +39,9 @@ use network_protocol::{
     CommunicationClass, NetworkError as ProtocolError, NetworkErrorCode, PeerConnectionState,
     RouteType,
 };
-use network_relay::v2::{DiscoverySnapshot, RuntimeEpoch};
+use network_relay::v2::{
+    ConnectivityAttemptStart, DiscoverySnapshot, ResolvePeerResponse, RuntimeEpoch,
+};
 use network_relay::RelayError;
 use quinn::VarInt;
 
@@ -83,6 +85,18 @@ pub(crate) struct ConnectivityAttemptCoordinator {
     state: Arc<RuntimeState>,
     /// 当前状态机位置（诊断/测试）。
     stage: std::sync::atomic::AtomicU8,
+}
+
+/// Inputs shared by the bounded Stage B Resolve transaction and its optional
+/// NOT_READY retry. Keeping the request as one value also makes the retry
+/// carry the exact same local discovery snapshot and identity binding.
+struct StageBTransactionRequest {
+    peer_id: String,
+    initiator_device_id: String,
+    initiator_runtime_epoch: RuntimeEpoch,
+    initiator_revision: u32,
+    initiator_snapshot: Option<DiscoverySnapshot>,
+    connect_deadline: Instant,
 }
 
 impl ConnectivityAttemptCoordinator {
@@ -300,8 +314,9 @@ impl ConnectivityAttemptCoordinator {
 
         // Stage A is deliberately independent of the Relay control plane.  A
         // fresh monotonic remote cache/configured endpoint is enough to start
-        // the bounded direct race; Resolve/Offer are only entered after this
-        // uncoordinated attempt fails.
+        // the bounded direct race; an already healthy path is handled by the
+        // pre-control reuse fast path below. Resolve/Offer are only entered after this
+        // pre-control reuse fast path and after the uncoordinated attempt fails.
         if self
             .try_stage_a_direct(
                 peer_id,
@@ -315,21 +330,79 @@ impl ConnectivityAttemptCoordinator {
             return Ok(());
         }
 
+        // Any healthy path is also a reuse fast path.  It must be
+        // decided before Stage B opens the one-shot Resolve → Offer ticket:
+        // the frozen ConnectivityOffer has no target field, so emitting an
+        // Offer and then returning from reuse would leave an unsolicited
+        // server-side coordination ticket (and possibly a leaked waiter).
+        if let Some(reused) = self.try_reuse_before_control(peer_id, capability).await? {
+            self.finish_reuse(peer_id, reused).await;
+            return Ok(());
+        }
+
         // -----------------------------------------------------------------
-        // 1. RESOLVING（§10）：Resolve is the Stage B coordination gate after
-        // the pure-direct Stage A has failed.
+        // 1. RESOLVING（§10）：Stage B owns one atomic Resolve → Offer
+        // coordination transaction. The control client holds its narrow gate
+        // through the authoritative Resolve and Offer enqueue, then returns
+        // the Resolve snapshot plus an answer waiter. This keeps the target
+        // binding coherent on the target-less ConnectivityOffer wire frame.
         // -----------------------------------------------------------------
         self.set_stage(ConnectivityAttemptState::Resolving);
-        let resolved = self.resolve(peer_id, &peer).await?;
+        let (control, ready_presence_ttl) = {
+            let control = self
+                .state
+                .relay
+                .control
+                .read()
+                .await
+                .clone()
+                .ok_or_else(|| {
+                    protocol_error_with_peer(
+                        NetworkErrorCode::RelayError,
+                        "authoritative Resolve is unavailable",
+                        "connect",
+                        peer_id,
+                    )
+                })?;
+            if !control.is_usable().await {
+                return Err(protocol_error_with_peer(
+                    NetworkErrorCode::RelayError,
+                    "authoritative Resolve control plane is unavailable",
+                    "connect",
+                    peer_id,
+                ));
+            }
+            let ready_presence_ttl = control.ready_presence_ttl();
+            (control, ready_presence_ttl)
+        };
+        let (local_epoch, local_revision, local_snapshot) = {
+            let manager = self.state.local_discovery.read().await;
+            manager
+                .as_ref()
+                .map(|manager| {
+                    (
+                        manager.runtime_epoch(),
+                        manager.revision(),
+                        Some(manager.snapshot()),
+                    )
+                })
+                .unwrap_or((RuntimeEpoch { high: 0, low: 0 }, 1, None))
+        };
+        let (attempt_id, coordination) = self
+            .begin_stage_b_transaction(
+                Arc::clone(&control),
+                StageBTransactionRequest {
+                    peer_id: peer_id.to_string(),
+                    initiator_device_id: identity.device_id.clone(),
+                    initiator_runtime_epoch: local_epoch.clone(),
+                    initiator_revision: local_revision,
+                    initiator_snapshot: local_snapshot,
+                    connect_deadline,
+                },
+            )
+            .await?;
+        let resolved = ready_peer_from_coordination(&coordination.resolved, peer_id)?;
         self.set_stage(ConnectivityAttemptState::Resolved);
-        let ready_presence_ttl = self
-            .state
-            .relay
-            .control
-            .read()
-            .await
-            .as_ref()
-            .and_then(|control| control.ready_presence_ttl());
         update_remote_candidate_cache(
             &state,
             peer_id,
@@ -344,25 +417,7 @@ impl ConnectivityAttemptCoordinator {
         // 2. Registry 重用（§34）。
         // -----------------------------------------------------------------
         if let Some(reused) = self.try_reuse(peer_id, &remote_epoch, capability).await? {
-            tracing::info!(
-                peer_id = %peer_id,
-                session = ?reused,
-                "reused existing healthy connection"
-            );
-            // 重用成功同样发布 Connected 终态：Dart connect() 把该事件当作成功信号
-            // （失败才由命令面发 Failed），不发布会令其等待超时。
-            let route = state
-                .path_route(peer_id)
-                .await
-                .unwrap_or(RouteType::Unspecified);
-            emit_peer_state(
-                &state.event_tx,
-                peer_id,
-                PeerConnectionState::Connected,
-                route,
-                None,
-            );
-            self.set_stage(ConnectivityAttemptState::ConnectedDirect);
+            self.finish_reuse(peer_id, reused).await;
             return Ok(());
         }
 
@@ -461,28 +516,6 @@ impl ConnectivityAttemptCoordinator {
         // 4. Create ConnectivityAttempt（§12）+ COORDINATING（§14）。
         // -----------------------------------------------------------------
         self.set_stage(ConnectivityAttemptState::Coordinating);
-        let local_epoch = state
-            .local_discovery
-            .read()
-            .await
-            .as_ref()
-            .map(|manager| manager.runtime_epoch())
-            .unwrap_or(RuntimeEpoch { high: 0, low: 0 });
-        let local_revision = state
-            .local_discovery
-            .read()
-            .await
-            .as_ref()
-            .map(|manager| manager.revision())
-            .unwrap_or(1);
-        let local_snapshot = state
-            .local_discovery
-            .read()
-            .await
-            .as_ref()
-            .map(|manager| manager.snapshot());
-
-        let attempt_id = new_attempt_id();
         // 一次性 ConnectivityAttempt（§12）：candidate 完全 attempt-scoped。
         // - `local_candidates`：本端已 gather 的候选（用于信令/供对端直连）。
         // - `remote_candidates`：Resolve 返回的对端候选（§14 服务器附带 A 当前
@@ -527,23 +560,14 @@ impl ConnectivityAttemptCoordinator {
         }
 
         // 发 offer 的异步任务：不阻塞 Direct 窗口（§14 双方 simultaneous checks）。
-        let candidate_updates = if let Some(control) = self.state.relay.control.read().await.clone()
-        {
-            self.spawn_coordination(
-                control,
-                peer_id.to_string(),
-                attempt_id.clone(),
-                local_epoch,
-                local_revision,
-                local_snapshot,
-                Arc::clone(&attempt),
-                preserved_direct_candidates,
-            )
-        } else {
-            let (sender, receiver) = watch::channel(None);
-            drop(sender);
-            receiver
-        };
+        let candidate_updates = self.spawn_coordination(
+            coordination,
+            peer_id.to_string(),
+            attempt_id.clone(),
+            Arc::clone(&attempt),
+            preserved_direct_candidates,
+            ready_presence_ttl,
+        );
         let remote_candidates = attempt.lock().await.remote_candidates().to_vec();
         let _ = attempt
             .lock()
@@ -608,10 +632,16 @@ impl ConnectivityAttemptCoordinator {
                     .await
                     .set_state(network_nat::ConnectivityAttemptState::Succeeded);
                 let admission = self.attach_direct_route(peer_id, route).await?;
+                let final_remote_epoch = attempt
+                    .lock()
+                    .await
+                    .remote_runtime_epoch()
+                    .map(runtime_epoch_from_nat)
+                    .or_else(|| remote_epoch.clone());
                 self.register_current(
                     Arc::clone(&state),
                     peer_id,
-                    &remote_epoch,
+                    &final_remote_epoch,
                     admission.session_id,
                 )
                 .await;
@@ -646,10 +676,16 @@ impl ConnectivityAttemptCoordinator {
                     .await
                 {
                     Ok(admission) => {
+                        let final_remote_epoch = attempt
+                            .lock()
+                            .await
+                            .remote_runtime_epoch()
+                            .map(runtime_epoch_from_nat)
+                            .or_else(|| remote_epoch.clone());
                         self.register_current(
                             Arc::clone(&state),
                             peer_id,
-                            &remote_epoch,
+                            &final_remote_epoch,
                             admission.session_id,
                         )
                         .await;
@@ -669,6 +705,70 @@ impl ConnectivityAttemptCoordinator {
                 }
             }
         }
+    }
+
+    /// Begin the Stage B control transaction, retrying NOT_READY exactly once.
+    /// A non-READY transaction never enqueues an Offer, so replacing its
+    /// attempt id on retry cannot leave a server-side waiter behind. READY is
+    /// returned with the same id that will be used by the following attempt.
+    async fn begin_stage_b_transaction(
+        &self,
+        control: Arc<dyn crate::discovery::DiscoveryControlPlane>,
+        request: StageBTransactionRequest,
+    ) -> Result<(String, ConnectivityAttemptStart), ProtocolError> {
+        let mut attempt_id = new_attempt_id();
+        let mut coordination = control
+            .begin_connectivity_attempt(
+                attempt_id.clone(),
+                request.peer_id.clone(),
+                request.initiator_device_id.clone(),
+                request.initiator_runtime_epoch.clone(),
+                request.initiator_revision,
+                request.initiator_snapshot.clone(),
+            )
+            .await
+            .map_err(|error| relay_resolve_error(&error, &request.peer_id))?;
+
+        if network_relay::v2::ResolveStatus::try_from(coordination.resolved.status)
+            != Ok(network_relay::v2::ResolveStatus::NotReady)
+        {
+            return Ok((attempt_id, coordination));
+        }
+
+        // Bound the retry wait by the public connect budget. If no budget
+        // remains, return the authoritative first NOT_READY response so the
+        // normal status mapper reports PeerNotReady instead of fabricating a
+        // READY result or extending the operation beyond its deadline.
+        let retry = Duration::from_millis(u64::from(coordination.resolved.retry_after_ms))
+            .min(super::NOT_READY_WAIT);
+        let remaining = request
+            .connect_deadline
+            .saturating_duration_since(Instant::now());
+        if retry >= remaining {
+            return Ok((attempt_id, coordination));
+        }
+        tokio::time::sleep(retry).await;
+        if Instant::now() >= request.connect_deadline {
+            return Ok((attempt_id, coordination));
+        }
+
+        // The first NOT_READY path has no Offer and therefore no active
+        // server-side coordination ticket. A fresh attempt id keeps each
+        // ConnectivityAttempt independently scoped on the retry.
+        attempt_id = new_attempt_id();
+        let retry_peer_id = request.peer_id.clone();
+        coordination = control
+            .begin_connectivity_attempt(
+                attempt_id.clone(),
+                retry_peer_id,
+                request.initiator_device_id,
+                request.initiator_runtime_epoch,
+                request.initiator_revision,
+                request.initiator_snapshot,
+            )
+            .await
+            .map_err(|error| relay_resolve_error(&error, &request.peer_id))?;
+        Ok((attempt_id, coordination))
     }
 
     /// Run the frozen pure-direct Stage A.  The method returns `true` only after
@@ -768,6 +868,7 @@ impl ConnectivityAttemptCoordinator {
     /// Resolve 阶段：控制面可用时走服务器权威解析（§10）。Configured/local
     /// candidates belong only to Stage A; a non-READY Resolve result never
     /// becomes a synthetic READY and therefore cannot unlock Stage C Relay.
+    #[allow(dead_code)] // compatibility seam for resolver-focused unit tests
     async fn resolve(
         &self,
         peer_id: &str,
@@ -823,6 +924,7 @@ impl ConnectivityAttemptCoordinator {
     /// Preserve the authoritative Resolve status after Stage A has already
     /// tried configured/fresh direct candidates. In particular, a configured
     /// endpoint cannot turn OFFLINE/NOT_READY/UNKNOWN into a synthetic READY.
+    #[allow(dead_code)] // compatibility seam for resolver-focused unit tests
     fn authoritative_resolve_or_error(
         &self,
         peer_id: &str,
@@ -910,6 +1012,85 @@ impl ConnectivityAttemptCoordinator {
         Ok(None)
     }
 
+    /// Reuse an already healthy path before opening the Stage B Resolve →
+    /// Offer transaction.  The physical path owner is authoritative for this
+    /// fast path: a connected session with the requested capability is already
+    /// usable, while an absent/unhealthy path falls through to the
+    /// authoritative Resolve and the normal epoch/index checks.
+    async fn try_reuse_before_control(
+        &self,
+        peer_id: &str,
+        capability: u8,
+    ) -> Result<Option<SessionId>, ProtocolError> {
+        let state = Arc::clone(&self.state);
+        let Some(session_id) = state.connection_sessions.current_session_id(peer_id).await else {
+            return Ok(None);
+        };
+        if !state.path_is_connected(peer_id).await
+            || !state.path_supports_capability(peer_id, capability).await
+        {
+            return Ok(None);
+        }
+
+        // A control-plane epoch hint fences the old authenticated transport
+        // before this fast path can reuse it.  Normal TTL expiry does not
+        // retire a healthy route; a pending/new epoch does, and the regular
+        // Stage B Resolve will establish the replacement authority.
+        if let Some(registered) = state
+            .ready_session_index
+            .lookup_registered(peer_id, capability)
+        {
+            if registered.session_id == session_id {
+                let epoch_changed =
+                    if let Some(registered_epoch) = registered.remote_runtime_epoch.as_ref() {
+                        let cache = state.remote_candidate_cache.read().await;
+                        cache.get(peer_id).is_some_and(|entry| {
+                            entry.pending_remote_epoch().is_some()
+                                || Some(runtime_epoch_from_nat(entry.runtime_epoch))
+                                    != Some(registered_epoch.clone())
+                        })
+                    } else {
+                        false
+                    };
+                if epoch_changed {
+                    close_session_and_unregister(
+                        Arc::clone(&state),
+                        peer_id.to_string(),
+                        session_id,
+                    )
+                    .await;
+                    return Ok(None);
+                }
+            }
+        }
+        Ok(Some(session_id))
+    }
+
+    /// Publish the single success signal for either pre-control or
+    /// post-Resolve registry reuse.
+    async fn finish_reuse(&self, peer_id: &str, session_id: SessionId) {
+        let state = Arc::clone(&self.state);
+        tracing::info!(
+            peer_id = %peer_id,
+            session = ?session_id,
+            "reused existing healthy connection"
+        );
+        // 重用成功同样发布 Connected 终态：Dart connect() 把该事件当作成功信号
+        // （失败才由命令面发 Failed），不发布会令其等待超时。
+        let route = state
+            .path_route(peer_id)
+            .await
+            .unwrap_or(RouteType::Unspecified);
+        emit_peer_state(
+            &state.event_tx,
+            peer_id,
+            PeerConnectionState::Connected,
+            route,
+            None,
+        );
+        self.set_stage(ConnectivityAttemptState::ConnectedDirect);
+    }
+
     /// 登记一条已建立的连接（§34）。注册表记录连接**实际**能力（由 route profile
     /// 推导），而不是请求时的 class，因此 QUIC/TCP 基线连接可被后续不同 class 的
     /// 请求复用。
@@ -932,45 +1113,22 @@ impl ConnectivityAttemptCoordinator {
             .register(peer_id, remote_epoch.clone(), capability, session_id);
     }
 
-    /// 发送 ConnectivityOffer（异步任务，不阻塞 Direct 窗口）。
-    #[allow(clippy::too_many_arguments)]
+    /// Wait for the answer from the already-enqueued ConnectivityOffer
+    /// without blocking the Direct window.
     fn spawn_coordination(
         &self,
-        control: Arc<dyn crate::discovery::DiscoveryControlPlane>,
+        coordination: ConnectivityAttemptStart,
         peer_id: String,
         attempt_id: String,
-        local_epoch: RuntimeEpoch,
-        local_revision: u32,
-        local_snapshot: Option<DiscoverySnapshot>,
         attempt: Arc<Mutex<ConnectivityAttempt>>,
         preserved_direct_candidates: Vec<Candidate>,
+        ready_presence_ttl: Option<Duration>,
     ) -> watch::Receiver<Option<Vec<Candidate>>> {
         let (candidate_update_tx, candidate_updates) = watch::channel(None);
         let state = Arc::clone(&self.state);
         let supervisor = Arc::clone(&state.task_supervisor);
-        let ready_presence_ttl = control.ready_presence_ttl();
         let _ = supervisor.spawn_runtime("connectivity-coordination", async move {
-            let device_id = state
-                .lifecycle
-                .identity
-                .read()
-                .await
-                .as_ref()
-                .map(|identity| identity.device_id.clone());
-            let Some(device_id) = device_id else {
-                return;
-            };
-            match control
-                .start_connectivity_attempt(
-                    attempt_id.clone(),
-                    peer_id.clone(),
-                    device_id,
-                    local_epoch,
-                    local_revision,
-                    local_snapshot,
-                )
-                .await
-            {
+            match coordination.wait_for_answer().await {
                 Ok(answer) => {
                     if answer.attempt_id != attempt_id {
                         tracing::debug!(
@@ -1482,12 +1640,66 @@ fn nat_runtime_epoch(epoch: &RuntimeEpoch) -> NatRuntimeEpoch {
     }
 }
 
+fn runtime_epoch_from_nat(epoch: NatRuntimeEpoch) -> RuntimeEpoch {
+    RuntimeEpoch {
+        high: epoch.high,
+        low: epoch.low,
+    }
+}
+
 fn resolved_runtime_epoch(resolved: &ResolvedPeer) -> Option<RuntimeEpoch> {
     match resolved {
         ResolvedPeer::Ready { discovery } => discovery
             .as_ref()
             .and_then(|snapshot| snapshot.runtime_epoch.clone()),
         _ => None,
+    }
+}
+
+/// Convert the control transaction's Resolve response into the coordinator's
+/// typed resolver result. Keep the status mapping here so test control planes
+/// and future implementations cannot turn a non-READY response into a
+/// synthetic usable peer.
+fn ready_peer_from_coordination(
+    response: &ResolvePeerResponse,
+    peer_id: &str,
+) -> Result<ResolvedPeer, ProtocolError> {
+    match network_relay::v2::ResolveStatus::try_from(response.status) {
+        Ok(network_relay::v2::ResolveStatus::Ready) => {
+            let Some(discovery) = response.discovery.clone() else {
+                return Err(protocol_error_with_peer(
+                    NetworkErrorCode::RelayError,
+                    "Relay coordination returned READY without discovery",
+                    "connect",
+                    peer_id,
+                ));
+            };
+            Ok(ResolvedPeer::Ready {
+                discovery: Some(discovery),
+            })
+        }
+        Ok(network_relay::v2::ResolveStatus::Offline) => Err(protocol_error_with_peer(
+            NetworkErrorCode::PeerOffline,
+            "Relay peer is offline",
+            "connect",
+            peer_id,
+        )),
+        Ok(network_relay::v2::ResolveStatus::NotReady) => Err(protocol_error_with_retry(
+            NetworkErrorCode::PeerNotReady,
+            "Relay peer discovery is not ready",
+            "connect",
+            Some(peer_id),
+            network_protocol::RetryDisposition::RetryAfter,
+            (response.retry_after_ms / 1000).max(1),
+        )),
+        Ok(network_relay::v2::ResolveStatus::Unknown)
+        | Ok(network_relay::v2::ResolveStatus::Unspecified)
+        | Err(_) => Err(protocol_error_with_peer(
+            NetworkErrorCode::RelayError,
+            "Relay peer resolution is unavailable",
+            "connect",
+            peer_id,
+        )),
     }
 }
 
@@ -1988,6 +2200,16 @@ mod tests {
             vec!["resolve", "offer", "reserve"],
             "Stage B must complete Resolve → Offer/Answer coordination before Stage C reserve"
         );
+        assert_eq!(
+            control.resolve_calls(),
+            1,
+            "Stage B must issue exactly one authoritative Resolve"
+        );
+        assert_eq!(
+            control.connectivity_calls(),
+            1,
+            "Stage B must enqueue exactly one ConnectivityOffer"
+        );
         let cache = state
             .remote_candidate_cache
             .read()
@@ -2249,16 +2471,24 @@ mod tests {
             }),
             published_at_ms: 1,
         };
-        let control =
-            StubControl::with_connectivity_answer(network_relay::v2::ConnectivityAnswer {
+        let answer = network_relay::v2::ConnectivityAnswer {
+            request_id: 1,
+            attempt_id: "attempt-answer".into(),
+            accepted: true,
+            responder_device_id: "peer-b".into(),
+            responder_runtime_epoch: snapshot.runtime_epoch.clone(),
+            responder_revision: snapshot.revision,
+            responder_snapshot: Some(snapshot.clone()),
+        };
+        let coordination = ConnectivityAttemptStart::new(
+            ResolvePeerResponse {
                 request_id: 1,
-                attempt_id: "attempt-answer".into(),
-                accepted: true,
-                responder_device_id: "peer-b".into(),
-                responder_runtime_epoch: snapshot.runtime_epoch.clone(),
-                responder_revision: snapshot.revision,
-                responder_snapshot: Some(snapshot),
-            });
+                status: network_relay::v2::ResolveStatus::Ready as i32,
+                discovery: Some(snapshot),
+                retry_after_ms: 0,
+            },
+            async move { Ok(answer) },
+        );
         let attempt = Arc::new(Mutex::new(ConnectivityAttempt::with_connect_window(
             "attempt-answer",
             "peer-b",
@@ -2268,14 +2498,12 @@ mod tests {
         )));
         let attempt_coordinator = ConnectivityAttemptCoordinator::new(state);
         let mut updates = attempt_coordinator.spawn_coordination(
-            control,
+            coordination,
             "peer-b".into(),
             "attempt-answer".into(),
-            RuntimeEpoch { high: 1, low: 2 },
-            1,
-            None,
             Arc::clone(&attempt),
             Vec::new(),
+            Some(Duration::from_secs(60)),
         );
         tokio::time::timeout(Duration::from_secs(1), updates.changed())
             .await
@@ -2333,8 +2561,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_is_the_authoritative_gate_before_connect() {
-        // §10/§40：每次 connect 前先 Resolve；OFFLINE 且无本地配置 endpoint 时直接
-        // 失败，不进入 Direct（fail-closed）。
+        // Legacy resolver seam: an authoritative OFFLINE result with no local
+        // configured endpoint fails closed and never fabricates a Direct path.
         let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = Arc::new(RuntimeState::new(
             event_tx,
@@ -2395,6 +2623,34 @@ mod tests {
                     && error.retry_disposition
                         == network_protocol::RetryDisposition::RetryAfter as i32
         ));
+    }
+
+    #[tokio::test]
+    async fn active_connect_not_ready_retries_once_then_maps_to_peer_not_ready() {
+        // The production connect path must apply the same bounded retry as the
+        // legacy resolver seam, while never enqueueing an Offer for either
+        // non-READY transaction.
+        let (state, _event_rx, _configured_control) = configured_reuse_state().await;
+        let control = StubControl::new(ResolveStatus::NotReady, None);
+        *state.relay.control.write().await = Some(control.clone());
+
+        let result = ConnectivityAttemptCoordinator::new(Arc::clone(&state))
+            .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(error)
+                if error.code == NetworkErrorCode::PeerNotReady as i32
+                    && error.retry_disposition
+                        == network_protocol::RetryDisposition::RetryAfter as i32
+        ));
+        assert_eq!(control.resolve_calls(), 2);
+        assert_eq!(
+            control.connectivity_calls(),
+            0,
+            "NOT_READY transactions must not enqueue ConnectivityOffer"
+        );
     }
 
     #[tokio::test]
@@ -2541,7 +2797,7 @@ mod tests {
         // §17/§40：Registry 重用路径依据已登记的实际 capability；后续
         // ReliableStream 请求复用同一条同时支持 message/stream 的 Relay route 时，
         // 不需要覆盖 Session 上的任何业务类别状态。
-        let (state, mut event_rx, _control) = configured_reuse_state().await;
+        let (state, mut event_rx, control) = configured_reuse_state().await;
         let peer_id = "peer-b";
 
         // 预置一条健康连接：ReliableMessage 会话 + 已登记（模拟先前 connect 建立）。
@@ -2569,6 +2825,17 @@ mod tests {
             .connect_with_class(peer_id, CommunicationClass::ReliableStream)
             .await;
         assert!(result.is_ok(), "reuse path should succeed: {result:?}");
+        assert_eq!(
+            control.resolve_calls(),
+            0,
+            "healthy Relay reuse must not open a new Resolve transaction"
+        );
+        assert_eq!(
+            control.connectivity_calls(),
+            0,
+            "healthy Relay reuse must not emit an unsolicited ConnectivityOffer"
+        );
+        assert_eq!(control.reserve_calls(), 0);
 
         // 重用的 Relay route profile 支持 ReliableStream；Relay(None) 载体只会因
         // 未连接而失败，不能因为此前的业务类别阻止 open_stream。
@@ -2603,6 +2870,77 @@ mod tests {
             }
             other => panic!("unexpected event payload: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn healthy_reuse_retires_path_after_remote_epoch_hint() {
+        let (state, _event_rx, _control) = configured_reuse_state().await;
+        let peer_id = "peer-b";
+        let session_id = match state
+            .begin_connect(peer_id, DEFAULT_CONNECTION_CAPABILITY)
+            .await
+        {
+            ConnectDecision::Started(id) => id,
+            decision => panic!("unexpected Session decision: {decision:?}"),
+        };
+        assert!(
+            state
+                .mark_relay_route_connected(peer_id, session_id, None)
+                .await
+        );
+        let remote_epoch = RuntimeEpoch { high: 3, low: 4 };
+        state.ready_session_index.register(
+            peer_id,
+            Some(remote_epoch.clone()),
+            DEFAULT_CONNECTION_CAPABILITY,
+            session_id,
+        );
+        let candidate = Candidate::new(
+            "127.0.0.1:41020".parse().expect("candidate endpoint"),
+            CandidateKind::Lan,
+            "epoch-fence".into(),
+        )
+        .with_generation(1);
+        let cache = ResolvedCandidateCache::from_snapshot(
+            ResolvedCandidateSnapshot {
+                runtime_epoch: nat_runtime_epoch(&remote_epoch),
+                revision: 1,
+                candidates: vec![CandidatePayloadV2::from_candidate(
+                    &candidate,
+                    vec![CandidateTransport::Quic],
+                )],
+                server_presence_ttl: Some(Duration::from_secs(60)),
+            },
+            Instant::now(),
+        )
+        .expect("cache");
+        state
+            .remote_candidate_cache
+            .write()
+            .await
+            .insert(peer_id.into(), cache);
+        state
+            .remote_candidate_cache
+            .write()
+            .await
+            .get_mut(peer_id)
+            .expect("cache entry")
+            .invalidate_for_remote_epoch(NatRuntimeEpoch { high: 5, low: 6 }, Instant::now());
+
+        let coordinator = ConnectivityAttemptCoordinator::new(Arc::clone(&state));
+        assert_eq!(
+            coordinator
+                .try_reuse_before_control(peer_id, DEFAULT_CONNECTION_CAPABILITY)
+                .await
+                .expect("reuse check"),
+            None,
+            "an epoch hint must fence pre-control reuse"
+        );
+        assert!(!state.path_is_connected(peer_id).await);
+        assert_eq!(
+            state.connection_sessions.current_session_id(peer_id).await,
+            None
+        );
     }
 
     /// 构造一个没有配置直连 endpoint 的 PeerConfig（测试 resolve 权威失败路径用）。
@@ -2670,20 +3008,6 @@ mod tests {
                 resolve_error: false,
                 resolve_never: true,
                 connectivity_answer: None,
-                calls: std::sync::Mutex::new(Vec::new()),
-            })
-        }
-
-        fn with_connectivity_answer(answer: network_relay::v2::ConnectivityAnswer) -> Arc<Self> {
-            Arc::new(Self {
-                status: ResolveStatus::Unknown,
-                discovery: None,
-                resolve_calls: std::sync::atomic::AtomicUsize::new(0),
-                connectivity_calls: std::sync::atomic::AtomicUsize::new(0),
-                reserve_calls: std::sync::atomic::AtomicUsize::new(0),
-                resolve_error: false,
-                resolve_never: false,
-                connectivity_answer: Some(answer),
                 calls: std::sync::Mutex::new(Vec::new()),
             })
         }
@@ -2766,6 +3090,47 @@ mod tests {
             &self,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + '_>> {
             Box::pin(async { true })
+        }
+
+        fn begin_connectivity_attempt(
+            &self,
+            _attempt_id: String,
+            target_device_id: String,
+            _initiator_device_id: String,
+            _initiator_runtime_epoch: RuntimeEpoch,
+            _initiator_revision: u32,
+            _initiator_snapshot: Option<DiscoverySnapshot>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<network_relay::v2::ConnectivityAttemptStart, RelayError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            let answer = self.connectivity_answer.clone();
+            Box::pin(async move {
+                let resolved = self.resolve_peer(&target_device_id).await?;
+                let status = resolved.status;
+                let retry_after_ms = resolved.retry_after_ms;
+                if resolved.status != ResolveStatus::Ready as i32 {
+                    return Ok(network_relay::v2::ConnectivityAttemptStart::new(
+                        resolved,
+                        async move {
+                            Err(RelayError::Protocol(format!(
+                                "connectivity attempt not started: resolve status={status} retry_after_ms={retry_after_ms}"
+                            )))
+                        },
+                    ));
+                }
+                self.calls.lock().expect("stub call log lock").push("offer");
+                self.connectivity_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(network_relay::v2::ConnectivityAttemptStart::new(
+                    resolved,
+                    async move { answer.ok_or(RelayError::NotConnected) },
+                ))
+            })
         }
 
         fn start_connectivity_attempt(

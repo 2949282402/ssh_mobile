@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-20
+> 最新更新时间：2026-08-22
 
 # ADR-TRANSPORT-NETWORK-V2：传输网络 v2 架构（Breaking Refactor 总纲）
 
@@ -18,7 +18,9 @@ interlocked machine: a presence change cascades into discovery cache, candidate,
 path, session, reconnect, and route-migration changes. The Main 基线版 design
 (「SSH_Mobile 传输网络架构重构设计 Main 基线版」, 2026-08-15) classifies this as a
 breaking refactor: we stop maintaining "一个永远正确的远端网络状态", and instead
-**真正要通信时重新向服务器解析当前状态，然后建立一次新的连接**.
+**真正要通信时重新向服务器解析当前状态，然后建立一次新的连接**；已经
+authenticated 且仍由路径 owner 判定健康、capability-compatible 的现有 path
+可以在控制面之前复用，不发送无主的 target-less Offer。
 
 This ADR is the top-level decision. It does not repeat the per-subject details;
 the four companion ADRs (Discovery, Connection Lifecycle, Business Recovery,
@@ -30,7 +32,8 @@ Relay Data Plane) hold those decisions.
 
 ```text
 Presence Push is advisory.         Presence 推送只是 UI 提示。
-Resolve/Lookup is authoritative.   建立/重建连接前必须查询服务器。
+Resolve/Lookup is authoritative.   新建/替换连接前必须查询服务器；健康现有 path
+                                   的复用由物理路径 owner 判定。
 Transport Connection is disposable.网络连接本身允许直接废弃重建。
 Business state is resumable when necessary. 只有真正需要连续性的业务状态才恢复。
 ```
@@ -139,7 +142,8 @@ Redis 仍是共享 live state 层（其键结构天然支持跨实例 presence/d
 
 ## Verification
 
-按 Main 基线版 §41 验收清单执行，至少覆盖：每次建连前 Resolve、Presence 只
+按 Main 基线版 §41 验收清单执行，至少覆盖：新建/替换连接前 Resolve、健康现有
+path 复用时控制面零调用、Presence 只
 用于 UI Hint、Presence Event 无权修改 ConnectivityAttempt、Discovery 使用
 runtime_epoch + revision 且有 ACK、Resolve 四态、Candidate 完全 attempt
 scoped、PathManager 不保存远端长期 Discovery Truth、Direct First 固定 4s、

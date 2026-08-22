@@ -53,16 +53,17 @@ the retired v1 route/session owner model.
   root after authenticated Noise/path admission, while Disabled is Direct
   identity-only and Relay Disabled is rejected before application crypto.
 - Connectivity stages are authoritative and ordered: Stage A uses only fresh
-  configured/cache Direct candidates; Stage B requires Resolve→Offer and a
-  fixed four-second Direct window; Stage C can reserve Relay only when Resolve
-  is READY, Direct failed, capabilities match, Required E2EE is active, and
-  budget remains.
-- `RuntimeState` owns the per-peer resolved candidate cache. Stage A reads only
-  fresh cached/configured direct candidates and does not call Resolve/Offer;
-  Stage B starts the existing Resolve→Offer gate after Stage A failure. Session
-  teardown leaves bounded ReliableStream identity tombstones so an old
-  `(peer_id, opener_device_id, stream_id)` handle cannot transparently write to
-  a new Session.
+  configured/cache Direct candidates and can reuse any already healthy,
+  capability-compatible path before control; Stage B requires one Resolve→Offer
+  transaction and a fixed four-second Direct window; Stage C can reserve Relay
+  only when Resolve is READY, Direct failed, capabilities match, Required E2EE
+  is active, and budget remains.
+- `RuntimeState` owns the per-peer resolved candidate cache. A healthy existing
+  path is reused by its physical path owner without opening a target-less Offer;
+  when a new/replacement transport is needed, Stage B starts the authoritative
+  Resolve→Offer gate. Session teardown leaves bounded ReliableStream identity
+  tombstones so an old `(peer_id, opener_device_id, stream_id)` handle cannot
+  transparently write to a new Session.
 - Generic reliable carriers carry Delivery frames; Delivery business state resumes
   across connections. File and stream operations acquire fresh path leases after
   loss, and SSH/Realtime explicitly close rather than transparently migrating a
