@@ -94,12 +94,6 @@ impl ReliableStreamIdentity {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReliableStreamLifecycle {
-    Open,
-    Closed,
-}
 /// Chunk size for the gateway socket pump.
 pub(crate) const STREAM_SOCKET_CHUNK_BYTES: usize = 16 * 1024;
 /// QUIC bidi preamble magic; distinguishes reliable streams from file offers
