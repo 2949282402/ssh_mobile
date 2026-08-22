@@ -116,7 +116,8 @@ async fn session_admission_rechecks_group_cancellation_after_task_spawn() {
             admitted = true;
             break;
         }
-        tokio::task::yield_now().await;
+        std::thread::yield_now();
+        std::thread::sleep(Duration::from_millis(1));
     }
     assert!(admitted, "racing child should reach the session registry");
     group.token.cancel();
