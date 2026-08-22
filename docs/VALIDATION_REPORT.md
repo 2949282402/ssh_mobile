@@ -43,7 +43,7 @@ Dart/FFI SDK surface was changed.
 - `bash scripts/front_coverage.sh` — passed at 95.78% line coverage.
 - `bash scripts/backend_coverage.sh` — passed at 82.1% filtered Go lines with
   Docker-backed MySQL/Redis.
-- `bash scripts/sdk_coverage.sh` — passed at 84.46% Dart and 83.54% Rust lines.
+- `bash scripts/sdk_coverage.sh` — passed at 90.67% Dart and 90.81% Rust lines.
 - Focused App client coverage — attempted with a bounded 2-minute timeout; the
   Flutter VM Service did not become ready in WSL, so no client tests ran.
 - `git diff --check` — passed.

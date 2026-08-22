@@ -22,8 +22,8 @@ evidence, not claims about production hardware latency.
 | Connection/runtime | `cargo test -p network-core --locked --lib` and the strict connectivity selector | PASS; full library and 24 connectivity tests completed |
 | Stage ordering | `stage_b_resolves_and_offers_before_relay_reservation` | PASS; one Resolve, one Offer, then reservation |
 | Relay client | `cargo test -p network-relay --locked` plus concrete WebSocket integration | PASS; 39 unit/golden and 4 integration tests |
-| Linux owner/workspace smoke | strict selectors plus `cargo test --workspace --locked` | PASS; 283 `network-core` tests and all workspace crates passed |
-| Coverage gates | `front_coverage.sh`, `backend_coverage.sh`, `sdk_coverage.sh` | PASS; 95.78% front lines, 82.1% filtered Go lines, 84.46% Dart and 83.54% Rust SDK lines |
+| Linux owner/workspace smoke | strict selectors plus `cargo test --workspace --locked` | PASS; 367 `network-core` tests and all workspace crates passed |
+| Coverage gates | `front_coverage.sh`, `backend_coverage.sh`, `sdk_coverage.sh` | PASS; 95.78% front lines, 82.1% filtered Go lines, 90.67% Dart and 90.81% Rust SDK lines |
 | Full aggregate coverage | `bash scripts/full_test.sh --no-bootstrap --with-coverage --serial` | Environment gap; App shard stalled loading Flutter tests in WSL and was stopped after the configured retry began |
 
 ## Required performance dimensions

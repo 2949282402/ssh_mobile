@@ -66,7 +66,7 @@ Tests: PARTIAL — strict owner selectors, workspace tests, and concrete Stage B
 - `bash scripts/front_coverage.sh`: 48 tests; 95.78% line coverage.
 - `bash scripts/backend_coverage.sh`: Docker-backed MySQL/Redis run; 82.1%
   filtered Go line coverage.
-- `bash scripts/sdk_coverage.sh`: 84.46% Dart and 83.54% Rust SDK line
+- `bash scripts/sdk_coverage.sh`: 90.67% Dart and 90.81% Rust SDK line
   coverage.
 - `CLIENT_FLUTTER_COVERAGE_TIMEOUT=2m bash scripts/client_coverage.sh
   --no-bootstrap`: not accepted; the Flutter VM Service did not become ready in

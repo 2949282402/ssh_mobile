@@ -36,7 +36,7 @@ changes are captured in the subsequent functional commits on this branch.
   coverage-enabled full Linux aggregate reached the App Flutter shard but
   stalled loading tests in WSL and is recorded as an environment gap.
 - Domain coverage gates passed for front (95.78% lines), backend (82.1% filtered
-  Go lines), and SDK (84.46% Dart / 83.54% Rust lines). The focused App client
+  Go lines), and SDK (90.67% Dart / 90.81% Rust lines). The focused App client
   coverage gate was attempted with a bounded 2-minute VM-service wait and did
   not start tests in this WSL environment.
 
