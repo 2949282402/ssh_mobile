@@ -197,6 +197,55 @@ async fn control_helpers_disconnect_without_leaving_config_or_reconnect_tasks() 
 }
 
 #[tokio::test]
+async fn reconnect_loop_stops_when_configuration_identity_or_control_is_unavailable() {
+    let stopping = state();
+    stopping.task_supervisor.cancel_root();
+    schedule_relay_reconnect(Arc::clone(&stopping));
+    assert!(!stopping
+        .relay
+        .reconnect_active
+        .load(std::sync::atomic::Ordering::Acquire));
+
+    let no_config = state();
+    schedule_relay_reconnect(Arc::clone(&no_config));
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(!no_config
+        .relay
+        .reconnect_active
+        .load(std::sync::atomic::Ordering::Acquire));
+
+    let no_identity = state();
+    *no_identity.relay.config.write().await = Some(RelayReconnectConfig {
+        relay_url: "ws://127.0.0.1:9".into(),
+        credential: "credential".into(),
+        signing_seed: [0; 32],
+    });
+    schedule_relay_reconnect(Arc::clone(&no_identity));
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(!no_identity
+        .relay
+        .reconnect_active
+        .load(std::sync::atomic::Ordering::Acquire));
+
+    let control_present = state();
+    *control_present.relay.config.write().await = Some(RelayReconnectConfig {
+        relay_url: "ws://127.0.0.1:9".into(),
+        credential: "credential".into(),
+        signing_seed: [0; 32],
+    });
+    *control_present.lifecycle.identity.write().await = Some(Arc::new(
+        network_identity::DeviceIdentity::from_private_keys("device-a".into(), [1; 32], [2; 32]),
+    ));
+    *control_present.relay.control.write().await = Some(control_client());
+    schedule_relay_reconnect(Arc::clone(&control_present));
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(!control_present
+        .relay
+        .reconnect_active
+        .load(std::sync::atomic::Ordering::Acquire));
+}
+
+#[tokio::test]
 async fn control_consumer_ignores_unconfigured_offer_reservation_and_signal() {
     let state = state();
     let control = control_client();
