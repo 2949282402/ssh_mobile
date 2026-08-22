@@ -688,6 +688,12 @@ pub(crate) async fn cancel_transfer(state: &RuntimeState, transfer_id: &str) {
             let _ = send_file_cancel(&data, transfer_id).await;
         }
     }
+    // Explicit cancellation is an owner boundary for both waiter maps. Drop
+    // their senders so an in-flight offer/complete awaiter wakes immediately
+    // instead of retaining a dead transfer identity after RemovePeer or
+    // CancelTransfer.
+    state.relay.acceptances.write().await.remove(transfer_id);
+    state.relay.completions.write().await.remove(transfer_id);
     cancel_relay_incoming(state, transfer_id).await;
 }
 

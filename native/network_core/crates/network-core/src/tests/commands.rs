@@ -1,11 +1,84 @@
 use super::*;
 
+use sha2::Digest;
+use std::path::PathBuf;
+use tokio::sync::oneshot;
+
+fn manifest(transfer_id: &str) -> network_transfer::FileManifest {
+    network_transfer::FileManifest {
+        transfer_id: transfer_id.into(),
+        file_name: "payload.bin".into(),
+        file_size: 4,
+        modified_at: 1,
+        content_hash: "a".repeat(64),
+        protocol_version: network_transfer::NETWORK_TRANSFER_PROTOCOL_VERSION,
+    }
+}
+
 #[test]
 fn command_result_ledger_claims_each_id_once() {
     let ledger = CommandResultLedger::new();
     assert_eq!(ledger.claim("command-1"), Ok(true));
     assert_eq!(ledger.claim("command-1"), Ok(false));
     assert_eq!(ledger.claim("command-2"), Ok(true));
+}
+
+#[test]
+fn command_result_ledger_rejects_growth_past_its_bound() {
+    let ledger = CommandResultLedger::new();
+    ledger
+        .seen
+        .lock()
+        .expect("command result ledger lock")
+        .extend((0..MAX_COMPLETED_COMMANDS).map(|index| format!("filled-{index}")));
+
+    assert_eq!(
+        ledger.claim("overflow"),
+        Err(CoreNetworkError::ResourceLimit("command result ledger"))
+    );
+}
+
+#[tokio::test]
+async fn command_worker_emits_a_terminal_error_for_duplicate_envelopes() {
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let state = Arc::new(RuntimeState::new(
+        event_tx,
+        Arc::new(std::sync::atomic::AtomicU16::new(0)),
+    ));
+    let (command_tx, command_rx) = tokio::sync::mpsc::channel(2);
+    let worker = tokio::spawn(run_command_worker(command_rx, Arc::clone(&state)));
+
+    for _ in 0..2 {
+        command_tx
+            .send(NetworkCommand {
+                command_id: "duplicate-envelope".into(),
+                protocol_version: NETWORK_PROTOCOL_VERSION,
+                payload: None,
+            })
+            .await
+            .expect("command worker is alive");
+    }
+    drop(command_tx);
+    worker.await.expect("command worker joins");
+
+    let mut results = Vec::new();
+    while let Ok(event) = event_rx.try_recv() {
+        if let Some(network_protocol::network_event::Payload::CommandResultV2(result)) =
+            event.payload
+        {
+            results.push(result);
+        }
+    }
+    assert_eq!(results.len(), 2);
+    assert!(results
+        .iter()
+        .all(|result| result.command_id == "duplicate-envelope"));
+    assert!(results.iter().any(|result| {
+        result
+            .error
+            .as_ref()
+            .is_some_and(|error| error.message.contains("already been completed"))
+    }));
 }
 
 #[test]
@@ -106,6 +179,63 @@ async fn remove_peer_evicts_configuration_and_supervisor() {
         .get_or_create_with_configured("peer-a", true)
         .expect("supervisor");
 
+    assert!(
+        state
+            .transfer
+            .manager
+            .register_outgoing(
+                manifest("outgoing-transfer"),
+                PathBuf::from("/tmp/outgoing-transfer.bin"),
+                "peer-a".into(),
+            )
+            .await
+    );
+    state.relay.pending_incoming.write().await.insert(
+        "pending-transfer".into(),
+        crate::relay::PendingRelayIncoming {
+            transfer_id: "pending-transfer".into(),
+            session_id: "pending-session".into(),
+            sender_id: "peer-a".into(),
+            manifest: manifest("pending-transfer"),
+            manifest_hash: "a".repeat(64),
+            crypto_session_id: "crypto-session".into(),
+        },
+    );
+    state.relay.active_incoming.lock().await.insert(
+        "active-transfer".into(),
+        crate::relay::ActiveRelayIncoming {
+            offer: crate::relay::PendingRelayIncoming {
+                transfer_id: "active-transfer".into(),
+                session_id: "active-session".into(),
+                sender_id: "peer-a".into(),
+                manifest: manifest("active-transfer"),
+                manifest_hash: "a".repeat(64),
+                crypto_session_id: "crypto-session".into(),
+            },
+            file: None,
+            temporary_path: PathBuf::from("/tmp/active-transfer.part"),
+            final_path: PathBuf::from("/tmp/active-transfer.bin"),
+            next_sequence: 0,
+            received_bytes: 0,
+            hasher: sha2::Sha256::new(),
+            already_completed: false,
+        },
+    );
+    let (acceptance_tx, _acceptance_rx) = oneshot::channel();
+    state
+        .relay
+        .acceptances
+        .write()
+        .await
+        .insert("outgoing-transfer".into(), acceptance_tx);
+    let (completion_tx, _completion_rx) = oneshot::channel();
+    state
+        .relay
+        .completions
+        .write()
+        .await
+        .insert("outgoing-transfer".into(), completion_tx);
+
     remove_peer_v2(&state, "peer-a".into())
         .await
         .expect("remove peer");
@@ -113,6 +243,16 @@ async fn remove_peer_evicts_configuration_and_supervisor() {
     assert!(!state.peers.read().await.contains_key("peer-a"));
     assert!(!state.trusted_peer_keys.read().await.contains_key("peer-a"));
     assert_eq!(state.peer_supervisors.len(), 0);
+    assert!(state
+        .transfer
+        .manager
+        .snapshot("outgoing-transfer")
+        .await
+        .is_none());
+    assert!(state.relay.pending_incoming.read().await.is_empty());
+    assert!(state.relay.active_incoming.lock().await.is_empty());
+    assert!(state.relay.acceptances.read().await.is_empty());
+    assert!(state.relay.completions.read().await.is_empty());
 }
 
 #[tokio::test]
@@ -167,6 +307,34 @@ async fn diagnostics_reads_live_supervisor_and_path_manager() {
         diagnostics.e2ee_policy,
         network_protocol::E2eePolicy::Required as i32
     );
+}
+
+#[tokio::test]
+async fn diagnostics_for_unconfigured_peer_reports_offline_defaults() {
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let state = RuntimeState::new(sender, Arc::new(std::sync::atomic::AtomicU16::new(0)));
+
+    emit_peer_diagnostics(&state, "unconfigured-peer".into())
+        .await
+        .expect("diagnostics for an unknown peer");
+    let Some(network_protocol::network_event::Payload::PeerDiagnostics(diagnostics)) =
+        receiver.try_recv().expect("diagnostics event").payload
+    else {
+        panic!("expected PeerDiagnostics");
+    };
+    assert_eq!(diagnostics.peer_id, "unconfigured-peer");
+    assert_eq!(
+        diagnostics.state,
+        network_protocol::PeerState::Offline as i32
+    );
+    assert_eq!(
+        diagnostics.e2ee_policy,
+        network_protocol::E2eePolicy::Required as i32
+    );
+    assert_eq!(diagnostics.ready_path_count, 0);
+    assert_eq!(diagnostics.queued_command_count, 0);
+    assert_eq!(diagnostics.active_stream_count, 0);
+    assert_eq!(diagnostics.active_transfer_count, 0);
 }
 
 #[test]
@@ -358,6 +526,18 @@ async fn command_envelope_and_route_validation_fail_closed() {
     .expect_err("empty command id must be rejected");
     assert_eq!(empty_id.code, NetworkErrorCode::InvalidArgument as i32);
 
+    let oversized_id = dispatch_command(
+        NetworkCommand {
+            command_id: "x".repeat(129),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: None,
+        },
+        Arc::clone(&state),
+    )
+    .await
+    .expect_err("oversized command id must be rejected");
+    assert_eq!(oversized_id.code, NetworkErrorCode::InvalidArgument as i32);
+
     let no_payload = dispatch_command(
         NetworkCommand {
             command_id: "payload".into(),
@@ -401,6 +581,29 @@ async fn command_envelope_and_route_validation_fail_closed() {
     .await
     .expect_err("peer config must be present");
     assert_eq!(peer_v2.code, NetworkErrorCode::InvalidArgument as i32);
+
+    let unknown_policy = dispatch_command(
+        NetworkCommand {
+            command_id: "unknown-policy".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::UpsertPeerV2(
+                network_protocol::UpsertPeerV2Command {
+                    config: Some(network_protocol::PeerConfig {
+                        peer_id: "peer-a".into(),
+                        e2ee_policy: 99,
+                        ..Default::default()
+                    }),
+                },
+            )),
+        },
+        Arc::clone(&state),
+    )
+    .await
+    .expect_err("unknown E2EE policy must be rejected");
+    assert_eq!(
+        unknown_policy.code,
+        NetworkErrorCode::InvalidArgument as i32
+    );
 
     let bad_remove = remove_peer_v2(&state, String::new())
         .await
