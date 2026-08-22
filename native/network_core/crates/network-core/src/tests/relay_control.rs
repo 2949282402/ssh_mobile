@@ -90,12 +90,20 @@ async fn control_events_update_presence_cache_and_emit_typed_presence_events() {
 
     events_tx
         .send(ControlEvent::PresenceHintSnapshot(PresenceHintSnapshot {
-            peers: vec![PeerPresenceHint {
-                device_id: "peer-a".into(),
-                online: true,
-                runtime_epoch: Some(RuntimeEpoch { high: 2, low: 3 }),
-                revision: 7,
-            }],
+            peers: vec![
+                PeerPresenceHint {
+                    device_id: "peer-a".into(),
+                    online: true,
+                    runtime_epoch: Some(RuntimeEpoch { high: 2, low: 3 }),
+                    revision: 7,
+                },
+                PeerPresenceHint {
+                    device_id: "offline-peer".into(),
+                    online: false,
+                    runtime_epoch: None,
+                    revision: 0,
+                },
+            ],
             published_at_ms: 1,
         }))
         .await
@@ -409,4 +417,28 @@ async fn control_consumer_reconnects_after_hint_without_epoch_and_disconnect() {
         .reconnect_active
         .load(std::sync::atomic::Ordering::Acquire));
     stop_relay_reconnect_task(&state).await;
+}
+
+#[tokio::test]
+async fn responder_connectivity_checks_stop_before_endpoint_is_available() {
+    let state = state();
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    spawn_responder_connectivity_checks(
+        Arc::clone(&state),
+        ConnectivityOffer {
+            attempt_id: "attempt-no-endpoint".into(),
+            initiator_device_id: "peer-a".into(),
+            ..Default::default()
+        },
+    );
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    state.task_supervisor.shutdown().await;
 }
