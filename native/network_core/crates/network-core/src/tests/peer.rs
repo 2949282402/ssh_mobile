@@ -1326,6 +1326,99 @@ async fn direct_quic_connection_failures_map_to_typed_errors() {
 }
 
 #[tokio::test]
+async fn direct_quic_authentication_failures_map_to_authentication_error() {
+    let server = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("server bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("create server endpoint");
+    let server_address = server.endpoint.local_addr().expect("server address");
+    let server_endpoint = server.endpoint;
+    let server_identity = Arc::new(DeviceIdentity::from_private_keys(
+        "device-server".into(),
+        [51; 32],
+        [52; 32],
+    ));
+    let client_identity = Arc::new(DeviceIdentity::from_private_keys(
+        "device-client".into(),
+        [53; 32],
+        [54; 32],
+    ));
+    let expected_client_key = client_identity.public_identity_key().to_bytes();
+    let server_task = tokio::spawn(async move {
+        let connection = server_endpoint
+            .accept()
+            .await
+            .expect("incoming QUIC connection")
+            .await
+            .expect("server QUIC connection");
+        QuicPeerSession::new(connection, "device-client".into())
+            .accept_handshake(&server_identity, expected_client_key)
+            .await
+    });
+    let client = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("client bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("create client endpoint");
+    let error = connect_direct(
+        client.endpoint.clone(),
+        server_address,
+        client_identity,
+        [55; 32],
+        "device-server".into(),
+        "auth-failure".into(),
+        Duration::from_secs(2),
+    )
+    .await
+    .expect_err("a wrong pinned server key must fail authentication");
+    assert_eq!(error.code, NetworkErrorCode::AuthenticationFailed as i32);
+    server_task
+        .await
+        .expect("server task join")
+        .expect("server should complete the challenge");
+    client
+        .endpoint
+        .close(VarInt::from_u32(0), b"auth failure test complete");
+}
+
+#[tokio::test]
+async fn admitted_crypto_install_skips_identity_only_and_installs_fresh_e2ee() {
+    let state = new_test_state().await;
+    let identity_only_admission = state
+        .admit_authenticated_session("peer-a", None, "identity-only")
+        .await
+        .expect("identity-only admission");
+    let identity_only = SessionCryptoMaterial {
+        root_key: [0; 32],
+        local_session_binding: identity_only_admission.session_id.wire_key(),
+        remote_session_binding: "identity-only".into(),
+        initiator: true,
+        e2ee_policy: crate::crypto_handshake::path_handshake::E2eePolicy::Disabled,
+        path_security: crate::crypto_handshake::path_handshake::PathSecurity::IdentityOnly,
+    };
+    install_admitted_crypto(&state, "peer-a", &identity_only_admission, &identity_only)
+        .await
+        .expect("identity-only admission must not install application keys");
+
+    let e2ee_admission = state
+        .admit_authenticated_session("peer-b", None, "stale")
+        .await
+        .expect("E2EE admission");
+    let e2ee = SessionCryptoMaterial {
+        root_key: [56; 32],
+        local_session_binding: e2ee_admission.session_id.wire_key(),
+        remote_session_binding: "stale".into(),
+        initiator: true,
+        e2ee_policy: crate::crypto_handshake::path_handshake::E2eePolicy::Required,
+        path_security: crate::crypto_handshake::path_handshake::PathSecurity::E2ee,
+    };
+    install_admitted_crypto(&state, "peer-b", &e2ee_admission, &e2ee)
+        .await
+        .expect("fresh E2EE material should be installed for the admitted session");
+}
+
+#[tokio::test]
 async fn direct_and_generic_candidate_races_fail_closed_on_empty_snapshots() {
     let endpoint = QuicEndpointManager::new(
         "127.0.0.1:0".parse().expect("client bind address"),
