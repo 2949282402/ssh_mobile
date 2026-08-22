@@ -336,6 +336,47 @@ async fn resume_helpers_ignore_invalid_peer_and_missing_session() {
 }
 
 #[tokio::test]
+async fn resume_helper_pauses_a_transfer_when_no_fresh_path_is_available() {
+    let state = state();
+    let transfer_id = "resume-without-path";
+    assert!(
+        state
+            .transfer
+            .manager
+            .register_outgoing(
+                manifest(transfer_id),
+                std::path::PathBuf::from("payload.bin"),
+                "peer-a".into(),
+            )
+            .await
+    );
+    assert!(state.transfer.manager.mark_transferring(transfer_id).await);
+    assert!(state.transfer.manager.pause_for_network(transfer_id).await);
+
+    let session_id = match state
+        .begin_connect("peer-a", crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        crate::runtime::ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected session decision: {decision:?}"),
+    };
+    resume_transfers_for_peer(Arc::clone(&state), "peer-a".into()).await;
+
+    assert_eq!(
+        state
+            .transfer
+            .manager
+            .snapshot(transfer_id)
+            .await
+            .expect("paused transfer remains owned")
+            .state,
+        network_transfer::TransferState::Paused,
+    );
+    state.fail_session("peer-a", session_id).await;
+    state.task_supervisor.shutdown().await;
+}
+
+#[tokio::test]
 async fn file_offer_parser_rejects_bad_protocol_lengths_and_utf8() {
     let (endpoint, client, server) = quic_pair().await;
     let (mut send, _) = client.open_bi().await.unwrap();
