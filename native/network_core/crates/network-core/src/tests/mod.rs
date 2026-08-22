@@ -24,6 +24,9 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{accept_hdr_async, tungstenite::Message};
 
+#[path = "relay_transfer_integration.rs"]
+mod relay_transfer_integration;
+
 /// 构造一个合法的 /v2/relay/{32-hex} 数据面地址（测试用 loopback）。
 fn v2_relay_data_endpoint(address: SocketAddr, reservation_id: &str) -> String {
     format!("ws://{address}/v2/relay/{reservation_id}")

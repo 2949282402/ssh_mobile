@@ -251,7 +251,7 @@ pub(super) async fn handle_relay_data_events(
 }
 
 /// 分派一条数据面信封。
-pub(super) async fn handle_relay_data_payload(
+pub(crate) async fn handle_relay_data_payload(
     state: &Arc<RuntimeState>,
     data: &Arc<RelayDataClient>,
     peer_id: &str,

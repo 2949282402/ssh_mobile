@@ -141,6 +141,8 @@ mod relay_data;
 mod relay_transfer;
 
 pub(super) use relay_control::*;
+#[cfg(test)]
+pub(crate) use relay_data::handle_relay_data_payload as test_handle_relay_data_payload;
 pub(super) use relay_data::*;
 pub(super) use relay_transfer::*;
 

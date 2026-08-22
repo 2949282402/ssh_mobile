@@ -510,14 +510,17 @@ pub(super) async fn receive_relay_chunk(
 pub(super) async fn complete_relay_incoming(
     state: &RuntimeState,
     data: &Arc<RelayDataClient>,
-    session_id: &str,
+    session_or_transfer_id: &str,
     sender_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (transfer_id, mut active) = {
         let mut active_transfers = state.relay.active_incoming.lock().await;
         let transfer_id = active_transfers
             .iter()
-            .find(|(_, active)| active.offer.session_id == session_id)
+            .find(|(transfer_id, active)| {
+                *transfer_id == session_or_transfer_id
+                    || active.offer.session_id == session_or_transfer_id
+            })
             .map(|(transfer_id, _)| transfer_id.clone())
             .ok_or_else(|| std::io::Error::other("Relay session is not accepted"))?;
         let active = active_transfers
