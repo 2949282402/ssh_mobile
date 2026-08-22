@@ -363,6 +363,61 @@ async fn path_admission_retry_only_allows_the_current_unbound_session() {
 }
 
 #[tokio::test]
+async fn direct_recovery_probe_helpers_are_bounded_and_owner_scoped() {
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
+
+    state.reset_direct_recovery("peer-a");
+    assert!(state.next_direct_recovery_delay("peer-a").is_none());
+    assert!(
+        !state
+            .arm_direct_probe(
+                "missing-peer",
+                crate::connect::IntentGeneration::INITIAL,
+                Duration::from_secs(1),
+                CAPABILITY_RELIABLE_STREAM,
+            )
+            .await
+    );
+
+    let manager = PeerPathManager::new(
+        PeerId::new("peer-a").expect("peer id"),
+        Arc::clone(&state.ready_paths),
+    );
+    state
+        .peer_path_managers
+        .write()
+        .await
+        .insert("peer-a".into(), Arc::new(Mutex::new(manager)));
+    assert!(
+        state
+            .arm_direct_probe(
+                "peer-a",
+                crate::connect::IntentGeneration::INITIAL,
+                Duration::from_secs(1),
+                CAPABILITY_RELIABLE_STREAM,
+            )
+            .await
+    );
+    assert!(
+        !state
+            .arm_direct_probe(
+                "peer-a",
+                crate::connect::IntentGeneration::INITIAL,
+                Duration::from_secs(1),
+                CAPABILITY_RELIABLE_STREAM,
+            )
+            .await
+    );
+    state
+        .finish_direct_probe("peer-a", crate::connect::IntentGeneration::INITIAL)
+        .await;
+    state
+        .finish_direct_probe("missing-peer", crate::connect::IntentGeneration::INITIAL)
+        .await;
+}
+
+#[tokio::test]
 async fn stale_session_retirement_is_idempotent_and_path_wait_is_bounded() {
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
     let state = RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0)));
