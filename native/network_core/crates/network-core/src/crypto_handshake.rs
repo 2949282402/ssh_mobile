@@ -1159,33 +1159,6 @@ pub(crate) fn decode_relay_frame(frame: &[u8]) -> Result<(u8, &[u8]), CryptoHand
     Ok((step, payload))
 }
 
-/// The QUIC route uses one additional bidirectional stream for the same
-/// application handshake.  The stream is discarded after the root is derived.
-#[allow(dead_code)] // compatibility helper retained for legacy internal callers
-pub(crate) async fn initiate_quic<F, Fut, T>(
-    connection: &quinn::Connection,
-    identity: Arc<DeviceIdentity>,
-    expected_peer_id: &str,
-    expected_peer_identity_key: [u8; 32],
-    session_binding: &str,
-    resolve_remote_session: F,
-) -> Result<(SessionCryptoMaterial, T), CryptoHandshakeError>
-where
-    F: FnOnce(&str, &str) -> Fut,
-    Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
-{
-    initiate_quic_with_policy(
-        connection,
-        identity,
-        expected_peer_id,
-        expected_peer_identity_key,
-        session_binding,
-        path_handshake::E2eePolicy::Required,
-        resolve_remote_session,
-    )
-    .await
-}
-
 pub(crate) async fn initiate_quic_with_policy<F, Fut, T>(
     connection: &quinn::Connection,
     identity: Arc<DeviceIdentity>,
@@ -1258,27 +1231,6 @@ where
     };
     send.finish().map_err(|_| CryptoHandshakeError::Failed)?;
     Ok((material, admission))
-}
-
-#[allow(dead_code)] // compatibility helper retained for legacy internal callers
-pub(crate) async fn respond_quic<F, Fut, T>(
-    connection: &quinn::Connection,
-    identity: Arc<DeviceIdentity>,
-    trusted_peer_keys: &RwLock<HashMap<String, [u8; 32]>>,
-    resolve_local_session_binding: F,
-) -> Result<(String, SessionCryptoMaterial, T), CryptoHandshakeError>
-where
-    F: FnOnce(&str, &str) -> Fut,
-    Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
-{
-    respond_quic_with_policy(
-        connection,
-        identity,
-        trusted_peer_keys,
-        path_handshake::E2eePolicy::Required,
-        resolve_local_session_binding,
-    )
-    .await
 }
 
 pub(crate) async fn respond_quic_with_policy<F, Fut, T>(
