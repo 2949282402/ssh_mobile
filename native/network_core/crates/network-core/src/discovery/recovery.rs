@@ -124,16 +124,6 @@ impl DirectRecoveryPolicy {
         self.next_delay_with_jitter(jitter)
     }
 
-    /// Wait for the next eligible Direct probe.  The coordinator should start
-    /// the probe only after this future completes and must not gate Relay
-    /// business calls on it.
-    #[allow(dead_code)]
-    pub(crate) async fn wait_for_next_probe(&mut self) -> Option<Duration> {
-        let delay = self.next_delay()?;
-        tokio::time::sleep(delay).await;
-        Some(delay)
-    }
-
     #[cfg(test)]
     async fn wait_for_next_probe_with_jitter(&mut self, jitter: Duration) -> Option<Duration> {
         let delay = self.next_delay_with_jitter(jitter)?;
