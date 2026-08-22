@@ -296,6 +296,16 @@ fn stream_wire_boundaries_reject_invalid_lengths_identity_and_services() {
         decode_stream_frame_identity(GenericFrameKind::DataMessage, &valid_open),
         Err(StreamError::InvalidFrame)
     ));
+    assert_eq!(
+        decode_stream_frame_identity(GenericFrameKind::StreamBytes, &valid_bytes)
+            .expect("bytes identity"),
+        ("peer-a".to_string(), 1)
+    );
+    assert_eq!(
+        decode_stream_frame_identity(GenericFrameKind::StreamClose, &valid_close)
+            .expect("close identity"),
+        ("peer-a".to_string(), 1)
+    );
     assert!(matches!(
         encode_quic_stream_preamble(1, ""),
         Err(StreamError::InvalidArgument)
