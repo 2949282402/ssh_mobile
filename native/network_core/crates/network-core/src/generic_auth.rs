@@ -62,33 +62,11 @@ where
     F: FnOnce(&str, &str) -> Fut,
     Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
 {
-    authenticate_responder_with_policy(
-        connection,
-        local_identity,
-        trusted_peer_keys,
-        E2eePolicy::Required,
-        resolve_local_session_binding,
-    )
-    .await
-}
-
-#[cfg(test)]
-pub(crate) async fn authenticate_responder_with_policy<F, Fut, T>(
-    connection: &mut GenericConnection,
-    local_identity: Arc<DeviceIdentity>,
-    trusted_peer_keys: &RwLock<HashMap<String, [u8; 32]>>,
-    e2ee_policy: E2eePolicy,
-    resolve_local_session_binding: F,
-) -> Result<AuthenticatedPeer<T>, CryptoHandshakeError>
-where
-    F: FnOnce(&str, &str) -> Fut,
-    Fut: Future<Output = Result<(String, T), CryptoHandshakeError>>,
-{
     let (peer_id, crypto, admission) = respond_generic_with_policy(
         connection,
         local_identity,
         trusted_peer_keys,
-        e2ee_policy,
+        E2eePolicy::Required,
         resolve_local_session_binding,
     )
     .await?;
