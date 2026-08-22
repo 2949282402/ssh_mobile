@@ -1,9 +1,12 @@
 package relay
 
 import (
+	"context"
 	"encoding/base64"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/ssh-mobile/relay/internal/relay/v2"
 )
@@ -203,5 +206,187 @@ func TestResolveStatusErrorBoundaries(t *testing.T) {
 		if code != test.code || message != test.message {
 			t.Errorf("status %v = (%v, %q), want (%v, %q)", test.status, code, message, test.code, test.message)
 		}
+	}
+}
+
+func TestControlV2ProtocolErrorRoutingBoundaries(t *testing.T) {
+	hub := newHub(Config{})
+	defer hub.close()
+	makePeer := func(deviceID, connectionID string) *peer {
+		return &peer{
+			deviceID:         deviceID,
+			connectionID:     connectionID,
+			outbound:         make(chan outboundFrame, 4),
+			done:             make(chan struct{}),
+			maxPendingFrames: 4,
+			maxPendingBytes:  4096,
+		}
+	}
+	initiator := makePeer("initiator", "initiator-1")
+	sender := makePeer("target", "target-1")
+	hub.mutex.Lock()
+	hub.peers[initiator.deviceID] = initiator
+	hub.peers[sender.deviceID] = sender
+	hub.mutex.Unlock()
+
+	hub.sendV2ProtocolError(sender, 7, v2.ErrorCode_ERROR_CODE_PROTOCOL, "bad request")
+	queued := <-sender.outbound
+	if queued.messageType != websocket.BinaryMessage {
+		t.Fatalf("protocol error message type = %d, want binary", queued.messageType)
+	}
+	decoded, err := v2.DecodeControl(queued.data)
+	if err != nil {
+		t.Fatalf("decode protocol error: %v", err)
+	}
+	if errorFrame := decoded.GetProtocolError(); errorFrame == nil || errorFrame.RequestId != 7 || errorFrame.AttemptId != "" || errorFrame.Message != "bad request" {
+		t.Fatalf("protocol error frame = %+v", decoded)
+	}
+	sender.dequeue(queued)
+
+	hub.sendV2ProtocolErrorWithAttempt(sender, 8, "attempt-1", v2.ErrorCode_ERROR_CODE_PEER_OFFLINE, "offline")
+	queued = <-sender.outbound
+	decoded, err = v2.DecodeControl(queued.data)
+	if err != nil || decoded.GetProtocolError() == nil || decoded.GetProtocolError().AttemptId != "attempt-1" {
+		t.Fatalf("attempt-scoped protocol error = %+v, err=%v", decoded, err)
+	}
+	sender.dequeue(queued)
+
+	hub.mutex.Lock()
+	hub.v2Attempts["attempt-1"] = v2Attempt{
+		initiator:             initiator.deviceID,
+		initiatorConnectionID: initiator.connectionID,
+		target:                sender.deviceID,
+		targetConnectionID:    sender.connectionID,
+		expiresAt:             time.Now().Add(time.Minute),
+	}
+	hub.mutex.Unlock()
+	hub.handleProtocolErrorV2(sender, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_ProtocolError{ProtocolError: &v2.ProtocolError{
+			AttemptId: "attempt-1",
+			RequestId: 9,
+			Code:      v2.ErrorCode_ERROR_CODE_RESOLVE_TIMEOUT,
+			Message:   "timeout",
+		}},
+	})
+	routed := <-initiator.outbound
+	routedFrame, err := v2.DecodeControl(routed.data)
+	if err != nil || routedFrame.GetProtocolError() == nil || routedFrame.GetProtocolError().RequestId != 9 {
+		t.Fatalf("routed protocol error = %+v, err=%v", routedFrame, err)
+	}
+	initiator.dequeue(routed)
+
+	// Missing attempt metadata is ignored, and an expired ticket is removed
+	// rather than forwarding a stale error to a reconnected peer.
+	hub.handleProtocolErrorV2(sender, &v2.RelayFrame{Version: v2.RELAY_V2_VERSION})
+	hub.mutex.Lock()
+	hub.v2Attempts["expired"] = v2Attempt{expiresAt: time.Now().Add(-time.Second)}
+	hub.mutex.Unlock()
+	hub.handleProtocolErrorV2(sender, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind:    &v2.RelayFrame_ProtocolError{ProtocolError: &v2.ProtocolError{AttemptId: "expired"}},
+	})
+	hub.mutex.Lock()
+	_, remains := hub.v2Attempts["expired"]
+	hub.mutex.Unlock()
+	if remains {
+		t.Fatal("expired protocol-error attempt was not pruned")
+	}
+
+	// A mismatched sender cannot consume the ticket.
+	hub.mutex.Lock()
+	hub.v2Attempts["mismatch"] = v2Attempt{
+		initiator:             initiator.deviceID,
+		initiatorConnectionID: initiator.connectionID,
+		target:                "another-device",
+		targetConnectionID:    sender.connectionID,
+		expiresAt:             time.Now().Add(time.Minute),
+	}
+	hub.mutex.Unlock()
+	hub.handleProtocolErrorV2(sender, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind:    &v2.RelayFrame_ProtocolError{ProtocolError: &v2.ProtocolError{AttemptId: "mismatch"}},
+	})
+	select {
+	case extra := <-initiator.outbound:
+		t.Fatalf("mismatched sender unexpectedly routed frame: %+v", extra)
+	default:
+	}
+}
+
+func TestControlV2HandlerFailureBoundaries(t *testing.T) {
+	hub := newHub(Config{})
+	defer hub.close()
+	makePeer := func(deviceID, connectionID string) *peer {
+		return &peer{
+			deviceID:         deviceID,
+			connectionID:     connectionID,
+			outbound:         make(chan outboundFrame, 16),
+			done:             make(chan struct{}),
+			maxPendingFrames: 16,
+			maxPendingBytes:  16 * 1024,
+		}
+	}
+	sender := makePeer("sender", "sender-1")
+	target := makePeer("target", "target-1")
+	hub.mutex.Lock()
+	hub.peers[sender.deviceID] = sender
+	hub.peers[target.deviceID] = target
+	hub.mutex.Unlock()
+	readError := func(p *peer) *v2.ProtocolError {
+		t.Helper()
+		queued := <-p.outbound
+		decoded, err := v2.DecodeControl(queued.data)
+		if err != nil {
+			t.Fatalf("decode queued control error: %v", err)
+		}
+		p.dequeue(queued)
+		if decoded.GetProtocolError() == nil {
+			t.Fatalf("queued frame is not a protocol error: %+v", decoded)
+		}
+		return decoded.GetProtocolError()
+	}
+
+	// A heartbeat without the authoritative presence store must fail closed,
+	// and an offer without the preceding Resolve gate must retain its attempt id.
+	hub.handleHeartbeatV2(sender, &v2.Heartbeat{RequestId: 1})
+	if got := readError(sender); got.Code != v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE || got.RequestId != 1 {
+		t.Fatalf("heartbeat failure = %+v", got)
+	}
+	hub.handleConnectivityOfferV2(sender, &v2.ConnectivityOffer{RequestId: 2, AttemptId: "attempt-no-resolve"})
+	if got := readError(sender); got.Code != v2.ErrorCode_ERROR_CODE_PROTOCOL || got.AttemptId != "attempt-no-resolve" {
+		t.Fatalf("ungated offer failure = %+v", got)
+	}
+
+	// Realtime signaling rejects self/empty/offline targets and forwards a
+	// valid opaque signal without rewriting its payload.
+	for requestID, targetID := range map[uint64]string{3: "", 4: "sender", 5: "offline"} {
+		hub.handleRealtimeSignalV2(sender, &v2.RealtimeSignal{RequestId: requestID, TargetDeviceId: targetID})
+		got := readError(sender)
+		if got.RequestId != requestID {
+			t.Fatalf("realtime error request id = %d, want %d", got.RequestId, requestID)
+		}
+		if targetID == "offline" && got.Code != v2.ErrorCode_ERROR_CODE_PEER_OFFLINE {
+			t.Fatalf("offline realtime code = %v", got.Code)
+		}
+	}
+	hub.handleRealtimeSignalV2(sender, &v2.RealtimeSignal{RequestId: 6, TargetDeviceId: "target", Payload: []byte("opaque")})
+	queued := <-target.outbound
+	decoded, err := v2.DecodeControl(queued.data)
+	if err != nil || decoded.GetRealtimeSignal() == nil || string(decoded.GetRealtimeSignal().Payload) != "opaque" {
+		t.Fatalf("forwarded realtime signal = %+v, err=%v", decoded, err)
+	}
+	target.dequeue(queued)
+
+	// Discovery publish errors map to a stable revision error after the sender
+	// has a valid presence lease but omits the mandatory snapshot revision.
+	store := newMemoryStore(Config{})
+	hub.presence = store
+	if _, _, err := store.TakePresence(context.Background(), sender.deviceID, sender.connectionID, Presence{}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	hub.handleDiscoveryPublishV2(sender, &v2.DiscoveryPublish{RequestId: 7})
+	if got := readError(sender); got.Code != v2.ErrorCode_ERROR_CODE_REVISION_STALE || got.RequestId != 7 {
+		t.Fatalf("invalid discovery publish = %+v", got)
 	}
 }
