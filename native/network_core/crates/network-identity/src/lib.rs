@@ -65,3 +65,7 @@ impl DeviceIdentity {
         peer_key.verify(nonce, &signature).is_ok()
     }
 }
+
+#[cfg(test)]
+#[path = "tests/mod.rs"]
+mod tests;
