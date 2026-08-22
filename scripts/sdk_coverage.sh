@@ -59,7 +59,7 @@ run_dart_package() {
   if ! (
     cd "$package_dir" || exit 1
     timeout "$DART_TIMEOUT" \
-      dart test --coverage="$raw_coverage_dir" --concurrency=1 \
+  dart test --coverage="$raw_coverage_dir" --concurrency=1 \
         --reporter compact "${test_targets[@]}"
     dart run coverage:format_coverage \
       --lcov --in="$raw_coverage_dir" --out="$coverage_file" \
@@ -133,9 +133,11 @@ run_dart_package network_sdk "$network_sdk_dir" "$RUN_DIR/network-sdk.lcov" \
   test/network_sdk_contract_test.dart \
   test/network_v2_contract_test.dart \
   test/network_v2_facade_test.dart \
+  test/network_models_boundaries_test.dart \
   test/realtime_test.dart
 run_dart_package network_transport "$network_transport_dir" "$RUN_DIR/network-transport.lcov" \
   test/event_mux_test.dart \
+  test/network_boundary_test.dart \
   test/network_runtime_test.dart \
   test/transport_contract_test.dart
 run_dart_package ssh_mobile_network_native "$native_sdk_dir" "$RUN_DIR/native-sdk.lcov" \

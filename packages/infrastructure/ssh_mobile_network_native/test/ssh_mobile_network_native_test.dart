@@ -89,6 +89,16 @@ void main() {
     expect(guard.pendingCount, 0);
     expect(guard.filterEvent(result), isNull);
 
+    const stateEvent = NativePeerStateChangedEvent(
+      eventId: 'state-1',
+      timestampMs: 2,
+      protocolVersion: NativeNetworkProtocol.protocolVersion,
+      peerId: 'peer-a',
+      state: NativePeerConnectionState.connected,
+      routeType: NativeRouteType.quicDirect,
+    );
+    expect(guard.filterEvent(stateEvent), same(stateEvent));
+
     guard.cancel('command-2');
     expect(guard.register('command-2'), isTrue);
     guard.clear();
@@ -500,5 +510,57 @@ void main() {
 
     final event = NativeNetworkProtocol.decodeEvent(frame);
     expect(event, isNull);
+  });
+
+  test('typed runtime command facade covers peer, message, transfer, and lifecycle boundaries', () async {
+    final runtime = await native.createRuntime();
+    addTearDown(runtime.dispose);
+    final peerConfig = NativePeerConfig(
+      peerId: 'peer-a',
+      endpointAddress: 'quic://127.0.0.1:443',
+      identityPublicKey: Uint8List(32),
+      e2ePublicKey: Uint8List(32),
+      e2eePolicy: NativeE2eePolicy.disabled,
+    );
+
+    expect(runtime.boundLocalPort, isA<int?>());
+    expect(runtime.upsertPeerV2(peerConfig), NativeOperationStatus.success);
+    expect(runtime.removePeerV2(peerId: 'peer-a'), NativeOperationStatus.success);
+    expect(
+      runtime.sendMessageV2(
+        peerId: 'peer-a',
+        messageId: 'message-a',
+        channelId: 'channel-a',
+        payload: Uint8List.fromList(<int>[1, 2]),
+        e2eePolicy: NativeE2eePolicy.disabled,
+      ),
+      NativeOperationStatus.success,
+    );
+    expect(
+      runtime.transferV2(
+        peerId: 'peer-a',
+        transferId: 'transfer-a',
+        filePath: '/tmp/file.bin',
+        confirmedOffset: 2,
+        resume: true,
+      ),
+      NativeOperationStatus.success,
+    );
+    expect(
+      runtime.sendMessageV2(
+        peerId: '',
+        messageId: 'message-a',
+        channelId: 'channel-a',
+        payload: Uint8List(0),
+      ),
+      NativeOperationStatus.invalidArgument,
+    );
+    expect(
+      runtime.stopRealtimeSession(realtimeId: ''),
+      NativeOperationStatus.invalidArgument,
+    );
+    await runtime.stop();
+    expect(runtime.boundLocalPort, isNull);
+    expect(runtime.upsertPeerV2(peerConfig), NativeOperationStatus.stopped);
   });
 }
