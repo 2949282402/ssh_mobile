@@ -980,3 +980,218 @@ async fn dispatch_transfer_command_cancels_an_active_transfer() {
         "explicit cancellation removes the transfer after cancelling it"
     );
 }
+
+#[tokio::test]
+async fn start_file_send_rejects_a_duplicate_after_selecting_a_live_quic_path() {
+    let state = state();
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let root = std::env::temp_dir().join(format!(
+        "ssh-mobile-transfer-duplicate-{}",
+        std::process::id()
+    ));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    let source = root.join("source.bin");
+    tokio::fs::write(&source, b"data").await.unwrap();
+    assert!(
+        state
+            .transfer
+            .manager
+            .register_outgoing(
+                manifest("duplicate-transfer"),
+                source.clone(),
+                "peer-a".into()
+            )
+            .await
+    );
+    let (endpoint, client, _server) = quic_pair().await;
+    state
+        .attach_connection_for_session(
+            "peer-a",
+            None,
+            client,
+            network_protocol::RouteType::QuicDirect,
+        )
+        .await
+        .expect("live QUIC path");
+    let error = start_file_send(
+        Arc::clone(&state),
+        SendFileCommand {
+            transfer_id: "duplicate-transfer".into(),
+            peer_id: "peer-a".into(),
+            file_path: source.to_string_lossy().into_owned(),
+        },
+    )
+    .await
+    .expect_err("duplicate transfer IDs must be rejected after path selection");
+    assert_eq!(error.code, NetworkErrorCode::InvalidArgument as i32);
+    state.close_transport_path("peer-a").await;
+    endpoint.close(quinn::VarInt::from_u32(0), b"duplicate transfer complete");
+    tokio::fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn outgoing_transfer_rejects_an_invalid_resume_offset_before_streaming_bytes() {
+    let state = state();
+    let root =
+        std::env::temp_dir().join(format!("ssh-mobile-transfer-offset-{}", std::process::id()));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    let source = root.join("source.bin");
+    tokio::fs::write(&source, b"data").await.unwrap();
+    let transfer_id = "invalid-resume-offset";
+    let transfer_manifest = network_transfer::build_file_manifest(transfer_id.into(), &source)
+        .await
+        .unwrap();
+    assert!(
+        state
+            .transfer
+            .manager
+            .register_outgoing(transfer_manifest.clone(), source.clone(), "peer-a".into())
+            .await
+    );
+    let (endpoint, client, server) = quic_pair().await;
+    state
+        .attach_connection_for_session(
+            "peer-a",
+            None,
+            client.clone(),
+            network_protocol::RouteType::QuicDirect,
+        )
+        .await
+        .expect("live QUIC path");
+    let (release_tx, release_rx) = oneshot::channel();
+    let server_task = tokio::spawn(async move {
+        let (mut send, mut receive) = server.accept_bi().await.unwrap();
+        let _ = network_quic::read_file_offer(&mut receive).await.unwrap();
+        network_quic::write_file_decision(&mut send, true, 999)
+            .await
+            .unwrap();
+        let _ = release_rx.await;
+        let _ = send.finish();
+    });
+    let lease = state
+        .acquire_path_lease("peer-a", CAPABILITY_RELIABLE_STREAM)
+        .await
+        .unwrap();
+    assert!(lease.is_active());
+    send_file(
+        client,
+        ResumableTransfer {
+            transfer_id: transfer_id.into(),
+            peer_id: "peer-a".into(),
+            session_id: "offset-session".into(),
+            source_path: source.clone(),
+            manifest: transfer_manifest,
+            offset: 0,
+        },
+        Arc::clone(&state),
+        lease,
+    )
+    .await;
+    let _ = release_tx.send(());
+    server_task.await.unwrap();
+    let snapshot = state.transfer.manager.snapshot(transfer_id).await;
+    assert!(snapshot.is_none());
+    state.close_transport_path("peer-a").await;
+    endpoint.close(quinn::VarInt::from_u32(0), b"offset test complete");
+    tokio::fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn outgoing_transfer_reports_when_business_state_is_no_longer_resumable() {
+    let state = state();
+    let root =
+        std::env::temp_dir().join(format!("ssh-mobile-transfer-stale-{}", std::process::id()));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    let source = root.join("source.bin");
+    tokio::fs::write(&source, b"data").await.unwrap();
+    let transfer_id = "stale-transfer-state";
+    let transfer_manifest = network_transfer::build_file_manifest(transfer_id.into(), &source)
+        .await
+        .unwrap();
+    let (endpoint, client, server) = quic_pair().await;
+    state
+        .attach_connection_for_session(
+            "peer-a",
+            None,
+            client.clone(),
+            network_protocol::RouteType::QuicDirect,
+        )
+        .await
+        .expect("live QUIC path");
+    let server_task = tokio::spawn(async move {
+        let (mut send, mut receive) = server.accept_bi().await.unwrap();
+        let _ = network_quic::read_file_offer(&mut receive).await.unwrap();
+        network_quic::write_file_decision(&mut send, true, 0)
+            .await
+            .unwrap();
+        send.finish().unwrap();
+    });
+    let lease = state
+        .acquire_path_lease("peer-a", CAPABILITY_RELIABLE_STREAM)
+        .await
+        .unwrap();
+    send_file(
+        client,
+        ResumableTransfer {
+            transfer_id: transfer_id.into(),
+            peer_id: "peer-a".into(),
+            session_id: "stale-session".into(),
+            source_path: source.clone(),
+            manifest: transfer_manifest,
+            offset: 0,
+        },
+        Arc::clone(&state),
+        lease,
+    )
+    .await;
+    server_task.await.unwrap();
+    assert!(state.transfer.manager.snapshot(transfer_id).await.is_none());
+    state.close_transport_path("peer-a").await;
+    endpoint.close(quinn::VarInt::from_u32(0), b"stale transfer complete");
+    tokio::fs::remove_dir_all(root).await.unwrap();
+}
+
+#[tokio::test]
+async fn incoming_offer_duplicate_keeps_the_existing_business_transfer_owned() {
+    let state = state();
+    let transfer_id = "incoming-duplicate";
+    assert!(
+        state
+            .transfer
+            .manager
+            .register_incoming(manifest(transfer_id), "peer-a".into())
+            .await
+    );
+    let lease = ready_stream_lease(&state).await;
+    let (endpoint, client, server) = quic_pair().await;
+    let (mut client_send, client_receive) = client.open_bi().await.unwrap();
+    client_send
+        .write_all(b"offer")
+        .await
+        .expect("open duplicate incoming stream");
+    let (server_send, server_receive) = server.accept_bi().await.unwrap();
+    handle_incoming_file_after_offer(
+        "peer-a".into(),
+        server_send,
+        server_receive,
+        manifest(transfer_id),
+        Arc::clone(&state),
+        lease,
+    )
+    .await;
+    drop(client_send);
+    drop(client_receive);
+    assert!(state.transfer.manager.snapshot(transfer_id).await.is_some());
+    endpoint.close(
+        quinn::VarInt::from_u32(0),
+        b"duplicate incoming offer complete",
+    );
+}

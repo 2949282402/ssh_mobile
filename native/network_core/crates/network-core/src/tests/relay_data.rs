@@ -828,3 +828,298 @@ async fn relay_business_envelopes_reject_malformed_token_and_stream_frames() {
     let stale = Arc::new(data_client());
     relay_data_disconnected(state, stale, "peer-a".into()).await;
 }
+
+#[tokio::test]
+async fn relay_incoming_connector_stops_before_using_missing_or_unreachable_config() {
+    let state = state();
+    let reservation = |local_token: Vec<u8>| network_relay::v2::IncomingRelayReservation {
+        attempt_id: "attempt".into(),
+        reservation_id: "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+        initiator_device_id: "peer-a".into(),
+        relay_data_endpoint: "ws://127.0.0.1:9/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
+        expires_at_ms: 0,
+        local_token,
+    };
+
+    // A reservation arriving before Relay is configured must be ignored.
+    connect_incoming_relay_data(&state, reservation(vec![0; 32])).await;
+
+    *state.relay.config.write().await = Some(RelayReconnectConfig {
+        relay_url: "ws://127.0.0.1:9".into(),
+        credential: "credential".into(),
+        signing_seed: [0; 32],
+    });
+    // Client construction rejects malformed reservation credentials.
+    connect_incoming_relay_data(&state, reservation(vec![0; 31])).await;
+    // A valid client still fails closed when the data endpoint cannot be reached.
+    connect_incoming_relay_data(&state, reservation(vec![0; 32])).await;
+}
+
+#[tokio::test]
+async fn relay_crypto_final_and_root_confirm_fail_closed_after_authentication() {
+    let token = "a".repeat(32);
+
+    // Drive the FINAL branch through authenticated identity admission and the
+    // responder queue. The unconnected client then fails at the first response
+    // write, proving that no business path is opened before the wire reply.
+    let final_state = state();
+    let initiator = Arc::new(network_identity::DeviceIdentity::from_private_keys(
+        "peer-a".into(),
+        [11u8; 32],
+        [21u8; 32],
+    ));
+    let responder = Arc::new(network_identity::DeviceIdentity::from_private_keys(
+        "local-a".into(),
+        [12u8; 32],
+        [22u8; 32],
+    ));
+    final_state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: initiator.public_identity_key().to_bytes(),
+            e2e_public_key: *initiator.public_e2e_key().as_bytes(),
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    final_state
+        .trusted_peer_keys
+        .write()
+        .await
+        .insert("peer-a".into(), initiator.public_identity_key().to_bytes());
+    *final_state.lifecycle.identity.write().await = Some(Arc::clone(&responder));
+    let (mut initiator_handshake, hello) =
+        crate::crypto_handshake::RelayInitiatorHandshake::start(initiator, &token)
+            .expect("valid Relay hello");
+    let (responder_handshake, response) =
+        crate::crypto_handshake::RelayResponderHandshake::accept_hello(
+            Arc::clone(&responder),
+            &hello,
+        )
+        .expect("valid Relay response");
+    let final_message = initiator_handshake
+        .accept_response(
+            &response,
+            &responder.device_id,
+            responder.public_identity_key().to_bytes(),
+        )
+        .expect("valid Relay final");
+    let key = relay_crypto_key("peer-a", &token);
+    final_state
+        .relay
+        .crypto_responders
+        .lock()
+        .await
+        .insert(key.clone(), responder_handshake);
+    let final_frame = crate::crypto_handshake::encode_relay_frame(
+        crate::crypto_handshake::RELAY_CRYPTO_FINAL,
+        &final_message,
+    )
+    .expect("encoded final");
+    let data = Arc::new(data_client());
+    let error = handle_relay_crypto_handshake(&final_state, &data, &token, "peer-a", &final_frame)
+        .await
+        .expect_err("final response must fail at an unconnected data socket");
+    assert!(error.to_string().contains("not connected"));
+    assert!(final_state
+        .relay
+        .crypto_confirmers
+        .lock()
+        .await
+        .contains_key(&key));
+
+    // Independently build a confirmer, then drive ROOT_CONFIRM far enough to
+    // authenticate and bind it before the same socket failure boundary.
+    let root_state = state();
+    root_state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [31u8; 32],
+            e2e_public_key: [41u8; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let root_initiator = Arc::new(network_identity::DeviceIdentity::from_private_keys(
+        "peer-a".into(),
+        [31u8; 32],
+        [41u8; 32],
+    ));
+    let root_responder = Arc::new(network_identity::DeviceIdentity::from_private_keys(
+        "local-a".into(),
+        [32u8; 32],
+        [42u8; 32],
+    ));
+    root_state.trusted_peer_keys.write().await.insert(
+        "peer-a".into(),
+        root_initiator.public_identity_key().to_bytes(),
+    );
+    *root_state.lifecycle.identity.write().await = Some(Arc::clone(&root_responder));
+    let (mut root_handshake, root_hello) =
+        crate::crypto_handshake::RelayInitiatorHandshake::start(root_initiator, &token)
+            .expect("valid root hello");
+    let (root_responder_handshake, root_response) =
+        crate::crypto_handshake::RelayResponderHandshake::accept_hello(
+            Arc::clone(&root_responder),
+            &root_hello,
+        )
+        .expect("valid root response");
+    let root_final = root_handshake
+        .accept_response(
+            &root_response,
+            &root_responder.device_id,
+            root_responder.public_identity_key().to_bytes(),
+        )
+        .expect("valid root final");
+    let admission = root_state
+        .admit_authenticated_session_with_capability(
+            "peer-a",
+            None,
+            &token,
+            crate::connect::DEFAULT_CONNECTION_CAPABILITY,
+        )
+        .await
+        .expect("authenticated Relay admission");
+    let (_, confirmer, encrypted_seed) = root_responder_handshake
+        .accept_final(&root_final, &root_state.trusted_peer_keys, move |_, _| {
+            let admission = admission;
+            async move { Ok((admission.session_id.wire_key(), admission)) }
+        })
+        .await
+        .expect("valid root seed");
+    root_state
+        .relay
+        .crypto_confirmers
+        .lock()
+        .await
+        .insert(relay_crypto_key("peer-a", &token), confirmer);
+    let root_confirmation = root_handshake
+        .accept_root_seed(&encrypted_seed)
+        .expect("accept root seed");
+    let (_, encrypted_confirm) = root_confirmation
+        .confirm(token.clone())
+        .expect("root confirmation");
+    let confirm_frame = crate::crypto_handshake::encode_relay_frame(
+        crate::crypto_handshake::RELAY_CRYPTO_ROOT_CONFIRM,
+        &encrypted_confirm,
+    )
+    .expect("encoded root confirmation");
+    let error = handle_relay_crypto_handshake(&root_state, &data, &token, "peer-a", &confirm_frame)
+        .await
+        .expect_err("root accept must fail at an unconnected data socket");
+    assert!(error.to_string().contains("not connected"));
+}
+
+#[tokio::test]
+async fn relay_payload_dispatch_reaches_offer_chunk_and_stream_success_boundaries() {
+    let state = state();
+    let data = Arc::new(data_client());
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [1u8; 32],
+            e2e_public_key: [2u8; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    state
+        .relay
+        .relay_path_ready
+        .write()
+        .await
+        .insert("peer-a".into());
+
+    let error = handle_relay_data_payload(&state, &data, "peer-a", &[DATA_ENV_FILE_OFFER, 0xff])
+        .await
+        .expect_err("malformed dispatched offer must fail closed");
+    assert!(!error.to_string().is_empty());
+
+    let mut chunk = vec![DATA_ENV_FILE_CHUNK];
+    chunk.extend_from_slice(&[b'x'; 32]);
+    chunk.extend_from_slice(&7u64.to_be_bytes());
+    chunk.extend_from_slice(b"ciphertext");
+    let error = handle_relay_data_payload(&state, &data, "peer-a", &chunk)
+        .await
+        .expect_err("unregistered dispatched chunk must fail closed");
+    assert!(!error.to_string().is_empty());
+
+    *state.lifecycle.identity.write().await = Some(Arc::new(
+        network_identity::DeviceIdentity::from_private_keys("local-a".into(), [3u8; 32], [4u8; 32]),
+    ));
+    let session_id = match state
+        .begin_connect("peer-a", crate::connect::DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        crate::runtime::ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected session decision: {decision:?}"),
+    };
+    assert!(
+        state
+            .mark_relay_route_connected("peer-a", session_id, Some(Arc::clone(&data)))
+            .await
+    );
+    let frame = |kind: GenericFrameKind, body: &[u8]| {
+        let mut frame = b"SMGF".to_vec();
+        frame.extend_from_slice(&NETWORK_PROTOCOL_VERSION.to_be_bytes());
+        frame.push(kind as u8);
+        frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        frame.extend_from_slice(body);
+        frame
+    };
+    let open = crate::stream::encode_stream_open_frame("peer-a", 8, "custom").expect("stream open");
+    let open_frame = frame(GenericFrameKind::StreamOpen, &open);
+    receive_relay_channel_message(&state, &data, "peer-a", "stream:peer-a:8", &open_frame)
+        .await
+        .expect("generic Relay channel should route a stream open");
+    let open_two =
+        crate::stream::encode_stream_open_frame("peer-a", 9, "custom").expect("second stream open");
+    let open_two_frame = frame(GenericFrameKind::StreamOpen, &open_two);
+    receive_relay_stream_frame(&state, &data, "peer-a", "stream:peer-a:9", &open_two_frame)
+        .await
+        .expect("Relay stream envelope should route a stream open");
+}
+
+#[tokio::test]
+async fn relay_admission_rejects_a_session_that_becomes_stale_before_finalize() {
+    let state = state();
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        PeerConfig {
+            endpoint: None,
+            identity_public_key: [7u8; 32],
+            e2e_public_key: [8u8; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let admission = state
+        .admit_authenticated_session("peer-a", None, "remote-a")
+        .await
+        .expect("admit Relay session");
+    let session_id = admission.session_id;
+    assert!(
+        state
+            .connection_sessions
+            .release_authenticated_session("peer-a", session_id, "remote-a")
+            .await
+    );
+    let material = SessionCryptoMaterial {
+        root_key: [17u8; 32],
+        local_session_binding: session_id.wire_key(),
+        remote_session_binding: "remote-a".into(),
+        initiator: false,
+        e2ee_policy: crate::crypto_handshake::path_handshake::E2eePolicy::Required,
+        path_security: crate::crypto_handshake::path_handshake::PathSecurity::E2ee,
+    };
+    let error = complete_relay_admission(
+        &state,
+        &Arc::new(data_client()),
+        "remote-a",
+        "peer-a",
+        material,
+        admission,
+    )
+    .await
+    .expect_err("a second finalize must fail closed");
+    assert!(error.to_string().contains("stale"));
+}

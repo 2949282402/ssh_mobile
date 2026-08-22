@@ -1539,6 +1539,40 @@ async fn v2_signal_rejects_an_empty_established_peer_binding() {
 }
 
 #[tokio::test]
+async fn realtime_turn_configuration_is_parsed_and_invalid_driver_setup_fails_closed() {
+    std::env::set_var(
+        "SSH_MOBILE_TURN_SERVERS",
+        " turn:a.example, ,turn:b.example ",
+    );
+    std::env::set_var("SSH_MOBILE_TURN_USERNAME", "turn-user");
+    std::env::set_var("SSH_MOBILE_TURN_CREDENTIAL", "turn-credential");
+    std::env::set_var("SSH_MOBILE_TURN_RELAY_ONLY", "yes");
+    let config = runtime_webrtc_config();
+    assert_eq!(config.ice_servers.len(), 2);
+    assert_eq!(config.ice_servers[0].urls, vec!["turn:a.example"]);
+    assert!(config.relay_only);
+
+    let (state, _event_rx) = realtime_test_state().await;
+    register_realtime_peer(&state, "peer-a").await;
+    std::env::set_var("SSH_MOBILE_TURN_SERVERS", "x".repeat(2049));
+    let error = start_session(
+        Arc::clone(&state),
+        StartRealtimeSessionCommand {
+            realtime_id: "00112233445566778899aabbccddeeff".into(),
+            peer_id: "peer-a".into(),
+        },
+    )
+    .await
+    .expect_err("an invalid TURN URL must fail before creating a driver");
+    assert_eq!(error.code, NetworkErrorCode::IoError as i32);
+
+    std::env::remove_var("SSH_MOBILE_TURN_SERVERS");
+    std::env::remove_var("SSH_MOBILE_TURN_USERNAME");
+    std::env::remove_var("SSH_MOBILE_TURN_CREDENTIAL");
+    std::env::remove_var("SSH_MOBILE_TURN_RELAY_ONLY");
+}
+
+#[tokio::test]
 async fn local_ice_candidate_without_a_realtime_owner_is_dropped() {
     let (state, mut event_rx) = realtime_test_state().await;
     forward_local_candidate(
@@ -1843,4 +1877,89 @@ fn realtime_session_without_peer_owner_fails_closed() {
     let error = with_session_peer(&mut session, WebRtcPeer::close)
         .expect_err("session without a peer owner must be rejected");
     assert!(error.to_string().contains("no WebRTC peer owner"));
+}
+
+#[test]
+fn realtime_close_and_unsupported_signal_boundaries_fail_closed() {
+    let realtime_id = "00112233445566778899aabbccddeeff";
+    let mut manager = RealtimeManager::default();
+    let unknown_close = match apply_signal_with_driver(
+        &mut manager,
+        realtime_id,
+        "peer-a",
+        InboundSignal {
+            kind: RealtimeSignalKind::WebRtcClose,
+            revision: 1,
+            payload: Vec::new(),
+        },
+        None,
+        None,
+    ) {
+        Ok(_) => panic!("close for an unknown realtime session succeeded"),
+        Err(error) => error,
+    };
+    assert!(unknown_close.to_string().contains("does not exist"));
+
+    manager.sessions.insert(
+        realtime_id.into(),
+        RealtimeSession {
+            peer_id: "peer-a".into(),
+            connection_session_id: None,
+            peer: Some(WebRtcPeer::new(WebRtcConfig::default()).expect("peer")),
+            driver: None,
+            revision: 3,
+            remote_revision: 2,
+            ice_revision: 3,
+            seen_candidates: HashSet::new(),
+        },
+    );
+    let mismatch = match apply_signal_with_driver(
+        &mut manager,
+        realtime_id,
+        "peer-b",
+        InboundSignal {
+            kind: RealtimeSignalKind::WebRtcClose,
+            revision: 4,
+            payload: Vec::new(),
+        },
+        None,
+        None,
+    ) {
+        Ok(_) => panic!("close from a different peer succeeded"),
+        Err(error) => error,
+    };
+    assert!(mismatch.to_string().contains("peer does not match"));
+    let stale = match apply_signal_with_driver(
+        &mut manager,
+        realtime_id,
+        "peer-a",
+        InboundSignal {
+            kind: RealtimeSignalKind::WebRtcClose,
+            revision: 2,
+            payload: Vec::new(),
+        },
+        None,
+        None,
+    ) {
+        Ok(_) => panic!("stale close revision succeeded"),
+        Err(error) => error,
+    };
+    assert!(stale.to_string().contains("stale"));
+
+    let unsupported = match apply_signal_with_driver(
+        &mut manager,
+        realtime_id,
+        "peer-a",
+        InboundSignal {
+            kind: RealtimeSignalKind::Unspecified,
+            revision: 4,
+            payload: Vec::new(),
+        },
+        None,
+        None,
+    ) {
+        Ok(_) => panic!("unspecified signal kind succeeded"),
+        Err(error) => error,
+    };
+    assert!(unsupported.to_string().contains("unsupported"));
 }
