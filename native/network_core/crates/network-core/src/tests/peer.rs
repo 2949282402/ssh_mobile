@@ -24,6 +24,37 @@ async fn generic_connection_pair() -> (GenericConnection, TcpStream) {
     )
 }
 
+async fn quic_connection_pair() -> (quinn::Endpoint, quinn::Connection) {
+    let server = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("server bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("server endpoint");
+    let server_address = server.endpoint.local_addr().expect("server address");
+    let server_endpoint = server.endpoint;
+    let server_task = tokio::spawn(async move {
+        server_endpoint
+            .accept()
+            .await
+            .expect("incoming QUIC connection")
+            .await
+            .expect("server QUIC connection")
+    });
+    let client = QuicEndpointManager::new(
+        "127.0.0.1:0".parse().expect("client bind address"),
+        Arc::new(PathManager::new()),
+    )
+    .expect("client endpoint");
+    let connection = client
+        .endpoint
+        .connect(server_address, "ssh-mobile")
+        .expect("connect QUIC candidate")
+        .await
+        .expect("QUIC connection");
+    let _server_connection = server_task.await.expect("server task");
+    (client.endpoint, connection)
+}
+
 async fn new_test_state() -> Arc<RuntimeState> {
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
     Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))))
@@ -1713,6 +1744,43 @@ async fn valid_runtime_configuration_binds_native_and_fallback_listeners_once() 
 }
 
 #[tokio::test]
+async fn stale_quic_path_admission_is_rejected_before_publication() {
+    let state = new_test_state().await;
+    let current = started_session(&state, "stale-path-peer").await;
+    let (endpoint, connection) = quic_connection_pair().await;
+    assert!(state
+        .attach_connection_for_session(
+            "stale-path-peer",
+            Some(SessionId::new()),
+            connection,
+            RouteType::QuicDirect,
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        state
+            .connection_sessions
+            .current_session_id("stale-path-peer")
+            .await,
+        Some(current)
+    );
+    endpoint.close(VarInt::from_u32(0), b"stale expected session complete");
+
+    let state_without_session = new_test_state().await;
+    let (endpoint, connection) = quic_connection_pair().await;
+    assert!(state_without_session
+        .attach_connection_for_session(
+            "missing-session-peer",
+            Some(SessionId::new()),
+            connection,
+            RouteType::QuicDirect,
+        )
+        .await
+        .is_err());
+    endpoint.close(VarInt::from_u32(0), b"stale missing session complete");
+}
+
+#[tokio::test]
 async fn peer_upsert_and_disconnect_preserve_identity_and_route_boundaries() {
     let state = new_test_state().await;
     let invalid_peer = upsert_peer(
@@ -1786,6 +1854,24 @@ async fn peer_upsert_and_disconnect_preserve_identity_and_route_boundaries() {
     assert_eq!(config.endpoint.unwrap().port(), 22);
     assert_eq!(config.e2ee_policy, network_protocol::E2eePolicy::Disabled);
     assert_eq!(state.trusted_peer_keys.read().await["peer-a"], [1; 32]);
+
+    upsert_peer(
+        &state,
+        UpsertPeerCommand {
+            peer_id: "peer-without-endpoint".into(),
+            identity_public_key: vec![3; 32],
+            e2e_public_key: vec![4; 32],
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("peer without a configured endpoint is valid");
+    assert!(state
+        .peers
+        .read()
+        .await
+        .get("peer-without-endpoint")
+        .is_some_and(|peer| peer.endpoint.is_none()));
 
     let empty_disconnect = disconnect_peer(&state, String::new())
         .await
@@ -1886,6 +1972,79 @@ async fn direct_quic_authentication_failures_map_to_authentication_error() {
     client
         .endpoint
         .close(VarInt::from_u32(0), b"auth failure test complete");
+}
+
+#[tokio::test]
+async fn stale_admissions_reject_direct_and_generic_route_attachment() {
+    let state = new_test_state().await;
+    let direct_admission = state
+        .admit_authenticated_session("peer-direct", None, "remote-direct")
+        .await
+        .expect("direct admission");
+    let direct_session = direct_admission.session_id;
+    assert!(
+        state
+            .connection_sessions
+            .retire_session("peer-direct", direct_session)
+            .await
+    );
+    let (direct_endpoint, direct_connection) = quic_connection_pair().await;
+    let direct_error = crate::connect::ConnectivityAttemptCoordinator::new(Arc::clone(&state))
+        .attach_direct_route(
+            "peer-direct",
+            ConnectedRoute::Quic {
+                connection: direct_connection,
+                crypto: SessionCryptoMaterial {
+                    root_key: [1; 32],
+                    local_session_binding: direct_session.wire_key(),
+                    remote_session_binding: "remote-direct".into(),
+                    initiator: true,
+                    e2ee_policy: crate::crypto_handshake::path_handshake::E2eePolicy::Required,
+                    path_security: crate::crypto_handshake::path_handshake::PathSecurity::E2ee,
+                },
+                admission: direct_admission,
+            },
+        )
+        .await
+        .expect_err("retired direct admission must not publish a route");
+    assert_eq!(direct_error.code, NetworkErrorCode::NoRoute as i32);
+    direct_endpoint.close(VarInt::from_u32(0), b"stale direct route test complete");
+
+    let generic_admission = state
+        .admit_authenticated_session("peer-generic", None, "remote-generic")
+        .await
+        .expect("generic admission");
+    let generic_session = generic_admission.session_id;
+    let (generic_connection, _server) = generic_connection_pair().await;
+    let scope =
+        started_generic_scope(&state, "peer-generic", generic_session, generic_connection).await;
+    assert!(
+        state
+            .connection_sessions
+            .retire_session("peer-generic", generic_session)
+            .await
+    );
+    let generic_error = crate::connect::ConnectivityAttemptCoordinator::new(Arc::clone(&state))
+        .attach_direct_route(
+            "peer-generic",
+            ConnectedRoute::Generic(AuthenticatedGenericRoute {
+                scope,
+                endpoint: "127.0.0.1:1".parse().expect("generic route endpoint"),
+                crypto: SessionCryptoMaterial {
+                    root_key: [2; 32],
+                    local_session_binding: generic_session.wire_key(),
+                    remote_session_binding: "remote-generic".into(),
+                    initiator: true,
+                    e2ee_policy: crate::crypto_handshake::path_handshake::E2eePolicy::Required,
+                    path_security: crate::crypto_handshake::path_handshake::PathSecurity::E2ee,
+                },
+                admission: generic_admission,
+            }),
+        )
+        .await
+        .expect_err("retired generic admission must not publish a route");
+    assert_eq!(generic_error.code, NetworkErrorCode::NoRoute as i32);
+    state.task_supervisor.shutdown().await;
 }
 
 #[tokio::test]
