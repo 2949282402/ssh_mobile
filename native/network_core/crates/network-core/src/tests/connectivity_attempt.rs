@@ -2020,6 +2020,85 @@ async fn connect_wrapper_and_missing_control_plane_fail_closed() {
 }
 
 #[tokio::test]
+async fn session_cleanup_guard_retires_an_unattached_attempt() {
+    let (state, _event_rx, _control) = configured_reuse_state().await;
+    let session_id = match state
+        .begin_connect("peer-b", DEFAULT_CONNECTION_CAPABILITY)
+        .await
+    {
+        crate::runtime::ConnectDecision::Started(session_id) => session_id,
+        decision => panic!("unexpected session decision: {decision:?}"),
+    };
+    let guard = SessionCleanupGuard::new(Arc::clone(&state), "peer-b", session_id);
+    drop(guard);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if state
+                .connection_sessions
+                .current_session_id("peer-b")
+                .await
+                .is_none()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cleanup guard should retire its session");
+}
+
+#[tokio::test]
+async fn coordination_spawn_fails_closed_when_runtime_supervisor_is_stopping() {
+    let (state, _event_rx, _control) = configured_reuse_state().await;
+    state.task_supervisor.cancel_root();
+    let coordination = ConnectivityAttemptStart::new(
+        ResolvePeerResponse {
+            request_id: 1,
+            status: ResolveStatus::Ready as i32,
+            discovery: None,
+            retry_after_ms: 0,
+        },
+        async { Err(RelayError::NotConnected) },
+    );
+    let attempt = Arc::new(Mutex::new(ConnectivityAttempt::with_connect_window(
+        "stopped-coordination",
+        "peer-b",
+        NatRuntimeEpoch { high: 0, low: 0 },
+        SystemTime::now(),
+        DIRECT_CONNECT_WINDOW,
+    )));
+    let coordinator = ConnectivityAttemptCoordinator::new(Arc::clone(&state));
+    assert!(coordinator
+        .spawn_coordination(
+            coordination,
+            "peer-b".into(),
+            "stopped-coordination".into(),
+            attempt,
+            Vec::new(),
+            None,
+        )
+        .is_err());
+    state.task_supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn local_candidate_collection_uses_the_bounded_path_manager_snapshot() {
+    let (state, _event_rx, _control) = configured_reuse_state().await;
+    let manager = Arc::new(PathManager::new());
+    let candidate = Candidate::new(
+        "192.168.1.24:42024".parse().expect("candidate endpoint"),
+        CandidateKind::Lan,
+        "local-candidate".into(),
+    );
+    manager.add_candidates(vec![candidate.clone()]).await;
+    *state.local_path_manager.write().await = Some(manager);
+    let candidates = collect_local_candidates(Arc::clone(&state)).await;
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].candidate_id, candidate.candidate_id);
+}
+
+#[tokio::test]
 async fn resolve_unknown_fails_closed_without_retry() {
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
     let state = Arc::new(RuntimeState::new(

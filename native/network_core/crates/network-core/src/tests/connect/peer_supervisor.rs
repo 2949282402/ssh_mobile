@@ -457,3 +457,96 @@ async fn mailbox_worker_starts_attempts_and_drains_repeated_intents() {
 
     state.task_supervisor.shutdown().await;
 }
+
+#[tokio::test]
+async fn completion_failure_releases_waiters_and_marks_peer_offline() {
+    let supervisor = supervisor();
+    let intent = supervisor
+        .ensure("failure", CommunicationClass::ReliableMessage)
+        .expect("failure intent");
+    let generation = intent.generation;
+    let mut mailbox = supervisor.take_mailbox().expect("mailbox");
+    mailbox.try_recv().expect("queued attempt");
+
+    assert_eq!(
+        supervisor.complete_ready(
+            generation,
+            PeerRequirement::from_class(CommunicationClass::ReliableMessage),
+            Err(CoreNetworkError::NoRoute),
+        ),
+        Ok(1)
+    );
+    assert_eq!(
+        intent.completion().await.expect("failure completion"),
+        Err(CoreNetworkError::NoRoute)
+    );
+    assert_eq!(supervisor.state(), PeerState::Offline);
+    assert!(supervisor.can_evict());
+}
+
+#[tokio::test]
+async fn pending_retry_reports_supervisor_stop_when_mailbox_closes() {
+    let supervisor = supervisor();
+    let message = supervisor
+        .ensure("message", CommunicationClass::ReliableMessage)
+        .expect("message intent");
+    let stream = supervisor
+        .ensure("stream", CommunicationClass::ReliableStream)
+        .expect("stream intent");
+    let generation = message.generation;
+    let mut mailbox = supervisor.take_mailbox().expect("mailbox");
+    mailbox.try_recv().expect("queued attempt");
+    drop(mailbox);
+    supervisor
+        .inner
+        .lock()
+        .expect("peer supervisor lock")
+        .retry_scheduled = false;
+
+    assert_eq!(
+        supervisor.complete_ready(
+            generation,
+            PeerRequirement::from_class(CommunicationClass::ReliableMessage),
+            Ok(PeerState::Online),
+        ),
+        Err(CoreNetworkError::SupervisorStopping)
+    );
+    assert_eq!(
+        message.completion().await.expect("message completion"),
+        Ok(PeerState::Online)
+    );
+    assert_eq!(
+        stream.completion().await.expect("stream completion"),
+        Err(CoreNetworkError::SupervisorStopping)
+    );
+    assert_eq!(supervisor.state(), PeerState::Offline);
+}
+
+#[tokio::test]
+async fn worker_start_and_inbound_admission_fail_closed_after_runtime_stop() {
+    let state = runtime_state();
+    state.task_supervisor.cancel_root();
+    let registry = PeerSupervisorRegistry::new();
+    assert!(matches!(
+        registry.start_connect(
+            Arc::clone(&state),
+            "peer-a",
+            "connect".into(),
+            CommunicationClass::ReliableMessage,
+        ),
+        Err(CoreNetworkError::SupervisorStopping)
+    ));
+
+    let supervisor = supervisor();
+    supervisor.stop();
+    assert_eq!(supervisor.disconnect(), 0);
+    assert_eq!(
+        supervisor.admit_inbound(true),
+        Err(CoreNetworkError::SupervisorStopping)
+    );
+    assert!(matches!(
+        supervisor.acquire_resource(),
+        Err(CoreNetworkError::SupervisorStopping)
+    ));
+    state.task_supervisor.shutdown().await;
+}
