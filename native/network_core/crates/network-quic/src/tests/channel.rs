@@ -39,6 +39,10 @@ fn channel_frame_budget_includes_a_bounded_payload() {
         ChannelFrameKind::try_from(1).expect("data kind"),
         ChannelFrameKind::DataMessage
     );
+    assert_eq!(
+        ChannelFrameKind::try_from(2).expect("ack kind"),
+        ChannelFrameKind::DeliveryAck
+    );
     assert!(ChannelFrameKind::try_from(9).is_err());
 }
 
@@ -54,6 +58,14 @@ async fn channel_frame_round_trips_and_rejects_bad_bounds() {
     assert_eq!(
         read_channel_frame(&mut recv).await.unwrap(),
         (ChannelFrameKind::DataMessage, b"hello".to_vec())
+    );
+    send_channel_frame(&client, ChannelFrameKind::DeliveryAck, b"ack")
+        .await
+        .unwrap();
+    let mut ack_recv = server.accept_uni().await.unwrap();
+    assert_eq!(
+        read_channel_frame(&mut ack_recv).await.unwrap(),
+        (ChannelFrameKind::DeliveryAck, b"ack".to_vec())
     );
     assert!(
         send_channel_frame(&client, ChannelFrameKind::DeliveryAck, &[])
@@ -73,11 +85,12 @@ async fn channel_frame_round_trips_and_rejects_bad_bounds() {
 #[tokio::test]
 async fn channel_reader_fails_closed_for_magic_version_kind_and_length() {
     let (endpoint, client, server) = quic_pair().await;
-    let cases: [(&[u8], &str); 4] = [
+    let cases: [(&[u8], &str); 5] = [
         (b"BAD!\0\0\0\x01\x01\0\0\0\x01x", "magic"),
         (b"SMCH\0\0\0\x03\x01\0\0\0\x01x", "version"),
         (b"SMCH\0\0\0\x01\x09\0\0\0\x01x", "kind"),
         (b"SMCH\0\0\0\x01\x01\0\0\0\0", "length"),
+        (b"SMCH\0\0\0\x01\x01\0\x00\x01\x00", "oversized length"),
     ];
     for (bytes, label) in cases {
         let mut send = server.open_uni().await.unwrap();
