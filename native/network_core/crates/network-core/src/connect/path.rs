@@ -401,11 +401,6 @@ impl PhysicalRoute {
         })
     }
 
-    pub(crate) fn is_relay_data(&self, data: &Arc<RelayDataClient>) -> bool {
-        self.relay_data()
-            .is_some_and(|current| Arc::ptr_eq(&current, data))
-    }
-
     pub(crate) async fn send_channel_frame(
         &self,
         relay_token: &str,

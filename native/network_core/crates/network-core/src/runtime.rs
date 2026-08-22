@@ -1053,18 +1053,6 @@ impl RuntimeState {
             .and_then(|profile| profile.route().to_wire())
     }
 
-    #[allow(dead_code)] // retained for runtime diagnostics and focused tests
-    pub(crate) async fn path_connection(&self, peer_id: &str) -> Option<quinn::Connection> {
-        let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
-        let lease = manager
-            .lock()
-            .expect("peer path manager lock")
-            .acquire(crate::connect::CAPABILITY_RELIABLE_MESSAGE)
-            .ok()?
-            .1;
-        lease.connection()
-    }
-
     pub(crate) async fn path_connection_for_lease(
         &self,
         lease: &crate::connect::PathLease,
@@ -1073,21 +1061,6 @@ impl RuntimeState {
             return None;
         }
         lease.connection()
-    }
-
-    #[allow(dead_code)] // retained for runtime diagnostics and focused tests
-    pub(crate) async fn path_stream_carrier(
-        &self,
-        peer_id: &str,
-    ) -> Option<crate::connect::StreamCarrier> {
-        let manager = self.peer_path_managers.read().await.get(peer_id).cloned()?;
-        let lease = manager
-            .lock()
-            .expect("peer path manager lock")
-            .acquire(crate::connect::CAPABILITY_RELIABLE_STREAM)
-            .ok()?
-            .1;
-        lease.stream_carrier()
     }
 
     pub(crate) async fn path_relay_data(&self, peer_id: &str) -> Option<Arc<RelayDataClient>> {
