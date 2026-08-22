@@ -169,7 +169,6 @@ pub(crate) async fn dispatch_command(
             let config = command.config.ok_or_else(|| {
                 protocol_error(NetworkErrorCode::InvalidArgument, "peer config is required")
             })?;
-            validate_e2ee_policy(config.e2ee_policy)?;
             let e2ee_policy =
                 network_protocol::E2eePolicy::try_from(config.e2ee_policy).map_err(|_| {
                     protocol_error(NetworkErrorCode::InvalidArgument, "unknown E2EE policy")

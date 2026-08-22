@@ -4,6 +4,8 @@ use sha2::Digest;
 use std::path::PathBuf;
 use tokio::sync::oneshot;
 
+use crate::stream::{ReliableStreamManager, StreamConsumer, StreamOpener};
+
 fn manifest(transfer_id: &str) -> network_transfer::FileManifest {
     network_transfer::FileManifest {
         transfer_id: transfer_id.into(),
@@ -221,6 +223,22 @@ async fn remove_peer_evicts_configuration_and_supervisor() {
             already_completed: false,
         },
     );
+    let stream_manager = ReliableStreamManager::new(state.event_tx.clone());
+    stream_manager
+        .open(StreamOpener::Local, 1, "ssh", StreamConsumer::Poll)
+        .await
+        .expect("stream owned by the peer");
+    state
+        .reliable_streams
+        .write()
+        .await
+        .insert("peer-a".into(), stream_manager);
+    let session_id = crate::session::SessionId::new();
+    state
+        .connection_sessions
+        .register_pending_session("peer-a", session_id)
+        .await
+        .expect("pending peer session");
     let (acceptance_tx, _acceptance_rx) = oneshot::channel();
     state
         .relay
@@ -253,6 +271,12 @@ async fn remove_peer_evicts_configuration_and_supervisor() {
     assert!(state.relay.active_incoming.lock().await.is_empty());
     assert!(state.relay.acceptances.read().await.is_empty());
     assert!(state.relay.completions.read().await.is_empty());
+    assert!(state.reliable_streams.read().await.get("peer-a").is_none());
+    assert!(state
+        .connection_sessions
+        .current_session_id("peer-a")
+        .await
+        .is_none());
 }
 
 #[tokio::test]
@@ -289,6 +313,16 @@ async fn diagnostics_reads_live_supervisor_and_path_manager() {
         "peer-a".into(),
         Arc::new(std::sync::Mutex::new(path_manager)),
     );
+    let stream_manager = ReliableStreamManager::new(state.event_tx.clone());
+    stream_manager
+        .open(StreamOpener::Local, 1, "ssh", StreamConsumer::Poll)
+        .await
+        .expect("stream owned by the peer");
+    state
+        .reliable_streams
+        .write()
+        .await
+        .insert("peer-a".into(), stream_manager);
 
     emit_peer_diagnostics(&state, "peer-a".into())
         .await
@@ -303,6 +337,7 @@ async fn diagnostics_reads_live_supervisor_and_path_manager() {
         network_protocol::PeerState::Online as i32
     );
     assert_eq!(diagnostics.ready_path_count, 1);
+    assert_eq!(diagnostics.active_stream_count, 1);
     assert_eq!(
         diagnostics.e2ee_policy,
         network_protocol::E2eePolicy::Required as i32
@@ -567,6 +602,25 @@ async fn command_envelope_and_route_validation_fail_closed() {
     .await
     .expect_err("transfer identity must be required");
     assert_eq!(transfer.code, NetworkErrorCode::InvalidArgument as i32);
+
+    let valid_transfer = dispatch_command(
+        NetworkCommand {
+            command_id: "valid-transfer".into(),
+            protocol_version: NETWORK_PROTOCOL_VERSION,
+            payload: Some(network_command::Payload::Transfer(
+                network_protocol::TransferCommand {
+                    peer_id: "peer-a".into(),
+                    transfer_id: "transfer-a".into(),
+                    file_path: "/path/that/does/not/exist".into(),
+                    ..Default::default()
+                },
+            )),
+        },
+        Arc::clone(&state),
+    )
+    .await
+    .expect_err("valid transfer identity still validates its source");
+    assert_eq!(valid_transfer.code, NetworkErrorCode::IoError as i32);
 
     let peer_v2 = dispatch_command(
         NetworkCommand {
