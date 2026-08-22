@@ -100,35 +100,6 @@ pub(crate) fn emit_command_result(
     });
 }
 
-/// Frozen V2 resource defaults. These values are shared by producers and
-/// adapters; a lower layer may reject earlier, but may not raise a limit.
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_ACTIVE_PEERS: usize = 64;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_CONFIGURED_PEERS: usize = 256;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_ESTABLISHMENTS: usize = 8;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_UNAUTHENTICATED_INBOUND: usize = 32;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_RELAY_DATA_PATHS: usize = 64;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_COMMANDS_PER_PEER: usize = 64;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_STREAMS_PER_PEER: usize = 32;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_ACTIVE_TRANSFERS: usize = 16;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_CONTROL_QUEUE_BYTES: usize = 4 * 1024 * 1024;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_DATA_QUEUE_BYTES: usize = 8 * 1024 * 1024;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_COMMAND_BYTES: usize = 1024 * 1024;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_EVENT_BYTES: usize = 1024 * 1024;
-#[allow(dead_code)]
-pub const NETWORK_V2_MAX_STREAM_CHUNK_BYTES: usize = 64 * 1024;
-
 pub(crate) fn emit_peer_diagnostics(
     event_tx: &EventSender,
     diagnostics: network_protocol::PeerDiagnostics,

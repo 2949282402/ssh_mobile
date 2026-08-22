@@ -53,8 +53,8 @@ pub(crate) const CONTROL_EVENT_MAILBOX_CAPACITY: usize = 256;
 pub(crate) const DATA_EVENT_MAILBOX_CAPACITY: usize = 128;
 pub(crate) const MAX_CONTROL_EVENT_QUEUE_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) const MAX_DATA_EVENT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
-/// Compatibility names retained for the contract inventory; the actual
-/// limits are enforced independently by the two lanes above.
+/// Compatibility names retained by the frozen protocol contract inventory;
+/// actual limits are enforced independently by the two lanes above.
 #[allow(dead_code)]
 pub(crate) const EVENT_MAILBOX_CAPACITY: usize = CONTROL_EVENT_MAILBOX_CAPACITY;
 #[allow(dead_code)]
