@@ -763,6 +763,19 @@ async fn relay_command_validation_checks_runtime_identity_and_credentials() {
     .await
     .expect_err("Relay URL and credential are required");
     assert_eq!(bad_url.code, NetworkErrorCode::InvalidArgument as i32);
+
+    state.task_supervisor.shutdown().await;
+    let stopping = start_configure_relay(
+        state,
+        network_protocol::ConfigureRelayCommand {
+            relay_url: "ws://127.0.0.1:9".into(),
+            relay_credential: "credential".into(),
+            relay_signing_seed: vec![0; 32],
+        },
+    )
+    .await
+    .expect_err("Relay configure must reject a stopping runtime");
+    assert_eq!(stopping.code, NetworkErrorCode::Cancelled as i32);
 }
 
 #[tokio::test]
