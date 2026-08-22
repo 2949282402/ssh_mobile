@@ -155,7 +155,7 @@ async fn transfer_dispatcher_rejects_relay_dispatch_for_an_unregistered_peer() {
 }
 
 #[test]
-fn transfer_identity_and_confirmed_offset_are_session_independent() {
+fn transfer_identity_is_session_independent() {
     let identity = TransferIdentity::new("peer-a", "transfer-a").expect("identity");
     assert_eq!(identity.peer_id, "peer-a");
     assert_eq!(identity.transfer_id, "transfer-a");
@@ -163,8 +163,6 @@ fn transfer_identity_and_confirmed_offset_are_session_independent() {
         identity,
         TransferIdentity::new("peer-b", "transfer-a").expect("peer-scoped identity")
     );
-    assert_eq!(ConfirmedOffset::new(4, 8).expect("offset").offset, 4);
-    assert!(ConfirmedOffset::new(9, 8).is_err());
 }
 
 #[test]
@@ -298,8 +296,6 @@ fn transfer_identity_validation_and_failure_mapping_are_fail_closed() {
         BusinessRecoveryError::RecoverableTransportLoss
     );
     assert!(stale.to_string().contains("no longer owns"));
-    assert!(ConfirmedOffset::new(2, 3).is_ok());
-    assert!(ConfirmedOffset::new(4, 3).is_err());
     assert!(TransferIdentity::new("", "id").is_err());
     assert!(TransferIdentity::new("peer", "").is_err());
 }

@@ -81,23 +81,6 @@ impl TransferIdentity {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ConfirmedOffset {
-    pub offset: u64,
-    pub total: u64,
-}
-
-impl ConfirmedOffset {
-    #[allow(dead_code)]
-    pub fn new(offset: u64, total: u64) -> Result<Self, &'static str> {
-        if offset > total {
-            return Err("confirmed offset exceeds transfer size");
-        }
-        Ok(Self { offset, total })
-    }
-}
-
 /// Progress is advisory data, but it is emitted once per transfer chunk. Keep
 /// the queue bounded so a stalled event consumer cannot retain an entire file
 /// transfer in memory; the producer naturally backpressures on this lane.
