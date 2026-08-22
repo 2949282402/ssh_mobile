@@ -151,7 +151,52 @@ async fn start_file_send_rejects_invalid_source_and_missing_route_before_dispatc
     .await
     .expect_err("unregistered peer must fail closed");
     assert_eq!(no_peer.code, NetworkErrorCode::NoRoute as i32);
+
+    state.peers.write().await.insert(
+        "peer-a".into(),
+        crate::runtime::PeerConfig {
+            endpoint: None,
+            identity_public_key: [1; 32],
+            e2e_public_key: [2; 32],
+            e2ee_policy: network_protocol::E2eePolicy::Required,
+        },
+    );
+    let _lease = ready_stream_lease(&state).await;
+    let no_carrier = start_file_send(
+        Arc::clone(&state),
+        SendFileCommand {
+            transfer_id: "transfer-no-carrier".into(),
+            peer_id: "peer-a".into(),
+            file_path: source.to_string_lossy().into_owned(),
+        },
+    )
+    .await
+    .expect_err("a non-stream path must fail before registering the transfer");
+    assert_eq!(no_carrier.code, NetworkErrorCode::NoRoute as i32);
     tokio::fs::remove_dir_all(&root).await.unwrap();
+}
+
+#[tokio::test]
+async fn business_path_fallback_returns_a_typed_no_route_error() {
+    let state = state();
+    let error = ensure_business_path(
+        &state,
+        "peer-a",
+        "transfer-fallback",
+        CommunicationClass::BulkTransfer,
+        CAPABILITY_RELIABLE_STREAM,
+    )
+    .await
+    .expect_err("missing path and runtime inputs must fail closed");
+    assert!(
+        matches!(
+            error,
+            CoreNetworkError::Cancelled
+                | CoreNetworkError::NoRoute
+                | CoreNetworkError::InvalidPeerId
+        ),
+        "unexpected fallback error: {error:?}"
+    );
 }
 
 #[tokio::test]
@@ -417,6 +462,92 @@ async fn incoming_file_offer_rejects_inactive_carriers_and_invalid_identity() {
     );
     task.await.unwrap();
     endpoint.close(quinn::VarInt::from_u32(0), b"invalid offer test complete");
+}
+
+#[tokio::test]
+async fn outgoing_transfer_pauses_on_lost_path_and_fails_on_source_change() {
+    let lost_state = state();
+    let lease = ready_stream_lease(&lost_state).await;
+    lost_state.close_transport_path("peer-a").await;
+    assert!(!lease.is_active());
+    assert!(
+        lost_state
+            .transfer
+            .manager
+            .register_outgoing(
+                manifest("lost-outgoing"),
+                std::path::PathBuf::from("missing.bin"),
+                "peer-a".into(),
+            )
+            .await
+    );
+    let (endpoint, client, _server) = quic_pair().await;
+    send_file(
+        client,
+        ResumableTransfer {
+            transfer_id: "lost-outgoing".into(),
+            peer_id: "peer-a".into(),
+            session_id: "session-lost".into(),
+            source_path: std::path::PathBuf::from("missing.bin"),
+            manifest: manifest("lost-outgoing"),
+            offset: 0,
+        },
+        Arc::clone(&lost_state),
+        lease,
+    )
+    .await;
+    assert_eq!(
+        lost_state
+            .transfer
+            .manager
+            .snapshot("lost-outgoing")
+            .await
+            .expect("lost transfer remains resumable")
+            .state,
+        network_transfer::TransferState::Paused
+    );
+    endpoint.close(quinn::VarInt::from_u32(0), b"outgoing pause test complete");
+
+    let changed_state = state();
+    let changed_lease = ready_stream_lease(&changed_state).await;
+    let root = std::env::temp_dir().join(format!(
+        "ssh-mobile-outgoing-source-change-{}",
+        std::process::id()
+    ));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    let source = root.join("source.bin");
+    tokio::fs::write(&source, b"changed").await.unwrap();
+    let transfer_id = "changed-outgoing";
+    assert!(
+        changed_state
+            .transfer
+            .manager
+            .register_outgoing(manifest(transfer_id), source.clone(), "peer-a".into(),)
+            .await
+    );
+    let (endpoint, client, _server) = quic_pair().await;
+    send_file(
+        client,
+        ResumableTransfer {
+            transfer_id: transfer_id.into(),
+            peer_id: "peer-a".into(),
+            session_id: "session-changed".into(),
+            source_path: source,
+            manifest: manifest(transfer_id),
+            offset: 0,
+        },
+        Arc::clone(&changed_state),
+        changed_lease,
+    )
+    .await;
+    assert!(changed_state
+        .transfer
+        .manager
+        .snapshot(transfer_id)
+        .await
+        .is_none());
+    endpoint.close(quinn::VarInt::from_u32(0), b"source change test complete");
+    tokio::fs::remove_dir_all(root).await.unwrap();
 }
 
 #[tokio::test]
