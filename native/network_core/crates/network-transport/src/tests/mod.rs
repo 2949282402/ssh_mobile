@@ -2,6 +2,7 @@ use super::*;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
 #[tokio::test]
@@ -236,11 +237,23 @@ async fn websocket_split_halves_deliver_duplex_binary_frames() {
             futures_util::SinkExt::send(&mut socket, Message::Binary(payload))
                 .await
                 .unwrap();
-            // Complete the WebSocket close handshake instead of dropping the
-            // accepted socket immediately after the echo. A reset here races
-            // the split reader and is reported as a protocol error on a busy
-            // CI runner even though the binary frame was delivered.
-            futures_util::SinkExt::close(&mut socket).await.unwrap();
+            // Keep the accepted socket alive until the client acknowledges
+            // the echo and sends its close frame. Dropping it immediately can
+            // reset the split reader before it consumes the binary payload.
+            while let Some(message) = futures_util::StreamExt::next(&mut socket).await {
+                match message.unwrap() {
+                    Message::Close(_) => {
+                        futures_util::SinkExt::close(&mut socket).await.unwrap();
+                        break;
+                    }
+                    Message::Ping(payload) => {
+                        futures_util::SinkExt::send(&mut socket, Message::Pong(payload))
+                            .await
+                            .unwrap();
+                    }
+                    _ => {}
+                }
+            }
         }
     });
 
@@ -257,8 +270,10 @@ async fn websocket_split_halves_deliver_duplex_binary_frames() {
         Err(TransportError::FrameTooLarge)
     ));
     // The halves are independent: send and receive concurrently (duplex).
+    let (echo_received, wait_for_echo) = oneshot::channel();
     let write = tokio::spawn(async move {
         let sent = writer.send(b"websocket-split").await?;
+        wait_for_echo.await.map_err(|_| TransportError::Closed)?;
         writer.close().await?;
         Ok::<_, TransportError>(sent)
     });
@@ -267,6 +282,9 @@ async fn websocket_split_halves_deliver_duplex_binary_frames() {
         .expect("split reader did not receive the echo")
         .unwrap();
     assert_eq!(received, b"websocket-split");
+    echo_received
+        .send(())
+        .expect("split writer task exited before receiving the echo");
     assert_eq!(
         write.await.expect("split writer task panicked").unwrap(),
         b"websocket-split".len()
