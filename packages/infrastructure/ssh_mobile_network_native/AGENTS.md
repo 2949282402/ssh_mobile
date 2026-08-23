@@ -1,4 +1,4 @@
-最新更新时间：2026-08-19
+最新更新时间：2026-08-24
 
 # ssh_mobile_network_native 维护约束
 
@@ -7,6 +7,10 @@
 允许修改 Dart FFI facade、native asset hook、平台构建配置、Rust 协议绑定和对应
 测试；协议字节、状态枚举和构建目标变化必须同步 Network Transport 合约。Realtime
 command/event 的类型化 API 必须继续隐藏 Rust handle、Socket 和 WebRTC 内部对象。
+
+`NativeNetworkProtocol` 是稳定的静态 facade：command encoding、event envelope、
+Peer/Delivery/Transfer/Realtime/Stream typed mapping 和 FFI 边界值校验由各自内部
+collaborator 拥有。新增 wire family 必须进入其所属 decoder，不得把实现重新堆回 facade。
 
 ## 禁止依赖
 

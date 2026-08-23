@@ -1,4 +1,4 @@
-> Last updated: 2026-08-22
+> Last updated: 2026-08-24
 
 # SDK Current State
 
@@ -12,7 +12,9 @@ the retired v1 route/session owner model.
 - `network_transport` provides the single App-scoped native runtime and
   borrowed command/Realtime gateways.
 - `ssh_mobile_network_native` runs native event polling on a helper isolate and
-  exposes typed Protobuf commands and events.
+  exposes typed Protobuf commands and events through a narrow facade; command
+  encoding, envelope dispatch, Peer/Delivery/Transfer/Realtime/Stream mapping,
+  and FFI boundary validation are separate stateless owners.
 - Rust owns authenticated QUIC, generic TCP/WebSocket carriers, UDP datagrams,
   WSS Relay integration, native WebRTC, `PeerSupervisor` lifecycle,
   `PeerPathManager` Direct/Relay physical carriers, Delivery/Recovery,

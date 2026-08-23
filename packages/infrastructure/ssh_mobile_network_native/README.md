@@ -1,4 +1,4 @@
-> Last updated: 2026-08-19
+> Last updated: 2026-08-24
 
 # SSH Mobile Network Native
 
@@ -9,6 +9,12 @@ versioned Protobuf commands and streams raw Protobuf events back to Dart.
 Native event polling runs on a helper isolate because the Rust poll call may
 block. Runtime disposal first asks that isolate to stop, waits for its exit,
 and only then destroys the Rust handle.
+
+`NativeNetworkProtocol` remains the stable static API while its implementation
+is split by ownership: command envelope encoding, event-envelope dispatch,
+Peer/environment mapping, Delivery/Transfer mapping, Realtime/SSH Stream
+mapping, and bounded FFI value validation. These collaborators do not change
+wire tags or expose native resources.
 
 The current Network Protocol V2 runtime handles peer registration with pinned Ed25519/X25519
 keys, per-peer `PathManager` selection, authenticated Quinn sessions, approved

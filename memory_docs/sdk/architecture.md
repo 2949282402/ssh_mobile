@@ -1,4 +1,4 @@
-> Last updated: 2026-08-20
+> Last updated: 2026-08-24
 
 # SDK Architecture
 
@@ -22,7 +22,9 @@ Ownership rules:
 - `network_transport` owns the single App-scoped native-runtime facade and
   lends bounded gateways; borrowers release subscriptions, not the native handle.
 - `ssh_mobile_network_native` owns the helper isolate and explicit native
-  `start → stop → destroy` binding lifecycle.
+  `start → stop → destroy` binding lifecycle. Its stable protocol facade
+  delegates command encoding, event-envelope dispatch, typed domain mapping,
+  and bounded FFI value validation to separate stateless collaborators.
 - Rust `network-core` owns the `PeerSupervisor` lifecycle owner,
   `PeerPathManager` Direct/Relay physical carriers, transport-scoped
   ConnectionSession security state, Delivery/Transfer managers, full-epoch
