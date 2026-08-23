@@ -685,6 +685,99 @@ async fn cancelled_attempt_allows_immediate_reconnect() {
     state.fail_session("peer-b", new_session_id).await;
 }
 
+#[tokio::test]
+async fn cancelled_connect_can_immediately_start_second_connect() {
+    let (state, _event_rx, _configured_control) = configured_reuse_state().await;
+    let first_control = StubControl::new(
+        ResolveStatus::Ready,
+        Some(stage_c_ready_unreachable_direct_snapshot()),
+    );
+    first_control.hold_offer();
+    *state.relay.control.write().await = Some(first_control.clone());
+
+    let first_coordinator = Arc::new(ConnectivityAttemptCoordinator::new(Arc::clone(&state)));
+    let first_task = {
+        let coordinator = Arc::clone(&first_coordinator);
+        tokio::spawn(async move {
+            coordinator
+                .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
+                .await
+        })
+    };
+    first_control.wait_offer_started().await;
+    let old_session_id = state
+        .connection_sessions
+        .current_session_id("peer-b")
+        .await
+        .expect("first coordinator must own a Session before Offer");
+
+    first_task.abort();
+    assert!(first_task
+        .await
+        .expect_err("first connect must abort")
+        .is_cancelled());
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if state.connection_sessions.current_session_id("peer-b").await != Some(old_session_id)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cancelled coordinator must retire its old Session");
+
+    let second_control = StubControl::new(
+        ResolveStatus::Ready,
+        Some(stage_c_ready_relay_only_snapshot()),
+    );
+    second_control.hold_offer();
+    *state.relay.control.write().await = Some(second_control.clone());
+
+    let second_coordinator = Arc::new(ConnectivityAttemptCoordinator::new(Arc::clone(&state)));
+    let second_task = {
+        let coordinator = Arc::clone(&second_coordinator);
+        tokio::spawn(async move {
+            coordinator
+                .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
+                .await
+        })
+    };
+    second_control.wait_offer_started().await;
+    let new_session_id = state
+        .connection_sessions
+        .current_session_id("peer-b")
+        .await
+        .expect("second coordinator must own a new Session before Offer release");
+
+    assert!(second_control.resolve_calls() >= 1);
+    assert!(second_control.connectivity_calls() >= 1);
+    assert_ne!(new_session_id, old_session_id);
+
+    state.fail_session("peer-b", old_session_id).await;
+    assert_eq!(
+        state.connection_sessions.current_session_id("peer-b").await,
+        Some(new_session_id),
+        "stale cancellation cleanup must not retire the replacement Session"
+    );
+
+    second_control.release_offer();
+    let result = tokio::time::timeout(Duration::from_secs(2), second_task)
+        .await
+        .expect("second coordinator must not remain permanently InProgress")
+        .expect("second coordinator task");
+    assert!(
+        result.is_err(),
+        "the closed test candidate must fail normally: {result:?}"
+    );
+    assert_eq!(
+        state.connection_sessions.current_session_id("peer-b").await,
+        None,
+        "failed replacement coordinator must retire its own Session"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn overall_timeout_does_not_poison_next_connect() {
     let (state, _event_rx, _configured_control) = configured_reuse_state().await;
@@ -752,6 +845,104 @@ async fn overall_timeout_does_not_poison_next_connect() {
 
     state.close_transport_path("peer-b").await;
     state.fail_session("peer-b", new_session_id).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn overall_timeout_allows_real_second_connect() {
+    let (state, _event_rx, _configured_control) = configured_reuse_state().await;
+    let first_control = StubControl::timeout();
+    *state.relay.control.write().await = Some(first_control.clone());
+
+    let first_coordinator = Arc::new(ConnectivityAttemptCoordinator::new(Arc::clone(&state)));
+    let first_task = {
+        let coordinator = Arc::clone(&first_coordinator);
+        tokio::spawn(async move {
+            coordinator
+                .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
+                .await
+        })
+    };
+    let old_session_id = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if first_control.resolve_calls() >= 1 {
+                if let Some(session_id) =
+                    state.connection_sessions.current_session_id("peer-b").await
+                {
+                    break session_id;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("timeout coordinator must reach authoritative Resolve");
+
+    tokio::time::advance(super::super::OVERALL_CONNECT_BUDGET + Duration::from_millis(1)).await;
+    let result = first_task.await.expect("overall timeout task");
+    assert!(
+        matches!(result, Err(ref error) if error.code == NetworkErrorCode::Timeout as i32),
+        "first coordinator must return Timeout: {result:?}"
+    );
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if state.connection_sessions.current_session_id("peer-b").await != Some(old_session_id)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("overall timeout cleanup must retire the old Session");
+
+    let second_control = StubControl::new(
+        ResolveStatus::Ready,
+        Some(stage_c_ready_relay_only_snapshot()),
+    );
+    second_control.hold_offer();
+    *state.relay.control.write().await = Some(second_control.clone());
+
+    let second_coordinator = Arc::new(ConnectivityAttemptCoordinator::new(Arc::clone(&state)));
+    let second_task = {
+        let coordinator = Arc::clone(&second_coordinator);
+        tokio::spawn(async move {
+            coordinator
+                .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
+                .await
+        })
+    };
+    second_control.wait_offer_started().await;
+    let new_session_id = state
+        .connection_sessions
+        .current_session_id("peer-b")
+        .await
+        .expect("second coordinator must reach Offer with a new Session");
+
+    assert!(second_control.resolve_calls() >= 1);
+    assert!(second_control.connectivity_calls() >= 1);
+    assert_ne!(new_session_id, old_session_id);
+
+    state.fail_session("peer-b", old_session_id).await;
+    assert_eq!(
+        state.connection_sessions.current_session_id("peer-b").await,
+        Some(new_session_id),
+        "stale timeout cleanup must not retire the replacement Session"
+    );
+
+    second_control.release_offer();
+    let result = tokio::time::timeout(Duration::from_secs(2), second_task)
+        .await
+        .expect("second coordinator must not remain permanently InProgress")
+        .expect("second coordinator task");
+    assert!(
+        result.is_err(),
+        "the closed test candidate must fail normally: {result:?}"
+    );
+    assert_eq!(
+        state.connection_sessions.current_session_id("peer-b").await,
+        None,
+        "failed replacement coordinator must retire its own Session"
+    );
 }
 
 #[tokio::test]
@@ -2802,6 +2993,58 @@ fn peer_without_endpoint() -> crate::runtime::PeerConfig {
     }
 }
 
+/// Test-local gate that keeps a real coordinator inside Stage B after its
+/// Resolve/Offer evidence has been recorded.  It makes the reconnect tests
+/// deterministic without adding a production injection point.
+struct StubOfferGate {
+    started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    hold: std::sync::atomic::AtomicBool,
+    started_flag: std::sync::atomic::AtomicBool,
+}
+
+impl StubOfferGate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            started: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+            hold: std::sync::atomic::AtomicBool::new(false),
+            started_flag: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
+    fn hold(&self) {
+        self.hold.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    async fn wait_started(&self) {
+        loop {
+            if self.started_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            let notified = self.started.notified();
+            if self.started_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    fn release(&self) {
+        self.hold.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.release.notify_one();
+    }
+
+    async fn wait_if_held(&self) {
+        if self.hold.load(std::sync::atomic::Ordering::SeqCst) {
+            self.started_flag
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            self.started.notify_one();
+            self.release.notified().await;
+        }
+    }
+}
+
 /// 预置 Resolve 状态的 mock 控制面（测试用）。
 struct StubControl {
     status: network_relay::v2::ResolveStatus,
@@ -2821,6 +3064,7 @@ struct StubControl {
     attempt_id_target: std::sync::Mutex<Option<Arc<std::sync::Mutex<Option<String>>>>>,
     ownership_state: std::sync::Mutex<Option<Arc<RuntimeState>>>,
     first_resolve_saw_owned_session: Arc<std::sync::atomic::AtomicBool>,
+    offer_gate: Arc<StubOfferGate>,
 }
 
 impl StubControl {
@@ -2846,6 +3090,7 @@ impl StubControl {
             attempt_id_target: std::sync::Mutex::new(None),
             ownership_state: std::sync::Mutex::new(None),
             first_resolve_saw_owned_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            offer_gate: StubOfferGate::new(),
         })
     }
 
@@ -2868,6 +3113,7 @@ impl StubControl {
             attempt_id_target: std::sync::Mutex::new(None),
             ownership_state: std::sync::Mutex::new(None),
             first_resolve_saw_owned_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            offer_gate: StubOfferGate::new(),
         })
     }
 
@@ -2890,6 +3136,7 @@ impl StubControl {
             attempt_id_target: std::sync::Mutex::new(None),
             ownership_state: std::sync::Mutex::new(None),
             first_resolve_saw_owned_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            offer_gate: StubOfferGate::new(),
         })
     }
 
@@ -2929,6 +3176,18 @@ impl StubControl {
             .relay_reservation
             .lock()
             .expect("stub relay reservation lock") = Some(reservation);
+    }
+
+    fn hold_offer(&self) {
+        self.offer_gate.hold();
+    }
+
+    async fn wait_offer_started(&self) {
+        self.offer_gate.wait_started().await;
+    }
+
+    fn release_offer(&self) {
+        self.offer_gate.release();
     }
 
     fn first_resolve_saw_owned_session(&self) -> bool {
@@ -3101,6 +3360,7 @@ impl crate::discovery::DiscoveryControlPlane for StubControl {
                 answer.attempt_id = attempt_id;
             }
         }
+        let offer_gate = Arc::clone(&self.offer_gate);
         Box::pin(async move {
             let resolved = self.resolve_peer(&target_device_id).await?;
             let status = resolved.status;
@@ -3118,6 +3378,7 @@ impl crate::discovery::DiscoveryControlPlane for StubControl {
             self.record_call("offer");
             self.connectivity_calls
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            offer_gate.wait_if_held().await;
             Ok(network_relay::v2::ConnectivityAttemptStart::new(
                 resolved,
                 async move { answer.ok_or(RelayError::NotConnected) },
