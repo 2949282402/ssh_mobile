@@ -36,6 +36,10 @@ Ownership rules:
   machine and route/session effects. Candidate snapshot/cache/ranking policy is
   independent from authoritative Resolve and Relay fallback eligibility, so a
   configured endpoint cannot bypass Relay status, E2EE, capability, or budget.
+- ReliableStream wire frames, QUIC preambles, and Relay tokens are stateless
+  codec concerns. The stream manager owns registry, sequence, bounded buffers,
+  tombstones, and one retained `PathLease`; the SSH gateway adapter alone maps
+  FFI commands and pumps bytes to local sshd under the runtime supervisor.
 - Each transport Connection owns exactly one `ConnectionSession`; a new
   connection gets a new `SessionId` and Noise root, and transport loss destroys
   that session. Delivery and Transfer managers own the business state that may

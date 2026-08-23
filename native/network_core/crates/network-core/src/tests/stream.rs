@@ -452,7 +452,8 @@ fn stream_wire_boundaries_reject_invalid_lengths_identity_and_services() {
 
 #[test]
 fn stream_command_handles_validate_presence_identity_and_range() {
-    let missing = parse_stream_handle(None, "peer-a", "ssh_stream_data").expect_err("missing");
+    let missing = SshGatewayAdapter::parse_stream_handle(None, "peer-a", "ssh_stream_data")
+        .expect_err("missing");
     assert_eq!(missing.code, NetworkErrorCode::InvalidArgument as i32);
 
     for handle in [
@@ -473,11 +474,12 @@ fn stream_command_handles_validate_presence_identity_and_range() {
             stream_id: u32::from(u16::MAX) + 1,
         },
     ] {
-        let error = parse_stream_handle(Some(handle), "peer-a", "ssh_stream_data")
-            .expect_err("invalid handle");
+        let error =
+            SshGatewayAdapter::parse_stream_handle(Some(handle), "peer-a", "ssh_stream_data")
+                .expect_err("invalid handle");
         assert_eq!(error.code, NetworkErrorCode::InvalidArgument as i32);
     }
-    let (handle, stream_id) = parse_stream_handle(
+    let (handle, stream_id) = SshGatewayAdapter::parse_stream_handle(
         Some(StreamHandle {
             opener_device_id: "peer-a".into(),
             stream_id: 7,

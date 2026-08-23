@@ -26,6 +26,10 @@ the retired v1 route/session owner model.
   session, while Delivery and Transfer business state resumes by business ID.
 - Discovery attempts preserve the full 128-bit `RuntimeEpoch`; revisions are ordered only within the same epoch, and late Answer candidates can still join the live Direct race.
 - ReliableStream commands and events use `StreamHandle(opener_device_id, stream_id)` end-to-end, so reverse-direction streams with the same numeric ID remain distinct.
+- ReliableStream framing/preamble/token codec, logical stream manager, and SSH
+  gateway/FFI adapter are independent owners. The manager alone retains the
+  path lease and bounded buffer; the gateway only pumps opaque bytes to local
+  sshd and does not interpret SSH protocol.
 - Queue acceptance, native command completion, transport acknowledgement, and
   application acknowledgement remain distinct.
 - Native command results are admitted through bounded exactly-once guards:

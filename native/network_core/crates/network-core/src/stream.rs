@@ -155,29 +155,230 @@ impl StreamError {
 // Wire encoders / decoders (generic-route frames and QUIC preamble)
 // ---------------------------------------------------------------------------
 
-fn append_stream_opener(out: &mut Vec<u8>, opener_peer_id: &str) -> Result<(), StreamError> {
-    if opener_peer_id.is_empty() || opener_peer_id.len() > 128 {
-        return Err(StreamError::InvalidArgument);
-    }
-    out.push(opener_peer_id.len() as u8);
-    out.extend_from_slice(opener_peer_id.as_bytes());
-    Ok(())
-}
+/// Owns every ReliableStream wire representation: generic-route frames, QUIC
+/// preambles, and Relay stream tokens. It has no stream registry or path lease.
+struct StreamFrameCodec;
 
-fn decode_stream_opener(payload: &[u8], cursor: &mut usize) -> Result<String, StreamError> {
-    if payload.len() < *cursor + STREAM_OPENER_LENGTH_BYTES {
-        return Err(StreamError::InvalidFrame);
+impl StreamFrameCodec {
+    fn append_stream_opener(out: &mut Vec<u8>, opener_peer_id: &str) -> Result<(), StreamError> {
+        if opener_peer_id.is_empty() || opener_peer_id.len() > 128 {
+            return Err(StreamError::InvalidArgument);
+        }
+        out.push(opener_peer_id.len() as u8);
+        out.extend_from_slice(opener_peer_id.as_bytes());
+        Ok(())
     }
-    let opener_len = payload[*cursor] as usize;
-    *cursor += STREAM_OPENER_LENGTH_BYTES;
-    if opener_len == 0 || opener_len > 128 || payload.len() < *cursor + opener_len {
-        return Err(StreamError::InvalidFrame);
+
+    fn decode_stream_opener(payload: &[u8], cursor: &mut usize) -> Result<String, StreamError> {
+        if payload.len() < *cursor + STREAM_OPENER_LENGTH_BYTES {
+            return Err(StreamError::InvalidFrame);
+        }
+        let opener_len = payload[*cursor] as usize;
+        *cursor += STREAM_OPENER_LENGTH_BYTES;
+        if opener_len == 0 || opener_len > 128 || payload.len() < *cursor + opener_len {
+            return Err(StreamError::InvalidFrame);
+        }
+        let opener = std::str::from_utf8(&payload[*cursor..*cursor + opener_len])
+            .map_err(|_| StreamError::InvalidFrame)?
+            .to_string();
+        *cursor += opener_len;
+        Ok(opener)
     }
-    let opener = std::str::from_utf8(&payload[*cursor..*cursor + opener_len])
-        .map_err(|_| StreamError::InvalidFrame)?
-        .to_string();
-    *cursor += opener_len;
-    Ok(opener)
+
+    pub(crate) fn encode_stream_bytes_frame(
+        opener_peer_id: &str,
+        stream_id: u16,
+        seq: u64,
+        data: &[u8],
+    ) -> Result<Vec<u8>, StreamError> {
+        if data.is_empty() {
+            return Err(StreamError::InvalidArgument);
+        }
+        let mut out = Vec::with_capacity(
+            STREAM_GENERIC_BYTES_HEADER_BYTES + opener_peer_id.len() + data.len(),
+        );
+        Self::append_stream_opener(&mut out, opener_peer_id)?;
+        out.extend_from_slice(&stream_id.to_be_bytes());
+        out.extend_from_slice(&seq.to_be_bytes());
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(data);
+        Ok(out)
+    }
+
+    pub(crate) fn decode_stream_bytes_frame(
+        payload: &[u8],
+    ) -> Result<(String, u16, u64, &[u8]), StreamError> {
+        if payload.len() < STREAM_GENERIC_BYTES_HEADER_BYTES {
+            return Err(StreamError::InvalidFrame);
+        }
+        let mut cursor = 0;
+        let opener = Self::decode_stream_opener(payload, &mut cursor)?;
+        if payload.len() < cursor + STREAM_ID_BYTES + 8 + 4 {
+            return Err(StreamError::InvalidFrame);
+        }
+        let stream_id = u16::from_be_bytes(
+            payload[cursor..cursor + STREAM_ID_BYTES]
+                .try_into()
+                .expect("stream_id bytes"),
+        );
+        cursor += STREAM_ID_BYTES;
+        let seq = u64::from_be_bytes(payload[cursor..cursor + 8].try_into().expect("seq bytes"));
+        cursor += 8;
+        let len =
+            u32::from_be_bytes(payload[cursor..cursor + 4].try_into().expect("len bytes")) as usize;
+        cursor += 4;
+        if len == 0 || cursor + len != payload.len() {
+            return Err(StreamError::InvalidFrame);
+        }
+        Ok((opener, stream_id, seq, &payload[cursor..cursor + len]))
+    }
+
+    pub(crate) fn encode_stream_open_frame(
+        opener_peer_id: &str,
+        stream_id: u16,
+        service: &str,
+    ) -> Result<Vec<u8>, StreamError> {
+        if service.is_empty() || service.len() > MAX_SERVICE_BYTES {
+            return Err(StreamError::InvalidArgument);
+        }
+        let mut out = Vec::with_capacity(
+            STREAM_GENERIC_OPEN_HEADER_BYTES + opener_peer_id.len() + service.len(),
+        );
+        Self::append_stream_opener(&mut out, opener_peer_id)?;
+        out.extend_from_slice(&stream_id.to_be_bytes());
+        out.extend_from_slice(&(service.len() as u16).to_be_bytes());
+        out.extend_from_slice(service.as_bytes());
+        Ok(out)
+    }
+
+    pub(crate) fn decode_stream_open_frame(
+        payload: &[u8],
+    ) -> Result<(String, u16, String), StreamError> {
+        if payload.len() < STREAM_GENERIC_OPEN_HEADER_BYTES {
+            return Err(StreamError::InvalidFrame);
+        }
+        let mut cursor = 0;
+        let opener = Self::decode_stream_opener(payload, &mut cursor)?;
+        if payload.len() < cursor + STREAM_ID_BYTES + 2 {
+            return Err(StreamError::InvalidFrame);
+        }
+        let stream_id = u16::from_be_bytes(
+            payload[cursor..cursor + STREAM_ID_BYTES]
+                .try_into()
+                .expect("stream_id bytes"),
+        );
+        cursor += STREAM_ID_BYTES;
+        let service_len = u16::from_be_bytes(
+            payload[cursor..cursor + 2]
+                .try_into()
+                .expect("service_len bytes"),
+        ) as usize;
+        cursor += 2;
+        if service_len == 0
+            || service_len > MAX_SERVICE_BYTES
+            || cursor + service_len != payload.len()
+        {
+            return Err(StreamError::InvalidFrame);
+        }
+        let service = std::str::from_utf8(&payload[cursor..cursor + service_len])
+            .map_err(|_| StreamError::InvalidFrame)?
+            .to_string();
+        Ok((opener, stream_id, service))
+    }
+
+    pub(crate) fn encode_stream_close_frame(
+        opener_peer_id: &str,
+        stream_id: u16,
+    ) -> Result<Vec<u8>, StreamError> {
+        let mut out = Vec::with_capacity(STREAM_GENERIC_CLOSE_HEADER_BYTES + opener_peer_id.len());
+        Self::append_stream_opener(&mut out, opener_peer_id)?;
+        out.extend_from_slice(&stream_id.to_be_bytes());
+        Ok(out)
+    }
+
+    pub(crate) fn decode_stream_close_frame(payload: &[u8]) -> Result<(String, u16), StreamError> {
+        if payload.len() < STREAM_GENERIC_CLOSE_HEADER_BYTES {
+            return Err(StreamError::InvalidFrame);
+        }
+        let mut cursor = 0;
+        let opener = Self::decode_stream_opener(payload, &mut cursor)?;
+        if payload.len() != cursor + STREAM_ID_BYTES {
+            return Err(StreamError::InvalidFrame);
+        }
+        let stream_id = u16::from_be_bytes(
+            payload[cursor..cursor + STREAM_ID_BYTES]
+                .try_into()
+                .expect("close stream_id bytes"),
+        );
+        Ok((opener, stream_id))
+    }
+
+    /// Extracts the stable `(opener_peer_id, stream_id)` identity from any stream
+    /// frame. Relay uses the same identity to validate its opaque token before
+    /// dispatching the frame to the stream manager.
+    pub(crate) fn decode_stream_frame_identity(
+        kind: GenericFrameKind,
+        payload: &[u8],
+    ) -> Result<(String, u16), StreamError> {
+        match kind {
+            GenericFrameKind::StreamOpen => {
+                let (opener, stream_id, _) = Self::decode_stream_open_frame(payload)?;
+                Ok((opener, stream_id))
+            }
+            GenericFrameKind::StreamBytes => {
+                let (opener, stream_id, _, _) = Self::decode_stream_bytes_frame(payload)?;
+                Ok((opener, stream_id))
+            }
+            GenericFrameKind::StreamClose => Self::decode_stream_close_frame(payload),
+            _ => Err(StreamError::InvalidFrame),
+        }
+    }
+
+    pub(crate) fn encode_quic_stream_preamble(
+        stream_id: u16,
+        service: &str,
+    ) -> Result<Vec<u8>, StreamError> {
+        if service.is_empty() || service.len() > MAX_SERVICE_BYTES {
+            return Err(StreamError::InvalidArgument);
+        }
+        let mut out = Vec::with_capacity(8 + service.len());
+        out.extend_from_slice(&STREAM_QUIC_PREAMBLE_MAGIC);
+        out.extend_from_slice(&stream_id.to_be_bytes());
+        out.extend_from_slice(&(service.len() as u16).to_be_bytes());
+        out.extend_from_slice(service.as_bytes());
+        Ok(out)
+    }
+
+    /// Reads the remainder of a QUIC bidi preamble after the four magic bytes have
+    /// already been consumed by the bidi dispatcher.
+    pub(crate) async fn read_quic_stream_preamble_after_magic(
+        receive: &mut quinn::RecvStream,
+    ) -> Result<(u16, String), StreamError> {
+        let stream_id = receive
+            .read_u16()
+            .await
+            .map_err(|_| StreamError::InvalidFrame)?;
+        let service_len = receive
+            .read_u16()
+            .await
+            .map_err(|_| StreamError::InvalidFrame)? as usize;
+        if service_len == 0 || service_len > MAX_SERVICE_BYTES {
+            return Err(StreamError::InvalidFrame);
+        }
+        let mut service = vec![0u8; service_len];
+        receive
+            .read_exact(&mut service)
+            .await
+            .map_err(|_| StreamError::InvalidFrame)?;
+        let service = String::from_utf8(service).map_err(|_| StreamError::InvalidFrame)?;
+        Ok((stream_id, service))
+    }
+
+    /// Relay 路由的流令牌：稳定绑定 opener peer 与 stream_id，避免两个方向
+    /// 同时使用同一逻辑 id 时共享数据面 token。
+    pub(crate) fn stream_relay_token(opener_peer_id: &str, stream_id: u16) -> String {
+        format!("stream:{opener_peer_id}:{stream_id}")
+    }
 }
 
 pub(crate) fn encode_stream_bytes_frame(
@@ -186,45 +387,13 @@ pub(crate) fn encode_stream_bytes_frame(
     seq: u64,
     data: &[u8],
 ) -> Result<Vec<u8>, StreamError> {
-    if data.is_empty() {
-        return Err(StreamError::InvalidArgument);
-    }
-    let mut out =
-        Vec::with_capacity(STREAM_GENERIC_BYTES_HEADER_BYTES + opener_peer_id.len() + data.len());
-    append_stream_opener(&mut out, opener_peer_id)?;
-    out.extend_from_slice(&stream_id.to_be_bytes());
-    out.extend_from_slice(&seq.to_be_bytes());
-    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
-    out.extend_from_slice(data);
-    Ok(out)
+    StreamFrameCodec::encode_stream_bytes_frame(opener_peer_id, stream_id, seq, data)
 }
 
 pub(crate) fn decode_stream_bytes_frame(
     payload: &[u8],
 ) -> Result<(String, u16, u64, &[u8]), StreamError> {
-    if payload.len() < STREAM_GENERIC_BYTES_HEADER_BYTES {
-        return Err(StreamError::InvalidFrame);
-    }
-    let mut cursor = 0;
-    let opener = decode_stream_opener(payload, &mut cursor)?;
-    if payload.len() < cursor + STREAM_ID_BYTES + 8 + 4 {
-        return Err(StreamError::InvalidFrame);
-    }
-    let stream_id = u16::from_be_bytes(
-        payload[cursor..cursor + STREAM_ID_BYTES]
-            .try_into()
-            .expect("stream_id bytes"),
-    );
-    cursor += STREAM_ID_BYTES;
-    let seq = u64::from_be_bytes(payload[cursor..cursor + 8].try_into().expect("seq bytes"));
-    cursor += 8;
-    let len =
-        u32::from_be_bytes(payload[cursor..cursor + 4].try_into().expect("len bytes")) as usize;
-    cursor += 4;
-    if len == 0 || cursor + len != payload.len() {
-        return Err(StreamError::InvalidFrame);
-    }
-    Ok((opener, stream_id, seq, &payload[cursor..cursor + len]))
+    StreamFrameCodec::decode_stream_bytes_frame(payload)
 }
 
 pub(crate) fn encode_stream_open_frame(
@@ -232,143 +401,48 @@ pub(crate) fn encode_stream_open_frame(
     stream_id: u16,
     service: &str,
 ) -> Result<Vec<u8>, StreamError> {
-    if service.is_empty() || service.len() > MAX_SERVICE_BYTES {
-        return Err(StreamError::InvalidArgument);
-    }
-    let mut out =
-        Vec::with_capacity(STREAM_GENERIC_OPEN_HEADER_BYTES + opener_peer_id.len() + service.len());
-    append_stream_opener(&mut out, opener_peer_id)?;
-    out.extend_from_slice(&stream_id.to_be_bytes());
-    out.extend_from_slice(&(service.len() as u16).to_be_bytes());
-    out.extend_from_slice(service.as_bytes());
-    Ok(out)
+    StreamFrameCodec::encode_stream_open_frame(opener_peer_id, stream_id, service)
 }
 
 pub(crate) fn decode_stream_open_frame(
     payload: &[u8],
 ) -> Result<(String, u16, String), StreamError> {
-    if payload.len() < STREAM_GENERIC_OPEN_HEADER_BYTES {
-        return Err(StreamError::InvalidFrame);
-    }
-    let mut cursor = 0;
-    let opener = decode_stream_opener(payload, &mut cursor)?;
-    if payload.len() < cursor + STREAM_ID_BYTES + 2 {
-        return Err(StreamError::InvalidFrame);
-    }
-    let stream_id = u16::from_be_bytes(
-        payload[cursor..cursor + STREAM_ID_BYTES]
-            .try_into()
-            .expect("stream_id bytes"),
-    );
-    cursor += STREAM_ID_BYTES;
-    let service_len = u16::from_be_bytes(
-        payload[cursor..cursor + 2]
-            .try_into()
-            .expect("service_len bytes"),
-    ) as usize;
-    cursor += 2;
-    if service_len == 0 || service_len > MAX_SERVICE_BYTES || cursor + service_len != payload.len()
-    {
-        return Err(StreamError::InvalidFrame);
-    }
-    let service = std::str::from_utf8(&payload[cursor..cursor + service_len])
-        .map_err(|_| StreamError::InvalidFrame)?
-        .to_string();
-    Ok((opener, stream_id, service))
+    StreamFrameCodec::decode_stream_open_frame(payload)
 }
 
 pub(crate) fn encode_stream_close_frame(
     opener_peer_id: &str,
     stream_id: u16,
 ) -> Result<Vec<u8>, StreamError> {
-    let mut out = Vec::with_capacity(STREAM_GENERIC_CLOSE_HEADER_BYTES + opener_peer_id.len());
-    append_stream_opener(&mut out, opener_peer_id)?;
-    out.extend_from_slice(&stream_id.to_be_bytes());
-    Ok(out)
+    StreamFrameCodec::encode_stream_close_frame(opener_peer_id, stream_id)
 }
 
 pub(crate) fn decode_stream_close_frame(payload: &[u8]) -> Result<(String, u16), StreamError> {
-    if payload.len() < STREAM_GENERIC_CLOSE_HEADER_BYTES {
-        return Err(StreamError::InvalidFrame);
-    }
-    let mut cursor = 0;
-    let opener = decode_stream_opener(payload, &mut cursor)?;
-    if payload.len() != cursor + STREAM_ID_BYTES {
-        return Err(StreamError::InvalidFrame);
-    }
-    let stream_id = u16::from_be_bytes(
-        payload[cursor..cursor + STREAM_ID_BYTES]
-            .try_into()
-            .expect("close stream_id bytes"),
-    );
-    Ok((opener, stream_id))
+    StreamFrameCodec::decode_stream_close_frame(payload)
 }
 
-/// Extracts the stable `(opener_peer_id, stream_id)` identity from any stream
-/// frame. Relay uses the same identity to validate its opaque token before
-/// dispatching the frame to the stream manager.
 pub(crate) fn decode_stream_frame_identity(
     kind: GenericFrameKind,
     payload: &[u8],
 ) -> Result<(String, u16), StreamError> {
-    match kind {
-        GenericFrameKind::StreamOpen => {
-            let (opener, stream_id, _) = decode_stream_open_frame(payload)?;
-            Ok((opener, stream_id))
-        }
-        GenericFrameKind::StreamBytes => {
-            let (opener, stream_id, _, _) = decode_stream_bytes_frame(payload)?;
-            Ok((opener, stream_id))
-        }
-        GenericFrameKind::StreamClose => decode_stream_close_frame(payload),
-        _ => Err(StreamError::InvalidFrame),
-    }
+    StreamFrameCodec::decode_stream_frame_identity(kind, payload)
 }
 
 pub(crate) fn encode_quic_stream_preamble(
     stream_id: u16,
     service: &str,
 ) -> Result<Vec<u8>, StreamError> {
-    if service.is_empty() || service.len() > MAX_SERVICE_BYTES {
-        return Err(StreamError::InvalidArgument);
-    }
-    let mut out = Vec::with_capacity(8 + service.len());
-    out.extend_from_slice(&STREAM_QUIC_PREAMBLE_MAGIC);
-    out.extend_from_slice(&stream_id.to_be_bytes());
-    out.extend_from_slice(&(service.len() as u16).to_be_bytes());
-    out.extend_from_slice(service.as_bytes());
-    Ok(out)
+    StreamFrameCodec::encode_quic_stream_preamble(stream_id, service)
 }
 
-/// Reads the remainder of a QUIC bidi preamble after the four magic bytes have
-/// already been consumed by the bidi dispatcher.
 pub(crate) async fn read_quic_stream_preamble_after_magic(
     receive: &mut quinn::RecvStream,
 ) -> Result<(u16, String), StreamError> {
-    let stream_id = receive
-        .read_u16()
-        .await
-        .map_err(|_| StreamError::InvalidFrame)?;
-    let service_len = receive
-        .read_u16()
-        .await
-        .map_err(|_| StreamError::InvalidFrame)? as usize;
-    if service_len == 0 || service_len > MAX_SERVICE_BYTES {
-        return Err(StreamError::InvalidFrame);
-    }
-    let mut service = vec![0u8; service_len];
-    receive
-        .read_exact(&mut service)
-        .await
-        .map_err(|_| StreamError::InvalidFrame)?;
-    let service = String::from_utf8(service).map_err(|_| StreamError::InvalidFrame)?;
-    Ok((stream_id, service))
+    StreamFrameCodec::read_quic_stream_preamble_after_magic(receive).await
 }
 
-/// Relay 路由的流令牌：稳定绑定 opener peer 与 stream_id，避免两个方向
-/// 同时使用同一逻辑 id 时共享数据面 token。
 pub(crate) fn stream_relay_token(opener_peer_id: &str, stream_id: u16) -> String {
-    format!("stream:{opener_peer_id}:{stream_id}")
+    StreamFrameCodec::stream_relay_token(opener_peer_id, stream_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -1697,211 +1771,249 @@ pub(crate) async fn spawn_quic_stream_reader(
 /// The SSH Server Service (design §21 option B): bridges a native byte stream
 /// whose service hint is `ssh` to a local TCP sshd socket. Zero SSH protocol
 /// code; the bridge just pumps bytes both ways.
+struct SshGatewayAdapter;
+
+impl SshGatewayAdapter {
+    pub(crate) fn spawn_ssh_gateway(
+        state: Arc<RuntimeState>,
+        peer_id: String,
+        opener: StreamOpener,
+        stream_id: u16,
+    ) {
+        let supervisor = Arc::clone(&state.task_supervisor);
+        let _ = supervisor.spawn_runtime("ssh-gateway", async move {
+            let gateway_port = state
+                .stream_gateway_port
+                .load(std::sync::atomic::Ordering::Acquire);
+            let address = format!("{STREAM_LOCAL_HOST}:{gateway_port}");
+            let socket = match TcpStream::connect(address.as_str()).await {
+                Ok(socket) => socket,
+                Err(error) => {
+                    tracing::warn!(
+                        peer_id = %peer_id,
+                        stream_id,
+                        %error,
+                        "SSH gateway could not connect to local sshd"
+                    );
+                    let _ = close_stream_with_opener(&state, &peer_id, opener, stream_id).await;
+                    return;
+                }
+            };
+            let (mut read_half, mut write_half) = socket.into_split();
+
+            // socket -> native stream
+            let socket_to_stream = tokio::spawn({
+                let state = Arc::clone(&state);
+                let peer_id = peer_id.clone();
+                async move {
+                    let mut buf = vec![0u8; STREAM_SOCKET_CHUNK_BYTES];
+                    loop {
+                        match read_half.read(&mut buf).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                if send_stream_with_opener(
+                                    &state,
+                                    &peer_id,
+                                    opener,
+                                    stream_id,
+                                    &buf[..n],
+                                )
+                                .await
+                                .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let _ = close_stream_with_opener(&state, &peer_id, opener, stream_id).await;
+                }
+            });
+
+            // native stream -> socket
+            let stream_to_socket = tokio::spawn({
+                let state = Arc::clone(&state);
+                let peer_id = peer_id.clone();
+                async move {
+                    let mut buf = vec![0u8; STREAM_SOCKET_CHUNK_BYTES];
+                    loop {
+                        match receive_stream_with_opener(
+                            &state, &peer_id, opener, stream_id, &mut buf,
+                        )
+                        .await
+                        {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                if write_half.write_all(&buf[..n]).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let _ = write_half.shutdown().await;
+                }
+            });
+
+            let _ = tokio::join!(socket_to_stream, stream_to_socket);
+            let _ = close_stream_with_opener(&state, &peer_id, opener, stream_id).await;
+        });
+    }
+
+    // ---------------------------------------------------------------------------
+    // FFI command handlers
+    // ---------------------------------------------------------------------------
+
+    fn parse_stream_handle(
+        handle: Option<StreamHandle>,
+        peer_id: &str,
+        operation: &str,
+    ) -> Result<(StreamHandle, u16), ProtocolError> {
+        let handle = handle.ok_or_else(|| {
+            protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "handle is required",
+                operation,
+                peer_id,
+            )
+        })?;
+        if !validate_peer(&handle.opener_device_id) {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "handle.opener_device_id must contain 1-128 characters",
+                operation,
+                peer_id,
+            ));
+        }
+        let stream_id = u16::try_from(handle.stream_id).map_err(|_| {
+            protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "handle.stream_id must be in 1..=65535",
+                operation,
+                peer_id,
+            )
+        })?;
+        if stream_id == 0 {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "handle.stream_id must be non-zero",
+                operation,
+                peer_id,
+            ));
+        }
+        Ok((handle, stream_id))
+    }
+
+    pub(crate) async fn handle_ssh_stream_open(
+        state: Arc<RuntimeState>,
+        command: SshStreamOpenCommand,
+    ) -> Result<(), ProtocolError> {
+        if !validate_peer(&command.peer_id) {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "peer_id must contain 1-128 characters",
+                "ssh_stream_open",
+                &command.peer_id,
+            ));
+        }
+        if command.service.is_empty() || command.service.len() > MAX_SERVICE_BYTES {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "service must contain 1-128 characters",
+                "ssh_stream_open",
+                &command.peer_id,
+            ));
+        }
+        let (handle, stream_id) =
+            Self::parse_stream_handle(command.handle, &command.peer_id, "ssh_stream_open")?;
+        let local_opener_device_id = local_stream_opener_peer_id(&state)
+            .await
+            .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_open"))?;
+        if handle.opener_device_id != local_opener_device_id {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "ssh stream open handle must identify the local opener",
+                "ssh_stream_open",
+                &command.peer_id,
+            ));
+        }
+        open_stream(
+            &state,
+            &command.peer_id,
+            stream_id,
+            &command.service,
+            StreamConsumer::Event,
+        )
+        .await
+        .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_open"))
+    }
+
+    pub(crate) async fn handle_ssh_stream_data(
+        state: Arc<RuntimeState>,
+        command: SshStreamDataCommand,
+    ) -> Result<(), ProtocolError> {
+        if !validate_peer(&command.peer_id) {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "peer_id must contain 1-128 characters",
+                "ssh_stream_data",
+                &command.peer_id,
+            ));
+        }
+        let (handle, _) =
+            Self::parse_stream_handle(command.handle, &command.peer_id, "ssh_stream_data")?;
+        send_stream(&state, &command.peer_id, &handle, &command.data)
+            .await
+            .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_data"))
+    }
+
+    pub(crate) async fn handle_ssh_stream_close(
+        state: Arc<RuntimeState>,
+        command: SshStreamCloseCommand,
+    ) -> Result<(), ProtocolError> {
+        if !validate_peer(&command.peer_id) {
+            return Err(protocol_error_with_peer(
+                NetworkErrorCode::InvalidArgument,
+                "peer_id must contain 1-128 characters",
+                "ssh_stream_close",
+                &command.peer_id,
+            ));
+        }
+        let (handle, _) =
+            Self::parse_stream_handle(command.handle, &command.peer_id, "ssh_stream_close")?;
+        close_stream(&state, &command.peer_id, &handle)
+            .await
+            .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_close"))
+    }
+}
+
 pub(crate) fn spawn_ssh_gateway(
     state: Arc<RuntimeState>,
     peer_id: String,
     opener: StreamOpener,
     stream_id: u16,
 ) {
-    let supervisor = Arc::clone(&state.task_supervisor);
-    let _ = supervisor.spawn_runtime("ssh-gateway", async move {
-        let gateway_port = state
-            .stream_gateway_port
-            .load(std::sync::atomic::Ordering::Acquire);
-        let address = format!("{STREAM_LOCAL_HOST}:{gateway_port}");
-        let socket = match TcpStream::connect(address.as_str()).await {
-            Ok(socket) => socket,
-            Err(error) => {
-                tracing::warn!(
-                    peer_id = %peer_id,
-                    stream_id,
-                    %error,
-                    "SSH gateway could not connect to local sshd"
-                );
-                let _ = close_stream_with_opener(&state, &peer_id, opener, stream_id).await;
-                return;
-            }
-        };
-        let (mut read_half, mut write_half) = socket.into_split();
-
-        // socket -> native stream
-        let socket_to_stream = tokio::spawn({
-            let state = Arc::clone(&state);
-            let peer_id = peer_id.clone();
-            async move {
-                let mut buf = vec![0u8; STREAM_SOCKET_CHUNK_BYTES];
-                loop {
-                    match read_half.read(&mut buf).await {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            if send_stream_with_opener(
-                                &state,
-                                &peer_id,
-                                opener,
-                                stream_id,
-                                &buf[..n],
-                            )
-                            .await
-                            .is_err()
-                            {
-                                break;
-                            }
-                        }
-                    }
-                }
-                let _ = close_stream_with_opener(&state, &peer_id, opener, stream_id).await;
-            }
-        });
-
-        // native stream -> socket
-        let stream_to_socket = tokio::spawn({
-            let state = Arc::clone(&state);
-            let peer_id = peer_id.clone();
-            async move {
-                let mut buf = vec![0u8; STREAM_SOCKET_CHUNK_BYTES];
-                loop {
-                    match receive_stream_with_opener(&state, &peer_id, opener, stream_id, &mut buf)
-                        .await
-                    {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            if write_half.write_all(&buf[..n]).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                }
-                let _ = write_half.shutdown().await;
-            }
-        });
-
-        let _ = tokio::join!(socket_to_stream, stream_to_socket);
-        let _ = close_stream_with_opener(&state, &peer_id, opener, stream_id).await;
-    });
-}
-
-// ---------------------------------------------------------------------------
-// FFI command handlers
-// ---------------------------------------------------------------------------
-
-fn parse_stream_handle(
-    handle: Option<StreamHandle>,
-    peer_id: &str,
-    operation: &str,
-) -> Result<(StreamHandle, u16), ProtocolError> {
-    let handle = handle.ok_or_else(|| {
-        protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "handle is required",
-            operation,
-            peer_id,
-        )
-    })?;
-    if !validate_peer(&handle.opener_device_id) {
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "handle.opener_device_id must contain 1-128 characters",
-            operation,
-            peer_id,
-        ));
-    }
-    let stream_id = u16::try_from(handle.stream_id).map_err(|_| {
-        protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "handle.stream_id must be in 1..=65535",
-            operation,
-            peer_id,
-        )
-    })?;
-    if stream_id == 0 {
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "handle.stream_id must be non-zero",
-            operation,
-            peer_id,
-        ));
-    }
-    Ok((handle, stream_id))
+    SshGatewayAdapter::spawn_ssh_gateway(state, peer_id, opener, stream_id);
 }
 
 pub(crate) async fn handle_ssh_stream_open(
     state: Arc<RuntimeState>,
     command: SshStreamOpenCommand,
 ) -> Result<(), ProtocolError> {
-    if !validate_peer(&command.peer_id) {
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "peer_id must contain 1-128 characters",
-            "ssh_stream_open",
-            &command.peer_id,
-        ));
-    }
-    if command.service.is_empty() || command.service.len() > MAX_SERVICE_BYTES {
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "service must contain 1-128 characters",
-            "ssh_stream_open",
-            &command.peer_id,
-        ));
-    }
-    let (handle, stream_id) =
-        parse_stream_handle(command.handle, &command.peer_id, "ssh_stream_open")?;
-    let local_opener_device_id = local_stream_opener_peer_id(&state)
-        .await
-        .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_open"))?;
-    if handle.opener_device_id != local_opener_device_id {
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "ssh stream open handle must identify the local opener",
-            "ssh_stream_open",
-            &command.peer_id,
-        ));
-    }
-    open_stream(
-        &state,
-        &command.peer_id,
-        stream_id,
-        &command.service,
-        StreamConsumer::Event,
-    )
-    .await
-    .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_open"))
+    SshGatewayAdapter::handle_ssh_stream_open(state, command).await
 }
 
 pub(crate) async fn handle_ssh_stream_data(
     state: Arc<RuntimeState>,
     command: SshStreamDataCommand,
 ) -> Result<(), ProtocolError> {
-    if !validate_peer(&command.peer_id) {
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "peer_id must contain 1-128 characters",
-            "ssh_stream_data",
-            &command.peer_id,
-        ));
-    }
-    let (handle, _) = parse_stream_handle(command.handle, &command.peer_id, "ssh_stream_data")?;
-    send_stream(&state, &command.peer_id, &handle, &command.data)
-        .await
-        .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_data"))
+    SshGatewayAdapter::handle_ssh_stream_data(state, command).await
 }
 
 pub(crate) async fn handle_ssh_stream_close(
     state: Arc<RuntimeState>,
     command: SshStreamCloseCommand,
 ) -> Result<(), ProtocolError> {
-    if !validate_peer(&command.peer_id) {
-        return Err(protocol_error_with_peer(
-            NetworkErrorCode::InvalidArgument,
-            "peer_id must contain 1-128 characters",
-            "ssh_stream_close",
-            &command.peer_id,
-        ));
-    }
-    let (handle, _) = parse_stream_handle(command.handle, &command.peer_id, "ssh_stream_close")?;
-    close_stream(&state, &command.peer_id, &handle)
-        .await
-        .map_err(|error| error.into_protocol(&command.peer_id, "ssh_stream_close"))
+    SshGatewayAdapter::handle_ssh_stream_close(state, command).await
 }
 
 #[cfg(test)]
