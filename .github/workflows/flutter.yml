@@ -234,6 +234,44 @@ jobs:
           --against '../.git#ref=6ec194bb3a66a748215d3abc11d6da84bd329619,subdir=protocol'
           --path proto/relay/v2/relay_v2.proto
 
+  client-backend-e2e:
+    # Keep the cross-process Docker/client gate isolated from Flutter's unit
+    # test process pool. It deliberately exercises the real Caddy → Go Relay
+    # path and owns its temporary Compose project/cleanup trap.
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        storage: [memory, mysql]
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Install Full App dependencies
+        working-directory: apps/ssh_mobile_full
+        run: flutter pub get
+      - name: Run strict client → Caddy → Go Relay E2E
+        env:
+          CLIENT_BACKEND_E2E_STORAGE: ${{ matrix.storage }}
+        run: bash scripts/client_backend_e2e.sh strict
+
   architecture-check:
     runs-on: ubuntu-latest
     timeout-minutes: 15

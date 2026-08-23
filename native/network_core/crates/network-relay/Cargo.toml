@@ -8,6 +8,11 @@ name = "relay_control_client_integration"
 path = "tests/relay_control_client_integration.rs"
 required-features = ["test-support"]
 
+[[test]]
+name = "client_backend_e2e"
+path = "tests/client_backend_e2e.rs"
+required-features = ["test-support"]
+
 [features]
 test-support = []
 
