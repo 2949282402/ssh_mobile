@@ -66,9 +66,15 @@ result as Windows evidence and keep the WSL gap visible.
 Windows must use the same repository pins as CI: Flutter 3.47.0 with Dart
 3.13.0 and Rust 1.97.1 MSVC. Configure the selected SDK through
 [`scripts/configure_windows_toolchain.ps1`](../../scripts/configure_windows_toolchain.ps1)
-from native PowerShell. The script keeps PATH, TEMP/TMP, and the Rust override
-process-scoped unless `-PersistUserPath` is explicitly supplied, and it refuses
-to continue when the versions do not match.
+from native PowerShell 7 (`pwsh.exe`). The script rejects Windows PowerShell
+5.1 and WSL UNC working directories, keeps PATH/TEMP/TMP/Rust overrides
+process-scoped unless `-PersistUserPath` is explicitly supplied, and refuses to
+continue when the versions do not match.
+
+The Windows MSI builder follows the same PowerShell 7/native-path boundary and
+selects a native Windows SDK temporary directory before invoking MSBuild. Its
+`-SuppressIceValidation` option is an explicit host-gap escape hatch, not a
+replacement for ICE validation on a normal Windows Installer host.
 
 Never invoke Windows `.exe`/`.bat`/`.cmd` toolchains from WSL validation scripts,
 and never share Linux/Windows `PATH`, `PUB_CACHE`, `.dart_tool`, Cargo/Rustup

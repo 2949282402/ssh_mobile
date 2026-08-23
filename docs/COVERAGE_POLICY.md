@@ -71,7 +71,7 @@ machine.
 Otherwise run it on Windows or CI with a working Flutter VM Service; ordinary
 `flutter test` success must not be substituted for the periodic coverage gate.
 
-For the native Windows fallback, start a Windows PowerShell session and
+For the native Windows fallback, start a native Windows PowerShell 7 (`pwsh.exe`) session and
 configure the pinned SDK before running the client gate:
 
 ```powershell
@@ -85,3 +85,12 @@ The configuration script validates Flutter 3.47.0/Dart 3.13.0 and Rust
 unless `-PersistUserPath` is explicitly requested. Do not invoke this Windows
 launcher from WSL, mix Windows and Linux package caches, or treat Windows
 coverage as a Linux validation pass.
+
+Build the Windows MSI from the same native PowerShell 7 session with
+[`scripts/build_windows_msi.ps1`](../scripts/build_windows_msi.ps1). The builder
+requires a native Windows working directory, selects the installed Windows SDK,
+and moves MSBuild temporary files off any inherited WSL path. If WiX reports
+LGHT0217 because the host cannot execute Windows Installer ICE actions, use the
+explicit `-SuppressIceValidation` switch only with a separately recorded ICE
+gap; still parse the resulting MSI with `dark.exe` or validate it on a host
+with Windows Installer ICE support.

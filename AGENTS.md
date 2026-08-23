@@ -106,7 +106,9 @@ A failing or incomplete check blocks submission unless the user explicitly
 accepts the documented environment gap. When tests, package membership,
 project structure, CI scope, or test-selection rules change, update
 `scripts/full_test.sh` in the same change. The canonical Skill and Project
-Memory define the detailed PR gate and script-maintenance rules.
+Memory define the detailed PR gate and script-maintenance rules. Explicit
+Windows platform checks use native PowerShell 7 (`pwsh.exe`) and a native
+working directory; they never replace the WSL Linux gate.
 
 `CLAUDE.md` is the Claude-specific thin bootstrap entry. It delegates repository
 entry and memory routing to this `AGENTS.md` and the canonical `.agents` Skill,

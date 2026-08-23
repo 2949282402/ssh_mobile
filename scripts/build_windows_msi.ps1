@@ -1,14 +1,65 @@
+[CmdletBinding()]
 param(
   [string]$Version = "1.0.0",
   [string]$ProductName = "SSH Mobile",
   [string]$Manufacturer = "SSH Mobile",
-  [string]$Flutter = "flutter"
+  [string]$Flutter = "flutter",
+  [string]$TempRoot = $env:SSH_MOBILE_WINDOWS_TEMP,
+  [switch]$SuppressIceValidation
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.IO.Compression
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$currentLocation = (Get-Location).ProviderPath
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+  throw 'PowerShell 7 or newer is required on Windows. Start pwsh.exe, not Windows PowerShell 5.1.'
+}
+if ($currentLocation -match '^(\\\\wsl|/mnt/)') {
+  throw 'Run the MSI builder from a native Windows path; do not inherit a WSL UNC working directory.'
+}
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot ".." -ErrorAction Stop)).ProviderPath
+
+# WSL-launched PowerShell can inherit a Linux temporary directory and a
+# truncated PATHEXT.  Both make MSBuild's manifest step fail even when the
+# Flutter/Dart/Rust versions are correct.
+$env:PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC'
+if ([string]::IsNullOrWhiteSpace($TempRoot) -or $TempRoot -match '^(\\\\wsl|/mnt/|/tmp/)') {
+  $systemDrive = if ([string]::IsNullOrWhiteSpace($env:SystemDrive)) {
+    'C:'
+  } else {
+    $env:SystemDrive
+  }
+  $TempRoot = Join-Path $systemDrive 'Temp\ssh-mobile'
+}
+New-Item -ItemType Directory -Path $TempRoot -Force | Out-Null
+$env:TEMP = $TempRoot
+$env:TMP = $TempRoot
+if (Test-Path Env:TMPDIR) {
+  Remove-Item Env:TMPDIR
+}
+$env:RUSTUP_TOOLCHAIN = '1.97.1-x86_64-pc-windows-msvc'
+
+$windowsSdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+$windowsSdkVersion = Get-ChildItem -LiteralPath $windowsSdkRoot -Directory -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -match '^10\.' } |
+  Sort-Object Name -Descending |
+  Select-Object -First 1
+if ($null -eq $windowsSdkVersion) {
+  throw "Windows 10 SDK was not found under $windowsSdkRoot."
+}
+$windowsSdkBin = Join-Path $windowsSdkVersion.FullName 'x64'
+foreach ($requiredTool in @('mt.exe', 'rc.exe')) {
+  if (-not (Test-Path -LiteralPath (Join-Path $windowsSdkBin $requiredTool) -PathType Leaf)) {
+    throw "Windows SDK tool is missing: $(Join-Path $windowsSdkBin $requiredTool)"
+  }
+}
+$env:Path = "$windowsSdkBin;$env:Path"
+$env:WindowsSdkDir = "$(Split-Path -Parent $windowsSdkVersion.FullName)\"
+$env:WindowsSDKVersion = "$($windowsSdkVersion.Name)\"
+
 $appDir = Join-Path $repoRoot "apps\ssh_mobile_full"
 # Full App 已迁移到 workspace member；构建与产物路径必须以 App 目录为 Owner。
 $releaseDir = Join-Path $appDir "build\windows\x64\runner\Release"
@@ -189,11 +240,18 @@ if ($LASTEXITCODE -ne 0) {
   throw "candle.exe failed with exit code $LASTEXITCODE"
 }
 
-& $light -nologo `
-  -ext $firewallExtension `
-  -out $msiPath `
-  (Join-Path $objDir "Product.wixobj") `
+$lightArguments = @(
+  '-nologo',
+  '-ext', $firewallExtension,
+  '-out', $msiPath,
+  (Join-Path $objDir "Product.wixobj"),
   (Join-Path $objDir "AppFiles.wixobj")
+)
+if ($SuppressIceValidation) {
+  Write-Warning 'WiX ICE validation is suppressed for this package run; validate the MSI separately on a host with Windows Installer ICE support.'
+  $lightArguments = @('-sice:*') + $lightArguments
+}
+& $light @lightArguments
 if ($LASTEXITCODE -ne 0) {
   throw "light.exe failed with exit code $LASTEXITCODE"
 }

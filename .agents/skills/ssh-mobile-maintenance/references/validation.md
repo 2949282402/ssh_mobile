@@ -24,14 +24,14 @@ WSL escape hatch:
   format/analyze/test/build checks. Do not invoke `powershell.exe`, `cmd.exe`,
   Windows `.bat`/`.cmd` launchers, or Windows `dart`/`flutter`/`cargo`/`go`/`node`
   binaries from those WSL checks.
-- Use a native Windows PowerShell session or a `windows-latest` CI job only
+- Use a native Windows PowerShell 7 (`pwsh.exe`) session or a `windows-latest` CI job only
   for checks that genuinely need Windows, such as the App client coverage run
   when the WSL Flutter VM Service is unavailable. Report that result as a
   Windows check; it does not turn a skipped WSL check into a Linux pass.
 - Keep the Windows toolchain aligned with the repository pins (currently
   Flutter 3.47.0/Dart 3.13.0 and Rust 1.97.1 MSVC). Run
   [`scripts/configure_windows_toolchain.ps1`](../../../../scripts/configure_windows_toolchain.ps1)
-  from native PowerShell with an explicit `-FlutterRoot`; its default is
+  from native PowerShell 7 with an explicit `-FlutterRoot`; its default is
   process-scoped and `-PersistUserPath` is the only option that changes the
   user PATH.
 - Keep OS-specific `PATH`, `PUB_CACHE`, `.dart_tool`, Cargo/Rustup caches, and
