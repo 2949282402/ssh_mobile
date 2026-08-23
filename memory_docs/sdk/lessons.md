@@ -1,4 +1,4 @@
-> Last updated: 2026-08-20
+> Last updated: 2026-08-23
 
 # SDK Lessons
 
@@ -27,3 +27,13 @@
 - Passive inbound is not a reconnect request. Preserve maintenance only when it
   was explicitly enabled, and gate Direct recovery on a ready Relay path so a
   Direct optimisation cannot interrupt healthy Relay/Realtime service.
+- Keep test instrumentation in independent test files (for example, the
+  `src/tests/` files selected with `#[path]`); do not add `#[cfg(test)]` fields,
+  hooks, observers, or other test-only coupling to production implementation
+  modules. Test-side fixtures may use existing diagnostic/read-only APIs and
+  record their own events without widening a production contract.
+- A WSL validation failure may move to native Windows PowerShell 7 (or CI) only
+  when the evidence identifies an environment/toolchain gap, such as a Flutter
+  VM Service that never starts. A product or test correctness failure must be
+  fixed rather than bypassed; Windows evidence remains separately labeled and
+  does not turn the WSL/Linux gap into a PASS.

@@ -1,15 +1,16 @@
-> Last updated: 2026-08-22
+> Last updated: 2026-08-23
 
 # Network V2 Performance Regression Report
 
-Status: **PASS for local deterministic regression smoke; not a production
-benchmark**
+Status: **PASS for local deterministic regression smoke; production benchmark
+DEFERRED — NON-BLOCKING**
 
-This is the canonical performance report for the Network V2 final-fix
-workstream. `PR48`/`PR49` are internal labels only. Validation used branch
-`agent/network-v2-final-20260819` at base commit
-`85663c93fd1881ad32a1924f6ca51623d6373640`; the final-fix changes are present
-in the subsequent functional commits on this branch.
+This is the canonical performance report for the PR48 local closure. Validation
+used branch `agent/network-v2-final-20260819` at the frozen baseline and local
+test head below; no production benchmark or remote CI result is inferred.
+
+`FINAL_CLOSURE_BASE_SHA: 926967e08ed2abb638bf13596fa4d25595c75da9`
+`LOCAL_VALIDATION_HEAD: 6441a0d6415bb2df2c897afec922f82056867489`
 
 The repository does not contain a stable production benchmark harness or a
 cross-device throughput baseline. The checks below are regression-smoke
@@ -19,18 +20,19 @@ evidence, not claims about production hardware latency.
 
 | Area | Check | Result |
 | --- | --- | --- |
-| Connection/runtime | `cargo test -p network-core --locked --lib` and the strict connectivity selector | PASS; full library and 24 connectivity tests completed |
-| Stage ordering | `stage_b_resolves_and_offers_before_relay_reservation` | PASS; one Resolve, one Offer, then reservation |
-| Relay client | `cargo test -p network-relay --locked` plus concrete WebSocket integration | PASS; 39 unit/golden and 4 integration tests |
-| Linux owner/workspace smoke | strict selectors plus `cargo test --workspace --locked` | PASS; 367 `network-core` tests and all workspace crates passed |
-| Coverage gates | `front_coverage.sh`, `backend_coverage.sh`, `sdk_coverage.sh` | PASS; 95.78% front lines, 82.1% filtered Go lines, 90.67% Dart and 90.81% Rust SDK lines |
-| Full aggregate coverage | `bash scripts/full_test.sh --no-bootstrap --with-coverage --serial` | Environment gap; App shard stalled loading Flutter tests in WSL and was stopped after the configured retry began |
+| Connection/runtime | `cargo test -p network-core 'connect::connectivity_attempt::tests::' --locked` | PASS; 61 focused tests, including cancellation/timeout reconnect isolation |
+| Stage ordering | Independent Stage C evidence in `src/tests/connectivity_attempt.rs` | PASS; `Resolve=1`, `Offer=1`, `Reserve=1`, with Direct failure before Reserve |
+| Relay client/data | `cargo test -p network-relay --locked` plus concrete integration | PASS; 45 unit/golden and 7 integration tests |
+| Linux owner/workspace smoke | strict selectors plus `cargo test --workspace --locked` | PASS; workspace tests completed with no product failures |
+| SDK/transport/FFI smoke | Flutter/Dart analyze/test and native Rust FFI checks | PASS; all runnable local selectors passed |
+| Full aggregate coverage | `bash scripts/full_test.sh --no-bootstrap --with-coverage --serial` | ENVIRONMENT GAP; App Flutter shard remained at `loading` without a VM Service in WSL and was stopped |
 
 ## Required performance dimensions
 
-- Connection: Stage A/B predicates and Stage B ordering pass. Stage C remains
-  predicate-only; no production connect-latency percentile is asserted because
-  no multi-device benchmark fixture or external endpoint is available.
+- Connection: Stage A/B predicates, lifecycle cleanup, and the test-only Stage C
+  order/count evidence pass. No production connect-latency percentile is
+  asserted because no multi-device benchmark fixture or external endpoint is
+  available.
 - Relay: control/data queues, nonce/revocation caps, transfer-session caps, and
   bounded event lanes are covered by code-level limits and owner tests. A
   sustained throughput and RSS benchmark still requires Redis/MySQL plus
@@ -45,8 +47,8 @@ evidence, not claims about production hardware latency.
 ## Gate result
 
 No regression signal or unbounded-queue signal was observed in the deterministic
-repository smoke after the Network V2 fixes. The performance gate is **PASS for
-repository smoke coverage only**. Production benchmarking is deferred and
-non-blocking for the runnable owner gate: real-device latency, sustained Relay
-throughput, CPU, RSS, and cross-instance load remain release-environment
-evidence and are not silently treated as measured here.
+repository smoke after the Network V2 changes. The performance gate is **PASS
+for repository smoke coverage only**. Production benchmarking is
+`DEFERRED — NON-BLOCKING`: real-device latency, sustained Relay throughput, CPU,
+RSS, and cross-instance load remain release-environment evidence and are not
+silently treated as measured here.

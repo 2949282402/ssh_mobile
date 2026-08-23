@@ -69,6 +69,10 @@ local contracts; do not replace them with project Memory.
   binding, secret redaction, host-key verification, and fail-closed execution.
   Do not weaken destructive-command, sensitive-path, sandbox, transport-auth,
   Delivery, Session-routing, or E2EE protections.
+- Keep test-only instrumentation, fixtures, observers, and event recording in
+  independent test files. Do not add `#[cfg(test)]` fields, hooks, or other
+  test coupling to production/business modules; use existing diagnostic or
+  read-only APIs and test-local wrappers without widening production contracts.
 - Edit generator inputs rather than generated output. Regenerate committed
   artifacts only when their source changes and review the generated diff.
 - Route diagnostics through the injected logger; do not add ad hoc `print` calls.
