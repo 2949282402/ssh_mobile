@@ -45,6 +45,11 @@ Ownership rules:
   and handshake tasks never own Session receivers; session-scope receivers own
   precise route-loss detection and schedule root-scope cleanup only after the
   final physical path disappears.
+- Runtime event lanes independently own Control/Data classification, count and
+  byte admission, per-event limits, and fairness. The non-owning runtime path
+  projection store independently owns Session bindings, topology replacement,
+  and exact stale-handle cleanup; `PeerPathManager` remains the sole carrier
+  owner and `ConnectionSessionStore` remains the admission/security owner.
 - Each transport Connection owns exactly one `ConnectionSession`; a new
   connection gets a new `SessionId` and Noise root, and transport loss destroys
   that session. Delivery and Transfer managers own the business state that may

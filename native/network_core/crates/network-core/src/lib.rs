@@ -19,6 +19,8 @@ mod realtime;
 mod relay;
 pub(crate) mod relay_state;
 mod runtime;
+mod runtime_event_lanes;
+mod runtime_path_projections;
 mod session;
 mod stream;
 mod task_supervisor;

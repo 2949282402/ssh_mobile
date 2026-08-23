@@ -1,26 +1,24 @@
 //! V2 网络运行时生命周期、共享状态与命令/事件通道。
 
-use network_protocol::{network_event, NetworkCommand, NetworkEvent};
-use prost::Message;
+use network_protocol::{NetworkCommand, NetworkEvent};
 use std::sync::{
-    atomic::{AtomicU16, AtomicU8, AtomicUsize, Ordering},
+    atomic::{AtomicU16, AtomicU8, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
 use tokio::runtime::Runtime;
-#[cfg(test)]
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify, RwLock};
 use tracing::info;
 
 use crate::commands::run_command_worker;
-use crate::connect::{
-    profile_capability_mask, PathHandle, PathLease, PathProjection, PeerId, PeerPathManager,
-};
+use crate::connect::{profile_capability_mask, PathHandle, PathLease, PeerId, PeerPathManager};
 use crate::crypto::{CryptoContext, CryptoError, SessionCryptoManager};
 use crate::crypto_handshake::SessionCryptoMaterial;
 use crate::delivery::DeliveryManager;
 use crate::errors::{CoreNetworkError, NetworkError};
+use crate::runtime_event_lanes::BoundedEventLanes;
+pub(crate) use crate::runtime_event_lanes::{EventReceiver, EventSender};
+use crate::runtime_path_projections::RuntimePathProjectionStore;
 use crate::session::{
     ConnectionAdmission, ConnectionAdmissionError, ConnectionAdmissionOutcome,
     ConnectionSessionStore, SessionId,
@@ -47,231 +45,11 @@ pub(crate) const MAX_PENDING_RELAY_CRYPTO_HANDSHAKES: usize = 64;
 pub(crate) const DELIVERY_RETRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Commands are control-plane input and must never grow an unbounded queue.
 pub(crate) const COMMAND_MAILBOX_CAPACITY: usize = 256;
-/// Native events are split before FFI polling so a data flood cannot block
-/// command results, peer state, or relay lifecycle events.
-pub(crate) const CONTROL_EVENT_MAILBOX_CAPACITY: usize = 256;
-pub(crate) const DATA_EVENT_MAILBOX_CAPACITY: usize = 128;
-pub(crate) const MAX_CONTROL_EVENT_QUEUE_BYTES: usize = 4 * 1024 * 1024;
-pub(crate) const MAX_DATA_EVENT_QUEUE_BYTES: usize = 8 * 1024 * 1024;
-/// Compatibility names retained by the frozen protocol contract inventory;
-/// actual limits are enforced independently by the two lanes above.
-#[allow(dead_code)]
-pub(crate) const EVENT_MAILBOX_CAPACITY: usize = CONTROL_EVENT_MAILBOX_CAPACITY;
-#[allow(dead_code)]
-pub(crate) const MAX_EVENT_QUEUE_BYTES: usize =
-    MAX_CONTROL_EVENT_QUEUE_BYTES + MAX_DATA_EVENT_QUEUE_BYTES;
-pub(crate) const MAX_EVENT_BYTES: usize = 1024 * 1024;
-pub(crate) const MAX_CONSECUTIVE_CONTROL_EVENTS: usize = 8;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RuntimeEventLane {
-    Control,
-    Data,
-}
-
-fn event_lane(event: &NetworkEvent) -> RuntimeEventLane {
-    match event.payload.as_ref() {
-        Some(network_event::Payload::TransferProgress(_))
-        | Some(network_event::Payload::PeerTransferProgress(_))
-        | Some(network_event::Payload::ChannelMessage(_))
-        | Some(network_event::Payload::SshStreamDataReceived(_)) => RuntimeEventLane::Data,
-        _ => RuntimeEventLane::Control,
-    }
-}
 
 pub(crate) const RUNTIME_CREATED: u8 = 0;
 pub(crate) const RUNTIME_RUNNING: u8 = 1;
 pub(crate) const RUNTIME_STOPPING: u8 = 2;
 pub(crate) const RUNTIME_STOPPED: u8 = 3;
-
-/// A bounded production event sender with an unbounded test adapter.
-///
-/// The test adapter keeps focused unit tests able to observe events without
-/// introducing a second production queue.  `NetworkRuntime::new` always uses
-/// the bounded variant below.
-#[derive(Clone)]
-pub(crate) enum EventSender {
-    Bounded {
-        control_sender: mpsc::Sender<NetworkEvent>,
-        data_sender: mpsc::Sender<NetworkEvent>,
-        control_queued_bytes: Arc<AtomicUsize>,
-        data_queued_bytes: Arc<AtomicUsize>,
-    },
-    #[cfg(test)]
-    Unbounded(tokio::sync::mpsc::UnboundedSender<NetworkEvent>),
-}
-
-pub(crate) struct EventReceiver {
-    control_receiver: mpsc::Receiver<NetworkEvent>,
-    data_receiver: mpsc::Receiver<NetworkEvent>,
-    control_queued_bytes: Arc<AtomicUsize>,
-    data_queued_bytes: Arc<AtomicUsize>,
-    consecutive_control: usize,
-    control_closed: bool,
-    data_closed: bool,
-}
-
-impl EventSender {
-    pub(crate) fn send(&self, event: NetworkEvent) -> Result<(), ()> {
-        let bytes = event.encoded_len();
-        if bytes > MAX_EVENT_BYTES {
-            return Err(());
-        }
-        match self {
-            Self::Bounded {
-                control_sender,
-                data_sender,
-                control_queued_bytes,
-                data_queued_bytes,
-            } => {
-                let (sender, queued_bytes, max_bytes) = match event_lane(&event) {
-                    RuntimeEventLane::Control => (
-                        control_sender,
-                        control_queued_bytes,
-                        MAX_CONTROL_EVENT_QUEUE_BYTES,
-                    ),
-                    RuntimeEventLane::Data => {
-                        (data_sender, data_queued_bytes, MAX_DATA_EVENT_QUEUE_BYTES)
-                    }
-                };
-                let mut current = queued_bytes.load(Ordering::Acquire);
-                loop {
-                    let next = current.saturating_add(bytes);
-                    if next > max_bytes {
-                        return Err(());
-                    }
-                    match queued_bytes.compare_exchange_weak(
-                        current,
-                        next,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    ) {
-                        Ok(_) => break,
-                        Err(observed) => current = observed,
-                    }
-                }
-                if sender.try_send(event).is_err() {
-                    queued_bytes.fetch_sub(bytes, Ordering::AcqRel);
-                    return Err(());
-                }
-                Ok(())
-            }
-            #[cfg(test)]
-            Self::Unbounded(sender) => sender.send(event).map_err(|_| ()),
-        }
-    }
-}
-
-#[cfg(test)]
-impl From<UnboundedSender<NetworkEvent>> for EventSender {
-    fn from(sender: UnboundedSender<NetworkEvent>) -> Self {
-        Self::Unbounded(sender)
-    }
-}
-
-impl EventReceiver {
-    fn release(&self, event: &NetworkEvent) {
-        let counter = match event_lane(event) {
-            RuntimeEventLane::Control => &self.control_queued_bytes,
-            RuntimeEventLane::Data => &self.data_queued_bytes,
-        };
-        counter.fetch_sub(event.encoded_len(), Ordering::AcqRel);
-    }
-
-    fn received(&mut self, event: NetworkEvent) -> NetworkEvent {
-        match event_lane(&event) {
-            RuntimeEventLane::Control => {
-                self.consecutive_control = self.consecutive_control.saturating_add(1);
-            }
-            RuntimeEventLane::Data => {
-                self.consecutive_control = 0;
-            }
-        }
-        self.release(&event);
-        event
-    }
-
-    fn try_recv(&mut self) -> Option<NetworkEvent> {
-        if self.consecutive_control >= MAX_CONSECUTIVE_CONTROL_EVENTS {
-            if let Ok(event) = self.data_receiver.try_recv() {
-                return Some(self.received(event));
-            }
-        }
-        if let Ok(event) = self.control_receiver.try_recv() {
-            return Some(self.received(event));
-        }
-        self.data_receiver
-            .try_recv()
-            .ok()
-            .map(|event| self.received(event))
-    }
-
-    async fn recv(&mut self) -> Option<NetworkEvent> {
-        loop {
-            if let Some(event) = self.try_recv() {
-                return Some(event);
-            }
-            if self.control_closed && self.data_closed {
-                return None;
-            }
-
-            let prefer_data = self.consecutive_control >= MAX_CONSECUTIVE_CONTROL_EVENTS;
-            let (event, lane) = match (self.control_closed, self.data_closed, prefer_data) {
-                (true, false, _) => (self.data_receiver.recv().await, RuntimeEventLane::Data),
-                (false, true, _) => (
-                    self.control_receiver.recv().await,
-                    RuntimeEventLane::Control,
-                ),
-                (false, false, true) => {
-                    tokio::select! {
-                        biased;
-                        event = self.data_receiver.recv() => (event, RuntimeEventLane::Data),
-                        event = self.control_receiver.recv() => (event, RuntimeEventLane::Control),
-                    }
-                }
-                (false, false, false) => {
-                    tokio::select! {
-                        biased;
-                        event = self.control_receiver.recv() => (event, RuntimeEventLane::Control),
-                        event = self.data_receiver.recv() => (event, RuntimeEventLane::Data),
-                    }
-                }
-                (true, true, _) => unreachable!(),
-            };
-            match event {
-                Some(event) => return Some(self.received(event)),
-                None => match lane {
-                    RuntimeEventLane::Control => self.control_closed = true,
-                    RuntimeEventLane::Data => self.data_closed = true,
-                },
-            }
-        }
-    }
-}
-
-fn bounded_event_channel() -> (EventSender, EventReceiver) {
-    let (control_sender, control_receiver) = mpsc::channel(CONTROL_EVENT_MAILBOX_CAPACITY);
-    let (data_sender, data_receiver) = mpsc::channel(DATA_EVENT_MAILBOX_CAPACITY);
-    let control_queued_bytes = Arc::new(AtomicUsize::new(0));
-    let data_queued_bytes = Arc::new(AtomicUsize::new(0));
-    (
-        EventSender::Bounded {
-            control_sender,
-            data_sender,
-            control_queued_bytes: Arc::clone(&control_queued_bytes),
-            data_queued_bytes: Arc::clone(&data_queued_bytes),
-        },
-        EventReceiver {
-            control_receiver,
-            data_receiver,
-            control_queued_bytes,
-            data_queued_bytes,
-            consecutive_control: 0,
-            control_closed: false,
-            data_closed: false,
-        },
-    )
-}
 
 /// 一次 authenticated Session admission 的不可变载体。
 ///
@@ -293,15 +71,6 @@ pub(crate) enum ConnectDecision {
     AlreadyConnected(SessionId),
     CapabilityMismatch(SessionId),
     InProgress(SessionId),
-}
-
-/// Non-owning runtime projection of a path owned by `PeerPathManager`.
-///
-/// RuntimeState keeps this only for session-scoped lookup and stale guards. It
-/// never retains an independent carrier lifetime owner.
-struct OwnedPathProjection {
-    session_id: SessionId,
-    projection: PathProjection,
 }
 
 impl ConnectionAdmissionLease {
@@ -402,9 +171,10 @@ pub(crate) struct RuntimeState {
     /// Strong peer-owned path managers. `ready_paths` is only a weak index;
     /// these managers own the corresponding PhysicalPath and its carrier.
     pub(crate) peer_path_managers: RwLock<HashMap<String, Arc<Mutex<PeerPathManager>>>>,
-    /// Runtime lookup for non-owning path projections. Direct and Relay
-    /// entries may coexist; the peer path manager owns every carrier.
-    path_projections: RwLock<HashMap<String, Vec<OwnedPathProjection>>>,
+    /// Session-scoped lookup for non-owning path projections. The dedicated
+    /// store owns replacement and stale-handle cleanup policy; peer managers
+    /// remain the only carrier owners.
+    path_projections: RuntimePathProjectionStore,
     /// Direct recovery policy is a scheduler gate only. It never owns a path
     /// or a session and Relay business availability is tracked independently.
     direct_recovery: Mutex<HashMap<String, crate::discovery::DirectRecoveryPolicy>>,
@@ -443,7 +213,7 @@ impl RuntimeState {
             ),
             ready_paths: Arc::new(crate::connect::PathRegistry::new()),
             peer_path_managers: RwLock::new(HashMap::new()),
-            path_projections: RwLock::new(HashMap::new()),
+            path_projections: RuntimePathProjectionStore::new(),
             direct_recovery: Mutex::new(HashMap::new()),
             reliable_streams: RwLock::new(HashMap::new()),
             stream_gateway_port: Arc::new(AtomicU16::new(crate::stream::STREAM_LOCAL_SSH_PORT)),
@@ -800,14 +570,9 @@ impl RuntimeState {
                 .ok_or(CoreNetworkError::StaleAttempt)?;
             (old_handle, projection)
         };
-        let mut paths = self.path_projections.write().await;
-        let entries = paths.entry(peer_id.to_string()).or_default();
-        entries
-            .retain(|entry| entry.projection.handle().profile().topology() != profile.topology());
-        entries.push(OwnedPathProjection {
-            session_id,
-            projection,
-        });
+        self.path_projections
+            .replace_topology(peer_id, session_id, projection)
+            .await;
         let mut recovery = self.direct_recovery.lock().expect("recovery policy lock");
         let policy = recovery.entry(peer_id.to_string()).or_default();
         match profile.topology() {
@@ -1122,15 +887,7 @@ impl RuntimeState {
         let Some(session_id) = current_session else {
             return false;
         };
-        self.path_projections
-            .read()
-            .await
-            .get(peer_id)
-            .is_some_and(|entries| {
-                entries
-                    .iter()
-                    .any(|entry| entry.session_id == session_id && entry.projection.is_alive())
-            })
+        self.path_projections.has_alive(peer_id, session_id).await
     }
 
     /// Validate an authenticated candidate before its peer-owned path is
@@ -1203,32 +960,15 @@ impl RuntimeState {
             return false;
         };
 
-        let (direct_handle, relay_handle) = {
-            // The projection index is only a snapshot.  We deliberately do
-            // not hold the synchronous path-manager lock across this await;
-            // the manager handles are rechecked immediately before close.
-            let projections = self.path_projections.read().await;
-            let Some(entries) = projections.get(peer_id) else {
-                return false;
-            };
-            let direct = entries
-                .iter()
-                .find(|entry| {
-                    entry.session_id == session_id
-                        && entry.projection.handle().profile().topology()
-                            == crate::connection::RouteTopology::Direct
-                })
-                .map(|entry| entry.projection.handle().clone());
-            let relay = entries
-                .iter()
-                .find(|entry| {
-                    entry.session_id == session_id
-                        && entry.projection.handle().profile().topology()
-                            == crate::connection::RouteTopology::Relay
-                })
-                .map(|entry| entry.projection.handle().clone());
-            (direct, relay)
-        };
+        // The projection store returns a snapshot. We deliberately do not
+        // hold the synchronous path-manager lock across this await; manager
+        // handles are rechecked immediately before close.
+        let handles = self
+            .path_projections
+            .handles_for_session(peer_id, session_id)
+            .await;
+        let direct_handle = handles.direct;
+        let relay_handle = handles.relay;
 
         let (direct_closed, relay_closed) = {
             let mut manager = manager.lock().expect("peer path manager lock");
@@ -1270,31 +1010,14 @@ impl RuntimeState {
             }
         }
 
-        {
-            let mut projections = self.path_projections.write().await;
-            if let Some(entries) = projections.get_mut(peer_id) {
-                entries.retain(|entry| {
-                    if entry.session_id != session_id {
-                        return true;
-                    }
-                    let handle = entry.projection.handle();
-                    !(direct_closed
-                        && direct_handle.as_ref().is_some_and(|expected| {
-                            handle.profile().topology() == crate::connection::RouteTopology::Direct
-                                && handle == expected
-                        }))
-                        && !(relay_closed
-                            && relay_handle.as_ref().is_some_and(|expected| {
-                                handle.profile().topology()
-                                    == crate::connection::RouteTopology::Relay
-                                    && handle == expected
-                            }))
-                });
-                if entries.is_empty() {
-                    projections.remove(peer_id);
-                }
-            }
-        }
+        self.path_projections
+            .remove_closed_for_session(
+                peer_id,
+                session_id,
+                direct_handle.as_ref().filter(|_| direct_closed),
+                relay_handle.as_ref().filter(|_| relay_closed),
+            )
+            .await;
 
         // Remove an empty manager only after taking the map write lock and
         // rechecking the same manager, so a concurrent replacement cannot be
@@ -1312,7 +1035,7 @@ impl RuntimeState {
         }
         drop(managers);
         if remove_manager {
-            self.path_projections.write().await.remove(peer_id);
+            self.path_projections.remove_peer(peer_id).await;
         }
         true
     }
@@ -1343,15 +1066,11 @@ impl RuntimeState {
 
     pub(crate) async fn close_transport_path(&self, peer_id: &str) -> Option<PathHandle> {
         let manager = self.peer_path_managers.write().await.remove(peer_id);
-        let entries = self.path_projections.write().await.remove(peer_id);
+        let first = self.path_projections.remove_peer(peer_id).await;
         self.direct_recovery
             .lock()
             .expect("recovery policy lock")
             .remove(peer_id);
-        let first = entries
-            .as_ref()
-            .and_then(|entries| entries.first())
-            .map(|entry| entry.projection.handle().clone());
         if let Some(manager) = manager {
             manager.lock().expect("peer path manager lock").hard_close();
         }
@@ -1387,11 +1106,12 @@ impl RuntimeState {
                 policy.mark_relay_lost();
             }
         }
-        self.remove_path_projections(peer_id, crate::connection::RouteTopology::Relay)
+        self.path_projections
+            .remove_topology(peer_id, crate::connection::RouteTopology::Relay)
             .await;
         if !self.manager_has_ready_path(&manager).await {
             self.peer_path_managers.write().await.remove(peer_id);
-            self.path_projections.write().await.remove(peer_id);
+            self.path_projections.remove_peer(peer_id).await;
         }
         Some(relay_handle)
     }
@@ -1420,11 +1140,12 @@ impl RuntimeState {
                 policy.mark_direct_unavailable();
             }
         }
-        self.remove_path_projections(peer_id, crate::connection::RouteTopology::Direct)
+        self.path_projections
+            .remove_topology(peer_id, crate::connection::RouteTopology::Direct)
             .await;
         if !self.manager_has_ready_path(&manager).await {
             self.peer_path_managers.write().await.remove(peer_id);
-            self.path_projections.write().await.remove(peer_id);
+            self.path_projections.remove_peer(peer_id).await;
         }
         Some(direct_handle)
     }
@@ -1476,20 +1197,6 @@ impl RuntimeState {
             .collect::<Vec<_>>();
         for peer_id in peers {
             let _ = self.close_transport_path(&peer_id).await;
-        }
-    }
-
-    async fn remove_path_projections(
-        &self,
-        peer_id: &str,
-        topology: crate::connection::RouteTopology,
-    ) {
-        let mut projections = self.path_projections.write().await;
-        if let Some(entries) = projections.get_mut(peer_id) {
-            entries.retain(|entry| entry.projection.handle().profile().topology() != topology);
-            if entries.is_empty() {
-                projections.remove(peer_id);
-            }
         }
     }
 
@@ -1663,7 +1370,7 @@ impl NetworkRuntime {
             .thread_name("ssh-net-worker")
             .build()
             .map_err(|error| NetworkError::RuntimeInitFailed(error.to_string()))?;
-        let (event_tx, event_rx) = bounded_event_channel();
+        let (event_tx, event_rx) = BoundedEventLanes::channel();
         let bound_port = Arc::new(AtomicU16::new(0));
         info!("NetworkRuntime initialized successfully");
         Ok(Self {

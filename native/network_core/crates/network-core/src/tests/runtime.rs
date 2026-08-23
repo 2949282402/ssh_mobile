@@ -33,13 +33,10 @@ async fn runtime_path_projection_is_non_owning() {
         .write()
         .await
         .insert(peer_id.to_string(), Arc::new(Mutex::new(manager)));
-    state.path_projections.write().await.insert(
-        peer_id.to_string(),
-        vec![OwnedPathProjection {
-            session_id,
-            projection: projection.clone(),
-        }],
-    );
+    state
+        .path_projections
+        .replace_topology(peer_id, session_id, projection.clone())
+        .await;
 
     assert!(state.path_is_connected(peer_id).await);
     state.peer_path_managers.write().await.remove(peer_id);
@@ -98,13 +95,10 @@ async fn stale_session_failure_does_not_close_replacement_path() {
         .write()
         .await
         .insert(peer_id.to_string(), Arc::new(Mutex::new(manager)));
-    state.path_projections.write().await.insert(
-        peer_id.to_string(),
-        vec![OwnedPathProjection {
-            session_id: replacement_session,
-            projection: replacement_projection,
-        }],
-    );
+    state
+        .path_projections
+        .replace_topology(peer_id, replacement_session, replacement_projection)
+        .await;
 
     assert!(state.path_is_connected(peer_id).await);
     state.fail_session(peer_id, old_session).await;
@@ -169,98 +163,6 @@ async fn authenticated_session_rejects_an_incompatible_connected_path() {
             .await,
         ConnectDecision::AlreadyConnected(session_id)
     );
-}
-
-fn control_event() -> NetworkEvent {
-    NetworkEvent {
-        payload: Some(network_event::Payload::PeerState(
-            network_protocol::PeerStateChangedEvent::default(),
-        )),
-        ..Default::default()
-    }
-}
-
-fn data_event() -> NetworkEvent {
-    NetworkEvent {
-        payload: Some(network_event::Payload::ChannelMessage(
-            network_protocol::ChannelMessageEvent {
-                payload: vec![1, 2, 3],
-                ..Default::default()
-            },
-        )),
-        ..Default::default()
-    }
-}
-
-#[tokio::test]
-async fn bounded_event_lanes_release_bytes_and_prefer_data_after_control_burst() {
-    let (sender, mut receiver) = bounded_event_channel();
-    let control = control_event();
-    let data = data_event();
-
-    for _ in 0..MAX_CONSECUTIVE_CONTROL_EVENTS {
-        sender.send(control.clone()).expect("control event");
-    }
-    sender.send(data.clone()).expect("data event");
-    assert_eq!(
-        receiver.control_queued_bytes.load(Ordering::Acquire),
-        control.encoded_len() * MAX_CONSECUTIVE_CONTROL_EVENTS
-    );
-    assert_eq!(
-        receiver.data_queued_bytes.load(Ordering::Acquire),
-        data.encoded_len()
-    );
-
-    for _ in 0..MAX_CONSECUTIVE_CONTROL_EVENTS {
-        assert!(matches!(
-            receiver.try_recv().and_then(|event| event.payload),
-            Some(network_event::Payload::PeerState(_))
-        ));
-    }
-    assert!(matches!(
-        receiver.try_recv().and_then(|event| event.payload),
-        Some(network_event::Payload::ChannelMessage(_))
-    ));
-    assert_eq!(receiver.control_queued_bytes.load(Ordering::Acquire), 0);
-    assert_eq!(receiver.data_queued_bytes.load(Ordering::Acquire), 0);
-
-    let oversized = NetworkEvent {
-        payload: Some(network_event::Payload::ChannelMessage(
-            network_protocol::ChannelMessageEvent {
-                payload: vec![0; MAX_EVENT_BYTES],
-                ..Default::default()
-            },
-        )),
-        ..Default::default()
-    };
-    assert!(sender.send(oversized).is_err());
-    drop(sender);
-    assert!(receiver.recv().await.is_none());
-}
-
-#[tokio::test]
-async fn event_receiver_handles_each_closed_lane_without_unreachable_states() {
-    let (control_sender, control_receiver) = mpsc::channel(2);
-    let (data_sender, data_receiver) = mpsc::channel(2);
-    let control_bytes = Arc::new(AtomicUsize::new(0));
-    let data_bytes = Arc::new(AtomicUsize::new(0));
-    let mut receiver = EventReceiver {
-        control_receiver,
-        data_receiver,
-        control_queued_bytes: control_bytes,
-        data_queued_bytes: data_bytes,
-        consecutive_control: 0,
-        control_closed: false,
-        data_closed: false,
-    };
-    drop(control_sender);
-    data_sender.send(data_event()).await.expect("data event");
-    assert!(matches!(
-        receiver.recv().await.and_then(|event| event.payload),
-        Some(network_event::Payload::ChannelMessage(_))
-    ));
-    drop(data_sender);
-    assert!(receiver.recv().await.is_none());
 }
 
 #[tokio::test]
@@ -549,7 +451,12 @@ fn runtime_lifecycle_rejects_commands_before_start_and_stops_idempotently() {
             payload: None,
         })
         .is_ok());
-    runtime.emit_event(control_event());
+    runtime.emit_event(NetworkEvent {
+        payload: Some(network_protocol::network_event::Payload::PeerState(
+            network_protocol::PeerStateChangedEvent::default(),
+        )),
+        ..Default::default()
+    });
     assert!(runtime.poll_event(0).is_some());
     // The command worker may publish a typed protocol error for the
     // intentionally empty command payload; the polling boundary itself

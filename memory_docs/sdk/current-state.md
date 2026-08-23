@@ -82,6 +82,10 @@ the retired v1 route/session owner model.
   supervision have independent lifecycle owners. Accept/handshake tasks remain
   runtime-scoped; bidi/channel/generic readers remain Session-scoped and retire
   only the exact lost route before deciding whether the Session is finished.
+- Native event classification/backpressure/fairness is owned by bounded event
+  lanes rather than `RuntimeState`. Session-scoped weak path projections are
+  owned by a dedicated store that applies topology replacement and exact stale
+  cleanup; it never extends carrier lifetime or replaces admission storage.
 - Feature-facing Realtime does not expose native signaling or media resources;
   decoded media availability remains defined by the public package contract.
 
