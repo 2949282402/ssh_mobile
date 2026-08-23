@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-24
 
 # feature_ai
 
@@ -13,6 +13,9 @@ AI chat、Agent、Skills、LLM provider/runtime 和工具编排 Feature。Packag
   和工具注册表。
 - `chat/`、`agent/`、`skills/`、`llm/`、`tools/` 和 `data/` 按业务子域拆分，
   不重新聚合为巨型 `ai_service.dart`。
+- Tool round 控制器只保留顺序编排和执行/审批状态；可见性/计划门禁、预算审计以及
+  provider message/system hint/ledger/trace 的统一结果折叠由独立 collaborator 持有，
+  并行与顺序路径不得再复制不同的结果落账规则。
 - 聊天、Agent metrics、trace 和消息敏感字段通过 `DriftAiRepository` 写入
   `ai.db`；加密能力由 App Shell 的 `AiTextProtectionPort` 注入，数据库异常
   不静默回退到内存实现。

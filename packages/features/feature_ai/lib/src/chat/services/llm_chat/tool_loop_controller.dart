@@ -61,6 +61,20 @@ class ToolLoopController {
   }) async {
     final activeProvider =
         provider ?? LlmProviderFactory.fromSettings(settings);
+    final resultRecorder = _ToolResultRecorder(
+      chatService: chatService,
+      toolBudget: toolBudget,
+      toolLedger: toolLedger,
+    );
+    final preflight = _ToolCallPreflight(
+      chatService: chatService,
+      recorder: resultRecorder,
+    );
+    final budgetAuditor = _ToolBudgetAuditCoordinator(
+      chatService: chatService,
+      toolBudget: toolBudget,
+      toolLedger: toolLedger,
+    );
     final parallelResult = await _tryHandleParallelReadOnlyToolCalls(
       toolCalls: toolCalls,
       visibleToolsByName: visibleToolsByName,
@@ -109,430 +123,60 @@ class ToolLoopController {
         signatureArguments,
       );
 
-      if (tool == null) {
-        outcome = 'tool_not_visible';
-        result = jsonEncode({
-          'error': 'Tool is not available in the current context.',
-          'tool': call.name,
-        });
-        onTrace?.call(
-          LlmTraceEvent(
-            kind: 'tool_blocked',
-            title: 'Tool blocked: ${call.name} (not visible)',
-            content:
-                'Tool "${call.name}" is not exposed in the current context.',
-          ),
-        );
-        workingMessages.add(
-          activeProvider.buildToolResultMessage(
-            call: LlmProviderToolCall(
-              id: call.id,
-              name: call.name,
-              argumentsJson: call.arguments,
-            ),
-            result: result,
-          ),
-        );
-        workingMessages.add({
-          'role': 'system',
-          'content':
-              'The requested tool is not available in the current context. Do not call hidden or unavailable tools. Use only the tools currently exposed to you, or ask the user to select the required server/session/mode first.',
-        });
-
-        toolLedger.add(
-          LlmToolLedgerEntry(
-            index: toolBudget.usedCalls,
-            toolName: call.name,
-            signature: signature,
-            argumentsPreview: chatService._toolSecretPolicy.previewText(
-              chatService._prettyJson(redactedArguments),
-              maxChars: 400,
-            ),
-            outcome: outcome,
-            approvalRequired: false,
-            approved: false,
-            failed: true,
-            emptyResult: false,
-            cacheHit: false,
-            dedupBlocked: false,
-            auditEscalationLevel: toolBudget.auditCount,
-            quality: ToolResultQuality.unsafeBlocked.name,
-            resultPreview: chatService._toolSecretPolicy.previewText(
-              chatService._prettyJsonString(result),
-              maxChars: 600,
-            ),
-          ),
-        );
-
-        chatService._emitToolResultTrace(
-          onTrace,
-          call.name,
-          result,
-          outcome: outcome,
-        );
-
+      final preflightDisposition = preflight.evaluate(
+        call: call,
+        tool: tool,
+        arguments: arguments,
+        redactedArguments: redactedArguments,
+        signature: signature,
+        planMode: planMode,
+        planSnapshot: activeSnapshot,
+        provider: activeProvider,
+        workingMessages: workingMessages,
+        language: language,
+        onTrace: onTrace,
+      );
+      if (preflightDisposition != _ToolPreflightDisposition.proceed) {
+        if (preflightDisposition == _ToolPreflightDisposition.planBlocked) {
+          _currentOutcome = AgentFinalOutcome.planExecutionBlocked;
+        }
         continue;
       }
+      if (tool == null) continue;
 
-      if (!planMode &&
-          activeSnapshot != null &&
-          activeSnapshot.steps.isNotEmpty) {
-        final gateResult = const PlanExecutionController()
-            .canRunToolForCurrentStep(
-              steps: activeSnapshot.steps,
-              toolName: tool.name,
-              arguments: arguments,
-            );
-
-        if (!gateResult.allowed) {
-          outcome = 'plan_execution_blocked';
-          _currentOutcome = AgentFinalOutcome.planExecutionBlocked;
-
-          final Map<String, dynamic> errorObj = {
-            'error': 'Tool call blocked by plan execution gate.',
-          };
-          if (gateResult.reason == 'task_update_required') {
-            errorObj['code'] = 'task_update_required';
-            errorObj['taskId'] = gateResult.currentStep?.id;
-            errorObj['nextAction'] =
-                'Call client_task_update with status=running for the current task before executing this tool.';
-          } else if (gateResult.reason == 'previous_step_failed') {
-            errorObj['code'] = 'plan_execution_blocked';
-            errorObj['reason'] = 'A preceding step has failed.';
-            errorObj['nextAction'] =
-                'Stop execution and ask the user whether to retry, skip, or revise the plan.';
-          } else {
-            errorObj['code'] = 'plan_execution_blocked';
-            errorObj['reason'] = gateResult.reason;
-          }
-          if (gateResult.currentStep != null) {
-            errorObj['currentStep'] = {
-              'taskId': gateResult.currentStep!.id,
-              'name': gateResult.currentStep!.name,
-              'status': gateResult.currentStep!.status.name,
-            };
-          }
-          result = jsonEncode(errorObj);
-
-          onTrace?.call(
-            LlmTraceEvent(
-              kind: 'tool_blocked',
-              title: 'Tool blocked by plan execution gate: ${call.name}',
-              content: chatService._prettyJson({
-                'tool': call.name,
-                'executionMode': tool.executionMode.name,
-                'stepScoped': true,
-                'reason': gateResult.reason,
-                'currentStepId': gateResult.currentStep?.id,
-                'currentStepStatus': gateResult.currentStep?.status.name,
-              }),
-            ),
-          );
-
-          workingMessages.add(
-            activeProvider.buildToolResultMessage(
-              call: LlmProviderToolCall(
-                id: call.id,
-                name: call.name,
-                argumentsJson: call.arguments,
-              ),
-              result: result,
-            ),
-          );
-
-          final quality = ToolResultClassifier.classify(
-            toolName: call.name,
-            resultJson: result,
-            outcome: outcome,
-            approvalRequired: false,
-            approved: false,
-            cacheHit: false,
-            dedupBlocked: false,
-          );
-
-          final hint = ToolResultClassifier.getSystemHint(
-            call.name,
-            quality,
-            language,
-          );
-          if (hint != null) {
-            workingMessages.add({'role': 'system', 'content': hint});
-          }
-
-          toolLedger.add(
-            LlmToolLedgerEntry(
-              index: toolBudget.usedCalls,
-              toolName: call.name,
-              signature: signature,
-              argumentsPreview: chatService._toolSecretPolicy.previewText(
-                chatService._prettyJson(redactedArguments),
-                maxChars: 400,
-              ),
-              outcome: outcome,
-              approvalRequired: false,
-              approved: false,
-              failed: true,
-              emptyResult: false,
-              cacheHit: false,
-              dedupBlocked: false,
-              auditEscalationLevel: toolBudget.auditCount,
-              quality: quality.name,
-              resultPreview: chatService._toolSecretPolicy.previewText(
-                chatService._prettyJsonString(result),
-                maxChars: 600,
-              ),
-            ),
-          );
-
-          chatService._emitToolResultTrace(
-            onTrace,
-            call.name,
-            result,
-            outcome: outcome,
-          );
-
-          continue;
-        }
-      }
-
-      final budgetCheck = toolBudget.checkBeforeToolCall();
-      if (budgetCheck.requiresAudit) {
-        bool humanApproved = true;
-        if (toolBudget.auditCount >= 3) {
-          if (requestToolApproval != null) {
-            chatService._emitBudgetTrace(
-              onTrace,
-              title: 'Requesting human approval for safety audit extension',
-              content: chatService._prettyJson({
-                'message':
-                    'AI tool usage requires additional human confirmation after 3 automated safety audits.',
-                'budget': toolBudget.toJson(),
-                'auditCount': toolBudget.auditCount,
-                'nextTool': call.name,
-              }),
-            );
-
-            final humanDecision = await requestToolApproval(
-              const AiToolApprovalRequest(
-                toolName: 'budget_audit',
-                approvalType: 'budget_audit',
-                connectionId: 'local',
-                connectionName: 'System',
-                command: 'Request permission to extend tool usage budget',
-                reason:
-                    'The assistant has performed 3 automated safety audits. Continue using tools?',
-              ),
-            );
-            humanApproved = humanDecision.approved;
-          } else {
-            humanApproved = false;
-          }
-        }
-
-        if (!humanApproved) {
-          _toolsDisabled = true;
-          final auditResult = LlmToolSafetyAuditResult.blocked(
-            summary: 'The user rejected the request to continue tool usage.',
-            issues: ['Human safety approval was denied.'],
-            suspectedLoop: false,
-            goalDrift: false,
-            recommendedNextAction:
-                'Finish the conversation without more tools.',
-          );
-          chatService._emitBudgetTrace(
-            onTrace,
-            title: 'Tool budget safety audit rejected by user',
-            content: chatService._prettyJson({
-              'message':
-                  'The user rejected the request to continue tool usage.',
-              'budget': toolBudget.toJson(),
-              'auditCount': toolBudget.auditCount,
-            }),
-          );
-
-          for (
-            var blockedIndex = toolIndex;
-            blockedIndex < toolCalls.length;
-            blockedIndex++
-          ) {
-            final blockedCall = toolCalls[blockedIndex];
-            final blockedResult = chatService._toolBudgetBlockedToolResult(
-              toolName: blockedCall.name,
-              toolBudget: toolBudget,
-              auditResult: auditResult,
-            );
-            chatService._emitToolResultTrace(
-              onTrace,
-              blockedCall.name,
-              blockedResult,
-              outcome: 'budget_audit_rejected',
-            );
-            workingMessages.add(
-              activeProvider.buildToolResultMessage(
-                call: LlmProviderToolCall(
-                  id: blockedCall.id,
-                  name: blockedCall.name,
-                  argumentsJson: blockedCall.arguments,
-                ),
-                result: blockedResult,
-              ),
-            );
-          }
-
-          workingMessages.add({
-            'role': 'system',
-            'content': chatService._toolBudgetRejectedFollowUpPrompt(
-              auditResult: auditResult,
-              toolBudget: toolBudget,
-            ),
-          });
-          await _triggerPostToolReview(
-            finalOutcome: AgentFinalOutcome.budgetAuditRejected,
-            originalUserGoal: originalUserGoal,
-            workingMessages: workingMessages,
-            language: language,
-            complete: complete,
-            classify: classify,
-            onTrace: onTrace,
-            cancellationToken: cancellationToken,
-            settings: settings,
-            planExecutionSnapshot: activeSnapshot,
-          );
-          return ToolLoopResult(
-            toolsShouldBeDisabled: true,
-            finalOutcome: AgentFinalOutcome.budgetAuditRejected,
-            planExecutionSnapshot: activeSnapshot,
-          );
-        }
-
-        toolBudget.recordAuditTriggered();
-        chatService._emitBudgetTrace(
-          onTrace,
-          title: 'Tool budget safety audit running',
-          content: chatService._prettyJson({
-            'message':
-                'Tool usage reached the current ceiling. Running an internal safety audit before granting more tool calls.',
-            'budget': toolBudget.toJson(),
-            'nextTool': call.name,
-          }),
-        );
-
-        final auditResult = await chatService._runToolSafetyAudit(
-          baseUrl: settings.baseUrl,
-          apiKey: apiKey,
-          model: auditModel,
-          deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
-          deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-          openAiReasoningEffort: settings.openAiReasoningEffort,
+      final budgetAuthorized = await budgetAuditor.authorizeNext(
+        toolCalls: toolCalls,
+        toolIndex: toolIndex,
+        call: call,
+        provider: activeProvider,
+        workingMessages: workingMessages,
+        requestToolApproval: requestToolApproval,
+        onTrace: onTrace,
+        cancellationToken: cancellationToken,
+        settings: settings,
+        apiKey: apiKey,
+        auditModel: auditModel,
+        originalUserGoal: originalUserGoal,
+      );
+      if (!budgetAuthorized) {
+        _toolsDisabled = true;
+        _currentOutcome = AgentFinalOutcome.budgetAuditRejected;
+        await _triggerPostToolReview(
+          finalOutcome: AgentFinalOutcome.budgetAuditRejected,
           originalUserGoal: originalUserGoal,
           workingMessages: workingMessages,
-          toolLedger: toolLedger,
-          toolBudget: toolBudget,
+          language: language,
+          complete: complete,
+          classify: classify,
+          onTrace: onTrace,
           cancellationToken: cancellationToken,
+          settings: settings,
+          planExecutionSnapshot: activeSnapshot,
         );
-        cancellationToken?.throwIfCancelled();
-
-        if (auditResult.shouldContinue) {
-          final budgetEvent = toolBudget.approveAuditExtension();
-          chatService._emitBudgetTrace(
-            onTrace,
-            title: 'Tool budget safety audit approved',
-            content: chatService._prettyJson({
-              'message':
-                  'The safety audit approved continued tool use. The tool budget was extended again.',
-              'budget': toolBudget.toJson(),
-              'extension': budgetEvent.toJson(),
-              'summary': auditResult.summary,
-              'issues': auditResult.issues,
-              'suspectedLoop': auditResult.suspectedLoop,
-              'goalDrift': auditResult.goalDrift,
-              'recommendedNextAction': auditResult.recommendedNextAction,
-            }),
-          );
-        } else {
-          _toolsDisabled = true;
-          chatService._emitBudgetTrace(
-            onTrace,
-            title: 'Tool budget safety audit rejected',
-            content: chatService._prettyJson({
-              'message':
-                  'The safety audit rejected further tool use for this run. Tools are now disabled and the assistant must finish without more tool calls.',
-              'budget': toolBudget.toJson(),
-              'summary': auditResult.summary,
-              'issues': auditResult.issues,
-              'suspectedLoop': auditResult.suspectedLoop,
-              'goalDrift': auditResult.goalDrift,
-              'recommendedNextAction': auditResult.recommendedNextAction,
-            }),
-          );
-
-          for (
-            var blockedIndex = toolIndex;
-            blockedIndex < toolCalls.length;
-            blockedIndex++
-          ) {
-            final blockedCall = toolCalls[blockedIndex];
-            final blockedResult = chatService._toolBudgetBlockedToolResult(
-              toolName: blockedCall.name,
-              toolBudget: toolBudget,
-              auditResult: auditResult,
-            );
-            chatService._emitToolResultTrace(
-              onTrace,
-              blockedCall.name,
-              blockedResult,
-              outcome: 'budget_audit_rejected',
-            );
-            workingMessages.add(
-              activeProvider.buildToolResultMessage(
-                call: LlmProviderToolCall(
-                  id: blockedCall.id,
-                  name: blockedCall.name,
-                  argumentsJson: blockedCall.arguments,
-                ),
-                result: blockedResult,
-              ),
-            );
-          }
-
-          workingMessages.add({
-            'role': 'system',
-            'content': chatService._toolBudgetRejectedFollowUpPrompt(
-              auditResult: auditResult,
-              toolBudget: toolBudget,
-            ),
-          });
-          await _triggerPostToolReview(
-            finalOutcome: AgentFinalOutcome.budgetAuditRejected,
-            originalUserGoal: originalUserGoal,
-            workingMessages: workingMessages,
-            language: language,
-            complete: complete,
-            classify: classify,
-            onTrace: onTrace,
-            cancellationToken: cancellationToken,
-            settings: settings,
-            planExecutionSnapshot: activeSnapshot,
-          );
-          return ToolLoopResult(
-            toolsShouldBeDisabled: true,
-            finalOutcome: AgentFinalOutcome.budgetAuditRejected,
-            planExecutionSnapshot: activeSnapshot,
-          );
-        }
-      }
-
-      final budgetEvent = toolBudget.recordAcceptedToolCall();
-      if (budgetEvent != null) {
-        chatService._emitBudgetTrace(
-          onTrace,
-          title: 'Tool budget reached and auto-extended',
-          content: chatService._prettyJson({
-            'message':
-                'The default tool budget was reached. The app automatically granted more tool calls. Please review whether the assistant is still using tools reasonably.',
-            'budget': toolBudget.toJson(),
-            'extension': budgetEvent.toJson(),
-          }),
+        return ToolLoopResult(
+          toolsShouldBeDisabled: true,
+          finalOutcome: AgentFinalOutcome.budgetAuditRejected,
+          planExecutionSnapshot: activeSnapshot,
         );
       }
 
@@ -848,67 +492,22 @@ class ToolLoopController {
         });
       }
 
-      chatService._emitToolResultTrace(
-        onTrace,
-        call.name,
-        result,
+      resultRecorder.record(
+        call: call,
+        provider: activeProvider,
+        workingMessages: workingMessages,
+        signature: signature,
+        redactedArguments: redactedArguments,
+        result: result,
         outcome: outcome,
-        cacheHit: cacheHit,
-        dedupBlocked: dedupBlocked,
-      );
-      workingMessages.add(
-        activeProvider.buildToolResultMessage(
-          call: LlmProviderToolCall(
-            id: call.id,
-            name: call.name,
-            argumentsJson: call.arguments,
-          ),
-          result: result,
-        ),
-      );
-
-      final quality = ToolResultClassifier.classify(
-        toolName: call.name,
-        resultJson: result,
-        outcome: outcome,
+        language: language,
+        onTrace: onTrace,
+        index: toolBudget.usedCalls,
         approvalRequired: approvalRequired,
         approved: approvedWrite,
         cacheHit: cacheHit,
         dedupBlocked: dedupBlocked,
-      );
-
-      final hint = ToolResultClassifier.getSystemHint(
-        call.name,
-        quality,
-        language,
-      );
-      if (hint != null) {
-        workingMessages.add({'role': 'system', 'content': hint});
-      }
-
-      toolLedger.add(
-        LlmToolLedgerEntry(
-          index: toolBudget.usedCalls,
-          toolName: call.name,
-          signature: signature,
-          argumentsPreview: chatService._toolSecretPolicy.previewText(
-            chatService._prettyJson(redactedArguments),
-            maxChars: 400,
-          ),
-          outcome: outcome,
-          approvalRequired: approvalRequired,
-          approved: approvedWrite,
-          failed: outcome != 'success',
-          emptyResult: chatService._looksLikeEmptyToolResult(result),
-          cacheHit: cacheHit,
-          dedupBlocked: dedupBlocked,
-          auditEscalationLevel: toolBudget.auditCount,
-          quality: quality.name,
-          resultPreview: chatService._toolSecretPolicy.previewText(
-            chatService._prettyJsonString(result),
-            maxChars: 600,
-          ),
-        ),
+        failedOverride: outcome != 'success',
       );
 
       if (stopAfterToolResult) {
