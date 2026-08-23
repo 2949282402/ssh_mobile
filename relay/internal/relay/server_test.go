@@ -378,6 +378,39 @@ func TestAdminOverviewCountsOnlineDevices(t *testing.T) {
 	}
 }
 
+// TestAdminOverviewCountsActiveRelayDataPairs pins the management metric to
+// the real RelayData registry instead of the legacy control-plane hub.
+func TestAdminOverviewCountsActiveRelayDataPairs(t *testing.T) {
+	server := NewServer(Config{})
+	defer server.Close()
+
+	initiator := testRelayDataConnForRegistry("reservation-admin", "device-a", relayDataRoleInitiator)
+	responder := testRelayDataConnForRegistry("reservation-admin", "device-b", relayDataRoleResponder)
+	if _, ok := server.relayData.admitEndpoint(initiator); !ok {
+		t.Fatal("initiator admission failed")
+	}
+	if _, ok := server.relayData.admitEndpoint(responder); !ok {
+		t.Fatal("responder admission failed")
+	}
+
+	overview, err := server.adminOverviewSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Relay.ActiveTransfers != 1 {
+		t.Fatalf("overview should report one active RelayData pair, got %d", overview.Relay.ActiveTransfers)
+	}
+
+	server.relayData.releaseEndpoint(responder)
+	overview, err = server.adminOverviewSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Relay.ActiveTransfers != 0 {
+		t.Fatalf("released RelayData pair should not remain active, got %d", overview.Relay.ActiveTransfers)
+	}
+}
+
 // TestHeartbeatRenewLost verifies the heartbeat-ownership contract: when a
 // foreign connection (e.g. on another instance) takes over the device's
 // presence lease, the superseded local connection discovers it on its next

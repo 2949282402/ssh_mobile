@@ -52,6 +52,24 @@ func newRelayDataRegistry() *relayDataRegistry {
 	}
 }
 
+// activePairCount returns the number of currently paired RelayData sessions.
+// Pending single-role endpoints and consumed historical reservations are not
+// active transfers. The same mutex that owns pair admission/release makes the
+// administrator snapshot safe while data sockets connect or disconnect.
+func (r *relayDataRegistry) activePairCount() int {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	active := 0
+	for _, pair := range r.pairs {
+		if pair.initiator != nil && pair.responder != nil &&
+			pair.initiator.paired.Load() && pair.responder.paired.Load() {
+			active++
+		}
+	}
+	return active
+}
+
 func (r *relayDataRegistry) trackUpgradeLocked(rc *relayDataConn) {
 	refs := r.upgradeRefs[rc.deviceID]
 	if refs == nil {

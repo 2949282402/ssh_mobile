@@ -54,21 +54,6 @@ type adminDevice struct {
 	PublicKeyFingerprint string `json:"public_key_fingerprint"`
 }
 
-// hubSnapshot 只带管理端消费的本地 hub 数据。在线状态与 RemoteAddr 一律来自
-// presence 租约（GetPresences），本地 peer 表不参与 admin 视图——它只反映本实例
-// 持有的连接，其它实例连接同一共享 Redis 的设备在 admin 视图里显示为空白地址
-// （设计 §26：Relay Control/Data 单实例，Redis 为共享实时状态层）。
-//
-// ActiveTransfers 在 v2 传输网络中恒为 0：活跃 relay-data 连接由 reservation 短命
-// 数据面承载（/v2/relay），不经过 hub 的 peer 表，也不计入本快照。
-type hubSnapshot struct {
-	ActiveSessions int
-}
-
-func (h *hub) snapshot() hubSnapshot {
-	return hubSnapshot{ActiveSessions: 0}
-}
-
 func (s *Server) adminOverview(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
@@ -81,7 +66,6 @@ func (s *Server) adminOverview(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
-	hubState := s.hub.snapshot()
 	enrolledList, err := s.store.ListEnrollments(context.Background())
 	if err != nil {
 		return adminOverviewResponse{}, err
@@ -113,7 +97,7 @@ func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 		ServerTime:        time.Now().Unix(),
 		UptimeSeconds:     int64(time.Since(s.startedAt).Seconds()),
 		Devices:           adminDeviceStat{Enrolled: enrolled, Online: online},
-		Relay:             adminRelayStat{ActiveTransfers: hubState.ActiveSessions},
+		Relay:             adminRelayStat{ActiveTransfers: s.relayData.activePairCount()},
 		Runtime:           adminRuntimeStat{AllocatedMemMB: float64(memory.Alloc) / 1024 / 1024, Goroutines: runtime.NumGoroutine()},
 		PresenceAvailable: presenceAvailable,
 	}, nil
