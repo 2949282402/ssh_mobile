@@ -96,7 +96,7 @@ async fn started_generic_scope(
     session_id: SessionId,
     connection: GenericConnection,
 ) -> GenericRouteScope {
-    supervise_generic_route(
+    OutboundGenericConnector::supervise_generic_route(
         Arc::clone(state),
         peer_id,
         session_id,
@@ -178,7 +178,7 @@ async fn generic_route_supervision_rejects_registration_after_runtime_shutdown()
     let state = new_test_state().await;
     state.task_supervisor.cancel_root();
     let (connection, _server) = generic_connection_pair().await;
-    let result = supervise_generic_route(
+    let result = OutboundGenericConnector::supervise_generic_route(
         Arc::clone(&state),
         "generic-shutdown-peer",
         SessionId::new(),
@@ -323,7 +323,7 @@ async fn outbound_generic_peer_restart_replaces_session_and_cancels_old_tasks() 
         release_rx.await.expect("release responder connection");
     });
 
-    let route = connect_tcp_route(
+    let route = OutboundGenericConnector::connect_tcp_route(
         endpoint,
         local_identity,
         remote_public_key,
@@ -445,7 +445,7 @@ async fn inbound_authenticated_generic_route_commits_a_fresh_session() {
         release_rx.await.expect("hold authenticated client route");
         result
     });
-    let server_result = accept_authenticated_generic(
+    let server_result = InboundConnectionAcceptor::accept_authenticated_generic(
         Arc::clone(&state),
         server,
         "127.0.0.1:39001".parse().expect("peer address"),
@@ -618,7 +618,7 @@ async fn tcp_fallback_accept_loop_survives_transient_accept_errors() {
         .await
         .expect("bind accept listener");
     let address = listener.local_addr().expect("accept listener address");
-    let loop_task = tokio::spawn(accept_tcp_loop(
+    let loop_task = tokio::spawn(InboundConnectionAcceptor::accept_tcp_loop(
         listener,
         Arc::clone(&state),
         Box::new(InjectOnceTransientAcceptError { injected: true }),
@@ -652,7 +652,11 @@ async fn tcp_fallback_accept_loop_exits_on_fatal_listener_error() {
         .expect("bind accept listener");
     let outcome = tokio::time::timeout(
         Duration::from_secs(1),
-        accept_tcp_loop(listener, Arc::clone(&state), Box::new(FatalAcceptError)),
+        InboundConnectionAcceptor::accept_tcp_loop(
+            listener,
+            Arc::clone(&state),
+            Box::new(FatalAcceptError),
+        ),
     )
     .await;
     assert!(
@@ -733,7 +737,7 @@ async fn generic_candidate_races_tcp_and_websocket_concurrently() {
         spawn_mixed_generic_responder(peer_id, local_peer_id).await;
     let route = tokio::time::timeout(
         Duration::from_secs(3),
-        connect_generic_candidate(
+        OutboundGenericConnector::connect_generic_candidate(
             endpoint,
             local_identity,
             remote_public_key,
@@ -818,7 +822,7 @@ async fn generic_candidate_authentication_failure_is_typed_and_cleans_session() 
     let session_id = started_session(&state, peer_id).await;
     let result = tokio::time::timeout(
         Duration::from_secs(2),
-        connect_generic_candidate(
+        OutboundGenericConnector::connect_generic_candidate(
             endpoint,
             local_identity,
             expected_remote.public_identity_key().to_bytes(),
@@ -873,7 +877,7 @@ async fn generic_candidate_timeout_closes_unauthenticated_socket() {
     let session_id = started_session(&state, peer_id).await;
     let result = tokio::time::timeout(
         Duration::from_secs(1),
-        connect_generic_candidate(
+        OutboundGenericConnector::connect_generic_candidate(
             endpoint,
             local_identity,
             expected_remote.public_identity_key().to_bytes(),
@@ -917,7 +921,7 @@ async fn websocket_candidate_without_stream_capability_does_not_admit_route() {
     let session_id = started_session(&state, peer_id).await;
     let result = tokio::time::timeout(
         Duration::from_secs(1),
-        connect_generic_candidate(
+        OutboundGenericConnector::connect_generic_candidate(
             endpoint,
             local_identity,
             remote_identity.public_identity_key().to_bytes(),
@@ -1090,10 +1094,13 @@ async fn relay_crypto_send_failure_removes_waiter_without_leaking_state() {
 #[tokio::test]
 async fn inbound_admission_requires_configured_peer_and_marks_supervisor_online() {
     let state = new_test_state().await;
-    let missing =
-        admit_authenticated_inbound(&state, "unknown-peer", DEFAULT_CONNECTION_CAPABILITY)
-            .await
-            .expect_err("inbound authentication must require peer configuration");
+    let missing = InboundConnectionAcceptor::admit_authenticated_inbound(
+        &state,
+        "unknown-peer",
+        DEFAULT_CONNECTION_CAPABILITY,
+    )
+    .await
+    .expect_err("inbound authentication must require peer configuration");
     assert!(missing.to_string().contains("not configured"));
 
     let peer_id = "inbound-configured-peer";
@@ -1106,9 +1113,13 @@ async fn inbound_admission_requires_configured_peer_and_marks_supervisor_online(
             e2ee_policy: network_protocol::E2eePolicy::Required,
         },
     );
-    admit_authenticated_inbound(&state, peer_id, CAPABILITY_RELIABLE_MESSAGE)
-        .await
-        .expect("configured inbound peer should be admitted");
+    InboundConnectionAcceptor::admit_authenticated_inbound(
+        &state,
+        peer_id,
+        CAPABILITY_RELIABLE_MESSAGE,
+    )
+    .await
+    .expect("configured inbound peer should be admitted");
     assert_eq!(
         state
             .peer_supervisors
@@ -1214,7 +1225,10 @@ async fn late_quic_candidate_arriving_before_direct_deadline_can_win() {
         .task_supervisor
         .spawn_runtime(
             "late-candidate-quic-accept",
-            accept_connections(server_endpoint.clone(), Arc::clone(&server_state)),
+            InboundConnectionAcceptor::accept_connections(
+                server_endpoint.clone(),
+                Arc::clone(&server_state),
+            ),
         )
         .expect("start server QUIC accept loop");
 
@@ -1586,14 +1600,16 @@ fn accept_error_policy_retries_transient_listener_failures() {
         std::io::ErrorKind::ConnectionReset,
         std::io::ErrorKind::AddrInUse,
     ] {
-        assert!(!accept_error_is_fatal(&std::io::Error::from(kind)));
+        assert!(!InboundConnectionAcceptor::accept_error_is_fatal(
+            &std::io::Error::from(kind)
+        ));
     }
-    assert!(accept_error_is_fatal(&std::io::Error::from(
-        std::io::ErrorKind::InvalidInput,
-    )));
-    assert!(accept_error_is_fatal(&std::io::Error::from(
-        std::io::ErrorKind::Unsupported,
-    )));
+    assert!(InboundConnectionAcceptor::accept_error_is_fatal(
+        &std::io::Error::from(std::io::ErrorKind::InvalidInput,)
+    ));
+    assert!(InboundConnectionAcceptor::accept_error_is_fatal(
+        &std::io::Error::from(std::io::ErrorKind::Unsupported,)
+    ));
 }
 
 #[test]
@@ -2154,7 +2170,7 @@ async fn direct_and_generic_candidate_races_fail_closed_on_empty_snapshots() {
 
     let (updates_tx, updates) = watch::channel(None);
     drop(updates_tx);
-    let generic_error = match connect_generic_candidates(
+    let generic_error = match OutboundGenericConnector::connect_generic_candidates(
         Vec::new(),
         identity,
         [44; 32],
@@ -2331,7 +2347,7 @@ async fn generic_candidate_race_empty_and_expired_windows_fail_closed() {
     ));
     let (empty_tx, empty_updates) = watch::channel(None);
     drop(empty_tx);
-    let empty_result = connect_generic_candidates(
+    let empty_result = OutboundGenericConnector::connect_generic_candidates(
         Vec::new(),
         Arc::clone(&identity),
         [0u8; 32],
@@ -2358,7 +2374,7 @@ async fn generic_candidate_race_empty_and_expired_windows_fail_closed() {
     );
     let (expired_tx, expired_updates) = watch::channel(None);
     drop(expired_tx);
-    let expired_result = connect_generic_candidates(
+    let expired_result = OutboundGenericConnector::connect_generic_candidates(
         vec![candidate],
         identity,
         [0u8; 32],
@@ -2395,7 +2411,7 @@ async fn generic_tcp_candidate_releases_a_route_that_lacks_requested_datagrams()
         spawn_tcp_generic_responder(peer_id, local_peer_id).await;
     let result = tokio::time::timeout(
         Duration::from_secs(2),
-        connect_generic_candidate(
+        OutboundGenericConnector::connect_generic_candidate(
             endpoint,
             local_identity,
             expected_remote.public_identity_key().to_bytes(),

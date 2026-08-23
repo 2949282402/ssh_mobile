@@ -40,6 +40,11 @@ Ownership rules:
   codec concerns. The stream manager owns registry, sequence, bounded buffers,
   tombstones, and one retained `PathLease`; the SSH gateway adapter alone maps
   FFI commands and pumps bytes to local sshd under the runtime supervisor.
+- Generic outbound candidate races, inbound listener/admission, and connection
+  receiver supervision are separate Peer collaborators. Runtime-scope accept
+  and handshake tasks never own Session receivers; session-scope receivers own
+  precise route-loss detection and schedule root-scope cleanup only after the
+  final physical path disappears.
 - Each transport Connection owns exactly one `ConnectionSession`; a new
   connection gets a new `SessionId` and Noise root, and transport loss destroys
   that session. Delivery and Transfer managers own the business state that may

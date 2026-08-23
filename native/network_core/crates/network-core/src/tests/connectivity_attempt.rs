@@ -1108,7 +1108,10 @@ async fn stage_c_direct_success_attaches_a_fresh_quic_session() {
         .task_supervisor
         .spawn_runtime(
             "stage-c-direct-accept",
-            crate::peer::accept_connections(server_endpoint.clone(), Arc::clone(&server_state)),
+            crate::peer::InboundConnectionAcceptor::accept_connections(
+                server_endpoint.clone(),
+                Arc::clone(&server_state),
+            ),
         )
         .expect("server accept task");
 

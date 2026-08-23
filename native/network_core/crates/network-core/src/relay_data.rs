@@ -360,7 +360,7 @@ pub(super) async fn relay_data_disconnected(
     cleanup_relay_state(&state, Some(&peer_id)).await;
     // §18/§35：transport 丢失即销毁 ConnectionSession（Relay route 由其数据客户端
     // 断开驱动）。显式 close 会 emit Disconnected。
-    crate::peer::teardown_relay_route(&state, &peer_id, &data).await;
+    crate::peer::ConnectionReceiverSupervisor::teardown_relay_route(&state, &peer_id, &data).await;
 }
 
 pub(super) fn relay_crypto_key(peer_id: &str, session_token: &str) -> String {

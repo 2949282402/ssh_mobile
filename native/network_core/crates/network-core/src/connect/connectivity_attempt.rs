@@ -1535,7 +1535,7 @@ impl ConnectivityAttemptCoordinator {
                 // （ResumeTransfer(transfer_id)，按 transfer_id + peer_id 领取）。
                 crate::transfer::resume_transfers_for_peer(Arc::clone(&state), peer_id.to_string())
                     .await;
-                crate::peer::spawn_session_receivers(
+                crate::peer::ConnectionReceiverSupervisor::spawn_session_receivers(
                     Arc::clone(&state),
                     peer_id.to_string(),
                     connection,

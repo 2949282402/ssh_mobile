@@ -78,6 +78,10 @@ the retired v1 route/session owner model.
   across connections. File and stream operations acquire fresh path leases after
   loss, and SSH/Realtime explicitly close rather than transparently migrating a
   stale connection.
+- Outbound generic connection races, inbound QUIC/TCP acceptance, and receiver
+  supervision have independent lifecycle owners. Accept/handshake tasks remain
+  runtime-scoped; bidi/channel/generic readers remain Session-scoped and retire
+  only the exact lost route before deciding whether the Session is finished.
 - Feature-facing Realtime does not expose native signaling or media resources;
   decoded media availability remains defined by the public package contract.
 
