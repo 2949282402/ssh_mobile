@@ -11,6 +11,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -120,7 +121,7 @@ func relayDataTestIdentityFor(t *testing.T, baseURL, reservationID, tokenHex str
 	); result != enrollmentOK {
 		t.Fatalf("create relay data test enrollment for %s: result=%d", deviceID, result)
 	}
-	credential, err := issueCredential(server.config.CredentialKey, deviceID, publicKey, server.config.CredentialTTL)
+	credential, err := issueCredential(server.config.CredentialKey, deviceID, publicKey, mustEnrollmentGeneration(t, server, deviceID), server.config.CredentialTTL)
 	if err != nil {
 		t.Fatalf("issue relay data test credential: %v", err)
 	}
@@ -171,10 +172,7 @@ func dialControlV2NoReady(t *testing.T, baseURL, credential, deviceID string, no
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceByte}, 32))
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+credential)
-	headers.Set("X-Relay-Nonce", nonce)
-	headers.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
-	))
+	setCurrentSignedDeviceProof(headers, http.MethodGet, "/v2/control", privateKey, nonce)
 	relayURL, err := url.Parse(baseURL)
 	if err != nil {
 		t.Fatal(err)
@@ -199,18 +197,10 @@ func dialRelayDataWithIdentity(baseURL, reservationID, tokenHex string, identity
 	}
 	relayURL.Scheme = "ws"
 	relayURL.Path = "/v2/relay/" + reservationID
-	q := relayURL.Query()
-	if tokenHex != "" {
-		q.Set("token", tokenHex)
-	}
-	relayURL.RawQuery = q.Encode()
 	nonce := base64.RawURLEncoding.EncodeToString(randomBytes(32))
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+identity.credential)
-	headers.Set("X-Relay-Nonce", nonce)
-	headers.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(identity.privateKey, []byte("GET\n/v2/relay/"+reservationID+"\n"+nonce)),
-	))
+	setCurrentSignedDeviceProof(headers, http.MethodGet, relayURL.Path, identity.privateKey, nonce)
 	headers.Set("X-Relay-Token", tokenHex)
 	return websocket.DefaultDialer.Dial(relayURL.String(), headers)
 }
@@ -383,6 +373,55 @@ func TestRelayDataAdmissionBindsDeviceRoleAndToken(t *testing.T) {
 	}
 }
 
+func TestRelayDataUpgradeQuotaIsReservedBeforeHTTP101(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	server.relayData.closeAll()
+	server.relayData = newRelayDataRegistry(1)
+	enrollV2(t, httpServer.URL, "device-a")
+	enrollV2(t, httpServer.URL, "device-b")
+	res := createRelayDataTestReservation(t, server, httpServer, "device-a", "device-b")
+	initiatorToken := hex.EncodeToString(res.InitiatorToken)
+	responderToken := hex.EncodeToString(res.ResponderToken)
+	identityA := relayDataTestIdentityByDevice(t, httpServer.URL, "device-a")
+	identityB := relayDataTestIdentityByDevice(t, httpServer.URL, "device-b")
+
+	first, response, err := dialRelayDataWithIdentity(httpServer.URL, res.ReservationID, initiatorToken, identityA)
+	if err != nil {
+		t.Fatalf("first upgrade failed: status=%v err=%v", responseStatus(response), err)
+	}
+	defer first.Close()
+	second, response, err := dialRelayDataWithIdentity(httpServer.URL, res.ReservationID, responderToken, identityB)
+	if err != nil {
+		t.Fatalf("second upgrade failed: status=%v err=%v", responseStatus(response), err)
+	}
+	defer second.Close()
+	waitRelayUpgradeSlots(t, server, 2)
+
+	third, response, err := dialRelayDataWithIdentity(httpServer.URL, res.ReservationID, initiatorToken, identityA)
+	if third != nil {
+		_ = third.Close()
+	}
+	if err == nil || response == nil || response.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("third upgrade should fail before 101: status=%v err=%v", responseStatus(response), err)
+	}
+	defer response.Body.Close()
+	var capacityError networkErrorResponse
+	if decodeErr := json.NewDecoder(response.Body).Decode(&capacityError); decodeErr != nil {
+		t.Fatalf("decode capacity response: %v", decodeErr)
+	}
+	if capacityError.Code != relayErrorRelayError || capacityError.RetryDisposition != retryWithBackoff {
+		t.Fatalf("unexpected capacity response: %+v", capacityError)
+	}
+
+	_ = first.Close()
+	waitRelayUpgradeSlots(t, server, 1)
+	retry, response, err := dialRelayDataWithIdentity(httpServer.URL, res.ReservationID, initiatorToken, identityA)
+	if err != nil {
+		t.Fatalf("released upgrade slot should be reusable: status=%v err=%v", responseStatus(response), err)
+	}
+	_ = retry.Close()
+}
+
 func TestRelayDataCloseDeviceClosesPendingActiveAndCounterpart(t *testing.T) {
 	server, httpServer := newV2TestServer(t)
 	pending := createRelayDataTestReservation(t, server, httpServer, "device-a", "device-b")
@@ -469,6 +508,23 @@ func waitRelayPending(t *testing.T, server *Server, reservationID string, want b
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("relay data pending state for %s: want present=%v, timed out", reservationID, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func waitRelayUpgradeSlots(t *testing.T, server *Server, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		server.relayData.mutex.Lock()
+		got := server.relayData.upgradeSlots
+		server.relayData.mutex.Unlock()
+		if got == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("RelayData upgrade slots=%d want=%d", got, want)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -1006,19 +1062,43 @@ func TestControlV2ReservationAndRelayData(t *testing.T) {
 	connB := dialControlV2(t, httpServer.URL, credB, "device-b", 0x72, privB)
 	defer connB.Close()
 
-	// B 发布 discovery 使其 READY（A reserve B 前 B 必须在线可连）。
+	// Both endpoints publish discovery so the authoritative Resolve -> Offer
+	// gate can prove them READY before Relay fallback is authorized.
+	publishDiscoveryV2Test(t, connA, 1001)
+	if hint := readV2ControlFrame(t, connB); hint.GetPeerAvailableHint() == nil {
+		t.Fatalf("device-b expected peer_available_hint after device-a publish, got %+v", hint)
+	}
 	publishDiscoveryV2Test(t, connB, 2001)
 	// B 发布 discovery 会向 A 广播 PeerAvailableHint：先消费，避免与 reserve 响应混淆。
 	if hint := readV2ControlFrame(t, connA); hint.GetPeerAvailableHint() == nil {
 		t.Fatalf("device-a expected peer_available_hint after device-b publish, got %+v", hint)
 	}
 
-	// A 发起 reservation。
 	attemptID := "r1c2d3e4f5a60718293a4b5c6d7e8f90"
 	writeV2ControlFrame(t, connA, &v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_ResolvePeerRequest{ResolvePeerRequest: &v2.ResolvePeerRequest{
+			RequestId: 1002, TargetDeviceId: "device-b",
+		}},
+	})
+	if resolved := readV2ControlFrame(t, connA).GetResolvePeerResponse(); resolved == nil || resolved.Status != v2.ResolveStatus_RESOLVE_STATUS_READY {
+		t.Fatalf("device-a expected READY resolve before reservation, got %+v", resolved)
+	}
+	writeV2ControlFrame(t, connA, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_ConnectivityOffer{ConnectivityOffer: &v2.ConnectivityOffer{
+			RequestId: 1003, AttemptId: attemptID,
+		}},
+	})
+	if forwarded := readV2ControlFrame(t, connB).GetConnectivityOffer(); forwarded == nil || forwarded.AttemptId != attemptID {
+		t.Fatalf("device-b expected connectivity offer before reservation, got %+v", forwarded)
+	}
+
+	// A falls back to Relay using the exact forwarded attempt and target.
+	writeV2ControlFrame(t, connA, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
 		Kind: &v2.RelayFrame_RelayReserveRequest{RelayReserveRequest: &v2.RelayReserveRequest{
-			RequestId:        1001,
+			RequestId:        1004,
 			AttemptId:        attemptID,
 			TargetDeviceId:   "device-b",
 			DesiredLifetimeS: 15,
@@ -1189,9 +1269,9 @@ func TestRelayDataPairReadyRequiresBothRoles(t *testing.T) {
 	}
 }
 
-// TestRelayDataSameRoleRetryRejectsDuplicate fixes role-aware one-shot pairing:
-// a replayed role token cannot replace a pending endpoint or steal its pair.
-func TestRelayDataSameRoleRetryRejectsDuplicate(t *testing.T) {
+// TestRelayDataSameRoleRetryReplacesPendingEndpoint pins the frozen retry
+// contract: the newest same-role endpoint wins before PairReady.
+func TestRelayDataSameRoleRetryReplacesPendingEndpoint(t *testing.T) {
 	for _, replaceInitiator := range []bool{true, false} {
 		name := "responder"
 		if replaceInitiator {
@@ -1240,8 +1320,8 @@ func TestRelayDataSameRoleRetryRejectsDuplicate(t *testing.T) {
 					LocalToken:    firstToken,
 				}},
 			})
-			if frame := readV2DataFrameDeadline(t, retry, 2*time.Second); frame == nil || frame.GetClose() == nil {
-				t.Fatalf("duplicate %s endpoint should receive close, got %+v", name, frame)
+			if frame := readV2DataFrameDeadline(t, first, 2*time.Second); frame == nil || frame.GetClose() == nil {
+				t.Fatalf("replaced %s endpoint should receive close, got %+v", name, frame)
 			}
 			waitRelayPending(t, server, reservationID, true)
 
@@ -1255,10 +1335,10 @@ func TestRelayDataSameRoleRetryRejectsDuplicate(t *testing.T) {
 				}},
 			})
 			waitRelayPending(t, server, reservationID, false)
-			readRelayDataPairReady(t, first, reservationID)
+			readRelayDataPairReady(t, retry, reservationID)
 			readRelayDataPairReady(t, other, reservationID)
 
-			writeV2DataFrame(t, first, &v2.RelayDataFrame{
+			writeV2DataFrame(t, retry, &v2.RelayDataFrame{
 				Version: v2.RELAY_V2_VERSION,
 				Kind: &v2.RelayDataFrame_Payload{Payload: &v2.RelayDataPayload{
 					Sequence:         7,
@@ -1267,10 +1347,99 @@ func TestRelayDataSameRoleRetryRejectsDuplicate(t *testing.T) {
 			})
 			frame := readV2DataFrame(t, other)
 			if frame == nil || frame.GetPayload() == nil || frame.GetPayload().Sequence != 7 {
-				t.Fatalf("original endpoint should remain linked to the opposite role, got %+v", frame)
+				t.Fatalf("replacement endpoint should link to the opposite role, got %+v", frame)
 			}
 		})
 	}
+}
+
+func TestRelayDataSameRoleRetryInvalidatesActivePairAndRequiresFreshCounterpart(t *testing.T) {
+	server, httpServer := newV2TestServer(t)
+	ctx := context.Background()
+	reservationID := hex.EncodeToString(randomBytes(16))
+	initiatorToken := randomBytes(32)
+	responderToken := randomBytes(32)
+	if err := server.cache.CreateReservation(ctx, Reservation{
+		ReservationID:     reservationID,
+		InitiatorDeviceID: "device-a",
+		ResponderDeviceID: "device-b",
+		RelayDataEndpoint: "wss://" + httpServer.URL + "/v2/relay/" + reservationID,
+		InitiatorToken:    initiatorToken,
+		ResponderToken:    responderToken,
+		ExpiresAtMs:       time.Now().Add(time.Minute).UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	initiator := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(initiatorToken))
+	defer initiator.Close()
+	responder := dialRelayData(t, httpServer.URL, reservationID, hex.EncodeToString(responderToken))
+	defer responder.Close()
+	identityA := relayDataTestIdentityByDevice(t, httpServer.URL, "device-a")
+	identityB := relayDataTestIdentityByDevice(t, httpServer.URL, "device-b")
+	writeV2DataFrame(t, initiator, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{
+			ReservationId: reservationID,
+			LocalToken:    initiatorToken,
+		}},
+	})
+	writeV2DataFrame(t, responder, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{
+			ReservationId: reservationID,
+			LocalToken:    responderToken,
+		}},
+	})
+	readRelayDataPairReady(t, initiator, reservationID)
+	readRelayDataPairReady(t, responder, reservationID)
+
+	retry, response, err := dialRelayDataWithIdentity(
+		httpServer.URL,
+		reservationID,
+		hex.EncodeToString(initiatorToken),
+		identityA,
+	)
+	if err != nil {
+		t.Fatalf("active-pair retry upgrade failed: status=%v err=%v", responseStatus(response), err)
+	}
+	defer retry.Close()
+	writeV2DataFrame(t, retry, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{
+			ReservationId: reservationID,
+			LocalToken:    initiatorToken,
+		}},
+	})
+	for name, endpoint := range map[string]*websocket.Conn{
+		"old initiator": initiator,
+		"old responder": responder,
+	} {
+		if frame := readV2DataFrameDeadline(t, endpoint, 2*time.Second); frame == nil || frame.GetClose() == nil {
+			t.Fatalf("%s should close after active-pair replacement, got %+v", name, frame)
+		}
+	}
+	waitRelayPending(t, server, reservationID, true)
+
+	freshResponder, response, err := dialRelayDataWithIdentity(
+		httpServer.URL,
+		reservationID,
+		hex.EncodeToString(responderToken),
+		identityB,
+	)
+	if err != nil {
+		t.Fatalf("fresh counterpart upgrade failed: status=%v err=%v", responseStatus(response), err)
+	}
+	defer freshResponder.Close()
+	writeV2DataFrame(t, freshResponder, &v2.RelayDataFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayDataFrame_Connect{Connect: &v2.RelayDataConnect{
+			ReservationId: reservationID,
+			LocalToken:    responderToken,
+		}},
+	})
+	readRelayDataPairReady(t, retry, reservationID)
+	readRelayDataPairReady(t, freshResponder, reservationID)
 }
 
 func TestRelayDataPairedDisconnectRequiresFreshPair(t *testing.T) {
@@ -1381,9 +1550,10 @@ func TestRelayDataUpgradeValidation(t *testing.T) {
 		t.Fatalf("missing token should 401, got status=%v err=%v", statusOf(response), err)
 	}
 
-	// 错误 token → 401。
-	relayURL.RawQuery = "token=" + strings.Repeat("ff", 32)
-	if _, response, err := websocket.DefaultDialer.Dial(relayURL.String(), nil); err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
+	// 错误 header token → 401；reservation credential 不允许进入 URL query。
+	relayURL.RawQuery = ""
+	wrongTokenHeader := http.Header{"X-Relay-Token": []string{strings.Repeat("ff", 32)}}
+	if _, response, err := websocket.DefaultDialer.Dial(relayURL.String(), wrongTokenHeader); err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong token should 401, got status=%v err=%v", statusOf(response), err)
 	}
 }
@@ -1615,7 +1785,7 @@ func TestControlV2OfferInitiatorForcedToSender(t *testing.T) {
 // IncomingRelayReservation 都不得泄露 httptest 的连接主机。
 func TestRelayReserveEndpointFromServerOrigin(t *testing.T) {
 	server, httpServer := newV2TestServer(t)
-	server.hub.config.PublicURL = "wss://relay.example.com"
+	server.hub.relayDataOrigin = "wss://relay.example.com"
 	credA, privA := enrollV2(t, httpServer.URL, "device-a")
 	credB, privB := enrollV2(t, httpServer.URL, "device-b")
 	connA := dialControlV2(t, httpServer.URL, credA, "device-a", 0x91, privA)
@@ -1623,6 +1793,10 @@ func TestRelayReserveEndpointFromServerOrigin(t *testing.T) {
 	connB := dialControlV2(t, httpServer.URL, credB, "device-b", 0x92, privB)
 	defer connB.Close()
 
+	publishDiscoveryV2Test(t, connA, 1001)
+	if hint := readV2ControlFrame(t, connB); hint.GetPeerAvailableHint() == nil {
+		t.Fatalf("device-b expected peer_available_hint, got %+v", hint)
+	}
 	publishDiscoveryV2Test(t, connB, 2001)
 	if hint := readV2ControlFrame(t, connA); hint.GetPeerAvailableHint() == nil {
 		t.Fatalf("device-a expected peer_available_hint, got %+v", hint)
@@ -1631,8 +1805,26 @@ func TestRelayReserveEndpointFromServerOrigin(t *testing.T) {
 	attemptID := "e1f2a3b4c5d60718293a4b5c6d7e8f90"
 	writeV2ControlFrame(t, connA, &v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_ResolvePeerRequest{ResolvePeerRequest: &v2.ResolvePeerRequest{
+			RequestId: 1002, TargetDeviceId: "device-b",
+		}},
+	})
+	if resolved := readV2ControlFrame(t, connA).GetResolvePeerResponse(); resolved == nil || resolved.Status != v2.ResolveStatus_RESOLVE_STATUS_READY {
+		t.Fatalf("expected READY resolve before endpoint reservation, got %+v", resolved)
+	}
+	writeV2ControlFrame(t, connA, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_ConnectivityOffer{ConnectivityOffer: &v2.ConnectivityOffer{
+			RequestId: 1003, AttemptId: attemptID,
+		}},
+	})
+	if forwarded := readV2ControlFrame(t, connB).GetConnectivityOffer(); forwarded == nil || forwarded.AttemptId != attemptID {
+		t.Fatalf("expected forwarded offer before endpoint reservation, got %+v", forwarded)
+	}
+	writeV2ControlFrame(t, connA, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
 		Kind: &v2.RelayFrame_RelayReserveRequest{RelayReserveRequest: &v2.RelayReserveRequest{
-			RequestId: 1001, AttemptId: attemptID, TargetDeviceId: "device-b", DesiredLifetimeS: 15,
+			RequestId: 1004, AttemptId: attemptID, TargetDeviceId: "device-b", DesiredLifetimeS: 15,
 		}},
 	})
 	resp := readV2ControlFrame(t, connA)
@@ -1668,8 +1860,13 @@ func TestRelayReserveEndpointIgnoresClientHostHeader(t *testing.T) {
 	// 单元级：注入带恶意 relayHost 的 peer，直接走 handleRelayReserveRequestV2。
 	caller := injectPeer(server.hub, "device-x")
 	caller.relayHost = "evil.example.com"
+	server.hub.mutex.Lock()
+	target := server.hub.peers["device-b"]
+	server.hub.mutex.Unlock()
+	attemptID := "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+	authorizeRelayReservationForTest(t, server.hub, caller, target, attemptID)
 	server.hub.handleRelayReserveRequestV2(caller, &v2.RelayReserveRequest{
-		RequestId: 1002, AttemptId: "a1b2c3d4e5f60718293a4b5c6d7e8f90", TargetDeviceId: "device-b", DesiredLifetimeS: 15,
+		RequestId: 1002, AttemptId: attemptID, TargetDeviceId: "device-b", DesiredLifetimeS: 15,
 	})
 	frame := readV2ControlFrameFromPeer(t, caller)
 	rr := frame.GetRelayReserveResponse()
@@ -1977,5 +2174,23 @@ func TestControlV2RouteRejectsSupersededPeer(t *testing.T) {
 			t.Fatalf("%s: superseded peer frame must not be dispatched to the target, got %s (err=%v)", tc.name, v2.KindName(decoded), derr)
 		default:
 		}
+	}
+}
+
+func TestControlV2RouteRejectsClosedCurrentPeer(t *testing.T) {
+	server, _ := newV2TestServer(t)
+	current := injectPeer(server.hub, "device-a")
+	closePeer(current)
+	data, err := v2.EncodeFrame(&v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_Heartbeat{Heartbeat: &v2.Heartbeat{
+			RequestId: 1,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.hub.routeControlV2(current, data) {
+		t.Fatal("a closed current peer dispatched a buffered control frame")
 	}
 }

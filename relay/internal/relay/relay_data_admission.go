@@ -27,6 +27,7 @@ const (
 
 type relayDataAdmission struct {
 	reservations relayReservationLookup
+	retries      *relayDataRegistry
 }
 
 // authorize binds the authenticated device, reservation role, and exact local
@@ -38,7 +39,13 @@ func (a relayDataAdmission) authorize(ctx context.Context, r *http.Request, rese
 		return Reservation{}, 0, relayDataAdmissionUnavailable
 	}
 	if !ok {
-		return Reservation{}, 0, relayDataAdmissionMissing
+		if a.retries == nil {
+			return Reservation{}, 0, relayDataAdmissionMissing
+		}
+		res, ok = a.retries.retryReservation(reservationID)
+		if !ok {
+			return Reservation{}, 0, relayDataAdmissionMissing
+		}
 	}
 	role, roleOK := relayDataRoleForDevice(res, deviceID)
 	if !roleOK || !validRelayTokenForRole(r, res, role) {
@@ -57,7 +64,8 @@ func (a relayDataAdmission) authorize(ctx context.Context, r *http.Request, rese
 func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 	reservationID := r.PathValue("reservation_id")
 	if !validReservationID(reservationID) {
-		http.Error(w, "invalid reservation id", http.StatusNotFound)
+		writeNetworkErrorRetry(w, http.StatusNotFound, relayErrorInvalidArgument,
+			"Relay data reservation is invalid.", "connect_relay_data", "", retryNoRetry, 0)
 		return
 	}
 	// Authenticate before touching reservation state.  An unauthenticated caller
@@ -72,7 +80,7 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 			"Relay data-plane authentication failed.", "connect_relay_data", "", retry, 0)
 		return
 	}
-	unlockAdmission, admissionCode, admitted := s.admitAuthenticatedDevice(r.Context(), claims, publicKey)
+	admission, admissionCode, admitted := s.admitAuthenticatedDevice(r.Context(), claims, publicKey)
 	if !admitted {
 		retry := retryUnspecified
 		if admissionCode == relayErrorCredentialExpired {
@@ -88,12 +96,12 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 	// revoke/re-enroll indefinitely; after trackUpgrade, revoke can find and
 	// close this endpoint directly.
 	defer func() {
-		if unlockAdmission != nil {
-			unlockAdmission()
+		if admission != nil {
+			admission.release()
 		}
 	}()
-	ctx, cancel := context.WithTimeout(r.Context(), presenceLeaseTimeout)
-	res, role, reservationAdmission := (relayDataAdmission{reservations: s.cache}).authorize(
+	ctx, cancel := context.WithTimeout(admission.ctx, presenceLeaseTimeout)
+	res, role, reservationAdmission := (relayDataAdmission{reservations: s.cache, retries: s.relayData}).authorize(
 		ctx,
 		r,
 		reservationID,
@@ -106,30 +114,53 @@ func (s *Server) connectRelayData(w http.ResponseWriter, r *http.Request) {
 			"Relay data reservation lookup failed.", "connect_relay_data", "", retryUnspecified, 0)
 		return
 	case relayDataAdmissionMissing:
-		http.Error(w, "reservation not found", http.StatusNotFound)
+		writeNetworkErrorRetry(w, http.StatusNotFound, relayErrorInvalidArgument,
+			"Relay data reservation is unavailable.", "connect_relay_data", "", retryNoRetry, 0)
 		return
 	case relayDataAdmissionForbidden:
-		http.Error(w, "invalid reservation token", http.StatusUnauthorized)
+		writeNetworkErrorRetry(w, http.StatusUnauthorized, relayErrorAuthenticationFailed,
+			"Relay data reservation authentication failed.", "connect_relay_data", "", retryNoRetry, 0)
 		return
 	case relayDataAdmissionAccepted:
 	}
+	// Reserve upgraded-without-Connect capacity before emitting HTTP 101. This
+	// closes the race where many authenticated requests all upgrade first and
+	// only become visible to the registry afterwards.
+	upgradeLease, upgradeAdmission := s.relayData.beginUpgrade(claims.DeviceID, claims.EnrollmentGeneration)
+	switch upgradeAdmission {
+	case relayDataUpgradeClosed:
+		writeNetworkErrorRetry(w, http.StatusServiceUnavailable, relayErrorRelayError,
+			"Relay data service is shutting down.", "connect_relay_data", "", retryWithBackoff, 0)
+		return
+	case relayDataUpgradeCapacity:
+		writeNetworkErrorRetry(w, http.StatusTooManyRequests, relayErrorRelayError,
+			"Relay data connection capacity is exhausted.", "connect_relay_data", "", retryWithBackoff, 0)
+		return
+	case relayDataUpgradeAccepted:
+	}
+	defer upgradeLease.release()
 	// 不按名义 ExpiresAtMs 做升级准入：滑动窗口续期（RenewReservation/touch）只滑动
 	// 存储 TTL，从不回写 ExpiresAtMs，因此晚加入的端点即使名义到期已过、只要存储键仍
 	// 存活（GetReservation ok）就必须被接受。GetReservation 的 ok 结果已编码滑动窗口
 	// 活性（memoryStore 按滑动的 entry.expiresAt 剪除，redisStore 依赖滑动的 Redis TTL）。
-	connection, err := s.upgrader.Upgrade(w, r, nil)
+	connection, err := s.upgradeWithinContext(admission.ctx, w, r)
 	if err != nil {
 		return
 	}
-	// 不在升级阶段登记：只有首帧 RelayDataConnect 通过校验后才进入 registry（避免
-	// 把自身当成等待对端）。未发 Connect 的已升级连接不占 pending 容量，但仍
-	// 由 upgradeRefs 追踪，以便 explicit revoke 立即关闭它。
-	rc := newRelayDataConn(&s.relayData, res, connection, s.config, s.cache, claims.DeviceID, role)
-	s.relayData.trackUpgrade(rc)
-	unlockAdmission()
-	unlockAdmission = nil
-	go rc.write()
-	go rc.read()
+	// 只有首帧 RelayDataConnect 通过校验后才进入 pending/active pair；Upgrade 后、
+	// Connect 前则由同一预占 slot 转换成 upgradeRefs，以便 revoke/shutdown 关闭。
+	rc := newRelayDataConn(s.relayData, res, connection, s.config, s.cache, claims.DeviceID, role, claims.EnrollmentGeneration)
+	if !s.relayData.stageEndpoint(upgradeLease, rc) {
+		_ = connection.Close()
+		return
+	}
+	_, enrollmentCurrent := s.enrollmentClaimsCurrent(admission.ctx, claims, publicKey)
+	if !enrollmentCurrent || !s.relayData.activateEndpoint(rc) {
+		rc.sendCloseAndShutdown(2, "device enrollment changed during relay data admission")
+		return
+	}
+	admission.release()
+	admission = nil
 }
 
 func relayDataRoleForDevice(res Reservation, deviceID string) (relayDataRole, bool) {
@@ -158,25 +189,22 @@ func validReservationID(id string) bool {
 	return err == nil
 }
 
-// validRelayToken 从 query (?token=) 或 header (X-Relay-Token) 读取 hex 编码的
-// reservation token，并校验它匹配 A 或 B 任一端的 token。
+// validRelayToken 只从 X-Relay-Token header 读取 hex 编码的 reservation token，
+// 并校验它匹配 A 或 B 任一端；任何 query token 都 fail closed。
 func validRelayToken(r *http.Request, res Reservation) bool {
 	return validRelayTokenForRole(r, res, relayDataRoleInitiator) ||
 		validRelayTokenForRole(r, res, relayDataRoleResponder)
 }
 
 func validRelayTokenForRole(r *http.Request, res Reservation, role relayDataRole) bool {
-	queryToken := r.URL.Query().Get("token")
-	headerToken := r.Header.Get("X-Relay-Token")
-	if queryToken == "" && headerToken == "" {
+	// Reservation tokens are credentials. Reject URL query transport because
+	// URLs are routinely retained by proxies, access logs, and browser history.
+	if r.URL.Query().Get("token") != "" {
 		return false
 	}
-	if queryToken != "" && headerToken != "" && queryToken != headerToken {
-		return false
-	}
-	token := queryToken
+	token := r.Header.Get("X-Relay-Token")
 	if token == "" {
-		token = headerToken
+		return false
 	}
 	raw, err := hex.DecodeString(token)
 	if err != nil {

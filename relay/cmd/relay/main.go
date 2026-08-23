@@ -1,4 +1,4 @@
-// Relay v1 服务启动入口；配置和路由均由 internal/relay 统一管理。
+// Relay 服务启动入口；设备 bootstrap 保留 /v1，传输控制面与数据面仅使用 v2。
 
 package main
 
@@ -56,9 +56,9 @@ func main() {
 			os.Exit(1)
 		}
 	case <-ctx.Done():
-		// Bounded shutdown: HTTP graceful shutdown (15s) is followed by a hub
-		// close that is itself bounded (hubCloseTimeout). The Compose
-		// stop_grace_period must exceed this full 15s + 5s budget so Docker
+		// Bounded shutdown: HTTP graceful shutdown (15s) is followed by the Relay
+		// runtime's single 10s total close budget. The Compose stop_grace_period
+		// must exceed this full 15s + 10s budget so Docker
 		// does not SIGKILL the process mid-sequence.
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		if err := httpServer.Shutdown(shutdownContext); err != nil {
@@ -82,7 +82,9 @@ func seedEnrollments(server *relay.Server, path string) error {
 	if err := json.Unmarshal(data, &enrollments); err != nil {
 		return err
 	}
-	return server.SeedEnrollments(context.Background(), enrollments)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return server.SeedEnrollments(ctx, enrollments)
 }
 
 // newHTTPServer builds the HTTP server with bounded read, write, header and

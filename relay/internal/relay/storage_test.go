@@ -82,7 +82,7 @@ func TestMemoryStoreRevokeEnrollment(t *testing.T) {
 	store := newMemoryStore(Config{MaxEnrolledDevices: 4, MaxRevokedDevices: 4})
 	ctx := context.Background()
 
-	if outcome, err := store.RevokeEnrollment(ctx, "device-a", time.Hour); err != nil || outcome != revokeNotEnrolled {
+	if outcome, _, err := store.RevokeEnrollment(ctx, "device-a", time.Hour); err != nil || outcome != revokeNotEnrolled {
 		t.Fatalf("revoke of an unenrolled device should report not enrolled: outcome=%v err=%v", outcome, err)
 	}
 
@@ -90,9 +90,14 @@ func TestMemoryStoreRevokeEnrollment(t *testing.T) {
 	if result, _ := store.PutEnrollment(ctx, &EnrolledDevice{DeviceID: "device-a", PublicKey: "key-a", EnrolledAt: enrolledAt}); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
-	outcome, err := store.RevokeEnrollment(ctx, "device-a", time.Hour)
+	revokedAfter := time.Now()
+	outcome, generation, err := store.RevokeEnrollment(ctx, "device-a", time.Hour)
+	revokedBefore := time.Now()
 	if err != nil || outcome != revokeOK {
 		t.Fatalf("revoke failed: outcome=%v err=%v", outcome, err)
+	}
+	if generation != enrolledAt.UTC().Truncate(time.Microsecond).UnixMicro() {
+		t.Fatalf("revoked generation=%d, want %d", generation, enrolledAt.UTC().Truncate(time.Microsecond).UnixMicro())
 	}
 	if device, _ := store.GetEnrollment(ctx, "device-a"); device != nil {
 		t.Fatal("enrollment should be removed after revoke")
@@ -101,8 +106,47 @@ func TestMemoryStoreRevokeEnrollment(t *testing.T) {
 	if !present {
 		t.Fatal("tombstone should be present after revoke")
 	}
-	if want := enrolledAt.Add(time.Hour); !expiry.Equal(want) {
-		t.Fatalf("tombstone bound = %v, want %v", expiry, want)
+	if expiry.Before(revokedAfter.Add(time.Hour)) || expiry.After(revokedBefore.Add(time.Hour)) {
+		t.Fatalf("tombstone bound = %v, want revoke-time window [%v, %v]", expiry,
+			revokedAfter.Add(time.Hour), revokedBefore.Add(time.Hour))
+	}
+}
+
+func TestMemoryStoreEnrollmentGenerationIsMonotonic(t *testing.T) {
+	store := newMemoryStore(Config{MaxEnrolledDevices: 4, MaxRevokedDevices: 4})
+	ctx := context.Background()
+	fixedTime := time.Now()
+	first := &EnrolledDevice{DeviceID: "device-a", PublicKey: "key-a", EnrolledAt: fixedTime}
+	if result, err := store.PutEnrollment(ctx, first); err != nil || result != enrollmentOK {
+		t.Fatalf("first enrollment: result=%v err=%v", result, err)
+	}
+	second := &EnrolledDevice{DeviceID: "device-a", PublicKey: "key-a", EnrolledAt: fixedTime}
+	if result, err := store.PutEnrollment(ctx, second); err != nil || result != enrollmentOK {
+		t.Fatalf("second enrollment: result=%v err=%v", result, err)
+	}
+	if !second.EnrolledAt.After(first.EnrolledAt) {
+		t.Fatalf("generation did not advance: first=%s second=%s", first.EnrolledAt, second.EnrolledAt)
+	}
+}
+
+func TestMemoryStoreReenrollmentAdvancesPastRevokedGeneration(t *testing.T) {
+	store := newMemoryStore(Config{MaxEnrolledDevices: 4, MaxRevokedDevices: 4})
+	ctx := context.Background()
+	fixedTime := time.Now()
+	first := &EnrolledDevice{DeviceID: "device-a", PublicKey: "key-a", EnrolledAt: fixedTime}
+	if result, err := store.PutEnrollment(ctx, first); err != nil || result != enrollmentOK {
+		t.Fatalf("first enrollment: result=%v err=%v", result, err)
+	}
+	outcome, revokedGeneration, err := store.RevokeEnrollment(ctx, "device-a", time.Hour)
+	if err != nil || outcome != revokeOK {
+		t.Fatalf("revoke: outcome=%v err=%v", outcome, err)
+	}
+	second := &EnrolledDevice{DeviceID: "device-a", PublicKey: "key-a", EnrolledAt: fixedTime}
+	if result, err := store.PutEnrollment(ctx, second); err != nil || result != enrollmentOK {
+		t.Fatalf("re-enrollment: result=%v err=%v", result, err)
+	}
+	if second.EnrolledAt.UnixMicro() <= revokedGeneration {
+		t.Fatalf("re-enrollment generation=%d did not advance past revoked=%d", second.EnrolledAt.UnixMicro(), revokedGeneration)
 	}
 }
 
@@ -121,7 +165,7 @@ func TestMemoryStoreRevokeCapacityFailsClosedWithoutDeleting(t *testing.T) {
 		t.Fatalf("enroll failed: %v", result)
 	}
 
-	outcome, err := store.RevokeEnrollment(ctx, "device-a", time.Hour)
+	outcome, _, err := store.RevokeEnrollment(ctx, "device-a", time.Hour)
 	if err != nil || outcome != revokeCapacity {
 		t.Fatalf("expected capacity outcome, got outcome=%v err=%v", outcome, err)
 	}
@@ -144,10 +188,58 @@ func TestMemoryStoreNonceReplayAndClear(t *testing.T) {
 	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "nonce-2", expiry); replayed {
 		t.Fatal("fresh nonce reported as replay")
 	}
-	// Re-enroll clears the device's nonces so old ones cannot be replayed.
+	// Explicit maintenance reset remains available, but enrollment lifecycle
+	// code deliberately does not call it because that would reopen replay.
 	_ = store.ClearDeviceNonces(ctx, "device-a")
+	if len(store.proofNonces) != 0 || len(store.proofNonceExpiries) != 0 || len(store.proofNonceExpiryByDevice) != 0 {
+		t.Fatalf("nonce clear left indexed state: maps=%d heap=%d index=%d",
+			len(store.proofNonces), len(store.proofNonceExpiries), len(store.proofNonceExpiryByDevice))
+	}
 	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "nonce-1", expiry); replayed {
 		t.Fatal("nonce still present after ClearDeviceNonces")
+	}
+	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "already-expired", time.Now().Add(-time.Second)); !replayed {
+		t.Fatal("already-expired nonce window failed open")
+	}
+}
+
+func TestMemoryStoreNonceSurvivesEnrollmentLifecycle(t *testing.T) {
+	store := newMemoryStore(Config{})
+	ctx := context.Background()
+	expiry := time.Now().Add(time.Hour)
+
+	if replayed, _ := store.ConsumeNonce(ctx, "device-reenroll", "proof", expiry); replayed {
+		t.Fatal("initial re-enrollment proof was rejected")
+	}
+	for i := 0; i < 2; i++ {
+		result, err := store.PutEnrollment(ctx, &EnrolledDevice{
+			DeviceID:   "device-reenroll",
+			PublicKey:  "key",
+			EnrolledAt: time.Now(),
+		})
+		if err != nil || result != enrollmentOK {
+			t.Fatalf("enrollment %d: result=%v err=%v", i, result, err)
+		}
+	}
+	if replayed, _ := store.ConsumeNonce(ctx, "device-reenroll", "proof", expiry); !replayed {
+		t.Fatal("same-key re-enrollment cleared an active proof nonce")
+	}
+
+	if replayed, _ := store.ConsumeNonce(ctx, "device-revoke", "proof", expiry); replayed {
+		t.Fatal("initial revocation proof was rejected")
+	}
+	if result, err := store.PutEnrollment(ctx, &EnrolledDevice{
+		DeviceID:   "device-revoke",
+		PublicKey:  "key",
+		EnrolledAt: time.Now(),
+	}); err != nil || result != enrollmentOK {
+		t.Fatalf("revoke enrollment: result=%v err=%v", result, err)
+	}
+	if outcome, _, err := store.RevokeEnrollment(ctx, "device-revoke", time.Hour); err != nil || outcome != revokeOK {
+		t.Fatalf("revoke: outcome=%v err=%v", outcome, err)
+	}
+	if replayed, _ := store.ConsumeNonce(ctx, "device-revoke", "proof", expiry); !replayed {
+		t.Fatal("revocation cleared an active proof nonce")
 	}
 }
 
@@ -157,30 +249,175 @@ func TestMemoryStoreNonceReplayAndClear(t *testing.T) {
 func TestMemoryStoreNonceExpiryFreesCap(t *testing.T) {
 	store := newMemoryStore(Config{MaxEnrolledDevices: 1, MaxRevokedDevices: 1})
 	ctx := context.Background()
+	expiry := time.Now().Add(time.Hour)
 
 	for i := 0; i < maxProofNoncesPerDevice; i++ {
-		if replayed, _ := store.ConsumeNonce(ctx, "device-a", fmt.Sprintf("t-%d", i), time.Now().Add(time.Second)); replayed {
+		if replayed, _ := store.ConsumeNonce(ctx, "device-a", fmt.Sprintf("t-%d", i), expiry); replayed {
 			t.Fatalf("nonce %d unexpectedly rejected before the cap", i)
 		}
 	}
-	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "t-over", time.Now().Add(time.Hour)); !replayed {
+	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "t-over", expiry.Add(time.Hour)); !replayed {
 		t.Fatal("nonce beyond the cap was accepted while all nonces are live")
 	}
 
-	// Poll rather than sleep: the over-cap rejection does not record the nonce,
-	// so retrying the same fresh nonce is safe and never flakes on timing.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if replayed, _ := store.ConsumeNonce(ctx, "device-a", "t-fresh", time.Now().Add(time.Hour)); !replayed {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("expired nonces were not pruned; cap never freed (P0 regression)")
-		}
-		time.Sleep(50 * time.Millisecond)
+	// Drive the production pruning routine with an explicit later clock value;
+	// no sleep or mutable production clock hook is needed.
+	store.deviceMu.Lock()
+	store.pruneExpiredProofNoncesLocked(expiry.Add(time.Nanosecond), maxProofNoncePrunesPerConsume)
+	store.deviceMu.Unlock()
+	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "t-fresh", expiry.Add(time.Hour)); replayed {
+		t.Fatal("expired nonces were not pruned; cap did not free")
 	}
-	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "t-0", time.Now().Add(time.Hour)); replayed {
+	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "t-0", expiry.Add(time.Hour)); replayed {
 		t.Fatal("expired nonce still treated as replay (P0 regression)")
+	}
+}
+
+func TestMemoryStoreNonceExpiryIndexMovesToEarlierInsert(t *testing.T) {
+	store := newMemoryStore(Config{})
+	ctx := context.Background()
+	earlyExpiry := time.Now().Add(time.Hour)
+	middleExpiry := earlyExpiry.Add(time.Hour)
+	lateExpiry := middleExpiry.Add(time.Hour)
+
+	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "late", lateExpiry); replayed {
+		t.Fatal("late nonce was rejected")
+	}
+	if replayed, _ := store.ConsumeNonce(ctx, "device-b", "middle", middleExpiry); replayed {
+		t.Fatal("middle nonce was rejected")
+	}
+	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "early", earlyExpiry); replayed {
+		t.Fatal("earlier nonce was rejected")
+	}
+	if root := store.proofNonceExpiries[0]; root.deviceID != "device-a" || !root.expiresAt.Equal(earlyExpiry) {
+		t.Fatalf("expiry heap root=%+v, want device-a at %v", root, earlyExpiry)
+	}
+
+	store.deviceMu.Lock()
+	store.pruneExpiredProofNoncesLocked(earlyExpiry.Add(time.Nanosecond), 1)
+	store.deviceMu.Unlock()
+	if nonces := store.proofNonces["device-a"]; len(nonces) != 1 || !nonces["late"].Equal(lateExpiry) {
+		t.Fatalf("device-a after earliest prune=%v, want only late nonce", nonces)
+	}
+	if root := store.proofNonceExpiries[0]; root.deviceID != "device-b" || !root.expiresAt.Equal(middleExpiry) {
+		t.Fatalf("re-indexed heap root=%+v, want device-b at %v", root, middleExpiry)
+	}
+}
+
+// TestMemoryStoreNonceTargetPrunesBehindGlobalBacklog pins the per-device cap
+// contract when more expired historical devices exist than one authentication's
+// global cleanup budget. The target's own 128 expired entries must still be
+// removed before applying its cap.
+func TestMemoryStoreNonceTargetPrunesBehindGlobalBacklog(t *testing.T) {
+	store := newMemoryStore(Config{})
+	ctx := context.Background()
+	futureExpiry := time.Now().Add(time.Hour)
+	const historicalDevices = maxProofNoncePrunesPerConsume * 2
+
+	for i := 0; i < historicalDevices; i++ {
+		deviceID := fmt.Sprintf("historical-%02d", i)
+		if replayed, err := store.ConsumeNonce(ctx, deviceID, "proof", futureExpiry); err != nil || replayed {
+			t.Fatalf("seed %s: replayed=%v err=%v", deviceID, replayed, err)
+		}
+	}
+	for i := 0; i < maxProofNoncesPerDevice; i++ {
+		if replayed, err := store.ConsumeNonce(ctx, "target", fmt.Sprintf("proof-%d", i), futureExpiry); err != nil || replayed {
+			t.Fatalf("seed target %d: replayed=%v err=%v", i, replayed, err)
+		}
+	}
+
+	// Deterministically model clock passage without sleeping or adding a
+	// production clock hook. Every heap key started equal, so replacing all keys
+	// with the same past instant preserves heap order.
+	pastExpiry := time.Now().Add(-time.Second)
+	store.deviceMu.Lock()
+	for _, nonces := range store.proofNonces {
+		for nonce := range nonces {
+			nonces[nonce] = pastExpiry
+		}
+	}
+	for _, entry := range store.proofNonceExpiries {
+		entry.expiresAt = pastExpiry
+	}
+	store.deviceMu.Unlock()
+
+	if replayed, err := store.ConsumeNonce(ctx, "target", "fresh", time.Now().Add(time.Hour)); err != nil || replayed {
+		t.Fatalf("fresh target proof behind cleanup backlog: replayed=%v err=%v", replayed, err)
+	}
+	if nonces := store.proofNonces["target"]; len(nonces) != 1 {
+		t.Fatalf("target nonce count after targeted prune=%d, want 1", len(nonces))
+	}
+	if got := len(store.proofNonces); got != historicalDevices-maxProofNoncePrunesPerConsume+1 {
+		t.Fatalf("bounded cleanup retained device maps=%d, want %d", got, historicalDevices-maxProofNoncePrunesPerConsume+1)
+	}
+}
+
+// TestMemoryStoreNonceChurnPrunesHistoricalDeviceMaps verifies that expiry is
+// globally ordered rather than cleaned only when the same device authenticates
+// again. The heap retains exactly one entry per non-empty device map, and
+// repeated fixed-budget pruning converges historical device churn while
+// retaining a mixed device's later nonce.
+func TestMemoryStoreNonceChurnPrunesHistoricalDeviceMaps(t *testing.T) {
+	store := newMemoryStore(Config{})
+	ctx := context.Background()
+	earlyExpiry := time.Now().Add(time.Hour)
+	lateExpiry := earlyExpiry.Add(time.Hour)
+	const historicalDevices = 512
+
+	for i := 0; i < historicalDevices; i++ {
+		deviceID := fmt.Sprintf("historical-%d", i)
+		if replayed, err := store.ConsumeNonce(ctx, deviceID, "proof", earlyExpiry); err != nil || replayed {
+			t.Fatalf("seed %s: replayed=%v err=%v", deviceID, replayed, err)
+		}
+	}
+	if replayed, err := store.ConsumeNonce(ctx, "mixed", "early", earlyExpiry); err != nil || replayed {
+		t.Fatalf("seed mixed early: replayed=%v err=%v", replayed, err)
+	}
+	if replayed, err := store.ConsumeNonce(ctx, "mixed", "late", lateExpiry); err != nil || replayed {
+		t.Fatalf("seed mixed late: replayed=%v err=%v", replayed, err)
+	}
+	if replayed, err := store.ConsumeNonce(ctx, "live", "proof", lateExpiry); err != nil || replayed {
+		t.Fatalf("seed live: replayed=%v err=%v", replayed, err)
+	}
+	if got, want := len(store.proofNonceExpiries), historicalDevices+2; got != want {
+		t.Fatalf("heap entries=%d, want one per device (%d)", got, want)
+	}
+
+	pruneTime := earlyExpiry.Add(time.Nanosecond)
+	store.deviceMu.Lock()
+	if got := store.pruneExpiredProofNoncesLocked(pruneTime, maxProofNoncePrunesPerConsume); got != maxProofNoncePrunesPerConsume {
+		store.deviceMu.Unlock()
+		t.Fatalf("first bounded prune processed=%d, want %d", got, maxProofNoncePrunesPerConsume)
+	}
+	if got := len(store.proofNonces); got != historicalDevices+2-maxProofNoncePrunesPerConsume {
+		store.deviceMu.Unlock()
+		t.Fatalf("first bounded prune retained maps=%d, want %d", got, historicalDevices+2-maxProofNoncePrunesPerConsume)
+	}
+	for len(store.proofNonceExpiries) > 0 && pruneTime.After(store.proofNonceExpiries[0].expiresAt) {
+		store.pruneExpiredProofNoncesLocked(pruneTime, maxProofNoncePrunesPerConsume)
+	}
+	store.deviceMu.Unlock()
+
+	if got := len(store.proofNonces); got != 2 {
+		t.Fatalf("device maps after churn prune=%d, want mixed and live only", got)
+	}
+	if got := len(store.proofNonceExpiries); got != 2 {
+		t.Fatalf("heap entries after churn prune=%d, want 2", got)
+	}
+	if got := len(store.proofNonceExpiryByDevice); got != 2 {
+		t.Fatalf("expiry index after churn prune=%d, want 2", got)
+	}
+	if nonces := store.proofNonces["mixed"]; len(nonces) != 1 || !nonces["late"].Equal(lateExpiry) {
+		t.Fatalf("mixed device nonces after prune=%v, want only later proof", nonces)
+	}
+	if entry := store.proofNonceExpiryByDevice["mixed"]; entry == nil || !entry.expiresAt.Equal(lateExpiry) {
+		t.Fatalf("mixed device next expiry=%v, want %v", entry, lateExpiry)
+	}
+	for i := 0; i < historicalDevices; i++ {
+		deviceID := fmt.Sprintf("historical-%d", i)
+		if _, present := store.proofNonces[deviceID]; present {
+			t.Fatalf("expired historical map %s was retained", deviceID)
+		}
 	}
 }
 

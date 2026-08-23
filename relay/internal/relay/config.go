@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -19,6 +21,7 @@ const (
 	defaultCredentialTTL                     = 24 * time.Hour
 	defaultAdminSessionTTL                   = 24 * time.Hour
 	defaultMaxConnections                    = 2048
+	defaultMaxTransferSessions               = 4096
 	defaultMaxEnrolledDevices                = 4096
 	defaultMaxRevokedDevices                 = 4096
 	defaultMaxPendingFramesPerDevice         = 64
@@ -39,6 +42,11 @@ const (
 	// SERVER_HEARTBEAT_MISSES_BEFORE_CLOSE=2（配合 PRESENCE_TTL_S=60：60/20）。
 	defaultServerHeartbeatInterval = 20 * time.Second
 	defaultServerHeartbeatMisses   = 2
+
+	publishedExampleEnrollmentToken = "replace-with-a-one-time-random-enrollment-secret"
+	publishedExampleCredentialKey   = "replace-with-a-32-byte-base64url-random-key"
+	publishedExampleAdminUser       = "replace-with-an-admin-username"
+	publishedExampleAdminPassword   = "replace-with-a-random-password-of-at-least-12-characters"
 )
 
 // relayEventsChannel is the Redis Pub/Sub channel carrying cross-instance
@@ -51,7 +59,10 @@ type Config struct {
 	StorageMode string
 	DatabaseURL string
 	RedisURL    string
-	InstanceID  string
+	// RedisPassword is consumed only while opening the shared state client and
+	// is cleared before the running Server retains its Config.
+	RedisPassword string
+	InstanceID    string
 	// PublicURL 是服务端对外可达的公共源（wss://host[:port] 或 host[:port]），用于构造
 	// 自包含的 relay_data_endpoint。未配置时从监听地址派生 dev 默认；无论哪种情况都绝不
 	// 使用客户端提供的 Host 头（攻击者可控，会把对端 token 引导到任意地址）。
@@ -67,6 +78,7 @@ type Config struct {
 	CredentialTTL               time.Duration
 	AdminSessionTTL             time.Duration
 	MaxConnections              int
+	MaxTransferSessions         int
 	MaxEnrolledDevices          int
 	MaxRevokedDevices           int
 	MaxPendingFramesPerDevice   int
@@ -94,13 +106,13 @@ func ConfigFromEnvironment() (Config, error) {
 		address = ":8080"
 	}
 	enrollment := os.Getenv("RELAY_ENROLLMENT_TOKEN")
-	if len(enrollment) < 16 {
+	if len(enrollment) < 16 || enrollment == publishedExampleEnrollmentToken {
 		return Config{}, errors.New("RELAY_ENROLLMENT_TOKEN must be set and contain at least 16 characters")
 	}
 
 	var decoded []byte
 	key := os.Getenv("RELAY_CREDENTIAL_KEY")
-	if key == "" {
+	if key == "" || key == publishedExampleCredentialKey {
 		return Config{}, errors.New("RELAY_CREDENTIAL_KEY must be set")
 	} else {
 		var err error
@@ -115,11 +127,15 @@ func ConfigFromEnvironment() (Config, error) {
 		storageMode = "memory"
 	}
 	publicURL := os.Getenv("RELAY_PUBLIC_URL")
+	if err := validateRelayPublicURL(publicURL); err != nil {
+		return Config{}, err
+	}
 	if storageMode != "memory" && storageMode != "mysql" {
 		return Config{}, errors.New("RELAY_STORAGE_MODE must be \"memory\" or \"mysql\"")
 	}
 	databaseURL := os.Getenv("RELAY_DATABASE_URL")
 	redisURL := os.Getenv("RELAY_REDIS_URL")
+	redisPassword := os.Getenv("RELAY_REDIS_PASSWORD")
 	instanceID := os.Getenv("RELAY_INSTANCE_ID")
 	if storageMode == "mysql" && databaseURL == "" {
 		return Config{}, errors.New("RELAY_DATABASE_URL must be set when RELAY_STORAGE_MODE=mysql")
@@ -130,50 +146,91 @@ func ConfigFromEnvironment() (Config, error) {
 		// Redis so mysql mode always keeps the full shared state layer.
 		return Config{}, errors.New("RELAY_REDIS_URL must be set when RELAY_STORAGE_MODE=mysql")
 	}
+	if storageMode == "mysql" && len(redisPassword) < 16 {
+		return Config{}, errors.New("RELAY_REDIS_PASSWORD must be set and contain at least 16 characters when RELAY_STORAGE_MODE=mysql")
+	}
 
 	adminUser := os.Getenv("RELAY_ADMIN_USER")
-	if adminUser == "" {
+	if adminUser == "" || adminUser == publishedExampleAdminUser {
 		return Config{}, errors.New("RELAY_ADMIN_USER must be set")
 	}
 	adminPassword := os.Getenv("RELAY_ADMIN_PASSWORD")
-	if len(adminPassword) < 12 {
+	if len(adminPassword) < 12 || adminPassword == publishedExampleAdminPassword {
 		return Config{}, errors.New("RELAY_ADMIN_PASSWORD must be set and contain at least 12 characters")
 	}
 
-	return Config{
+	var parseErr error
+	readDuration := func(name string, fallback time.Duration) time.Duration {
+		if parseErr != nil {
+			return fallback
+		}
+		value, err := durationEnv(name, fallback)
+		if err != nil {
+			parseErr = err
+		}
+		return value
+	}
+	readInt := func(name string, fallback int) int {
+		if parseErr != nil {
+			return fallback
+		}
+		value, err := intEnv(name, fallback)
+		if err != nil {
+			parseErr = err
+		}
+		return value
+	}
+	readInt64 := func(name string, fallback int64) int64 {
+		if parseErr != nil {
+			return fallback
+		}
+		value, err := int64Env(name, fallback)
+		if err != nil {
+			parseErr = err
+		}
+		return value
+	}
+
+	config := Config{
 		Address:                     address,
 		StorageMode:                 storageMode,
 		DatabaseURL:                 databaseURL,
 		RedisURL:                    redisURL,
+		RedisPassword:               redisPassword,
 		InstanceID:                  instanceID,
 		PublicURL:                   publicURL,
-		PresenceTTL:                 durationEnv("RELAY_PRESENCE_TTL", defaultPresenceTTL),
-		ServerHeartbeatInterval:     durationEnv("RELAY_SERVER_HEARTBEAT_INTERVAL", defaultServerHeartbeatInterval),
-		ServerHeartbeatMisses:       intEnv("RELAY_SERVER_HEARTBEAT_MISSES", defaultServerHeartbeatMisses),
+		PresenceTTL:                 readDuration("RELAY_PRESENCE_TTL", defaultPresenceTTL),
+		ServerHeartbeatInterval:     readDuration("RELAY_SERVER_HEARTBEAT_INTERVAL", defaultServerHeartbeatInterval),
+		ServerHeartbeatMisses:       readInt("RELAY_SERVER_HEARTBEAT_MISSES", defaultServerHeartbeatMisses),
 		EnrollmentToken:             enrollment,
 		CredentialKey:               decoded,
-		CredentialTTL:               durationEnv("RELAY_CREDENTIAL_TTL", defaultCredentialTTL),
-		AdminSessionTTL:             durationEnv("RELAY_ADMIN_SESSION_TTL", defaultAdminSessionTTL),
-		MaxConnections:              intEnv("RELAY_MAX_CONNECTIONS", defaultMaxConnections),
-		MaxEnrolledDevices:          intEnv("RELAY_MAX_ENROLLED_DEVICES", defaultMaxEnrolledDevices),
-		MaxRevokedDevices:           intEnv("RELAY_MAX_REVOKED_DEVICES", defaultMaxRevokedDevices),
-		MaxPendingFramesPerDevice:   intEnv("RELAY_MAX_PENDING_FRAMES_PER_DEVICE", defaultMaxPendingFramesPerDevice),
-		MaxPendingBytesPerDevice:    int64Env("RELAY_MAX_PENDING_BYTES_PER_DEVICE", defaultMaxPendingBytesPerDevice),
-		MaxFramesPerSecondPerDevice: intEnv("RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE", defaultMaxFramesPerSecondPerDevice),
-		MaxBytesPerSecondPerDevice:  int64Env("RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE", defaultMaxBytesPerSecondPerDevice),
-		MaxAdminSessions:            intEnv("RELAY_MAX_ADMIN_SESSIONS", defaultMaxAdminSessions),
-		AdminLoginMaxAttempts:       intEnv("RELAY_ADMIN_LOGIN_MAX_ATTEMPTS", defaultAdminLoginMaxAttempts),
-		AdminLoginWindow:            durationEnv("RELAY_ADMIN_LOGIN_WINDOW", defaultAdminLoginWindow),
-		AdminLoginBlockDuration:     durationEnv("RELAY_ADMIN_LOGIN_BLOCK", defaultAdminLoginBlockDuration),
-		MaxAdminLoginEntries:        intEnv("RELAY_MAX_ADMIN_LOGIN_ENTRIES", defaultMaxAdminLoginEntries),
-		HTTPReadTimeout:             durationEnv("RELAY_HTTP_READ_TIMEOUT", defaultHTTPReadTimeout),
-		HTTPWriteTimeout:            durationEnv("RELAY_HTTP_WRITE_TIMEOUT", defaultHTTPWriteTimeout),
-		HTTPIdleTimeout:             durationEnv("RELAY_HTTP_IDLE_TIMEOUT", defaultHTTPIdleTimeout),
-		HTTPMaxHeaderBytes:          intEnv("RELAY_HTTP_MAX_HEADER_BYTES", defaultHTTPMaxHeaderBytes),
+		CredentialTTL:               readDuration("RELAY_CREDENTIAL_TTL", defaultCredentialTTL),
+		AdminSessionTTL:             readDuration("RELAY_ADMIN_SESSION_TTL", defaultAdminSessionTTL),
+		MaxConnections:              readInt("RELAY_MAX_CONNECTIONS", defaultMaxConnections),
+		MaxTransferSessions:         readInt("RELAY_MAX_TRANSFER_SESSIONS", defaultMaxTransferSessions),
+		MaxEnrolledDevices:          readInt("RELAY_MAX_ENROLLED_DEVICES", defaultMaxEnrolledDevices),
+		MaxRevokedDevices:           readInt("RELAY_MAX_REVOKED_DEVICES", defaultMaxRevokedDevices),
+		MaxPendingFramesPerDevice:   readInt("RELAY_MAX_PENDING_FRAMES_PER_DEVICE", defaultMaxPendingFramesPerDevice),
+		MaxPendingBytesPerDevice:    readInt64("RELAY_MAX_PENDING_BYTES_PER_DEVICE", defaultMaxPendingBytesPerDevice),
+		MaxFramesPerSecondPerDevice: readInt("RELAY_MAX_FRAMES_PER_SECOND_PER_DEVICE", defaultMaxFramesPerSecondPerDevice),
+		MaxBytesPerSecondPerDevice:  readInt64("RELAY_MAX_BYTES_PER_SECOND_PER_DEVICE", defaultMaxBytesPerSecondPerDevice),
+		MaxAdminSessions:            readInt("RELAY_MAX_ADMIN_SESSIONS", defaultMaxAdminSessions),
+		AdminLoginMaxAttempts:       readInt("RELAY_ADMIN_LOGIN_MAX_ATTEMPTS", defaultAdminLoginMaxAttempts),
+		AdminLoginWindow:            readDuration("RELAY_ADMIN_LOGIN_WINDOW", defaultAdminLoginWindow),
+		AdminLoginBlockDuration:     readDuration("RELAY_ADMIN_LOGIN_BLOCK", defaultAdminLoginBlockDuration),
+		MaxAdminLoginEntries:        readInt("RELAY_MAX_ADMIN_LOGIN_ENTRIES", defaultMaxAdminLoginEntries),
+		HTTPReadTimeout:             readDuration("RELAY_HTTP_READ_TIMEOUT", defaultHTTPReadTimeout),
+		HTTPWriteTimeout:            readDuration("RELAY_HTTP_WRITE_TIMEOUT", defaultHTTPWriteTimeout),
+		HTTPIdleTimeout:             readDuration("RELAY_HTTP_IDLE_TIMEOUT", defaultHTTPIdleTimeout),
+		HTTPMaxHeaderBytes:          readInt("RELAY_HTTP_MAX_HEADER_BYTES", defaultHTTPMaxHeaderBytes),
 		TrustedProxyCIDRs:           cidrListEnv("RELAY_TRUSTED_PROXY_CIDRS"),
 		AdminUser:                   adminUser,
 		AdminPassword:               adminPassword,
-	}, nil
+	}
+	if parseErr != nil {
+		return Config{}, parseErr
+	}
+	return config, nil
 }
 
 // cidrListEnv parses a comma-separated list of CIDRs (or bare IP addresses)
@@ -218,6 +275,9 @@ func withConfigDefaults(config Config) Config {
 	}
 	if config.MaxConnections <= 0 {
 		config.MaxConnections = defaultMaxConnections
+	}
+	if config.MaxTransferSessions <= 0 {
+		config.MaxTransferSessions = defaultMaxTransferSessions
 	}
 	if config.MaxEnrolledDevices <= 0 {
 		config.MaxEnrolledDevices = defaultMaxEnrolledDevices
@@ -287,6 +347,19 @@ func relayDataEndpointOrigin(config Config) string {
 		if !strings.Contains(origin, "://") {
 			origin = "wss://" + origin
 		}
+		if parsed, err := url.Parse(origin); err == nil && parsed.Host != "" {
+			switch parsed.Scheme {
+			case "https":
+				parsed.Scheme = "wss"
+			case "http":
+				parsed.Scheme = "ws"
+			}
+			parsed.Path = ""
+			parsed.RawPath = ""
+			parsed.RawQuery = ""
+			parsed.Fragment = ""
+			return strings.TrimSuffix(parsed.String(), "/")
+		}
 		return origin
 	}
 	host, port, err := net.SplitHostPort(config.Address)
@@ -304,28 +377,86 @@ func relayDataEndpointOrigin(config Config) string {
 	return "wss://" + net.JoinHostPort(host, port)
 }
 
-// durationEnv 读取正的时间间隔，异常时返回指定默认值。
-func durationEnv(name string, fallback time.Duration) time.Duration {
-	if value, err := time.ParseDuration(os.Getenv(name)); err == nil && value > 0 {
-		return value
+// validateRelayPublicURL keeps production endpoint publication on an explicit
+// origin. Plain HTTP/WS is accepted only for loopback integration tests.
+func validateRelayPublicURL(value string) error {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return errors.New("RELAY_PUBLIC_URL must be set to the externally reachable Relay origin")
 	}
-	return fallback
+	if !strings.Contains(raw, "://") {
+		raw = "wss://" + raw
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.Hostname() == "" {
+		return errors.New("RELAY_PUBLIC_URL must be a valid origin")
+	}
+	if parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("RELAY_PUBLIC_URL must not contain credentials, a path, query, or fragment")
+	}
+	switch parsed.Scheme {
+	case "https", "wss":
+		if relayPublicHostIsLoopback(parsed.Hostname()) {
+			return errors.New("RELAY_PUBLIC_URL must not publish a loopback HTTPS/WSS origin")
+		}
+	case "http", "ws":
+		if !relayPublicHostIsLoopback(parsed.Hostname()) {
+			return errors.New("RELAY_PUBLIC_URL permits HTTP/WS only for loopback integration tests")
+		}
+	default:
+		return errors.New("RELAY_PUBLIC_URL scheme must be https or wss")
+	}
+	return nil
 }
 
-// intEnv 读取正整数资源配置，异常时返回指定默认值。
-func intEnv(name string, fallback int) int {
-	if value, err := strconv.Atoi(os.Getenv(name)); err == nil && value > 0 {
-		return value
+func relayPublicHostIsLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
 	}
-	return fallback
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
-// int64Env 读取正的 int64 资源配置，异常时返回指定默认值。
-func int64Env(name string, fallback int64) int64 {
-	if value, err := strconv.ParseInt(os.Getenv(name), 10, 64); err == nil && value > 0 {
-		return value
+// durationEnv reads a positive duration. Unset values use the documented
+// default; explicitly empty, malformed, zero, or negative values fail closed.
+func durationEnv(name string, fallback time.Duration) (time.Duration, error) {
+	raw, present := os.LookupEnv(name)
+	if !present {
+		return fallback, nil
 	}
-	return fallback
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration", name)
+	}
+	return value, nil
+}
+
+// intEnv reads a positive integer resource limit with fail-closed explicit
+// configuration semantics.
+func intEnv(name string, fallback int) (int, error) {
+	raw, present := os.LookupEnv(name)
+	if !present {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return value, nil
+}
+
+// int64Env reads a positive int64 resource limit with fail-closed explicit
+// configuration semantics.
+func int64Env(name string, fallback int64) (int64, error) {
+	raw, present := os.LookupEnv(name)
+	if !present {
+		return fallback, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return value, nil
 }
 
 // randomBytes 生成指定长度的密码学随机字节。

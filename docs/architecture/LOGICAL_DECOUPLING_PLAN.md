@@ -25,7 +25,7 @@
 | S3 | `native/network_core/crates/network-core/src/stream.rs` | 分离 wire frame codec、stream manager 与 SSH gateway adapter | 已完成：wire/preamble/token 归 `StreamFrameCodec`，registry/lease/backpressure 归 manager，local sshd pump 与 FFI command mapping 归 `SshGatewayAdapter` |
 | S4 | `native/network_core/crates/network-core/src/peer.rs` | 分离 outbound generic connector、inbound acceptor 与 receiver supervision | 已完成：generic candidate race、runtime-scope accept/admission、session-scope receiver/path-loss 分属三个具名 Owner |
 | S5 | `native/network_core/crates/network-core/src/runtime.rs` | 抽取 bounded event lanes 与 projection store；RuntimeState 只保留组合和生命周期；既有 `ConnectionSessionStore` 已是独立 admission owner，保留而不重复封装 | 已完成：事件分类/字节准入/公平调度归 `BoundedEventLanes`，Session 绑定/拓扑替换/精确 stale cleanup 归 `RuntimePathProjectionStore`；Runtime 从 1891 行降至约 1598 行 |
-| B1 | `relay/internal/relay/reservation.go` | 分离 reservation store、Relay Data admission、registry、flow budget 和 connection pump，并通过窄接口绑定 one-shot 授权 | 已完成：原文件从 1096 行降至 196 行；4 个数据面 Owner 均低于 500 行，pump 仅借用 lease store/pair owner 窄接口且不直接维护预算计数 |
+| B1 | `relay/internal/relay/reservation.go` | 分离 reservation store、Relay Data admission、registry、flow budget 和 connection pump，并通过窄接口绑定 one-shot 授权 | 已完成：原文件从 1096 行降至当前 467 行；存储/Reserve gate、HTTP admission、one-shot registry、flow budget 与 connection pump 已分 Owner。后续安全审查使 registry/connection 超过 500 行，已按当前职责和共同不变量再次审查，见复扫记录 |
 
 实施顺序固定为 C1→C6、S1→S5、B1。某项若在实现前的调用图/测试审查证明已有独立 Owner 且继续抽取只会增加耦合，则必须在本表记录证据后改为“保留”，不得以移动代码代替解耦。
 
@@ -164,26 +164,26 @@
 
 ### B1 验证记录
 
-- `reservation.go` 只保留 Reservation 数据模型、lifetime clamp/hard expiry 以及 memory/
-  Redis 的 create/get/delete/renew；HTTP、WebSocket、pair map 和 socket budget 不再进入存储
-  owner。
+- `reservation.go` 只保留 Reservation 数据模型、Resolve→Offer→Reserve 有界一次性
+  gate、精确 gate expiry index、lifetime clamp/hard expiry 以及 memory/Redis 的
+  create/get/delete/renew；HTTP、WebSocket、pair map 和 socket budget 不再进入该 owner。
 - `relayDataAdmission` 在 WebSocket upgrade 前一次性绑定 authenticated device、reservation
   role 与 role-specific token；首个 `RelayDataConnect` 再次校验同一不可变绑定。registry 的
   `admitEndpoint` 独占 one-shot role slot、PairReady 发布和 consumed 防重放。
 - connection pump 只依赖 `reservationLeaseStore` 的 delete/renew 与 `relayDataPairOwner` 的
-  admit/release，不能访问完整 Cache、presence、enrollment、admin state 或 registry revoke
+  admit/release/forward，不能访问完整 Cache、presence、enrollment、admin state 或 registry revoke
   索引；`relayDataFlowBudget` 独占出站积压 reservation/release 与入站速率窗口，socket
   owner 只执行非阻塞 channel handoff、读写、Ping/Pong 与关闭冲刷。
-- 新增生产文件的独立文件级覆盖率为 admission 90.0%、connection 91.5%、flow budget
-  100.0%、registry 94.3%；
-  `go test ./...`、`go test -race ./...`、`go vet ./...`、`govulncheck` 与 22 个冻结 Relay V2
-  fixture/descriptor 契约检查通过。
+- admission、connection、flow budget 与 registry 各有独立测试，覆盖 role/token、
+  one-shot 配对、同角色重试、PairReady enqueue/实际写入 barrier、限流、吊销、到期、
+  有界 drain/Close 和共享 reservation TTL 删除后的受控重试。Stage 3 Backend 审查继续
+  通过 owner Go suite、race/vet、coverage 与 Relay V2 contract gate 验证该解耦边界。
 
 ## 实施后复扫
 
 - 按同一排除规则复扫当前树，超过 500 行的可执行生产源码为 Client 83 个、SDK 28 个、
-  Backend 4 个、Front 0 个；Backend 的 `relay_v2.pb.go` 是生成物，不进入逻辑拆分。
-  所有当前路径均能回溯到上方 TODO 或完整处置清单，实施新增的两个大文件如下补充审查。
+  Backend 7 个、Front 0 个；Backend 的 2732 行 `relay_v2.pb.go` 是生成物，不进入逻辑拆分。
+  所有当前路径均能回溯到上方 TODO 或完整处置清单；实施后跨线的大文件如下补充审查。
 - `packages/features/feature_ai/lib/src/chat/services/llm_chat/tool_loop_helpers.dart`（832 行）
   是 `part` 实现容器，不是新增的全能 Service：其中
   result recorder、preflight 和 budget audit 是三个独立 collaborator；并行只读批次、
@@ -197,13 +197,44 @@
   与响应式规则 Owner。React 页面/API/query 逻辑均已按模块分离，选择器已有组件/页面命名
   边界；仅拆 stylesheet 不会隔离运行时状态或依赖，改为 CSS Modules 也不解决本阶段发现的
   逻辑耦合，因此记录审查后保留。
+- Backend 当前 7 个大文件均已做调用图、锁/状态和依赖面复审：
+  - `hub.go`（1090 行）是 Control peer/lease 的唯一生命周期 Owner；staged activation、
+    authoritative presence claim、exact-connection replacement、socket pump 和有界 queue
+    共同维护“只有当前已激活连接可路由”的不变量。复用的精确可删除 expiry index 已把
+    attempt/gate 过期顺序与表扫描解耦，Offer 锁内热路径保持 O(log n)；Resolve、presence
+    sweep、hint fan-out 与 Discovery limiter 已在独立文件/协作者中，继续移动 pump 方法
+    不会产生新 Owner。
+  - `control_v2.go`（908 行）是无独立存储资源的 protobuf dispatch/validation facade，
+    可变连接、attempt、Resolve ticket 和 reservation 状态均由 Hub/Store 拥有；按消息类型
+    分文件只会拆散同一 request/attempt/ProtocolError contract，不形成生命周期隔离。
+    大 Offer 的编码/分配已移到 Hub mutex 之外，锁内只复核精确连接、登记索引并入队。
+  - `relay_data_registry.go`（724 行）是 one-shot pair 状态机 Owner；upgrade lease、role slot、
+    pending/active 计数、consumed 防重放、same-role replacement、revoke 与 shutdown 索引必须
+    在同一 mutex transaction 中变化。帧编码/大分配已在进入 mutex 前完成；HTTP admission、
+    flow budget 和 socket pump 已拆出。
+  - `redis_cache.go`（654 行）是一个 `Cache` adapter，集中维护 key namespace、Lua CAS/
+    capacity transaction、TTL 与 event subscription，并统一施加不可覆盖的 socket/pool
+    bounds；按方法族搬文件不会减少依赖或创建不同生命周期。
+  - `relay_data_connection.go`（661 行）是单个 RelayData endpoint 的 pump/liveness Owner；
+    activation、PairReady actual-write barrier、terminal writer gate、FIFO、Ping/Pong、
+    reservation lease touch 与 bounded drain 共用同一 socket/done 生命周期。pair map 和
+    流量策略已分别交给 registry 与 `relayDataFlowBudget`，剩余拆分只是物理移动。
+  - `mysql_store.go`（611 行）是一个 `Storage` adapter，enrollment counter、device-row lock、
+    monotonic generation、revocation tombstone 与 delete 必须共享事务/deadlock retry 规则；
+    prune lifecycle 也由该 adapter 创建并关闭，继续拆分会复制数据库 Owner。
+  - `cache.go`（536 行）是 memory `Cache` adapter 与其 capability contract；proof nonce
+    bucket 和 earliest-expiry heap 必须在同一 `deviceMu` transaction 中变化，presence、
+    discovery、reservation 与 admin session 则共享同一个 process-local cache lifecycle。
+    Redis 已由独立 adapter 实现；把方法族移动到别的文件不会产生新的资源 Owner。
 
 ## 500 行以下抽查
 
 - Front：最大可执行生产文件 `devices-page.tsx` 为 241 行；页面、UI kit、API client、schema 和 query hooks 已分 Owner，无新增 TODO；全局样式资产见实施后复扫。
 - Client：抽查 `system_admin_service.dart`（491）、`mcp_tool_handler.dart`（483）、`llm_chat_service.dart`（470）和 `app_runtime.dart`（428）；分别是单一命令服务、MCP handler、LLM facade 和 App 生命周期 owner，保留。
 - SDK：抽查 `network-transport/src/lib.rs`（249）、WebRTC `peer.rs`（424）与 `driver.rs`（283）；公共 transport facade、Peer 与 driver owner 已分离，保留。
-- Backend：抽查 `v2/codec.go`（457）、`config.go`（338）与 enrollment handler（276）；wire codec、配置和设备 API owner 独立，保留。
+- Backend：抽查 `v2/codec.go`（457）、`config.go`（469）、`server.go`（329）、
+  `reservation.go`（467）与 `relay_data_admission.go`（223）；wire codec、配置、组合/
+  总生命周期、reservation store 与 HTTP admission 已分 Owner，保留。
 
 ## 完整超过 500 行处置清单
 
@@ -330,11 +361,13 @@
 
 | 行数 | 文件 | 处置 |
 | ---: | --- | --- |
-| 1096 | `relay/internal/relay/reservation.go` | TODO-B1 |
-| 752 | `relay/internal/relay/control_v2.go` | 保留：单一 Relay control/hub owner |
-| 617 | `relay/internal/relay/hub.go` | 保留：单一 Relay control/hub owner |
-| 583 | `relay/internal/relay/mysql_store.go` | 保留：单一 Storage/Cache adapter |
-| 583 | `relay/internal/relay/redis_cache.go` | 保留：单一 Storage/Cache adapter |
+| 1090 | `relay/internal/relay/hub.go` | 保留：Control peer/lease staged lifecycle Owner；精确 expiry index、reservation gate、Resolve/sweep/hint/limiter 已解耦 |
+| 908 | `relay/internal/relay/control_v2.go` | 保留：无独立资源的 v2 dispatch/validation facade；大 Offer 锁外编码，状态归 Hub/Store |
+| 724 | `relay/internal/relay/relay_data_registry.go` | 保留：one-shot pair/revoke-forward 线性化的单 mutex transaction Owner；锁外编码，admission/pump/flow 已解耦 |
+| 654 | `relay/internal/relay/redis_cache.go` | 保留：单一 Cache/key/Lua/TTL/event adapter 与统一连接安全边界 |
+| 661 | `relay/internal/relay/relay_data_connection.go` | 保留：单 endpoint socket/pump/liveness/terminal writer/drain Owner；registry/flow 已解耦 |
+| 611 | `relay/internal/relay/mysql_store.go` | 保留：单一 Storage transaction/prune lifecycle Owner |
+| 536 | `relay/internal/relay/cache.go` | 保留：memory Cache contract/adapter；nonce map+expiry heap 共享原子索引，外部 Redis adapter 已分离 |
 
 ### front
 

@@ -31,6 +31,7 @@ func TestNetworkV2ExpiredCredentialCannotOpenDataSocket(t *testing.T) {
 		server.config.CredentialKey,
 		"device-a",
 		publicKey,
+		mustEnrollmentGeneration(t, server, "device-a"),
 		-time.Second,
 	)
 	if err != nil {
@@ -66,10 +67,7 @@ func dialControlV2ForRevocation(baseURL, credential string, nonceByte byte, priv
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceByte}, 32))
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+credential)
-	headers.Set("X-Relay-Nonce", nonce)
-	headers.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
-	))
+	setCurrentSignedDeviceProof(headers, http.MethodGet, "/v2/control", privateKey, nonce)
 	return websocket.DefaultDialer.Dial(relayURL.String(), headers)
 }
 

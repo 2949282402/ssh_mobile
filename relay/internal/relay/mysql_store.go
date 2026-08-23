@@ -93,36 +93,35 @@ const enrollmentCounterKey = "enrollment_count"
 // errEnrollmentCapacity 表示容量检查命中上限；调用方映射为 enrollmentResourceLimit。
 var errEnrollmentCapacity = errors.New("enrollment capacity reached")
 
-// testAfterCounterCountHook 是测试专用缝隙：在 ensureEnrollmentCounter 的
-// `SELECT COUNT(*)` 之后、`INSERT IGNORE` 之前调用，用于确定性构造「懒初始化基准
-// 与并发 Remove 交错」的时序。生产环境始终为 nil。
-var testAfterCounterCountHook func()
-
-// testBeforeRevokeDeleteHook 是测试专用缝隙：在 RevokeEnrollment 已写墓碑、仍持有
-// device 行锁、尚未删除设备行时调用。旧复合实现（RecordRevocation + RemoveEnrollment
-// 两个独立事务）在该点不持有任何锁，并发 re-enroll 可穿插进去，确定性复现跨实例撕裂；
-// 单事务实现中并发 re-enroll 的 device FOR UPDATE 在此阻塞。生产环境始终为 nil。
-var testBeforeRevokeDeleteHook func()
-
-// revocationPruneInterval bounds the growth of the durable revocations table:
-// rows whose protected credentials have expired are swept periodically.
-const revocationPruneInterval = time.Hour
+const (
+	// revocationPruneInterval bounds the growth of the durable revocations table:
+	// rows whose protected credentials have expired are swept periodically.
+	revocationPruneInterval = time.Hour
+	// revocationPruneTimeout keeps one slow database operation from pinning the
+	// store lifecycle forever. Close cancels the parent context as an additional
+	// shutdown signal, so a compliant database driver releases the in-flight
+	// query immediately instead of consuming the full timeout.
+	revocationPruneTimeout = 5 * time.Second
+)
 
 // mysqlStore implements Storage against a MySQL database. database/sql's
 // connection pool is concurrent-safe, so individual methods need no caller-held
 // lock; composite device operations are serialized per device by the caller's
 // lock stripe, letting different devices use the pool in parallel.
 type mysqlStore struct {
-	db          *sql.DB
-	maxEnrolled int
-	closeCh     chan struct{}
-	closeOnce   sync.Once
-	wg          sync.WaitGroup
+	db              *sql.DB
+	maxEnrolled     int
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+	closeOnce       sync.Once
+	closeErr        error
+	wg              sync.WaitGroup
 }
 
 // openMySQLStore opens the database, applies the schema migration, and verifies
-// connectivity. The DSN must include parseTime=true&loc=UTC so DATETIME columns
-// round-trip into time.Time consistently.
+// connectivity. The DSN must enable parseTime and retain UTC location semantics
+// (the driver default, canonically written as loc=UTC) so DATETIME columns
+// round-trip into time.Time consistently across instances.
 func openMySQLStore(ctx context.Context, dsn string, maxEnrolled int) (*mysqlStore, error) {
 	cfg, err := mysql.ParseDSN(dsn)
 	if err != nil {
@@ -131,7 +130,13 @@ func openMySQLStore(ctx context.Context, dsn string, maxEnrolled int) (*mysqlSto
 	if !cfg.ParseTime {
 		// Without parseTime the driver returns DATETIME columns as raw bytes and
 		// every Scan into time.Time fails at runtime; fail fast at startup.
-		return nil, errors.New("RELAY_DATABASE_URL must include parseTime=true (and loc=UTC)")
+		return nil, errors.New("RELAY_DATABASE_URL must include parseTime=true")
+	}
+	if cfg.Loc != time.UTC {
+		// Enrollment generations and revocation bounds are compared across Relay
+		// instances. Parsing DATETIME in a process-local zone would make the same
+		// durable row produce different instants, so reject it before dialing.
+		return nil, errors.New("RELAY_DATABASE_URL location must be UTC")
 	}
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -169,7 +174,13 @@ func openMySQLStore(ctx context.Context, dsn string, maxEnrolled int) (*mysqlSto
 		_ = db.Close()
 		return nil, err
 	}
-	store := &mysqlStore{db: db, maxEnrolled: maxEnrolled, closeCh: make(chan struct{})}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+	store := &mysqlStore{
+		db:              db,
+		maxEnrolled:     maxEnrolled,
+		lifecycleCtx:    lifecycleCtx,
+		lifecycleCancel: lifecycleCancel,
+	}
 	store.wg.Add(1)
 	go store.pruneRevocationsLoop()
 	return store, nil
@@ -177,9 +188,12 @@ func openMySQLStore(ctx context.Context, dsn string, maxEnrolled int) (*mysqlSto
 
 // Close 停止周期清理并释放数据库连接。
 func (m *mysqlStore) Close() error {
-	m.closeOnce.Do(func() { close(m.closeCh) })
-	m.wg.Wait()
-	return m.db.Close()
+	m.closeOnce.Do(func() {
+		m.lifecycleCancel()
+		m.wg.Wait()
+		m.closeErr = m.db.Close()
+	})
+	return m.closeErr
 }
 
 // pruneRevocationsLoop 周期性删除已过期的吊销 tombstone，防止 revocations 表随
@@ -191,10 +205,12 @@ func (m *mysqlStore) pruneRevocationsLoop() {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-m.closeCh:
+		case <-m.lifecycleCtx.Done():
 			return
 		case <-ticker.C:
-			_ = m.pruneExpiredRevocations(context.Background())
+			ctx, cancel := context.WithTimeout(m.lifecycleCtx, revocationPruneTimeout)
+			_ = m.pruneExpiredRevocations(ctx)
+			cancel()
 		}
 	}
 }
@@ -275,22 +291,40 @@ func (m *mysqlStore) putEnrollment(ctx context.Context, device *EnrolledDevice) 
 	// the gap/row lock and then sees the committed key, or it blocks on the
 	// inserted row.
 	var storedKey string
+	var storedEnrolledAt time.Time
 	err = tx.QueryRowContext(ctx,
-		`SELECT public_key FROM devices WHERE device_id = ? FOR UPDATE`, device.DeviceID,
-	).Scan(&storedKey)
+		`SELECT public_key, enrolled_at FROM devices WHERE device_id = ? FOR UPDATE`, device.DeviceID,
+	).Scan(&storedKey, &storedEnrolledAt)
 	isNewDevice := false
 	switch {
 	case err == nil:
 		if storedKey != device.PublicKey {
 			return enrollmentIdentityConflict, nil
 		}
+		device.EnrolledAt = nextEnrollmentTime(device.EnrolledAt, &EnrolledDevice{EnrolledAt: storedEnrolledAt})
 	case errors.Is(err, sql.ErrNoRows):
 		isNewDevice = true
+		// Preserve the established device -> counter -> revocation lock order.
+		// RevokeEnrollment takes the counter before inserting/updating its
+		// tombstone; taking the tombstone first here would create an avoidable
+		// cross-device lock inversion.
 		if err := m.reserveEnrollmentCapacity(ctx, tx); err != nil {
 			if errors.Is(err, errEnrollmentCapacity) {
 				return enrollmentResourceLimit, nil
 			}
 			return enrollmentResourceLimit, err
+		}
+		var revokedAt time.Time
+		revokeErr := tx.QueryRowContext(ctx,
+			`SELECT revoked_at FROM revocations WHERE device_id = ? FOR UPDATE`, device.DeviceID,
+		).Scan(&revokedAt)
+		switch {
+		case revokeErr == nil:
+			device.EnrolledAt = nextEnrollmentTime(device.EnrolledAt, &EnrolledDevice{EnrolledAt: revokedAt})
+		case errors.Is(revokeErr, sql.ErrNoRows):
+			device.EnrolledAt = nextEnrollmentTime(device.EnrolledAt, nil)
+		default:
+			return enrollmentResourceLimit, revokeErr
 		}
 	default:
 		return enrollmentResourceLimit, err
@@ -358,9 +392,6 @@ func ensureEnrollmentCounter(ctx context.Context, tx *sql.Tx) error {
 	var initialCount int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices`).Scan(&initialCount); err != nil {
 		return err
-	}
-	if testAfterCounterCountHook != nil {
-		testAfterCounterCountHook()
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT IGNORE INTO relay_meta (meta_key, meta_value) VALUES (?, ?)`,
@@ -441,28 +472,28 @@ func (m *mysqlStore) RemoveEnrollment(ctx context.Context, deviceID string) erro
 // → "设备没了 + 墓碑也没了"。锁序 device → counter 与 putEnrollment/RemoveEnrollment
 // 一致，无锁序反转。revocations 表上的 gap 锁交互（本事务的 INSERT 墓碑 vs 并发新设备
 // 入册的 DELETE 清墓碑 + relay_meta 行锁）可偶发 1213 死锁，与入册路径一致做有限重试。
-func (m *mysqlStore) RevokeEnrollment(ctx context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, error) {
+func (m *mysqlStore) RevokeEnrollment(ctx context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, int64, error) {
 	for attempt := 0; ; attempt++ {
-		result, err := m.revokeEnrollment(ctx, deviceID, credentialTTL)
+		result, generation, err := m.revokeEnrollment(ctx, deviceID, credentialTTL)
 		if err == nil || !isDeadlockError(err) {
-			return result, err
+			return result, generation, err
 		}
 		if attempt >= 2 {
-			return revokeNotEnrolled, fmt.Errorf("revocation deadlocked after %d attempts: %w", attempt+1, err)
+			return revokeNotEnrolled, 0, fmt.Errorf("revocation deadlocked after %d attempts: %w", attempt+1, err)
 		}
 		select {
 		case <-ctx.Done():
-			return revokeNotEnrolled, ctx.Err()
+			return revokeNotEnrolled, 0, ctx.Err()
 		case <-time.After(time.Duration(attempt+1) * 5 * time.Millisecond):
 		}
 	}
 }
 
 // revokeEnrollment 是 RevokeEnrollment 的单个事务本体；1213 死锁重试由外层包装处理。
-func (m *mysqlStore) revokeEnrollment(ctx context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, error) {
+func (m *mysqlStore) revokeEnrollment(ctx context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, int64, error) {
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
-		return revokeNotEnrolled, err
+		return revokeNotEnrolled, 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -473,46 +504,43 @@ func (m *mysqlStore) revokeEnrollment(ctx context.Context, deviceID string, cred
 		`SELECT enrolled_at FROM devices WHERE device_id = ? FOR UPDATE`, deviceID,
 	).Scan(&enrolledAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return revokeNotEnrolled, tx.Commit()
+		return revokeNotEnrolled, 0, tx.Commit()
 	}
 	if err != nil {
-		return revokeNotEnrolled, err
+		return revokeNotEnrolled, 0, err
 	}
-	// 在 device 行锁内计算墓碑上界（与 adminRevokeDevice 旧逻辑一致：EnrolledAt + TTL，
-	// 零值兜底 now+TTL），不再依赖事务外的 enrollment 快照。
-	validUntil := enrolledAt.Add(credentialTTL)
-	if enrolledAt.IsZero() {
-		validUntil = time.Now().Add(credentialTTL)
-	}
+	// refresh 可在首次 enrollment 后任意时刻签发新的完整 TTL。以撤销时刻为上界
+	// 起点，确保丢失 Pub/Sub 事件的其它实例在下一轮对账时仍能看到 tombstone 并关闭
+	// 已建立连接；使用 EnrolledAt 会在老设备刚 refresh 后过早清除墓碑。
+	now := time.Now()
+	revokedAt := nextEnrollmentTime(now, &EnrolledDevice{EnrolledAt: enrolledAt})
+	validUntil := now.Add(credentialTTL)
 	// 墓碑与删除同一事务：要么都落地，要么都不落地。ensure 在删除前执行，其 COUNT 基准
 	// 仍含待删行，随后递减 1 → 净结果 = 删除后正确计数（与 RemoveEnrollment 相同防漂移）。
 	if err := ensureEnrollmentCounter(ctx, tx); err != nil {
-		return revokeNotEnrolled, err
+		return revokeNotEnrolled, 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO revocations (device_id, revoked_at, valid_until)
 		VALUES (?, ?, ?)
 		ON DUPLICATE KEY UPDATE valid_until = GREATEST(valid_until, VALUES(valid_until))`,
-		deviceID, time.Now(), validUntil,
+		deviceID, revokedAt, validUntil,
 	); err != nil {
-		return revokeNotEnrolled, err
-	}
-	if testBeforeRevokeDeleteHook != nil {
-		// 测试缝隙：墓碑已写、device 行锁仍持有、设备尚未删除。旧复合实现在这里不持有
-		// 任何锁（RecordRevocation 与 RemoveEnrollment 是两个独立事务），确定性复现
-		// 跨实例撕裂；单事务实现中并发 re-enroll 的 FOR UPDATE 在此阻塞。
-		testBeforeRevokeDeleteHook()
+		return revokeNotEnrolled, 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM devices WHERE device_id = ?`, deviceID); err != nil {
-		return revokeNotEnrolled, err
+		return revokeNotEnrolled, 0, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE relay_meta SET meta_value = GREATEST(meta_value - 1, 0) WHERE meta_key = ?`,
 		enrollmentCounterKey,
 	); err != nil {
-		return revokeNotEnrolled, err
+		return revokeNotEnrolled, 0, err
 	}
-	return revokeOK, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return revokeNotEnrolled, 0, err
+	}
+	return revokeOK, enrolledAt.UnixMicro(), nil
 }
 
 func (m *mysqlStore) RecordRevocation(ctx context.Context, deviceID string, validUntil time.Time) (bool, error) {

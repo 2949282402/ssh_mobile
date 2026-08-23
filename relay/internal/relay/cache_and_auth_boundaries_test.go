@@ -64,6 +64,7 @@ func TestAdminAuthAddressAndRequestBoundaries(t *testing.T) {
 		origin     string
 		tls        bool
 		forwarded  string
+		remoteAddr string
 		wantOrigin bool
 	}{
 		{name: "no metadata", wantOrigin: true},
@@ -75,6 +76,7 @@ func TestAdminAuthAddressAndRequestBoundaries(t *testing.T) {
 		{name: "user info is forbidden", origin: "http://user@relay.example", wantOrigin: false},
 		{name: "malformed origin", origin: "://", wantOrigin: false},
 		{name: "forwarded tls", origin: "https://relay.example", forwarded: "https", wantOrigin: true},
+		{name: "untrusted forwarded tls", origin: "https://relay.example", forwarded: "https", remoteAddr: "198.51.100.10:443", wantOrigin: false},
 		{name: "request tls", origin: "https://relay.example", tls: true, wantOrigin: true},
 	}
 	for _, tc := range originCases {
@@ -87,10 +89,13 @@ func TestAdminAuthAddressAndRequestBoundaries(t *testing.T) {
 			if tc.forwarded != "" {
 				r.Header.Set("X-Forwarded-Proto", tc.forwarded)
 			}
+			if tc.remoteAddr != "" {
+				r.RemoteAddr = tc.remoteAddr
+			}
 			if tc.tls {
 				r.TLS = &tls.ConnectionState{}
 			}
-			if got := adminRequestIsSameOrigin(r); got != tc.wantOrigin {
+			if got := server.adminRequestIsSameOrigin(r); got != tc.wantOrigin {
 				t.Fatalf("same-origin result = %v, want %v", got, tc.wantOrigin)
 			}
 		})
@@ -122,16 +127,21 @@ func TestAdminAuthAddressAndRequestBoundaries(t *testing.T) {
 	}
 
 	plain := httptest.NewRequest(http.MethodGet, "http://relay.example/", nil)
-	if requestUsesTLS(plain) || requestScheme(plain) != "http" {
+	plain.RemoteAddr = "198.51.100.10:1234"
+	if server.requestUsesTLS(plain) || server.requestScheme(plain) != "http" {
 		t.Fatal("plain request incorrectly reported as TLS")
 	}
 	plain.Header.Set("X-Forwarded-Proto", "HTTPS")
-	if !requestUsesTLS(plain) || requestScheme(plain) != "https" {
-		t.Fatal("forwarded HTTPS was not recognized")
+	if server.requestUsesTLS(plain) || server.requestScheme(plain) != "http" {
+		t.Fatal("untrusted peer forged forwarded HTTPS")
+	}
+	plain.RemoteAddr = "192.0.2.10:1234"
+	if !server.requestUsesTLS(plain) || server.requestScheme(plain) != "https" {
+		t.Fatal("trusted proxy forwarded HTTPS was not recognized")
 	}
 }
 
-func TestAdminLoginLimiterEvictsOldestEntry(t *testing.T) {
+func TestAdminLoginLimiterRejectsNewKeyAtCapacity(t *testing.T) {
 	server := NewServer(Config{
 		MaxAdminLoginEntries:    1,
 		AdminLoginMaxAttempts:   5,
@@ -140,12 +150,18 @@ func TestAdminLoginLimiterEvictsOldestEntry(t *testing.T) {
 	})
 	defer server.Close()
 	oldKey := adminLoginKey("198.51.100.10", "old")
-	server.admin.loginAttempts[oldKey] = adminLoginAttempt{lastSeen: time.Now().Add(-time.Minute)}
-	if allowed, _ := server.allowAdminLogin("198.51.100.11", "new"); !allowed {
-		t.Fatal("new login entry should be admitted after evicting the oldest entry")
+	server.admin.loginAttempts[oldKey] = adminLoginAttempt{
+		windowStartedAt: time.Now().Add(-30 * time.Second),
+		lastSeen:        time.Now().Add(-30 * time.Second),
 	}
-	if _, present := server.admin.loginAttempts[oldKey]; present {
-		t.Fatal("oldest login limiter entry was not evicted")
+	if allowed, retry := server.allowAdminLogin("198.51.100.11", "new"); allowed || retry <= 0 {
+		t.Fatalf("new login entry at capacity = allowed=%v retry=%s, want fail-closed", allowed, retry)
+	}
+	if _, present := server.admin.loginAttempts[oldKey]; !present {
+		t.Fatal("live login limiter entry was evicted")
+	}
+	if _, present := server.admin.loginAttempts[adminLoginKey("198.51.100.11", "new")]; present {
+		t.Fatal("rejected login limiter key was inserted")
 	}
 }
 
@@ -485,14 +501,14 @@ func TestRelayReservationValidationBoundaries(t *testing.T) {
 		want    bool
 		anyRole bool
 	}{
-		{name: "query initiator", query: initiatorHex, role: relayDataRoleInitiator, want: true},
+		{name: "query initiator is rejected", query: initiatorHex, role: relayDataRoleInitiator},
 		{name: "header responder", header: responderHex, role: relayDataRoleResponder, want: true},
 		{name: "missing token", role: relayDataRoleInitiator},
-		{name: "invalid hex", query: "not-hex", role: relayDataRoleInitiator},
+		{name: "invalid hex", header: "not-hex", role: relayDataRoleInitiator},
 		{name: "mismatched query and header", query: initiatorHex, header: responderHex, role: relayDataRoleInitiator},
-		{name: "wrong role token", query: responderHex, role: relayDataRoleInitiator},
-		{name: "unknown role", query: initiatorHex, role: relayDataRole(99)},
-		{name: "any role wrapper", query: responderHex, anyRole: true, want: true},
+		{name: "wrong role token", header: responderHex, role: relayDataRoleInitiator},
+		{name: "unknown role", header: initiatorHex, role: relayDataRole(99)},
+		{name: "any role wrapper", header: responderHex, anyRole: true, want: true},
 	}
 	for _, tc := range cases {
 		t.Run("token/"+tc.name, func(t *testing.T) {

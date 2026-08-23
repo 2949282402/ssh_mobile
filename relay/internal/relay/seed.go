@@ -16,11 +16,11 @@ import (
 func (s *Server) SeedEnrollments(ctx context.Context, devices []EnrolledDevice) error {
 	for i := range devices {
 		device := &devices[i]
-		unlock := s.lockDevice(device.DeviceID)
-		result, err := s.store.PutEnrollment(ctx, device)
-		if err == nil && result == enrollmentOK {
-			_ = s.cache.ClearDeviceNonces(ctx, device.DeviceID)
+		unlock, locked := s.lockDeviceContext(ctx, device.DeviceID)
+		if !locked {
+			return ctx.Err()
 		}
+		result, err := s.store.PutEnrollment(ctx, device)
 		unlock()
 		if err != nil {
 			return err

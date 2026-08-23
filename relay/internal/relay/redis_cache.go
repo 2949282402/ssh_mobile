@@ -19,32 +19,74 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const redisKeyPrefix = "relay:"
+const (
+	redisKeyPrefix      = "relay:"
+	redisDialTimeout    = 2 * time.Second
+	redisCommandTimeout = 2 * time.Second
+	redisPoolTimeout    = 2 * time.Second
+	redisPoolSize       = 64
+	redisMaxActiveConns = 64
+)
 
 // redisStore implements Cache against Redis. go-redis clients are
 // concurrent-safe, so no internal lock is needed. Key TTLs carry the expiry
 // semantics that the memory store tracks explicitly.
 type redisStore struct {
-	client *redis.Client
-	logger *slog.Logger
+	client           *redis.Client
+	logger           *slog.Logger
+	maxReservations  int
+	maxAdminSessions int
 }
 
 // openRedisStore parses RELAY_REDIS_URL (accepting either a redis:// URL or a
 // bare host:port) and verifies connectivity.
-func openRedisStore(ctx context.Context, url string) (*redisStore, error) {
-	opts, err := redis.ParseURL(url)
+func openRedisStore(ctx context.Context, url string, configs ...Config) (*redisStore, error) {
+	config := withConfigDefaults(Config{})
+	if len(configs) > 0 {
+		config = withConfigDefaults(configs[0])
+	}
+	opts, err := redisClientOptions(url, config)
 	if err != nil {
-		opts, err = redis.ParseURL("redis://" + url)
-		if err != nil {
-			return nil, fmt.Errorf("invalid RELAY_REDIS_URL: %w", err)
-		}
+		return nil, err
 	}
 	client := redis.NewClient(opts)
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
 		return nil, err
 	}
-	return &redisStore{client: client, logger: slog.Default()}, nil
+	return &redisStore{
+		client:           client,
+		logger:           slog.Default(),
+		maxReservations:  config.MaxTransferSessions,
+		maxAdminSessions: config.MaxAdminSessions,
+	}, nil
+}
+
+// redisClientOptions applies process-owned safety bounds after URL parsing so
+// an operator-supplied query cannot disable context cancellation, socket
+// deadlines, retries, or pool limits. The relay already owns operation-level
+// deadlines; automatic retries would make their latency and side effects less
+// predictable, so every command gets one bounded attempt.
+func redisClientOptions(rawURL string, config Config) (*redis.Options, error) {
+	opts, err := redis.ParseURL(rawURL)
+	if err != nil {
+		opts, err = redis.ParseURL("redis://" + rawURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid RELAY_REDIS_URL: %w", err)
+		}
+	}
+	if config.RedisPassword != "" {
+		opts.Password = config.RedisPassword
+	}
+	opts.ContextTimeoutEnabled = true
+	opts.MaxRetries = -1
+	opts.DialTimeout = redisDialTimeout
+	opts.ReadTimeout = redisCommandTimeout
+	opts.WriteTimeout = redisCommandTimeout
+	opts.PoolTimeout = redisPoolTimeout
+	opts.PoolSize = redisPoolSize
+	opts.MaxActiveConns = redisMaxActiveConns
+	return opts, nil
 }
 
 // Close 释放 Redis 连接。
@@ -62,6 +104,9 @@ func (r *redisStore) noncesKey(deviceID string) string {
 func (r *redisStore) adminSessionKey(token string) string {
 	return redisKeyPrefix + "admin:session:" + token
 }
+func (r *redisStore) adminSessionIndexKey() string {
+	return redisKeyPrefix + "admin:sessions"
+}
 
 // consumeNonceScript atomically records a nonce and enforces the per-device
 // active-nonce cap using one ZSET per device. KEYS[1]=relay:nonces:<deviceID>;
@@ -76,7 +121,7 @@ func (r *redisStore) adminSessionKey(token string) string {
 const consumeNonceScript = `
 local ttl = tonumber(ARGV[2]) - tonumber(ARGV[1])
 if ttl <= 0 then
-  return 0
+  return 1
 end
 if redis.call('TYPE', KEYS[1]).ok == 'set' then
   redis.call('DEL', KEYS[1])
@@ -98,8 +143,9 @@ return 0
 func (r *redisStore) ConsumeNonce(ctx context.Context, deviceID, nonce string, expiresAt time.Time) (bool, error) {
 	now := time.Now()
 	if !expiresAt.After(now) {
-		// Already expired: accept without recording (fail open on the edge).
-		return false, nil
+		// Already expired means no replay record can be retained; reject it as
+		// consumed instead of accepting an indefinitely reusable proof.
+		return true, nil
 	}
 	result, err := r.client.Eval(ctx, consumeNonceScript,
 		[]string{r.noncesKey(deviceID)},
@@ -519,7 +565,28 @@ func (r *redisStore) ListOnlinePeers(ctx context.Context) (map[string]Discovery,
 }
 
 func (r *redisStore) SetAdminSession(ctx context.Context, token string, ttl time.Duration) error {
-	return r.client.Set(ctx, r.adminSessionKey(token), "1", ttl).Err()
+	if ttl <= 0 {
+		return r.DeleteAdminSession(ctx, token)
+	}
+	now := time.Now()
+	expiresAt := now.Add(ttl)
+	result, err := r.client.Eval(ctx, `
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+if redis.call('EXISTS', KEYS[2]) == 0 and redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then
+  return 0
+end
+redis.call('SET', KEYS[2], '1', 'PX', ARGV[3])
+redis.call('ZADD', KEYS[1], ARGV[4], ARGV[5])
+return 1
+`, []string{r.adminSessionIndexKey(), r.adminSessionKey(token)},
+		now.UnixMilli(), r.maxAdminSessions, ttl.Milliseconds(), expiresAt.UnixMilli(), token).Int()
+	if err != nil {
+		return err
+	}
+	if result != 1 {
+		return errAdminSessionCapacity
+	}
+	return nil
 }
 
 func (r *redisStore) AdminSessionExists(ctx context.Context, token string) (bool, error) {
@@ -531,7 +598,11 @@ func (r *redisStore) AdminSessionExists(ctx context.Context, token string) (bool
 }
 
 func (r *redisStore) DeleteAdminSession(ctx context.Context, token string) error {
-	return r.client.Del(ctx, r.adminSessionKey(token)).Err()
+	return r.client.Eval(ctx, `
+redis.call('DEL', KEYS[1])
+redis.call('ZREM', KEYS[2], ARGV[1])
+return 1
+`, []string{r.adminSessionKey(token), r.adminSessionIndexKey()}, token).Err()
 }
 
 func (r *redisStore) Publish(ctx context.Context, event RelayEvent) error {

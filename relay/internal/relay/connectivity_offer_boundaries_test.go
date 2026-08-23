@@ -11,10 +11,13 @@ import (
 func TestConnectivityOfferResolveGateBoundaries(t *testing.T) {
 	store := newMemoryStore(Config{})
 	hub := &hub{
-		presence:            store,
-		peers:               map[string]*peer{},
-		v2Attempts:          map[string]v2Attempt{},
-		coordinationTargets: map[string]coordinationTarget{},
+		presence:             store,
+		peers:                map[string]*peer{},
+		v2Attempts:           map[string]v2Attempt{},
+		attemptsByConnection: map[string]map[string]struct{}{},
+		maxV2Attempts:        1,
+		maxV2AttemptsPerConn: 1,
+		coordinationTargets:  map[string]coordinationTarget{},
 	}
 	makePeer := func(deviceID, connectionID string) *peer {
 		return &peer{
@@ -115,9 +118,23 @@ func TestConnectivityOfferResolveGateBoundaries(t *testing.T) {
 		t.Fatalf("duplicate attempt offer = %+v", got)
 	}
 
+	// A different live attempt cannot displace the first ticket when either the
+	// global or per-connection capacity is full.
+	hub.rememberCoordinationTarget(sender, target.deviceID)
+	hub.handleConnectivityOfferV2(sender, &v2.ConnectivityOffer{RequestId: 61, AttemptId: "over-capacity"})
+	if got := readError(t, sender); got.Code != v2.ErrorCode_ERROR_CODE_RATE_LIMITED {
+		t.Fatalf("attempt capacity error = %+v", got)
+	}
+
 	// A target that disappears after Resolve is reported as offline rather than
-	// leaving a dangling attempt ticket.
-	delete(hub.peers, target.deviceID)
+	// leaving a dangling attempt ticket. Disconnect also removes every attempt
+	// indexed by the exact connection rather than waiting for the minute sweep.
+	if !hub.disconnectConnection(target.deviceID, target.connectionID) {
+		t.Fatal("target disconnect was not applied")
+	}
+	if _, present := hub.v2Attempts[validAttempt]; present {
+		t.Fatal("target disconnect left its live attempt ticket")
+	}
 	hub.rememberCoordinationTarget(sender, target.deviceID)
 	hub.handleConnectivityOfferV2(sender, &v2.ConnectivityOffer{RequestId: 7, AttemptId: "target-gone"})
 	if got := readError(t, sender); got.Code != v2.ErrorCode_ERROR_CODE_PEER_OFFLINE {

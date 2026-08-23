@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,24 +38,33 @@ func TestCredentialVerificationFailureBoundaries(t *testing.T) {
 		return signPayload(payload)
 	}
 	valid := claimsToken(credentialClaims{
-		DeviceID:  "device-a",
-		PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
-		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		DeviceID:             "device-a",
+		PublicKey:            base64.RawURLEncoding.EncodeToString(publicKey),
+		EnrollmentGeneration: 1,
+		ExpiresAt:            time.Now().Add(time.Hour).Unix(),
 	})
 	invalidJSON := signPayload([]byte("{"))
 	missingDevice := claimsToken(credentialClaims{
+		PublicKey:            base64.RawURLEncoding.EncodeToString(publicKey),
+		EnrollmentGeneration: 1,
+		ExpiresAt:            time.Now().Add(time.Hour).Unix(),
+	})
+	missingGeneration := claimsToken(credentialClaims{
+		DeviceID:  "device-a",
 		PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
 		ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	})
 	expired := claimsToken(credentialClaims{
-		DeviceID:  "device-a",
-		PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
-		ExpiresAt: time.Now().Add(-time.Hour).Unix(),
+		DeviceID:             "device-a",
+		PublicKey:            base64.RawURLEncoding.EncodeToString(publicKey),
+		EnrollmentGeneration: 1,
+		ExpiresAt:            time.Now().Add(-time.Hour).Unix(),
 	})
 	badPublicKey := claimsToken(credentialClaims{
-		DeviceID:  "device-a",
-		PublicKey: "not-a-key",
-		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		DeviceID:             "device-a",
+		PublicKey:            "not-a-key",
+		EnrollmentGeneration: 1,
+		ExpiresAt:            time.Now().Add(time.Hour).Unix(),
 	})
 
 	tests := []struct {
@@ -68,6 +78,7 @@ func TestCredentialVerificationFailureBoundaries(t *testing.T) {
 		{name: "signature mismatch", token: base64.RawURLEncoding.EncodeToString([]byte("{}")) + "." + base64.RawURLEncoding.EncodeToString([]byte("bad"))},
 		{name: "invalid json", token: invalidJSON},
 		{name: "missing device id", token: missingDevice},
+		{name: "missing enrollment generation", token: missingGeneration},
 		{name: "expired", token: expired, want: errCredentialExpired},
 		{name: "invalid public key", token: badPublicKey},
 		{name: "valid", token: valid},
@@ -124,6 +135,7 @@ func TestConfigParsingAndEndpointFallbackBoundaries(t *testing.T) {
 		t.Setenv("RELAY_ADMIN_USER", "admin")
 		t.Setenv("RELAY_ADMIN_PASSWORD", "long-random-password")
 		t.Setenv("RELAY_STORAGE_MODE", "memory")
+		t.Setenv("RELAY_PUBLIC_URL", "wss://relay.example.test")
 	}
 
 	setValid(t)
@@ -143,20 +155,20 @@ func TestConfigParsingAndEndpointFallbackBoundaries(t *testing.T) {
 	}
 
 	t.Setenv("RELAY_DURATION_BOUNDARY", "not-a-duration")
-	if got := durationEnv("RELAY_DURATION_BOUNDARY", 7*time.Second); got != 7*time.Second {
-		t.Fatalf("invalid duration did not fall back: %s", got)
+	if _, err := durationEnv("RELAY_DURATION_BOUNDARY", 7*time.Second); err == nil {
+		t.Fatal("invalid duration was accepted")
 	}
 	t.Setenv("RELAY_DURATION_BOUNDARY", "0s")
-	if got := durationEnv("RELAY_DURATION_BOUNDARY", 7*time.Second); got != 7*time.Second {
-		t.Fatalf("non-positive duration did not fall back: %s", got)
+	if _, err := durationEnv("RELAY_DURATION_BOUNDARY", 7*time.Second); err == nil {
+		t.Fatal("non-positive duration was accepted")
 	}
 	t.Setenv("RELAY_INT_BOUNDARY", "not-an-int")
-	if got := intEnv("RELAY_INT_BOUNDARY", 9); got != 9 {
-		t.Fatalf("invalid int did not fall back: %d", got)
+	if _, err := intEnv("RELAY_INT_BOUNDARY", 9); err == nil {
+		t.Fatal("invalid integer was accepted")
 	}
 	t.Setenv("RELAY_INT64_BOUNDARY", "0")
-	if got := int64Env("RELAY_INT64_BOUNDARY", 11); got != 11 {
-		t.Fatalf("non-positive int64 did not fall back: %d", got)
+	if _, err := int64Env("RELAY_INT64_BOUNDARY", 11); err == nil {
+		t.Fatal("non-positive int64 was accepted")
 	}
 
 	for _, test := range []struct {
@@ -170,7 +182,7 @@ func TestConfigParsingAndEndpointFallbackBoundaries(t *testing.T) {
 	}
 }
 
-func TestAdminLoginLimitEvictsOldestAndBlocks(t *testing.T) {
+func TestAdminLoginLimitPreservesBlockedKeysAtCapacity(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:           []byte(mysqlTestCredentialKey),
 		EnrollmentToken:         "test-token",
@@ -180,27 +192,35 @@ func TestAdminLoginLimitEvictsOldestAndBlocks(t *testing.T) {
 		AdminLoginBlockDuration: time.Minute,
 	})
 	defer server.Close()
-	old := time.Now().Add(-5 * time.Second)
-	server.admin.mutex.Lock()
-	server.admin.loginAttempts = map[string]adminLoginAttempt{
-		"old\x00user": {windowStartedAt: old, lastSeen: old},
-		"new\x00user": {windowStartedAt: old.Add(time.Second), lastSeen: old.Add(time.Second)},
+
+	if allowed, _ := server.allowAdminLogin("client", "administrator"); !allowed {
+		t.Fatal("first administrator attempt was rejected")
 	}
-	server.admin.mutex.Unlock()
-	if allowed, _ := server.allowAdminLogin("client", "fresh"); !allowed {
-		t.Fatal("fresh login should be admitted after evicting the oldest entry")
+	if allowed, retry := server.allowAdminLogin("client", "administrator"); allowed || retry <= 0 {
+		t.Fatalf("administrator key was not blocked: allowed=%v retry=%s", allowed, retry)
 	}
-	server.admin.mutex.Lock()
-	_, oldPresent := server.admin.loginAttempts["old\x00user"]
-	_, freshPresent := server.admin.loginAttempts["client\x00fresh"]
-	server.admin.mutex.Unlock()
-	if oldPresent || !freshPresent {
-		t.Fatalf("login limiter eviction state: oldPresent=%v freshPresent=%v", oldPresent, freshPresent)
+	if allowed, _ := server.allowAdminLogin("client", "filler"); !allowed {
+		t.Fatal("filler key was rejected before capacity")
 	}
 	if allowed, retry := server.allowAdminLogin("client", "fresh"); allowed || retry <= 0 {
-		t.Fatalf("second attempt should be blocked: allowed=%v retry=%s", allowed, retry)
+		t.Fatalf("fresh key at capacity = allowed=%v retry=%s, want fail-closed", allowed, retry)
 	}
-	server.clearAdminLoginLimit("client", "fresh")
+
+	targetKey := adminLoginKey("client", "administrator")
+	fillerKey := adminLoginKey("client", "filler")
+	freshKey := adminLoginKey("client", "fresh")
+	server.admin.mutex.Lock()
+	target, targetPresent := server.admin.loginAttempts[targetKey]
+	_, fillerPresent := server.admin.loginAttempts[fillerKey]
+	_, freshPresent := server.admin.loginAttempts[freshKey]
+	server.admin.mutex.Unlock()
+	if !targetPresent || !fillerPresent || freshPresent || !target.blockedUntil.After(time.Now()) {
+		t.Fatalf("login limiter capacity state: target=%+v targetPresent=%v fillerPresent=%v freshPresent=%v",
+			target, targetPresent, fillerPresent, freshPresent)
+	}
+	if allowed, retry := server.allowAdminLogin("client", "administrator"); allowed || retry <= 0 {
+		t.Fatalf("blocked administrator key was bypassed after capacity pressure: allowed=%v retry=%s", allowed, retry)
+	}
 }
 
 func TestAdminRevokeDeviceRequestBoundaries(t *testing.T) {
@@ -418,7 +438,15 @@ type boundaryReservationFailure struct {
 }
 
 func (boundaryReservationFailure) CreateReservation(context.Context, Reservation) error {
-	return errors.New("reservation backend unavailable")
+	return errors.New("reservation backend unavailable: sentinel-internal-topology")
+}
+
+type boundaryReservationCapacity struct {
+	Cache
+}
+
+func (boundaryReservationCapacity) CreateReservation(context.Context, Reservation) error {
+	return errReservationCapacity
 }
 
 func TestRelayReserveFailureBoundaries(t *testing.T) {
@@ -426,10 +454,10 @@ func TestRelayReserveFailureBoundaries(t *testing.T) {
 	sender := boundaryHeartbeatPeer("reserve-sender")
 	target := boundaryHeartbeatPeer("reserve-target")
 	h := &hub{
-		config:      withConfigDefaults(Config{Address: ":8080"}),
-		peers:       map[string]*peer{sender.deviceID: sender, target.deviceID: target},
-		presence:    store,
-		presenceTTL: time.Minute,
+		relayDataOrigin: relayDataEndpointOrigin(withConfigDefaults(Config{Address: ":8080"})),
+		peers:           map[string]*peer{sender.deviceID: sender, target.deviceID: target},
+		presence:        store,
+		presenceTTL:     time.Minute,
 	}
 	readyTarget := func() {
 		if _, _, err := store.TakePresence(context.Background(), target.deviceID, target.connectionID, Presence{}, time.Minute); err != nil {
@@ -453,6 +481,9 @@ func TestRelayReserveFailureBoundaries(t *testing.T) {
 		{name: "offline target", targetID: target.deviceID, want: v2.ErrorCode_ERROR_CODE_PEER_OFFLINE},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			if test.targetID != "" && test.targetID != sender.deviceID {
+				authorizeRelayReservationForTest(t, h, sender, target, test.name)
+			}
 			h.handleRelayReserveRequestV2(sender, &v2.RelayReserveRequest{RequestId: 1, AttemptId: test.name, TargetDeviceId: test.targetID})
 			if got := readError(t); got.Code != test.want || got.AttemptId != test.name {
 				t.Fatalf("reservation error=%+v, want code=%v", got, test.want)
@@ -463,15 +494,24 @@ func TestRelayReserveFailureBoundaries(t *testing.T) {
 	if _, _, err := store.TakePresence(context.Background(), target.deviceID, target.connectionID, Presence{}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	authorizeRelayReservationForTest(t, h, sender, target, "not-ready")
 	h.handleRelayReserveRequestV2(sender, &v2.RelayReserveRequest{RequestId: 2, AttemptId: "not-ready", TargetDeviceId: target.deviceID})
 	if got := readError(t); got.Code != v2.ErrorCode_ERROR_CODE_PEER_NOT_READY {
 		t.Fatalf("not-ready reservation error=%+v", got)
 	}
 	readyTarget()
 	h.presence = boundaryReservationFailure{Cache: store}
+	authorizeRelayReservationForTest(t, h, sender, target, "store-failure")
 	h.handleRelayReserveRequestV2(sender, &v2.RelayReserveRequest{RequestId: 3, AttemptId: "store-failure", TargetDeviceId: target.deviceID})
-	if got := readError(t); got.Code != v2.ErrorCode_ERROR_CODE_RESERVATION_FAILED {
+	if got := readError(t); got.Code != v2.ErrorCode_ERROR_CODE_RESERVATION_FAILED ||
+		strings.Contains(got.Message, "sentinel-internal-topology") {
 		t.Fatalf("reservation backend error=%+v", got)
+	}
+	h.presence = boundaryReservationCapacity{Cache: store}
+	authorizeRelayReservationForTest(t, h, sender, target, "capacity")
+	h.handleRelayReserveRequestV2(sender, &v2.RelayReserveRequest{RequestId: 4, AttemptId: "capacity", TargetDeviceId: target.deviceID})
+	if got := readError(t); got.Code != v2.ErrorCode_ERROR_CODE_RATE_LIMITED {
+		t.Fatalf("reservation capacity error=%+v", got)
 	}
 }
 
@@ -568,29 +608,88 @@ func TestResolvePeerHandlerBoundaries(t *testing.T) {
 func TestAdmitAuthenticatedDeviceFailureBoundaries(t *testing.T) {
 	server := NewServer(Config{CredentialKey: []byte(mysqlTestCredentialKey), EnrollmentToken: "test-token", CredentialTTL: time.Hour})
 	defer server.Close()
-	claims := credentialClaims{DeviceID: "admit-device", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	key := []byte("admit-key")
-	if result := server.replaceEnrollment(claims.DeviceID, base64.RawURLEncoding.EncodeToString(key), "test", 1, time.Now()); result != enrollmentOK {
+	deviceID := "admit-device"
+	if result := server.replaceEnrollment(deviceID, base64.RawURLEncoding.EncodeToString(key), "test", 1, time.Now()); result != enrollmentOK {
 		t.Fatalf("enrollment failed: %v", result)
 	}
-	if unlock, code, ok := server.admitAuthenticatedDevice(context.Background(), claims, key); !ok || code != relayErrorUnspecified || unlock == nil {
-		t.Fatalf("valid admission result: unlock=%v code=%d ok=%v", unlock != nil, code, ok)
+	enrolled, err := server.store.GetEnrollment(context.Background(), deviceID)
+	if err != nil || enrolled == nil {
+		t.Fatalf("read enrollment generation: enrollment=%+v err=%v", enrolled, err)
+	}
+	claims := credentialClaims{
+		DeviceID:             deviceID,
+		EnrollmentGeneration: enrolled.EnrolledAt.UnixMicro(),
+		ExpiresAt:            time.Now().Add(time.Hour).Unix(),
+	}
+	if admission, code, ok := server.admitAuthenticatedDevice(context.Background(), claims, key); !ok || code != relayErrorUnspecified || admission == nil {
+		t.Fatalf("valid admission result: admission=%v code=%d ok=%v", admission != nil, code, ok)
 	} else {
-		unlock()
+		if _, hasDeadline := admission.ctx.Deadline(); !hasDeadline {
+			t.Fatal("device admission did not retain a total deadline")
+		}
+		select {
+		case <-admission.ctx.Done():
+			t.Fatal("device admission canceled its budget before staged activation")
+		default:
+		}
+		admission.release()
+		select {
+		case <-admission.ctx.Done():
+		default:
+			t.Fatal("releasing device admission did not cancel its budget")
+		}
 	}
 	expired := claims
 	expired.ExpiresAt = time.Now().Add(-time.Minute).Unix()
-	if unlock, code, ok := server.admitAuthenticatedDevice(context.Background(), expired, key); ok || unlock != nil || code != relayErrorCredentialExpired {
-		t.Fatalf("expired admission: unlock=%v code=%d ok=%v", unlock != nil, code, ok)
+	if admission, code, ok := server.admitAuthenticatedDevice(context.Background(), expired, key); ok || admission != nil || code != relayErrorCredentialExpired {
+		t.Fatalf("expired admission: admission=%v code=%d ok=%v", admission != nil, code, ok)
 	}
-	if unlock, code, ok := server.admitAuthenticatedDevice(context.Background(), claims, []byte("wrong-key")); ok || unlock != nil || code != relayErrorAuthenticationFailed {
-		t.Fatalf("key mismatch admission: unlock=%v code=%d ok=%v", unlock != nil, code, ok)
+	if admission, code, ok := server.admitAuthenticatedDevice(context.Background(), claims, []byte("wrong-key")); ok || admission != nil || code != relayErrorAuthenticationFailed {
+		t.Fatalf("key mismatch admission: admission=%v code=%d ok=%v", admission != nil, code, ok)
 	}
 	if recorded, err := server.store.RecordRevocation(context.Background(), claims.DeviceID, time.Now().Add(time.Hour)); err != nil || !recorded {
 		t.Fatalf("revocation failed: recorded=%v err=%v", recorded, err)
 	}
-	if unlock, code, ok := server.admitAuthenticatedDevice(context.Background(), claims, key); ok || unlock != nil || code != relayErrorAuthenticationFailed {
-		t.Fatalf("revoked admission: unlock=%v code=%d ok=%v", unlock != nil, code, ok)
+	if admission, code, ok := server.admitAuthenticatedDevice(context.Background(), claims, key); ok || admission != nil || code != relayErrorAuthenticationFailed {
+		t.Fatalf("revoked admission: admission=%v code=%d ok=%v", admission != nil, code, ok)
+	}
+}
+
+func TestHubStageAdmissionStripeHonorsCallerDeadline(t *testing.T) {
+	h := newHub(Config{InstanceID: "deadline-test"})
+	defer h.close()
+
+	deviceID := "blocked-device"
+	release := h.lockAdmission(deviceID)
+	released := false
+	defer func() {
+		if !released {
+			release()
+		}
+	}()
+
+	peer := boundaryHeartbeatPeer(deviceID)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	result := make(chan bool, 1)
+	go func() { result <- h.stageWithContext(ctx, peer) }()
+	select {
+	case staged := <-result:
+		if staged {
+			t.Fatal("stage unexpectedly crossed a held admission stripe")
+		}
+	case <-time.After(time.Second):
+		// Release the held stripe before failing so a regression cannot strand the
+		// worker until the package-level test timeout.
+		release()
+		released = true
+		t.Fatal("stage ignored caller deadline while waiting for stripe")
+	}
+	select {
+	case <-peer.done:
+	default:
+		t.Fatal("deadline-rejected staged peer was not closed")
 	}
 }
 

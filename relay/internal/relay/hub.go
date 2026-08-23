@@ -1,9 +1,12 @@
 package relay
 
 import (
+	"container/heap"
 	"context"
 	"hash/fnv"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -16,13 +19,97 @@ type outboundFrame struct {
 	data        []byte
 }
 
+// expiryIndex keeps one removable min-heap entry per live key. Unlike a lazy
+// heap, deleting or consuming state also removes its heap node, so a later
+// capacity check never has to walk an unbounded chain of stale expiries.
+type expiryIndexEntry[K comparable] struct {
+	key       K
+	expiresAt time.Time
+	index     int
+}
+
+type expiryIndexHeap[K comparable] []*expiryIndexEntry[K]
+
+func (h expiryIndexHeap[K]) Len() int { return len(h) }
+
+func (h expiryIndexHeap[K]) Less(i, j int) bool {
+	return h[i].expiresAt.Before(h[j].expiresAt)
+}
+
+func (h expiryIndexHeap[K]) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].index = i
+	h[j].index = j
+}
+
+func (h *expiryIndexHeap[K]) Push(value any) {
+	entry := value.(*expiryIndexEntry[K])
+	entry.index = len(*h)
+	*h = append(*h, entry)
+}
+
+func (h *expiryIndexHeap[K]) Pop() any {
+	old := *h
+	last := len(old) - 1
+	entry := old[last]
+	old[last] = nil
+	entry.index = -1
+	*h = old[:last]
+	return entry
+}
+
+type expiryIndex[K comparable] struct {
+	heap  expiryIndexHeap[K]
+	byKey map[K]*expiryIndexEntry[K]
+}
+
+func (i *expiryIndex[K]) add(key K, expiresAt time.Time) bool {
+	if i.byKey == nil {
+		i.byKey = make(map[K]*expiryIndexEntry[K])
+	}
+	if _, exists := i.byKey[key]; exists {
+		return false
+	}
+	entry := &expiryIndexEntry[K]{key: key, expiresAt: expiresAt}
+	i.byKey[key] = entry
+	heap.Push(&i.heap, entry)
+	return true
+}
+
+func (i *expiryIndex[K]) remove(key K) bool {
+	entry := i.byKey[key]
+	if entry == nil {
+		return false
+	}
+	heap.Remove(&i.heap, entry.index)
+	delete(i.byKey, key)
+	return true
+}
+
+func (i *expiryIndex[K]) oldestExpired(now time.Time) (K, bool) {
+	if len(i.heap) > 0 && !now.Before(i.heap[0].expiresAt) {
+		return i.heap[0].key, true
+	}
+	var zero K
+	return zero, false
+}
+
+func (i *expiryIndex[K]) reset() {
+	i.heap = nil
+	i.byKey = make(map[K]*expiryIndexEntry[K])
+}
+
 type peer struct {
-	deviceID     string
-	connectionID string
-	socket       *websocket.Conn
-	outbound     chan outboundFrame
-	done         chan struct{}
-	once         sync.Once
+	deviceID             string
+	connectionID         string
+	enrollmentGeneration int64
+	socket               *websocket.Conn
+	outbound             chan outboundFrame
+	done                 chan struct{}
+	once                 sync.Once
+	activation           chan struct{}
+	activationOnce       sync.Once
+	admissionActive      atomic.Bool
 	// writeMutex 串行化对 socket 的写：正常路径只有 hub.write 写，但 /v2/control 的
 	// 协议违规路径需要先同步冲刷一帧 ProtocolError 再关连接，两者不能并发写 WebSocket。
 	writeMutex         sync.Mutex
@@ -88,24 +175,54 @@ type presenceStore interface {
 }
 
 type hub struct {
-	config      Config
-	mutex       sync.Mutex
-	peers       map[string]*peer
-	presence    presenceStore
-	instanceID  string
-	presenceTTL time.Duration
+	mutex                   sync.Mutex
+	peers                   map[string]*peer
+	presence                presenceStore
+	instanceID              string
+	presenceTTL             time.Duration
+	maxConnections          int
+	serverHeartbeatInterval time.Duration
+	serverHeartbeatMisses   int
+	relayDataOrigin         string
+	maxDiscoveryDevices     int
 	// v2Attempts 是 v2 异步 attempt（attempt_id → 发起设备）的路由注册表：服务端在
 	// 转发 ConnectivityOffer 时登记，ConnectivityAnswer/ProtocolError 据此回路由到
 	// 发起方。条目带过期时间，由 hub.prune 惰性清理。
 	v2Attempts map[string]v2Attempt
+	// v2AttemptExpiries is an exact, removable expiry index. The heap and map
+	// contain one entry per attempt, including while an Answer consumes routing
+	// independently from the reservation fallback gate.
+	v2AttemptExpiries expiryIndex[string]
+	// attemptsByConnection is the reverse index for immediate disconnect and
+	// replacement cleanup. Each attempt is indexed by both endpoint connection
+	// IDs, so stale correlation state cannot accumulate until the minute sweep.
+	attemptsByConnection map[string]map[string]struct{}
+	maxV2Attempts        int
+	maxV2AttemptsPerConn int
+	// reservationGates independently authorize one RelayReserveRequest
+	// after a ConnectivityOffer has actually been queued to its resolved target.
+	// The key includes the authenticated initiator connection, so another peer
+	// cannot guess an attempt_id and consume the authorization. Keeping this
+	// separate from v2Attempts lets Answer/ProtocolError retain their own
+	// one-shot return-routing lifetime.
+	reservationGates relayReservationGateRegistry
 	// The frozen ConnectivityOffer has no target field.  Keep a one-shot
 	// Resolve -> Offer ticket per authenticated control connection instead.
 	coordinationTargets map[string]coordinationTarget
-	admission           [admissionStripeCount]sync.Mutex
-	stop                chan struct{}
-	closeOnce           sync.Once
-	waitGroup           sync.WaitGroup
-	closed              bool
+	// discoveryLimiter is a separate device-scoped admission collaborator: it
+	// protects fleet-wide hint fan-out without coupling token accounting to the
+	// peer-routing mutex.
+	discoveryLimiter *discoveryFanoutLimiter
+	// pendingAdmissions contains authenticated control sockets while their
+	// authoritative presence claim is in flight. They count toward capacity but
+	// are never routable through peers until the lease succeeds.
+	pendingAdmissions map[string]*peer
+	admission         [admissionStripeCount]deviceStripeLock
+	stop              chan struct{}
+	closeOnce         sync.Once
+	waitGroup         sync.WaitGroup
+	closed            bool
+	logger            *slog.Logger
 }
 
 type coordinationTarget struct {
@@ -120,6 +237,12 @@ type coordinationTarget struct {
 // connection. Different devices rarely collide on a stripe and only wait briefly.
 const admissionStripeCount = 128
 
+const (
+	defaultMaxV2Attempts        = 65536
+	defaultMaxV2AttemptsPerConn = 64
+	maxV2StatePrunesPerSweep    = 256
+)
+
 // deviceLockStripe maps a deviceID to a lock stripe via fnv-1a, so per-device
 // lock arrays (the hub's admission stripes and the Server's device stripes)
 // stay balanced and same-device operations always hit the same stripe.
@@ -133,21 +256,40 @@ func deviceLockStripe(deviceID string) uint64 {
 // so the lease claim for a newer connection runs after any in-flight claim for
 // the same device has fully landed.
 func (h *hub) lockAdmission(deviceID string) func() {
+	unlock, _ := h.lockAdmissionContext(context.Background(), deviceID)
+	return unlock
+}
+
+// lockAdmissionContext keeps queueing on the per-device Hub stripe inside the
+// caller's total admission budget. A plain mutex here would let a request wait
+// past its WebSocket security deadline before it even starts the presence
+// claim, especially when unrelated device IDs collide on the same stripe.
+func (h *hub) lockAdmissionContext(ctx context.Context, deviceID string) (func(), bool) {
 	stripe := deviceLockStripe(deviceID) % admissionStripeCount
-	h.admission[stripe].Lock()
-	return h.admission[stripe].Unlock
+	return h.admission[stripe].acquire(ctx)
 }
 
 func newHub(config Config) *hub {
 	config = withConfigDefaults(config)
 	h := &hub{
-		config:              config,
-		peers:               map[string]*peer{},
-		v2Attempts:          map[string]v2Attempt{},
-		coordinationTargets: map[string]coordinationTarget{},
-		instanceID:          config.InstanceID,
-		presenceTTL:         config.PresenceTTL,
-		stop:                make(chan struct{}),
+		peers:                   map[string]*peer{},
+		v2Attempts:              map[string]v2Attempt{},
+		attemptsByConnection:    map[string]map[string]struct{}{},
+		maxV2Attempts:           defaultMaxV2Attempts,
+		maxV2AttemptsPerConn:    defaultMaxV2AttemptsPerConn,
+		reservationGates:        newRelayReservationGateRegistry(0, 0),
+		coordinationTargets:     map[string]coordinationTarget{},
+		discoveryLimiter:        newDiscoveryFanoutLimiter(config.MaxEnrolledDevices),
+		pendingAdmissions:       map[string]*peer{},
+		instanceID:              config.InstanceID,
+		presenceTTL:             config.PresenceTTL,
+		maxConnections:          config.MaxConnections,
+		serverHeartbeatInterval: config.ServerHeartbeatInterval,
+		serverHeartbeatMisses:   config.ServerHeartbeatMisses,
+		relayDataOrigin:         relayDataEndpointOrigin(config),
+		maxDiscoveryDevices:     config.MaxEnrolledDevices,
+		logger:                  slog.Default(),
+		stop:                    make(chan struct{}),
 	}
 	h.waitGroup.Add(1)
 	go func() {
@@ -160,6 +302,173 @@ func newHub(config Config) *hub {
 		h.monitorHeartbeats()
 	}()
 	return h
+}
+
+func (h *hub) removeV2AttemptLocked(attemptID string) {
+	attempt, present := h.v2Attempts[attemptID]
+	if present {
+		delete(h.v2Attempts, attemptID)
+		for _, connectionID := range []string{attempt.initiatorConnectionID, attempt.targetConnectionID} {
+			refs := h.attemptsByConnection[connectionID]
+			delete(refs, attemptID)
+			if len(refs) == 0 {
+				delete(h.attemptsByConnection, connectionID)
+			}
+		}
+	}
+	h.v2AttemptExpiries.remove(attemptID)
+}
+
+func (h *hub) pruneExpiredV2AttemptsLocked(now time.Time, limit int) int {
+	pruned := 0
+	for pruned < limit {
+		attemptID, expired := h.v2AttemptExpiries.oldestExpired(now)
+		if !expired {
+			break
+		}
+		h.removeV2AttemptLocked(attemptID)
+		pruned++
+	}
+	return pruned
+}
+
+func (h *hub) addV2AttemptLocked(attemptID string, attempt v2Attempt, now time.Time) bool {
+	if attemptID == "" || !now.Before(attempt.expiresAt) {
+		return false
+	}
+	if h.v2Attempts == nil {
+		h.v2Attempts = make(map[string]v2Attempt)
+	}
+	if h.attemptsByConnection == nil {
+		h.attemptsByConnection = make(map[string]map[string]struct{})
+	}
+	globalLimit := h.maxV2Attempts
+	if globalLimit <= 0 {
+		globalLimit = defaultMaxV2Attempts
+	}
+	perConnectionLimit := h.maxV2AttemptsPerConn
+	if perConnectionLimit <= 0 {
+		perConnectionLimit = defaultMaxV2AttemptsPerConn
+	}
+	if _, exists := h.v2Attempts[attemptID]; exists {
+		return false
+	}
+	if len(h.v2Attempts) >= globalLimit {
+		// The exact heap makes capacity recovery one directed O(log n) removal.
+		// Do not drain all expired attempts on this Offer hot path.
+		h.pruneExpiredV2AttemptsLocked(now, 1)
+		if len(h.v2Attempts) >= globalLimit {
+			return false
+		}
+	}
+	connectionIDs := []string{attempt.initiatorConnectionID}
+	if attempt.targetConnectionID != attempt.initiatorConnectionID {
+		connectionIDs = append(connectionIDs, attempt.targetConnectionID)
+	}
+	for _, connectionID := range connectionIDs {
+		if connectionID == "" {
+			continue
+		}
+		if len(h.attemptsByConnection[connectionID]) >= perConnectionLimit &&
+			!h.releaseExpiredV2AttemptSlotForConnectionLocked(connectionID, now, perConnectionLimit) {
+			return false
+		}
+	}
+	h.v2Attempts[attemptID] = attempt
+	if !h.v2AttemptExpiries.add(attemptID, attempt.expiresAt) {
+		delete(h.v2Attempts, attemptID)
+		return false
+	}
+	for _, connectionID := range connectionIDs {
+		if connectionID == "" {
+			continue
+		}
+		refs := h.attemptsByConnection[connectionID]
+		if refs == nil {
+			refs = make(map[string]struct{})
+			h.attemptsByConnection[connectionID] = refs
+		}
+		refs[attemptID] = struct{}{}
+	}
+	return true
+}
+
+// releaseExpiredV2AttemptSlotForConnectionLocked checks only the connection's
+// reverse-index bucket. That bucket is capped at maxChecks (64 in production),
+// so per-connection capacity recovery is independent of global attempt count.
+func (h *hub) releaseExpiredV2AttemptSlotForConnectionLocked(connectionID string, now time.Time, maxChecks int) bool {
+	refs := h.attemptsByConnection[connectionID]
+	checked := 0
+	for attemptID := range refs {
+		if checked >= maxChecks {
+			break
+		}
+		checked++
+		attempt, present := h.v2Attempts[attemptID]
+		if !present || !now.Before(attempt.expiresAt) {
+			h.removeV2AttemptLocked(attemptID)
+			break
+		}
+	}
+	return len(h.attemptsByConnection[connectionID]) < maxChecks
+}
+
+func (h *hub) removeV2AttemptsForConnectionLocked(connectionID string) {
+	refs := h.attemptsByConnection[connectionID]
+	if len(refs) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(refs))
+	for attemptID := range refs {
+		ids = append(ids, attemptID)
+	}
+	for _, attemptID := range ids {
+		h.removeV2AttemptLocked(attemptID)
+	}
+}
+
+func peerControlOpen(peer *peer) bool {
+	if !peerIsRoutable(peer) {
+		return false
+	}
+	if peer.done == nil {
+		return true
+	}
+	select {
+	case <-peer.done:
+		return false
+	default:
+		return true
+	}
+}
+
+// consumeRelayReservationGate atomically consumes an authorization regardless
+// of whether its target matches. A malformed/replayed request cannot probe or
+// retain a live gate. The returned target connection is the exact connection
+// that received the offer; a reconnect must start a fresh Resolve -> Offer.
+func (h *hub) consumeRelayReservationGate(sender *peer, attemptID, targetDeviceID string) (relayReservationGate, bool) {
+	if sender == nil || attemptID == "" {
+		return relayReservationGate{}, false
+	}
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+	key := relayReservationGateKey{initiatorConnectionID: sender.connectionID, attemptID: attemptID}
+	gate, present := h.reservationGates.take(key, time.Now())
+	if !present || gate.initiatorDeviceID != sender.deviceID || gate.targetDeviceID != targetDeviceID {
+		return relayReservationGate{}, false
+	}
+	if h.peers[sender.deviceID] != sender || !peerControlOpen(sender) {
+		return relayReservationGate{}, false
+	}
+	target := h.peers[gate.targetDeviceID]
+	if !peerControlOpen(target) || target.connectionID != gate.targetConnectionID {
+		return relayReservationGate{}, false
+	}
+	return gate, true
+}
+
+func newPendingAdmissionMap() map[string]*peer {
+	return make(map[string]*peer)
 }
 
 func (h *hub) rememberCoordinationTarget(peer *peer, deviceID string) {
@@ -196,11 +505,11 @@ func (h *hub) consumeCoordinationTarget(peer *peer) (string, bool) {
 // 定向关闭。关闭会解除 read goroutine 对 socket 的阻塞，其 deferred remove() 随后
 // 释放 presence/discovery 租约并广播 peer_offline——与 sweeper 收敛路径一致。
 func (h *hub) monitorHeartbeats() {
-	interval := h.config.ServerHeartbeatInterval
+	interval := h.serverHeartbeatInterval
 	if interval <= 0 {
 		interval = defaultServerHeartbeatInterval
 	}
-	misses := h.config.ServerHeartbeatMisses
+	misses := h.serverHeartbeatMisses
 	if misses <= 0 {
 		misses = defaultServerHeartbeatMisses
 	}
@@ -215,7 +524,7 @@ func (h *hub) monitorHeartbeats() {
 			h.mutex.Lock()
 			stale := make([]*peer, 0)
 			for _, p := range h.peers {
-				if now.Sub(p.lastHeartbeat) > threshold {
+				if peerIsRoutable(p) && now.Sub(p.lastHeartbeat) > threshold {
 					stale = append(stale, p)
 				}
 			}
@@ -240,11 +549,16 @@ func (h *hub) presenceFor(peer *peer) Presence {
 	return value
 }
 
-// hubCloseTimeout bounds the peer/pruner convergence wait during close. Peer
-// sockets are closed before waiting, so this normally returns immediately; the
-// bound exists so a wedged goroutine cannot stall the whole shutdown path
-// beyond the Compose stop_grace_period.
+// hubCloseTimeout bounds the complete Hub close transaction, including shared
+// presence cleanup and peer/pruner convergence. Peer sockets are closed before
+// waiting, so this normally returns immediately; the bound exists so a wedged
+// dependency or goroutine cannot exceed the Compose stop_grace_period.
 const hubCloseTimeout = 5 * time.Second
+
+// hubPresenceSweepTimeout bounds both the cleanup calls and the wait for their
+// workers. A store implementation is expected to honor context cancellation,
+// but shutdown must still return if a buggy dependency ignores it.
+const hubPresenceSweepTimeout = 2 * time.Second
 
 // presenceLeaseTimeout bounds each heartbeat's presence lease I/O so a slow or
 // hung Redis cannot stall the WebSocket read goroutine (which also routes data
@@ -254,15 +568,24 @@ const presenceLeaseTimeout = 500 * time.Millisecond
 
 func (h *hub) close() {
 	h.closeOnce.Do(func() {
+		closeDeadline := time.Now().Add(hubCloseTimeout)
 		h.mutex.Lock()
 		h.closed = true
 		close(h.stop)
-		peers := make([]*peer, 0, len(h.peers))
+		peers := make([]*peer, 0, len(h.peers)+len(h.pendingAdmissions))
 		for _, value := range h.peers {
 			peers = append(peers, value)
 		}
+		for _, value := range h.pendingAdmissions {
+			peers = append(peers, value)
+		}
 		h.peers = map[string]*peer{}
+		h.pendingAdmissions = map[string]*peer{}
 		h.coordinationTargets = map[string]coordinationTarget{}
+		h.v2Attempts = map[string]v2Attempt{}
+		h.attemptsByConnection = map[string]map[string]struct{}{}
+		h.v2AttemptExpiries.reset()
+		h.reservationGates.reset()
 		h.mutex.Unlock()
 		for _, peer := range peers {
 			closePeer(peer)
@@ -273,7 +596,7 @@ func (h *hub) close() {
 			// releases concurrently under a 2s context deadline. Each release is
 			// CAS'd to the peer's own connection, so a lease already taken over
 			// by another instance is left untouched.
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), hubPresenceSweepTimeout)
 			var sweep sync.WaitGroup
 			for _, p := range peers {
 				sweep.Add(1)
@@ -283,7 +606,15 @@ func (h *hub) close() {
 					_, _ = h.presence.ReleaseDiscovery(ctx, peer.deviceID, peer.connectionID)
 				}(p)
 			}
-			sweep.Wait()
+			sweepDone := make(chan struct{})
+			go func() {
+				sweep.Wait()
+				close(sweepDone)
+			}()
+			select {
+			case <-sweepDone:
+			case <-ctx.Done():
+			}
 			cancel()
 		}
 		done := make(chan struct{})
@@ -291,85 +622,133 @@ func (h *hub) close() {
 			h.waitGroup.Wait()
 			close(done)
 		}()
+		remaining := time.Until(closeDeadline)
+		if remaining <= 0 {
+			return
+		}
+		waitTimer := time.NewTimer(remaining)
+		defer waitTimer.Stop()
 		select {
 		case <-done:
-		case <-time.After(hubCloseTimeout):
+		case <-waitTimer.C:
 			// Sockets were already closed above; proceed even if a goroutine
 			// is stuck, keeping the process exit path bounded.
 		}
 	})
 }
+
+// add is the immediately-active form used by already-authorized internal
+// callers and focused tests. HTTP admission uses stage followed by activate so
+// no socket worker can run before the post-registration durable recheck.
 func (h *hub) add(peer *peer) bool {
+	if !h.stage(peer) {
+		return false
+	}
+	return h.activate(peer)
+}
+
+func (h *hub) stage(peer *peer) bool {
+	return h.stageWithContext(context.Background(), peer)
+}
+
+// stageWithContext keeps all presence-claim work inside the caller's composite
+// admission budget. The legacy stage wrapper remains for already-authorized
+// internal callers and focused tests that have no HTTP admission context.
+func (h *hub) stageWithContext(parent context.Context, peer *peer) bool {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if err := parent.Err(); err != nil {
+		closePeer(peer)
+		return false
+	}
 	peer.lastSeen = time.Now()
 	// 服务端心跳监视器从连接建立开始计时，给新连接最多 2 个心跳周期（40s）发送首个
 	// heartbeat；尚未上传首个 heartbeat 的连接不会被误杀。
 	peer.lastHeartbeat = time.Now()
+	if peer.activation == nil {
+		peer.activation = make(chan struct{})
+	}
 	// Serialize admission per device so the Redis lease claim lands in
 	// connection-establishment order: a newer connection's TakePresence runs only
 	// after any in-flight claim for the same device completed, so a stale claim
 	// can never overwrite it and kick the valid connection.
-	unlockAdmission := h.lockAdmission(peer.deviceID)
+	unlockAdmission, locked := h.lockAdmissionContext(parent, peer.deviceID)
+	if !locked {
+		closePeer(peer)
+		return false
+	}
 	defer unlockAdmission()
+	if err := parent.Err(); err != nil {
+		closePeer(peer)
+		return false
+	}
 
 	h.mutex.Lock()
 	if h.closed {
 		h.mutex.Unlock()
+		closePeer(peer)
 		return false
 	}
 	previous := h.peers[peer.deviceID]
-	if previous == nil && len(h.peers) >= h.config.MaxConnections {
+	if previous == nil && len(h.peers)+len(h.pendingAdmissions) >= h.maxConnections {
 		h.mutex.Unlock()
+		closePeer(peer)
 		return false
 	}
-	h.peers[peer.deviceID] = peer
-	h.mutex.Unlock()
-	if previous != nil {
-		closePeer(previous)
+	if h.pendingAdmissions == nil {
+		h.pendingAdmissions = newPendingAdmissionMap()
 	}
-	// Take the presence lease before starting the read/write goroutines: if the
-	// socket fails immediately, remove() releases it after this point, so no
-	// phantom online entry can be left behind by a delayed TakePresence. The new
-	// connection takes over any existing lease (newest connect wins).
+	h.pendingAdmissions[peer.deviceID] = peer
+	h.mutex.Unlock()
+	// Take the presence lease while the socket remains non-routable in
+	// pendingAdmissions. A failed or timed-out shared-state claim fails closed:
+	// no Ready frame, worker, or h.peers entry exists yet.
 	leaseTaken := false
+	var old Presence
+	var replaced bool
 	if h.presence != nil {
-		old, replaced, err := h.presence.TakePresence(context.Background(), peer.deviceID, peer.connectionID, h.presenceFor(peer), h.presenceTTL)
-		if err == nil {
-			leaseTaken = true
+		ctx, cancel := context.WithTimeout(parent, presenceLeaseTimeout)
+		var err error
+		old, replaced, err = h.presence.TakePresence(ctx, peer.deviceID, peer.connectionID, h.presenceFor(peer), h.presenceTTL)
+		cancel()
+		if err != nil {
+			h.mutex.Lock()
+			if h.pendingAdmissions[peer.deviceID] == peer {
+				delete(h.pendingAdmissions, peer.deviceID)
+			}
+			h.mutex.Unlock()
+			closePeer(peer)
+			return false
 		}
-		if err == nil && replaced && old.ConnectionID != "" && old.InstanceID != "" && old.InstanceID != h.instanceID {
-			// Cross-instance takeover: tell the superseded connection's instance
-			// to close it now, so the dual-connection window collapses
-			// immediately instead of waiting up to a heartbeat cycle. A lost
-			// event is covered by the heartbeat CAS renew fallback.
-			_ = h.presence.Publish(context.Background(), RelayEvent{
-				Type:            eventConnectionReplaced,
-				DeviceID:        peer.deviceID,
-				OldInstanceID:   old.InstanceID,
-				OldConnectionID: old.ConnectionID,
-				NewConnectionID: peer.connectionID,
-				Time:            time.Now().UnixMilli(),
-			})
-		}
+		leaseTaken = true
 		// 不再写占位 discovery：在线判定要求 presence 与 discovery 双有效 + 真实
 		// revision（>0）+ owner 一致（明确版 §13 收紧版）。连接建立后、设备真正
 		// 发布 discovery 之前，该设备不被 resolve 视为可连接——§8「上传 discovery
 		// 后才广播为 online」由此自然成立。discovery 只在设备发布 DiscoveryPublish
 		// 时由 publishDiscoveryV2 写入（CAS 要求当前 presence owner）。
 	}
-	// Atomically re-check currency/closed and register the worker goroutines in
-	// the same h.mutex critical section that close() uses, so shutdown cannot
-	// race: if close() won the mutex first, isCurrent is false and no workers are
-	// registered (close()'s Wait() has nothing to wait for); if this wins first,
-	// the Add(2) happens-before close()'s Wait(), which must then see both
-	// workers' Done. The peer may also have been kicked (revoke/disconnect)
-	// while the lease claim was in flight.
+	// Atomically publish the peer and register both workers in the same critical
+	// section used by close/disconnect. The staged marker must still belong to
+	// this connection and the previous local generation must be unchanged.
 	h.mutex.Lock()
-	isCurrent := !h.closed && h.peers[peer.deviceID] == peer
-	if isCurrent {
+	canCommit := !h.closed && h.pendingAdmissions[peer.deviceID] == peer && h.peers[peer.deviceID] == previous
+	if canCommit && previous == nil && len(h.peers) >= h.maxConnections {
+		canCommit = false
+	}
+	if h.pendingAdmissions[peer.deviceID] == peer {
+		delete(h.pendingAdmissions, peer.deviceID)
+	}
+	if canCommit {
+		h.peers[peer.deviceID] = peer
+		if previous != nil {
+			h.removeV2AttemptsForConnectionLocked(previous.connectionID)
+			h.reservationGates.removeConnection(previous.connectionID)
+		}
 		h.waitGroup.Add(2)
 	}
 	h.mutex.Unlock()
-	if !isCurrent {
+	if !canCommit {
 		// The lease was just taken but this admission was rejected (the hub closed
 		// or the peer was kicked while the claim was in flight): release the lease
 		// we wrote so a rejected connection cannot leave a phantom "online" entry.
@@ -377,14 +756,68 @@ func (h *hub) add(peer *peer) bool {
 		// since taken the lease over it is left untouched — the same lifecycle
 		// rule the heartbeat path applies after a post-renew currency re-check.
 		if leaseTaken && h.presence != nil {
-			_, _ = h.presence.ReleasePresence(context.Background(), peer.deviceID, peer.connectionID)
+			ctx, cancel := context.WithTimeout(parent, presenceLeaseTimeout)
+			_, _ = h.presence.ReleasePresence(ctx, peer.deviceID, peer.connectionID)
+			cancel()
 		}
 		closePeer(peer)
 		return false
 	}
+	if previous != nil {
+		closePeer(previous)
+	}
+	if h.presence != nil && replaced && old.ConnectionID != "" && old.InstanceID != "" && old.InstanceID != h.instanceID {
+		// Cross-instance takeover: tell the superseded connection's instance to
+		// close it now. A lost event is covered by the heartbeat CAS fallback.
+		ctx, cancel := context.WithTimeout(parent, presenceLeaseTimeout)
+		_ = h.presence.Publish(ctx, RelayEvent{
+			Type:            eventConnectionReplaced,
+			DeviceID:        peer.deviceID,
+			OldInstanceID:   old.InstanceID,
+			OldConnectionID: old.ConnectionID,
+			NewConnectionID: peer.connectionID,
+			Time:            time.Now().UnixMilli(),
+		})
+		cancel()
+	}
 	go h.write(peer)
 	go h.read(peer)
 	return true
+}
+
+// activate commits a staged peer as routable and releases both socket workers.
+// A concurrent lifecycle close wins by removing the exact peer first.
+func (h *hub) activate(peer *peer) bool {
+	if peer == nil {
+		return false
+	}
+	h.mutex.Lock()
+	current := !h.closed && h.peers[peer.deviceID] == peer
+	if current {
+		peer.admissionActive.Store(true)
+		peer.activationOnce.Do(func() { close(peer.activation) })
+	}
+	h.mutex.Unlock()
+	if !current {
+		closePeer(peer)
+	}
+	return current
+}
+
+func (peer *peer) waitForActivation() bool {
+	if peer.activation == nil {
+		return true
+	}
+	select {
+	case <-peer.activation:
+		return peer.admissionActive.Load()
+	case <-peer.done:
+		return false
+	}
+}
+
+func peerIsRoutable(peer *peer) bool {
+	return peer != nil && (peer.activation == nil || peer.admissionActive.Load())
 }
 
 // disconnectConnection closes only the connection whose connectionID matches — a
@@ -406,12 +839,19 @@ func (h *hub) disconnectConnection(deviceID, connectionID string) bool {
 	}
 	delete(h.peers, deviceID)
 	delete(h.coordinationTargets, connectionID)
+	h.removeV2AttemptsForConnectionLocked(connectionID)
+	h.reservationGates.removeConnection(connectionID)
 	h.mutex.Unlock()
-	if h.presence != nil {
-		_, _ = h.presence.ReleasePresence(context.Background(), deviceID, connectionID)
-		_, _ = h.presence.ReleaseDiscovery(context.Background(), deviceID, connectionID)
-	}
+	// Stop local traffic before touching the shared presence store. A stalled
+	// Redis release must never extend the lifetime of a connection selected for
+	// replacement/revocation.
 	closePeer(current)
+	if h.presence != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+		_, _ = h.presence.ReleasePresence(ctx, deviceID, connectionID)
+		_, _ = h.presence.ReleaseDiscovery(ctx, deviceID, connectionID)
+		cancel()
+	}
 	return true
 }
 
@@ -423,13 +863,18 @@ func (h *hub) remove(peer *peer) {
 	// cross-instance case where a foreign connection now owns the lease.
 	isCurrent := h.peers[peer.deviceID] == peer
 	delete(h.coordinationTargets, peer.connectionID)
+	h.removeV2AttemptsForConnectionLocked(peer.connectionID)
+	h.reservationGates.removeConnection(peer.connectionID)
 	if isCurrent {
 		delete(h.peers, peer.deviceID)
 	}
 	h.mutex.Unlock()
+	closePeer(peer)
 	if isCurrent && h.presence != nil {
-		released, _ := h.presence.ReleasePresence(context.Background(), peer.deviceID, peer.connectionID)
-		_, _ = h.presence.ReleaseDiscovery(context.Background(), peer.deviceID, peer.connectionID)
+		ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+		released, _ := h.presence.ReleasePresence(ctx, peer.deviceID, peer.connectionID)
+		_, _ = h.presence.ReleaseDiscovery(ctx, peer.deviceID, peer.connectionID)
+		cancel()
 		// 仅当租约真被释放（released=true）才广播 peer_offline：若 CAS 返回 false，
 		// 说明租约已被同设备的另一条连接接管（如本实例 socket 断开后设备在其它实例
 		// 重连，TakePresence 已接管），设备实际仍在线上，广播 offline 会误报。
@@ -439,7 +884,6 @@ func (h *hub) remove(peer *peer) {
 			h.broadcastPeerEvent(framePeerOffline, peer.deviceID, Discovery{})
 		}
 	}
-	closePeer(peer)
 }
 
 func closePeer(peer *peer) {
@@ -454,16 +898,41 @@ func closePeer(peer *peer) {
 }
 
 func (h *hub) disconnectDevice(deviceID string) {
+	h.disconnectDeviceBeforeGeneration(deviceID, 0)
+}
+
+// disconnectDeviceBeforeGeneration closes only sockets authenticated under an
+// enrollment generation older than cutoff. cutoff <= 0 is the unconditional
+// revoke/shutdown form. Delayed re-enrollment events use a positive cutoff so
+// they cannot terminate a connection already authenticated under the new
+// durable enrollment generation.
+func (h *hub) disconnectDeviceBeforeGeneration(deviceID string, cutoff int64) {
 	h.mutex.Lock()
 	peer := h.peers[deviceID]
+	pending := h.pendingAdmissions[deviceID]
+	if cutoff > 0 && peer != nil && peer.enrollmentGeneration >= cutoff {
+		peer = nil
+	}
+	if cutoff > 0 && pending != nil && pending.enrollmentGeneration >= cutoff {
+		pending = nil
+	}
 	if peer != nil {
 		delete(h.peers, deviceID)
+		delete(h.coordinationTargets, peer.connectionID)
+		h.removeV2AttemptsForConnectionLocked(peer.connectionID)
+		h.reservationGates.removeConnection(peer.connectionID)
+	}
+	if pending != nil {
+		delete(h.pendingAdmissions, deviceID)
 	}
 	h.mutex.Unlock()
+	if pending != nil {
+		closePeer(pending)
+	}
 	if peer != nil {
-		h.mutex.Lock()
-		delete(h.coordinationTargets, peer.connectionID)
-		h.mutex.Unlock()
+		// Stop the socket first. Presence cleanup is shared-state bookkeeping and
+		// is allowed to consume its bounded timeout without keeping traffic alive.
+		closePeer(peer)
 		// Release only this instance's current lease (CAS): the peer's deferred
 		// remove() would see isCurrent==false and never release it, so do it
 		// here. If a newer connection replaced this peer or took over the lease
@@ -472,8 +941,10 @@ func (h *hub) disconnectDevice(deviceID string) {
 		// there when it receives the revoke/kick event, or by reconcileRevocations.
 		released := false
 		if h.presence != nil {
-			released, _ = h.presence.ReleasePresence(context.Background(), deviceID, peer.connectionID)
-			_, _ = h.presence.ReleaseDiscovery(context.Background(), deviceID, peer.connectionID)
+			ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+			released, _ = h.presence.ReleasePresence(ctx, deviceID, peer.connectionID)
+			_, _ = h.presence.ReleaseDiscovery(ctx, deviceID, peer.connectionID)
+			cancel()
 		}
 		// 设备被整机断开（revoke/kick/对账/重新 enroll 抢占）：广播 peer_offline。
 		// 关闭触发的 remove() 此时 isCurrent==false 不会重复广播。被新连接替换的
@@ -483,13 +954,15 @@ func (h *hub) disconnectDevice(deviceID string) {
 		if released {
 			h.broadcastPeerEvent(framePeerOffline, deviceID, Discovery{})
 		}
-		closePeer(peer)
 	}
 }
 
 func (h *hub) write(peer *peer) {
 	defer h.waitGroup.Done()
 	defer h.remove(peer)
+	if !peer.waitForActivation() {
+		return
+	}
 	for {
 		select {
 		case <-peer.done:
@@ -510,6 +983,9 @@ func (h *hub) write(peer *peer) {
 func (h *hub) read(peer *peer) {
 	defer h.waitGroup.Done()
 	defer h.remove(peer)
+	if !peer.waitForActivation() {
+		return
+	}
 	// /v2/control 每帧最大为冻结契约的 MAX_RELAY_FRAME_BYTES（4+512KiB）。
 	peer.socket.SetReadLimit(v2.MAX_RELAY_FRAME_BYTES)
 	for {
@@ -606,11 +1082,8 @@ func (h *hub) prune() {
 			return
 		case now := <-ticker.C:
 			h.mutex.Lock()
-			for id, attempt := range h.v2Attempts {
-				if now.After(attempt.expiresAt) {
-					delete(h.v2Attempts, id)
-				}
-			}
+			h.pruneExpiredV2AttemptsLocked(now, maxV2StatePrunesPerSweep)
+			h.reservationGates.prune(now, maxV2StatePrunesPerSweep)
 			h.mutex.Unlock()
 		}
 	}

@@ -8,22 +8,38 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 )
 
-// refreshNonceTTL 限制 refresh 证明 nonce 的存活时间，与 authenticatedRequest 的
-// 重放防护共用同一 nonce 存储（Cache，当前为 memoryStore）与上限（每设备 128 个活跃 nonce）。
-const refreshNonceTTL = 5 * time.Minute
+// refreshProofFreshness 是 refresh 证明的最大时钟偏差。上下边界均包含；
+// nonce 再多保留 1 秒，使下边界的请求在秒精度时钟下仍能原子消费。
+const (
+	refreshProofFreshness = 5 * time.Minute
+	refreshNonceSlack     = time.Second
+)
 
 type refreshRequest struct {
 	DeviceID  string `json:"device_id"`
 	PublicKey string `json:"public_key"`
+	Timestamp int64  `json:"timestamp"`
 	Nonce     string `json:"nonce"`
 	Signature string `json:"signature"`
+}
+
+func refreshProofTimestampIsFresh(timestamp int64, now time.Time) bool {
+	windowSeconds := int64(refreshProofFreshness / time.Second)
+	nowSeconds := now.Unix()
+	return timestamp >= nowSeconds-windowSeconds && timestamp <= nowSeconds+windowSeconds
+}
+
+func refreshProofPayload(timestamp int64, nonce string) string {
+	return "POST\n/v1/devices/refresh\n" + strconv.FormatInt(timestamp, 10) + "\n" + nonce
 }
 
 func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
@@ -48,14 +64,31 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		writeNetworkError(w, http.StatusBadRequest, relayErrorInvalidArgument, "Device nonce is invalid.", "refresh_credential", request.DeviceID)
 		return
 	}
+	if request.Timestamp <= 0 {
+		writeNetworkError(w, http.StatusBadRequest, relayErrorInvalidArgument, "Refresh timestamp is invalid.", "refresh_credential", request.DeviceID)
+		return
+	}
+	now := time.Now()
+	if !refreshProofTimestampIsFresh(request.Timestamp, now) {
+		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
+		return
+	}
 
 	// refresh 的「读 enrollment → 查吊销 → 消费 nonce」是同设备复合单元：与
 	// revoke/enroll 在同一条 per-device 分片锁上串行，避免吊销与 refresh 竞态
 	// （IsRevoked 通过后、凭据签发前被 revoke 抢先，向已吊销设备续发新凭据）。
-	unlock := s.lockDevice(request.DeviceID)
+	ctx, cancel := context.WithTimeout(r.Context(), deviceSecurityOperationTimeout)
+	defer cancel()
+	unlock, locked := s.lockDeviceContext(ctx, request.DeviceID)
+	if !locked {
+		writeNetworkErrorRetry(w, http.StatusServiceUnavailable, relayErrorRelayError,
+			"Relay device security operation timed out.", "refresh_credential", request.DeviceID,
+			retryWithBackoff, 0)
+		return
+	}
 	defer unlock()
 
-	device, err := s.store.GetEnrollment(r.Context(), request.DeviceID)
+	device, err := s.store.GetEnrollment(ctx, request.DeviceID)
 	if err != nil {
 		// 存储故障：fail closed，客户端可稍后重试 refresh（内存实现永不返回错误）。
 		writeNetworkError(w, http.StatusInternalServerError, relayErrorRelayError, "Relay storage is unavailable.", "refresh_credential", request.DeviceID)
@@ -68,7 +101,7 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 	}
 	// 纵深防御：即使 enrollment 因并发/删除失败而残留，只要吊销 tombstone 在有效期
 	// 内就不得续发新凭据（否则被吊销设备可通过 refresh 重新取得有效凭据）。
-	revoked, revokeErr := s.store.IsRevoked(r.Context(), request.DeviceID, time.Now())
+	revoked, revokeErr := s.store.IsRevoked(ctx, request.DeviceID, now)
 	if revokeErr != nil {
 		writeNetworkError(w, http.StatusInternalServerError, relayErrorRelayError, "Relay storage is unavailable.", "refresh_credential", request.DeviceID)
 		return
@@ -87,22 +120,29 @@ func (s *Server) refresh(w http.ResponseWriter, r *http.Request) {
 		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
 		return
 	}
-	proofPayload := "POST\n/v1/devices/refresh\n" + request.Nonce
+	proofPayload := refreshProofPayload(request.Timestamp, request.Nonce)
 	if err := verifyDeviceProof(storedKey, proofPayload, request.Signature); err != nil {
 		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
 		return
 	}
-	replayed, nonceErr := s.cache.ConsumeNonce(r.Context(), request.DeviceID, request.Nonce, time.Now().Add(refreshNonceTTL))
+	nonceExpiresAt := time.Unix(request.Timestamp, 0).Add(refreshProofFreshness).Add(refreshNonceSlack)
+	replayed, nonceErr := s.cache.ConsumeNonce(ctx, request.DeviceID, request.Nonce, nonceExpiresAt)
 	if nonceErr != nil {
-		// fail-open：与 /v2/control 鉴权一致——nonce 防重放降级不阻断 refresh，
-		// Ed25519 签名仍是真正的鉴权；仅日志告警。
-		s.logger.Warn("replay-protection cache unavailable during refresh; degraded",
+		// A signed refresh request is replayable unless this write succeeds. Cache
+		// failure therefore fails closed; issuing a credential here would turn a
+		// Redis outage or OOM into a credential-minting replay window.
+		s.logger.Error("replay-protection cache unavailable during refresh",
 			"device_id", request.DeviceID, "error", nonceErr)
-	} else if replayed {
+		writeNetworkErrorRetry(w, http.StatusServiceUnavailable, relayErrorRelayError,
+			"Relay replay protection is unavailable.", "refresh_credential", request.DeviceID,
+			retryWithBackoff, 0)
+		return
+	}
+	if replayed {
 		writeNetworkError(w, http.StatusUnauthorized, relayErrorAuthenticationFailed, "Relay device authentication failed.", "refresh_credential", request.DeviceID)
 		return
 	}
-	credential, err := issueCredential(s.config.CredentialKey, request.DeviceID, storedKey, s.config.CredentialTTL)
+	credential, err := issueCredential(s.config.CredentialKey, request.DeviceID, storedKey, device.EnrolledAt.UnixMicro(), s.config.CredentialTTL)
 	if err != nil {
 		writeNetworkError(w, http.StatusInternalServerError, relayErrorRelayError, "Relay credential issuance failed.", "refresh_credential", request.DeviceID)
 		return

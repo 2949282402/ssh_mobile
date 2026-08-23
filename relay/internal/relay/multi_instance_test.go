@@ -76,17 +76,14 @@ func TestMultiInstanceSharedAuth(t *testing.T) {
 		t.Fatalf("enroll failed: %v", result)
 	}
 
-	credential, err := issueCredential([]byte(mysqlTestCredentialKey), "device-a", publicKey, time.Hour)
+	credential, err := issueCredential([]byte(mysqlTestCredentialKey), "device-a", publicKey, mustEnrollmentGeneration(t, serverA, "device-a"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32))
 	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	request.Header.Set("X-Relay-Nonce", nonce)
-	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
-	))
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
 	if _, _, _, ok := serverB.authenticatedRequest(request); !ok {
 		t.Fatal("device could not authenticate against a different instance sharing the same backend")
 	}

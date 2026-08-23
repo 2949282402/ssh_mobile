@@ -22,9 +22,10 @@ import (
 // peer_online/peer_updated/peer_offline 只携带设备 ID：订阅侧从共享 discovery 回查
 // runtime_epoch/revision 来重建推送发现帧（advisory，best-effort）。
 type RelayEvent struct {
-	Type     string `json:"type"`
-	DeviceID string `json:"device_id"`
-	Time     int64  `json:"ts"`
+	Type                 string `json:"type"`
+	DeviceID             string `json:"device_id"`
+	EnrollmentGeneration int64  `json:"enrollment_generation,omitempty"`
+	Time                 int64  `json:"ts"`
 	// InstanceID 是发布事件实例的标识：推送发现事件由发布方先本地广播再 Publish，
 	// 订阅方（含发布方自身的订阅连接）据此跳过同实例回环，避免对本地 peer 重复推送。
 	InstanceID      string `json:"instance_id,omitempty"`
@@ -52,14 +53,20 @@ const (
 
 	// reconcileInterval 是吊销对账周期：封顶 Redis 抖动期间丢失事件的窗口。
 	reconcileInterval = 15 * time.Second
+	// revocationReconcileTimeout is one budget for the complete sweep, not a
+	// fresh timeout per device. Storage currently exposes only point lookups, so
+	// this bounds the N+1 scan and defers any unchecked tail to the next sweep.
+	revocationReconcileTimeout = 5 * time.Second
 )
 
 // handleRelayEvent 处理来自事件总线的跨实例事件。内存模式不订阅，因此本方法只
 // 在 Redis 缓存激活时被调用。
 func (s *Server) handleRelayEvent(event RelayEvent) {
 	switch event.Type {
-	case eventDeviceRevoked, eventDeviceKicked:
-		s.hub.disconnectDevice(event.DeviceID)
+	case eventDeviceRevoked:
+		s.handleRevokedEvent(event)
+	case eventDeviceKicked:
+		s.handleKickedEvent(event)
 	case eventConnectionReplaced:
 		s.hub.disconnectConnection(event.DeviceID, event.OldConnectionID)
 	case eventPeerOnline, eventPeerUpdated, eventPeerOffline:
@@ -86,6 +93,72 @@ func (s *Server) handleRelayEvent(event RelayEvent) {
 		}
 		s.hub.broadcastPeerHintV2(frameType, event.DeviceID, d)
 	}
+}
+
+// handleKickedEvent converges on the latest durable generation rather than
+// trusting event delivery order. A stale event can still clean up older local
+// sockets, but it can never close a socket authenticated under the current or a
+// newer enrollment generation.
+func (s *Server) handleKickedEvent(event RelayEvent) {
+	unlock, locked := s.lockDeviceContext(s.eventsCtx, event.DeviceID)
+	if !locked {
+		return
+	}
+	defer unlock()
+	cutoff := event.EnrollmentGeneration
+	ctx, cancel := context.WithTimeout(s.eventsCtx, presenceLeaseTimeout)
+	device, err := s.store.GetEnrollment(ctx, event.DeviceID)
+	cancel()
+	if err == nil && device != nil && device.EnrolledAt.UnixMicro() > cutoff {
+		cutoff = device.EnrolledAt.UnixMicro()
+	}
+	if cutoff <= 0 {
+		// Legacy publishers did not carry a generation. Preserve their old
+		// behavior during rolling deployment; new publishers always bind one.
+		s.relayData.closeDevice(event.DeviceID)
+		s.hub.disconnectDevice(event.DeviceID)
+		return
+	}
+	s.relayData.closeDeviceBeforeGeneration(event.DeviceID, cutoff)
+	s.hub.disconnectDeviceBeforeGeneration(event.DeviceID, cutoff)
+}
+
+// handleRevokedEvent uses the atomically removed enrollment generation carried
+// by the event. If the device has since re-enrolled, only pre-generation
+// sockets are closed; if it remains absent, every local socket is terminal.
+func (s *Server) handleRevokedEvent(event RelayEvent) {
+	unlock, locked := s.lockDeviceContext(s.eventsCtx, event.DeviceID)
+	if !locked {
+		return
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(s.eventsCtx, presenceLeaseTimeout)
+	device, err := s.store.GetEnrollment(ctx, event.DeviceID)
+	cancel()
+	if err == nil && device != nil {
+		current := device.EnrolledAt.UnixMicro()
+		if event.EnrollmentGeneration > 0 && current > event.EnrollmentGeneration {
+			s.relayData.closeDeviceBeforeGeneration(event.DeviceID, current)
+			s.hub.disconnectDeviceBeforeGeneration(event.DeviceID, current)
+			return
+		}
+	}
+	if err != nil && event.EnrollmentGeneration > 0 {
+		// A storage outage must not let the revoked generation keep transferring,
+		// but generation-scoped closure preserves any later re-enrollment.
+		cutoff := event.EnrollmentGeneration + 1
+		s.relayData.closeDeviceBeforeGeneration(event.DeviceID, cutoff)
+		s.hub.disconnectDeviceBeforeGeneration(event.DeviceID, cutoff)
+		return
+	}
+	if err == nil && device == nil {
+		// The durable enrollment is gone, so this identity no longer consumes a
+		// discovery limiter slot. A delayed event that sees a later enrollment
+		// returns above and deliberately preserves its reconnect budget.
+		s.hub.forgetDiscoveryPublish(event.DeviceID)
+	}
+	s.relayData.closeDevice(event.DeviceID)
+	s.hub.disconnectDevice(event.DeviceID)
 }
 
 // startEventSubscribers 在 Redis 缓存激活时启动事件订阅与吊销对账 goroutine。
@@ -125,24 +198,58 @@ func (s *Server) reconcileRevocations() {
 
 // reconcileRevocationsOnce 执行一次吊销对账扫描，单独抽出便于直接测试。
 func (s *Server) reconcileRevocationsOnce() {
+	ctx, cancel := context.WithTimeout(s.eventsCtx, revocationReconcileTimeout)
+	defer cancel()
+	s.reconcileRevocationsWithContext(ctx)
+}
+
+// reconcileRevocationsWithContext scans one snapshot under a single caller
+// budget. Server.Close cancels eventsCtx, which also cancels an in-flight store
+// call and lets the event goroutine join before cache/store shutdown.
+func (s *Server) reconcileRevocationsWithContext(ctx context.Context) {
 	s.hub.mutex.Lock()
-	peers := make([]string, 0, len(s.hub.peers))
+	deviceIDs := make(map[string]struct{}, len(s.hub.peers))
 	for deviceID := range s.hub.peers {
-		peers = append(peers, deviceID)
+		deviceIDs[deviceID] = struct{}{}
+	}
+	for deviceID := range s.hub.pendingAdmissions {
+		deviceIDs[deviceID] = struct{}{}
 	}
 	s.hub.mutex.Unlock()
-	for _, deviceID := range peers {
-		// IsRevoked 是单个存储调用，store 内部并发安全，无需任何调用方锁——旧的全局
-		// devicesMutex 让每 15s 一次、对全部在线设备的吊销对账把所有 device-plane 请求
-		// 串行化（MySQL 模式一个 RTT 一锁，直接吃吞吐）。
-		revoked, err := s.store.IsRevoked(context.Background(), deviceID, time.Now())
+	for _, deviceID := range s.relayData.deviceIDs() {
+		deviceIDs[deviceID] = struct{}{}
+	}
+	for deviceID := range deviceIDs {
+		if ctx.Err() != nil {
+			return
+		}
+		unlock, locked := s.lockDeviceContext(ctx, deviceID)
+		if !locked {
+			return
+		}
+		// Atomic revoke deletes the enrollment and same-key re-enrollment advances
+		// its monotonic generation. One GetEnrollment therefore reconciles both a
+		// missed revoke and a missed kick without the previous IsRevoked + Get N+1.
+		device, err := s.store.GetEnrollment(ctx, deviceID)
 		if err != nil {
+			unlock()
+			if ctx.Err() != nil {
+				return
+			}
 			s.logger.Warn("revocation reconciliation could not check device",
 				"device_id", deviceID, "error", err)
 			continue
 		}
-		if revoked {
+		if device == nil {
+			s.relayData.closeDevice(deviceID)
 			s.hub.disconnectDevice(deviceID)
+			s.hub.forgetDiscoveryPublish(deviceID)
+			unlock()
+			continue
 		}
+		generation := device.EnrolledAt.UnixMicro()
+		s.relayData.closeDeviceBeforeGeneration(deviceID, generation)
+		s.hub.disconnectDeviceBeforeGeneration(deviceID, generation)
+		unlock()
 	}
 }

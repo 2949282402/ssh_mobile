@@ -13,12 +13,74 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
+
+func TestRedisClientOptionsEnforceContextSocketAndPoolBounds(t *testing.T) {
+	opts, err := redisClientOptions(
+		"redis://localhost:6379/0?read_timeout=-1s&write_timeout=-1s&max_retries=9&pool_size=999",
+		Config{RedisPassword: "test-independent-password"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.ContextTimeoutEnabled {
+		t.Fatal("Redis commands do not honor caller deadlines")
+	}
+	if opts.MaxRetries != -1 || opts.DialTimeout != redisDialTimeout || opts.ReadTimeout != redisCommandTimeout || opts.WriteTimeout != redisCommandTimeout {
+		t.Fatalf("Redis command bounds were not enforced: %+v", opts)
+	}
+	if opts.PoolTimeout != redisPoolTimeout || opts.PoolSize != redisPoolSize || opts.MaxActiveConns != redisMaxActiveConns {
+		t.Fatalf("Redis pool bounds were not enforced: %+v", opts)
+	}
+	if opts.Password != "test-independent-password" {
+		t.Fatal("independent Redis password did not override URL credentials")
+	}
+}
+
+func TestRedisClientHonorsCallerDeadlineAgainstBlackhole(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			accepted <- connection
+		}
+	}()
+
+	opts, err := redisClientOptions("redis://"+listener.Addr().String()+"/0", Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := redis.NewClient(opts)
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if err := client.Ping(ctx).Err(); err == nil {
+		t.Fatal("blackholed Redis command unexpectedly succeeded")
+	}
+	if elapsed := time.Since(started); elapsed >= 500*time.Millisecond {
+		t.Fatalf("caller deadline was ignored; Redis command took %s", elapsed)
+	}
+	select {
+	case connection := <-accepted:
+		_ = connection.Close()
+	case <-time.After(time.Second):
+		t.Fatal("blackhole listener never accepted the Redis connection")
+	}
+}
 
 func requireRedisURL(t *testing.T) string {
 	t.Helper()
@@ -78,6 +140,9 @@ func TestRedisStorePresenceNonceAndAdmin(t *testing.T) {
 	}
 	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "nonce-1", expiry); replayed {
 		t.Fatal("nonce still present after clear")
+	}
+	if replayed, _ := store.ConsumeNonce(ctx, "device-a", "already-expired", time.Now().Add(-time.Second)); !replayed {
+		t.Fatal("already-expired nonce window failed open")
 	}
 
 	if err := store.SetAdminSession(ctx, "tok-1", time.Minute); err != nil {
@@ -434,17 +499,14 @@ func TestAuthFailsClosedWhenCacheUnavailable(t *testing.T) {
 	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
 		t.Fatalf("enroll failed: %v", result)
 	}
-	credential, err := issueCredential([]byte(mysqlTestCredentialKey), "device-a", publicKey, time.Hour)
+	credential, err := issueCredential([]byte(mysqlTestCredentialKey), "device-a", publicKey, mustEnrollmentGeneration(t, server, "device-a"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
 	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	request.Header.Set("X-Relay-Nonce", nonce)
-	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
-	))
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
 	if _, _, code, ok := server.authenticatedRequest(request); ok || code != relayErrorAuthenticationFailed {
 		t.Fatalf("authentication did not fail closed when the cache was unavailable: ok=%v code=%d", ok, code)
 	}

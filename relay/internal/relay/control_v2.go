@@ -68,7 +68,7 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 			"Relay control-plane authentication failed.", "connect_relay_v2", "", retry, 0)
 		return
 	}
-	unlockAdmission, admissionCode, admitted := s.admitAuthenticatedDevice(r.Context(), claims, publicKey)
+	admission, admissionCode, admitted := s.admitAuthenticatedDevice(r.Context(), claims, publicKey)
 	if !admitted {
 		retry := retryUnspecified
 		if admissionCode == relayErrorCredentialExpired {
@@ -82,25 +82,26 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 	// long-lived control connection must not block revoke/re-enroll forever;
 	// once hub.add has recorded the socket, revoke can find and close it.
 	defer func() {
-		if unlockAdmission != nil {
-			unlockAdmission()
+		if admission != nil {
+			admission.release()
 		}
 	}()
-	connection, err := s.upgrader.Upgrade(w, r, nil)
+	connection, err := s.upgradeWithinContext(admission.ctx, w, r)
 	if err != nil {
 		return
 	}
 	peer := &peer{
-		deviceID:           claims.DeviceID,
-		connectionID:       hex.EncodeToString(randomBytes(12)),
-		socket:             connection,
-		outbound:           make(chan outboundFrame, s.config.MaxPendingFramesPerDevice),
-		done:               make(chan struct{}),
-		maxPendingFrames:   s.config.MaxPendingFramesPerDevice,
-		maxPendingBytes:    s.config.MaxPendingBytesPerDevice,
-		maxFramesPerSecond: s.config.MaxFramesPerSecondPerDevice,
-		maxBytesPerSecond:  s.config.MaxBytesPerSecondPerDevice,
-		relayHost:          r.Host,
+		deviceID:             claims.DeviceID,
+		connectionID:         hex.EncodeToString(randomBytes(12)),
+		enrollmentGeneration: claims.EnrollmentGeneration,
+		socket:               connection,
+		outbound:             make(chan outboundFrame, s.config.MaxPendingFramesPerDevice),
+		done:                 make(chan struct{}),
+		maxPendingFrames:     s.config.MaxPendingFramesPerDevice,
+		maxPendingBytes:      s.config.MaxPendingBytesPerDevice,
+		maxFramesPerSecond:   s.config.MaxFramesPerSecondPerDevice,
+		maxBytesPerSecond:    s.config.MaxBytesPerSecondPerDevice,
+		relayHost:            r.Host,
 	}
 	presenceTTLSeconds := uint32(s.config.PresenceTTL / time.Second)
 	if presenceTTLSeconds == 0 {
@@ -126,22 +127,27 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 		_ = connection.Close()
 		return
 	}
-	if !s.hub.add(peer) {
+	if !s.hub.stageWithContext(admission.ctx, peer) {
 		_ = connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "connection limit"), time.Now().Add(time.Second))
 		_ = connection.Close()
 		return
 	}
-	unlockAdmission()
-	unlockAdmission = nil
-	if !s.hub.controlLeaseCurrentV2(peer) {
+	_, enrollmentCurrent := s.enrollmentClaimsCurrent(admission.ctx, claims, publicKey)
+	if !enrollmentCurrent || !s.hub.controlLeaseCurrentV2WithinContext(admission.ctx, peer) {
 		// hub.add historically kept a socket alive when the shared lease store
 		// failed.  A control connection without an authoritative presence lease
 		// is not safe to use for Resolve, signaling, or reservation admission.
-		// Fail closed after the Ready frame rather than exposing a phantom peer.
+		// The workers remain behind their activation barrier, so neither Ready nor
+		// a client frame can cross the failed admission decision.
 		s.hub.sendV2ProtocolErrorSync(peer, 0, v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE, "control lease unavailable")
 		s.hub.disconnectConnection(peer.deviceID, peer.connectionID)
 		return
 	}
+	if !s.hub.activate(peer) {
+		return
+	}
+	admission.release()
+	admission = nil
 	// Presence hints are advisory, but a newly connected control client needs a
 	// complete current view rather than waiting for the next edge-triggered
 	// event.  Ready remains the first frame; add() has already queued it before
@@ -153,10 +159,17 @@ func (s *Server) connectControlV2(w http.ResponseWriter, r *http.Request) {
 // admits a control socket.  The check closes the admission gap where a backend
 // error could otherwise leave an in-memory peer routable without a lease.
 func (h *hub) controlLeaseCurrentV2(peer *peer) bool {
+	return h.controlLeaseCurrentV2WithinContext(context.Background(), peer)
+}
+
+func (h *hub) controlLeaseCurrentV2WithinContext(parent context.Context, peer *peer) bool {
 	if h.presence == nil || peer == nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, presenceLeaseTimeout)
 	presence, ok, err := h.presence.GetPresence(ctx, peer.deviceID)
 	cancel()
 	return err == nil && ok && presence.ConnectionID == peer.connectionID
@@ -171,6 +184,16 @@ func (h *hub) controlLeaseCurrentV2(peer *peer) bool {
 // 不能走 outbound 异步队列，否则 read goroutine 的 defer closePeer 会在 write
 // goroutine 冲刷前关掉 socket，ProtocolError 丢失。
 func (h *hub) routeControlV2(sender *peer, data []byte) bool {
+	if sender == nil {
+		return false
+	}
+	select {
+	case <-sender.done:
+		// A socket selected for shutdown must not dispatch a frame that was
+		// already buffered in Gorilla before Close interrupted the reader.
+		return false
+	default:
+	}
 	// 每帧重核 currency（v1 routeControl 的同款守卫）：被取代/撤销的控制连接，其 read
 	// goroutine 仍可能读到一帧在途数据（closePeer 之后、socket 关闭之前）。若不拦截，
 	// 这条陈旧连接仍能分派 ConnectivityOffer/RelayReserveRequest/RealtimeSignal。
@@ -283,8 +306,10 @@ func (h *hub) handleHeartbeatV2(sender *peer, hb *v2.Heartbeat) {
 		isCurrent := h.peers[sender.deviceID] == sender
 		h.mutex.Unlock()
 		if !isCurrent {
-			_, _ = h.presence.ReleasePresence(context.Background(), sender.deviceID, sender.connectionID)
 			closePeer(sender)
+			releaseCtx, releaseCancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+			_, _ = h.presence.ReleasePresence(releaseCtx, sender.deviceID, sender.connectionID)
+			releaseCancel()
 			return
 		}
 	}
@@ -301,20 +326,33 @@ func (h *hub) handleHeartbeatV2(sender *peer, hb *v2.Heartbeat) {
 // discovery、广播 peer_online/peer_updated，并向发布客户端回 DiscoveryAck。失败按
 // 冻结错误模型映射 ProtocolError（EPOCH_CONFLICT / REVISION_STALE / CONTROL_UNAVAILABLE）。
 func (h *hub) handleDiscoveryPublishV2(sender *peer, pub *v2.DiscoveryPublish) {
+	if !h.allowDiscoveryPublish(sender.deviceID, time.Now()) {
+		h.sendV2ProtocolError(sender, pub.RequestId, v2.ErrorCode_ERROR_CODE_RATE_LIMITED,
+			"Discovery publication rate limit exceeded.")
+		return
+	}
 	ack, err := h.publishDiscoveryV2(pub.RequestId, sender.deviceID, sender.connectionID, pub.Snapshot)
 	if err != nil {
 		code := v2.ErrorCode_ERROR_CODE_CONTROL_UNAVAILABLE
+		message := "Relay discovery state is unavailable."
 		switch {
 		case errors.Is(err, errDiscoveryInvalidSnapshot):
 			code = v2.ErrorCode_ERROR_CODE_PROTOCOL
+			message = "Discovery snapshot is invalid."
 		case errors.Is(err, errDiscoveryRevisionStale),
 			errors.Is(err, errDiscoveryRevisionImmutable),
 			errors.Is(err, errDiscoveryNoRevision):
 			code = v2.ErrorCode_ERROR_CODE_REVISION_STALE
+			message = "Discovery revision is stale."
 		case errors.Is(err, errDiscoveryNotOwner):
 			code = v2.ErrorCode_ERROR_CODE_EPOCH_CONFLICT
+			message = "Discovery lease ownership changed."
+		default:
+			if h.logger != nil {
+				h.logger.Warn("discovery publication failed", "device_id", sender.deviceID, "error", err)
+			}
 		}
-		h.sendV2ProtocolError(sender, pub.RequestId, code, err.Error())
+		h.sendV2ProtocolError(sender, pub.RequestId, code, message)
 		return
 	}
 	h.sendV2Frame(sender, &v2.RelayFrame{
@@ -393,38 +431,104 @@ func (h *hub) handleConnectivityOfferV2(sender *peer, offer *v2.ConnectivityOffe
 	// 发起方身份以服务端认证为准：客户端可任意填写 initiator_device_id（伪造为其它设备），
 	// 服务端在转发前强制覆盖为发送者，防止对端把被伪装的设备记为协商发起方。
 	offer.InitiatorDeviceId = sender.deviceID
-	h.mutex.Lock()
-	if h.v2Attempts == nil {
-		h.v2Attempts = make(map[string]v2Attempt)
+	encodedOffer, err := v2.EncodeFrame(&v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind:    &v2.RelayFrame_ConnectivityOffer{ConnectivityOffer: offer},
+	})
+	if err != nil {
+		code := v2.ErrorCodeOf(err)
+		if code == v2.ErrorCode_ERROR_CODE_UNSPECIFIED {
+			code = v2.ErrorCode_ERROR_CODE_PROTOCOL
+		}
+		h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, code,
+			"connectivity offer could not be encoded")
+		return
 	}
+	outboundOffer := outboundFrame{messageType: websocket.BinaryMessage, data: encodedOffer}
+
+	h.mutex.Lock()
+	now := time.Now()
+	// routeControlV2 checked currency before the authoritative store lookups,
+	// but either lookup and the potentially large encode may have overlapped a
+	// reconnect. Re-check the local peer and its authoritative READY owner under
+	// the Hub lock before publishing any route or reservation authorization state.
+	if h.peers[sender.deviceID] != sender || !peerControlOpen(sender) ||
+		initiatorResult.discovery.ConnectionID != sender.connectionID {
+		h.mutex.Unlock()
+		return
+	}
+	// Do not retain a target pointer across the lock-free encode. Re-fetch the
+	// exact current peer and require it to be the connection proven READY by the
+	// authoritative lookup above.
 	target := h.peers[targetID]
+	if !peerControlOpen(target) || target.connectionID != targetResult.discovery.ConnectionID {
+		target = nil
+	}
 	if existing, exists := h.v2Attempts[offer.AttemptId]; exists {
-		if time.Now().Before(existing.expiresAt) {
+		if now.Before(existing.expiresAt) {
 			h.mutex.Unlock()
 			h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, v2.ErrorCode_ERROR_CODE_PROTOCOL, "attempt_id is already in use")
 			return
 		}
-		delete(h.v2Attempts, offer.AttemptId)
+		h.removeV2AttemptLocked(offer.AttemptId)
+	}
+	gateKey := relayReservationGateKey{initiatorConnectionID: sender.connectionID, attemptID: offer.AttemptId}
+	if h.reservationGates.contains(gateKey, now) {
+		h.mutex.Unlock()
+		h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, v2.ErrorCode_ERROR_CODE_PROTOCOL, "attempt_id is already in use")
+		return
 	}
 	if target != nil {
-		h.v2Attempts[offer.AttemptId] = v2Attempt{
+		attempt := v2Attempt{
 			initiator:             sender.deviceID,
 			initiatorConnectionID: sender.connectionID,
 			target:                targetID,
 			targetConnectionID:    target.connectionID,
-			expiresAt:             time.Now().Add(v2AttemptLifetime),
+			expiresAt:             now.Add(v2AttemptLifetime),
+		}
+		if !h.addV2AttemptLocked(offer.AttemptId, attempt, now) {
+			h.removeV2AttemptLocked(offer.AttemptId)
+			h.mutex.Unlock()
+			h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId,
+				v2.ErrorCode_ERROR_CODE_RATE_LIMITED, "connectivity attempt capacity is temporarily exhausted")
+			return
+		}
+		if !h.reservationGates.add(offer.AttemptId, relayReservationGate{
+			initiatorDeviceID:     attempt.initiator,
+			initiatorConnectionID: attempt.initiatorConnectionID,
+			targetDeviceID:        attempt.target,
+			targetConnectionID:    attempt.targetConnectionID,
+			expiresAt:             attempt.expiresAt,
+		}, now) {
+			h.removeV2AttemptLocked(offer.AttemptId)
+			h.reservationGates.remove(gateKey)
+			h.mutex.Unlock()
+			h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId,
+				v2.ErrorCode_ERROR_CODE_RATE_LIMITED, "relay reservation authorization capacity is temporarily exhausted")
+			return
 		}
 	}
-	h.mutex.Unlock()
 	if target == nil {
+		h.mutex.Unlock()
 		h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId, v2.ErrorCode_ERROR_CODE_PEER_OFFLINE,
 			"target peer is not connected on the v2 control plane")
 		return
 	}
-	h.sendV2Frame(target, &v2.RelayFrame{
-		Version: v2.RELAY_V2_VERSION,
-		Kind:    &v2.RelayFrame_ConnectivityOffer{ConnectivityOffer: offer},
-	})
+	// All gate readers use the Hub lock. The tentative gate therefore becomes
+	// visible only after this already-encoded frame enters the exact target
+	// connection's queue and the lock is released. The queue handoff is bounded
+	// and non-blocking; failure removes every attempt/gate index before unlock.
+	forwarded := target.enqueue(outboundOffer)
+	if !forwarded {
+		h.removeV2AttemptLocked(offer.AttemptId)
+		h.reservationGates.remove(gateKey)
+	}
+	h.mutex.Unlock()
+	if !forwarded {
+		closePeer(target)
+		h.sendV2ProtocolErrorWithAttempt(sender, offer.RequestId, offer.AttemptId,
+			v2.ErrorCode_ERROR_CODE_PEER_OFFLINE, "target peer is not connected on the v2 control plane")
+	}
 }
 
 // handleConnectivityAnswerV2 把 B 的 ConnectivityAnswer 按 attempt_id 回路由给发起方
@@ -433,7 +537,7 @@ func (h *hub) handleConnectivityAnswerV2(sender *peer, ans *v2.ConnectivityAnswe
 	h.mutex.Lock()
 	attempt, ok := h.v2Attempts[ans.AttemptId]
 	if ok && !time.Now().Before(attempt.expiresAt) {
-		delete(h.v2Attempts, ans.AttemptId)
+		h.removeV2AttemptLocked(ans.AttemptId)
 		ok = false
 	}
 	// A stale or mismatched answer is deliberately dropped.  In particular,
@@ -446,12 +550,12 @@ func (h *hub) handleConnectivityAnswerV2(sender *peer, ans *v2.ConnectivityAnswe
 	initiator := (*peer)(nil)
 	if ok && attempt.initiator != "" && attempt.initiator != sender.deviceID {
 		initiator = h.peers[attempt.initiator]
-		if initiator == nil || initiator.connectionID != attempt.initiatorConnectionID {
+		if !peerIsRoutable(initiator) || initiator.connectionID != attempt.initiatorConnectionID {
 			initiator = nil
 		}
 	}
 	if ok {
-		delete(h.v2Attempts, ans.AttemptId)
+		h.removeV2AttemptLocked(ans.AttemptId)
 	}
 	h.mutex.Unlock()
 	if !ok || initiator == nil {
@@ -477,6 +581,9 @@ func (h *hub) handleRealtimeSignalV2(sender *peer, sig *v2.RealtimeSignal) {
 	}
 	h.mutex.Lock()
 	target := h.peers[sig.TargetDeviceId]
+	if !peerIsRoutable(target) {
+		target = nil
+	}
 	h.mutex.Unlock()
 	if target == nil {
 		h.sendV2ProtocolError(sender, sig.RequestId, v2.ErrorCode_ERROR_CODE_PEER_OFFLINE, "target peer is not connected on the v2 control plane")
@@ -499,7 +606,7 @@ func (h *hub) handleProtocolErrorV2(sender *peer, frame *v2.RelayFrame) {
 	attempt, ok := h.v2Attempts[pe.AttemptId]
 	target := (*peer)(nil)
 	if ok && !time.Now().Before(attempt.expiresAt) {
-		delete(h.v2Attempts, pe.AttemptId)
+		h.removeV2AttemptLocked(pe.AttemptId)
 		ok = false
 	}
 	if ok && (attempt.target != sender.deviceID || attempt.targetConnectionID != sender.connectionID || h.peers[attempt.target] != sender) {
@@ -508,10 +615,10 @@ func (h *hub) handleProtocolErrorV2(sender *peer, frame *v2.RelayFrame) {
 	}
 	if ok {
 		target = h.peers[attempt.initiator]
-		if target == nil || target.connectionID != attempt.initiatorConnectionID {
+		if !peerIsRoutable(target) || target.connectionID != attempt.initiatorConnectionID {
 			target = nil
 		}
-		delete(h.v2Attempts, pe.AttemptId)
+		h.removeV2AttemptLocked(pe.AttemptId)
 	}
 	h.mutex.Unlock()
 	if ok && target != nil && target != sender {
@@ -520,14 +627,22 @@ func (h *hub) handleProtocolErrorV2(sender *peer, frame *v2.RelayFrame) {
 }
 
 // handleRelayReserveRequestV2 创建一条 relay-data reservation（设计 §25）：
-//  1. 目标必须 READY（权威 resolve，绝不 fail-open）。
-//  2. 生成 16-byte hex reservation_id、两个独立 32-byte local_token，存活秒数夹到
+//  1. 一次性消费同一发起 Control connection 上成功转发的 Resolve→Offer gate；
+//     attempt_id 与目标设备、两端 connection_id 必须精确匹配。
+//  2. 目标必须 READY（权威 resolve，绝不 fail-open）。
+//  3. 生成 16-byte hex reservation_id、两个独立 32-byte local_token，存活秒数夹到
 //     [15,120]；落盘共享状态（Redis relay:reservation:{id}，TTL=expires_at）。
-//  3. 给 A 回 RelayReserveResponse（含自包含 relay_data_endpoint），并给 B 推
+//  4. 给 A 回 RelayReserveResponse（含自包含 relay_data_endpoint），并给 B 推
 //     IncomingRelayReservation——B 在 v2 控制面连接时才能收到。
 func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequest) {
+	gate, authorized := h.consumeRelayReservationGate(sender, req.AttemptId, req.TargetDeviceId)
 	if req.TargetDeviceId == "" || req.TargetDeviceId == sender.deviceID {
 		h.sendV2ProtocolErrorWithAttempt(sender, req.RequestId, req.AttemptId, v2.ErrorCode_ERROR_CODE_PROTOCOL, "invalid reservation target")
+		return
+	}
+	if !authorized {
+		h.sendV2ProtocolErrorWithAttempt(sender, req.RequestId, req.AttemptId, v2.ErrorCode_ERROR_CODE_PROTOCOL,
+			"relay reservation requires a successful connectivity offer")
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
@@ -551,7 +666,7 @@ func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequ
 	// relay_data_endpoint 必须从服务端配置的公共源构造（RELAY_PUBLIC_URL，未配置时从
 	// 监听地址派生），绝不使用客户端提供的 Host 头：Host 头攻击者可控，用它构造端点会
 	// 把对端 B 的 32-byte ResponderToken 引导到攻击者选择的地址。
-	endpoint := fmt.Sprintf("%s/v2/relay/%s", relayDataEndpointOrigin(h.config), reservationID)
+	endpoint := fmt.Sprintf("%s/v2/relay/%s", h.relayDataOrigin, reservationID)
 	res := Reservation{
 		ReservationID:     reservationID,
 		AttemptID:         req.AttemptId,
@@ -567,11 +682,60 @@ func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequ
 	err := h.presence.CreateReservation(cctx, res)
 	ccancel()
 	if err != nil {
-		h.sendV2ProtocolErrorWithAttempt(sender, req.RequestId, req.AttemptId, v2.ErrorCode_ERROR_CODE_RESERVATION_FAILED, err.Error())
+		code := v2.ErrorCode_ERROR_CODE_RESERVATION_FAILED
+		message := "Relay reservation storage is unavailable."
+		if errors.Is(err, errReservationCapacity) {
+			code = v2.ErrorCode_ERROR_CODE_RATE_LIMITED
+			message = "Relay reservation capacity is temporarily exhausted."
+		}
+		if h.logger != nil {
+			h.logger.Warn("relay reservation creation failed", "device_id", sender.deviceID, "error", err)
+		}
+		h.sendV2ProtocolErrorWithAttempt(sender, req.RequestId, req.AttemptId, code, message)
 		return
 	}
-	// 给 A 回 RelayReserveResponse。
-	h.sendV2Frame(sender, &v2.RelayFrame{
+	// The reservation remains bound to the exact target control connection that
+	// received the offer. A reconnect cannot inherit a token for an attempt it
+	// never saw; it must perform a fresh Resolve -> Offer cycle.
+	h.mutex.Lock()
+	initiatorCurrent := h.peers[gate.initiatorDeviceID] == sender && peerControlOpen(sender)
+	responder := h.peers[gate.targetDeviceID]
+	if !peerControlOpen(responder) || responder.connectionID != gate.targetConnectionID {
+		responder = nil
+	}
+	h.mutex.Unlock()
+	if !initiatorCurrent || responder == nil {
+		deleteCtx, deleteCancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+		_ = h.presence.DeleteReservation(deleteCtx, reservationID)
+		deleteCancel()
+		if initiatorCurrent {
+			h.sendV2ProtocolErrorWithAttempt(sender, req.RequestId, req.AttemptId, v2.ErrorCode_ERROR_CODE_PEER_OFFLINE,
+				"target peer is not connected on the v2 control plane")
+		}
+		return
+	}
+	// Give B its role token first. If its exact control connection cannot accept
+	// the notification, delete the still-secret reservation and fail A closed.
+	if !h.sendV2Frame(responder, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_IncomingRelayReservation{IncomingRelayReservation: &v2.IncomingRelayReservation{
+			AttemptId:         req.AttemptId,
+			ReservationId:     reservationID,
+			InitiatorDeviceId: sender.deviceID,
+			RelayDataEndpoint: endpoint,
+			ExpiresAtMs:       expiresAtMs,
+			LocalToken:        responderToken,
+		}},
+	}) {
+		deleteCtx, deleteCancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+		_ = h.presence.DeleteReservation(deleteCtx, reservationID)
+		deleteCancel()
+		h.sendV2ProtocolErrorWithAttempt(sender, req.RequestId, req.AttemptId, v2.ErrorCode_ERROR_CODE_PEER_OFFLINE,
+			"target peer is not connected on the v2 control plane")
+		return
+	}
+	// Give A the initiator token only after B accepted its notification.
+	if !h.sendV2Frame(sender, &v2.RelayFrame{
 		Version: v2.RELAY_V2_VERSION,
 		Kind: &v2.RelayFrame_RelayReserveResponse{RelayReserveResponse: &v2.RelayReserveResponse{
 			RequestId:         req.RequestId,
@@ -581,23 +745,10 @@ func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequ
 			ExpiresAtMs:       expiresAtMs,
 			LocalToken:        initiatorToken,
 		}},
-	})
-	// 给 B 推 IncomingRelayReservation（B 在线时才推）。
-	h.mutex.Lock()
-	responder := h.peers[req.TargetDeviceId]
-	h.mutex.Unlock()
-	if responder != nil {
-		h.sendV2Frame(responder, &v2.RelayFrame{
-			Version: v2.RELAY_V2_VERSION,
-			Kind: &v2.RelayFrame_IncomingRelayReservation{IncomingRelayReservation: &v2.IncomingRelayReservation{
-				AttemptId:         req.AttemptId,
-				ReservationId:     reservationID,
-				InitiatorDeviceId: sender.deviceID,
-				RelayDataEndpoint: endpoint,
-				ExpiresAtMs:       expiresAtMs,
-				LocalToken:        responderToken,
-			}},
-		})
+	}) {
+		deleteCtx, deleteCancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+		_ = h.presence.DeleteReservation(deleteCtx, reservationID)
+		deleteCancel()
 	}
 }
 
@@ -607,14 +758,19 @@ func (h *hub) handleRelayReserveRequestV2(sender *peer, req *v2.RelayReserveRequ
 
 // sendV2Frame 编码并投递一帧 v2 控制帧给指定 peer。编码失败或对端积压/已关闭时定向
 // 关闭对端。
-func (h *hub) sendV2Frame(peer *peer, frame *v2.RelayFrame) {
+func (h *hub) sendV2Frame(peer *peer, frame *v2.RelayFrame) bool {
+	if peer == nil {
+		return false
+	}
 	data, err := v2.EncodeFrame(frame)
 	if err != nil {
-		return
+		return false
 	}
 	if !peer.enqueue(outboundFrame{websocket.BinaryMessage, data}) {
-		go peer.socket.Close()
+		closePeer(peer)
+		return false
 	}
+	return true
 }
 
 // sendV2ProtocolError 向 peer 回一条 ProtocolError（request_id 回显失败请求，
@@ -712,14 +868,14 @@ func (h *hub) broadcastV2(exceptDeviceID string, frame *v2.RelayFrame) {
 	h.mutex.Lock()
 	peers := make([]*peer, 0, len(h.peers))
 	for deviceID, p := range h.peers {
-		if deviceID != exceptDeviceID {
+		if deviceID != exceptDeviceID && peerIsRoutable(p) {
 			peers = append(peers, p)
 		}
 	}
 	h.mutex.Unlock()
 	for _, p := range peers {
 		if !p.enqueue(outboundFrame{websocket.BinaryMessage, data}) {
-			go p.socket.Close()
+			closePeer(p)
 		}
 	}
 }

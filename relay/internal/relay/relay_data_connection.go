@@ -17,19 +17,58 @@ import (
 
 const (
 	relayDataWriteTimeout = 10 * time.Second
+	// Shutdown drains preserve queued ordering (especially RelayDataClose) but
+	// use one total budget per endpoint; a full 64-frame queue must not turn
+	// Server.Close into 64 sequential one-second waits.
+	relayDataDrainTimeout = 2 * time.Second
 	// Pair liveness is independent from reservation admission TTL once both
 	// roles are ready. Every WebSocket control/data write remains serialized by
 	// the same outbound writer.
 	relayDataPingInterval  = 30 * time.Second
 	relayDataPongTimeout   = 15 * time.Second
 	relayDataPairReadyPing = "ssh-mobile-relay-paired-v1:"
+	relayDataKeepalivePing = "ssh-mobile-relay-keepalive-v1"
 )
+
+// relayDataPairReadyDecision is the commit barrier shared by both PairReady
+// frames. A writer may dequeue its frame immediately, but it cannot publish the
+// Ping until the registry has placed the counterpart frame and commits. An
+// aborted decision makes both writers discard their frame.
+type relayDataPairReadyDecision struct {
+	once      sync.Once
+	committed bool
+	done      chan struct{}
+}
+
+func newRelayDataPairReadyDecision() *relayDataPairReadyDecision {
+	return &relayDataPairReadyDecision{done: make(chan struct{})}
+}
+
+func (d *relayDataPairReadyDecision) resolve(committed bool) {
+	d.once.Do(func() {
+		d.committed = committed
+		close(d.done)
+	})
+}
+
+func (d *relayDataPairReadyDecision) wait() bool {
+	<-d.done
+	return d.committed
+}
+
+type relayDataOutboundFrame struct {
+	messageType          int
+	data                 []byte
+	pairReady            *relayDataPairReadyDecision
+	allowedAfterTerminal bool
+}
 
 // relayDataPairOwner is the narrow one-shot pairing capability borrowed by a
 // connection pump. The concrete registry retains revocation and shutdown APIs.
 type relayDataPairOwner interface {
 	admitEndpoint(*relayDataConn) (*relayDataConn, bool)
 	releaseEndpoint(*relayDataConn)
+	forwardEndpoint(*relayDataConn, relayDataOutboundFrame) bool
 }
 
 // reservationLeaseStore is the only shared-state capability needed after HTTP
@@ -44,41 +83,59 @@ type reservationLeaseStore interface {
 // 写侧：read goroutine 阻塞读 socket，write goroutine 从 outbound 写帧并在 close 时
 // 先 drain 再关 socket，保证 RelayDataClose 帧能被冲刷到对端。
 type relayDataConn struct {
-	reservationID string
-	res           Reservation
-	deviceID      string
-	role          relayDataRole
-	registry      relayDataPairOwner
-	reservations  reservationLeaseStore
-	socket        *websocket.Conn
-	outbound      chan outboundFrame
-	done          chan struct{}
-	writeDone     chan struct{}
-	once          sync.Once
-	grace         time.Duration
+	reservationID        string
+	res                  Reservation
+	deviceID             string
+	enrollmentGeneration int64
+	role                 relayDataRole
+	registry             relayDataPairOwner
+	reservations         reservationLeaseStore
+	socket               *websocket.Conn
+	outbound             chan relayDataOutboundFrame
+	done                 chan struct{}
+	writeDone            chan struct{}
+	once                 sync.Once
+	terminal             atomic.Bool
+	writeGate            sync.Mutex
+	activation           chan struct{}
+	activationOnce       sync.Once
+	admissionActive      atomic.Bool
+	lifecycleCtx         context.Context
+	grace                time.Duration
 
 	peerMutex sync.Mutex
 	peer      *relayDataConn
 	ready     atomic.Bool
 	paired    atomic.Bool
-	lastPong  atomic.Int64
-	flow      relayDataFlowBudget
+	// pairReadySent becomes true only after this endpoint's writer has
+	// successfully written the one-shot PairReady Ping to its socket. Registry
+	// readiness alone is insufficient: a pipelined client frame must not cross
+	// the data plane while its setup signal is merely queued.
+	pairReadySent atomic.Bool
+	lastPong      atomic.Int64
+	flow          relayDataFlowBudget
 }
 
-func newRelayDataConn(registry relayDataPairOwner, res Reservation, socket *websocket.Conn, config Config, reservations reservationLeaseStore, deviceID string, role relayDataRole) *relayDataConn {
+func newRelayDataConn(registry relayDataPairOwner, res Reservation, socket *websocket.Conn, config Config, reservations reservationLeaseStore, deviceID string, role relayDataRole, generation ...int64) *relayDataConn {
+	enrollmentGeneration := int64(0)
+	if len(generation) > 0 {
+		enrollmentGeneration = generation[0]
+	}
 	return &relayDataConn{
-		reservationID: res.ReservationID,
-		res:           res,
-		deviceID:      deviceID,
-		role:          role,
-		registry:      registry,
-		reservations:  reservations,
-		socket:        socket,
-		outbound:      make(chan outboundFrame, config.MaxPendingFramesPerDevice),
-		done:          make(chan struct{}),
-		writeDone:     make(chan struct{}),
-		grace:         time.Duration(v2.RESERVATION_EXPIRY_GRACE_S) * time.Second,
-		flow:          newRelayDataFlowBudget(config),
+		reservationID:        res.ReservationID,
+		res:                  res,
+		deviceID:             deviceID,
+		enrollmentGeneration: enrollmentGeneration,
+		role:                 role,
+		registry:             registry,
+		reservations:         reservations,
+		socket:               socket,
+		outbound:             make(chan relayDataOutboundFrame, config.MaxPendingFramesPerDevice),
+		done:                 make(chan struct{}),
+		writeDone:            make(chan struct{}),
+		activation:           make(chan struct{}),
+		grace:                time.Duration(v2.RESERVATION_EXPIRY_GRACE_S) * time.Second,
+		flow:                 newRelayDataFlowBudget(config),
 	}
 }
 
@@ -124,6 +181,9 @@ func (rc *relayDataConn) read() {
 		}
 		<-rc.writeDone
 	}()
+	if !rc.waitForActivation() {
+		return
+	}
 	rc.socket.SetReadLimit(v2.MAX_RELAY_DATA_FRAME_BYTES)
 	// Gorilla invokes these handlers from the single read goroutine.  Responses
 	// are queued instead of calling WriteControl/WriteMessage directly, so every
@@ -132,7 +192,7 @@ func (rc *relayDataConn) read() {
 	rc.lastPong.Store(time.Now().UnixNano())
 	rc.socket.SetPingHandler(func(payload string) error {
 		rc.lastPong.Store(time.Now().UnixNano())
-		if !rc.enqueue(outboundFrame{websocket.PongMessage, []byte(payload)}) {
+		if !rc.enqueue(relayDataOutboundFrame{messageType: websocket.PongMessage, data: []byte(payload)}) {
 			return errors.New("relay pong queue is closed")
 		}
 		return nil
@@ -156,8 +216,17 @@ func (rc *relayDataConn) read() {
 
 	connected := false
 	for {
+		if rc.isTerminal() {
+			return
+		}
 		kind, data, err := rc.socket.ReadMessage()
 		if err != nil {
+			return
+		}
+		// Revocation linearizes in the registry before transport shutdown. A frame
+		// that was already buffered in Gorilla or the kernel must not be decoded or
+		// dispatched after that point.
+		if rc.isTerminal() {
 			return
 		}
 		if kind != websocket.BinaryMessage {
@@ -171,6 +240,12 @@ func (rc *relayDataConn) read() {
 		frame, err := v2.DecodeData(data)
 		if err != nil {
 			rc.sendCloseAndShutdown(2, v2.ErrorCodeOf(err).String())
+			return
+		}
+		// Decode is bounded but still concurrent with revocation. Recheck before
+		// every protocol dispatch so an in-flight decode cannot cross the terminal
+		// boundary.
+		if rc.isTerminal() {
 			return
 		}
 		if !connected {
@@ -188,7 +263,13 @@ func (rc *relayDataConn) read() {
 			connected = true
 			peer, registered := rc.registry.admitEndpoint(rc)
 			if !registered {
-				rc.sendCloseAndShutdown(2, "too many pending relay data connections")
+				rc.sendCloseAndShutdown(2, "relay data admission rejected")
+				// A non-nil peer means PairReady could not be queued after both
+				// roles were linked. The registry rolled the whole pair back; close
+				// the previously pending endpoint as well so it cannot linger.
+				if peer != nil {
+					peer.sendCloseAndShutdown(2, "relay data pairing ready notification failed")
+				}
 				return
 			}
 			if peer != nil && !rc.ready.Load() {
@@ -200,7 +281,7 @@ func (rc *relayDataConn) read() {
 				// reservation in memory and use liveness, not reservation TTL, for
 				// their lifetime.
 				if rc.reservations != nil {
-					ctx, cancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+					ctx, cancel := rc.reservationOperationContext()
 					_ = rc.reservations.DeleteReservation(ctx, rc.reservationID)
 					cancel()
 				}
@@ -249,7 +330,7 @@ func (rc *relayDataConn) read() {
 // PairReady frames.  It never writes to the socket directly; the existing
 // outbound writer remains the sole WebSocket writer.
 func (rc *relayDataConn) startKeepalive() {
-	if !rc.paired.Load() {
+	if rc.isTerminal() || !rc.paired.Load() {
 		return
 	}
 	go func() {
@@ -277,6 +358,9 @@ func (rc *relayDataConn) startKeepalive() {
 // The goroutine only supplies time and stops when requested; all Ping/Pong
 // ordering and close policy stays independently testable here.
 func (rc *relayDataConn) keepaliveTick(now, lastPing time.Time) (time.Time, bool) {
+	if rc.isTerminal() {
+		return lastPing, true
+	}
 	if !lastPing.IsZero() && now.Sub(lastPing) >= relayDataPongTimeout {
 		lastPong := time.Unix(0, rc.lastPong.Load())
 		if !lastPong.After(lastPing) {
@@ -287,9 +371,9 @@ func (rc *relayDataConn) keepaliveTick(now, lastPing time.Time) (time.Time, bool
 	if !lastPing.IsZero() && now.Sub(lastPing) < relayDataPingInterval {
 		return lastPing, false
 	}
-	if !rc.enqueue(outboundFrame{
+	if !rc.enqueue(relayDataOutboundFrame{
 		messageType: websocket.PingMessage,
-		data:        []byte(relayDataPairReadyPing + rc.reservationID),
+		data:        []byte(relayDataKeepalivePing),
 	}) {
 		rc.close()
 		return lastPing, true
@@ -302,7 +386,7 @@ func (rc *relayDataConn) keepaliveTick(now, lastPing time.Time) (time.Time, bool
 // 连接仍由本地定时器兜底关闭）。Stop 返回 false 表示定时器已触发（回调正在运行）、
 // 连接正在关闭，此时不再续期。仅 read goroutine 调用 Stop/Reset，避免与回调并发。
 func (rc *relayDataConn) touch(expiryTimer *time.Timer) {
-	if rc.paired.Load() {
+	if rc.isTerminal() || rc.paired.Load() {
 		return
 	}
 	if !expiryTimer.Stop() {
@@ -313,9 +397,17 @@ func (rc *relayDataConn) touch(expiryTimer *time.Timer) {
 	if rc.reservations == nil {
 		return
 	}
-	rctx, rcancel := context.WithTimeout(context.Background(), presenceLeaseTimeout)
+	rctx, rcancel := rc.reservationOperationContext()
 	_, _ = rc.reservations.RenewReservation(rctx, rc.reservationID, ttl)
 	rcancel()
+}
+
+func (rc *relayDataConn) reservationOperationContext() (context.Context, context.CancelFunc) {
+	parent := rc.lifecycleCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, presenceLeaseTimeout)
 }
 
 // refreshTTL 返回滑动窗口的存活时长：创建时夹取的 LifetimeS + grace。旧格式条目
@@ -361,27 +453,45 @@ func (rc *relayDataConn) acceptConnect(connect *v2.RelayDataConnect) (relayDataR
 // forward 把一帧 RelayDataFrame 编码后投递给对端端点。返回 false 表示对端未连接或
 // 编码/投递失败。
 func (rc *relayDataConn) forward(frame *v2.RelayDataFrame) bool {
-	other := rc.peerConn()
-	if !rc.ready.Load() || other == nil || !other.ready.Load() {
+	if rc.registry == nil || rc.isTerminal() || frame == nil || (frame.GetPayload() == nil && frame.GetAck() == nil) {
 		return false
 	}
-	return other.enqueueFrame(frame)
+	outbound, ok := encodeRelayDataOutboundFrame(frame)
+	if !ok {
+		return false
+	}
+	return rc.registry.forwardEndpoint(rc, outbound)
 }
 
-func (rc *relayDataConn) enqueuePairReadyPing() bool {
-	return rc.enqueue(outboundFrame{
+func (rc *relayDataConn) enqueuePairReadyPing(decision *relayDataPairReadyDecision) bool {
+	return rc.enqueue(relayDataOutboundFrame{
 		messageType: websocket.PingMessage,
 		data:        []byte(relayDataPairReadyPing + rc.reservationID),
+		pairReady:   decision,
 	})
 }
 
 // enqueueFrame 编码并投递一帧到本连接的 outbound。
 func (rc *relayDataConn) enqueueFrame(frame *v2.RelayDataFrame) bool {
-	data, err := v2.EncodeDataFrame(frame)
-	if err != nil {
+	outbound, ok := encodeRelayDataOutboundFrame(frame)
+	if !ok {
 		return false
 	}
-	return rc.enqueue(outboundFrame{websocket.BinaryMessage, data})
+	return rc.enqueue(outbound)
+}
+
+// encodeRelayDataOutboundFrame performs protobuf marshaling and the potentially
+// large frame allocation before a caller enters any registry critical section.
+func encodeRelayDataOutboundFrame(frame *v2.RelayDataFrame) (relayDataOutboundFrame, bool) {
+	data, err := v2.EncodeDataFrame(frame)
+	if err != nil {
+		return relayDataOutboundFrame{}, false
+	}
+	return relayDataOutboundFrame{
+		messageType:          websocket.BinaryMessage,
+		data:                 data,
+		allowedAfterTerminal: frame.GetClose() != nil,
+	}, true
 }
 
 // sendCloseAndShutdown 向本端投递 RelayDataClose 并关闭本端（write goroutine 冲刷后
@@ -397,9 +507,52 @@ func (rc *relayDataConn) sendCloseAndShutdown(reason uint32, detail string) {
 // close 幂等关闭 done 通道（不直接关 socket——socket 由 write goroutine 在 drain 后
 // 关闭，保证待发帧不丢失）。
 func (rc *relayDataConn) close() {
+	rc.markTerminal()
 	rc.once.Do(func() {
 		close(rc.done)
 	})
+}
+
+// markTerminal is called under registry.mutex for authorization/lifecycle
+// invalidation and may also be called by local pump failures. Once set, the
+// endpoint can never be admitted, paired, or used for business forwarding
+// again. A queued RelayDataClose is the only frame allowed to survive it.
+func (rc *relayDataConn) markTerminal() {
+	rc.terminal.Store(true)
+	rc.admissionActive.Store(false)
+	rc.ready.Store(false)
+	rc.paired.Store(false)
+	rc.pairReadySent.Store(false)
+}
+
+func (rc *relayDataConn) isTerminal() bool {
+	if rc == nil || rc.terminal.Load() {
+		return true
+	}
+	select {
+	case <-rc.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// waitForWriteQuiescence makes lifecycle methods return only after a business
+// frame whose socket write began before terminalization has completed. Every
+// later queued business frame is discarded by writeOutbound.
+func (rc *relayDataConn) waitForWriteQuiescence() {
+	rc.writeGate.Lock()
+	rc.writeGate.Unlock()
+}
+
+// forceSocketClose is the bounded-shutdown fallback after the graceful drain
+// window. Closing the transport interrupts an in-flight WebSocket read/write;
+// the registry lifecycle context independently interrupts lease-store I/O.
+func (rc *relayDataConn) forceSocketClose() {
+	rc.close()
+	if rc.socket != nil {
+		_ = rc.socket.Close()
+	}
 }
 
 // write 从 outbound 写帧。收到 done 后先 drain 剩余帧（如 RelayDataClose）再关 socket，
@@ -411,28 +564,48 @@ func (rc *relayDataConn) write() {
 		}
 		close(rc.writeDone)
 	}()
+	if !rc.waitForActivation() {
+		return
+	}
 	for {
 		select {
 		case <-rc.done:
 			rc.drainOutbound()
 			return
 		case frame := <-rc.outbound:
-			rc.flow.releaseOutbound(len(frame.data))
-			_ = rc.socket.SetWriteDeadline(time.Now().Add(relayDataWriteTimeout))
-			if err := rc.socket.WriteMessage(frame.messageType, frame.data); err != nil {
+			if !rc.writeOutbound(frame, relayDataWriteTimeout) {
 				return
 			}
 		}
 	}
 }
 
+func (rc *relayDataConn) waitForActivation() bool {
+	if rc.activation == nil {
+		return true
+	}
+	select {
+	case <-rc.activation:
+		return rc.admissionActive.Load()
+	case <-rc.done:
+		return false
+	}
+}
+
 // drainOutbound 在 done 之后把仍在 outbound 里的帧尽力写完（非阻塞 select 读空）。
 func (rc *relayDataConn) drainOutbound() {
+	deadline := time.Now().Add(relayDataDrainTimeout)
 	for {
 		select {
 		case frame := <-rc.outbound:
-			_ = rc.socket.SetWriteDeadline(time.Now().Add(time.Second))
-			if rc.socket.WriteMessage(frame.messageType, frame.data) != nil {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return
+			}
+			if remaining > time.Second {
+				remaining = time.Second
+			}
+			if !rc.writeOutbound(frame, remaining) {
 				return
 			}
 		default:
@@ -443,11 +616,37 @@ func (rc *relayDataConn) drainOutbound() {
 
 // enqueue owns the non-blocking channel handoff; relayDataFlowBudget owns all
 // backlog accounting and rolls back a reservation when the channel race loses.
-func (rc *relayDataConn) enqueue(frame outboundFrame) bool {
+func (rc *relayDataConn) writeOutbound(frame relayDataOutboundFrame, timeout time.Duration) bool {
+	rc.flow.releaseOutbound(len(frame.data))
+	if rc.isTerminal() && !frame.allowedAfterTerminal {
+		return true
+	}
+	if frame.pairReady != nil && !frame.pairReady.wait() {
+		return true
+	}
+	rc.writeGate.Lock()
+	defer rc.writeGate.Unlock()
+	if rc.isTerminal() && !frame.allowedAfterTerminal {
+		return true
+	}
+	_ = rc.socket.SetWriteDeadline(time.Now().Add(timeout))
+	if err := rc.socket.WriteMessage(frame.messageType, frame.data); err != nil {
+		return false
+	}
+	if frame.pairReady != nil {
+		rc.pairReadySent.Store(true)
+	}
+	return true
+}
+
+func (rc *relayDataConn) enqueue(frame relayDataOutboundFrame) bool {
 	select {
 	case <-rc.done:
 		return false
 	default:
+	}
+	if rc.terminal.Load() && !frame.allowedAfterTerminal {
+		return false
 	}
 	if !rc.flow.reserveOutbound(len(frame.data)) {
 		return false

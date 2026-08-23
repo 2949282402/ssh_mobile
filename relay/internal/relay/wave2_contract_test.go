@@ -38,17 +38,14 @@ func TestConnectExpiredCredentialReturnsCode12(t *testing.T) {
 	}
 
 	// A credential whose expiry is already in the past.
-	expired, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, -time.Hour)
+	expired, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, mustEnrollmentGeneration(t, server, "device-a"), -time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
 	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+expired)
-	request.Header.Set("X-Relay-Nonce", nonce)
-	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
-	))
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
 
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
@@ -101,7 +98,7 @@ func TestShortCredentialTTLExpiresBeforeReadyAdmission(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, shortCredentialTTL)
+	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, mustEnrollmentGeneration(t, server, "device-a"), shortCredentialTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,10 +118,7 @@ func TestShortCredentialTTLExpiresBeforeReadyAdmission(t *testing.T) {
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x43}, 32))
 	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	request.Header.Set("X-Relay-Nonce", nonce)
-	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
-	))
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
 	rec := httptest.NewRecorder()
@@ -160,22 +154,19 @@ func TestConnectGenericAuthFailureKeepsCode2(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, time.Hour)
+	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, mustEnrollmentGeneration(t, server, "device-a"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 32))
 	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	request.Header.Set("X-Relay-Nonce", nonce)
 	// Sign with the wrong key: a non-expired but invalid proof.
 	_, wrongPrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Header.Set("X-Relay-Signature", base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(wrongPrivate, []byte("GET\n/v2/control\n"+nonce)),
-	))
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", wrongPrivate, nonce)
 
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
@@ -332,12 +323,14 @@ func TestRefreshCredentialIssuesFreshCredential(t *testing.T) {
 	server.RegisterRoutes(mux)
 
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32))
+	timestamp := time.Now().Unix()
 	body, _ := json.Marshal(refreshRequest{
 		DeviceID:  "device-a",
 		PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
+		Timestamp: timestamp,
 		Nonce:     nonce,
 		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(privateKey, []byte("POST\n/v1/devices/refresh\n"+nonce)),
+			ed25519.Sign(privateKey, []byte(refreshProofPayload(timestamp, nonce))),
 		),
 	})
 	request := httptest.NewRequest("POST", "/v1/devices/refresh", bytes.NewReader(body))
@@ -376,6 +369,7 @@ func TestRefreshCredentialUnknownDeviceReturns404(t *testing.T) {
 	body, _ := json.Marshal(refreshRequest{
 		DeviceID:  "ghost-device",
 		PublicKey: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, ed25519.PublicKeySize)),
+		Timestamp: time.Now().Unix(),
 		Nonce:     nonce,
 		Signature: "x",
 	})
@@ -416,12 +410,14 @@ func TestRefreshCredentialBadSignatureReturns401(t *testing.T) {
 	server.RegisterRoutes(mux)
 
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32))
+	timestamp := time.Now().Unix()
 	body, _ := json.Marshal(refreshRequest{
 		DeviceID:  "device-a",
 		PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
+		Timestamp: timestamp,
 		Nonce:     nonce,
 		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(wrongPrivate, []byte("POST\n/v1/devices/refresh\n"+nonce)),
+			ed25519.Sign(wrongPrivate, []byte(refreshProofPayload(timestamp, nonce))),
 		),
 	})
 	request := httptest.NewRequest("POST", "/v1/devices/refresh", bytes.NewReader(body))
@@ -457,14 +453,16 @@ func TestRefreshCredentialRejectsReplayedNonce(t *testing.T) {
 	server.RegisterRoutes(mux)
 
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
+	timestamp := time.Now().Unix()
 	signature := base64.RawURLEncoding.EncodeToString(
-		ed25519.Sign(privateKey, []byte("POST\n/v1/devices/refresh\n"+nonce)),
+		ed25519.Sign(privateKey, []byte(refreshProofPayload(timestamp, nonce))),
 	)
 	refresh := func() *httptest.ResponseRecorder {
 		t.Helper()
 		body, _ := json.Marshal(refreshRequest{
 			DeviceID:  "device-a",
 			PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
+			Timestamp: timestamp,
 			Nonce:     nonce,
 			Signature: signature,
 		})

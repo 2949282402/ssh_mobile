@@ -3,9 +3,10 @@
 // Reservation 是「Direct 失败后走 Relay」的短命数据通道凭证：发起方 A 通过 /v2/control
 // 发 RelayReserveRequest，服务端创建 reservation（Redis relay:reservation:{id}，
 // TTL=expires_at），给 A 回 RelayReserveResponse、给 B 推 IncomingRelayReservation；
-// 双方随后各自连接 /v2/relay/{reservation_id}。本文件只拥有 reservation 数据模型、
-// lifetime 规则和 memory/Redis 存储；HTTP 准入、one-shot 配对与 socket pump 分属独立
-// owner，且都不能解析 encrypted_payload（ADR-017 边界）。
+// 双方随后各自连接 /v2/relay/{reservation_id}。本文件拥有 reservation 数据模型、
+// Resolve→Offer→Reserve 的有界一次性授权、lifetime 规则和 memory/Redis 存储；HTTP
+// 升级准入、one-shot 配对与 socket pump 分属独立 owner，且都不能解析
+// encrypted_payload（ADR-017 边界）。
 
 package relay
 
@@ -52,6 +53,210 @@ type reservationEntry struct {
 // 保持与 presence/discovery 的 CAS 语义同构——本阶段 reservation 一次性创建、无接管）。
 var errReservationNotOwner = errors.New("relay reservation write rejected: not the owner")
 
+// errReservationCapacity reports that all configured live reservation slots
+// are occupied. Callers map it to a stable rate/resource-limit response.
+var errReservationCapacity = errors.New("relay reservation capacity reached")
+
+var errReservationExists = errors.New("relay reservation already exists")
+
+const (
+	defaultMaxRelayReservationGates        = 65536
+	defaultMaxRelayReservationGatesPerConn = 64
+)
+
+// relayReservationGateRegistry owns the short-lived authorization between a
+// successfully forwarded ConnectivityOffer and one RelayReserveRequest. It is
+// deliberately separate from the attempt return-routing registry: an Answer or
+// ProtocolError consumes its route without consuming Relay fallback authority.
+// Callers serialize this registry with the Hub mutex.
+type relayReservationGateRegistry struct {
+	gates        map[relayReservationGateKey]relayReservationGate
+	byConnection map[string]map[relayReservationGateKey]struct{}
+	expiries     expiryIndex[relayReservationGateKey]
+	maxTotal     int
+	maxPerConn   int
+}
+
+type relayReservationGateKey struct {
+	initiatorConnectionID string
+	attemptID             string
+}
+
+type relayReservationGate struct {
+	initiatorDeviceID     string
+	initiatorConnectionID string
+	targetDeviceID        string
+	targetConnectionID    string
+	expiresAt             time.Time
+}
+
+func newRelayReservationGateRegistry(maxTotal, maxPerConn int) relayReservationGateRegistry {
+	if maxTotal <= 0 {
+		maxTotal = defaultMaxRelayReservationGates
+	}
+	if maxPerConn <= 0 {
+		maxPerConn = defaultMaxRelayReservationGatesPerConn
+	}
+	return relayReservationGateRegistry{
+		gates:        make(map[relayReservationGateKey]relayReservationGate),
+		byConnection: make(map[string]map[relayReservationGateKey]struct{}),
+		maxTotal:     maxTotal,
+		maxPerConn:   maxPerConn,
+	}
+}
+
+func (r *relayReservationGateRegistry) ensure() {
+	if r.gates == nil {
+		r.gates = make(map[relayReservationGateKey]relayReservationGate)
+	}
+	if r.byConnection == nil {
+		r.byConnection = make(map[string]map[relayReservationGateKey]struct{})
+	}
+	if r.maxTotal <= 0 {
+		r.maxTotal = defaultMaxRelayReservationGates
+	}
+	if r.maxPerConn <= 0 {
+		r.maxPerConn = defaultMaxRelayReservationGatesPerConn
+	}
+}
+
+func (r *relayReservationGateRegistry) remove(key relayReservationGateKey) {
+	gate, present := r.gates[key]
+	if present {
+		delete(r.gates, key)
+		for _, connectionID := range []string{key.initiatorConnectionID, gate.targetConnectionID} {
+			if connectionID == "" {
+				continue
+			}
+			refs := r.byConnection[connectionID]
+			delete(refs, key)
+			if len(refs) == 0 {
+				delete(r.byConnection, connectionID)
+			}
+		}
+	}
+	r.expiries.remove(key)
+}
+
+func (r *relayReservationGateRegistry) prune(now time.Time, limit int) int {
+	pruned := 0
+	for pruned < limit {
+		key, expired := r.expiries.oldestExpired(now)
+		if !expired {
+			break
+		}
+		r.remove(key)
+		pruned++
+	}
+	return pruned
+}
+
+func (r *relayReservationGateRegistry) contains(key relayReservationGateKey, now time.Time) bool {
+	gate, present := r.gates[key]
+	if present && !now.Before(gate.expiresAt) {
+		r.remove(key)
+		return false
+	}
+	return present
+}
+
+func (r *relayReservationGateRegistry) add(attemptID string, gate relayReservationGate, now time.Time) bool {
+	if attemptID == "" || gate.initiatorDeviceID == "" || gate.targetDeviceID == "" ||
+		gate.initiatorConnectionID == "" || gate.targetConnectionID == "" || !now.Before(gate.expiresAt) {
+		return false
+	}
+	r.ensure()
+	key := relayReservationGateKey{initiatorConnectionID: gate.initiatorConnectionID, attemptID: attemptID}
+	if r.contains(key, now) {
+		return false
+	}
+	if len(r.gates) >= r.maxTotal {
+		// Recover exactly one expired global slot. The indexed heap means this
+		// remains O(log n), independent of the number of live gates.
+		r.prune(now, 1)
+		if len(r.gates) >= r.maxTotal {
+			return false
+		}
+	}
+	connectionIDs := []string{gate.initiatorConnectionID}
+	if gate.targetConnectionID != gate.initiatorConnectionID {
+		connectionIDs = append(connectionIDs, gate.targetConnectionID)
+	}
+	for _, connectionID := range connectionIDs {
+		if len(r.byConnection[connectionID]) >= r.maxPerConn &&
+			!r.releaseExpiredSlotForConnection(connectionID, now) {
+			return false
+		}
+	}
+	r.gates[key] = gate
+	if !r.expiries.add(key, gate.expiresAt) {
+		delete(r.gates, key)
+		return false
+	}
+	for _, connectionID := range connectionIDs {
+		refs := r.byConnection[connectionID]
+		if refs == nil {
+			refs = make(map[relayReservationGateKey]struct{})
+			r.byConnection[connectionID] = refs
+		}
+		refs[key] = struct{}{}
+	}
+	return true
+}
+
+// releaseExpiredSlotForConnection examines only one reverse-index bucket. The
+// bucket is capped at maxPerConn (64 in production), avoiding a global scan
+// when one busy connection reaches its own limit before the registry is full.
+func (r *relayReservationGateRegistry) releaseExpiredSlotForConnection(connectionID string, now time.Time) bool {
+	refs := r.byConnection[connectionID]
+	checked := 0
+	for key := range refs {
+		if checked >= r.maxPerConn {
+			break
+		}
+		checked++
+		gate, present := r.gates[key]
+		if !present || !now.Before(gate.expiresAt) {
+			r.remove(key)
+			break
+		}
+	}
+	return len(r.byConnection[connectionID]) < r.maxPerConn
+}
+
+// take removes a gate before returning it, including an expired one. A
+// malformed or replayed request cannot retain or probe live authorization.
+func (r *relayReservationGateRegistry) take(key relayReservationGateKey, now time.Time) (relayReservationGate, bool) {
+	gate, present := r.gates[key]
+	if present {
+		r.remove(key)
+	}
+	if !present || !now.Before(gate.expiresAt) {
+		return relayReservationGate{}, false
+	}
+	return gate, true
+}
+
+func (r *relayReservationGateRegistry) removeConnection(connectionID string) {
+	refs := r.byConnection[connectionID]
+	if len(refs) == 0 {
+		return
+	}
+	keys := make([]relayReservationGateKey, 0, len(refs))
+	for key := range refs {
+		keys = append(keys, key)
+	}
+	for _, key := range keys {
+		r.remove(key)
+	}
+}
+
+func (r *relayReservationGateRegistry) reset() {
+	r.gates = make(map[relayReservationGateKey]relayReservationGate)
+	r.byConnection = make(map[string]map[relayReservationGateKey]struct{})
+	r.expiries.reset()
+}
+
 // clampReservationLifetime 把客户端想要的 reservation 存活秒数夹到冻结契约的
 // [RESERVATION_LIFETIME_S_MIN, RESERVATION_LIFETIME_S_MAX] 区间；0 用默认值。
 func clampReservationLifetime(desired uint32) uint32 {
@@ -90,17 +295,27 @@ func (m *memoryStore) CreateReservation(_ context.Context, r Reservation) error 
 	if r.ReservationID == "" {
 		return fmt.Errorf("reservation id is empty")
 	}
+	expiresAt := reservationHardExpiry(r.ExpiresAtMs)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
+	if !expiresAt.After(now) {
+		return errors.New("relay reservation expires beyond the grace window")
+	}
 	for id, entry := range m.reservations {
-		if now.After(entry.expiresAt) {
+		if !now.Before(entry.expiresAt) {
 			delete(m.reservations, id)
 		}
 	}
+	if _, exists := m.reservations[r.ReservationID]; exists {
+		return errReservationExists
+	}
+	if len(m.reservations) >= m.maxReservations {
+		return errReservationCapacity
+	}
 	m.reservations[r.ReservationID] = reservationEntry{
 		reservation: r,
-		expiresAt:   reservationHardExpiry(r.ExpiresAtMs),
+		expiresAt:   expiresAt,
 	}
 	return nil
 }
@@ -154,17 +369,55 @@ func (r *redisStore) reservationKey(reservationID string) string {
 	return redisKeyPrefix + "reservation:" + reservationID
 }
 
+func (r *redisStore) reservationIndexKey() string {
+	return redisKeyPrefix + "reservations"
+}
+
+const createReservationScript = `
+local ttl = tonumber(ARGV[2]) - tonumber(ARGV[1])
+if ttl <= 0 then
+  return -2
+end
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+if redis.call('EXISTS', KEYS[2]) == 1 then
+  return -1
+end
+if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[3]) then
+  return 0
+end
+redis.call('SET', KEYS[2], ARGV[4], 'PX', ttl, 'NX')
+redis.call('ZADD', KEYS[1], ARGV[2], ARGV[5])
+return 1
+`
+
 func (r *redisStore) CreateReservation(ctx context.Context, res Reservation) error {
 	data, err := json.Marshal(res)
 	if err != nil {
 		return err
 	}
 	// Redis TTL 也带宽限：条目保留到硬到期时刻，宽限内仍可被升级接受。
-	ttl := time.Until(reservationHardExpiry(res.ExpiresAtMs))
-	if ttl <= 0 {
+	expiresAt := reservationHardExpiry(res.ExpiresAtMs)
+	now := time.Now()
+	if !expiresAt.After(now) {
 		return errors.New("relay reservation expires beyond the grace window")
 	}
-	return r.client.Set(ctx, r.reservationKey(res.ReservationID), string(data), ttl).Err()
+	result, err := r.client.Eval(ctx, createReservationScript,
+		[]string{r.reservationIndexKey(), r.reservationKey(res.ReservationID)},
+		now.UnixMilli(), expiresAt.UnixMilli(), r.maxReservations, string(data), res.ReservationID,
+	).Int()
+	if err != nil {
+		return err
+	}
+	switch result {
+	case 1:
+		return nil
+	case 0:
+		return errReservationCapacity
+	case -1:
+		return errReservationExists
+	default:
+		return errors.New("relay reservation expires beyond the grace window")
+	}
 }
 
 func (r *redisStore) GetReservation(ctx context.Context, reservationID string) (Reservation, bool, error) {
@@ -183,7 +436,11 @@ func (r *redisStore) GetReservation(ctx context.Context, reservationID string) (
 }
 
 func (r *redisStore) DeleteReservation(ctx context.Context, reservationID string) error {
-	return r.client.Del(ctx, r.reservationKey(reservationID)).Err()
+	return r.client.Eval(ctx, `
+redis.call('DEL', KEYS[1])
+redis.call('ZREM', KEYS[2], ARGV[1])
+return 1
+`, []string{r.reservationKey(reservationID), r.reservationIndexKey()}, reservationID).Err()
 }
 
 // RenewReservation 把 reservation 键的 TTL 滑动到 now+ttl（滑动窗口续期，数据面流量
@@ -192,5 +449,19 @@ func (r *redisStore) RenewReservation(ctx context.Context, reservationID string,
 	if ttl <= 0 {
 		return false, nil
 	}
-	return r.client.Expire(ctx, r.reservationKey(reservationID), ttl).Result()
+	expiresAt := time.Now().Add(ttl)
+	result, err := r.client.Eval(ctx, `
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  redis.call('ZREM', KEYS[2], ARGV[2])
+  return 0
+end
+redis.call('PEXPIRE', KEYS[1], ARGV[1])
+redis.call('ZADD', KEYS[2], ARGV[3], ARGV[2])
+return 1
+`, []string{r.reservationKey(reservationID), r.reservationIndexKey()},
+		ttl.Milliseconds(), reservationID, expiresAt.UnixMilli()).Int()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
 }
