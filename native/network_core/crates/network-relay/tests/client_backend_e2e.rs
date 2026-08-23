@@ -458,9 +458,8 @@ async fn wait_for_file(path: &str) {
 
 async fn wait_for_control_disconnect(events: &mut mpsc::Receiver<ControlEvent>) {
     loop {
-        match next_control_event(events).await {
-            ControlEvent::Disconnected { .. } => return,
-            _ => {}
+        if let ControlEvent::Disconnected { .. } = next_control_event(events).await {
+            return;
         }
     }
 }
