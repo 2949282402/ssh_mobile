@@ -256,7 +256,13 @@ run_rust() {
     CLIENT_BACKEND_E2E_BASE_URL="$BASE_URL" \
     RELAY_ENROLLMENT_TOKEN="$ENROLLMENT_TOKEN" \
     cargo test -p network-relay --features test-support \
-      --test client_backend_e2e --locked -- --test-threads=1)
+      --test client_backend_e2e --locked -- --ignored --test-threads=1)
+}
+
+build_rust_e2e() {
+  (cd "$ROOT_DIR/native/network_core" && \
+    cargo test -p network-relay --features test-support \
+      --test client_backend_e2e --locked --no-run)
 }
 
 run_admin_revoke() {
@@ -335,6 +341,9 @@ run_rust_with_revocation() {
   local done_file="$TMP_ROOT/revocation-done"
   local log_file="$TMP_ROOT/rust-revocation.log"
   local rust_pid attempt
+  # Build before starting the marker handshake. GitHub runners may need more
+  # than one minute to compile the Relay integration target on a cold cache.
+  build_rust_e2e
   rm -f -- "$ready_file" "$done_file" "$log_file"
   (
     cd "$ROOT_DIR/native/network_core"
@@ -345,11 +354,11 @@ run_rust_with_revocation() {
     CLIENT_BACKEND_E2E_REVOCATION_READY_FILE="$ready_file" \
     CLIENT_BACKEND_E2E_REVOCATION_DONE_FILE="$done_file" \
     cargo test -p network-relay --features test-support \
-      --test client_backend_e2e --locked -- --test-threads=1
+      --test client_backend_e2e --locked -- --ignored --test-threads=1
   ) > "$log_file" 2>&1 &
   rust_pid=$!
   RUST_E2E_PID="$rust_pid"
-  for attempt in $(seq 1 240); do
+  for attempt in $(seq 1 600); do
     if [[ -f "$ready_file" ]]; then
       break
     fi

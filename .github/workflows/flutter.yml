@@ -514,7 +514,7 @@ jobs:
           )
           for test_file in "${all_test_files[@]}"; do
             case "$test_file" in
-              test/features/startup/views/startup_screen_test.dart|test/screens/system_admin/system_admin_snapshot_tabs_test.dart|test/services/network/transfer_transport_test.dart)
+              test/features/startup/views/startup_screen_test.dart|test/screens/system_admin/system_admin_snapshot_tabs_test.dart|test/services/network/transfer_transport_test.dart|test/integration/client_backend/*)
                 ;;
               *)
                 coverage_test_files+=("$test_file")

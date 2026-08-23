@@ -618,7 +618,7 @@ collect_app_tests() {
   for test_file in "${all_test_files[@]}"; do
     test_file="${test_file#"$ROOT_DIR/apps/ssh_mobile_full/"}"
     case "$test_file" in
-      test/features/startup/views/startup_screen_test.dart|test/screens/system_admin/system_admin_snapshot_tabs_test.dart|test/services/network/transfer_transport_test.dart)
+      test/features/startup/views/startup_screen_test.dart|test/screens/system_admin/system_admin_snapshot_tabs_test.dart|test/services/network/transfer_transport_test.dart|test/integration/client_backend/*)
         ;;
       *)
         output_array+=("$test_file")

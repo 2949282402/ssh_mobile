@@ -39,3 +39,6 @@ WSL/Linux 的系统信任库。否则脚本会失败，而不会跳过 TLS 验�
 组件契约测试和本地 Rust 内存集成测试仍由各自门禁负责；本目录只承载跨进程真实
 客户端—Go Relay 测试。`AuthenticatedApiClient` 的遗留 `/v1/peers`/`connect`
 接口没有对应 Relay v2 端点，保留契约测试并作为后续兼容性清理项。
+
+Rust E2E target 在普通 `cargo test --workspace` 中保持 ignored，避免没有临时
+Compose 环境时误运行；统一入口会显式使用 `--ignored` 启动它。

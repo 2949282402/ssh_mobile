@@ -49,6 +49,7 @@ impl Identity {
 }
 
 #[tokio::test]
+#[ignore = "requires the isolated Caddy → Go Relay deployment"]
 async fn real_clients_complete_control_and_reservation_data_flow() {
     let base_url = std::env::var("CLIENT_BACKEND_E2E_BASE_URL")
         .expect("CLIENT_BACKEND_E2E_BASE_URL must point at the Caddy HTTP origin");
