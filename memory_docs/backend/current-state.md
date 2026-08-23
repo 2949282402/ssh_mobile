@@ -1,4 +1,4 @@
-> Last updated: 2026-08-22
+> Last updated: 2026-08-24
 
 # Backend Current State
 
@@ -69,6 +69,11 @@ Current boundaries:
   admission while active sockets keep their in-memory authorization. PairReady
   and 30s/15s Ping/Pong liveness control frames share the single outbound writer;
   active RelayData is not closed by reservation TTL or natural credential expiry.
+- Relay Data storage, HTTP admission, one-shot pair registry, flow budget, and
+  connection pump are independent owners. The pump borrows only reservation
+  delete/renew and endpoint admit/release capabilities, so it cannot reach
+  enrollment, presence, administrator state, registry revocation internals, or
+  mutate flow counters directly.
 - Process restart clears device, administrator-session, and Relay-session state
   **in memory mode**; `mysql` mode keeps enrollment and revocation durable and
   devices keep working across a restart.

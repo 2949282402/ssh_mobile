@@ -1,4 +1,4 @@
-> Last updated: 2026-08-23
+> Last updated: 2026-08-24
 
 # SSH Mobile Control and Relay Server
 
@@ -243,6 +243,15 @@ Transport traffic is v2-only. `/v2/control` carries authenticated protobuf
 messages with opaque encrypted payloads. The two routes have separate writers,
 admission rules, and lifetimes; a data frame on the control route (or a control
 frame on the data route) is a protocol violation.
+
+Relay Data implementation ownership is explicit: `reservation.go` owns the
+reservation model and memory/Redis TTL storage; `relay_data_admission.go` owns
+authenticated device/role/token binding before upgrade; `relay_data_registry.go`
+owns one-shot role slots, pairing, revocation, and shutdown indexing; and
+`relay_data_connection.go` owns the socket pump and Ping/Pong liveness.
+`relay_data_flow_budget.go` independently owns outbound backlog accounting and
+the inbound rate window. The pump borrows only narrow reservation-lease and
+pair-owner interfaces.
 
 ## Network Protocol v2 Relay contract
 
