@@ -103,6 +103,6 @@ external-consumer migration inventory authorizes removal.
   existing RelayData owner tests. A multi-process deployment flow, physical
   devices, and cross-instance services remain release-environment evidence.
 
-`git diff --check` passed for the code-validation head; the final docs sync is
-bound to the code/CI head above and will be pushed as the follow-up report
-commit without changing Draft status.
+`git diff --check` passed for the code-validation head; this report is the
+follow-up docs sync bound to the code/CI head above and does not change Draft
+status.
