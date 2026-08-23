@@ -10,7 +10,9 @@ local closure evidence. `PR48` is an internal workstream label only; the
 canonical document name is **Network V2 Connectivity Stage Audit**.
 
 `FINAL_CLOSURE_BASE_SHA: 926967e08ed2abb638bf13596fa4d25595c75da9`
-`LOCAL_VALIDATION_HEAD: 6441a0d6415bb2df2c897afec922f82056867489`
+`CODE_VALIDATION_HEAD: 2253282f3afa7dc64ff38e5604eb2f272518969b`
+`CI_HEAD: 2253282f3afa7dc64ff38e5604eb2f272518969b`
+`PR_HEAD_SHA: 2253282f3afa7dc64ff38e5604eb2f272518969b (code/CI head before this docs sync)`
 
 ## Findings and disposition
 
@@ -26,7 +28,7 @@ canonical document name is **Network V2 Connectivity Stage Audit**.
 ## Current runnable evidence
 
 - `cargo test -p network-core 'connect::connectivity_attempt::tests::' --locked`:
-  61/61 passed, including Stage A zero-control reuse, bounded active
+  63/63 passed, including Stage A zero-control reuse, bounded active
   `NOT_READY` retry, cancellation/timeout reconnect isolation, and the
   independent Stage C order/count evidence.
 - `cargo test -p network-relay --locked`: 45/45 passed, including tracker
@@ -38,12 +40,15 @@ canonical document name is **Network V2 Connectivity Stage Audit**.
   and the selected Rust/Go/Dart owner suites passed. A transient realtime
   environment-order race was reproduced once and cleared by the serial
   realtime selector; it did not reproduce on the final strict run.
+- GitHub Actions run `32639926098` passed every listed check for `CI_HEAD`,
+  including Android, Windows, macOS, iOS, App coverage/static/unit shards,
+  both client-backend E2E modes, Rust/Go/Protocol/Architecture, and SDK.
 
 ## Remaining evidence
 
 The Stage C evidence is intentionally test-only: it lives in
 `native/network_core/crates/network-core/src/tests/connectivity_attempt.rs` and
 does not add observers, hooks, or `#[cfg(test)]` fields to production modules.
-Real Redis/MySQL cross-instance behavior, physical-device lifecycle behavior,
-and native platform CI remain environment-dependent and are recorded in the
-final acceptance report rather than inferred from the local owner tests.
+Real Redis/MySQL cross-instance behavior and physical-device lifecycle
+behavior remain environment-dependent; the final platform CI jobs passed, but
+those CI builds are not a substitute for physical-device evidence.

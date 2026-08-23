@@ -8,7 +8,9 @@ It does not authorize changes to the frozen protocol or public SDK surface.
 
 Validation base: branch `agent/network-v2-final-20260819`, commit
 `926967e08ed2abb638bf13596fa4d25595c75da9`
-`LOCAL_VALIDATION_HEAD: 6441a0d6415bb2df2c897afec922f82056867489`
+`CODE_VALIDATION_HEAD: 2253282f3afa7dc64ff38e5604eb2f272518969b`
+`CI_HEAD: 2253282f3afa7dc64ff38e5604eb2f272518969b`
+`PR_HEAD_SHA: 2253282f3afa7dc64ff38e5604eb2f272518969b (code/CI head before this docs sync)`
 
 ## PASS
 
@@ -47,7 +49,8 @@ Validation base: branch `agent/network-v2-final-20260819`, commit
   CI run may supply separate Flutter coverage evidence; it does not convert
   this WSL gap into a Linux PASS.
 - Real Redis/MySQL-backed admission, cross-instance revocation delivery, and
-  physical Android/iOS lifecycle runs remain environment-dependent follow-ups.
+  physical Android/iOS lifecycle runs remain environment-dependent follow-ups;
+  the final Android/Windows/macOS/iOS CI jobs passed.
 - ReadySessionIndex draining/reacquisition and full production transport fault
   injection remain beyond the local owner suites.
 - Production performance benchmarking is `DEFERRED — NON-BLOCKING`.
@@ -85,13 +88,15 @@ Validation base: branch `agent/network-v2-final-20260819`, commit
 ## Coordinator decision
 
 The final-fix owner gates are **PASS for runnable Linux evidence**, with the
-coverage-enabled aggregate App shard recorded as an environment gap. The Stage
-B double-Resolve architecture defect, stub-only confidence gap, and lifecycle
-reconnect poisoning regressions are closed; Stage C has the required local
-order/count evidence and RelayData owner coverage. Multi-process deployment,
-native-platform/environment evidence, and production performance benchmarks
-remain explicit follow-ups. Phase 4 SDK cleanup is complete under the freeze
-gate, while public compatibility-alias retirement remains deferred and
-non-blocking pending an external-consumer migration inventory. Network V2
-protocol direction, PeerSupervisor ownership, and PathLease semantics remain
-frozen.
+coverage-enabled aggregate App shard recorded as an environment gap. The
+final GitHub CI run for `CI_HEAD` passed every listed check, including Android,
+Windows, macOS, iOS, App coverage/unit/static shards, E2E, and all owner
+quality jobs. The Stage B double-Resolve architecture defect, stub-only
+confidence gap, and lifecycle reconnect poisoning regressions are closed;
+Stage C has the required local order/count evidence and RelayData owner
+coverage. Multi-process deployment, physical-device evidence, and production
+performance benchmarks remain explicit follow-ups. Phase 4 SDK cleanup is
+complete under the freeze gate, while public compatibility-alias retirement
+remains deferred and non-blocking pending an external-consumer migration
+inventory. Network V2 protocol direction, PeerSupervisor ownership, and
+PathLease semantics remain frozen.

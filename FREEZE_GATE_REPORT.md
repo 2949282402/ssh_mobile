@@ -10,7 +10,9 @@ Branch: `agent/network-v2-final-20260819`
 Baseline commit: `926967e08ed2abb638bf13596fa4d25595c75da9`
 
 `FINAL_CLOSURE_BASE_SHA: 926967e08ed2abb638bf13596fa4d25595c75da9`
-`LOCAL_VALIDATION_HEAD: 6441a0d6415bb2df2c897afec922f82056867489`
+`CODE_VALIDATION_HEAD: 2253282f3afa7dc64ff38e5604eb2f272518969b`
+`CI_HEAD: 2253282f3afa7dc64ff38e5604eb2f272518969b`
+`PR_HEAD_SHA: 2253282f3afa7dc64ff38e5604eb2f272518969b (code/CI head before this docs sync)`
 
 ## Gate decision
 
@@ -26,7 +28,7 @@ Baseline commit: `926967e08ed2abb638bf13596fa4d25595c75da9`
 
 - Strict contract checks: the final strict run completed all 17 checks with
   the documented test-defined skips.
-- Connectivity owner selector: 61/61 tests passed, including capability-aware
+- Connectivity owner selector: 63/63 tests passed, including capability-aware
   Stage A, zero-call reuse, bounded active `NOT_READY` retry, cancellation and
   timeout reconnect isolation, and Stage C `Resolve → Offer → Direct failure →
   Reserve` counts/order.
@@ -37,6 +39,9 @@ Baseline commit: `926967e08ed2abb638bf13596fa4d25595c75da9`
 - Memory/MySQL client-backend E2E both passed. The coverage-enabled aggregate
   reached the App Flutter shard but remained at `loading` without a VM Service
   in WSL; it is an environment gap, not a PASS.
+- GitHub Actions run `32639926098` passed every listed check for `CI_HEAD`,
+  including Android, Windows, macOS, iOS, App coverage/static/unit shards,
+  both client-backend E2E modes, Rust/Go/Protocol/Architecture, and SDK.
 
 ## Frozen Network V2 invariants
 
@@ -71,11 +76,10 @@ until an external-consumer migration inventory authorizes their removal.
 
 ## Known environment limits
 
-Windows desktop, macOS/Xcode, iOS/CocoaPods, physical mobile lifecycle, and
-real Redis/MySQL cross-instance evidence require their native or deployment
-hosts. The focused and aggregate App coverage gates require a working Flutter
-VM Service; both expose the WSL startup stall here. A native Windows PowerShell
-7 or CI run may provide separate coverage evidence for this environment gap,
-but cannot be relabeled as WSL/Linux PASS.
+Physical mobile lifecycle and real Redis/MySQL cross-instance evidence require
+native or deployment hosts. The focused and aggregate App coverage gate
+requires a working Flutter VM Service; the aggregate run exposed a WSL
+startup stall here. The final Windows/macOS/iOS/Android CI jobs passed and are
+recorded as CI evidence, not relabeled as local WSL/Linux evidence.
 
-**FREEZE_GATE: PASS FOR RUNNABLE OWNER GATES; COVERAGE AGGREGATE ENVIRONMENT GAP**
+**FREEZE_GATE: PASS FOR RUNNABLE OWNER GATES AND FINAL CI; LOCAL COVERAGE AGGREGATE ENVIRONMENT GAP**

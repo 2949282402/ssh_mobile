@@ -10,7 +10,9 @@ used branch `agent/network-v2-final-20260819` at the frozen baseline and local
 test head below; no production benchmark or remote CI result is inferred.
 
 `FINAL_CLOSURE_BASE_SHA: 926967e08ed2abb638bf13596fa4d25595c75da9`
-`LOCAL_VALIDATION_HEAD: 6441a0d6415bb2df2c897afec922f82056867489`
+`CODE_VALIDATION_HEAD: 2253282f3afa7dc64ff38e5604eb2f272518969b`
+`CI_HEAD: 2253282f3afa7dc64ff38e5604eb2f272518969b`
+`PR_HEAD_SHA: 2253282f3afa7dc64ff38e5604eb2f272518969b (code/CI head before this docs sync)`
 
 The repository does not contain a stable production benchmark harness or a
 cross-device throughput baseline. The checks below are regression-smoke
@@ -20,12 +22,13 @@ evidence, not claims about production hardware latency.
 
 | Area | Check | Result |
 | --- | --- | --- |
-| Connection/runtime | `cargo test -p network-core 'connect::connectivity_attempt::tests::' --locked` | PASS; 61 focused tests, including cancellation/timeout reconnect isolation |
+| Connection/runtime | `cargo test -p network-core 'connect::connectivity_attempt::tests::' --locked` | PASS; 63 focused tests, including cancellation/timeout reconnect isolation |
 | Stage ordering | Independent Stage C evidence in `src/tests/connectivity_attempt.rs` | PASS; `Resolve=1`, `Offer=1`, `Reserve=1`, with Direct failure before Reserve |
 | Relay client/data | `cargo test -p network-relay --locked` plus concrete integration | PASS; 45 unit/golden and 7 integration tests |
 | Linux owner/workspace smoke | strict selectors plus `cargo test --workspace --locked` | PASS; workspace tests completed with no product failures |
 | SDK/transport/FFI smoke | Flutter/Dart analyze/test and native Rust FFI checks | PASS; all runnable local selectors passed |
 | Full aggregate coverage | `bash scripts/full_test.sh --no-bootstrap --with-coverage --serial` | ENVIRONMENT GAP; App Flutter shard remained at `loading` without a VM Service in WSL and was stopped |
+| Final GitHub CI | Actions run `32639926098` | PASS; every listed Linux/Rust/Go/Protocol/SDK/App/E2E/Android/Windows/macOS/iOS check passed |
 
 ## Required performance dimensions
 

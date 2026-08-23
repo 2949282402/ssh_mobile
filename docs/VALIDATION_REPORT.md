@@ -6,14 +6,14 @@ This report is the current validation index for branch
 `agent/network-v2-final-20260819`.
 
 `FINAL_CLOSURE_BASE_SHA: 926967e08ed2abb638bf13596fa4d25595c75da9`
-`LOCAL_VALIDATION_HEAD: 6441a0d6415bb2df2c897afec922f82056867489`
-
-`GitHub CI: NOT RE-RUN for LOCAL_VALIDATION_HEAD; prior CI evidence is scoped
-only to FINAL_CLOSURE_BASE_SHA. No push or PR state change was performed.`
+`CODE_VALIDATION_HEAD: 2253282f3afa7dc64ff38e5604eb2f272518969b`
+`CI_HEAD: 2253282f3afa7dc64ff38e5604eb2f272518969b`
+`PR_HEAD_SHA: 2253282f3afa7dc64ff38e5604eb2f272518969b (code/CI head before this docs sync)`
+`GitHub CI RUN: 32639926098 — all listed checks PASS for CI_HEAD`
 
 ## Contract and owner closeout
 
-`protocol/contract_tests/acceptance_matrix.json` records 69/69 cases as
+`protocol/contract_tests/acceptance_matrix.json` records 71/71 cases as
 `covered`. `bash scripts/network_v2_acceptance.sh strict` is the strict entry
 point and preserves the frozen Relay V2 wire shape: target-less
 `ConnectivityOffer`, request/attempt correlation, fail-closed Resolve status,
@@ -38,7 +38,7 @@ public Dart/Rust contract, or FFI ABI was changed.
 - `cargo check --workspace --locked` — passed.
 - `cargo clippy --workspace --all-targets --locked -- -D warnings` — passed.
 - `cargo test -p network-core 'connect::connectivity_attempt::tests::' --locked` —
-  passed: 61/61, including healthy-path Offer suppression, bounded active
+  passed: 63/63, including healthy-path Offer suppression, bounded active
   `NOT_READY` retry, lifecycle cancellation/timeout reconnect isolation, and
   Stage C order/count evidence.
 - `cargo test -p network-relay --locked` — passed: 45/45.
@@ -55,14 +55,16 @@ public Dart/Rust contract, or FFI ABI was changed.
 - Exact protocol commands (`protoc`, `bash scripts/relay_v2_contract.sh`,
   `buf lint`, scoped `buf breaking`) — passed.
 - `git diff --check` — passed.
+- GitHub Actions run `32639926098` — every listed check passed for the final
+  `CI_HEAD`, including App coverage/static/unit shards, Android, Windows,
+  macOS, iOS, both client-backend E2E modes, and all owner quality jobs.
 
 ## Not run on this host
 
-- Windows desktop, macOS/Xcode, iOS/CocoaPods, and physical mobile lifecycle
-  jobs require their native CI hosts.
+- Physical mobile lifecycle and deployment evidence still require native or
+  service hosts; the final Windows/macOS/iOS/Android CI build jobs passed.
 - Real multi-host Relay deployment, physical-device lifecycle, and broader
   transport fault injection require external services/devices; local Stage C
   order/count evidence and RelayData owner coverage are complete.
-- If a WSL Flutter VM Service environment gap must be closed, use native Windows
-  PowerShell 7 or CI as separately labeled evidence; a product/test failure is
-  not eligible for this fallback and Windows evidence cannot become Linux PASS.
+- The final CI App coverage pass is separately labeled CI evidence; it does not
+  turn the WSL aggregate Flutter loading stall into a Linux local PASS.
