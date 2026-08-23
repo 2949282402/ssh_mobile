@@ -1,4 +1,4 @@
-> Last updated: 2026-08-22
+> Last updated: 2026-08-23
 
 # Coverage policy
 
@@ -60,3 +60,18 @@ machine.
 
 Otherwise run it on Windows or CI with a working Flutter VM Service; ordinary
 `flutter test` success must not be substituted for the periodic coverage gate.
+
+For the native Windows fallback, start a Windows PowerShell session and
+configure the pinned SDK before running the client gate:
+
+```powershell
+. .\scripts\configure_windows_toolchain.ps1 `
+  -FlutterRoot 'D:\toolchains\flutter_windows_3.47.0\flutter'
+$env:CLIENT_COVERAGE_MINIMUM = '90'
+```
+
+The configuration script validates Flutter 3.47.0/Dart 3.13.0 and Rust
+1.97.1 MSVC, uses a native TEMP/TMP directory, and leaves the user PATH alone
+unless `-PersistUserPath` is explicitly requested. Do not invoke this Windows
+launcher from WSL, mix Windows and Linux package caches, or treat Windows
+coverage as a Linux validation pass.

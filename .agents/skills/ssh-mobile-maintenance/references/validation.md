@@ -1,4 +1,4 @@
-> Last updated: 2026-08-20
+> Last updated: 2026-08-23
 
 # Validation Matrix
 
@@ -16,6 +16,28 @@ Windows `dart`/`flutter`/`go`/`cargo`/`node`, `.bat`/`.cmd` launchers,
 Windows drive. Prefer the Linux `go`/`cargo`/`flutter`/`dart`/`node` on the WSL
 PATH. When a required check cannot run under the WSL Linux toolchain, report the
 exact command and reason instead of falling back to a Windows binary.
+
+Windows-native validation is a separate, explicit environment rather than a
+WSL escape hatch:
+
+- Keep WSL as the source of truth for Linux CI, `full_test.sh`, and ordinary
+  format/analyze/test/build checks. Do not invoke `powershell.exe`, `cmd.exe`,
+  Windows `.bat`/`.cmd` launchers, or Windows `dart`/`flutter`/`cargo`/`go`/`node`
+  binaries from those WSL checks.
+- Use a native Windows PowerShell session or a `windows-latest` CI job only
+  for checks that genuinely need Windows, such as the App client coverage run
+  when the WSL Flutter VM Service is unavailable. Report that result as a
+  Windows check; it does not turn a skipped WSL check into a Linux pass.
+- Keep the Windows toolchain aligned with the repository pins (currently
+  Flutter 3.47.0/Dart 3.13.0 and Rust 1.97.1 MSVC). Run
+  [`scripts/configure_windows_toolchain.ps1`](../../../../scripts/configure_windows_toolchain.ps1)
+  from native PowerShell with an explicit `-FlutterRoot`; its default is
+  process-scoped and `-PersistUserPath` is the only option that changes the
+  user PATH.
+- Keep OS-specific `PATH`, `PUB_CACHE`, `.dart_tool`, Cargo/Rustup caches, and
+  temporary directories isolated. Native Windows coverage must use a native
+  `TEMP`/`TMP` path and clear an inherited WSL `TMPDIR`; never share Linux
+  build artifacts or package caches with Windows tooling.
 
 ## Always
 
