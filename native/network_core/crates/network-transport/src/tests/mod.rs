@@ -57,6 +57,11 @@ async fn websocket_transport_round_trips_binary_messages() {
             futures_util::SinkExt::send(&mut socket, Message::Binary(payload))
                 .await
                 .unwrap();
+            // Complete the WebSocket close handshake instead of dropping the
+            // accepted socket immediately after the echo. A reset here races
+            // the split reader and is reported as a protocol error on a busy
+            // CI runner even though the binary frame was delivered.
+            futures_util::SinkExt::close(&mut socket).await.unwrap();
         }
     });
 
