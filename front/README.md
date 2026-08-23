@@ -1,11 +1,11 @@
-> Last updated: 2026-08-11
+> Last updated: 2026-08-23
 
 # SSH Mobile Relay Admin
 
 This directory contains the standalone React + Vite + TypeScript administration
-console for the memory-only SSH Mobile Relay. It owns the browser UI only; the
-Go service in `../relay/` owns authentication, device enrollment, relay
-sessions, and the v1 WebSocket protocol.
+console for SSH Mobile Relay. It owns the browser UI only; the Go service in
+`../relay/` owns authentication, device enrollment, optional MySQL/Redis state,
+Relay sessions, and the v2 control/data WebSocket protocol.
 
 ## Development
 

@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-20
+> 最新更新时间：2026-08-23
 
 # SSH Mobile 跨平台 P2P 网络平台实施计划
 
@@ -10,7 +10,7 @@ where marked below. WireGuard scope is removed from the current project.
 
 ---
 
-# 当前实施状态（2026-08-20）
+# 当前实施状态（2026-08-23）
 
 本文件同时保留完整目标架构与后续阶段；以下状态只描述已经接入生产调用链的部分。
 旧阶段中的 v1 Session/Connection 方案保留为历史设计，当前生命周期以 v2 ADR 为准。
@@ -128,16 +128,17 @@ where marked below. WireGuard scope is removed from the current project.
   checkpoint/resume; physical network switching and 1 GiB+ transfer still need evidence.
 - 当前项目不再支持或实现 WireGuard；本文后续相关章节仅保留为历史方案记录，
   不属于当前实现和发布验收范围。
-- Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；
-  开发阶段不保留旧注册接口、协议降级或旧客户端兼容；这些 bootstrap
-  兼容端点与 native Relay V2 control/data contract 分离。
+- Go Relay 使用 `/v1/devices/enroll` 与 `/v1/devices/refresh` 管理设备凭据，
+  transport 只使用 `/v2/control` 与 `/v2/relay/{reservation_id}` 两条物理分离的
+  WebSocket；不存在 `/v1/connect`。默认 `memory` 模式是进程本地状态，
+  `mysql` 模式用 MySQL 持久化 enrollment/revocation，并要求 Redis 承载共享 live state。
 - Flutter 公共网络层统一返回 `NetworkResult`，公开事件使用类型化事件；
   Realtime command result 只在 App Shell adapter 内部关联，不向 Feature 暴露。
   LAN HTTP 错误使用稳定的
   `code`、`message`、`operation`、`peer_id` 结构，WebShare 固定 HTTPS，
   浏览器不满足安全上下文时禁止传输而不自动降级。
-- WireGuard、完整公网 candidate 协调和 Phase 11 RTC 不属于当前实现和发布验收范围，
-  不能因上述文件传输闭环而标记为已交付。
+- WireGuard 不属于当前项目；Feature-safe Realtime 生命周期与 signaling 已交付，
+  native decoded media event/decoder 和仍缺少设备证据的公网场景不得标记为已验收。
 
 开发阶段 Drift 只维护 `schemaVersion = 1` 的当前 schema；字段变化后删除本地
 开发数据库并重新生成代码，不编写迁移或旧数据导入逻辑。
@@ -155,7 +156,7 @@ where marked below. WireGuard scope is removed from the current project.
 
 逐步升级为一套统一的跨平台网络通信平台。
 
-最终支持：
+当前目标架构支持：
 
 1. Windows / Android / iOS / macOS 多端。
 2. 设备身份与可信设备管理。
@@ -163,13 +164,11 @@ where marked below. WireGuard scope is removed from the current project.
 4. IPv4 NAT 穿透。
 5. P2P 优先、Relay 自动回退。
 6. QUIC 高速文件传输。
-7. WireGuard 虚拟局域网。
-8. Windows RDP / SSH / SMB 等远程访问。
-9. 服务器只参与控制和必要的数据转发，不保存文件内容。
-10. 后续扩展语音、视频、屏幕共享。
-11. Flutter 只承担 UI 与业务状态。
-12. Rust 统一实现跨平台网络核心。
-13. Go 负责服务端控制平面与 Relay。
+7. 服务器只参与控制和必要的数据转发，不保存业务 Payload 或文件内容。
+8. Feature-safe Realtime 生命周期与 signaling；decoded media 能力按独立契约扩展。
+9. Flutter 只承担 UI、业务意图和 App Shell 适配。
+10. Rust 统一实现跨平台网络核心。
+11. Go 负责服务端控制平面与 Relay。
 
 最终技术栈：
 
@@ -182,11 +181,11 @@ where marked below. WireGuard scope is removed from the current project.
 | QUIC 首选实现 | Quinn |
 | QUIC 实现 | Quinn |
 | NAT | IPv6 + multi-server STUN + Candidate Exchange + simultaneous QUIC connectivity checks |
-| VPN | WireGuard |
+| VPN | 不在当前项目范围 |
 | 服务端 | Go |
 | 控制连接 | HTTPS + WSS |
 | 控制消息 | Protobuf |
-| Relay | Go memory-only relay |
+| Relay | Go；默认 memory，可选 MySQL + Redis storage profile |
 | 文件 E2E | X25519 + AEAD |
 | 实时音视频 | WebRTC（后续） |
 
@@ -196,30 +195,25 @@ where marked below. WireGuard scope is removed from the current project.
 
 当前 SSH Mobile 已经不是一个简单 SSH 客户端。
 
-仓库采用 feature-first MVVM：
+仓库采用 package-first MVVM：
 
 ```text
-lib/features/<feature>/
-    models/
-    services/
-    viewmodels/
-    views/
-    widgets/
-
-lib/services/
-lib/core/services/
-lib/data/
-lib/widgets/
-lib/theme/
+packages/core/
+packages/features/feature_*/
+packages/infrastructure/
+apps/ssh_mobile_full/lib/app/
+apps/ssh_mobile_full/lib/services/
+apps/ssh_mobile_full/lib/features/{home,settings,startup}/
 ```
 
 并明确规定：
 
-- 新 UI 不进入 `lib/screens/`
-- 跨 feature 基础设施放 `lib/services/`
-- 安全和协议基础设施放 `lib/core/services/`
+- 产品 Feature UI 与业务逻辑进入 owning `packages/features/feature_*`
+- 跨 Feature 契约进入 `packages/core/`，App 组合与适配进入 `lib/app/`
+- SSH/Network 运行时进入 owning Infrastructure package 或 App Scope adapter
+- Package 之间只使用公共入口，不导入另一 Package 的 `/src/`
 - ViewModel 不承担底层协议实现
-- Dart 非生成文件原则上不得超过 1000 行
+- 非生成生产文件超过 500 行时必须审查真实职责边界；解耦以逻辑 Owner 为准
 
 因此，本计划不会重新设计 Flutter 层架构，而是在现有 MVVM 下面增加：
 
@@ -234,6 +228,15 @@ Network Core
 ```
 
 ---
+
+# 历史规划正文
+
+从第 3 节起保留最初的分阶段方案和决策演进记录，其中的 `/v1/connect`、WireGuard、
+旧 App 本地 Feature 路径、透明升级/迁移和 memory-only Relay 描述均为历史输入，
+不代表当前接口或交付范围。当前实现只以上面的“当前实施状态”、
+[`memory_docs/sdk/current-state.md`](../memory_docs/sdk/current-state.md)、
+[`memory_docs/backend/current-state.md`](../memory_docs/backend/current-state.md)、代码与测试
+为准。
 
 # 3. 当前已有能力必须复用
 

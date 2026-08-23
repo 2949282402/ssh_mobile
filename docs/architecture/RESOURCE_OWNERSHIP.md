@@ -1,4 +1,4 @@
-最新更新时间：2026-08-13
+最新更新时间：2026-08-23
 
 # 资源 Owner 审计
 
@@ -57,7 +57,7 @@
 新增数据库、网络连接、SSH Session、Timer、Stream、Controller、Isolate 或
 Native handle 时，先在本表增加 Owner/Scope/Release，再补生命周期测试。自动检查：
 
-```powershell
+```bash
 dart run tool/check_resource_owners.dart
 dart run test/tool/resource_owner_check_test.dart
 ```

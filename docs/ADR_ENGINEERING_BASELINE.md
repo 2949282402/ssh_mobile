@@ -1,28 +1,26 @@
+> 最新更新时间：2026-08-23
+
 # Engineering Baseline ADR
 
-> 最新更新时间：2026-08-09
-
 Status: Accepted
-
-Updated: 2026-08-09
 
 ## Decisions
 
 - Keep Provider + `ChangeNotifier` as the app state-management baseline.
-  Compose services and feature ViewModels in `lib/main.dart`, and optimize hot
-  paths with `Selector`, `context.select`, and repaint boundaries instead of
-  migrating frameworks.
-- Keep a pure feature-first MVVM layout as the directory baseline. Put
-  feature-owned models, services, ViewModels, views, and widgets under
-  `lib/features/<feature>/<layer>/`. Keep truly shared UI in
-  `packages/core/app_ui/` through `package:app_ui/app_ui.dart`; old app theme
-  and migrated widget paths are compatibility exports. Keep infrastructure in
-  `lib/services/`, `lib/core/services/`, and `lib/data/` until its numbered
-  package migration Step.
-- Split code by feature and responsibility before a non-generated Dart file
-  reaches 1000 lines. Prefer independently importable collaborators; use Dart
-  `part` files only for cohesive code that needs library-private access. Never
-  hand-edit or split generated files such as `*.g.dart`.
+  Compose App Scope resources in `apps/ssh_mobile_full/lib/app/`; Feature route
+  scopes create their own ViewModels. Optimize hot paths with `Selector`,
+  `context.select`, and repaint boundaries instead of migrating frameworks.
+- Keep package-first feature MVVM as the directory baseline. Feature-owned
+  models, services, ViewModels, views, and widgets live in the owning
+  `packages/features/feature_*` member; shared contracts and UI live in
+  `packages/core/`; App-scoped SSH/SFTP/network/platform implementations stay
+  behind App Shell adapters or the owning Infrastructure package. Packages use
+  public entry points and never import another package's `/src/`.
+- Review every non-generated production file once it exceeds 500 lines and also
+  review smaller files whose responsibilities span multiple owners. Split only
+  at a real logic, lifecycle, storage, protocol, or test seam; do not create
+  cosmetic `part` files to satisfy a line count. Never hand-edit or split
+  generated files such as `*.g.dart`.
 - Keep screen classes thin. Routing, layout composition, and short-lived UI
   affordances may stay in screens; validation, async orchestration, repository
   coordination, and reusable feature state belong in ViewModels or services.
@@ -40,7 +38,7 @@ Updated: 2026-08-09
 - Store growth-oriented structured data in the owning Feature/Core Drift
   repositories, small settings in SharedPreferences, and credentials in secure
   storage. `AppAiStorageAdapter` is only an injected AI Port adapter and does
-  not own the shared App database. Sensitive AI content, traces, todo steps,
+  not own a shared business database. Sensitive AI content, traces, todo steps,
   and Playbook content must be encrypted before SQLite writes.
 - Android release builds do not allow cleartext traffic by default. Debug and
   profile builds may allow cleartext for local provider/SearXNG testing.

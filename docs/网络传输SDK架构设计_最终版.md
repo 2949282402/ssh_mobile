@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-22
+> 最新更新时间：2026-08-23
 
 # 网络传输 SDK 架构设计
 
@@ -148,23 +148,21 @@ Connection / Transport
 
 不能把应用层 E2EE 分散写进 TCP、QUIC、WebRTC 各自实现。
 
-### 2.5 Direct 优先，Relay 兜底
+### 2.5 分阶段 Direct 优先，Relay 受控兜底
 
-默认连接策略：
+一次建连 attempt 的权威策略固定为：
 
 ```text
-优先 Direct / P2P
-      ↓
-短时间未建立可用连接
-      ↓
-自动启动 Relay
-      ↓
-谁先可用先使用
-      ↓
-持续评估更优路径
+Stage A：仅复用健康兼容路径或新鲜 Direct candidate
+      ↓（仍需新连接）
+Stage B：一次 Resolve → Offer，固定四秒 Direct window
+      ↓（Direct 失败且策略/能力/预算均允许）
+Stage C：Reserve Relay，Required E2EE 后建立新 ConnectionSession
 ```
 
-Relay 切换完全由 SDK 完成。
+业务 `ensure` 不会隐式开启 maintenance，也不会在连接存续期间透明迁移路径。
+只有显式维护的 Peer 才会在网络环境变化后、Relay 已 Ready 的前提下执行有界 Direct
+recovery；新 transport 始终创建新的 ConnectionSession、SessionId 与 Noise root。
 
 ### 2.6 Relay 只做透明转发
 

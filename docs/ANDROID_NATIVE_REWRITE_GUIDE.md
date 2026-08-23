@@ -1,6 +1,6 @@
-# SSH Mobile Android 原生复写零基础教程
+> 最新更新时间：2026-08-23
 
-> 最新更新时间：2026-08-09
+# SSH Mobile Android 原生复写零基础教程
 
 这是一份从 0 开始复写 SSH Mobile 的 Android 原生教程。它假设你只学过传统 Java + XML Android 开发，现在想学习 Kotlin、Jetpack Compose 和 MVVM 架构，并用本项目已有功能做一个能投 Android 实习的作品。
 
@@ -36,57 +36,43 @@ D:/coding/ssh_mobile_android/
 ssh-mobile-native/
 ```
 
-当前 Flutter 项目只作为功能参考。它采用纯 feature-first MVVM：功能自有的 model、service、ViewModel、view 和 widget 位于 `lib/features/<feature>/`，共享 UI 位于 `lib/widgets/` 与 `lib/theme/`，协议、存储和平台基础设施位于 `lib/services/`、`lib/core/services/` 与 `lib/data/`。你在做 Android 原生版时，应该先看“状态和动作在谁手里”，再看具体页面怎么摆。
+当前 Flutter 项目只作为功能参考。它采用 package-first MVVM：产品 Feature 位于
+`packages/features/feature_*`，共享契约与 UI 位于 `packages/core/`，SSH 与 Network
+运行时位于 `packages/infrastructure/`，Full App 的组合根、Port Adapter 和 App Scope
+后端位于 `apps/ssh_mobile_full/lib/app/` 与 `lib/services/`。你在做 Android 原生版时，
+应该先看“状态和动作在谁手里”，再看具体页面怎么摆。
 
 先看 MVVM / feature 层：
 
 | 当前 Flutter 文件 | 你要在 Android 原生版实现的功能 |
 | --- | --- |
-| `lib/main.dart` | Provider 装配入口，决定全局依赖怎么注入 |
-| `lib/features/connection/models/connection.dart` | 服务器配置模型 |
-| `lib/features/connection/viewmodels/connection_viewmodel.dart` | 服务器列表、保存、删除、校验和 SSH 验证状态 |
-| `lib/features/connection/views/add_edit_screen.dart` | 服务器新增/编辑表单 |
-| `lib/features/settings/viewmodels/settings_viewmodel.dart` | 语言、主题、安全/隐私、备份和开发者设置 |
-| `lib/features/terminal/viewmodels/terminal_session_viewmodel.dart` | 终端会话级状态与动作 |
-| `lib/features/terminal/viewmodels/terminal_history_viewmodel.dart` | 终端历史状态与动作 |
-| `lib/features/terminal/viewmodels/terminal_windows_viewmodel.dart` | 终端窗口总览与恢复状态 |
-| `lib/features/sftp/viewmodels/sftp_viewmodel.dart` | SFTP 连接、路径、目录项和文件操作状态 |
-| `lib/features/performance/viewmodels/performance_viewmodel.dart` | 监控页 tab、选中服务器和采样状态 |
-| `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart` | AI 聊天会话、流式输出、审批和工具运行状态 |
-| `lib/features/ai_chat/services/` | AI 聊天上下文构建、生成执行、消息映射、token 估算和 metrics 持久化 |
+| `apps/ssh_mobile_full/lib/app/` | Provider 装配、`AppRuntime` 生命周期与路由聚合 |
+| `packages/core/connection_core/` | 服务器配置模型、Repository、数据库与凭据契约 |
+| `packages/features/feature_connection/` | 服务器列表编辑状态、校验与新增/编辑表单 |
+| `apps/ssh_mobile_full/lib/features/settings/` | 语言、主题、安全/隐私、备份和开发者设置 |
+| `packages/features/feature_terminal/` | 终端会话、历史、窗口总览与页面状态 |
+| `packages/features/feature_sftp/` | SFTP 路由、路径、目录项、编辑与预览状态 |
+| `packages/features/feature_monitoring/` | 监控采样、解析、Tab 与服务器选择状态 |
+| `packages/features/feature_ai/` | AI Chat、Agent、Skills、LLM、审批和 Tool 编排 |
 
 再看基础设施和页面壳：
 
 | 当前 Flutter 文件 | 你要在 Android 原生版实现的功能 |
 | --- | --- |
-| `packages/core/connection_core/`、`packages/features/feature_ai/` 等 | 按模块划分的数据库、Repository、偏好、密钥和备份边界；Android 版也应按 Owner 拆分，禁止复制一个统一存储门面 |
-| `lib/services/ssh_service.dart` | SSH 会话、多窗口、tmux |
-| `lib/services/sftp_service.dart` | SFTP 文件管理 |
-| `lib/services/performance_monitor_service.dart` | 性能监控 |
-| `lib/services/server_status_probe.dart` | Linux / Windows 只读状态命令和解析 |
-| `lib/features/ai_chat/services/llm_chat_service.dart` | AI 流式聊天编排与网络层 |
-| `lib/services/ai_tool_service.dart` | AI tools 和命令审批 |
-| `lib/services/client_system_tool_service.dart` | 手机本机工具 |
-| `lib/services/client_webview_service.dart` | 聊天绑定的客户端 WebView 状态 |
-| `lib/services/playbook_service.dart` | Playbook |
-| `lib/services/rag_service.dart` | RAG 知识库 |
-| `lib/services/system_admin_service.dart` | 系统管理 |
-| `lib/services/app_log_service.dart` | 开发日志 |
-| `lib/features/home/views/home_screen.dart` | 主导航壳、服务器列表和设置入口 |
-| `lib/features/startup/views/startup_screen.dart` | 启动页 |
-| `lib/features/terminal/views/terminal_screen.dart` | 终端页入口 |
-| `lib/features/terminal/views/terminal_windows_screen.dart` | 终端窗口总览 |
-| `lib/features/terminal/views/terminal_history_screen.dart` | 终端历史 |
-| `lib/features/sftp/views/sftp_screen.dart` | SFTP 页入口 |
-| `lib/features/sftp/views/sftp_editor_screen.dart` | 远程文本编辑 |
-| `lib/features/sftp/views/sftp_file_viewer_screen.dart` | 文件预览 |
-| `lib/features/ai_chat/views/llm_chat_screen.dart` | AI 页入口 |
-| `lib/features/ai_skills/views/ai_skills_screen.dart` | 自定义 AI Skills 管理 |
-| `lib/features/client_webview/views/client_webview_screen.dart` | 聊天绑定的客户端 WebView |
-| `lib/features/developer_log/views/developer_log_screen.dart` | 开发日志 |
-| `lib/features/playbook/views/playbook_screen.dart` | Playbook |
-| `lib/features/rag/views/rag_knowledge_screen.dart` | RAG 知识库 |
-| `lib/features/system_admin/views/system_admin_screen.dart` | 系统管理与内置性能监控 |
+| `packages/core/connection_core/`、`packages/features/feature_ai/` 等 | 按模块划分的数据库、Repository、偏好、密钥和备份边界；Android 版也应按 Owner 拆分，禁止复制统一存储门面 |
+| `packages/infrastructure/ssh_core/` 与 Full App SSH adapter | SSH Session、Lease/Pool、多窗口和 tmux 生命周期 |
+| `packages/features/feature_sftp/` 与 Full App SFTP adapter | SFTP 文件管理与 App Scope 协议后端 |
+| `packages/features/feature_monitoring/` | Linux/Windows 状态命令、后台解析和监控状态 |
+| `packages/features/feature_ai/` | AI 流式聊天、Agent Tool、安全审批与 Skills |
+| `apps/ssh_mobile_full/lib/services/client_system_tool_service.dart` | 手机本机工具的 App adapter |
+| `packages/features/feature_webview/` | 聊天绑定的客户端 WebView 状态与安全策略 |
+| `packages/features/feature_playbook/` | Playbook 编辑、审批绑定与执行 |
+| `packages/features/feature_rag/` | RAG 知识库与有界缓存 |
+| `packages/features/feature_system_admin/` | 系统管理与内置性能监控 |
+| `apps/ssh_mobile_full/lib/services/app_log_service.dart` | App 日志 owner 与开发日志后端 |
+| `apps/ssh_mobile_full/lib/features/home/`、`apps/ssh_mobile_full/lib/features/startup/` | 主导航壳与启动页 |
+| `packages/features/feature_terminal/`、`packages/features/feature_sftp/`、`packages/features/feature_ai/` | 终端、SFTP 与 AI 页面入口 |
+| `packages/features/feature_developer/` | 开发日志与诊断面板 |
 
 ## 1. 你现在的知识怎么迁移
 

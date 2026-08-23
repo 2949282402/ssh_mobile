@@ -1,11 +1,11 @@
-最新更新时间：2026-08-13
+最新更新时间：2026-08-23
 
 # ssh_mobile_full
 
 ## 职责
 
 Full App 是 SSH Mobile 的完整 App Shell 和组合根，负责启动协调、`AppRuntime`
-生命周期、路由聚合、App Port 适配器以及仍在迁移期使用的兼容桥。
+生命周期、路由聚合、App Port 适配器以及兼容清单中明确保留的 App Scope 后端。
 
 ## 不负责什么
 
