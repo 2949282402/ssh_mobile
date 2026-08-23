@@ -1,4 +1,4 @@
-> Last updated: 2026-08-22
+> Last updated: 2026-08-23
 
 # Project Memory
 
@@ -67,6 +67,11 @@ Flutter runner workaround are maintained in
 [`docs/COVERAGE_POLICY.md`](../docs/COVERAGE_POLICY.md).
 New hand-written production files have the stricter 90% file-level coverage
 and corresponding-test requirement documented there.
+
+The native Windows PowerShell 7 MSI packaging and client validation workflow is
+maintained in [`client/current-state.md`](client/current-state.md). It is
+platform-specific evidence and must keep any WSL or WiX ICE environment gap
+visible.
 
 Maintenance rules are defined by
 [Skill & Memory Maintenance](../docs/agent/skill-memory-maintenance.md).
