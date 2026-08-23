@@ -1003,6 +1003,60 @@
       ]
     },
     {
+      "id": "flow.cancelled_connect_reconnect",
+      "category": "peer-lifecycle",
+      "acceptance": "Cancelling a coordinator-owned connect retires its exact Session and permits a second real connect to reach Resolve and Offer with a distinct SessionId; stale cleanup cannot retire the replacement.",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "cancelled_connect_can_immediately_start_second_connect"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/tests/connectivity_attempt.rs",
+          "contains": [
+            "cancelled_connect_can_immediately_start_second_connect",
+            "second coordinator must own a new Session before Offer release",
+            "stale cancellation cleanup must not retire the replacement Session",
+            "connect_with_class"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow.timeout_connect_reconnect",
+      "category": "peer-lifecycle",
+      "acceptance": "An overall connect timeout retires its exact Session and permits a second real coordinator connect to reach Resolve and Offer with a distinct SessionId; stale timeout cleanup cannot retire the replacement.",
+      "status": "covered",
+      "behavioral_verification": {
+        "kind": "owner_behavior_test",
+        "tests": [
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "overall_timeout_allows_real_second_connect"
+          }
+        ]
+      },
+      "evidence": [
+        {
+          "path": "native/network_core/crates/network-core/src/tests/connectivity_attempt.rs",
+          "contains": [
+            "overall_timeout_allows_real_second_connect",
+            "second coordinator must reach Offer with a new Session",
+            "stale timeout cleanup must not retire the replacement Session",
+            "OVERALL_CONNECT_BUDGET"
+          ]
+        }
+      ]
+    },
+    {
       "id": "relay.protocol_frame_validation",
       "category": "relay-control-protocol",
       "acceptance": "Malformed, wrong-direction, wrong-version, and inconsistent discovery frames fail closed before routing.",

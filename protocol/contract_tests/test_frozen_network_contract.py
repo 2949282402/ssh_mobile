@@ -70,6 +70,8 @@ REQUIRED_CASE_IDS = {
     "ownership.relay_tracker_stale_owner",
     "relay.control_auth_disconnect_reconnect",
     "flow.connection_boundary_failures",
+    "flow.cancelled_connect_reconnect",
+    "flow.timeout_connect_reconnect",
     "relay.protocol_frame_validation",
     "security.direct_disabled_business",
     "security.required_disabled_mismatch",
