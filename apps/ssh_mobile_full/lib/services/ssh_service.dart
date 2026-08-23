@@ -29,6 +29,104 @@ part 'ssh/ssh_session_metadata.dart';
 
 typedef TerminalHistoryRecord = terminal_metadata.TerminalHistoryRecord;
 
+/// 独占 flutter_background_service 的事件订阅与撤销。
+final class _SshBackgroundEventBridge {
+  _SshBackgroundEventBridge({
+    required this.service,
+    required this.onState,
+    required this.onOutput,
+    required this.onOverview,
+    required this.onLog,
+  });
+
+  final FlutterBackgroundService service;
+  final void Function(Map<String, dynamic> data) onState;
+  final void Function(Map<String, dynamic> data) onOutput;
+  final void Function(Map<String, dynamic> data) onOverview;
+  final void Function(Map<String, dynamic>? data) onLog;
+  StreamSubscription<Map<String, dynamic>?>? _state;
+  StreamSubscription<Map<String, dynamic>?>? _output;
+  StreamSubscription<Map<String, dynamic>?>? _overview;
+  StreamSubscription<Map<String, dynamic>?>? _log;
+
+  int get activeSubscriptionCount => <Object?>[
+    _state,
+    _output,
+    _overview,
+    _log,
+  ].where((subscription) => subscription != null).length;
+
+  void start() {
+    cancel();
+    _state = service.on('sshStateChanged').listen((data) {
+      if (data != null) onState(data);
+    });
+    _output = service.on('sshDataReceived').listen((data) {
+      if (data != null) onOutput(data);
+    });
+    _overview = service.on('sshOverviewUpdated').listen((data) {
+      if (data != null) onOverview(data);
+    });
+    _log = service.on('sshLogReceived').listen(onLog);
+  }
+
+  void cancel() {
+    _state?.cancel();
+    _state = null;
+    _output?.cancel();
+    _output = null;
+    _overview?.cancel();
+    _overview = null;
+    _log?.cancel();
+    _log = null;
+  }
+}
+
+/// 将 SSH Owner 的可变 session registry 投影为稳定 UI 快照。
+final class _SshSessionProjection {
+  const _SshSessionProjection();
+
+  ({List<SshSession> sessions, SshServerOverviewSnapshot overview}) project(
+    Iterable<SshSession> source,
+  ) {
+    final sessions = source.toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final byConnection = <String, SshConnectionOverview>{};
+    for (final session in sessions) {
+      final id = session.connectionId;
+      final current = byConnection[id];
+      byConnection[id] = SshConnectionOverview(
+        count: (current?.count ?? 0) + 1,
+        latestState: _latestState(current?.latestState, session.state),
+        hasConnected:
+            (current?.hasConnected ?? false) ||
+            session.state == SshConnectionState.connected,
+      );
+    }
+    return (
+      sessions: List<SshSession>.unmodifiable(sessions),
+      overview: SshServerOverviewSnapshot(
+        byConnection: byConnection,
+        windowCount: sessions.length,
+      ),
+    );
+  }
+
+  SshConnectionState _latestState(
+    SshConnectionState? current,
+    SshConnectionState next,
+  ) {
+    const precedence = <SshConnectionState, int>{
+      SshConnectionState.disconnected: 0,
+      SshConnectionState.error: 1,
+      SshConnectionState.connecting: 2,
+      SshConnectionState.connected: 3,
+    };
+    if (current == null) return next;
+    return precedence[next]! > precedence[current]! ? next : current;
+  }
+}
+
 /// SSH 会话管理器。每个连接最多可以有多个 SshSession（窗口）。
 ///
 /// 双模架构：
@@ -56,6 +154,9 @@ class SshService extends ChangeNotifier
   final FlutterBackgroundService _backgroundService =
       FlutterBackgroundService();
   final TerminalHistoryService _historyService = TerminalHistoryService();
+  final _SshSessionProjection _sessionProjection =
+      const _SshSessionProjection();
+  late final _SshBackgroundEventBridge _backgroundBridge;
 
   final Map<String, SshSession> _sessions = {};
   final Map<String, ConnectionTargetBinding> _sessionTargetBindings = {};
@@ -69,10 +170,6 @@ class SshService extends ChangeNotifier
   List<SshSession> _sessionsView = const [];
   SshServerOverviewSnapshot _serverOverviewSnapshot =
       const SshServerOverviewSnapshot.empty();
-  StreamSubscription<Map<String, dynamic>?>? _stateSub;
-  StreamSubscription<Map<String, dynamic>?>? _outputSub;
-  StreamSubscription<Map<String, dynamic>?>? _keepAliveSub;
-  StreamSubscription<Map<String, dynamic>?>? _appLogSub;
   String? _lastSessionId;
   String? _lastErrorMessage;
   bool _restoredTmuxSessions = false;
@@ -96,6 +193,13 @@ class SshService extends ChangeNotifier
        _appSettings = appSettings,
        _nativeStreamConnector = nativeStreamConnector,
        _peerIdResolver = peerIdResolver {
+    _backgroundBridge = _SshBackgroundEventBridge(
+      service: _backgroundService,
+      onState: _handleBackgroundState,
+      onOutput: _handleBackgroundOutput,
+      onOverview: _handleBackgroundOverview,
+      onLog: handleBackgroundLog,
+    );
     StartupInstrumentation.instance.recordServiceConstructed('SshService');
   }
 
@@ -200,12 +304,7 @@ class SshService extends ChangeNotifier
   int get leaseCount => _coreSessionPool.activeLeaseCount;
 
   /// SSH Service 当前已登记的后台事件订阅数量。
-  int get activeSubscriptionCount => [
-    _stateSub,
-    _outputSub,
-    _keepAliveSub,
-    _appLogSub,
-  ].where((subscription) => subscription != null).length;
+  int get activeSubscriptionCount => _backgroundBridge.activeSubscriptionCount;
 
   /// SSH Pool 当前等待空闲回收的 Timer 数量。
   int get activeTimerCount => _coreSessionPool.idleTimerCount;
@@ -800,93 +899,70 @@ class SshService extends ChangeNotifier
   }
 
   void _listenToBackgroundService() {
-    _cancelBackgroundSubscriptions();
-    _stateSub = _backgroundService.on('sshStateChanged').listen((data) {
-      if (data == null) return;
-      final String sessionId = data['sessionId'];
-      final String stateName = data['state'];
-      final String? error = data['errorMessage'];
-
-      final state = SshConnectionState.values.firstWhere(
-        (e) => e.name == stateName,
-        orElse: () => SshConnectionState.disconnected,
-      );
-
-      final session = _sessions[sessionId];
-      if (session != null) {
-        session.state = state;
-        session.errorMessage = error;
-        session.updatedAt = DateTime.now();
-
-        if (state == SshConnectionState.connected) {
-          final completer = _connectCompleters.remove(sessionId);
-          completer?.complete();
-        } else if (state == SshConnectionState.error) {
-          final completer = _connectCompleters.remove(sessionId);
-          completer?.completeError(StateError(error ?? 'Connection failed'));
-        }
-
-        unawaited(_saveTerminalHistoryRecord(session));
-        _notifySessionMetadataChanged();
-      }
-    });
-
-    _outputSub = _backgroundService.on('sshDataReceived').listen((data) {
-      if (data == null) return;
-      final String sessionId = data['sessionId'];
-      final String text = data['data'];
-
-      final session = _sessions[sessionId];
-      if (session != null) {
-        session.addOutput(text);
-        unawaited(_historyService.append(sessionId, text));
-      }
-    });
-
-    _keepAliveSub = _backgroundService.on('sshOverviewUpdated').listen((data) {
-      if (data == null) return;
-      final overviewMap = data['overview'] as Map;
-      final windowCount = data['windowCount'] as int;
-
-      final byConnection = <String, SshConnectionOverview>{};
-      for (final entry in overviewMap.entries) {
-        final val = entry.value as Map;
-        final latestStateName = val['latestState'] as String?;
-        final state = latestStateName == null
-            ? null
-            : SshConnectionState.values.firstWhere(
-                (e) => e.name == latestStateName,
-                orElse: () => SshConnectionState.disconnected,
-              );
-
-        byConnection[entry.key as String] = SshConnectionOverview(
-          count: val['count'] as int,
-          latestState: state,
-          hasConnected: val['hasConnected'] as bool,
-        );
-      }
-
-      _serverOverviewSnapshot = SshServerOverviewSnapshot(
-        byConnection: byConnection,
-        windowCount: windowCount,
-      );
-      notifyListeners();
-    });
-
-    _appLogSub = _backgroundService
-        .on('sshLogReceived')
-        .listen(handleBackgroundLog);
+    _backgroundBridge.start();
   }
 
-  void _cancelBackgroundSubscriptions() {
-    _stateSub?.cancel();
-    _stateSub = null;
-    _outputSub?.cancel();
-    _outputSub = null;
-    _keepAliveSub?.cancel();
-    _keepAliveSub = null;
-    _appLogSub?.cancel();
-    _appLogSub = null;
+  void _handleBackgroundState(Map<String, dynamic> data) {
+    final String sessionId = data['sessionId'];
+    final String stateName = data['state'];
+    final String? error = data['errorMessage'];
+    final state = SshConnectionState.values.firstWhere(
+      (candidate) => candidate.name == stateName,
+      orElse: () => SshConnectionState.disconnected,
+    );
+
+    final session = _sessions[sessionId];
+    if (session == null) return;
+    session.state = state;
+    session.errorMessage = error;
+    session.updatedAt = DateTime.now();
+
+    if (state == SshConnectionState.connected) {
+      _connectCompleters.remove(sessionId)?.complete();
+    } else if (state == SshConnectionState.error) {
+      _connectCompleters
+          .remove(sessionId)
+          ?.completeError(StateError(error ?? 'Connection failed'));
+    }
+
+    unawaited(_saveTerminalHistoryRecord(session));
+    _notifySessionMetadataChanged();
+  }
+
+  void _handleBackgroundOutput(Map<String, dynamic> data) {
+    final String sessionId = data['sessionId'];
+    final String text = data['data'];
+    final session = _sessions[sessionId];
+    if (session == null) return;
+    session.addOutput(text);
+    unawaited(_historyService.append(sessionId, text));
+  }
+
+  void _handleBackgroundOverview(Map<String, dynamic> data) {
+    final overviewMap = data['overview'] as Map;
+    final windowCount = data['windowCount'] as int;
+    final byConnection = <String, SshConnectionOverview>{};
+    for (final entry in overviewMap.entries) {
+      final val = entry.value as Map;
+      final latestStateName = val['latestState'] as String?;
+      final state = latestStateName == null
+          ? null
+          : SshConnectionState.values.firstWhere(
+              (candidate) => candidate.name == latestStateName,
+              orElse: () => SshConnectionState.disconnected,
+            );
+      byConnection[entry.key as String] = SshConnectionOverview(
+        count: val['count'] as int,
+        latestState: state,
+        hasConnected: val['hasConnected'] as bool,
+      );
+    }
+
+    _serverOverviewSnapshot = SshServerOverviewSnapshot(
+      byConnection: byConnection,
+      windowCount: windowCount,
+    );
+    notifyListeners();
   }
 
   @visibleForTesting
@@ -904,50 +980,10 @@ class SshService extends ChangeNotifier
   }
 
   void _refreshSessionsView() {
-    _sessionsView = List.unmodifiable(
-      _sessions.values.toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt)),
-    );
-
+    final projection = _sessionProjection.project(_sessions.values);
+    _sessionsView = projection.sessions;
     if (!_usesBackgroundService) {
-      final byConnection = <String, SshConnectionOverview>{};
-      for (final session in _sessions.values) {
-        final connId = session.connectionId;
-        final current = byConnection[connId];
-        if (current == null) {
-          byConnection[connId] = SshConnectionOverview(
-            count: 1,
-            latestState: session.state,
-            hasConnected: session.state == SshConnectionState.connected,
-          );
-        } else {
-          final SshConnectionState newState;
-          if (current.latestState == SshConnectionState.connected ||
-              session.state == SshConnectionState.connected) {
-            newState = SshConnectionState.connected;
-          } else if (current.latestState == SshConnectionState.connecting ||
-              session.state == SshConnectionState.connecting) {
-            newState = SshConnectionState.connecting;
-          } else if (current.latestState == SshConnectionState.error ||
-              session.state == SshConnectionState.error) {
-            newState = SshConnectionState.error;
-          } else {
-            newState = SshConnectionState.disconnected;
-          }
-
-          byConnection[connId] = SshConnectionOverview(
-            count: current.count + 1,
-            latestState: newState,
-            hasConnected:
-                current.hasConnected ||
-                session.state == SshConnectionState.connected,
-          );
-        }
-      }
-      _serverOverviewSnapshot = SshServerOverviewSnapshot(
-        byConnection: byConnection,
-        windowCount: _sessions.length,
-      );
+      _serverOverviewSnapshot = projection.overview;
     }
   }
 
@@ -958,10 +994,7 @@ class SshService extends ChangeNotifier
   @override
   void dispose() {
     unawaited(_coreSessionPool.close());
-    _stateSub?.cancel();
-    _outputSub?.cancel();
-    _keepAliveSub?.cancel();
-    _appLogSub?.cancel();
+    _backgroundBridge.cancel();
     // Terminal 输出历史的写队列由 SSH Owner 负责在关闭时排空并释放。
     unawaited(_historyService.dispose());
     for (final runtime in _localRuntimes.values) {

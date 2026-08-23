@@ -1,4 +1,4 @@
-最新更新时间：2026-08-13
+最新更新时间：2026-08-24
 
 # ssh_mobile_full 维护约束
 
@@ -34,6 +34,15 @@ App Shell 只维护 `app_logs`；Feature/Core 数据库由各自 Module/Reposito
 `AppRuntime` 是 App Scope Network、SSH、Logger、Module 和适配器的 Owner；必须提供
 `dispose/close/cancel/release`，并在 debug 断言中检查可观测的 Timer、Subscription、
 Lease 和 native handle 已释放。Route Scope 只释放自己的 ViewModel 资源。
+
+`BackgroundServiceManager` 只拥有 UI isolate 的通知、权限、power lock 和平台服务
+启停；后台入口点创建的 `_BackgroundSshRuntime` 独占后台 session registry、SSH/tmux、
+keepalive Timer 和事件订阅。不得把 isolate session 状态放回静态 Manager。
+
+`SshService` 保留 App Scope SSH session/command Owner；后台插件订阅统一归
+`_SshBackgroundEventBridge`，UI 快照统一归 `_SshSessionProjection`。Network V2 公开
+codec 只能组合 command encoder 和实际 wire tag 对应的 typed decoder，不得复制 schema
+或为不存在的 Realtime tag 建立伪适配层。
 
 ## 必须运行的测试
 

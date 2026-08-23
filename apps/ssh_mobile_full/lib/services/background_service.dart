@@ -390,8 +390,19 @@ BackgroundReconnectDecision decideBackgroundUnexpectedDisconnect({
 }
 
 @pragma('vm:entry-point')
-void sshBackgroundServiceEntryPoint(ServiceInstance service) {
-  final sessions = <String, _BackgroundSshSession>{};
+void sshBackgroundServiceEntryPoint(ServiceInstance service) =>
+    _BackgroundSshRuntime(service).start();
+
+/// 后台 isolate 的 SSH session、事件订阅、tmux 和 keepalive 生命周期 Owner。
+///
+/// UI isolate 的 [BackgroundServiceManager] 只负责平台前台服务和电源资源；本类
+/// 只消费 [ServiceInstance] 事件总线，不调用通知权限或 power MethodChannel。
+final class _BackgroundSshRuntime {
+  /// 为一个后台 isolate service 创建独立运行时。
+  _BackgroundSshRuntime(this.service);
+
+  final ServiceInstance service;
+  final Map<String, _BackgroundSshSession> sessions = {};
 
   void emitLog(String level, String message, {String? details}) {
     service.invoke('sshLogReceived', {
@@ -422,9 +433,10 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
   }
 
   void setNotification(String content) {
-    if (service is AndroidServiceInstance) {
-      service.setAsForegroundService();
-      service.setForegroundNotificationInfo(
+    final instance = service;
+    if (instance is AndroidServiceInstance) {
+      instance.setAsForegroundService();
+      instance.setForegroundNotificationInfo(
         title: 'SSH Mobile',
         content: content,
       );
@@ -510,8 +522,6 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     }
     setNotification('SSH service is running');
   }
-
-  late Future<void> Function(Map<String, dynamic> data) connectSsh;
 
   Future<void> handleUnexpectedDisconnect(
     _BackgroundSshSession runtime,
@@ -601,7 +611,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     );
   }
 
-  connectSsh = (Map<String, dynamic> data) async {
+  Future<void> connectSsh(Map<String, dynamic> data) async {
     final sessionId = data['sessionId'] as String?;
     if (sessionId == null || sessionId.isEmpty) {
       emitLog('warning', 'Ignoring sshConnect without sessionId');
@@ -851,78 +861,82 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       );
       setNotification('SSH connection failed');
     }
-  };
+  }
 
-  setNotification('SSH service is running');
-  emitLog('service', 'Background SSH service started');
+  /// 注册后台事件订阅并发布初始运行状态。
+  void start() {
+    setNotification('SSH service is running');
+    emitLog('service', 'Background SSH service started');
 
-  service.on('sshConnect').listen((event) {
-    if (event != null) {
-      emitLog(
-        'service',
-        'Received sshConnect request',
-        details: 'sessionId=${event['sessionId']} connection=${event['name']}',
-      );
-      unawaited(connectSsh(event));
-    }
-  });
+    service.on('sshConnect').listen((event) {
+      if (event != null) {
+        emitLog(
+          'service',
+          'Received sshConnect request',
+          details:
+              'sessionId=${event['sessionId']} connection=${event['name']}',
+        );
+        unawaited(connectSsh(event));
+      }
+    });
 
-  service.on('sshInput').listen((event) {
-    final sessionId = event?['sessionId'] as String?;
-    final data = event?['data'] as String?;
-    final session = sessionId == null ? null : sessions[sessionId];
-    if (data != null && session != null) {
-      session.shell.stdin.add(utf8.encode(data));
-    } else if (sessionId != null) {
-      emitLog(
-        'warning',
-        'Ignoring input for missing SSH session',
-        details: 'sessionId=$sessionId',
-      );
-    }
-  });
+    service.on('sshInput').listen((event) {
+      final sessionId = event?['sessionId'] as String?;
+      final data = event?['data'] as String?;
+      final session = sessionId == null ? null : sessions[sessionId];
+      if (data != null && session != null) {
+        session.shell.stdin.add(utf8.encode(data));
+      } else if (sessionId != null) {
+        emitLog(
+          'warning',
+          'Ignoring input for missing SSH session',
+          details: 'sessionId=$sessionId',
+        );
+      }
+    });
 
-  service.on('sshResize').listen((event) {
-    final sessionId = event?['sessionId'] as String?;
-    final width = (event?['width'] as num?)?.toInt();
-    final height = (event?['height'] as num?)?.toInt();
-    final session = sessionId == null ? null : sessions[sessionId];
-    if (width != null && height != null && session != null) {
-      session.shell.resizeTerminal(width, height);
-      emitLog(
-        'service',
-        'Resized SSH terminal',
-        details: 'sessionId=$sessionId size=${width}x$height',
-      );
-    }
-  });
+    service.on('sshResize').listen((event) {
+      final sessionId = event?['sessionId'] as String?;
+      final width = (event?['width'] as num?)?.toInt();
+      final height = (event?['height'] as num?)?.toInt();
+      final session = sessionId == null ? null : sessions[sessionId];
+      if (width != null && height != null && session != null) {
+        session.shell.resizeTerminal(width, height);
+        emitLog(
+          'service',
+          'Resized SSH terminal',
+          details: 'sessionId=$sessionId size=${width}x$height',
+        );
+      }
+    });
 
-  service.on('sshDisconnect').listen((event) {
-    final sessionId = event?['sessionId'] as String?;
-    if (sessionId != null) {
-      emitLog(
-        'service',
-        'Received sshDisconnect request',
-        details: 'sessionId=$sessionId',
-      );
-      unawaited(closeSsh(sessionId, destroyTmux: true));
-    }
-  });
+    service.on('sshDisconnect').listen((event) {
+      final sessionId = event?['sessionId'] as String?;
+      if (sessionId != null) {
+        emitLog(
+          'service',
+          'Received sshDisconnect request',
+          details: 'sessionId=$sessionId',
+        );
+        unawaited(closeSsh(sessionId, destroyTmux: true));
+      }
+    });
 
-  service.on('sshDisconnectAll').listen((event) async {
-    emitLog('service', 'Received sshDisconnectAll request');
-    await closeAll();
-  });
+    service.on('sshDisconnectAll').listen((event) async {
+      emitLog('service', 'Received sshDisconnectAll request');
+      await closeAll();
+    });
 
-  service.on('update').listen((event) {
-    setNotification(event?['content'] as String? ?? 'SSH service is running');
-  });
+    service.on('update').listen((event) {
+      setNotification(event?['content'] as String? ?? 'SSH service is running');
+    });
 
-  service.on('stopService').listen((event) async {
-    emitLog('service', 'Stopping background SSH service');
-    await closeAll(notify: false);
-    service.stopSelf();
-  });
+    service.on('stopService').listen((event) async {
+      emitLog('service', 'Stopping background SSH service');
+      await closeAll(notify: false);
+      service.stopSelf();
+    });
+  }
 }
 
 class _BackgroundSshSession {
