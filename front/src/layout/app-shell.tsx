@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
@@ -27,26 +27,106 @@ const pageNames: Record<string, string> = {
   '/access': '注册授权',
 };
 
+const NAV_FOCUSABLE_SELECTOR = [
+  'button:not([disabled])',
+  '[href]',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 export function AppShell({ username }: { username: string }) {
   const [navOpen, setNavOpen] = useState(false);
   const location = useLocation();
   const queryClient = useQueryClient();
   const toast = useToast();
+  const sidebarRef = useRef<HTMLElement>(null);
+  const openNavButtonRef = useRef<HTMLButtonElement>(null);
+  const closeNavButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreNavFocusRef = useRef(false);
+  const previousPathRef = useRef(location.pathname);
   const logoutMutation = useMutation({
     mutationFn: () => authApi.logout(),
     onSuccess: () => {
-      queryClient.clear();
-      void queryClient.invalidateQueries({ queryKey: queryKeys.auth });
+      void queryClient.cancelQueries({ queryKey: ['relay'] });
+      void queryClient.cancelQueries({ queryKey: queryKeys.auth, exact: true });
+      queryClient.removeQueries({ queryKey: ['relay'] });
+      queryClient.setQueryData(queryKeys.auth, {
+        authenticated: false,
+        username: '',
+      });
     },
     onError: () => toast.push('退出登录失败，请重试。', 'error'),
   });
 
-  const closeNav = () => setNavOpen(false);
+  const closeNav = useCallback(() => {
+    restoreNavFocusRef.current = true;
+    setNavOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (navOpen) {
+      closeNavButtonRef.current?.focus();
+      return;
+    }
+    if (restoreNavFocusRef.current) {
+      restoreNavFocusRef.current = false;
+      openNavButtonRef.current?.focus();
+    }
+  }, [navOpen]);
+
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeNav();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+
+      const sidebar = sidebarRef.current;
+      if (!sidebar) return;
+      const focusable = Array.from(sidebar.querySelectorAll<HTMLElement>(NAV_FOCUSABLE_SELECTOR));
+      if (focusable.length === 0) {
+        event.preventDefault();
+        sidebar.focus();
+        return;
+      }
+      const activeIndex = focusable.indexOf(document.activeElement as HTMLElement);
+      const nextIndex = event.shiftKey
+        ? activeIndex <= 0 ? focusable.length - 1 : activeIndex - 1
+        : activeIndex === focusable.length - 1 ? 0 : activeIndex + 1;
+      if (activeIndex === -1) {
+        event.preventDefault();
+        focusable[event.shiftKey ? focusable.length - 1 : 0]?.focus();
+        return;
+      }
+      event.preventDefault();
+      focusable[nextIndex]?.focus();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [closeNav, navOpen]);
+
+  useEffect(() => {
+    if (previousPathRef.current === location.pathname) return;
+    previousPathRef.current = location.pathname;
+    if (navOpen) closeNav();
+  }, [closeNav, location.pathname, navOpen]);
 
   return (
     <div className="app-shell">
-      <div className={`nav-scrim${navOpen ? ' nav-scrim--visible' : ''}`} onClick={closeNav} />
-      <aside className={`sidebar${navOpen ? ' sidebar--open' : ''}`}>
+      <div
+        className={`nav-scrim${navOpen ? ' nav-scrim--visible' : ''}`}
+        aria-hidden="true"
+        onClick={closeNav}
+      />
+      <aside
+        id="primary-navigation"
+        ref={sidebarRef}
+        className={`sidebar${navOpen ? ' sidebar--open' : ''}`}
+        aria-label="Relay 导航"
+        tabIndex={-1}
+      >
         <div className="sidebar__head">
           <NavLink to="/overview" className="brand-lockup" onClick={closeNav}>
             <BrandMark />
@@ -55,7 +135,7 @@ export function AppShell({ username }: { username: string }) {
               <small>RELAY CONTROL</small>
             </span>
           </NavLink>
-          <IconButton label="关闭导航" onClick={closeNav} className="mobile-only">
+          <IconButton ref={closeNavButtonRef} label="关闭导航" onClick={closeNav} className="mobile-only">
             <X size={18} />
           </IconButton>
         </div>
@@ -85,8 +165,8 @@ export function AppShell({ username }: { username: string }) {
           <div className="memory-note">
             <span className="memory-note__icon"><RadioTower size={15} /></span>
             <div>
-              <strong>Memory-only relay</strong>
-              <span>服务重启后设备需重新注册</span>
+              <strong>Relay state</strong>
+              <span>持久化方式由部署配置决定</span>
             </div>
           </div>
           <div className="account-row">
@@ -106,10 +186,17 @@ export function AppShell({ username }: { username: string }) {
         </div>
       </aside>
 
-      <main className="content-shell">
+      <main className="content-shell" inert={navOpen} aria-hidden={navOpen || undefined}>
         <header className="topbar">
           <div className="topbar__left">
-            <IconButton label="打开导航" onClick={() => setNavOpen(true)} className="mobile-only">
+            <IconButton
+              ref={openNavButtonRef}
+              label="打开导航"
+              onClick={() => setNavOpen(true)}
+              className="mobile-only"
+              aria-expanded={navOpen}
+              aria-controls="primary-navigation"
+            >
               <Menu size={20} />
             </IconButton>
             <div>

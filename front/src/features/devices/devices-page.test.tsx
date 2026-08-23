@@ -48,7 +48,7 @@ describe('DevicesPage', () => {
     renderDevices();
 
     await waitFor(() => expect(screen.getByText('device-a')).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: '撤销' }));
+    await user.click(screen.getByRole('button', { name: '撤销设备 device-a' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '撤销设备' }));
 
@@ -113,7 +113,7 @@ describe('DevicesPage', () => {
     const { unmount } = renderDevices();
 
     await waitFor(() => expect(screen.getByText('device-a')).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: '撤销' }));
+    await user.click(screen.getByRole('button', { name: '撤销设备 device-a' }));
     await user.click(screen.getByRole('button', { name: '撤销设备' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(capturedSignal?.aborted).toBe(false);
@@ -131,10 +131,47 @@ describe('DevicesPage', () => {
     renderDevices();
 
     await waitFor(() => expect(screen.getByText('device-a')).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: '撤销' }));
+    await user.click(screen.getByRole('button', { name: '撤销设备 device-a' }));
     await user.click(screen.getByRole('button', { name: '撤销设备' }));
 
     await waitFor(() => expect(screen.getByText('设备仍在线')).toBeInTheDocument());
     expect(screen.getByText('device-a')).toBeInTheDocument();
+  });
+
+  it('marks retained devices as stale when a refresh fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(devices))
+      .mockImplementation(() => Promise.resolve(jsonResponse({
+        error: { code: 'unavailable', message: 'device refresh failed' },
+      }, 503)));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    renderDevices();
+
+    await waitFor(() => expect(screen.getByText('device-a')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '刷新设备' }));
+
+    await waitFor(() => expect(screen.getByText(/device refresh failed.*上次成功同步的数据/)).toBeInTheDocument());
+    expect(screen.getByText('device-a')).toBeInTheDocument();
+  });
+
+  it('removes a revoked device locally when the authoritative refresh fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(devices))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockImplementation(() => Promise.resolve(jsonResponse({
+        error: { code: 'unavailable', message: 'post-revoke refresh failed' },
+      }, 503)));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    renderDevices();
+
+    await waitFor(() => expect(screen.getByText('device-a')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '撤销设备 device-a' }));
+    await user.click(screen.getByRole('button', { name: '撤销设备' }));
+
+    await waitFor(() => expect(screen.getByText('还没有注册设备')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/post-revoke refresh failed.*上次成功同步的数据/)).toBeInTheDocument());
+    expect(screen.queryByText('device-a')).not.toBeInTheDocument();
   });
 });

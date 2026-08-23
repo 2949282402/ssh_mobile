@@ -115,6 +115,28 @@ describe('admin API client', () => {
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   });
 
+  it('rejects a late success response when fetch ignores caller cancellation', async () => {
+    const controller = new AbortController();
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = overviewApi.get(controller.signal);
+    controller.abort();
+    resolveFetch?.(jsonResponse({
+      server_time: 1_700_000_000,
+      uptime_seconds: 21,
+      devices: { enrolled: 2, online: 1 },
+      relay: { active_transfers: 0 },
+      runtime: { allocated_mem_mb: 12.34, goroutines: 7 },
+      presence_available: true,
+    }));
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   it('converts a stalled request into a bounded timeout error', async () => {
     vi.useFakeTimers();
     try {
@@ -143,11 +165,21 @@ describe('admin API client', () => {
       const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
       vi.stubGlobal('fetch', fetchMock);
 
-      await expect(request('/api/admin/v1/devices/device-a/revoke', overviewSchema, { method: 'POST' })).resolves.toBeUndefined();
+      await expect(authApi.logout()).resolves.toBeUndefined();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('validates an empty success response against the endpoint schema', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(overviewApi.get()).rejects.toMatchObject({
+      status: 204,
+      message: 'Relay 返回的数据格式无效。',
+    });
   });
 
   it('honors a caller signal that is already aborted before the request starts', async () => {

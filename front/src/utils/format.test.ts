@@ -57,10 +57,15 @@ describe('format utilities', () => {
       configurable: true,
       value: execCommand,
     });
+    const appendChild = vi.spyOn(document.body, 'appendChild');
 
     await copyToClipboard('fallback-value');
 
     expect(execCommand).toHaveBeenCalledWith('copy');
+    const textarea = appendChild.mock.calls[0]?.[0] as HTMLTextAreaElement;
+    expect(textarea).toHaveClass('clipboard-fallback');
+    expect(textarea).not.toHaveAttribute('style');
+    expect(textarea.value).toBe('');
     expect(document.querySelector('textarea')).toBeNull();
   });
 

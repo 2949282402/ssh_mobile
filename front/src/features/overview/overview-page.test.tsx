@@ -43,6 +43,7 @@ describe('OverviewPage', () => {
     await waitFor(() => expect(screen.getByText('1 台设备在线')).toBeInTheDocument());
     // The memory figure appears both in the metric tile and the runtime panel.
     expect(screen.getAllByText('12.34 MB').length).toBeGreaterThan(0);
+    expect(screen.getByText('由 Relay 部署配置决定')).toBeInTheDocument();
     expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
@@ -75,5 +76,24 @@ describe('OverviewPage', () => {
     await user.click(screen.getByRole('button', { name: '重试' }));
     await waitFor(() => expect(screen.getByText('1 台设备在线')).toBeInTheDocument());
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('marks retained data as stale when a refresh fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(overview))
+      .mockImplementation(() => Promise.resolve(jsonResponse({
+        error: { code: 'unavailable', message: 'overview refresh failed' },
+      }, 503)));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    renderOverview();
+
+    await waitFor(() => expect(screen.getByText('LIVE SNAPSHOT')).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '刷新状态' }));
+
+    await waitFor(() => expect(screen.getByText('STALE SNAPSHOT')).toBeInTheDocument());
+    expect(screen.getByText(/overview refresh failed.*上次成功同步的数据/)).toBeInTheDocument();
+    expect(screen.queryByText('LIVE SNAPSHOT')).not.toBeInTheDocument();
+    expect(screen.getByText('1 台设备在线')).toBeInTheDocument();
   });
 });

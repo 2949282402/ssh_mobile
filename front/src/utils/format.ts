@@ -35,11 +35,17 @@ export async function copyToClipboard(value: string) {
   const input = document.createElement('textarea');
   input.value = value;
   input.setAttribute('readonly', '');
-  input.style.position = 'fixed';
-  input.style.opacity = '0';
+  input.setAttribute('aria-hidden', 'true');
+  input.tabIndex = -1;
+  input.className = 'clipboard-fallback';
   document.body.appendChild(input);
-  input.select();
-  const copied = document.execCommand('copy');
-  input.remove();
+  let copied = false;
+  try {
+    input.select();
+    copied = typeof document.execCommand === 'function' && document.execCommand('copy');
+  } finally {
+    input.value = '';
+    input.remove();
+  }
   if (!copied) throw new Error('当前浏览器不支持复制。');
 }

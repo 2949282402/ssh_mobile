@@ -20,6 +20,12 @@ function isAbortError(error: unknown) {
   return error instanceof Error && error.name === 'AbortError';
 }
 
+function throwIfAborted(signal: AbortSignal) {
+  if (!signal.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new DOMException('Aborted', 'AbortError');
+}
+
 export async function request<T>(
   path: string,
   schema: z.ZodType<T>,
@@ -57,8 +63,10 @@ export async function request<T>(
         ...init?.headers,
       },
     });
+    throwIfAborted(requestController.signal);
 
     const body = await parseResponse(response);
+    throwIfAborted(requestController.signal);
     if (!response.ok) {
       const parsedError = parseApiError(body);
       const message = parsedError?.message ?? 'Relay 请求失败。';
@@ -72,11 +80,7 @@ export async function request<T>(
       throw new ApiRequestError(message, response.status, parsedError);
     }
 
-    if (response.status === 204) {
-      return undefined as T;
-    }
-
-    const parsed = schema.safeParse(body);
+    const parsed = schema.safeParse(response.status === 204 ? undefined : body);
     if (!parsed.success) {
       throw new ApiRequestError('Relay 返回的数据格式无效。', response.status);
     }
