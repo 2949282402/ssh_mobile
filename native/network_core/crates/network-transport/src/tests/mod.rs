@@ -231,28 +231,52 @@ async fn websocket_split_halves_deliver_duplex_binary_frames() {
         futures_util::SinkExt::send(&mut socket, Message::Pong(Vec::new().into()))
             .await
             .unwrap();
-        // Echo the first binary message back to the client.
-        if let Some(Ok(Message::Binary(payload))) = futures_util::StreamExt::next(&mut socket).await
-        {
-            futures_util::SinkExt::send(&mut socket, Message::Binary(payload))
-                .await
-                .unwrap();
-            // Keep the accepted socket alive until the client acknowledges
-            // the echo and sends its close frame. Dropping it immediately can
-            // reset the split reader before it consumes the binary payload.
-            while let Some(message) = futures_util::StreamExt::next(&mut socket).await {
-                match message.unwrap() {
-                    Message::Close(_) => {
-                        futures_util::SinkExt::close(&mut socket).await.unwrap();
-                        break;
-                    }
-                    Message::Ping(payload) => {
-                        futures_util::SinkExt::send(&mut socket, Message::Pong(payload))
-                            .await
-                            .unwrap();
-                    }
-                    _ => {}
+        // The client automatically answers the server Ping. Keep reading
+        // control frames until the actual binary payload arrives; otherwise
+        // a scheduler can make the automatic Pong look like the first frame
+        // and the test server would drop the socket before echoing anything.
+        loop {
+            let message = match futures_util::StreamExt::next(&mut socket).await {
+                Some(Ok(message)) => message,
+                Some(Err(error)) => panic!("server WebSocket read failed: {error}"),
+                None => return,
+            };
+            match message {
+                Message::Binary(payload) => {
+                    futures_util::SinkExt::send(&mut socket, Message::Binary(payload))
+                        .await
+                        .unwrap();
+                    break;
                 }
+                Message::Ping(payload) => {
+                    futures_util::SinkExt::send(&mut socket, Message::Pong(payload))
+                        .await
+                        .unwrap();
+                }
+                Message::Pong(_) => {}
+                Message::Close(_) => {
+                    futures_util::SinkExt::close(&mut socket).await.unwrap();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Keep the accepted socket alive until the client acknowledges the
+        // echo and sends its close frame. Dropping it immediately can reset
+        // the split reader before it consumes the binary payload.
+        while let Some(message) = futures_util::StreamExt::next(&mut socket).await {
+            match message.unwrap() {
+                Message::Close(_) => {
+                    futures_util::SinkExt::close(&mut socket).await.unwrap();
+                    break;
+                }
+                Message::Ping(payload) => {
+                    futures_util::SinkExt::send(&mut socket, Message::Pong(payload))
+                        .await
+                        .unwrap();
+                }
+                _ => {}
             }
         }
     });
