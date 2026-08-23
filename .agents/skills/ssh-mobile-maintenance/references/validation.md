@@ -49,6 +49,16 @@ git status --short
 Review the final diff for unrelated work, secrets, generated noise, stale
 documentation, and accidental public API/dependency changes.
 
+## New production source files
+
+Every newly added hand-written production source file requires corresponding
+independent tests in the owning test directory and at least 90% file-level
+line coverage. The 90% rule is stricter than the aggregate owner thresholds in
+the coverage scripts. Generated output, documentation, configuration,
+test-only files, and platform boilerplate without coverable business logic may
+be excluded only when the owner report records the reason; otherwise the
+change is incomplete.
+
 ## Repository local CI
 
 Use [`scripts/full_test.sh`](../../../../scripts/full_test.sh) as the WSL entry

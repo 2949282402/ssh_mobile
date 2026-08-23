@@ -20,6 +20,16 @@ for the missing boundary, error path, extreme value, or state transition.
 Tests that only execute a line without checking an observable result are not
 an acceptable way to satisfy this policy.
 
+## New-file requirement
+
+The 80% values below are aggregate owner baselines. Every newly added
+hand-written production source file has a stricter requirement: add
+corresponding independent tests in the owning test directory and reach at
+least 90% line coverage for that file. Generated output, documentation,
+configuration, test-only files, and platform boilerplate without coverable
+business logic are excluded only when the owner validation report records the
+reason. A new source file without this evidence is not ready for merge.
+
 ## Owner scopes
 
 | Gate | Scope | Threshold |

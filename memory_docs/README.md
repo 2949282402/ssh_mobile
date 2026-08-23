@@ -65,6 +65,8 @@ Each gate enforces an 80% threshold on its documented scope. The former
 gate. Scope, failure interpretation, Docker-backed services, and the WSL
 Flutter runner workaround are maintained in
 [`docs/COVERAGE_POLICY.md`](../docs/COVERAGE_POLICY.md).
+New hand-written production files have the stricter 90% file-level coverage
+and corresponding-test requirement documented there.
 
 Maintenance rules are defined by
 [Skill & Memory Maintenance](../docs/agent/skill-memory-maintenance.md).

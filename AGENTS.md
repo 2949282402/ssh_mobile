@@ -1,4 +1,4 @@
-> Last updated: 2026-08-22
+> Last updated: 2026-08-23
 
 # Repository Bootstrap
 
@@ -97,6 +97,11 @@ domain-specific gates: `scripts/front_coverage.sh`,
 `scripts/sdk_coverage.sh`. Each gate enforces an 80% line/metric threshold on
 its documented owner scope and prints uncovered locations when it fails.
 `scripts/coverage_test.sh` remains a compatibility alias for the client gate.
+A stricter new-source rule also applies: every newly added hand-written
+production source file must have corresponding independent tests and at least
+90% file-level line coverage. Generated output, documentation, configuration,
+test-only files, and platform boilerplate without coverable business logic are
+excluded only when the owning validation report records the reason.
 A failing or incomplete check blocks submission unless the user explicitly
 accepts the documented environment gap. When tests, package membership,
 project structure, CI scope, or test-selection rules change, update
