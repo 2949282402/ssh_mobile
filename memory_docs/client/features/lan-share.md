@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-24
 
 # LAN Share Feature Memory
 
@@ -7,9 +7,16 @@
 `packages/features/feature_lan_share/` owns discovery, pairing,
 HTTPS/WebSocket/Web Share transfer, Relay enrollment and orchestration,
 transfer history, non-secret pairing metadata, and `lan_share.db`.
-`LanShareModule` owns its database, repository, Receiver, timers, and
-Feature-scoped network resources. AppRuntime and NetworkRuntime retain ownership
-of injected App-scoped capabilities.
+`LanShareModule` owns its database, repository, Receiver, and Feature-scoped
+network resources. `LanReceiverCoordinator` owns LAN listener/discovery,
+pairing, native Facade creation, and ViewModel lifecycle. Its internal
+`LanRelayCoordinator` independently owns enrollment, credential refresh, Relay
+event subscription, typed retry policy, and bounded timers while only borrowing
+the Receiver-created Facade. It consumes pure Dart settings, logging,
+enrollment, and capability Ports rather than concrete Flutter storage or
+`NetworkRuntime`; the Receiver composition boundary supplies those adapters.
+AppRuntime and NetworkRuntime retain ownership of injected App-scoped
+capabilities.
 
 One receiver-owned `LanShareViewModel` is exposed through the Feature Scope and
 is reused by the LAN page plus pairing/chat routes. Receiver activation is

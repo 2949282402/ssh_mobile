@@ -1,4 +1,4 @@
-最新更新时间：2026-08-19
+最新更新时间：2026-08-24
 
 # feature_lan_share
 
@@ -14,6 +14,11 @@ LAN Quick Share 的独立 Feature Package，负责设备发现、配对、HTTPS/
 - 不依赖 SSH、其他 Feature 的实现或 App 的 `/src/` 路径。
 - `LanShareModule` 独占 `lan_share.db`、历史 Repository 和接收器资源；App
   Shell 只注入 App Scope 资源并负责配置是否激活接收器。
+- `LanReceiverCoordinator` 负责 LAN listener、discovery、pairing、原生 Facade
+  创建和 ViewModel 生命周期；其内部 `LanRelayCoordinator` 独占 enrollment、
+  credential refresh、Relay 事件订阅和有限重连状态机，只借用 Receiver 创建的
+  Facade，并通过纯 Dart `LanRelay*Port` 借用 endpoint、日志、enrollment 和 capability，
+  绝不停止或释放 App Scope Runtime。
 - 数据库只保存传输历史和不含密钥、Token 的配对元数据；密钥、PIN、Bearer
   Token 和 Relay 凭据继续由安全存储边界管理。
 - Relay 设置页只接收当前会话的 enrollment Token；Token 不进入偏好设置、数据库、
@@ -41,7 +46,9 @@ App Shell 只保留 `lan_share_feature_adapters.dart` 以及 Network Protocol V2
   Receiver 配置、页面和 Port。
 - 依赖：`app_core`、`app_ui`、`network_transport`、`network_sdk` 及 LAN 直接插件。
 - 数据库：`LanShareModule` 独占 `lan_share.db`，只存历史和非秘密配对 metadata。
-- 生命周期与资源 Owner：Module 负责数据库、历史 Repository、Receiver、Timer、
+- 生命周期与资源 Owner：Module 负责数据库、历史 Repository、Receiver；Receiver
+  内部 Relay Owner 负责 Relay Timer、credential client 和事件订阅，Module 仍负责
+  等待两者关闭；Module 还负责
   WebSocket/HTTPS 资源；AppRuntime/NetworkRuntime 负责注入的 App Scope 资源。
   Receiver 初始化只请求 `NetworkCapability.runtime`；App Shell adapter 将
   Runtime-owned `NetworkCommandGateway`（因此不隐式要求 QUIC）适配为

@@ -27,7 +27,7 @@ final class FakeLanShareSettings extends ChangeNotifier
 
   /// 已保存的 Relay origin；默认空字符串表示未配置。
   @override
-  final String relayEndpoint;
+  String relayEndpoint;
   final FakeLanShareStrings _strings = FakeLanShareStrings();
 
   @override
@@ -62,7 +62,10 @@ final class FakeLanShareSettings extends ChangeNotifier
   Future<void> setLanDeviceAlias(String alias) async {}
 
   @override
-  Future<void> setRelayEndpoint(String endpoint) async {}
+  Future<void> setRelayEndpoint(String endpoint) async {
+    relayEndpoint = endpoint;
+    notifyListeners();
+  }
 
   @override
   Future<void> setRelayServer({

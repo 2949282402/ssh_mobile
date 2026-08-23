@@ -1,4 +1,4 @@
-最新更新时间：2026-08-19
+最新更新时间：2026-08-24
 
 # LAN Share Package Guidelines
 
@@ -12,6 +12,10 @@
   不得恢复本地模型桥接。
 - `LanShareModule` 是 `lan_share.db`、Repository、Receiver 和 Route Service
   的 Owner；Route Scope 只负责 ViewModel 生命周期。
+- Receiver 只创建/释放 LAN listener、discovery、配对资源和借给 Relay 的
+  `NetworkFacade`；`LanRelayCoordinator` 独占 endpoint 观察、enrollment、refresh、
+  Relay 事件订阅和有限重连 Timer，只能依赖 `LanRelay*Port`，且不得停止或释放
+  借入的 Facade/Runtime。
 - 不把密钥、PIN、Bearer Token、Relay credential 或远端 localPath 写入明文
   数据库；接收文件必须经过 LAN sandbox 校验。
 - Relay 设置只能通过 `LanRelaySettingsViewModel` 和注入的 Receiver Coordinator
