@@ -1,4 +1,4 @@
-> Last updated: 2026-08-23
+> Last updated: 2026-08-24
 
 # SSH Mobile Relay Admin
 
@@ -33,6 +33,11 @@ npm run lint
 npm run test:run
 npm run build
 ```
+
+From the repository root, run `bash scripts/admin_api_contract.sh` to replay
+responses emitted by the real Go administrator handlers through the production
+Front request client and Zod schemas. The fixture is generated in a private
+temporary directory for each run, redacts credentials, and is never committed.
 
 The Docker image is built by `Dockerfile` and serves the Vite output through
 Nginx. Do not store administrator sessions or Enrollment Tokens in browser

@@ -70,6 +70,22 @@ void main() {
     'protocol-v2-contract 必须安装 native Dart package dependencies',
   );
 
+  final adminApiContract = _jobSection(workflow, 'admin-api-contract');
+  _expect(
+    adminApiContract.contains('actions/setup-go@v5') &&
+        adminApiContract.contains('actions/setup-node@v4'),
+    'admin-api-contract 必须同时安装 Go 与 Node.js',
+  );
+  _expect(
+    adminApiContract.contains('working-directory: front') &&
+        adminApiContract.contains('run: npm ci'),
+    'admin-api-contract 必须安装 Front dependencies',
+  );
+  _expect(
+    adminApiContract.contains('bash scripts/admin_api_contract.sh'),
+    'admin-api-contract 必须运行真实 Go handler → Front schema 门禁',
+  );
+
   for (final jobName in const ['android-build', 'macos-build', 'ios-build']) {
     final job = _jobSection(workflow, jobName);
     _expect(
@@ -231,6 +247,7 @@ String _jobSection(String workflow, String jobName) {
 
 const _requiredWorkflowMarkers = <String>[
   'architecture-check:',
+  'admin-api-contract:',
   'sdk-dart-quality:',
   'native-network-quality:',
   'relay-quality:',

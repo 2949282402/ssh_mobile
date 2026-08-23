@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-23
+> 最新更新时间：2026-08-24
 
 # SSH Mobile 控制与中继服务器
 
@@ -237,6 +237,10 @@ go test -race ./...
 go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```
+
+在仓库根目录运行 `bash scripts/admin_api_contract.sh`，可将真实 Go 管理接口生成的
+响应交给 Front 生产请求客户端和 Zod schema 校验。运行时 fixture 只写入私有临时目录，
+凭据会被脱敏且不会提交到仓库。
 
 ### Network v2 Phase 0 合同矩阵
 

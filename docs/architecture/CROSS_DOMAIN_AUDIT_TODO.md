@@ -42,14 +42,25 @@ bash scripts/front_coverage.sh
 bash scripts/full_test.sh --only front-quality --no-bootstrap
 ```
 
-## Backend（下一阶段）
+## Backend（进行中）
 
 - [ ] **B-01 完整 Backend 审查**：按 Backend Memory、Relay README、Go 实现、测试、
   配置和部署边界展开问题清单并逐项修复。
-- [ ] **B-02 Network V2 管理指标**：`admin_api.go` 当前把活动传输数固定为 0；让
-  管理概览读取真实、并发安全的 RelayData 活动配对数并补回归测试。
-- [ ] **B-03 Front↔Relay 契约门禁**：增加由真实 Go handler 输出驱动、由 Front
-  Zod schema 验证的管理 API 契约检查，避免 JSON tag/字段漂移时两边单测同时误绿。
+- [x] **B-02 Network V2 管理指标**：管理概览改为读取真实、并发安全的 RelayData
+  活动配对数；pending 单端不计数，配对释放后立即归零，并有生命周期回归测试。
+- [x] **B-03 Front↔Relay 契约门禁**：真实 Go handler 在私有临时目录生成已脱敏
+  响应，Front 生产请求客户端与 Zod schema 验证路径、方法、状态码、204、401 和
+  JSON 字段；门禁已接入 `full_test.sh` 与独立 GitHub Actions job。
+
+B-02/B-03 验收命令：
+
+```bash
+bash scripts/admin_api_contract.sh
+bash scripts/full_test.sh --only admin-api-contract --no-bootstrap
+dart run test/tool/ci_workflow_test.dart
+cd relay
+go test ./internal/relay -run 'TestRelayDataRegistryRejectsDuplicateRoleAndConsumesPair|TestAdminOverviewCountsActiveRelayDataPairs' -count=1
+```
 
 ## Client（待 Backend 完成后展开）
 

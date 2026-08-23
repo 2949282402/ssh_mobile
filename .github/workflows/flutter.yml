@@ -47,6 +47,26 @@ jobs:
       - name: Build front container
         run: docker build -t ssh-mobile-relay-front:test .
 
+  admin-api-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: relay/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+      - name: Install front dependencies
+        working-directory: front
+        run: npm ci
+      - name: Check Front ↔ Relay administrator API contract
+        run: bash scripts/admin_api_contract.sh
+
   native-network-quality:
     runs-on: ubuntu-latest
     timeout-minutes: 20

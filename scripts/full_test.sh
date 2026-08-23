@@ -826,6 +826,11 @@ job_front() {
   fi
 }
 
+job_admin_api_contract() {
+  need go npm || return "$SKIP_STATUS"
+  step 'Check Front ↔ Relay administrator API contract' bash "$ROOT_DIR/scripts/admin_api_contract.sh"
+}
+
 job_native() {
   need cargo || return "$SKIP_STATUS"
   step 'Check Rust formatting' run_in native/network_core cargo fmt --all -- --check
@@ -1060,6 +1065,7 @@ job_features() {
 
 PRE_JOBS=(
   'front-quality:job_front'
+  'admin-api-contract:job_admin_api_contract'
   'native-network-quality:job_native'
   'sdk-dart-quality:job_sdk'
   'relay-quality:job_relay'

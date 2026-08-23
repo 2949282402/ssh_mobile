@@ -295,6 +295,12 @@ go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```
 
+From the repository root, run `bash scripts/admin_api_contract.sh` to verify
+that responses emitted by the real Go administrator handlers still satisfy the
+production Front request client and Zod schemas. The runtime fixture is written
+only to a private temporary directory, redacts credentials, and is never
+committed.
+
 ### Network v2 Phase 0 contract matrix
 
 From the repository root, run the non-mutating characterization matrix for
