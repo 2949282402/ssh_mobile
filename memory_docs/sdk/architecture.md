@@ -32,6 +32,10 @@ Ownership rules:
   ReliableStream events, cryptographic context, transfer state, Realtime state,
   and supervised tasks. Business code borrows a `PathLease`; the
   `ConnectionSessionStore` does not own route or Peer lifecycle.
+- Connectivity attempt execution owns only the bounded Stage A→B→C state
+  machine and route/session effects. Candidate snapshot/cache/ranking policy is
+  independent from authoritative Resolve and Relay fallback eligibility, so a
+  configured endpoint cannot bypass Relay status, E2EE, capability, or budget.
 - Each transport Connection owns exactly one `ConnectionSession`; a new
   connection gets a new `SessionId` and Noise root, and transport loss destroys
   that session. Delivery and Transfer managers own the business state that may

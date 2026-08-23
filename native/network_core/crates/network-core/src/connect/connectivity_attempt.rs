@@ -138,6 +138,16 @@ struct StageBTransactionRequest {
     connect_deadline: Instant,
 }
 
+/// Owns candidate snapshot decoding, cache projection, and deterministic
+/// Direct target selection. It never starts a connection or mutates the
+/// coordinator state machine.
+struct CandidateSnapshotPolicy;
+
+/// Owns the authoritative Stage B/Stage C admission gates. Keeping these
+/// decisions pure prevents configured candidates from bypassing Relay status,
+/// E2EE, capability, or connect-budget requirements.
+struct ConnectivityStageEligibility;
+
 impl ConnectivityAttemptCoordinator {
     pub(crate) fn new(state: Arc<RuntimeState>) -> Self {
         Self {
@@ -527,7 +537,10 @@ impl ConnectivityAttemptCoordinator {
                 return Err(error);
             }
         };
-        let resolved = match ready_peer_from_coordination(&coordination.resolved, peer_id) {
+        let resolved = match ConnectivityStageEligibility::ready_peer_from_coordination(
+            &coordination.resolved,
+            peer_id,
+        ) {
             Ok(resolved) => resolved,
             Err(error) => {
                 state.fail_session(peer_id, session_id).await;
@@ -535,15 +548,15 @@ impl ConnectivityAttemptCoordinator {
             }
         };
         self.set_stage(ConnectivityAttemptState::Resolved);
-        update_remote_candidate_cache(
+        CandidateSnapshotPolicy::update_remote_candidate_cache(
             &state,
             peer_id,
-            resolved_snapshot(&resolved),
+            CandidateSnapshotPolicy::resolved_snapshot(&resolved),
             ready_presence_ttl,
         )
         .await;
 
-        let remote_epoch = resolved_runtime_epoch(&resolved);
+        let remote_epoch = CandidateSnapshotPolicy::resolved_runtime_epoch(&resolved);
 
         // Resolve remains authoritative for epoch/index reconciliation, but
         // the Offer is already committed and this coordinator owns a fresh
@@ -581,16 +594,23 @@ impl ConnectivityAttemptCoordinator {
         let mut attempt = ConnectivityAttempt::with_connect_window(
             attempt_id.clone(),
             peer_id.to_string(),
-            nat_runtime_epoch(&local_epoch),
+            CandidateSnapshotPolicy::nat_runtime_epoch(&local_epoch),
             attempt_started_at,
             DIRECT_CONNECT_WINDOW,
         )
-        .with_local_candidates(collect_local_candidates(state.clone()).await);
-        let initial_remote_candidates = resolved_candidates(&resolved, &peer);
+        .with_local_candidates(
+            CandidateSnapshotPolicy::collect_local_candidates(state.clone()).await,
+        );
+        let initial_remote_candidates =
+            CandidateSnapshotPolicy::resolved_candidates(&resolved, &peer);
         if let Err(error) = attempt.apply_remote_candidates(
-            resolved_snapshot(&resolved)
-                .and_then(|snapshot| snapshot.runtime_epoch.as_ref().map(nat_runtime_epoch)),
-            resolved_snapshot(&resolved)
+            CandidateSnapshotPolicy::resolved_snapshot(&resolved).and_then(|snapshot| {
+                snapshot
+                    .runtime_epoch
+                    .as_ref()
+                    .map(CandidateSnapshotPolicy::nat_runtime_epoch)
+            }),
+            CandidateSnapshotPolicy::resolved_snapshot(&resolved)
                 .map(|snapshot| u64::from(snapshot.revision))
                 .unwrap_or(0),
             initial_remote_candidates,
@@ -705,7 +725,7 @@ impl ConnectivityAttemptCoordinator {
                     .lock()
                     .await
                     .remote_runtime_epoch()
-                    .map(runtime_epoch_from_nat)
+                    .map(CandidateSnapshotPolicy::runtime_epoch_from_nat)
                     .or_else(|| remote_epoch.clone());
                 self.register_current(
                     Arc::clone(&state),
@@ -725,7 +745,7 @@ impl ConnectivityAttemptCoordinator {
                     .await
                     .set_state(network_nat::ConnectivityAttemptState::Expired);
                 self.set_stage(ConnectivityAttemptState::DirectFailed);
-                if !relay_fallback_is_eligible(
+                if !ConnectivityStageEligibility::relay_fallback_is_eligible(
                     &resolved,
                     capability,
                     peer.e2ee_policy,
@@ -750,7 +770,7 @@ impl ConnectivityAttemptCoordinator {
                             .lock()
                             .await
                             .remote_runtime_epoch()
-                            .map(runtime_epoch_from_nat)
+                            .map(CandidateSnapshotPolicy::runtime_epoch_from_nat)
                             .or_else(|| remote_epoch.clone());
                         self.register_current(
                             Arc::clone(&state),
@@ -863,7 +883,11 @@ impl ConnectivityAttemptCoordinator {
 
         let (candidates, remote_epoch) = {
             let caches = self.state.remote_candidate_cache.read().await;
-            stage_a_direct_candidates(caches.get(peer_id), peer, Instant::now())
+            CandidateSnapshotPolicy::stage_a_direct_candidates(
+                caches.get(peer_id),
+                peer,
+                Instant::now(),
+            )
         };
         if candidates.is_empty() {
             return Ok(false);
@@ -951,7 +975,7 @@ impl ConnectivityAttemptCoordinator {
     async fn resolve(
         &self,
         peer_id: &str,
-        peer: &crate::runtime::PeerConfig,
+        _peer: &crate::runtime::PeerConfig,
     ) -> Result<ResolvedPeer, ProtocolError> {
         let Some(control) = self.state.relay.control.read().await.clone() else {
             return Err(protocol_error_with_peer(
@@ -997,53 +1021,7 @@ impl ConnectivityAttemptCoordinator {
                 peer_id,
             )),
         };
-        self.authoritative_resolve_or_error(peer_id, peer, result)
-    }
-
-    /// Preserve the authoritative Resolve status after Stage A has already
-    /// tried configured/fresh direct candidates. In particular, a configured
-    /// endpoint cannot turn OFFLINE/NOT_READY/UNKNOWN into a synthetic READY.
-    #[allow(dead_code)] // compatibility seam for resolver-focused unit tests
-    fn authoritative_resolve_or_error(
-        &self,
-        peer_id: &str,
-        _peer: &crate::runtime::PeerConfig,
-        result: Result<ResolvedPeer, ProtocolError>,
-    ) -> Result<ResolvedPeer, ProtocolError> {
-        match result {
-            Ok(ResolvedPeer::Ready {
-                discovery: Some(discovery),
-            }) => Ok(ResolvedPeer::Ready {
-                discovery: Some(discovery),
-            }),
-            Ok(ResolvedPeer::Ready { discovery: None }) => Err(protocol_error_with_peer(
-                NetworkErrorCode::RelayError,
-                "Relay returned READY without an authoritative discovery snapshot",
-                "connect",
-                peer_id,
-            )),
-            Ok(ResolvedPeer::Offline) => Err(protocol_error_with_peer(
-                NetworkErrorCode::PeerOffline,
-                "Relay peer is offline",
-                "connect",
-                peer_id,
-            )),
-            Ok(ResolvedPeer::NotReady { retry_after_ms }) => Err(protocol_error_with_retry(
-                NetworkErrorCode::PeerNotReady,
-                "Relay peer discovery is not ready",
-                "connect",
-                Some(peer_id),
-                network_protocol::RetryDisposition::RetryAfter,
-                (retry_after_ms / 1000).max(1),
-            )),
-            Ok(ResolvedPeer::Unknown { .. }) => Err(protocol_error_with_peer(
-                NetworkErrorCode::RelayError,
-                "Relay peer resolution is unavailable",
-                "connect",
-                peer_id,
-            )),
-            Err(error) => Err(error),
-        }
+        ConnectivityStageEligibility::authoritative_resolve_or_error(peer_id, result)
     }
 
     /// Reuse an already healthy path before opening the Stage B Resolve →
@@ -1079,9 +1057,13 @@ impl ConnectivityAttemptCoordinator {
                     if let Some(registered_epoch) = registered.remote_runtime_epoch.as_ref() {
                         let cache = state.remote_candidate_cache.read().await;
                         cache.get(peer_id).is_some_and(|entry| {
-                            entry.pending_remote_epoch().is_some()
-                                || Some(runtime_epoch_from_nat(entry.runtime_epoch))
-                                    != Some(registered_epoch.clone())
+                            entry.pending_remote_epoch().is_some() || {
+                                Some(CandidateSnapshotPolicy::runtime_epoch_from_nat(
+                                    entry.runtime_epoch,
+                                ))
+                            } != Some(
+                                registered_epoch.clone(),
+                            )
                         })
                     } else {
                         false
@@ -1175,19 +1157,23 @@ impl ConnectivityAttemptCoordinator {
                     }
                     if answer.accepted {
                         if let Some(snapshot) = answer.responder_snapshot.as_ref() {
-                            update_remote_candidate_cache(
+                            CandidateSnapshotPolicy::update_remote_candidate_cache(
                                 &state,
                                 &peer_id,
                                 Some(snapshot),
                                 ready_presence_ttl,
                             )
                             .await;
-                            let mut candidates = discovery_snapshot_candidates(snapshot);
+                            let mut candidates =
+                                CandidateSnapshotPolicy::discovery_snapshot_candidates(snapshot);
                             candidates.extend(preserved_direct_candidates.iter().cloned());
                             let result = {
                                 let mut attempt = attempt.lock().await;
                                 let result = attempt.apply_remote_candidates(
-                                    snapshot.runtime_epoch.as_ref().map(nat_runtime_epoch),
+                                    snapshot
+                                        .runtime_epoch
+                                        .as_ref()
+                                        .map(CandidateSnapshotPolicy::nat_runtime_epoch),
                                     u64::from(snapshot.revision),
                                     candidates,
                                 );
@@ -1680,26 +1666,28 @@ fn new_attempt_id() -> String {
 }
 
 /// 从 Resolve 结果提取对端 runtime_epoch。
-fn nat_runtime_epoch(epoch: &RuntimeEpoch) -> NatRuntimeEpoch {
-    NatRuntimeEpoch {
-        high: epoch.high,
-        low: epoch.low,
+impl CandidateSnapshotPolicy {
+    fn nat_runtime_epoch(epoch: &RuntimeEpoch) -> NatRuntimeEpoch {
+        NatRuntimeEpoch {
+            high: epoch.high,
+            low: epoch.low,
+        }
     }
-}
 
-fn runtime_epoch_from_nat(epoch: NatRuntimeEpoch) -> RuntimeEpoch {
-    RuntimeEpoch {
-        high: epoch.high,
-        low: epoch.low,
+    fn runtime_epoch_from_nat(epoch: NatRuntimeEpoch) -> RuntimeEpoch {
+        RuntimeEpoch {
+            high: epoch.high,
+            low: epoch.low,
+        }
     }
-}
 
-fn resolved_runtime_epoch(resolved: &ResolvedPeer) -> Option<RuntimeEpoch> {
-    match resolved {
-        ResolvedPeer::Ready { discovery } => discovery
-            .as_ref()
-            .and_then(|snapshot| snapshot.runtime_epoch.clone()),
-        _ => None,
+    fn resolved_runtime_epoch(resolved: &ResolvedPeer) -> Option<RuntimeEpoch> {
+        match resolved {
+            ResolvedPeer::Ready { discovery } => discovery
+                .as_ref()
+                .and_then(|snapshot| snapshot.runtime_epoch.clone()),
+            _ => None,
+        }
     }
 }
 
@@ -1707,281 +1695,290 @@ fn resolved_runtime_epoch(resolved: &ResolvedPeer) -> Option<RuntimeEpoch> {
 /// typed resolver result. Keep the status mapping here so test control planes
 /// and future implementations cannot turn a non-READY response into a
 /// synthetic usable peer.
-fn ready_peer_from_coordination(
-    response: &ResolvePeerResponse,
-    peer_id: &str,
-) -> Result<ResolvedPeer, ProtocolError> {
-    match network_relay::v2::ResolveStatus::try_from(response.status) {
-        Ok(network_relay::v2::ResolveStatus::Ready) => {
-            let Some(discovery) = response.discovery.clone() else {
-                return Err(protocol_error_with_peer(
-                    NetworkErrorCode::RelayError,
-                    "Relay coordination returned READY without discovery",
-                    "connect",
-                    peer_id,
-                ));
-            };
-            Ok(ResolvedPeer::Ready {
-                discovery: Some(discovery),
-            })
+impl ConnectivityStageEligibility {
+    fn ready_peer_from_coordination(
+        response: &ResolvePeerResponse,
+        peer_id: &str,
+    ) -> Result<ResolvedPeer, ProtocolError> {
+        match network_relay::v2::ResolveStatus::try_from(response.status) {
+            Ok(network_relay::v2::ResolveStatus::Ready) => {
+                let Some(discovery) = response.discovery.clone() else {
+                    return Err(protocol_error_with_peer(
+                        NetworkErrorCode::RelayError,
+                        "Relay coordination returned READY without discovery",
+                        "connect",
+                        peer_id,
+                    ));
+                };
+                Ok(ResolvedPeer::Ready {
+                    discovery: Some(discovery),
+                })
+            }
+            Ok(network_relay::v2::ResolveStatus::Offline) => Err(protocol_error_with_peer(
+                NetworkErrorCode::PeerOffline,
+                "Relay peer is offline",
+                "connect",
+                peer_id,
+            )),
+            Ok(network_relay::v2::ResolveStatus::NotReady) => Err(protocol_error_with_retry(
+                NetworkErrorCode::PeerNotReady,
+                "Relay peer discovery is not ready",
+                "connect",
+                Some(peer_id),
+                network_protocol::RetryDisposition::RetryAfter,
+                (response.retry_after_ms / 1000).max(1),
+            )),
+            Ok(network_relay::v2::ResolveStatus::Unknown)
+            | Ok(network_relay::v2::ResolveStatus::Unspecified)
+            | Err(_) => Err(protocol_error_with_peer(
+                NetworkErrorCode::RelayError,
+                "Relay peer resolution is unavailable",
+                "connect",
+                peer_id,
+            )),
         }
-        Ok(network_relay::v2::ResolveStatus::Offline) => Err(protocol_error_with_peer(
-            NetworkErrorCode::PeerOffline,
-            "Relay peer is offline",
-            "connect",
-            peer_id,
-        )),
-        Ok(network_relay::v2::ResolveStatus::NotReady) => Err(protocol_error_with_retry(
-            NetworkErrorCode::PeerNotReady,
-            "Relay peer discovery is not ready",
-            "connect",
-            Some(peer_id),
-            network_protocol::RetryDisposition::RetryAfter,
-            (response.retry_after_ms / 1000).max(1),
-        )),
-        Ok(network_relay::v2::ResolveStatus::Unknown)
-        | Ok(network_relay::v2::ResolveStatus::Unspecified)
-        | Err(_) => Err(protocol_error_with_peer(
-            NetworkErrorCode::RelayError,
-            "Relay peer resolution is unavailable",
-            "connect",
-            peer_id,
-        )),
     }
 }
 
 /// 从 Resolve 结果解码远端候选（opaque JSON → Candidate）。
-fn resolved_snapshot(resolved: &ResolvedPeer) -> Option<&DiscoverySnapshot> {
-    match resolved {
-        ResolvedPeer::Ready { discovery } => discovery.as_ref(),
-        ResolvedPeer::Offline | ResolvedPeer::NotReady { .. } | ResolvedPeer::Unknown { .. } => {
-            None
+impl CandidateSnapshotPolicy {
+    fn resolved_snapshot(resolved: &ResolvedPeer) -> Option<&DiscoverySnapshot> {
+        match resolved {
+            ResolvedPeer::Ready { discovery } => discovery.as_ref(),
+            ResolvedPeer::Offline
+            | ResolvedPeer::NotReady { .. }
+            | ResolvedPeer::Unknown { .. } => None,
         }
     }
-}
 
-fn snapshot_candidate_transports(snapshot: &DiscoverySnapshot) -> Vec<CandidateTransport> {
-    snapshot
-        .transport_capabilities
-        .iter()
-        .filter_map(|value| network_relay::v2::TransportCapability::try_from(*value).ok())
-        .filter_map(|capability| match capability {
-            network_relay::v2::TransportCapability::Quic => Some(CandidateTransport::Quic),
-            network_relay::v2::TransportCapability::Tcp => Some(CandidateTransport::Tcp),
-            network_relay::v2::TransportCapability::UdpDatagram => {
-                Some(CandidateTransport::UdpDatagram)
-            }
-            network_relay::v2::TransportCapability::Websocket => {
-                Some(CandidateTransport::Websocket)
-            }
-            network_relay::v2::TransportCapability::RelayData => Some(CandidateTransport::Relay),
-            network_relay::v2::TransportCapability::Unspecified
-            | network_relay::v2::TransportCapability::Webrtc => None,
-        })
-        .collect()
-}
-
-fn snapshot_candidate_payloads(snapshot: &DiscoverySnapshot) -> Vec<CandidatePayloadV2> {
-    let advertised_transports = snapshot_candidate_transports(snapshot);
-    snapshot
-        .candidate_bundle
-        .as_ref()
-        .into_iter()
-        .flat_map(|bundle| bundle.candidates.iter())
-        .filter_map(|bytes| serde_json::from_slice::<CandidateAdvertisement>(bytes).ok())
-        .filter_map(|advertisement| {
-            let mut transports = match advertisement.kind {
-                // STUN mappings are shared by QUIC and UDP datagrams. Never
-                // let a global TCP/WS capability turn them into TCP/WS probes.
-                CandidateKind::ServerReflexive => network_nat::STUN_SRFLX_TRANSPORTS.to_vec(),
-                CandidateKind::Relay => vec![CandidateTransport::Relay],
-                _ => advertised_transports
-                    .iter()
-                    .copied()
-                    .filter(|transport| *transport != CandidateTransport::Relay)
-                    .collect(),
-            };
-            // Empty capability lists are tolerated only for older local test
-            // fixtures that predate the capability field. A RelayData-only
-            // advertisement must not be turned into a synthetic QUIC direct
-            // candidate.
-            if transports.is_empty() && advertised_transports.is_empty() {
-                transports.push(CandidateTransport::Quic);
-            }
-            if transports.is_empty() {
-                return None;
-            }
-            let candidate = CandidatePayloadV2 {
-                version: network_nat::CANDIDATE_PAYLOAD_VERSION,
-                candidate_id: advertisement.candidate_id,
-                endpoint: advertisement.endpoint,
-                kind: advertisement.kind,
-                transport_capabilities: transports,
-                priority: advertisement.priority,
-                interface: advertisement.interface,
-                generation: advertisement.generation,
-            };
-            candidate.validate().ok().map(|_| candidate)
-        })
-        .take(network_nat::MAX_CANDIDATE_PAYLOAD_ENTRIES)
-        .collect()
-}
-
-fn candidate_from_v2(candidate: &CandidatePayloadV2) -> Option<Candidate> {
-    if !candidate.is_direct_probe_eligible() {
-        return None;
-    }
-    let mut direct = Candidate::new(
-        candidate.endpoint,
-        candidate.kind,
-        candidate.interface.clone(),
-    );
-    direct.candidate_id = candidate.candidate_id.clone();
-    direct.priority = candidate.priority;
-    direct.generation = candidate.generation;
-    Some(direct)
-}
-
-/// Build the complete uncoordinated Stage A target set. Only a fresh remote
-/// cache entry is read; configured endpoints are local operator input and are
-/// always appended. The cache carries the remote LAN/STUN candidates gathered
-/// from the peer, while Relay candidates are excluded before the Direct race.
-fn stage_a_direct_candidates(
-    cache: Option<&ResolvedCandidateCache>,
-    peer: &crate::runtime::PeerConfig,
-    now: Instant,
-) -> (Vec<Candidate>, Option<RuntimeEpoch>) {
-    let (mut candidates, remote_epoch) = match cache {
-        Some(cache) => {
-            let fresh = cache.stage_a_candidates_at(now);
-            let candidates = fresh
-                .unwrap_or_default()
-                .iter()
-                .filter_map(candidate_from_v2)
-                .collect::<Vec<_>>();
-            let remote_epoch = fresh.map(|_| RuntimeEpoch {
-                high: cache.runtime_epoch.high,
-                low: cache.runtime_epoch.low,
-            });
-            (candidates, remote_epoch)
-        }
-        None => (Vec::new(), None),
-    };
-    append_configured_endpoint(&mut candidates, peer);
-    candidates.retain(|candidate| candidate.kind != CandidateKind::Relay);
-    candidates.sort_by(|left, right| {
-        candidate_order(left)
-            .cmp(&candidate_order(right))
-            .then_with(|| right.priority.cmp(&left.priority))
-            .then_with(|| left.candidate_id.cmp(&right.candidate_id))
-    });
-    (candidates, remote_epoch)
-}
-
-async fn update_remote_candidate_cache(
-    state: &RuntimeState,
-    peer_id: &str,
-    snapshot: Option<&DiscoverySnapshot>,
-    ready_presence_ttl: Option<Duration>,
-) {
-    let Some(snapshot) = snapshot else {
-        return;
-    };
-    let Some(runtime_epoch) = snapshot.runtime_epoch.as_ref() else {
-        return;
-    };
-    let candidate_snapshot = ResolvedCandidateSnapshot {
-        runtime_epoch: nat_runtime_epoch(runtime_epoch),
-        revision: u64::from(snapshot.revision),
-        candidates: snapshot_candidate_payloads(snapshot),
-        server_presence_ttl: ready_presence_ttl,
-    };
-    let learned_at = Instant::now();
-    let mut cache = state.remote_candidate_cache.write().await;
-    match cache.get_mut(peer_id) {
-        Some(existing) => {
-            if let Err(error) = existing.apply(candidate_snapshot, learned_at) {
-                tracing::debug!(%peer_id, error = %error, "ignored inconsistent remote candidate cache snapshot");
-            }
-        }
-        None => match ResolvedCandidateCache::from_snapshot(candidate_snapshot, learned_at) {
-            Ok(value) => {
-                cache.insert(peer_id.to_string(), value);
-            }
-            Err(error) => {
-                tracing::debug!(%peer_id, error = %error, "ignored invalid remote candidate cache snapshot");
-            }
-        },
-    }
-}
-
-fn discovery_snapshot_candidates(snapshot: &DiscoverySnapshot) -> Vec<Candidate> {
-    snapshot_candidate_payloads(snapshot)
-        .into_iter()
-        .filter_map(|candidate| candidate_from_v2(&candidate))
-        .collect()
-}
-
-fn resolved_candidates(
-    resolved: &ResolvedPeer,
-    peer: &crate::runtime::PeerConfig,
-) -> Vec<Candidate> {
-    let mut candidates = Vec::new();
-    if let Some(snapshot) = resolved_snapshot(resolved) {
-        candidates.extend(discovery_snapshot_candidates(snapshot));
-    }
-    append_configured_endpoint(&mut candidates, peer);
-    candidates.sort_by(|left, right| {
-        candidate_order(left)
-            .cmp(&candidate_order(right))
-            .then_with(|| right.priority.cmp(&left.priority))
-            .then_with(|| left.candidate_id.cmp(&right.candidate_id))
-    });
-    candidates
-}
-
-/// Direct candidate order is deterministic and deliberately independent of the
-/// order in which a remote snapshot happened to arrive. The configured endpoint
-/// is a last-resort direct candidate after the advertised LAN/public/reflexive
-/// candidates, while the remaining kinds keep their lower-priority tail.
-fn candidate_order(candidate: &Candidate) -> u8 {
-    if candidate.interface_name == "peer-configured" {
-        return 3;
-    }
-    match candidate.kind {
-        CandidateKind::Lan => 0,
-        CandidateKind::PublicIpv6 => 1,
-        CandidateKind::ServerReflexive => 2,
-        CandidateKind::PortMapped => 4,
-        CandidateKind::Relay => 5,
-    }
-}
-
-/// 收集本地候选（local PathManager 已 gather 的候选）。
-async fn collect_local_candidates(state: Arc<RuntimeState>) -> Vec<Candidate> {
-    let Some(manager) = state.local_path_manager.read().await.clone() else {
-        return Vec::new();
-    };
-    manager
-        .ranked_candidates()
-        .await
-        .into_iter()
-        .take(MAX_CANDIDATES_PER_SIGNAL)
-        .collect()
-}
-
-/// 追加手工配置的 endpoint 候选（peer.endpoint，LAN/显式直连）。
-fn append_configured_endpoint(candidates: &mut Vec<Candidate>, peer: &crate::runtime::PeerConfig) {
-    if let Some(endpoint) = peer.endpoint {
-        if !candidates
+    fn snapshot_candidate_transports(snapshot: &DiscoverySnapshot) -> Vec<CandidateTransport> {
+        snapshot
+            .transport_capabilities
             .iter()
-            .any(|candidate| candidate.endpoint == endpoint)
-        {
-            candidates.push(Candidate::new(
-                endpoint,
-                crate::peer::candidate_kind_for(endpoint),
-                "peer-configured".into(),
-            ));
+            .filter_map(|value| network_relay::v2::TransportCapability::try_from(*value).ok())
+            .filter_map(|capability| match capability {
+                network_relay::v2::TransportCapability::Quic => Some(CandidateTransport::Quic),
+                network_relay::v2::TransportCapability::Tcp => Some(CandidateTransport::Tcp),
+                network_relay::v2::TransportCapability::UdpDatagram => {
+                    Some(CandidateTransport::UdpDatagram)
+                }
+                network_relay::v2::TransportCapability::Websocket => {
+                    Some(CandidateTransport::Websocket)
+                }
+                network_relay::v2::TransportCapability::RelayData => {
+                    Some(CandidateTransport::Relay)
+                }
+                network_relay::v2::TransportCapability::Unspecified
+                | network_relay::v2::TransportCapability::Webrtc => None,
+            })
+            .collect()
+    }
+
+    fn snapshot_candidate_payloads(snapshot: &DiscoverySnapshot) -> Vec<CandidatePayloadV2> {
+        let advertised_transports = Self::snapshot_candidate_transports(snapshot);
+        snapshot
+            .candidate_bundle
+            .as_ref()
+            .into_iter()
+            .flat_map(|bundle| bundle.candidates.iter())
+            .filter_map(|bytes| serde_json::from_slice::<CandidateAdvertisement>(bytes).ok())
+            .filter_map(|advertisement| {
+                let mut transports = match advertisement.kind {
+                    // STUN mappings are shared by QUIC and UDP datagrams. Never
+                    // let a global TCP/WS capability turn them into TCP/WS probes.
+                    CandidateKind::ServerReflexive => network_nat::STUN_SRFLX_TRANSPORTS.to_vec(),
+                    CandidateKind::Relay => vec![CandidateTransport::Relay],
+                    _ => advertised_transports
+                        .iter()
+                        .copied()
+                        .filter(|transport| *transport != CandidateTransport::Relay)
+                        .collect(),
+                };
+                // Empty capability lists are tolerated only for older local test
+                // fixtures that predate the capability field. A RelayData-only
+                // advertisement must not be turned into a synthetic QUIC direct
+                // candidate.
+                if transports.is_empty() && advertised_transports.is_empty() {
+                    transports.push(CandidateTransport::Quic);
+                }
+                if transports.is_empty() {
+                    return None;
+                }
+                let candidate = CandidatePayloadV2 {
+                    version: network_nat::CANDIDATE_PAYLOAD_VERSION,
+                    candidate_id: advertisement.candidate_id,
+                    endpoint: advertisement.endpoint,
+                    kind: advertisement.kind,
+                    transport_capabilities: transports,
+                    priority: advertisement.priority,
+                    interface: advertisement.interface,
+                    generation: advertisement.generation,
+                };
+                candidate.validate().ok().map(|_| candidate)
+            })
+            .take(network_nat::MAX_CANDIDATE_PAYLOAD_ENTRIES)
+            .collect()
+    }
+
+    fn candidate_from_v2(candidate: &CandidatePayloadV2) -> Option<Candidate> {
+        if !candidate.is_direct_probe_eligible() {
+            return None;
+        }
+        let mut direct = Candidate::new(
+            candidate.endpoint,
+            candidate.kind,
+            candidate.interface.clone(),
+        );
+        direct.candidate_id = candidate.candidate_id.clone();
+        direct.priority = candidate.priority;
+        direct.generation = candidate.generation;
+        Some(direct)
+    }
+
+    /// Build the complete uncoordinated Stage A target set. Only a fresh remote
+    /// cache entry is read; configured endpoints are local operator input and are
+    /// always appended. The cache carries the remote LAN/STUN candidates gathered
+    /// from the peer, while Relay candidates are excluded before the Direct race.
+    fn stage_a_direct_candidates(
+        cache: Option<&ResolvedCandidateCache>,
+        peer: &crate::runtime::PeerConfig,
+        now: Instant,
+    ) -> (Vec<Candidate>, Option<RuntimeEpoch>) {
+        let (mut candidates, remote_epoch) = match cache {
+            Some(cache) => {
+                let fresh = cache.stage_a_candidates_at(now);
+                let candidates = fresh
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(Self::candidate_from_v2)
+                    .collect::<Vec<_>>();
+                let remote_epoch = fresh.map(|_| RuntimeEpoch {
+                    high: cache.runtime_epoch.high,
+                    low: cache.runtime_epoch.low,
+                });
+                (candidates, remote_epoch)
+            }
+            None => (Vec::new(), None),
+        };
+        Self::append_configured_endpoint(&mut candidates, peer);
+        candidates.retain(|candidate| candidate.kind != CandidateKind::Relay);
+        candidates.sort_by(|left, right| {
+            Self::candidate_order(left)
+                .cmp(&Self::candidate_order(right))
+                .then_with(|| right.priority.cmp(&left.priority))
+                .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+        });
+        (candidates, remote_epoch)
+    }
+
+    async fn update_remote_candidate_cache(
+        state: &RuntimeState,
+        peer_id: &str,
+        snapshot: Option<&DiscoverySnapshot>,
+        ready_presence_ttl: Option<Duration>,
+    ) {
+        let Some(snapshot) = snapshot else {
+            return;
+        };
+        let Some(runtime_epoch) = snapshot.runtime_epoch.as_ref() else {
+            return;
+        };
+        let candidate_snapshot = ResolvedCandidateSnapshot {
+            runtime_epoch: Self::nat_runtime_epoch(runtime_epoch),
+            revision: u64::from(snapshot.revision),
+            candidates: Self::snapshot_candidate_payloads(snapshot),
+            server_presence_ttl: ready_presence_ttl,
+        };
+        let learned_at = Instant::now();
+        let mut cache = state.remote_candidate_cache.write().await;
+        match cache.get_mut(peer_id) {
+            Some(existing) => {
+                if let Err(error) = existing.apply(candidate_snapshot, learned_at) {
+                    tracing::debug!(%peer_id, error = %error, "ignored inconsistent remote candidate cache snapshot");
+                }
+            }
+            None => match ResolvedCandidateCache::from_snapshot(candidate_snapshot, learned_at) {
+                Ok(value) => {
+                    cache.insert(peer_id.to_string(), value);
+                }
+                Err(error) => {
+                    tracing::debug!(%peer_id, error = %error, "ignored invalid remote candidate cache snapshot");
+                }
+            },
+        }
+    }
+
+    fn discovery_snapshot_candidates(snapshot: &DiscoverySnapshot) -> Vec<Candidate> {
+        Self::snapshot_candidate_payloads(snapshot)
+            .into_iter()
+            .filter_map(|candidate| Self::candidate_from_v2(&candidate))
+            .collect()
+    }
+
+    fn resolved_candidates(
+        resolved: &ResolvedPeer,
+        peer: &crate::runtime::PeerConfig,
+    ) -> Vec<Candidate> {
+        let mut candidates = Vec::new();
+        if let Some(snapshot) = Self::resolved_snapshot(resolved) {
+            candidates.extend(Self::discovery_snapshot_candidates(snapshot));
+        }
+        Self::append_configured_endpoint(&mut candidates, peer);
+        candidates.sort_by(|left, right| {
+            Self::candidate_order(left)
+                .cmp(&Self::candidate_order(right))
+                .then_with(|| right.priority.cmp(&left.priority))
+                .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+        });
+        candidates
+    }
+
+    /// Direct candidate order is deterministic and deliberately independent of the
+    /// order in which a remote snapshot happened to arrive. The configured endpoint
+    /// is a last-resort direct candidate after the advertised LAN/public/reflexive
+    /// candidates, while the remaining kinds keep their lower-priority tail.
+    fn candidate_order(candidate: &Candidate) -> u8 {
+        if candidate.interface_name == "peer-configured" {
+            return 3;
+        }
+        match candidate.kind {
+            CandidateKind::Lan => 0,
+            CandidateKind::PublicIpv6 => 1,
+            CandidateKind::ServerReflexive => 2,
+            CandidateKind::PortMapped => 4,
+            CandidateKind::Relay => 5,
+        }
+    }
+
+    /// 收集本地候选（local PathManager 已 gather 的候选）。
+    async fn collect_local_candidates(state: Arc<RuntimeState>) -> Vec<Candidate> {
+        let Some(manager) = state.local_path_manager.read().await.clone() else {
+            return Vec::new();
+        };
+        manager
+            .ranked_candidates()
+            .await
+            .into_iter()
+            .take(MAX_CANDIDATES_PER_SIGNAL)
+            .collect()
+    }
+
+    /// 追加手工配置的 endpoint 候选（peer.endpoint，LAN/显式直连）。
+    fn append_configured_endpoint(
+        candidates: &mut Vec<Candidate>,
+        peer: &crate::runtime::PeerConfig,
+    ) {
+        if let Some(endpoint) = peer.endpoint {
+            if !candidates
+                .iter()
+                .any(|candidate| candidate.endpoint == endpoint)
+            {
+                candidates.push(Candidate::new(
+                    endpoint,
+                    crate::peer::candidate_kind_for(endpoint),
+                    "peer-configured".into(),
+                ));
+            }
         }
     }
 }
@@ -1991,34 +1988,84 @@ fn append_configured_endpoint(candidates: &mut Vec<Candidate>, peer: &crate::run
 /// the requested business capability must be carried by the Relay profile,
 /// the Relay path must use Required E2EE, and the overall connect budget must
 /// still have time for reservation admission.
-fn relay_fallback_is_eligible(
-    resolved: &ResolvedPeer,
-    requested_capability: u8,
-    e2ee_policy: network_protocol::E2eePolicy,
-    connect_deadline: Instant,
-) -> bool {
-    if Instant::now() >= connect_deadline || e2ee_policy != network_protocol::E2eePolicy::Required {
-        return false;
+impl ConnectivityStageEligibility {
+    /// Preserve the authoritative Resolve status after Stage A has already tried
+    /// configured/fresh direct candidates. A configured endpoint cannot turn an
+    /// OFFLINE/NOT_READY/UNKNOWN result into a synthetic READY peer.
+    #[allow(dead_code)]
+    fn authoritative_resolve_or_error(
+        peer_id: &str,
+        result: Result<ResolvedPeer, ProtocolError>,
+    ) -> Result<ResolvedPeer, ProtocolError> {
+        match result {
+            Ok(ResolvedPeer::Ready {
+                discovery: Some(discovery),
+            }) => Ok(ResolvedPeer::Ready {
+                discovery: Some(discovery),
+            }),
+            Ok(ResolvedPeer::Ready { discovery: None }) => Err(protocol_error_with_peer(
+                NetworkErrorCode::RelayError,
+                "Relay returned READY without an authoritative discovery snapshot",
+                "connect",
+                peer_id,
+            )),
+            Ok(ResolvedPeer::Offline) => Err(protocol_error_with_peer(
+                NetworkErrorCode::PeerOffline,
+                "Relay peer is offline",
+                "connect",
+                peer_id,
+            )),
+            Ok(ResolvedPeer::NotReady { retry_after_ms }) => Err(protocol_error_with_retry(
+                NetworkErrorCode::PeerNotReady,
+                "Relay peer discovery is not ready",
+                "connect",
+                Some(peer_id),
+                network_protocol::RetryDisposition::RetryAfter,
+                (retry_after_ms / 1000).max(1),
+            )),
+            Ok(ResolvedPeer::Unknown { .. }) => Err(protocol_error_with_peer(
+                NetworkErrorCode::RelayError,
+                "Relay peer resolution is unavailable",
+                "connect",
+                peer_id,
+            )),
+            Err(error) => Err(error),
+        }
     }
-    let ResolvedPeer::Ready {
-        discovery: Some(discovery),
-    } = resolved
-    else {
-        return false;
-    };
-    if discovery.runtime_epoch.is_none() || discovery.revision == 0 {
-        return false;
-    }
-    let relay_advertised = discovery
-        .transport_capabilities
-        .iter()
-        .filter_map(|value| network_relay::v2::TransportCapability::try_from(*value).ok())
-        .any(|capability| capability == network_relay::v2::TransportCapability::RelayData);
-    let relay_supports_request = crate::connection::ConnectionProfile::for_route(RouteType::Relay)
+
+    fn relay_fallback_is_eligible(
+        resolved: &ResolvedPeer,
+        requested_capability: u8,
+        e2ee_policy: network_protocol::E2eePolicy,
+        connect_deadline: Instant,
+    ) -> bool {
+        if Instant::now() >= connect_deadline
+            || e2ee_policy != network_protocol::E2eePolicy::Required
+        {
+            return false;
+        }
+        let ResolvedPeer::Ready {
+            discovery: Some(discovery),
+        } = resolved
+        else {
+            return false;
+        };
+        if discovery.runtime_epoch.is_none() || discovery.revision == 0 {
+            return false;
+        }
+        let relay_advertised = discovery
+            .transport_capabilities
+            .iter()
+            .filter_map(|value| network_relay::v2::TransportCapability::try_from(*value).ok())
+            .any(|capability| capability == network_relay::v2::TransportCapability::RelayData);
+        let relay_supports_request = crate::connection::ConnectionProfile::for_route(
+            RouteType::Relay,
+        )
         .is_some_and(|profile| {
             profile_capability_mask(profile) & requested_capability == requested_capability
         });
-    relay_advertised && relay_supports_request
+        relay_advertised && relay_supports_request
+    }
 }
 
 /// 把控制面错误映射为类型化错误（§33 ControlUnavailable/ResolveTimeout/ProtocolError）。

@@ -60,6 +60,10 @@ the retired v1 route/session owner model.
   transaction and a fixed four-second Direct window; Stage C can reserve Relay
   only when Resolve is READY, Direct failed, capabilities match, Required E2EE
   is active, and budget remains.
+- Candidate snapshot decoding, cache projection, and deterministic Direct
+  ranking are owned separately from the coordinator. Stage B authoritative
+  status and Stage C Relay eligibility are pure closed-gate decisions; the
+  coordinator retains bounded execution, Session cleanup, and route attachment.
 - `RuntimeState` owns the per-peer resolved candidate cache. A healthy existing
   path is reused by its physical path owner without opening a target-less Offer;
   when a new/replacement transport is needed, Stage B starts the authoritative

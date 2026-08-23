@@ -1404,8 +1404,8 @@ fn direct_candidates_are_ranked_before_the_staggered_race() {
         ),
     ];
     candidates.sort_by(|left, right| {
-        candidate_order(left)
-            .cmp(&candidate_order(right))
+        CandidateSnapshotPolicy::candidate_order(left)
+            .cmp(&CandidateSnapshotPolicy::candidate_order(right))
             .then_with(|| right.priority.cmp(&left.priority))
             .then_with(|| left.candidate_id.cmp(&right.candidate_id))
     });
@@ -1456,8 +1456,11 @@ fn stage_a_uses_fresh_cache_and_configured_direct_candidates_only() {
         e2ee_policy: network_protocol::E2eePolicy::Required,
     };
 
-    let (fresh, remote_epoch) =
-        stage_a_direct_candidates(Some(&cache), &peer, learned_at + Duration::from_secs(4));
+    let (fresh, remote_epoch) = CandidateSnapshotPolicy::stage_a_direct_candidates(
+        Some(&cache),
+        &peer,
+        learned_at + Duration::from_secs(4),
+    );
     assert_eq!(remote_epoch, Some(RuntimeEpoch { high: 11, low: 12 }));
     assert_eq!(
         fresh
@@ -1471,7 +1474,7 @@ fn stage_a_uses_fresh_cache_and_configured_direct_candidates_only() {
         .iter()
         .all(|candidate| candidate.kind != CandidateKind::Relay));
 
-    let (stale, stale_epoch) = stage_a_direct_candidates(
+    let (stale, stale_epoch) = CandidateSnapshotPolicy::stage_a_direct_candidates(
         Some(&cache),
         &peer,
         learned_at + Duration::from_secs(5) + Duration::from_nanos(1),
@@ -1514,7 +1517,7 @@ fn snapshot_candidate_capabilities_keep_srflx_udp_only_and_drop_relay_from_direc
         published_at_ms: 0,
     };
 
-    let payloads = snapshot_candidate_payloads(&snapshot);
+    let payloads = CandidateSnapshotPolicy::snapshot_candidate_payloads(&snapshot);
     let lan_payload = payloads
         .iter()
         .find(|candidate| candidate.kind == CandidateKind::Lan)
@@ -1563,14 +1566,14 @@ fn malformed_and_relay_only_snapshots_never_become_direct_candidates() {
         published_at_ms: 0,
     };
 
-    let payloads = snapshot_candidate_payloads(&snapshot);
+    let payloads = CandidateSnapshotPolicy::snapshot_candidate_payloads(&snapshot);
     assert_eq!(
         payloads.len(),
         1,
         "RelayData-only snapshots drop direct LAN candidates"
     );
     assert_eq!(payloads[0].kind, CandidateKind::Relay);
-    assert!(discovery_snapshot_candidates(&snapshot).is_empty());
+    assert!(CandidateSnapshotPolicy::discovery_snapshot_candidates(&snapshot).is_empty());
 
     let legacy_snapshot = DiscoverySnapshot {
         runtime_epoch: snapshot.runtime_epoch,
@@ -1581,7 +1584,7 @@ fn malformed_and_relay_only_snapshots_never_become_direct_candidates() {
         }),
         published_at_ms: 0,
     };
-    let legacy = snapshot_candidate_payloads(&legacy_snapshot);
+    let legacy = CandidateSnapshotPolicy::snapshot_candidate_payloads(&legacy_snapshot);
     assert_eq!(legacy.len(), 1);
     assert_eq!(
         legacy[0].transport_capabilities,
@@ -1606,9 +1609,9 @@ fn candidate_order_keeps_configured_and_tail_kinds_deterministic() {
         CandidateKind::Lan,
         "peer-configured".into(),
     );
-    assert_eq!(candidate_order(&configured), 3);
-    assert_eq!(candidate_order(&port_mapped), 4);
-    assert_eq!(candidate_order(&relay), 5);
+    assert_eq!(CandidateSnapshotPolicy::candidate_order(&configured), 3);
+    assert_eq!(CandidateSnapshotPolicy::candidate_order(&port_mapped), 4);
+    assert_eq!(CandidateSnapshotPolicy::candidate_order(&relay), 5);
 }
 
 #[test]
@@ -1623,19 +1626,19 @@ fn relay_fallback_gate_requires_ready_relay_policy_and_budget() {
         }),
     };
     let deadline = Instant::now() + Duration::from_secs(1);
-    assert!(relay_fallback_is_eligible(
+    assert!(ConnectivityStageEligibility::relay_fallback_is_eligible(
         &ready,
         crate::connect::CAPABILITY_RELIABLE_MESSAGE,
         network_protocol::E2eePolicy::Required,
         deadline,
     ));
-    assert!(!relay_fallback_is_eligible(
+    assert!(!ConnectivityStageEligibility::relay_fallback_is_eligible(
         &ready,
         crate::connect::CAPABILITY_RELIABLE_MESSAGE,
         network_protocol::E2eePolicy::Disabled,
         deadline,
     ));
-    assert!(!relay_fallback_is_eligible(
+    assert!(!ConnectivityStageEligibility::relay_fallback_is_eligible(
         &ready,
         crate::connect::CAPABILITY_UNRELIABLE_DATAGRAM,
         network_protocol::E2eePolicy::Required,
@@ -1650,31 +1653,31 @@ fn relay_fallback_gate_requires_ready_relay_policy_and_budget() {
             published_at_ms: 0,
         }),
     };
-    assert!(!relay_fallback_is_eligible(
+    assert!(!ConnectivityStageEligibility::relay_fallback_is_eligible(
         &no_relay_capability,
         crate::connect::CAPABILITY_RELIABLE_MESSAGE,
         network_protocol::E2eePolicy::Required,
         deadline,
     ));
-    assert!(!relay_fallback_is_eligible(
+    assert!(!ConnectivityStageEligibility::relay_fallback_is_eligible(
         &ResolvedPeer::NotReady { retry_after_ms: 0 },
         crate::connect::CAPABILITY_RELIABLE_MESSAGE,
         network_protocol::E2eePolicy::Required,
         deadline,
     ));
-    assert!(!relay_fallback_is_eligible(
+    assert!(!ConnectivityStageEligibility::relay_fallback_is_eligible(
         &ResolvedPeer::Offline,
         crate::connect::CAPABILITY_RELIABLE_MESSAGE,
         network_protocol::E2eePolicy::Required,
         deadline,
     ));
-    assert!(!relay_fallback_is_eligible(
+    assert!(!ConnectivityStageEligibility::relay_fallback_is_eligible(
         &ResolvedPeer::Unknown { retry_after_ms: 0 },
         crate::connect::CAPABILITY_RELIABLE_MESSAGE,
         network_protocol::E2eePolicy::Required,
         deadline,
     ));
-    assert!(!relay_fallback_is_eligible(
+    assert!(!ConnectivityStageEligibility::relay_fallback_is_eligible(
         &ready,
         crate::connect::CAPABILITY_RELIABLE_MESSAGE,
         network_protocol::E2eePolicy::Required,
@@ -1728,7 +1731,7 @@ async fn connectivity_answer_merges_candidates_into_the_live_attempt() {
     let attempt = Arc::new(Mutex::new(ConnectivityAttempt::with_connect_window(
         "attempt-answer",
         "peer-b",
-        nat_runtime_epoch(&RuntimeEpoch { high: 1, low: 2 }),
+        CandidateSnapshotPolicy::nat_runtime_epoch(&RuntimeEpoch { high: 1, low: 2 }),
         SystemTime::now(),
         DIRECT_CONNECT_WINDOW,
     )));
@@ -1755,7 +1758,10 @@ async fn connectivity_answer_merges_candidates_into_the_live_attempt() {
     assert_eq!(attempt.remote_discovery_revision(), Some(7));
     assert_eq!(
         attempt.remote_runtime_epoch(),
-        Some(nat_runtime_epoch(&RuntimeEpoch { high: 3, low: 4 })),
+        Some(CandidateSnapshotPolicy::nat_runtime_epoch(&RuntimeEpoch {
+            high: 3,
+            low: 4
+        })),
     );
     assert_eq!(
         attempt.state(),
@@ -1773,8 +1779,9 @@ fn coordination_and_authoritative_statuses_fail_closed() {
         discovery: Some(ready_snapshot.clone()),
         retry_after_ms: 0,
     };
-    let resolved = ready_peer_from_coordination(&ready_response, peer_id)
-        .expect("READY with discovery must resolve");
+    let resolved =
+        ConnectivityStageEligibility::ready_peer_from_coordination(&ready_response, peer_id)
+            .expect("READY with discovery must resolve");
     assert!(matches!(
         resolved,
         ResolvedPeer::Ready { discovery: Some(_) }
@@ -1792,7 +1799,7 @@ fn coordination_and_authoritative_statuses_fail_closed() {
             discovery: None,
             retry_after_ms: 500,
         };
-        let error = ready_peer_from_coordination(&response, peer_id)
+        let error = ConnectivityStageEligibility::ready_peer_from_coordination(&response, peer_id)
             .expect_err("non-ready status must not fabricate a peer");
         assert_eq!(error.code, expected_code as i32, "status={status:?}");
     }
@@ -1803,25 +1810,20 @@ fn coordination_and_authoritative_statuses_fail_closed() {
         discovery: None,
         retry_after_ms: 0,
     };
-    let error = ready_peer_from_coordination(&missing_discovery, peer_id)
-        .expect_err("READY without discovery must fail closed");
+    let error =
+        ConnectivityStageEligibility::ready_peer_from_coordination(&missing_discovery, peer_id)
+            .expect_err("READY without discovery must fail closed");
     assert_eq!(error.code, NetworkErrorCode::RelayError as i32);
 
-    let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
-    let state = Arc::new(RuntimeState::new(
-        event_tx,
-        Arc::new(std::sync::atomic::AtomicU16::new(0)),
-    ));
-    let coordinator = ConnectivityAttemptCoordinator::new(state);
-    assert!(coordinator
-        .authoritative_resolve_or_error(
+    assert!(
+        ConnectivityStageEligibility::authoritative_resolve_or_error(
             peer_id,
-            &peer_without_endpoint(),
             Ok(ResolvedPeer::Ready {
                 discovery: Some(ready_snapshot),
             }),
         )
-        .is_ok());
+        .is_ok()
+    );
     for (resolved, expected_code) in [
         (
             ResolvedPeer::Ready { discovery: None },
@@ -1841,23 +1843,21 @@ fn coordination_and_authoritative_statuses_fail_closed() {
             NetworkErrorCode::RelayError,
         ),
     ] {
-        let error = coordinator
-            .authoritative_resolve_or_error(peer_id, &peer_without_endpoint(), Ok(resolved))
-            .expect_err("authoritative status must remain typed");
+        let error =
+            ConnectivityStageEligibility::authoritative_resolve_or_error(peer_id, Ok(resolved))
+                .expect_err("authoritative status must remain typed");
         assert_eq!(error.code, expected_code as i32);
     }
-    let error = coordinator
-        .authoritative_resolve_or_error(
+    let error = ConnectivityStageEligibility::authoritative_resolve_or_error(
+        peer_id,
+        Err(protocol_error_with_peer(
+            NetworkErrorCode::Cancelled,
+            "cancelled",
+            "test",
             peer_id,
-            &peer_without_endpoint(),
-            Err(protocol_error_with_peer(
-                NetworkErrorCode::Cancelled,
-                "cancelled",
-                "test",
-                peer_id,
-            )),
-        )
-        .expect_err("transport error must propagate");
+        )),
+    )
+    .expect_err("transport error must propagate");
     assert_eq!(error.code, NetworkErrorCode::Cancelled as i32);
 }
 
@@ -1885,21 +1885,26 @@ fn resolved_runtime_epoch_is_read_from_ready_discovery() {
         discovery: Some(discovery),
     };
     assert_eq!(
-        resolved_runtime_epoch(&resolved),
+        CandidateSnapshotPolicy::resolved_runtime_epoch(&resolved),
         Some(RuntimeEpoch { high: 7, low: 8 })
     );
     assert_eq!(
-        runtime_epoch_from_nat(nat_runtime_epoch(&RuntimeEpoch { high: 9, low: 10 })),
+        CandidateSnapshotPolicy::runtime_epoch_from_nat(
+            CandidateSnapshotPolicy::nat_runtime_epoch(&RuntimeEpoch { high: 9, low: 10 })
+        ),
         RuntimeEpoch { high: 9, low: 10 }
     );
     assert_eq!(
-        resolved_snapshot(&resolved).map(|snapshot| snapshot.revision),
+        CandidateSnapshotPolicy::resolved_snapshot(&resolved).map(|snapshot| snapshot.revision),
         Some(3)
     );
-    assert_eq!(resolved_runtime_epoch(&ResolvedPeer::Offline), None);
-    assert!(resolved_snapshot(&ResolvedPeer::Offline).is_none());
     assert_eq!(
-        resolved_runtime_epoch(&ResolvedPeer::Ready { discovery: None }),
+        CandidateSnapshotPolicy::resolved_runtime_epoch(&ResolvedPeer::Offline),
+        None
+    );
+    assert!(CandidateSnapshotPolicy::resolved_snapshot(&ResolvedPeer::Offline).is_none());
+    assert_eq!(
+        CandidateSnapshotPolicy::resolved_runtime_epoch(&ResolvedPeer::Ready { discovery: None }),
         None
     );
 }
@@ -1934,7 +1939,7 @@ fn candidate_conversion_and_snapshot_transport_mapping_are_fail_closed() {
         published_at_ms: 0,
     };
     assert_eq!(
-        snapshot_candidate_transports(&snapshot),
+        CandidateSnapshotPolicy::snapshot_candidate_transports(&snapshot),
         vec![
             CandidateTransport::Quic,
             CandidateTransport::Tcp,
@@ -1943,25 +1948,26 @@ fn candidate_conversion_and_snapshot_transport_mapping_are_fail_closed() {
             CandidateTransport::Relay,
         ]
     );
-    let payloads = snapshot_candidate_payloads(&snapshot);
+    let payloads = CandidateSnapshotPolicy::snapshot_candidate_payloads(&snapshot);
     assert_eq!(payloads.len(), 1);
-    let direct = candidate_from_v2(&payloads[0]).expect("LAN candidate is direct eligible");
+    let direct = CandidateSnapshotPolicy::candidate_from_v2(&payloads[0])
+        .expect("LAN candidate is direct eligible");
     assert!(direct.candidate_id.starts_with("helper-lan"));
     assert_eq!(direct.generation, 4);
     let mut relay = payloads[0].clone();
     relay.kind = CandidateKind::Relay;
     relay.transport_capabilities = vec![CandidateTransport::Relay];
-    assert!(candidate_from_v2(&relay).is_none());
+    assert!(CandidateSnapshotPolicy::candidate_from_v2(&relay).is_none());
     let mut invalid = payloads[0].clone();
     invalid.transport_capabilities = vec![CandidateTransport::Relay];
-    assert!(candidate_from_v2(&invalid).is_none());
+    assert!(CandidateSnapshotPolicy::candidate_from_v2(&invalid).is_none());
 }
 
 #[tokio::test]
 async fn cache_update_ignores_missing_epoch_and_rejects_inconsistent_snapshots() {
     let (state, _event_rx, _control) = configured_reuse_state().await;
-    update_remote_candidate_cache(&state, "peer-b", None, None).await;
-    update_remote_candidate_cache(
+    CandidateSnapshotPolicy::update_remote_candidate_cache(&state, "peer-b", None, None).await;
+    CandidateSnapshotPolicy::update_remote_candidate_cache(
         &state,
         "peer-b",
         Some(&DiscoverySnapshot {
@@ -1977,8 +1983,13 @@ async fn cache_update_ignores_missing_epoch_and_rejects_inconsistent_snapshots()
     assert!(state.remote_candidate_cache.read().await.is_empty());
 
     let first = stage_c_ready_unreachable_direct_snapshot();
-    update_remote_candidate_cache(&state, "peer-b", Some(&first), Some(Duration::from_secs(5)))
-        .await;
+    CandidateSnapshotPolicy::update_remote_candidate_cache(
+        &state,
+        "peer-b",
+        Some(&first),
+        Some(Duration::from_secs(5)),
+    )
+    .await;
     assert!(state
         .remote_candidate_cache
         .read()
@@ -1992,7 +2003,7 @@ async fn cache_update_ignores_missing_epoch_and_rejects_inconsistent_snapshots()
         candidate_bundle: first.candidate_bundle.clone(),
         published_at_ms: 0,
     };
-    update_remote_candidate_cache(
+    CandidateSnapshotPolicy::update_remote_candidate_cache(
         &state,
         "peer-b",
         Some(&inconsistent),
@@ -2024,7 +2035,7 @@ fn relay_error_mapping_and_stage_c_epoch_revision_guards_are_typed() {
     );
     let mut missing_epoch = stage_c_ready_relay_only_snapshot();
     missing_epoch.runtime_epoch = None;
-    assert!(!relay_fallback_is_eligible(
+    assert!(!ConnectivityStageEligibility::relay_fallback_is_eligible(
         &ResolvedPeer::Ready {
             discovery: Some(missing_epoch),
         },
@@ -2034,7 +2045,7 @@ fn relay_error_mapping_and_stage_c_epoch_revision_guards_are_typed() {
     ));
     let mut zero_revision = stage_c_ready_relay_only_snapshot();
     zero_revision.revision = 0;
-    assert!(!relay_fallback_is_eligible(
+    assert!(!ConnectivityStageEligibility::relay_fallback_is_eligible(
         &ResolvedPeer::Ready {
             discovery: Some(zero_revision),
         },
@@ -2687,7 +2698,7 @@ async fn local_candidate_collection_uses_the_bounded_path_manager_snapshot() {
     );
     manager.add_candidates(vec![candidate.clone()]).await;
     *state.local_path_manager.write().await = Some(manager);
-    let candidates = collect_local_candidates(Arc::clone(&state)).await;
+    let candidates = CandidateSnapshotPolicy::collect_local_candidates(Arc::clone(&state)).await;
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].candidate_id, candidate.candidate_id);
 }
@@ -2939,7 +2950,7 @@ async fn healthy_reuse_retires_path_after_remote_epoch_hint() {
     .with_generation(1);
     let cache = ResolvedCandidateCache::from_snapshot(
         ResolvedCandidateSnapshot {
-            runtime_epoch: nat_runtime_epoch(&remote_epoch),
+            runtime_epoch: CandidateSnapshotPolicy::nat_runtime_epoch(&remote_epoch),
             revision: 1,
             candidates: vec![CandidatePayloadV2::from_candidate(
                 &candidate,
