@@ -5,7 +5,114 @@ use crate::connect::{PeerId, PeerPathManager, DEFAULT_CONNECTION_CAPABILITY};
 use crate::connection::{ConnectionProfile, Route, RouteTransport};
 use network_nat::PathManager;
 use network_relay::v2::ResolveStatus;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Captures the existing Direct-failure diagnostic from the test thread
+/// without adding an observer or callback to the production coordinator.
+struct StageCLogState {
+    direct_failed_at: std::sync::Mutex<Option<Instant>>,
+    expected_attempt_id: Arc<std::sync::Mutex<Option<String>>>,
+}
+
+impl StageCLogState {
+    fn new() -> Self {
+        Self {
+            direct_failed_at: std::sync::Mutex::new(None),
+            expected_attempt_id: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+}
+
+struct StageCLogCapture {
+    state: Arc<StageCLogState>,
+}
+
+impl StageCLogCapture {
+    fn new(state: Arc<StageCLogState>) -> Self {
+        Self { state }
+    }
+}
+
+struct StageCEventVisitor {
+    message: Option<String>,
+    attempt_id: Option<String>,
+}
+
+impl tracing::field::Visit for StageCEventVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.message = Some(format!("{value:?}"));
+        } else if field.name() == "attempt_id" {
+            self.attempt_id = Some(format!("{value:?}").trim_matches('"').to_string());
+        }
+    }
+}
+
+impl tracing::Subscriber for StageCLogCapture {
+    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        let mut visitor = StageCEventVisitor {
+            message: None,
+            attempt_id: None,
+        };
+        event.record(&mut visitor);
+        let expected_attempt_id = self
+            .state
+            .expected_attempt_id
+            .lock()
+            .expect("Stage C attempt id lock")
+            .clone();
+        if expected_attempt_id
+            .as_deref()
+            .zip(visitor.attempt_id.as_deref())
+            .is_some_and(|(expected, actual)| expected == actual)
+            && visitor.message.as_deref().is_some_and(|message| {
+                message.contains("direct first failed; falling back to relay")
+            })
+        {
+            let mut timestamp = self
+                .state
+                .direct_failed_at
+                .lock()
+                .expect("Direct failure timestamp lock");
+            if timestamp.is_none() {
+                *timestamp = Some(Instant::now());
+            }
+        }
+    }
+
+    fn enter(&self, _span: &tracing::span::Id) {}
+
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+static STAGE_C_LOG_STATE: std::sync::OnceLock<Arc<StageCLogState>> = std::sync::OnceLock::new();
+
+fn stage_c_log_state() -> Arc<StageCLogState> {
+    if let Some(state) = STAGE_C_LOG_STATE.get() {
+        return Arc::clone(state);
+    }
+    let state = Arc::new(StageCLogState::new());
+    if STAGE_C_LOG_STATE.set(Arc::clone(&state)).is_ok() {
+        tracing::subscriber::set_global_default(StageCLogCapture::new(Arc::clone(&state)))
+            .expect("Stage C tracing subscriber must be installable");
+    }
+    STAGE_C_LOG_STATE
+        .get()
+        .map(Arc::clone)
+        .expect("Stage C tracing state")
+}
 
 /// 构造一个可跑通 `connect_with_class` 前段（配置校验 + Resolve + try_reuse）
 /// 的 RuntimeState：配置了 endpoint/identity/peer，并注入权威 READY mock。
@@ -495,6 +602,159 @@ async fn in_progress_admission_reuses_a_route_that_appears_before_retry() {
 }
 
 #[tokio::test]
+async fn cancelled_attempt_allows_immediate_reconnect() {
+    let (state, _event_rx, _configured_control) = configured_reuse_state().await;
+    let control = StubControl::new(
+        ResolveStatus::Ready,
+        Some(stage_c_ready_unreachable_direct_snapshot()),
+    );
+    *state.relay.control.write().await = Some(control.clone());
+
+    let coordinator = Arc::new(ConnectivityAttemptCoordinator::new(Arc::clone(&state)));
+    let task = {
+        let coordinator = Arc::clone(&coordinator);
+        tokio::spawn(async move {
+            coordinator
+                .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
+                .await
+        })
+    };
+
+    let old_session_id = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if control.connectivity_calls() == 1 {
+                if let Some(session_id) =
+                    state.connection_sessions.current_session_id("peer-b").await
+                {
+                    break session_id;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Stage B must commit Offer before cancellation");
+
+    task.abort();
+    let _ = task.await;
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if state.connection_sessions.current_session_id("peer-b").await != Some(old_session_id)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cancelled attempt must retire its exact Session");
+
+    let new_session_id = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            match state
+                .begin_connect("peer-b", DEFAULT_CONNECTION_CAPABILITY)
+                .await
+            {
+                ConnectDecision::Started(session_id) => break session_id,
+                ConnectDecision::InProgress(_) => tokio::task::yield_now().await,
+                decision => panic!("unexpected reconnect admission: {decision:?}"),
+            }
+        }
+    })
+    .await
+    .expect("cancelled attempt must allow a new admission");
+
+    assert_ne!(new_session_id, old_session_id);
+    assert!(
+        state
+            .mark_relay_route_connected("peer-b", new_session_id, None)
+            .await,
+        "replacement Session must be able to publish a route"
+    );
+
+    state.fail_session("peer-b", old_session_id).await;
+    assert_eq!(
+        state.connection_sessions.current_session_id("peer-b").await,
+        Some(new_session_id),
+        "stale cleanup must not retire the replacement Session"
+    );
+    assert!(state.path_is_connected("peer-b").await);
+
+    state.close_transport_path("peer-b").await;
+    state.fail_session("peer-b", new_session_id).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn overall_timeout_does_not_poison_next_connect() {
+    let (state, _event_rx, _configured_control) = configured_reuse_state().await;
+    let control = StubControl::timeout();
+    *state.relay.control.write().await = Some(control);
+
+    let coordinator = Arc::new(ConnectivityAttemptCoordinator::new(Arc::clone(&state)));
+    let task = {
+        let coordinator = Arc::clone(&coordinator);
+        tokio::spawn(async move {
+            coordinator
+                .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
+                .await
+        })
+    };
+
+    let old_session_id = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let Some(session_id) = state.connection_sessions.current_session_id("peer-b").await {
+                break session_id;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("timeout attempt must reserve a Session before Resolve");
+
+    tokio::task::yield_now().await;
+    tokio::time::advance(super::super::OVERALL_CONNECT_BUDGET + Duration::from_millis(1)).await;
+    let result = task.await.expect("overall timeout task");
+    assert!(
+        matches!(result, Err(ref error) if error.code == NetworkErrorCode::Timeout as i32),
+        "hanging control transaction must map to Timeout: {result:?}"
+    );
+
+    tokio::task::yield_now().await;
+    let new_session_id = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            match state
+                .begin_connect("peer-b", DEFAULT_CONNECTION_CAPABILITY)
+                .await
+            {
+                ConnectDecision::Started(session_id) => break session_id,
+                ConnectDecision::InProgress(_) => tokio::task::yield_now().await,
+                decision => panic!("unexpected reconnect admission: {decision:?}"),
+            }
+        }
+    })
+    .await
+    .expect("overall timeout must allow a new admission");
+
+    assert_ne!(new_session_id, old_session_id);
+    assert!(
+        state
+            .mark_relay_route_connected("peer-b", new_session_id, None)
+            .await,
+        "replacement Session must survive stale timeout cleanup"
+    );
+    state.fail_session("peer-b", old_session_id).await;
+    assert_eq!(
+        state.connection_sessions.current_session_id("peer-b").await,
+        Some(new_session_id)
+    );
+    assert!(state.path_is_connected("peer-b").await);
+
+    state.close_transport_path("peer-b").await;
+    state.fail_session("peer-b", new_session_id).await;
+}
+
+#[tokio::test]
 async fn stage_b_resolves_and_offers_before_relay_reservation() {
     let (state, _event_rx, _configured_control) = configured_reuse_state().await;
     let stage_b_candidate = Candidate::new(
@@ -540,6 +800,16 @@ async fn stage_b_resolves_and_offers_before_relay_reservation() {
     *state.relay.control.write().await = Some(control.clone());
     control.observe_session_ownership(Arc::clone(&state));
 
+    let stage_c_state = stage_c_log_state();
+    *stage_c_state
+        .direct_failed_at
+        .lock()
+        .expect("Direct failure timestamp lock") = None;
+    *stage_c_state
+        .expected_attempt_id
+        .lock()
+        .expect("Stage C attempt id lock") = None;
+    control.observe_attempt_id(Arc::clone(&stage_c_state.expected_attempt_id));
     let result = ConnectivityAttemptCoordinator::new(Arc::clone(&state))
         .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
         .await;
@@ -562,6 +832,30 @@ async fn stage_b_resolves_and_offers_before_relay_reservation() {
         control.connectivity_calls(),
         1,
         "Stage B must enqueue exactly one ConnectivityOffer"
+    );
+    assert_eq!(
+        control.reserve_calls(),
+        1,
+        "Stage C must issue exactly one Relay reservation"
+    );
+    let direct_failed_at = stage_c_state
+        .direct_failed_at
+        .lock()
+        .expect("Direct failure timestamp lock")
+        .expect("Stage C observer must capture Direct failure");
+    let call_times = control.call_times();
+    let resolve_at = call_times
+        .iter()
+        .find_map(|(name, timestamp)| (*name == "resolve").then_some(*timestamp))
+        .expect("Resolve timestamp");
+    let offer_at = call_times
+        .iter()
+        .find_map(|(name, timestamp)| (*name == "offer").then_some(*timestamp))
+        .expect("Offer timestamp");
+    let reserve_at = control.reserve_at().expect("Reserve timestamp");
+    assert!(
+        resolve_at < offer_at && offer_at < direct_failed_at && direct_failed_at < reserve_at,
+        "Stage C must preserve Resolve → Offer → Direct failure → Reserve ordering: resolve={resolve_at:?}, offer={offer_at:?}, direct_failed={direct_failed_at:?}, reserve={reserve_at:?}"
     );
     let cache = state
         .remote_candidate_cache
@@ -2521,7 +2815,10 @@ struct StubControl {
     usable: std::sync::atomic::AtomicBool,
     connectivity_answer: std::sync::Mutex<Option<network_relay::v2::ConnectivityAnswer>>,
     relay_reservation: std::sync::Mutex<Option<network_relay::v2::RelayReserveResponse>>,
+    reserve_at: std::sync::Mutex<Option<Instant>>,
     calls: std::sync::Mutex<Vec<&'static str>>,
+    call_times: std::sync::Mutex<Vec<(&'static str, Instant)>>,
+    attempt_id_target: std::sync::Mutex<Option<Arc<std::sync::Mutex<Option<String>>>>>,
     ownership_state: std::sync::Mutex<Option<Arc<RuntimeState>>>,
     first_resolve_saw_owned_session: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -2543,7 +2840,10 @@ impl StubControl {
             usable: std::sync::atomic::AtomicBool::new(true),
             connectivity_answer: std::sync::Mutex::new(None),
             relay_reservation: std::sync::Mutex::new(None),
+            reserve_at: std::sync::Mutex::new(None),
             calls: std::sync::Mutex::new(Vec::new()),
+            call_times: std::sync::Mutex::new(Vec::new()),
+            attempt_id_target: std::sync::Mutex::new(None),
             ownership_state: std::sync::Mutex::new(None),
             first_resolve_saw_owned_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
@@ -2562,7 +2862,10 @@ impl StubControl {
             usable: std::sync::atomic::AtomicBool::new(true),
             connectivity_answer: std::sync::Mutex::new(None),
             relay_reservation: std::sync::Mutex::new(None),
+            reserve_at: std::sync::Mutex::new(None),
             calls: std::sync::Mutex::new(Vec::new()),
+            call_times: std::sync::Mutex::new(Vec::new()),
+            attempt_id_target: std::sync::Mutex::new(None),
             ownership_state: std::sync::Mutex::new(None),
             first_resolve_saw_owned_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
@@ -2581,7 +2884,10 @@ impl StubControl {
             usable: std::sync::atomic::AtomicBool::new(true),
             connectivity_answer: std::sync::Mutex::new(None),
             relay_reservation: std::sync::Mutex::new(None),
+            reserve_at: std::sync::Mutex::new(None),
             calls: std::sync::Mutex::new(Vec::new()),
+            call_times: std::sync::Mutex::new(Vec::new()),
+            attempt_id_target: std::sync::Mutex::new(None),
             ownership_state: std::sync::Mutex::new(None),
             first_resolve_saw_owned_session: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
@@ -2592,6 +2898,13 @@ impl StubControl {
             .ownership_state
             .lock()
             .expect("stub ownership state lock") = Some(state);
+    }
+
+    fn observe_attempt_id(&self, target: Arc<std::sync::Mutex<Option<String>>>) {
+        *self
+            .attempt_id_target
+            .lock()
+            .expect("stub attempt id target lock") = Some(target);
     }
 
     fn return_not_ready_once(&self) {
@@ -2636,6 +2949,25 @@ impl StubControl {
         self.reserve_calls.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    fn reserve_at(&self) -> Option<Instant> {
+        *self.reserve_at.lock().expect("reserve timestamp lock")
+    }
+
+    fn call_times(&self) -> Vec<(&'static str, Instant)> {
+        self.call_times
+            .lock()
+            .expect("stub call timestamp lock")
+            .clone()
+    }
+
+    fn record_call(&self, name: &'static str) {
+        self.calls.lock().expect("stub call log lock").push(name);
+        self.call_times
+            .lock()
+            .expect("stub call timestamp lock")
+            .push((name, Instant::now()));
+    }
+
     fn call_order(&self) -> Vec<&'static str> {
         self.calls.lock().expect("stub call log lock").clone()
     }
@@ -2667,10 +2999,7 @@ impl crate::discovery::DiscoveryControlPlane for StubControl {
                 + '_,
         >,
     > {
-        self.calls
-            .lock()
-            .expect("stub call log lock")
-            .push("resolve");
+        self.record_call("resolve");
         self.resolve_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let first_resolve = self.resolve_calls() == 1;
@@ -2750,6 +3079,14 @@ impl crate::discovery::DiscoveryControlPlane for StubControl {
                 + '_,
         >,
     > {
+        if let Some(target) = self
+            .attempt_id_target
+            .lock()
+            .expect("stub attempt id target lock")
+            .clone()
+        {
+            *target.lock().expect("Stage C attempt id lock") = Some(attempt_id.clone());
+        }
         let mut answer = self
             .connectivity_answer
             .lock()
@@ -2778,7 +3115,7 @@ impl crate::discovery::DiscoveryControlPlane for StubControl {
                     },
                 ));
             }
-            self.calls.lock().expect("stub call log lock").push("offer");
+            self.record_call("offer");
             self.connectivity_calls
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(network_relay::v2::ConnectivityAttemptStart::new(
@@ -2804,7 +3141,7 @@ impl crate::discovery::DiscoveryControlPlane for StubControl {
                 + '_,
         >,
     > {
-        self.calls.lock().expect("stub call log lock").push("offer");
+        self.record_call("offer");
         self.connectivity_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let answer = self
@@ -2828,10 +3165,8 @@ impl crate::discovery::DiscoveryControlPlane for StubControl {
                 + '_,
         >,
     > {
-        self.calls
-            .lock()
-            .expect("stub call log lock")
-            .push("reserve");
+        *self.reserve_at.lock().expect("reserve timestamp lock") = Some(Instant::now());
+        self.record_call("reserve");
         self.reserve_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let reservation = self

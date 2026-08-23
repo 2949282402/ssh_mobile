@@ -790,7 +790,7 @@
     {
       "id": "flow.stage_c_relay_fallback",
       "category": "staged-connect",
-      "acceptance": "The Stage C eligibility predicate admits bounded Relay fallback only for an authoritative READY peer, RelayData policy, and remaining budget; the end-to-end transition is not claimed here.",
+      "acceptance": "Stage C evidence records exactly one authoritative Resolve, one ConnectivityOffer, a Direct failure, and one Relay reservation in strict Resolve → Offer → Direct failure → Reserve order; fallback remains gated by authoritative READY discovery, RelayData capability, Required E2EE, and the remaining connect budget. RelayData owner tests cover reservation pairing, opaque payload plus ACK, and independent close.",
       "status": "covered",
       "behavioral_verification": {
         "kind": "owner_behavior_test",
@@ -798,21 +798,47 @@
           {
             "owner": "rust",
             "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+            "name": "stage_b_resolves_and_offers_before_relay_reservation"
+          },
+          {
+            "owner": "rust",
+            "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
             "name": "relay_fallback_gate_requires_ready_relay_policy_and_budget"
           },
           {
             "owner": "rust",
-            "path": "native/network_core/crates/network-nat/src/path_manager.rs",
-            "name": "nat_fixture_candidate_priority_prefers_direct_paths_and_keeps_relay_fallback"
+            "path": "native/network_core/crates/network-core/src/tests.rs",
+            "name": "relay_data_clients_forward_envelopes_over_reservation"
+          },
+          {
+            "owner": "go",
+            "path": "relay/internal/relay/control_v2_test.go",
+            "name": "TestRelayDataPairReadyRequiresBothRoles"
           }
         ]
       },
       "evidence": [
         {
-          "path": "native/network_core/crates/network-core/src/connect/connectivity_attempt.rs",
+          "path": "native/network_core/crates/network-core/src/tests/connectivity_attempt.rs",
           "contains": [
-            "relay_fallback_is_eligible",
-            "Relay route does not satisfy the requested capability"
+            "stage_b_resolves_and_offers_before_relay_reservation",
+            "call_times",
+            "direct first failed; falling back to relay",
+            "reserve_at"
+          ]
+        },
+        {
+          "path": "native/network_core/crates/network-core/src/tests/mod.rs",
+          "contains": [
+            "relay_data_clients_forward_envelopes_over_reservation",
+            "send_ack",
+            "close A data client"
+          ]
+        },
+        {
+          "path": "relay/internal/relay/control_v2_test.go",
+          "contains": [
+            "TestRelayDataPairReadyRequiresBothRoles"
           ]
         }
       ]
