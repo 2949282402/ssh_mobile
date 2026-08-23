@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 /// 服务器健康等级。
 enum ServerHealthLevel { unknown, healthy, warning, critical }
 
@@ -50,7 +48,7 @@ class ServerHealthSnapshot {
             other.level == level &&
             other.score == score &&
             other.summary == summary &&
-            listEquals(other.details, details) &&
+            _stringListsEqual(other.details, details) &&
             other.updatedAt == updatedAt &&
             other.latestSample == latestSample &&
             other.maxDiskUsedPercent == maxDiskUsedPercent;
@@ -67,6 +65,15 @@ class ServerHealthSnapshot {
     latestSample,
     maxDiskUsedPercent,
   );
+}
+
+bool _stringListsEqual(List<String> left, List<String> right) {
+  if (identical(left, right)) return true;
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
 }
 
 /// 经过时间去重后的监控告警。
