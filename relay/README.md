@@ -1,4 +1,4 @@
-> Last updated: 2026-08-21
+> Last updated: 2026-08-23
 
 # SSH Mobile Control and Relay Server
 
@@ -26,6 +26,7 @@ port, limit, duration, and image value to be present in that file.
 | Variable | Requirement |
 |---|---|
 | `RELAY_PUBLIC_DOMAIN` | Public DNS name, or an explicit local `http://` address for local smoke testing |
+| `RELAY_PUBLIC_URL` | Public HTTP(S) origin advertised in `RelayReserveResponse.relay_data_endpoint`; local E2E sets a temporary loopback origin |
 | `RELAY_HTTP_PORT` | Host port for Caddy HTTP |
 | `RELAY_HTTPS_PORT` | Host port for Caddy HTTPS |
 | `RELAY_CADDY_IMAGE` | Caddy image and version, normally `caddy:2.8-alpine` |
@@ -36,6 +37,8 @@ port, limit, duration, and image value to be present in that file.
 | `RELAY_STORAGE_MODE` | Device-plane storage backend: `memory` (default, process-local) or `mysql` (durable enrollment/revocation; requires Redis) |
 | `RELAY_DATABASE_URL` | MySQL DSN (requires `parseTime=true&loc=UTC`), required when `RELAY_STORAGE_MODE=mysql` |
 | `RELAY_REDIS_URL` | Redis URL for the shared state layer (presence, nonce, admin sessions, cross-instance events); required when `RELAY_STORAGE_MODE=mysql` |
+| `MYSQL_ROOT_PASSWORD` | MySQL root password for the optional Compose `storage` profile |
+| `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` | Database and application credentials used by the optional Compose `storage` profile |
 | `RELAY_INSTANCE_ID` | Stable per-instance identity recorded in presence; defaults to a random value per process |
 | `RELAY_PRESENCE_TTL` | Presence key lifetime (device heartbeat renews it); default `60s` |
 | `RELAY_CREDENTIAL_TTL` | Device credential lifetime, using Go duration syntax |
@@ -59,6 +62,8 @@ port, limit, duration, and image value to be present in that file.
 | `RELAY_HTTP_IDLE_TIMEOUT` | HTTP keep-alive idle timeout, using Go duration syntax |
 | `RELAY_HTTP_MAX_HEADER_BYTES` | Maximum HTTP request header bytes |
 | `RELAY_TRUSTED_PROXY_CIDRS` | Comma-separated trusted-proxy CIDRs; empty (default) never honors `X-Forwarded-For`/`X-Real-IP` for the login limiter |
+| `RELAY_NETWORK_SUBNET` | Optional Compose IPv4 subnet override for an isolated test project; defaults to `172.30.0.0/24` |
+| `RELAY_CADDY_IP` | Optional static Caddy address inside that subnet; defaults to `172.30.0.10` and must match the trusted-proxy CIDR |
 | `RELAY_ENROLLMENT_TOKEN` | Random enrollment secret, at least 16 characters |
 | `RELAY_CREDENTIAL_KEY` | Base64url-encoded random key containing at least 32 bytes |
 | `RELAY_ADMIN_USER` | Dashboard administrator username |
@@ -299,6 +304,49 @@ bash scripts/network_v2_acceptance.sh strict
 
 The baseline is not a claim that final acceptance is complete; the open cases
 remain recorded in `protocol/contract_tests/acceptance_matrix.json`.
+
+### Real client—Relay E2E
+
+Component and contract tests, local Rust/in-memory integration tests, and a
+real client—Go Relay deployment are separate evidence layers. The last layer
+starts the Flutter/Dart and Rust clients as independent processes, routes them
+through Caddy, and exercises the Go Relay's `/v1` enrollment/refresh,
+`/v2/control`, and `/v2/relay/{reservation_id}` paths. A real Android/iOS
+device-network run remains a separate physical-device validation.
+
+From the repository root, use the WSL/Linux entry point:
+
+```sh
+bash scripts/client_backend_e2e.sh smoke
+bash scripts/client_backend_e2e.sh strict
+bash scripts/full_test.sh --with-client-backend-smoke --no-bootstrap
+```
+
+`smoke` covers enrollment and refresh, two authenticated control clients,
+discovery/resolve/offer/answer, realtime signaling, reservation admission,
+opaque data payloads, ACK/close, and the Caddy `/v2` route guard. It prints
+`CLIENT_BACKEND_SMOKE_PASS`. `strict` additionally uses a short credential TTL
+to verify expiry → refresh → reconnect and restarts Caddy and Relay before
+printing `CLIENT_BACKEND_STRICT_PASS`.
+
+Each run creates a private temporary Compose project, enrollment token,
+credential key, network subnet, and data directory. The exit trap removes the
+containers, volumes, network, and temporary files; no credential is written to
+`relay/.env` or retained in the repository. Set both
+`CLIENT_BACKEND_E2E_BASE_URL` and `RELAY_ENROLLMENT_TOKEN` to test an already
+running deployment instead of starting Compose. Strict mode's isolated Compose
+path also logs in to the admin API, revokes an online device, and asserts that
+its control and data sockets close. Set `CLIENT_BACKEND_E2E_STORAGE=mysql` to
+enable the MySQL/Redis Compose profile and verify the durable storage wiring;
+HTTPS/WSS with a trusted test CA remains a release-profile matrix case and can
+be supplied for an external deployment with `CLIENT_BACKEND_E2E_CA_FILE`; the
+same CA must also be installed in the WSL/Linux system trust store used by the
+Dart and WSS SDK clients. Memory-mode HTTP smoke does not claim those paths.
+
+The route guard is intentional: unauthenticated `/v2/control` and
+`/v2/relay/*` requests must return Relay's JSON `401`, never the Front SPA's
+`text/html` response. A legitimate WebSocket upgrade is exercised by the live
+Rust SDK clients after enrollment.
 
 ### Storage integration tests
 

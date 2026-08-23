@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-21
+> 最新更新时间：2026-08-23
 
 # SSH Mobile 控制与中继服务器
 
@@ -22,6 +22,7 @@ Compose 部署的所有参数都来自 `relay/.env`。缺少必填密钥或密�
 | 环境变量 | 要求 |
 |---|---|
 | `RELAY_PUBLIC_DOMAIN` | 公网 DNS 名称；本地冒烟测试可填写显式 `http://` 地址 |
+| `RELAY_PUBLIC_URL` | 写入 `RelayReserveResponse.relay_data_endpoint` 的公网 HTTP(S) origin；本地 E2E 使用临时 loopback 地址 |
 | `RELAY_HTTP_PORT` | Caddy 对外 HTTP 端口 |
 | `RELAY_HTTPS_PORT` | Caddy 对外 HTTPS 端口 |
 | `RELAY_CADDY_IMAGE` | Caddy 镜像及版本，通常为 `caddy:2.8-alpine` |
@@ -32,6 +33,8 @@ Compose 部署的所有参数都来自 `relay/.env`。缺少必填密钥或密�
 | `RELAY_STORAGE_MODE` | 设备面存储后端：`memory`（默认，进程本地）或 `mysql`（注册/吊销持久化，需 Redis） |
 | `RELAY_DATABASE_URL` | MySQL DSN（需含 `parseTime=true&loc=UTC`），`RELAY_STORAGE_MODE=mysql` 时必填 |
 | `RELAY_REDIS_URL` | Redis URL，提供共享状态层（在线状态/防重放/管理端会话/跨实例事件），`RELAY_STORAGE_MODE=mysql` 时必填 |
+| `MYSQL_ROOT_PASSWORD` | 可选 Compose `storage` profile 使用的 MySQL root 密码 |
+| `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` | 可选 Compose `storage` profile 使用的数据库和应用账号 |
 | `RELAY_INSTANCE_ID` | 实例稳定标识，写入在线状态；默认每次进程随机生成 |
 | `RELAY_PRESENCE_TTL` | 在线状态键有效期（设备心跳续期）；默认 `60s` |
 | `RELAY_CREDENTIAL_TTL` | 设备凭据有效期，使用 Go duration 格式 |
@@ -55,6 +58,8 @@ Compose 部署的所有参数都来自 `relay/.env`。缺少必填密钥或密�
 | `RELAY_HTTP_IDLE_TIMEOUT` | HTTP keep-alive 空闲超时，使用 Go duration 格式 |
 | `RELAY_HTTP_MAX_HEADER_BYTES` | HTTP 请求头最大字节数 |
 | `RELAY_TRUSTED_PROXY_CIDRS` | 逗号分隔的可信代理 CIDR 列表；默认空值表示登录限流从不信任 `X-Forwarded-For`/`X-Real-IP` |
+| `RELAY_NETWORK_SUBNET` | 可选的 Compose 隔离测试子网覆盖，默认 `172.30.0.0/24` |
+| `RELAY_CADDY_IP` | 子网内 Caddy 静态地址，默认 `172.30.0.10`，必须与可信代理 CIDR 一致 |
 | `RELAY_ENROLLMENT_TOKEN` | 随机注册口令，至少 16 个字符 |
 | `RELAY_CREDENTIAL_KEY` | Base64URL 编码的随机密钥，解码后至少 32 字节 |
 | `RELAY_ADMIN_USER` | Web 管理面板管理员账号 |
@@ -250,6 +255,40 @@ bash scripts/network_v2_acceptance.sh strict
 
 基线通过不表示最终验收已完成；未关闭项保留在
 `protocol/contract_tests/acceptance_matrix.json` 中。
+
+### 真实客户端—Relay E2E
+
+组件/合同测试、本地 Rust/内存集成测试，以及真实客户端—Go Relay 部署属于不同的证据层。
+最后一层会启动独立的 Flutter/Dart 与 Rust 客户端进程，经 Caddy 访问 Go Relay，实际覆盖
+`/v1` 注册/刷新、`/v2/control` 和 `/v2/relay/{reservation_id}`；真实 Android/iOS
+设备网络仍需单独执行，不能由容器测试替代。
+
+在仓库根目录使用 WSL/Linux 入口：
+
+```sh
+bash scripts/client_backend_e2e.sh smoke
+bash scripts/client_backend_e2e.sh strict
+bash scripts/full_test.sh --with-client-backend-smoke --no-bootstrap
+```
+
+`smoke` 覆盖注册与刷新、两个认证控制客户端、discovery/resolve/offer/answer、实时信令、
+reservation 建立、opaque 数据、ACK/关闭以及 Caddy `/v2` 路由守卫，成功标记为
+`CLIENT_BACKEND_SMOKE_PASS`。`strict` 额外使用短凭据 TTL 验证过期 → refresh → 重连，并
+重启 Caddy 与 Relay，成功标记为 `CLIENT_BACKEND_STRICT_PASS`。
+
+每次运行都会创建私有临时 Compose 项目、注册 Token、凭据密钥、网络子网和数据目录；退出时
+通过 trap 删除容器、卷、网络和临时文件，不写入 `relay/.env`，也不会把凭据保留在仓库中。
+若要复用已经运行的部署，必须同时设置 `CLIENT_BACKEND_E2E_BASE_URL` 与
+`RELAY_ENROLLMENT_TOKEN`。strict 的隔离 Compose 流程还会登录管理 API 撤销在线设备，
+并断言其控制面和数据面 socket 同时关闭。设置 `CLIENT_BACKEND_E2E_STORAGE=mysql` 可额外
+启动 MySQL/Redis profile，验证持久化存储 wiring；带受信任测试 CA 的 HTTPS/WSS 仍属于发布
+配置矩阵，外部部署可通过 `CLIENT_BACKEND_E2E_CA_FILE` 显式提供 CA。内存模式 HTTP smoke
+的 Rust bootstrap 会使用该文件；Dart 与 WSS SDK 仍要求同一 CA 已安装到 WSL/Linux
+系统信任库。内存模式 HTTP smoke 不宣称覆盖这些路径。
+
+路由守卫是强约束：未认证的 `/v2/control` 与 `/v2/relay/*` 必须返回 Relay 的 JSON `401`，
+绝不能返回 Front SPA 的 `text/html`；合法 WebSocket 升级则由注册后的真实 Rust SDK 客户端
+实际执行。
 
 ### 存储集成测试
 
