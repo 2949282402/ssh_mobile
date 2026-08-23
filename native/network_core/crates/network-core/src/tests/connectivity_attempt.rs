@@ -6,6 +6,7 @@ use crate::connection::{ConnectionProfile, Route, RouteTransport};
 use network_nat::PathManager;
 use network_relay::v2::ResolveStatus;
 use std::time::{Duration, Instant};
+use tracing::Instrument;
 
 /// Captures the existing Direct-failure diagnostic from the test thread
 /// without adding an observer or callback to the production coordinator.
@@ -95,23 +96,6 @@ impl tracing::Subscriber for StageCLogCapture {
     fn enter(&self, _span: &tracing::span::Id) {}
 
     fn exit(&self, _span: &tracing::span::Id) {}
-}
-
-static STAGE_C_LOG_STATE: std::sync::OnceLock<Arc<StageCLogState>> = std::sync::OnceLock::new();
-
-fn stage_c_log_state() -> Arc<StageCLogState> {
-    if let Some(state) = STAGE_C_LOG_STATE.get() {
-        return Arc::clone(state);
-    }
-    let state = Arc::new(StageCLogState::new());
-    if STAGE_C_LOG_STATE.set(Arc::clone(&state)).is_ok() {
-        tracing::subscriber::set_global_default(StageCLogCapture::new(Arc::clone(&state)))
-            .expect("Stage C tracing subscriber must be installable");
-    }
-    STAGE_C_LOG_STATE
-        .get()
-        .map(Arc::clone)
-        .expect("Stage C tracing state")
 }
 
 /// 构造一个可跑通 `connect_with_class` 前段（配置校验 + Resolve + try_reuse）
@@ -945,7 +929,7 @@ async fn overall_timeout_allows_real_second_connect() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "current_thread")]
 async fn stage_b_resolves_and_offers_before_relay_reservation() {
     let (state, _event_rx, _configured_control) = configured_reuse_state().await;
     let stage_b_candidate = Candidate::new(
@@ -991,7 +975,9 @@ async fn stage_b_resolves_and_offers_before_relay_reservation() {
     *state.relay.control.write().await = Some(control.clone());
     control.observe_session_ownership(Arc::clone(&state));
 
-    let stage_c_state = stage_c_log_state();
+    let stage_c_state = Arc::new(StageCLogState::new());
+    let _subscriber_guard =
+        tracing::subscriber::set_default(StageCLogCapture::new(Arc::clone(&stage_c_state)));
     *stage_c_state
         .direct_failed_at
         .lock()
@@ -1001,9 +987,19 @@ async fn stage_b_resolves_and_offers_before_relay_reservation() {
         .lock()
         .expect("Stage C attempt id lock") = None;
     control.observe_attempt_id(Arc::clone(&stage_c_state.expected_attempt_id));
-    let result = ConnectivityAttemptCoordinator::new(Arc::clone(&state))
-        .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
-        .await;
+    // The scoped guard covers this current-thread test.  Instrumenting the
+    // awaited coordinator future carries the same test dispatch if Tokio polls
+    // a nested task on another worker while the selector runs in parallel.
+    let dispatch = tracing::Dispatch::new(StageCLogCapture::new(Arc::clone(&stage_c_state)));
+    let result = tracing::dispatcher::with_default(&dispatch, || {
+        async {
+            ConnectivityAttemptCoordinator::new(Arc::clone(&state))
+                .connect_with_class("peer-b", CommunicationClass::ReliableMessage)
+                .await
+        }
+        .instrument(tracing::span!(tracing::Level::TRACE, "stage_c_ordering"))
+    })
+    .await;
     assert!(result.is_err(), "test control has no usable transport");
     assert_eq!(
         control.call_order(),
