@@ -15,6 +15,10 @@
 五分钟去重和有界历史由 `MonitoringAlertEvaluator` 独占。不得在 Service 再建第二套
 采样/告警缓存。
 
+每轮 `startMonitoring` 必须捕获完整、不可变的目标集合和独立 epoch。停止、重启或
+移除连接会使旧 epoch 失效；旧轮次不得继续 retry、记录 sample/error/alert、移除新轮次
+的 sampling 标记或重启 Timer。
+
 旧 `lib/services/performance_monitor_service.dart` 路径在迁移期间是兼容桥；新
 代码应依赖 `package:feature_monitoring/feature_monitoring.dart` 的公共 API。
 

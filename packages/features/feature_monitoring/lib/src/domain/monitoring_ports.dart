@@ -32,6 +32,9 @@ abstract interface class MonitoringSshPort {
 
 /// 监控查询连接目标平台的最小能力。
 abstract interface class MonitoringConnectionCatalogPort {
+  /// 捕获当前保存配置的不可变 SSH 目标；连接不存在时返回 null。
+  ssh_core.SshTargetBinding? targetBindingFor(String connectionId);
+
   /// 返回保存的服务器平台；未知连接返回 null，由监控服务按 Linux 兼容处理。
   ServerPlatform? serverPlatformFor(String connectionId);
 }

@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-24
 
 # feature_terminal
 
@@ -31,6 +31,9 @@ Feature；App 通过公开 Port 提供兼容适配器。旧 App 路径在迁移�
 `TerminalModule` 负责打开和关闭 `terminal.db`。Route Scope 负责创建页面
 ViewModel；ViewModel 只拥有页面内 Controller、Subscription 和 Timer，不能
 关闭 App Scope SSH Manager。
+
+Module 初始化与销毁按 generation 串行收敛；销毁开始后，迟到 initializer 关闭
+自己的局部数据库，不能重新发布 Repository、恢复 active 状态或复活已释放 Module。
 
 ## Package contract
 

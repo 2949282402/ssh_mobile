@@ -61,8 +61,9 @@ class MonitoringService extends ChangeNotifier {
   Duration _interval = defaultInterval;
   final Set<String> _selectedConnectionIds = {};
   final Set<String> _monitoringConnectionIds = {};
-  Map<String, ssh_core.SshTargetBinding>? _monitoringTargetBindings;
-  final Set<String> _samplingConnectionIds = {};
+  Map<String, ssh_core.SshTargetBinding> _monitoringTargetBindings = const {};
+  final Map<String, int> _samplingEpochs = {};
+  int _monitoringEpoch = 0;
   final Map<String, int> _failureCountsByConnection = {};
   final MonitoringSampleStore _sampleStore;
   final MonitoringAlertEvaluator _alertEvaluator;
@@ -89,9 +90,9 @@ class MonitoringService extends ChangeNotifier {
       _alertEvaluator = MonitoringAlertEvaluator();
 
   bool get isRunning => _running;
-  bool get isSampling => _samplingConnectionIds.isNotEmpty;
+  bool get isSampling => _samplingEpochs.isNotEmpty;
   bool isSamplingConnection(String connectionId) =>
-      _samplingConnectionIds.contains(connectionId);
+      _samplingEpochs.containsKey(connectionId);
   Duration get interval => _interval;
   Duration get effectiveInterval => _effectiveInterval;
   Duration get historyWindow => _sampleStore.historyWindow;
@@ -148,22 +149,34 @@ class MonitoringService extends ChangeNotifier {
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
     Map<String, ssh_core.SshTargetBinding>? targetBindings,
   }) async {
-    if (_selectedConnectionIds.isEmpty) return;
-    if (targetBindings != null) {
-      final selected = _selectedConnectionIds.toSet();
-      if (targetBindings.keys.toSet().length != selected.length ||
-          !targetBindings.keys.toSet().containsAll(selected)) {
-        throw StateError(
-          'The performance monitor selection changed after approval.',
-        );
-      }
-      _monitoringTargetBindings =
-          Map<String, ssh_core.SshTargetBinding>.unmodifiable({
-            for (final id in selected) id: targetBindings[id]!,
-          });
-    } else {
-      _monitoringTargetBindings = null;
+    if (_disposed) {
+      throw StateError('MonitoringService has been disposed.');
     }
+    if (_selectedConnectionIds.isEmpty) return;
+    final selected = _selectedConnectionIds.toSet();
+    final capturedBindings = targetBindings == null
+        ? Map<String, ssh_core.SshTargetBinding>.fromEntries(
+            selected.map((id) {
+              final binding = _connectionCatalog.targetBindingFor(id);
+              return binding == null ? null : MapEntry(id, binding);
+            }).nonNulls,
+          )
+        : Map<String, ssh_core.SshTargetBinding>.from(targetBindings);
+    if (capturedBindings.keys.toSet().length != selected.length ||
+        !capturedBindings.keys.toSet().containsAll(selected) ||
+        selected.any((id) => capturedBindings[id]?.id != id)) {
+      throw StateError(
+        targetBindings == null
+            ? 'A selected performance monitor target is no longer available.'
+            : 'The performance monitor selection changed after approval.',
+      );
+    }
+    final epoch = ++_monitoringEpoch;
+    _samplingEpochs.clear();
+    _monitoringTargetBindings =
+        Map<String, ssh_core.SshTargetBinding>.unmodifiable({
+          for (final id in selected) id: capturedBindings[id]!,
+        });
     _running = true;
     _startedAt = DateTime.now();
     _monitoringConnectionIds
@@ -181,17 +194,18 @@ class MonitoringService extends ChangeNotifier {
       unawaited(background.start(connectionName: 'Performance monitor'));
     }
     _restartTimer();
-    await sampleNow(onUnknownHostKey: onUnknownHostKey);
+    await _sampleNowForEpoch(epoch, onUnknownHostKey: onUnknownHostKey);
   }
 
   void stopMonitoring() {
+    _monitoringEpoch++;
     _timer?.cancel();
     _timer = null;
     _running = false;
     _startedAt = null;
-    _samplingConnectionIds.clear();
+    _samplingEpochs.clear();
     _monitoringConnectionIds.clear();
-    _monitoringTargetBindings = null;
+    _monitoringTargetBindings = const {};
     _sampleStore.stopMonitoring();
     _failureCountsByConnection.clear();
     _invalidateMonitoringCache();
@@ -202,7 +216,13 @@ class MonitoringService extends ChangeNotifier {
     final changed =
         _selectedConnectionIds.remove(connectionId) |
         _monitoringConnectionIds.remove(connectionId);
-    _samplingConnectionIds.remove(connectionId);
+    if (!changed) return;
+    _monitoringEpoch++;
+    _samplingEpochs.clear();
+    _monitoringTargetBindings = Map.unmodifiable(
+      Map<String, ssh_core.SshTargetBinding>.from(_monitoringTargetBindings)
+        ..remove(connectionId),
+    );
     _sampleStore.removeConnection(connectionId);
     _failureCountsByConnection.remove(connectionId);
     _invalidateSelectionCache();
@@ -230,15 +250,22 @@ class MonitoringService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> sampleNow({
+  Future<void> sampleNow({ssh_core.SshHostKeyConfirmation? onUnknownHostKey}) =>
+      _sampleNowForEpoch(_monitoringEpoch, onUnknownHostKey: onUnknownHostKey);
+
+  Future<void> _sampleNowForEpoch(
+    int epoch, {
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
+    if (epoch != _monitoringEpoch) return;
     if (!_running || _monitoringConnectionIds.isEmpty) return;
     final targets = _monitoringConnectionIds
-        .where((id) => !_samplingConnectionIds.contains(id))
+        .where((id) => !_samplingEpochs.containsKey(id))
         .toList(growable: false);
     if (targets.isEmpty) return;
-    _samplingConnectionIds.addAll(targets);
+    for (final connectionId in targets) {
+      _samplingEpochs[connectionId] = epoch;
+    }
     if (!_disposed) notifyListeners();
 
     try {
@@ -248,32 +275,44 @@ class MonitoringService extends ChangeNotifier {
           batch.map(
             (connectionId) => _sampleConnection(
               connectionId,
+              epoch: epoch,
+              targetBinding: _monitoringTargetBindings[connectionId]!,
               onUnknownHostKey: onUnknownHostKey,
             ),
           ),
         );
       }
     } finally {
-      _samplingConnectionIds.removeAll(targets);
-      if (_running && !_disposed) _restartTimer();
-      if (!_disposed) notifyListeners();
+      for (final connectionId in targets) {
+        if (_samplingEpochs[connectionId] == epoch) {
+          _samplingEpochs.remove(connectionId);
+        }
+      }
+      if (_isCurrentEpoch(epoch)) _restartTimer();
+      if (!_disposed && epoch == _monitoringEpoch) notifyListeners();
     }
   }
 
   Future<void> _sampleConnection(
     String connectionId, {
+    required int epoch,
+    required ssh_core.SshTargetBinding targetBinding,
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     try {
-      if (_platformFor(connectionId) == ServerPlatform.windows) {
+      if (targetBinding.serverPlatform == ServerPlatform.windows) {
         await _sampleWindowsConnection(
           connectionId,
+          epoch: epoch,
+          targetBinding: targetBinding,
           onUnknownHostKey: onUnknownHostKey,
         );
         return;
       }
       final result = await _runOneShotWithRetry(
         connectionId: connectionId,
+        monitoringEpoch: epoch,
+        targetBinding: targetBinding,
         command: ServerStatusProbe.performanceCommand,
         timeout: _commandTimeout,
         onUnknownHostKey: onUnknownHostKey,
@@ -295,7 +334,7 @@ class MonitoringService extends ChangeNotifier {
         raw.diskUsage,
         _interval,
       );
-      if (!_running || !_monitoringConnectionIds.contains(connectionId)) {
+      if (!_isCurrentTarget(epoch, connectionId, targetBinding)) {
         return;
       }
       _sampleStore.recordSample(
@@ -307,6 +346,10 @@ class MonitoringService extends ChangeNotifier {
       _failureCountsByConnection.remove(connectionId);
       _alertEvaluator.evaluate(connectionId, sample, raw.diskUsage);
     } catch (e, stackTrace) {
+      if (e is _StaleMonitoringRunException ||
+          !_isCurrentTarget(epoch, connectionId, targetBinding)) {
+        return;
+      }
       _sampleStore.recordError(connectionId, e.toString());
       _failureCountsByConnection[connectionId] =
           (_failureCountsByConnection[connectionId] ?? 0) + 1;
@@ -326,11 +369,15 @@ class MonitoringService extends ChangeNotifier {
 
   Future<void> _sampleWindowsConnection(
     String connectionId, {
+    required int epoch,
+    required ssh_core.SshTargetBinding targetBinding,
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     final status = await _fetchWindowsStatus(
       connectionId,
       _commandTimeout,
+      monitoringEpoch: epoch,
+      targetBinding: targetBinding,
       onUnknownHostKey: onUnknownHostKey,
     );
     final sample = PerformanceSample(
@@ -342,7 +389,7 @@ class MonitoringService extends ChangeNotifier {
       networkBytesPerSecond: status.networkBytesPerSecond,
       diskUsage: status.diskUsage,
     );
-    if (!_running || !_monitoringConnectionIds.contains(connectionId)) {
+    if (!_isCurrentTarget(epoch, connectionId, targetBinding)) {
       return;
     }
     _sampleStore.recordSample(connectionId, sample, status.diskUsage);
@@ -443,10 +490,14 @@ class MonitoringService extends ChangeNotifier {
   Future<WindowsStatusSnapshot> _fetchWindowsStatus(
     String connectionId,
     Duration timeout, {
+    int? monitoringEpoch,
+    ssh_core.SshTargetBinding? targetBinding,
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     final result = await _runOneShotWithRetry(
       connectionId: connectionId,
+      monitoringEpoch: monitoringEpoch,
+      targetBinding: targetBinding,
       command: ServerStatusProbe.windowsStatusCommand,
       timeout: timeout,
       onUnknownHostKey: onUnknownHostKey,
@@ -462,8 +513,6 @@ class MonitoringService extends ChangeNotifier {
   }
 
   ServerPlatform _platformFor(String connectionId) {
-    final bound = _monitoringTargetBindings?[connectionId];
-    if (bound != null) return bound.serverPlatform;
     return _connectionCatalog.serverPlatformFor(connectionId) ??
         ServerPlatform.linux;
   }
@@ -472,16 +521,16 @@ class MonitoringService extends ChangeNotifier {
     required String connectionId,
     required String command,
     required Duration timeout,
+    int? monitoringEpoch,
+    ssh_core.SshTargetBinding? targetBinding,
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     Future<ssh_core.RemoteCommandResult> run() {
-      final binding = _monitoringTargetBindings?[connectionId];
-      if (_monitoringTargetBindings != null && binding == null) {
-        throw StateError(
-          'Connection is not part of the approved monitor target set.',
-        );
+      if (monitoringEpoch != null &&
+          !_isCurrentTarget(monitoringEpoch, connectionId, targetBinding)) {
+        throw const _StaleMonitoringRunException();
       }
-      return binding == null
+      return targetBinding == null
           ? _sshPort.runOneShotCommand(
               connectionId: connectionId,
               command: command,
@@ -490,7 +539,7 @@ class MonitoringService extends ChangeNotifier {
               priority: MonitoringRequestPriority.low,
             )
           : _sshPort.runOneShotCommandForBinding(
-              binding: binding,
+              binding: targetBinding,
               command: command,
               timeout: timeout,
               onUnknownHostKey: onUnknownHostKey,
@@ -501,7 +550,14 @@ class MonitoringService extends ChangeNotifier {
     try {
       return await run();
     } catch (firstError, firstStackTrace) {
-      if (_disposed) {
+      if (firstError is _StaleMonitoringRunException ||
+          _disposed ||
+          (monitoringEpoch != null &&
+              !_isCurrentTarget(
+                monitoringEpoch,
+                connectionId,
+                targetBinding,
+              ))) {
         Error.throwWithStackTrace(firstError, firstStackTrace);
       }
       _logger.warning(
@@ -509,7 +565,16 @@ class MonitoringService extends ChangeNotifier {
         details: 'connectionId=$connectionId error=$firstError',
       );
       await Future<void>.delayed(_retryDelayFor(connectionId));
-      if (_disposed) {
+      if (_disposed ||
+          (monitoringEpoch != null &&
+              !_isCurrentTarget(
+                monitoringEpoch,
+                connectionId,
+                targetBinding,
+              ))) {
+        if (monitoringEpoch != null) {
+          throw const _StaleMonitoringRunException();
+        }
         Error.throwWithStackTrace(firstError, firstStackTrace);
       }
       try {
@@ -528,10 +593,30 @@ class MonitoringService extends ChangeNotifier {
     return Duration(milliseconds: 700 + min(failures, 4) * 350);
   }
 
+  bool _isCurrentEpoch(int epoch) =>
+      !_disposed && _running && epoch == _monitoringEpoch;
+
+  bool _isCurrentTarget(
+    int epoch,
+    String connectionId,
+    ssh_core.SshTargetBinding? binding,
+  ) =>
+      _isCurrentEpoch(epoch) &&
+      _monitoringConnectionIds.contains(connectionId) &&
+      identical(_monitoringTargetBindings[connectionId], binding);
+
   @override
   void dispose() {
+    _monitoringEpoch++;
     _disposed = true;
     _timer?.cancel();
+    _running = false;
+    _samplingEpochs.clear();
+    _monitoringTargetBindings = const {};
     super.dispose();
   }
+}
+
+final class _StaleMonitoringRunException implements Exception {
+  const _StaleMonitoringRunException();
 }

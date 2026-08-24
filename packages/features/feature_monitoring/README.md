@@ -12,6 +12,8 @@
 - `MonitoringService` 只编排选择、Timer、低优先级 SSH probe 和平台路由；内部
   `MonitoringSampleStore` 独占有界历史/派生健康视图，
   `MonitoringAlertEvaluator` 独占阈值、五分钟去重和告警上限；
+- 每次显式启动都会冻结所选连接的 `SshTargetBinding` 并生成新的 run epoch；停止、
+  重启或移除连接后，旧轮次的迟到成功、错误、重试和清理不得写入当前轮次；
 - 不创建 `monitoring.db`，实时采样只保存在服务内存窗口；
 - 不依赖统一存储门面、`SshService`、`AppSettings` 或其他 Feature 实现。
 

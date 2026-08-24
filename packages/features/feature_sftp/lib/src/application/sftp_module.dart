@@ -4,6 +4,8 @@
 // Manager 与兼容后端由 AppRuntime 注入，Module 只借用，不在 dispose 中
 // 关闭 App Scope 资源。
 
+import 'dart:async';
+
 import 'package:app_core/app_core.dart';
 import 'package:ssh_core/ssh_core.dart';
 
@@ -13,7 +15,7 @@ import '../data/sftp_service.dart';
 import '../domain/sftp_ports.dart';
 
 /// SFTP 数据库构造器，供生命周期测试注入内存数据库。
-typedef SftpDatabaseFactory = SftpDatabase Function();
+typedef SftpDatabaseFactory = FutureOr<SftpDatabase> Function();
 
 /// SFTP Feature 的 Module Scope Owner。
 final class SftpModule implements AppModule {
@@ -30,6 +32,8 @@ final class SftpModule implements AppModule {
   SftpBackend? _backend;
   Future<void>? _initializeFuture;
   Future<void>? _disposeFuture;
+  int _generation = 0;
+  bool _initializing = false;
 
   @override
   String get id => 'feature_sftp';
@@ -67,21 +71,32 @@ final class SftpModule implements AppModule {
     }
     final existing = _initializeFuture;
     if (existing != null) return existing;
-    final future = _doInitialize();
+    _initializing = true;
+    final future = _doInitialize(_generation);
     _initializeFuture = future;
     return future;
   }
 
-  Future<void> _doInitialize() async {
-    final manager = _sshSessionManager;
-    final backend = _backend;
-    if (manager == null || backend == null) {
-      throw StateError('SftpModule must be registered before initialize.');
-    }
-
-    final database = _databaseFactory();
+  Future<void> _doInitialize(int generation) async {
+    SftpDatabase? createdDatabase;
     try {
+      final manager = _sshSessionManager;
+      final backend = _backend;
+      if (manager == null || backend == null) {
+        throw StateError('SftpModule must be registered before initialize.');
+      }
+      final databaseCandidate = _databaseFactory();
+      createdDatabase = databaseCandidate is Future<SftpDatabase>
+          ? await databaseCandidate
+          : databaseCandidate;
+      final database = createdDatabase;
+      if (_state == ModuleState.disposed || generation != _generation) {
+        throw StateError('SftpModule initialization was cancelled.');
+      }
       await database.customSelect('SELECT 1').getSingle();
+      if (_state == ModuleState.disposed || generation != _generation) {
+        throw StateError('SftpModule initialization was cancelled.');
+      }
       final repository = DriftSftpPathHistoryRepository(database);
       _database = database;
       _repository = repository;
@@ -92,10 +107,14 @@ final class SftpModule implements AppModule {
       );
       _state = ModuleState.initialized;
     } catch (_) {
-      await database.dispose();
-      _initializeFuture = null;
-      _state = ModuleState.registered;
+      await createdDatabase?.dispose();
+      if (_state != ModuleState.disposed && generation == _generation) {
+        _initializeFuture = null;
+        _state = ModuleState.registered;
+      }
       rethrow;
+    } finally {
+      _initializing = false;
     }
   }
 
@@ -106,7 +125,11 @@ final class SftpModule implements AppModule {
       _state = ModuleState.active;
       return;
     }
+    final generation = _generation;
     await initialize();
+    if (_state == ModuleState.disposed || generation != _generation) {
+      throw StateError('SftpModule has been disposed.');
+    }
     _state = ModuleState.active;
   }
 
@@ -127,7 +150,16 @@ final class SftpModule implements AppModule {
   }
 
   Future<void> _disposeResources() async {
-    await deactivate();
+    _generation++;
+    _state = ModuleState.disposed;
+    final initialization = _initializeFuture;
+    if (_initializing && initialization != null) {
+      try {
+        await initialization;
+      } catch (_) {
+        // A stale initializer owns and closes its local database before exit.
+      }
+    }
     final service = _service;
     final database = _database;
     _service = null;
@@ -140,6 +172,5 @@ final class SftpModule implements AppModule {
       service.dispose();
     }
     if (database != null) await database.dispose();
-    _state = ModuleState.disposed;
   }
 }

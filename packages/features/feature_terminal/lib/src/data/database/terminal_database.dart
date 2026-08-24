@@ -31,6 +31,9 @@ final class TerminalDatabase extends _$TerminalDatabase implements Disposable {
 
   bool _disposed = false;
 
+  /// 数据库 Owner 是否已经执行幂等关闭。
+  bool get isDisposed => _disposed;
+
   @override
   int get schemaVersion => 1;
 

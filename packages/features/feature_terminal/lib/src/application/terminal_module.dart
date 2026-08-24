@@ -4,6 +4,8 @@
 // 创建并 activate，离开时先 deactivate，再关闭数据库，避免页面仍在访问
 // Drift 句柄时被提前释放。
 
+import 'dart:async';
+
 import 'package:app_core/app_core.dart';
 import 'package:ssh_core/ssh_core.dart';
 
@@ -12,7 +14,7 @@ import '../data/repository/drift_terminal_history_repository.dart';
 import '../domain/terminal_ports.dart';
 
 /// Terminal database constructor used by the production Module and tests.
-typedef TerminalDatabaseFactory = TerminalDatabase Function();
+typedef TerminalDatabaseFactory = FutureOr<TerminalDatabase> Function();
 
 /// Terminal Feature 的数据库和 Repository Module。
 final class TerminalModule implements AppModule {
@@ -36,6 +38,8 @@ final class TerminalModule implements AppModule {
   SshSessionManager? _sshManager;
   Future<void>? _initializeFuture;
   Future<void>? _disposeFuture;
+  int _generation = 0;
+  bool _initializing = false;
 
   /// 当前 Module 持有的数据库；注册并初始化后可用。
   TerminalDatabase get database =>
@@ -68,24 +72,40 @@ final class TerminalModule implements AppModule {
     }
     final existing = _initializeFuture;
     if (existing != null) return existing;
-    final future = _doInitialize();
+    _initializing = true;
+    final future = _doInitialize(_generation);
     _initializeFuture = future;
     return future;
   }
 
-  Future<void> _doInitialize() async {
+  Future<void> _doInitialize(int generation) async {
     // ModuleState 不暴露 initializing 中间态；_initializeFuture 负责并发合并。
-    final database = _databaseFactory();
+    TerminalDatabase? createdDatabase;
     try {
+      final databaseCandidate = _databaseFactory();
+      createdDatabase = databaseCandidate is Future<TerminalDatabase>
+          ? await databaseCandidate
+          : databaseCandidate;
+      final database = createdDatabase;
+      if (_state == ModuleState.disposed || generation != _generation) {
+        throw StateError('TerminalModule initialization was cancelled.');
+      }
       await database.customSelect('SELECT 1').getSingle();
+      if (_state == ModuleState.disposed || generation != _generation) {
+        throw StateError('TerminalModule initialization was cancelled.');
+      }
       _database = database;
       _repository = DriftTerminalHistoryRepository(database);
       _state = ModuleState.initialized;
     } catch (_) {
-      await database.dispose();
-      _initializeFuture = null;
-      _state = ModuleState.registered;
+      await createdDatabase?.dispose();
+      if (_state != ModuleState.disposed && generation == _generation) {
+        _initializeFuture = null;
+        _state = ModuleState.registered;
+      }
       rethrow;
+    } finally {
+      _initializing = false;
     }
   }
 
@@ -96,7 +116,11 @@ final class TerminalModule implements AppModule {
       _state = ModuleState.active;
       return;
     }
+    final generation = _generation;
     await initialize();
+    if (_state == ModuleState.disposed || generation != _generation) {
+      throw StateError('TerminalModule has been disposed.');
+    }
     _state = ModuleState.active;
   }
 
@@ -117,12 +141,20 @@ final class TerminalModule implements AppModule {
   }
 
   Future<void> _disposeResources() async {
-    await deactivate();
+    _generation++;
+    _state = ModuleState.disposed;
+    final initialization = _initializeFuture;
+    if (_initializing && initialization != null) {
+      try {
+        await initialization;
+      } catch (_) {
+        // A stale initializer owns and closes its local database before exit.
+      }
+    }
     final database = _database;
     _database = null;
     _repository = null;
     _sshManager = null;
     if (database != null) await database.dispose();
-    _state = ModuleState.disposed;
   }
 }

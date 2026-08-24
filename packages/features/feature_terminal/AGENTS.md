@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-24
 
 # feature_terminal
 
@@ -17,6 +17,8 @@ Terminal-only App 只能注入其公开的 `SshSessionManager`、Terminal Port �
 Terminal 页面使用 Route Scope 创建 ViewModel；页面销毁时必须释放订阅、Timer、
 Controller 和 SSH 相关监听。`TerminalModule` 独占自己的数据库和 Repository，
 关闭时必须先停止活跃资源，再关闭数据库。
+初始化与销毁必须使用同一 generation/串行屏障；销毁开始后，迟到 initializer
+负责关闭局部数据库，不得发布 Repository 或改写 disposed 状态。
 
 终端原始输出历史服务位于 `lib/src/data/`，不直接访问 App 的数据保护、日志或路径
 服务；这些能力通过 Port 注入。当前 App Shell 的兼容 facade 负责提供旧实现所需的

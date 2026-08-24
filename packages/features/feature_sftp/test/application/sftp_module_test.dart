@@ -1,5 +1,7 @@
 // SFTP Module 生命周期测试。
 
+import 'dart:async';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app_core/app_core.dart';
@@ -48,5 +50,37 @@ void main() {
     expect(module.state, ModuleState.disposed);
     expect(() => module.database, throwsStateError);
     expect(() => module.service, throwsStateError);
+  });
+
+  test('dispose cancels a late initializer and closes its database', () async {
+    final manager = FakeSshSessionManager();
+    final backend = FakeSftpBackend();
+    final database = SftpDatabase.forTesting(NativeDatabase.memory());
+    final databaseReady = Completer<SftpDatabase>();
+    final module = SftpModule(databaseFactory: () => databaseReady.future);
+    await module.register(
+      ModuleContext.fromMap(<Type, Object>{
+        SshSessionManager: manager,
+        SftpBackend: backend,
+      }),
+    );
+
+    final activation = module.activate();
+    final initialization = module.initialize();
+    final disposal = module.dispose();
+    final activationExpectation = expectLater(activation, throwsStateError);
+    final initializationExpectation = expectLater(
+      initialization,
+      throwsStateError,
+    );
+    expect(module.state, ModuleState.disposed);
+    databaseReady.complete(database);
+
+    await initializationExpectation;
+    await activationExpectation;
+    await disposal;
+    expect(module.state, ModuleState.disposed);
+    expect(() => module.service, throwsStateError);
+    expect(database.isDisposed, isTrue);
   });
 }

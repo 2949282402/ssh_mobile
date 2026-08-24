@@ -34,6 +34,9 @@ commit, and observed regressions.
 - Start performance sampling for several servers.
 - Verify sampling starts only after the user taps Start, selected servers stay
   frozen for the run, and failures back off without noisy banners.
+- Stop and immediately restart against an edited target while an old probe is
+  pending. Verify late success/error/retry from the old epoch is discarded and
+  every command in the new run uses its captured target binding.
 - Check charts, disk sections, ports, and applications tabs for rebuild jank and
   refresh-button disabled states.
 

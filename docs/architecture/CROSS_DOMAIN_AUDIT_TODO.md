@@ -153,7 +153,7 @@ git diff --check
 - [x] **C-10 SFTP 目标绑定和日志脱敏**：条目、编辑和确认任务携带创建时
   target fingerprint，同 ID 换主机后旧 UI 不得读/写/删新目标；敏感路径
   日志只保留操作类型、稳定错误码和不可逆 hash。
-- [ ] **C-11 Monitoring 与 Feature Module 代次**：Monitoring 每轮 start 固定
+- [x] **C-11 Monitoring 与 Feature Module 代次**：Monitoring 每轮 start 固定
   epoch+target，stop/restart 后丢弃迟到 success/error/retry；SFTP/Terminal 初始化
   与销毁串行化，迟到初始化必须关闭局部数据库/服务，不得“复活”。
 - [ ] **C-12 Terminal 有界数据与 App owner**：历史加载期实时输出使用有界
