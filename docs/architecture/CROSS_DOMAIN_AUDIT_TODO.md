@@ -120,9 +120,59 @@ docker compose --env-file relay/.env.example -f relay/compose.yaml --profile sto
 git diff --check
 ```
 
-## Client（待 Backend 完成后展开）
+## Client（进行中）
 
-- [ ] **C-AUDIT 完整 Client 审查、TODO、修复与 Domain 验收**。
+- [x] **C-01 AI 命令安全边界**：`run_command` 必须拒绝重定向、命令
+  替换、换行和混合敏感路径；安全诊断改为精确命令/参数策略，不得
+  在 Plan Mode 或无审批路径执行远程写入与子命令。
+- [x] **C-02 MCP 安全与生命周期**：串行化 `start/stop/dispose`，阻止停用或
+  退出后迟到监听；JSON-RPC 错误、活动和日志只返回稳定错误码与经统一
+  策略脱敏的诊断。
+- [x] **C-03 WebView SSRF 边界**：规范化 IPv4 的非标准表示，拒绝所有非
+  全局可路由 IPv4/IPv6；在真正请求和每次重定向处校验 DNS 解析结果，
+  防止 DNS rebinding 读取本机或内网资源。
+- [ ] **C-04 Playbook 并发与数据保护**：将“审批后动作未变”改为数据库
+  revision CAS，并发编辑不得被执行侧覆盖；移除或迁移与加密 content 重复的
+  明文 name/description。
+- [ ] **C-05 AI/RAG 数据与 Route 生命周期**：聊天标题不得明文复制用户
+  prompt；PDF 在解压、文本、page/stream/chunk 和 embedding 前均有硬上限；AI
+  生成必须在 Route/Module 释放前取消并收敛，迟到回调不得写已关闭的
+  notifier、stream 或数据库。
+- [x] **C-06 System Admin 不可变目标与破坏性操作**：并发 A/B 连接、Route
+  销毁与迟到建连使用 generation/Lease fail-closed；所有 root 命令绑定
+  connection/target/session；重启/关机 token 绑定同一快照并原子一次性消费。
+- [x] **C-07 System Admin 命令与输出上限**：用户名和 shell 执行严格校验，
+  密码绝不进入 shell 命令文本而通过受控 stdin/argv 输入；stdout/stderr 设
+  统一硬上限，超限关闭会话并返回稳定错误。
+- [ ] **C-08 Connection/Host-key/凭据原子性**：Host Key 只在持久化成功后
+  更新调用方对象；Connection 配置、Host Key 和安全存储凭据使用可回滚的
+  staging/compensation；拒绝非 canonical ID 并使用无碰撞安全存储 key。
+- [ ] **C-09 SSH owner 和 Native stream 关闭屏障**：前台/后台 SSH 创建失败、
+  同 session 并发建连与 shell-done 重连都必须有唯一 owner 且可等待释放；
+  native stream 的迟到 open 和 send failure 必须释放局部句柄并从 registry 移除。
+- [ ] **C-10 SFTP 目标绑定和日志脱敏**：条目、编辑和确认任务携带创建时
+  target fingerprint，同 ID 换主机后旧 UI 不得读/写/删新目标；敏感路径
+  日志只保留操作类型、稳定错误码和不可逆 hash。
+- [ ] **C-11 Monitoring 与 Feature Module 代次**：Monitoring 每轮 start 固定
+  epoch+target，stop/restart 后丢弃迟到 success/error/retry；SFTP/Terminal 初始化
+  与销毁串行化，迟到初始化必须关闭局部数据库/服务，不得“复活”。
+- [ ] **C-12 Terminal 有界数据与 App owner**：历史加载期实时输出使用有界
+  ring buffer；旧明文历史流式加密并原子替换；Terminal App 由有生命周期的
+  Widget owner 等待幂等释放，cleanup 单项失败不得跳过后续 owner。
+- [ ] **C-13 AppRuntime/后台服务回滚**：构造失败时取消并有界等待已启动的
+  initializer，迟到任务不得访问已释放 DB/logger；后台服务启动返回
+  `false` 时立即释放已获取 power locks。
+- [ ] **C-14 LAN Share 会话、存储与配对边界**：native/WebShare 上传元数据
+  必须原子消费且 pending+active 共享并发上限；桌面端导出不得把最大
+  20 GiB 文件整体读入内存；远程配对复查不得在 unpair 后迟到恢复，
+  HTTP client/响应有界释放；Transfer/Discovery 最终关闭必须可等待且先
+  收敛 socket/server 再关闭 stream。
+- [ ] **C-15 架构审计报告语义**：兼容性门禁将“受批准的 App Shell adapter
+  测试引用”与真正受基线约束的旧引用分开计数，避免 closed 模块显示
+  `3 refs / 0 baseline` 却通过的误导输出。
+- [ ] **C-16 Client Domain 门禁**：通过所有受影响 package/app 的聚焦测试、
+  format/analyze，架构/依赖/资源 owner/兼容性门禁，Client coverage 不低于
+  80%，新手写生产文件不低于 90%。
 
 ## SDK（待 Client 完成后展开）
 

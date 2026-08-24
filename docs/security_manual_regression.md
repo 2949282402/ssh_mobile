@@ -1,6 +1,6 @@
-# SSH Security Manual Regression Checklist
+> Last updated: 2026-08-24
 
-> 最新更新时间：2026-08-03
+# SSH Security Manual Regression Checklist
 
 Use this checklist before a security-sensitive release. Record concrete device
 and server details, then mark each scenario pass/fail with notes.
@@ -53,6 +53,8 @@ and server details, then mark each scenario pass/fail with notes.
 | --- | --- | --- | --- |
 | `run_command` reads `~/.ssh/id_rsa`, `/etc/shadow`, `.env`, or environment | Blocked before execution |  |  |
 | `run_command` reads logs such as `journalctl` | Requires user approval |  |  |
+| `run_command` uses a lookalike diagnostic name such as `lswhatever` or `cmd /c dirx` | Requires user approval; prefix matching cannot mark it read-only |  |  |
+| PowerShell uses `-EncodedCommand`, `-File`, a non-allowlisted first cmdlet, or a write-capable pipeline cmdlet | Requires user approval; only exact diagnostic cmdlets and read-only pipeline segments are read-only |  |  |
 | SFTP AI read/download ordinary path | Requires user approval |  |  |
 | SFTP AI read/download secret path | Blocked before execution |  |  |
 | External MCP in `reviewConfiguredTools` with a configured risky Tool | Enters approval queue only when dynamic approval request exists |  |  |
@@ -61,9 +63,12 @@ and server details, then mark each scenario pass/fail with notes.
 | Local MCP Console exposure change | Takes effect without server restart and rejects pending MCP approvals |  |  |
 | External MCP in `trustedAgent` with a bound target | Executes through target-bound `executeApproved`; queue remains empty |  |  |
 | Switching MCP mode or regenerating Token with pending approvals | All pending requests rejected; none auto-execute |  |  |
+| MCP handler/server/activity persistence throws an exception containing a token | JSON-RPC, UI state, and logs expose only stable error codes and error type; token and stack are absent |  |  |
 | Unknown host key from AI tool path | Not auto-trusted |  |  |
 | Fingerprint mismatch from AI tool path | Blocked |  |  |
 | WebView reads localhost/private/metadata/file/data/javascript URL | Blocked |  |  |
+| Public WebView URL resolves to mixed public/private answers, redirects to private/metadata, or rebinds on a later hop | Blocked before the private address is connected; every hop is resolved again and pinned to its validated IP |  |  |
+| Proxied WebView page contains remote scripts/images/forms or a forged `data:text/html` navigation | Only escaped text and validated links render; no remote subresource loads and the forged navigation is blocked |  |  |
 | WebView page contains password/token/secret form | Text is not returned to AI |  |  |
 
 ## Backup, Logs, and Android Background

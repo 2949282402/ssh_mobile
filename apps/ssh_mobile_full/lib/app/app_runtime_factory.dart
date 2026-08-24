@@ -139,6 +139,10 @@ final class AppRuntimeFactory {
       cleanup.add(appSettings.dispose, priority: _CleanupPriority.settings);
       final webViewService = feature_webview.ClientWebViewService(
         logger: logger,
+        networkLoader: feature_webview.ClientWebViewSafeNetworkLoader(
+          resolver: const AppWebViewDnsResolver(),
+          transport: const AppWebViewPinnedTransport(),
+        ),
       );
       cleanup.add(webViewService.dispose, priority: _CleanupPriority.adapter);
       final webViewSettingsAdapter = AppWebViewSettingsAdapter(appSettings);

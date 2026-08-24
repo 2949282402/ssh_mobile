@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-24
 
 # feature_webview
 
@@ -17,11 +17,16 @@
   WebView 页面和 AI 工具的边界不会反向耦合。
 - URL 只允许 HTTP/HTTPS，并阻断 localhost、私有网段、metadata 地址、敏感表单
   页面和非安全 Scheme；这些限制同时适用于 UI 导航和 AI 工具调用。
+- WebView 不直接访问远端网络。App 注入的受控 Loader 对每个初始请求和重定向
+  重新解析 DNS、拒绝任一非全球可路由地址，并把实际 socket 固定到已验证 IP；
+  Feature 只把转义后的纯文本和安全链接渲染为无远端子资源的本地 HTML。生成
+  文档使用按会话与代次绑定的一次性导航 lease，其他 `about:`/`data:` 导航仍拒绝。
 
 ## 公共入口
 
 调用方只能导入 `package:feature_webview/feature_webview.dart`，不得引用 `lib/src/`。
 主要 API 包括 `ClientWebViewService`、`ClientWebViewAdapter`、
+`ClientWebViewSafeNetworkLoader`、`ClientWebViewSafeDocumentRenderer`、
 `ClientWebViewScreen`、`ClientWebViewViewModel` 和 `WebViewSettingsPort`。
 
 ## 验证

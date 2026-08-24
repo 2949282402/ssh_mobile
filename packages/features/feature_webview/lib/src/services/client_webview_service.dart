@@ -11,6 +11,10 @@ import 'package:app_core/app_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../domain/client_webview_network.dart';
+import '../domain/client_webview_safe_document.dart';
+import '../domain/client_webview_security_policy.dart';
+
 part 'client_webview/client_webview_models.dart';
 part 'client_webview/client_webview_ops.dart';
 
@@ -46,16 +50,24 @@ final class ClientWebViewService extends ChangeNotifier
     implements ClientWebViewAdapter {
   static const String defaultUrl = 'https://www.baidu.com';
   static const int defaultMaxChars = 40000;
+  static const _safeDocumentRenderer = ClientWebViewSafeDocumentRenderer();
 
-  ClientWebViewService({required AppLogger logger})
-    : _logger = logger.scope('client_webview');
+  ClientWebViewService({
+    required AppLogger logger,
+    required ClientWebViewNetworkLoader networkLoader,
+  }) : _logger = logger.scope('client_webview'),
+       _networkLoader = networkLoader;
 
   final AppLogger _logger;
+  final ClientWebViewNetworkLoader _networkLoader;
   final Map<String, ClientWebViewSession> _sessions = {};
 
   /// 释放所有会话状态，并停止向已销毁的页面发送通知。
   @override
   void dispose() {
+    for (final session in _sessions.values) {
+      session._internalDocumentLease.clear();
+    }
     _sessions.clear();
     super.dispose();
   }
@@ -94,11 +106,7 @@ final class ClientWebViewService extends ChangeNotifier
       notifyListeners();
       return;
     }
-    session._lastError = null;
-    session._url = uri.toString();
-    session._updatedAt = DateTime.now();
-    notifyListeners();
-    await controller.loadRequest(uri);
+    await _loadUriThroughProxy(session, uri);
   }
 
   @override
@@ -166,15 +174,18 @@ final class ClientWebViewService extends ChangeNotifier
     final uri = _searchUri(trimmedQuery, engine: engine);
     final token = _beginAiBrowsing(session, 'Searching "$trimmedQuery"');
     try {
-      final now = DateTime.now();
-      session
-        .._lastError = null
-        .._url = uri.toString()
-        .._isLoading = true
-        .._progress = 0
-        .._updatedAt = now;
-      notifyListeners();
-      await controller.loadRequest(uri);
+      final loaded = await _loadUriThroughProxy(session, uri);
+      if (!loaded) {
+        return ClientWebViewSearchResult(
+          chatId: chatId,
+          supported: true,
+          query: trimmedQuery,
+          searchUrl: session.url,
+          results: const [],
+          engine: engine ?? 'baidu',
+          error: session.lastError ?? 'Secure WebView request was blocked.',
+        );
+      }
       if (!_isAiBrowsingCurrent(session, token)) {
         return _interruptedSearchResult(session, trimmedQuery, engine: engine);
       }
@@ -213,6 +224,10 @@ final class ClientWebViewService extends ChangeNotifier
       }
       final title = (payload['title'] as String?)?.trim();
       final url = (payload['url'] as String?)?.trim();
+      final payloadUri = url == null ? null : Uri.tryParse(url);
+      final safePayloadUrl =
+          payloadUri != null &&
+          ClientWebViewSecurityPolicy.blockedUriReason(payloadUri) == null;
       final rawResults = payload['results'];
       final results = <ClientWebViewSearchItem>[];
       if (rawResults is List) {
@@ -232,7 +247,7 @@ final class ClientWebViewService extends ChangeNotifier
       final capturedAt = DateTime.now();
       session
         .._title = title?.isNotEmpty == true ? title : session.title
-        .._url = url?.isNotEmpty == true ? url : session.url
+        .._url = safePayloadUrl ? url : session.url
         .._isLoading = false
         .._progress = 100
         .._lastError = null
@@ -242,6 +257,7 @@ final class ClientWebViewService extends ChangeNotifier
         chatId: chatId,
         supported: true,
         query: trimmedQuery,
+        searchUrl: session.url,
         results: results,
         capturedAt: capturedAt,
         engine: engine ?? 'baidu',
@@ -302,7 +318,9 @@ final class ClientWebViewService extends ChangeNotifier
   @override
   /// 清除聊天会话状态；页面离开或聊天删除时由上层调用。
   void clearSession(String chatId) {
-    if (_sessions.remove(chatId) != null) {
+    final removed = _sessions.remove(chatId);
+    if (removed != null) {
+      removed._internalDocumentLease.clear();
       notifyListeners();
     }
   }
@@ -552,6 +570,9 @@ final class ClientWebViewService extends ChangeNotifier
               return NavigationDecision.prevent;
             }
             final uri = Uri.tryParse(request.url);
+            if (uri != null && session._internalDocumentLease.consume(uri)) {
+              return NavigationDecision.navigate;
+            }
             final blockedReason = uri == null
                 ? 'Invalid URL: ${request.url}'
                 : ClientWebViewSecurityPolicy.blockedUriReason(uri);
@@ -560,12 +581,20 @@ final class ClientWebViewService extends ChangeNotifier
               _notifyIfCurrent(session);
               return NavigationDecision.prevent;
             }
-            return NavigationDecision.navigate;
+            unawaited(_loadUriThroughProxy(session, uri!));
+            return NavigationDecision.prevent;
           },
           onPageStarted: (url) {
             if (!_isCurrentSession(session)) return;
+            final startedUri = Uri.tryParse(url);
             session
-              .._url = url
+              .._url =
+                  startedUri != null &&
+                      session._internalDocumentLease.isIssuedDocument(
+                        startedUri,
+                      )
+                  ? session.url
+                  : url
               .._progress = 0
               .._isLoading = true
               .._lastError = null
@@ -581,8 +610,15 @@ final class ClientWebViewService extends ChangeNotifier
           },
           onPageFinished: (url) {
             if (!_isCurrentSession(session)) return;
+            final finishedUri = Uri.tryParse(url);
             session
-              .._url = url
+              .._url =
+                  finishedUri != null &&
+                      session._internalDocumentLease.isIssuedDocument(
+                        finishedUri,
+                      )
+                  ? session.url
+                  : url
               .._progress = 100
               .._isLoading = false
               .._updatedAt = DateTime.now();
@@ -608,8 +644,9 @@ final class ClientWebViewService extends ChangeNotifier
             _notifyIfCurrent(session);
           },
         ),
-      )
-      ..loadRequest(Uri.parse(defaultUrl));
+      );
+
+    unawaited(_loadUriThroughProxy(session, Uri.parse(defaultUrl)));
 
     return session;
   }
