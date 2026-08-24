@@ -1041,25 +1041,6 @@ impl RuntimeState {
                 relay_handle.as_ref().filter(|_| relay_closed),
             )
             .await;
-
-        // Remove an empty manager only after taking the map write lock and
-        // rechecking the same manager, so a concurrent replacement cannot be
-        // erased after it publishes a new ready path.
-        let mut managers = self.peer_path_managers.write().await;
-        let remove_manager = managers.get(peer_id).is_some_and(|current| {
-            if !Arc::ptr_eq(current, &manager) {
-                return false;
-            }
-            let manager = manager.lock().expect("peer path manager lock");
-            manager.direct_ready().is_empty() && manager.relay_ready().is_none()
-        });
-        if remove_manager {
-            managers.remove(peer_id);
-        }
-        drop(managers);
-        if remove_manager {
-            self.path_projections.remove_peer(peer_id).await;
-        }
         true
     }
 
@@ -1125,14 +1106,7 @@ impl RuntimeState {
             }
             closed
         };
-        self.close_inactive_streams(peer_id).await;
-        self.path_projections
-            .remove_handle(peer_id, &relay_handle)
-            .await;
-        if !self.manager_has_ready_path(&manager).await {
-            self.peer_path_managers.write().await.remove(peer_id);
-            self.path_projections.remove_peer(peer_id).await;
-        }
+        self.cleanup_closed_path(peer_id, &relay_handle).await;
         Some(relay_handle)
     }
 
@@ -1156,14 +1130,7 @@ impl RuntimeState {
             }
             closed
         };
-        self.close_inactive_streams(peer_id).await;
-        self.path_projections
-            .remove_handle(peer_id, &direct_handle)
-            .await;
-        if !self.manager_has_ready_path(&manager).await {
-            self.peer_path_managers.write().await.remove(peer_id);
-            self.path_projections.remove_peer(peer_id).await;
-        }
+        self.cleanup_closed_path(peer_id, &direct_handle).await;
         Some(direct_handle)
     }
 
@@ -1190,10 +1157,7 @@ impl RuntimeState {
             }
             closed
         };
-        self.close_inactive_streams(peer_id).await;
-        self.path_projections
-            .remove_handle(peer_id, &direct_handle)
-            .await;
+        self.cleanup_closed_path(peer_id, &direct_handle).await;
         Some(direct_handle)
     }
 
@@ -1230,9 +1194,14 @@ impl RuntimeState {
         }
     }
 
-    async fn manager_has_ready_path(&self, manager: &Arc<Mutex<PeerPathManager>>) -> bool {
-        let manager = manager.lock().expect("peer path manager lock");
-        !manager.direct_ready().is_empty() || manager.relay_ready().is_some()
+    /// Finish asynchronous cleanup for one exact closed path.
+    ///
+    /// Keep an empty manager registered: a concurrent publisher may already
+    /// hold a clone of that manager outside the map lock. Only explicit peer
+    /// transport close and runtime shutdown remove the manager registration.
+    async fn cleanup_closed_path(&self, peer_id: &str, handle: &PathHandle) {
+        self.close_inactive_streams(peer_id).await;
+        self.path_projections.remove_handle(peer_id, handle).await;
     }
 
     #[cfg(test)]
