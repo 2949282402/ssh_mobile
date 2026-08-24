@@ -86,3 +86,37 @@ class MockToolService implements AiToolExecutor, AiToolApprovalTargetGuard {
     return const AiCommandReview.readOnly();
   }
 }
+
+class RecordingExecutionToolService implements AiToolExecutor {
+  RecordingExecutionToolService(this.delegate);
+
+  final AiToolExecutor delegate;
+  bool executed = false;
+
+  @override
+  Future<List<AiTool>> tools() => delegate.tools();
+
+  @override
+  Future<List<Map<String, dynamic>>> toolDefinitions() =>
+      delegate.toolDefinitions();
+
+  @override
+  Future<AiToolApprovalRequest?> approvalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  ) => delegate.approvalRequestFor(name, arguments);
+
+  @override
+  Future<String> execute(
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async {
+    executed = true;
+    return '{"ok":true}';
+  }
+
+  @override
+  AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) =>
+      delegate.reviewCommand(command, platform: platform);
+}

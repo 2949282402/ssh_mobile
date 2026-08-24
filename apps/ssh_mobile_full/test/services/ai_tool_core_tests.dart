@@ -8,6 +8,85 @@ void _registerAiToolCoreTests() {
     expect(review.requiresApproval, isFalse);
   });
 
+  test('read-only command names require an exact token boundary', () {
+    for (final command in [
+      'lswhatever',
+      'freezer',
+      'pwdx',
+      'topical',
+      'unamex',
+      'uptimectl',
+      'whoamix',
+      'ls\u2028whatever',
+    ]) {
+      final review = tools.reviewCommand(
+        command,
+        platform: ServerPlatform.linux,
+      );
+      expect(review.blocked, isFalse, reason: command);
+      expect(review.requiresApproval, isTrue, reason: command);
+    }
+
+    for (final command in [
+      'cmd /c dirx',
+      'cmd /c echoes',
+      'cmd /c tasklistx',
+      'cmd /c whoamix',
+    ]) {
+      final review = tools.reviewCommand(
+        command,
+        platform: ServerPlatform.windows,
+      );
+      expect(review.blocked, isFalse, reason: command);
+      expect(review.requiresApproval, isTrue, reason: command);
+    }
+
+    expect(
+      tools
+          .reviewCommand('ls -la', platform: ServerPlatform.linux)
+          .requiresApproval,
+      isFalse,
+    );
+    expect(
+      tools
+          .reviewCommand('cmd /c dir /b', platform: ServerPlatform.windows)
+          .requiresApproval,
+      isFalse,
+    );
+  });
+
+  test('PowerShell diagnostics use cmdlet and pipeline allowlists', () {
+    for (final command in [
+      'powershell -NoProfile -Command Get-Process',
+      'pwsh Get-Service | Select-Object Name | ConvertTo-Json',
+      r'powershell $PSVersionTable.PSVersion',
+    ]) {
+      final review = tools.reviewCommand(
+        command,
+        platform: ServerPlatform.windows,
+      );
+      expect(review.blocked, isFalse, reason: command);
+      expect(review.requiresApproval, isFalse, reason: command);
+    }
+
+    for (final command in [
+      'powershell -EncodedCommand ZABhAG4AZwBlAHI=',
+      r'powershell -File C:\Temp\script.ps1',
+      r'powershell -Command Set-Content C:\Temp\owned.txt owned',
+      r'powershell -Command Get-Process | Tee-Object C:\Temp\owned.txt',
+      r'''powershell -Command "Get-Process; Set-Content C:\Temp\owned.txt owned"''',
+      'powershell Get-Process\u2028Set-Content C:\\Temp\\owned.txt owned',
+      'powershell Get-ChildItem',
+    ]) {
+      final review = tools.reviewCommand(
+        command,
+        platform: ServerPlatform.windows,
+      );
+      expect(review.blocked, isFalse, reason: command);
+      expect(review.requiresApproval, isTrue, reason: command);
+    }
+  });
+
   test('requires approval for Linux command chaining', () {
     final review = tools.reviewCommand(
       'cat /etc/os-release | grep PRETTY',
@@ -16,6 +95,69 @@ void _registerAiToolCoreTests() {
 
     expect(review.blocked, isFalse);
     expect(review.requiresApproval, isTrue);
+  });
+
+  test('requires approval for shell redirection and command substitution', () {
+    final cases = <({String command, ServerPlatform platform})>[
+      (
+        command: 'cat /etc/os-release > /tmp/ai-owned',
+        platform: ServerPlatform.linux,
+      ),
+      (command: r'ls $(touch /tmp/ai-owned)', platform: ServerPlatform.linux),
+      (command: 'ls `touch /tmp/ai-owned`', platform: ServerPlatform.linux),
+      (
+        command: r'cmd /c echo owned > C:\Temp\ai-owned.txt',
+        platform: ServerPlatform.windows,
+      ),
+      (
+        command: r'powershell Get-Process | Tee-Object C:\Temp\processes.txt',
+        platform: ServerPlatform.windows,
+      ),
+    ];
+
+    for (final item in cases) {
+      final review = tools.reviewCommand(item.command, platform: item.platform);
+
+      expect(review.blocked, isFalse, reason: item.command);
+      expect(review.requiresApproval, isTrue, reason: item.command);
+    }
+  });
+
+  test('run_command approval requests cover shell-control syntax', () async {
+    for (final command in [
+      'cat /etc/os-release > /tmp/ai-owned',
+      r'ls $(touch /tmp/ai-owned)',
+      'ls `touch /tmp/ai-owned`',
+    ]) {
+      final request = await tools.approvalRequestFor('run_command', {
+        'connectionId': 'server-1',
+        'command': command,
+      });
+
+      expect(request, isNotNull, reason: command);
+      expect(request?.approvalType, 'remote_write', reason: command);
+    }
+  });
+
+  test('known-safe reads require every file operand to be safe', () {
+    final safe = tools.reviewCommand(
+      'cat /etc/os-release',
+      platform: ServerPlatform.linux,
+    );
+    final mixed = tools.reviewCommand(
+      'cat /etc/os-release /home/app/config.yml',
+      platform: ServerPlatform.linux,
+    );
+    final windowsFileRead = tools.reviewCommand(
+      r'cmd /c type C:\Users\demo\config.txt',
+      platform: ServerPlatform.windows,
+    );
+
+    expect(safe.requiresApproval, isFalse);
+    expect(mixed.blocked, isFalse);
+    expect(mixed.requiresApproval, isTrue);
+    expect(windowsFileRead.blocked, isFalse);
+    expect(windowsFileRead.requiresApproval, isTrue);
   });
 
   test('remote approval binding changes with connection target', () async {

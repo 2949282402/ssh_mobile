@@ -25,45 +25,47 @@ extension _SecurityPolicy on AiToolService {
         'Windows command was requested for a Linux server. Use POSIX or Linux commands for this server.',
       );
     }
-    if (_hasCommandSeparator(normalized)) {
+    if (_hasShellControlSyntax(normalized)) {
       return const AiCommandReview.requiresApproval(
-        'Command chaining or piping requires user approval.',
+        'Shell chaining, substitution, or redirection requires user approval.',
       );
     }
-    if (normalized.startsWith('cmd /c type')) {
+    if (_matchesCommandInvocation(normalized, 'cmd /c type')) {
       return const AiCommandReview.requiresApproval(
         'Reading remote file contents requires user approval.',
       );
     }
     final readReview = _sensitiveReadCommandReview(normalized);
     if (readReview != null) return readReview;
-    const allowedPrefixes = [
-      'cat ',
-      'command -v ',
-      'df ',
-      'du ',
+    const allowedCommands = [
+      'cat',
+      'command -v',
+      'df',
+      'du',
       'free',
-      'grep ',
-      'head ',
-      'journalctl ',
+      'grep',
+      'head',
+      'journalctl',
       'ls',
-      'netstat ',
-      'ps ',
+      'netstat',
+      'ps',
       'pwd',
-      'readlink ',
-      'realpath ',
-      'ss ',
-      'stat ',
-      'systemctl status ',
-      'tail ',
-      'top ',
+      'readlink',
+      'realpath',
+      'ss',
+      'stat',
+      'systemctl status',
+      'tail',
+      'top',
       'uname',
       'uptime',
-      'whereis ',
-      'which ',
+      'whereis',
+      'which',
       'whoami',
     ];
-    if (!allowedPrefixes.any(normalized.startsWith) &&
+    if (!allowedCommands.any(
+          (command) => _matchesCommandInvocation(normalized, command),
+        ) &&
         !_isSafePowerShellDiagnostic(normalized)) {
       return const AiCommandReview.requiresApproval(
         'This command may change server state.',
@@ -82,10 +84,7 @@ extension _SecurityPolicy on AiToolService {
         'Linux or POSIX command was requested for a Windows server. Use explicit cmd /c or PowerShell commands for this server.',
       );
     }
-    if (_isSafePowerShellDiagnostic(normalized)) {
-      return const AiCommandReview.readOnly();
-    }
-    const safeCmdPrefixes = [
+    const safeCmdCommands = [
       'cmd /c cd',
       'cmd /c dir',
       'cmd /c echo',
@@ -98,14 +97,24 @@ extension _SecurityPolicy on AiToolService {
       'cmd /c ver',
       'cmd /c whoami',
     ];
-    if (_hasCommandSeparator(normalized)) {
+    if (_isSafePowerShellDiagnostic(normalized)) {
+      return const AiCommandReview.readOnly();
+    }
+    if (_hasShellControlSyntax(normalized)) {
       return const AiCommandReview.requiresApproval(
-        'Command chaining or piping requires user approval.',
+        'Shell chaining, substitution, or redirection requires user approval.',
+      );
+    }
+    if (_matchesCommandInvocation(normalized, 'cmd /c type')) {
+      return const AiCommandReview.requiresApproval(
+        'Reading remote file contents requires user approval.',
       );
     }
     final readReview = _sensitiveReadCommandReview(normalized);
     if (readReview != null) return readReview;
-    if (safeCmdPrefixes.any(normalized.startsWith)) {
+    if (safeCmdCommands.any(
+      (command) => _matchesCommandInvocation(normalized, command),
+    )) {
       return const AiCommandReview.readOnly();
     }
     if (normalized.startsWith('cmd /c ') ||
@@ -214,12 +223,22 @@ extension _SecurityPolicy on AiToolService {
     return prefixes.any(normalized.startsWith);
   }
 
-  bool _hasCommandSeparator(String normalized) {
-    return normalized.contains(';') ||
-        normalized.contains('|') ||
-        normalized.contains('&&') ||
-        normalized.contains('||') ||
-        normalized.contains(' & ');
+  bool _hasShellControlSyntax(String normalized) {
+    if (normalized.contains(r'$(') || normalized.contains('`')) return true;
+    for (final codeUnit in normalized.codeUnits) {
+      if (codeUnit == 0x3b || // ;
+          codeUnit == 0x26 || // &
+          codeUnit == 0x7c || // |
+          codeUnit == 0x3c || // <
+          codeUnit == 0x3e || // >
+          codeUnit == 0x0a || // LF
+          codeUnit == 0x0d || // CR
+          (codeUnit < 0x20 && codeUnit != 0x09) ||
+          codeUnit == 0x7f) {
+        return true;
+      }
+    }
+    return false;
   }
 
   AiCommandReview? _sensitiveReadCommandReview(String normalized) {
@@ -260,7 +279,7 @@ extension _SecurityPolicy on AiToolService {
   }
 
   bool _isClearlySafeReadCommand(String text) {
-    const safeFragments = [
+    const safeFiles = {
       '/etc/os-release',
       '/etc/issue',
       '/proc/cpuinfo',
@@ -272,55 +291,172 @@ extension _SecurityPolicy on AiToolService {
       '/proc/net/dev',
       '/proc/net/tcp',
       '/proc/net/udp',
-      '/sys/class/net',
-      '/sys/class/thermal',
-    ];
-    return safeFragments.any(text.contains);
+    };
+    const safeDirectories = {'/sys/class/net', '/sys/class/thermal'};
+    final tokens = text
+        .split(RegExp(r'\s+'))
+        .where((token) => token.isNotEmpty)
+        .toList(growable: false);
+    if (tokens.isEmpty ||
+        (tokens.first != 'cat' &&
+            tokens.first != 'head' &&
+            tokens.first != 'tail')) {
+      return false;
+    }
+
+    final operands = <String>[];
+    var expectsNumericOptionValue = false;
+    for (final token in tokens.skip(1)) {
+      if (expectsNumericOptionValue) {
+        if (!RegExp(r'^\+?\d+$').hasMatch(token)) return false;
+        expectsNumericOptionValue = false;
+        continue;
+      }
+      if (tokens.first != 'cat' &&
+          (token == '-n' ||
+              token == '--lines' ||
+              token == '-c' ||
+              token == '--bytes')) {
+        expectsNumericOptionValue = true;
+        continue;
+      }
+      if (token.startsWith('-')) continue;
+      operands.add(token);
+    }
+    if (expectsNumericOptionValue || operands.isEmpty) return false;
+
+    return operands.every((path) {
+      final segments = path.split('/');
+      if (!path.startsWith('/') || segments.contains('..')) return false;
+      if (safeFiles.contains(path)) return true;
+      return safeDirectories.any(
+        (directory) => path == directory || path.startsWith('$directory/'),
+      );
+    });
   }
 
   bool _isSafePowerShellDiagnostic(String normalized) {
-    final isPowerShell =
-        normalized.startsWith('powershell ') || normalized.startsWith('pwsh ');
-    if (!isPowerShell) return false;
-    const blockedFragments = [
-      ' add-',
-      ' clear-',
-      ' copy-',
-      ' disable-',
-      ' enable-',
-      'get-content',
-      ' invoke-',
-      ' move-',
-      ' new-',
-      ' out-file',
-      ' remove-',
-      ' rename-',
-      ' restart-',
-      ' set-',
-      ' start-',
-      ' stop-',
-      ' write-',
-      '>>',
-      '>',
-      ';',
-      '&&',
-      '||',
-      ' del ',
-      ' erase ',
-      ' rd ',
-      ' rmdir ',
-    ];
-    if (blockedFragments.any(normalized.contains)) return false;
-    const safeFragments = [
-      'get-',
+    const launchers = ['powershell', 'powershell.exe', 'pwsh', 'pwsh.exe'];
+    final launcher = launchers.firstWhere(
+      (value) => _matchesCommandInvocation(normalized, value),
+      orElse: () => '',
+    );
+    if (launcher.isEmpty || normalized.length == launcher.length) return false;
+    var script = normalized.substring(launcher.length).trimLeft();
+    const allowedLauncherFlags = {
+      '-nologo',
+      '-noprofile',
+      '-noninteractive',
+      '-sta',
+      '-mta',
+    };
+    while (script.startsWith('-')) {
+      final separator = script.indexOf(RegExp(r'[ \t]'));
+      final option = separator < 0 ? script : script.substring(0, separator);
+      if (option == '-encodedcommand' ||
+          option == '-enc' ||
+          option == '-file' ||
+          option == '-f') {
+        return false;
+      }
+      if (option == '-command' || option == '-c') {
+        if (separator < 0) return false;
+        script = script.substring(separator).trimLeft();
+        break;
+      }
+      if (!allowedLauncherFlags.contains(option) || separator < 0) return false;
+      script = script.substring(separator).trimLeft();
+    }
+    if ((script.startsWith('"') && script.endsWith('"')) ||
+        (script.startsWith("'") && script.endsWith("'"))) {
+      script = script.substring(1, script.length - 1).trim();
+    }
+    final hasUnsafeControl = script.codeUnits.any(
+      (codeUnit) =>
+          (codeUnit < 0x20 && codeUnit != 0x09) ||
+          codeUnit == 0x7f ||
+          codeUnit == 0x85 ||
+          codeUnit == 0x2028 ||
+          codeUnit == 0x2029,
+    );
+    if (script.isEmpty ||
+        hasUnsafeControl ||
+        script.contains(';') ||
+        script.contains('&') ||
+        script.contains('<') ||
+        script.contains('>') ||
+        script.contains('`') ||
+        script.contains(r'$(') ||
+        script.contains('{') ||
+        script.contains('}') ||
+        script.contains('(') ||
+        script.contains(')') ||
+        script.contains('\n') ||
+        script.contains('\r') ||
+        script.contains('||')) {
+      return false;
+    }
+
+    const firstCmdlets = {
+      'get-ciminstance',
+      'get-computerinfo',
+      'get-counter',
+      'get-date',
+      'get-dnsclientcache',
+      'get-host',
+      'get-hotfix',
+      'get-location',
+      'get-netadapter',
+      'get-netipconfiguration',
+      'get-netroute',
+      'get-nettcpconnection',
+      'get-netudpendpoint',
+      'get-process',
+      'get-psdrive',
+      'get-service',
+      'get-timezone',
+      'get-wmiobject',
+      'resolve-dnsname',
+      'test-connection',
+      'test-netconnection',
+    };
+    const pipelineCmdlets = {
+      'convertto-json',
+      'format-list',
+      'format-table',
+      'measure-object',
+      'out-string',
       'select-object',
       'sort-object',
-      'measure-object',
-      'where-object',
-      'convertto-json',
-      r'$psversiontable',
-    ];
-    return safeFragments.any(normalized.contains);
+    };
+    final segments = script.split('|').map((value) => value.trim()).toList();
+    if (segments.isEmpty || segments.any((value) => value.isEmpty))
+      return false;
+    for (var index = 0; index < segments.length; index++) {
+      final segment = segments[index];
+      final separator = segment.indexOf(RegExp(r'[ \t]'));
+      final command = separator < 0 ? segment : segment.substring(0, separator);
+      if (index == 0) {
+        final isVersionTable = RegExp(
+          r'^\$psversiontable(?:\.[a-z0-9_]+)?$',
+        ).hasMatch(command);
+        if (!isVersionTable && !firstCmdlets.contains(command)) return false;
+        if (!isVersionTable && segment.contains(r'$')) return false;
+      } else if (!pipelineCmdlets.contains(command) || segment.contains(r'$')) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _matchesCommandInvocation(String normalized, String command) {
+    if (normalized == command) return true;
+    if (!normalized.startsWith(command) ||
+        normalized.length == command.length) {
+      return false;
+    }
+    final separator = normalized.codeUnitAt(command.length);
+    return separator == 0x20 || separator == 0x09;
   }
 
   String _truncate(String value) {
