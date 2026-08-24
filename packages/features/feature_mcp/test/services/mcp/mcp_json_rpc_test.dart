@@ -88,5 +88,62 @@ void main() {
         },
       );
     });
+
+    test('internal errors expose only a stable error code', () async {
+      const secret = 'MCP_JSON_RPC_SECRET_20260824';
+      final router = McpJsonRpcRouter(
+        lifecycleHandler: const _ThrowingLifecycleHandler(secret),
+        toolHandler: McpToolHandler(
+          aiToolService: _NoopToolExecutor(),
+          settingsProvider: () => const McpServerSettings(),
+        ),
+      );
+
+      final response = await router.route(
+        '{"jsonrpc":"2.0","id":7,"method":"ping"}',
+      );
+      final body = response.body! as Map<String, dynamic>;
+      final error = body['error'] as Map<String, dynamic>;
+
+      expect(error['code'], McpJsonRpcErrorCodes.internalError);
+      expect(error['message'], 'Internal error');
+      expect(error['data'], const {'error': 'internal_error'});
+      expect(body.toString(), isNot(contains(secret)));
+    });
   });
+}
+
+class _ThrowingLifecycleHandler extends McpLifecycleHandler {
+  const _ThrowingLifecycleHandler(this.secret);
+
+  final String secret;
+
+  @override
+  bool canHandle(String method) => true;
+
+  @override
+  McpJsonRpcHandlerResult handle(McpJsonRpcRequest request) {
+    throw StateError('Authorization: Bearer $secret');
+  }
+}
+
+class _NoopToolExecutor implements McpToolExecutor {
+  @override
+  Future<List<McpTool>> tools() async => const [];
+
+  @override
+  Future<List<Map<String, dynamic>>> toolDefinitions() async => const [];
+
+  @override
+  Future<McpApprovalRequest?> approvalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  ) async => null;
+
+  @override
+  Future<String> execute(
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async => '{}';
 }

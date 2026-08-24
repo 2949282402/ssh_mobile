@@ -1,4 +1,4 @@
-最新更新时间：2026-08-20
+最新更新时间：2026-08-24
 
 # feature_mcp
 
@@ -15,12 +15,16 @@
 - 调用方只允许从 `package:feature_mcp/feature_mcp.dart` 使用公共 API。
 - 公共入口提供 MCP 路由的纯 metadata；App Shell 只聚合描述并在 Route Scope 创建
   控制台状态，Core 不持有 Widget、ViewModel 或 Module 实例。
+- `McpSelfTestRunner` 独立拥有 initialize → tools/list 协议诊断和稳定结果落账；
+  Server Controller 只注入短生命周期 HTTP transport，不复制自检状态机。
 
 ## 生命周期
 
 AppRuntime 注册、初始化并激活 `McpModule`，应用生命周期在退出时先停止 Server，
 再释放 Module 和 `mcp.db`。路由通过 `McpFeatureScope` 创建 ViewModel，路由退出
 只释放自己的 ViewModel。
+`start/stop/checkPort/close` 串行化；`close()` 立即使旧 generation 失效，并等待迟到
+bind 与活动 HTTP listener 完成关闭后，Module 才关闭审批队列和数据库。
 
 ## 验证
 

@@ -6,6 +6,63 @@ import '../domain/mcp_activity.dart';
 import '../domain/mcp_auth_guard.dart';
 import '../domain/mcp_ports.dart';
 import 'mcp_json_rpc.dart';
+import 'mcp_self_test_runner.dart';
+
+String _sanitizedHttpErrorDetails(String errorCode, Object error) {
+  return 'errorCode=$errorCode errorType=${error.runtimeType}';
+}
+
+/// 每个请求创建并释放 HttpClient 的 loopback 自检 transport。
+final class McpHttpSelfTestTransport implements McpSelfTestTransport {
+  const McpHttpSelfTestTransport();
+
+  @override
+  Future<McpSelfTestResponse> postJson({
+    required Uri url,
+    required String token,
+    required Map<String, dynamic> body,
+  }) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 5)
+      ..findProxy = ((_) => 'DIRECT');
+    try {
+      final request = await client
+          .postUrl(url)
+          .timeout(const Duration(seconds: 5));
+      request.headers.contentType = ContentType.json;
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+      request.write(jsonEncode(body));
+      final response = await request.close().timeout(
+        const Duration(seconds: 5),
+      );
+      final responseText = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != HttpStatus.ok) {
+        return McpSelfTestResponse(
+          reachable: true,
+          statusCode: response.statusCode,
+          succeeded: false,
+        );
+      }
+      final decoded = jsonDecode(responseText);
+      return McpSelfTestResponse(
+        reachable: true,
+        statusCode: response.statusCode,
+        succeeded: decoded is Map && decoded['error'] == null,
+      );
+    } catch (_) {
+      return const McpSelfTestResponse(
+        reachable: false,
+        statusCode: null,
+        succeeded: false,
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+}
 
 /// The request data consumed by [McpHttpRequestHandler].
 ///
@@ -124,12 +181,11 @@ final class McpHttpRequestHandler {
         body: result.hasBody ? jsonEncode(result.body) : null,
         contentType: result.hasBody ? ContentType.json : null,
       );
-    } catch (e, stackTrace) {
+    } catch (error) {
       _recordSecurity('request_failed', outcome: McpActivityOutcome.failed);
       logger?.error(
         'MCP HTTP request failed',
-        error: e,
-        stackTrace: stackTrace,
+        details: _sanitizedHttpErrorDetails('request_failed', error),
       );
       return const McpHttpResponseData(
         statusCode: HttpStatus.internalServerError,
@@ -200,11 +256,10 @@ class McpHttpServer implements McpHttpServerHandle {
   }) {
     _subscription = _server.listen(
       _handleRequest,
-      onError: (Object error, StackTrace stackTrace) {
+      onError: (Object error, StackTrace _) {
         _logger?.error(
           'MCP HTTP server request stream failed',
-          error: error,
-          stackTrace: stackTrace,
+          details: _sanitizedHttpErrorDetails('request_stream_failed', error),
         );
       },
     );
@@ -270,8 +325,8 @@ class McpHttpServer implements McpHttpServerHandle {
       }
       if (result.body != null) response.write(result.body);
       await response.close();
-    } catch (e, stackTrace) {
-      _recordRequestFailure(e, stackTrace);
+    } catch (error) {
+      _recordRequestFailure(error);
       try {
         response.statusCode = HttpStatus.internalServerError;
       } catch (_) {
@@ -283,7 +338,7 @@ class McpHttpServer implements McpHttpServerHandle {
     }
   }
 
-  void _recordRequestFailure(Object error, StackTrace stackTrace) {
+  void _recordRequestFailure(Object error) {
     final recorder = _activityRecorder;
     if (recorder != null) {
       unawaited(
@@ -296,8 +351,7 @@ class McpHttpServer implements McpHttpServerHandle {
     }
     _logger?.error(
       'MCP HTTP request failed',
-      error: error,
-      stackTrace: stackTrace,
+      details: _sanitizedHttpErrorDetails('request_failed', error),
     );
   }
 }

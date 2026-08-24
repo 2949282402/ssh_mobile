@@ -35,4 +35,67 @@ void main() {
       expect(await repository.loadMcpActivityRecords(), isEmpty);
     },
   );
+
+  test('activity persistence failures log no exception contents', () async {
+    const secret = 'MCP_ACTIVITY_SECRET_20260824';
+    final logger = _RecordingLogger();
+    final recorder = McpActivityRecorder(
+      _ThrowingActivityRepository(secret),
+      logger: logger,
+    );
+
+    await recorder.record(
+      kind: McpActivityKind.security,
+      outcome: McpActivityOutcome.failed,
+      policyReason: 'request_failed',
+    );
+
+    final logText = logger.entries.join('\n');
+    expect(logText, contains('errorCode=activity_persistence_failed'));
+    expect(logText, contains('errorType=StateError'));
+    expect(logText, isNot(contains(secret)));
+  });
+}
+
+class _ThrowingActivityRepository implements McpActivityRepository {
+  const _ThrowingActivityRepository(this.secret);
+
+  final String secret;
+
+  @override
+  Future<void> clearMcpActivityRecords() async {}
+
+  @override
+  Future<List<McpActivityRecord>> loadMcpActivityRecords({int limit = 500}) {
+    return Future.value(const []);
+  }
+
+  @override
+  Future<void> recordMcpActivity(McpActivityRecord record) {
+    throw StateError('Authorization: Bearer $secret');
+  }
+}
+
+class _RecordingLogger implements McpLoggerPort {
+  final entries = <String>[];
+
+  @override
+  void info(String message, {String? details}) {
+    entries.add('$message|$details');
+  }
+
+  @override
+  void warning(String message, {String? details}) {
+    entries.add('$message|$details');
+  }
+
+  @override
+  void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  }) {
+    entries.add('$message|$error|$stackTrace|$details');
+  }
 }

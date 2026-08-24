@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../application/mcp_server_controller.dart';
+import '../../../application/mcp_self_test_runner.dart';
 import '../../../application/mcp_tool_exposure_policy.dart';
 import '../../../domain/mcp_invocation_policy.dart';
 import '../../../domain/mcp_server_settings.dart';

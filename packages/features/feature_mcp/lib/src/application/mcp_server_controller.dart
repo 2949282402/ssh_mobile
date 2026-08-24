@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -14,6 +13,7 @@ import '../domain/mcp_invocation_policy.dart';
 import 'mcp_json_rpc.dart';
 import 'mcp_lifecycle_handler.dart';
 import 'mcp_port_probe.dart';
+import 'mcp_self_test_runner.dart';
 import '../domain/mcp_tool_description_localizer.dart';
 import 'mcp_tool_handler.dart';
 import 'mcp_tool_exposure_policy.dart';
@@ -59,49 +59,6 @@ class McpToolPolicySnapshot {
   McpToolPolicyResult get result => exposureResult;
 }
 
-class McpSelfTestResult {
-  final bool serverReachable;
-  final bool authenticated;
-  final bool initialized;
-  final bool toolsListed;
-  final int durationMs;
-  final String? failureCode;
-
-  const McpSelfTestResult({
-    required this.serverReachable,
-    required this.authenticated,
-    required this.initialized,
-    required this.toolsListed,
-    required this.durationMs,
-    this.failureCode,
-  });
-
-  bool get succeeded =>
-      serverReachable && authenticated && initialized && toolsListed;
-}
-
-/// Result of one request made by the MCP self-test transport.
-final class McpSelfTestResponse {
-  final bool reachable;
-  final int? statusCode;
-  final bool succeeded;
-
-  const McpSelfTestResponse({
-    required this.reachable,
-    required this.statusCode,
-    required this.succeeded,
-  });
-}
-
-/// Transport used by [McpServerController.runSelfTest].
-abstract interface class McpSelfTestTransport {
-  Future<McpSelfTestResponse> postJson({
-    required Uri url,
-    required String token,
-    required Map<String, dynamic> body,
-  });
-}
-
 /// Factory used by the controller to own the MCP HTTP server lifecycle.
 typedef McpHttpServerFactory =
     Future<McpHttpServerHandle> Function({
@@ -129,57 +86,6 @@ Future<McpHttpServerHandle> _bindMcpHttpServer({
     activityRecorder: activityRecorder,
     logger: logger,
   );
-}
-
-final class _HttpMcpSelfTestTransport implements McpSelfTestTransport {
-  const _HttpMcpSelfTestTransport();
-
-  @override
-  Future<McpSelfTestResponse> postJson({
-    required Uri url,
-    required String token,
-    required Map<String, dynamic> body,
-  }) async {
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 5)
-      ..findProxy = (_) => 'DIRECT';
-    try {
-      final request = await client
-          .postUrl(url)
-          .timeout(const Duration(seconds: 5));
-      request.headers.contentType = ContentType.json;
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-      request.write(jsonEncode(body));
-      final response = await request.close().timeout(
-        const Duration(seconds: 5),
-      );
-      final responseText = await utf8.decoder
-          .bind(response)
-          .join()
-          .timeout(const Duration(seconds: 5));
-      if (response.statusCode != HttpStatus.ok) {
-        return McpSelfTestResponse(
-          reachable: true,
-          statusCode: response.statusCode,
-          succeeded: false,
-        );
-      }
-      final decoded = jsonDecode(responseText);
-      return McpSelfTestResponse(
-        reachable: true,
-        statusCode: response.statusCode,
-        succeeded: decoded is Map && decoded['error'] == null,
-      );
-    } catch (_) {
-      return const McpSelfTestResponse(
-        reachable: false,
-        statusCode: null,
-        succeeded: false,
-      );
-    } finally {
-      client.close(force: true);
-    }
-  }
 }
 
 class McpServerStatusSnapshot {
@@ -225,6 +131,11 @@ class McpServerController extends ChangeNotifier {
   McpPortProbeResult? _lastPortProbeResult;
   DateTime? _startedAt;
   bool _disposed = false;
+  bool _notifierDisposed = false;
+  Future<void> _lifecycleTail = Future<void>.value();
+  Future<void>? _closeFuture;
+  int _lifecycleGeneration = 0;
+  bool _desiredRunning = false;
   McpApprovalMode? _lastApprovalMode;
   Set<String> _lastSecondaryReviewTools = const {};
   Set<String> _lastExposedTools = const {};
@@ -238,7 +149,7 @@ class McpServerController extends ChangeNotifier {
     required this.logger,
     this.portProbe = const McpPortProbe(),
     this.serverFactory = _bindMcpHttpServer,
-    this.selfTestTransport = const _HttpMcpSelfTestTransport(),
+    this.selfTestTransport = const McpHttpSelfTestTransport(),
     McpApprovalQueue? approvalQueue,
   }) : approvalQueue = approvalQueue ?? McpApprovalQueue(logger: logger) {
     _lastApprovalMode = settings.mcpSettings.approvalMode;
@@ -368,13 +279,32 @@ class McpServerController extends ChangeNotifier {
   }
 
   Future<void> startIfEnabled() async {
-    await settings.ensureCoreLoaded();
-    if (settings.mcpSettings.enabled) {
+    try {
+      await settings.ensureCoreLoaded();
+    } catch (error) {
+      if (_disposed) return;
+      logger.error(
+        'MCP settings failed to load before server start',
+        details:
+            'errorCode=settings_load_failed errorType=${error.runtimeType}',
+      );
+      _setFailed('settings_load_failed');
+      return;
+    }
+    if (!_disposed && settings.mcpSettings.enabled) {
       await start();
     }
   }
 
-  Future<McpServerStatusSnapshot> start() async {
+  Future<McpServerStatusSnapshot> start() {
+    if (_disposed) return Future.value(snapshot);
+    _desiredRunning = true;
+    final generation = ++_lifecycleGeneration;
+    return _serializeLifecycle(() => _start(generation));
+  }
+
+  Future<McpServerStatusSnapshot> _start(int generation) async {
+    if (!_isCurrentStart(generation)) return snapshot;
     if (running) return snapshot;
 
     unawaited(
@@ -391,40 +321,42 @@ class McpServerController extends ChangeNotifier {
       return snapshot;
     }
 
-    await this.settings.ensureMcpServerToken();
-    final token = this.settings.mcpSettings.token;
-    settings = this.settings.mcpSettings.copyWith(token: token);
-
-    _status = McpServerRunStatus.checkingPort;
-    _lastError = null;
-    _notify();
-    logger.info(
-      'MCP server start requested',
-      details: 'host=${settings.host} port=${settings.port}',
-    );
-
-    final probe = await portProbe.check(
-      host: settings.host,
-      port: settings.port,
-    );
-    _lastPortProbeResult = probe;
-    logger.info(
-      'MCP port check result',
-      details:
-          'host=${probe.host} port=${probe.port} available=${probe.available} reason=${probe.reason.name}',
-    );
-    if (!probe.available) {
-      _setFailed(
-        probe.reason == McpPortProbeReason.invalidHostOrPort
-            ? 'Invalid MCP host or port'
-            : 'Port is already in use',
-      );
-      return snapshot;
-    }
-
-    _status = McpServerRunStatus.starting;
-    _notify();
     try {
+      await this.settings.ensureMcpServerToken();
+      if (!_isCurrentStart(generation)) return snapshot;
+      final token = this.settings.mcpSettings.token;
+      settings = this.settings.mcpSettings.copyWith(token: token);
+
+      _status = McpServerRunStatus.checkingPort;
+      _lastError = null;
+      _notify();
+      logger.info(
+        'MCP server start requested',
+        details: 'host=${settings.host} port=${settings.port}',
+      );
+
+      final probe = await portProbe.check(
+        host: settings.host,
+        port: settings.port,
+      );
+      if (!_isCurrentStart(generation)) return snapshot;
+      _lastPortProbeResult = probe;
+      logger.info(
+        'MCP port check result',
+        details:
+            'host=${probe.host} port=${probe.port} available=${probe.available} reason=${probe.reason.name}',
+      );
+      if (!probe.available) {
+        _setFailed(
+          probe.reason == McpPortProbeReason.invalidHostOrPort
+              ? 'Invalid MCP host or port'
+              : 'Port is already in use',
+        );
+        return snapshot;
+      }
+
+      _status = McpServerRunStatus.starting;
+      _notify();
       final lazyToolExecutor = LazyMcpToolExecutor(toolServiceFactory);
       final router = McpJsonRpcRouter(
         lifecycleHandler: const McpLifecycleHandler(),
@@ -439,7 +371,7 @@ class McpServerController extends ChangeNotifier {
           logger: logger,
         ),
       );
-      _server = await serverFactory(
+      final server = await serverFactory(
         host: settings.host,
         port: settings.port,
         token: token,
@@ -447,6 +379,11 @@ class McpServerController extends ChangeNotifier {
         activityRecorder: _activityRecorder,
         logger: logger,
       );
+      if (!_isCurrentStart(generation)) {
+        await _closeSupersededServer(server);
+        return snapshot;
+      }
+      _server = server;
       _boundHost = settings.host;
       _boundPort = settings.port;
       _startedAt = DateTime.now();
@@ -465,29 +402,38 @@ class McpServerController extends ChangeNotifier {
       );
       _notify();
       return snapshot;
-    } on SocketException catch (e, stackTrace) {
+    } on SocketException catch (error) {
+      if (!_isCurrentStart(generation)) return snapshot;
       logger.error(
         'MCP server failed to start',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'host=${settings.host} port=${settings.port}',
+        details:
+            'host=${settings.host} port=${settings.port} '
+            'errorCode=server_bind_failed errorType=${error.runtimeType}',
       );
-      _setFailed(e.message);
+      _setFailed('server_bind_failed');
       return snapshot;
-    } catch (e, stackTrace) {
+    } catch (error) {
+      if (!_isCurrentStart(generation)) return snapshot;
       logger.error(
         'MCP server failed to start',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'host=${settings.host} port=${settings.port}',
+        details:
+            'host=${settings.host} port=${settings.port} '
+            'errorCode=server_start_failed errorType=${error.runtimeType}',
       );
-      _setFailed(e.toString());
+      _setFailed('server_start_failed');
       return snapshot;
     }
   }
 
-  Future<void> stop() async {
+  Future<void> stop() {
     approvalQueue.rejectAll();
+    _desiredRunning = false;
+    _lifecycleGeneration += 1;
+    if (_disposed) return Future<void>.value();
+    return _serializeLifecycle(_stop);
+  }
+
+  Future<void> _stop() async {
     final server = _server;
     _server = null;
     _boundHost = null;
@@ -499,13 +445,15 @@ class McpServerController extends ChangeNotifier {
     }
     _status = McpServerRunStatus.stopped;
     _lastError = null;
-    unawaited(
-      _activityRecorder.record(
-        kind: McpActivityKind.lifecycle,
-        outcome: McpActivityOutcome.success,
-        policyReason: 'server_stopped',
-      ),
-    );
+    if (!_disposed) {
+      unawaited(
+        _activityRecorder.record(
+          kind: McpActivityKind.lifecycle,
+          outcome: McpActivityOutcome.success,
+          policyReason: 'server_stopped',
+        ),
+      );
+    }
     _notify();
   }
 
@@ -514,7 +462,11 @@ class McpServerController extends ChangeNotifier {
     return start();
   }
 
-  Future<McpPortProbeResult> checkPort({String? host, int? port}) async {
+  Future<McpPortProbeResult> checkPort({String? host, int? port}) {
+    return _serializeLifecycle(() => _checkPort(host: host, port: port));
+  }
+
+  Future<McpPortProbeResult> _checkPort({String? host, int? port}) async {
     final settings = this.settings.mcpSettings;
     final wasRunning = running;
     if (!wasRunning) {
@@ -538,116 +490,70 @@ class McpServerController extends ChangeNotifier {
     return result;
   }
 
+  bool _isCurrentStart(int generation) {
+    return !_disposed && _desiredRunning && generation == _lifecycleGeneration;
+  }
+
+  Future<T> _serializeLifecycle<T>(Future<T> Function() action) {
+    final previous = _lifecycleTail;
+    final result = Completer<T>();
+    _lifecycleTail = () async {
+      await previous;
+      try {
+        result.complete(await action());
+      } catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
+      }
+    }();
+    return result.future;
+  }
+
+  Future<void> _closeSupersededServer(McpHttpServerHandle server) async {
+    try {
+      await server.close();
+    } catch (error) {
+      logger.error(
+        'Superseded MCP server failed to close',
+        details: 'errorType=${error.runtimeType}',
+      );
+    }
+  }
+
+  /// 使新生命周期动作立即失效，并等待所有在途 start/stop 与 HTTP Server 收敛。
+  Future<void> close() {
+    final existing = _closeFuture;
+    if (existing != null) return existing;
+    _disposed = true;
+    _desiredRunning = false;
+    _lifecycleGeneration += 1;
+    settings.removeListener(_handleSettingsChanged);
+    approvalQueue.rejectAll();
+    final future = _serializeLifecycle(_closeResources);
+    _closeFuture = future;
+    return future;
+  }
+
+  Future<void> _closeResources() async {
+    final server = _server;
+    _server = null;
+    _boundHost = null;
+    _boundPort = null;
+    _startedAt = null;
+    _status = McpServerRunStatus.stopped;
+    _lastError = null;
+    if (server != null) await _closeSupersededServer(server);
+    approvalQueue.dispose();
+  }
+
   Future<McpSelfTestResult> runSelfTest() async {
-    final watch = Stopwatch()..start();
-    if (!running) {
-      return _selfTestFailure(
-        watch,
-        'server_not_running',
-        serverReachable: false,
-        authenticated: false,
-      );
-    }
-    final token = await settings.ensureMcpServerToken();
-    final url = Uri.parse(snapshot.url);
-    final initialize = await _postJsonRpc(url, token, const {
-      'jsonrpc': '2.0',
-      'id': 1,
-      'method': 'initialize',
-      'params': {'protocolVersion': McpLifecycleHandler.protocolVersion},
-    });
-    if (!initialize.reachable) {
-      return _selfTestFailure(
-        watch,
-        'connection_failed',
-        serverReachable: false,
-        authenticated: false,
-      );
-    }
-    if (initialize.statusCode == HttpStatus.unauthorized ||
-        initialize.statusCode == HttpStatus.forbidden) {
-      return _selfTestFailure(
-        watch,
-        'authentication_failed',
-        serverReachable: true,
-        authenticated: false,
-      );
-    }
-    if (!initialize.succeeded) {
-      return _selfTestFailure(
-        watch,
-        'initialize_failed',
-        serverReachable: true,
-        authenticated: true,
-      );
-    }
-    final toolsListed = await _postJsonRpc(url, token, const {
-      'jsonrpc': '2.0',
-      'id': 2,
-      'method': 'tools/list',
-    });
-    if (!toolsListed.succeeded) {
-      return _selfTestFailure(
-        watch,
-        'tools_list_failed',
-        serverReachable: toolsListed.reachable,
-        authenticated: toolsListed.reachable,
-        initialized: true,
-      );
-    }
-    watch.stop();
-    final result = McpSelfTestResult(
-      serverReachable: true,
-      authenticated: true,
-      initialized: true,
-      toolsListed: true,
-      durationMs: watch.elapsedMilliseconds,
+    return McpSelfTestRunner(
+      transport: selfTestTransport,
+      activityRecorder: _activityRecorder,
+    ).run(
+      serverRunning: running,
+      url: Uri.parse(snapshot.url),
+      loadToken: settings.ensureMcpServerToken,
     );
-    unawaited(
-      _activityRecorder.record(
-        kind: McpActivityKind.protocol,
-        outcome: McpActivityOutcome.success,
-        method: 'self_test',
-        durationMs: result.durationMs,
-      ),
-    );
-    return result;
-  }
-
-  Future<McpSelfTestResponse> _postJsonRpc(
-    Uri url,
-    String token,
-    Map<String, dynamic> body,
-  ) async {
-    return selfTestTransport.postJson(url: url, token: token, body: body);
-  }
-
-  McpSelfTestResult _selfTestFailure(
-    Stopwatch watch,
-    String code, {
-    required bool serverReachable,
-    required bool authenticated,
-    bool initialized = false,
-  }) {
-    watch.stop();
-    final result = McpSelfTestResult(
-      serverReachable: serverReachable,
-      authenticated: authenticated,
-      initialized: initialized,
-      toolsListed: false,
-      durationMs: watch.elapsedMilliseconds,
-      failureCode: code,
-    );
-    unawaited(
-      _activityRecorder.record(
-        kind: McpActivityKind.protocol,
-        outcome: McpActivityOutcome.failed,
-        method: 'self_test',
-        policyReason: code,
-        durationMs: result.durationMs,
-      ),
-    );
-    return result;
   }
 
   void _setFailed(String error) {
@@ -671,11 +577,9 @@ class McpServerController extends ChangeNotifier {
 
   @override
   void dispose() {
-    _disposed = true;
-    settings.removeListener(_handleSettingsChanged);
-    approvalQueue.rejectAll();
-    approvalQueue.dispose();
-    unawaited(_server?.close());
+    if (_notifierDisposed) return;
+    unawaited(close());
+    _notifierDisposed = true;
     super.dispose();
   }
 }

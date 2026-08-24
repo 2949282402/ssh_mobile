@@ -203,7 +203,7 @@ class McpJsonRpcRouter {
           data: e.data,
         ),
       );
-    } catch (e) {
+    } catch (_) {
       if (request.isNotification) {
         return const McpJsonRpcHttpResult(
           statusCode: 202,
@@ -217,7 +217,7 @@ class McpJsonRpcRouter {
           id: request.id,
           code: McpJsonRpcErrorCodes.internalError,
           message: 'Internal error',
-          data: {'error': e.toString()},
+          data: const {'error': 'internal_error'},
         ),
       );
     }

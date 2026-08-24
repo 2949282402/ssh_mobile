@@ -129,6 +129,32 @@ void main() {
       expect(activity.policyReason, 'tool_not_configured_for_secondary_review');
     });
 
+    test('tool execution errors do not expose secrets', () async {
+      const secret = 'MCP_EXCEPTION_SECRET_20260824';
+      final logger = _RecordingLogger();
+      final toolHandler = McpToolHandler(
+        aiToolService: _ThrowingToolExecutor(secret),
+        settingsProvider: () => const McpServerSettings(token: 'secret'),
+        logger: logger,
+      );
+
+      final response = await toolHandler.handle(
+        const McpJsonRpcRequest(
+          id: 'error-redaction-test',
+          hasId: true,
+          method: 'tools/call',
+          params: {'name': 'list_servers', 'arguments': <String, dynamic>{}},
+        ),
+      );
+
+      final result = response.result! as Map;
+      final text = result['content'][0]['text'] as String;
+      expect(result['isError'], isTrue);
+      expect(text, contains('tool_execution_failed'));
+      expect(text, isNot(contains(secret)));
+      expect(logger.entries.join('\n'), isNot(contains(secret)));
+    });
+
     test('POST tools/call for write tool returns approval_required', () async {
       final response = await postJson({
         'jsonrpc': '2.0',
@@ -502,6 +528,42 @@ void main() {
       expect(activity.method, isNull);
       expect(activity.toolName, isNull);
     });
+
+    test('request failures log only a stable code and error type', () async {
+      const secret = 'MCP_HTTP_SECRET_20260824';
+      final logger = _RecordingLogger();
+      final guardedHandler = McpHttpRequestHandler(
+        port: 38321,
+        token: 'secret',
+        router: McpJsonRpcRouter(
+          lifecycleHandler: const McpLifecycleHandler(),
+          toolHandler: McpToolHandler(
+            aiToolService: _FakeToolExecutor(),
+            settingsProvider: () => const McpServerSettings(token: 'secret'),
+          ),
+        ),
+        logger: logger,
+      );
+
+      final response = await guardedHandler.handle(
+        McpHttpRequestData(
+          path: '/mcp',
+          method: 'POST',
+          contentType: ContentType.json,
+          authorization: 'Bearer secret',
+          origin: null,
+          body: Future<String>.error(
+            StateError('Authorization: Bearer $secret'),
+          ),
+        ),
+      );
+
+      expect(response.statusCode, HttpStatus.internalServerError);
+      final logText = logger.entries.join('\n');
+      expect(logText, contains('errorCode=request_failed'));
+      expect(logText, contains('errorType=StateError'));
+      expect(logText, isNot(contains(secret)));
+    });
   });
 }
 
@@ -611,6 +673,66 @@ class _FakeToolExecutor implements McpToolExecutor, McpApprovalTargetGuard {
     Map<String, dynamic> arguments,
   ) {
     return execute(request.toolName, arguments, approvedWrite: true);
+  }
+}
+
+class _ThrowingToolExecutor implements McpToolExecutor {
+  _ThrowingToolExecutor(this.secret);
+
+  final String secret;
+
+  @override
+  Future<List<McpTool>> tools() async => const [
+    McpTool(
+      name: 'list_servers',
+      description: 'List saved servers.',
+      properties: {},
+    ),
+  ];
+
+  @override
+  Future<List<Map<String, dynamic>>> toolDefinitions() async {
+    const adapter = McpAiToolAdapter();
+    return (await tools()).map(adapter.toMcpTool).toList();
+  }
+
+  @override
+  Future<McpApprovalRequest?> approvalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  ) async => null;
+
+  @override
+  Future<String> execute(
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) {
+    throw StateError('Authorization: Bearer $secret');
+  }
+}
+
+class _RecordingLogger implements McpLoggerPort {
+  final entries = <String>[];
+
+  @override
+  void info(String message, {String? details}) {
+    entries.add('$message|$details');
+  }
+
+  @override
+  void warning(String message, {String? details}) {
+    entries.add('$message|$details');
+  }
+
+  @override
+  void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  }) {
+    entries.add('$message|$error|$stackTrace|$details');
   }
 }
 
