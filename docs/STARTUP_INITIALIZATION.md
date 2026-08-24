@@ -1,6 +1,6 @@
-# 应用启动按需初始化架构 (On-demand Startup Initialization Architecture)
+> 最新更新时间：2026-08-24
 
-> 最新更新时间：2026-08-09
+# 应用启动按需初始化架构 (On-demand Startup Initialization Architecture)
 
 ## 概述
 为了大幅提升应用冷启动速度，降低 CPU/内存占用并减少未访问功能引起的后台 I/O 和网络开销，应用采用了**按需初始化架构（On-demand Initialization Architecture）**。
@@ -35,3 +35,11 @@
 ### 6. 条件生命周期与导入刷新
 - 移除首帧后固定 900ms 的全局后台服务预热 Timer。
 - 规范配置导入（Import）回调，等待所有已注册系统的异步刷新完成后才返回。
+
+### 7. Runtime initializer Owner 与失败回滚
+- `AppRuntimeInitializationOwner` 先惰性登记非阻塞 initializer，只在完整 Runtime
+  所有权提交后统一启动；构造中途失败不会留下访问待释放数据库的后台任务。
+- Owner 为已启动任务提供 cancellation signal，逆序调用可取消 initializer，并以
+  3 秒屏障等待收敛；超时后关闭诊断入口，迟到错误不得访问已经释放的 Logger。
+- 正常 `AppRuntime.dispose()` 仍先等待已提交 initializer，再按 Adapter → Module →
+  Realtime → SFTP → SSH → Network → Database → Logger 逆序释放。

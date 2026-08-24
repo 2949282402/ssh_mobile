@@ -11,6 +11,7 @@
 | AppLogger | `AppRuntime` → `AppLogService` | App | `dispose` last; cancels UI notification timer; does not close the log DB |
 | AppLogDatabase | binder via `AppLogService.setDatabase` (not closed by `AppLogService.dispose`) | App | `detachDatabase` drains writes, then `dispose` closes Drift handle (idempotent) |
 | AppSettings | `AppRuntime` | App | `dispose` cancels listeners and pending work |
+| App startup initializers | `AppRuntimeInitializationOwner` → `AppRuntime` | App/Startup | register lazily; start after Runtime commit; construction rollback cancels in reverse and closes late diagnostics after bounded wait |
 | ConnectionDatabase | `AppRuntime` / Connection Core | App | await repository init, then `close` |
 | NetworkRuntime | `AppRuntime` | App | `dispose` after SSH/SFTP stop |
 | Native handle | Network native adapter via `NetworkRuntime` | App/Native | stop isolate, then `destroy` handle |
@@ -38,6 +39,7 @@
 | ViewModel | owning Route Provider/Scope | Route | Provider/Scope `dispose` |
 | Route Controller | owning Widget State/ViewModel | Route/Widget | State `dispose` |
 | Timer | owning Module/Service/ViewModel | Owner scope | `cancel` before owner release |
+| Foreground-service power locks | `BackgroundServiceLifecycle` | App/Platform | release immediately when native start returns false; stop retries release after failures |
 | StreamSubscription | owning Service/Controller | Owner scope | `cancel` / `DisposableBag` |
 | StreamController | owning Service/Controller | Owner scope | `close` before owner release |
 | Isolate | launching parser/transfer/native owner | Task/Owner scope | stop/kill and await exit |

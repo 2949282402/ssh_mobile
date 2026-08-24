@@ -25,6 +25,7 @@ import '../services/terminal_session_metadata_store.dart';
 import '../services/shortcut_command_service.dart';
 import '../services/ssh_service.dart';
 import 'app_runtime.dart';
+import 'app_runtime_initialization_owner.dart';
 import 'ai_external_capability_adapters.dart';
 import 'ai_feature_adapters.dart';
 import 'developer_feature_adapters.dart';
@@ -71,9 +72,13 @@ final class AppRuntimeFactory {
     bool disposeLogger = true,
     void Function(String event)? lifecycleObserver,
   }) async {
-    final cleanup = _CleanupStack(observer: lifecycleObserver);
-    final pendingInitialization = _PendingInitialization();
     final logger = appLogService ?? AppLogService();
+    final cleanup = _CleanupStack(observer: lifecycleObserver);
+    final pendingInitialization = AppRuntimeInitializationOwner(
+      onError: (description, error, stackTrace) {
+        logger.error(description, error: error, stackTrace: stackTrace);
+      },
+    );
     if (disposeLogger) {
       cleanup.add(logger.dispose, priority: _CleanupPriority.logger);
     }
@@ -116,22 +121,19 @@ final class AppRuntimeFactory {
       final bootstrapClient = JsonBootstrapClient(
         executor: const AppSdkRequestExecutor(),
       );
-      pendingInitialization.track(
-        runtimeConnectionRepository.initialize(),
-        logger: logger,
+      pendingInitialization.add(
+        start: (_) => runtimeConnectionRepository.initialize(),
         description: 'Connection repository initialization failed',
       );
 
       // 这些任务原本由 main 并发发起，继续保持不阻塞 runApp 的行为；其
       // Future 由 Runtime 持有并在关闭前等待，避免失败后悬空运行。
-      pendingInitialization.track(
-        SharedPreferences.getInstance(),
-        logger: logger,
+      pendingInitialization.add(
+        start: (_) => SharedPreferences.getInstance(),
         description: 'SharedPreferences initialization failed',
       );
-      pendingInitialization.track(
-        DisplayModeService.enableHighRefreshRate(),
-        logger: logger,
+      pendingInitialization.add(
+        start: (_) => DisplayModeService.enableHighRefreshRate(),
         description: 'High refresh-rate setup failed',
       );
 
@@ -172,9 +174,8 @@ final class AppRuntimeFactory {
         bootstrapCoordinator.dispose,
         priority: _CleanupPriority.adapter,
       );
-      pendingInitialization.track(
-        bootstrapCoordinator.ensureBootstrap(),
-        logger: logger,
+      pendingInitialization.add(
+        start: (_) => bootstrapCoordinator.ensureBootstrap(),
         description: 'App bootstrap initialization failed',
       );
 
@@ -205,9 +206,9 @@ final class AppRuntimeFactory {
       );
       final terminalSshManager = AppTerminalSshSessionManager(sshService);
       cleanup.add(terminalSshManager.close, priority: _CleanupPriority.ssh);
-      pendingInitialization.track(
-        sshService.ensureInitialized(),
-        logger: logger,
+      pendingInitialization.add(
+        start: (_) => sshService.ensureInitialized(),
+        cancel: sshService.close,
         description: 'SSH service initialization failed',
       );
 
@@ -257,9 +258,9 @@ final class AppRuntimeFactory {
       );
       aiStorageAdapter.registerOnImportCallback(appSettings.init);
       aiStorageAdapter.registerOnImportCallback(shortcutCommandService.init);
-      pendingInitialization.track(
-        aiStorageAdapter.init(),
-        logger: logger,
+      pendingInitialization.add(
+        start: (_) => aiStorageAdapter.init(),
+        cancel: aiStorageAdapter.shutdown,
         description: 'AI storage preferences initialization failed',
       );
 
@@ -527,12 +528,21 @@ final class AppRuntimeFactory {
         disposeLogger: disposeLogger,
       );
       cleanup.commit();
+      pendingInitialization.start();
       return runtime;
     } catch (error, stackTrace) {
-      // 构造已经失败，不能再让一个永久挂起的启动任务无限阻塞回滚。
-      // shutdown 让 wait 立即返回，已跟踪的 Future 仍会自行完成或记录失败。
-      pendingInitialization.shutdown();
-      await pendingInitialization.wait();
+      // 构造已经失败，先取消并有界等待所有已启动 initializer；超时后的
+      // 迟到错误不会再访问即将释放的 Logger。
+      final initializersSettled = await pendingInitialization.cancelAndWait();
+      if (!initializersSettled) {
+        try {
+          logger.warning(
+            'Runtime initializer cancellation reached its bounded wait',
+          );
+        } catch (_) {
+          // The original initialization error remains authoritative.
+        }
+      }
       final cleanupError = await cleanup.dispose();
       if (cleanupError != null) {
         try {
@@ -647,50 +657,6 @@ abstract final class _CleanupPriority {
   static const realtime = 60;
   static const module = 70;
   static const adapter = 80;
-}
-
-/// Tracks non-blocking initialization without changing its startup timing.
-/// Every tracked operation is converted to a successful barrier completion
-/// after logging its failure, so shutdown can await all work and preserve the
-/// original construction/disposal error.
-final class _PendingInitialization {
-  final List<Future<void>> _operations = <Future<void>>[];
-  final Completer<void> _shutdown = Completer<void>();
-
-  bool get _shutdownRequested => _shutdown.isCompleted;
-
-  /// 请求 [wait] 停止等待未完成的已跟踪任务。
-  ///
-  /// 构造已经失败时，一个永久挂起的启动任务不能无限阻塞已创建资源的回滚；
-  /// shutdown 让 wait 在下一次事件循环边界立即返回，已跟踪 Future 仍由各自
-  /// onError 处理，不会产生未捕获异常。
-  void shutdown() {
-    if (!_shutdown.isCompleted) _shutdown.complete();
-  }
-
-  void track<T>(
-    Future<T> operation, {
-    required AppLogService logger,
-    required String description,
-  }) {
-    final tracked = operation.then<void>(
-      (_) {},
-      onError: (Object error, StackTrace stackTrace) {
-        logger.error(description, error: error, stackTrace: stackTrace);
-      },
-    );
-    _operations.add(tracked);
-    unawaited(tracked);
-  }
-
-  /// 等待所有已跟踪任务完成；构造失败时 [shutdown] 会在下次事件循环边界
-  /// 解除等待，避免被永久挂起的任务阻塞回滚。
-  Future<void> wait() async {
-    if (_shutdownRequested) return;
-    if (_operations.isEmpty) return;
-    final allCompleted = Future.wait<void>(_operations).then<void>((_) {});
-    await Future.any(<Future<void>>[allCompleted, _shutdown.future]);
-  }
 }
 
 final class _CleanupFailure {

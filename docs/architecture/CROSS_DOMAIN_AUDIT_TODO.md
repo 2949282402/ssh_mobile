@@ -159,7 +159,7 @@ git diff --check
 - [x] **C-12 Terminal 有界数据与 App owner**：历史加载期实时输出使用有界
   ring buffer；旧明文历史流式加密并原子替换；Terminal App 由有生命周期的
   Widget owner 等待幂等释放，cleanup 单项失败不得跳过后续 owner。
-- [ ] **C-13 AppRuntime/后台服务回滚**：构造失败时取消并有界等待已启动的
+- [x] **C-13 AppRuntime/后台服务回滚**：构造失败时取消并有界等待已启动的
   initializer，迟到任务不得访问已释放 DB/logger；后台服务启动返回
   `false` 时立即释放已获取 power locks。
 - [ ] **C-14 LAN Share 会话、存储与配对边界**：native/WebShare 上传元数据

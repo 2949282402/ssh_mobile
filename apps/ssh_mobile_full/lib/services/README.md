@@ -51,6 +51,9 @@ RAG 和 Network 的旧 Feature/业务入口已经完成零引用收口；剩余�
   generation：失败或被新建连取代的 socket/client/shell/runtime 会逆序释放；
   App Scope 关闭会等待建连、重连、后台事件订阅、Session Pool 与 native stream
   connector 收敛，迟到回调不得重新登记资源。
+- `BackgroundServiceLifecycle` 串行化前台服务 start/stop 与 power lock 所有权；
+  native `startService` 返回 `false` 或抛错时立即释放已获取 lock，stop 即使 ACK、
+  subscription 或其他清理失败也继续尝试释放。
 - 内部拆分文件：被 `part of` 或条件导出引用的文件不是独立 Service，必须
   与其主库一起维护，不能按“零直接引用”误删。
 
