@@ -131,7 +131,7 @@ git diff --check
 - [x] **C-03 WebView SSRF 边界**：规范化 IPv4 的非标准表示，拒绝所有非
   全局可路由 IPv4/IPv6；在真正请求和每次重定向处校验 DNS 解析结果，
   防止 DNS rebinding 读取本机或内网资源。
-- [ ] **C-04 Playbook 并发与数据保护**：将“审批后动作未变”改为数据库
+- [x] **C-04 Playbook 并发与数据保护**：将“审批后动作未变”改为数据库
   revision CAS，并发编辑不得被执行侧覆盖；移除或迁移与加密 content 重复的
   明文 name/description。
 - [ ] **C-05 AI/RAG 数据与 Route 生命周期**：聊天标题不得明文复制用户

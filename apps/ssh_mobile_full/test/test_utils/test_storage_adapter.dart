@@ -471,13 +471,13 @@ class TestStorageAdapter extends ChangeNotifier
       playbookRepository.deletePlaybook(id);
 
   @override
-  Future<bool> savePlaybookIfActionUnchanged({
+  Future<int?> savePlaybookIfRevisionMatches({
     required String playbookId,
-    required String expectedActionFingerprint,
+    required int expectedRevision,
     required playbook.Playbook playbook,
-  }) => playbookRepository.savePlaybookIfActionUnchanged(
+  }) => playbookRepository.savePlaybookIfRevisionMatches(
     playbookId: playbookId,
-    expectedActionFingerprint: expectedActionFingerprint,
+    expectedRevision: expectedRevision,
     playbook: playbook,
   );
 
@@ -1084,8 +1084,10 @@ final class _TestPlaybookRepository implements playbook.PlaybookRepository {
 
   @override
   Future<void> savePlaybook(playbook.Playbook item) async {
-    _items.removeWhere((current) => current.id == item.id);
-    _items.add(item);
+    final index = _items.indexWhere((current) => current.id == item.id);
+    final revision = index == -1 ? 1 : _items[index].revision + 1;
+    if (index != -1) _items.removeAt(index);
+    _items.add(item.copyWith(revision: revision));
   }
 
   @override
@@ -1094,38 +1096,23 @@ final class _TestPlaybookRepository implements playbook.PlaybookRepository {
   }
 
   @override
-  Future<bool> savePlaybookIfActionUnchanged({
+  Future<int?> savePlaybookIfRevisionMatches({
     required String playbookId,
-    required String expectedActionFingerprint,
+    required int expectedRevision,
     required playbook.Playbook playbook,
   }) async {
     final current = _items.where((item) => item.id == playbookId).firstOrNull;
-    if (current == null || _fingerprint(current) != expectedActionFingerprint) {
-      return false;
+    if (current == null || current.revision != expectedRevision) {
+      return null;
     }
-    await savePlaybook(playbook);
-    return true;
+    final nextRevision = expectedRevision + 1;
+    _items.remove(current);
+    _items.add(playbook.copyWith(revision: nextRevision));
+    return nextRevision;
   }
 
   @override
   Future<void> saveRunSnapshot(playbook.PlaybookRunSnapshot snapshot) async {}
-
-  static String _fingerprint(playbook.Playbook item) => jsonEncode({
-    'id': item.id,
-    'name': item.name,
-    'description': item.description,
-    'steps': item.steps
-        .map(
-          (step) => {
-            'id': step.id,
-            'name': step.name,
-            'command': step.command,
-            'description': step.description,
-            'expectedOutcomeRegex': step.expectedOutcomeRegex,
-          },
-        )
-        .toList(growable: false),
-  });
 }
 
 extension<E> on Iterable<E> {

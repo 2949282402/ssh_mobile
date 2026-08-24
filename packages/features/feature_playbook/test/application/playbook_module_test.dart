@@ -62,8 +62,8 @@ void main() {
       await database.dispose();
     });
 
-    final playbook = _samplePlaybook();
-    await repository.savePlaybook(playbook);
+    await repository.savePlaybook(_samplePlaybook());
+    final playbook = (await repository.loadPlaybooks()).single;
     final target = ssh_core.SshTargetBinding.fromConfig(
       ConnectionConfig(
         id: 'connection-1',
@@ -107,6 +107,63 @@ void main() {
     expect(service.isRunning, isFalse);
     expect(service.isPaused, isFalse);
     expect(service.activePlaybook?.steps.single.status, StepStatus.success);
+  });
+
+  test('approved execution rejects a stale database revision', () async {
+    final database = PlaybookDatabase.forTesting(NativeDatabase.memory());
+    final repository = DriftPlaybookRepository(
+      database: database,
+      dataProtection: FakePlaybookDataProtection(),
+    );
+    final ssh = FakePlaybookSshPort();
+    final service = PlaybookService(
+      repository: repository,
+      sshPort: ssh,
+      logger: FakePlaybookLogger(),
+    );
+    addTearDown(() async {
+      service.dispose();
+      await database.dispose();
+    });
+
+    await repository.savePlaybook(_samplePlaybook());
+    final approved = (await repository.loadPlaybooks()).single;
+    await repository.savePlaybook(
+      approved.copyWith(description: 'concurrent edit'),
+    );
+    final actionFingerprint = jsonEncode({
+      'id': approved.id,
+      'name': approved.name,
+      'description': approved.description,
+      'steps': approved.steps
+          .map(
+            (step) => {
+              'id': step.id,
+              'name': step.name,
+              'command': step.command,
+              'description': step.description,
+              'expectedOutcomeRegex': step.expectedOutcomeRegex,
+            },
+          )
+          .toList(growable: false),
+    });
+
+    expect(
+      await service.startApprovedExecution(
+        playbook: approved,
+        actionFingerprint: actionFingerprint,
+        connectionTarget: ssh_core.SshTargetBinding.fromConfig(
+          ConnectionConfig(
+            id: 'connection-1',
+            name: '测试服务器',
+            host: 'example.test',
+            username: 'gary',
+          ),
+        ),
+      ),
+      isFalse,
+    );
+    expect(ssh.commands, isEmpty);
   });
 }
 

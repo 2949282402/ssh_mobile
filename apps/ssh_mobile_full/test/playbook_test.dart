@@ -726,12 +726,13 @@ void main() {
           updatedAt: DateTime.now(),
         );
         await storage.savePlaybook(playbook);
+        final approved = (await storage.loadPlaybooks()).single;
         final binding = ssh_core.SshTargetBinding.fromConfig(connection);
 
         expect(
           await approvedService.startApprovedExecution(
-            playbook: playbook,
-            actionFingerprint: _actionFingerprint(playbook),
+            playbook: approved,
+            actionFingerprint: _actionFingerprint(approved),
             connectionTarget: binding,
           ),
           isTrue,
@@ -786,11 +787,12 @@ void main() {
           updatedAt: DateTime.now(),
         );
         await storage.savePlaybook(playbook);
+        final approved = (await storage.loadPlaybooks()).single;
 
         expect(
           await approvedService.startApprovedExecution(
-            playbook: playbook,
-            actionFingerprint: _actionFingerprint(playbook),
+            playbook: approved,
+            actionFingerprint: _actionFingerprint(approved),
             connectionTarget: ssh_core.SshTargetBinding.fromConfig(connection),
           ),
           isTrue,

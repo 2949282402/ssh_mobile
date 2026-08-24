@@ -25,7 +25,8 @@ class $PlaybooksTable extends Playbooks
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
   );
   static const VerificationMeta _descriptionMeta = const VerificationMeta(
     'description',
@@ -49,6 +50,18 @@ class $PlaybooksTable extends Playbooks
     false,
     type: DriftSqlType.string,
     requiredDuringInsert: true,
+  );
+  static const VerificationMeta _revisionMeta = const VerificationMeta(
+    'revision',
+  );
+  @override
+  late final GeneratedColumn<int> revision = GeneratedColumn<int>(
+    'revision',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(1),
   );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
@@ -78,6 +91,7 @@ class $PlaybooksTable extends Playbooks
     name,
     description,
     contentJson,
+    revision,
     createdAt,
     updatedAt,
   ];
@@ -103,8 +117,6 @@ class $PlaybooksTable extends Playbooks
         _nameMeta,
         name.isAcceptableOrUnknown(data['name']!, _nameMeta),
       );
-    } else if (isInserting) {
-      context.missing(_nameMeta);
     }
     if (data.containsKey('description')) {
       context.handle(
@@ -125,6 +137,12 @@ class $PlaybooksTable extends Playbooks
       );
     } else if (isInserting) {
       context.missing(_contentJsonMeta);
+    }
+    if (data.containsKey('revision')) {
+      context.handle(
+        _revisionMeta,
+        revision.isAcceptableOrUnknown(data['revision']!, _revisionMeta),
+      );
     }
     if (data.containsKey('created_at')) {
       context.handle(
@@ -167,6 +185,10 @@ class $PlaybooksTable extends Playbooks
         DriftSqlType.string,
         data['${effectivePrefix}content_json'],
       )!,
+      revision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}revision'],
+      )!,
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}created_at'],
@@ -186,9 +208,14 @@ class $PlaybooksTable extends Playbooks
 
 class Playbook extends DataClass implements Insertable<Playbook> {
   final String id;
+
+  /// Deprecated compatibility columns. Sensitive display metadata is stored
+  /// only inside encrypted [contentJson]; these columns remain empty so a v1
+  /// database can migrate without rebuilding foreign-key parents.
   final String name;
   final String description;
   final String contentJson;
+  final int revision;
   final int createdAt;
   final int updatedAt;
   const Playbook({
@@ -196,6 +223,7 @@ class Playbook extends DataClass implements Insertable<Playbook> {
     required this.name,
     required this.description,
     required this.contentJson,
+    required this.revision,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -206,6 +234,7 @@ class Playbook extends DataClass implements Insertable<Playbook> {
     map['name'] = Variable<String>(name);
     map['description'] = Variable<String>(description);
     map['content_json'] = Variable<String>(contentJson);
+    map['revision'] = Variable<int>(revision);
     map['created_at'] = Variable<int>(createdAt);
     map['updated_at'] = Variable<int>(updatedAt);
     return map;
@@ -217,6 +246,7 @@ class Playbook extends DataClass implements Insertable<Playbook> {
       name: Value(name),
       description: Value(description),
       contentJson: Value(contentJson),
+      revision: Value(revision),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -232,6 +262,7 @@ class Playbook extends DataClass implements Insertable<Playbook> {
       name: serializer.fromJson<String>(json['name']),
       description: serializer.fromJson<String>(json['description']),
       contentJson: serializer.fromJson<String>(json['contentJson']),
+      revision: serializer.fromJson<int>(json['revision']),
       createdAt: serializer.fromJson<int>(json['createdAt']),
       updatedAt: serializer.fromJson<int>(json['updatedAt']),
     );
@@ -244,6 +275,7 @@ class Playbook extends DataClass implements Insertable<Playbook> {
       'name': serializer.toJson<String>(name),
       'description': serializer.toJson<String>(description),
       'contentJson': serializer.toJson<String>(contentJson),
+      'revision': serializer.toJson<int>(revision),
       'createdAt': serializer.toJson<int>(createdAt),
       'updatedAt': serializer.toJson<int>(updatedAt),
     };
@@ -254,6 +286,7 @@ class Playbook extends DataClass implements Insertable<Playbook> {
     String? name,
     String? description,
     String? contentJson,
+    int? revision,
     int? createdAt,
     int? updatedAt,
   }) => Playbook(
@@ -261,6 +294,7 @@ class Playbook extends DataClass implements Insertable<Playbook> {
     name: name ?? this.name,
     description: description ?? this.description,
     contentJson: contentJson ?? this.contentJson,
+    revision: revision ?? this.revision,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -274,6 +308,7 @@ class Playbook extends DataClass implements Insertable<Playbook> {
       contentJson: data.contentJson.present
           ? data.contentJson.value
           : this.contentJson,
+      revision: data.revision.present ? data.revision.value : this.revision,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -286,6 +321,7 @@ class Playbook extends DataClass implements Insertable<Playbook> {
           ..write('name: $name, ')
           ..write('description: $description, ')
           ..write('contentJson: $contentJson, ')
+          ..write('revision: $revision, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -293,8 +329,15 @@ class Playbook extends DataClass implements Insertable<Playbook> {
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, name, description, contentJson, createdAt, updatedAt);
+  int get hashCode => Object.hash(
+    id,
+    name,
+    description,
+    contentJson,
+    revision,
+    createdAt,
+    updatedAt,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -303,6 +346,7 @@ class Playbook extends DataClass implements Insertable<Playbook> {
           other.name == this.name &&
           other.description == this.description &&
           other.contentJson == this.contentJson &&
+          other.revision == this.revision &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -312,6 +356,7 @@ class PlaybooksCompanion extends UpdateCompanion<Playbook> {
   final Value<String> name;
   final Value<String> description;
   final Value<String> contentJson;
+  final Value<int> revision;
   final Value<int> createdAt;
   final Value<int> updatedAt;
   final Value<int> rowid;
@@ -320,20 +365,21 @@ class PlaybooksCompanion extends UpdateCompanion<Playbook> {
     this.name = const Value.absent(),
     this.description = const Value.absent(),
     this.contentJson = const Value.absent(),
+    this.revision = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   PlaybooksCompanion.insert({
     required String id,
-    required String name,
+    this.name = const Value.absent(),
     this.description = const Value.absent(),
     required String contentJson,
+    this.revision = const Value.absent(),
     required int createdAt,
     required int updatedAt,
     this.rowid = const Value.absent(),
   }) : id = Value(id),
-       name = Value(name),
        contentJson = Value(contentJson),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
@@ -342,6 +388,7 @@ class PlaybooksCompanion extends UpdateCompanion<Playbook> {
     Expression<String>? name,
     Expression<String>? description,
     Expression<String>? contentJson,
+    Expression<int>? revision,
     Expression<int>? createdAt,
     Expression<int>? updatedAt,
     Expression<int>? rowid,
@@ -351,6 +398,7 @@ class PlaybooksCompanion extends UpdateCompanion<Playbook> {
       if (name != null) 'name': name,
       if (description != null) 'description': description,
       if (contentJson != null) 'content_json': contentJson,
+      if (revision != null) 'revision': revision,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
@@ -362,6 +410,7 @@ class PlaybooksCompanion extends UpdateCompanion<Playbook> {
     Value<String>? name,
     Value<String>? description,
     Value<String>? contentJson,
+    Value<int>? revision,
     Value<int>? createdAt,
     Value<int>? updatedAt,
     Value<int>? rowid,
@@ -371,6 +420,7 @@ class PlaybooksCompanion extends UpdateCompanion<Playbook> {
       name: name ?? this.name,
       description: description ?? this.description,
       contentJson: contentJson ?? this.contentJson,
+      revision: revision ?? this.revision,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
@@ -392,6 +442,9 @@ class PlaybooksCompanion extends UpdateCompanion<Playbook> {
     if (contentJson.present) {
       map['content_json'] = Variable<String>(contentJson.value);
     }
+    if (revision.present) {
+      map['revision'] = Variable<int>(revision.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<int>(createdAt.value);
     }
@@ -411,6 +464,7 @@ class PlaybooksCompanion extends UpdateCompanion<Playbook> {
           ..write('name: $name, ')
           ..write('description: $description, ')
           ..write('contentJson: $contentJson, ')
+          ..write('revision: $revision, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -1303,9 +1357,10 @@ abstract class _$PlaybookDatabase extends GeneratedDatabase {
 typedef $$PlaybooksTableCreateCompanionBuilder =
     PlaybooksCompanion Function({
       required String id,
-      required String name,
+      Value<String> name,
       Value<String> description,
       required String contentJson,
+      Value<int> revision,
       required int createdAt,
       required int updatedAt,
       Value<int> rowid,
@@ -1316,6 +1371,7 @@ typedef $$PlaybooksTableUpdateCompanionBuilder =
       Value<String> name,
       Value<String> description,
       Value<String> contentJson,
+      Value<int> revision,
       Value<int> createdAt,
       Value<int> updatedAt,
       Value<int> rowid,
@@ -1371,6 +1427,11 @@ class $$PlaybooksTableFilterComposer
 
   ColumnFilters<String> get contentJson => $composableBuilder(
     column: $table.contentJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get revision => $composableBuilder(
+    column: $table.revision,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1439,6 +1500,11 @@ class $$PlaybooksTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get revision => $composableBuilder(
+    column: $table.revision,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -1474,6 +1540,9 @@ class $$PlaybooksTableAnnotationComposer
     column: $table.contentJson,
     builder: (column) => column,
   );
+
+  GeneratedColumn<int> get revision =>
+      $composableBuilder(column: $table.revision, builder: (column) => column);
 
   GeneratedColumn<int> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -1539,6 +1608,7 @@ class $$PlaybooksTableTableManager
                 Value<String> name = const Value.absent(),
                 Value<String> description = const Value.absent(),
                 Value<String> contentJson = const Value.absent(),
+                Value<int> revision = const Value.absent(),
                 Value<int> createdAt = const Value.absent(),
                 Value<int> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -1547,6 +1617,7 @@ class $$PlaybooksTableTableManager
                 name: name,
                 description: description,
                 contentJson: contentJson,
+                revision: revision,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -1554,9 +1625,10 @@ class $$PlaybooksTableTableManager
           createCompanionCallback:
               ({
                 required String id,
-                required String name,
+                Value<String> name = const Value.absent(),
                 Value<String> description = const Value.absent(),
                 required String contentJson,
+                Value<int> revision = const Value.absent(),
                 required int createdAt,
                 required int updatedAt,
                 Value<int> rowid = const Value.absent(),
@@ -1565,6 +1637,7 @@ class $$PlaybooksTableTableManager
                 name: name,
                 description: description,
                 contentJson: contentJson,
+                revision: revision,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:ssh_core/ssh_core.dart' as ssh_core;
@@ -184,6 +185,10 @@ class PlaybookService extends ChangeNotifier implements PlaybookAutomationPort {
     required ssh_core.SshTargetBinding connectionTarget,
   }) async {
     final approvedPlaybook = Playbook.fromJson(playbook.toJson());
+    if (approvedPlaybook.revision < 1 ||
+        _actionFingerprint(approvedPlaybook) != actionFingerprint) {
+      return false;
+    }
     final approvedSteps = _snapshotSteps(approvedPlaybook.steps);
     final cleanSteps = approvedSteps.map(_cleanStep).toList(growable: false);
     final runningPlaybook = approvedPlaybook.copyWith(
@@ -197,6 +202,7 @@ class PlaybookService extends ChangeNotifier implements PlaybookAutomationPort {
       commandSteps: approvedSteps,
       connectionBinding: connectionTarget,
       approvedActionFingerprint: actionFingerprint,
+      expectedRevision: approvedPlaybook.revision,
     );
     _activatePendingRun(run, runningPlaybook);
 
@@ -493,14 +499,14 @@ class PlaybookService extends ChangeNotifier implements PlaybookAutomationPort {
       if (!_isCurrentRun(run) || playbook.id != run.playbookId) return false;
 
       final fingerprint = run.approvedActionFingerprint;
-      final saved = fingerprint == null
+      final savedRevision = fingerprint == null
           ? await _saveUnapprovedRunState(playbook)
-          : await _repository.savePlaybookIfActionUnchanged(
+          : await _repository.savePlaybookIfRevisionMatches(
               playbookId: run.playbookId,
-              expectedActionFingerprint: fingerprint,
+              expectedRevision: run.expectedRevision!,
               playbook: playbook,
             );
-      if (!saved) {
+      if (savedRevision == null) {
         if (_isCurrentRun(run)) {
           _logger.warning(
             'Approved playbook changed during execution',
@@ -518,6 +524,7 @@ class PlaybookService extends ChangeNotifier implements PlaybookAutomationPort {
         }
         return false;
       }
+      if (fingerprint != null) run.expectedRevision = savedRevision;
 
       if (!_isCurrentRun(run)) return false;
       await _saveRunSnapshot(run, playbook);
@@ -528,9 +535,10 @@ class PlaybookService extends ChangeNotifier implements PlaybookAutomationPort {
     });
   }
 
-  Future<bool> _saveUnapprovedRunState(Playbook playbook) async {
+  Future<int> _saveUnapprovedRunState(Playbook playbook) async {
     await _repository.savePlaybook(playbook);
-    return true;
+    // Unapproved UI execution does not use this value as a concurrency token.
+    return 0;
   }
 
   /// 将当前执行状态写入独立历史表；命令和输出由 Repository 加密。
@@ -648,6 +656,7 @@ class PlaybookService extends ChangeNotifier implements PlaybookAutomationPort {
     required List<PlaybookStep> commandSteps,
     ssh_core.SshTargetBinding? connectionBinding,
     String? approvedActionFingerprint,
+    int? expectedRevision,
     DateTime? startedAt,
   }) {
     return _PlaybookExecutionRun(
@@ -657,6 +666,7 @@ class PlaybookService extends ChangeNotifier implements PlaybookAutomationPort {
       commandSteps: _snapshotSteps(commandSteps),
       connectionBinding: connectionBinding,
       approvedActionFingerprint: approvedActionFingerprint,
+      expectedRevision: expectedRevision,
       startedAt: startedAt ?? DateTime.now(),
     );
   }
@@ -671,6 +681,7 @@ class PlaybookService extends ChangeNotifier implements PlaybookAutomationPort {
       commandSteps: previous.commandSteps,
       connectionBinding: previous.connectionBinding,
       approvedActionFingerprint: previous.approvedActionFingerprint,
+      expectedRevision: previous.expectedRevision,
       startedAt: previous.startedAt,
     );
   }
@@ -755,9 +766,25 @@ class PlaybookService extends ChangeNotifier implements PlaybookAutomationPort {
       exitCode: exitCode,
     );
   }
+
+  static String _actionFingerprint(Playbook playbook) => jsonEncode({
+    'id': playbook.id,
+    'name': playbook.name,
+    'description': playbook.description,
+    'steps': playbook.steps
+        .map(
+          (step) => {
+            'id': step.id,
+            'name': step.name,
+            'command': step.command,
+            'description': step.description,
+            'expectedOutcomeRegex': step.expectedOutcomeRegex,
+          },
+        )
+        .toList(growable: false),
+  });
 }
 
-@immutable
 class _PlaybookExecutionRun {
   final int generation;
   final String playbookId;
@@ -765,15 +792,17 @@ class _PlaybookExecutionRun {
   final List<PlaybookStep> commandSteps;
   final ssh_core.SshTargetBinding? connectionBinding;
   final String? approvedActionFingerprint;
+  int? expectedRevision;
   final DateTime startedAt;
 
-  const _PlaybookExecutionRun({
+  _PlaybookExecutionRun({
     required this.generation,
     required this.playbookId,
     required this.connectionId,
     required this.commandSteps,
     required this.connectionBinding,
     required this.approvedActionFingerprint,
+    required this.expectedRevision,
     required this.startedAt,
   });
 

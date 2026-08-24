@@ -542,13 +542,13 @@ final class AppAiStorageAdapter extends ChangeNotifier
   Future<void> deletePlaybook(String id) =>
       _playbookRepository.deletePlaybook(id);
 
-  Future<bool> savePlaybookIfActionUnchanged({
+  Future<int?> savePlaybookIfRevisionMatches({
     required String playbookId,
-    required String expectedActionFingerprint,
+    required int expectedRevision,
     required feature_playbook.Playbook playbook,
-  }) => _playbookRepository.savePlaybookIfActionUnchanged(
+  }) => _playbookRepository.savePlaybookIfRevisionMatches(
     playbookId: playbookId,
-    expectedActionFingerprint: expectedActionFingerprint,
+    expectedRevision: expectedRevision,
     playbook: playbook,
   );
 

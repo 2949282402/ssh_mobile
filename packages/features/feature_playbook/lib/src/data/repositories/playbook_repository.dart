@@ -17,9 +17,9 @@ abstract interface class PlaybookRepository {
 
   Future<void> deletePlaybook(String id);
 
-  Future<bool> savePlaybookIfActionUnchanged({
+  Future<int?> savePlaybookIfRevisionMatches({
     required String playbookId,
-    required String expectedActionFingerprint,
+    required int expectedRevision,
     required Playbook playbook,
   });
 
@@ -62,9 +62,9 @@ final class DriftPlaybookRepository implements PlaybookRepository {
   }
 
   @override
-  Future<bool> savePlaybookIfActionUnchanged({
+  Future<int?> savePlaybookIfRevisionMatches({
     required String playbookId,
-    required String expectedActionFingerprint,
+    required int expectedRevision,
     required Playbook playbook,
   }) async {
     if (playbook.id != playbookId) {
@@ -74,16 +74,10 @@ final class DriftPlaybookRepository implements PlaybookRepository {
         'Playbook id must match playbookId.',
       );
     }
-    final current = (await loadPlaybooks()).where(
-      (candidate) => candidate.id == playbookId,
+    return _database.playbookDao.savePlaybookIfRevisionMatches(
+      playbook: await _toCompanion(playbook),
+      expectedRevision: expectedRevision,
     );
-    final existing = current.isEmpty ? null : current.first;
-    if (existing == null ||
-        _actionFingerprint(existing) != expectedActionFingerprint) {
-      return false;
-    }
-    await savePlaybook(playbook);
-    return true;
   }
 
   @override
@@ -122,15 +116,18 @@ final class DriftPlaybookRepository implements PlaybookRepository {
 
   Future<Playbook> _fromRow(db.Playbook row) async {
     final content = await _decrypt(row.contentJson);
-    return Playbook.fromJson(jsonDecode(content) as Map<String, dynamic>);
+    return Playbook.fromJson(
+      jsonDecode(content) as Map<String, dynamic>,
+    ).copyWith(revision: row.revision);
   }
 
   Future<db.PlaybooksCompanion> _toCompanion(Playbook playbook) async {
     return db.PlaybooksCompanion(
       id: drift.Value(playbook.id),
-      name: drift.Value(playbook.name),
-      description: drift.Value(playbook.description),
+      name: const drift.Value(''),
+      description: const drift.Value(''),
       contentJson: drift.Value(await _encrypt(jsonEncode(playbook.toJson()))),
+      revision: drift.Value(playbook.revision),
       createdAt: drift.Value(_toDbMillis(playbook.createdAt)),
       updatedAt: drift.Value(_toDbMillis(playbook.updatedAt)),
     );
@@ -148,21 +145,4 @@ final class DriftPlaybookRepository implements PlaybookRepository {
 
   static int _toDbMillis(DateTime value) =>
       value.toUtc().millisecondsSinceEpoch;
-
-  static String _actionFingerprint(Playbook playbook) => jsonEncode({
-    'id': playbook.id,
-    'name': playbook.name,
-    'description': playbook.description,
-    'steps': playbook.steps
-        .map(
-          (step) => {
-            'id': step.id,
-            'name': step.name,
-            'command': step.command,
-            'description': step.description,
-            'expectedOutcomeRegex': step.expectedOutcomeRegex,
-          },
-        )
-        .toList(growable: false),
-  });
 }
