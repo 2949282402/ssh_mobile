@@ -26,6 +26,7 @@ final class AiModule implements AppModule {
   DriftAiRepository? _repository;
   Future<void>? _initializeFuture;
   Future<void>? _disposeFuture;
+  int _lifecycleGeneration = 0;
 
   @override
   String get id => 'feature_ai';
@@ -58,9 +59,15 @@ final class AiModule implements AppModule {
   }
 
   @override
-  Future<void> initialize() => _initializeFuture ??= _doInitialize();
+  Future<void> initialize() {
+    if (_state == ModuleState.disposed) {
+      return Future<void>.error(StateError('AiModule has been disposed.'));
+    }
+    final generation = _lifecycleGeneration;
+    return _initializeFuture ??= _doInitialize(generation);
+  }
 
-  Future<void> _doInitialize() async {
+  Future<void> _doInitialize(int generation) async {
     final protection = _protection;
     final logger = _logger;
     if (_storage == null ||
@@ -75,6 +82,11 @@ final class AiModule implements AppModule {
     try {
       database = _databaseFactory();
       await database.customSelect('SELECT 1').getSingle();
+      if (_state == ModuleState.disposed ||
+          generation != _lifecycleGeneration) {
+        await database.dispose();
+        return;
+      }
       _database = database;
       _repository = DriftAiRepository(database, protection);
       _state = ModuleState.initialized;
@@ -84,7 +96,9 @@ final class AiModule implements AppModule {
       _database = null;
       _repository = null;
       _initializeFuture = null;
-      _state = ModuleState.registered;
+      if (_state != ModuleState.disposed) {
+        _state = ModuleState.registered;
+      }
       rethrow;
     }
   }
@@ -92,6 +106,9 @@ final class AiModule implements AppModule {
   @override
   Future<void> activate() async {
     await initialize();
+    if (_state == ModuleState.disposed) {
+      throw StateError('AiModule has been disposed.');
+    }
     _state = ModuleState.active;
   }
 
@@ -106,7 +123,16 @@ final class AiModule implements AppModule {
 
   Future<void> _disposeResources() async {
     if (_state == ModuleState.disposed) return;
-    await deactivate();
+    _lifecycleGeneration += 1;
+    _state = ModuleState.disposed;
+    final initializing = _initializeFuture;
+    if (initializing != null) {
+      try {
+        await initializing;
+      } catch (_) {
+        // Initialization failure is already owned by its caller.
+      }
+    }
     _repository = null;
     final database = _database;
     _database = null;
@@ -117,6 +143,5 @@ final class AiModule implements AppModule {
     final logger = _logger;
     _logger = null;
     if (logger != null) AiLoggerContext.reset(logger);
-    _state = ModuleState.disposed;
   }
 }

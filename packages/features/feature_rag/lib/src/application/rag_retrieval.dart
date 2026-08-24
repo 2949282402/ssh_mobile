@@ -20,6 +20,7 @@ mixin RagRetrievalMixin implements RagCapability {
   Map<String, RagCacheMetadata> get _cacheEntries;
 
   Future<void> init({bool force = false});
+  Future<T> _trackOperation<T>(Future<T> Function() action);
 
   Map<String, List<RagChunk>> _lastLoadedChunks = {};
 
@@ -31,6 +32,22 @@ mixin RagRetrievalMixin implements RagCapability {
     Set<String>? filterDocumentIds,
     String? searchMode,
     String? aliyunApiKey,
+  }) => _trackOperation(
+    () => _retrieve(
+      query,
+      limit: limit,
+      filterDocumentIds: filterDocumentIds,
+      searchMode: searchMode,
+      aliyunApiKey: aliyunApiKey,
+    ),
+  );
+
+  Future<List<RagChunk>> _retrieve(
+    String query, {
+    required int limit,
+    required Set<String>? filterDocumentIds,
+    required String? searchMode,
+    required String? aliyunApiKey,
   }) async {
     await init();
     if (_documents.isEmpty || query.trim().isEmpty) return const [];

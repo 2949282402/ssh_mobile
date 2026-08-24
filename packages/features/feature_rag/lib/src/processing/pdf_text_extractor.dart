@@ -6,8 +6,18 @@ import 'package:archive/archive.dart';
 class PdfTextExtractor {
   const PdfTextExtractor._();
 
+  static const int maxSourceBytes = 16 * 1024 * 1024;
+  static const int maxPageCount = 2000;
+  static const int maxStreamCount = 2048;
+  static const int maxCompressedStreamBytes = 4 * 1024 * 1024;
+  static const int maxExpandedStreamBytes = 8 * 1024 * 1024;
+  static const int maxExtractedTextChars = 2 * 1024 * 1024;
+
   /// 从 PDF 二进制数据中提取纯文本。
   static String extractText(List<int> bytes) {
+    if (bytes.length > maxSourceBytes) {
+      throw const PdfTextLimitExceededException('source_bytes');
+    }
     if (bytes.length < 4 ||
         bytes[0] != 0x25 || // %
         bytes[1] != 0x50 || // P
@@ -18,6 +28,11 @@ class PdfTextExtractor {
     }
 
     final textBuffer = StringBuffer();
+    final sourceText = latin1.decode(bytes, allowInvalid: true);
+    final pageCount = RegExp(r'/Type\s*/Page\b').allMatches(sourceText).length;
+    if (pageCount > maxPageCount) {
+      throw const PdfTextLimitExceededException('page_count');
+    }
 
     // 寻找 PDF 中的数据流
     final streamPattern = [115, 116, 114, 101, 97, 109]; // "stream"
@@ -34,12 +49,18 @@ class PdfTextExtractor {
     ]; // "endstream"
 
     int start = 0;
+    var streamCount = 0;
+    var extractedChars = 0;
     while (true) {
       final streamIdx = _indexOf(bytes, streamPattern, start);
       if (streamIdx == -1) break;
 
       final endStreamIdx = _indexOf(bytes, endStreamPattern, streamIdx + 6);
       if (endStreamIdx == -1) break;
+      streamCount += 1;
+      if (streamCount > maxStreamCount) {
+        throw const PdfTextLimitExceededException('stream_count');
+      }
 
       // 确定流数据的真实起始位置（跳过 stream 之后的换行符 \r\n 或 \n）
       int streamStart = streamIdx + 6;
@@ -56,12 +77,19 @@ class PdfTextExtractor {
       if (streamEnd > streamStart && bytes[streamEnd - 1] == 13) streamEnd--;
 
       if (streamEnd > streamStart) {
+        if (streamEnd - streamStart > maxCompressedStreamBytes) {
+          throw const PdfTextLimitExceededException('compressed_stream_bytes');
+        }
         final streamBytes = bytes.sublist(streamStart, streamEnd);
         List<int>? decompressedBytes;
 
         // 尝试使用 ZLib (FlateDecode) 解压
         try {
-          decompressedBytes = ZLibDecoder().decodeBytes(streamBytes);
+          final output = _BoundedPdfOutputStream(maxExpandedStreamBytes);
+          ZLibDecoder().decodeStream(InputMemoryStream(streamBytes), output);
+          decompressedBytes = output.getBytes();
+        } on PdfTextLimitExceededException {
+          rethrow;
         } catch (_) {
           // 解压失败，说明可能不是 Flate 压缩流或是非文本流（如图片），忽略即可
         }
@@ -72,9 +100,17 @@ class PdfTextExtractor {
             final streamStr = latin1.decode(decompressedBytes);
             final extractedText = _parsePdfStreamText(streamStr);
             if (extractedText.isNotEmpty) {
+              extractedChars += extractedText.length + 1;
+              if (extractedChars > maxExtractedTextChars) {
+                throw const PdfTextLimitExceededException(
+                  'extracted_text_chars',
+                );
+              }
               textBuffer.write(extractedText);
               textBuffer.write('\n');
             }
+          } on PdfTextLimitExceededException {
+            rethrow;
           } catch (_) {
             // 忽略转换失败的流
           }
@@ -250,5 +286,50 @@ class PdfTextExtractor {
     }
 
     return decodedStr;
+  }
+}
+
+final class PdfTextLimitExceededException implements Exception {
+  const PdfTextLimitExceededException(this.limit);
+
+  final String limit;
+
+  @override
+  String toString() => 'PDF exceeds the configured $limit limit.';
+}
+
+final class _BoundedPdfOutputStream extends OutputMemoryStream {
+  _BoundedPdfOutputStream(this.maxBytes)
+    : super(
+        size: maxBytes < OutputMemoryStream.defaultBufferSize
+            ? maxBytes
+            : OutputMemoryStream.defaultBufferSize,
+      );
+
+  final int maxBytes;
+
+  void _ensureCapacity(int additionalBytes) {
+    if (additionalBytes < 0 || length + additionalBytes > maxBytes) {
+      throw const PdfTextLimitExceededException('expanded_stream_bytes');
+    }
+  }
+
+  @override
+  void writeByte(int value) {
+    _ensureCapacity(1);
+    super.writeByte(value);
+  }
+
+  @override
+  void writeBytes(List<int> bytes, {int? length}) {
+    final writeLength = length ?? bytes.length;
+    _ensureCapacity(writeLength);
+    super.writeBytes(bytes, length: writeLength);
+  }
+
+  @override
+  void writeStream(InputStream stream) {
+    _ensureCapacity(stream.length);
+    super.writeStream(stream);
   }
 }

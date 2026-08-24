@@ -134,7 +134,7 @@ git diff --check
 - [x] **C-04 Playbook 并发与数据保护**：将“审批后动作未变”改为数据库
   revision CAS，并发编辑不得被执行侧覆盖；移除或迁移与加密 content 重复的
   明文 name/description。
-- [ ] **C-05 AI/RAG 数据与 Route 生命周期**：聊天标题不得明文复制用户
+- [x] **C-05 AI/RAG 数据与 Route 生命周期**：聊天标题不得明文复制用户
   prompt；PDF 在解压、文本、page/stream/chunk 和 embedding 前均有硬上限；AI
   生成必须在 Route/Module 释放前取消并收敛，迟到回调不得写已关闭的
   notifier、stream 或数据库。

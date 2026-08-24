@@ -2,6 +2,7 @@
 //
 // 使用内存 Drift 和临时目录验证数据库/缓存 Owner、BM25 检索和幂等释放。
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:app_core/app_core.dart';
@@ -134,4 +135,61 @@ void main() {
     settings.dispose();
     await cacheDirectory.delete(recursive: true);
   });
+
+  test('module disposal joins an in-flight embedding operation', () async {
+    final cacheDirectory = await Directory.systemTemp.createTemp(
+      'rag-close-test-',
+    );
+    final settings = FakeRagSettings(apiKey: 'test-key');
+    final embedding = _GatedRagEmbedding();
+    final module = RagModule(
+      databaseFactory: () => RagDatabase.forTesting(NativeDatabase.memory()),
+      cacheStoreFactory: () =>
+          RagCacheStore(directoryFactory: () async => cacheDirectory),
+      embeddingClientFactory: ({required apiKey, logger}) => embedding,
+    );
+    await module.register(
+      ModuleContext.fromMap({
+        RagSettingsPort: settings,
+        RagLoggerPort: RecordingRagLogger(),
+      }),
+    );
+    await module.initialize();
+
+    final add = module.service.addDocument(
+      name: 'pending.txt',
+      bytes: 'bounded pending document'.codeUnits,
+      mimeType: 'text/plain',
+    );
+    await embedding.started.future;
+    var disposed = false;
+    final closing = module.dispose().whenComplete(() => disposed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(disposed, isFalse);
+
+    embedding.release.complete();
+    await add;
+    await closing;
+
+    expect(module.state, ModuleState.disposed);
+    settings.dispose();
+    await cacheDirectory.delete(recursive: true);
+  });
+}
+
+final class _GatedRagEmbedding implements RagEmbeddingPort {
+  final Completer<void> started = Completer<void>();
+  final Completer<void> release = Completer<void>();
+
+  @override
+  Future<List<List<double>>> getEmbeddings(
+    List<String> texts, {
+    String textType = 'document',
+  }) async {
+    if (!started.isCompleted) started.complete();
+    await release.future;
+    return [
+      for (final _ in texts) const [1, 0],
+    ];
+  }
 }

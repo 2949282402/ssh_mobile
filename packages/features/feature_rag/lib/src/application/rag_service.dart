@@ -25,6 +25,9 @@ final class RagService extends ChangeNotifier
     with RagRetrievalMixin
     implements RagCapability {
   static const int embeddingBatchSize = 20;
+  static const int maxExtractedTextChars = 2 * 1024 * 1024;
+  static const int maxChunksPerDocument = 4096;
+  static const int maxEmbeddingInputChars = 2 * 1024 * 1024;
 
   RagService({
     required this._repository,
@@ -59,6 +62,9 @@ final class RagService extends ChangeNotifier
   bool _isLoading = false;
   bool _isInitialized = false;
   bool _disposed = false;
+  bool _notifierDisposed = false;
+  final Set<Future<void>> _operations = <Future<void>>{};
+  Future<void>? _closeFuture;
 
   /// 当前已保存的文档元数据；列表副本防止 UI 绕过 Service 修改状态。
   List<RagDocumentMetadata> get documents => List.unmodifiable(_documents);
@@ -128,6 +134,14 @@ final class RagService extends ChangeNotifier
     required String name,
     required List<int> bytes,
     required String mimeType,
+  }) => _trackOperation(
+    () => _addDocument(name: name, bytes: bytes, mimeType: mimeType),
+  );
+
+  Future<RagDocumentMetadata> _addDocument({
+    required String name,
+    required List<int> bytes,
+    required String mimeType,
   }) async {
     await init();
     _ensureNotDisposed();
@@ -143,6 +157,9 @@ final class RagService extends ChangeNotifier
       if (text.trim().isEmpty) {
         throw ArgumentError('未在文档中提取到有效文本内容。');
       }
+      if (text.length > maxExtractedTextChars) {
+        throw ArgumentError('文档提取文本超过 RAG 允许的上限。');
+      }
 
       final chunks = TextChunker.split(
         text: text,
@@ -152,6 +169,9 @@ final class RagService extends ChangeNotifier
         chunkOverlap: 120,
       );
       if (chunks.isEmpty) throw StateError('文本切块失败。');
+      if (chunks.length > maxChunksPerDocument) {
+        throw ArgumentError('文档分块数量超过 RAG 允许的上限。');
+      }
 
       await _attachEmbeddings(chunks);
       cacheEntry = await _cacheStore.write(
@@ -201,7 +221,10 @@ final class RagService extends ChangeNotifier
   }
 
   /// 删除文档、缓存和对应索引；操作重复执行安全。
-  Future<void> deleteDocument(String documentId) async {
+  Future<void> deleteDocument(String documentId) =>
+      _trackOperation(() => _deleteDocument(documentId));
+
+  Future<void> _deleteDocument(String documentId) async {
     await init();
     _ensureNotDisposed();
     _setLoading(true);
@@ -230,12 +253,45 @@ final class RagService extends ChangeNotifier
 
   @override
   void dispose() {
-    if (_disposed) return;
+    if (_notifierDisposed) return;
+    _notifierDisposed = true;
     _disposed = true;
     _initFuture = null;
     _documents.clear();
     _cacheEntries.clear();
     super.dispose();
+  }
+
+  /// Stops accepting new work and joins all cache/database/embedding
+  /// operations before the Module closes rag.db.
+  Future<void> close() => _closeFuture ??= _closeResources();
+
+  Future<void> _closeResources() async {
+    _disposed = true;
+    final initializing = _initFuture;
+    if (initializing != null) {
+      try {
+        await initializing;
+      } catch (_) {
+        // The initialization caller retains its original failure.
+      }
+    }
+    while (_operations.isNotEmpty) {
+      await Future.wait<void>(List.of(_operations));
+    }
+    dispose();
+  }
+
+  @override
+  Future<T> _trackOperation<T>(Future<T> Function() action) {
+    _ensureNotDisposed();
+    final operation = action();
+    late final Future<void> barrier;
+    barrier = operation
+        .then<void>((_) {}, onError: (_, _) {})
+        .whenComplete(() => _operations.remove(barrier));
+    _operations.add(barrier);
+    return operation;
   }
 
   String _extractText({
@@ -253,6 +309,13 @@ final class RagService extends ChangeNotifier
   Future<void> _attachEmbeddings(List<RagChunk> chunks) async {
     final apiKey = (await _settings.getAliyunApiKey() ?? '').trim();
     if (apiKey.isEmpty) return;
+    final embeddingChars = chunks.fold<int>(
+      0,
+      (total, chunk) => total + chunk.text.length,
+    );
+    if (embeddingChars > maxEmbeddingInputChars) {
+      throw ArgumentError('Embedding 输入超过 RAG 允许的上限。');
+    }
 
     try {
       final client = _embeddingClientFactory(apiKey: apiKey, logger: _logger);

@@ -1,6 +1,19 @@
 part of 'ai_chat_viewmodel_test.dart';
 
 void _registerAiChatViewModelCoreTests() {
+  test('private chat title never copies the user prompt', () {
+    const privatePrompt = 'production password is super-secret-value';
+
+    final title = buildPrivateChatTitle(
+      language: AppLanguage.en,
+      now: DateTime(2026, 8, 24, 9, 7),
+    );
+
+    expect(title, 'New chat · 09:07');
+    expect(title, isNot(contains(privatePrompt)));
+    expect(title, isNot(contains('password')));
+  });
+
   test('loadInitialDraft loads a draft and updates state', () async {
     final viewModel = createAiChatViewModel(
       storageService: storageService,

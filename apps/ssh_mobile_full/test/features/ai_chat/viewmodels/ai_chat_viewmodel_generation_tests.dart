@@ -2,6 +2,50 @@ part of 'ai_chat_viewmodel_test.dart';
 
 void _registerAiChatViewModelGenerationTests() {
   test(
+    'close cancels and joins generation before releasing Route state',
+    () async {
+      await storageService.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        apiKey: 'dummy-key',
+      );
+      final factory = CancellationGatedRuntimeFactory(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+      final viewModel = createAiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+        runtimeFactory: factory,
+      );
+      await viewModel.loadInitialDraft();
+
+      expect(
+        await viewModel.sendText(text: 'private generation input'),
+        isA<SendTextSuccess>(),
+      );
+      await factory.streamStarted.future;
+      await viewModel.close().timeout(const Duration(seconds: 2));
+
+      final stored = (await storageService.loadAiChats()).single;
+      expect(stored.messages.last.role, 'assistant');
+      expect(stored.messages.last.text, isEmpty);
+      expect(stored.title, isNot(contains('private generation input')));
+      viewModel.dispose();
+    },
+  );
+
+  test(
     'normal return with missing outcome stays unknown and records failure',
     () async {
       await storageService.saveAiConnectionSettings(

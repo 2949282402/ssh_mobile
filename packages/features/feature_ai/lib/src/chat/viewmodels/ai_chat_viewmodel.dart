@@ -48,6 +48,17 @@ String buildApprovedPlanExecutionContext({
   );
 }
 
+@visibleForTesting
+String buildPrivateChatTitle({
+  required AppLanguage language,
+  required DateTime now,
+}) {
+  final base = AiStrings(language).newChat;
+  final hour = now.hour.toString().padLeft(2, '0');
+  final minute = now.minute.toString().padLeft(2, '0');
+  return '$base · $hour:$minute';
+}
+
 // ViewModel与View层通信的状态和返回结果
 sealed class SendTextResult {
   const SendTextResult();
@@ -260,6 +271,10 @@ class AiChatViewModel extends ChangeNotifier {
   final Set<String> _deletedGenerationChatIds = {};
   final Set<String> _deletedChatIds = {};
   ClientRuntimeHealthReport? _lastRuntimeHealthReport;
+  final Set<Future<void>> _generationOperations = <Future<void>>{};
+  Future<void>? _closeFuture;
+  bool _closing = false;
+  bool _changeNotifierDisposed = false;
 
   // 上下文限制
   int _contextWindowTokens = AiContextWindowSize.k259;
@@ -370,6 +385,7 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   set toolsExpanded(bool value) {
+    if (_closing) return;
     if (_toolsExpanded != value) {
       _toolsExpanded = value;
       notifyListeners();
@@ -378,24 +394,43 @@ class AiChatViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_changeNotifierDisposed) return;
+    _changeNotifierDisposed = true;
+    final closeFuture = close();
+    super.dispose();
+    unawaited(closeFuture);
+  }
+
+  /// Cancels the Route-owned generation and releases notifiers only after the
+  /// generation Future has converged. Provider may call [dispose]
+  /// synchronously; this barrier keeps the resources alive until then.
+  Future<void> close() => _closeFuture ??= _closeResources();
+
+  Future<void> _closeResources() async {
+    if (_closing) return;
+    _closing = true;
     if (_pendingApproval?.completer.isCompleted == false) {
       _pendingApproval!.completer.complete(
         const AiToolApprovalDecision.rejected(),
       );
     }
     _activeCancellationToken?.cancel();
+    while (_generationOperations.isNotEmpty) {
+      await Future.wait<void>(List.of(_generationOperations));
+    }
     streamingAssistantText.dispose();
     streamingAssistantStatus.dispose();
     _scrollRequests.close();
-    super.dispose();
   }
 
   void _triggerScroll() {
+    if (_closing) return;
     _scrollRequests.add(null);
   }
 
   // 加载初始草稿
   void notify() {
+    if (_closing) return;
     notifyListeners();
   }
 }

@@ -11,6 +11,12 @@ Route Scope owns AI ViewModels, streams, timers, and controllers. App Shell
 adapters inject settings, logging, text protection, SSH/SFTP, monitoring,
 Playbook, RAG, MCP, and WebView capabilities without transferring ownership.
 
+Chat-list titles do not derive from user prompt text. Route teardown rejects
+pending approvals, cancels the active provider request, and joins the generation
+Future before releasing its streaming notifiers. `AiModule` invalidates an
+in-flight lazy initialization before closing `ai.db`, so a late open cannot
+resurrect the Module after App shutdown.
+
 Chat, metrics, trace, attachments, context, and other sensitive fields are
 encrypted before Drift writes. Database-open failures surface; they do not
 fall back to an in-memory production store.

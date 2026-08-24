@@ -116,6 +116,43 @@ class FakeSuccessLlmChatService extends LlmChatService {
   }
 }
 
+class CancellationGatedLlmChatService extends LlmChatService {
+  CancellationGatedLlmChatService({
+    required super.storageService,
+    required this.started,
+  }) : super(toolService: const _FakeAiToolExecutor());
+
+  final Completer<void> started;
+
+  @override
+  Stream<String> stream({
+    required List<Map<String, dynamic>> messages,
+    String? modelOverride,
+    Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
+    requestToolApproval,
+    void Function(LlmRunStats stats)? onStats,
+    void Function(LlmTraceEvent event)? onTrace,
+    LlmCancellationToken? cancellationToken,
+    String? runId,
+    Set<String>? allowedTools,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
+    List<String> memorySources = const [],
+    bool forceContextCompression = false,
+    bool planMode = false,
+    AiChatMessageRecord? approvedPlanMessage,
+  }) async* {
+    final cancelled = Completer<void>();
+    cancellationToken?.onCancel(() {
+      if (!cancelled.isCompleted) cancelled.complete();
+    });
+    if (!started.isCompleted) started.complete();
+    await cancelled.future;
+  }
+}
+
 class _FakeAiToolExecutor implements AiToolExecutor {
   const _FakeAiToolExecutor();
   @override
@@ -275,6 +312,33 @@ class FakeSuccessRuntimeFactory extends LegacyAiChatRuntimeFactory {
         lastSelectedConnectionIds = selectedConnectionIds;
         lastAllowedTools = allowedTools;
       },
+    );
+  }
+}
+
+class CancellationGatedRuntimeFactory extends LegacyAiChatRuntimeFactory {
+  CancellationGatedRuntimeFactory({
+    required super.storageService,
+    required super.sshService,
+    required super.sftpService,
+    required super.performanceMonitorService,
+    required super.playbookService,
+    required super.ragService,
+    required super.appSettings,
+  });
+
+  final Completer<void> streamStarted = Completer<void>();
+
+  @override
+  LlmChatService createLlmChatService({
+    required AiConnectionSettings settings,
+    required String model,
+    required String chatId,
+    AppLanguage language = AppLanguage.zh,
+  }) {
+    return CancellationGatedLlmChatService(
+      storageService: aiStoragePort(storageService),
+      started: streamStarted,
     );
   }
 }
