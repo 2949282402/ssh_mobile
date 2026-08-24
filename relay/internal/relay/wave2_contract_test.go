@@ -71,7 +71,7 @@ func TestReadyReportsConfiguredPresenceTTL(t *testing.T) {
 	server, httpServer := newV2TestServer(t)
 	server.config.PresenceTTL = 7 * time.Second
 	credential, privateKey := enrollV2(t, httpServer.URL, "device-a")
-	conn := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x44, privateKey)
+	conn := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", privateKey)
 	defer conn.Close()
 	ready := readV2ControlFrame(t, conn).GetReady()
 	if ready == nil || ready.PresenceTtlS != 7 {

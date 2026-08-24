@@ -334,7 +334,7 @@ func TestHubAddSerializesConcurrentSameDeviceClaims(t *testing.T) {
 	credential, _, privateKey := enrollViaHTTP(t, httpServer.URL, "device-a", "test-token")
 
 	// A1 connects; its lease claim is gated (blocks before the ready frame).
-	connA1 := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x10, privateKey)
+	connA1 := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", privateKey)
 	defer connA1.Close()
 	<-gate.blocked
 
@@ -344,7 +344,7 @@ func TestHubAddSerializesConcurrentSameDeviceClaims(t *testing.T) {
 	// re-check and hub registration as one serialized operation.
 	connA2Ch := make(chan *websocket.Conn, 1)
 	go func() {
-		connA2Ch <- dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x11, privateKey)
+		connA2Ch <- dialControlV2NoReady(t, httpServer.URL, credential, "device-a", privateKey)
 	}()
 	time.Sleep(100 * time.Millisecond)
 	server.hub.mutex.Lock()

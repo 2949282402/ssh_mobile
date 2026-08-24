@@ -80,7 +80,7 @@ func TestMultiInstanceSharedAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32))
+	nonce := base64.RawURLEncoding.EncodeToString(randomBytes(32))
 	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
 	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)

@@ -141,9 +141,9 @@ func relayDataTestIdentityByDevice(t *testing.T, baseURL, deviceID string) relay
 
 // dialControlV2 连接 /v2/control 并消费首帧 Ready 与随后一次完整 advisory
 // PresenceHintSnapshot。
-func dialControlV2(t *testing.T, baseURL, credential, deviceID string, nonceByte byte, privateKey ed25519.PrivateKey) *websocket.Conn {
+func dialControlV2(t *testing.T, baseURL, credential, deviceID string, _ byte, privateKey ed25519.PrivateKey) *websocket.Conn {
 	t.Helper()
-	conn := dialControlV2NoReady(t, baseURL, credential, deviceID, nonceByte, privateKey)
+	conn := dialControlV2NoReady(t, baseURL, credential, deviceID, privateKey)
 	ready := readV2ControlFrame(t, conn)
 	if ready.GetReady() == nil ||
 		ready.GetReady().ProtocolVersion != v2.RELAY_V2_VERSION ||
@@ -167,9 +167,12 @@ func consumeV2PresenceHintSnapshot(t *testing.T, conn *websocket.Conn) {
 	}
 }
 
-func dialControlV2NoReady(t *testing.T, baseURL, credential, deviceID string, nonceByte byte, privateKey ed25519.PrivateKey) *websocket.Conn {
+func dialControlV2NoReady(t *testing.T, baseURL, credential, deviceID string, privateKey ed25519.PrivateKey) *websocket.Conn {
 	t.Helper()
-	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceByte}, 32))
+	// Some callers exercise a persistent Redis replay cache. A deterministic
+	// nonce would collide across test processes even after the MySQL fixture is
+	// reset, so every real upgrade needs a fresh proof nonce.
+	nonce := base64.RawURLEncoding.EncodeToString(randomBytes(32))
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+credential)
 	setCurrentSignedDeviceProof(headers, http.MethodGet, "/v2/control", privateKey, nonce)
@@ -747,7 +750,7 @@ func TestControlV2NewConnectionReceivesFullPresenceHintSnapshot(t *testing.T) {
 	defer connA.Close()
 	publishDiscoveryV2Test(t, connA, 1001)
 
-	connB := dialControlV2NoReady(t, httpServer.URL, credB, "device-b", 0x36, privB)
+	connB := dialControlV2NoReady(t, httpServer.URL, credB, "device-b", privB)
 	defer connB.Close()
 	if ready := readV2ControlFrame(t, connB); ready.GetReady() == nil {
 		t.Fatalf("expected Ready before presence snapshot, got %+v", ready)
@@ -1008,7 +1011,7 @@ func TestControlV2RejectsRelayDataFrame(t *testing.T) {
 	_, httpServer := newV2TestServer(t)
 	credential, privateKey := enrollV2(t, httpServer.URL, "device-a")
 
-	conn := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x61, privateKey)
+	conn := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", privateKey)
 	// 先消费 Ready。
 	if r := readV2ControlFrame(t, conn); r.GetReady() == nil {
 		t.Fatalf("expected ready, got %+v", r)
@@ -1709,7 +1712,7 @@ func TestControlV2RejectsClientHintFrames(t *testing.T) {
 	}
 	for i, tc := range frames {
 		credential, privateKey := enrollV2(t, httpServer.URL, tc.deviceID)
-		conn := dialControlV2NoReady(t, httpServer.URL, credential, tc.deviceID, byte(0x70+i), privateKey)
+		conn := dialControlV2NoReady(t, httpServer.URL, credential, tc.deviceID, privateKey)
 		if r := readV2ControlFrame(t, conn); r.GetReady() == nil {
 			t.Fatalf("expected ready, got %+v", r)
 		}
