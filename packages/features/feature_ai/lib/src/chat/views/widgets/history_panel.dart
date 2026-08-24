@@ -118,11 +118,23 @@ class _HistoryPanelState extends State<HistoryPanel> {
         ),
         Expanded(
           child: widget.loading
-              ? const Center(
-                  child: SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+              ? AppSkeletonizer.zone(
+                  enabled: true,
+                  semanticsLabel: widget.strings.loading,
+                  child: ListView.separated(
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: 4,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      return ListTile(
+                        leading: const Bone.circle(size: 24),
+                        title: Bone(
+                          width: index.isEven ? 160 : 200,
+                          height: 16,
+                        ),
+                        subtitle: const Bone(width: 80, height: 12),
+                      );
+                    },
                   ),
                 )
               : filtered.isEmpty

@@ -18,6 +18,7 @@ final class RagKnowledgeViewModel extends ChangeNotifier {
   final RagService _ragService;
   final RagSettingsPort _settings;
   bool _isProcessing = false;
+  String? _initializationError;
 
   List<RagDocumentMetadata> get documents => _ragService.documents;
 
@@ -27,7 +28,30 @@ final class RagKnowledgeViewModel extends ChangeNotifier {
 
   bool get isEnglish => _settings.isEnglish;
 
-  Future<void> initRag() => _ragService.init();
+  bool get isInitialLoading =>
+      !_ragService.isInitialized && _initializationError == null;
+
+  String? get initializationError => _initializationError;
+
+  bool get isInitialized => _ragService.isInitialized;
+
+  Future<void> initRag() async {
+    _initializationError = null;
+    await Future<void>.delayed(Duration.zero);
+    try {
+      await _ragService.init();
+    } catch (e) {
+      _initializationError = e.toString();
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<void> retryInit() {
+    _initializationError = null;
+    notifyListeners();
+    return initRag();
+  }
 
   Future<String?> getAliyunApiKey() => _settings.getAliyunApiKey();
 

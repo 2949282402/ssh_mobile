@@ -21,6 +21,8 @@ class McpConsoleViewModel extends ChangeNotifier {
   McpActivityOutcome? _selectedOutcome;
   McpSelfTestResult? _lastSelfTest;
   bool _loading = true;
+  bool _initialLoadCompleted = false;
+  Future<void>? _refreshInFlight;
   bool _loadingPolicies = false;
   bool _pendingPolicyReload = false;
   bool _runningAction = false;
@@ -48,6 +50,8 @@ class McpConsoleViewModel extends ChangeNotifier {
   bool get exposureToolsConfigured =>
       _settings.mcpSettings.exposureToolsConfigured;
   bool get loading => _loading;
+  bool get initialLoading => _loading && !_initialLoadCompleted;
+  bool get refreshing => _loading && _initialLoadCompleted;
   bool get runningAction => _runningAction;
   String? get errorCode => _errorCode;
   McpSelfTestResult? get lastSelfTest => _lastSelfTest;
@@ -71,7 +75,15 @@ class McpConsoleViewModel extends ChangeNotifier {
   String get geminiConfig =>
       McpConfigTemplates.geminiCli(_settings.mcpSettings);
 
-  Future<void> refresh() async {
+  Future<void> refresh() {
+    final inFlight = _refreshInFlight;
+    if (inFlight != null) return inFlight;
+    final future = _doRefresh();
+    _refreshInFlight = future;
+    return future;
+  }
+
+  Future<void> _doRefresh() async {
     _loading = true;
     _errorCode = null;
     notifyListeners();
@@ -82,10 +94,12 @@ class McpConsoleViewModel extends ChangeNotifier {
       ]);
       _activities = values[0] as List<McpActivityRecord>;
       _tools = values[1] as List<McpToolPolicySnapshot>;
+      _initialLoadCompleted = true;
     } catch (_) {
       _errorCode = 'load_failed';
     } finally {
       _loading = false;
+      _refreshInFlight = null;
       notifyListeners();
     }
   }

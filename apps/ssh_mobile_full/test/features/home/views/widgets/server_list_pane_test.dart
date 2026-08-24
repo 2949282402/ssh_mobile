@@ -208,6 +208,17 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'displays empty state when storage is ready and connections are empty',
+    (tester) async {
+      await tester.pumpWidget(host(onSettings: (_) {}));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AppSkeletonizer), findsNothing);
+      expect(find.byType(AppEmptyState), findsOneWidget);
+    },
+  );
 }
 
 class _TestSshService extends SshService {

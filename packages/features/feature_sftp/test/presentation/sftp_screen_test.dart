@@ -44,6 +44,27 @@ void main() {
     expect(find.text('deployment-user@prod.example.com:2222'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'renders skeleton loading state when directory is busy and entries are empty',
+    (tester) async {
+      final fixture = await _SftpScreenFixture.create();
+      addTearDown(fixture.dispose);
+      fixture.backend.state = SftpConnectionState.loading;
+      fixture.backend.entries = const [];
+      fixture.backend.isBusy = true;
+      fixture.backend.notifyListeners();
+
+      await tester.pumpWidget(fixture.host());
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(
+        find.byKey(const ValueKey('sftp-directory-loading')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 final class _SftpScreenFixture {

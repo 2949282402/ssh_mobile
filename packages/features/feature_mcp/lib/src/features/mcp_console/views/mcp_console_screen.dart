@@ -32,9 +32,21 @@ class McpConsoleScreen extends StatelessWidget {
               if (viewModel.errorCode != null)
                 _ErrorBanner(english: english, code: viewModel.errorCode!),
               Expanded(
-                child: viewModel.loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _ConsoleBody(viewModel: viewModel, english: english),
+                child: viewModel.initialLoading
+                    ? AppSkeletonizer.zone(
+                        enabled: true,
+                        semanticsLabel: english
+                            ? 'Loading MCP console...'
+                            : '正在加载 MCP 控制台...',
+                        child: const _McpConsoleSkeleton(),
+                      )
+                    : Stack(
+                        children: [
+                          _ConsoleBody(viewModel: viewModel, english: english),
+                          if (viewModel.refreshing)
+                            const LinearProgressIndicator(minHeight: 2),
+                        ],
+                      ),
               ),
             ],
           ),
@@ -577,3 +589,91 @@ String _selfTestLabel(McpSelfTestResult result, bool english) =>
 String _formatDate(DateTime value) =>
     '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} '
     '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}:${value.second.toString().padLeft(2, '0')}';
+
+class _McpConsoleSkeleton extends StatelessWidget {
+  const _McpConsoleSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListView(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      children: [
+        Container(
+          height: 140,
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.3,
+            ),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Bone(width: 120, height: 16),
+              const SizedBox(height: 16),
+              Row(
+                children: const [
+                  Expanded(child: Bone(width: double.infinity, height: 40)),
+                  SizedBox(width: 12),
+                  Expanded(child: Bone(width: double.infinity, height: 40)),
+                ],
+              ),
+            ],
+          ),
+        ),
+        Container(
+          height: 100,
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.3,
+            ),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Bone(width: 100, height: 16),
+              SizedBox(height: 12),
+              Bone(width: double.infinity, height: 28),
+            ],
+          ),
+        ),
+        Container(
+          height: 180,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.3,
+            ),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: const [
+              Bone(width: 140, height: 16),
+              SizedBox(height: 16),
+              Bone(width: double.infinity, height: 32),
+              SizedBox(height: 8),
+              Bone(width: double.infinity, height: 32),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}

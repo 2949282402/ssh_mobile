@@ -62,6 +62,7 @@ class AiStrings {
   String get composerHint =>
       _en ? 'Ask a question, or type / for commands' : '描述任务，或输入 / 查看命令';
   String get history => _en ? 'Chat history' : '聊天历史';
+  String get loading => _en ? 'Loading...' : '正在加载...';
   String get newChat => _en ? 'New chat' : '新聊天';
   String get delete => _en ? 'Delete' : '删除';
   String get deleteChatTitle => _en ? 'Delete chat?' : '删除对话？';

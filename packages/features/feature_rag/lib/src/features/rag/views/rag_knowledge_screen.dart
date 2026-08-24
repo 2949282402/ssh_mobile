@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:app_ui/app_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -12,6 +15,11 @@ class _RagStrings {
   const _RagStrings(this.isEn);
 
   String get title => isEn ? 'Ops Knowledge Base' : '运维知识库';
+  String get loadingKnowledge =>
+      isEn ? 'Loading knowledge base...' : '正在加载运维知识库...';
+  String get initFailed =>
+      isEn ? 'Failed to initialize knowledge base' : '知识库初始化失败';
+  String get retry => isEn ? 'Retry' : '重试';
   String get noDocuments => isEn ? 'No documents uploaded yet' : '暂无上传的运维文档';
   String get uploadHint => isEn
       ? 'Tap + to upload a document (PDF, Markdown, Txt, Log)'
@@ -55,9 +63,7 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<RagKnowledgeViewModel>().initRag();
-    });
+    unawaited(context.read<RagKnowledgeViewModel>().initRag());
   }
 
   Future<void> _showAliyunSettings(
@@ -229,125 +235,8 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
       ),
       body: Stack(
         children: [
-          if (viewModel.documents.isEmpty && !viewModel.isLoading)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.auto_stories,
-                      size: 80,
-                      color: theme.colorScheme.primary.withValues(alpha: 0.3),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      strings.noDocuments,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      strings.uploadHint,
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.textTheme.bodySmall?.color,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: viewModel.documents.length,
-              itemBuilder: (context, index) {
-                final doc = viewModel.documents[index];
-                final isPdf = doc.name.toLowerCase().endsWith('.pdf');
-                final dateStr = DateFormat(
-                  'yyyy-MM-dd HH:mm',
-                ).format(doc.uploadedAt);
-
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  elevation: 1,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    leading: CircleAvatar(
-                      backgroundColor: isPdf
-                          ? theme.colorScheme.errorContainer
-                          : theme.colorScheme.primaryContainer,
-                      foregroundColor: isPdf
-                          ? theme.colorScheme.onErrorContainer
-                          : theme.colorScheme.onPrimaryContainer,
-                      child: Icon(
-                        isPdf ? Icons.picture_as_pdf : Icons.description,
-                      ),
-                    ),
-                    title: Text(
-                      doc.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(top: 6.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.storage_outlined,
-                                size: 14,
-                                color: theme.textTheme.bodySmall?.color,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                _formatSize(doc.sizeBytes),
-                                style: theme.textTheme.bodySmall,
-                              ),
-                              const SizedBox(width: 12),
-                              Icon(
-                                Icons.grid_view_outlined,
-                                size: 14,
-                                color: theme.textTheme.bodySmall?.color,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                strings.chunkCount(doc.chunkCount),
-                                style: theme.textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            strings.uploadedAtLabel(dateStr),
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                    ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline),
-                      color: theme.colorScheme.error,
-                      onPressed: () =>
-                          _handleDelete(context, strings, viewModel, doc),
-                    ),
-                  ),
-                );
-              },
-            ),
-          if (viewModel.isProcessing || viewModel.isLoading)
+          _buildBody(context, viewModel, strings, theme),
+          if (viewModel.isProcessing)
             Container(
               color: Colors.black.withValues(alpha: 0.3),
               child: Center(
@@ -378,6 +267,198 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
         tooltip: strings.title,
         child: const Icon(Icons.add),
       ),
+    );
+  }
+
+  Widget _buildBody(
+    BuildContext context,
+    RagKnowledgeViewModel viewModel,
+    _RagStrings strings,
+    ThemeData theme,
+  ) {
+    if (viewModel.isInitialLoading) {
+      return AppSkeletonizer.zone(
+        enabled: true,
+        semanticsLabel: strings.loadingKnowledge,
+        child: ListView.builder(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(12),
+          itemCount: 4,
+          itemBuilder: (context, index) {
+            return Card(
+              margin: const EdgeInsets.only(bottom: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                leading: const Bone.circle(size: 40),
+                title: Bone(width: index.isEven ? 160 : 220, height: 16),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 6.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Bone(width: 120, height: 12),
+                      SizedBox(height: 4),
+                      Bone(width: 180, height: 12),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    if (viewModel.initializationError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.error_outline_rounded,
+                size: 64,
+                color: theme.colorScheme.error,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                strings.initFailed,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: viewModel.retryInit,
+                icon: const Icon(Icons.refresh_rounded),
+                label: Text(strings.retry),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (viewModel.documents.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.auto_stories,
+                size: 80,
+                color: theme.colorScheme.primary.withValues(alpha: 0.3),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                strings.noDocuments,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                strings.uploadHint,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.textTheme.bodySmall?.color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: viewModel.documents.length,
+      itemBuilder: (context, index) {
+        final doc = viewModel.documents[index];
+        final isPdf = doc.name.toLowerCase().endsWith('.pdf');
+        final dateStr = DateFormat('yyyy-MM-dd HH:mm').format(doc.uploadedAt);
+
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          elevation: 1,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 8,
+            ),
+            leading: CircleAvatar(
+              backgroundColor: isPdf
+                  ? theme.colorScheme.errorContainer
+                  : theme.colorScheme.primaryContainer,
+              foregroundColor: isPdf
+                  ? theme.colorScheme.onErrorContainer
+                  : theme.colorScheme.onPrimaryContainer,
+              child: Icon(isPdf ? Icons.picture_as_pdf : Icons.description),
+            ),
+            title: Text(
+              doc.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 6.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.storage_outlined,
+                        size: 14,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _formatSize(doc.sizeBytes),
+                        style: theme.textTheme.bodySmall,
+                      ),
+                      const SizedBox(width: 12),
+                      Icon(
+                        Icons.grid_view_outlined,
+                        size: 14,
+                        color: theme.textTheme.bodySmall?.color,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        strings.chunkCount(doc.chunkCount),
+                        style: theme.textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    strings.uploadedAtLabel(dateStr),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline),
+              color: theme.colorScheme.error,
+              onPressed: () => _handleDelete(context, strings, viewModel, doc),
+            ),
+          ),
+        );
+      },
     );
   }
 }

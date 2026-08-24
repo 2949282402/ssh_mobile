@@ -157,8 +157,10 @@ class _MonitorTabState extends State<_MonitorTab>
       );
     }
     if (!hasSamples) {
-      return Center(
-        child: Text(_monitorText(strings, 'Waiting for samples', '等待采样数据')),
+      return AppSkeletonizer.zone(
+        enabled: true,
+        semanticsLabel: _monitorText(strings, 'Waiting for samples', '等待采样数据'),
+        child: const _MonitorOverviewSkeleton(),
       );
     }
     return LayoutBuilder(
@@ -365,5 +367,79 @@ class _MonitorTabState extends State<_MonitorTab>
       return '${(bytesPerSecond / 1024).toStringAsFixed(1)} KB';
     }
     return '${bytesPerSecond.toStringAsFixed(0)} B';
+  }
+}
+
+class _MonitorOverviewSkeleton extends StatelessWidget {
+  const _MonitorOverviewSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListView(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
+      children: [
+        Container(
+          height: 120,
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.3,
+            ),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            border: Border.all(
+              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Bone(width: 140, height: 16),
+              const SizedBox(height: 12),
+              Row(
+                children: const [
+                  Expanded(child: Bone(width: double.infinity, height: 48)),
+                  SizedBox(width: 12),
+                  Expanded(child: Bone(width: double.infinity, height: 48)),
+                ],
+              ),
+            ],
+          ),
+        ),
+        for (var i = 0; i < 2; i++)
+          Container(
+            height: 180,
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withValues(
+                alpha: 0.3,
+              ),
+              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+              border: Border.all(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: const [
+                    Bone(width: 100, height: 16),
+                    Bone(width: 60, height: 16),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                const Expanded(
+                  child: Bone(width: double.infinity, height: double.infinity),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
   }
 }
