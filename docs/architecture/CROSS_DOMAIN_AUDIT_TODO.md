@@ -120,7 +120,7 @@ docker compose --env-file relay/.env.example -f relay/compose.yaml --profile sto
 git diff --check
 ```
 
-## Client（进行中）
+## Client（已完成）
 
 - [x] **C-01 AI 命令安全边界**：`run_command` 必须拒绝重定向、命令
   替换、换行和混合敏感路径；安全诊断改为精确命令/参数策略，不得
@@ -170,7 +170,7 @@ git diff --check
 - [x] **C-15 架构审计报告语义**：兼容性门禁将“受批准的 App Shell adapter
   测试引用”与真正受基线约束的旧引用分开计数，避免 closed 模块显示
   `3 refs / 0 baseline` 却通过的误导输出。
-- [ ] **C-16 Client Domain 门禁**：通过所有受影响 package/app 的聚焦测试、
+- [x] **C-16 Client Domain 门禁**：通过所有受影响 package/app 的聚焦测试、
   format/analyze，架构/依赖/资源 owner/兼容性门禁，Client coverage 不低于
   80%，新手写生产文件不低于 90%。
 

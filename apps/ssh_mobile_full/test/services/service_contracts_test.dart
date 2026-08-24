@@ -67,7 +67,10 @@ void main() {
     expect(ssh, isA<SshClientAdapter>());
     expect(sftp, isA<SftpClientAdapter>());
     expect(ClientSystemToolService.instance, isA<ClientSystemToolAdapter>());
-    final webViewService = ClientWebViewService(logger: AppLogService.instance);
+    final webViewService = ClientWebViewService(
+      logger: AppLogService.instance,
+      networkLoader: const _TestNetworkLoader(),
+    );
     addTearDown(webViewService.dispose);
     expect(webViewService, isA<ClientWebViewAdapter>());
 
@@ -87,4 +90,18 @@ void main() {
     expect(llm, isA<LlmClientAdapter>());
     expect(const MultiAgentCoordinator(), isA<MultiAgentCoordinatorAdapter>());
   });
+}
+
+final class _TestNetworkLoader implements ClientWebViewNetworkLoader {
+  const _TestNetworkLoader();
+
+  @override
+  Future<ClientWebViewFetchedPage> load(Uri uri) async {
+    return ClientWebViewFetchedPage(
+      requestedUri: uri,
+      finalUri: uri,
+      contentType: 'text/plain',
+      body: '',
+    );
+  }
 }

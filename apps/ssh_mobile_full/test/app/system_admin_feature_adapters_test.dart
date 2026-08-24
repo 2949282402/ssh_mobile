@@ -260,9 +260,7 @@ final class _FakeConnectionRepository implements ConnectionRepository {
   ConnectionConfig? current;
 
   @override
-  List<ConnectionConfig> get connections => [
-    if (current case final value?) value,
-  ];
+  List<ConnectionConfig> get connections => [?current];
 
   @override
   ConnectionConfig? getConnection(String id) =>

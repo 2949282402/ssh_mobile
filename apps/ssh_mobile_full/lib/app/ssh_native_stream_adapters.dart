@@ -6,6 +6,9 @@
 // 再发送 `SshStreamOpen` 命令，并把 `SshStreamDataReceived` / `SshStreamClosed`
 // 事件按完整 NativeStreamHandle 路由到对应的 [SshNativeStream]（dartssh2 仍负责 SSH/SFTP 协议）。
 
+// ignore_for_file: prefer_initializing_formals
+// Public named parameters intentionally initialize private owner fields.
+
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -94,7 +97,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
       _streams.remove(handle);
       _pendingOpens.remove(commandId);
       throw StateError(
-        'Failed to queue native SSH stream open: ' + status.name + '.',
+        'Failed to queue native SSH stream open: ${status.name}.',
       );
     }
     return stream;

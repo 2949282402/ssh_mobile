@@ -3,6 +3,9 @@
 // 该边界独立拥有每次 acquire 返回的管理 Lease；App Shell 注入的 Connection、
 // Credential、Host Key Repository 和 native stream connector 均为借用资源。
 
+// ignore_for_file: prefer_initializing_formals
+// Public named parameters intentionally initialize private adapter fields.
+
 import 'dart:async';
 import 'dart:typed_data';
 

@@ -72,21 +72,24 @@ void main() {
       await first;
     });
 
-    test('rejects a concurrent target change for the same session id', () async {
-      final first = sshService.connect(
-        'missing-connection-a',
-        sessionId: 'shared-session',
-      );
-
-      await expectLater(
-        sshService.connect(
-          'missing-connection-b',
+    test(
+      'rejects a concurrent target change for the same session id',
+      () async {
+        final first = sshService.connect(
+          'missing-connection-a',
           sessionId: 'shared-session',
-        ),
-        throwsA(isA<StateError>()),
-      );
-      await first;
-    });
+        );
+
+        await expectLater(
+          sshService.connect(
+            'missing-connection-b',
+            sessionId: 'shared-session',
+          ),
+          throwsA(isA<StateError>()),
+        );
+        await first;
+      },
+    );
 
     test('close is awaitable, idempotent, and rejects late connects', () async {
       final first = sshService.close();
@@ -99,10 +102,7 @@ void main() {
       expect(sshService.leaseCount, 0);
 
       await expectLater(
-        sshService.connect(
-          'missing-connection',
-          sessionId: 'late-session',
-        ),
+        sshService.connect('missing-connection', sessionId: 'late-session'),
         throwsA(isA<StateError>()),
       );
     });

@@ -51,6 +51,10 @@ queue、Session Pool 和 native stream connector 完成释放。Network V2 codec
 编码与 Peer/Transfer/SSH Stream typed decoder 彼此独立；Realtime 使用自己的 native
 protocol，不属于当前 V2 event schema。
 
+System Admin 的 App Shell 组合按职责拆为 Port/Route 聚合、设置与本地化投影、
+SSH 目标绑定与有界命令执行；后者返回 Route-owned Lease，并在取消、超时、输出超限
+或目标代次变化时关闭全部局部 process/client，不关闭 App Scope SSH owner。
+
 ## 测试命令
 
 ```bash

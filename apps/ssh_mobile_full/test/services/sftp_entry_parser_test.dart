@@ -7,6 +7,7 @@ void main() {
   test('SFTP entries are built and sorted in a background isolate', () async {
     final entries = await SftpEntryParser.parse(
       connectionId: 'conn-1',
+      targetFingerprint: 'target-fingerprint-1',
       absolutePath: '/srv',
       names: [
         SftpName(
@@ -24,6 +25,12 @@ void main() {
     );
 
     expect(entries.map((entry) => entry.name), ['Alpha', 'zeta.txt']);
+    expect(
+      entries.every(
+        (entry) => entry.targetFingerprint == 'target-fingerprint-1',
+      ),
+      isTrue,
+    );
     expect(entries.first.isDirectory, isTrue);
     expect(entries.last.path, '/srv/zeta.txt');
     expect(entries.last.sizeLabel, '2.0 KB');

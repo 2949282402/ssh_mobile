@@ -1,3 +1,6 @@
+// ignore_for_file: prefer_initializing_formals
+// Public named parameters intentionally initialize private adapter fields.
+
 import 'dart:async';
 import 'dart:convert';
 

@@ -76,7 +76,7 @@ class _GatedBoundSshService extends FakeSshService {
   final Completer<void> releaseFirstCommand = Completer<void>();
   final List<String> executedCommands = [];
 
-  _GatedBoundSshService(TestStorageAdapter storage) : super(storage);
+  _GatedBoundSshService(super.storage);
 
   @override
   Future<RemoteCommandResult> runOneShotCommandForBinding({
@@ -114,7 +114,7 @@ class _ConcurrentStartSshService extends FakeSshService {
   int activeCommandCount = 0;
   int maxConcurrentCommandCount = 0;
 
-  _ConcurrentStartSshService(TestStorageAdapter storage) : super(storage);
+  _ConcurrentStartSshService(super.storage);
 
   @override
   Future<RemoteCommandResult> runOneShotCommand({
