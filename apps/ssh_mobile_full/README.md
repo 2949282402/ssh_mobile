@@ -44,7 +44,10 @@ Playbook、RAG、MCP 和 LAN Share 数据库分别由对应 Core/Feature Module 
 
 前台 `SshService` 中，`_SshBackgroundEventBridge` 独占后台插件事件订阅，
 `_SshSessionProjection` 独占不可变 session 列表与 connection overview 聚合；连接、
-会话、命令和 history queue 仍由 `SshService` 拥有。Network V2 codec 是窄 facade，命令
+会话、命令和 history queue 仍由 `SshService` 拥有。前后台建连在登记到 session
+registry 前由 attempt owner 持有，并以 per-session generation 阻止迟到回调覆盖新资源；
+`SshService.close()` 会等待 connect/reconnect、后台 isolate 确认、订阅、runtime、history
+queue、Session Pool 和 native stream connector 完成释放。Network V2 codec 是窄 facade，命令
 编码与 Peer/Transfer/SSH Stream typed decoder 彼此独立；Realtime 使用自己的 native
 protocol，不属于当前 V2 event schema。
 

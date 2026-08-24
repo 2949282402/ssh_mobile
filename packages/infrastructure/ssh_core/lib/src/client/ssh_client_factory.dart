@@ -147,8 +147,18 @@ final class SshClientFactory {
         error: error,
         stackTrace: stackTrace,
       );
-      socket.close();
-      rethrow;
+      try {
+        await socket.close();
+      } catch (closeError, closeStackTrace) {
+        _log(
+          LogLevel.warning,
+          'SSH socket cleanup failed after client setup failure',
+          details: 'connection=${config.name}',
+          error: closeError,
+          stackTrace: closeStackTrace,
+        );
+      }
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 

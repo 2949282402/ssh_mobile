@@ -1,4 +1,4 @@
-最新更新时间：2026-08-21
+最新更新时间：2026-08-24
 
 # App Shell Services 分类
 
@@ -47,6 +47,10 @@ RAG 和 Network 的旧 Feature/业务入口已经完成零引用收口；剩余�
   Peer、Relay、Route projection、Transfer 分别由相邻的
   `network_service_*` 内部 part 所有。新的 `network_transport` 负责
   Runtime/Handle Facade，不复制或重写 TCP/UDP/QUIC/WebShare 协议。
+- SSH 前后台在 session registry 之外统一使用 attempt owner 和 per-session
+  generation：失败或被新建连取代的 socket/client/shell/runtime 会逆序释放；
+  App Scope 关闭会等待建连、重连、后台事件订阅、Session Pool 与 native stream
+  connector 收敛，迟到回调不得重新登记资源。
 - 内部拆分文件：被 `part of` 或条件导出引用的文件不是独立 Service，必须
   与其主库一起维护，不能按“零直接引用”误删。
 

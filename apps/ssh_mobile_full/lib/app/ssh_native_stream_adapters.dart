@@ -63,9 +63,15 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     required String peerId,
     String service = kSshNativeStreamService,
   }) async {
+    _ensureOpen();
     final openerDeviceId = await _ensureOpenerDeviceId();
+    _ensureOpen();
     final gateway = await _ensureGateway();
-    if (_facade != null) await _ensurePeerConnected(peerId);
+    _ensureOpen();
+    if (_facade != null) {
+      await _ensurePeerConnected(peerId);
+      _ensureOpen();
+    }
 
     final handle = _allocateStreamHandle(openerDeviceId);
     final stream = _AppSshNativeStream(
@@ -94,6 +100,12 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     return stream;
   }
 
+  void _ensureOpen() {
+    if (_closed) {
+      throw StateError('The native SSH stream connector is closed.');
+    }
+  }
+
   NativeStreamHandle _allocateStreamHandle(String openerDeviceId) {
     final firstCandidate = _nextStreamId;
     var streamId = firstCandidate;
@@ -112,13 +124,22 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
   Future<String> _ensureOpenerDeviceId() {
     final existing = _openerDeviceIdFuture;
     if (existing != null) return existing;
-    final future = _openerDeviceIdProvider().then((deviceId) {
+    late final Future<String> future;
+    future = _openerDeviceIdProvider().then((deviceId) {
       if (deviceId.isEmpty) {
         throw StateError('The local opener device ID is unavailable.');
       }
       return deviceId;
     });
     _openerDeviceIdFuture = future;
+    future.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {
+        if (identical(_openerDeviceIdFuture, future)) {
+          _openerDeviceIdFuture = null;
+        }
+      },
+    );
     return future;
   }
 
@@ -161,6 +182,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
         'Failed to connect peer $peerId: ${result.error.message}',
       );
     }
+    _ensureOpen();
     _connectedPeers[peerId] = true;
   }
 
@@ -171,7 +193,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
       case NativeSshStreamDataReceivedEvent(:final handle, :final data):
         _streams[handle]?._onData(data);
       case NativeSshStreamClosedEvent(:final handle):
-        final stream = _streams.remove(handle);
+        final stream = _removeStream(handle);
         stream?._onClosed();
       case NativeCommandResultEvent(
         :final commandId,
@@ -186,7 +208,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
         final stream = _streams[handle];
         if (stream == null) break;
         if (!accepted) {
-          _streams.remove(handle);
+          _removeStream(handle);
           stream._fail(
             StateError(
               error?.message ?? 'SSH stream open was rejected by native.',
@@ -215,7 +237,7 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
   }
 
   void _closeStream(NativeStreamHandle handle, String peerId) {
-    _streams.remove(handle);
+    _removeStream(handle);
     final gateway = _gateway;
     if (gateway == null || _closed) return;
     gateway.sendCommand(
@@ -227,6 +249,20 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     );
   }
 
+  _AppSshNativeStream? _removeStream(NativeStreamHandle handle) {
+    _pendingOpens.removeWhere((_, pendingHandle) => pendingHandle == handle);
+    return _streams.remove(handle);
+  }
+
+  void _failStream(
+    NativeStreamHandle handle,
+    Object error, [
+    StackTrace? stackTrace,
+  ]) {
+    final stream = _removeStream(handle);
+    stream?._fail(error, stackTrace);
+  }
+
   /// 关闭所有活跃流并释放 gateway 监听；幂等。
   @override
   Future<void> closeAll() async {
@@ -234,6 +270,8 @@ final class AppSshNativeStreamConnector implements SshNativeStreamConnector {
     _closed = true;
     await _nativeSubscription?.cancel();
     _nativeSubscription = null;
+    _gatewayFuture = null;
+    _openerDeviceIdFuture = null;
     final streams = _streams.values.toList();
     _streams.clear();
     _pendingOpens.clear();
@@ -281,7 +319,7 @@ final class _AppSshNativeStream implements SshNativeStream {
         'SSH native stream send was dropped: the gateway is closed '
         'or rejected the command.',
       );
-      _fail(error);
+      connector._failStream(handle, error);
       throw error;
     }
   }

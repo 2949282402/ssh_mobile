@@ -147,7 +147,7 @@ git diff --check
 - [x] **C-08 Connection/Host-key/凭据原子性**：Host Key 只在持久化成功后
   更新调用方对象；Connection 配置、Host Key 和安全存储凭据使用可回滚的
   staging/compensation；拒绝非 canonical ID 并使用无碰撞安全存储 key。
-- [ ] **C-09 SSH owner 和 Native stream 关闭屏障**：前台/后台 SSH 创建失败、
+- [x] **C-09 SSH owner 和 Native stream 关闭屏障**：前台/后台 SSH 创建失败、
   同 session 并发建连与 shell-done 重连都必须有唯一 owner 且可等待释放；
   native stream 的迟到 open 和 send failure 必须释放局部句柄并从 registry 移除。
 - [ ] **C-10 SFTP 目标绑定和日志脱敏**：条目、编辑和确认任务携带创建时

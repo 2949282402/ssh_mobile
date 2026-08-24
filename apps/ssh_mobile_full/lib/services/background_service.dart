@@ -14,6 +14,8 @@ import 'package:ssh_core/ssh_core.dart' as ssh_core;
 
 import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
+import 'background_service_lifecycle.dart';
+import 'ssh/ssh_connection_attempt.dart';
 
 /// 后台 isolate 可选的 native SSH 流连接器。
 ///
@@ -37,6 +39,10 @@ Future<SSHSocket> _openBackgroundSshSocket({
   return SSHSocket.connect(host, port, timeout: const Duration(seconds: 15));
 }
 
+final class _SupersededSshConnection implements Exception {
+  const _SupersededSshConnection();
+}
+
 /// Android/iOS 前台服务管理。
 ///
 /// 职责：
@@ -54,6 +60,17 @@ class BackgroundServiceManager {
   static bool _configured = false;
   static bool _notificationPermissionChecked = false;
   static Future<void>? _prewarmFuture;
+  static final BackgroundServiceLifecycle _lifecycle =
+      BackgroundServiceLifecycle(
+        isRunning: () => FlutterBackgroundService().isRunning(),
+        startService: () => FlutterBackgroundService().startService(),
+        stoppedEvents: () => FlutterBackgroundService()
+            .on('sshServiceStopped')
+            .map<void>((_) {}),
+        requestStop: () => FlutterBackgroundService().invoke('stopService'),
+        acquirePowerLocks: _acquirePowerLocks,
+        releasePowerLocks: _releasePowerLocks,
+      );
 
   static bool get _supportsNativeBackgroundService {
     return !kIsWeb &&
@@ -144,26 +161,23 @@ class BackgroundServiceManager {
   }) async {
     if (!_supportsNativeBackgroundService) return;
     AppLogService.instance.info(
-      '[BackgroundManager] Starting background service for connection: $connectionName',
+      '[BackgroundManager] Starting background service',
     );
     await initialize();
-    var locksAcquired = false;
     try {
-      await _acquirePowerLocks();
-      locksAcquired = true;
-      unawaited(_requestBatteryOptimizationExemption());
-
       final service = FlutterBackgroundService();
-      if (!await service.isRunning()) {
-        final started = await service.startService();
-        AppLogService.instance.info(
-          '[BackgroundManager] service.startService() invoked, result: $started',
+      final started = await _lifecycle.start();
+      AppLogService.instance.info(
+        '[BackgroundManager] Background service start result',
+        details: 'started=$started',
+      );
+      if (!started) {
+        AppLogService.instance.warning(
+          '[BackgroundManager] Platform declined background service startup',
         );
-      } else {
-        AppLogService.instance.info(
-          '[BackgroundManager] Background service is already running',
-        );
+        return;
       }
+      unawaited(_requestBatteryOptimizationExemption());
 
       service.invoke('update', {
         'title': 'SSH Mobile',
@@ -178,9 +192,6 @@ class BackgroundServiceManager {
         error: e,
         stackTrace: stackTrace,
       );
-      if (locksAcquired) {
-        await _releasePowerLocks();
-      }
       rethrow;
     }
   }
@@ -190,16 +201,12 @@ class BackgroundServiceManager {
     AppLogService.instance.info(
       '[BackgroundManager] Stopping background service',
     );
-    final service = FlutterBackgroundService();
-    if (await service.isRunning()) {
-      service.invoke('stopService');
-      AppLogService.instance.info(
-        '[BackgroundManager] Invoked stopService command',
+    final acknowledged = await _lifecycle.stop();
+    if (!acknowledged) {
+      AppLogService.instance.warning(
+        '[BackgroundManager] Timed out waiting for SSH resource shutdown',
       );
-    } else {
-      AppLogService.instance.info('[BackgroundManager] Service is not running');
     }
-    await _releasePowerLocks();
     AppLogService.instance.info('Background SSH Service stopped');
   }
 
@@ -403,6 +410,11 @@ final class _BackgroundSshRuntime {
 
   final ServiceInstance service;
   final Map<String, _BackgroundSshSession> sessions = {};
+  final SshSessionConnectGate _connectGate = SshSessionConnectGate();
+  final Set<Future<void>> _connectOperations = <Future<void>>{};
+  final List<StreamSubscription<Map<String, dynamic>?>> _eventSubscriptions =
+      <StreamSubscription<Map<String, dynamic>?>>[];
+  bool _stopping = false;
 
   void emitLog(String level, String message, {String? details}) {
     service.invoke('sshLogReceived', {
@@ -484,7 +496,9 @@ final class _BackgroundSshRuntime {
     bool notify = true,
     String? message,
     bool destroyTmux = false,
+    bool cancelPending = true,
   }) async {
+    if (cancelPending) _connectGate.cancel(sessionId);
     final session = sessions.remove(sessionId);
     if (session == null) return;
     emitLog(
@@ -496,7 +510,15 @@ final class _BackgroundSshRuntime {
     if (destroyTmux) {
       await session.killTmuxSession();
     }
-    session.close();
+    try {
+      await session.close();
+    } catch (error) {
+      emitLog(
+        'error',
+        'SSH session resource cleanup failed',
+        details: 'sessionId=$sessionId error=$error',
+      );
+    }
     if (notify) {
       emitState(
         'disconnected',
@@ -510,7 +532,8 @@ final class _BackgroundSshRuntime {
     emitOverview();
   }
 
-  Future<void> closeAll({bool notify = true}) async {
+  Future<void> closeAll({bool notify = true, bool destroyTmux = true}) async {
+    _connectGate.cancelAll();
     final ids = sessions.keys.toList();
     emitLog(
       'service',
@@ -518,8 +541,9 @@ final class _BackgroundSshRuntime {
       details: 'count=${ids.length} notify=$notify',
     );
     for (final sessionId in ids) {
-      await closeSsh(sessionId, notify: notify, destroyTmux: true);
+      await closeSsh(sessionId, notify: notify, destroyTmux: destroyTmux);
     }
+    await Future.wait<void>(_connectOperations.toList(growable: false));
     setNotification('SSH service is running');
   }
 
@@ -527,7 +551,7 @@ final class _BackgroundSshRuntime {
     _BackgroundSshSession runtime,
     String reason,
   ) async {
-    if (!sessions.containsKey(runtime.sessionId)) {
+    if (!identical(sessions[runtime.sessionId], runtime)) {
       return;
     }
 
@@ -612,32 +636,40 @@ final class _BackgroundSshRuntime {
   }
 
   Future<void> connectSsh(Map<String, dynamic> data) async {
-    final sessionId = data['sessionId'] as String?;
-    if (sessionId == null || sessionId.isEmpty) {
+    if (_stopping) return;
+    final rawSessionId = data['sessionId'];
+    if (rawSessionId is! String || rawSessionId.isEmpty) {
       emitLog('warning', 'Ignoring sshConnect without sessionId');
       return;
     }
-    await closeSsh(sessionId, notify: false);
-    final connectionId = data['id'] as String?;
-    final name = data['name'] as String? ?? 'server';
+    final sessionId = rawSessionId;
+    final connectToken = _connectGate.begin(sessionId);
+    final owner = SshConnectionAttemptOwner();
+    final connectionId = data['id'] is String ? data['id'] as String : null;
+    final name = data['name'] is String ? data['name'] as String : 'server';
     final showServerNameInNotification =
         data['showServerNameInNotification'] == true;
-    emitState(
-      'connecting',
-      sessionId: sessionId,
-      connectionId: connectionId,
-      connectionName: name,
-    );
-    setNotification(
-      showServerNameInNotification ? 'Connecting to $name...' : 'Connecting...',
-    );
-    emitLog(
-      'service',
-      'Connecting SSH socket',
-      details: 'sessionId=$sessionId host=${data['host']}:${data['port']}',
-    );
 
     try {
+      await closeSsh(sessionId, notify: false, cancelPending: false);
+      _ensureConnectCurrent(sessionId, connectToken);
+      emitState(
+        'connecting',
+        sessionId: sessionId,
+        connectionId: connectionId,
+        connectionName: name,
+      );
+      setNotification(
+        showServerNameInNotification
+            ? 'Connecting to $name...'
+            : 'Connecting...',
+      );
+      emitLog(
+        'service',
+        'Connecting SSH socket',
+        details: 'sessionId=$sessionId host=${data['host']}:${data['port']}',
+      );
+
       final host = data['host'] as String;
       final port = (data['port'] as num?)?.toInt() ?? 22;
       final username = data['username'] as String;
@@ -663,6 +695,8 @@ final class _BackgroundSshRuntime {
         port: port,
         peerId: peerId,
       );
+      owner.ownSocket(socket.destroy);
+      _ensureConnectCurrent(sessionId, connectToken);
       emitLog(
         'service',
         'SSH socket connected',
@@ -692,6 +726,7 @@ final class _BackgroundSshRuntime {
         config,
         credentials,
       );
+      _ensureConnectCurrent(sessionId, connectToken);
 
       final authOptions = SshClientFactory.buildAuthOptions(
         config: config,
@@ -712,26 +747,32 @@ final class _BackgroundSshRuntime {
         onPasswordRequest: authOptions.onPasswordRequest,
         onUserInfoRequest: authOptions.onUserInfoRequest,
       );
+      owner.ownClient(client.close);
 
       await client.authenticated.timeout(const Duration(seconds: 15));
+      _ensureConnectCurrent(sessionId, connectToken);
 
       if (launchMode == 'tmux') {
-        try {
-          await ensureTmuxInstalled(client: client);
-          emitLog(
-            'service',
-            'tmux available',
-            details: 'sessionId=$sessionId tmux=$tmuxSessionName',
-          );
-        } catch (_) {
-          client.close();
-          rethrow;
-        }
+        await ensureTmuxInstalled(client: client);
+        _ensureConnectCurrent(sessionId, connectToken);
+        emitLog(
+          'service',
+          'tmux available',
+          details: 'sessionId=$sessionId tmux=$tmuxSessionName',
+        );
       }
 
-      final shell = await client.shell(
-        pty: SSHPtyConfig(width: width, height: height, type: 'xterm-256color'),
-      );
+      final shell = await client
+          .shell(
+            pty: SSHPtyConfig(
+              width: width,
+              height: height,
+              type: 'xterm-256color',
+            ),
+          )
+          .timeout(const Duration(seconds: 15));
+      owner.ownShell(shell.close);
+      _ensureConnectCurrent(sessionId, connectToken);
       emitLog(
         'service',
         'SSH shell opened',
@@ -750,7 +791,7 @@ final class _BackgroundSshRuntime {
         client: client,
         shell: shell,
       );
-      sessions[sessionId] = runtime;
+      owner.ownRuntime(runtime.close);
 
       runtime.stdoutSub = shell.stdout.listen(
         (bytes) {
@@ -832,6 +873,10 @@ final class _BackgroundSshRuntime {
         },
       );
 
+      _ensureConnectCurrent(sessionId, connectToken);
+      sessions[sessionId] = runtime;
+      owner.commit();
+
       emitState(
         'connected',
         sessionId: sessionId,
@@ -845,8 +890,15 @@ final class _BackgroundSshRuntime {
         'SSH session connected',
         details: 'sessionId=$sessionId connection=$name mode=$launchMode',
       );
+    } on _SupersededSshConnection {
+      emitLog(
+        'service',
+        'Discarding superseded SSH connection attempt',
+        details: 'sessionId=$sessionId connection=$name',
+      );
     } catch (e) {
-      await closeSsh(sessionId, notify: false);
+      if (!_connectGate.isCurrent(sessionId, connectToken)) return;
+      await closeSsh(sessionId, notify: false, cancelPending: false);
       emitLog(
         'error',
         'SSH connection failed',
@@ -860,7 +912,55 @@ final class _BackgroundSshRuntime {
         connectionName: name,
       );
       setNotification('SSH connection failed');
+    } finally {
+      try {
+        await owner.rollback();
+      } catch (error) {
+        emitLog(
+          'error',
+          'Failed to release SSH connection attempt resources',
+          details: 'sessionId=$sessionId error=$error',
+        );
+      }
+      _connectGate.finish(sessionId, connectToken);
     }
+  }
+
+  void _ensureConnectCurrent(String sessionId, int token) {
+    if (_stopping || !_connectGate.isCurrent(sessionId, token)) {
+      throw const _SupersededSshConnection();
+    }
+  }
+
+  Future<void> _trackConnect(Map<String, dynamic> data) {
+    if (_stopping) return Future<void>.value();
+    late final Future<void> operation;
+    operation = connectSsh(data)
+        .then<void>(
+          (_) {},
+          onError: (Object error, StackTrace stackTrace) {
+            emitLog(
+              'error',
+              'Unhandled background SSH connection failure',
+              details: 'error=$error\n$stackTrace',
+            );
+          },
+        )
+        .whenComplete(() => _connectOperations.remove(operation));
+    _connectOperations.add(operation);
+    return operation;
+  }
+
+  void _listen(String event, void Function(Map<String, dynamic>? data) onData) {
+    _eventSubscriptions.add(service.on(event).listen(onData));
+  }
+
+  Future<void> _cancelEventSubscriptions() async {
+    final subscriptions = _eventSubscriptions.toList(growable: false);
+    _eventSubscriptions.clear();
+    await Future.wait<void>(
+      subscriptions.map((subscription) => subscription.cancel()),
+    );
   }
 
   /// 注册后台事件订阅并发布初始运行状态。
@@ -868,7 +968,7 @@ final class _BackgroundSshRuntime {
     setNotification('SSH service is running');
     emitLog('service', 'Background SSH service started');
 
-    service.on('sshConnect').listen((event) {
+    _listen('sshConnect', (event) {
       if (event != null) {
         emitLog(
           'service',
@@ -876,11 +976,11 @@ final class _BackgroundSshRuntime {
           details:
               'sessionId=${event['sessionId']} connection=${event['name']}',
         );
-        unawaited(connectSsh(event));
+        unawaited(_trackConnect(event));
       }
     });
 
-    service.on('sshInput').listen((event) {
+    _listen('sshInput', (event) {
       final sessionId = event?['sessionId'] as String?;
       final data = event?['data'] as String?;
       final session = sessionId == null ? null : sessions[sessionId];
@@ -895,7 +995,7 @@ final class _BackgroundSshRuntime {
       }
     });
 
-    service.on('sshResize').listen((event) {
+    _listen('sshResize', (event) {
       final sessionId = event?['sessionId'] as String?;
       final width = (event?['width'] as num?)?.toInt();
       final height = (event?['height'] as num?)?.toInt();
@@ -910,7 +1010,7 @@ final class _BackgroundSshRuntime {
       }
     });
 
-    service.on('sshDisconnect').listen((event) {
+    _listen('sshDisconnect', (event) {
       final sessionId = event?['sessionId'] as String?;
       if (sessionId != null) {
         emitLog(
@@ -922,19 +1022,35 @@ final class _BackgroundSshRuntime {
       }
     });
 
-    service.on('sshDisconnectAll').listen((event) async {
+    _listen('sshDisconnectAll', (event) async {
       emitLog('service', 'Received sshDisconnectAll request');
       await closeAll();
     });
 
-    service.on('update').listen((event) {
+    _listen('update', (event) {
       setNotification(event?['content'] as String? ?? 'SSH service is running');
     });
 
-    service.on('stopService').listen((event) async {
+    _listen('stopService', (event) async {
+      if (_stopping) return;
       emitLog('service', 'Stopping background SSH service');
-      await closeAll(notify: false);
-      service.stopSelf();
+      _stopping = true;
+      try {
+        // App shutdown 只释放 SSH transport；tmux 远端 session 仍由恢复记录拥有。
+        await closeAll(notify: false, destroyTmux: false);
+        await _cancelEventSubscriptions();
+      } catch (error) {
+        emitLog(
+          'error',
+          'Background SSH shutdown cleanup failed',
+          details: error.toString(),
+        );
+      } finally {
+        service.invoke('sshServiceStopped', {
+          'timestamp': DateTime.now().toIso8601String(),
+        });
+        service.stopSelf();
+      }
     });
   }
 }
@@ -955,6 +1071,7 @@ class _BackgroundSshSession {
   Timer? keepAliveTimer;
   bool pingInFlight = false;
   int keepAliveFailures = 0;
+  Future<void>? _closeFuture;
 
   _BackgroundSshSession({
     required this.sessionId,
@@ -969,13 +1086,26 @@ class _BackgroundSshSession {
     required this.shell,
   });
 
-  void close() {
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     keepAliveTimer?.cancel();
-    stdoutSub?.cancel();
-    stderrSub?.cancel();
-    shell.close();
-    client.close();
-    pingInFlight = false;
+    keepAliveTimer = null;
+    final subscriptions = <StreamSubscription<List<int>>>[
+      ?stdoutSub,
+      ?stderrSub,
+    ];
+    stdoutSub = null;
+    stderrSub = null;
+    try {
+      await Future.wait<void>(
+        subscriptions.map((subscription) => subscription.cancel()),
+      );
+    } finally {
+      shell.close();
+      client.close();
+      pingInFlight = false;
+    }
   }
 
   Future<void> killTmuxSession() async {

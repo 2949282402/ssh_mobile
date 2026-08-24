@@ -225,11 +225,79 @@ void main() {
         );
         expect(doneErrors, hasLength(1));
         expect(errors, hasLength(1));
+        expect(connector.activeStreamCount, 0);
 
         await incomingSubscription.cancel();
         await connector.closeAll();
       },
     );
+
+    test(
+      'late opener completion cannot register a stream after closeAll',
+      () async {
+        final opener = Completer<String>();
+        final gateway = _FakeGateway();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () => opener.future,
+        );
+
+        final openFuture = connector.open(peerId: 'peer-a');
+        final expectation = expectLater(openFuture, throwsA(isA<StateError>()));
+        await Future<void>.delayed(Duration.zero);
+        await connector.closeAll();
+        opener.complete('device-a');
+
+        await expectation;
+        expect(connector.activeStreamCount, 0);
+        expect(gateway.commands, isEmpty);
+      },
+    );
+
+    test(
+      'late gateway completion cannot register a stream after closeAll',
+      () async {
+        final gatewayFuture = Completer<NetworkCommandGateway>();
+        final gateway = _FakeGateway();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () => gatewayFuture.future,
+          openerDeviceIdProvider: () async => 'device-a',
+        );
+
+        final openFuture = connector.open(peerId: 'peer-a');
+        final expectation = expectLater(openFuture, throwsA(isA<StateError>()));
+        await Future<void>.delayed(Duration.zero);
+        await connector.closeAll();
+        gatewayFuture.complete(gateway);
+
+        await expectation;
+        expect(connector.activeStreamCount, 0);
+        expect(gateway.commands, isEmpty);
+      },
+    );
+
+    test('failed opener identity lookup can be retried', () async {
+      final gateway = _FakeGateway();
+      var attempts = 0;
+      final connector = AppSshNativeStreamConnector(
+        gatewayProvider: () async => gateway,
+        openerDeviceIdProvider: () async {
+          attempts++;
+          if (attempts == 1) {
+            throw StateError('identity temporarily unavailable');
+          }
+          return 'device-a';
+        },
+      );
+
+      await expectLater(connector.open(peerId: 'peer-a'), throwsStateError);
+      final stream = await connector.open(peerId: 'peer-a');
+
+      expect(attempts, 2);
+      expect(connector.activeStreamCount, 1);
+      await stream.close();
+      await connector.closeAll();
+    });
 
     test('send throws after the connector is closed', () async {
       final gateway = _FakeGateway();
