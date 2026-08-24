@@ -17,13 +17,27 @@ import (
 	"github.com/ssh-mobile/relay/internal/relay/v2"
 )
 
+func mustEnrollmentGeneration(t *testing.T, server *Server, deviceID string) int64 {
+	t.Helper()
+	device, err := server.store.GetEnrollment(context.Background(), deviceID)
+	if err != nil || device == nil {
+		t.Fatalf("load enrollment generation for %s: device=%v err=%v", deviceID, device, err)
+	}
+	generation := device.EnrolledAt.UnixMicro()
+	if generation <= 0 {
+		t.Fatalf("invalid enrollment generation for %s: %d", deviceID, generation)
+	}
+	return generation
+}
+
 // TestCredentialBindsDeviceAndKey 验证凭据同时绑定设备标识和设备公钥。
 func TestCredentialBindsDeviceAndKey(t *testing.T) {
 	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := issueCredential([]byte("01234567890123456789012345678901"), "device-a", publicKey, time.Minute)
+	generation := time.Now().UnixMicro()
+	credential, err := issueCredential([]byte("01234567890123456789012345678901"), "device-a", publicKey, generation, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,8 +45,52 @@ func TestCredentialBindsDeviceAndKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claims.DeviceID != "device-a" || base64.RawURLEncoding.EncodeToString(restored) != base64.RawURLEncoding.EncodeToString(publicKey) {
+	if claims.DeviceID != "device-a" || claims.EnrollmentGeneration != generation || base64.RawURLEncoding.EncodeToString(restored) != base64.RawURLEncoding.EncodeToString(publicKey) {
 		t.Fatal("credential lost identity binding")
+	}
+}
+
+func TestSameKeyReenrollmentInvalidatesPriorCredentialGeneration(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(Config{CredentialKey: []byte("01234567890123456789012345678901")})
+	defer server.Close()
+	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
+	fixedTime := time.Now()
+	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, fixedTime); result != enrollmentOK {
+		t.Fatalf("initial enrollment=%v", result)
+	}
+	oldGeneration := mustEnrollmentGeneration(t, server, "device-a")
+	oldCredential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, oldGeneration, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, fixedTime); result != enrollmentOK {
+		t.Fatalf("re-enrollment=%v", result)
+	}
+	newGeneration := mustEnrollmentGeneration(t, server, "device-a")
+	if newGeneration <= oldGeneration {
+		t.Fatalf("generation did not advance: old=%d new=%d", oldGeneration, newGeneration)
+	}
+
+	authRequest := func(credential string, nonceByte byte) *http.Request {
+		nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceByte}, 32))
+		request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+		request.Header.Set("Authorization", "Bearer "+credential)
+		setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+		return request
+	}
+	if _, _, _, ok := server.authenticatedRequest(authRequest(oldCredential, 0x31)); ok {
+		t.Fatal("credential from the prior enrollment generation was accepted")
+	}
+	newCredential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, newGeneration, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, ok := server.authenticatedRequest(authRequest(newCredential, 0x32)); !ok {
+		t.Fatal("credential from the current enrollment generation was rejected")
 	}
 }
 
@@ -135,15 +193,6 @@ func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 	})
 	defer server.Close()
 
-	credential, err := issueCredential(
-		server.config.CredentialKey,
-		"device-a",
-		publicKey,
-		time.Hour,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if _, err := server.store.PutEnrollment(context.Background(), &EnrolledDevice{
 		DeviceID:        "device-a",
 		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
@@ -152,17 +201,21 @@ func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	credential, err := issueCredential(
+		server.config.CredentialKey,
+		"device-a",
+		publicKey,
+		mustEnrollmentGeneration(t, server, "device-a"),
+		time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	authenticatedRequest := func(nonceValue byte) *http.Request {
 		nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceValue}, 32))
 		request := httptest.NewRequest("GET", "/v2/control", nil)
 		request.Header.Set("Authorization", "Bearer "+credential)
-		request.Header.Set("X-Relay-Nonce", nonce)
-		request.Header.Set(
-			"X-Relay-Signature",
-			base64.RawURLEncoding.EncodeToString(
-				ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
-			),
-		)
+		setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
 		return request
 	}
 
@@ -201,6 +254,7 @@ func TestCredentialRequiresCurrentEnrollment(t *testing.T) {
 		server.config.CredentialKey,
 		"device-from-previous-process",
 		publicKey,
+		time.Now().UnixMicro(),
 		time.Hour,
 	)
 	if err != nil {
@@ -209,13 +263,7 @@ func TestCredentialRequiresCurrentEnrollment(t *testing.T) {
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{3}, 32))
 	request := httptest.NewRequest("GET", "/v2/control", nil)
 	request.Header.Set("Authorization", "Bearer "+credential)
-	request.Header.Set("X-Relay-Nonce", nonce)
-	request.Header.Set(
-		"X-Relay-Signature",
-		base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(privateKey, []byte("GET\n/v2/control\n"+nonce)),
-		),
-	)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
 	if _, _, _, ok := server.authenticatedRequest(request); ok {
 		t.Fatal("credential from an unregistered relay process was accepted")
 	}
@@ -375,6 +423,39 @@ func TestAdminOverviewCountsOnlineDevices(t *testing.T) {
 	}
 	if overview.Devices.Enrolled != 1 || overview.Devices.Online != 1 || !overview.PresenceAvailable {
 		t.Fatalf("overview should count the online device with presence available: %+v", overview.Devices)
+	}
+}
+
+// TestAdminOverviewCountsActiveRelayDataPairs pins the management metric to
+// the real RelayData registry instead of the legacy control-plane hub.
+func TestAdminOverviewCountsActiveRelayDataPairs(t *testing.T) {
+	server := NewServer(Config{})
+	defer server.Close()
+
+	initiator := testRelayDataConnForRegistry("reservation-admin", "device-a", relayDataRoleInitiator)
+	responder := testRelayDataConnForRegistry("reservation-admin", "device-b", relayDataRoleResponder)
+	if _, ok := server.relayData.admitEndpoint(initiator); !ok {
+		t.Fatal("initiator admission failed")
+	}
+	if _, ok := server.relayData.admitEndpoint(responder); !ok {
+		t.Fatal("responder admission failed")
+	}
+
+	overview, err := server.adminOverviewSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Relay.ActiveTransfers != 1 {
+		t.Fatalf("overview should report one active RelayData pair, got %d", overview.Relay.ActiveTransfers)
+	}
+
+	server.relayData.releaseEndpoint(responder)
+	overview, err = server.adminOverviewSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Relay.ActiveTransfers != 0 {
+		t.Fatalf("released RelayData pair should not remain active, got %d", overview.Relay.ActiveTransfers)
 	}
 }
 

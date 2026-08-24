@@ -9,36 +9,13 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:network_sdk/network_sdk.dart';
 
-/// 标识用于 enrollment 和原生配置的 Relay 源站。
-final class RelaySettings {
-  /// 为一个 HTTPS Relay 源站创建配置。
-  const RelaySettings({required this.endpoint});
+import '../../domain/lan_relay_ports.dart';
 
-  /// 不包含路径、查询参数或凭据的 Relay HTTPS 源站。
-  final Uri endpoint;
-}
-
-/// 只包含 Rust Relay 客户端所需的凭据材料。
-final class RelayNativeConfiguration {
-  /// 创建原生 Relay 配置快照。
-  const RelayNativeConfiguration({
-    required this.endpoint,
-    required this.credential,
-    required this.signingSeed,
-  });
-
-  /// 传递给原生运行时的 Relay 源站。
-  final Uri endpoint;
-
-  /// 短期 enrollment 凭据。
-  final String credential;
-
-  /// 从安全存储加载的 Ed25519 签名种子。
-  final Uint8List signingSeed;
-}
+export '../../domain/lan_relay_ports.dart'
+    show RelayNativeConfiguration, RelaySettings;
 
 /// 负责 Dart 层的 Relay enrollment 与安全凭据读取。
-final class RelayEnrollmentService {
+final class RelayEnrollmentService implements LanRelayEnrollmentPort {
   /// 为一个稳定设备身份创建 enrollment 服务。
   RelayEnrollmentService({
     required this.currentDeviceId,
@@ -61,6 +38,7 @@ final class RelayEnrollmentService {
   /// 为设备执行 enrollment，并将凭据写入安全存储。
   ///
   /// 可预期的端点、认证、响应和 I/O 失败都通过 [NetworkFailure] 返回。
+  @override
   Future<NetworkResult<void>> enroll(
     RelaySettings settings,
     String enrollmentToken,
@@ -136,6 +114,7 @@ final class RelayEnrollmentService {
   /// 使用设备签名种子对 refresh 请求签名；成功后以与 [enroll] 相同的安全存储
   /// 写入形状保存新凭据。失败时以 [NetworkFailure] 返回；404 被 SDK 映射为
   /// [NetworkErrorCode.noRoute]，表示设备未 enrollment，需要重新 enroll。
+  @override
   Future<NetworkResult<void>> refreshCredential(RelaySettings settings) async {
     late final Uri endpoint;
     try {
@@ -156,7 +135,10 @@ final class RelayEnrollmentService {
       final pair = await _signingKeyPair();
       final publicKey = await pair.extractPublicKey();
       final nonce = _randomRefreshNonce();
-      final transcript = 'POST\n/v1/devices/refresh\n$nonce';
+      final timestamp =
+          DateTime.now().toUtc().millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
+      final transcript = 'POST\n/v1/devices/refresh\n$timestamp\n$nonce';
       final signatureBytes = (await Ed25519().sign(
         utf8.encode(transcript),
         keyPair: pair,
@@ -166,6 +148,7 @@ final class RelayEnrollmentService {
         RefreshRequest(
           deviceId: currentDeviceId,
           identityPublicKey: Uint8List.fromList(publicKey.bytes),
+          timestamp: timestamp,
           nonce: nonce,
           signature: base64UrlEncode(signatureBytes).replaceAll('=', ''),
         ),
@@ -203,6 +186,7 @@ final class RelayEnrollmentService {
   }
 
   /// 当前端点和设备是否保存过 enrollment 凭据记录（无论是否已过期）。
+  @override
   Future<bool> hasStoredCredential(RelaySettings settings) async {
     final endpoint = _validatedEndpoint(settings.endpoint);
     final stored = await _secureStorage.read(key: _credentialKey);
@@ -217,10 +201,12 @@ final class RelayEnrollmentService {
   }
 
   /// 仅当当前端点和设备范围内存在有效凭据时返回 true。
+  @override
   Future<bool> isEnrolled(RelaySettings settings) async =>
       (await _credentialFor(settings)) != null;
 
   /// 加载仅供原生使用的身份材料，不将其暴露到 Dart 数据流。
+  @override
   Future<RelayNativeConfiguration?> nativeConfiguration(
     RelaySettings settings,
   ) async {
@@ -240,9 +226,11 @@ final class RelayEnrollmentService {
   ///
   /// 签名种子代表设备身份，不应因为更换 Relay 源站或用户主动清除
   /// enrollment 而轮换；短期 Relay credential 则必须立即从安全存储移除。
+  @override
   Future<void> clearEnrollment() => _secureStorage.delete(key: _credentialKey);
 
   /// Dart 不承载 Relay 数据面，因此此处不释放 socket。
+  @override
   Future<void> dispose() async {}
 
   static const _credentialKey = 'relay_device_credential_v1';

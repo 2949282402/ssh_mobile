@@ -326,6 +326,71 @@ void _registerToolLoopCoreTests() {
     expect(loopResult.finalOutcome, AgentFinalOutcome.planModeBlocked);
   });
 
+  test(
+    'run_command shell redirection cannot bypass approval or Plan Mode',
+    () async {
+      await storage.addConnection(
+        ConnectionConfig(
+          id: 'server-plan',
+          name: 'Plan Mode Server',
+          host: 'example.com',
+          username: 'tester',
+          launchMode: TerminalLaunchMode.ssh,
+          serverPlatform: ServerPlatform.linux,
+        ),
+      );
+      final recordingTools = RecordingExecutionToolService(tools);
+      final chatService = LlmChatService(
+        storageService: aiStoragePort(storage),
+        toolService: recordingTools,
+      );
+      final controller = ToolLoopController(
+        chatService: chatService,
+        toolBudget: LlmToolBudgetController(baseBudget: 10),
+        readOnlyToolCache: <String, CachedToolResult>{},
+        toolLedger: <LlmToolLedgerEntry>[],
+      );
+      final runCommand = (await tools.tools()).firstWhere(
+        (tool) => tool.name == 'run_command',
+      );
+      final workingMessages = <Map<String, dynamic>>[];
+      var approvalCallbackInvoked = false;
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_run_command_redirect',
+            name: 'run_command',
+            arguments:
+                '{"connectionId":"server-plan","command":"cat /etc/os-release > /tmp/ai-owned"}',
+          ),
+        ],
+        visibleToolsByName: {'run_command': runCommand},
+        planMode: true,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Inspect the server',
+        workingMessages: workingMessages,
+        requestToolApproval: (request) async {
+          approvalCallbackInvoked = true;
+          return const AiToolApprovalDecision.approved();
+        },
+        onTrace: null,
+        cancellationToken: null,
+        settings: await storage.loadAiConnectionSettings(),
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+      );
+
+      expect(recordingTools.executed, isFalse);
+      expect(approvalCallbackInvoked, isFalse);
+      expect(workingMessages.last['content'], contains('PLAN MODE is active'));
+      expect(loopResult.finalOutcome, AgentFinalOutcome.planModeBlocked);
+    },
+  );
+
   test('rejected approval with abort=true stops the loop', () async {
     final budget = LlmToolBudgetController(baseBudget: 10);
     final cache = <String, CachedToolResult>{};

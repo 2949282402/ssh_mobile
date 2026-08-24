@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-24
 
 # App Shell Services 分类
 
@@ -29,21 +29,31 @@ RAG 和 Network 的旧 Feature/业务入口已经完成零引用收口；剩余�
   `connection_target_binding.dart`、`remote_target_scope.dart`、
   `remote_command_decoder.dart`、`terminal_session_metadata_store.dart`、
   `sftp_backend_adapters.dart`、`sftp_io_backend_adapters.dart`、
-  `network_v1_adapters.dart`。
+  `network_sdk_adapters.dart`。
   它们只把 App-owned Repository、Secure Storage、SSH 或日志能力转换为
   Feature Port，不拥有 Feature 数据库。
 - 仍保留的协议/基础设施后端：`ssh_service.dart` 与 `ssh/**`、
   `sftp_service.dart` 与 `sftp/**`、`sftp_path_history_store.dart`、
   `server_diagnostics_service.dart`、`server_status_probe.dart`、
-  `terminal_history_service*.dart`，以及 `network/**` 中登记的 native v1
+  `terminal_history_service*.dart`，以及 `network/**` 中登记的 Network Protocol V2
   codec/service/identity。它们不是 Feature UI 或业务 Owner，只能由 App Shell
   适配器和组合测试使用；Playbook、RAG、Monitoring、System Admin、LAN Share
   和 Network Relay 的旧业务 facade 已删除。`SshService`
   的会话、Lease、Pool idle Timer 和后台订阅计数也只是诊断读取面，不改变
   其仍由 AppRuntime/SSH Manager 统一关闭的 Owner 关系。
 - 旧协议适配：`network/**`。LAN Feature 已有独立实现和 Module；`network/**`
-  仅承载 App Scope native v1 协议调用面。新的 `network_transport` 负责
+  仅承载 App Scope Network Protocol V2 协议调用面。`network_service.dart` 只保留
+  `NetworkService` 兼容入口和组合根；命令协调、事件路由、Runtime 生命周期、
+  Peer、Relay、Route projection、Transfer 分别由相邻的
+  `network_service_*` 内部 part 所有。新的 `network_transport` 负责
   Runtime/Handle Facade，不复制或重写 TCP/UDP/QUIC/WebShare 协议。
+- SSH 前后台在 session registry 之外统一使用 attempt owner 和 per-session
+  generation：失败或被新建连取代的 socket/client/shell/runtime 会逆序释放；
+  App Scope 关闭会等待建连、重连、后台事件订阅、Session Pool 与 native stream
+  connector 收敛，迟到回调不得重新登记资源。
+- `BackgroundServiceLifecycle` 串行化前台服务 start/stop 与 power lock 所有权；
+  native `startService` 返回 `false` 或抛错时立即释放已获取 lock，stop 即使 ACK、
+  subscription 或其他清理失败也继续尝试释放。
 - 内部拆分文件：被 `part of` 或条件导出引用的文件不是独立 Service，必须
   与其主库一起维护，不能按“零直接引用”误删。
 

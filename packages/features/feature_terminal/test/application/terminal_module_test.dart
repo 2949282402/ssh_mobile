@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app_core/app_core.dart';
@@ -39,4 +41,32 @@ void main() {
       expect(() => module.database, throwsStateError);
     },
   );
+
+  test('dispose cancels a late initializer and closes its database', () async {
+    final manager = FakeSshSessionManager(FakeTerminalCapability());
+    final database = TerminalDatabase.forTesting(NativeDatabase.memory());
+    final databaseReady = Completer<TerminalDatabase>();
+    final module = TerminalModule(databaseFactory: () => databaseReady.future);
+    await module.register(
+      ModuleContext.fromMap(<Type, Object>{SshSessionManager: manager}),
+    );
+
+    final activation = module.activate();
+    final initialization = module.initialize();
+    final disposal = module.dispose();
+    final activationExpectation = expectLater(activation, throwsStateError);
+    final initializationExpectation = expectLater(
+      initialization,
+      throwsStateError,
+    );
+    expect(module.state, ModuleState.disposed);
+    databaseReady.complete(database);
+
+    await initializationExpectation;
+    await activationExpectation;
+    await disposal;
+    expect(module.state, ModuleState.disposed);
+    expect(() => module.database, throwsStateError);
+    expect(database.isDisposed, isTrue);
+  });
 }

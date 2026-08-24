@@ -8,6 +8,8 @@ import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import '../domain/monitoring_models.dart';
 import '../domain/monitoring_ports.dart';
 import '../domain/server_status_probe.dart';
+import 'monitoring_alert_evaluator.dart';
+import 'monitoring_sample_store.dart';
 
 /// 服务器性能监控采样服务。
 ///
@@ -57,30 +59,16 @@ class MonitoringService extends ChangeNotifier {
   bool _running = false;
   DateTime? _startedAt;
   Duration _interval = defaultInterval;
-  Duration _historyWindow = defaultHistoryWindow;
   final Set<String> _selectedConnectionIds = {};
   final Set<String> _monitoringConnectionIds = {};
-  Map<String, ssh_core.SshTargetBinding>? _monitoringTargetBindings;
-  final Set<String> _samplingConnectionIds = {};
-  final Map<String, List<PerformanceSample>> _samplesByConnection = {};
-  final Map<String, List<DiskUsageSnapshot>> _diskUsageByConnection = {};
-  final Map<String, String> _errorsByConnection = {};
+  Map<String, ssh_core.SshTargetBinding> _monitoringTargetBindings = const {};
+  final Map<String, int> _samplingEpochs = {};
+  int _monitoringEpoch = 0;
   final Map<String, int> _failureCountsByConnection = {};
-  final Map<String, RawPerformanceCounters> _previousCountersByConnection = {};
-  final Map<String, DateTime> _lastAlertAtByKey = {};
-  final List<MonitorAlert> _alerts = [];
+  final MonitoringSampleStore _sampleStore;
+  final MonitoringAlertEvaluator _alertEvaluator;
   Set<String>? _selectedConnectionIdsView;
   Set<String>? _monitoringConnectionIdsView;
-  Map<String, String>? _errorsByConnectionView;
-  List<MonitorAlert>? _alertsView;
-  Map<String, ServerHealthSnapshot>? _healthByConnectionView;
-  final Map<String, ServerHealthSnapshot> _healthByConnectionEntryCache = {};
-  final Map<String, List<DiskUsageSnapshot>> _diskUsageViewsByConnection = {};
-  final Map<String, List<PerformanceSample>> _sampleViewsByConnection = {};
-  final Map<String, List<PerformanceSample>> _visibleSamplesByConnection = {};
-  DateTime? _visibleSamplesCutoff;
-  int? _visibleSamplesCutoffBucket;
-  Duration? _visibleSamplesWindow;
 
   /// 创建一个尚未启动轮询的监控服务。
   factory MonitoringService({
@@ -95,192 +83,50 @@ class MonitoringService extends ChangeNotifier {
     this._connectionCatalog,
     this._logger,
     this._background,
-  );
+  ) : _sampleStore = MonitoringSampleStore(
+        historyWindow: defaultHistoryWindow,
+        maxRetention: maxRetention,
+      ),
+      _alertEvaluator = MonitoringAlertEvaluator();
 
   bool get isRunning => _running;
-  bool get isSampling => _samplingConnectionIds.isNotEmpty;
+  bool get isSampling => _samplingEpochs.isNotEmpty;
   bool isSamplingConnection(String connectionId) =>
-      _samplingConnectionIds.contains(connectionId);
+      _samplingEpochs.containsKey(connectionId);
   Duration get interval => _interval;
   Duration get effectiveInterval => _effectiveInterval;
-  Duration get historyWindow => _historyWindow;
+  Duration get historyWindow => _sampleStore.historyWindow;
   DateTime? get startedAt => _startedAt;
   Set<String> get selectedConnectionIds =>
       _selectedConnectionIdsView ??= Set.unmodifiable(_selectedConnectionIds);
   Set<String> get monitoringConnectionIds => _monitoringConnectionIdsView ??=
       Set.unmodifiable(_monitoringConnectionIds);
-  Map<String, String> get errorsByConnection =>
-      _errorsByConnectionView ??= Map.unmodifiable(_errorsByConnection);
-  List<MonitorAlert> get alerts => _alertsView ??= List.unmodifiable(_alerts);
-  Map<String, ServerHealthSnapshot> get healthByConnection {
-    final cached = _healthByConnectionView;
-    if (cached != null) return cached;
-    final ids = {
-      ..._selectedConnectionIds,
-      ..._monitoringConnectionIds,
-      ..._samplesByConnection.keys,
-      ..._errorsByConnection.keys,
-    };
-    return _healthByConnectionView = Map.unmodifiable({
-      for (final id in ids) id: _buildHealthFor(id),
-    });
-  }
-
-  List<DiskUsageSnapshot> diskUsageFor(String connectionId) {
-    return _diskUsageViewsByConnection[connectionId] ??= List.unmodifiable(
-      _diskUsageByConnection[connectionId] ?? const <DiskUsageSnapshot>[],
-    );
-  }
-
-  List<PerformanceSample> samplesFor(String connectionId) {
-    return _sampleViewsByConnection[connectionId] ??= List.unmodifiable(
-      _samplesByConnection[connectionId] ?? const <PerformanceSample>[],
-    );
-  }
-
-  ServerHealthSnapshot healthFor(String connectionId) {
-    final cached = _healthByConnectionView?[connectionId];
-    if (cached != null) return cached;
-    return _healthByConnectionEntryCache[connectionId] ??= _buildHealthFor(
-      connectionId,
-    );
-  }
-
-  ServerHealthSnapshot _buildHealthFor(String connectionId) {
-    final error = _errorsByConnection[connectionId];
-    final samples = _samplesByConnection[connectionId] ?? const [];
-    if (error != null && error.isNotEmpty) {
-      return ServerHealthSnapshot(
-        connectionId: connectionId,
-        level: ServerHealthLevel.critical,
-        score: 0,
-        summary: 'Sampling failed',
-        details: [error],
-        updatedAt: DateTime.now(),
-      );
-    }
-    if (samples.isEmpty) {
-      return ServerHealthSnapshot(
-        connectionId: connectionId,
-        level: ServerHealthLevel.unknown,
-        score: 0,
-        summary: 'No samples',
-        details: const [],
-        updatedAt: DateTime.now(),
-      );
-    }
-    final sample = samples.last;
-    final diskMax = sample.diskUsage.isEmpty
-        ? 0.0
-        : sample.diskUsage.map((disk) => disk.usedPercent).reduce(max);
-    final details = <String>[];
-    final cpuPenalty = _thresholdPenalty(sample.cpuPercent, 70, 95, 35);
-    final memoryPenalty = _thresholdPenalty(sample.memoryPercent, 70, 95, 35);
-    final diskPenalty = _thresholdPenalty(diskMax, 75, 95, 30);
-    final score = (100 - cpuPenalty - memoryPenalty - diskPenalty)
-        .clamp(0, 100)
-        .round();
-    if (sample.cpuPercent >= 85) {
-      details.add('CPU ${sample.cpuPercent.toStringAsFixed(1)}%');
-    }
-    if (sample.memoryPercent >= 85) {
-      details.add('Memory ${sample.memoryPercent.toStringAsFixed(1)}%');
-    }
-    if (diskMax >= 85) {
-      details.add('Disk ${diskMax.toStringAsFixed(1)}%');
-    }
-    final level =
-        score < 45 ||
-            sample.cpuPercent >= 95 ||
-            sample.memoryPercent >= 95 ||
-            diskMax >= 95
-        ? ServerHealthLevel.critical
-        : score < 75 ||
-              sample.cpuPercent >= 85 ||
-              sample.memoryPercent >= 85 ||
-              diskMax >= 85
-        ? ServerHealthLevel.warning
-        : ServerHealthLevel.healthy;
-    return ServerHealthSnapshot(
-      connectionId: connectionId,
-      level: level,
-      score: score,
-      summary: switch (level) {
-        ServerHealthLevel.healthy => 'Healthy',
-        ServerHealthLevel.warning => 'Warning',
-        ServerHealthLevel.critical => 'Critical',
-        ServerHealthLevel.unknown => 'No samples',
-      },
-      details: details,
-      updatedAt: sample.time,
-      latestSample: sample,
-      maxDiskUsedPercent: diskMax,
-    );
-  }
-
-  List<PerformanceSample> visibleSamplesFor(String connectionId) {
-    final cutoff = DateTime.now().subtract(_historyWindow);
-    final cutoffBucket = cutoff.millisecondsSinceEpoch ~/ 1000;
-    if (_visibleSamplesWindow != _historyWindow ||
-        _visibleSamplesCutoffBucket != cutoffBucket) {
-      _visibleSamplesByConnection.clear();
-      _visibleSamplesWindow = _historyWindow;
-      _visibleSamplesCutoffBucket = cutoffBucket;
-      _visibleSamplesCutoff = cutoff;
-    }
-    final activeCutoff = _visibleSamplesCutoff ?? cutoff;
-    return _visibleSamplesByConnection[connectionId] ??= List.unmodifiable(
-      (_samplesByConnection[connectionId] ?? const <PerformanceSample>[]).where(
-        (sample) => !sample.time.isBefore(activeCutoff),
-      ),
-    );
-  }
+  Map<String, String> get errorsByConnection => _sampleStore.errors;
+  List<MonitorAlert> get alerts => _alertEvaluator.alerts;
+  Map<String, ServerHealthSnapshot> get healthByConnection =>
+      _sampleStore.healthForConnections(<String>{
+        ..._selectedConnectionIds,
+        ..._monitoringConnectionIds,
+      });
+  List<DiskUsageSnapshot> diskUsageFor(String connectionId) =>
+      _sampleStore.diskUsageFor(connectionId);
+  List<PerformanceSample> samplesFor(String connectionId) =>
+      _sampleStore.samplesFor(connectionId);
+  ServerHealthSnapshot healthFor(String connectionId) =>
+      _sampleStore.healthFor(connectionId);
+  List<PerformanceSample> visibleSamplesFor(String connectionId) =>
+      _sampleStore.visibleSamplesFor(connectionId);
 
   // Sampling widgets read these snapshots several times per build. Keep stable
   // immutable views and invalidate only the affected connection when data moves.
   void _invalidateSelectionCache() {
     _selectedConnectionIdsView = null;
-    _healthByConnectionView = null;
+    _sampleStore.invalidateConnectionSet();
   }
 
   void _invalidateMonitoringCache() {
     _monitoringConnectionIdsView = null;
-    _healthByConnectionView = null;
-  }
-
-  void _invalidateErrorsCache([String? connectionId]) {
-    _errorsByConnectionView = null;
-    _healthByConnectionView = null;
-    if (connectionId == null) {
-      _healthByConnectionEntryCache.clear();
-    } else {
-      _healthByConnectionEntryCache.remove(connectionId);
-    }
-  }
-
-  void _invalidateSamplesFor(String connectionId) {
-    _sampleViewsByConnection.remove(connectionId);
-    _visibleSamplesByConnection.remove(connectionId);
-    _healthByConnectionView = null;
-    _healthByConnectionEntryCache.remove(connectionId);
-  }
-
-  void _invalidateAllSamplesCache() {
-    _sampleViewsByConnection.clear();
-    _invalidateVisibleSamplesCache();
-    _healthByConnectionView = null;
-    _healthByConnectionEntryCache.clear();
-  }
-
-  void _invalidateVisibleSamplesCache() {
-    _visibleSamplesByConnection.clear();
-    _visibleSamplesCutoff = null;
-    _visibleSamplesCutoffBucket = null;
-    _visibleSamplesWindow = null;
-  }
-
-  void _invalidateDiskUsageFor(String connectionId) {
-    _diskUsageViewsByConnection.remove(connectionId);
+    _sampleStore.invalidateConnectionSet();
   }
 
   void toggleSelection(String connectionId) {
@@ -303,40 +149,42 @@ class MonitoringService extends ChangeNotifier {
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
     Map<String, ssh_core.SshTargetBinding>? targetBindings,
   }) async {
-    if (_selectedConnectionIds.isEmpty) return;
-    if (targetBindings != null) {
-      final selected = _selectedConnectionIds.toSet();
-      if (targetBindings.keys.toSet().length != selected.length ||
-          !targetBindings.keys.toSet().containsAll(selected)) {
-        throw StateError(
-          'The performance monitor selection changed after approval.',
-        );
-      }
-      _monitoringTargetBindings =
-          Map<String, ssh_core.SshTargetBinding>.unmodifiable({
-            for (final id in selected) id: targetBindings[id]!,
-          });
-    } else {
-      _monitoringTargetBindings = null;
+    if (_disposed) {
+      throw StateError('MonitoringService has been disposed.');
     }
+    if (_selectedConnectionIds.isEmpty) return;
+    final selected = _selectedConnectionIds.toSet();
+    final capturedBindings = targetBindings == null
+        ? Map<String, ssh_core.SshTargetBinding>.fromEntries(
+            selected.map((id) {
+              final binding = _connectionCatalog.targetBindingFor(id);
+              return binding == null ? null : MapEntry(id, binding);
+            }).nonNulls,
+          )
+        : Map<String, ssh_core.SshTargetBinding>.from(targetBindings);
+    if (capturedBindings.keys.toSet().length != selected.length ||
+        !capturedBindings.keys.toSet().containsAll(selected) ||
+        selected.any((id) => capturedBindings[id]?.id != id)) {
+      throw StateError(
+        targetBindings == null
+            ? 'A selected performance monitor target is no longer available.'
+            : 'The performance monitor selection changed after approval.',
+      );
+    }
+    final epoch = ++_monitoringEpoch;
+    _samplingEpochs.clear();
+    _monitoringTargetBindings =
+        Map<String, ssh_core.SshTargetBinding>.unmodifiable({
+          for (final id in selected) id: capturedBindings[id]!,
+        });
     _running = true;
     _startedAt = DateTime.now();
     _monitoringConnectionIds
       ..clear()
       ..addAll(_selectedConnectionIds);
-    _samplesByConnection
-      ..clear()
-      ..addEntries(
-        _monitoringConnectionIds.map(
-          (id) => MapEntry(id, <PerformanceSample>[]),
-        ),
-      );
-    _errorsByConnection.clear();
+    _sampleStore.resetForMonitoring(_monitoringConnectionIds);
     _failureCountsByConnection.clear();
-    _previousCountersByConnection.clear();
     _invalidateMonitoringCache();
-    _invalidateErrorsCache();
-    _invalidateAllSamplesCache();
     notifyListeners();
 
     // Keep the injected foreground capability active while monitoring. The
@@ -346,22 +194,21 @@ class MonitoringService extends ChangeNotifier {
       unawaited(background.start(connectionName: 'Performance monitor'));
     }
     _restartTimer();
-    await sampleNow(onUnknownHostKey: onUnknownHostKey);
+    await _sampleNowForEpoch(epoch, onUnknownHostKey: onUnknownHostKey);
   }
 
   void stopMonitoring() {
+    _monitoringEpoch++;
     _timer?.cancel();
     _timer = null;
     _running = false;
     _startedAt = null;
-    _samplingConnectionIds.clear();
+    _samplingEpochs.clear();
     _monitoringConnectionIds.clear();
-    _monitoringTargetBindings = null;
-    _errorsByConnection.clear();
+    _monitoringTargetBindings = const {};
+    _sampleStore.stopMonitoring();
     _failureCountsByConnection.clear();
-    _previousCountersByConnection.clear();
     _invalidateMonitoringCache();
-    _invalidateErrorsCache();
     notifyListeners();
   }
 
@@ -369,17 +216,17 @@ class MonitoringService extends ChangeNotifier {
     final changed =
         _selectedConnectionIds.remove(connectionId) |
         _monitoringConnectionIds.remove(connectionId);
-    _samplingConnectionIds.remove(connectionId);
-    _samplesByConnection.remove(connectionId);
-    _errorsByConnection.remove(connectionId);
-    _diskUsageByConnection.remove(connectionId);
+    if (!changed) return;
+    _monitoringEpoch++;
+    _samplingEpochs.clear();
+    _monitoringTargetBindings = Map.unmodifiable(
+      Map<String, ssh_core.SshTargetBinding>.from(_monitoringTargetBindings)
+        ..remove(connectionId),
+    );
+    _sampleStore.removeConnection(connectionId);
     _failureCountsByConnection.remove(connectionId);
-    _previousCountersByConnection.remove(connectionId);
     _invalidateSelectionCache();
     _invalidateMonitoringCache();
-    _invalidateErrorsCache(connectionId);
-    _invalidateSamplesFor(connectionId);
-    _invalidateDiskUsageFor(connectionId);
     if (_monitoringConnectionIds.isEmpty) {
       _timer?.cancel();
       _timer = null;
@@ -398,21 +245,27 @@ class MonitoringService extends ChangeNotifier {
 
   void setHistoryWindow(Duration window) {
     final next = window > maxRetention ? maxRetention : window;
-    if (_historyWindow == next) return;
-    _historyWindow = next;
-    _invalidateVisibleSamplesCache();
+    if (_sampleStore.historyWindow == next) return;
+    _sampleStore.setHistoryWindow(next);
     notifyListeners();
   }
 
-  Future<void> sampleNow({
+  Future<void> sampleNow({ssh_core.SshHostKeyConfirmation? onUnknownHostKey}) =>
+      _sampleNowForEpoch(_monitoringEpoch, onUnknownHostKey: onUnknownHostKey);
+
+  Future<void> _sampleNowForEpoch(
+    int epoch, {
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
+    if (epoch != _monitoringEpoch) return;
     if (!_running || _monitoringConnectionIds.isEmpty) return;
     final targets = _monitoringConnectionIds
-        .where((id) => !_samplingConnectionIds.contains(id))
+        .where((id) => !_samplingEpochs.containsKey(id))
         .toList(growable: false);
     if (targets.isEmpty) return;
-    _samplingConnectionIds.addAll(targets);
+    for (final connectionId in targets) {
+      _samplingEpochs[connectionId] = epoch;
+    }
     if (!_disposed) notifyListeners();
 
     try {
@@ -422,32 +275,44 @@ class MonitoringService extends ChangeNotifier {
           batch.map(
             (connectionId) => _sampleConnection(
               connectionId,
+              epoch: epoch,
+              targetBinding: _monitoringTargetBindings[connectionId]!,
               onUnknownHostKey: onUnknownHostKey,
             ),
           ),
         );
       }
     } finally {
-      _samplingConnectionIds.removeAll(targets);
-      if (_running && !_disposed) _restartTimer();
-      if (!_disposed) notifyListeners();
+      for (final connectionId in targets) {
+        if (_samplingEpochs[connectionId] == epoch) {
+          _samplingEpochs.remove(connectionId);
+        }
+      }
+      if (_isCurrentEpoch(epoch)) _restartTimer();
+      if (!_disposed && epoch == _monitoringEpoch) notifyListeners();
     }
   }
 
   Future<void> _sampleConnection(
     String connectionId, {
+    required int epoch,
+    required ssh_core.SshTargetBinding targetBinding,
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     try {
-      if (_platformFor(connectionId) == ServerPlatform.windows) {
+      if (targetBinding.serverPlatform == ServerPlatform.windows) {
         await _sampleWindowsConnection(
           connectionId,
+          epoch: epoch,
+          targetBinding: targetBinding,
           onUnknownHostKey: onUnknownHostKey,
         );
         return;
       }
       final result = await _runOneShotWithRetry(
         connectionId: connectionId,
+        monitoringEpoch: epoch,
+        targetBinding: targetBinding,
         command: ServerStatusProbe.performanceCommand,
         timeout: _commandTimeout,
         onUnknownHostKey: onUnknownHostKey,
@@ -462,36 +327,33 @@ class MonitoringService extends ChangeNotifier {
       final raw = await ServerStatusProbe.parsePerformanceOutputAsync(
         result.stdout,
       );
-      final sample = _sampleFromCounters(
+      final sample = _sampleStore.sampleFromCounters(
         connectionId,
         raw.counters,
         DateTime.now(),
         raw.diskUsage,
+        _interval,
       );
-      if (!_running || !_monitoringConnectionIds.contains(connectionId)) {
+      if (!_isCurrentTarget(epoch, connectionId, targetBinding)) {
         return;
       }
-      _previousCountersByConnection[connectionId] = raw.counters;
-      _diskUsageByConnection[connectionId] = raw.diskUsage;
-      (_samplesByConnection[connectionId] ??= []).add(sample);
-      _trimSamples(connectionId);
-      final hadError = _errorsByConnection.remove(connectionId) != null;
+      _sampleStore.recordSample(
+        connectionId,
+        sample,
+        raw.diskUsage,
+        counters: raw.counters,
+      );
       _failureCountsByConnection.remove(connectionId);
-      _evaluateAlerts(connectionId, sample, raw.diskUsage);
-      _invalidateSamplesFor(connectionId);
-      _invalidateDiskUsageFor(connectionId);
-      if (hadError) _invalidateErrorsCache(connectionId);
+      _alertEvaluator.evaluate(connectionId, sample, raw.diskUsage);
     } catch (e, stackTrace) {
-      _errorsByConnection[connectionId] = e.toString();
+      if (e is _StaleMonitoringRunException ||
+          !_isCurrentTarget(epoch, connectionId, targetBinding)) {
+        return;
+      }
+      _sampleStore.recordError(connectionId, e.toString());
       _failureCountsByConnection[connectionId] =
           (_failureCountsByConnection[connectionId] ?? 0) + 1;
-      _addAlert(
-        connectionId: connectionId,
-        metric: 'sampling',
-        level: ServerHealthLevel.critical,
-        message: 'Sampling failed: $e',
-      );
-      _invalidateErrorsCache(connectionId);
+      _alertEvaluator.recordSamplingFailure(connectionId, e.toString());
       _logger.warning(
         'Performance sample failed',
         details: 'connectionId=$connectionId error=$e',
@@ -507,11 +369,15 @@ class MonitoringService extends ChangeNotifier {
 
   Future<void> _sampleWindowsConnection(
     String connectionId, {
+    required int epoch,
+    required ssh_core.SshTargetBinding targetBinding,
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     final status = await _fetchWindowsStatus(
       connectionId,
       _commandTimeout,
+      monitoringEpoch: epoch,
+      targetBinding: targetBinding,
       onUnknownHostKey: onUnknownHostKey,
     );
     final sample = PerformanceSample(
@@ -523,18 +389,12 @@ class MonitoringService extends ChangeNotifier {
       networkBytesPerSecond: status.networkBytesPerSecond,
       diskUsage: status.diskUsage,
     );
-    if (!_running || !_monitoringConnectionIds.contains(connectionId)) {
+    if (!_isCurrentTarget(epoch, connectionId, targetBinding)) {
       return;
     }
-    _diskUsageByConnection[connectionId] = status.diskUsage;
-    (_samplesByConnection[connectionId] ??= []).add(sample);
-    _trimSamples(connectionId);
-    final hadError = _errorsByConnection.remove(connectionId) != null;
+    _sampleStore.recordSample(connectionId, sample, status.diskUsage);
     _failureCountsByConnection.remove(connectionId);
-    _evaluateAlerts(connectionId, sample, status.diskUsage);
-    _invalidateSamplesFor(connectionId);
-    _invalidateDiskUsageFor(connectionId);
-    if (hadError) _invalidateErrorsCache(connectionId);
+    _alertEvaluator.evaluate(connectionId, sample, status.diskUsage);
   }
 
   void _restartTimer() {
@@ -630,10 +490,14 @@ class MonitoringService extends ChangeNotifier {
   Future<WindowsStatusSnapshot> _fetchWindowsStatus(
     String connectionId,
     Duration timeout, {
+    int? monitoringEpoch,
+    ssh_core.SshTargetBinding? targetBinding,
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     final result = await _runOneShotWithRetry(
       connectionId: connectionId,
+      monitoringEpoch: monitoringEpoch,
+      targetBinding: targetBinding,
       command: ServerStatusProbe.windowsStatusCommand,
       timeout: timeout,
       onUnknownHostKey: onUnknownHostKey,
@@ -649,8 +513,6 @@ class MonitoringService extends ChangeNotifier {
   }
 
   ServerPlatform _platformFor(String connectionId) {
-    final bound = _monitoringTargetBindings?[connectionId];
-    if (bound != null) return bound.serverPlatform;
     return _connectionCatalog.serverPlatformFor(connectionId) ??
         ServerPlatform.linux;
   }
@@ -659,16 +521,16 @@ class MonitoringService extends ChangeNotifier {
     required String connectionId,
     required String command,
     required Duration timeout,
+    int? monitoringEpoch,
+    ssh_core.SshTargetBinding? targetBinding,
     ssh_core.SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     Future<ssh_core.RemoteCommandResult> run() {
-      final binding = _monitoringTargetBindings?[connectionId];
-      if (_monitoringTargetBindings != null && binding == null) {
-        throw StateError(
-          'Connection is not part of the approved monitor target set.',
-        );
+      if (monitoringEpoch != null &&
+          !_isCurrentTarget(monitoringEpoch, connectionId, targetBinding)) {
+        throw const _StaleMonitoringRunException();
       }
-      return binding == null
+      return targetBinding == null
           ? _sshPort.runOneShotCommand(
               connectionId: connectionId,
               command: command,
@@ -677,7 +539,7 @@ class MonitoringService extends ChangeNotifier {
               priority: MonitoringRequestPriority.low,
             )
           : _sshPort.runOneShotCommandForBinding(
-              binding: binding,
+              binding: targetBinding,
               command: command,
               timeout: timeout,
               onUnknownHostKey: onUnknownHostKey,
@@ -688,7 +550,14 @@ class MonitoringService extends ChangeNotifier {
     try {
       return await run();
     } catch (firstError, firstStackTrace) {
-      if (_disposed) {
+      if (firstError is _StaleMonitoringRunException ||
+          _disposed ||
+          (monitoringEpoch != null &&
+              !_isCurrentTarget(
+                monitoringEpoch,
+                connectionId,
+                targetBinding,
+              ))) {
         Error.throwWithStackTrace(firstError, firstStackTrace);
       }
       _logger.warning(
@@ -696,7 +565,16 @@ class MonitoringService extends ChangeNotifier {
         details: 'connectionId=$connectionId error=$firstError',
       );
       await Future<void>.delayed(_retryDelayFor(connectionId));
-      if (_disposed) {
+      if (_disposed ||
+          (monitoringEpoch != null &&
+              !_isCurrentTarget(
+                monitoringEpoch,
+                connectionId,
+                targetBinding,
+              ))) {
+        if (monitoringEpoch != null) {
+          throw const _StaleMonitoringRunException();
+        }
         Error.throwWithStackTrace(firstError, firstStackTrace);
       }
       try {
@@ -715,232 +593,30 @@ class MonitoringService extends ChangeNotifier {
     return Duration(milliseconds: 700 + min(failures, 4) * 350);
   }
 
-  PerformanceSample _sampleFromCounters(
+  bool _isCurrentEpoch(int epoch) =>
+      !_disposed && _running && epoch == _monitoringEpoch;
+
+  bool _isCurrentTarget(
+    int epoch,
     String connectionId,
-    RawPerformanceCounters counters,
-    DateTime time,
-    List<DiskUsageSnapshot> diskUsage,
-  ) {
-    final previous = _previousCountersByConnection[connectionId];
-    final cpuPercent = previous == null
-        ? 0.0
-        : _ratePercent(
-            counters.cpuTotal - previous.cpuTotal,
-            counters.cpuBusy - previous.cpuBusy,
-          );
-    final seconds = previous == null
-        ? _interval.inMilliseconds / 1000
-        : max(0.001, time.difference(previous.time).inMilliseconds / 1000);
-    final diskBytesPerSecond = previous == null
-        ? 0.0
-        : (counters.diskBytes - previous.diskBytes) / seconds;
-    final networkBytesPerSecond = previous == null
-        ? 0.0
-        : (counters.networkBytes - previous.networkBytes) / seconds;
-
-    return PerformanceSample(
-      connectionId: connectionId,
-      time: time,
-      cpuPercent: cpuPercent.clamp(0, 100).toDouble(),
-      memoryPercent: counters.memoryPercent.clamp(0, 100).toDouble(),
-      diskBytesPerSecond: max(0, diskBytesPerSecond),
-      networkBytesPerSecond: max(0, networkBytesPerSecond),
-      diskUsage: diskUsage,
-    );
-  }
-
-  double _ratePercent(int totalDelta, int busyDelta) {
-    if (totalDelta <= 0 || busyDelta <= 0) return 0;
-    return busyDelta / totalDelta * 100;
-  }
-
-  void _trimSamples(String connectionId) {
-    final now = DateTime.now();
-    final maxRetCutoff = now.subtract(maxRetention);
-
-    final samples = _samplesByConnection[connectionId];
-    if (samples == null || samples.isEmpty) return;
-
-    // 1. 移除超过 10 分钟的最老数据
-    samples.removeWhere((sample) => sample.time.isBefore(maxRetCutoff));
-
-    // 2. 对超过 5 分钟的采样数据进行降采样（合并 10 秒间隔内的点）
-    final downsampleCutoff = now.subtract(const Duration(minutes: 5));
-
-    final olderSamples = <PerformanceSample>[];
-    final newerSamples = <PerformanceSample>[];
-
-    for (final sample in samples) {
-      if (sample.time.isBefore(downsampleCutoff)) {
-        olderSamples.add(sample);
-      } else {
-        newerSamples.add(sample);
-      }
-    }
-
-    if (olderSamples.isNotEmpty) {
-      final compactedOlder = <PerformanceSample>[];
-      var bucket = <PerformanceSample>[];
-
-      for (final sample in olderSamples) {
-        if (bucket.isEmpty) {
-          bucket.add(sample);
-        } else {
-          final firstTime = bucket.first.time;
-          if (sample.time.difference(firstTime) < const Duration(seconds: 10)) {
-            bucket.add(sample);
-          } else {
-            compactedOlder.add(_averageSamples(bucket));
-            bucket = [sample];
-          }
-        }
-      }
-
-      if (bucket.isNotEmpty) {
-        compactedOlder.add(_averageSamples(bucket));
-      }
-
-      samples.clear();
-      samples.addAll(compactedOlder);
-      samples.addAll(newerSamples);
-    }
-  }
-
-  PerformanceSample _averageSamples(List<PerformanceSample> list) {
-    if (list.length == 1) return list.first;
-
-    var totalCpu = 0.0;
-    var totalMem = 0.0;
-    var totalDisk = 0.0;
-    var totalNet = 0.0;
-    var totalMs = 0;
-
-    for (final s in list) {
-      totalCpu += s.cpuPercent;
-      totalMem += s.memoryPercent;
-      totalDisk += s.diskBytesPerSecond;
-      totalNet += s.networkBytesPerSecond;
-      totalMs += s.time.millisecondsSinceEpoch;
-    }
-
-    final count = list.length;
-    final avgTime = DateTime.fromMillisecondsSinceEpoch(totalMs ~/ count);
-    final diskUsage = list[count ~/ 2].diskUsage;
-
-    return PerformanceSample(
-      connectionId: list.first.connectionId,
-      time: avgTime,
-      cpuPercent: totalCpu / count,
-      memoryPercent: totalMem / count,
-      diskBytesPerSecond: totalDisk / count,
-      networkBytesPerSecond: totalNet / count,
-      diskUsage: diskUsage,
-    );
-  }
-
-  double _thresholdPenalty(
-    double value,
-    double warning,
-    double critical,
-    double maxPenalty,
-  ) {
-    if (value <= warning) return 0;
-    if (value >= critical) return maxPenalty;
-    return (value - warning) / (critical - warning) * maxPenalty;
-  }
-
-  void _evaluateAlerts(
-    String connectionId,
-    PerformanceSample sample,
-    List<DiskUsageSnapshot> diskUsage,
-  ) {
-    _thresholdAlert(
-      connectionId: connectionId,
-      metric: 'cpu',
-      label: 'CPU',
-      value: sample.cpuPercent,
-      warning: 85,
-      critical: 95,
-    );
-    _thresholdAlert(
-      connectionId: connectionId,
-      metric: 'memory',
-      label: 'Memory',
-      value: sample.memoryPercent,
-      warning: 85,
-      critical: 95,
-    );
-    for (final disk in diskUsage) {
-      _thresholdAlert(
-        connectionId: connectionId,
-        metric: 'disk:${disk.mount}',
-        label: 'Disk ${disk.mount}',
-        value: disk.usedPercent,
-        warning: 85,
-        critical: 95,
-      );
-    }
-  }
-
-  void _thresholdAlert({
-    required String connectionId,
-    required String metric,
-    required String label,
-    required double value,
-    required double warning,
-    required double critical,
-  }) {
-    if (value >= critical) {
-      _addAlert(
-        connectionId: connectionId,
-        metric: metric,
-        level: ServerHealthLevel.critical,
-        message: '$label is ${value.toStringAsFixed(1)}%',
-      );
-    } else if (value >= warning) {
-      _addAlert(
-        connectionId: connectionId,
-        metric: metric,
-        level: ServerHealthLevel.warning,
-        message: '$label is ${value.toStringAsFixed(1)}%',
-      );
-    }
-  }
-
-  void _addAlert({
-    required String connectionId,
-    required String metric,
-    required ServerHealthLevel level,
-    required String message,
-  }) {
-    final now = DateTime.now();
-    final key = '$connectionId:$metric:${level.name}';
-    final lastAt = _lastAlertAtByKey[key];
-    if (lastAt != null && now.difference(lastAt) < const Duration(minutes: 5)) {
-      return;
-    }
-    _lastAlertAtByKey[key] = now;
-    _alerts.insert(
-      0,
-      MonitorAlert(
-        id: '${now.microsecondsSinceEpoch}-$key',
-        connectionId: connectionId,
-        metric: metric,
-        level: level,
-        message: message,
-        createdAt: now,
-      ),
-    );
-    if (_alerts.length > 80) {
-      _alerts.removeRange(80, _alerts.length);
-    }
-    _alertsView = null;
-  }
+    ssh_core.SshTargetBinding? binding,
+  ) =>
+      _isCurrentEpoch(epoch) &&
+      _monitoringConnectionIds.contains(connectionId) &&
+      identical(_monitoringTargetBindings[connectionId], binding);
 
   @override
   void dispose() {
+    _monitoringEpoch++;
     _disposed = true;
     _timer?.cancel();
+    _running = false;
+    _samplingEpochs.clear();
+    _monitoringTargetBindings = const {};
     super.dispose();
   }
+}
+
+final class _StaleMonitoringRunException implements Exception {
+  const _StaleMonitoringRunException();
 }

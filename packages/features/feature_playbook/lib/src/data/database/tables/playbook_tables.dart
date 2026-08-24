@@ -3,9 +3,14 @@ part of '../playbook_database.dart';
 /// 可复用剧本表；正文 JSON 加密保存，便于保留完整的步骤快照。
 class Playbooks extends Table {
   TextColumn get id => text()();
-  TextColumn get name => text()();
+
+  /// Deprecated compatibility columns. Sensitive display metadata is stored
+  /// only inside encrypted [contentJson]; these columns remain empty so a v1
+  /// database can migrate without rebuilding foreign-key parents.
+  TextColumn get name => text().withDefault(const Constant(''))();
   TextColumn get description => text().withDefault(const Constant(''))();
   TextColumn get contentJson => text()();
+  IntColumn get revision => integer().withDefault(const Constant(1))();
   IntColumn get createdAt => integer()();
   IntColumn get updatedAt => integer()();
 

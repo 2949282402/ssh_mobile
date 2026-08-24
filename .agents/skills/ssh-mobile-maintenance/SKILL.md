@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug the SSH Mobile repository, including Flutter, Dart packages, the Rust network SDK, Relay, Admin UI, tests, documentation, and shared Agent guidance. Use for any non-trivial implementation, diagnosis, validation, or documentation change in this repository.
 ---
 
-> Last updated: 2026-08-14
+> Last updated: 2026-08-20
 
 # SSH Mobile Maintenance
 
@@ -34,6 +34,30 @@ The repository is in active development. Adding or refactoring code does not
 need to preserve compatibility with older versions: destructive refactoring is
 allowed, with callers migrated as part of the change. Where a contract or
 protocol carries a version number, use `V1`.
+
+## Pull request preflight
+
+Treat a request to create, update, submit, or publish a pull request (创建、更新
+或提交 PR) as a validation-gated write operation. Before committing, pushing,
+or invoking a GitHub PR write action:
+
+1. Inspect the complete worktree and identify every affected owner.
+2. Run the repository's WSL local CI entry point,
+   [`scripts/full_test.sh`](../../../scripts/full_test.sh). Use
+   `--no-bootstrap` only when dependency manifests and lockfiles are already
+   current; otherwise let the script bootstrap the Linux dependencies.
+3. Run the focused and owner-specific checks selected by the Validation Matrix
+   in addition to the local CI entry point when the change requires them.
+4. Do not submit while any check is failing or incomplete. A documented
+   platform or toolchain gap is not a pass: stop, report the exact gap, and
+   require explicit user acceptance before proceeding with a PR write. A new
+   or behavior-relevant gap always blocks the PR write.
+5. After any code, test, dependency, project-structure, or CI-scope change,
+   rerun the affected checks before the PR write action.
+
+The PR write action is the final step: validation evidence must exist before
+`git push`, PR creation, or PR update. The GitHub and Git Commit Skills provide
+the write mechanics; this Skill owns the repository validation gate.
 
 ## Scope before implementation
 
@@ -142,6 +166,11 @@ Code loads Skills directly from `.agents/skills/`; do not create a second
   explicitly rather than deferred to the commit step.
 - Run `git diff --check` for every change. Review the final diff for unrelated
   files, generated noise, secrets, stale paths, and unintended API/ownership changes.
+- [`scripts/full_test.sh`](../../../scripts/full_test.sh) is a maintained
+  cross-domain CI mirror. When tests, package membership, project structure,
+  CI jobs, generated checks, test exclusions, timeouts, or Linux toolchain
+  assumptions change, update the script in the same change and validate the
+  affected `--only` jobs.
 - If a required check cannot run, report the exact command and environmental or
   scope reason; distinguish that from a product failure.
 - A task is complete only when requested behavior/documentation is implemented,

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { queryKeys } from '../../api/query-keys';
@@ -125,6 +125,38 @@ describe('AccessPage', () => {
     rendered.unmount();
   });
 
+  it('re-reads a copy-only token after the short cache lifetime expires', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ enrollment_token: 'first-copy-token' }))
+      .mockResolvedValueOnce(jsonResponse({ enrollment_token: 'second-copy-token' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const rendered = renderAccess();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '复制 Token' }));
+    });
+    expect(writeText).toHaveBeenCalledWith('first-copy-token');
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(rendered.queryClient.getQueryData(queryKeys.token)).toBeUndefined();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '复制 Token' }));
+    });
+    expect(writeText).toHaveBeenLastCalledWith('second-copy-token');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    rendered.unmount();
+  });
+
   it('aborts a pending token rotation when the page unmounts', async () => {
     let capturedSignal: AbortSignal | null | undefined;
     const fetchMock = vi.fn().mockImplementationOnce((_path: string, init: RequestInit) => {
@@ -146,11 +178,74 @@ describe('AccessPage', () => {
     expect(capturedSignal?.aborted).toBe(true);
   });
 
+  it('blocks a late token rotation response from repopulating the cache after unmount', async () => {
+    let capturedSignal: AbortSignal | null | undefined;
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn().mockImplementationOnce((_path: string, init: RequestInit) => {
+      capturedSignal = init.signal;
+      return new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    const rendered = renderAccess();
+
+    await user.click(screen.getByRole('button', { name: '轮换 Token' }));
+    await user.click(screen.getByRole('button', { name: '重新生成 Token' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    rendered.unmount();
+    expect(capturedSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      resolveFetch?.(jsonResponse({ enrollment_token: 'late-rotated-secret' }));
+    });
+    await waitFor(() => expect(rendered.queryClient.getQueryData(queryKeys.token)).toBeUndefined());
+    expect(JSON.stringify(rendered.queryClient.getMutationCache().getAll())).not.toContain('late-rotated-secret');
+  });
+
+  it('keeps a rotated token when an older token read returns late', async () => {
+    let readSignal: AbortSignal | null | undefined;
+    let resolveRead: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn().mockImplementation((path: string, init: RequestInit) => {
+      if (path.endsWith('/enrollment-token')) {
+        readSignal = init.signal;
+        return new Promise<Response>((resolve) => {
+          resolveRead = resolve;
+        });
+      }
+      if (path.endsWith('/enrollment-token/rotate')) {
+        return Promise.resolve(jsonResponse({ enrollment_token: 'rotated-current-token' }));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    const rendered = renderAccess();
+
+    await user.click(screen.getByRole('button', { name: '显示' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await user.click(screen.getByRole('button', { name: '轮换 Token' }));
+    await user.click(screen.getByRole('button', { name: '重新生成 Token' }));
+
+    await waitFor(() => expect(screen.getByText('rotated-current-token')).toBeInTheDocument());
+    expect(readSignal?.aborted).toBe(true);
+
+    await act(async () => {
+      resolveRead?.(jsonResponse({ enrollment_token: 'superseded-old-token' }));
+    });
+    await waitFor(() => expect(rendered.queryClient.getQueryData(queryKeys.token)).toEqual({
+      enrollment_token: 'rotated-current-token',
+    }));
+    expect(screen.queryByText('superseded-old-token')).not.toBeInTheDocument();
+  });
+
   it('rotates the token only after explicit confirmation', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ enrollment_token: 'rotated-secret' }));
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
-    renderAccess();
+    const rendered = renderAccess();
 
     await user.click(screen.getByRole('button', { name: '轮换 Token' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -162,5 +257,7 @@ describe('AccessPage', () => {
       method: 'POST',
       credentials: 'include',
     }));
+    expect(JSON.stringify(rendered.queryClient.getMutationCache().getAll().map((mutation) => mutation.state.data)))
+      .not.toContain('rotated-secret');
   });
 });

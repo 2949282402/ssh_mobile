@@ -63,11 +63,16 @@ final class _FakeNetworkRuntime implements NetworkRuntime {
 /// ConnectionRepository 替身：initialize 永久挂起，用于证明构造失败回滚
 /// 不会被一个永远不完成的启动任务阻塞。
 final class _HangingConnectionRepository implements ConnectionRepository {
+  int initializeCalls = 0;
+
   @override
   List<ConnectionConfig> get connections => const <ConnectionConfig>[];
 
   @override
-  Future<void> initialize() => Completer<void>().future;
+  Future<void> initialize() {
+    initializeCalls++;
+    return Completer<void>().future;
+  }
 
   @override
   Future<List<ConnectionConfig>> loadConnections() async =>
@@ -234,11 +239,12 @@ void main() {
   );
 
   test(
-    'rollback is not blocked forever by a hung pending initializer',
+    'construction failure does not start lazy pending initializers',
     () async {
       final events = <String>[];
+      final repository = _HangingConnectionRepository();
       final harness = await _newHarness(
-        connectionRepository: _HangingConnectionRepository(),
+        connectionRepository: repository,
         hostKeyRepository: _FakeHostKeyRepository(),
         lanShareDatabaseFactory: () =>
             throw StateError('injected lan share failure'),
@@ -246,8 +252,8 @@ void main() {
         lifecycleObserver: events.add,
       );
       try {
-        // 若 wait() 没有 bounded-wait 语义，create 会永久挂起；这里用
-        // timeout 证明回滚在有限时间内完成并抛出原始构造错误。
+        // Initializers start only after ownership transfers to a valid Runtime,
+        // so a construction failure cannot leave a DB task behind cleanup.
         await expectLater(
           harness.createFuture.timeout(const Duration(seconds: 10)),
           throwsA(
@@ -261,6 +267,7 @@ void main() {
         // 回滚必须跑完整个优先级图，至少到达数据库(20)清理。
         final priorities = _rollbackPriorities(events);
         expect(priorities, containsAll(<int>[80, 70, 60, 50, 40, 30, 20]));
+        expect(repository.initializeCalls, 0);
       } finally {
         await harness.close();
       }

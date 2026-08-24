@@ -12,6 +12,7 @@ export 'src/application/mcp_lifecycle_handler.dart';
 export 'src/application/mcp_module.dart';
 export 'src/application/mcp_port_probe.dart';
 export 'src/application/mcp_server_controller.dart';
+export 'src/application/mcp_self_test_runner.dart';
 export 'src/application/mcp_tool_exposure_policy.dart';
 export 'src/application/mcp_tool_handler.dart';
 export 'src/data/database/mcp_database.dart' hide McpActivityRecord;

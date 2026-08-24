@@ -1,4 +1,4 @@
-//! v1 原生网络运行时外观。
+//! Network Protocol V2 原生网络运行时外观。
 //!
 //! 按职责拆分实现，使生命周期、命令分发、对端连接、传输、Relay 处理和
 //! 线协议事件可以独立审查。
@@ -17,7 +17,10 @@ mod generic_auth;
 mod peer;
 mod realtime;
 mod relay;
+pub(crate) mod relay_state;
 mod runtime;
+mod runtime_event_lanes;
+mod runtime_path_projections;
 mod session;
 mod stream;
 mod task_supervisor;

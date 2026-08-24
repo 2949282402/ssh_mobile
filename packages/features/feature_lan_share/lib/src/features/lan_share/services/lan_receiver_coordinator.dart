@@ -20,39 +20,9 @@ import '../../../services/lan_share/lan_storage_service.dart';
 import '../../../services/lan_share/lan_transfer_service.dart';
 import '../../../services/relay/relay_enrollment_service.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
+import 'lan_relay_coordinator.dart';
 
-/// Relay 配置和数据面状态的安全快照；不包含 token、credential 或签名材料。
-final class LanRelayStatus {
-  /// 创建一个 Relay 状态快照。
-  const LanRelayStatus({
-    required this.endpoint,
-    required this.state,
-    required this.enrolled,
-    required this.reconnectAttempt,
-    this.error,
-  });
-
-  /// 当前保存的 HTTPS Relay origin。
-  final String endpoint;
-
-  /// 原生 Relay WebSocket 的最终观察状态。
-  final RelayConnectionState state;
-
-  /// 当前设备是否有绑定到该 endpoint 的有效 enrollment。
-  final bool enrolled;
-
-  /// 当前自动重连序号；0 表示尚未开始自动重连。
-  final int reconnectAttempt;
-
-  /// 最近一次安全可展示的错误。
-  final NetworkError? error;
-
-  /// Relay 数据面是否已连接。
-  bool get isConnected => state == RelayConnectionState.connected;
-
-  /// Relay 是否正在建立连接。
-  bool get isConnecting => state == RelayConnectionState.connecting;
-}
+export 'lan_relay_coordinator.dart' show LanRelayStatus;
 
 /// 负责 LAN Receiver 的激活、停用和最终释放。
 final class LanReceiverCoordinator extends ChangeNotifier {
@@ -111,22 +81,9 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   LanSecurityService? _securityService;
   LanStorageService? _lanStorageService;
   LanTransferService? _transferService;
-  RelayEnrollmentService? _relayEnrollmentService;
+  LanRelayCoordinator? _relayCoordinator;
   NetworkFacade? _networkFacade;
   LanShareNetworkIdentityMaterial? _networkIdentityMaterial;
-  bool _nativeRelayActive = false;
-  RelayConnectionState _relayConnectionState =
-      RelayConnectionState.disconnected;
-  NetworkError? _relayError;
-  bool _relayEnrolled = false;
-  int _relayReconnectAttempt = 0;
-  Timer? _relayReconnectTimer;
-  Future<NetworkResult<void>>? _relayConnectFuture;
-  Future<void>? _relayRefreshFuture;
-  bool _relayReconnectEnabled = true;
-  bool _relayExplicitlyDisconnected = false;
-  bool _applyingRelayEndpoint = false;
-  String _observedRelayEndpoint = '';
   bool _receiverActive = false;
 
   final StreamController<LanPairingRequest> _pairingRequestController =
@@ -135,7 +92,6 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   StreamSubscription<LanPairingRequest>? _pairingInviteSubscription;
   StreamSubscription<LanDevice>? _announcedDeviceSubscription;
   StreamSubscription<LanDevice>? _handshakePendingSubscription;
-  StreamSubscription<NetworkEvent>? _networkEventSubscription;
 
   bool _initialized = false;
   bool _disposed = false;
@@ -165,19 +121,21 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   LanTransferService? get transferService => _transferService;
 
   /// 初始化完成后返回 Relay enrollment 服务。
-  RelayEnrollmentService? get relayEnrollmentService => _relayEnrollmentService;
+  LanRelayEnrollmentPort? get relayEnrollmentService =>
+      _relayCoordinator?.enrollmentService;
 
   /// 当前是否已启用原生 Relay 配置。
-  bool get nativeRelayActive => _nativeRelayActive;
+  bool get nativeRelayActive => _relayCoordinator?.nativeRelayActive ?? false;
 
   /// 当前 Relay 配置、连接和自动重连状态。
-  LanRelayStatus get relayStatus => LanRelayStatus(
-    endpoint: appSettings.relayEndpoint,
-    state: _relayConnectionState,
-    enrolled: _relayEnrolled,
-    reconnectAttempt: _relayReconnectAttempt,
-    error: _relayError,
-  );
+  LanRelayStatus get relayStatus =>
+      _relayCoordinator?.status ??
+      LanRelayStatus(
+        endpoint: appSettings.relayEndpoint,
+        state: RelayConnectionState.disconnected,
+        enrolled: false,
+        reconnectAttempt: 0,
+      );
 
   /// 可用时返回 App Shell 注入的网络 Facade。
   NetworkFacade? get networkFacade => _networkFacade;
@@ -262,41 +220,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   /// 仅保存 Relay origin；端点变化会断开旧 socket 并清除旧 enrollment。
   Future<NetworkResult<void>> saveRelayEndpoint(Uri endpoint) async {
     await ensureInitialized();
-    if (!_isValidRelayEndpoint(endpoint)) {
-      return _networkFailure(
-        NetworkErrorCode.invalidArgument,
-        'Relay endpoint must be an HTTPS origin',
-        NetworkOperation.connectRelay,
-      );
-    }
-    final normalized = endpoint
-        .replace(path: '', query: null, fragment: null)
-        .toString();
-    if (normalized != appSettings.relayEndpoint) {
-      _stopRelayReconnect();
-      _relayReconnectEnabled = false;
-      _relayExplicitlyDisconnected = true;
-      await _waitForRelayConnect();
-      final disconnected = await _disconnectRelaySocket();
-      if (disconnected is NetworkFailure<void>) return disconnected;
-      await _relayEnrollmentService?.clearEnrollment();
-      _relayEnrolled = false;
-    }
-    try {
-      _applyingRelayEndpoint = true;
-      await appSettings.setRelayEndpoint(normalized);
-    } on ArgumentError catch (error) {
-      return _networkFailure(
-        NetworkErrorCode.invalidArgument,
-        error.message?.toString() ?? 'Relay endpoint is invalid',
-        NetworkOperation.connectRelay,
-      );
-    } finally {
-      _applyingRelayEndpoint = false;
-    }
-    _relayError = null;
-    _notifyIfActive();
-    return const NetworkSuccess<void>(null);
+    return _relayCoordinator!.saveEndpoint(endpoint);
   }
 
   /// 完成凭据 enrollment，并配置原生 Relay 数据面。
@@ -305,446 +229,28 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     required String enrollmentToken,
   }) async {
     await ensureInitialized();
-    final client = _relayEnrollmentService;
-    if (client == null) {
-      return _networkFailure(
-        NetworkErrorCode.relayError,
-        'Relay enrollment service is unavailable',
-        NetworkOperation.enrollRelay,
-      );
-    }
-    if (!_isValidRelayEndpoint(endpoint)) {
-      return _networkFailure(
-        NetworkErrorCode.invalidArgument,
-        'Relay enrollment endpoint must be an HTTPS origin',
-        NetworkOperation.enrollRelay,
-      );
-    }
-    _stopRelayReconnect();
-    _relayReconnectEnabled = false;
-    _relayExplicitlyDisconnected = true;
-    await _waitForRelayConnect();
-    final disconnected = await _disconnectRelaySocket();
-    if (disconnected is NetworkFailure<void>) return disconnected;
-
-    final relaySettings = RelaySettings(
-      endpoint: endpoint.replace(path: '', query: null, fragment: null),
+    return _relayCoordinator!.enroll(
+      endpoint: endpoint,
+      enrollmentToken: enrollmentToken,
     );
-    final enrollment = await client.enroll(
-      relaySettings,
-      enrollmentToken.trim(),
-    );
-    if (enrollment is NetworkFailure<void>) {
-      _relayEnrolled = false;
-      _relayError = enrollment.error;
-      _notifyIfActive();
-      return enrollment;
-    }
-    try {
-      _applyingRelayEndpoint = true;
-      await appSettings.setRelayEndpoint(relaySettings.endpoint.toString());
-    } finally {
-      _applyingRelayEndpoint = false;
-    }
-    _relayReconnectEnabled = true;
-    _relayExplicitlyDisconnected = false;
-    _relayEnrolled = true;
-    _relayError = null;
-    final result = await _connectRelay(relaySettings);
-    if (result is NetworkFailure<void>) _relayError = result.error;
-    _notifyIfActive();
-    return result;
   }
 
   /// 加载已存储 enrollment，并配置原生 Relay 连接。
   Future<NetworkResult<void>> connectConfiguredRelay() async {
     await ensureInitialized();
-    _stopRelayReconnect();
-    _relayReconnectAttempt = 0;
-    _relayReconnectEnabled = true;
-    _relayExplicitlyDisconnected = false;
-    return _connectConfiguredRelay();
+    return _relayCoordinator!.connectConfigured();
   }
 
   /// 主动断开 Relay，但保留 endpoint 和 enrollment 供下次连接使用。
   Future<NetworkResult<void>> disconnectRelay() async {
     await ensureInitialized();
-    _stopRelayReconnect();
-    _relayReconnectEnabled = false;
-    _relayExplicitlyDisconnected = true;
-    await _waitForRelayConnect();
-    final result = await _disconnectRelaySocket();
-    _notifyIfActive();
-    return result;
+    return _relayCoordinator!.disconnect();
   }
 
   /// 清除 endpoint 与短期 enrollment credential，但保留设备签名种子。
   Future<NetworkResult<void>> clearRelayEnrollment() async {
     await ensureInitialized();
-    _stopRelayReconnect();
-    _relayReconnectEnabled = false;
-    _relayExplicitlyDisconnected = true;
-    await _waitForRelayConnect();
-    final disconnected = await _disconnectRelaySocket();
-    await _relayEnrollmentService?.clearEnrollment();
-    _relayEnrolled = false;
-    _relayError = null;
-    try {
-      _applyingRelayEndpoint = true;
-      await appSettings.setRelayEndpoint('');
-    } finally {
-      _applyingRelayEndpoint = false;
-    }
-    _notifyIfActive();
-    return disconnected;
-  }
-
-  /// 将 enrollment 凭据转换为注入网络服务使用的 Relay 配置。
-  Future<NetworkResult<void>> _connectRelay(RelaySettings settings) async {
-    final existing = _relayConnectFuture;
-    if (existing != null) return existing;
-    final operation = _doConnectRelay(settings);
-    _relayConnectFuture = operation;
-    try {
-      return await operation;
-    } finally {
-      if (identical(_relayConnectFuture, operation)) _relayConnectFuture = null;
-    }
-  }
-
-  /// 等待已有配置操作完成，避免旧任务在显式断开后重新打开 Relay。
-  Future<void> _waitForRelayConnect() async {
-    final operation = _relayConnectFuture;
-    if (operation == null) return;
-    try {
-      await operation;
-    } on Object {
-      // 连接结果通过 NetworkResult 传播；这里仅等待其生命周期结束。
-    }
-  }
-
-  /// 请求 WSS Relay 数据面 Capability；失败时返回 connectRelay 的统一失败结果。
-  ///
-  /// 在 `enableWebSocketRelay: false` 时，任何 Relay 配置都必须在此快速失败，
-  /// 而不会向 native 发出 disconnectRelay/configureRelay 等 Relay 命令。
-  Future<NetworkResult<void>> _requireRelayCapability() async {
-    try {
-      await networkRuntime.ensureCapability(NetworkCapability.webSocketRelay);
-      return const NetworkSuccess<void>(null);
-    } on Object {
-      return _networkFailure(
-        NetworkErrorCode.relayError,
-        'WebSocket Relay capability is unavailable',
-        NetworkOperation.connectRelay,
-      );
-    }
-  }
-
-  Future<NetworkResult<void>> _doConnectRelay(RelaySettings settings) async {
-    final relayCapability = await _requireRelayCapability();
-    if (relayCapability is NetworkFailure<void>) return relayCapability;
-    final client = _relayEnrollmentService;
-    final facade = _networkFacade;
-    if (client == null || facade == null) {
-      return _networkFailure(
-        NetworkErrorCode.noRoute,
-        'native network runtime is unavailable',
-        NetworkOperation.connectRelay,
-      );
-    }
-    final configuration = await client.nativeConfiguration(settings);
-    if (configuration == null) {
-      // 曾 enrollment 但本地凭据已过期：交给上层按 credentialExpired 触发 refresh，
-      // 而非立即要求用户重新输入 enrollment token。
-      if (await client.hasStoredCredential(settings)) {
-        _relayEnrolled = true;
-        return _networkFailure(
-          NetworkErrorCode.credentialExpired,
-          'Relay credential expired; refreshing.',
-          NetworkOperation.connectRelay,
-        );
-      }
-      _relayEnrolled = false;
-      return _networkFailure(
-        NetworkErrorCode.authenticationFailed,
-        'Relay enrollment is required',
-        NetworkOperation.connectRelay,
-      );
-    }
-    if (_nativeRelayActive ||
-        _relayConnectionState == RelayConnectionState.connected ||
-        _relayConnectionState == RelayConnectionState.connecting) {
-      final disconnected = await _disconnectRelaySocket();
-      if (disconnected is NetworkFailure<void>) return disconnected;
-    }
-    final result = await facade.configureRelay(
-      RelayConfig(
-        relayUrl: configuration.endpoint.toString(),
-        relayCredential: configuration.credential,
-        relaySigningSeed: configuration.signingSeed,
-      ),
-    );
-    _nativeRelayActive = result is NetworkSuccess<void>;
-    if (result is NetworkFailure<void>) _relayError = result.error;
-    return result;
-  }
-
-  Future<NetworkResult<void>> _connectConfiguredRelay() async {
-    final relayCapability = await _requireRelayCapability();
-    if (relayCapability is NetworkFailure<void>) return relayCapability;
-    final endpoint = Uri.tryParse(appSettings.relayEndpoint);
-    final client = _relayEnrollmentService;
-    if (endpoint == null ||
-        client == null ||
-        !_isValidRelayEndpoint(endpoint)) {
-      return _networkFailure(
-        NetworkErrorCode.relayError,
-        'Relay configuration is unavailable',
-        NetworkOperation.connectRelay,
-      );
-    }
-    final settings = RelaySettings(endpoint: endpoint);
-    _relayEnrolled = await client.isEnrolled(settings);
-    if (!_relayEnrolled) {
-      // 本地凭据过期但曾成功 enrollment：先尝试静默 refresh，而非要求 token。
-      if (await client.hasStoredCredential(settings)) {
-        _relayEnrolled = true;
-        _relayError = NetworkError(
-          code: NetworkErrorCode.credentialExpired,
-          message: 'Relay credential expired; refreshing.',
-          operation: NetworkOperation.connectRelay,
-        );
-        _scheduleRelayReconnect();
-        _notifyIfActive();
-        return _networkFailure(
-          NetworkErrorCode.credentialExpired,
-          'Relay credential expired; refreshing.',
-          NetworkOperation.connectRelay,
-        );
-      }
-      final failure = _networkFailure(
-        NetworkErrorCode.authenticationFailed,
-        'Relay enrollment is required',
-        NetworkOperation.connectRelay,
-      );
-      _relayError = failure.error;
-      _notifyIfActive();
-      return failure;
-    }
-    final result = await _connectRelay(settings);
-    if (result is NetworkFailure<void>) {
-      _relayError = result.error;
-      _scheduleRelayReconnect();
-    }
-    _notifyIfActive();
-    return result;
-  }
-
-  Future<NetworkResult<void>> _disconnectRelaySocket() async {
-    final facade = _networkFacade;
-    _nativeRelayActive = false;
-    if (facade == null) {
-      _relayConnectionState = RelayConnectionState.disconnected;
-      return const NetworkSuccess<void>(null);
-    }
-    final result = await facade.disconnectRelay();
-    if (result is NetworkSuccess<void>) {
-      _relayConnectionState = RelayConnectionState.disconnected;
-      _relayError = null;
-    }
-    return result;
-  }
-
-  bool _isValidRelayEndpoint(Uri endpoint) =>
-      endpoint.scheme == 'https' &&
-      endpoint.host.isNotEmpty &&
-      endpoint.userInfo.isEmpty &&
-      endpoint.query.isEmpty &&
-      endpoint.fragment.isEmpty &&
-      (endpoint.path.isEmpty || endpoint.path == '/');
-
-  /// 观察从 App Shell 传入的 Relay endpoint 变化。
-  void _onAppSettingsChanged() {
-    final endpoint = appSettings.relayEndpoint;
-    if (_observedRelayEndpoint == endpoint) return;
-    final previous = _observedRelayEndpoint;
-    _observedRelayEndpoint = endpoint;
-    if (_applyingRelayEndpoint || previous.isEmpty) return;
-    unawaited(_handleExternalRelayEndpointChange());
-  }
-
-  /// 外部修改 endpoint 时撤销旧 socket 和旧 credential，强制重新 enrollment。
-  Future<void> _handleExternalRelayEndpointChange() async {
-    _stopRelayReconnect();
-    _relayReconnectEnabled = false;
-    _relayExplicitlyDisconnected = true;
-    await _waitForRelayConnect();
-    await _disconnectRelaySocket();
-    await _relayEnrollmentService?.clearEnrollment();
-    _relayEnrolled = false;
-    _relayError = null;
-    if (!_disposed) notifyListeners();
-  }
-
-  /// 应用原生 Relay 的类型化生命周期事件，并安排有限次数自动重连。
-  void _handleNetworkEvent(NetworkEvent event) {
-    if (event is! RelayStateChanged) return;
-    _relayConnectionState = event.state;
-    _relayError = event.error;
-    _nativeRelayActive = event.state == RelayConnectionState.connected;
-    if (event.state == RelayConnectionState.connected) {
-      _relayReconnectAttempt = 0;
-      _relayReconnectTimer?.cancel();
-      _relayReconnectTimer = null;
-      _relayError = null;
-    } else if (event.state == RelayConnectionState.failed ||
-        event.state == RelayConnectionState.disconnected) {
-      _nativeRelayActive = false;
-      if (_relayReconnectEnabled &&
-          !_relayExplicitlyDisconnected &&
-          _relayEnrolled) {
-        _scheduleRelayReconnect();
-      }
-    }
-    if (!_disposed) notifyListeners();
-  }
-
-  /// 按最后一次失败的 [NetworkError] 重试策略安排自动重连。
-  ///
-  /// - `retryAfter`：使用服务端建议秒数（上限 60s；`<=0` 时回退指数退避）。
-  /// - `retryWithBackoff`/`unspecified`：保持 1/2/4/8/16/30 秒指数退避，最多六次。
-  /// - `refreshCredentialThenRetry`/`credentialExpired`：走 refresh 路径，不盲目重连。
-  /// - `noRetry`/`identityConflict`：停止自动重连并保留 typed 错误。
-  void _scheduleRelayReconnect() {
-    const delays = <Duration>[
-      Duration(seconds: 1),
-      Duration(seconds: 2),
-      Duration(seconds: 4),
-      Duration(seconds: 8),
-      Duration(seconds: 16),
-      Duration(seconds: 30),
-    ];
-    if (_relayReconnectTimer != null ||
-        !_relayReconnectEnabled ||
-        _relayExplicitlyDisconnected ||
-        !_relayEnrolled ||
-        _relayConnectionState == RelayConnectionState.connected ||
-        _relayConnectionState == RelayConnectionState.connecting) {
-      return;
-    }
-    final error = _relayError;
-    final disposition = error?.retryDisposition ?? RetryDisposition.unspecified;
-    if (disposition == RetryDisposition.noRetry ||
-        error?.code == NetworkErrorCode.identityConflict) {
-      _stopRelayReconnect();
-      _relayReconnectEnabled = false;
-      if (!_disposed) notifyListeners();
-      return;
-    }
-    if (disposition == RetryDisposition.refreshCredentialThenRetry ||
-        error?.code == NetworkErrorCode.credentialExpired) {
-      _stopRelayReconnect();
-      unawaited(_refreshAndReconnectRelay());
-      if (!_disposed) notifyListeners();
-      return;
-    }
-    if (_relayReconnectAttempt >= delays.length) return;
-    var delay = delays[_relayReconnectAttempt];
-    if (disposition == RetryDisposition.retryAfter &&
-        (error?.retryAfterSeconds ?? 0) > 0) {
-      delay = Duration(seconds: error!.retryAfterSeconds.clamp(1, 60));
-    }
-    _relayReconnectAttempt++;
-    _relayReconnectTimer = Timer(delay, () {
-      _relayReconnectTimer = null;
-      if (_relayReconnectEnabled && !_relayExplicitlyDisconnected) {
-        unawaited(_connectConfiguredRelay());
-      }
-    });
-    if (!_disposed) notifyListeners();
-  }
-
-  /// 合并并发 refresh，镜像 [_relayConnectFuture] 的 coalescing 模式。
-  Future<void> _refreshAndReconnectRelay() {
-    final existing = _relayRefreshFuture;
-    if (existing != null) return existing;
-    final operation = _refreshAndReconnectRelayInternal();
-    _relayRefreshFuture = operation;
-    try {
-      return operation;
-    } finally {
-      if (identical(_relayRefreshFuture, operation)) {
-        _relayRefreshFuture = null;
-      }
-    }
-  }
-
-  /// 刷新已过期的 Relay 凭据，成功后重新配置原生数据面。
-  ///
-  /// 刷新失败且 [NetworkErrorCode.noRoute]（relay 重启丢失 enrollment）时停止自动
-  /// 重试并标记未 enrollment；auth/credentialExpired 失败只展示错误，不循环重试。
-  Future<void> _refreshAndReconnectRelayInternal() async {
-    try {
-      final client = _relayEnrollmentService;
-      final endpoint = Uri.tryParse(appSettings.relayEndpoint);
-      if (client == null ||
-          endpoint == null ||
-          !_isValidRelayEndpoint(endpoint)) {
-        _relayError = _networkFailure(
-          NetworkErrorCode.relayError,
-          'Relay configuration is unavailable',
-          NetworkOperation.connectRelay,
-        ).error;
-        _notifyIfActive();
-        return;
-      }
-      final settings = RelaySettings(endpoint: endpoint);
-      final refresh = await client.refreshCredential(settings);
-      if (refresh is NetworkFailure<void>) {
-        final error = refresh.error;
-        if (error.code == NetworkErrorCode.noRoute) {
-          // relay 重启丢失 enrollment：停止自动重试，标记未 enrollment，交由 UI 提示。
-          _stopRelayReconnect();
-          _relayReconnectEnabled = false;
-          _relayEnrolled = false;
-          _relayError = error;
-          _notifyIfActive();
-          return;
-        }
-        // auth / credentialExpired / identityConflict：展示错误，不循环重试。
-        _stopRelayReconnect();
-        _relayError = error;
-        _notifyIfActive();
-        return;
-      }
-      // refresh 成功：新凭据已由 service 写入安全存储，重新配置原生数据面。
-      _relayEnrolled = true;
-      _relayError = null;
-      final result = await _connectRelay(settings);
-      if (result is NetworkFailure<void>) {
-        _relayError = result.error;
-        _scheduleRelayReconnect();
-      }
-      _notifyIfActive();
-    } on Object catch (error, stackTrace) {
-      logger.warning(
-        'Relay credential refresh failed',
-        details: '$error\n$stackTrace',
-      );
-      _relayError = _networkFailure(
-        NetworkErrorCode.relayError,
-        'Relay credential refresh failed.',
-        NetworkOperation.connectRelay,
-      ).error;
-      _notifyIfActive();
-    }
-  }
-
-  /// 取消自动重连并重置退避计数。
-  void _stopRelayReconnect() {
-    _relayReconnectTimer?.cancel();
-    _relayReconnectTimer = null;
-    _relayReconnectAttempt = 0;
+    return _relayCoordinator!.clearEnrollment();
   }
 
   /// 仅在 Coordinator 仍活跃时通知路由级观察者。
@@ -878,6 +384,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   Future<void> _doInit() async {
     LanDiscoveryService? discovery;
     LanTransferService? transfer;
+    LanRelayCoordinator? relay;
     try {
       await appSettings.ensureLanIdentity();
       final deviceId = appSettings.lanDeviceId;
@@ -897,6 +404,13 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         currentDeviceId: deviceId,
         bootstrapClient: bootstrapClient,
       );
+      relay = LanRelayCoordinator(
+        appSettings: appSettings,
+        logger: logger,
+        enrollmentService: relayEnrollmentService,
+        capability: _LanRelayCapabilityAdapter(networkRuntime),
+        onChanged: _notifyIfActive,
+      );
       transfer =
           transferServiceOverride ??
           LanTransferService(
@@ -912,10 +426,8 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       _securityService = security;
       _lanStorageService = lanStorage;
       _transferService = transfer;
-      _relayEnrollmentService = relayEnrollmentService;
+      _relayCoordinator = relay;
       _networkIdentityMaterial = identity;
-      _observedRelayEndpoint = appSettings.relayEndpoint;
-      appSettings.addListener(_onAppSettingsChanged);
       _listenToTransferEvents(transfer);
       if (security.activePin == null) security.generate6DigitPin();
 
@@ -923,20 +435,19 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       if (initializeNetwork) await _startReceiverRuntime();
       _receiverActive = initializeNetwork;
       notifyListeners();
-      if (initializeNetwork) _connectConfiguredRelayInBackground();
+      if (initializeNetwork) relay.connectConfiguredInBackground();
     } catch (_) {
       await _cancelReceiverSubscriptions();
-      await transfer?.stopListening();
-      discovery?.dispose();
-      transfer?.dispose();
+      await discovery?.close();
+      await transfer?.close();
       await _disposeNetworkFacade();
+      await relay?.close();
       _discoveryService = null;
       _securityService = null;
       _lanStorageService = null;
       _transferService = null;
-      _relayEnrollmentService = null;
+      _relayCoordinator = null;
       _networkIdentityMaterial = null;
-      appSettings.removeListener(_onAppSettingsChanged);
       _initialized = false;
       _initFuture = null;
       rethrow;
@@ -1023,37 +534,11 @@ final class LanReceiverCoordinator extends ChangeNotifier {
         return;
       }
       _networkFacade = facade;
-      _networkEventSubscription = facade.events.listen(_handleNetworkEvent);
-      _connectConfiguredRelayInBackground();
+      await _relayCoordinator?.attachFacade(facade);
+      _relayCoordinator?.connectConfiguredInBackground();
     } on Object catch (error, stackTrace) {
       logger.warning(
         'Native network runtime initialization failed',
-        details: '$error\n$stackTrace',
-      );
-    }
-  }
-
-  /// 在后台尝试恢复已保存的 Relay enrollment。
-  void _connectConfiguredRelayInBackground() {
-    final endpoint = Uri.tryParse(appSettings.relayEndpoint);
-    if (endpoint == null || !_isValidRelayEndpoint(endpoint)) return;
-    _relayReconnectEnabled = true;
-    _relayExplicitlyDisconnected = false;
-    unawaited(_connectConfiguredRelayInBackgroundAsync());
-  }
-
-  Future<void> _connectConfiguredRelayInBackgroundAsync() async {
-    try {
-      final result = await _connectConfiguredRelay();
-      if (result is NetworkFailure<void>) {
-        logger.warning(
-          'Configured Relay connection failed',
-          details: result.error.toString(),
-        );
-      }
-    } on Object catch (error, stackTrace) {
-      logger.warning(
-        'Configured Relay connection failed',
         details: '$error\n$stackTrace',
       );
     }
@@ -1073,10 +558,7 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   Future<void> _disposeNetworkFacade() async {
     final facade = _networkFacade;
     _networkFacade = null;
-    _nativeRelayActive = false;
-    _relayConnectionState = RelayConnectionState.disconnected;
-    await _networkEventSubscription?.cancel();
-    _networkEventSubscription = null;
+    await _relayCoordinator?.detachFacade();
     if (facade == null) return;
     try {
       await facade.stop();
@@ -1104,21 +586,33 @@ final class LanReceiverCoordinator extends ChangeNotifier {
   Future<void> _closeResources() async {
     if (_disposed) return;
     _disposed = true;
-    _stopRelayReconnect();
-    _relayReconnectEnabled = false;
-    _relayExplicitlyDisconnected = true;
-    appSettings.removeListener(_onAppSettingsChanged);
-    await _viewModel?.shutdown();
-    _viewModel?.dispose();
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> attempt(FutureOr<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    final viewModel = _viewModel;
+    final transferService = _transferService;
+    final discoveryService = _discoveryService;
+    final relayCoordinator = _relayCoordinator;
+    await attempt(() => viewModel?.shutdown());
+    await attempt(() => viewModel?.dispose());
     _viewModel = null;
-    await _cancelReceiverSubscriptions();
-    await _transferService?.stopListening();
-    await _discoveryService?.stopAdvertising();
-    await _disposeNetworkFacade();
-    await _relayEnrollmentService?.dispose();
-    _relayEnrollmentService = null;
-    _transferService?.dispose();
-    _discoveryService?.dispose();
+    await attempt(_cancelReceiverSubscriptions);
+    await attempt(() => transferService?.stopListening());
+    await attempt(() => discoveryService?.stopAdvertising());
+    await attempt(_disposeNetworkFacade);
+    await attempt(() => relayCoordinator?.close());
+    _relayCoordinator = null;
+    await attempt(() => discoveryService?.close());
+    await attempt(() => transferService?.close());
     _transferService = null;
     _discoveryService = null;
     _securityService = null;
@@ -1126,11 +620,14 @@ final class LanReceiverCoordinator extends ChangeNotifier {
     _initialized = false;
     _receiverActive = false;
     if (!_pairingRequestController.isClosed) {
-      await _pairingRequestController.close();
+      await attempt(_pairingRequestController.close);
     }
     if (!_notifierDisposed) {
       _notifierDisposed = true;
       super.dispose();
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
     }
   }
 
@@ -1141,6 +638,24 @@ final class LanReceiverCoordinator extends ChangeNotifier {
       _notifierDisposed = true;
       super.dispose();
     }
-    unawaited(close());
+    unawaited(
+      close().catchError((Object error) {
+        logger.warning(
+          'LAN receiver cleanup failed',
+          details: 'errorType=${error.runtimeType}',
+        );
+      }),
+    );
   }
+}
+
+/// 将 App Scope Runtime 收窄为 Relay Owner 可借用的单一能力。
+final class _LanRelayCapabilityAdapter implements LanRelayCapabilityPort {
+  const _LanRelayCapabilityAdapter(this._runtime);
+
+  final NetworkRuntime _runtime;
+
+  @override
+  Future<void> ensureWebSocketRelay() =>
+      _runtime.ensureCapability(NetworkCapability.webSocketRelay);
 }

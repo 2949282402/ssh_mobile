@@ -124,13 +124,5 @@ async fn read_bounded_utf8(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn file_offer_limits_are_intentionally_bounded() {
-        assert_eq!(MAX_TRANSFER_ID_BYTES, 128);
-        assert_eq!(MAX_FILE_NAME_BYTES, 255);
-        assert_eq!(FILE_COMPLETION_ACK, 0xA1);
-    }
-}
+#[path = "tests/file_stream.rs"]
+mod tests;

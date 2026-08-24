@@ -27,11 +27,17 @@ export function AccessPage() {
   });
   const tokenRequestRef = useRef<Promise<string> | null>(null);
   const rotateAbortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+
+  const resetTokenQuery = useCallback(() => {
+    void queryClient.resetQueries({ queryKey: queryKeys.token, exact: true });
+  }, [queryClient]);
 
   const clearTokenCache = useCallback(() => {
-    queryClient.removeQueries({ queryKey: queryKeys.token, exact: true });
+    resetTokenQuery();
+    setTokenRequested(false);
     setRevealed(false);
-  }, [queryClient]);
+  }, [resetTokenQuery]);
 
   useEffect(() => {
     if (!tokenQuery.data) return undefined;
@@ -39,10 +45,15 @@ export function AccessPage() {
     return () => window.clearTimeout(timeoutId);
   }, [clearTokenCache, tokenQuery.data]);
 
-  useEffect(() => () => {
-    rotateAbortRef.current?.abort();
-    queryClient.removeQueries({ queryKey: queryKeys.token, exact: true });
-  }, [queryClient]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      rotateAbortRef.current?.abort();
+      tokenRequestRef.current = null;
+      resetTokenQuery();
+    };
+  }, [resetTokenQuery]);
 
   const ensureToken = async () => {
     const cachedToken = tokenQuery.data?.enrollment_token;
@@ -54,31 +65,40 @@ export function AccessPage() {
 
     const requestPromise = tokenQuery.refetch()
       .then((result) => {
+        if (!mountedRef.current) throw new DOMException('Access page inactive', 'AbortError');
         if (result.data?.enrollment_token) return result.data.enrollment_token;
         throw result.error instanceof Error ? result.error : new Error('无法读取 Enrollment Token。');
       })
       .finally(() => {
-        tokenRequestRef.current = null;
+        if (tokenRequestRef.current === requestPromise) {
+          tokenRequestRef.current = null;
+        }
       });
     tokenRequestRef.current = requestPromise;
     return requestPromise;
   };
 
   const rotateMutation = useMutation({
-    mutationFn: () => {
+    gcTime: 0,
+    mutationFn: async () => {
       rotateAbortRef.current?.abort();
+      tokenRequestRef.current = null;
+      clearTokenCache();
       const controller = new AbortController();
       rotateAbortRef.current = controller;
-      return accessApi.rotateToken(controller.signal);
-    },
-    onSuccess: (result) => {
+      const result = await accessApi.rotateToken(controller.signal);
+      if (!mountedRef.current) return false;
       queryClient.setQueryData(queryKeys.token, result);
+      return true;
+    },
+    onSuccess: (tokenApplied) => {
+      if (!mountedRef.current || !tokenApplied) return;
       setRevealed(true);
       setShowRotateDialog(false);
       toast.push('Enrollment Token 已重新生成。', 'success');
     },
     onError: (error) => {
-      if (isAbortError(error)) return;
+      if (!mountedRef.current || isAbortError(error)) return;
       toast.push(error instanceof ApiRequestError ? error.message : 'Token 轮换失败。', 'error');
     },
   });
@@ -90,7 +110,7 @@ export function AccessPage() {
     }
     try {
       await ensureToken();
-      setRevealed(true);
+      if (mountedRef.current) setRevealed(true);
     } catch {
       // The query error is rendered below without exposing the token or error details.
     }
@@ -99,9 +119,12 @@ export function AccessPage() {
   const handleCopy = async () => {
     try {
       const token = await ensureToken();
+      if (!mountedRef.current) return;
       await copyToClipboard(token);
+      if (!mountedRef.current) return;
       toast.push('Enrollment Token 已复制到剪贴板。', 'success');
     } catch (error) {
+      if (!mountedRef.current || isAbortError(error)) return;
       toast.push(error instanceof Error ? error.message : '复制失败。', 'error');
     }
   };
@@ -172,7 +195,7 @@ export function AccessPage() {
           <div className="info-card__list">
             <span><Check size={15} /> HttpOnly 管理员会话</span>
             <span><Check size={15} /> Relay API 同源访问</span>
-            <span><Check size={15} /> 设备状态仅驻留内存</span>
+            <span><Check size={15} /> 敏感口令仅短时内存缓存</span>
           </div>
         </section>
       </div>

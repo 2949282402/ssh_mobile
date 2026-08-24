@@ -190,43 +190,5 @@ impl SignalingStateMachine {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn signaling_state_machine_requires_offer_before_answer() {
-        let mut machine = SignalingStateMachine::default();
-        assert!(matches!(
-            machine.local_answer(),
-            Err(SignalingError::InvalidTransition(SignalingState::New))
-        ));
-        machine.local_offer().unwrap();
-        machine.remote_answer().unwrap();
-        assert_eq!(machine.state(), SignalingState::Connected);
-        assert_eq!(machine.revision(), 2);
-    }
-
-    #[test]
-    fn signaling_inputs_are_bounded_and_validated() {
-        assert!(SessionDescription::new(DescriptionType::Offer, "v=0\r\n".into()).is_ok());
-        assert!(matches!(
-            SessionDescription::new(DescriptionType::Offer, "s=invalid".into()),
-            Err(SignalingError::InvalidDescription)
-        ));
-        assert!(IceCandidate::new("candidate:1".into(), None, Some(0), None).is_ok());
-        assert!(matches!(
-            IceCandidate::new("invalid".into(), None, None, None),
-            Err(SignalingError::InvalidCandidate)
-        ));
-    }
-
-    #[test]
-    fn remote_offer_can_start_a_new_generation_after_a_local_answer() {
-        let mut machine = SignalingStateMachine::default();
-        machine.remote_offer().unwrap();
-        machine.local_answer().unwrap();
-        machine.remote_offer().unwrap();
-        assert_eq!(machine.state(), SignalingState::RemoteOffer);
-        assert_eq!(machine.revision(), 3);
-    }
-}
+#[path = "tests/signaling.rs"]
+mod tests;

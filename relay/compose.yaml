@@ -13,7 +13,6 @@ services:
       RELAY_ENROLLMENT_TOKEN: ${RELAY_ENROLLMENT_TOKEN:?set a one-time enrollment token}
       RELAY_CREDENTIAL_KEY: ${RELAY_CREDENTIAL_KEY:?set a base64url 32-byte signing key}
       RELAY_CREDENTIAL_TTL: ${RELAY_CREDENTIAL_TTL:?set credential ttl}
-      RELAY_SESSION_TTL: ${RELAY_SESSION_TTL:?set session ttl}
       RELAY_ADMIN_SESSION_TTL: ${RELAY_ADMIN_SESSION_TTL:?set admin session ttl}
       RELAY_MAX_CONNECTIONS: ${RELAY_MAX_CONNECTIONS:?set max connections}
       RELAY_MAX_ENROLLED_DEVICES: ${RELAY_MAX_ENROLLED_DEVICES:?set max enrolled devices}
@@ -33,6 +32,9 @@ services:
       RELAY_HTTP_IDLE_TIMEOUT: ${RELAY_HTTP_IDLE_TIMEOUT:?set HTTP idle timeout}
       RELAY_HTTP_MAX_HEADER_BYTES: ${RELAY_HTTP_MAX_HEADER_BYTES:?set HTTP max header bytes}
       RELAY_TRUSTED_PROXY_CIDRS: ${RELAY_TRUSTED_PROXY_CIDRS:-}
+      # The reservation endpoint is advertised to devices and must be the
+      # externally reachable Caddy origin, never the internal Relay socket.
+      RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:?set the externally reachable Relay origin}
       RELAY_ADMIN_USER: ${RELAY_ADMIN_USER:?set the dashboard administrator username}
       RELAY_ADMIN_PASSWORD: ${RELAY_ADMIN_PASSWORD:?set a dashboard password with at least 12 characters}
       # Storage backend: "memory" (default) or "mysql". mysql requires the
@@ -42,10 +44,12 @@ services:
       RELAY_STORAGE_MODE: ${RELAY_STORAGE_MODE:-memory}
       RELAY_DATABASE_URL: ${RELAY_DATABASE_URL:-}
       RELAY_REDIS_URL: ${RELAY_REDIS_URL:-}
+      RELAY_REDIS_PASSWORD: ${RELAY_REDIS_PASSWORD:-}
       RELAY_INSTANCE_ID: ${RELAY_INSTANCE_ID:-}
       RELAY_PRESENCE_TTL: ${RELAY_PRESENCE_TTL:-60s}
     networks:
       - relay_internal
+      - relay_state
 
   # MySQL storage for durable enrollment/revocation (RELAY_STORAGE_MODE=mysql).
   # Start with: docker compose --profile storage up -d
@@ -60,11 +64,13 @@ services:
       # image fails loudly at startup if no root password is provided.
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-relay}
+      MYSQL_USER: ${MYSQL_USER:-relay}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-}
       TZ: UTC
     volumes:
       - relay_mysql_data:/var/lib/mysql
     networks:
-      - relay_internal
+      - relay_state
 
   # Redis state layer (shared presence, nonce, admin sessions, events).
   redis:
@@ -73,13 +79,28 @@ services:
     restart: unless-stopped
     expose:
       - "6379"
-    # Bound memory so a nonce/presence key buildup can never OOM the instance;
-    # eviction under pressure degrades replay protection, never the process.
-    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    environment:
+      # Keep memory-only Compose interpolation valid while the storage profile
+      # is inactive. The command below rejects a missing/short password before
+      # Redis starts whenever this service is actually enabled.
+      REDIS_PASSWORD: ${RELAY_REDIS_PASSWORD:-}
+    # Security state must never be silently evicted: when bounded memory is
+    # exhausted Redis rejects writes and Relay fails closed. The password is
+    # expanded inside the container rather than embedded in the image or URL.
+    command:
+      - sh
+      - -ec
+      - >-
+        if [ "$${#REDIS_PASSWORD}" -lt 16 ]; then
+          echo "RELAY_REDIS_PASSWORD must contain at least 16 characters" >&2;
+          exit 1;
+        fi;
+        exec redis-server --maxmemory 128mb --maxmemory-policy noeviction
+        --requirepass "$$REDIS_PASSWORD"
     volumes:
       - relay_redis_data:/data
     networks:
-      - relay_internal
+      - relay_state
 
   front:
     build:
@@ -119,13 +140,15 @@ services:
     # headers for per-client rate limiting.
     networks:
       relay_internal:
-        ipv4_address: 172.30.0.10
+        ipv4_address: ${RELAY_CADDY_IP:-172.30.0.10}
 
 networks:
   relay_internal:
     ipam:
       config:
-        - subnet: 172.30.0.0/24
+        - subnet: ${RELAY_NETWORK_SUBNET:-172.30.0.0/24}
+  relay_state:
+    internal: true
 
 volumes:
   caddy_data:

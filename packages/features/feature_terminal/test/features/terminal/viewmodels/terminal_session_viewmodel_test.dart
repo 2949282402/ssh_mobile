@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_terminal/feature_terminal.dart';
+import 'package:ssh_core/ssh_core.dart';
 import 'package:xterm/xterm.dart';
 
 import '../../../fakes/terminal_test_fakes.dart';
@@ -164,5 +167,93 @@ void main() {
 
       expect(terminal.sentData, ['\x01', '\x1bb']);
     });
+
+    test(
+      'bounds live output retained while history loading is delayed',
+      () async {
+        final output = StreamController<String>.broadcast(sync: true);
+        final history = Completer<String>();
+        terminal = FakeTerminalCapability(
+          sessions: <SshTerminalSession>[
+            SshTerminalSession(
+              id: 'session_123',
+              connectionId: 'conn_123',
+              connectionName: 'server',
+              displayName: 'window',
+              tmuxSessionName: null,
+              tmuxAutoDeleteSeconds: null,
+              fontSize: 13,
+              state: SshConnectionState.connected,
+              errorMessage: null,
+              createdAt: DateTime(2026),
+              updatedAt: DateTime(2026),
+              output: output.stream,
+              outputText: '',
+              estimatedMemoryBytes: 0,
+            ),
+          ],
+        )..historyLoader = (_) => history.future;
+        sshManager = FakeSshSessionManager(terminal);
+        final viewModel = TerminalSessionViewModel(
+          sshSessionManager: sshManager,
+          sessionId: 'session_123',
+          connectionId: 'conn_123',
+        );
+        addTearDown(viewModel.dispose);
+        addTearDown(output.close);
+        await Future<void>.delayed(Duration.zero);
+
+        output.add('begin-${_repeat('x', 240000)}-end\r\n');
+        history.complete('');
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+
+        final rendered = viewModel.terminal.buffer.getText();
+        expect(rendered, isNot(contains('begin-')));
+        expect(rendered, contains('-end'));
+      },
+    );
+
+    test('redacts sensitive asynchronous stream errors', () async {
+      final output = StreamController<String>.broadcast(sync: true);
+      terminal = FakeTerminalCapability(
+        sessions: <SshTerminalSession>[
+          SshTerminalSession(
+            id: 'session_123',
+            connectionId: 'conn_123',
+            connectionName: 'server',
+            displayName: 'window',
+            tmuxSessionName: null,
+            tmuxAutoDeleteSeconds: null,
+            fontSize: 13,
+            state: SshConnectionState.connected,
+            errorMessage: null,
+            createdAt: DateTime(2026),
+            updatedAt: DateTime(2026),
+            output: output.stream,
+            outputText: 'ready',
+            estimatedMemoryBytes: 0,
+          ),
+        ],
+      );
+      sshManager = FakeSshSessionManager(terminal);
+      final viewModel = TerminalSessionViewModel(
+        sshSessionManager: sshManager,
+        sessionId: 'session_123',
+        connectionId: 'conn_123',
+      );
+      addTearDown(viewModel.dispose);
+      addTearDown(output.close);
+      await Future<void>.delayed(Duration.zero);
+
+      output.addError(StateError('password=hunter2'));
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+
+      final rendered = viewModel.terminal.buffer.getText();
+      expect(rendered, contains('password=[REDACTED]'));
+      expect(rendered, isNot(contains('hunter2')));
+    });
   });
 }
+
+String _repeat(String value, int count) =>
+    List<String>.filled(count, value, growable: false).join();

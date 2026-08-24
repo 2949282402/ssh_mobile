@@ -54,15 +54,5 @@ fn is_global_unicast_v6(ip: Ipv6Addr) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn never_advertises_unspecified_or_loopback_addresses() {
-        assert!(!is_advertisable("0.0.0.0".parse().unwrap()));
-        assert!(!is_advertisable("127.0.0.1".parse().unwrap()));
-        assert!(!is_advertisable("::".parse().unwrap()));
-        assert!(!is_advertisable("::1".parse().unwrap()));
-        assert!(is_advertisable("192.168.1.20".parse().unwrap()));
-    }
-}
+#[path = "tests/discovery.rs"]
+mod tests;

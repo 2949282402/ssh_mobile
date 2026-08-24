@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nsd/nsd.dart' as nsd;
 import 'package:feature_lan_share/feature_lan_share.dart';
+import 'package:network_sdk/network_sdk.dart';
 
 class _RecordingLanDiscoveryService extends LanDiscoveryService {
   final List<int> startedPorts = [];
@@ -95,6 +96,20 @@ void main() {
     },
   );
 
+  test('repeated advertising start releases the previous generation', () async {
+    final discovery = _RecordingLanDiscoveryService();
+
+    await discovery.startAdvertising(port: 61443);
+    await discovery.startAdvertising(port: 61444);
+
+    expect(discovery.startedPorts, [61443, 61444]);
+    expect(discovery.stopCount, 1);
+    expect(discovery.advertisedPort, 61444);
+
+    await discovery.close();
+    expect(discovery.stopCount, 2);
+  });
+
   test('UDP PING advertises the native HTTPS port', () {
     final payload = LanDiscoveryService.createUdpPingPayload(
       deviceId: 'local-device',
@@ -186,6 +201,32 @@ void main() {
       expect(multicastLock.isHeld, isFalse);
 
       discovery.dispose();
+    },
+  );
+
+  test(
+    'close waits for an in-flight discovery start and rejects restart',
+    () async {
+      final multicastLock = _RecordingMulticastLock();
+      final discovery = _ControllableLanDiscoveryService(
+        multicastLock: multicastLock,
+      );
+      final start = discovery.startDiscovery();
+      await _waitUntil(() => discovery.pendingStarts.length == 1);
+
+      var closeCompleted = false;
+      final closing = discovery.close().whenComplete(
+        () => closeCompleted = true,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(closeCompleted, isFalse);
+
+      discovery.pendingStarts.single.complete(nsd.Discovery('late-session'));
+      await Future.wait([start, closing]);
+
+      expect(discovery.stoppedDiscoveryIds, ['late-session']);
+      expect(multicastLock.isHeld, isFalse);
+      expect(await discovery.startDiscovery(), isA<NetworkFailure<void>>());
     },
   );
 }

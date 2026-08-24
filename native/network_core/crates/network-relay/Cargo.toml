@@ -3,6 +3,16 @@ name = "network-relay"
 version = "0.1.0"
 edition = "2021"
 
+[[test]]
+name = "relay_control_client_integration"
+path = "tests/relay_control_client_integration.rs"
+required-features = ["test-support"]
+
+[[test]]
+name = "client_backend_e2e"
+path = "tests/client_backend_e2e.rs"
+required-features = ["test-support"]
+
 [features]
 test-support = []
 
@@ -20,3 +30,6 @@ ed25519-dalek = "2.1"
 rand = "0.8"
 url = "2.5"
 hex = "0.4"
+
+[dev-dependencies]
+tokio = { version = "1.38", features = ["test-util"] }

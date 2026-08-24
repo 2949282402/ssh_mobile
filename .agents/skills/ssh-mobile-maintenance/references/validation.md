@@ -1,4 +1,4 @@
-> Last updated: 2026-08-14
+> Last updated: 2026-08-23
 
 # Validation Matrix
 
@@ -17,6 +17,28 @@ Windows drive. Prefer the Linux `go`/`cargo`/`flutter`/`dart`/`node` on the WSL
 PATH. When a required check cannot run under the WSL Linux toolchain, report the
 exact command and reason instead of falling back to a Windows binary.
 
+Windows-native validation is a separate, explicit environment rather than a
+WSL escape hatch:
+
+- Keep WSL as the source of truth for Linux CI, `full_test.sh`, and ordinary
+  format/analyze/test/build checks. Do not invoke `powershell.exe`, `cmd.exe`,
+  Windows `.bat`/`.cmd` launchers, or Windows `dart`/`flutter`/`cargo`/`go`/`node`
+  binaries from those WSL checks.
+- Use a native Windows PowerShell 7 (`pwsh.exe`) session or a `windows-latest` CI job only
+  for checks that genuinely need Windows, such as the App client coverage run
+  when the WSL Flutter VM Service is unavailable. Report that result as a
+  Windows check; it does not turn a skipped WSL check into a Linux pass.
+- Keep the Windows toolchain aligned with the repository pins (currently
+  Flutter 3.47.0/Dart 3.13.0 and Rust 1.97.1 MSVC). Run
+  [`scripts/configure_windows_toolchain.ps1`](../../../../scripts/configure_windows_toolchain.ps1)
+  from native PowerShell 7 with an explicit `-FlutterRoot`; its default is
+  process-scoped and `-PersistUserPath` is the only option that changes the
+  user PATH.
+- Keep OS-specific `PATH`, `PUB_CACHE`, `.dart_tool`, Cargo/Rustup caches, and
+  temporary directories isolated. Native Windows coverage must use a native
+  `TEMP`/`TMP` path and clear an inherited WSL `TMPDIR`; never share Linux
+  build artifacts or package caches with Windows tooling.
+
 ## Always
 
 ```bash
@@ -26,6 +48,34 @@ git status --short
 
 Review the final diff for unrelated work, secrets, generated noise, stale
 documentation, and accidental public API/dependency changes.
+
+## New production source files
+
+Every newly added hand-written production source file requires corresponding
+independent tests in the owning test directory and at least 90% file-level
+line coverage. The 90% rule is stricter than the aggregate owner thresholds in
+the coverage scripts. Generated output, documentation, configuration,
+test-only files, and platform boilerplate without coverable business logic may
+be excluded only when the owner report records the reason; otherwise the
+change is incomplete.
+
+## Repository local CI
+
+Use [`scripts/full_test.sh`](../../../../scripts/full_test.sh) as the WSL entry
+point for the Linux-runnable CI gates spanning the Front, SDK/native/protocol,
+Relay, architecture, Core/Feature, Full App, and Android owners:
+
+```bash
+bash scripts/full_test.sh
+```
+
+For repeat runs with unchanged dependencies, `--no-bootstrap` avoids redundant
+dependency installation. The script's default WSL profile keeps known
+platform/toolchain gaps explicit; a `GAP` is incomplete validation, not a
+passing check. When tests, package membership, project structure, CI jobs,
+generated checks, exclusions, timeouts, or Linux environment assumptions
+change, update `scripts/full_test.sh` in the same change and run the affected
+jobs with `--only` before broader validation.
 
 ## Formatting
 

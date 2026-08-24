@@ -41,6 +41,9 @@ extension AiChatGenerationActions on AiChatViewModel {
     required AiRuntimeConnectionSnapshot runtimeConnection,
     required AppLanguage language,
   }) async {
+    final generationCompletion = Completer<void>();
+    final generationBarrier = generationCompletion.future;
+    _generationOperations.add(generationBarrier);
     final cancellationToken = LlmCancellationToken();
     _activeCancellationToken = cancellationToken;
     _activeGenerationChatId = chatId;
@@ -51,7 +54,7 @@ extension AiChatGenerationActions on AiChatViewModel {
 
     try {
       final settings = runtimeConnection.settings;
-      if (_deletedGenerationChatIds.contains(chatId)) return;
+      if (_generationCannotPublish(chatId)) return;
       final modelProfile = AgentModelProfile(
         mainModel: model,
         helperModel: settings.helperModel,
@@ -119,14 +122,14 @@ extension AiChatGenerationActions on AiChatViewModel {
           );
         },
       );
-      if (_deletedGenerationChatIds.contains(chatId)) return;
+      if (_generationCannotPublish(chatId)) return;
 
       if (runResult is AiChatRunSuccess) {
         final currentChat = await _reconciledChatForRun(
           chatId: chatId,
           fallback: initialChat,
         );
-        if (_deletedGenerationChatIds.contains(chatId)) return;
+        if (_generationCannotPublish(chatId)) return;
         final completedMessages = [...currentChat.messages];
         final assistantIndex = completedMessages.indexWhere(
           (message) =>
@@ -185,6 +188,7 @@ extension AiChatGenerationActions on AiChatViewModel {
         _sending = false;
         notify();
         await _storageService.saveAiChat(answeredChat);
+        if (_closing) return;
         if (_deletedGenerationChatIds.contains(chatId)) {
           await _storageService.deleteAiChat(chatId);
           return;
@@ -209,7 +213,7 @@ extension AiChatGenerationActions on AiChatViewModel {
           chatId: chatId,
           fallback: initialChat,
         );
-        if (_deletedGenerationChatIds.contains(chatId)) return;
+        if (_generationCannotPublish(chatId)) return;
         final cancelledMessages = [...currentChat.messages];
         final assistantIndex = cancelledMessages.indexWhere(
           (message) =>
@@ -253,6 +257,7 @@ extension AiChatGenerationActions on AiChatViewModel {
         _sending = false;
         notify();
         await _storageService.saveAiChat(cancelledChat);
+        if (_closing) return;
         if (_deletedGenerationChatIds.contains(chatId)) {
           await _storageService.deleteAiChat(chatId);
           return;
@@ -272,7 +277,7 @@ extension AiChatGenerationActions on AiChatViewModel {
           chatId: chatId,
           fallback: initialChat,
         );
-        if (_deletedGenerationChatIds.contains(chatId)) return;
+        if (_generationCannotPublish(chatId)) return;
         final errorMessages = [...currentChat.messages];
         final assistantIndex = errorMessages.indexWhere(
           (message) =>
@@ -336,6 +341,7 @@ extension AiChatGenerationActions on AiChatViewModel {
         _sending = false;
         notify();
         await _storageService.saveAiChat(errorChat);
+        if (_closing) return;
         if (_deletedGenerationChatIds.contains(chatId)) {
           await _storageService.deleteAiChat(chatId);
           return;
@@ -352,7 +358,7 @@ extension AiChatGenerationActions on AiChatViewModel {
         );
       }
     } catch (e, stackTrace) {
-      if (!_deletedGenerationChatIds.contains(chatId)) {
+      if (!_generationCannotPublish(chatId)) {
         AppLogService.instance.error(
           'LLM chat UI request failed unexpectedly',
           error: e,
@@ -378,6 +384,11 @@ extension AiChatGenerationActions on AiChatViewModel {
       _deletedGenerationChatIds.remove(chatId);
       notify();
       _triggerScroll();
+      _generationOperations.remove(generationBarrier);
+      if (!generationCompletion.isCompleted) generationCompletion.complete();
     }
   }
+
+  bool _generationCannotPublish(String chatId) =>
+      _closing || _deletedGenerationChatIds.contains(chatId);
 }

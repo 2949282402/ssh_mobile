@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -15,8 +16,18 @@ import (
 // TestOpenMySQLStoreRequiresParseTime verifies startup rejects a DSN that would
 // silently break time.Scan at runtime.
 func TestOpenMySQLStoreRequiresParseTime(t *testing.T) {
-	if _, err := openMySQLStore(context.Background(), "root:pw@tcp(127.0.0.1:3306)/relay", 100); err == nil {
-		t.Fatal("DSN without parseTime=true was accepted")
+	_, err := openMySQLStore(context.Background(), "root:pw@tcp(127.0.0.1:3306)/relay", 100)
+	if err == nil || !strings.Contains(err.Error(), "must include parseTime=true") {
+		t.Fatalf("expected parseTime validation error before dialing, got %v", err)
+	}
+}
+
+// TestOpenMySQLStoreRequiresUTCLocation verifies durable generations cannot be
+// interpreted in a process-local timezone that differs across Relay instances.
+func TestOpenMySQLStoreRequiresUTCLocation(t *testing.T) {
+	_, err := openMySQLStore(context.Background(), "root:pw@tcp(127.0.0.1:3306)/relay?parseTime=true&loc=Local", 100)
+	if err == nil || !strings.Contains(err.Error(), "location must be UTC") {
+		t.Fatalf("expected UTC location validation error before dialing, got %v", err)
 	}
 }
 
@@ -63,9 +74,9 @@ func TestReconcileRevocationsDisconnectsRevokedDevice(t *testing.T) {
 	}
 	injectPeer(server.hub, "device-a")
 
-	recorded, err := server.store.RecordRevocation(ctx, "device-a", time.Now().Add(time.Hour))
-	if err != nil || !recorded {
-		t.Fatalf("revoke failed: recorded=%v err=%v", recorded, err)
+	outcome, _, err := server.store.RevokeEnrollment(ctx, "device-a", time.Hour)
+	if err != nil || outcome != revokeOK {
+		t.Fatalf("revoke failed: outcome=%v err=%v", outcome, err)
 	}
 
 	server.reconcileRevocationsOnce()

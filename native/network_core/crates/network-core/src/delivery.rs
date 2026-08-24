@@ -4,12 +4,13 @@
 //! handle。Connection 恢复后由上层取出 `RecoverySnapshot`，在当前 transport
 //! 上重新发送；因此 ACK、去重和重试不会绑定到某一条已失效的 Connection。
 //!
-//! transport-network v2（§19/§20）：跨连接稳定的是业务身份 **MessageId +
-//! ChannelId**（以及其所属的 Peer），**不是** Transport Connection 或
+//! transport-network v2（§19/§20）：跨连接稳定的是业务身份 **PeerId +
+//! MessageId + ChannelId**，**不是** Transport Connection 或
 //! ConnectionSession。Step 8 之后 Session 与 connection 一一对应且可销毁：
 //! 新连接 = 新 SessionId + 新 Noise root。因此本 manager 的 pending / dedup /
 //! ordered 状态全部按 **Peer 业务作用域** 保存，绝不用每个连接的 SessionId
-//! 作 key；`MessageId` 是 ACK 与去重的稳定键。连接丢失时本 manager 不会清空
+//! 作 key；`DeliveryIdentity`（PeerId + MessageId）是发送端 ACK 的稳定键。
+//! 连接丢失时本 manager 不会清空
 //! 这些状态，未 ACK 的消息会在新连接上以**同一个 MessageId** 重新发送，
 //! 由接收端按 MessageId 去重（§20）。
 
@@ -19,10 +20,31 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
-use crate::crypto::CryptoMode;
-
 const MAX_SCOPE_ID_BYTES: usize = 128;
 const MESSAGE_ID_BYTES: usize = 16;
+const MAX_TERMINAL_OUTCOMES: usize = 4096;
+
+/// Stable business recovery categories shared by Delivery, Transfer, and
+/// ReliableStream.  These names deliberately do not depend on a transport or
+/// protocol implementation so callers can retain business meaning across a
+/// fresh ConnectionSession.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub(crate) enum BusinessRecoveryError {
+    #[error("RecoverableTransportLoss")]
+    RecoverableTransportLoss,
+    #[error("OperationExpired")]
+    OperationExpired,
+    #[error("ResumeRejected")]
+    ResumeRejected,
+}
+
+pub(crate) fn is_valid_peer_id(peer_id: &str) -> bool {
+    is_valid_scope_id(peer_id)
+}
+
+fn is_valid_scope_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= MAX_SCOPE_ID_BYTES
+}
 
 /// 应用 handler 的 ACK 超时是独立的生命周期策略，不能复用 processed dedup
 /// 的 TTL。超时由 Delivery owner 显式扫描；严格有序通道会进入 Failed，不能
@@ -40,6 +62,28 @@ impl MessageId {
 
     pub fn to_bytes(self) -> [u8; MESSAGE_ID_BYTES] {
         self.0
+    }
+}
+
+/// Frozen Delivery identity. A transport/session or path is deliberately not
+/// part of this key; each send attempt may acquire and release its own path
+/// lease while the ACK wait remains peer-scoped.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct DeliveryIdentity {
+    pub peer_id: String,
+    pub message_id: MessageId,
+}
+
+impl DeliveryIdentity {
+    pub fn new(peer_id: impl Into<String>, message_id: MessageId) -> Result<Self, DeliveryError> {
+        let peer_id = peer_id.into();
+        if !is_valid_peer_id(&peer_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        Ok(Self {
+            peer_id,
+            message_id,
+        })
     }
 }
 
@@ -115,9 +159,6 @@ pub struct PendingMessage {
     pub channel_id: String,
     pub sequence: u64,
     pub payload: Vec<u8>,
-    /// Logical plaintext mode. The payload itself is never replaced with a
-    /// Route-specific ciphertext while it waits for retry/recovery.
-    pub(crate) crypto_mode: CryptoMode,
     pub policy: DeliveryPolicy,
     pub state: DeliveryState,
     pub attempts: u32,
@@ -169,9 +210,19 @@ pub enum RetryDecision {
     NotFound,
 }
 
+impl RetryDecision {
+    pub(crate) fn recovery_error(self) -> Option<BusinessRecoveryError> {
+        match self {
+            Self::RetryAt(_) => Some(BusinessRecoveryError::RecoverableTransportLoss),
+            Self::Failed | Self::Expired => Some(BusinessRecoveryError::OperationExpired),
+            Self::NotFound => None,
+        }
+    }
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DeliveryError {
-    #[error("session and channel identifiers are required")]
+    #[error("peer and channel identifiers are required")]
     InvalidScope,
     #[error("message payload exceeds the delivery limit")]
     PayloadTooLarge,
@@ -185,6 +236,35 @@ pub enum DeliveryError {
     Expired,
     #[error("message retry budget exhausted")]
     RetryExhausted,
+}
+
+impl DeliveryError {
+    pub(crate) fn recovery_error(&self) -> Option<BusinessRecoveryError> {
+        match self {
+            Self::Expired | Self::RetryExhausted => Some(BusinessRecoveryError::OperationExpired),
+            _ => None,
+        }
+    }
+}
+
+/// The single terminal transition an acknowledged reliable message may make.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DeliveryTerminalOutcome {
+    Acknowledged,
+    Expired,
+    Cancelled,
+    Failed,
+}
+
+/// A peer-scoped lease for one transport send attempt.  The attempt number is
+/// checked on completion so a late result from an older attempt cannot settle
+/// a newer one.
+#[derive(Clone, Debug)]
+pub(crate) struct DeliverySendAttempt {
+    pub(crate) peer_id: String,
+    pub(crate) message_id: MessageId,
+    pub(crate) attempt: u32,
+    pub(crate) message: PendingMessage,
 }
 
 /// Delivery 队列和去重窗口的边界。
@@ -357,8 +437,9 @@ pub(crate) struct IncomingTimeout {
 }
 
 struct DeliveryStore {
-    pending: HashMap<MessageId, PendingMessage>,
+    pending: HashMap<DeliveryIdentity, PendingMessage>,
     pending_bytes: usize,
+    terminal_outcomes: HashMap<DeliveryIdentity, DeliveryTerminalOutcome>,
     next_sequences: HashMap<(String, String), u64>,
     /// Peer 作用域连接代数（每次 Connection Ready 递增一次）。只用于 wire。
     recovery_epochs: HashMap<String, u64>,
@@ -375,6 +456,7 @@ impl DeliveryStore {
         Self {
             pending: HashMap::new(),
             pending_bytes: 0,
+            terminal_outcomes: HashMap::new(),
             next_sequences: HashMap::new(),
             recovery_epochs: HashMap::new(),
             incoming_active: HashMap::new(),
@@ -443,34 +525,11 @@ impl DeliveryManager {
         policy: DeliveryPolicy,
         retry_policy: RetryPolicy,
     ) -> Result<PendingMessage, DeliveryError> {
-        self.enqueue_with_crypto(
+        self.enqueue_at_inner(
             peer_id,
             channel_id,
             payload,
             policy,
-            CryptoMode::E2ee,
-            retry_policy,
-        )
-        .await
-    }
-
-    /// Enqueue logical plaintext together with its application crypto mode.
-    /// Every later send derives a fresh ciphertext from this stored plaintext.
-    pub(crate) async fn enqueue_with_crypto(
-        &self,
-        peer_id: &str,
-        channel_id: &str,
-        payload: Vec<u8>,
-        policy: DeliveryPolicy,
-        crypto_mode: CryptoMode,
-        retry_policy: RetryPolicy,
-    ) -> Result<PendingMessage, DeliveryError> {
-        self.enqueue_at_with_crypto(
-            peer_id,
-            channel_id,
-            payload,
-            policy,
-            crypto_mode,
             retry_policy,
             Instant::now(),
         )
@@ -487,34 +546,20 @@ impl DeliveryManager {
         retry_policy: RetryPolicy,
         now: Instant,
     ) -> Result<PendingMessage, DeliveryError> {
-        self.enqueue_at_with_crypto(
-            peer_id,
-            channel_id,
-            payload,
-            policy,
-            CryptoMode::E2ee,
-            retry_policy,
-            now,
-        )
-        .await
+        self.enqueue_at_inner(peer_id, channel_id, payload, policy, retry_policy, now)
+            .await
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn enqueue_at_with_crypto(
+    async fn enqueue_at_inner(
         &self,
         peer_id: &str,
         channel_id: &str,
         payload: Vec<u8>,
         policy: DeliveryPolicy,
-        crypto_mode: CryptoMode,
         retry_policy: RetryPolicy,
         now: Instant,
     ) -> Result<PendingMessage, DeliveryError> {
-        if peer_id.is_empty()
-            || channel_id.is_empty()
-            || peer_id.len() > MAX_SCOPE_ID_BYTES
-            || channel_id.len() > MAX_SCOPE_ID_BYTES
-        {
+        if !is_valid_scope_id(peer_id) || !is_valid_scope_id(channel_id) {
             return Err(DeliveryError::InvalidScope);
         }
         if payload.len() > self.config.max_payload_bytes {
@@ -534,10 +579,12 @@ impl DeliveryManager {
                         && message.channel_id == channel_id
                         && message.policy == DeliveryPolicy::LatestState
                 })
-                .map(|(message_id, _)| *message_id)
+                .map(|(identity, _)| identity.clone())
                 .collect::<Vec<_>>();
-            for message_id in obsolete {
-                remove_pending(&mut store, &message_id);
+            for identity in obsolete {
+                if remove_pending(&mut store, &identity).is_some() {
+                    record_terminal(&mut store, identity, DeliveryTerminalOutcome::Cancelled);
+                }
             }
         }
         if policy != DeliveryPolicy::BestEffort
@@ -557,14 +604,13 @@ impl DeliveryManager {
             .get(peer_id)
             .copied()
             .unwrap_or_default();
-        let message_id = next_message_id(&store.pending);
+        let message_id = next_message_id(peer_id, &store.pending, &store.terminal_outcomes);
         let message = PendingMessage {
             message_id,
             peer_id: peer_id.to_string(),
             channel_id: channel_id.to_string(),
             sequence: message_sequence,
             payload,
-            crypto_mode,
             policy,
             state: DeliveryState::Queued,
             attempts: 0,
@@ -577,7 +623,13 @@ impl DeliveryManager {
         };
         if policy != DeliveryPolicy::BestEffort {
             store.pending_bytes += message.payload.len();
-            store.pending.insert(message_id, message.clone());
+            store.pending.insert(
+                DeliveryIdentity {
+                    peer_id: peer_id.to_string(),
+                    message_id,
+                },
+                message.clone(),
+            );
         }
         Ok(message)
     }
@@ -588,15 +640,65 @@ impl DeliveryManager {
         message_id: MessageId,
         now: Instant,
     ) -> Result<Option<PendingMessage>, DeliveryError> {
+        self.begin_send_inner(None, message_id, now).await
+    }
+
+    /// Peer-scoped form of [`Self::begin_send`].  A caller that owns a
+    /// business operation must provide the peer identity explicitly; a
+    /// MessageId alone is not sufficient to claim a send lease.
+    pub(crate) async fn begin_send_for_peer(
+        &self,
+        peer_id: &str,
+        message_id: MessageId,
+        now: Instant,
+    ) -> Result<Option<DeliverySendAttempt>, DeliveryError> {
+        if !is_valid_peer_id(peer_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        let message = self
+            .begin_send_inner(Some(peer_id), message_id, now)
+            .await?;
+        Ok(message.map(|message| DeliverySendAttempt {
+            peer_id: peer_id.to_string(),
+            message_id,
+            attempt: message.attempts,
+            message,
+        }))
+    }
+
+    async fn begin_send_inner(
+        &self,
+        expected_peer_id: Option<&str>,
+        message_id: MessageId,
+        now: Instant,
+    ) -> Result<Option<PendingMessage>, DeliveryError> {
         let mut store = self.store.lock().await;
-        let Some(existing) = store.pending.get(&message_id) else {
+        if let Some(peer_id) = expected_peer_id {
+            let scoped_identity = DeliveryIdentity {
+                peer_id: peer_id.to_string(),
+                message_id,
+            };
+            if !store.pending.contains_key(&scoped_identity)
+                && store
+                    .pending
+                    .keys()
+                    .any(|identity| identity.message_id == message_id)
+            {
+                return Err(DeliveryError::InvalidScope);
+            }
+        }
+        let Some(identity) = resolve_pending_identity(&store, expected_peer_id, message_id) else {
+            return Err(DeliveryError::NotFound);
+        };
+        let Some(existing) = store.pending.get(&identity) else {
             return Err(DeliveryError::NotFound);
         };
         if is_expired(existing, now) {
-            remove_pending(&mut store, &message_id);
+            remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Expired);
             return Err(DeliveryError::Expired);
         }
-        let Some(message) = store.pending.get_mut(&message_id) else {
+        let Some(message) = store.pending.get_mut(&identity) else {
             return Err(DeliveryError::NotFound);
         };
         if matches!(message.state, DeliveryState::Sending) {
@@ -614,7 +716,8 @@ impl DeliveryManager {
         let next_attempt = message.attempts.saturating_add(1);
         if next_attempt > message.retry_policy.max_attempts {
             message.state = DeliveryState::Failed;
-            let _ = remove_pending(&mut store, &message_id);
+            let _ = remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Failed);
             return Err(DeliveryError::RetryExhausted);
         }
         let retry_bytes = message
@@ -626,7 +729,8 @@ impl DeliveryManager {
             .is_some_and(|limit| retry_bytes > limit)
         {
             message.state = DeliveryState::Failed;
-            let _ = remove_pending(&mut store, &message_id);
+            let _ = remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Failed);
             return Err(DeliveryError::RetryExhausted);
         }
         message.attempts = next_attempt;
@@ -637,11 +741,40 @@ impl DeliveryManager {
 
     /// 传输层成功写出消息后等待应用 ACK。
     pub async fn mark_sent(&self, message_id: MessageId, now: Instant) -> bool {
+        self.mark_sent_inner(None, None, message_id, now).await
+    }
+
+    pub(crate) async fn mark_sent_for_attempt(
+        &self,
+        attempt: &DeliverySendAttempt,
+        now: Instant,
+    ) -> bool {
+        self.mark_sent_inner(
+            Some(&attempt.peer_id),
+            Some(attempt.attempt),
+            attempt.message_id,
+            now,
+        )
+        .await
+    }
+
+    async fn mark_sent_inner(
+        &self,
+        expected_peer_id: Option<&str>,
+        expected_attempt: Option<u32>,
+        message_id: MessageId,
+        now: Instant,
+    ) -> bool {
         let mut store = self.store.lock().await;
-        let Some(message) = store.pending.get_mut(&message_id) else {
+        let Some(identity) = resolve_pending_identity(&store, expected_peer_id, message_id) else {
             return false;
         };
-        if message.state != DeliveryState::Sending {
+        let Some(message) = store.pending.get_mut(&identity) else {
+            return false;
+        };
+        if message.state != DeliveryState::Sending
+            || expected_attempt.is_some_and(|attempt| message.attempts != attempt)
+        {
             return false;
         }
         message.state = DeliveryState::SentUnacked;
@@ -651,17 +784,54 @@ impl DeliveryManager {
 
     /// 传输层写失败后回到 Pending，或耗尽预算进入 Failed。
     pub async fn mark_send_failed(&self, message_id: MessageId, now: Instant) -> RetryDecision {
+        self.mark_send_failed_inner(None, None, message_id, now)
+            .await
+    }
+
+    pub(crate) async fn mark_send_failed_for_attempt(
+        &self,
+        attempt: &DeliverySendAttempt,
+        now: Instant,
+    ) -> RetryDecision {
+        self.mark_send_failed_inner(
+            Some(&attempt.peer_id),
+            Some(attempt.attempt),
+            attempt.message_id,
+            now,
+        )
+        .await
+    }
+
+    async fn mark_send_failed_inner(
+        &self,
+        expected_peer_id: Option<&str>,
+        expected_attempt: Option<u32>,
+        message_id: MessageId,
+        now: Instant,
+    ) -> RetryDecision {
         let mut store = self.store.lock().await;
-        let Some(existing) = store.pending.get(&message_id) else {
+        let Some(identity) = resolve_pending_identity(&store, expected_peer_id, message_id) else {
+            return RetryDecision::NotFound;
+        };
+        let Some(existing) = store.pending.get(&identity) else {
             return RetryDecision::NotFound;
         };
         if is_expired(existing, now) {
-            remove_pending(&mut store, &message_id);
+            remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Expired);
             return RetryDecision::Expired;
         }
-        let Some(message) = store.pending.get_mut(&message_id) else {
+        let Some(message) = store.pending.get_mut(&identity) else {
             return RetryDecision::NotFound;
         };
+        // A result may arrive after recovery invalidated its lease.  Do not let
+        // that stale result requeue or fail a newer attempt.
+        if expected_attempt.is_some()
+            && (message.state != DeliveryState::Sending
+                || expected_attempt.is_some_and(|attempt| message.attempts != attempt))
+        {
+            return RetryDecision::NotFound;
+        }
         if message.attempts >= message.retry_policy.max_attempts
             || message
                 .retry_policy
@@ -674,7 +844,8 @@ impl DeliveryManager {
                 })
         {
             message.state = DeliveryState::Failed;
-            remove_pending(&mut store, &message_id);
+            remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Failed);
             return RetryDecision::Failed;
         }
         message.state = DeliveryState::Queued;
@@ -688,15 +859,39 @@ impl DeliveryManager {
     /// 不再携带 recovery_epoch 门控——连接换代后发送端以同一个 MessageId 重发，
     /// ACK 只需按 MessageId 匹配即可完成。
     pub async fn acknowledge(&self, peer_id: &str, message_id: MessageId) -> AckResult {
-        let mut store = self.store.lock().await;
-        let Some(message) = store.pending.get(&message_id) else {
-            return AckResult::Unknown;
-        };
-        if message.peer_id != peer_id {
+        if !is_valid_peer_id(peer_id) {
             return AckResult::Unknown;
         }
-        remove_pending(&mut store, &message_id);
+        let mut store = self.store.lock().await;
+        let identity = DeliveryIdentity {
+            peer_id: peer_id.to_string(),
+            message_id,
+        };
+        if !store.pending.contains_key(&identity) {
+            return AckResult::Unknown;
+        }
+        remove_pending(&mut store, &identity);
+        record_terminal(&mut store, identity, DeliveryTerminalOutcome::Acknowledged);
         AckResult::Acknowledged
+    }
+
+    /// Return the terminal outcome only when the caller supplies the owning
+    /// peer.  This keeps a MessageId from becoming a cross-peer capability.
+    #[allow(dead_code)]
+    pub(crate) async fn terminal_outcome(
+        &self,
+        peer_id: &str,
+        message_id: MessageId,
+    ) -> Option<DeliveryTerminalOutcome> {
+        if !is_valid_peer_id(peer_id) {
+            return None;
+        }
+        let store = self.store.lock().await;
+        let identity = DeliveryIdentity {
+            peer_id: peer_id.to_string(),
+            message_id,
+        };
+        store.terminal_outcomes.get(&identity).copied()
     }
 
     /// 新 Connection Ready 后，重置 Peer 作用域的 in-flight 状态并返回恢复批次。
@@ -706,6 +901,16 @@ impl DeliveryManager {
     /// 当前 transport 上重发。
     pub async fn recover_peer(&self, peer_id: &str) -> RecoverySnapshot {
         self.recover_peer_at(peer_id, Instant::now()).await
+    }
+
+    pub(crate) async fn recover_peer_checked(
+        &self,
+        peer_id: &str,
+    ) -> Result<RecoverySnapshot, DeliveryError> {
+        if !is_valid_peer_id(peer_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        Ok(self.recover_peer(peer_id).await)
     }
 
     async fn recover_peer_at(&self, peer_id: &str, now: Instant) -> RecoverySnapshot {
@@ -720,16 +925,16 @@ impl DeliveryManager {
             .pending
             .iter()
             .filter(|(_, message)| message.peer_id == peer_id)
-            .map(|(message_id, _)| *message_id)
+            .map(|(identity, _)| identity.clone())
             .collect::<Vec<_>>();
         let mut messages = Vec::new();
         let mut expired = Vec::new();
-        for message_id in message_ids {
-            let Some(message) = store.pending.get_mut(&message_id) else {
+        for identity in message_ids {
+            let Some(message) = store.pending.get_mut(&identity) else {
                 continue;
             };
             if is_expired(message, now) {
-                expired.push(message_id);
+                expired.push(identity.clone());
                 continue;
             }
             message.state = DeliveryState::Queued;
@@ -737,8 +942,9 @@ impl DeliveryManager {
             message.recovery_epoch = recovery_epoch;
             messages.push(message.clone());
         }
-        for message_id in expired {
-            remove_pending(&mut store, &message_id);
+        for identity in expired {
+            remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Expired);
         }
         messages.sort_by_key(|message| message.sequence);
         RecoverySnapshot {
@@ -754,16 +960,16 @@ impl DeliveryManager {
             .pending
             .iter()
             .filter(|(_, message)| message.peer_id == peer_id)
-            .map(|(message_id, _)| *message_id)
+            .map(|(identity, _)| identity.clone())
             .collect::<Vec<_>>();
         let mut retryable = Vec::new();
         let mut expired = Vec::new();
-        for message_id in message_ids {
-            let Some(message) = store.pending.get_mut(&message_id) else {
+        for identity in message_ids {
+            let Some(message) = store.pending.get_mut(&identity) else {
                 continue;
             };
             if is_expired(message, now) {
-                expired.push(message_id);
+                expired.push(identity.clone());
             } else if message.state == DeliveryState::SentUnacked && now >= message.next_retry_at {
                 message.state = DeliveryState::Queued;
                 message.next_retry_at = now;
@@ -772,20 +978,39 @@ impl DeliveryManager {
                 retryable.push(message.clone());
             }
         }
-        for message_id in expired {
-            remove_pending(&mut store, &message_id);
+        for identity in expired {
+            remove_pending(&mut store, &identity);
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Expired);
         }
         retryable.sort_by_key(|message| message.sequence);
         retryable
     }
 
+    pub(crate) async fn retryable_messages_checked(
+        &self,
+        peer_id: &str,
+        now: Instant,
+    ) -> Result<Vec<PendingMessage>, DeliveryError> {
+        if !is_valid_peer_id(peer_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        Ok(self.retryable_messages(peer_id, now).await)
+    }
+
     pub async fn cancel(&self, message_id: MessageId) -> bool {
         let mut store = self.store.lock().await;
-        let Some(message) = store.pending.get_mut(&message_id) else {
+        let Some(identity) = resolve_pending_identity(&store, None, message_id) else {
+            return false;
+        };
+        let Some(message) = store.pending.get_mut(&identity) else {
             return false;
         };
         message.state = DeliveryState::Cancelled;
-        remove_pending(&mut store, &message_id).is_some()
+        let removed = remove_pending(&mut store, &identity).is_some();
+        if removed {
+            record_terminal(&mut store, identity, DeliveryTerminalOutcome::Cancelled);
+        }
+        removed
     }
 
     /// 接收端在业务 handler 前登记 MessageId（§20）。重复消息只需再次 ACK。
@@ -844,6 +1069,22 @@ impl DeliveryManager {
         DedupDecision::New
     }
 
+    pub(crate) async fn begin_incoming_checked(
+        &self,
+        peer_id: &str,
+        channel_id: &str,
+        message_id: MessageId,
+        recovery_epoch: u64,
+        now: Instant,
+    ) -> Result<DedupDecision, DeliveryError> {
+        if !is_valid_peer_id(peer_id) || !is_valid_scope_id(channel_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        Ok(self
+            .begin_incoming(peer_id, channel_id, message_id, recovery_epoch, now)
+            .await)
+    }
+
     /// Insert a newly deduplicated message into its SessionBoundOrdered state.
     ///
     /// Only the message at `expected_sequence` becomes application-visible;
@@ -858,6 +1099,9 @@ impl DeliveryManager {
         message: OrderedMessage,
         now: Instant,
     ) -> OrderedInsertResult {
+        if !is_valid_peer_id(&message.peer_id) || !is_valid_scope_id(&message.channel_id) {
+            return OrderedInsertResult::Rejected;
+        }
         let mut store = self.store.lock().await;
         let key = (message.peer_id.clone(), message.channel_id.clone());
         if store.failed_ordered.contains(&key) {
@@ -904,6 +1148,20 @@ impl DeliveryManager {
     ) -> Option<IncomingCompletion> {
         self.complete_incoming_at(peer_id, channel_id, message_id, Instant::now())
             .await
+    }
+
+    pub(crate) async fn complete_incoming_checked(
+        &self,
+        peer_id: &str,
+        channel_id: &str,
+        message_id: MessageId,
+    ) -> Result<Option<IncomingCompletion>, DeliveryError> {
+        if !is_valid_peer_id(peer_id) || !is_valid_scope_id(channel_id) {
+            return Err(DeliveryError::InvalidScope);
+        }
+        Ok(self
+            .complete_incoming(peer_id, channel_id, message_id)
+            .await)
     }
 
     async fn complete_incoming_at(
@@ -1151,15 +1409,60 @@ impl DeliveryManager {
     }
 }
 
-fn next_message_id(pending: &HashMap<MessageId, PendingMessage>) -> MessageId {
+fn next_message_id(
+    peer_id: &str,
+    pending: &HashMap<DeliveryIdentity, PendingMessage>,
+    terminal_outcomes: &HashMap<DeliveryIdentity, DeliveryTerminalOutcome>,
+) -> MessageId {
     loop {
         let mut bytes = [0u8; MESSAGE_ID_BYTES];
         rand::thread_rng().fill_bytes(&mut bytes);
         let candidate = MessageId(bytes);
-        if !pending.contains_key(&candidate) {
+        let identity = DeliveryIdentity {
+            peer_id: peer_id.to_string(),
+            message_id: candidate,
+        };
+        if !pending.contains_key(&identity) && !terminal_outcomes.contains_key(&identity) {
             return candidate;
         }
     }
+}
+
+fn resolve_pending_identity(
+    store: &DeliveryStore,
+    expected_peer_id: Option<&str>,
+    message_id: MessageId,
+) -> Option<DeliveryIdentity> {
+    if let Some(peer_id) = expected_peer_id {
+        let identity = DeliveryIdentity {
+            peer_id: peer_id.to_string(),
+            message_id,
+        };
+        return store.pending.contains_key(&identity).then_some(identity);
+    }
+
+    let mut matches = store
+        .pending
+        .keys()
+        .filter(|identity| identity.message_id == message_id)
+        .cloned();
+    let identity = matches.next()?;
+    matches.next().is_none().then_some(identity)
+}
+
+fn record_terminal(
+    store: &mut DeliveryStore,
+    identity: DeliveryIdentity,
+    outcome: DeliveryTerminalOutcome,
+) {
+    if !store.terminal_outcomes.contains_key(&identity)
+        && store.terminal_outcomes.len() >= MAX_TERMINAL_OUTCOMES
+    {
+        if let Some(oldest) = store.terminal_outcomes.keys().next().cloned() {
+            store.terminal_outcomes.remove(&oldest);
+        }
+    }
+    store.terminal_outcomes.entry(identity).or_insert(outcome);
 }
 
 fn is_expired(message: &PendingMessage, now: Instant) -> bool {
@@ -1168,8 +1471,11 @@ fn is_expired(message: &PendingMessage, now: Instant) -> bool {
         .is_some_and(|expires_at| now >= expires_at)
 }
 
-fn remove_pending(store: &mut DeliveryStore, message_id: &MessageId) -> Option<PendingMessage> {
-    let message = store.pending.remove(message_id)?;
+fn remove_pending(
+    store: &mut DeliveryStore,
+    identity: &DeliveryIdentity,
+) -> Option<PendingMessage> {
+    let message = store.pending.remove(identity)?;
     store.pending_bytes = store.pending_bytes.saturating_sub(message.payload.len());
     Some(message)
 }
@@ -1374,1267 +1680,5 @@ fn assert_delivery_invariants(store: &DeliveryStore) {
 fn assert_delivery_invariants(_store: &DeliveryStore) {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn retry_policy() -> RetryPolicy {
-        RetryPolicy {
-            max_attempts: 3,
-            initial_backoff: Duration::from_secs(1),
-            max_backoff: Duration::from_secs(4),
-            ttl: Some(Duration::from_secs(30)),
-            max_total_retry_bytes: Some(32),
-        }
-    }
-
-    fn config() -> DeliveryConfig {
-        DeliveryConfig {
-            max_pending_messages: 4,
-            max_pending_bytes: 32,
-            max_payload_bytes: 16,
-            dedup_max_entries: 4,
-            dedup_ttl: Duration::from_secs(10),
-            application_ack_timeout: Duration::from_secs(5 * 60),
-            max_reorder_messages: 2,
-            max_reorder_bytes: 8,
-            max_sequence_gap: 4,
-        }
-    }
-
-    const SHORT_ACK_TIMEOUT: Duration = Duration::from_millis(50);
-
-    fn short_timeout_config() -> DeliveryConfig {
-        DeliveryConfig {
-            application_ack_timeout: SHORT_ACK_TIMEOUT,
-            ..config()
-        }
-    }
-
-    fn ordered_message(sequence: u64, message_id: u8) -> OrderedMessage {
-        OrderedMessage {
-            peer_id: "peer-a".into(),
-            // wire 信封的 SessionId：单测中仅随 OrderedMessage 传递，不做 key。
-            session_id: "session-a".into(),
-            channel_id: "control".into(),
-            message_id: MessageId([message_id; MESSAGE_ID_BYTES]),
-            sequence,
-            policy: DeliveryPolicy::SessionBoundOrdered,
-            payload: vec![message_id],
-        }
-    }
-
-    #[test]
-    fn ordered_channel_releases_only_the_next_contiguous_message() {
-        let mut state = OrderedChannelState::default();
-        assert_eq!(
-            state.insert(ordered_message(2, 2), 4, 16, 4),
-            OrderedInsertResult::Buffered
-        );
-        assert_eq!(
-            state.insert(ordered_message(1, 1), 4, 16, 4),
-            OrderedInsertResult::Buffered
-        );
-        assert_eq!(
-            state.insert(ordered_message(0, 0), 4, 16, 4),
-            OrderedInsertResult::Ready
-        );
-        assert_eq!(
-            state
-                .acknowledge(MessageId([0; MESSAGE_ID_BYTES]))
-                .map(|message| message.sequence),
-            Some(1)
-        );
-        assert_eq!(
-            state
-                .acknowledge(MessageId([1; MESSAGE_ID_BYTES]))
-                .map(|message| message.sequence),
-            Some(2)
-        );
-        assert_eq!(state.acknowledge(MessageId([2; MESSAGE_ID_BYTES])), None);
-    }
-
-    #[test]
-    fn ordered_channel_rejects_sequence_gap_and_reorder_overflow() {
-        let mut state = OrderedChannelState::default();
-        assert_eq!(
-            state.insert(ordered_message(5, 5), 4, 16, 4),
-            OrderedInsertResult::Rejected
-        );
-        assert_eq!(
-            state.insert(ordered_message(2, 2), 1, 16, 4),
-            OrderedInsertResult::Buffered
-        );
-        assert_eq!(
-            state.insert(ordered_message(3, 3), 1, 16, 4),
-            OrderedInsertResult::Rejected
-        );
-        assert_eq!(
-            state.insert(
-                OrderedMessage {
-                    payload: vec![0; 17],
-                    ..ordered_message(1, 1)
-                },
-                4,
-                16,
-                4,
-            ),
-            OrderedInsertResult::Rejected
-        );
-    }
-
-    #[tokio::test]
-    async fn ordered_delivery_waits_for_application_ack_before_releasing_buffer() {
-        let manager = DeliveryManager::with_config(config());
-        let now = Instant::now();
-        for (sequence, id) in [(0, 0), (2, 2), (1, 1)] {
-            let message = ordered_message(sequence, id);
-            assert_eq!(
-                manager
-                    .begin_incoming(
-                        &message.peer_id,
-                        &message.channel_id,
-                        message.message_id,
-                        1,
-                        now,
-                    )
-                    .await,
-                DedupDecision::New
-            );
-            let result = manager.accept_ordered(message).await;
-            if sequence == 0 {
-                assert_eq!(result, OrderedInsertResult::Ready);
-            } else {
-                assert_eq!(result, OrderedInsertResult::Buffered);
-            }
-        }
-
-        let first = manager
-            .complete_incoming("peer-a", "control", MessageId([0; MESSAGE_ID_BYTES]))
-            .await
-            .expect("first ordered message should be ACKable");
-        assert_eq!(
-            first.next_ordered.as_ref().map(|message| message.sequence),
-            Some(1)
-        );
-        let second = manager
-            .complete_incoming("peer-a", "control", MessageId([1; MESSAGE_ID_BYTES]))
-            .await
-            .expect("second ordered message should be ACKable after release");
-        assert_eq!(
-            second.next_ordered.as_ref().map(|message| message.sequence),
-            Some(2)
-        );
-    }
-
-    #[tokio::test]
-    async fn ordered_buffered_message_does_not_keep_an_ack_deadline() {
-        let manager = DeliveryManager::with_config(short_timeout_config());
-        let now = Instant::now();
-        for (sequence, id) in [(0, 60), (1, 61)] {
-            let message = ordered_message(sequence, id);
-            assert_eq!(
-                manager
-                    .begin_incoming(
-                        &message.peer_id,
-                        &message.channel_id,
-                        message.message_id,
-                        1,
-                        now,
-                    )
-                    .await,
-                DedupDecision::New
-            );
-            assert_eq!(
-                manager.accept_ordered_at(message, now).await,
-                if sequence == 0 {
-                    OrderedInsertResult::Ready
-                } else {
-                    OrderedInsertResult::Buffered
-                }
-            );
-        }
-        assert_eq!(
-            manager
-                .incoming_record_state("peer-a", "control", MessageId([61; MESSAGE_ID_BYTES]))
-                .await,
-            Some((ActiveIncomingState::OrderedBuffered, None))
-        );
-
-        let head_ack_at = now + Duration::from_millis(25);
-        let completion = manager
-            .complete_incoming_at(
-                "peer-a",
-                "control",
-                MessageId([60; MESSAGE_ID_BYTES]),
-                head_ack_at,
-            )
-            .await
-            .expect("head message should be ACKable");
-        assert_eq!(
-            completion
-                .next_ordered
-                .as_ref()
-                .map(|message| message.sequence),
-            Some(1)
-        );
-        let promoted_deadline = head_ack_at + SHORT_ACK_TIMEOUT;
-        assert_eq!(
-            manager
-                .incoming_record_state("peer-a", "control", MessageId([61; MESSAGE_ID_BYTES]))
-                .await,
-            Some((ActiveIncomingState::InFlight, Some(promoted_deadline)))
-        );
-
-        let old_deadline = now + SHORT_ACK_TIMEOUT;
-        assert!(manager
-            .expire_incoming("peer-a", old_deadline + Duration::from_millis(1))
-            .await
-            .is_empty());
-        assert!(manager
-            .complete_incoming_at(
-                "peer-a",
-                "control",
-                MessageId([61; MESSAGE_ID_BYTES]),
-                old_deadline + Duration::from_millis(1),
-            )
-            .await
-            .is_some());
-    }
-
-    #[tokio::test]
-    async fn ordered_buffer_promotion_gets_a_full_ack_timeout_window() {
-        let manager = DeliveryManager::with_config(short_timeout_config());
-        let now = Instant::now();
-        for (sequence, id) in [(0, 62), (1, 63)] {
-            let message = ordered_message(sequence, id);
-            assert_eq!(
-                manager
-                    .begin_incoming(
-                        &message.peer_id,
-                        &message.channel_id,
-                        message.message_id,
-                        1,
-                        now,
-                    )
-                    .await,
-                DedupDecision::New
-            );
-            assert_eq!(
-                manager.accept_ordered_at(message, now).await,
-                if sequence == 0 {
-                    OrderedInsertResult::Ready
-                } else {
-                    OrderedInsertResult::Buffered
-                }
-            );
-        }
-
-        let head_ack_at = now + Duration::from_millis(49);
-        let completion = manager
-            .complete_incoming_at(
-                "peer-a",
-                "control",
-                MessageId([62; MESSAGE_ID_BYTES]),
-                head_ack_at,
-            )
-            .await
-            .expect("head message should be ACKable");
-        assert_eq!(
-            completion
-                .next_ordered
-                .as_ref()
-                .map(|message| message.sequence),
-            Some(1)
-        );
-        let promoted_deadline = head_ack_at + SHORT_ACK_TIMEOUT;
-        assert_eq!(
-            manager
-                .incoming_record_state("peer-a", "control", MessageId([63; MESSAGE_ID_BYTES]))
-                .await,
-            Some((ActiveIncomingState::InFlight, Some(promoted_deadline)))
-        );
-
-        assert!(manager
-            .expire_incoming("peer-a", promoted_deadline - Duration::from_millis(1),)
-            .await
-            .is_empty());
-        let expired = manager
-            .expire_incoming("peer-a", promoted_deadline + Duration::from_millis(1))
-            .await;
-        assert_eq!(expired.len(), 1);
-        assert!(expired[0].ordered_channel_failed);
-        assert_eq!(manager.incoming_state_counts().await, (0, 1, 0));
-    }
-
-    #[tokio::test]
-    async fn ordered_buffered_messages_restart_ack_timeout_in_sequence() {
-        let manager = DeliveryManager::with_config(short_timeout_config());
-        let now = Instant::now();
-        for (sequence, id) in [(0, 64), (1, 65), (2, 66)] {
-            let message = ordered_message(sequence, id);
-            assert_eq!(
-                manager
-                    .begin_incoming(
-                        &message.peer_id,
-                        &message.channel_id,
-                        message.message_id,
-                        1,
-                        now,
-                    )
-                    .await,
-                DedupDecision::New
-            );
-            assert_eq!(
-                manager.accept_ordered_at(message, now).await,
-                if sequence == 0 {
-                    OrderedInsertResult::Ready
-                } else {
-                    OrderedInsertResult::Buffered
-                }
-            );
-        }
-        assert_eq!(
-            manager
-                .incoming_record_state("peer-a", "control", MessageId([65; MESSAGE_ID_BYTES]))
-                .await,
-            Some((ActiveIncomingState::OrderedBuffered, None))
-        );
-        assert_eq!(
-            manager
-                .incoming_record_state("peer-a", "control", MessageId([66; MESSAGE_ID_BYTES]))
-                .await,
-            Some((ActiveIncomingState::OrderedBuffered, None))
-        );
-
-        let first_ack_at = now + Duration::from_millis(25);
-        let first_completion = manager
-            .complete_incoming_at(
-                "peer-a",
-                "control",
-                MessageId([64; MESSAGE_ID_BYTES]),
-                first_ack_at,
-            )
-            .await
-            .expect("first message should be ACKable");
-        assert_eq!(
-            first_completion
-                .next_ordered
-                .as_ref()
-                .map(|message| message.sequence),
-            Some(1)
-        );
-        assert_eq!(
-            manager
-                .incoming_record_state("peer-a", "control", MessageId([65; MESSAGE_ID_BYTES]))
-                .await,
-            Some((
-                ActiveIncomingState::InFlight,
-                Some(first_ack_at + SHORT_ACK_TIMEOUT),
-            ))
-        );
-        assert!(manager
-            .expire_incoming("peer-a", now + Duration::from_millis(51))
-            .await
-            .is_empty());
-
-        let second_ack_at = now + Duration::from_millis(60);
-        let second_completion = manager
-            .complete_incoming_at(
-                "peer-a",
-                "control",
-                MessageId([65; MESSAGE_ID_BYTES]),
-                second_ack_at,
-            )
-            .await
-            .expect("second message should be ACKable after release");
-        assert_eq!(
-            second_completion
-                .next_ordered
-                .as_ref()
-                .map(|message| message.sequence),
-            Some(2)
-        );
-        assert_eq!(
-            manager
-                .incoming_record_state("peer-a", "control", MessageId([66; MESSAGE_ID_BYTES]))
-                .await,
-            Some((
-                ActiveIncomingState::InFlight,
-                Some(second_ack_at + SHORT_ACK_TIMEOUT),
-            ))
-        );
-        assert!(manager
-            .expire_incoming("peer-a", now + Duration::from_millis(101))
-            .await
-            .is_empty());
-
-        let final_completion = manager
-            .complete_incoming_at(
-                "peer-a",
-                "control",
-                MessageId([66; MESSAGE_ID_BYTES]),
-                now + Duration::from_millis(105),
-            )
-            .await
-            .expect("third message should be ACKable after release");
-        assert!(final_completion.next_ordered.is_none());
-        assert_eq!(manager.incoming_state_counts().await, (0, 3, 0));
-    }
-
-    #[tokio::test]
-    async fn inflight_survives_processed_dedup_ttl_until_application_ack() {
-        let manager = DeliveryManager::with_config(config());
-        let now = Instant::now();
-        let message_id = MessageId([20; MESSAGE_ID_BYTES]);
-        assert_eq!(
-            manager
-                .begin_incoming("peer-a", "control", message_id, 1, now)
-                .await,
-            DedupDecision::New
-        );
-
-        // 11 seconds exceeds this test's processed-history TTL, but remains
-        // below the independent application ACK timeout.
-        for id in [21, 22] {
-            assert_eq!(
-                manager
-                    .begin_incoming(
-                        "peer-a",
-                        "control",
-                        MessageId([id; MESSAGE_ID_BYTES]),
-                        1,
-                        now + Duration::from_secs(11),
-                    )
-                    .await,
-                DedupDecision::New
-            );
-        }
-        assert_eq!(manager.incoming_state_counts().await.0, 3);
-        assert!(manager
-            .complete_incoming("peer-a", "control", message_id)
-            .await
-            .is_some());
-    }
-
-    #[tokio::test]
-    async fn ordered_buffer_survives_processed_dedup_ttl_and_releases_in_sequence() {
-        let manager = DeliveryManager::with_config(config());
-        let now = Instant::now();
-        for (sequence, id) in [(2, 2), (1, 1)] {
-            let message = ordered_message(sequence, id);
-            assert_eq!(
-                manager
-                    .begin_incoming(
-                        &message.peer_id,
-                        &message.channel_id,
-                        message.message_id,
-                        1,
-                        now,
-                    )
-                    .await,
-                DedupDecision::New
-            );
-            assert_eq!(
-                manager.accept_ordered(message).await,
-                OrderedInsertResult::Buffered
-            );
-        }
-
-        let first = ordered_message(0, 0);
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    &first.peer_id,
-                    &first.channel_id,
-                    first.message_id,
-                    1,
-                    now + Duration::from_secs(11),
-                )
-                .await,
-            DedupDecision::New
-        );
-        assert_eq!(
-            manager.accept_ordered(first).await,
-            OrderedInsertResult::Ready
-        );
-
-        let mut released = Vec::new();
-        for id in [0, 1, 2] {
-            let completion = manager
-                .complete_incoming_at(
-                    "peer-a",
-                    "control",
-                    MessageId([id; MESSAGE_ID_BYTES]),
-                    now + Duration::from_secs(11),
-                )
-                .await
-                .expect("ordered message should be ACKable");
-            released.push(id);
-            if id < 2 {
-                assert_eq!(
-                    completion
-                        .next_ordered
-                        .as_ref()
-                        .map(|message| message.sequence),
-                    Some(u64::from(id + 1))
-                );
-            } else {
-                assert!(completion.next_ordered.is_none());
-            }
-        }
-        assert_eq!(released, vec![0, 1, 2]);
-        assert_eq!(manager.incoming_state_counts().await, (0, 3, 0));
-    }
-
-    #[tokio::test]
-    async fn processed_history_pressure_never_evicts_active_or_ordered_buffered() {
-        let mut limited = config();
-        limited.dedup_max_entries = 2;
-        let manager = DeliveryManager::with_config(limited);
-        let now = Instant::now();
-
-        let first = ordered_message(0, 0);
-        assert_eq!(
-            manager
-                .begin_incoming(&first.peer_id, &first.channel_id, first.message_id, 1, now,)
-                .await,
-            DedupDecision::New
-        );
-        assert_eq!(
-            manager.accept_ordered(first).await,
-            OrderedInsertResult::Ready
-        );
-        let buffered = ordered_message(1, 1);
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    &buffered.peer_id,
-                    &buffered.channel_id,
-                    buffered.message_id,
-                    1,
-                    now,
-                )
-                .await,
-            DedupDecision::New
-        );
-        assert_eq!(
-            manager.accept_ordered(buffered).await,
-            OrderedInsertResult::Buffered
-        );
-
-        for (offset, id) in [10u8, 11, 12].into_iter().enumerate() {
-            let at = now + Duration::from_secs((offset + 1) as u64);
-            let message_id = MessageId([id; MESSAGE_ID_BYTES]);
-            assert_eq!(
-                manager
-                    .begin_incoming("peer-a", "history", message_id, 1, at)
-                    .await,
-                DedupDecision::New
-            );
-            assert!(manager
-                .complete_incoming_at("peer-a", "history", message_id, at)
-                .await
-                .is_some());
-        }
-        assert_eq!(manager.incoming_state_counts().await, (2, 2, 1));
-
-        assert!(manager
-            .complete_incoming_at(
-                "peer-a",
-                "control",
-                MessageId([0; MESSAGE_ID_BYTES]),
-                now + Duration::from_secs(5),
-            )
-            .await
-            .is_some());
-        assert!(manager
-            .complete_incoming_at(
-                "peer-a",
-                "control",
-                MessageId([1; MESSAGE_ID_BYTES]),
-                now + Duration::from_secs(5),
-            )
-            .await
-            .is_some());
-    }
-
-    #[tokio::test]
-    async fn processed_history_is_the_only_state_evicted_by_capacity() {
-        let mut limited = config();
-        limited.dedup_max_entries = 2;
-        let manager = DeliveryManager::with_config(limited);
-        let now = Instant::now();
-        for (offset, id) in [30u8, 31, 32].into_iter().enumerate() {
-            let at = now + Duration::from_secs(offset as u64);
-            let message_id = MessageId([id; MESSAGE_ID_BYTES]);
-            assert_eq!(
-                manager
-                    .begin_incoming("peer-a", "control", message_id, 1, at)
-                    .await,
-                DedupDecision::New
-            );
-            assert!(manager
-                .complete_incoming_at("peer-a", "control", message_id, at)
-                .await
-                .is_some());
-        }
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    "peer-a",
-                    "control",
-                    MessageId([30; MESSAGE_ID_BYTES]),
-                    1,
-                    now + Duration::from_secs(4),
-                )
-                .await,
-            DedupDecision::New
-        );
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    "peer-a",
-                    "control",
-                    MessageId([31; MESSAGE_ID_BYTES]),
-                    1,
-                    now + Duration::from_secs(4),
-                )
-                .await,
-            DedupDecision::DuplicateProcessed
-        );
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    "peer-a",
-                    "control",
-                    MessageId([32; MESSAGE_ID_BYTES]),
-                    1,
-                    now + Duration::from_secs(4),
-                )
-                .await,
-            DedupDecision::DuplicateProcessed
-        );
-    }
-
-    #[tokio::test]
-    async fn application_ack_timeout_fails_ordered_channel_without_skipping_sequence() {
-        let manager = DeliveryManager::with_config(short_timeout_config());
-        let now = Instant::now();
-        let timeout_at = now + SHORT_ACK_TIMEOUT + Duration::from_millis(1);
-        for (sequence, id) in [(0, 40), (1, 41)] {
-            let message = ordered_message(sequence, id);
-            assert_eq!(
-                manager
-                    .begin_incoming(
-                        &message.peer_id,
-                        &message.channel_id,
-                        message.message_id,
-                        1,
-                        now,
-                    )
-                    .await,
-                DedupDecision::New
-            );
-            assert!(matches!(
-                manager.accept_ordered_at(message, now).await,
-                OrderedInsertResult::Ready | OrderedInsertResult::Buffered
-            ));
-        }
-        let expired = manager.expire_incoming("peer-a", timeout_at).await;
-        assert_eq!(expired.len(), 2);
-        assert!(expired.iter().all(|timeout| timeout.ordered_channel_failed));
-        assert_eq!(manager.incoming_state_counts().await, (0, 0, 0));
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    "peer-a",
-                    "control",
-                    MessageId([42; MESSAGE_ID_BYTES]),
-                    1,
-                    timeout_at,
-                )
-                .await,
-            DedupDecision::ChannelFailed
-        );
-        manager.close_peer("peer-a").await;
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    "peer-a",
-                    "control",
-                    MessageId([42; MESSAGE_ID_BYTES]),
-                    1,
-                    timeout_at,
-                )
-                .await,
-            DedupDecision::New
-        );
-    }
-
-    #[tokio::test]
-    async fn closing_session_clears_active_incoming_and_ordered_buffer() {
-        let manager = DeliveryManager::with_config(config());
-        let now = Instant::now();
-        for (sequence, id) in [(0, 50), (1, 51)] {
-            let message = ordered_message(sequence, id);
-            assert_eq!(
-                manager
-                    .begin_incoming(
-                        &message.peer_id,
-                        &message.channel_id,
-                        message.message_id,
-                        1,
-                        now,
-                    )
-                    .await,
-                DedupDecision::New
-            );
-            let result = manager.accept_ordered(message).await;
-            assert!(matches!(
-                result,
-                OrderedInsertResult::Ready | OrderedInsertResult::Buffered
-            ));
-        }
-        manager.close_peer("peer-a").await;
-        assert_eq!(manager.incoming_state_counts().await, (0, 0, 0));
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    "peer-a",
-                    "control",
-                    MessageId([50; MESSAGE_ID_BYTES]),
-                    1,
-                    now + Duration::from_secs(1),
-                )
-                .await,
-            DedupDecision::New
-        );
-    }
-
-    /// 把发送端 pending 消息转换为接收端 OrderedMessage（message_id 必须一致，
-    /// 才能命中 begin_incoming 创建的 active dedup 记录）。
-    fn ordered_from_pending(message: &PendingMessage) -> OrderedMessage {
-        OrderedMessage {
-            peer_id: message.peer_id.clone(),
-            session_id: "session-a".into(),
-            channel_id: message.channel_id.clone(),
-            message_id: message.message_id,
-            sequence: message.sequence,
-            policy: message.policy,
-            payload: message.payload.clone(),
-        }
-    }
-
-    #[tokio::test]
-    async fn explicit_close_preserves_ordered_anchor_and_resumes_without_wedge() {
-        // §40 显式断开：close_peer 保留有序通道的 expected_sequence 断点，与发送端
-        // 保留 next_sequences 计数器对称——两端重连后从各自断点继续。修复前 close_peer
-        // 清空 ordered 状态，接收端从 expected_sequence=0 重新开始，而发送端继续发
-        // 5、6、7：seq5 因间隔超限被 Rejected，通道永久卡死且 expire_incoming 不失败
-        // （OrderedBuffered 无 ack_deadline），静默丢消息。
-        let manager = DeliveryManager::with_config(DeliveryConfig {
-            max_pending_messages: 16,
-            max_pending_bytes: 64,
-            ..config()
-        });
-        let now = Instant::now();
-
-        // 发送端入队有序消息 seq 0..5；seq5 是断线时仍 pending（未 ACK）的消息。
-        let mut pending = Vec::new();
-        for sequence in 0..6u64 {
-            pending.push(
-                manager
-                    .enqueue_at(
-                        "peer-a",
-                        "control",
-                        vec![sequence as u8],
-                        DeliveryPolicy::SessionBoundOrdered,
-                        retry_policy(),
-                        now,
-                    )
-                    .await
-                    .expect("enqueue ordered message"),
-            );
-        }
-
-        // 接收端投递 seq 0..4 → expected_sequence 推进到 5。
-        for message in pending.iter().take(5) {
-            assert_eq!(
-                manager
-                    .begin_incoming(
-                        &message.peer_id,
-                        &message.channel_id,
-                        message.message_id,
-                        1,
-                        now,
-                    )
-                    .await,
-                DedupDecision::New
-            );
-            assert_eq!(
-                manager.accept_ordered(ordered_from_pending(message)).await,
-                OrderedInsertResult::Ready
-            );
-            manager
-                .complete_incoming(&message.peer_id, &message.channel_id, message.message_id)
-                .await
-                .expect("delivered ordered message");
-        }
-
-        // 断线：seq5 仍 pending，可经 MessageId 重发（发送端 next_sequences 不受
-        // close_peer 影响，新的入队继续从 6 编号）。
-        assert_eq!(manager.pending_len().await, 6);
-        let resent = manager
-            .begin_send(pending[5].message_id, now)
-            .await
-            .expect("begin resend")
-            .expect("resendable");
-        assert_eq!(resent.message_id, pending[5].message_id);
-
-        // 双方显式断开：close_peer 放弃在途 dedup/历史/失败标记，但保留有序断点；
-        // 本单实例中一次调用同时模拟发送端（next_sequences 保留）与接收端
-        // （expected_sequence 保留）两侧的清理。
-        manager.close_peer("peer-a").await;
-
-        // 重连：发送端新入队 seq 6、7。
-        for sequence in 6..8u64 {
-            pending.push(
-                manager
-                    .enqueue_at(
-                        "peer-a",
-                        "control",
-                        vec![sequence as u8],
-                        DeliveryPolicy::SessionBoundOrdered,
-                        retry_policy(),
-                        now,
-                    )
-                    .await
-                    .expect("enqueue new ordered message"),
-            );
-        }
-
-        // 接收端重建 dedup 记录并把 seq5 重新插入保留的 ordered 状态 → 必须 Ready，
-        // 修复前因 expected_sequence 被重置为 0、间隔超限而被 Rejected，通道卡死。
-        let surviving = &pending[5];
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    &surviving.peer_id,
-                    &surviving.channel_id,
-                    surviving.message_id,
-                    2,
-                    now,
-                )
-                .await,
-            DedupDecision::New
-        );
-        assert_eq!(
-            manager
-                .accept_ordered(ordered_from_pending(surviving))
-                .await,
-            OrderedInsertResult::Ready
-        );
-
-        // seq6、7 缓冲，seq5 ACK 后按序释放 5、6、7，无空洞。
-        for message in pending.iter().skip(6) {
-            assert_eq!(
-                manager
-                    .begin_incoming(
-                        &message.peer_id,
-                        &message.channel_id,
-                        message.message_id,
-                        2,
-                        now,
-                    )
-                    .await,
-                DedupDecision::New
-            );
-            assert_eq!(
-                manager.accept_ordered(ordered_from_pending(message)).await,
-                OrderedInsertResult::Buffered
-            );
-        }
-        let mut released = Vec::new();
-        for message in pending.iter().skip(5) {
-            let completion = manager
-                .complete_incoming(&message.peer_id, &message.channel_id, message.message_id)
-                .await
-                .expect("ordered message must be ACKable after reconnect");
-            released.push(message.sequence);
-            if let Some(next) = completion.next_ordered {
-                assert_eq!(next.sequence, message.sequence.saturating_add(1));
-            }
-        }
-        assert_eq!(released, vec![5, 6, 7]);
-    }
-
-    #[tokio::test]
-    async fn recovery_preserves_sequence_and_rejects_stale_ack() {
-        let manager = DeliveryManager::with_config(config());
-        let now = Instant::now();
-        let first = manager
-            .enqueue_at(
-                "peer-a",
-                "control",
-                b"one".to_vec(),
-                DeliveryPolicy::AckedDeduplicated,
-                retry_policy(),
-                now,
-            )
-            .await
-            .expect("enqueue first");
-        let second = manager
-            .enqueue_at(
-                "peer-a",
-                "control",
-                b"two".to_vec(),
-                DeliveryPolicy::SessionBoundOrdered,
-                retry_policy(),
-                now,
-            )
-            .await
-            .expect("enqueue second");
-        assert_eq!(first.sequence, 0);
-        assert_eq!(second.sequence, 1);
-
-        let sent = manager
-            .begin_send(first.message_id, now)
-            .await
-            .expect("begin send")
-            .expect("sendable");
-        assert_eq!(sent.attempts, 1);
-        assert_eq!(sent.payload, b"one");
-        assert_eq!(sent.crypto_mode, CryptoMode::E2ee);
-        assert!(manager.mark_sent(first.message_id, now).await);
-
-        let recovery = manager
-            .recover_peer_at("peer-a", now + Duration::from_secs(1))
-            .await;
-        assert_eq!(recovery.recovery_epoch, 1);
-        assert_eq!(
-            recovery
-                .messages
-                .iter()
-                .map(|message| message.sequence)
-                .collect::<Vec<_>>(),
-            vec![0, 1]
-        );
-        // §20：ACK 只按 MessageId 关联——即使携带了过时/未对齐的连接代数，
-        // 只要该 MessageId 仍在 pending 中就完成；recover 后以同一 MessageId
-        // 重发，ACK 不需要等待 epoch 对齐。
-        let resent = manager
-            .begin_send(first.message_id, now + Duration::from_secs(1))
-            .await
-            .expect("begin resend")
-            .expect("resendable");
-        assert_eq!(resent.recovery_epoch, recovery.recovery_epoch);
-        assert_eq!(resent.attempts, 2);
-        assert_eq!(
-            manager.acknowledge("peer-a", first.message_id).await,
-            AckResult::Acknowledged
-        );
-        assert_eq!(manager.pending_len().await, 1);
-        // 已完成 MessageId 的重复 ACK 是无害的 no-op（不再报 StaleEpoch）。
-        assert_eq!(
-            manager.acknowledge("peer-a", first.message_id).await,
-            AckResult::Unknown
-        );
-    }
-
-    #[tokio::test]
-    async fn pending_message_keeps_plaintext_and_explicit_crypto_mode() {
-        let manager = DeliveryManager::with_config(config());
-        let message = manager
-            .enqueue_with_crypto(
-                "peer-a",
-                "control",
-                b"plaintext".to_vec(),
-                DeliveryPolicy::Acked,
-                CryptoMode::None,
-                retry_policy(),
-            )
-            .await
-            .expect("enqueue message");
-        assert_eq!(message.payload, b"plaintext");
-        assert_eq!(message.crypto_mode, CryptoMode::None);
-        let sent = manager
-            .begin_send(message.message_id, Instant::now())
-            .await
-            .expect("begin send")
-            .expect("sendable");
-        assert_eq!(sent.payload, b"plaintext");
-        assert_eq!(sent.crypto_mode, CryptoMode::None);
-    }
-
-    #[tokio::test]
-    async fn retry_policy_is_bounded_and_expiry_removes_pending() {
-        let manager = DeliveryManager::with_config(config());
-        let now = Instant::now();
-        let message = manager
-            .enqueue_at(
-                "peer-a",
-                "control",
-                b"payload".to_vec(),
-                DeliveryPolicy::Acked,
-                retry_policy(),
-                now,
-            )
-            .await
-            .expect("enqueue");
-        manager
-            .begin_send(message.message_id, now)
-            .await
-            .expect("begin")
-            .expect("sendable");
-        assert!(manager.mark_sent(message.message_id, now).await);
-        assert!(manager
-            .retryable_messages("peer-a", now + Duration::from_millis(999))
-            .await
-            .is_empty());
-        assert_eq!(
-            manager
-                .retryable_messages("peer-a", now + Duration::from_secs(1))
-                .await
-                .len(),
-            1
-        );
-        assert_eq!(
-            manager
-                .mark_send_failed(message.message_id, now + Duration::from_secs(1))
-                .await,
-            RetryDecision::RetryAt(now + Duration::from_secs(2))
-        );
-        assert_eq!(
-            manager
-                .recover_peer_at("peer-a", now + Duration::from_secs(31))
-                .await
-                .messages
-                .len(),
-            0
-        );
-        assert_eq!(manager.pending_len().await, 0);
-    }
-
-    #[tokio::test]
-    async fn latest_state_replaces_only_older_latest_state() {
-        let manager = DeliveryManager::with_config(config());
-        let now = Instant::now();
-        let old = manager
-            .enqueue_at(
-                "peer-a",
-                "mouse",
-                vec![1],
-                DeliveryPolicy::LatestState,
-                retry_policy(),
-                now,
-            )
-            .await
-            .expect("enqueue old");
-        let new = manager
-            .enqueue_at(
-                "peer-a",
-                "mouse",
-                vec![2],
-                DeliveryPolicy::LatestState,
-                retry_policy(),
-                now,
-            )
-            .await
-            .expect("enqueue new");
-        assert_eq!(manager.pending_len().await, 1);
-        assert!(matches!(
-            manager.begin_send(old.message_id, now).await,
-            Err(DeliveryError::NotFound)
-        ));
-        assert_eq!(
-            manager
-                .begin_send(new.message_id, now)
-                .await
-                .expect("begin new")
-                .expect("new sendable")
-                .payload,
-            vec![2]
-        );
-    }
-
-    #[tokio::test]
-    async fn dedup_window_is_scoped_and_expires() {
-        let manager = DeliveryManager::with_config(config());
-        let now = Instant::now();
-        let message_id = MessageId([7; MESSAGE_ID_BYTES]);
-        assert_eq!(
-            manager
-                .begin_incoming("peer-a", "control", message_id, 1, now)
-                .await,
-            DedupDecision::New
-        );
-        assert_eq!(
-            manager
-                .begin_incoming("peer-a", "control", message_id, 1, now)
-                .await,
-            DedupDecision::DuplicateInFlight
-        );
-        assert!(manager
-            .complete_incoming("peer-a", "control", message_id)
-            .await
-            .is_some());
-        assert_eq!(
-            manager
-                .begin_incoming("peer-a", "control", message_id, 1, now)
-                .await,
-            DedupDecision::DuplicateProcessed
-        );
-        assert_eq!(
-            manager
-                .begin_incoming("peer-a", "control", message_id, 2, now)
-                .await,
-            DedupDecision::DuplicateProcessed
-        );
-        assert_eq!(
-            manager
-                .incoming_recovery_epoch("peer-a", "control", message_id)
-                .await,
-            Some(2)
-        );
-        // §20：连接代数不再门控去重——携带较低代数的重放帧仍是 DuplicateProcessed，
-        // 只是不能再次进入应用 handler（对已完成消息的重复 ACK 是无害 no-op）。
-        assert_eq!(
-            manager
-                .begin_incoming("peer-a", "control", message_id, 1, now)
-                .await,
-            DedupDecision::DuplicateProcessed
-        );
-        assert!(manager
-            .complete_incoming("peer-a", "control", message_id)
-            .await
-            .is_none());
-        assert_eq!(
-            manager
-                .begin_incoming("peer-b", "control", message_id, 1, now)
-                .await,
-            DedupDecision::New
-        );
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    "peer-a",
-                    "control",
-                    message_id,
-                    1,
-                    now + Duration::from_secs(11),
-                )
-                .await,
-            DedupDecision::New
-        );
-    }
-
-    #[tokio::test]
-    async fn recovery_epoch_updates_do_not_turn_inflight_into_processed() {
-        let manager = DeliveryManager::with_config(config());
-        let now = Instant::now();
-        let message_id = MessageId([8; MESSAGE_ID_BYTES]);
-
-        assert_eq!(
-            manager
-                .begin_incoming("peer-a", "control", message_id, 1, now)
-                .await,
-            DedupDecision::New
-        );
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    "peer-a",
-                    "control",
-                    message_id,
-                    2,
-                    now + Duration::from_secs(1),
-                )
-                .await,
-            DedupDecision::DuplicateInFlight
-        );
-        assert_eq!(
-            manager
-                .incoming_recovery_epoch("peer-a", "control", message_id)
-                .await,
-            Some(2)
-        );
-        assert_eq!(
-            manager
-                .complete_incoming("peer-a", "control", message_id)
-                .await,
-            Some(IncomingCompletion {
-                recovery_epoch: 2,
-                next_ordered: None,
-            })
-        );
-        assert_eq!(
-            manager
-                .begin_incoming(
-                    "peer-a",
-                    "control",
-                    message_id,
-                    2,
-                    now + Duration::from_secs(1),
-                )
-                .await,
-            DedupDecision::DuplicateProcessed
-        );
-    }
-
-    #[tokio::test]
-    async fn best_effort_skips_pending_and_reliable_queue_is_bounded() {
-        let manager = DeliveryManager::with_config(DeliveryConfig {
-            max_pending_messages: 1,
-            max_pending_bytes: 4,
-            max_payload_bytes: 4,
-            dedup_max_entries: 4,
-            dedup_ttl: Duration::from_secs(10),
-            application_ack_timeout: Duration::from_secs(5 * 60),
-            max_reorder_messages: 2,
-            max_reorder_bytes: 8,
-            max_sequence_gap: 4,
-        });
-        let now = Instant::now();
-        let best_effort = manager
-            .enqueue_at(
-                "peer-a",
-                "video",
-                vec![1, 2, 3, 4],
-                DeliveryPolicy::BestEffort,
-                retry_policy(),
-                now,
-            )
-            .await
-            .expect("enqueue best effort");
-        assert_eq!(manager.pending_len().await, 0);
-        assert!(matches!(
-            manager.begin_send(best_effort.message_id, now).await,
-            Err(DeliveryError::NotFound)
-        ));
-
-        manager
-            .enqueue_at(
-                "peer-a",
-                "control",
-                vec![9, 9, 9, 9],
-                DeliveryPolicy::Acked,
-                retry_policy(),
-                now,
-            )
-            .await
-            .expect("enqueue reliable");
-        assert!(matches!(
-            manager
-                .enqueue_at(
-                    "peer-a",
-                    "control",
-                    vec![8],
-                    DeliveryPolicy::Acked,
-                    retry_policy(),
-                    now,
-                )
-                .await,
-            Err(DeliveryError::QueueFull)
-        ));
-    }
-}
+#[path = "tests/delivery.rs"]
+mod tests;

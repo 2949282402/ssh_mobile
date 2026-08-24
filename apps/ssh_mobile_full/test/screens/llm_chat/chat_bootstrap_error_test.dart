@@ -107,13 +107,13 @@ void main() {
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       debugDefaultTargetPlatformOverride = originalPlatform;
-      rag.dispose();
       playbooks.dispose();
       monitor.dispose();
       sftp.dispose();
       ssh.dispose();
       settings.dispose();
       await tester.runAsync(storage.shutdown);
+      rag.dispose();
       storage.dispose();
     }
   });

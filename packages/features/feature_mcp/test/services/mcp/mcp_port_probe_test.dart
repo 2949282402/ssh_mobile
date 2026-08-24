@@ -7,31 +7,37 @@ void main() {
   group('McpPortProbe', () {
     const probe = McpPortProbe();
 
-    Future<int> findFreePort() async {
-      final socket = await ServerSocket.bind('127.0.0.1', 0);
-      final port = socket.port;
-      await socket.close();
-      return port;
-    }
-
     test('available unused port returns available', () async {
-      final port = await findFreePort();
+      var bindCalls = 0;
+      final reservation = _FakeReservation();
+      final probe = McpPortProbe(
+        bind: (host, port) async {
+          bindCalls++;
+          return reservation;
+        },
+      );
+
+      const port = 38321;
       final result = await probe.check(host: '127.0.0.1', port: port);
 
       expect(result.available, isTrue);
       expect(result.reason, McpPortProbeReason.available);
+      expect(bindCalls, 1);
+      expect(reservation.closed, isTrue);
     });
 
     test('occupied port returns unavailable', () async {
-      final socket = await ServerSocket.bind('127.0.0.1', 0);
-      try {
-        final result = await probe.check(host: '127.0.0.1', port: socket.port);
+      final probe = McpPortProbe(
+        bind: (host, port) async {
+          throw SocketException('address already in use');
+        },
+      );
 
-        expect(result.available, isFalse);
-        expect(result.reason, McpPortProbeReason.portOccupiedOrUnavailable);
-      } finally {
-        await socket.close();
-      }
+      final result = await probe.check(host: '127.0.0.1', port: 38321);
+
+      expect(result.available, isFalse);
+      expect(result.reason, McpPortProbeReason.portOccupiedOrUnavailable);
+      expect(result.message, 'address already in use');
     });
 
     test('invalid port below 1024 returns invalid', () async {
@@ -55,4 +61,13 @@ void main() {
       expect(result.reason, McpPortProbeReason.invalidHostOrPort);
     });
   });
+}
+
+class _FakeReservation implements McpPortReservation {
+  var closed = false;
+
+  @override
+  Future<void> close() async {
+    closed = true;
+  }
 }

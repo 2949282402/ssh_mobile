@@ -1,0 +1,421 @@
+// Network Protocol V2 schema. Field tags are frozen for this protocol
+// generation; Dart and Rust hand-written bindings must remain aligned.
+
+syntax = "proto3";
+
+package network.v2;
+
+enum NetworkErrorCode {
+  NETWORK_ERROR_CODE_UNSPECIFIED = 0;
+  NETWORK_ERROR_CODE_INVALID_ARGUMENT = 1;
+  NETWORK_ERROR_CODE_AUTHENTICATION_FAILED = 2;
+  NETWORK_ERROR_CODE_NO_ROUTE = 3;
+  NETWORK_ERROR_CODE_TIMEOUT = 4;
+  NETWORK_ERROR_CODE_PEER_OFFLINE = 5;
+  NETWORK_ERROR_CODE_QUIC_ERROR = 6;
+  NETWORK_ERROR_CODE_NAT_ERROR = 7;
+  NETWORK_ERROR_CODE_RELAY_ERROR = 8;
+  reserved 9;
+  NETWORK_ERROR_CODE_IO_ERROR = 10;
+  NETWORK_ERROR_CODE_CANCELLED = 11;
+  NETWORK_ERROR_CODE_CREDENTIAL_EXPIRED = 12;
+  NETWORK_ERROR_CODE_IDENTITY_CONFLICT = 13;
+  NETWORK_ERROR_CODE_CONFIGURATION = 14;
+  NETWORK_ERROR_CODE_SECURITY_POLICY_MISMATCH = 15;
+  NETWORK_ERROR_CODE_RELAY_REQUIRES_E2EE = 16;
+  NETWORK_ERROR_CODE_PEER_NOT_READY = 17;
+  NETWORK_ERROR_CODE_RESOURCE_LIMIT = 18;
+  NETWORK_ERROR_CODE_LIFECYCLE = 19;
+  NETWORK_ERROR_CODE_PROTOCOL_MISMATCH = 20;
+  NETWORK_ERROR_CODE_STALE_OPERATION = 21;
+  NETWORK_ERROR_CODE_INVALID_STATE = 22;
+  NETWORK_ERROR_CODE_PATH_LOST = 23;
+  NETWORK_ERROR_CODE_RESUME_REJECTED = 24;
+  NETWORK_ERROR_CODE_STREAM_CLOSED = 25;
+}
+
+// 服务端建议的重试策略；默认 Unspecified 表示未指定。
+enum RetryDisposition {
+  RETRY_DISPOSITION_UNSPECIFIED = 0;
+  RETRY_DISPOSITION_NO_RETRY = 1;
+  RETRY_DISPOSITION_RETRY_WITH_BACKOFF = 2;
+  RETRY_DISPOSITION_RETRY_AFTER = 3;
+  RETRY_DISPOSITION_REFRESH_CREDENTIAL_THEN_RETRY = 4;
+}
+
+enum PeerConnectionState {
+  PEER_CONNECTION_STATE_UNSPECIFIED = 0;
+  PEER_CONNECTION_STATE_CONNECTING = 1;
+  PEER_CONNECTION_STATE_CONNECTED = 2;
+  PEER_CONNECTION_STATE_DISCONNECTED = 3;
+  PEER_CONNECTION_STATE_FAILED = 4;
+}
+
+// The only peer lifecycle exposed to business clients. Transport/session
+// states remain native implementation details.
+enum PeerState {
+  PEER_STATE_OFFLINE = 0;
+  PEER_STATE_CONNECTING = 1;
+  PEER_STATE_ONLINE = 2;
+}
+
+enum E2eePolicy {
+  E2EE_POLICY_REQUIRED = 0;
+  E2EE_POLICY_DISABLED = 1;
+}
+
+enum CommandResultState {
+  COMMAND_RESULT_STATE_SUCCEEDED = 0;
+  COMMAND_RESULT_STATE_FAILED = 1;
+  COMMAND_RESULT_STATE_CANCELLED = 2;
+}
+
+enum NetworkEventLane {
+  NETWORK_EVENT_LANE_CONTROL = 0;
+  NETWORK_EVENT_LANE_DATA = 1;
+}
+
+enum RouteType {
+  ROUTE_TYPE_UNSPECIFIED = 0;
+  ROUTE_TYPE_QUIC_DIRECT = 1;
+  ROUTE_TYPE_RELAY = 2;
+  reserved 3;
+  ROUTE_TYPE_LAN = 4;
+}
+
+// Composed route metadata for transports that cannot be represented by the
+// legacy flat RouteType enum.
+enum RouteTopology {
+  ROUTE_TOPOLOGY_UNSPECIFIED = 0;
+  ROUTE_TOPOLOGY_DIRECT = 1;
+  ROUTE_TOPOLOGY_RELAY = 2;
+}
+
+enum RouteTransport {
+  ROUTE_TRANSPORT_UNSPECIFIED = 0;
+  ROUTE_TRANSPORT_QUIC = 1;
+  ROUTE_TRANSPORT_TCP = 2;
+  ROUTE_TRANSPORT_UDP = 3;
+  ROUTE_TRANSPORT_WEBSOCKET = 4;
+}
+
+enum RelayConnectionState {
+  RELAY_CONNECTION_STATE_UNSPECIFIED = 0;
+  RELAY_CONNECTION_STATE_CONNECTING = 1;
+  RELAY_CONNECTION_STATE_CONNECTED = 2;
+  RELAY_CONNECTION_STATE_DISCONNECTED = 3;
+  RELAY_CONNECTION_STATE_FAILED = 4;
+}
+
+enum RealtimeSessionState {
+  REALTIME_SESSION_STATE_UNSPECIFIED = 0;
+  REALTIME_SESSION_STATE_NEGOTIATING = 1;
+  REALTIME_SESSION_STATE_CONNECTED = 2;
+  REALTIME_SESSION_STATE_RESTARTING = 3;
+  REALTIME_SESSION_STATE_CLOSED = 4;
+  REALTIME_SESSION_STATE_FAILED = 5;
+}
+
+enum RealtimeSignalKind {
+  REALTIME_SIGNAL_KIND_UNSPECIFIED = 0;
+  REALTIME_SIGNAL_KIND_WEBRTC_OFFER = 1;
+  REALTIME_SIGNAL_KIND_WEBRTC_ANSWER = 2;
+  REALTIME_SIGNAL_KIND_ICE_CANDIDATE = 3;
+  REALTIME_SIGNAL_KIND_ICE_RESTART = 4;
+  REALTIME_SIGNAL_KIND_WEBRTC_CLOSE = 5;
+}
+
+enum DeliveryPolicyCode {
+  DELIVERY_POLICY_CODE_BEST_EFFORT = 0;
+  DELIVERY_POLICY_CODE_LATEST_STATE = 1;
+  DELIVERY_POLICY_CODE_ACKED = 2;
+  DELIVERY_POLICY_CODE_ACKED_DEDUPLICATED = 3;
+  DELIVERY_POLICY_CODE_SESSION_BOUND_ORDERED = 4;
+  DELIVERY_POLICY_CODE_RESUMABLE_TRANSFER = 5;
+}
+
+message NetworkError {
+  NetworkErrorCode code = 1;
+  string message = 2;
+  string operation = 3;
+  string peer_id = 4;
+  RetryDisposition retry_disposition = 5;
+  uint32 retry_after_seconds = 6;
+}
+
+message ConnectPeerCommand {
+  string peer_id = 1;
+  uint32 intent = 2;
+}
+
+message DisconnectPeerCommand {
+  string peer_id = 1;
+}
+
+message SendFileCommand {
+  string transfer_id = 1;
+  string peer_id = 2;
+  string file_path = 3;
+}
+
+message CancelTransferCommand {
+  string transfer_id = 1;
+}
+
+message ConfigureRuntimeCommand {
+  string device_id = 1;
+  bytes identity_private_key = 2;
+  bytes e2e_private_key = 3;
+  string listen_address = 4;
+  string receive_directory = 5;
+}
+
+message UpsertPeerCommand {
+  string peer_id = 1;
+  string endpoint_address = 2;
+  bytes identity_public_key = 3;
+  bytes e2e_public_key = 4;
+}
+
+message RespondIncomingTransferCommand {
+  string transfer_id = 1;
+  bool accept = 2;
+}
+
+message PeerConfig {
+  string peer_id = 1;
+  string endpoint_address = 2;
+  bytes identity_public_key = 3;
+  bytes e2e_public_key = 4;
+  E2eePolicy e2ee_policy = 5;
+}
+
+message UpsertPeerV2Command {
+  PeerConfig config = 1;
+}
+
+message RemovePeerCommand {
+  string peer_id = 1;
+}
+
+message SendMessageV2Command {
+  string peer_id = 1;
+  string message_id = 2;
+  string channel_id = 3;
+  bytes payload = 4;
+  DeliveryPolicyCode policy = 5;
+  E2eePolicy e2ee_policy = 6;
+}
+
+message TransferCommand {
+  string peer_id = 1;
+  string transfer_id = 2;
+  string file_path = 3;
+  uint64 confirmed_offset = 4;
+  bool resume = 5;
+}
+
+message PeerDiagnosticsCommand {
+  string peer_id = 1;
+}
+
+message NetworkEnvironmentChangedCommand {
+  uint64 generation = 1;
+  bool has_connectivity = 2;
+  bool is_foreground = 3;
+  bool is_metered = 4;
+}
+
+message ConfigureRelayCommand {
+  string relay_url = 1;
+  string relay_credential = 2;
+  bytes relay_signing_seed = 3;
+}
+
+message DisconnectRelayCommand {}
+
+message StartRealtimeSessionCommand {
+  string realtime_id = 1;
+  string peer_id = 2;
+}
+
+message StopRealtimeSessionCommand {
+  string realtime_id = 1;
+}
+
+message SendRealtimeSignalCommand {
+  string realtime_id = 1;
+  string peer_id = 2;
+  RealtimeSignalKind kind = 3;
+  uint64 revision = 4;
+  bytes payload = 5;
+}
+
+message NetworkCommand {
+  string command_id = 1;
+  uint32 protocol_version = 2;
+  oneof payload {
+    ConnectPeerCommand connect_peer = 10;
+    SendFileCommand send_file = 11;
+    CancelTransferCommand cancel_transfer = 12;
+    ConfigureRuntimeCommand configure_runtime = 13;
+    UpsertPeerCommand upsert_peer = 14;
+    RespondIncomingTransferCommand respond_incoming_transfer = 15;
+    ConfigureRelayCommand configure_relay = 16;
+    DisconnectPeerCommand disconnect_peer = 17;
+    DisconnectRelayCommand disconnect_relay = 18;
+    StartRealtimeSessionCommand start_realtime_session = 21;
+    StopRealtimeSessionCommand stop_realtime_session = 22;
+    SendRealtimeSignalCommand send_realtime_signal = 23;
+    UpsertPeerV2Command upsert_peer_v2 = 28;
+    RemovePeerCommand remove_peer = 29;
+    SendMessageV2Command send_message_v2 = 30;
+    TransferCommand transfer = 31;
+    PeerDiagnosticsCommand peer_diagnostics = 32;
+    NetworkEnvironmentChangedCommand network_environment_changed = 33;
+  }
+}
+
+message PeerStateChangedEvent {
+  string peer_id = 1;
+  PeerConnectionState state = 2;
+  // Observational route metadata; PeerSupervisor remains the lifecycle owner.
+  RouteType route_type = 3;
+  NetworkError error = 4;
+  RouteTopology route_topology = 5;
+  RouteTransport route_transport = 6;
+}
+
+message TransferProgressEvent {
+  string transfer_id = 1;
+  uint64 bytes_transferred = 2;
+  uint64 total_bytes = 3;
+}
+
+  // 由 Dart 服务消费，用于完成待处理 NetworkResult，不作为公开 NetworkEvent 暴露。
+message CommandResultEvent {
+  string command_id = 1;
+  bool accepted = 2;
+  NetworkError error = 3;
+}
+
+message CommandResult {
+  string command_id = 1;
+  string peer_id = 2;
+  CommandResultState state = 3;
+  NetworkError error = 4;
+}
+
+message PeerLifecycleEvent {
+  string peer_id = 1;
+  PeerState state = 2;
+  E2eePolicy e2ee_policy = 3;
+  NetworkError error = 4;
+}
+
+message PeerDiagnostics {
+  string peer_id = 1;
+  PeerState state = 2;
+  E2eePolicy e2ee_policy = 3;
+  uint32 ready_path_count = 4;
+  uint32 queued_command_count = 5;
+  uint32 active_stream_count = 6;
+  uint32 active_transfer_count = 7;
+  NetworkError last_error = 8;
+}
+
+message NetworkEnvironmentChangedEvent {
+  uint64 generation = 1;
+  bool has_connectivity = 2;
+  bool is_foreground = 3;
+  bool is_metered = 4;
+}
+
+message PeerTransferProgressEvent {
+  string peer_id = 1;
+  string transfer_id = 2;
+  uint64 confirmed_offset = 3;
+  uint64 total_bytes = 4;
+  bool paused = 5;
+}
+
+message IncomingTransferOfferEvent {
+  string transfer_id = 1;
+  string peer_id = 2;
+  string file_name = 3;
+  uint64 file_size = 4;
+}
+
+message TransferCompletedEvent {
+  string transfer_id = 1;
+  string local_path = 2;
+}
+
+message TransferFailedEvent {
+  string transfer_id = 1;
+  NetworkError error = 2;
+}
+
+message RouteChangedEvent {
+  string peer_id = 1;
+  RouteType route_type = 2;
+  string endpoint = 3;
+  uint64 rtt_ms = 4;
+  uint32 loss_per_mille = 5;
+  RouteTopology topology = 6;
+  RouteTransport transport = 7;
+}
+
+message RelayStateChangedEvent {
+  RelayConnectionState state = 1;
+  NetworkError error = 2;
+}
+
+message RealtimeStateChangedEvent {
+  string realtime_id = 1;
+  string peer_id = 2;
+  RealtimeSessionState state = 3;
+  uint64 revision = 4;
+  NetworkError error = 5;
+}
+
+message RealtimeSignalEvent {
+  string realtime_id = 1;
+  string peer_id = 2;
+  RealtimeSignalKind kind = 3;
+  uint64 revision = 4;
+  bytes payload = 5;
+}
+
+// Realtime Session 稳定后发布的完整状态快照。
+message RealtimeSnapshotEvent {
+  string realtime_id = 1;
+  string peer_id = 2;
+  RealtimeSessionState state = 3;
+  uint64 revision = 4;
+  NetworkError error = 5;
+}
+
+message NetworkEvent {
+  string event_id = 1;
+  int64 timestamp_ms = 2;
+  uint32 protocol_version = 3;
+  oneof payload {
+    PeerStateChangedEvent peer_state = 10;
+    TransferProgressEvent transfer_progress = 11;
+    CommandResultEvent command_result = 13;
+    IncomingTransferOfferEvent incoming_transfer_offer = 14;
+    TransferCompletedEvent transfer_completed = 15;
+    TransferFailedEvent transfer_failed = 16;
+    RouteChangedEvent route_changed = 17;
+    RelayStateChangedEvent relay_state_changed = 18;
+    RealtimeStateChangedEvent realtime_state = 21;
+    RealtimeSignalEvent realtime_signal = 22;
+    RealtimeSnapshotEvent realtime_snapshot = 23;
+    PeerLifecycleEvent peer_lifecycle = 28;
+    CommandResult command_result_v2 = 29;
+    PeerDiagnostics peer_diagnostics = 30;
+    NetworkEnvironmentChangedEvent network_environment_changed = 31;
+    PeerTransferProgressEvent peer_transfer_progress = 32;
+  }
+}

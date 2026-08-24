@@ -1,5 +1,5 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,22 +9,42 @@ void main() {
   test(
     'self-test checks initialize and tools/list without executing tools',
     () async {
-      final reservation = await ServerSocket.bind(
-        InternetAddress.loopbackIPv4,
-        0,
-      );
-      final port = reservation.port;
-      await reservation.close();
+      final server = _FakeHttpServerHandle();
+      final selfTestTransport = _FakeSelfTestTransport([
+        const McpSelfTestResponse(
+          reachable: true,
+          statusCode: 200,
+          succeeded: true,
+        ),
+        const McpSelfTestResponse(
+          reachable: true,
+          statusCode: 200,
+          succeeded: true,
+        ),
+      ]);
       final settings = _FakeSettings(
-        value: McpServerSettings(
+        value: const McpServerSettings(
           enabled: true,
           host: '127.0.0.1',
-          port: port,
+          port: 38321,
           token: 'test-token',
         ),
       );
       final executor = _FakeToolExecutor();
-      final controller = _createController(settings, () => executor);
+      final controller = _createController(
+        settings,
+        () => executor,
+        serverFactory:
+            ({
+              required host,
+              required port,
+              required token,
+              required router,
+              required activityRecorder,
+              required logger,
+            }) async => server,
+        selfTestTransport: selfTestTransport,
+      );
       addTearDown(() {
         controller.dispose();
         settings.dispose();
@@ -39,6 +59,8 @@ void main() {
       expect(result.initialized, isTrue);
       expect(result.toolsListed, isTrue);
       expect(executor.executedTools, isEmpty);
+      expect(selfTestTransport.requests, 2);
+      expect(server.closed, isFalse);
     },
   );
 
@@ -54,6 +76,128 @@ void main() {
 
     expect(result.succeeded, isFalse);
     expect(result.failureCode, 'server_not_running');
+    expect(controller.running, isFalse);
+  });
+
+  test('stop invalidates a start waiting for the port probe', () async {
+    final probeEntered = Completer<void>();
+    final releaseProbe = Completer<void>();
+    final settings = _FakeSettings(
+      value: const McpServerSettings(token: 'test-token'),
+    );
+    var serverFactoryCalls = 0;
+    final controller = _createController(
+      settings,
+      _FakeToolExecutor.new,
+      portProbe: McpPortProbe(
+        bind: (host, port) async {
+          probeEntered.complete();
+          await releaseProbe.future;
+          return _FakePortReservation();
+        },
+      ),
+      serverFactory:
+          ({
+            required host,
+            required port,
+            required token,
+            required router,
+            required activityRecorder,
+            required logger,
+          }) async {
+            serverFactoryCalls += 1;
+            return _FakeHttpServerHandle();
+          },
+    );
+    addTearDown(() {
+      controller.dispose();
+      settings.dispose();
+    });
+
+    final start = controller.start();
+    await probeEntered.future;
+    final stop = controller.stop();
+    releaseProbe.complete();
+    await start;
+    await stop;
+
+    expect(controller.running, isFalse);
+    expect(controller.status, McpServerRunStatus.stopped);
+    expect(serverFactoryCalls, 0);
+  });
+
+  test('dispose closes a server handle returned by a late start', () async {
+    final factoryEntered = Completer<void>();
+    final releaseFactory = Completer<void>();
+    final server = _FakeHttpServerHandle();
+    final settings = _FakeSettings(
+      value: const McpServerSettings(token: 'test-token'),
+    );
+    final controller = _createController(
+      settings,
+      _FakeToolExecutor.new,
+      serverFactory:
+          ({
+            required host,
+            required port,
+            required token,
+            required router,
+            required activityRecorder,
+            required logger,
+          }) async {
+            factoryEntered.complete();
+            await releaseFactory.future;
+            return server;
+          },
+    );
+    addTearDown(settings.dispose);
+
+    final start = controller.start();
+    await factoryEntered.future;
+    controller.dispose();
+    releaseFactory.complete();
+    await start;
+
+    expect(server.closed, isTrue);
+    expect(controller.running, isFalse);
+    expect(controller.status, McpServerRunStatus.stopped);
+  });
+
+  test('close waits for the active HTTP server shutdown barrier', () async {
+    final closeGate = Completer<void>();
+    final server = _FakeHttpServerHandle(closeGate: closeGate);
+    final settings = _FakeSettings(
+      value: const McpServerSettings(token: 'test-token'),
+    );
+    final controller = _createController(
+      settings,
+      _FakeToolExecutor.new,
+      serverFactory:
+          ({
+            required host,
+            required port,
+            required token,
+            required router,
+            required activityRecorder,
+            required logger,
+          }) async => server,
+    );
+    addTearDown(() {
+      controller.dispose();
+      settings.dispose();
+    });
+    await controller.start();
+
+    var closeCompleted = false;
+    final closing = controller.close().whenComplete(
+      () => closeCompleted = true,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(server.closed, isTrue);
+    expect(closeCompleted, isFalse);
+    closeGate.complete();
+    await closing;
     expect(controller.running, isFalse);
   });
 
@@ -160,19 +304,111 @@ void main() {
     expect(executed, isFalse);
     expect(queue.pending, isEmpty);
   });
+
+  test('server startup failures expose only a stable error code', () async {
+    const secret = 'MCP_STARTUP_SECRET_20260824';
+    final settings = _FakeSettings(
+      value: const McpServerSettings(token: 'test-token'),
+    );
+    final logger = _RecordingLogger();
+    final controller = _createController(
+      settings,
+      _FakeToolExecutor.new,
+      logger: logger,
+      serverFactory:
+          ({
+            required host,
+            required port,
+            required token,
+            required router,
+            required activityRecorder,
+            required logger,
+          }) async {
+            throw StateError('Authorization: Bearer $secret');
+          },
+    );
+    addTearDown(() {
+      controller.dispose();
+      settings.dispose();
+    });
+
+    await controller.start();
+
+    expect(controller.status, McpServerRunStatus.failed);
+    expect(controller.lastError, 'server_start_failed');
+    final logText = logger.entries.join('\n');
+    expect(logText, contains('errorCode=server_start_failed'));
+    expect(logText, contains('errorType=StateError'));
+    expect(logText, isNot(contains(secret)));
+  });
+
+  test('settings and token startup failures remain redacted', () async {
+    const secret = 'MCP_SETTINGS_SECRET_20260824';
+    final loadLogger = _RecordingLogger();
+    final loadSettings = _FakeSettings(
+      value: const McpServerSettings(enabled: true),
+      loadError: StateError('Authorization: Bearer $secret'),
+    );
+    final loadController = _createController(
+      loadSettings,
+      _FakeToolExecutor.new,
+      logger: loadLogger,
+    );
+    final tokenLogger = _RecordingLogger();
+    final tokenSettings = _FakeSettings(
+      tokenError: StateError('Authorization: Bearer $secret'),
+    );
+    final tokenController = _createController(
+      tokenSettings,
+      _FakeToolExecutor.new,
+      logger: tokenLogger,
+    );
+    addTearDown(() {
+      loadController.dispose();
+      loadSettings.dispose();
+      tokenController.dispose();
+      tokenSettings.dispose();
+    });
+
+    await loadController.startIfEnabled();
+    await tokenController.start();
+
+    expect(loadController.lastError, 'settings_load_failed');
+    expect(tokenController.lastError, 'server_start_failed');
+    expect(loadLogger.entries.join('\n'), isNot(contains(secret)));
+    expect(tokenLogger.entries.join('\n'), isNot(contains(secret)));
+  });
 }
 
 McpServerController _createController(
   McpSettingsPort settings,
   McpToolExecutor Function() factory, {
   McpApprovalQueue? approvalQueue,
+  McpPortProbe? portProbe,
+  McpHttpServerFactory? serverFactory,
+  McpSelfTestTransport? selfTestTransport,
+  McpLoggerPort logger = const _FakeLogger(),
 }) {
   return McpServerController(
     settings: settings,
     toolServiceFactory: factory,
     activityRepository: _MemoryActivityRepository(),
-    logger: const _FakeLogger(),
+    logger: logger,
     approvalQueue: approvalQueue,
+    portProbe:
+        portProbe ??
+        McpPortProbe(bind: (host, port) async => _FakePortReservation()),
+    serverFactory:
+        serverFactory ??
+        ({
+          required host,
+          required port,
+          required token,
+          required router,
+          required activityRecorder,
+          required logger,
+        }) async => _FakeHttpServerHandle(),
+    selfTestTransport: selfTestTransport ?? _FakeSelfTestTransport([]),
   );
 }
 
@@ -194,10 +430,12 @@ Future<void> _waitFor(bool Function() condition) async {
 }
 
 class _FakeSettings extends ChangeNotifier implements McpSettingsPort {
-  _FakeSettings({McpServerSettings? value})
+  _FakeSettings({McpServerSettings? value, this.loadError, this.tokenError})
     : _value = value ?? const McpServerSettings();
 
   McpServerSettings _value;
+  final Object? loadError;
+  final Object? tokenError;
 
   @override
   McpServerSettings get mcpSettings => _value;
@@ -206,10 +444,13 @@ class _FakeSettings extends ChangeNotifier implements McpSettingsPort {
   bool get isEnglish => false;
 
   @override
-  Future<void> ensureCoreLoaded() async {}
+  Future<void> ensureCoreLoaded() async {
+    if (loadError != null) throw loadError!;
+  }
 
   @override
   Future<String> ensureMcpServerToken() async {
+    if (tokenError != null) throw tokenError!;
     if (_value.hasToken) return _value.token;
     _value = _value.copyWith(token: 'test-token');
     notifyListeners();
@@ -311,6 +552,72 @@ class _FakeLogger implements McpLoggerPort {
     StackTrace? stackTrace,
     String? details,
   }) {}
+}
+
+class _RecordingLogger implements McpLoggerPort {
+  final entries = <String>[];
+
+  @override
+  void info(String message, {String? details}) {
+    entries.add('$message|$details');
+  }
+
+  @override
+  void warning(String message, {String? details}) {
+    entries.add('$message|$details');
+  }
+
+  @override
+  void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String? details,
+  }) {
+    entries.add('$message|$error|$stackTrace|$details');
+  }
+}
+
+class _FakePortReservation implements McpPortReservation {
+  @override
+  Future<void> close() async {}
+}
+
+class _FakeHttpServerHandle implements McpHttpServerHandle {
+  _FakeHttpServerHandle({this.closeGate});
+
+  final Completer<void>? closeGate;
+  var closed = false;
+
+  @override
+  Future<void> close({bool force = true}) async {
+    closed = true;
+    await closeGate?.future;
+  }
+}
+
+class _FakeSelfTestTransport implements McpSelfTestTransport {
+  _FakeSelfTestTransport(this._responses);
+
+  final List<McpSelfTestResponse> _responses;
+  var requests = 0;
+
+  @override
+  Future<McpSelfTestResponse> postJson({
+    required Uri url,
+    required String token,
+    required Map<String, dynamic> body,
+  }) async {
+    requests++;
+    if (_responses.isEmpty) {
+      return const McpSelfTestResponse(
+        reachable: false,
+        statusCode: null,
+        succeeded: false,
+      );
+    }
+    return _responses.removeAt(0);
+  }
 }
 
 class _FakeToolExecutor implements McpToolExecutor {

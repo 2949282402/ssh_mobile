@@ -33,16 +33,21 @@ extension _SftpConnectionLifecycle on SftpService {
       session.state = SftpConnectionState.connected;
       AppLogService.instance.info(
         'SFTP connected',
-        details: 'connection=${config.name} host=${config.host}:${config.port}',
+        details: SftpLogSafety.details(
+          operation: 'connect',
+          connectionId: session.connectionId,
+        ),
       );
       notify();
       await _openLastKnownPath(session);
-    } catch (e, stackTrace) {
+    } catch (e) {
       AppLogService.instance.error(
         'SFTP connect failed',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'connection=${config.name}',
+        details: SftpLogSafety.details(
+          operation: 'connect',
+          connectionId: session.connectionId,
+          error: e,
+        ),
       );
       session.close();
       session.client = null;

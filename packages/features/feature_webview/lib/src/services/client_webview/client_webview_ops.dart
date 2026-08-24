@@ -1,6 +1,81 @@
 part of '../client_webview_service.dart';
 
 extension ClientWebViewServiceOps on ClientWebViewService {
+  Future<bool> _loadUriThroughProxy(
+    ClientWebViewSession session,
+    Uri uri,
+  ) async {
+    final controller = session.controller;
+    if (controller == null || !_isCurrentSession(session)) return false;
+    final blockedReason = ClientWebViewSecurityPolicy.blockedUriReason(uri);
+    if (blockedReason != null) {
+      session
+        .._lastError = blockedReason
+        .._isLoading = false
+        .._updatedAt = DateTime.now();
+      _notifyIfCurrent(session);
+      return false;
+    }
+    final loadGeneration = ++session._networkLoadGeneration;
+
+    session
+      .._url = uri.toString()
+      .._lastError = null
+      .._isLoading = true
+      .._progress = 0
+      .._updatedAt = DateTime.now();
+    _notifyIfCurrent(session);
+    try {
+      final page = await _networkLoader.load(uri);
+      if (!_isCurrentSession(session) ||
+          session._networkLoadGeneration != loadGeneration) {
+        return false;
+      }
+      session
+        .._url = page.finalUri.toString()
+        .._updatedAt = DateTime.now();
+      final ticket = session._internalDocumentLease.issue();
+      try {
+        await controller.loadHtmlString(
+          ClientWebViewService._safeDocumentRenderer.render(page),
+          baseUrl: ticket.uri.toString(),
+        );
+      } catch (_) {
+        session._internalDocumentLease.cancel(ticket);
+        rethrow;
+      }
+      return _isCurrentSession(session) &&
+          session._networkLoadGeneration == loadGeneration;
+    } on ClientWebViewNetworkException catch (error) {
+      if (!_isCurrentSession(session) ||
+          session._networkLoadGeneration != loadGeneration) {
+        return false;
+      }
+      session
+        .._lastError = error.message
+        .._isLoading = false
+        .._updatedAt = DateTime.now();
+      _notifyIfCurrent(session);
+      return false;
+    } catch (error) {
+      if (!_isCurrentSession(session) ||
+          session._networkLoadGeneration != loadGeneration) {
+        return false;
+      }
+      _logError(
+        'Secure Client WebView load failed',
+        details:
+            'chatId=${session.chatId} host=${uri.host} errorType=${error.runtimeType}',
+      );
+      session
+        .._lastError = 'Secure WebView request failed.'
+        .._isLoading = false
+        .._updatedAt = DateTime.now();
+      _notifyIfCurrent(session);
+      return false;
+    }
+  }
+
   Future<void> _refreshTitle(ClientWebViewSession session) async {
     final controller = session.controller;
     if (controller == null) return;
@@ -71,7 +146,7 @@ extension ClientWebViewServiceOps on ClientWebViewService {
 
     try {
       final raw = await controller.runJavaScriptReturningResult(
-        _pageTextScript,
+        clientWebViewPageTextScript,
       );
       if (!_isCurrentSession(session)) {
         return _closedSnapshot(session, effectiveMaxChars);
@@ -79,12 +154,16 @@ extension ClientWebViewServiceOps on ClientWebViewService {
       final payload = _decodeJavaScriptPayload(raw);
       final title = (payload['title'] as String?)?.trim();
       final url = (payload['url'] as String?)?.trim();
+      final payloadUri = url == null ? null : Uri.tryParse(url);
+      final safePayloadUrl =
+          payloadUri != null &&
+          ClientWebViewSecurityPolicy.blockedUriReason(payloadUri) == null;
       final sensitiveFormDetected = payload['sensitiveFormDetected'] == true;
       if (sensitiveFormDetected) {
         final now = DateTime.now();
         session
           .._title = title?.isNotEmpty == true ? title : session.title
-          .._url = url?.isNotEmpty == true ? url : session.url
+          .._url = safePayloadUrl ? url : session.url
           .._lastText = ''
           .._lastTextLength = 0
           .._lastTextTruncated = false
@@ -114,7 +193,7 @@ extension ClientWebViewServiceOps on ClientWebViewService {
       final now = DateTime.now();
       session
         .._title = title?.isNotEmpty == true ? title : session.title
-        .._url = url?.isNotEmpty == true ? url : session.url
+        .._url = safePayloadUrl ? url : session.url
         .._lastText = truncatedText.value
         .._lastTextLength = text.length
         .._lastTextTruncated = truncatedText.truncated
@@ -234,7 +313,7 @@ extension ClientWebViewServiceOps on ClientWebViewService {
       if (!_isAiBrowsingCurrent(session, aiBrowsingToken)) return const {};
       try {
         final raw = await controller
-            .runJavaScriptReturningResult(_searchResultsScript)
+            .runJavaScriptReturningResult(clientWebViewSearchResultsScript)
             .timeout(const Duration(seconds: 2));
         if (!_isAiBrowsingCurrent(session, aiBrowsingToken)) return const {};
         final payload = _decodeJavaScriptPayload(raw);
@@ -397,171 +476,3 @@ extension ClientWebViewServiceOps on ClientWebViewService {
             defaultTargetPlatform == TargetPlatform.iOS);
   }
 }
-
-const String _pageTextScript = r'''
-(() => {
-  const title = document.title || '';
-  const url = window.location ? window.location.href : '';
-  const body = document.body;
-  const sensitiveSelector = [
-    'input[type="password"]',
-    'input[name*="token" i]',
-    'input[name*="secret" i]',
-    'input[name*="api" i]',
-    'input[name*="key" i]',
-    'textarea[name*="secret" i]',
-    'textarea[name*="token" i]'
-  ].join(',');
-  const sensitiveFormDetected = !!document.querySelector(sensitiveSelector);
-  const text = body ? (body.innerText || '') : '';
-  return JSON.stringify({ title, url, text, sensitiveFormDetected });
-})()
-''';
-
-const String _searchResultsScript = r'''
-(() => {
-  const clean = (value) => (value || '').replace(/\s+/g, ' ').trim();
-  const notHidden = (el) => {
-    if (!el) return false;
-    const style = window.getComputedStyle(el);
-    return style.display !== 'none' && style.visibility !== 'hidden';
-  };
-  const unwrapUrl = (href) => {
-    try {
-      const parsed = new URL(href, window.location.href);
-      const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
-      const duckTarget = parsed.searchParams.get('uddg');
-      if (host.endsWith('duckduckgo.com') && duckTarget) {
-        try {
-          return decodeURIComponent(duckTarget);
-        } catch (_) {
-          return duckTarget;
-        }
-      }
-      if (parsed.hostname.includes('bing.com') && parsed.pathname.includes('/ck/')) {
-        const encoded = parsed.searchParams.get('u');
-        if (encoded) {
-          let value = encoded;
-          if (value.startsWith('a1')) value = value.substring(2);
-          try {
-            const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
-            return atob(normalized);
-          } catch (_) {
-            return decodeURIComponent(encoded);
-          }
-        }
-      }
-      return parsed.href;
-    } catch (_) {
-      return '';
-    }
-  };
-  const useful = (url, title) => {
-    if (!url || !title || title.length < 3) return false;
-    let parsed;
-    try {
-      parsed = new URL(url);
-    } catch (_) {
-      return false;
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-    const lowerTitle = title.toLowerCase();
-    const junk = [
-      'images', 'videos', 'maps', 'news', 'shopping', 'settings', 'sign in',
-      'privacy', 'privacy policy', 'terms', 'terms of service', 'next',
-      'previous', 'feedback', 'help', 'advertise', 'safe search',
-      'all regions', 'any time', 'past day', 'past week', 'past month',
-      'past year', 'more results'
-    ];
-    if (junk.includes(lowerTitle)) return false;
-    const loweredUrl = url.toLowerCase();
-    if (
-      loweredUrl.includes('/y.js?') ||
-      loweredUrl.includes('ad_domain=') ||
-      loweredUrl.includes('/aclick?') ||
-      loweredUrl.includes('doubleclick.net')
-    ) {
-      return false;
-    }
-    const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
-    const path = parsed.pathname.toLowerCase();
-    if (host.endsWith('duckduckgo.com')) {
-      if (
-        path === '/' ||
-        path.includes('/html') ||
-        path.includes('/l/') ||
-        path.includes('/settings') ||
-        path.includes('/feedback') ||
-        path.includes('/duckduckgo-help-pages')
-      ) {
-        return false;
-      }
-    }
-    const currentHost = window.location.hostname.replace(/^www\./, '').toLowerCase();
-    if (host === currentHost) {
-      if (
-        path === '/' ||
-        path.includes('/search') ||
-        path.includes('/images') ||
-        path === '/s'
-      ) {
-        return false;
-      }
-    }
-    return true;
-  };
-  const results = [];
-  const seen = new Set();
-  const addResult = (anchor, container) => {
-    if (!anchor || !notHidden(anchor)) return;
-    if (container && (
-      container.classList.contains('result--ad') ||
-      container.querySelector('.badge--ad, [class*="badge--ad"], [class*="ad_domain"]')
-    )) {
-      return;
-    }
-    const url = unwrapUrl(anchor.href);
-    const title = clean(anchor.innerText || anchor.textContent);
-    if (!useful(url, title) || seen.has(url)) return;
-    seen.add(url);
-    const snippetNode = container ? container.querySelector(
-      '.result__snippet, .result__body, .result__extras, .b_caption p, .b_snippet, p, [class*="snippet"], [class*="content"]'
-    ) : null;
-    let snippet = clean(snippetNode && notHidden(snippetNode) ? snippetNode.innerText : '');
-    if (!snippet && container) {
-      snippet = clean(container.innerText).replace(title, '').trim();
-    }
-    if (snippet.length > 500) snippet = snippet.substring(0, 500);
-    results.push({ title, url, snippet });
-  };
-  const containers = Array.from(document.querySelectorAll([
-    '.result.results_links',
-    '.results_links',
-    '.web-result',
-    '.result',
-    'li.b_algo',
-    'ol#b_results > li',
-    '[data-testid="result"]',
-    'article',
-    '.g'
-  ].join(',')));
-  for (const container of containers) {
-    const anchor = container.querySelector(
-      '.result__a[href], a.result__a[href], h2 a[href], h3 a[href], a[href]'
-    );
-    addResult(anchor, container);
-    if (results.length >= 12) break;
-  }
-  if (results.length < 3) {
-    for (const anchor of Array.from(document.querySelectorAll('a[href]'))) {
-      addResult(anchor, anchor.closest('li, article, div') || anchor.parentElement);
-      if (results.length >= 12) break;
-    }
-  }
-  return JSON.stringify({
-    title: document.title || '',
-    url: window.location ? window.location.href : '',
-    results
-  });
-})()
-''';

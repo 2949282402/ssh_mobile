@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-20
 
 # MCP Feature Agent Notes
 
@@ -18,3 +18,6 @@
 - 数据库约束：`McpModule` 独占 `mcp.db`；活动记录不得回流统一 `AppDatabase`，秘密只保留在安全边界。
 - 资源释放规则：Module 停止 HTTP Server、拒绝 pending approval、关闭 Repository/数据库；Route Scope 释放 ViewModel。
 - 必须运行的测试：`dart format --output=none --set-exit-if-changed lib test`、`flutter analyze`、`flutter test`。
+- `mcp_http_server_native_test.dart` 标记为 `native-loopback`，需要原生 Linux
+  Flutter runner；WSL 使用 `flutter test --exclude-tags native-loopback`，CI
+  仍运行真实回环 HTTP 集成测试。

@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-24
 
 # MCP Feature Memory
 
@@ -12,6 +12,10 @@ logging, and the AI Tool Runtime.
 
 Application disposal stops the server, rejects pending approvals, and closes
 the Module database. Route disposal releases only route-scoped ViewModels.
+Server lifecycle actions are serialized and generation-bound. The awaited
+`close()` barrier invalidates late starts and closes their local handles before
+the Module closes `mcp.db`. Protocol self-test orchestration is owned by
+`McpSelfTestRunner`, not the HTTP Server owner.
 
 ## Execution boundaries
 

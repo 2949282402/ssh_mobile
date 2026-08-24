@@ -86,7 +86,7 @@ func TestResolveV2LeaseBasedOnline(t *testing.T) {
 	caller := injectPeer(server.hub, "caller")
 
 	// device-a：READY（presence+discovery 均有效、owner 一致、revision>0）。
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1", ConnectionID: "conn-a"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{
@@ -162,11 +162,12 @@ func TestResolveV2FourStates(t *testing.T) {
 	// 本地表有连接但缓存不可读：UNKNOWN 必须判 NOT READY，不再 fail-open 到 h.peers。
 	injectPeer(server.hub, "device-x")
 
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1", ConnectionID: "conn-a"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{
-		DeviceID: "device-a", Revision: 7, Capabilities: []string{"cap-a"}, Candidates: []string{"cand-a"},
+		DeviceID: "device-a", ConnectionID: "conn-a", RuntimeEpochHigh: 1, RuntimeEpochLow: 1,
+		Revision: 7, Capabilities: []string{"cap-a"}, Candidates: []string{"cand-a"},
 	}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
@@ -198,10 +199,12 @@ func TestResolvePeerStatusMatrix(t *testing.T) {
 	ctx := context.Background()
 
 	// device-a：READY（presence+discovery 有效、owner 一致、revision>0）。
-	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1", ConnectionID: "conn-a"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{DeviceID: "device-a", Revision: 3}, time.Minute); err != nil {
+	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{
+		DeviceID: "device-a", ConnectionID: "conn-a", RuntimeEpochHigh: 1, RuntimeEpochLow: 1, Revision: 3,
+	}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if got := server.hub.resolvePeer(ctx, "device-a"); got.status != v2.ResolveStatus_RESOLVE_STATUS_READY {
@@ -222,13 +225,15 @@ func TestResolvePeerStatusMatrix(t *testing.T) {
 	}
 
 	// device-d：presence+discovery 双有效但 owner 不一致（重连窗口旧连接残留）→ NOT_READY。
-	if _, _, err := server.cache.TakePresence(ctx, "device-d", "conn-d1", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	if _, _, err := server.cache.TakePresence(ctx, "device-d", "conn-d1", Presence{InstanceID: "i1", ConnectionID: "conn-d1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.cache.TakeDiscovery(ctx, "device-d", "conn-d1", Discovery{DeviceID: "device-d", Revision: 5}, time.Minute); err != nil {
+	if err := server.cache.TakeDiscovery(ctx, "device-d", "conn-d1", Discovery{
+		DeviceID: "device-d", ConnectionID: "conn-d1", RuntimeEpochHigh: 1, RuntimeEpochLow: 1, Revision: 5,
+	}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := server.cache.TakePresence(ctx, "device-d", "conn-d2", Presence{InstanceID: "i1"}, time.Minute); err != nil {
+	if _, _, err := server.cache.TakePresence(ctx, "device-d", "conn-d2", Presence{InstanceID: "i1", ConnectionID: "conn-d2"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if got := server.hub.resolvePeer(ctx, "device-d"); got.status != v2.ResolveStatus_RESOLVE_STATUS_NOT_READY {
@@ -480,7 +485,9 @@ func TestHandleRelayEventPeerEvents(t *testing.T) {
 	if _, _, err := server.cache.TakePresence(ctx, "device-a", "conn-a", Presence{InstanceID: "i1"}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{DeviceID: "device-a", Revision: 3}, time.Minute); err != nil {
+	if err := server.cache.TakeDiscovery(ctx, "device-a", "conn-a", Discovery{
+		DeviceID: "device-a", RuntimeEpochHigh: 1, RuntimeEpochLow: 1, Revision: 3,
+	}, time.Minute); err != nil {
 		t.Fatal(err)
 	}
 

@@ -20,6 +20,7 @@ extension SftpServiceOperations on SftpService {
       final names = await sftp.listdir(absolutePath);
       final entries = await _buildEntries(
         connectionId: config.id,
+        targetFingerprint: targetBinding.fingerprint,
         absolutePath: absolutePath,
         names: names,
       );
@@ -32,7 +33,11 @@ extension SftpServiceOperations on SftpService {
       );
       AppLogService.instance.info(
         'SFTP directory listed for tool',
-        details: 'connection=${config.name} path=$absolutePath',
+        details: SftpLogSafety.details(
+          operation: 'tool_list_directory',
+          connectionId: config.id,
+          path: absolutePath,
+        ),
       );
       return unmodifiableEntries;
     });
@@ -69,8 +74,12 @@ extension SftpServiceOperations on SftpService {
         final bytes = await _readFileBytesWithinLimit(file, maxBytes: maxBytes);
         AppLogService.instance.info(
           'SFTP file read for tool',
-          details:
-              'connection=${config.name} path=$absolutePath bytes=${bytes.length}',
+          details: SftpLogSafety.details(
+            operation: 'tool_read_text',
+            connectionId: config.id,
+            path: absolutePath,
+            bytes: bytes.length,
+          ),
         );
 
         await SftpFileCache.put(
@@ -82,7 +91,7 @@ extension SftpServiceOperations on SftpService {
           bytes,
         );
 
-        return compute(SftpService._decodeUtf8, bytes);
+        return await compute(SftpService._decodeUtf8, bytes);
       } finally {
         await _closeFileQuietly(file);
       }
@@ -124,8 +133,12 @@ extension SftpServiceOperations on SftpService {
         final bytes = await _readFileBytesWithinLimit(file, maxBytes: maxBytes);
         AppLogService.instance.info(
           'SFTP file downloaded for tool',
-          details:
-              'connection=${config.name} path=$absolutePath bytes=${bytes.length}',
+          details: SftpLogSafety.details(
+            operation: 'tool_download',
+            connectionId: config.id,
+            path: absolutePath,
+            bytes: bytes.length,
+          ),
         );
 
         await SftpFileCache.put(
@@ -172,8 +185,12 @@ extension SftpServiceOperations on SftpService {
         );
         AppLogService.instance.info(
           'SFTP text file saved for tool',
-          details:
-              'connection=${config.name} path=$absolutePath bytes=${bytes.length}',
+          details: SftpLogSafety.details(
+            operation: 'tool_write_text',
+            connectionId: config.id,
+            path: absolutePath,
+            bytes: bytes.length,
+          ),
         );
       } finally {
         await _closeFileQuietly(file);
@@ -229,8 +246,12 @@ extension SftpServiceOperations on SftpService {
         );
         AppLogService.instance.info(
           'SFTP file uploaded for tool',
-          details:
-              'connection=${config.name} path=$absolutePath bytes=${bytes.length}',
+          details: SftpLogSafety.details(
+            operation: 'tool_upload',
+            connectionId: config.id,
+            path: absolutePath,
+            bytes: bytes.length,
+          ),
         );
       } finally {
         await _closeFileQuietly(file);
@@ -248,7 +269,11 @@ extension SftpServiceOperations on SftpService {
       _directoryCache.invalidate(connectionId, targetBinding.fingerprint);
       AppLogService.instance.info(
         'SFTP directory created for tool',
-        details: 'connection=${config.name} path=$absolutePath',
+        details: SftpLogSafety.details(
+          operation: 'tool_create_directory',
+          connectionId: config.id,
+          path: absolutePath,
+        ),
       );
     });
   }
@@ -275,8 +300,12 @@ extension SftpServiceOperations on SftpService {
       );
       AppLogService.instance.info(
         'SFTP path renamed for tool',
-        details:
-            'connection=${config.name} from=$absolutePath to=$absoluteNewPath',
+        details: SftpLogSafety.details(
+          operation: 'tool_rename',
+          connectionId: config.id,
+          path: absolutePath,
+          destinationPath: absoluteNewPath,
+        ),
       );
     });
   }
@@ -301,8 +330,12 @@ extension SftpServiceOperations on SftpService {
       );
       AppLogService.instance.info(
         'SFTP path deleted for tool',
-        details:
-            'connection=${config.name} path=$absolutePath directory=${attrs.isDirectory}',
+        details: SftpLogSafety.details(
+          operation: 'tool_delete',
+          connectionId: config.id,
+          path: absolutePath,
+          directory: attrs.isDirectory,
+        ),
       );
     });
   }

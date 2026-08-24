@@ -63,7 +63,12 @@ final class McpModule implements AppModule {
   }
 
   @override
-  Future<void> initialize() => _initializeFuture ??= _doInitialize();
+  Future<void> initialize() {
+    if (_state == ModuleState.disposed) {
+      return Future<void>.error(StateError('McpModule has been disposed.'));
+    }
+    return _initializeFuture ??= _doInitialize();
+  }
 
   Future<void> _doInitialize() async {
     final settings = _settings;
@@ -78,6 +83,9 @@ final class McpModule implements AppModule {
     try {
       database = _databaseFactory();
       await database.customSelect('SELECT 1').getSingle();
+      if (_state == ModuleState.disposed) {
+        throw StateError('McpModule was disposed during initialization.');
+      }
       final repository = DriftMcpActivityRepository(database);
       final service = McpServerController(
         settings: settings,
@@ -95,7 +103,7 @@ final class McpModule implements AppModule {
       _repository = null;
       _service = null;
       _initializeFuture = null;
-      _state = ModuleState.registered;
+      if (_state != ModuleState.disposed) _state = ModuleState.registered;
       rethrow;
     }
   }
@@ -105,6 +113,7 @@ final class McpModule implements AppModule {
   Future<void> activate() async {
     if (_state == ModuleState.active) return;
     await initialize();
+    if (_state == ModuleState.disposed) return;
     _state = ModuleState.active;
   }
 
@@ -119,20 +128,27 @@ final class McpModule implements AppModule {
 
   Future<void> _disposeResources() async {
     if (_state == ModuleState.disposed) return;
-    await deactivate();
+    _state = ModuleState.disposed;
+    final initialization = _initializeFuture;
+    if (initialization != null) {
+      try {
+        await initialization;
+      } catch (_) {
+        // Initialization observes disposed and releases its local database.
+      }
+    }
     final service = _service;
     final database = _database;
     _service = null;
     _repository = null;
     _database = null;
     if (service != null) {
-      await service.stop();
+      await service.close();
       service.dispose();
     }
     if (database != null) await database.dispose();
     _settings = null;
     _logger = null;
     _toolRuntime = null;
-    _state = ModuleState.disposed;
   }
 }

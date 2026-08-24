@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../application/mcp_approval_queue.dart';
 import '../../../application/mcp_server_controller.dart';
+import '../../../application/mcp_self_test_runner.dart';
 import '../../../domain/mcp_activity.dart';
 import '../../../domain/mcp_ports.dart';
 import '../../../domain/mcp_server_settings.dart';

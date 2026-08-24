@@ -1,3 +1,6 @@
+// ignore_for_file: prefer_initializing_formals
+// Public named parameters intentionally initialize private service fields.
+
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
@@ -20,6 +23,8 @@ import 'remote_target_scope.dart';
 import 'remote_command_decoder.dart';
 import 'terminal_session_metadata_store.dart' as terminal_metadata;
 import 'terminal_history_service.dart';
+import 'ssh/ssh_background_event_bridge.dart';
+import 'ssh/ssh_connection_attempt.dart';
 import '../utils/startup_instrumentation.dart';
 
 part 'ssh/ssh_session.dart';
@@ -28,6 +33,55 @@ part 'ssh/ssh_connection_runtime.dart';
 part 'ssh/ssh_session_metadata.dart';
 
 typedef TerminalHistoryRecord = terminal_metadata.TerminalHistoryRecord;
+
+final class _SshServiceClosing implements Exception {
+  const _SshServiceClosing();
+}
+
+/// 将 SSH Owner 的可变 session registry 投影为稳定 UI 快照。
+final class _SshSessionProjection {
+  const _SshSessionProjection();
+
+  ({List<SshSession> sessions, SshServerOverviewSnapshot overview}) project(
+    Iterable<SshSession> source,
+  ) {
+    final sessions = source.toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final byConnection = <String, SshConnectionOverview>{};
+    for (final session in sessions) {
+      final id = session.connectionId;
+      final current = byConnection[id];
+      byConnection[id] = SshConnectionOverview(
+        count: (current?.count ?? 0) + 1,
+        latestState: _latestState(current?.latestState, session.state),
+        hasConnected:
+            (current?.hasConnected ?? false) ||
+            session.state == SshConnectionState.connected,
+      );
+    }
+    return (
+      sessions: List<SshSession>.unmodifiable(sessions),
+      overview: SshServerOverviewSnapshot(
+        byConnection: byConnection,
+        windowCount: sessions.length,
+      ),
+    );
+  }
+
+  SshConnectionState _latestState(
+    SshConnectionState? current,
+    SshConnectionState next,
+  ) {
+    const precedence = <SshConnectionState, int>{
+      SshConnectionState.disconnected: 0,
+      SshConnectionState.error: 1,
+      SshConnectionState.connecting: 2,
+      SshConnectionState.connected: 3,
+    };
+    if (current == null) return next;
+    return precedence[next]! > precedence[current]! ? next : current;
+  }
+}
 
 /// SSH 会话管理器。每个连接最多可以有多个 SshSession（窗口）。
 ///
@@ -56,11 +110,20 @@ class SshService extends ChangeNotifier
   final FlutterBackgroundService _backgroundService =
       FlutterBackgroundService();
   final TerminalHistoryService _historyService = TerminalHistoryService();
+  final _SshSessionProjection _sessionProjection =
+      const _SshSessionProjection();
+  late final SshBackgroundEventBridge _backgroundBridge;
 
   final Map<String, SshSession> _sessions = {};
   final Map<String, ConnectionTargetBinding> _sessionTargetBindings = {};
   final Map<String, _LocalSshRuntime> _localRuntimes = {};
+  final SshSessionConnectGate _localConnectGate = SshSessionConnectGate();
   final Map<String, Completer<void>> _connectCompleters = {};
+  final Map<String, Future<void>> _connectOperations = {};
+  final Map<String, String> _connectOperationTargets = {};
+  final Map<String, Future<void>> _reconnectOperations = {};
+  final Set<Future<void>> _ownedSshOperations = <Future<void>>{};
+  final Set<Future<void>> _persistenceOperations = <Future<void>>{};
   final Set<String> _closingSessionIds = {};
   // Step08 的共享 Pool 先挂在现有兼容 Service 上，确保 App Scope 只有一个
   // SSH Owner；Terminal Pilot 会逐步把旧方法面迁到 package Manager。
@@ -69,14 +132,13 @@ class SshService extends ChangeNotifier
   List<SshSession> _sessionsView = const [];
   SshServerOverviewSnapshot _serverOverviewSnapshot =
       const SshServerOverviewSnapshot.empty();
-  StreamSubscription<Map<String, dynamic>?>? _stateSub;
-  StreamSubscription<Map<String, dynamic>?>? _outputSub;
-  StreamSubscription<Map<String, dynamic>?>? _keepAliveSub;
-  StreamSubscription<Map<String, dynamic>?>? _appLogSub;
   String? _lastSessionId;
   String? _lastErrorMessage;
   bool _restoredTmuxSessions = false;
   bool _initialized = false;
+  bool _shutdownRequested = false;
+  bool _notifierDisposed = false;
+  final Completer<void> _shutdownSignal = Completer<void>();
   Future<void>? _initFuture;
   Future<void>? _managerCloseFuture;
 
@@ -96,6 +158,13 @@ class SshService extends ChangeNotifier
        _appSettings = appSettings,
        _nativeStreamConnector = nativeStreamConnector,
        _peerIdResolver = peerIdResolver {
+    _backgroundBridge = SshBackgroundEventBridge(
+      events: _backgroundService.on,
+      onState: _handleBackgroundState,
+      onOutput: _handleBackgroundOutput,
+      onOverview: _handleBackgroundOverview,
+      onLog: handleBackgroundLog,
+    );
     StartupInstrumentation.instance.recordServiceConstructed('SshService');
   }
 
@@ -112,6 +181,11 @@ class SshService extends ChangeNotifier
 
   @override
   Future<void> ensureInitialized() {
+    if (_shutdownRequested) {
+      return Future<void>.error(
+        StateError('SshService is shutting down or already closed.'),
+      );
+    }
     if (_initialized) return Future.value();
     if (_initFuture != null) return _initFuture!;
 
@@ -124,6 +198,11 @@ class SshService extends ChangeNotifier
     required String sessionId,
     required Future<ssh_core.SshSession> Function() create,
   }) {
+    if (_shutdownRequested) {
+      return Future<ssh_core.SshSessionLease>.error(
+        StateError('SshService is shutting down or already closed.'),
+      );
+    }
     return _coreSessionPool.acquire(sessionId: sessionId, create: create);
   }
 
@@ -132,35 +211,109 @@ class SshService extends ChangeNotifier
   Future<void> close() {
     final existing = _managerCloseFuture;
     if (existing != null) return existing;
+    _beginShutdown();
     final future = _closeManager();
     _managerCloseFuture = future;
     return future;
   }
 
   Future<void> _closeManager() async {
-    try {
-      await ensureInitialized();
-    } finally {
-      await _coreSessionPool.close();
-      // 关闭所有 native ReliableStream/ConnectionSession，必须在
-      // networkRuntime.dispose 之前完成（app_runtime.dart 释放顺序）。
-      await _nativeStreamConnector?.closeAll();
-      dispose();
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> attempt(FutureOr<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
     }
+
+    final initialization = _initFuture;
+    if (initialization != null) {
+      await attempt(() => initialization);
+    }
+
+    // 先阻止迟到事件写回，再解除所有等待连接结果的 Future。
+    await attempt(_backgroundBridge.cancel);
+    for (final completer in _connectCompleters.values.toList()) {
+      if (!completer.isCompleted) completer.complete();
+    }
+    _connectCompleters.clear();
+    _closingSessionIds.addAll(_sessions.keys);
+    _localConnectGate.cancelAll();
+
+    if (_usesBackgroundService) {
+      await attempt(BackgroundServiceManager.stop);
+    }
+
+    // connect/reconnect 在看到 shutdown barrier 后会回滚临时资源；等待它们
+    // 完成后再关闭 registry-owned runtime，避免迟到登记越过释放边界。
+    final operations = <Future<void>>[
+      ..._connectOperations.values,
+      ..._reconnectOperations.values,
+      ..._ownedSshOperations,
+    ];
+    await attempt(() => Future.wait<void>(operations));
+    await attempt(
+      () => Future.wait<void>(_persistenceOperations.toList(growable: false)),
+    );
+
+    final runtimes = _localRuntimes.values.toList(growable: false);
+    _localRuntimes.clear();
+    for (final runtime in runtimes) {
+      await attempt(runtime.close);
+    }
+
+    final sessions = _sessions.values.toList(growable: false);
+    _sessions.clear();
+    _sessionTargetBindings.clear();
+    _refreshSessionsView();
+    for (final session in sessions) {
+      await attempt(session.close);
+    }
+    _lastSessionId = null;
+
+    // Terminal 输出写队列和共享 Pool 都属于 App Scope SSH Owner。
+    await attempt(_historyService.dispose);
+    await attempt(_coreSessionPool.close);
+    // 关闭所有 native ReliableStream/ConnectionSession，必须在
+    // networkRuntime.dispose 之前完成（app_runtime.dart 释放顺序）。
+    await attempt(
+      () => _nativeStreamConnector?.closeAll() ?? Future<void>.value(),
+    );
+    _disposeNotifier();
+
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
+  }
+
+  void _beginShutdown() {
+    if (_shutdownRequested) return;
+    _shutdownRequested = true;
+    if (!_shutdownSignal.isCompleted) _shutdownSignal.complete();
+  }
+
+  void _disposeNotifier() {
+    if (_notifierDisposed) return;
+    _notifierDisposed = true;
+    super.dispose();
   }
 
   Future<void> _doInit() async {
     try {
       StartupInstrumentation.instance.recordServiceInitialized('SshService');
       if (_usesBackgroundService) {
-        _listenToBackgroundService();
+        await _listenToBackgroundService();
       } else {
         AppLogService.instance.info(
           'Background SSH service disabled on this platform',
         );
       }
       await restoreTmuxSessions();
-      _initialized = true;
+      if (!_shutdownRequested) _initialized = true;
     } catch (e) {
       _initFuture = null;
       rethrow;
@@ -200,12 +353,7 @@ class SshService extends ChangeNotifier
   int get leaseCount => _coreSessionPool.activeLeaseCount;
 
   /// SSH Service 当前已登记的后台事件订阅数量。
-  int get activeSubscriptionCount => [
-    _stateSub,
-    _outputSub,
-    _keepAliveSub,
-    _appLogSub,
-  ].where((subscription) => subscription != null).length;
+  int get activeSubscriptionCount => _backgroundBridge.activeSubscriptionCount;
 
   /// SSH Pool 当前等待空闲回收的 Timer 数量。
   int get activeTimerCount => _coreSessionPool.idleTimerCount;
@@ -309,7 +457,10 @@ class SshService extends ChangeNotifier
       return false;
     }
     session.displayName = nextName;
-    unawaited(_saveRestorableTmuxSession(session));
+    _schedulePersistence(
+      () => _saveRestorableTmuxSession(session),
+      description: 'Failed to save restorable SSH session',
+    );
     _notifySessionMetadataChanged();
     return true;
   }
@@ -322,17 +473,22 @@ class SshService extends ChangeNotifier
       SshSession.minTerminalFontSize,
       SshSession.maxTerminalFontSize,
     );
-    unawaited(_saveRestorableTmuxSession(session));
+    _schedulePersistence(
+      () => _saveRestorableTmuxSession(session),
+      description: 'Failed to save restorable SSH session',
+    );
     _notifySessionMetadataChanged();
   }
 
   @override
   Future<void> restoreTmuxSessions() async {
-    if (_restoredTmuxSessions) return;
+    if (_restoredTmuxSessions || _shutdownRequested) return;
     _restoredTmuxSessions = true;
     await _terminalMetadataStore.initFuture;
+    if (_shutdownRequested) return;
     final storedSessions = await _terminalMetadataStore
         .loadRestorableTmuxSessions();
+    if (_shutdownRequested) return;
     AppLogService.instance.info(
       'Restoring tmux sessions',
       details: 'count=${storedSessions.length}',
@@ -340,6 +496,7 @@ class SshService extends ChangeNotifier
     if (storedSessions.isEmpty) return;
 
     for (final stored in storedSessions) {
+      if (_shutdownRequested) return;
       final config = _connectionRepository.getConnection(stored.connectionId);
       if (config?.launchMode != TerminalLaunchMode.tmux) {
         AppLogService.instance.warning(
@@ -368,9 +525,10 @@ class SshService extends ChangeNotifier
     }
 
     _refreshSessionsView();
-    notifyListeners();
+    notify();
 
     for (final session in _sessions.values.toList()) {
+      if (_shutdownRequested) return;
       final config = _connectionRepository.getConnection(session.connectionId);
       if (config?.launchMode != TerminalLaunchMode.tmux ||
           session.isConnected) {
@@ -452,17 +610,61 @@ class SshService extends ChangeNotifier
     String? sessionId,
     String? displayName,
     SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
+  }) {
+    if (_shutdownRequested) {
+      return Future<void>.error(
+        StateError('SshService is shutting down or already closed.'),
+      );
+    }
     final id = sessionId ?? _createSessionId(connectionId);
+    final existing = _connectOperations[id];
+    if (existing != null) {
+      if (_connectOperationTargets[id] != connectionId) {
+        return Future<void>.error(
+          StateError(
+            'SSH session $id is already connecting to a different target.',
+          ),
+        );
+      }
+      return existing;
+    }
+
+    late final Future<void> operation;
+    operation =
+        _connectOnce(
+          connectionId,
+          sessionId: id,
+          displayName: displayName,
+          onUnknownHostKey: onUnknownHostKey,
+        ).whenComplete(() {
+          if (identical(_connectOperations[id], operation)) {
+            _connectOperations.remove(id);
+            _connectOperationTargets.remove(id);
+          }
+        });
+    _connectOperations[id] = operation;
+    _connectOperationTargets[id] = connectionId;
+    return operation;
+  }
+
+  Future<void> _connectOnce(
+    String connectionId, {
+    required String sessionId,
+    String? displayName,
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    final id = sessionId;
     ConnectionRuntimeTarget runtimeTarget;
     try {
       await Future<void>.delayed(Duration.zero);
+      if (_shutdownRequested) return;
       runtimeTarget = await RemoteTargetScope.resolveIfBound(
         connectionRepository: _connectionRepository,
         credentialRepository: _credentialRepository,
         connectionId: connectionId,
       );
     } on RemoteTargetScopeException catch (e) {
+      if (_shutdownRequested) return;
       AppLogService.instance.error(
         'SSH connection target unavailable',
         error: e,
@@ -471,6 +673,7 @@ class SshService extends ChangeNotifier
       _setSessionError(id, connectionId, 'Unknown', e.message);
       return;
     }
+    if (_shutdownRequested) return;
     final config = runtimeTarget.config;
     final credentials = SshCredentials(
       password: runtimeTarget.password,
@@ -533,7 +736,10 @@ class SshService extends ChangeNotifier
     final launchMode = _effectiveLaunchMode(config);
     final connectCompleter = Completer<void>();
     _connectCompleters[id] = connectCompleter;
-    unawaited(_saveTerminalHistoryRecord(session));
+    _schedulePersistence(
+      () => _saveTerminalHistoryRecord(session),
+      description: 'Failed to save terminal history record',
+    );
     AppLogService.instance.info(
       'Session connecting',
       details:
@@ -545,6 +751,7 @@ class SshService extends ChangeNotifier
     try {
       // Allow UI to render the connecting state and connection dialog entrance
       await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (_shutdownRequested) throw const _SshServiceClosing();
 
       if (launchMode == TerminalLaunchMode.tmux) {
         session.tmuxSessionName ??= _uniqueTmuxSessionName(
@@ -575,6 +782,7 @@ class SshService extends ChangeNotifier
         );
         // Let the UI render while foreground service is starting up
         await Future<void>.delayed(const Duration(milliseconds: 16));
+        if (_shutdownRequested) throw const _SshServiceClosing();
         _backgroundService.invoke('sshConnect', {
           'sessionId': id,
           'id': config.id,
@@ -601,6 +809,7 @@ class SshService extends ChangeNotifier
       } else {
         // Allow UI rendering before initiating local cryptographic handshake
         await Future<void>.delayed(const Duration(milliseconds: 16));
+        if (_shutdownRequested) throw const _SshServiceClosing();
         await _connectLocalSession(
           session: session,
           config: config,
@@ -611,13 +820,23 @@ class SshService extends ChangeNotifier
       }
 
       await connectCompleter.future.timeout(const Duration(seconds: 30));
+      if (_shutdownRequested) throw const _SshServiceClosing();
+    } on _SshServiceClosing {
+      final pending = _connectCompleters.remove(id);
+      if (pending != null && !pending.isCompleted) pending.complete();
     } on TimeoutException {
+      if (_shutdownRequested) return;
+      final pending = _connectCompleters.remove(id);
+      if (pending != null && !pending.isCompleted) pending.complete();
       AppLogService.instance.error(
         'Session connect timed out',
         details: 'sessionId=$id connection=${config.name}',
       );
       _setSessionError(id, connectionId, config.name, 'Connection timed out');
     } catch (e, stackTrace) {
+      if (_shutdownRequested) return;
+      final pending = _connectCompleters.remove(id);
+      if (pending != null && !pending.isCompleted) pending.complete();
       AppLogService.instance.error(
         'Session connect failed',
         error: e,
@@ -645,12 +864,18 @@ class SshService extends ChangeNotifier
       session.state = SshConnectionState.disconnected;
       session.errorMessage = 'Closed by user';
       session.updatedAt = DateTime.now();
-      unawaited(_saveTerminalHistoryRecord(session));
+      _schedulePersistence(
+        () => _saveTerminalHistoryRecord(session),
+        description: 'Failed to save terminal history record',
+      );
     }
     await session?.close();
     await _terminalMetadataStore.removeRestorableTmuxSession(sessionId);
     _sessionTargetBindings.remove(sessionId);
-    _connectCompleters.remove(sessionId);
+    final pendingConnect = _connectCompleters.remove(sessionId);
+    if (pendingConnect != null && !pendingConnect.isCompleted) {
+      pendingConnect.complete();
+    }
     if (_lastSessionId == sessionId) {
       _lastSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
     }
@@ -666,7 +891,10 @@ class SshService extends ChangeNotifier
       session.state = SshConnectionState.error;
       session.errorMessage ??= 'Connection failed';
       session.updatedAt = DateTime.now();
-      unawaited(_saveTerminalHistoryRecord(session));
+      _schedulePersistence(
+        () => _saveTerminalHistoryRecord(session),
+        description: 'Failed to save terminal history record',
+      );
     }
     await session?.close();
     await _terminalMetadataStore.removeRestorableTmuxSession(sessionId);
@@ -698,17 +926,23 @@ class SshService extends ChangeNotifier
       session.state = SshConnectionState.disconnected;
       session.errorMessage = 'Closed by user';
       session.updatedAt = DateTime.now();
-      unawaited(_saveTerminalHistoryRecord(session));
+      _schedulePersistence(
+        () => _saveTerminalHistoryRecord(session),
+        description: 'Failed to save terminal history record',
+      );
       await session.close();
     }
     _sessions.clear();
     _sessionTargetBindings.clear();
     _refreshSessionsView();
+    for (final completer in _connectCompleters.values) {
+      if (!completer.isCompleted) completer.complete();
+    }
     _connectCompleters.clear();
     _lastSessionId = null;
     await _terminalMetadataStore.clearRestorableTmuxSessions();
     await BackgroundServiceManager.stop();
-    notifyListeners();
+    notify();
   }
 
   @override
@@ -756,18 +990,20 @@ class SshService extends ChangeNotifier
     required String command,
     Duration timeout = const Duration(seconds: 15),
     SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    final target = await RemoteTargetScope.resolveIfBound(
-      connectionRepository: _connectionRepository,
-      credentialRepository: _credentialRepository,
-      connectionId: connectionId,
-    );
-    return _runOneShotCommandForTarget(
-      target: target,
-      command: command,
-      timeout: timeout,
-      onUnknownHostKey: onUnknownHostKey,
-    );
+  }) {
+    return _trackOwnedSshOperation(() async {
+      final target = await RemoteTargetScope.resolveIfBound(
+        connectionRepository: _connectionRepository,
+        credentialRepository: _credentialRepository,
+        connectionId: connectionId,
+      );
+      return _runOneShotCommandForTarget(
+        target: target,
+        command: command,
+        timeout: timeout,
+        onUnknownHostKey: onUnknownHostKey,
+      );
+    });
   }
 
   /// Executes against an explicitly approved target binding.
@@ -779,114 +1015,97 @@ class SshService extends ChangeNotifier
     required String command,
     Duration timeout = const Duration(seconds: 15),
     SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
-    final target = await RemoteTargetScope.resolveBinding(
-      binding,
-      connectionRepository: _connectionRepository,
-      credentialRepository: _credentialRepository,
-    );
-    if (target == null) {
-      if (_connectionRepository.getConnection(binding.id) == null) {
-        throw RemoteTargetScopeException.notFound(binding.id);
-      }
-      throw RemoteTargetScopeException.targetChanged(binding.id);
-    }
-    return _runOneShotCommandForTarget(
-      target: target,
-      command: command,
-      timeout: timeout,
-      onUnknownHostKey: onUnknownHostKey,
-    );
-  }
-
-  void _listenToBackgroundService() {
-    _cancelBackgroundSubscriptions();
-    _stateSub = _backgroundService.on('sshStateChanged').listen((data) {
-      if (data == null) return;
-      final String sessionId = data['sessionId'];
-      final String stateName = data['state'];
-      final String? error = data['errorMessage'];
-
-      final state = SshConnectionState.values.firstWhere(
-        (e) => e.name == stateName,
-        orElse: () => SshConnectionState.disconnected,
+  }) {
+    return _trackOwnedSshOperation(() async {
+      final target = await RemoteTargetScope.resolveBinding(
+        binding,
+        connectionRepository: _connectionRepository,
+        credentialRepository: _credentialRepository,
       );
-
-      final session = _sessions[sessionId];
-      if (session != null) {
-        session.state = state;
-        session.errorMessage = error;
-        session.updatedAt = DateTime.now();
-
-        if (state == SshConnectionState.connected) {
-          final completer = _connectCompleters.remove(sessionId);
-          completer?.complete();
-        } else if (state == SshConnectionState.error) {
-          final completer = _connectCompleters.remove(sessionId);
-          completer?.completeError(StateError(error ?? 'Connection failed'));
+      if (target == null) {
+        if (_connectionRepository.getConnection(binding.id) == null) {
+          throw RemoteTargetScopeException.notFound(binding.id);
         }
-
-        unawaited(_saveTerminalHistoryRecord(session));
-        _notifySessionMetadataChanged();
+        throw RemoteTargetScopeException.targetChanged(binding.id);
       }
-    });
-
-    _outputSub = _backgroundService.on('sshDataReceived').listen((data) {
-      if (data == null) return;
-      final String sessionId = data['sessionId'];
-      final String text = data['data'];
-
-      final session = _sessions[sessionId];
-      if (session != null) {
-        session.addOutput(text);
-        unawaited(_historyService.append(sessionId, text));
-      }
-    });
-
-    _keepAliveSub = _backgroundService.on('sshOverviewUpdated').listen((data) {
-      if (data == null) return;
-      final overviewMap = data['overview'] as Map;
-      final windowCount = data['windowCount'] as int;
-
-      final byConnection = <String, SshConnectionOverview>{};
-      for (final entry in overviewMap.entries) {
-        final val = entry.value as Map;
-        final latestStateName = val['latestState'] as String?;
-        final state = latestStateName == null
-            ? null
-            : SshConnectionState.values.firstWhere(
-                (e) => e.name == latestStateName,
-                orElse: () => SshConnectionState.disconnected,
-              );
-
-        byConnection[entry.key as String] = SshConnectionOverview(
-          count: val['count'] as int,
-          latestState: state,
-          hasConnected: val['hasConnected'] as bool,
-        );
-      }
-
-      _serverOverviewSnapshot = SshServerOverviewSnapshot(
-        byConnection: byConnection,
-        windowCount: windowCount,
+      return _runOneShotCommandForTarget(
+        target: target,
+        command: command,
+        timeout: timeout,
+        onUnknownHostKey: onUnknownHostKey,
       );
-      notifyListeners();
     });
-
-    _appLogSub = _backgroundService
-        .on('sshLogReceived')
-        .listen(handleBackgroundLog);
   }
 
-  void _cancelBackgroundSubscriptions() {
-    _stateSub?.cancel();
-    _stateSub = null;
-    _outputSub?.cancel();
-    _outputSub = null;
-    _keepAliveSub?.cancel();
-    _keepAliveSub = null;
-    _appLogSub?.cancel();
-    _appLogSub = null;
+  Future<void> _listenToBackgroundService() => _backgroundBridge.start();
+
+  void _handleBackgroundState(Map<String, dynamic> data) {
+    if (_shutdownRequested) return;
+    final String sessionId = data['sessionId'];
+    final String stateName = data['state'];
+    final String? error = data['errorMessage'];
+    final state = SshConnectionState.values.firstWhere(
+      (candidate) => candidate.name == stateName,
+      orElse: () => SshConnectionState.disconnected,
+    );
+
+    final session = _sessions[sessionId];
+    if (session == null) return;
+    session.state = state;
+    session.errorMessage = error;
+    session.updatedAt = DateTime.now();
+
+    if (state == SshConnectionState.connected) {
+      _connectCompleters.remove(sessionId)?.complete();
+    } else if (state == SshConnectionState.error) {
+      _connectCompleters
+          .remove(sessionId)
+          ?.completeError(StateError(error ?? 'Connection failed'));
+    }
+
+    _schedulePersistence(
+      () => _saveTerminalHistoryRecord(session),
+      description: 'Failed to save terminal history record',
+    );
+    _notifySessionMetadataChanged();
+  }
+
+  void _handleBackgroundOutput(Map<String, dynamic> data) {
+    if (_shutdownRequested) return;
+    final String sessionId = data['sessionId'];
+    final String text = data['data'];
+    final session = _sessions[sessionId];
+    if (session == null) return;
+    session.addOutput(text);
+    unawaited(_historyService.append(sessionId, text));
+  }
+
+  void _handleBackgroundOverview(Map<String, dynamic> data) {
+    if (_shutdownRequested) return;
+    final overviewMap = data['overview'] as Map;
+    final windowCount = data['windowCount'] as int;
+    final byConnection = <String, SshConnectionOverview>{};
+    for (final entry in overviewMap.entries) {
+      final val = entry.value as Map;
+      final latestStateName = val['latestState'] as String?;
+      final state = latestStateName == null
+          ? null
+          : SshConnectionState.values.firstWhere(
+              (candidate) => candidate.name == latestStateName,
+              orElse: () => SshConnectionState.disconnected,
+            );
+      byConnection[entry.key as String] = SshConnectionOverview(
+        count: val['count'] as int,
+        latestState: state,
+        hasConnected: val['hasConnected'] as bool,
+      );
+    }
+
+    _serverOverviewSnapshot = SshServerOverviewSnapshot(
+      byConnection: byConnection,
+      windowCount: windowCount,
+    );
+    notify();
   }
 
   @visibleForTesting
@@ -904,73 +1123,71 @@ class SshService extends ChangeNotifier
   }
 
   void _refreshSessionsView() {
-    _sessionsView = List.unmodifiable(
-      _sessions.values.toList()
-        ..sort((a, b) => a.createdAt.compareTo(b.createdAt)),
-    );
-
+    final projection = _sessionProjection.project(_sessions.values);
+    _sessionsView = projection.sessions;
     if (!_usesBackgroundService) {
-      final byConnection = <String, SshConnectionOverview>{};
-      for (final session in _sessions.values) {
-        final connId = session.connectionId;
-        final current = byConnection[connId];
-        if (current == null) {
-          byConnection[connId] = SshConnectionOverview(
-            count: 1,
-            latestState: session.state,
-            hasConnected: session.state == SshConnectionState.connected,
-          );
-        } else {
-          final SshConnectionState newState;
-          if (current.latestState == SshConnectionState.connected ||
-              session.state == SshConnectionState.connected) {
-            newState = SshConnectionState.connected;
-          } else if (current.latestState == SshConnectionState.connecting ||
-              session.state == SshConnectionState.connecting) {
-            newState = SshConnectionState.connecting;
-          } else if (current.latestState == SshConnectionState.error ||
-              session.state == SshConnectionState.error) {
-            newState = SshConnectionState.error;
-          } else {
-            newState = SshConnectionState.disconnected;
-          }
-
-          byConnection[connId] = SshConnectionOverview(
-            count: current.count + 1,
-            latestState: newState,
-            hasConnected:
-                current.hasConnected ||
-                session.state == SshConnectionState.connected,
-          );
-        }
-      }
-      _serverOverviewSnapshot = SshServerOverviewSnapshot(
-        byConnection: byConnection,
-        windowCount: _sessions.length,
-      );
+      _serverOverviewSnapshot = projection.overview;
     }
   }
 
   void notify() {
-    notifyListeners();
+    if (!_shutdownRequested && !_notifierDisposed) notifyListeners();
+  }
+
+  void _schedulePersistence(
+    Future<void> Function() operation, {
+    required String description,
+  }) {
+    if (_shutdownRequested) return;
+    late final Future<void> tracked;
+    tracked = operation()
+        .catchError((Object error, StackTrace stackTrace) {
+          AppLogService.instance.error(
+            description,
+            error: error,
+            stackTrace: stackTrace,
+          );
+        })
+        .whenComplete(() => _persistenceOperations.remove(tracked));
+    _persistenceOperations.add(tracked);
+    unawaited(tracked);
+  }
+
+  Future<T> _trackOwnedSshOperation<T>(Future<T> Function() operation) {
+    if (_shutdownRequested) {
+      return Future<T>.error(
+        StateError('SshService is shutting down or already closed.'),
+      );
+    }
+    final result = Future<T>.sync(operation);
+    late final Future<void> barrier;
+    barrier = result
+        .then<void>((_) {}, onError: (_, _) {})
+        .whenComplete(() => _ownedSshOperations.remove(barrier));
+    _ownedSshOperations.add(barrier);
+    return result;
   }
 
   @override
   void dispose() {
-    unawaited(_coreSessionPool.close());
-    _stateSub?.cancel();
-    _outputSub?.cancel();
-    _keepAliveSub?.cancel();
-    _appLogSub?.cancel();
-    // Terminal 输出历史的写队列由 SSH Owner 负责在关闭时排空并释放。
-    unawaited(_historyService.dispose());
-    for (final runtime in _localRuntimes.values) {
-      runtime.close();
+    if (_notifierDisposed) return;
+    final shutdown = close();
+    if (!_notifierDisposed) {
+      _notifierDisposed = true;
+      super.dispose();
     }
-    for (final session in _sessions.values) {
-      session.close();
-    }
-    super.dispose();
+    unawaited(
+      shutdown.then<void>(
+        (_) {},
+        onError: (Object error, StackTrace stackTrace) {
+          AppLogService.instance.error(
+            'SshService asynchronous dispose failed',
+            error: error,
+            stackTrace: stackTrace,
+          );
+        },
+      ),
+    );
   }
 }
 

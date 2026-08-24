@@ -420,7 +420,6 @@ void main() {
       await _pumpChatUi(tester);
       await tester.pumpWidget(const SizedBox.shrink());
       debugDefaultTargetPlatformOverride = originalPlatform;
-      rag.dispose();
       playbooks.dispose();
       monitor.dispose();
       sftp.dispose();
@@ -429,6 +428,10 @@ void main() {
       await tester.runAsync(() async {
         await storage.shutdown();
       });
+      // TestStorageAdapter owns the RAG module. Await the owner's shutdown
+      // before synchronously disposing the wrapper; starting its async close
+      // in the widget-test fake async zone would deadlock a later runAsync.
+      rag.dispose();
       storage.dispose();
     }
   });

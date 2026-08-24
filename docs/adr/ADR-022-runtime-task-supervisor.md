@@ -1,6 +1,15 @@
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-19
 
 # ADR-022：Native Runtime Task Supervisor
+
+> **V2 边界审计（2026-08-19）**：Runtime root cancellation、supervisor-owned
+> task、显式 stop/join 和 native resource shutdown 仍然有效；本 ADR 中把
+> reconnect、direct-upgrade、Delivery retry 或 transfer worker 归入旧
+> ConnectionSession task group 的 v1 归属规则，已由
+> [ADR-CONNECTION-LIFECYCLE-V2](ADR-CONNECTION-LIFECYCLE-V2.md) 与
+> [ADR-BUSINESS-RECOVERY-V2](ADR-BUSINESS-RECOVERY-V2.md) 取代。v2 只把
+> ConnectionSession-scoped carrier work 放入 session group，Delivery/Transfer
+> recovery worker 由业务 manager 跨 transport 持有。
 
 ## 状态
 

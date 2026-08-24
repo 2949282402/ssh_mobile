@@ -35,12 +35,23 @@ final class PlaybookDatabase extends _$PlaybookDatabase implements Disposable {
   }
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onCreate: (Migrator m) async {
       await m.createAll();
+    },
+    onUpgrade: (Migrator m, int from, int to) async {
+      if (from < 2) {
+        await m.addColumn(playbooks, playbooks.revision);
+        // v1 duplicated user-authored metadata in plaintext even though the
+        // canonical JSON was encrypted. Readers already use content_json, so
+        // blank the compatibility columns during migration.
+        await customStatement(
+          "UPDATE playbooks SET name = '', description = ''",
+        );
+      }
     },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON');

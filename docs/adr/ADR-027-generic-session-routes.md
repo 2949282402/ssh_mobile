@@ -1,10 +1,15 @@
-> 最新更新时间：2026-08-13
+> 最新更新时间：2026-08-19
 
 # ADR-027：Generic Transports as Session Routes
 
 ## Status
 
-Accepted for native network v1.
+Superseded for the active runtime by Network Protocol V2 Peer/Path ownership.
+
+This ADR remains a historical record of generic route admission and carrier
+shutdown rules. Current lifecycle truth belongs to `PeerSupervisor`,
+`PeerPathManager`, and `PathLease`; the old `SessionManager` wording is not an
+active contract.
 
 ## Context
 

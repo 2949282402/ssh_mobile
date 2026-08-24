@@ -7,8 +7,8 @@
 pub mod v2;
 
 pub use v2::{
-    ControlEvent, DataEvent, RelayControlClient, RelayDataClient, RelayDataFrame,
-    RelayDataFrameKind, RelayError, RelayFrame, RelayFrameKind,
+    ConnectivityAttemptStart, ControlEvent, DataEvent, RelayControlClient, RelayDataClient,
+    RelayDataFrame, RelayDataFrameKind, RelayError, RelayFrame, RelayFrameKind,
 };
 
 /// 传输网络 v2 冻结的 Relay 协议版本。

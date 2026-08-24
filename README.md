@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-23
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -20,13 +20,12 @@
 
 SSH Mobile is a Flutter-based cross-platform SSH and SFTP client for Android, iOS, macOS, Windows, and Web. It combines multi-window terminals, remote file management, server monitoring, secure storage, and OpenAI-compatible AI tools in a single mobile and desktop operations workspace.
 
-The codebase is being migrated incrementally as a Dart workspace. The Terminal,
-SFTP, real-time Monitoring, System Administration, Playbook, RAG, MCP, and AI
-capabilities now have package boundaries under `packages/features/`; their
-legacy App paths remain compatibility bridges while later Steps converge the
-remaining shared services. AI data lives in `ai.db`; RAG metadata lives in
-`rag.db`, while bounded document/vector cache files follow TTL and eviction
-limits.
+The codebase is a 21-member Dart workspace. Feature implementations live under
+`packages/features/`, shared contracts live under `packages/core/`, and the
+Full App is the composition root for App-scoped adapters and resources. The
+remaining App compatibility backends are explicitly inventoried; they are not
+second Feature owners. AI data lives in `ai.db`; RAG metadata lives in `rag.db`,
+while bounded document/vector cache files follow TTL and eviction limits.
 
 Each workspace member keeps a concise package contract in its `README.md` and
 `AGENTS.md`, covering ownership, public APIs, dependencies, storage, lifecycle,
@@ -43,9 +42,14 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 - **SSH connection management** with passwords, private keys, encrypted private keys, jump hosts, server platform selection, and SSH host-key trust-on-first-use verification.
 - **Multi-window terminals** that allow several fixed-name sessions per server and stable tmux session binding.
 - **SFTP file management** with browsing, recent and favorite paths, uploads, downloads, editing, previews, and explicit deletion confirmation. The upload action follows the active theme's secondary color instead of a fixed deep purple.
-- **LAN Quick Share & Network Transfer** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. File sends run through the Rust network runtime: pinned-identity Quinn direct paths are selected first and the current WSS Relay path carries only opaque AES-GCM ciphertext when direct reachability is unavailable. Session traffic uses forward-secret authenticated Noise XX roots, structured epoch/direction/counter nonces, and explicit key rotation; authenticated TCP and direct WebSocket routes are bounded Delivery fallbacks and never silently downgrade E2EE. Route migration preserves the logical SessionId, pending Delivery state, and Session crypto context. Incoming direct and Relay offers require a global explicit approval, verified data is committed in the app sandbox, and success is reported only after receiver persistence and acknowledgement. The active development build does not retain the old HTTPS file-send fallback. The
+- **LAN Quick Share & Network Transfer** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. File sends run through the Rust network runtime: pinned-identity Quinn direct paths are selected first and the current WSS Relay path carries only opaque AES-GCM ciphertext when direct reachability is unavailable. Session traffic uses forward-secret authenticated Noise XX roots, structured epoch/direction/counter nonces, and explicit key rotation; authenticated TCP and direct WebSocket routes are bounded Delivery fallbacks and never silently downgrade E2EE. Every transport has a disposable ConnectionSession with a fresh SessionId and crypto root; transport loss destroys it, while Delivery and Transfer resume by business identity on a fresh PathLease. Incoming direct and Relay offers require a global explicit approval, verified data is committed in the app sandbox, and success is reported only after receiver persistence and acknowledgement. The active development build does not retain the old HTTPS file-send fallback. Logical ReliableStreams are addressed end-to-end by `(opener_device_id, stream_id)`, so both peers may use the same numeric `stream_id` without ambiguity. The
 feature-facing RealtimeSession exposes only lifecycle/state/media views; PeerConnection,
 ICE, SDP, sockets, and Relay signaling remain native/App Shell owned.
+- **Network Protocol V2 ownership** is explicit: `PeerSupervisor` owns mutable peer
+  connectivity, `PeerPathManager` owns Direct/Relay physical paths, and business
+  operations borrow `PathLease` instances. `E2eePolicy::Disabled` is Direct
+  identity-only and cannot fall through to Relay; authoritative Resolve gates the
+  staged Direct/Relay connection flow.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
 - **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; it supports `reviewConfiguredTools` (default) and `trustedAgent` modes while always enforcing its loopback-only and hard security boundaries.
@@ -58,7 +62,7 @@ ICE, SDP, sockets, and Relay signaling remain native/App Shell owned.
 
 ### Requirements
 
-- Flutter `>=3.44.0`; CI is pinned to Flutter `3.44.2`.
+- Flutter `>=3.47.0`; CI is pinned to Flutter `3.47.0`.
 - Dart SDK `>=3.12.0 <4.0.0`.
 - Android Studio and Android SDK, or the corresponding platform toolchain.
 - Visual Studio with `Desktop development with C++` for Windows builds.
@@ -94,7 +98,13 @@ The application can launch without real server or AI credentials. A reachable SS
 
 ## Control Plane & Public Relay Production Deployment
 
-The bundled `relay/` Go service provides a memory-only WSS relay and device control plane for Network Transfer / P2P fallback. Its standalone React + Vite + TypeScript administration console lives in `front/`; enrollment and dashboard credentials must be configured explicitly, and the service refuses to start with missing or weak secrets.
+The bundled `relay/` Go service provides the WSS control/data plane for Network
+Transfer and P2P fallback. It defaults to process-local memory state; the
+optional `storage` Compose profile uses MySQL for durable enrollment/revocation
+and Redis for shared live state. Its standalone React + Vite + TypeScript
+administration console lives in `front/`; enrollment and dashboard credentials
+must be configured explicitly, and the service refuses to start with missing or
+weak secrets.
 
 Docker Compose with Caddy is the supported production deployment path. Follow the [relay deployment guide](relay/README.md), then run:
 
@@ -105,7 +115,12 @@ Copy-Item .env.example .env
 docker compose --env-file .env up --build
 ```
 
-This single command builds and starts `front`, `relay`, and `caddy`, then keeps their combined logs attached. Caddy exposes the front-end SPA publicly and forwards `/api/admin/v1`, `/v1`, and `/healthz` to the internal Relay service. Restarting the memory-only relay invalidates existing device enrollment, so clients must enroll again.
+This command builds and starts `front`, `relay`, and `caddy`, then keeps their
+combined logs attached. Caddy exposes the front-end SPA publicly and forwards
+`/api/admin/v1`, `/v1`, `/v2`, and `/healthz` to the internal Relay service. In
+the default `memory` mode a restart clears enrollment; in `mysql` mode enrollment
+and revocation persist while live connections are re-established. See the Relay
+guide for the explicit `storage` profile command.
 
 In SSH Mobile, open **LAN Share Settings** and enter the HTTPS relay host, port, and enrollment token. The token is used only for enrollment and is never persisted in preferences; the endpoint is stored as an origin while the device credential remains in platform secure storage. The page reports connected/disconnected/failed state and provides explicit reconnect, disconnect, and clear actions. Production clients require a valid TLS certificate.
 
@@ -130,12 +145,13 @@ flutter build ios --release --no-codesign
 ```
 
 ```powershell
-# Windows
-Set-Location apps/ssh_mobile_full
-flutter config --enable-windows-desktop
-flutter build windows
-Set-Location ../..
-powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_msi.ps1
+# Windows: run from a native checkout in PowerShell 7 (pwsh.exe).
+Set-Location '<native-repo>'
+. .\scripts\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
+& '<flutter-root>\bin\flutter.bat' build windows --no-pub
+& .\scripts\build_windows_msi.ps1 `
+  -Flutter '<flutter-root>\bin\flutter.bat' `
+  -Version '1.0.0'
 ```
 
 Android CI uses the official Google, Maven Central, and Flutter artifact repositories. Aliyun Maven mirrors are optional for local environments and can be enabled with `USE_ALIYUN_MAVEN=true` or the Gradle property `-PuseAliyunMaven=true`.
@@ -294,10 +310,36 @@ flutter analyze --no-fatal-infos
 flutter test
 ```
 
+For the normal post-change local regression gate, use the repository wrapper
+from the root directory:
+
+```bash
+bash scripts/full_test.sh --no-bootstrap
+```
+
+This daily gate checks the runnable formatting, analysis, contract, workspace,
+App test, and build jobs without collecting Flutter coverage. Coverage is a
+periodic review because Flutter instrumentation substantially increases WSL
+runtime. Run the four owner-specific gates:
+
+```bash
+bash scripts/front_coverage.sh
+bash scripts/backend_coverage.sh
+bash scripts/client_coverage.sh
+bash scripts/sdk_coverage.sh
+```
+
+Each gate enforces an 80% threshold on its documented owner scope. The client
+gate covers the App-owned Network V2 service boundary; it does not represent
+coverage for unrelated Full App UI features. See
+[Coverage policy](docs/COVERAGE_POLICY.md) for the exact scopes and the
+meaningful-boundary-test rule. `scripts/coverage_test.sh --no-bootstrap`
+remains as a compatibility alias for `scripts/client_coverage.sh`.
+
 ### Workspace module gate
 
-For a pull request, run the changed package and its dependent packages through
-Melos' diff filter, then run the architecture guard:
+After the repository regression gate, use Melos' diff filter for a focused
+changed-package check when it gives faster feedback:
 
 ```bash
 dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "dart format --output=none --set-exit-if-changed lib test"
@@ -316,24 +358,16 @@ existing `info`-level lints non-fatal while errors and warnings remain fatal.
 ### Full quality gate
 
 ```bash
-dart pub get
-dart run tool/check_file_sizes.dart
-dart run tool/check_module_dependencies.dart
-dart run tool/check_resource_owners.dart
-dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
-cd apps/ssh_mobile_full
-dart run tool/generate_app_icons.dart
-dart run build_runner build
-dart format --output=none --set-exit-if-changed lib test tool
-flutter analyze
-flutter test --coverage --reporter expanded
-dart run tool/check_coverage.dart --minimum=35
+bash scripts/full_test.sh
+bash scripts/front_coverage.sh
+bash scripts/backend_coverage.sh
+bash scripts/client_coverage.sh
+bash scripts/sdk_coverage.sh
 ```
 
-Check generated files and agent skills:
+Regenerate and diff generated files only when their source inputs changed:
 
 ```bash
-cd ../..
 git diff --exit-code -- apps/ssh_mobile_full/assets apps/ssh_mobile_full/android apps/ssh_mobile_full/ios apps/ssh_mobile_full/macos apps/ssh_mobile_full/web apps/ssh_mobile_full/windows/runner/resources/app_icon.ico
 git diff --exit-code -- apps/ssh_mobile_full/lib/services/app_log_database.g.dart
 ```
@@ -348,9 +382,11 @@ flutter build ios --release --no-codesign --no-pub
 ```
 
 ```powershell
-Set-Location apps/ssh_mobile_full
-flutter test --reporter expanded
-flutter build windows
+# Run only from a native checkout in PowerShell 7 after configuring the pinned SDK.
+Set-Location '<native-repo>'
+. .\scripts\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
+& '<flutter-root>\bin\flutter.bat' test --no-pub --reporter expanded
+& '<flutter-root>\bin\flutter.bat' build windows --no-pub
 ```
 
 Terminal-only dependency and build verification:
@@ -455,22 +491,18 @@ flowchart LR
   and `feature_terminal`; it does not initialize or route
   AI, RAG, MCP, WebView, LAN Share, or SFTP. The live SSH compatibility backend
   remains owned by the Full App until the planned SSH method migration.
-- `apps/ssh_mobile_full/lib/features/`: feature-owned models, ViewModels, services, views, and
-  feature-local widgets. Current feature roots are `connection`, `terminal`,
-  `sftp`, `ai_chat`, `ai_skills`, `performance`,
-  `system_admin`, `lan_share`, `playbook`, `rag`, `settings`, `startup`,
-  `home`.
-- `packages/features/feature_connection/`: the migrated Connection editor,
+- `apps/ssh_mobile_full/lib/features/`: App-owned `home`, `settings`, and
+  `startup` shell presentation. Product Feature implementations live in the
+  packages listed below.
+- `packages/features/feature_connection/`: the Connection editor,
   ViewModel, localized presentation contract, and runtime/verification ports. It
-  depends on `connection_core` and never owns the Connection database. The App
-  composition root injects the Core repositories; old App paths remain
-  non-owning compatibility bridges until their later convergence Steps.
-- `packages/features/feature_terminal/`: the migrated Terminal Pilot, including
+  depends on `connection_core`, never owns the Connection database, and receives
+  the Core repositories from the App composition root.
+- `packages/features/feature_terminal/`: Terminal presentation, including
   route-scoped ViewModels, terminal presentation, terminal-specific output
   history, and the independent `terminal.db`. It consumes only public Core
   contracts and injected Ports; `TerminalFeatureScope` owns its Provider
-  composition without owning injected resources. Old App terminal paths remain
-  compatibility exports while later storage/SSH migrations are pending.
+  composition without owning injected resources.
 - `packages/features/feature_playbook/`: the migrated Playbook editor,
   approval-bound sequential execution, encrypted run history, and independent
   `playbook.db`. Cross-feature AI calls use the public
@@ -479,8 +511,7 @@ flowchart LR
 - `packages/features/feature_monitoring/`: real-time monitoring models,
   background parsers/probes, low-priority SSH Ports, the Monitoring Module, and
   route-scoped monitoring state. It intentionally has no `monitoring.db`; the
-  existing product keeps only bounded in-memory samples. Old Performance Monitor
-  services and tools remain App-layer compatibility bridges.
+  existing product keeps only bounded in-memory samples.
 - `packages/features/feature_system_admin/`: System Administration UI, route
   ViewModel, management command service, lifecycle Module, and local monitoring
   Capability contract. App Shell adapters inject legacy SSH, connection,
@@ -490,7 +521,7 @@ flowchart LR
   HTTPS/WebSocket transfer, Web Share, transfer history, non-secret pairing
   metadata, and the `LanShareModule` with its independent `lan_share.db`.
   The package consumes `network_sdk` client contracts plus `network_transport`,
-  `app_core`, `app_ui`, and injected App Ports; native v1 construction remains
+  `app_core`, `app_ui`, and injected App Ports; Network Protocol V2 construction remains
   in the App Shell adapter.
 - `packages/features/feature_mcp/`: the local MCP HTTP/JSON-RPC server,
   exposure and invocation policy, approval queue, activity Repository, console
@@ -501,7 +532,6 @@ flowchart LR
   tool orchestration, AI WebView contracts, and independent `ai.db`. Its
   `AiModule` lazily owns the database and Repository; the App Shell injects
   `app_core` Capability contracts and App Ports through the composition root.
-  The old AI App paths remain compatibility surfaces, not a second owner.
 - `packages/features/feature_webview/`: client WebView sessions, navigation UI,
   public-page search, visible-text extraction, and URL/sensitive-form security
   policy. `ClientWebViewService` is an AppRuntime-owned resource; the package
@@ -519,8 +549,8 @@ flowchart LR
   Provider keeps App Scope instances and Ports, while route scopes own Feature
   ViewModels. `AppConnectionRouteScope` also preserves the Home-to-Add/Edit/SFTP
   shared Connection ViewModel flow.
-- `apps/ssh_mobile_full/lib/services/`: cross-feature SSH/SFTP, monitoring,
-  App Shell adapters, legacy LAN-share compatibility services, and platform
+- `apps/ssh_mobile_full/lib/services/`: App-scoped SSH/SFTP backends, App Shell
+  adapters, the Network V2 service boundary, logging, settings, and platform
   adapters. The directory's complete Owner/compatibility classification is in
   `apps/ssh_mobile_full/lib/services/README.md`; maintained AI/MCP
   implementations live in their Feature packages.
@@ -533,16 +563,14 @@ flowchart LR
 - `packages/core/app_ui/`: shared theme, responsive metrics, and cross-feature UI widgets. It exposes only `package:app_ui/app_ui.dart` and has no Feature or service dependency; the old app theme/widget paths are compatibility exports.
 - `packages/core/connection_core/`: Connection domain models and contracts, a separate non-sensitive Drift database, Secure Storage credentials, and Host Key trust metadata. Its `ConnectionDatabase` is created and closed by `AppRuntime`; `feature_connection` consumes the public repositories and injected capabilities.
 - `packages/infrastructure/network_sdk/`: typed Flutter client contracts and pure JSON adapters for bootstrap, authenticated control-plane calls, business sessions, and event streams. `SdkRequestExecutor` is injected by the App Shell; the package owns no Socket, HTTP client, FFI handle, database, or App lifecycle. Its `RealtimeSession` contract is the only Feature-facing realtime API, and its start/stop Futures complete only after the App Shell correlates native command results.
-- `packages/infrastructure/network_transport/`: the App Scope `NetworkRuntime` facade, lazy Capability state machine, diagnostics snapshot, transport contracts, metrics snapshot, explicit native handle adapter, and non-owning `NetworkCommandGateway` and typed `NetworkRealtimeGateway` borrowed from the same Runtime handle. Realtime start/stop return a `NativeCommandTicket` so queue acceptance is distinct from operation completion; `AppRuntime` creates the single instance and this Step does not add a second protocol implementation.
+- `packages/infrastructure/network_transport/`: the App Scope `NetworkRuntime` facade, lazy Capability state machine, diagnostics snapshot, transport contracts, metrics snapshot, explicit native handle adapter, and non-owning `NetworkCommandGateway` and typed `NetworkRealtimeGateway` borrowed from the same Runtime handle. Realtime start/stop return a `NativeCommandTicket` so queue acceptance is distinct from operation completion; `AppRuntime` creates the single instance and the architecture does not add a second protocol implementation.
 - `packages/infrastructure/ssh_core/`: the App Scope SSH Session Manager, lease/pool lifecycle, Desktop/Mobile Runtime Adapter contracts, SSH Client/Host Key/command boundaries, and non-secret target bindings. The package does not depend on App Shell storage implementations; `AppRuntime` owns one Manager instance, and `feature_terminal` receives that Manager through injection while the old `SshService` remains a compatibility implementation.
 - `packages/infrastructure/ssh_mobile_network_native/`: native network package staged under the Infrastructure boundary.
 - `apps/ssh_mobile_full/lib/core/services/`: lower-level shared security and protocol factories,
   including host-key policy and data protection.
 - `apps/ssh_mobile_full/lib/theme/`, migrated shared widget paths, and `lib/utils/responsive.dart`: compatibility exports for `packages/core/app_ui/`; Feature-specific widgets remain under their owning Feature.
-- `apps/ssh_mobile_full/lib/models/`: small legacy-compatible shared model surface only; new
-  feature models belong to their owning `apps/ssh_mobile_full/lib/features/<feature>/models/`.
-- `apps/ssh_mobile_full/lib/screens/`: legacy compatibility surface; do not add new application UI
-  here.
+- New product Feature models, ViewModels, services, and views belong to the
+  owning `packages/features/feature_*` member, not a new App-local Feature tree.
 - `apps/ssh_mobile_full/test/`: unit and widget tests.
 - `packages/core/app_core/test/`: Core contract tests; run them with `flutter test` from that package or the Melos scope command.
 - `packages/core/app_ui/test/`: shared theme, responsive, and widget tests; run them with `flutter test` from that package.
@@ -566,36 +594,37 @@ aggregated by `app/navigation/` without importing Feature `/src/` code.
 The same Runtime owns one lazy `NetworkRuntime`; QUIC and WSS Relay capabilities
 share native initialization, failed initialization can retry, and disposal waits
 for and closes the native handle. The typed `network_sdk` client facade is injected
-above that runtime, while its App Shell adapter is the only bridge to the legacy
-native v1 service. Realtime command tickets are correlated with native result events
-inside that adapter, with bounded timeout/dispose cleanup; lifecycle states come from
-native state events and stop waits for `closed`. LAN Share still has a Feature-owned
-Module and database; old LAN paths remain compatibility surfaces during migration.
+above that runtime, while its App Shell adapter is the only bridge to the
+Network Protocol V2 service. Realtime command tickets are correlated with native
+result events inside that adapter, with bounded timeout/dispose cleanup;
+lifecycle states come from native state events and stop waits for `closed`. LAN
+Share has one Feature-owned Module and database; its native construction stays
+in the App Shell adapter without creating a second business implementation.
 `AppRuntime.logger` exposes the Core logger contract; the current full-app
-implementation is an App-layer `AppLogService` adapter, so existing database,
-disk, redaction, and UI notification behavior remains unchanged during staged
-migration. New module code should request a scoped logger from Runtime instead
-of constructing a logging service.
+implementation is an App-layer `AppLogService` adapter, preserving database,
+disk, redaction, and UI notification behavior. New module code should request a
+scoped logger from Runtime instead of constructing a logging service.
 Route- or screen-scoped feature state stays local: for example, the AI chat
 runtime is created by `AiChatRuntimeFactory` and provided by the chat view,
 while terminal screens create focused session/history/window ViewModels. Views
 keep layout and transient presentation state; validation, async orchestration,
 and repository coordination belong in ViewModels and services.
 
-The Connection module uses a new `connection.sqlite` baseline during development.
+The Connection module uses `connection.sqlite` during development.
 Its Drift table deliberately excludes passwords and private keys; those values
 are handled only by `CredentialRepository` and platform Secure Storage. The
-current legacy Connection ViewModel consumes the Core Connection repositories
-through App Shell injection; its old App path remains only as a compatibility
-surface.
+Connection ViewModel consumes the Core Connection repositories through App
+Shell injection.
 
 LAN file transfer follows `LanShareViewModel → NetworkService → Rust
 NetworkRuntime`. Commands return typed acceptance results, while progress and
 terminal outcomes arrive as typed events. The runtime owns per-peer path
 selection, authenticated QUIC/TCP/WebSocket routes, streaming file verification,
 and native Relay send/receive; Flutter owns pairing, approval UI, history, and
-presentation state. The Go Relay remains a memory-only v1 router and never
-receives plaintext file metadata or bytes.
+presentation state. The Go Relay data plane remains an ephemeral opaque
+forwarder and never receives plaintext file metadata or bytes; optional
+MySQL/Redis storage persists control-plane identity and shared live state, not
+business payloads or transfer contents.
 
 Native channel Delivery keeps active incoming handlers and ordered-buffered
 messages outside the processed dedup TTL/LRU window. Application ACK timeout is
@@ -640,9 +669,9 @@ Entering a terminal route creates a `TerminalModule` and its Route Scope
 ViewModels; the module owns terminal metadata in `terminal.db` and closes its
 Drift resources when the route scope is disposed. SSH is obtained through the
 injected `ssh_core.SshSessionManager`, never by constructing a second SSH
-service. The App Shell adapters temporarily bridge legacy settings, shortcuts,
-connection dialogs, and history records so existing behavior remains stable;
-the old App paths are compatibility exports rather than a second implementation.
+service. The App Shell adapters bridge settings, shortcuts, connection dialogs,
+and history records through explicit Ports; they are compatibility boundaries
+rather than a second Terminal implementation.
 
 On Windows, the terminal includes a multiline command composer with paste, clear, local sent-command history, `Enter` to send, and `Shift+Enter` for a new line. The advanced Windows keyboard provides QWERTY, Shell-symbol, navigation, and F1-F12 layers plus compose/direct modes. Its modern rounded keycaps scale to the available width without horizontal scrolling, with staggered QWERTY rows and physical-keyboard-style modifier and space-bar proportions. Shift, Ctrl, and Alt support one-shot and locked states, including combinations such as `Shift+Tab`; users can choose which built-in keys appear in the quick bar, and that layout is persisted and included in app backups. Submitted drafts use the terminal's bracketed-paste mode when the remote shell supports it.
 

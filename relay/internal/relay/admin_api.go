@@ -54,25 +54,14 @@ type adminDevice struct {
 	PublicKeyFingerprint string `json:"public_key_fingerprint"`
 }
 
-// hubSnapshot 只带管理端消费的本地 hub 数据。在线状态与 RemoteAddr 一律来自
-// presence 租约（GetPresences），本地 peer 表不参与 admin 视图——它只反映本实例
-// 持有的连接，其它实例连接同一共享 Redis 的设备在 admin 视图里显示为空白地址
-// （设计 §26：Relay Control/Data 单实例，Redis 为共享实时状态层）。
-//
-// ActiveTransfers 在 v2 传输网络中恒为 0：活跃 relay-data 连接由 reservation 短命
-// 数据面承载（/v2/relay），不经过 hub 的 peer 表，也不计入本快照。
-type hubSnapshot struct {
-	ActiveSessions int
-}
+const adminSnapshotTimeout = 5 * time.Second
 
-func (h *hub) snapshot() hubSnapshot {
-	return hubSnapshot{ActiveSessions: 0}
-}
-
-func (s *Server) adminOverview(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	snapshot, err := s.adminOverviewSnapshot()
+	ctx, cancel := context.WithTimeout(r.Context(), adminSnapshotTimeout)
+	defer cancel()
+	snapshot, err := s.adminOverviewSnapshotContext(ctx)
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, adminErrorInternal, "Device storage is unavailable.")
 		return
@@ -81,8 +70,13 @@ func (s *Server) adminOverview(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
-	hubState := s.hub.snapshot()
-	enrolledList, err := s.store.ListEnrollments(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), adminSnapshotTimeout)
+	defer cancel()
+	return s.adminOverviewSnapshotContext(ctx)
+}
+
+func (s *Server) adminOverviewSnapshotContext(ctx context.Context) (adminOverviewResponse, error) {
+	enrolledList, err := s.store.ListEnrollments(ctx)
 	if err != nil {
 		return adminOverviewResponse{}, err
 	}
@@ -92,7 +86,7 @@ func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 	for _, device := range enrolledList {
 		deviceIDs = append(deviceIDs, device.DeviceID)
 	}
-	presences, presenceErr := s.cache.GetPresences(context.Background(), deviceIDs)
+	presences, presenceErr := s.cache.GetPresences(ctx, deviceIDs)
 	presenceAvailable := presenceErr == nil
 	if presenceErr != nil {
 		// Redis presence 不可用：online 不能当作"全部离线"解读，给前端显式标志
@@ -113,14 +107,16 @@ func (s *Server) adminOverviewSnapshot() (adminOverviewResponse, error) {
 		ServerTime:        time.Now().Unix(),
 		UptimeSeconds:     int64(time.Since(s.startedAt).Seconds()),
 		Devices:           adminDeviceStat{Enrolled: enrolled, Online: online},
-		Relay:             adminRelayStat{ActiveTransfers: hubState.ActiveSessions},
+		Relay:             adminRelayStat{ActiveTransfers: s.relayData.activePairCount()},
 		Runtime:           adminRuntimeStat{AllocatedMemMB: float64(memory.Alloc) / 1024 / 1024, Goroutines: runtime.NumGoroutine()},
 		PresenceAvailable: presenceAvailable,
 	}, nil
 }
 
-func (s *Server) adminDevices(w http.ResponseWriter, _ *http.Request) {
-	items, presenceAvailable, err := s.adminDeviceSnapshot()
+func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), adminSnapshotTimeout)
+	defer cancel()
+	items, presenceAvailable, err := s.adminDeviceSnapshotContext(ctx)
 	if err != nil {
 		writeAdminError(w, http.StatusInternalServerError, adminErrorInternal, "Device storage is unavailable.")
 		return
@@ -131,7 +127,13 @@ func (s *Server) adminDevices(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) adminDeviceSnapshot() ([]adminDevice, bool, error) {
-	enrolledList, err := s.store.ListEnrollments(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), adminSnapshotTimeout)
+	defer cancel()
+	return s.adminDeviceSnapshotContext(ctx)
+}
+
+func (s *Server) adminDeviceSnapshotContext(ctx context.Context) ([]adminDevice, bool, error) {
+	enrolledList, err := s.store.ListEnrollments(ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -142,7 +144,7 @@ func (s *Server) adminDeviceSnapshot() ([]adminDevice, bool, error) {
 	for _, enrolled := range enrolledList {
 		deviceIDs = append(deviceIDs, enrolled.DeviceID)
 	}
-	presences, presenceErr := s.cache.GetPresences(context.Background(), deviceIDs)
+	presences, presenceErr := s.cache.GetPresences(ctx, deviceIDs)
 	presenceAvailable := presenceErr == nil
 	if presenceErr != nil {
 		s.logger.Warn("presence cache unavailable; online status is unknown", "error", presenceErr)

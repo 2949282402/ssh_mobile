@@ -3,6 +3,8 @@
 // ViewModel 负责当前服务器选择、管理数据加载和 Service 监听；不拥有
 // App Scope 的连接目录、SSH 或 SFTP 资源。
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:connection_core/connection_core.dart';
 import 'package:ssh_core/ssh_core.dart';
@@ -70,17 +72,23 @@ class SystemAdminViewModel extends ChangeNotifier {
   String? get errorMessage => _adminService.errorMessage;
   bool get isRoot => _adminService.isRoot;
 
+  SystemAdminSessionTarget? get activeManagementTarget {
+    final target = _adminService.activeTarget;
+    if (target == null || target.connectionId != _selectedConnectionId) {
+      return null;
+    }
+    if (!target.binding.matches(connectionById(target.connectionId))) {
+      return null;
+    }
+    return target;
+  }
+
   String? get activeManagementConnectionId {
-    final currentManagementId = _adminService.connectionId;
-    if (currentManagementId == null) return null;
-    if (currentManagementId != _selectedConnectionId) return null;
-    return currentManagementId;
+    return activeManagementTarget?.connectionId;
   }
 
   bool get canManageSelectedConnection {
-    return activeManagementConnectionId != null &&
-        _adminService.isConnected &&
-        _adminService.isRoot;
+    return activeManagementTarget != null && _adminService.isRoot;
   }
 
   bool get isConnectingSelectedConnection {
@@ -177,6 +185,15 @@ class SystemAdminViewModel extends ChangeNotifier {
       clearInvalidSelection();
       return;
     }
+    final activeTarget = _adminService.activeTarget;
+    if (activeTarget != null &&
+        !activeTarget.binding.matches(
+          connectionById(activeTarget.connectionId),
+        )) {
+      _clearManagementData();
+      unawaited(_adminService.disconnect());
+      return;
+    }
     notifyListeners();
   }
 
@@ -205,7 +222,7 @@ class SystemAdminViewModel extends ChangeNotifier {
     _clearManagementData();
 
     if (_adminService.connectionId == oldSelectedId) {
-      _adminService.disconnect();
+      unawaited(_adminService.disconnect());
     }
 
     notifyListeners();
@@ -229,7 +246,12 @@ class SystemAdminViewModel extends ChangeNotifier {
     String id, {
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
-    await _adminService.connect(id, onUnknownHostKey: onUnknownHostKey);
+    final config = connectionById(id);
+    if (config == null) throw StateError('Connection config not found');
+    await _adminService.connect(
+      SshTargetBinding.fromConfig(config),
+      onUnknownHostKey: onUnknownHostKey,
+    );
   }
 
   Future<void> connectIfNeeded(
@@ -240,8 +262,11 @@ class SystemAdminViewModel extends ChangeNotifier {
 
     if (_connectingConnectionId == id && _adminService.isConnecting) return;
 
-    if (_adminService.isConnected &&
-        _adminService.connectionId == id &&
+    final config = connectionById(id);
+    if (config == null) return;
+    final currentTarget = activeManagementTarget;
+    if (currentTarget != null &&
+        currentTarget.binding.matches(config) &&
         _adminService.isRoot) {
       return;
     }
@@ -250,7 +275,10 @@ class SystemAdminViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _adminService.connect(id, onUnknownHostKey: onUnknownHostKey);
+      await _adminService.connect(
+        SshTargetBinding.fromConfig(config),
+        onUnknownHostKey: onUnknownHostKey,
+      );
     } finally {
       if (_connectingConnectionId == id) {
         _connectingConnectionId = null;
@@ -259,8 +287,10 @@ class SystemAdminViewModel extends ChangeNotifier {
     }
   }
 
-  void disconnect() {
-    _adminService.disconnect();
+  Future<void> disconnect() => _adminService.disconnect();
+
+  Future<void> disconnectTarget(SystemAdminSessionTarget target) async {
+    if (_adminService.isActiveTarget(target)) await _adminService.disconnect();
   }
 
   // Data retrieval wrapper methods
@@ -305,7 +335,8 @@ class SystemAdminViewModel extends ChangeNotifier {
 
   Future<void> fetchAccounts(String connId, {bool force = false}) async {
     if (!force && _accountsLoadedFor == connId) return;
-    if (activeManagementConnectionId != connId) return;
+    final target = activeManagementTarget;
+    if (target == null || target.connectionId != connId) return;
 
     cancelActiveCommands();
     final commandEpoch = _commandEpoch;
@@ -314,15 +345,16 @@ class SystemAdminViewModel extends ChangeNotifier {
 
     Future<void> performFetch() async {
       try {
-        final data = await _adminService.getUserAccounts(connId);
+        final data = await _adminService.getUserAccounts(target);
         if (_selectedConnectionId != connId ||
-            activeManagementConnectionId != connId) {
+            commandEpoch != _commandEpoch ||
+            !_adminService.isActiveTarget(target)) {
           return;
         }
         _accounts = data;
         _accountsLoadedFor = connId;
       } finally {
-        if (_selectedConnectionId == connId) {
+        if (_selectedConnectionId == connId && commandEpoch == _commandEpoch) {
           _loadingAccounts = false;
           notifyListeners();
         }
@@ -340,7 +372,8 @@ class SystemAdminViewModel extends ChangeNotifier {
 
   Future<void> fetchSessions(String connId, {bool force = false}) async {
     if (!force && _sessionsLoadedFor == connId) return;
-    if (activeManagementConnectionId != connId) return;
+    final target = activeManagementTarget;
+    if (target == null || target.connectionId != connId) return;
 
     cancelActiveCommands();
     final commandEpoch = _commandEpoch;
@@ -349,15 +382,16 @@ class SystemAdminViewModel extends ChangeNotifier {
 
     Future<void> performFetch() async {
       try {
-        final data = await _adminService.getActiveSessions(connId);
+        final data = await _adminService.getActiveSessions(target);
         if (_selectedConnectionId != connId ||
-            activeManagementConnectionId != connId) {
+            commandEpoch != _commandEpoch ||
+            !_adminService.isActiveTarget(target)) {
           return;
         }
         _sessions = data;
         _sessionsLoadedFor = connId;
       } finally {
-        if (_selectedConnectionId == connId) {
+        if (_selectedConnectionId == connId && commandEpoch == _commandEpoch) {
           _loadingSessions = false;
           notifyListeners();
         }
@@ -375,7 +409,8 @@ class SystemAdminViewModel extends ChangeNotifier {
 
   Future<void> fetchServices(String connId, {bool force = false}) async {
     if (!force && _servicesLoadedFor == connId) return;
-    if (activeManagementConnectionId != connId) return;
+    final target = activeManagementTarget;
+    if (target == null || target.connectionId != connId) return;
 
     cancelActiveCommands();
     final commandEpoch = _commandEpoch;
@@ -384,15 +419,16 @@ class SystemAdminViewModel extends ChangeNotifier {
 
     Future<void> performFetch() async {
       try {
-        final data = await _adminService.getSystemdServices(connId);
+        final data = await _adminService.getSystemdServices(target);
         if (_selectedConnectionId != connId ||
-            activeManagementConnectionId != connId) {
+            commandEpoch != _commandEpoch ||
+            !_adminService.isActiveTarget(target)) {
           return;
         }
         _services = data;
         _servicesLoadedFor = connId;
       } finally {
-        if (_selectedConnectionId == connId) {
+        if (_selectedConnectionId == connId && commandEpoch == _commandEpoch) {
           _loadingServices = false;
           notifyListeners();
         }
@@ -410,7 +446,8 @@ class SystemAdminViewModel extends ChangeNotifier {
 
   Future<void> fetchPorts(String connId, {bool force = false}) async {
     if (!force && _portsLoadedFor == connId) return;
-    if (activeManagementConnectionId != connId) return;
+    final target = activeManagementTarget;
+    if (target == null || target.connectionId != connId) return;
 
     cancelActiveCommands();
     final commandEpoch = _commandEpoch;
@@ -419,15 +456,16 @@ class SystemAdminViewModel extends ChangeNotifier {
 
     Future<void> performFetch() async {
       try {
-        final data = await _adminService.getListeningPorts(connId);
+        final data = await _adminService.getListeningPorts(target);
         if (_selectedConnectionId != connId ||
-            activeManagementConnectionId != connId) {
+            commandEpoch != _commandEpoch ||
+            !_adminService.isActiveTarget(target)) {
           return;
         }
         _ports = data;
         _portsLoadedFor = connId;
       } finally {
-        if (_selectedConnectionId == connId) {
+        if (_selectedConnectionId == connId && commandEpoch == _commandEpoch) {
           _loadingPorts = false;
           notifyListeners();
         }
@@ -449,77 +487,91 @@ class SystemAdminViewModel extends ChangeNotifier {
     String password, {
     String shell = '/bin/bash',
   }) async {
-    final id = activeManagementConnectionId;
-    if (id == null) return;
+    final target = activeManagementTarget;
+    if (target == null) return;
     await _adminService.createUser(
-      id,
+      target,
       username: username,
       password: password,
       shell: shell,
     );
-    await fetchAccounts(id, force: true);
+    if (_adminService.isActiveTarget(target)) {
+      await fetchAccounts(target.connectionId, force: true);
+    }
   }
 
   Future<bool> checkUserSudo(String username) async {
-    final id = activeManagementConnectionId;
-    if (id == null) return false;
-    return await _adminService.checkUserSudo(id, username);
+    final target = activeManagementTarget;
+    if (target == null) return false;
+    return _adminService.checkUserSudo(target, username);
   }
 
   Future<void> setUserSudo(String username, bool grant) async {
-    final id = activeManagementConnectionId;
-    if (id == null) return;
-    await _adminService.setUserSudo(id, username, grant);
-    await fetchAccounts(id, force: true);
+    final target = activeManagementTarget;
+    if (target == null) return;
+    await _adminService.setUserSudo(target, username, grant);
+    if (_adminService.isActiveTarget(target)) {
+      await fetchAccounts(target.connectionId, force: true);
+    }
   }
 
   Future<void> lockUser(String username) async {
-    final id = activeManagementConnectionId;
-    if (id == null) return;
-    await _adminService.lockUser(id, username);
-    await fetchAccounts(id, force: true);
+    final target = activeManagementTarget;
+    if (target == null) return;
+    await _adminService.lockUser(target, username);
+    if (_adminService.isActiveTarget(target)) {
+      await fetchAccounts(target.connectionId, force: true);
+    }
   }
 
   Future<void> unlockUser(String username) async {
-    final id = activeManagementConnectionId;
-    if (id == null) return;
-    await _adminService.unlockUser(id, username);
-    await fetchAccounts(id, force: true);
+    final target = activeManagementTarget;
+    if (target == null) return;
+    await _adminService.unlockUser(target, username);
+    if (_adminService.isActiveTarget(target)) {
+      await fetchAccounts(target.connectionId, force: true);
+    }
   }
 
   Future<void> changePassword(String username, String newPassword) async {
-    final id = activeManagementConnectionId;
-    if (id == null) return;
-    await _adminService.changePassword(id, username, newPassword);
-    await fetchAccounts(id, force: true);
+    final target = activeManagementTarget;
+    if (target == null) return;
+    await _adminService.changePassword(target, username, newPassword);
+    if (_adminService.isActiveTarget(target)) {
+      await fetchAccounts(target.connectionId, force: true);
+    }
   }
 
   Future<String> getUserHomeStorageUsage(String homeDir) async {
-    final id = activeManagementConnectionId;
-    if (id == null) return 'N/A';
-    return await _adminService.getUserHomeStorageUsage(id, homeDir);
+    final target = activeManagementTarget;
+    if (target == null) return 'N/A';
+    return _adminService.getUserHomeStorageUsage(target, homeDir);
   }
 
   Future<List<LinuxUserProcess>> getUserProcessesAndMemory(
     String username,
   ) async {
-    final id = activeManagementConnectionId;
-    if (id == null) return [];
-    return await _adminService.getUserProcessesAndMemory(id, username);
+    final target = activeManagementTarget;
+    if (target == null) return [];
+    return _adminService.getUserProcessesAndMemory(target, username);
   }
 
   Future<void> killActiveSession(String tty) async {
-    final id = activeManagementConnectionId;
-    if (id == null) return;
-    await _adminService.killActiveSession(id, tty);
-    await fetchSessions(id, force: true);
+    final target = activeManagementTarget;
+    if (target == null) return;
+    await _adminService.killActiveSession(target, tty);
+    if (_adminService.isActiveTarget(target)) {
+      await fetchSessions(target.connectionId, force: true);
+    }
   }
 
   Future<void> manageSystemdService(String serviceName, String action) async {
-    final id = activeManagementConnectionId;
-    if (id == null) return;
-    await _adminService.manageSystemdService(id, serviceName, action);
-    await fetchServices(id, force: true);
+    final target = activeManagementTarget;
+    if (target == null) return;
+    await _adminService.manageSystemdService(target, serviceName, action);
+    if (_adminService.isActiveTarget(target)) {
+      await fetchServices(target.connectionId, force: true);
+    }
   }
 
   Future<void> rebootServer(SystemPowerConfirmationToken token) async {
@@ -529,9 +581,7 @@ class SystemAdminViewModel extends ChangeNotifier {
     if (!token.isFresh) {
       throw StateError('System power confirmation token expired');
     }
-    final id = activeManagementConnectionId;
-    if (id == null) return;
-    await _adminService.rebootServer(id, token);
+    await _adminService.rebootServer(token);
   }
 
   Future<void> shutdownServer(SystemPowerConfirmationToken token) async {
@@ -541,8 +591,6 @@ class SystemAdminViewModel extends ChangeNotifier {
     if (!token.isFresh) {
       throw StateError('System power confirmation token expired');
     }
-    final id = activeManagementConnectionId;
-    if (id == null) return;
-    await _adminService.shutdownServer(id, token);
+    await _adminService.shutdownServer(token);
   }
 }

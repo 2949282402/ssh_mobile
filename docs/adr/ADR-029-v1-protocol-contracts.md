@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-15
+> 最新更新时间：2026-08-24
 
 # ADR-029：v1 协议契约消费（Relay refresh、重试策略、Realtime 快照）
 
@@ -18,6 +18,11 @@ Realtime revision 快照、`POST /v1/devices/refresh`）。transport-network v2 
 表中仍作为「Realtime 快照版本」保留（见
 [ADR-TRANSPORT-NETWORK-V2](ADR-TRANSPORT-NETWORK-V2.md) 命名方案）；其余 v1
 wire 形态随 v2 迁移删除。
+
+`POST /v1/devices/refresh` 作为当前 Bootstrap HTTP API 仍然保留；其现行签名
+时效性与硬切换契约由
+[ADR-031-relay-refresh-proof-freshness.md](ADR-031-relay-refresh-proof-freshness.md)
+统一定义，本 ADR 中无时间戳的历史请求形状不再可用。
 
 ## Context
 

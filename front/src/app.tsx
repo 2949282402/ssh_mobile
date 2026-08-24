@@ -31,7 +31,12 @@ function AuthGate() {
 
   useEffect(() => {
     const handleUnauthorized = () => {
+      void queryClient.cancelQueries({ queryKey: ['relay'] });
       queryClient.removeQueries({ queryKey: ['relay'] });
+      queryClient.setQueryData(queryKeys.auth, {
+        authenticated: false,
+        username: '',
+      });
       void authQuery.refetch();
     };
     window.addEventListener('relay:unauthorized', handleUnauthorized);

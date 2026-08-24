@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-13
+> 最新更新时间：2026-08-23
 
 <p align="center">
   <img src="apps/ssh_mobile_full/assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -18,7 +18,7 @@
   <a href="https://github.com/hejulian2004/ssh_mobile/actions/workflows/flutter.yml"><img src="https://github.com/hejulian2004/ssh_mobile/actions/workflows/flutter.yml/badge.svg" alt="Flutter CI" /></a>
 </p>
 
-SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 Android、iOS、macOS、Windows 和 Web。它把多窗口终端、远程文件管理、服务器监控、安全存储和 OpenAI-compatible AI tools 整合为一个移动端与桌面端运维工作台。Terminal、SFTP、监控、系统管理、Playbook 和 RAG 已按计划建立独立 Feature Package；RAG 元数据写入 `rag.db`，正文与向量只进入有大小上限、TTL 和淘汰策略的缓存文件。
+SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 Android、iOS、macOS、Windows 和 Web。它把多窗口终端、远程文件管理、服务器监控、安全存储和 OpenAI-compatible AI tools 整合为一个移动端与桌面端运维工作台。仓库采用 21 个成员的 Dart Workspace：Feature 实现在 `packages/features/`，共享契约位于 `packages/core/`，Full App 只作为组合根持有 App Scope 资源与适配器。RAG 元数据写入 `rag.db`，正文与向量只进入有大小上限、TTL 和淘汰策略的缓存文件。
 
 项目最初源于一台只有 2 核 CPU 和 1 GB 内存的服务器。完整 AI Agent 无法在这类低配置服务器上稳定运行，因此 SSH Mobile 将模型推理和 Agent 编排放在客户端，再通过 SSH 和 SFTP 检查、维护远程服务器，从而避免占用服务器有限的内存。
 
@@ -34,9 +34,13 @@ Public API、依赖、存储、生命周期和测试命令，`AGENTS.md` 说明�
 - **SSH 连接管理**：支持密码、私钥、私钥密码、跳板机、服务器平台选择和 SSH Host Key 首次信任校验。
 - **多终端窗口**：同一服务器可创建多个固定名称的终端窗口，并稳定绑定 tmux 会话。
 - **SFTP 文件管理**：支持目录浏览、最近与收藏路径、上传、下载、编辑、预览和输入完整名称确认删除。
-- **局域网快传与网络传输**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；文件发送统一进入 Rust 网络运行时，优先使用固定身份的 Quinn 直连，无法直达时由当前 WSS Relay 路径只转发 opaque AES-GCM 密文。Session 流量使用带前向保密的 authenticated Noise XX root、epoch/方向/单调 counter 结构化 nonce 和明确的 key rotation；经过身份认证的 TCP 与直连 WebSocket 也可作为有界 Delivery 路径，但不会静默把 E2EE 降级为明文。路由迁移会保留逻辑 SessionId、待处理 Delivery 和 Session crypto context。直连和中继的入站文件都通过全局弹窗显式审批，校验后才提交到应用沙箱，并在接收端持久化和确认后报告成功。当前开发版本不保留旧 HTTPS 文件发送降级路径。RealtimeSession 只向 Flutter
+- **局域网快传与网络传输**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；文件发送统一进入 Rust 网络运行时，优先使用固定身份的 Quinn 直连，无法直达时由当前 WSS Relay 路径只转发 opaque AES-GCM 密文。Session 流量使用带前向保密的 authenticated Noise XX root、epoch/方向/单调 counter 结构化 nonce 和明确的 key rotation；经过身份认证的 TCP 与直连 WebSocket 也可作为有界 Delivery 路径，但不会静默把 E2EE 降级为明文。每条 Transport 都拥有一次性 ConnectionSession、新 SessionId 与新 crypto root；断线销毁该 Session，Delivery/Transfer 只按业务身份在新 PathLease 上恢复。直连和中继的入站文件都通过全局弹窗显式审批，校验后才提交到应用沙箱，并在接收端持久化和确认后报告成功。当前开发版本不保留旧 HTTPS 文件发送降级路径。逻辑 ReliableStream 在 Wire、Native、FFI 和 App 全链路使用 `(opener_device_id, stream_id)` 标识，因此双方可以同时使用相同数字 `stream_id` 而不会串流。RealtimeSession 只向 Flutter
 Feature 暴露 start/stop、状态、远端视频流和音频状态；PeerConnection、ICE、
 SDP、Socket 与 Relay signaling 继续由 Rust/native/App Shell 持有。
+- **Network Protocol V2 ownership**：`PeerSupervisor` 是每个 Peer 唯一的可变连接
+  Owner，`PeerPathManager` 持有 Direct/Relay 物理路径，业务操作通过
+  `PathLease` 借用 carrier。`E2eePolicy::Disabled` 只允许 Direct identity-only，
+  不得降级为 Relay；Resolve 是 Direct/Relay 分阶段建连的权威门禁。
 - **服务器监控**：查看性能、端口、应用进程、服务、用户和活动会话。
 - **AI Chat 与 Agent 执行**：支持流式输出、Plan Mode、审批式工具调用、聊天历史、消息分支、上下文压缩、RAG、Skills 和执行 Trace。
 - **本地 MCP Server**：桌面端可生成 Codex、Claude Code 和 Gemini CLI 配置；支持默认的 `reviewConfiguredTools` 与显式启用的 `trustedAgent` 两种模式，同时始终执行回环监听和硬安全边界。
@@ -49,7 +53,7 @@ SDP、Socket 与 Relay signaling 继续由 Rust/native/App Shell 持有。
 
 ### 环境要求
 
-- Flutter `>=3.44.0`，CI 固定使用 Flutter `3.44.2`。
+- Flutter `>=3.47.0`，CI 固定使用 Flutter `3.47.0`。
 - Dart SDK `>=3.12.0 <4.0.0`。
 - Android Studio、Android SDK 或对应目标平台的开发工具链。
 - Windows 构建需要 Visual Studio 的 `Desktop development with C++`。
@@ -85,7 +89,11 @@ flutter run -d chrome
 
 ## 控制平面与中继服务器生产部署
 
-仓库内的 `relay/` Go 服务提供设备控制平面和基于 HTTPS/WSS 的内存中继，用于网络传输与 P2P 备用链路；独立的 React + Vite + TypeScript 管理端位于根目录 `front/`。注册凭据与管理凭据必须显式配置；缺少密钥或使用弱口令时，服务会拒绝启动。
+仓库内的 `relay/` Go 服务提供 Network V2 的 WSS 控制面与数据面。默认
+`memory` 模式使用进程本地状态；可选 `storage` Compose profile 使用 MySQL
+持久化注册/吊销，并用 Redis 保存共享在线、防重放、管理会话和事件状态。独立的
+React + Vite + TypeScript 管理端位于根目录 `front/`。注册凭据与管理凭据必须显式
+配置；缺少密钥或使用弱口令时，服务会拒绝启动。
 
 仅支持使用 Docker Compose 与 Caddy 进行生产部署。按照[中继部署说明](relay/README.zh-CN.md)完成配置后运行：
 
@@ -96,7 +104,10 @@ Copy-Item .env.example .env
 docker compose --env-file .env up --build
 ```
 
-这一条命令会构建并启动 `front`、`relay` 与 `caddy`，随后持续显示三者的合并日志。Caddy 对外提供前端 SPA，并把 `/api/admin/v1`、`/v1` 和 `/healthz` 转发到内部 Relay 服务。中继状态仅驻留内存；服务重启后，客户端需要重新注册。
+这一条命令会构建并启动 `front`、`relay` 与 `caddy`，随后持续显示三者的合并日志。
+Caddy 对外提供前端 SPA，并把 `/api/admin/v1`、`/v1`、`/v2` 和 `/healthz`
+转发到内部 Relay 服务。默认 `memory` 模式重启后需要重新注册；`mysql` 模式保留
+注册和吊销状态，但活动连接仍需重建。显式 `storage` profile 命令见中继部署说明。
 
 在 SSH Mobile 中打开“局域网共享设置”，填写具备有效 TLS 证书的 HTTPS 中继主机、端口和注册 Token。Token 只用于本次注册，不会写入偏好设置；应用只保存 Relay origin，设备凭据保存在平台安全存储中。设置页会显示已连接、已断开或失败状态，并提供手动连接、断开和清除操作。
 
@@ -121,12 +132,13 @@ flutter build ios --release --no-codesign
 ```
 
 ```powershell
-# Windows
-Set-Location apps/ssh_mobile_full
-flutter config --enable-windows-desktop
-flutter build windows
-Set-Location ../..
-powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_msi.ps1
+# Windows：必须在原生 checkout 的 PowerShell 7（pwsh.exe）中运行。
+Set-Location '<native-repo>'
+. .\scripts\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
+& '<flutter-root>\bin\flutter.bat' build windows --no-pub
+& .\scripts\build_windows_msi.ps1 `
+  -Flutter '<flutter-root>\bin\flutter.bat' `
+  -Version '1.0.0'
 ```
 
 Android CI 默认使用 Google、Maven Central 和 Flutter 官方制品仓库。国内本地环境需要阿里云镜像时，可设置环境变量 `USE_ALIYUN_MAVEN=true`，或使用 Gradle 参数 `-PuseAliyunMaven=true` 显式开启。
@@ -274,10 +286,25 @@ flutter analyze --no-fatal-infos
 flutter test
 ```
 
+正常修改后的 WSL 回归入口是：
+
+```bash
+bash scripts/full_test.sh --no-bootstrap
+```
+
+日常回归不收集 Flutter 覆盖率。大型重构、新功能或发布审查需独立运行四个
+Owner 覆盖率门禁，每个门禁对其文档化范围执行 80% 阈值：
+
+```bash
+bash scripts/front_coverage.sh
+bash scripts/backend_coverage.sh
+bash scripts/client_coverage.sh
+bash scripts/sdk_coverage.sh
+```
+
 ### Workspace 模块门禁
 
-Pull Request 先通过 Melos 的 diff 过滤检查发生变更的 Package 及其依赖方，
-再执行架构守卫：
+仓库级回归通过后，可用 Melos diff 过滤对发生变更的 Package 及其依赖方做聚焦检查：
 
 ```bash
 dart run melos exec --diff=origin/main...HEAD --include-dependents --fail-fast -- "dart format --output=none --set-exit-if-changed lib test"
@@ -296,26 +323,18 @@ dart run tool/check_resource_owners.dart
 ### 完整质量门禁
 
 ```bash
-dart pub get
-dart run tool/check_file_sizes.dart
-dart run tool/check_module_dependencies.dart
-dart run tool/check_resource_owners.dart
-dart format --output=none --set-exit-if-changed apps/ssh_mobile_full/lib apps/ssh_mobile_full/test apps/ssh_mobile_full/tool
-cd apps/ssh_mobile_full
-dart run tool/generate_app_icons.dart
-dart run build_runner build
-dart format --output=none --set-exit-if-changed lib test tool
-flutter analyze
-flutter test --coverage --reporter expanded
-dart run tool/check_coverage.dart --minimum=35
+bash scripts/full_test.sh
+bash scripts/front_coverage.sh
+bash scripts/backend_coverage.sh
+bash scripts/client_coverage.sh
+bash scripts/sdk_coverage.sh
 ```
 
-检查生成文件和 Agent Skill：
+只有生成器输入发生变化时才重新生成并检查对应产物：
 
 ```bash
-cd ../..
 git diff --exit-code -- apps/ssh_mobile_full/assets apps/ssh_mobile_full/android apps/ssh_mobile_full/ios apps/ssh_mobile_full/macos apps/ssh_mobile_full/web apps/ssh_mobile_full/windows/runner/resources/app_icon.ico
-git diff --exit-code -- apps/ssh_mobile_full/lib/data/database/app_database.g.dart
+git diff --exit-code -- apps/ssh_mobile_full/lib/services/app_log_database.g.dart
 ```
 
 ### 平台构建验证
@@ -328,9 +347,11 @@ flutter build ios --release --no-codesign --no-pub
 ```
 
 ```powershell
-Set-Location apps/ssh_mobile_full
-flutter test --reporter expanded
-flutter build windows
+# 只能在原生 checkout 的 PowerShell 7 中配置并使用仓库固定 SDK。
+Set-Location '<native-repo>'
+. .\scripts\configure_windows_toolchain.ps1 -FlutterRoot '<flutter-root>'
+& '<flutter-root>\bin\flutter.bat' test --no-pub --reporter expanded
+& '<flutter-root>\bin\flutter.bat' build windows --no-pub
 ```
 
 ### 人工集成测试清单
@@ -407,9 +428,9 @@ flowchart LR
   Views[Feature Views] --> ViewModels[Feature ViewModels]
   ViewModels --> Services[SSH / SFTP / Monitor / AI Services]
   Services --> Protocols[SSH / SFTP / HTTP / WebView Adapters]
-  Services --> Storage[StorageService Facade]
-  Storage --> Drift[Encrypted Drift Repositories]
-  Storage --> Secure[Platform Secure Storage]
+  Services --> Repositories[Feature/Core Repositories]
+  Repositories --> Drift[Encrypted Feature Drift Databases]
+  Repositories --> Secure[Platform Secure Storage]
   AI[AI Orchestration] --> Services
   AI --> Safety[Approval and Secret Policies]
 ```
@@ -419,18 +440,14 @@ flowchart LR
 - `apps/ssh_mobile_full/lib/main.dart`：精简的应用入口；App Shell 与依赖装配位于
   `apps/ssh_mobile_full/lib/app/`（`AppBootstrap`、`AppRuntimeFactory`、`AppRuntime`
   和 `SshMobileApp`）。
-- `apps/ssh_mobile_full/lib/features/`：各 Feature 自有的 Model、ViewModel、Service、View 和
-  Feature 内部 Widget。当前 Feature 根目录包括 `connection`、`terminal`、
-  `sftp`、`ai_chat`、`ai_skills`、`client_webview`、`performance`、
-  `system_admin`、`lan_share`、`playbook`、`rag`、`settings`、`startup`、
-  `home` 和 `developer_log`。
-- `packages/features/feature_connection/`：已经迁移的 Connection 编辑页、ViewModel、
-  双语展示契约以及运行时/验证 Capability Port。它依赖 `connection_core`，不拥有
-  Connection 数据库；在 SSH/SFTP 后续 Step 完成前，App 组合根会暂时桥接新 Core
-  Repository 与仍使用旧 `StorageService` 的消费者。
-- `packages/features/feature_terminal/`：已经迁移的 Terminal Pilot，包括路由作用域
+- `apps/ssh_mobile_full/lib/features/`：只保留 App 自有的 `home`、`settings` 和
+  `startup` 壳层展示；产品 Feature 实现位于下面的 Workspace Package。
+- `packages/features/feature_connection/`：Connection 编辑页、ViewModel、双语展示
+  契约以及运行时/验证 Capability Port。它依赖 `connection_core`，不拥有
+  Connection 数据库；App 组合根负责注入 Core Repository。
+- `packages/features/feature_terminal/`：Terminal 展示与路由状态，包括路由作用域
   ViewModel、终端页面、终端输出历史和独立的 `terminal.db`。它只依赖公共 Core 合约
-  与注入的 Port；后续存储/SSH Step 完成前，旧 App Terminal 路径保留为兼容导出。
+  与注入的 Port，不创建第二个 SSH Owner。
 - `packages/features/feature_playbook/`：已经迁移的 Playbook 编辑、审批绑定、串行
   执行和加密运行历史，Module 独占 `playbook.db`。AI 等跨 Feature 调用只依赖公开的
   `PlaybookAutomationPort`，SSH、日志和数据保护能力由 App Shell 注入。
@@ -440,22 +457,21 @@ flowchart LR
 - `packages/features/feature_developer/`：Developer Log、Developer Panel 和
   生命周期诊断展示。Feature 只读取公共 Port；App Shell 适配器提供脱敏的
   Module、SSH、NetworkRuntime、数据库和已接入 Timer/订阅快照。
-- `apps/ssh_mobile_full/lib/services/`：跨 Feature 的 SSH/SFTP/LLM/AI Tool、监控、存储、局域网
-  快传兼容服务和平台适配基础设施。
-- `apps/ssh_mobile_full/lib/data/`：Drift 数据库、DAO 和 Repository 实现。
+- `apps/ssh_mobile_full/lib/services/`：App Scope SSH/SFTP 后端、App Shell Adapter、
+  Network V2 Service 边界、日志、设置和平台适配基础设施；AI/MCP 等业务实现位于
+  各自 Feature Package。
 - `packages/core/app_core/`：纯 Dart 的生命周期、Module、日志和 Capability 合约；生产代码不依赖 Flutter/UI。日志部分包括作用域 `AppLogger`、有界 `LogBuffer`、`LogSink` 和可释放的 `AppLoggerImpl`。
 - `packages/core/app_ui/`：共享主题、响应式指标和跨 Feature 通用 Widget。只通过 `package:app_ui/app_ui.dart` 暴露，不依赖 Feature、SSH、网络、数据库或应用 Service；旧主题、响应式和通用 Widget 路径仅保留兼容导出。
 - `packages/core/connection_core/`：Connection 领域模型与契约、独立的非敏感 Drift 数据库、Secure Storage 凭据和 Host Key 信任元数据。`ConnectionDatabase` 由 `AppRuntime` 创建和关闭；`feature_connection` 只消费其公共 Repository 与注入的 Capability。
 - `packages/infrastructure/ssh_mobile_network_native/`：位于 Infrastructure 边界下的原生网络 Package。
 - `packages/infrastructure/network_sdk/`：Flutter 层 Bootstrap、鉴权 API、Session 和事件流客户端契约，以及不拥有网络资源的 JSON 适配器；`SdkRequestExecutor` 由 App Shell 注入，不拥有 Socket、HTTP client、FFI handle、数据库或 App 生命周期。其 `RealtimeSession` 的 start/stop Future 只有在 App Shell 关联 native command result 后才完成。
-- `packages/infrastructure/network_transport/`：App Scope `NetworkRuntime` Facade、lazy Capability 状态机、生命周期诊断快照、传输端点/连接合约、指标快照、显式 native handle adapter，以及非拥有型 `NetworkCommandGateway` 和 typed `NetworkRealtimeGateway`。Realtime start/stop 返回带 `commandId` 的 `NativeCommandTicket`，区分 queue acceptance 与操作完成；实例由 `AppRuntime` 唯一创建，当前 Step 不新增第二套协议实现。
+- `packages/infrastructure/network_transport/`：App Scope `NetworkRuntime` Facade、lazy Capability 状态机、生命周期诊断快照、传输端点/连接合约、指标快照、显式 native handle adapter，以及非拥有型 `NetworkCommandGateway` 和 typed `NetworkRealtimeGateway`。Realtime start/stop 返回带 `commandId` 的 `NativeCommandTicket`，区分 queue acceptance 与操作完成；实例由 `AppRuntime` 唯一创建，该架构不新增第二套协议实现。
 - `packages/infrastructure/ssh_core/`：App Scope SSH Session Manager、Lease/Pool 生命周期、桌面端与移动端 Runtime Adapter、SSH Client/Host Key/命令执行边界及非敏感目标绑定。该包不依赖 `StorageService`；`AppRuntime` 只持有一个 Manager，`feature_terminal` 通过注入使用它，旧 `SshService` 仅作为兼容实现保留。
 - `apps/ssh_mobile_full/lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
   策略和数据保护。
 - `apps/ssh_mobile_full/lib/theme/`、已迁移的共享 Widget 路径以及 `lib/utils/responsive.dart`：`packages/core/app_ui/` 的兼容导出；Feature 专属 Widget 继续放在所属 Feature 内。
-- `apps/ssh_mobile_full/lib/models/`：仅保留小型的历史兼容共享模型；新增 Feature 模型放在所属的
-  `apps/ssh_mobile_full/lib/features/<feature>/models/`。
-- `apps/ssh_mobile_full/lib/screens/`：历史兼容目录；不要继续在此新增应用 UI。
+- 新增产品 Feature 的 Model、ViewModel、Service 和 View 必须进入对应的
+  `packages/features/feature_*` 成员，不再新建 App 本地 Feature 实现树。
 - `apps/ssh_mobile_full/test/`：单元测试和 Widget 测试。
 - `packages/core/app_core/test/`：Core 合约测试；可在该 Package 中执行 `flutter test`，或使用 Melos scope 命令。
 - `packages/core/app_ui/test/`：共享主题、响应式工具和 Widget 测试；可在该 Package 中执行 `flutter test`。
@@ -481,28 +497,27 @@ Terminal Pilot 位于 `packages/features/feature_terminal/`。进入终端路由
 `TerminalModule` 和 Route Scope ViewModel；Module 独占 `terminal.db` 的终端元数据，
 路由销毁时关闭 Drift 资源。SSH 只能通过注入的
 `ssh_core.SshSessionManager` 使用，不能在 Feature 内创建新的 SSH Service。App
-组合根暂时提供设置、快捷键、连接对话框和历史的兼容适配器，旧 App 路径只是兼容
-导出，不会形成第二套实现。
+组合根提供设置、快捷键、连接对话框和历史 Port Adapter，不形成第二套实现。
 同一个 Runtime 还持有唯一的 lazy `NetworkRuntime`；QUIC 与 WSS Relay 能力共享
 native 初始化，失败可重试，释放时等待并关闭 native handle。Realtime command ticket
 在 App Shell adapter 内与 native result event 关联，pending command 有界、超时可回收，
 dispose 会取消结果等待和事件订阅；session 状态以 native state event 为准，stop 要等
-`closed`。旧 LAN Coordinator 通过 App Shell adapter 将其桥接为注入的
-`network_sdk.SessionClient`，在专属迁移 Step 前仍暂时使用原有 v1 协议适配器。
+`closed`。LAN Share 通过 App Shell adapter 使用 typed `network_sdk` contract，
+数据面仅走 Network V2 runtime。
 `AppRuntime.logger` 暴露 Core Logger Contract；当前 Full App 仍由 App 层的
-`AppLogService` 适配，因此数据库、磁盘、脱敏和 UI 通知行为在分阶段迁移期间保持不变。
+`AppLogService` 适配，保留数据库、磁盘、脱敏和 UI 通知行为。
 新增模块应从 Runtime 获取作用域 Logger，不应自行构造日志服务。
 
-Connection 模块在开发期使用全新的 `connection.sqlite` 基线；Drift 表刻意不保存
-密码和私钥，这些值只能通过 `CredentialRepository` 进入平台 Secure Storage。当前
-旧 Connection ViewModel 仍暂时使用 `StorageService`，待计划中的
-`feature_connection` Step 再切换。
+Connection 模块在开发期使用 `connection.sqlite`；Drift 表刻意不保存密码和私钥，
+这些值只能通过 `CredentialRepository` 进入平台 Secure Storage。Connection
+ViewModel 通过 App Shell 注入消费 Core Repository。
 
 LAN 文件数据路径为 `LanShareViewModel → NetworkService → Rust
 NetworkRuntime`。命令只返回 typed accepted 结果，进度和终态通过 typed events
 返回。Rust 负责每 peer 路径选择、身份认证 QUIC/TCP/WebSocket、流式文件校验
 以及原生 Relay 收发；Flutter 负责配对、审批 UI、历史记录和展示状态。Go Relay
-只作为 v1 内存路由器，不接触文件明文元数据或明文字节。
+数据面只是短生命周期的 opaque forwarder，不接触文件明文元数据或明文字节；可选
+MySQL/Redis 只持久化控制面身份与共享 live state，不保存业务 Payload 或传输内容。
 
 Native Channel Delivery 会把仍在处理的 incoming handler 和 ordered buffer
 独立于已完成消息的 dedup TTL/LRU。应用 ACK timeout 使用单独策略；严格有序

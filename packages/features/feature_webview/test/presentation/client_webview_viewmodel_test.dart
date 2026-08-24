@@ -11,7 +11,10 @@ void main() {
 
   setUp(() async {
     settings = _FakeWebViewSettings();
-    webViewService = ClientWebViewService(logger: const _TestLogger());
+    webViewService = ClientWebViewService(
+      logger: const _TestLogger(),
+      networkLoader: const _TestNetworkLoader(),
+    );
   });
 
   tearDown(() => webViewService.dispose());
@@ -43,4 +46,18 @@ final class _TestLogger implements AppLogger {
 
   @override
   AppLogger scope(String name) => this;
+}
+
+final class _TestNetworkLoader implements ClientWebViewNetworkLoader {
+  const _TestNetworkLoader();
+
+  @override
+  Future<ClientWebViewFetchedPage> load(Uri uri) async {
+    return ClientWebViewFetchedPage(
+      requestedUri: uri,
+      finalUri: uri,
+      contentType: 'text/plain',
+      body: '',
+    );
+  }
 }

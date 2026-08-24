@@ -554,6 +554,7 @@ void main() {
         textScale: 2,
         entry: const SftpEntry(
           connectionId: 'server-1',
+          targetFingerprint: 'target-1',
           name: 'a-very-long-production-configuration-file.conf',
           path:
               '/srv/production/services/ssh/configuration/a-very-long-production-configuration-file.conf',
@@ -639,6 +640,7 @@ void main() {
 
 const _defaultEntry = SftpEntry(
   connectionId: 'server-1',
+  targetFingerprint: 'target-1',
   name: 'sshd_config',
   path: '/etc/ssh/sshd_config',
   lowerName: 'sshd_config',

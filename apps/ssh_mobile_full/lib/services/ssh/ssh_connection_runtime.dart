@@ -68,83 +68,115 @@ extension _SshConnectionRuntime on SshService {
     required TerminalLaunchMode launchMode,
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
-    await _closeLocalSession(session.id, destroyTmux: false);
-    AppLogService.instance.info(
-      'Connecting SSH locally',
-      details: 'sessionId=${session.id} host=${config.host}',
-    );
-
-    final client = await _clientFactory.connectClient(
-      config,
-      credentials: credentials,
-      onUnknownHostKey: onUnknownHostKey,
-      peerId: _peerIdResolver?.call(config),
-    );
-    final isTmux = launchMode == TerminalLaunchMode.tmux;
-    final termType = config.serverPlatform == ServerPlatform.windows
-        ? 'ms-terminal'
-        : 'xterm-256color';
-
-    SSHSession shell;
-    if (isTmux) {
-      final sessionName = session.tmuxSessionName!;
-      shell = await client.shell(
-        pty: SSHPtyConfig(
-          width: config.terminalWidth,
-          height: config.terminalHeight,
-          type: termType,
-        ),
+    final connectToken = _localConnectGate.begin(session.id);
+    final owner = SshConnectionAttemptOwner();
+    try {
+      await _closeLocalSession(
+        session.id,
+        destroyTmux: false,
+        cancelPending: false,
+      );
+      _ensureLocalConnectCurrent(session, connectToken);
+      AppLogService.instance.info(
+        'Connecting SSH locally',
+        details: 'sessionId=${session.id} host=${config.host}',
       );
 
-      final escapedName = sessionName.replaceAll("'", "'\"'\"'");
-      final attachCmd = 'exec tmux new-session -A -s \'$escapedName\'\r';
-      shell.write(utf8.encode(attachCmd));
-    } else {
-      shell = await client.shell(
-        pty: SSHPtyConfig(
-          width: config.terminalWidth,
-          height: config.terminalHeight,
-          type: termType,
-        ),
+      final client = await _clientFactory.connectClient(
+        config,
+        credentials: credentials,
+        onUnknownHostKey: onUnknownHostKey,
+        peerId: _peerIdResolver?.call(config),
       );
+      owner.ownClient(client.close);
+      _ensureLocalConnectCurrent(session, connectToken);
+      final isTmux = launchMode == TerminalLaunchMode.tmux;
+      final termType = config.serverPlatform == ServerPlatform.windows
+          ? 'ms-terminal'
+          : 'xterm-256color';
+
+      final shell = await client
+          .shell(
+            pty: SSHPtyConfig(
+              width: config.terminalWidth,
+              height: config.terminalHeight,
+              type: termType,
+            ),
+          )
+          .timeout(const Duration(seconds: 15));
+      owner.ownShell(shell.close);
+      _ensureLocalConnectCurrent(session, connectToken);
+
+      if (isTmux) {
+        final sessionName = session.tmuxSessionName!;
+        final escapedName = sessionName.replaceAll("'", "'\"'\"'");
+        final attachCmd = 'exec tmux new-session -A -s \'$escapedName\'\r';
+        shell.write(utf8.encode(attachCmd));
+      }
+
+      final runtime = _LocalSshRuntime(
+        sessionId: session.id,
+        client: client,
+        shell: shell,
+        tmuxSessionName: session.tmuxSessionName,
+      );
+      owner.ownRuntime(runtime.close);
+
+      runtime.stdoutSub = shell.stdout.listen((data) {
+        final text = utf8.decode(data, allowMalformed: true);
+        _onLocalSessionData(session.id, text);
+      });
+
+      runtime.stderrSub = shell.stderr.listen((data) {
+        final text = utf8.decode(data, allowMalformed: true);
+        _onLocalSessionErrorData(session.id, text);
+      });
+
+      unawaited(
+        shell.done.then((_) {
+          _onLocalSessionDone(runtime);
+        }),
+      );
+
+      _startLocalKeepAlive(runtime);
+      _ensureLocalConnectCurrent(session, connectToken);
+      _localRuntimes[session.id] = runtime;
+      owner.commit();
+
+      session.state = SshConnectionState.connected;
+      session.errorMessage = null;
+      session.updatedAt = DateTime.now();
+
+      final completer = _connectCompleters.remove(session.id);
+      if (completer != null && !completer.isCompleted) completer.complete();
+
+      _schedulePersistence(
+        () => _saveRestorableTmuxSession(session),
+        description: 'Failed to save restorable SSH session',
+      );
+      _notifySessionMetadataChanged();
+    } finally {
+      try {
+        await owner.rollback();
+      } catch (error, stackTrace) {
+        AppLogService.instance.error(
+          'Failed to release local SSH connection attempt',
+          error: error,
+          stackTrace: stackTrace,
+          details: 'sessionId=${session.id}',
+        );
+      }
+      _localConnectGate.finish(session.id, connectToken);
     }
+  }
 
-    final runtime = _LocalSshRuntime(
-      sessionId: session.id,
-      client: client,
-      shell: shell,
-      tmuxSessionName: session.tmuxSessionName,
-    );
-
-    _localRuntimes[session.id] = runtime;
-
-    runtime.stdoutSub = shell.stdout.listen((data) {
-      final text = utf8.decode(data, allowMalformed: true);
-      _onLocalSessionData(session.id, text);
-    });
-
-    runtime.stderrSub = shell.stderr.listen((data) {
-      final text = utf8.decode(data, allowMalformed: true);
-      _onLocalSessionErrorData(session.id, text);
-    });
-
-    unawaited(
-      shell.done.then((_) {
-        _onLocalSessionDone(session.id);
-      }),
-    );
-
-    _startLocalKeepAlive(runtime);
-
-    session.state = SshConnectionState.connected;
-    session.errorMessage = null;
-    session.updatedAt = DateTime.now();
-
-    final completer = _connectCompleters.remove(session.id);
-    completer?.complete();
-
-    unawaited(_saveRestorableTmuxSession(session));
-    _notifySessionMetadataChanged();
+  void _ensureLocalConnectCurrent(SshSession session, int connectToken) {
+    if (_shutdownRequested ||
+        _closingSessionIds.contains(session.id) ||
+        !_localConnectGate.isCurrent(session.id, connectToken) ||
+        !identical(_sessions[session.id], session)) {
+      throw const _SshServiceClosing();
+    }
   }
 
   void _onLocalSessionData(String sessionId, String text) {
@@ -161,9 +193,11 @@ extension _SshConnectionRuntime on SshService {
     unawaited(_historyService.append(sessionId, text));
   }
 
-  void _onLocalSessionDone(String sessionId) {
-    final runtime = _localRuntimes[sessionId];
-    if (runtime == null) return;
+  void _onLocalSessionDone(_LocalSshRuntime runtime) {
+    final sessionId = runtime.sessionId;
+    if (_shutdownRequested || !identical(_localRuntimes[sessionId], runtime)) {
+      return;
+    }
     if (_closingSessionIds.contains(sessionId)) {
       _closingSessionIds.remove(sessionId);
       return;
@@ -172,17 +206,27 @@ extension _SshConnectionRuntime on SshService {
       'Local SSH session closed unexpectedly',
       details: 'sessionId=$sessionId',
     );
-    unawaited(_reconnectLocalSession(sessionId));
+    if (_reconnectOperations.containsKey(sessionId)) return;
+    late final Future<void> operation;
+    operation = _reconnectLocalSession(sessionId).whenComplete(() {
+      if (identical(_reconnectOperations[sessionId], operation)) {
+        _reconnectOperations.remove(sessionId);
+      }
+    });
+    _reconnectOperations[sessionId] = operation;
+    unawaited(operation);
   }
 
   Future<void> _reconnectLocalSession(String sessionId) async {
+    if (_shutdownRequested) return;
     final session = _sessions[sessionId];
     if (session == null) return;
     session.state = SshConnectionState.connecting;
     _notifySessionMetadataChanged();
 
     for (var i = 1; i <= 5; i++) {
-      if (!_sessions.containsKey(sessionId) ||
+      if (_shutdownRequested ||
+          !_sessions.containsKey(sessionId) ||
           _closingSessionIds.contains(sessionId)) {
         return;
       }
@@ -200,6 +244,11 @@ extension _SshConnectionRuntime on SshService {
           connectionRepository: _connectionRepository,
           credentialRepository: _credentialRepository,
         );
+        if (_shutdownRequested ||
+            _closingSessionIds.contains(sessionId) ||
+            !identical(_sessions[sessionId], session)) {
+          return;
+        }
         if (target == null) {
           session.state = SshConnectionState.error;
           session.errorMessage =
@@ -221,18 +270,27 @@ extension _SshConnectionRuntime on SshService {
           launchMode: launchMode,
         );
         return;
+      } on _SshServiceClosing {
+        // 显式 connect、disconnect 或 shutdown 已取得该 session 的新 generation；
+        // 旧 reconnect 不得继续退避后再次覆盖新 runtime。
+        return;
       } catch (e) {
+        if (_shutdownRequested) return;
         AppLogService.instance.error(
           'Reconnect attempt failed',
           error: e,
           details: 'sessionId=$sessionId attempt=$i',
         );
         final delay = min(30, pow(2, i).toInt());
-        await Future<void>.delayed(Duration(seconds: delay));
+        await Future.any<void>(<Future<void>>[
+          Future<void>.delayed(Duration(seconds: delay)),
+          _shutdownSignal.future,
+        ]);
+        if (_shutdownRequested) return;
       }
     }
 
-    if (_sessions.containsKey(sessionId)) {
+    if (!_shutdownRequested && _sessions.containsKey(sessionId)) {
       session.state = SshConnectionState.error;
       session.errorMessage = 'Reconnect failed after 5 attempts';
       _notifySessionMetadataChanged();
@@ -243,6 +301,11 @@ extension _SshConnectionRuntime on SshService {
     runtime.keepAliveTimer = Timer.periodic(const Duration(seconds: 15), (
       timer,
     ) async {
+      if (_shutdownRequested ||
+          !identical(_localRuntimes[runtime.sessionId], runtime)) {
+        timer.cancel();
+        return;
+      }
       if (runtime.pingInFlight) {
         runtime.keepAliveFailures++;
         AppLogService.instance.warning(
@@ -252,7 +315,7 @@ extension _SshConnectionRuntime on SshService {
         );
         if (runtime.keepAliveFailures >= 3) {
           timer.cancel();
-          _onLocalSessionDone(runtime.sessionId);
+          _onLocalSessionDone(runtime);
         }
         return;
       }
@@ -273,7 +336,7 @@ extension _SshConnectionRuntime on SshService {
         );
         if (runtime.keepAliveFailures >= 3) {
           timer.cancel();
-          _onLocalSessionDone(runtime.sessionId);
+          _onLocalSessionDone(runtime);
         }
       }
     });
@@ -282,7 +345,9 @@ extension _SshConnectionRuntime on SshService {
   Future<void> _closeLocalSession(
     String sessionId, {
     required bool destroyTmux,
+    bool cancelPending = true,
   }) async {
+    if (cancelPending) _localConnectGate.cancel(sessionId);
     final runtime = _localRuntimes.remove(sessionId);
     if (runtime == null) return;
 
@@ -307,6 +372,6 @@ extension _SshConnectionRuntime on SshService {
       }
     }
 
-    runtime.close();
+    await runtime.close();
   }
 }

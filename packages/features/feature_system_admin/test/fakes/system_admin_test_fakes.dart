@@ -3,6 +3,8 @@
 // 这些替身只模拟 Port 的生命周期和返回值，不建立真实 SSH、SFTP 或存储
 // 连接，用来验证模块注册、管理会话关闭以及命令取消边界。
 
+import 'dart:async';
+
 import 'package:connection_core/connection_core.dart';
 import 'package:feature_system_admin/feature_system_admin.dart';
 import 'package:flutter/foundation.dart';
@@ -23,24 +25,67 @@ final class FakeSystemAdminConnectionCatalog extends ChangeNotifier
 
   @override
   Future<void> reorderConnections(int oldIndex, int newIndex) async {}
+
+  void replaceConnections(List<ConnectionConfig> value) {
+    connections = List<ConnectionConfig>.unmodifiable(value);
+    notifyListeners();
+  }
 }
 
-/// 可记录命令、取消和关闭的管理会话替身。
-final class FakeSystemAdminSshSession implements SystemAdminSshSessionPort {
-  FakeSystemAdminSshSession({this.stdout = '0', this.exitCode = 0});
+ConnectionConfig systemAdminTestConnection(
+  String id, {
+  String? host,
+  String username = 'root',
+}) => ConnectionConfig(
+  id: id,
+  name: id,
+  host: host ?? '$id.example.test',
+  username: username,
+);
 
+SshTargetBinding systemAdminTestTarget(
+  String id, {
+  String? host,
+  String username = 'root',
+}) => SshTargetBinding.fromConfig(
+  systemAdminTestConnection(id, host: host, username: username),
+);
+
+typedef FakeSystemAdminCommandResponder =
+    FutureOr<RemoteCommandResult> Function(SystemAdminCommand command);
+
+/// 可记录目标、命令、取消和释放的管理 Lease 替身。
+final class FakeSystemAdminSshLease implements SystemAdminSshLeasePort {
+  FakeSystemAdminSshLease({
+    required this.targetBinding,
+    this.stdout = '0',
+    this.exitCode = 0,
+    this.responder,
+  });
+
+  @override
+  final SshTargetBinding targetBinding;
   final String stdout;
   final int? exitCode;
+  FakeSystemAdminCommandResponder? responder;
+  final List<SystemAdminCommand> commands = <SystemAdminCommand>[];
   int runCount = 0;
   int cancelCount = 0;
-  bool isClosed = false;
+  int releaseCount = 0;
+
+  @override
+  bool isReleased = false;
 
   @override
   Future<RemoteCommandResult> run(
-    String command, {
+    SystemAdminCommand command, {
     required Duration timeout,
   }) async {
+    if (isReleased) throw StateError('Fake lease is released');
     runCount++;
+    commands.add(command);
+    final handler = responder;
+    if (handler != null) return handler(command);
     return RemoteCommandResult(exitCode: exitCode, stdout: stdout, stderr: '');
   }
 
@@ -50,25 +95,37 @@ final class FakeSystemAdminSshSession implements SystemAdminSshSessionPort {
   }
 
   @override
-  void close() {
-    isClosed = true;
+  Future<void> release() async {
+    releaseCount++;
+    isReleased = true;
   }
 }
 
 /// 管理 SSH 连接 Port 的可观察替身。
 final class FakeSystemAdminSshPort implements SystemAdminSshPort {
-  FakeSystemAdminSshPort(this.session);
+  FakeSystemAdminSshPort([this.lease]);
 
-  final FakeSystemAdminSshSession session;
-  int connectCount = 0;
+  final FakeSystemAdminSshLease? lease;
+  FutureOr<SystemAdminSshLeasePort> Function(SshTargetBinding target)?
+  acquireOverride;
+  final List<SshTargetBinding> acquiredTargets = <SshTargetBinding>[];
+  final List<SshHostKeyConfirmation?> acquiredHostKeyConfirmations =
+      <SshHostKeyConfirmation?>[];
+  int acquireCount = 0;
 
   @override
-  Future<SystemAdminSshSessionPort> connect(
-    String connectionId, {
+  Future<SystemAdminSshLeasePort> acquire(
+    SshTargetBinding target, {
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
-    connectCount++;
-    return session;
+    acquireCount++;
+    acquiredTargets.add(target);
+    acquiredHostKeyConfirmations.add(onUnknownHostKey);
+    final handler = acquireOverride;
+    if (handler != null) return handler(target);
+    final result = lease;
+    if (result == null) throw StateError('No fake lease configured');
+    return result;
   }
 }
 

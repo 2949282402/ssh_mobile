@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ssh_core/ssh_core.dart' as ssh_core;
 import 'package:ssh_mobile/services/ssh_service.dart';
 import '../test_utils/test_storage_adapter.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
@@ -18,7 +21,10 @@ void main() {
       AppLogService.instance.clear();
     });
 
-    tearDown(() {
+    tearDown(() async {
+      await sshService.close();
+      await storageService.shutdown();
+      storageService.dispose();
       debugDefaultTargetPlatformOverride = null;
       AppLogService.instance.clear();
     });
@@ -50,6 +56,85 @@ void main() {
       expect(entry.message, '[Background] A background message without level');
       expect(entry.normalizedLevel, AppLogLevel.info);
       expect(entry.details, isNull);
+    });
+
+    test('coalesces concurrent connects for the same session id', () async {
+      final first = sshService.connect(
+        'missing-connection',
+        sessionId: 'shared-session',
+      );
+      final second = sshService.connect(
+        'missing-connection',
+        sessionId: 'shared-session',
+      );
+
+      expect(identical(first, second), isTrue);
+      await first;
+    });
+
+    test(
+      'rejects a concurrent target change for the same session id',
+      () async {
+        final first = sshService.connect(
+          'missing-connection-a',
+          sessionId: 'shared-session',
+        );
+
+        await expectLater(
+          sshService.connect(
+            'missing-connection-b',
+            sessionId: 'shared-session',
+          ),
+          throwsA(isA<StateError>()),
+        );
+        await first;
+      },
+    );
+
+    test('close is awaitable, idempotent, and rejects late connects', () async {
+      final first = sshService.close();
+      final second = sshService.close();
+
+      expect(identical(first, second), isTrue);
+      await first;
+      expect(sshService.activeSubscriptionCount, 0);
+      expect(sshService.activeTimerCount, 0);
+      expect(sshService.leaseCount, 0);
+
+      await expectLater(
+        sshService.connect('missing-connection', sessionId: 'late-session'),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('close waits for an in-flight pooled session creation', () async {
+      final sessionGate = Completer<ssh_core.SshSession>();
+      final acquire = sshService.acquire(
+        sessionId: 'pooled-session',
+        create: () => sessionGate.future,
+      );
+      final acquireExpectation = expectLater(
+        acquire,
+        throwsA(isA<StateError>()),
+      );
+      var closeCompleted = false;
+      final closing = sshService.close().whenComplete(
+        () => closeCompleted = true,
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      expect(closeCompleted, isFalse);
+
+      sessionGate.complete(
+        ssh_core.SshSession(
+          id: 'pooled-session',
+          connectionId: 'connection-1',
+          connectionName: 'Server',
+        ),
+      );
+      await acquireExpectation;
+      await closing;
+      expect(closeCompleted, isTrue);
     });
   });
 }

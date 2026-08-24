@@ -10,6 +10,7 @@ class _LocalSshRuntime {
   Timer? keepAliveTimer;
   bool pingInFlight = false;
   int keepAliveFailures = 0;
+  Future<void>? _closeFuture;
 
   _LocalSshRuntime({
     required this.sessionId,
@@ -18,11 +19,25 @@ class _LocalSshRuntime {
     required this.tmuxSessionName,
   });
 
-  void close() {
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     keepAliveTimer?.cancel();
-    stdoutSub?.cancel();
-    stderrSub?.cancel();
-    shell.close();
-    client.close();
+    keepAliveTimer = null;
+    final subscriptions = <StreamSubscription<List<int>>>[
+      ?stdoutSub,
+      ?stderrSub,
+    ];
+    stdoutSub = null;
+    stderrSub = null;
+    try {
+      await Future.wait<void>(
+        subscriptions.map((subscription) => subscription.cancel()),
+      );
+    } finally {
+      shell.close();
+      client.close();
+      pingInFlight = false;
+    }
   }
 }

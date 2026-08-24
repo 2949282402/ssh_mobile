@@ -74,6 +74,17 @@ class StubSystemAdminViewModel extends ChangeNotifier
   }
 
   @override
+  admin.SystemAdminSessionTarget? get activeManagementTarget {
+    final id = activeManagementConnectionId;
+    final config = connectionById(id);
+    if (id == null || config == null || !isConnected || !isRoot) return null;
+    return admin.SystemAdminSessionTarget(
+      binding: ssh_core.SshTargetBinding.fromConfig(config),
+      generation: 1,
+    );
+  }
+
+  @override
   bool get canManageSelectedConnection {
     return activeManagementConnectionId != null && isConnected && isRoot;
   }
@@ -156,11 +167,16 @@ class StubSystemAdminViewModel extends ChangeNotifier
   }
 
   @override
-  void disconnect() {
+  Future<void> disconnect() async {
     managementConnectionId = null;
     isConnected = false;
     isRoot = false;
     notifyListeners();
+  }
+
+  @override
+  Future<void> disconnectTarget(admin.SystemAdminSessionTarget target) async {
+    if (activeManagementTarget?.matches(target) ?? false) await disconnect();
   }
 
   @override

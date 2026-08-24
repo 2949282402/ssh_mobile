@@ -170,6 +170,7 @@ void main() {
 
 const _textEntry = SftpEntry(
   connectionId: 'missing-connection',
+  targetFingerprint: 'missing-target',
   name: 'config.txt',
   path: '/etc/config.txt',
   lowerName: 'config.txt',

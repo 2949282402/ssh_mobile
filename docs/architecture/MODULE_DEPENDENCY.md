@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-23
 
 # 模块依赖审计
 
@@ -8,7 +8,7 @@ workspace 成员的直接生产依赖。
 
 ## 审计命令
 
-```powershell
+```bash
 dart run tool/check_module_dependencies.dart
 dart run test/tool/module_dependency_check_test.dart
 dart run tool/architecture_check.dart

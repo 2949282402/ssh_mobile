@@ -4,7 +4,7 @@ import { Check, Filter, Search, Server, ShieldOff, SlidersHorizontal, Wifi, X } 
 import { devicesApi } from '../../api/devices';
 import { ApiRequestError, isAbortError } from '../../api/errors';
 import { queryKeys } from '../../api/query-keys';
-import type { EnrolledDevice } from '../../schemas/devices';
+import type { DevicesResponse, EnrolledDevice } from '../../schemas/devices';
 import { ConfirmDialog } from '../../components/confirm-dialog';
 import { useToast } from '../../components/toast';
 import {
@@ -30,9 +30,14 @@ export function DevicesPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const revokeAbortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
-  useEffect(() => () => {
-    revokeAbortRef.current?.abort();
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      revokeAbortRef.current?.abort();
+    };
   }, []);
 
   const revokeMutation = useMutation({
@@ -43,12 +48,22 @@ export function DevicesPage() {
       return devicesApi.revoke(deviceId, controller.signal);
     },
     onSuccess: (_result, deviceId) => {
+      queryClient.setQueryData<DevicesResponse>(queryKeys.devices, (current) => {
+        if (!current) return current;
+        const items = current.items.filter((device) => device.device_id !== deviceId);
+        return {
+          ...current,
+          items,
+          total: items.length === current.items.length ? current.total : Math.max(0, current.total - 1),
+        };
+      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.devices });
+      if (!mountedRef.current) return;
       setSelectedDevice(null);
       toast.push(`设备 ${deviceId} 已撤销注册。`, 'success');
-      void queryClient.invalidateQueries({ queryKey: queryKeys.devices });
     },
     onError: (error) => {
-      if (isAbortError(error)) return;
+      if (!mountedRef.current || isAbortError(error)) return;
       toast.push(error instanceof ApiRequestError ? error.message : '设备撤销失败。', 'error');
     },
   });
@@ -83,7 +98,7 @@ export function DevicesPage() {
   if (devicesQuery.isError && !devicesResponse) {
     return (
       <div className="page page--narrow">
-        <PageHeader eyebrow="Relay / Devices" title="设备管理" description="管理当前进程中的已注册设备。" />
+        <PageHeader eyebrow="Relay / Devices" title="设备管理" description="管理 Relay 中的已注册设备。" />
         <ErrorState
           description={devicesQuery.error instanceof ApiRequestError ? devicesQuery.error.message : undefined}
           onRetry={() => void devicesQuery.refetch()}
@@ -96,6 +111,10 @@ export function DevicesPage() {
   // schema 保证 presence_available 存在；数据就绪后直接取原始值（与 Overview 页一致）。
   const presenceAvailable = devicesResponse.presence_available;
   const effectiveFilter = presenceAvailable ? filter : 'all';
+  const refreshFailed = devicesQuery.isError;
+  const refreshError = devicesQuery.error instanceof ApiRequestError
+    ? devicesQuery.error.message
+    : '最近一次设备同步失败。';
 
   return (
     <div className="page">
@@ -113,6 +132,10 @@ export function DevicesPage() {
 
       {!presenceAvailable ? (
         <InlineNotice tone="warning">presence 服务异常，设备的在线状态暂不可用。</InlineNotice>
+      ) : null}
+
+      {refreshFailed ? (
+        <InlineNotice tone="warning">{refreshError} 当前显示上次成功同步的数据。</InlineNotice>
       ) : null}
 
       <div className="list-toolbar">
@@ -155,7 +178,7 @@ export function DevicesPage() {
             <p className="eyebrow">Enrolled devices</p>
             <h2>已注册设备</h2>
           </div>
-          <Badge tone="neutral"><SlidersHorizontal size={13} /> v1 registry</Badge>
+          <Badge tone="neutral"><SlidersHorizontal size={13} /> Device protocol v1</Badge>
         </div>
         {devicesResponse.items.length === 0 ? (
           <EmptyState title="还没有注册设备" description="使用当前 Enrollment Token 注册第一台设备。" icon={<ServerIcon />} />
@@ -196,7 +219,11 @@ export function DevicesPage() {
                       <td data-label="注册时间"><span className="muted-value">{formatDate(device.enrolled_at)}</span></td>
                       <td data-label="当前状态"><ConnectionBadge online={knownOnline} available={presenceAvailable} /></td>
                       <td data-label="操作" className="device-table__action">
-                        <Button variant="danger" onClick={() => setSelectedDevice(device)}>
+                        <Button
+                          variant="danger"
+                          aria-label={`撤销设备 ${device.device_id}`}
+                          onClick={() => setSelectedDevice(device)}
+                        >
                           <ShieldOff size={14} />
                           撤销
                         </Button>
@@ -213,7 +240,7 @@ export function DevicesPage() {
       {selectedDevice ? (
         <ConfirmDialog
           title="撤销设备注册？"
-          description={`设备 ${selectedDevice.device_id} 将从当前 Relay 进程中移除；如果它在线，现有连接也会立即断开。`}
+          description={`设备 ${selectedDevice.device_id} 将从 Relay 注册表中移除；如果它在线，现有连接也会立即断开。`}
           confirmLabel="撤销设备"
           loading={revokeMutation.isPending}
           onCancel={() => setSelectedDevice(null)}

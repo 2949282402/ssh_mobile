@@ -182,7 +182,6 @@ void main() {
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         debugDefaultTargetPlatformOverride = originalPlatform;
-        ragService.dispose();
         playbookService.dispose();
         performanceMonitorService.dispose();
         sftpService.dispose();
@@ -191,6 +190,7 @@ void main() {
         await tester.runAsync(() async {
           await storageService.shutdown();
         });
+        ragService.dispose();
         storageService.dispose();
         await tester.runAsync(aiDatabase.dispose);
       }

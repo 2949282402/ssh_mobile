@@ -273,6 +273,57 @@ class FakeHttpConnectionInfo implements HttpConnectionInfo {
   int get remotePort => 50000;
 }
 
+class _BlockingPairStorage implements FlutterSecureStorage {
+  _BlockingPairStorage({required String deviceId})
+    : _deviceId = deviceId,
+      _values = {
+        'lan_share_paired_device_ids': jsonEncode({deviceId: 0}),
+        'lan_share_inbound_access_tokens': jsonEncode({deviceId: 'inbound'}),
+        'lan_share_outbound_access_tokens': jsonEncode({deviceId: 'outbound'}),
+        'lan_share_peer_certificate_fingerprints': jsonEncode({
+          deviceId: 'b' * 64,
+        }),
+      };
+
+  final String _deviceId;
+  final Map<String, String> _values;
+  final Completer<void> outboundReadStarted = Completer<void>();
+  final Completer<void> allowOutboundReads = Completer<void>();
+  final Completer<void> pairedRemovalPersisted = Completer<void>();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    final key = invocation.namedArguments[#key] as String?;
+    if (invocation.memberName == #read) {
+      if (key == 'lan_share_outbound_access_tokens') {
+        if (!outboundReadStarted.isCompleted) outboundReadStarted.complete();
+        return allowOutboundReads.future.then((_) => _values[key]);
+      }
+      return Future<String?>.value(_values[key]);
+    }
+    if (invocation.memberName == #write) {
+      final value = invocation.namedArguments[#value] as String?;
+      if (value == null) {
+        _values.remove(key);
+      } else {
+        _values[key!] = value;
+      }
+      if (key == 'lan_share_paired_device_ids' &&
+          value != null &&
+          !(jsonDecode(value) as Map<String, dynamic>).containsKey(_deviceId) &&
+          !pairedRemovalPersisted.isCompleted) {
+        pairedRemovalPersisted.complete();
+      }
+      return Future<void>.value();
+    }
+    if (invocation.memberName == #delete) {
+      _values.remove(key);
+      return Future<void>.value();
+    }
+    throw UnimplementedError('_BlockingPairStorage: ${invocation.memberName}');
+  }
+}
+
 /// 执行 v1 LAN 配对和规范化 HTTP 契约测试。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -568,6 +619,28 @@ void main() {
       expect(securityService.pinSecondsRemaining, greaterThan(0));
     });
 
+    test('TLS context creation is single-flight and device-bound', () async {
+      final contexts = await Future.wait([
+        securityService.getOrCreateSecurityContext('local_device_123'),
+        securityService.getOrCreateSecurityContext('local_device_123'),
+      ]);
+
+      expect(identical(contexts.first, contexts.last), isTrue);
+      await expectLater(
+        securityService.getOrCreateSecurityContext('different-device'),
+        throwsStateError,
+      );
+    });
+
+    test('static X25519 key creation is single-flight', () async {
+      final publicKeys = await Future.wait([
+        securityService.getStaticX25519PublicKeyBytes(),
+        securityService.getStaticX25519PublicKeyBytes(),
+      ]);
+
+      expect(publicKeys.first, orderedEquals(publicKeys.last));
+    });
+
     test(
       'isDevicePaired removes pairing and returns false after 1 minute',
       () async {
@@ -611,6 +684,80 @@ void main() {
         );
       },
     );
+
+    test(
+      'late remote verification cannot restore an unpaired device',
+      () async {
+        final verificationStarted = Completer<void>();
+        final verificationResult = Completer<bool>();
+        final verificationReturned = Completer<void>();
+        final guardedSecurity = LanSecurityService(
+          remotePairVerifier:
+              ({
+                required Uri endpoint,
+                required String accessToken,
+                required String expectedFingerprint,
+              }) async {
+                if (!verificationStarted.isCompleted) {
+                  verificationStarted.complete();
+                }
+                try {
+                  return await verificationResult.future;
+                } finally {
+                  verificationReturned.complete();
+                }
+              },
+        );
+        const remoteId = 'late-remote';
+        await guardedSecurity.issueInboundAccessToken(remoteId);
+        await guardedSecurity.storeOutboundAccessToken(
+          remoteId,
+          'remote-token',
+        );
+        await guardedSecurity.storePeerCertificateFingerprint(
+          remoteId,
+          'a' * 64,
+        );
+        await guardedSecurity.pairDevice(remoteId);
+
+        expect(
+          await guardedSecurity.isDevicePaired(
+            remoteId,
+            ip: '127.0.0.1',
+            port: 53317,
+            localDeviceId: 'local_device_123',
+          ),
+          isTrue,
+        );
+        await verificationStarted.future;
+        await guardedSecurity.unpairDevice(remoteId);
+        verificationResult.complete(true);
+        await verificationReturned.future;
+        await Future<void>.delayed(Duration.zero);
+
+        const storage = FlutterSecureStorage();
+        final raw = await storage.read(key: 'lan_share_paired_device_ids');
+        final paired = jsonDecode(raw ?? '{}') as Map<String, dynamic>;
+        expect(paired, isNot(contains(remoteId)));
+        expect(await guardedSecurity.isDevicePaired(remoteId), isFalse);
+      },
+    );
+
+    test('paired read cannot return true after concurrent unpair', () async {
+      const remoteId = 'concurrent-unpair-peer';
+      final storage = _BlockingPairStorage(deviceId: remoteId);
+      final guardedSecurity = LanSecurityService(secureStorage: storage);
+
+      final pairedRead = guardedSecurity.isDevicePaired(remoteId);
+      await storage.outboundReadStarted.future;
+      final unpair = guardedSecurity.unpairDevice(remoteId);
+      await storage.pairedRemovalPersisted.future;
+      storage.allowOutboundReads.complete();
+
+      expect(await pairedRead, isFalse);
+      await unpair;
+      expect(await guardedSecurity.isDevicePaired(remoteId), isFalse);
+    });
 
     test('GET /api/lan/check_pair handles paired status check', () async {
       final token = await securityService.issueInboundAccessToken(

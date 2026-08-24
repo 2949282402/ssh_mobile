@@ -1,6 +1,6 @@
-# Relay Protocol V2 — Frozen Wire Contract
+> Last updated: 2026-08-19
 
-> Last updated: 2026-08-16
+# Relay Protocol V2 — Frozen Wire Contract
 
 ## 1. Status
 
@@ -12,10 +12,12 @@ fixtures:
 - WS-A — Go control plane (`/v2/control`, reservations)
 - WS-B — network-nat ConnectivityAttempt (offer/answer candidate shapes)
 - WS-C — network-relay split (RelayControlClient / RelayDataClient)
-- Phase 4 — network-core (DiscoveryManager, ConnectionOrchestrator, RealtimeManager)
+- Phase 4 — network-core (DiscoveryManager, ConnectivityAttemptCoordinator, RealtimeManager)
 
-Everything here is ADDITIVE. The existing v1 wire (JSON control + `0x10` binary)
-and the Go relay stay untouched until Step 11.
+Relay Protocol V2 remains additive to the Relay Bootstrap/WebSocket V1 boundary:
+the `/v1/devices/*` enrollment and `/v1/connect` data route remain explicitly
+separate. The retired Network SDK/Data Protocol V1 package and codec are not a
+compatibility target for this contract.
 
 Authoritative files:
 
@@ -31,8 +33,7 @@ Authoritative files:
   (violation → close with `ProtocolError MALFORMED_FRAME`; on `/v2/relay` →
   `RelayDataClose reason 2`).
 - `/v2/control` frames decode to `relay.v2.RelayFrame`; `/v2/relay` frames
-  decode to `relay.v2.RelayDataFrame`. Offering the wrong envelope type on a
-  route is a protocol violation → close.
+  decode to `relay.v2.RelayDataFrame`. Offering the wrong envelope type on a route is a protocol violation → close.
 - `RelayFrame.version` / `RelayDataFrame.version` MUST be 2 (else `ProtocolError
   PROTOCOL`). Unknown oneof tags are SKIPPED (proto3) for forward compatibility;
   length/size/version violations are HARD errors.
@@ -60,13 +61,34 @@ Authoritative files:
 - Token validated at upgrade AND optionally re-confirmed by the first
   `RelayDataConnect` (must match path segment + token).
 - Carries ONLY: `RelayDataConnect` (first), `RelayDataPayload` (encrypted
-  forwarding), `RelayDataAck` (flow control), `RelayDataClose`.
+  forwarding), `RelayDataAck` (flow control), and `RelayDataClose`.
 - Relay enforces per-connection byte/rate budgets, frame size, reservation
   expiry (close when now > expires_at + 5 s grace). Relay NEVER parses
   `encrypted_payload`; it is a stateless opaque forwarder.
 - Lifecycle: A `RelayReserveRequest` → server stores reservation (TTL=expires_at)
   → `RelayReserveResponse` to A + `IncomingRelayReservation` to B → both connect
-  `/v2/relay/{id}` → encrypted payload flows → `RelayDataClose` or TTL expiry.
+  `/v2/relay/{id}` with role-specific tokens → Relay sends one WebSocket Ping
+  carrying `ssh-mobile-relay-paired-v1:<reservation_id>` to both endpoints →
+  encrypted payload flows → `RelayDataClose` or explicit revocation. PairReady
+  is a WebSocket control frame, not a protobuf message.
+- `RelayDataConnect` authenticates the initiator/responder role from its token;
+  same-role retries replace an unpaired endpoint. Once a pair has completed
+  PairReady, replacing either role invalidates the whole old pair: Relay closes
+  both old endpoints with `RelayDataClose(reason=2)`, creates a fresh pending
+  pair, and never sends a second PairReady to the endpoint that remained
+  connected. Both roles must complete a new `Connect → PairReady` sequence
+  before payload or ack traffic resumes.
+- `RelayDataPayload` and `RelayDataAck` are rejected until the two roles are
+  paired and the PairReady WebSocket Ping has been sent. PairReady is one-shot
+  for one paired data connection; a client must wait for that Ping before
+  treating the data plane as connected. A 30 s server Ping / 15 s Pong timeout
+  uses the same single writer as binary frames.
+- There is no `RelayDataReady` protobuf message and no `ready` oneof field in
+  the frozen `RelayDataFrame`.
+- The reservation TTL governs pending admission only. Once PairReady has been
+  established, active data lifetime is independent of reservation TTL and
+  natural credential expiry. Explicit device revocation closes pending and
+  active endpoints, including the active counterpart.
 
 ## 4. Message inventory
 
@@ -89,7 +111,7 @@ Authoritative files:
 | 14 | `DiscoveryAck` | echoes `request_id`, epoch, revision |
 | 15 | `ResolvePeerRequest` | `request_id`, `target_device_id` |
 | 16 | `ResolvePeerResponse` | 4-state `status` (no fail-open `online=true`); discovery iff READY; `retry_after_ms` hint (NOT_READY 2000 / UNKNOWN 5000) |
-| 17 | `ConnectivityOffer` | `attempt_id`-keyed; initiator epoch/revision/snapshot |
+| 17 | `ConnectivityOffer` | `attempt_id`-keyed; target is the preceding successful Resolve on the shared control connection; initiator epoch/revision/snapshot |
 | 18 | `ConnectivityAnswer` | echoes `attempt_id`; accepted; responder epoch/revision/snapshot |
 | 19 | `PresenceHintSnapshot` | `repeated PeerPresenceHint` — advisory, UI cache only |
 | 20 | `PeerAvailableHint` | device online/updated |
@@ -97,10 +119,10 @@ Authoritative files:
 | 22 | `RelayReserveRequest` | `attempt_id`, target, desired lifetime (server clamps [15, 120]) |
 | 23 | `RelayReserveResponse` | reservation_id (16-byte hex / 32 chars), self-contained endpoint, expires_at_ms, 32-byte local_token |
 | 24 | `IncomingRelayReservation` | pushed to B; receiver-specific token |
-| 25 | `RealtimeSignal` | `realtime_id`, target, kind, revision, payload ≤ 256 KiB |
+| 25 | `RealtimeSignal` | `realtime_id`, target, kind, revision, payload ≤ 256 KiB; no sender field on the wire |
 | 26 | `ProtocolError` | echoes failing `request_id` (0 = server-initiated), `attempt_id`, `code`, `message` |
 
-### Relay data (`RelayDataFrame` oneof tags 10–13; reserved 30–63)
+### Relay data (`RelayDataFrame` oneof tags 10–13; reserved 14, 30–63)
 
 | Tag | Message | Notes |
 |---|---|---|
@@ -109,14 +131,14 @@ Authoritative files:
 | 12 | `RelayDataAck` | echoes `sequence` (receipt/flow control) |
 | 13 | `RelayDataClose` | `reason` 0 normal / 1 expiry / 2 error |
 
-### Enums (value numbers are the frozen part; names carry the network.v1-style
+### Enums (value numbers are the frozen part; names carry the Network Protocol
 enum-name prefix so value identifiers stay unique within the package)
 
 | Enum | Values |
 |---|---|
 | `TransportCapability` | UNSPECIFIED=0, QUIC=1, TCP=2, UDP_DATAGRAM=3, WEBSOCKET=4, WEBRTC=5, RELAY_DATA=6 |
 | `ResolveStatus` | UNSPECIFIED=0, READY=1, OFFLINE=2, NOT_READY=3, UNKNOWN=4 |
-| `RealtimeSignalKind` | UNSPECIFIED=0, OFFER=1, ANSWER=2, ICE_CANDIDATE=3, ICE_RESTART=4, CLOSE=5 (mirrors network.v1 values 1..5) |
+| `RealtimeSignalKind` | UNSPECIFIED=0, OFFER=1, ANSWER=2, ICE_CANDIDATE=3, ICE_RESTART=4, CLOSE=5 (mirrors Network Protocol V2 values 1..5) |
 | `ErrorCode` | UNSPECIFIED=0, CONTROL_UNAVAILABLE=1, AUTHENTICATION_FAILED=2, PEER_OFFLINE=3, PEER_NOT_READY=4, RESOLVE_TIMEOUT=5, PROTOCOL=6, EPOCH_CONFLICT=7, REVISION_STALE=8, RESERVATION_FAILED=9, RESERVATION_EXPIRED=10, RELAY_UNAVAILABLE=11, RATE_LIMITED=12, MALFORMED_FRAME=13, FRAME_TOO_LARGE=14 |
 
 ## 5. Correlation & error model
@@ -126,6 +148,15 @@ enum-name prefix so value identifiers stay unique within the package)
 - Responses echo `request_id` (HeartbeatAck, DiscoveryAck, ResolvePeerResponse,
   RelayReserveResponse, ProtocolError). Async attempts correlate by `attempt_id`;
   stale/mismatched answers are dropped. No global Notify.
+- `RealtimeSignal.target_device_id` is the device that should receive the frame.
+  The frozen wire message has no `sender_device_id`: the receiving runtime
+  obtains the remote identity from its established `realtime_id` → peer binding
+  and rejects an unknown binding. It must never use `target_device_id` as the
+  sender identity.
+- `ConnectivityOffer` has no target field. It is accepted only after a
+  successful `ResolvePeerRequest`/READY response on the same control
+  connection; the server forwards it through that Resolve → Offer gate. The
+  gate does not hold a lock across the later answer or direct-probe work.
 - Error mapping: OFFLINE/NOT_READY/UNKNOWN → `ResolvePeerResponse.status`;
   unknown backend failure → `ProtocolError CONTROL_UNAVAILABLE`; discovery CAS
   conflict → `EPOCH_CONFLICT`; reservation failure/expiry → `RESERVATION_FAILED`/
@@ -172,7 +203,9 @@ Location: `protocol/relay_v2_testdata/`
   request_id, status, reservation fields, token hex, sequence).
 - `session_sequence.golden.json` — ordered full lifecycle:
   ready → heartbeat/ack → discovery_publish/ack → resolve_ready →
-  connectivity_offer/answer → reserve/incoming → relay_data_payload ×2 → close.
+  connectivity_offer/answer → reserve/incoming → relay_data_connect →
+  relay_data_payload ×2 → close. PairReady is a WebSocket Ping and therefore
+  has no golden protobuf fixture.
 
 Deterministic seed values:
 
@@ -192,8 +225,8 @@ The fixtures are produced deterministically by
 `protocol/relay_v2_testdata/generate_fixtures.py` (minimal protobuf wire
 encoding, no external deps). Regenerate with
 `python3 protocol/relay_v2_testdata/generate_fixtures.py --regenerate`, or run
-`scripts/relay_v2_contract.sh` which regenerates and asserts the committed files
-are current via `git diff --exit-code`.
+`scripts/relay_v2_contract.sh`, which checks the committed files without
+mutating the worktree.
 
 Cross-language tests (WS-P-R Rust, WS-P-G Go): decode each fixture → assert the
 `expects` in `manifest.json` → re-encode → assert byte-identical. Framing

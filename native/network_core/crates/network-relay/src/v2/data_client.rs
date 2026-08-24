@@ -1,7 +1,8 @@
 //! Relay v2 数据面客户端（`/v2/relay/{reservation_id}`）。
 //!
-//! reservation 作用域：只转发不透明的 EncryptedPayload、流控 Ack 与 Close。
-//! 拥有自己的 socket、outbound 队列与速率预算，绝不与
+//! reservation 作用域：先完成 RelayDataConnect/PairReady Ping 配对握手，再转发
+//! 不透明的 EncryptedPayload、流控 Ack 与 Close。拥有自己的 socket、outbound 队列
+//! 与速率预算，绝不与
 //! [`super::RelayControlClient`] 共享任何资源。
 
 use ed25519_dalek::SigningKey;
@@ -28,6 +29,7 @@ const MAX_DATA_PAYLOAD_BYTES: usize = 512 * 1024;
 const DEFAULT_RATE_BYTES_PER_SEC: f64 = 512.0 * 1024.0;
 /// 默认突发容量：512 KiB。
 const DEFAULT_BURST_BYTES: f64 = 512.0 * 1024.0;
+const PAIR_READY_PING_PREFIX: &str = "ssh-mobile-relay-paired-v1:";
 
 /// Relay v2 数据面事件。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,7 +165,11 @@ impl RelayDataClient {
         })
     }
 
-    /// 连接数据面端点，并发送 RelayDataConnect 认证 reservation。
+    /// 连接数据面端点，发送 RelayDataConnect，并等待唯一的 PairReady WS Ping。
+    ///
+    /// WebSocket 建立或 Connect 写入成功都不代表 reservation 已经可用；只有
+    /// Relay 确认 initiator/responder 两个角色都已加入后，调用方才能立即发送
+    /// E2EE 业务帧。
     pub async fn connect_reservation(&mut self) -> Result<(), RelayError> {
         if *self.is_connected.read().await {
             return Err(RelayError::Protocol(
@@ -181,8 +187,6 @@ impl RelayDataClient {
             .map_err(|_| RelayError::Socket("Relay data connection timed out".into()))?
             .map_err(map_connect_error)?;
         let (mut writer, mut reader) = socket.split();
-        let (outbound, mut outbound_rx) = mpsc::channel::<Message>(DATA_QUEUE_CAPACITY);
-        self.outbound = Some(outbound);
 
         // 首个帧必须是 RelayDataConnect，绑定 reservation 与本地 token。
         let connect_frame = RelayDataFrame {
@@ -200,6 +204,90 @@ impl RelayDataClient {
         .await
         .map_err(|_| RelayError::Socket("Relay data connect timed out".into()))?
         .map_err(|error| RelayError::Socket(error.to_string()))?;
+
+        // Connect 只完成本端认证。PairReady Ping 才表示另一端也已加入；在此之前
+        // 不启动业务 writer/reader，也不暴露 is_connected=true。
+        let reservation_id = self.reservation_id.clone();
+        let ready = tokio::time::timeout(SOCKET_OPERATION_TIMEOUT, async {
+            loop {
+                let message = reader.next().await.ok_or_else(|| {
+                    RelayError::Socket("Relay data closed before pairing was ready".into())
+                })?;
+                let message = message.map_err(|error| RelayError::Socket(error.to_string()))?;
+                match message {
+                    Message::Binary(frame) => {
+                        let frame = decode_data_frame(&frame)?;
+                        if frame.version != RELAY_V2_VERSION {
+                            return Err(RelayError::Protocol(format!(
+                                "unsupported Relay v2 data frame version {}",
+                                frame.version
+                            )));
+                        }
+                        match frame.kind.ok_or_else(|| {
+                            RelayError::Protocol(
+                                "Relay v2 data frame is missing its message kind".into(),
+                            )
+                        })? {
+                            relay_data_frame::Kind::Close(close) => {
+                                return Err(RelayError::Socket(format!(
+                                    "Relay closed data pairing: {}",
+                                    close.detail
+                                )))
+                            }
+                            relay_data_frame::Kind::Connect(_) => {
+                                return Err(RelayError::Protocol(
+                                    "Relay server sent RelayDataConnect during pairing".into(),
+                                ))
+                            }
+                            relay_data_frame::Kind::Payload(_) | relay_data_frame::Kind::Ack(_) => {
+                                return Err(RelayError::Protocol(
+                                    "Relay sent business data before PairReady".into(),
+                                ))
+                            }
+                        }
+                    }
+                    Message::Ping(payload) => {
+                        let is_pair_ready = payload.as_ref()
+                            == format!("{PAIR_READY_PING_PREFIX}{reservation_id}").as_bytes();
+                        writer
+                            .send(Message::Pong(payload))
+                            .await
+                            .map_err(|error| RelayError::Socket(error.to_string()))?;
+                        if is_pair_ready {
+                            break Ok(());
+                        }
+                    }
+                    Message::Pong(_) => {}
+                    Message::Close(_) => {
+                        return Err(RelayError::Socket(
+                            "Relay closed data pairing before PairReady Ping".into(),
+                        ))
+                    }
+                    Message::Text(_) | Message::Frame(_) => {
+                        return Err(RelayError::Protocol(
+                            "Relay v2 data frames must be binary protobuf".into(),
+                        ))
+                    }
+                }
+            }
+        })
+        .await;
+        match ready {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                let _ = writer.send(Message::Close(None)).await;
+                return Err(error);
+            }
+            Err(_) => {
+                let _ = writer.send(Message::Close(None)).await;
+                return Err(RelayError::Socket(
+                    "Relay data pairing timed out waiting for PairReady Ping".into(),
+                ));
+            }
+        }
+
+        let (outbound, mut outbound_rx) = mpsc::channel::<Message>(DATA_QUEUE_CAPACITY);
+        self.outbound = Some(outbound.clone());
         *self.is_connected.write().await = true;
 
         let connected_for_writer = Arc::clone(&self.is_connected);
@@ -232,6 +320,7 @@ impl RelayDataClient {
         }));
 
         let inbound_tx = self.inbound_tx.clone();
+        let outbound_for_reader = outbound.clone();
         let connected_for_reader = Arc::clone(&self.is_connected);
         let notified_for_reader = Arc::clone(&self.disconnect_notified);
         let intentional_for_reader = Arc::clone(&self.intentional_disconnect);
@@ -242,6 +331,20 @@ impl RelayDataClient {
                     reason = "Relay data reader failed".to_string();
                     break;
                 };
+                if let Message::Ping(payload) = message {
+                    // The server owns the single-writer rule.  Route the
+                    // control response through the writer queue instead of
+                    // writing the WebSocket from the reader task.
+                    if outbound_for_reader
+                        .send_timeout(Message::Pong(payload), SOCKET_OPERATION_TIMEOUT)
+                        .await
+                        .is_err()
+                    {
+                        reason = "Relay data Pong response failed".to_string();
+                        break;
+                    }
+                    continue;
+                }
                 match decode_data_event(message) {
                     Ok(Some(event)) => {
                         if inbound_tx.send(event).await.is_err() {
@@ -265,20 +368,18 @@ impl RelayDataClient {
             )
             .await;
         }));
-        info!("Relay v2 data client connected");
+        info!("Relay v2 data client connected and paired");
         Ok(())
     }
 
     /// 构建数据面 WebSocket 升级请求：设备认证头 + 校验 reservation 本地 token 的
     /// `X-Relay-Token` 头。
     ///
-    /// Go 端 connectRelayData 在升级前必须校验 reservation token（validRelayToken，
-    /// 从 `?token=` query 或 `X-Relay-Token` header 读取），否则直接返回 401；而
-    /// [`normalize_data_endpoint`] 拒绝端点携带 query，因此 token 只能经 header 传递。
+    /// Go 端 connectRelayData 在升级前只从 `X-Relay-Token` header 校验 reservation
+    /// token；query token 会 fail closed，避免凭据进入代理日志、历史记录或遥测 URL。
     fn build_data_upgrade_request(&self) -> Result<Request, RelayError> {
-        let path = self.data_url.path().to_string();
         let mut request =
-            authenticated_ws_request(&self.data_url, &path, &self.credential, &self.signing_key)?;
+            authenticated_ws_request(&self.data_url, &self.credential, &self.signing_key)?;
         request.headers_mut().insert(
             "X-Relay-Token",
             HeaderValue::from_str(&hex::encode(&self.local_token))
@@ -294,7 +395,8 @@ impl RelayDataClient {
             .ok_or_else(|| RelayError::Protocol("Relay data events were already consumed".into()))
     }
 
-    /// 接收下一条数据面事件（Payload / Ack / Close / Disconnected）。
+    /// 接收下一条数据面事件（Payload / Ack / Close / Disconnected）。PairReady Ping
+    /// 只在 `connect_reservation` 建立后台 worker 前消费，不会作为业务事件暴露。
     pub async fn recv(&mut self) -> Option<DataEvent> {
         self.inbound.as_mut()?.recv().await
     }
@@ -531,168 +633,5 @@ async fn mark_data_disconnected(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use prost::Message;
-
-    #[test]
-    fn data_payload_frame_round_trips() {
-        let frame = RelayDataFrame {
-            version: RELAY_V2_VERSION,
-            kind: Some(relay_data_frame::Kind::Payload(RelayDataPayload {
-                sequence: 42,
-                encrypted_payload: (65..129).collect::<Vec<u8>>(),
-            })),
-        };
-        let encoded = encode_data_frame(&frame).expect("encode");
-        // [4-byte BE length][protobuf]
-        assert_eq!(encoded.len(), 4 + frame.encoded_len());
-        assert_eq!(
-            u32::from_be_bytes(encoded[..4].try_into().unwrap()) as usize,
-            encoded.len() - 4
-        );
-        let decoded = decode_data_frame(&encoded).expect("decode");
-        assert_eq!(decoded, frame);
-    }
-
-    #[test]
-    fn data_connect_frame_is_encoded_for_the_reservation() {
-        let frame = RelayDataFrame {
-            version: RELAY_V2_VERSION,
-            kind: Some(relay_data_frame::Kind::Connect(RelayDataConnect {
-                reservation_id: "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
-                local_token: (1..33).collect(),
-            })),
-        };
-        let encoded = encode_data_frame(&frame).expect("encode");
-        let decoded = decode_data_frame(&encoded).expect("decode");
-        assert_eq!(decoded, frame);
-    }
-
-    #[test]
-    fn data_close_event_decodes() {
-        let frame = RelayDataFrame {
-            version: RELAY_V2_VERSION,
-            kind: Some(relay_data_frame::Kind::Close(RelayDataClose {
-                reason: 1,
-                detail: "expiry".into(),
-            })),
-        };
-        let encoded = encode_data_frame(&frame).expect("encode");
-        let event =
-            data_event_from_frame(decode_data_frame(&encoded).expect("decode")).expect("event");
-        assert_eq!(
-            event,
-            DataEvent::Close {
-                reason: 1,
-                detail: "expiry".into(),
-            }
-        );
-    }
-
-    #[test]
-    fn data_frame_version_must_be_two() {
-        let frame = RelayDataFrame {
-            version: 1,
-            kind: Some(relay_data_frame::Kind::Payload(RelayDataPayload {
-                sequence: 1,
-                encrypted_payload: vec![0u8; 16],
-            })),
-        };
-        assert!(encode_data_frame(&frame).is_err());
-    }
-
-    #[test]
-    fn data_endpoint_normalization_requires_v2_reservation_path() {
-        assert!(normalize_data_endpoint(
-            "wss://relay.example.test/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d"
-        )
-        .is_ok());
-        // 错误 path（不是 /v2/relay/{32-hex}）必须被拒绝。
-        assert!(normalize_data_endpoint("wss://relay.example.test/v2/relay/short").is_err());
-        assert!(normalize_data_endpoint("wss://relay.example.test/v1/relay").is_err());
-        assert!(normalize_data_endpoint("wss://relay.example.test").is_err());
-    }
-
-    #[tokio::test]
-    async fn rate_budget_gates_oversized_bursts() {
-        let budget = RateBudget::new(1024.0, 1024.0);
-        let budget = Arc::new(Mutex::new(budget));
-        let (inbound_tx, inbound) = mpsc::channel(4);
-        let client = RelayDataClient {
-            data_url: Url::parse(
-                "wss://relay.example.test/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d",
-            )
-            .expect("url"),
-            reservation_id: "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
-            local_token: (1..33).collect(),
-            credential: "credential".into(),
-            signing_key: SigningKey::from_bytes(&[0u8; 32]),
-            outbound: None,
-            inbound: Some(inbound),
-            inbound_tx,
-            rate_budget: budget,
-            writer_task: None,
-            reader_task: None,
-            is_connected: Arc::new(RwLock::new(false)),
-            disconnect_notified: Arc::new(AtomicBool::new(false)),
-            intentional_disconnect: Arc::new(AtomicBool::new(false)),
-        };
-        // 未连接时在出站队列阶段报 NotConnected（速率预算已通过）。
-        assert!(matches!(
-            client.send(1, &vec![0u8; 1024]).await,
-            Err(RelayError::NotConnected)
-        ));
-    }
-
-    /// 回归 #1：Go 端 connectRelayData 在升级前要求 reservation 本地 token
-    /// （`?token=` 或 `X-Relay-Token`），升级请求必须携带 hex 编码的 token 头。
-    #[test]
-    fn data_upgrade_request_carries_reservation_token_header() {
-        let client = RelayDataClient::new(
-            "wss://relay.example.test/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
-            "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
-            (1..33).collect(),
-            "credential".into(),
-            [0u8; 32],
-        )
-        .expect("client");
-        let request = client
-            .build_data_upgrade_request()
-            .expect("upgrade request");
-        assert_eq!(
-            request
-                .headers()
-                .get("X-Relay-Token")
-                .expect("token header")
-                .to_str()
-                .expect("ascii header"),
-            hex::encode(&client.local_token)
-        );
-        // 设备认证头仍然保留。
-        assert!(request.headers().get("Authorization").is_some());
-    }
-
-    /// 回归 #14a：主动断开必须向事件通道发出终态事件，否则消费者阻塞在 recv()
-    /// 上永久驻留（Arc<RelayDataClient> + 事件通道泄漏）。
-    #[tokio::test]
-    async fn request_disconnect_emits_terminal_close_event() {
-        let mut client = RelayDataClient::new(
-            "wss://relay.example.test/v2/relay/9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
-            "9a8b7c6d5e4f3a2b1c9d8e7f6a5b4c3d".into(),
-            (1..33).collect(),
-            "credential".into(),
-            [0u8; 32],
-        )
-        .expect("client");
-        let mut events = client.take_events().expect("events");
-        client.request_disconnect().await;
-        assert_eq!(
-            events.recv().await,
-            Some(DataEvent::Close {
-                reason: 0,
-                detail: "intentional disconnect".into(),
-            })
-        );
-    }
-}
+#[path = "../tests/v2/data_client.rs"]
+mod tests;

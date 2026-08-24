@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -27,36 +27,38 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   children: ReactNode;
 };
 
-export function Button({
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   variant = 'primary',
   loading = false,
   disabled,
+  className = '',
   children,
   ...props
-}: ButtonProps) {
+}: ButtonProps, ref) {
   return (
     <button
-      className={`button button--${variant}`}
+      className={`button button--${variant}${className ? ` ${className}` : ''}`}
       disabled={disabled || loading}
+      ref={ref}
       {...props}
     >
       {loading ? <LoaderCircle className="spin" size={16} aria-hidden="true" /> : null}
       {children}
     </button>
   );
-}
+});
 
-export function IconButton({
+export const IconButton = forwardRef<HTMLButtonElement, ButtonProps & { label: string }>(function IconButton({
   label,
   children,
   ...props
-}: ButtonProps & { label: string }) {
+}: ButtonProps & { label: string }, ref) {
   return (
-    <Button {...props} variant="icon" aria-label={label} title={label}>
+    <Button ref={ref} {...props} variant="icon" aria-label={label} title={label}>
       {children}
     </Button>
   );
-}
+});
 
 export function Badge({
   tone,

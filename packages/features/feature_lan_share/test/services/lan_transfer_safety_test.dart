@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:feature_lan_share/src/services/lan_share/lan_security_service.dart';
+import 'package:feature_lan_share/src/services/lan_share/lan_share_models.dart';
 import 'package:feature_lan_share/src/services/lan_share/lan_storage_service.dart';
 import 'package:feature_lan_share/src/services/lan_share/lan_transfer_protocol.dart';
 
@@ -45,7 +46,7 @@ void main() {
 
       expect(
         guard
-            .requirePendingUpload(
+            .consumePendingUpload(
               messageId: 'same-id',
               senderDeviceId: 'sender-a',
               fileName: 'a.bin',
@@ -54,18 +55,91 @@ void main() {
             .expectedBytes,
         10,
       );
-      guard.completePendingUpload('sender-a', 'same-id');
-      expect(
-        guard
-            .requirePendingUpload(
-              messageId: 'same-id',
-              senderDeviceId: 'sender-b',
-              fileName: 'b.bin',
-              encrypted: false,
-            )
-            .expectedBytes,
-        20,
+      final senderBUpload = guard.consumePendingUpload(
+        messageId: 'same-id',
+        senderDeviceId: 'sender-b',
+        fileName: 'b.bin',
+        encrypted: false,
       );
+      expect(senderBUpload.expectedBytes, 20);
+      guard.completeUpload(senderBUpload);
+    });
+
+    test('pending uploads are one-shot and active leases keep capacity', () {
+      final first = LanPendingUpload(
+        messageId: 'active',
+        senderDeviceId: 'sender',
+        fileName: 'active.bin',
+        expectedBytes: 1,
+        encrypted: false,
+        expiresAt: DateTime.now().add(const Duration(minutes: 1)),
+      );
+      guard.registerPendingUpload(first);
+      final active = guard.consumePendingUpload(
+        messageId: first.messageId,
+        senderDeviceId: first.senderDeviceId,
+        fileName: first.fileName,
+        encrypted: first.encrypted,
+      );
+
+      expect(
+        () => guard.consumePendingUpload(
+          messageId: first.messageId,
+          senderDeviceId: first.senderDeviceId,
+          fileName: first.fileName,
+          encrypted: first.encrypted,
+        ),
+        throwsA(isA<LanHttpException>()),
+      );
+      expect(
+        () => guard.registerPendingUpload(first),
+        throwsA(
+          isA<LanHttpException>().having(
+            (error) => error.statusCode,
+            'statusCode',
+            HttpStatus.conflict,
+          ),
+        ),
+      );
+
+      for (
+        var index = 1;
+        index < LanTransferProtocolGuard.maxPendingUploadSessions;
+        index++
+      ) {
+        guard.registerPendingUpload(
+          LanPendingUpload(
+            messageId: 'pending-$index',
+            senderDeviceId: 'sender',
+            fileName: 'pending-$index.bin',
+            expectedBytes: 1,
+            encrypted: false,
+            expiresAt: DateTime.now().add(const Duration(minutes: 1)),
+          ),
+        );
+      }
+      expect(
+        () => guard.registerPendingUpload(
+          LanPendingUpload(
+            messageId: 'overflow',
+            senderDeviceId: 'sender',
+            fileName: 'overflow.bin',
+            expectedBytes: 1,
+            encrypted: false,
+            expiresAt: DateTime.now().add(const Duration(minutes: 1)),
+          ),
+        ),
+        throwsA(
+          isA<LanHttpException>().having(
+            (error) => error.statusCode,
+            'statusCode',
+            HttpStatus.tooManyRequests,
+          ),
+        ),
+      );
+
+      guard.completeUpload(active);
+      guard.registerPendingUpload(first);
     });
 
     test('encrypted uploads above the memory budget are rejected', () {
@@ -200,6 +274,28 @@ void main() {
       await inside.writeAsString('inside');
       expect(await storage.deleteSandboxFile(inside.path), isTrue);
       expect(await inside.exists(), isFalse);
+    });
+
+    test('desktop export copies through a selected directory', () async {
+      storage = LanStorageService(
+        sandboxDirectoryProvider: () async => root,
+        desktopExportDirectoryProvider: () async => outsideRoot.path,
+      );
+      final source = await storage.getSandboxTargetFile('large-export.bin');
+      final payload = List<int>.generate(1024 * 1024, (index) => index % 251);
+      await source.writeAsBytes(payload, flush: true);
+
+      expect(
+        await storage.exportToPublic(source.path, LanPayloadType.file),
+        isTrue,
+      );
+
+      final exported = File(
+        '${outsideRoot.path}${Platform.pathSeparator}large-export.bin',
+      );
+      expect(await exported.exists(), isTrue);
+      expect(await exported.length(), payload.length);
+      expect(await exported.readAsBytes(), payload);
     });
   });
 }

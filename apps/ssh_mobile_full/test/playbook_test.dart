@@ -76,7 +76,7 @@ class _GatedBoundSshService extends FakeSshService {
   final Completer<void> releaseFirstCommand = Completer<void>();
   final List<String> executedCommands = [];
 
-  _GatedBoundSshService(TestStorageAdapter storage) : super(storage);
+  _GatedBoundSshService(super.storage);
 
   @override
   Future<RemoteCommandResult> runOneShotCommandForBinding({
@@ -114,7 +114,7 @@ class _ConcurrentStartSshService extends FakeSshService {
   int activeCommandCount = 0;
   int maxConcurrentCommandCount = 0;
 
-  _ConcurrentStartSshService(TestStorageAdapter storage) : super(storage);
+  _ConcurrentStartSshService(super.storage);
 
   @override
   Future<RemoteCommandResult> runOneShotCommand({
@@ -447,11 +447,10 @@ void main() {
           const Duration(seconds: 2),
         );
 
-        expect(
-          concurrentSsh.executedCommands,
-          ['old-first', 'new-first'],
-          reason: 'The old loop must not execute a command from the new run.',
-        );
+        expect(concurrentSsh.executedCommands, [
+          'old-first',
+          'new-first',
+        ], reason: 'The old loop must not execute a command from the new run.');
         expect(concurrentService.activePlaybook?.id, newPlaybook.id);
         expect(concurrentService.currentStepIndex, 0);
         expect(concurrentService.isRunning, isTrue);
@@ -727,12 +726,13 @@ void main() {
           updatedAt: DateTime.now(),
         );
         await storage.savePlaybook(playbook);
+        final approved = (await storage.loadPlaybooks()).single;
         final binding = ssh_core.SshTargetBinding.fromConfig(connection);
 
         expect(
           await approvedService.startApprovedExecution(
-            playbook: playbook,
-            actionFingerprint: _actionFingerprint(playbook),
+            playbook: approved,
+            actionFingerprint: _actionFingerprint(approved),
             connectionTarget: binding,
           ),
           isTrue,
@@ -787,11 +787,12 @@ void main() {
           updatedAt: DateTime.now(),
         );
         await storage.savePlaybook(playbook);
+        final approved = (await storage.loadPlaybooks()).single;
 
         expect(
           await approvedService.startApprovedExecution(
-            playbook: playbook,
-            actionFingerprint: _actionFingerprint(playbook),
+            playbook: approved,
+            actionFingerprint: _actionFingerprint(approved),
             connectionTarget: ssh_core.SshTargetBinding.fromConfig(connection),
           ),
           isTrue,

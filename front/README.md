@@ -1,11 +1,11 @@
-> Last updated: 2026-08-11
+> Last updated: 2026-08-24
 
 # SSH Mobile Relay Admin
 
 This directory contains the standalone React + Vite + TypeScript administration
-console for the memory-only SSH Mobile Relay. It owns the browser UI only; the
-Go service in `../relay/` owns authentication, device enrollment, relay
-sessions, and the v1 WebSocket protocol.
+console for SSH Mobile Relay. It owns the browser UI only; the Go service in
+`../relay/` owns authentication, device enrollment, optional MySQL/Redis state,
+Relay sessions, and the v2 control/data WebSocket protocol.
 
 ## Development
 
@@ -33,6 +33,11 @@ npm run lint
 npm run test:run
 npm run build
 ```
+
+From the repository root, run `bash scripts/admin_api_contract.sh` to replay
+responses emitted by the real Go administrator handlers through the production
+Front request client and Zod schemas. The fixture is generated in a private
+temporary directory for each run, redacts credentials, and is never committed.
 
 The Docker image is built by `Dockerfile` and serves the Vite output through
 Nginx. Do not store administrator sessions or Enrollment Tokens in browser

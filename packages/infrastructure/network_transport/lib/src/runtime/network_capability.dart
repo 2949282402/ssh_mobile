@@ -10,10 +10,10 @@ enum NetworkCapability {
   /// 面向无连接数据报的 UDP 能力；当前 Facade 尚未提供实现。
   udp,
 
-  /// 当前 native v1 使用的 Quinn/QUIC 数据面。
+  /// 当前 Network Protocol V2 使用的 Quinn/QUIC 数据面。
   quic,
 
-  /// 当前 native v1 使用的 WSS Relay 数据面。
+  /// 当前 Network Protocol V2 使用的 WSS Relay 数据面。
   webSocketRelay,
 
   /// 当前 App Scope native runtime 本身，不绑定具体数据面协议。

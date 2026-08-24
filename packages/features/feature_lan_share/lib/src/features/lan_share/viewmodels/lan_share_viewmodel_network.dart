@@ -13,7 +13,7 @@ extension LanShareViewModelNetworkEvents on LanShareViewModel {
         :final bytesTransferred,
         :final totalBytes,
       ):
-        unawaited(
+        _trackBackgroundOperation(
           _enqueueMessagePersistence(
             transferId,
             () => historyDao.updateRecordStatus(
@@ -23,9 +23,10 @@ extension LanShareViewModelNetworkEvents on LanShareViewModel {
               bytesTotal: totalBytes > 0 ? totalBytes : null,
             ),
           ),
+          'LAN transfer progress persistence failed',
         );
       case TransferCompleted(:final transferId, :final localPath):
-        unawaited(
+        _trackBackgroundOperation(
           _enqueueMessagePersistence(
             transferId,
             () => historyDao.updateRecordStatus(
@@ -34,9 +35,10 @@ extension LanShareViewModelNetworkEvents on LanShareViewModel {
               localPath: localPath.isEmpty ? null : localPath,
             ),
           ),
+          'LAN transfer completion persistence failed',
         );
       case TransferFailed(:final transferId, :final error):
-        unawaited(
+        _trackBackgroundOperation(
           _enqueueMessagePersistence(
             transferId,
             () => historyDao.updateRecordStatus(
@@ -45,6 +47,7 @@ extension LanShareViewModelNetworkEvents on LanShareViewModel {
               failureReason: error.code.name,
             ),
           ),
+          'LAN transfer failure persistence failed',
         );
       default:
         break;

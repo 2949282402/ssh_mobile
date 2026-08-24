@@ -3,17 +3,21 @@
 # The relay.v2 protos are locked. `buf lint` and `buf breaking` give the
 # frozen-contract guarantee: any field/tag change after freeze fails CI.
 # 模块根必须为 `proto/`（PACKAGE_DIRECTORY_MATCH：包 relay.v2 需位于
-# relay/v2/ 目录）；proto/network/v1 为遗留 v1 契约，不在本 frozen-contract
-# 门禁范围内，整文件豁免，避免被其风格违规阻塞 relay v2 契约门禁。
-# Run from protocol/:  buf lint  /  buf breaking --against <ref>
+# relay/v2/ 目录）；Network Protocol V2 与 Relay Protocol V2 同属当前冻结
+# 合同，不保留旧 Network Protocol 兼容 schema。
+# Run from protocol/:  buf lint  /  buf breaking . --against <repo-ref>
 version: v2
 modules:
   - path: proto
 lint:
   use:
     - STANDARD
-  ignore:
-    - proto/network/v1/network.proto
+  # These zero values are intentionally wire-stable domain defaults matching
+  # the hand-written Rust/Dart bindings; keep the exception scoped to this
+  # schema while retaining the other STANDARD checks.
+  ignore_only:
+    ENUM_ZERO_VALUE_SUFFIX:
+      - proto/network/v2/network.proto
 breaking:
   use:
     - FILE

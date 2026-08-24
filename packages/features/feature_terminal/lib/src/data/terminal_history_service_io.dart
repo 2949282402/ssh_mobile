@@ -219,9 +219,18 @@ class TerminalHistoryService {
       await raf.close();
     }
 
+    final migrationDirectory = await file.parent.createTemp(
+      '.terminal-history-migration-',
+    );
+    final encryptedReplacement = File(
+      p.join(migrationDirectory.path, 'history.encrypted'),
+    );
     try {
-      final plaintext = await file.readAsString();
-      await _writeEncryptedChunks(file, plaintext, mode: FileMode.write);
+      await _writeEncryptedStream(file, encryptedReplacement);
+      // The replacement lives on the same filesystem. Rename publishes only a
+      // completely flushed encrypted file and leaves the plaintext untouched
+      // if encryption or the replacement itself fails.
+      await encryptedReplacement.rename(file.path);
       _logger.info('Migrated plain-text terminal history to encrypted format');
     } catch (error, stackTrace) {
       _logger.error(
@@ -230,6 +239,37 @@ class TerminalHistoryService {
         stackTrace: stackTrace,
       );
       rethrow;
+    } finally {
+      if (await migrationDirectory.exists()) {
+        await migrationDirectory.delete(recursive: true);
+      }
+    }
+  }
+
+  Future<void> _writeEncryptedStream(File source, File target) async {
+    final sink = target.openWrite(mode: FileMode.write);
+    var pending = '';
+    try {
+      await for (final decoded in source.openRead().transform(utf8.decoder)) {
+        pending += decoded;
+        while (pending.length >= _encryptedChunkChars) {
+          var end = _encryptedChunkChars;
+          if (end < pending.length &&
+              _isHighSurrogate(pending.codeUnitAt(end - 1)) &&
+              _isLowSurrogate(pending.codeUnitAt(end))) {
+            end--;
+          }
+          final chunk = pending.substring(0, end);
+          pending = pending.substring(end);
+          sink.writeln(await _dataProtection.encryptString(chunk));
+        }
+      }
+      if (pending.isNotEmpty) {
+        sink.writeln(await _dataProtection.encryptString(pending));
+      }
+    } finally {
+      await sink.flush();
+      await sink.close();
     }
   }
 
@@ -252,6 +292,12 @@ class TerminalHistoryService {
       await sink.close();
     }
   }
+
+  static bool _isHighSurrogate(int codeUnit) =>
+      codeUnit >= 0xD800 && codeUnit <= 0xDBFF;
+
+  static bool _isLowSurrogate(int codeUnit) =>
+      codeUnit >= 0xDC00 && codeUnit <= 0xDFFF;
 }
 
 final class _PendingHistoryWrite {

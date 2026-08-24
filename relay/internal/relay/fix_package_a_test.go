@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // TestRefreshRejectsRevokedButStillEnrolledDevice verifies a device whose
@@ -48,12 +50,14 @@ func TestRefreshRejectsRevokedButStillEnrolledDevice(t *testing.T) {
 	}
 
 	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32))
+	timestamp := time.Now().Unix()
 	body, _ := json.Marshal(refreshRequest{
 		DeviceID:  "device-a",
 		PublicKey: encodedKey,
+		Timestamp: timestamp,
 		Nonce:     nonce,
 		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(privateKey, []byte("POST\n/v1/devices/refresh\n"+nonce)),
+			ed25519.Sign(privateKey, []byte(refreshProofPayload(timestamp, nonce))),
 		),
 	})
 	mux := http.NewServeMux()
@@ -74,8 +78,108 @@ type failingRevokeStore struct {
 	Storage
 }
 
-func (failingRevokeStore) RevokeEnrollment(context.Context, string, time.Duration) (revokeResult, error) {
-	return revokeNotEnrolled, errors.New("injected revoke failure")
+func (failingRevokeStore) RevokeEnrollment(context.Context, string, time.Duration) (revokeResult, int64, error) {
+	return revokeNotEnrolled, 0, errors.New("injected revoke failure")
+}
+
+// failingNonceCache models a replay-protection backend outage. Authentication
+// must reject the request instead of accepting it without recording the nonce.
+type failingNonceCache struct {
+	Cache
+}
+
+func (failingNonceCache) ConsumeNonce(context.Context, string, string, time.Time) (bool, error) {
+	return false, errors.New("injected nonce cache failure")
+}
+
+func TestAuthenticatedRequestFailsClosedWhenNonceCacheUnavailable(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+		CredentialTTL:   time.Minute,
+	})
+	defer server.Close()
+	if result := server.replaceEnrollment(
+		"device-a",
+		base64.RawURLEncoding.EncodeToString(publicKey),
+		"test",
+		1,
+		time.Now(),
+	); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, mustEnrollmentGeneration(t, server, "device-a"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x41}, 32))
+	request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	request.Header.Set("Authorization", "Bearer "+credential)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	server.cache = failingNonceCache{Cache: server.cache}
+
+	if _, _, code, ok := server.authenticatedRequest(request); ok || code != relayErrorAuthenticationFailed {
+		t.Fatalf("nonce cache outage must fail closed: ok=%v code=%d", ok, code)
+	}
+}
+
+func TestAuthenticatedDeviceAdmissionRechecksRevocation(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+		CredentialTTL:   time.Minute,
+	})
+	defer server.Close()
+	if result := server.replaceEnrollment(
+		"device-a",
+		base64.RawURLEncoding.EncodeToString(publicKey),
+		"test",
+		1,
+		time.Now(),
+	); result != enrollmentOK {
+		t.Fatalf("enroll failed: %v", result)
+	}
+	credential, err := issueCredential(server.config.CredentialKey, "device-a", publicKey, mustEnrollmentGeneration(t, server, "device-a"), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x42}, 32))
+	request := httptest.NewRequest(http.MethodGet, "/v2/control", nil)
+	request.Header.Set("Authorization", "Bearer "+credential)
+	setCurrentSignedDeviceProof(request.Header, http.MethodGet, "/v2/control", privateKey, nonce)
+	claims, authenticatedKey, code, ok := server.authenticatedRequest(request)
+	if !ok || code != relayErrorUnspecified {
+		t.Fatalf("valid proof was rejected before revoke: ok=%v code=%d", ok, code)
+	}
+
+	revokeRequest := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
+	revokeRequest.SetPathValue("deviceId", "device-a")
+	revokeResponse := httptest.NewRecorder()
+	server.adminRevokeDevice(revokeResponse, revokeRequest)
+	if revokeResponse.Code != http.StatusNoContent {
+		t.Fatalf("revoke failed: got %d", revokeResponse.Code)
+	}
+
+	admission, admissionCode, admitted := server.admitAuthenticatedDevice(
+		context.Background(),
+		claims,
+		authenticatedKey,
+	)
+	if admitted {
+		admission.release()
+		t.Fatal("socket admission bypassed the revocation re-check")
+	}
+	if admissionCode != relayErrorAuthenticationFailed {
+		t.Fatalf("revoked socket admission returned code %d", admissionCode)
+	}
 }
 
 // TestAdminRevokeReturnsErrorWhenRevokeFails verifies the revoke handler reports
@@ -230,23 +334,35 @@ func TestHubAddSerializesConcurrentSameDeviceClaims(t *testing.T) {
 	credential, _, privateKey := enrollViaHTTP(t, httpServer.URL, "device-a", "test-token")
 
 	// A1 connects; its lease claim is gated (blocks before the ready frame).
-	connA1 := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x10, privateKey)
+	connA1 := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", privateKey)
 	defer connA1.Close()
 	<-gate.blocked
 
-	// A2 connects while A1's claim is in flight: it must block at the admission
-	// lock (not reach the map or Redis) until A1's claim completes.
-	connA2 := dialControlV2NoReady(t, httpServer.URL, credential, "device-a", 0x11, privateKey)
-	defer connA2.Close()
+	// A2 connects while A1's claim is in flight: it must block on the same
+	// per-device admission lock until A1's claim completes.  Dial asynchronously
+	// because the fail-closed admission lock intentionally covers authentication
+	// re-check and hub registration as one serialized operation.
+	connA2Ch := make(chan *websocket.Conn, 1)
+	go func() {
+		connA2Ch <- dialControlV2NoReady(t, httpServer.URL, credential, "device-a", privateKey)
+	}()
 	time.Sleep(100 * time.Millisecond)
 	server.hub.mutex.Lock()
 	current := server.hub.peers["device-a"]
+	pending := server.hub.pendingAdmissions["device-a"]
 	server.hub.mutex.Unlock()
-	if current == nil || current.connectionID == "" {
-		t.Fatal("A1 is not in the hub map while its claim is in flight")
+	if current != nil || pending == nil || pending.connectionID == "" {
+		t.Fatalf("A1 must remain staged and non-routable while its claim is in flight: current=%v pending=%v", current, pending)
 	}
 
 	close(gate.release)
+	var connA2 *websocket.Conn
+	select {
+	case connA2 = <-connA2Ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("A2 did not complete after A1 admission was released")
+	}
+	defer connA2.Close()
 
 	// A2's admission completes only after A1's claim; read A2's ready frame.
 	_ = connA2.SetReadDeadline(time.Now().Add(3 * time.Second))
@@ -312,7 +428,7 @@ func TestHubAddAfterCloseRegistersNoWorkers(t *testing.T) {
 
 	addDone := make(chan bool, 1)
 	go func() { addDone <- server.hub.add(peer) }()
-	<-gate.blocked // the claim is in flight; the peer is in the map
+	<-gate.blocked // the claim is in flight; the peer is staged but not routable
 
 	server.hub.close() // closed=true, peers cleared, peer closed
 
@@ -336,6 +452,36 @@ func TestHubAddAfterCloseRegistersNoWorkers(t *testing.T) {
 	}
 	if present {
 		t.Fatal("rejected admission resurrected presence after hub close")
+	}
+}
+
+func TestHubAddFailsClosedBeforeRoutingWhenPresenceClaimFails(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte(mysqlTestCredentialKey),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+	server.hub.presence = erroringCache{Cache: server.cache}
+	peer := &peer{
+		deviceID:     "device-a",
+		connectionID: "conn-a",
+		outbound:     make(chan outboundFrame, 8),
+		done:         make(chan struct{}),
+	}
+	if server.hub.add(peer) {
+		t.Fatal("presence claim failure admitted a routable control peer")
+	}
+	server.hub.mutex.Lock()
+	current := server.hub.peers[peer.deviceID]
+	pending := server.hub.pendingAdmissions[peer.deviceID]
+	server.hub.mutex.Unlock()
+	if current != nil || pending != nil {
+		t.Fatalf("failed presence claim leaked routing state: current=%v pending=%v", current, pending)
+	}
+	select {
+	case <-peer.done:
+	default:
+		t.Fatal("failed presence claim did not close the staged peer")
 	}
 }
 
@@ -364,7 +510,7 @@ func TestHubAddRejectedAfterDisconnectDoesNotResurrectPresence(t *testing.T) {
 
 	addDone := make(chan bool, 1)
 	go func() { addDone <- server.hub.add(peer) }()
-	<-gate.blocked // the claim is in flight; the peer is in the map
+	<-gate.blocked // the claim is in flight; the peer is staged but not routable
 
 	// Revoke/kick the device while the claim is blocked: the hub removes the
 	// peer and attempts a release that misses (the lease is not written yet).

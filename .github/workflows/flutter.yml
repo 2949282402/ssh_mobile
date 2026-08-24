@@ -8,6 +8,14 @@ on:
 permissions:
   contents: read
 
+env:
+  FLUTTER_VERSION: '3.47.0'
+  NODE_VERSION: '24.19.0'
+  GO_VERSION: '1.27.0'
+  PROTOC_VERSION: '27.1'
+  BUF_VERSION: '1.47.2'
+  RUST_TOOLCHAIN: '1.97.1'
+
 concurrency:
   group: flutter-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -23,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: front/package-lock.json
       - name: Install front dependencies
@@ -39,6 +47,26 @@ jobs:
       - name: Build front container
         run: docker build -t ssh-mobile-relay-front:test .
 
+  admin-api-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: relay/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: front/package-lock.json
+      - name: Install front dependencies
+        working-directory: front
+        run: npm ci
+      - name: Check Front ↔ Relay administrator API contract
+        run: bash scripts/admin_api_contract.sh
+
   native-network-quality:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -49,6 +77,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt, clippy
       - uses: swatinem/rust-cache@v2
         with:
@@ -63,7 +92,7 @@ jobs:
           --no-tls --no-dtls --min-port=49160 --max-port=49200
           --no-multicast-peers
       - name: Test Rust workspace
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked -- --test-threads=1
       - name: Test WebRTC TURN fallback
         run: >-
           cargo test -p network-webrtc --locked --
@@ -84,10 +113,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
@@ -151,7 +181,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24.x'
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: relay/go.sum
       - name: Check Go formatting
         run: |
@@ -174,37 +204,93 @@ jobs:
         working-directory: .
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24.x'
-      - name: Install protoc (best-effort)
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-        continue-on-error: true
-      - name: Compile-check relay v2 proto
+          go-version: ${{ env.GO_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+      - uses: arduino/setup-protoc@v3
+        with:
+          version: ${{ env.PROTOC_VERSION }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: ${{ env.BUF_VERSION }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Compile-check all Network V2 protos
         run: |
-          if command -v protoc >/dev/null 2>&1; then
-            protoc --proto_path=protocol --descriptor_set_out=/dev/null protocol/proto/relay/v2/relay_v2.proto
-            echo "proto compile-check: OK"
-          else
-            echo "protoc unavailable; skipping proto compile-check"
-          fi
+          protoc --proto_path=protocol \
+            --descriptor_set_out=/tmp/network-v2.desc \
+            protocol/proto/relay/v2/relay_v2.proto \
+            protocol/proto/network/v2/network.proto
       - name: Run relay v2 contract check
         run: bash scripts/relay_v2_contract.sh
-      - name: Install buf (best-effort)
-        run: go install github.com/bufbuild/buf/cmd/buf@v1.47.2
-        continue-on-error: true
+      - name: Run strict network v2 acceptance gate
+        run: bash scripts/network_v2_acceptance.sh strict
       - name: buf lint
-        run: |
-          BUF="$(command -v buf 2>/dev/null || echo "$HOME/go/bin/buf")"
-          if [ -x "$BUF" ] && [ -f protocol/buf.yaml ]; then
-            (cd protocol && "$BUF" lint)
-            echo "buf lint: OK"
-          else
-            echo "buf not available; skipping buf lint"
-          fi
+        working-directory: protocol
+        run: buf lint
+      - name: buf breaking against frozen Relay V2
+        working-directory: protocol
+        run: >-
+          buf breaking .
+          --against '../.git#ref=6ec194bb3a66a748215d3abc11d6da84bd329619,subdir=protocol'
+          --path proto/relay/v2/relay_v2.proto
+
+  client-backend-e2e:
+    # Keep the cross-process Docker/client gate isolated from Flutter's unit
+    # test process pool. It deliberately exercises the real Caddy → Go Relay
+    # path and owns its temporary Compose project/cleanup trap.
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        storage: [memory, mysql]
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "native/network_core -> target"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install workspace dependencies
+        run: dart pub get
+      - name: Install native Dart package dependencies
+        working-directory: packages/infrastructure/ssh_mobile_network_native
+        run: flutter pub get
+      - name: Install Full App dependencies
+        working-directory: apps/ssh_mobile_full
+        run: flutter pub get
+      - name: Run strict client → Caddy → Go Relay E2E
+        env:
+          CLIENT_BACKEND_E2E_STORAGE: ${{ matrix.storage }}
+        run: bash scripts/client_backend_e2e.sh strict
 
   architecture-check:
     runs-on: ubuntu-latest
@@ -216,10 +302,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
@@ -227,6 +314,8 @@ jobs:
         run: dart run tool/check_agent_docs.dart
       - name: Test agent documentation checker
         run: dart run test/tool/agent_docs_check_test.dart
+      - name: Test CI workflow contract
+        run: dart run test/tool/ci_workflow_test.dart
       - name: Check architecture guard
         run: dart run tool/architecture_check.dart
       - name: Check module dependencies
@@ -248,7 +337,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
@@ -284,7 +373,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
@@ -344,10 +433,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: x86_64-pc-windows-msvc
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Install workspace dependencies
         run: dart pub get
@@ -368,10 +458,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Install dependencies
         working-directory: .
@@ -401,7 +492,7 @@ jobs:
 
   app-unit-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -414,10 +505,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Install dependencies
         working-directory: .
@@ -428,7 +520,140 @@ jobs:
       - name: Install Full App dependencies
         run: flutter pub get
       - name: Run Sharded Unit Tests
-        run: flutter test --reporter expanded --timeout 60s --total-shards ${{ matrix.total_shards }} --shard-index ${{ matrix.shard_index }}
+        run: |
+          isolated_coverage_test_files=(
+            test/features/startup/views/startup_screen_test.dart
+            test/screens/system_admin/system_admin_snapshot_tabs_test.dart
+          )
+          non_coverage_test_files=(
+            test/services/network/transfer_transport_test.dart
+          )
+          coverage_test_files=()
+          mapfile -d '' all_test_files < <(
+            find test -type f -name '*_test.dart' -print0 | sort -z
+          )
+          for test_file in "${all_test_files[@]}"; do
+            case "$test_file" in
+              test/features/startup/views/startup_screen_test.dart|test/screens/system_admin/system_admin_snapshot_tabs_test.dart|test/services/network/transfer_transport_test.dart|test/integration/client_backend/*)
+                ;;
+              *)
+                coverage_test_files+=("$test_file")
+                ;;
+            esac
+          done
+
+          if [ "${#coverage_test_files[@]}" -eq 0 ]; then
+            echo "No coverage test files were discovered."
+            exit 1
+          fi
+
+          for attempt in 1 2; do
+            echo "Running Flutter test shard ${{ matrix.shard_index }} (attempt $attempt)."
+            rm -f coverage/lcov.info
+            if timeout --signal=TERM --kill-after=30s 8m \
+              flutter test --coverage --reporter expanded \
+              --fail-fast \
+              --timeout 60s \
+              --total-shards "${{ matrix.total_shards }}" \
+              --shard-index "${{ matrix.shard_index }}" \
+              "${coverage_test_files[@]}"; then
+              break
+            else
+              status=$?
+            fi
+
+            if [ "$attempt" -eq 2 ]; then
+              exit "$status"
+            fi
+            echo "Flutter test shard failed or timed out; retrying once."
+          done
+
+          echo "Running isolated Flutter tests with supplemental coverage."
+          rm -f coverage/isolated-startup-lcov.info
+          timeout --signal=TERM --kill-after=30s 8m \
+            flutter test \
+            --coverage \
+            --coverage-path coverage/isolated-startup-lcov.info \
+            --fail-fast \
+            --reporter expanded \
+            --timeout 60s \
+            --total-shards "${{ matrix.total_shards }}" \
+            --shard-index "${{ matrix.shard_index }}" \
+            "${isolated_coverage_test_files[0]}"
+
+          rm -f coverage/isolated-system-admin-lcov.info
+          timeout --signal=TERM --kill-after=30s 8m \
+            flutter test \
+            --coverage \
+            --coverage-path coverage/isolated-system-admin-lcov.info \
+            --fail-fast \
+            --reporter expanded \
+            --timeout 60s \
+            --total-shards "${{ matrix.total_shards }}" \
+            --shard-index "${{ matrix.shard_index }}" \
+            "${isolated_coverage_test_files[1]}"
+
+          echo "Running native Flutter tests without coverage."
+          timeout --signal=TERM --kill-after=30s 8m \
+            flutter test \
+            --fail-fast \
+            --reporter expanded \
+            --timeout 60s \
+            --total-shards "${{ matrix.total_shards }}" \
+            --shard-index "${{ matrix.shard_index }}" \
+            "${non_coverage_test_files[@]}"
+      - name: Upload shard coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-coverage-${{ matrix.shard_index }}
+          path: apps/ssh_mobile_full/coverage/*.info
+          if-no-files-found: error
+
+  app-coverage:
+    runs-on: ubuntu-latest
+    needs: app-unit-tests
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/ssh_mobile_full
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install Full App dependencies
+        run: flutter pub get
+      - name: Download shard coverage
+        uses: actions/download-artifact@v4
+        with:
+          pattern: flutter-coverage-*
+          path: coverage-shards
+      - name: Enforce shard coverage
+        run: |
+          mapfile -d '' shard_files < <(find "$GITHUB_WORKSPACE/coverage-shards" -type f -name lcov.info -print0 | sort -z)
+          if [ "${#shard_files[@]}" -ne 2 ]; then
+            echo "Expected 2 shard coverage files, found ${#shard_files[@]}."
+            exit 1
+          fi
+
+          mapfile -d '' isolated_files < <(find "$GITHUB_WORKSPACE/coverage-shards" -type f -name 'isolated-*.info' -print0 | sort -z)
+          if [ "${#isolated_files[@]}" -ne 4 ]; then
+            echo "Expected 4 isolated coverage files, found ${#isolated_files[@]}."
+            exit 1
+          fi
+
+          coverage_args=()
+          for shard_file in "${shard_files[@]}"; do
+            coverage_args+=("--file=$shard_file")
+          done
+          for isolated_file in "${isolated_files[@]}"; do
+            coverage_args+=("--file=$isolated_file")
+          done
+
+          dart run tool/check_coverage.dart \
+            --minimum=35 \
+            "${coverage_args[@]}"
 
   android-build:
     runs-on: ubuntu-latest
@@ -440,11 +665,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      - name: Diagnose Rust target toolchain
+        working-directory: native/network_core
+        run: |
+          rustup show active-toolchain
+          rustup target list --installed
       - name: Install dependencies
         working-directory: .
         run: dart pub get
@@ -466,10 +697,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: x86_64-pc-windows-msvc
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Enable Windows desktop
         run: flutter config --enable-windows-desktop
@@ -492,11 +724,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      - name: Diagnose Rust target toolchain
+        working-directory: native/network_core
+        run: |
+          rustup show active-toolchain
+          rustup target list --installed
       - name: Enable macOS desktop
         run: flutter config --enable-macos-desktop
       - name: Install dependencies
@@ -518,11 +756,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.2'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      - name: Diagnose Rust target toolchain
+        working-directory: native/network_core
+        run: |
+          rustup show active-toolchain
+          rustup target list --installed
       - name: Install dependencies
         working-directory: .
         run: dart pub get

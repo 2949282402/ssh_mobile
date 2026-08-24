@@ -139,14 +139,21 @@ void main() {
         RelaySettings(endpoint: endpoint),
         '0123456789abcdef',
       );
+      final beforeRefresh =
+          DateTime.now().toUtc().millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
       final refresh = await service.refreshCredential(
         RelaySettings(endpoint: endpoint),
       );
+      final afterRefresh =
+          DateTime.now().toUtc().millisecondsSinceEpoch ~/
+          Duration.millisecondsPerSecond;
       expect(refresh, isA<NetworkSuccess<void>>());
       expect(captured, isNotNull);
       final request = captured!;
       expect(request.deviceId, 'device-a');
       expect(request.identityPublicKey, hasLength(32));
+      expect(request.timestamp, inInclusiveRange(beforeRefresh, afterRefresh));
       expect(
         base64Url.decode(base64Url.normalize(request.nonce)),
         hasLength(32),
@@ -156,7 +163,9 @@ void main() {
       );
       expect(signatureBytes, hasLength(64));
       final valid = await Ed25519().verify(
-        utf8.encode('POST\n/v1/devices/refresh\n${request.nonce}'),
+        utf8.encode(
+          'POST\n/v1/devices/refresh\n${request.timestamp}\n${request.nonce}',
+        ),
         signature: Signature(
           signatureBytes,
           publicKey: SimplePublicKey(
@@ -166,6 +175,17 @@ void main() {
         ),
       );
       expect(valid, isTrue);
+      final legacyTranscriptValid = await Ed25519().verify(
+        utf8.encode('POST\n/v1/devices/refresh\n${request.nonce}'),
+        signature: Signature(
+          signatureBytes,
+          publicKey: SimplePublicKey(
+            request.identityPublicKey,
+            type: KeyPairType.ed25519,
+          ),
+        ),
+      );
+      expect(legacyTranscriptValid, isFalse);
 
       expect(
         await service.isEnrolled(RelaySettings(endpoint: endpoint)),

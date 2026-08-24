@@ -128,12 +128,14 @@ extension AiChatContextActions on AiChatViewModel {
     );
   }
 
-  String _titleFrom(String text) {
-    final cleaned = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (cleaned.isEmpty) {
-      return AiStrings(_appSettings.language).newChat;
-    }
-    return cleaned.length > 22 ? '${cleaned.substring(0, 22)}...' : cleaned;
+  String _titleFrom(String _) {
+    // Never duplicate user prompts into chat-list metadata. Message bodies are
+    // already encrypted, but titles are displayed and exported broadly enough
+    // that deriving them from private input creates an unnecessary copy.
+    return buildPrivateChatTitle(
+      language: _appSettings.language,
+      now: DateTime.now(),
+    );
   }
 
   List<Map<String, dynamic>> _messagesForRequest(

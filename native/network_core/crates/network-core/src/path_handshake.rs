@@ -1,0 +1,318 @@
+// PathHandshakeV2 metadata owned by the existing Noise application handshake.
+//
+// This module deliberately contains no wire handshake. PathHandshakeV2 is an
+// evolution of the existing Noise transcript: its metadata is carried in the
+// encrypted Noise application payloads and is therefore authenticated by the
+// existing Noise state. A Relay only forwards the existing `DATA_ENV_CRYPTO`
+// envelope; it never gets a second security protocol.
+
+use sha2::{Digest, Sha256};
+
+pub(crate) const PATH_HANDSHAKE_VERSION: u32 = 2;
+pub(crate) const NETWORK_DATA_PROTOCOL_VERSION: u32 = 2;
+
+const TRANSCRIPT_DOMAIN: &[u8] = b"ssh-mobile/path-handshake/transcript/v2";
+const MAX_PEER_ID_BYTES: usize = 128;
+const MAX_PATH_BINDING_BYTES: usize = 256;
+const MAX_CONNECTION_PROFILE_BYTES: usize = 256;
+const IDENTITY_KEY_BYTES: usize = 32;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(u8)]
+pub(crate) enum E2eePolicy {
+    #[default]
+    Required = 0,
+    Disabled = 1,
+}
+
+impl E2eePolicy {
+    pub(crate) fn from_code(code: u8) -> Result<Self, PathHandshakeError> {
+        match code {
+            0 => Ok(Self::Required),
+            1 => Ok(Self::Disabled),
+            _ => Err(PathHandshakeError::InvalidFrame),
+        }
+    }
+
+    /// Convert the frozen Network V2 enum at the policy boundary. Keeping the
+    /// conversion here prevents callers from validating a protocol policy and
+    /// then silently falling back to the handshake default.
+    pub(crate) fn from_network_code(code: i32) -> Result<Self, PathHandshakeError> {
+        match network_protocol::E2eePolicy::try_from(code)
+            .map_err(|_| PathHandshakeError::InvalidFrame)?
+        {
+            network_protocol::E2eePolicy::Required => Ok(Self::Required),
+            network_protocol::E2eePolicy::Disabled => Ok(Self::Disabled),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub(crate) enum PathKind {
+    Direct = 1,
+    Relay = 2,
+}
+
+impl PathKind {
+    pub(crate) fn from_code(code: u8) -> Result<Self, PathHandshakeError> {
+        match code {
+            1 => Ok(Self::Direct),
+            2 => Ok(Self::Relay),
+            _ => Err(PathHandshakeError::InvalidFrame),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub(crate) enum PathHandshakeError {
+    #[error("PathHandshakeV2 metadata is invalid")]
+    InvalidFrame,
+    #[error("PathHandshakeV2 peer protocol mismatch")]
+    PeerProtocolMismatch,
+    #[error("PathHandshakeV2 downgrade rejected")]
+    DowngradeRejected,
+    #[error("PathHandshakeV2 identity is mandatory")]
+    IdentityRequired,
+    #[error("PathHandshakeV2 peer identity mismatch")]
+    PeerIdentityMismatch,
+    #[error("PathHandshakeV2 identity proof failed")]
+    IdentityProofFailed,
+    #[error("PathHandshakeV2 security policy mismatch")]
+    SecurityPolicyMismatch,
+    #[error("Relay paths require E2EE")]
+    RelayRequiresE2ee,
+    #[error("PathHandshakeV2 path binding mismatch")]
+    PathBindingMismatch,
+    #[error("PathHandshakeV2 connection profile mismatch")]
+    ConnectionProfileMismatch,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PathHandshakeMetadata {
+    pub(crate) path_handshake_version: u32,
+    pub(crate) network_data_protocol_version: u32,
+    pub(crate) e2ee_policy: E2eePolicy,
+    pub(crate) path_kind: PathKind,
+    pub(crate) path_binding: Vec<u8>,
+    pub(crate) connection_profile: Vec<u8>,
+}
+
+impl PathHandshakeMetadata {
+    pub(crate) fn new(
+        e2ee_policy: E2eePolicy,
+        path_kind: PathKind,
+        path_binding: Vec<u8>,
+        connection_profile: Vec<u8>,
+    ) -> Result<Self, PathHandshakeError> {
+        validate_bytes(&path_binding, MAX_PATH_BINDING_BYTES)?;
+        validate_bytes(&connection_profile, MAX_CONNECTION_PROFILE_BYTES)?;
+        if path_kind == PathKind::Relay && e2ee_policy == E2eePolicy::Disabled {
+            return Err(PathHandshakeError::RelayRequiresE2ee);
+        }
+        Ok(Self {
+            path_handshake_version: PATH_HANDSHAKE_VERSION,
+            network_data_protocol_version: NETWORK_DATA_PROTOCOL_VERSION,
+            e2ee_policy,
+            path_kind,
+            path_binding,
+            connection_profile,
+        })
+    }
+
+    pub(crate) fn encode(&self, output: &mut Vec<u8>) -> Result<(), PathHandshakeError> {
+        if self.path_handshake_version != PATH_HANDSHAKE_VERSION
+            || self.network_data_protocol_version != NETWORK_DATA_PROTOCOL_VERSION
+        {
+            return Err(PathHandshakeError::PeerProtocolMismatch);
+        }
+        output.extend_from_slice(&self.path_handshake_version.to_be_bytes());
+        output.extend_from_slice(&self.network_data_protocol_version.to_be_bytes());
+        output.push(self.e2ee_policy as u8);
+        output.push(self.path_kind as u8);
+        append_bytes(output, &self.path_binding, MAX_PATH_BINDING_BYTES)?;
+        append_bytes(
+            output,
+            &self.connection_profile,
+            MAX_CONNECTION_PROFILE_BYTES,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn security_for(
+        &self,
+        local_policy: E2eePolicy,
+    ) -> Result<PathSecurity, PathHandshakeError> {
+        negotiate_security(self.path_kind, local_policy, self.e2ee_policy)
+    }
+
+    pub(crate) fn decode(cursor: &mut impl MetadataCursor) -> Result<Self, PathHandshakeError> {
+        let path_handshake_version = cursor.take_u32()?;
+        if path_handshake_version < PATH_HANDSHAKE_VERSION {
+            return Err(PathHandshakeError::DowngradeRejected);
+        }
+        if path_handshake_version != PATH_HANDSHAKE_VERSION {
+            return Err(PathHandshakeError::PeerProtocolMismatch);
+        }
+        let network_data_protocol_version = cursor.take_u32()?;
+        if network_data_protocol_version < NETWORK_DATA_PROTOCOL_VERSION {
+            return Err(PathHandshakeError::DowngradeRejected);
+        }
+        if network_data_protocol_version != NETWORK_DATA_PROTOCOL_VERSION {
+            return Err(PathHandshakeError::PeerProtocolMismatch);
+        }
+        let e2ee_policy = E2eePolicy::from_code(cursor.take_byte()?)?;
+        let path_kind = PathKind::from_code(cursor.take_byte()?)?;
+        let path_binding = cursor.take_bytes(MAX_PATH_BINDING_BYTES)?.to_vec();
+        let connection_profile = cursor.take_bytes(MAX_CONNECTION_PROFILE_BYTES)?.to_vec();
+        let metadata = Self {
+            path_handshake_version,
+            network_data_protocol_version,
+            e2ee_policy,
+            path_kind,
+            path_binding,
+            connection_profile,
+        };
+        if metadata.path_kind == PathKind::Relay && metadata.e2ee_policy == E2eePolicy::Disabled {
+            return Err(PathHandshakeError::RelayRequiresE2ee);
+        }
+        Ok(metadata)
+    }
+
+    pub(crate) fn transcript_bytes(
+        &self,
+        initiator_id: &str,
+        initiator_key: &[u8; IDENTITY_KEY_BYTES],
+        responder_id: &str,
+        responder_key: &[u8; IDENTITY_KEY_BYTES],
+        responder_policy: E2eePolicy,
+    ) -> Result<Vec<u8>, PathHandshakeError> {
+        validate_peer_id(initiator_id)?;
+        validate_peer_id(responder_id)?;
+        validate_identity_key(initiator_key)?;
+        validate_identity_key(responder_key)?;
+        if self.path_kind == PathKind::Relay
+            && (self.e2ee_policy == E2eePolicy::Disabled
+                || responder_policy == E2eePolicy::Disabled)
+        {
+            return Err(PathHandshakeError::RelayRequiresE2ee);
+        }
+        if self.e2ee_policy != responder_policy {
+            return Err(PathHandshakeError::SecurityPolicyMismatch);
+        }
+        let mut output = Vec::with_capacity(512);
+        output.extend_from_slice(TRANSCRIPT_DOMAIN);
+        self.encode(&mut output)?;
+        output.push(responder_policy as u8);
+        append_string(&mut output, initiator_id, MAX_PEER_ID_BYTES)?;
+        output.extend_from_slice(initiator_key);
+        append_string(&mut output, responder_id, MAX_PEER_ID_BYTES)?;
+        output.extend_from_slice(responder_key);
+        Ok(output)
+    }
+
+    pub(crate) fn transcript_hash(
+        &self,
+        initiator_id: &str,
+        initiator_key: &[u8; IDENTITY_KEY_BYTES],
+        responder_id: &str,
+        responder_key: &[u8; IDENTITY_KEY_BYTES],
+        responder_policy: E2eePolicy,
+    ) -> Result<[u8; 32], PathHandshakeError> {
+        Ok(Sha256::digest(self.transcript_bytes(
+            initiator_id,
+            initiator_key,
+            responder_id,
+            responder_key,
+            responder_policy,
+        )?)
+        .into())
+    }
+}
+
+pub(crate) trait MetadataCursor {
+    fn take_byte(&mut self) -> Result<u8, PathHandshakeError>;
+    fn take_u32(&mut self) -> Result<u32, PathHandshakeError>;
+    fn take_bytes(&mut self, max: usize) -> Result<&[u8], PathHandshakeError>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PathSecurity {
+    E2ee,
+    IdentityOnly,
+}
+
+impl PathSecurity {
+    pub(crate) fn policy(self) -> E2eePolicy {
+        match self {
+            Self::E2ee => E2eePolicy::Required,
+            Self::IdentityOnly => E2eePolicy::Disabled,
+        }
+    }
+
+    pub(crate) fn has_application_e2ee(self) -> bool {
+        matches!(self, Self::E2ee)
+    }
+}
+
+pub(crate) fn negotiate_security(
+    path_kind: PathKind,
+    local: E2eePolicy,
+    remote: E2eePolicy,
+) -> Result<PathSecurity, PathHandshakeError> {
+    if path_kind == PathKind::Relay
+        && (local == E2eePolicy::Disabled || remote == E2eePolicy::Disabled)
+    {
+        return Err(PathHandshakeError::RelayRequiresE2ee);
+    }
+    if local != remote {
+        return Err(PathHandshakeError::SecurityPolicyMismatch);
+    }
+    Ok(match local {
+        E2eePolicy::Required => PathSecurity::E2ee,
+        E2eePolicy::Disabled => PathSecurity::IdentityOnly,
+    })
+}
+
+fn validate_peer_id(peer_id: &str) -> Result<(), PathHandshakeError> {
+    if peer_id.is_empty() || peer_id.len() > MAX_PEER_ID_BYTES {
+        return Err(PathHandshakeError::IdentityRequired);
+    }
+    Ok(())
+}
+
+fn validate_identity_key(key: &[u8; IDENTITY_KEY_BYTES]) -> Result<(), PathHandshakeError> {
+    if key.iter().all(|byte| *byte == 0) {
+        return Err(PathHandshakeError::IdentityRequired);
+    }
+    Ok(())
+}
+
+fn validate_bytes(bytes: &[u8], max: usize) -> Result<(), PathHandshakeError> {
+    if bytes.is_empty() || bytes.len() > max {
+        return Err(PathHandshakeError::InvalidFrame);
+    }
+    Ok(())
+}
+
+fn append_string(output: &mut Vec<u8>, value: &str, max: usize) -> Result<(), PathHandshakeError> {
+    if value.is_empty() || value.len() > max || value.len() > u16::MAX as usize {
+        return Err(PathHandshakeError::InvalidFrame);
+    }
+    output.extend_from_slice(&(value.len() as u16).to_be_bytes());
+    output.extend_from_slice(value.as_bytes());
+    Ok(())
+}
+
+fn append_bytes(output: &mut Vec<u8>, value: &[u8], max: usize) -> Result<(), PathHandshakeError> {
+    if value.is_empty() || value.len() > max || value.len() > u16::MAX as usize {
+        return Err(PathHandshakeError::InvalidFrame);
+    }
+    output.extend_from_slice(&(value.len() as u16).to_be_bytes());
+    output.extend_from_slice(value);
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "tests/path_handshake.rs"]
+mod tests;

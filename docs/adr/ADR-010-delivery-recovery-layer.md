@@ -1,6 +1,13 @@
-> 最新更新时间：2026-08-12
+> 最新更新时间：2026-08-19
 
 # ADR-010：跨 Connection 的 Delivery/Recovery Layer
+
+> **V2 边界审计（2026-08-19）**：本 ADR 继续作为 Delivery 去重、ACK、重试和
+> 有序接收的基础决策；其中把逻辑 Session/Connection 连续性作为恢复锚点的 v1
+> 语句，已由 [ADR-BUSINESS-RECOVERY-V2](ADR-BUSINESS-RECOVERY-V2.md) 与
+> [ADR-CONNECTION-LIFECYCLE-V2](ADR-CONNECTION-LIFECYCLE-V2.md) 取代。v2 的
+> `ConnectionSession` 与单个 transport Connection 同生命周期，业务恢复按
+> MessageId/channel 或 transfer_id/confirmed_offset 进行。
 
 ## 背景
 
@@ -45,7 +52,7 @@ QUIC/Relay 的 transport ACK 只能说明当前连接完成了传输，不能说
   逐条领取 Pending 消息并通过统一 Channel adapter 重新编码到当前 QUIC
   单向 stream 或 Relay opaque control；ACK 超时由 Session 级 retry worker
   继续扫描。Pending 保存逻辑 payload，不保存旧连接上的 Ciphertext。
-- native v1 协议现在包含 `SendMessage`、`AcknowledgeMessage`、`DataMessage`
+- Network Protocol V2 现在包含 `SendMessage`、`AcknowledgeMessage`、`DataMessage`
   和 `DeliveryAck`；Flutter/Dart 公共 API 仍不直接暴露 Quinn、Relay 或
   Rust pointer，后续 FFI API Step 再把这些能力映射为 Session/Channel 语义。
   File Resume 的 `.part`、checkpoint 和 TransferId 恢复仍在后续 Step 单独接入。

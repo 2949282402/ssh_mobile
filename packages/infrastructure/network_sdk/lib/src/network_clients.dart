@@ -14,7 +14,8 @@ abstract interface class BootstrapClient {
 
   /// 为已 enrolled 设备签发新的短期凭据，无需 enrollment token。
   ///
-  /// 请求由设备签名种子对 `POST\n/v1/devices/refresh\n<nonce>` 的 Ed25519 签名
+  /// 请求由设备签名种子对
+  /// `POST\n/v1/devices/refresh\n<timestamp>\n<nonce>` 的 Ed25519 签名
   /// 证明身份；成功后返回与 enroll 相同的 [DeviceEnrollment] 形状。失败时按共享
   /// 错误映射返回：409 → identityConflict、401 code 12 → credentialExpired、
   /// 404 → noRoute（设备未 enrollment，需要重新 enroll）。
@@ -163,6 +164,7 @@ final class RefreshRequest {
   const RefreshRequest({
     required this.deviceId,
     required this.identityPublicKey,
+    required this.timestamp,
     required this.nonce,
     required this.signature,
   });
@@ -170,10 +172,14 @@ final class RefreshRequest {
   final String deviceId;
   final Uint8List identityPublicKey;
 
+  /// 签名时的 Unix 秒时间戳。Relay 只接受与服务端相差不超过 300 秒的证明。
+  final int timestamp;
+
   /// 32 字节随机 nonce 的 base64url 编码（无 padding）。
   final String nonce;
 
-  /// 对 `POST\n/v1/devices/refresh\n<nonce>` 的 Ed25519 签名的 base64url 编码。
+  /// 对 `POST\n/v1/devices/refresh\n<timestamp>\n<nonce>` 的 Ed25519
+  /// 签名的 base64url 编码（transcript 无末尾换行）。
   final String signature;
 }
 

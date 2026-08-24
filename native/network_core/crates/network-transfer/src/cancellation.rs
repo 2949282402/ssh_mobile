@@ -15,3 +15,7 @@ impl TransferCancellation {
         self.cancelled.load(Ordering::SeqCst)
     }
 }
+
+#[cfg(test)]
+#[path = "tests/cancellation.rs"]
+mod tests;

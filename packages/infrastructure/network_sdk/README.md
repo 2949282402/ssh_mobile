@@ -1,4 +1,4 @@
-最新更新时间：2026-08-12
+最新更新时间：2026-08-21
 
 # network_sdk
 
@@ -41,6 +41,11 @@ session state，未解码的视频帧和音频设备能力保持 unavailable，�
 泄漏给 Feature。`start()`/`stop()` 的 Future 等待 App Shell 关联到
 `NativeCommandResultEvent` 的命令完成；队列入列成功不会被当作操作完成，且 stop
 只有在 native `closed` 状态事件到达后才把 session 状态置为 `stopped`。
+
+Network V2 的命令边界按功能域提供 Connection、Identity、Transfer、Realtime 和
+Relay lifecycle ports；`NetworkV2FacadeImpl` 只编排这些 port，不拥有注入的
+`NetworkV2CommandPort`。Facade `dispose()` 只释放自身状态，App/native owner
+仍负责 command port 的 stop/dispose。
 
 开发阶段的旧网络类型别名也集中在本包中；Feature 必须直接导入
 `package:network_sdk/network_sdk.dart`，不得再创建或导出本地

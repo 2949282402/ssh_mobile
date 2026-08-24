@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-24
 
 # feature_ai 维护约束
 
@@ -29,6 +29,10 @@ AI 只依赖 `app_core`、`app_ui`、`connection_core`、`ssh_core` 和显式的
 `AiModule` 负责 AI 数据库和 Repository；Route Scope 负责 Chat/Skills ViewModel、
 Stream、Timer 和 Controller。App Shell 注入的 SSH、WebView、日志和数据保护资源
 仍由各自 App Scope Owner 释放。
+
+Tool loop 的 preflight、预算审计和结果折叠是独立安全 Owner：隐藏工具必须在预算、
+审批、cache 和执行前被 preflight 拒绝；顺序与并行路径必须共用 result recorder；
+预算审计统一通过 budget coordinator 封禁剩余调用。不得把这些规则复制回 round loop。
 
 ## 必须运行的测试
 

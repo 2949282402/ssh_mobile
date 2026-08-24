@@ -420,36 +420,5 @@ fn rtc_error(error: impl std::fmt::Display) -> WebRtcError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn peer_offer_contains_media_and_data_sections() {
-        let mut peer = WebRtcPeer::new(WebRtcConfig::default()).unwrap();
-        peer.add_media_transceiver(MediaKind::Audio, MediaDirection::Recvonly, None)
-            .unwrap();
-        peer.add_media_transceiver(MediaKind::Video, MediaDirection::Recvonly, None)
-            .unwrap();
-        peer.create_data_channel("control", DataChannelReliability::default())
-            .unwrap();
-
-        let offer = peer.create_offer().unwrap();
-        assert_eq!(offer.kind, DescriptionType::Offer);
-        assert!(offer.sdp.contains("m=audio"));
-        assert!(offer.sdp.contains("m=video"));
-        assert!(offer.sdp.contains("m=application"));
-        assert_eq!(peer.signaling_state(), SignalingState::LocalOffer);
-    }
-
-    #[test]
-    fn invalid_data_channel_payload_is_rejected_before_rtc() {
-        let mut peer = WebRtcPeer::new(WebRtcConfig::default()).unwrap();
-        let channel = peer
-            .create_data_channel("control", DataChannelReliability::default())
-            .unwrap();
-        assert!(peer.send_data(channel, &[]).is_err());
-        assert!(peer
-            .send_data(channel, &[0; MAX_DATA_CHANNEL_PAYLOAD_BYTES + 1])
-            .is_err());
-    }
-}
+#[path = "tests/peer.rs"]
+mod tests;

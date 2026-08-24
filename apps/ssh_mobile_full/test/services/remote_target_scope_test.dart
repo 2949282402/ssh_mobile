@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -434,8 +432,8 @@ void main() {
           updatedAt: createdAt,
         );
         await storage.savePlaybook(original);
-        final fingerprint = _playbookActionFingerprint(original);
-        final executionState = original.copyWith(
+        final approved = (await storage.loadPlaybooks()).single;
+        final executionState = approved.copyWith(
           steps: [
             original.steps.single.copyWith(
               status: StepStatus.success,
@@ -448,28 +446,29 @@ void main() {
         );
 
         expect(
-          await storage.savePlaybookIfActionUnchanged(
+          await storage.savePlaybookIfRevisionMatches(
             playbookId: original.id,
-            expectedActionFingerprint: fingerprint,
+            expectedRevision: approved.revision,
             playbook: executionState,
           ),
-          isTrue,
+          approved.revision + 1,
         );
 
+        final executionRevision = approved.revision + 1;
         final edited = executionState.copyWith(
           steps: [executionState.steps.single.copyWith(command: 'id')],
           updatedAt: createdAt.add(const Duration(seconds: 2)),
         );
         await storage.savePlaybook(edited);
         expect(
-          await storage.savePlaybookIfActionUnchanged(
+          await storage.savePlaybookIfRevisionMatches(
             playbookId: original.id,
-            expectedActionFingerprint: fingerprint,
+            expectedRevision: executionRevision,
             playbook: executionState.copyWith(
               updatedAt: createdAt.add(const Duration(seconds: 3)),
             ),
           ),
-          isFalse,
+          isNull,
         );
         expect(
           (await storage.loadPlaybooks()).single.steps.single.command,
@@ -516,23 +515,4 @@ ConnectionConfig _connection({
     jumpUsername: jumpUsername,
     updatedAt: updatedAt,
   );
-}
-
-String _playbookActionFingerprint(Playbook playbook) {
-  return jsonEncode({
-    'id': playbook.id,
-    'name': playbook.name,
-    'description': playbook.description,
-    'steps': playbook.steps
-        .map(
-          (step) => {
-            'id': step.id,
-            'name': step.name,
-            'command': step.command,
-            'description': step.description,
-            'expectedOutcomeRegex': step.expectedOutcomeRegex,
-          },
-        )
-        .toList(growable: false),
-  });
 }

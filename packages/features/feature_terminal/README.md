@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-24
 
 # feature_terminal
 
@@ -26,11 +26,18 @@ Feature；App 通过公开 Port 提供兼容适配器。旧 App 路径在迁移�
 服务也已迁入本包，并由 App Shell 的 SSH Owner 注入数据保护与日志 Port。App
 组合根只保留终端元数据的显式兼容适配器，不再通过统一存储门面双写/读取。
 
+历史加载期间的实时输出和渲染背压队列均使用保留最新尾部的 UTF-16 安全有界
+buffer，单个超大事件也不能绕过 200,000 字符上限。旧明文历史按 32 KiB 字符块
+流式加密到同文件系统临时文件，完整 flush 后才原子替换原文件。
+
 ## 生命周期
 
 `TerminalModule` 负责打开和关闭 `terminal.db`。Route Scope 负责创建页面
 ViewModel；ViewModel 只拥有页面内 Controller、Subscription 和 Timer，不能
 关闭 App Scope SSH Manager。
+
+Module 初始化与销毁按 generation 串行收敛；销毁开始后，迟到 initializer 关闭
+自己的局部数据库，不能重新发布 Repository、恢复 active 状态或复活已释放 Module。
 
 ## Package contract
 

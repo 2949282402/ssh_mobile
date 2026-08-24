@@ -1,4 +1,4 @@
-// v1 原生网络 FFI 事件缓冲区声明。
+// Network Protocol V2 原生网络 FFI 事件缓冲区声明。
 
 import 'dart:ffi';
 

@@ -101,6 +101,12 @@ final class AppMonitoringConnectionCatalogAdapter
   final connection_core.ConnectionRepository _repository;
 
   @override
+  ssh_core.SshTargetBinding? targetBindingFor(String connectionId) {
+    final config = _repository.getConnection(connectionId);
+    return config == null ? null : ssh_core.SshTargetBinding.fromConfig(config);
+  }
+
+  @override
   connection_core.ServerPlatform? serverPlatformFor(String connectionId) =>
       _repository.getConnection(connectionId)?.serverPlatform;
 }

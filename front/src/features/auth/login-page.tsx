@@ -20,7 +20,7 @@ export function LoginPage({
   const [error, setError] = useState(initialError ?? '');
   const toast = useToast();
   useEffect(() => {
-    if (initialError) setError(initialError);
+    setError(initialError ?? '');
   }, [initialError]);
   const loginMutation = useMutation({
     mutationFn: () => authApi.login(username.trim(), password),
@@ -51,9 +51,9 @@ export function LoginPage({
       <section className="login-visual">
         <div className="login-visual__brand"><BrandMark /><span>SSH MOBILE / RELAY</span></div>
         <div className="login-visual__copy">
-          <p className="eyebrow">Memory-only control plane</p>
+          <p className="eyebrow">Relay administration</p>
           <h1>Keep every relay<br /><em>signal</em> in sight.</h1>
-          <p>管理设备注册、在线连接与中继会话。控制台只查看当前进程状态，不会持久化设备数据。</p>
+          <p>管理设备注册、在线连接与中继会话。数据持久化方式由 Relay 的部署配置决定。</p>
         </div>
         <SignalRail
           nodes={[
@@ -64,7 +64,7 @@ export function LoginPage({
         />
         <div className="login-visual__footer">
           <span><ShieldCheck size={15} /> HttpOnly session</span>
-          <span><Radio size={15} /> Protocol v1</span>
+          <span><Radio size={15} /> Admin API v1</span>
         </div>
       </section>
 

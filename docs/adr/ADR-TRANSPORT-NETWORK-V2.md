@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-15
+> 最新更新时间：2026-08-22
 
 # ADR-TRANSPORT-NETWORK-V2：传输网络 v2 架构（Breaking Refactor 总纲）
 
@@ -18,7 +18,9 @@ interlocked machine: a presence change cascades into discovery cache, candidate,
 path, session, reconnect, and route-migration changes. The Main 基线版 design
 (「SSH_Mobile 传输网络架构重构设计 Main 基线版」, 2026-08-15) classifies this as a
 breaking refactor: we stop maintaining "一个永远正确的远端网络状态", and instead
-**真正要通信时重新向服务器解析当前状态，然后建立一次新的连接**.
+**真正要通信时重新向服务器解析当前状态，然后建立一次新的连接**；已经
+authenticated 且仍由路径 owner 判定健康、capability-compatible 的现有 path
+可以在控制面之前复用，不发送无主的 target-less Offer。
 
 This ADR is the top-level decision. It does not repeat the per-subject details;
 the four companion ADRs (Discovery, Connection Lifecycle, Business Recovery,
@@ -30,7 +32,8 @@ Relay Data Plane) hold those decisions.
 
 ```text
 Presence Push is advisory.         Presence 推送只是 UI 提示。
-Resolve/Lookup is authoritative.   建立/重建连接前必须查询服务器。
+Resolve/Lookup is authoritative.   新建/替换连接前必须查询服务器；健康现有 path
+                                   的复用由物理路径 owner 判定。
 Transport Connection is disposable.网络连接本身允许直接废弃重建。
 Business state is resumable when necessary. 只有真正需要连续性的业务状态才恢复。
 ```
@@ -49,6 +52,30 @@ Every implementation step must obey these four rules. In particular:
 - Business continuity (file transfer, reliable message, Delivery) is owned
   above the transport and resumed across fresh connections by business identity
   (`transfer_id` / `MessageId`).
+
+### Implementation ownership closeout
+
+The current implementation makes the four principles executable rather than
+descriptive:
+
+- `PeerSupervisor` is the sole mutable Peer connectivity/lifecycle owner and
+  receives transport-loss reports through its generation-guarded mailbox.
+- `PeerPathManager` owns the Direct and Relay `PhysicalPath` carriers. A
+  `PathHandle` is non-owning; business operations acquire and release a
+  `PathLease`, and normal drain is distinct from hard close/security revoke.
+- `ConnectionSessionStore` stores only connection identity, remote binding,
+  admission winner state, and security decisions. It does not expose route,
+  carrier, Relay-data, Peer lifecycle, or capability-union state.
+- Delivery, Transfer, ReliableStream, SSH, and Realtime use the path owner for
+  transport selection. Transport loss destroys the ConnectionSession; only
+  Delivery/Transfer business identities may resume on a fresh connection.
+- `E2eePolicy::Required` installs a fresh application root after authenticated
+  Noise/path admission. `E2eePolicy::Disabled` is identity-only Direct and
+  cannot open a Relay path or create application crypto context.
+- Stage A is cache/configured Direct only; Stage B is authoritative
+  Resolve→Offer with a fixed four-second Direct window; Stage C reserves Relay
+  only after `READY`, Direct failure, capability compatibility, Required E2EE,
+  and remaining budget.
 
 ### Naming scheme for generation / epoch / revision
 
@@ -115,10 +142,16 @@ Redis 仍是共享 live state 层（其键结构天然支持跨实例 presence/d
 
 ## Verification
 
-按 Main 基线版 §41 验收清单执行，至少覆盖：每次建连前 Resolve、Presence 只
+按 Main 基线版 §41 验收清单执行，至少覆盖：新建/替换连接前 Resolve、健康现有
+path 复用时控制面零调用、Presence 只
 用于 UI Hint、Presence Event 无权修改 ConnectivityAttempt、Discovery 使用
 runtime_epoch + revision 且有 ACK、Resolve 四态、Candidate 完全 attempt
 scoped、PathManager 不保存远端长期 Discovery Truth、Direct First 固定 4s、
 Control/Relay Data 物理分离、ConnectionSession 与 Transport 同生命周期、
-Delivery/Transfer 自行恢复、SSH/WebRTC 新建 Session、Relay→Direct 后台升级
-移除，以及 Rust / Go / Dart / Flutter 测试全部通过。
+Delivery/Transfer 自行恢复、SSH/WebRTC 新建 Session、Relay→Direct 无触发透明
+升级移除（环境变化触发的 bounded Direct recovery 除外），以及 Rust / Go / Dart /
+Flutter 测试全部通过。当前提交的
+`protocol/contract_tests/acceptance_matrix.json` 已将 60 个案例标记为
+`covered`；本地 `scripts/network_v2_acceptance.sh strict`、Go/Dart owner
+套件、buf 和 descriptor 门禁，以及选定的 architecture/protocol/SDK CI jobs
+均已通过；完整 App/feature/设备与服务集成门禁仍由 CI 执行。

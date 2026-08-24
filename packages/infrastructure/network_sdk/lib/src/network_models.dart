@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-/// Dart、Rust、FFI、LAN 和 Relay 共享的开发阶段 v1 错误码。
+/// Dart、Rust、FFI、LAN 和 Relay 共享的 Network V2 public error codes.
 enum NetworkErrorCode {
   unspecified(0),
   invalidArgument(1),
@@ -14,7 +14,19 @@ enum NetworkErrorCode {
   ioError(10),
   cancelled(11),
   credentialExpired(12),
-  identityConflict(13);
+  identityConflict(13),
+  configuration(14),
+  securityPolicyMismatch(15),
+  relayRequiresE2ee(16),
+  peerNotReady(17),
+  resourceLimit(18),
+  lifecycle(19),
+  protocolMismatch(20),
+  staleOperation(21),
+  invalidState(22),
+  pathLost(23),
+  resumeRejected(24),
+  streamClosed(25);
 
   const NetworkErrorCode(this.wireValue);
 
@@ -29,7 +41,9 @@ extension NetworkErrorCodePolicy on NetworkErrorCode {
     NetworkErrorCode.timeout ||
     NetworkErrorCode.peerOffline ||
     NetworkErrorCode.noRoute ||
-    NetworkErrorCode.relayError => true,
+    NetworkErrorCode.relayError ||
+    NetworkErrorCode.pathLost ||
+    NetworkErrorCode.peerNotReady => true,
     _ => false,
   };
 }
@@ -37,7 +51,7 @@ extension NetworkErrorCodePolicy on NetworkErrorCode {
 /// 传输网络 v2 的五种业务通信类别（设计文档 §16/§17）。
 ///
 /// 业务只能通过 [CommunicationClass] 表达通信语义，不能直接指定 QUIC/TCP/UDP
-/// 等具体传输。每个类别映射到现有 native command/event tag；当前 native v1
+/// 等具体传输。每个类别映射到现有 Network Protocol V2 command/event tag；当前 V2
 /// 契约不新增 tag（SSH 流与消息通道 tag 由 WS-E 在并行工作流落地）。
 /// [wireValue] 镜像 network-protocol crate `CommunicationClass` 的 prost 枚举值。
 enum CommunicationClass {

@@ -70,3 +70,7 @@ pub struct ResumeRequest {
     pub transfer_id: String,
     pub offset: u64,
 }
+
+#[cfg(test)]
+#[path = "tests/manifest.rs"]
+mod tests;

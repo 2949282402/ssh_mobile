@@ -1,6 +1,6 @@
 // 网络运行时的安全配置。
 //
-// 这里仅保留当前 native v1 已经能够表达的开关，避免提前设计一套新的
+// 这里仅保留当前 Network Protocol V2 已经能够表达的开关，避免提前设计一套新的
 // 协议配置系统；未来协议实现可以在不改变 NetworkRuntime 合约的前提下扩展。
 
 import '../runtime/network_capability.dart';
@@ -9,7 +9,7 @@ import '../runtime/network_capability.dart';
 final class NetworkConfig {
   /// 创建默认网络配置。
   ///
-  /// Native runtime、QUIC、WSS Relay 和 Realtime 是当前 native v1 已存在的
+  /// Native runtime、QUIC、WSS Relay 和 Realtime 是当前 Network Protocol V2 已存在的
   /// 能力；TCP/UDP 在当前 Step 仍明确返回 unsupported，不通过默认配置伪造支持。
   const NetworkConfig({
     this.enableQuic = true,

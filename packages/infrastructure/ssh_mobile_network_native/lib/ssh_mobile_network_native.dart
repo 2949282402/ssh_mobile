@@ -1,6 +1,8 @@
-// ssh_mobile_network_native package 的 v1 Dart 绑定与生命周期封装。
+// ssh_mobile_network_native package 的 Network Protocol V2 Dart 绑定与
+// 生命周期封装。
 // 网络状态由 Rust 运行时拥有；Dart 只提交命令并轮询类型化线协议事件。
 
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:typed_data';
 
@@ -12,9 +14,11 @@ import 'src/network_native_isolate.dart';
 export 'src/native_operation_status.dart';
 export 'src/native_realtime_protocol.dart';
 
+enum _NativeRuntimeLifecycle { running, stopping, stopped, destroyed }
+
 /// ssh_mobile_network_native 的 C ABI FFI 绑定。
 
-/// 返回原生库导出的 v1 ABI 版本。
+/// 返回原生库导出的独立 C ABI 版本。
 @Native<Uint32 Function()>(symbol: 'ssh_net_abi_version')
 external int _sshNetAbiVersionNative();
 
@@ -65,9 +69,24 @@ class SshMobileNetworkNative {
         _sshNetRuntimeStartNative(handle),
       );
       if (!startResult.isSuccess) {
-        NativeOperationStatus.fromNativeCode(
+        final stopResult = NativeOperationStatus.fromNativeCode(
+          _sshNetRuntimeStopNative(handle),
+        );
+        if (!stopResult.isSuccess) {
+          throw StateError(
+            'Native network runtime start failed (${startResult.name}); '
+            'cleanup stop failed (${stopResult.name}), handle was not destroyed.',
+          );
+        }
+        final destroyResult = NativeOperationStatus.fromNativeCode(
           _sshNetRuntimeDestroyNative(handle),
         );
+        if (!destroyResult.isSuccess) {
+          throw StateError(
+            'Native network runtime start failed (${startResult.name}); '
+            'cleanup destroy failed (${destroyResult.name}).',
+          );
+        }
         throw StateError(
           'Native network runtime start failed (${startResult.name}).',
         );
@@ -75,12 +94,30 @@ class SshMobileNetworkNative {
       final poller = NetworkNativeIsolate(handle);
       try {
         await poller.startPolling();
-      } catch (_) {
-        NativeOperationStatus.fromNativeCode(_sshNetRuntimeStopNative(handle));
-        NativeOperationStatus.fromNativeCode(
+      } catch (error, stackTrace) {
+        // The poller must confirm isolate exit before either native lifecycle
+        // call. If that confirmation fails, do not risk destroying a handle
+        // that the worker may still be using.
+        await poller.stop();
+        final stopResult = NativeOperationStatus.fromNativeCode(
+          _sshNetRuntimeStopNative(handle),
+        );
+        if (!stopResult.isSuccess) {
+          throw StateError(
+            'Native network runtime startup cleanup stop failed '
+            '(${stopResult.name}); handle was not destroyed.',
+          );
+        }
+        final destroyResult = NativeOperationStatus.fromNativeCode(
           _sshNetRuntimeDestroyNative(handle),
         );
-        rethrow;
+        if (!destroyResult.isSuccess) {
+          throw StateError(
+            'Native network runtime startup cleanup destroy failed '
+            '(${destroyResult.name}).',
+          );
+        }
+        Error.throwWithStackTrace(error, stackTrace);
       }
       return NativeNetworkRuntime._(handle, poller);
     } finally {
@@ -97,9 +134,11 @@ class NativeNetworkRuntime {
   Pointer<Void> _handle;
   final NetworkNativeIsolate _poller;
   int _commandSequence = 0;
-  bool _stopped = false;
+  _NativeRuntimeLifecycle _lifecycle = _NativeRuntimeLifecycle.running;
+  Future<NativeOperationStatus>? _stopFuture;
+  Future<void>? _disposeFuture;
 
-  /// 发布 helper isolate 收到的原始 v1 事件帧。
+  /// 发布 helper isolate 收到的原始 Network Protocol V2 事件帧。
   Stream<Uint8List> get rawEvents => _poller.rawEvents;
 
   /// Typed native command/event stream. Unknown future events are ignored by
@@ -114,15 +153,94 @@ class NativeNetworkRuntime {
   /// 该 getter 仅用于受控集成测试和诊断，不是 NetworkService、Feature 或
   /// 客户端业务 API。runtime 尚未配置监听地址或已经停止时返回 `null`。
   int? get boundLocalPort {
-    if (_handle == nullptr || _stopped) return null;
+    if (_handle == nullptr || _lifecycle != _NativeRuntimeLifecycle.running) {
+      return null;
+    }
     final port = _sshNetRuntimeLocalPortNative(_handle);
     return port > 0 ? port : null;
   }
 
   /// 向原生运行时提交一个已编码命令。
   NativeOperationStatus sendCommand(Uint8List command) {
-    if (_handle == nullptr || _stopped) return NativeOperationStatus.stopped;
+    if (_handle == nullptr || _lifecycle != _NativeRuntimeLifecycle.running) {
+      return NativeOperationStatus.stopped;
+    }
     return _poller.sendCommand(command);
+  }
+
+  /// Queues an explicit V2 peer configuration without exposing native state.
+  NativeOperationStatus upsertPeerV2(NativePeerConfig config) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.upsertPeerV2Command(
+          commandId: _nextCommandId('peer-upsert-v2'),
+          config: config,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
+  }
+
+  NativeOperationStatus removePeerV2({required String peerId}) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.removePeerCommand(
+          commandId: _nextCommandId('peer-remove-v2'),
+          peerId: peerId,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
+  }
+
+  NativeOperationStatus sendMessageV2({
+    required String peerId,
+    required String messageId,
+    required String channelId,
+    required Uint8List payload,
+    int deliveryPolicy = 2,
+    NativeE2eePolicy e2eePolicy = NativeE2eePolicy.required,
+  }) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.sendMessageV2Command(
+          commandId: _nextCommandId('message-v2'),
+          peerId: peerId,
+          messageId: messageId,
+          channelId: channelId,
+          payload: payload,
+          deliveryPolicy: deliveryPolicy,
+          e2eePolicy: e2eePolicy,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
+  }
+
+  NativeOperationStatus transferV2({
+    required String peerId,
+    required String transferId,
+    required String filePath,
+    int confirmedOffset = 0,
+    bool resume = false,
+  }) {
+    try {
+      return sendCommand(
+        NativeNetworkProtocol.transferCommand(
+          commandId: _nextCommandId('transfer-v2'),
+          peerId: peerId,
+          transferId: transferId,
+          filePath: filePath,
+          confirmedOffset: confirmedOffset,
+          resume: resume,
+        ),
+      );
+    } on ArgumentError {
+      return NativeOperationStatus.invalidArgument;
+    }
   }
 
   /// Starts a Session-owned WebRTC Realtime route.
@@ -182,24 +300,76 @@ class NativeNetworkRuntime {
   }
 
   /// 在停止原生运行时前停止 helper isolate。
-  Future<NativeOperationStatus> stop() async {
-    if (_handle == nullptr || _stopped) return NativeOperationStatus.success;
-    _stopped = true;
-    await _poller.stop();
-    return NativeOperationStatus.fromNativeCode(
-      _sshNetRuntimeStopNative(_handle),
+  Future<NativeOperationStatus> stop() {
+    if (_lifecycle == _NativeRuntimeLifecycle.destroyed ||
+        _lifecycle == _NativeRuntimeLifecycle.stopped) {
+      return Future<NativeOperationStatus>.value(NativeOperationStatus.success);
+    }
+    final inFlight = _stopFuture;
+    if (inFlight != null) return inFlight;
+    _lifecycle = _NativeRuntimeLifecycle.stopping;
+    final future = _stopInternal();
+    _stopFuture = future;
+    unawaited(
+      future.then<void>(
+        (_) {
+          if (identical(_stopFuture, future)) _stopFuture = null;
+        },
+        onError: (Object _, StackTrace _) {
+          if (identical(_stopFuture, future)) _stopFuture = null;
+        },
+      ),
     );
+    return future;
   }
 
   /// 恰好执行一次运行时停止和销毁。
-  Future<void> dispose() async {
+  Future<void> dispose() {
+    if (_lifecycle == _NativeRuntimeLifecycle.destroyed) {
+      return Future<void>.value();
+    }
+    final inFlight = _disposeFuture;
+    if (inFlight != null) return inFlight;
+    final future = _disposeInternal();
+    _disposeFuture = future;
+    unawaited(
+      future.then<void>(
+        (_) {
+          if (identical(_disposeFuture, future)) _disposeFuture = null;
+        },
+        onError: (Object _, StackTrace _) {
+          if (identical(_disposeFuture, future)) _disposeFuture = null;
+        },
+      ),
+    );
+    return future;
+  }
+
+  Future<NativeOperationStatus> _stopInternal() async {
+    await _poller.stop();
     final handle = _handle;
-    if (handle == nullptr) return;
+    if (handle == nullptr) {
+      _lifecycle = _NativeRuntimeLifecycle.destroyed;
+      return NativeOperationStatus.success;
+    }
+    final result = NativeOperationStatus.fromNativeCode(
+      _sshNetRuntimeStopNative(handle),
+    );
+    if (result.isSuccess) _lifecycle = _NativeRuntimeLifecycle.stopped;
+    return result;
+  }
+
+  Future<void> _disposeInternal() async {
     final stopResult = await stop();
-    _handle = nullptr;
     if (!stopResult.isSuccess) {
       throw StateError(
         'Native network runtime stop failed (${stopResult.name}).',
+      );
+    }
+    final handle = _handle;
+    if (handle == nullptr) {
+      throw StateError(
+        'Native network runtime handle disappeared before destroy.',
       );
     }
     final result = NativeOperationStatus.fromNativeCode(
@@ -210,6 +380,8 @@ class NativeNetworkRuntime {
         'Native network runtime destroy failed (${result.name}).',
       );
     }
+    _handle = nullptr;
+    _lifecycle = _NativeRuntimeLifecycle.destroyed;
   }
 
   String _nextCommandId(String operation) {

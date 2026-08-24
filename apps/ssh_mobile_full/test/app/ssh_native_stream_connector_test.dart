@@ -15,6 +15,7 @@ void main() {
         final gateway = _FakeGateway();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
         );
 
         final stream = await connector.open(peerId: 'peer-a');
@@ -29,14 +30,37 @@ void main() {
         stream.done.then((_) => done.add('done'));
 
         // 推送 SshStreamDataReceived（tag 26）。
-        gateway.push(_dataFrame(eventId: 'e1', peerId: 'peer-a', streamId: 1));
+        gateway.push(
+          _dataFrame(
+            eventId: 'e1-ambiguous',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-b',
+            streamId: 1,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(received, isEmpty);
+
+        gateway.push(
+          _dataFrame(
+            eventId: 'e1',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 1,
+          ),
+        );
         await Future<void>.delayed(Duration.zero);
         expect(received, hasLength(1));
         expect(received[0], orderedEquals([0x01, 0x02, 0x03]));
 
         // 推送 SshStreamClosed（tag 27），done 完成且流被移除。
         gateway.push(
-          _closedFrame(eventId: 'e2', peerId: 'peer-a', streamId: 1),
+          _closedFrame(
+            eventId: 'e2',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 1,
+          ),
         );
         await stream.done;
         expect(done, ['done']);
@@ -53,6 +77,7 @@ void main() {
         final gateway = _FakeGateway();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
         );
         final stream = await connector.open(peerId: 'peer-a');
         gateway.commands.clear();
@@ -74,6 +99,7 @@ void main() {
       final gateway = _FakeGateway();
       final connector = AppSshNativeStreamConnector(
         gatewayProvider: () async => gateway,
+        openerDeviceIdProvider: () async => 'device-a',
       );
       final stream = await connector.open(peerId: 'peer-a');
       final doneFuture = stream.done.then((_) {});
@@ -92,6 +118,7 @@ void main() {
         final gateway = _FakeGateway();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
         );
         final stream = await connector.open(peerId: 'peer-a');
         expect(connector.activeStreamCount, 1);
@@ -135,6 +162,7 @@ void main() {
         final gateway = _FakeGateway();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
         );
         final stream = await connector.open(peerId: 'peer-a');
         final openCommandId = _commandIdOf(gateway.commands.first);
@@ -152,7 +180,14 @@ void main() {
 
         final received = <Uint8List>[];
         final subscription = stream.incoming.listen(received.add);
-        gateway.push(_dataFrame(eventId: 'e4', peerId: 'peer-a', streamId: 1));
+        gateway.push(
+          _dataFrame(
+            eventId: 'e4',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 1,
+          ),
+        );
         await Future<void>.delayed(Duration.zero);
         expect(received, hasLength(1));
 
@@ -167,6 +202,7 @@ void main() {
         final gateway = _FakeGateway();
         final connector = AppSshNativeStreamConnector(
           gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
         );
         final stream = await connector.open(peerId: 'peer-a');
         gateway.commands.clear();
@@ -189,16 +225,85 @@ void main() {
         );
         expect(doneErrors, hasLength(1));
         expect(errors, hasLength(1));
+        expect(connector.activeStreamCount, 0);
 
         await incomingSubscription.cancel();
         await connector.closeAll();
       },
     );
 
+    test(
+      'late opener completion cannot register a stream after closeAll',
+      () async {
+        final opener = Completer<String>();
+        final gateway = _FakeGateway();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () => opener.future,
+        );
+
+        final openFuture = connector.open(peerId: 'peer-a');
+        final expectation = expectLater(openFuture, throwsA(isA<StateError>()));
+        await Future<void>.delayed(Duration.zero);
+        await connector.closeAll();
+        opener.complete('device-a');
+
+        await expectation;
+        expect(connector.activeStreamCount, 0);
+        expect(gateway.commands, isEmpty);
+      },
+    );
+
+    test(
+      'late gateway completion cannot register a stream after closeAll',
+      () async {
+        final gatewayFuture = Completer<NetworkCommandGateway>();
+        final gateway = _FakeGateway();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () => gatewayFuture.future,
+          openerDeviceIdProvider: () async => 'device-a',
+        );
+
+        final openFuture = connector.open(peerId: 'peer-a');
+        final expectation = expectLater(openFuture, throwsA(isA<StateError>()));
+        await Future<void>.delayed(Duration.zero);
+        await connector.closeAll();
+        gatewayFuture.complete(gateway);
+
+        await expectation;
+        expect(connector.activeStreamCount, 0);
+        expect(gateway.commands, isEmpty);
+      },
+    );
+
+    test('failed opener identity lookup can be retried', () async {
+      final gateway = _FakeGateway();
+      var attempts = 0;
+      final connector = AppSshNativeStreamConnector(
+        gatewayProvider: () async => gateway,
+        openerDeviceIdProvider: () async {
+          attempts++;
+          if (attempts == 1) {
+            throw StateError('identity temporarily unavailable');
+          }
+          return 'device-a';
+        },
+      );
+
+      await expectLater(connector.open(peerId: 'peer-a'), throwsStateError);
+      final stream = await connector.open(peerId: 'peer-a');
+
+      expect(attempts, 2);
+      expect(connector.activeStreamCount, 1);
+      await stream.close();
+      await connector.closeAll();
+    });
+
     test('send throws after the connector is closed', () async {
       final gateway = _FakeGateway();
       final connector = AppSshNativeStreamConnector(
         gatewayProvider: () async => gateway,
+        openerDeviceIdProvider: () async => 'device-a',
       );
       final stream = await connector.open(peerId: 'peer-a');
 
@@ -209,6 +314,69 @@ void main() {
         throwsA(isA<StateError>()),
       );
     });
+
+    test(
+      'wraps stream IDs, skips occupied handles, and fails when exhausted',
+      () async {
+        final gateway = _FakeGateway();
+        final connector = AppSshNativeStreamConnector(
+          gatewayProvider: () async => gateway,
+          openerDeviceIdProvider: () async => 'device-a',
+        );
+
+        final firstStream = await connector.open(peerId: 'peer-a');
+        final occupiedSecondStream = await connector.open(peerId: 'peer-a');
+        for (var streamId = 3; streamId <= 0xffff; streamId++) {
+          await connector.open(peerId: 'peer-a');
+        }
+        expect(connector.activeStreamCount, 0xffff);
+
+        await expectLater(
+          connector.open(peerId: 'peer-a'),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              contains('namespace is exhausted'),
+            ),
+          ),
+        );
+
+        await occupiedSecondStream.close();
+        final wrappedStream = await connector.open(peerId: 'peer-a');
+        expect(connector.activeStreamCount, 0xffff);
+
+        final firstData = <Uint8List>[];
+        final wrappedData = <Uint8List>[];
+        final firstSubscription = firstStream.incoming.listen(firstData.add);
+        final wrappedSubscription = wrappedStream.incoming.listen(
+          wrappedData.add,
+        );
+        gateway.push(
+          _dataFrame(
+            eventId: 'wrapped-first',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 1,
+          ),
+        );
+        gateway.push(
+          _dataFrame(
+            eventId: 'wrapped-second',
+            peerId: 'peer-a',
+            openerDeviceId: 'device-a',
+            streamId: 2,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(firstData, hasLength(1));
+        expect(wrappedData, hasLength(1));
+
+        await firstSubscription.cancel();
+        await wrappedSubscription.cancel();
+        await connector.closeAll();
+      },
+    );
   });
 }
 
@@ -216,11 +384,15 @@ void main() {
 Uint8List _dataFrame({
   required String eventId,
   required String peerId,
+  required String openerDeviceId,
   required int streamId,
 }) {
   final payload = <int>[
     ..._stringField(1, peerId),
-    ..._varintField(2, streamId),
+    ..._messageField(2, <int>[
+      ..._stringField(1, openerDeviceId),
+      ..._varintField(2, streamId),
+    ]),
     0x1a,
     0x03,
     0x01,
@@ -285,11 +457,15 @@ String _commandIdOf(Uint8List command) {
 Uint8List _closedFrame({
   required String eventId,
   required String peerId,
+  required String openerDeviceId,
   required int streamId,
 }) {
   final payload = <int>[
     ..._stringField(1, peerId),
-    ..._varintField(2, streamId),
+    ..._messageField(2, <int>[
+      ..._stringField(1, openerDeviceId),
+      ..._varintField(2, streamId),
+    ]),
   ];
   return _eventFrame(eventId, 27, payload);
 }
@@ -300,7 +476,7 @@ Uint8List _eventFrame(String eventId, int field, List<int> payload) {
     0x10,
     0x01, // timestamp_ms = 1
     0x18,
-    0x01, // protocol_version = 1
+    0x02, // protocol_version = 2
     ..._varint(field << 3 | 2),
     ..._varint(payload.length),
     ...payload,

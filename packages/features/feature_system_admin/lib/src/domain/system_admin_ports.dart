@@ -100,20 +100,152 @@ abstract interface class SystemAdminSettingsPort implements Listenable {
   SystemAdminStrings get strings;
 }
 
-/// 管理会话中的一次性命令执行能力。
-abstract interface class SystemAdminSshSessionPort {
-  Future<RemoteCommandResult> run(String command, {required Duration timeout});
+/// System Admin 允许执行的远端命令快照。
+///
+/// 动态参数只能通过 [argv] 提供，App adapter 负责逐项安全编码。只有完全由
+/// Feature 持有、没有动态输入的脚本才可使用 [shell]。敏感输入只存在于
+/// [standardInputBytes]，不得复制到命令文本、日志或异常。
+final class SystemAdminCommand {
+  SystemAdminCommand._({
+    required this.executable,
+    required List<String> arguments,
+    required this.shellScript,
+    required Uint8List? standardInputBytes,
+  }) : arguments = List<String>.unmodifiable(arguments),
+       _standardInputBytes = standardInputBytes == null
+           ? null
+           : Uint8List.fromList(standardInputBytes);
+
+  /// 所有 stdout/stderr 合计的统一硬上限。
+  static const int maxOutputBytes = 2 * 1024 * 1024;
+
+  /// stdin 的硬上限；当前只用于 `chpasswd` 的单条受控记录。
+  static const int maxInputBytes = 16 * 1024;
+
+  /// 创建 argv 命令；参数不会经过 shell 拼接。
+  factory SystemAdminCommand.argv(
+    String executable, {
+    List<String> arguments = const <String>[],
+    Uint8List? standardInputBytes,
+  }) {
+    if (executable.trim().isEmpty) {
+      throw ArgumentError.value(executable, 'executable', 'must not be empty');
+    }
+    if (standardInputBytes != null &&
+        standardInputBytes.length > maxInputBytes) {
+      throw ArgumentError.value(
+        standardInputBytes.length,
+        'standardInputBytes',
+        'exceeds the System Admin input limit',
+      );
+    }
+    return SystemAdminCommand._(
+      executable: executable,
+      arguments: arguments,
+      shellScript: null,
+      standardInputBytes: standardInputBytes,
+    );
+  }
+
+  /// 创建没有任何动态输入的固定 shell 脚本。
+  factory SystemAdminCommand.shell(String script) {
+    if (script.trim().isEmpty) {
+      throw ArgumentError.value(script, 'script', 'must not be empty');
+    }
+    return SystemAdminCommand._(
+      executable: null,
+      arguments: const <String>[],
+      shellScript: script,
+      standardInputBytes: null,
+    );
+  }
+
+  final String? executable;
+  final List<String> arguments;
+  final String? shellScript;
+  final Uint8List? _standardInputBytes;
+
+  /// 返回 stdin 的短生命周期副本，避免调用方修改命令快照。
+  Uint8List? get standardInputBytes {
+    final bytes = _standardInputBytes;
+    return bytes == null ? null : Uint8List.fromList(bytes);
+  }
+}
+
+/// 远端输出超过统一上限时返回的稳定错误；不包含远端输出或命令文本。
+final class SystemAdminOutputLimitException implements Exception {
+  const SystemAdminOutputLimitException({required this.maxBytes});
+
+  final int maxBytes;
+
+  @override
+  String toString() =>
+      'System Admin command output exceeded the $maxBytes-byte limit.';
+}
+
+/// 管理命令在统一 deadline 内未完成时返回的稳定错误。
+final class SystemAdminCommandTimeoutException implements Exception {
+  const SystemAdminCommandTimeoutException();
+
+  @override
+  String toString() => 'System Admin command timed out.';
+}
+
+/// 管理命令被 Route/用户取消时返回的稳定错误。
+final class SystemAdminCommandCancelledException implements Exception {
+  const SystemAdminCommandCancelledException();
+
+  @override
+  String toString() => 'System Admin command was cancelled.';
+}
+
+/// 管理 SSH 在 deadline 内未建立时返回的稳定错误。
+final class SystemAdminConnectionTimeoutException implements Exception {
+  const SystemAdminConnectionTimeoutException();
+
+  @override
+  String toString() => 'System Admin SSH acquisition timed out.';
+}
+
+/// 已通过 root 校验的不可变目标和管理会话 generation。
+final class SystemAdminSessionTarget {
+  const SystemAdminSessionTarget({
+    required this.binding,
+    required this.generation,
+  });
+
+  final SshTargetBinding binding;
+  final int generation;
+
+  String get connectionId => binding.id;
+
+  bool matches(SystemAdminSessionTarget other) =>
+      generation == other.generation &&
+      binding.fingerprint == other.binding.fingerprint;
+}
+
+/// 管理会话中的专用短生命周期 SSH Lease。
+abstract interface class SystemAdminSshLeasePort {
+  /// 实际建立并通过 Host Key 校验的不可变目标。
+  SshTargetBinding get targetBinding;
+
+  bool get isReleased;
+
+  Future<RemoteCommandResult> run(
+    SystemAdminCommand command, {
+    required Duration timeout,
+  });
 
   void cancelActiveCommands();
 
-  /// 关闭该 Feature 当前持有的管理会话。
-  void close();
+  /// 交还该 Feature 当前持有的管理 Lease；重复调用安全。
+  Future<void> release();
 }
 
 /// App Shell 提供的管理 SSH 连接能力。
 abstract interface class SystemAdminSshPort {
-  Future<SystemAdminSshSessionPort> connect(
-    String connectionId, {
+  Future<SystemAdminSshLeasePort> acquire(
+    SshTargetBinding target, {
     SshHostKeyConfirmation? onUnknownHostKey,
   });
 }

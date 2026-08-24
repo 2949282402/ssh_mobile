@@ -241,11 +241,10 @@ class McpToolHandler {
         decision: decision,
         watch: watch,
       );
-    } catch (e, stackTrace) {
+    } catch (e) {
       return _finishExecutionError(
         name: name,
         error: e,
-        stackTrace: stackTrace,
         policyReason: 'tool_execution_failed',
         watch: watch,
       );
@@ -299,11 +298,10 @@ class McpToolHandler {
         policyReason: _secondaryApprovalPolicyReason(text),
         watch: watch,
       );
-    } catch (e, stackTrace) {
+    } catch (e) {
       return _finishExecutionError(
         name: name,
         error: e,
-        stackTrace: stackTrace,
         policyReason: 'tool_execution_failed',
         watch: watch,
       );
@@ -409,15 +407,12 @@ class McpToolHandler {
   Map<String, dynamic> _finishExecutionError({
     required String name,
     required Object error,
-    required StackTrace stackTrace,
     required String policyReason,
     required Stopwatch watch,
   }) {
     logger?.error(
       'MCP tool execution failed',
-      error: error,
-      stackTrace: stackTrace,
-      details: 'tool=$name',
+      details: 'tool=$name errorType=${error.runtimeType}',
     );
     watch.stop();
     _record(
@@ -431,7 +426,7 @@ class McpToolHandler {
     return _toolError({
       'error': 'tool_execution_failed',
       'tool': name,
-      'message': error.toString(),
+      'message': 'Tool execution failed.',
     });
   }
 

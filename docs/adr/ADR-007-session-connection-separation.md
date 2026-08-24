@@ -1,6 +1,11 @@
-> 最新更新时间：2026-08-11
+> 最新更新时间：2026-08-19
 
 # ADR-007：Session 与 Connection 生命周期分离
+
+> **V2 状态**：本 ADR 保留早期 Session/Connection 分离决策的历史记录，已由
+> Network Protocol V2 的 PeerSupervisor、PeerPathManager、PathLease 与
+> ConnectionSession 生命周期契约取代。旧 `SessionManager` 命名和 v1 wire 说明
+> 不再是当前实现依据。
 
 ## 背景
 
@@ -30,4 +35,4 @@ FFI、Flutter API 与事件结构不变。自动重连和 Delivery Recovery 仍�
 
 ## 状态
 
-Accepted
+Superseded by Network Protocol V2 lifecycle contracts.

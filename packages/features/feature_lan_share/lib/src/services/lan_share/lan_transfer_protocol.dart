@@ -48,10 +48,12 @@ class LanTransferProtocolGuard {
   static const int maxPendingUploadSessions = 64;
   static const int maxPendingPairingHandshakes = 64;
   static const int maxRememberedPairingNonces = 256;
+  static const Duration requestBodyIdleTimeout = Duration(seconds: 30);
 
   final String currentDeviceId;
   final LanSecurityService securityService;
   final Map<String, LanPendingUpload> _pendingUploads = {};
+  final Map<String, LanPendingUpload> _activeUploads = {};
   final Map<String, DateTime> _lastInviteByAddress = {};
   final List<DateTime> _recentInvites = [];
   final Map<String, List<DateTime>> _pairingAttemptsByAddress = {};
@@ -79,7 +81,19 @@ class LanTransferProtocolGuard {
 
     final builder = BytesBuilder(copy: false);
     var total = 0;
-    await for (final chunk in request) {
+    await for (final chunk in request.timeout(
+      requestBodyIdleTimeout,
+      onTimeout: (sink) {
+        sink
+          ..addError(
+            const LanHttpException(
+              HttpStatus.requestTimeout,
+              'Request body timed out.',
+            ),
+          )
+          ..close();
+      },
+    )) {
       total += chunk.length;
       if (total > maxBytes) {
         throw const LanHttpException(
@@ -235,25 +249,35 @@ class LanTransferProtocolGuard {
       );
     }
     final key = _uploadKey(upload.senderDeviceId, upload.messageId);
-    if (!_pendingUploads.containsKey(key) &&
-        _pendingUploads.length >= maxPendingUploadSessions) {
+    if (_pendingUploads.containsKey(key) || _activeUploads.containsKey(key)) {
+      throw const LanHttpException(
+        HttpStatus.conflict,
+        'An upload with this ID is already pending or active.',
+      );
+    }
+    if (_pendingUploads.length + _activeUploads.length >=
+        maxPendingUploadSessions) {
       throw const LanHttpException(
         HttpStatus.tooManyRequests,
-        'Too many uploads are pending.',
+        'Too many uploads are pending or active.',
       );
     }
     _pendingUploads[key] = upload;
   }
 
-  /// 查找并校验与上传请求完全匹配的待处理会话。
-  LanPendingUpload requirePendingUpload({
+  /// 原子消费与上传请求完全匹配的待处理会话。
+  ///
+  /// 消费后会话进入 active registry，因此并发重放与重复元数据
+  /// 都会 fail closed，且 pending+active 共用同一全局上限。
+  LanPendingUpload consumePendingUpload({
     required String messageId,
     required String senderDeviceId,
     required String fileName,
     required bool encrypted,
   }) {
     _prunePendingUploads();
-    final pending = _pendingUploads[_uploadKey(senderDeviceId, messageId)];
+    final key = _uploadKey(senderDeviceId, messageId);
+    final pending = _pendingUploads[key];
     if (pending == null ||
         pending.isExpired ||
         pending.senderDeviceId != senderDeviceId ||
@@ -264,12 +288,23 @@ class LanTransferProtocolGuard {
         'No matching accepted upload was found.',
       );
     }
+    _pendingUploads.remove(key);
+    _activeUploads[key] = pending;
     return pending;
   }
 
-  /// 完成后移除一个待处理上传会话。
-  void completePendingUpload(String senderDeviceId, String messageId) {
-    _pendingUploads.remove(_uploadKey(senderDeviceId, messageId));
+  /// 仅完成与 [upload] 身份相同的 active 上传租约。
+  void completeUpload(LanPendingUpload upload) {
+    final key = _uploadKey(upload.senderDeviceId, upload.messageId);
+    if (identical(_activeUploads[key], upload)) {
+      _activeUploads.remove(key);
+    }
+  }
+
+  /// 监听器停止时释放全部尚未完成的上传租约。
+  void clearUploadSessions() {
+    _pendingUploads.clear();
+    _activeUploads.clear();
   }
 
   /// 生成发送方与消息标识组合的内存 key。

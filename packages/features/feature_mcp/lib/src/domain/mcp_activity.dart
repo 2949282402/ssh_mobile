@@ -61,11 +61,12 @@ class McpActivityRecorder {
           durationMs: durationMs,
         ),
       );
-    } catch (error, stackTrace) {
+    } catch (error) {
       logger?.error(
         'MCP activity persistence failed',
-        error: error,
-        stackTrace: stackTrace,
+        details:
+            'errorCode=activity_persistence_failed '
+            'errorType=${error.runtimeType}',
       );
     }
   }

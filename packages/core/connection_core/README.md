@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-24
 
 # connection_core
 
@@ -12,6 +12,8 @@ Connection/凭据/Host Key 公共契约，以及只保存非敏感连接结构�
   会主动排除它们。
 - `ConnectionRepository` 只管理连接结构和排序；`CredentialRepository` 只管理
   Secure Storage 中的密码、私钥；`HostKeyRepository` 只管理 Host Key 信任元数据。
+- Connection ID 必须非空且已规范化，Repository 不会静默 trim；Secure Storage
+  使用版本化、无碰撞编码键，并在首次读取时按“先写新键、再删旧键”迁移历史键。
 - `ConnectionDatabase` 是本 Package 的资源，由 AppRuntime 创建并关闭；它使用
   `connection.sqlite`，不读取或迁移旧统一业务数据库/SharedPreferences 连接数据。
 - 本 Package 不依赖任何 Feature，也不暴露 `/src/` 路径给外部调用方。

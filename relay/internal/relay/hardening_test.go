@@ -7,10 +7,15 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
+
+	"github.com/ssh-mobile/relay/internal/relay/v2"
 )
 
 func TestEnrolledDeviceLimitAllowsReplacementButRejectsNewDevice(t *testing.T) {
@@ -71,6 +76,99 @@ func TestPerDeviceByteRateLimit(t *testing.T) {
 	}
 }
 
+func TestDiscoveryPublishBudgetSurvivesConnectionReplacement(t *testing.T) {
+	hub := newHub(Config{MaxEnrolledDevices: 2})
+	defer hub.close()
+	now := time.Now()
+	for i := 0; i < int(discoveryPublishBurst); i++ {
+		if !hub.allowDiscoveryPublish("device-a", now) {
+			t.Fatalf("initial discovery burst rejected at index %d", i)
+		}
+	}
+	if hub.allowDiscoveryPublish("device-a", now) {
+		t.Fatal("discovery fan-out limiter accepted traffic beyond its burst")
+	}
+	// The key is device-scoped, so replacing a socket cannot reset the budget.
+	if hub.allowDiscoveryPublish("device-a", now) {
+		t.Fatal("same-device reconnect reset the discovery fan-out budget")
+	}
+	if !hub.allowDiscoveryPublish("device-a", now.Add(discoveryPublishRefill)) {
+		t.Fatal("discovery budget did not refill after the documented interval")
+	}
+}
+
+func TestDiscoveryPublishBudgetCapacityPrunesIdleDevices(t *testing.T) {
+	limiter := newDiscoveryFanoutLimiter(1)
+	now := time.Now()
+	if !limiter.allow("device-a", now) {
+		t.Fatal("first device was rejected")
+	}
+	if limiter.allow("device-b", now) {
+		t.Fatal("limiter admitted a second device beyond its bounded map")
+	}
+	if !limiter.allow("device-b", now.Add(discoveryBudgetRetention)) {
+		t.Fatal("idle device budget was not pruned for a new device")
+	}
+}
+
+func TestDiscoveryPublishBudgetReleasesDurablyRevokedDevice(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:      []byte("01234567890123456789012345678901"),
+		EnrollmentToken:    "test-enrollment-token",
+		MaxEnrolledDevices: 1,
+	})
+	defer server.Close()
+
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedKey := base64.RawURLEncoding.EncodeToString(publicKey)
+	if result := server.replaceEnrollment("device-a", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
+		t.Fatalf("enroll device-a: %v", result)
+	}
+	now := time.Now()
+	if !server.hub.allowDiscoveryPublish("device-a", now) {
+		t.Fatal("device-a first discovery publish was rejected")
+	}
+
+	revokeRequest := httptest.NewRequest(http.MethodPost, "/api/admin/v1/devices/device-a/revoke", nil)
+	revokeRequest.SetPathValue("deviceId", "device-a")
+	revokeResponse := httptest.NewRecorder()
+	server.adminRevokeDevice(revokeResponse, revokeRequest)
+	if revokeResponse.Code != http.StatusNoContent {
+		t.Fatalf("revoke device-a: status=%d body=%s", revokeResponse.Code, revokeResponse.Body.String())
+	}
+	if result := server.replaceEnrollment("device-b", encodedKey, "test", 1, time.Now()); result != enrollmentOK {
+		t.Fatalf("enroll device-b after revoke: %v", result)
+	}
+	if !server.hub.allowDiscoveryPublish("device-b", now) {
+		t.Fatal("device-b first discovery publish remained blocked by revoked device-a's limiter slot")
+	}
+}
+
+func TestV2QueueOverflowClosesPeerSynchronously(t *testing.T) {
+	hub := &hub{}
+	peer := &peer{
+		outbound: make(chan outboundFrame, 1),
+		done:     make(chan struct{}),
+	}
+	peer.outbound <- outboundFrame{messageType: websocket.BinaryMessage, data: []byte("occupied")}
+	hub.sendV2Frame(peer, &v2.RelayFrame{
+		Version: v2.RELAY_V2_VERSION,
+		Kind: &v2.RelayFrame_HeartbeatAck{HeartbeatAck: &v2.HeartbeatAck{
+			RequestId: 1,
+		}},
+	})
+	select {
+	case <-peer.done:
+	default:
+		t.Fatal("queue overflow returned before closing the peer")
+	}
+	// Repeated overflow/close attempts are absorbed by the peer's once gate.
+	closePeer(peer)
+}
+
 func TestAdminSessionLimitAndCleanup(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:    []byte("01234567890123456789012345678901"),
@@ -78,16 +176,19 @@ func TestAdminSessionLimitAndCleanup(t *testing.T) {
 		AdminSessionTTL:  time.Minute,
 	})
 	defer server.Close()
+	ctx := context.Background()
 
-	first, created := server.tryCreateAdminSession()
-	if !created || first == "" {
+	first, err := server.tryCreateAdminSession(ctx)
+	if err != nil || first == "" {
 		t.Fatal("first administrator session was not created")
 	}
-	if _, created = server.tryCreateAdminSession(); created {
+	if _, err = server.tryCreateAdminSession(ctx); !errors.Is(err, errAdminSessionCapacity) {
 		t.Fatal("administrator session limit was bypassed")
 	}
-	server.destroyAdminSession(first)
-	if _, created = server.tryCreateAdminSession(); !created {
+	if err := server.destroyAdminSession(ctx, first); err != nil {
+		t.Fatalf("destroy administrator session: %v", err)
+	}
+	if _, err = server.tryCreateAdminSession(ctx); err != nil {
 		t.Fatal("administrator session slot was not released")
 	}
 }
@@ -221,6 +322,34 @@ func TestAdminTokenRotationIsProcessLocalAndRestartClearsDevices(t *testing.T) {
 	deviceCount, _ := restarted.store.CountEnrollments(context.Background())
 	if deviceCount != 0 {
 		t.Fatalf("device enrollment state survived process restart: %d", deviceCount)
+	}
+}
+
+func TestAdminTokenRotationRejectsNonDurableMutationInMySQLMode(t *testing.T) {
+	const originalToken = "original-enrollment-token"
+	server := NewServer(Config{
+		StorageMode:     "mysql",
+		CredentialKey:   []byte("01234567890123456789012345678901"),
+		EnrollmentToken: originalToken,
+	})
+	defer server.Close()
+
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/v1/access/enrollment-token/rotate", nil)
+	response := httptest.NewRecorder()
+	server.adminRotateToken(response, request)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("mysql-mode rotation status=%d body=%s", response.Code, response.Body.String())
+	}
+	var failure adminErrorResponse
+	if err := json.NewDecoder(response.Body).Decode(&failure); err != nil {
+		t.Fatal(err)
+	}
+	if failure.Error.Code != adminErrorConflict {
+		t.Fatalf("mysql-mode rotation error=%+v", failure)
+	}
+	if !server.validEnrollmentToken(originalToken) {
+		t.Fatal("rejected mysql-mode rotation changed the configured token")
 	}
 }
 

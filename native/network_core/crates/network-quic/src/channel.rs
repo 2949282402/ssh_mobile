@@ -96,18 +96,5 @@ pub async fn read_channel_frame(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn channel_frame_budget_includes_a_bounded_payload() {
-        const CHANNEL_HEADER_BYTES: usize = 4 + 4 + 1 + 4;
-        assert_eq!(CHANNEL_HEADER_BYTES, 13);
-        assert_eq!(MAX_CHANNEL_FRAME_BYTES, 48 * 1024);
-        assert_eq!(
-            ChannelFrameKind::try_from(1).expect("data kind"),
-            ChannelFrameKind::DataMessage
-        );
-        assert!(ChannelFrameKind::try_from(9).is_err());
-    }
-}
+#[path = "tests/channel.rs"]
+mod tests;

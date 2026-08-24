@@ -13,6 +13,7 @@ final class SftpEntry {
   /// 创建目录条目快照。
   const SftpEntry({
     required this.connectionId,
+    required this.targetFingerprint,
     required this.name,
     required this.path,
     required this.lowerName,
@@ -25,6 +26,9 @@ final class SftpEntry {
   });
 
   final String connectionId;
+
+  /// 条目创建时的不可变远端目标指纹；操作时必须与当前 Session 完全一致。
+  final String targetFingerprint;
   final String name;
   final String path;
   final String lowerName;
@@ -34,6 +38,12 @@ final class SftpEntry {
   final String sizeLabel;
   final DateTime? modifiedAt;
   final String? modifiedLabel;
+}
+
+/// 条目创建后的连接目标已被同 ID 的新目标取代。
+final class SftpTargetChangedException extends StateError {
+  SftpTargetChangedException()
+    : super('SFTP target changed; reopen the directory before continuing.');
 }
 
 /// 远端路径元数据。

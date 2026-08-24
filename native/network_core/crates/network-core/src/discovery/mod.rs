@@ -12,11 +12,12 @@
 //!
 //! transport-network v2 之后：v1 的 `upload_discovery` 命令、`peer_presence`
 //! 处理、`lookup` 路径已在 Step 11 删除；本模块是 Discovery 生命周期唯一实现。
-//! `state.relay_control`（v2 控制面 sink）承载 DiscoveryPublish/DiscoveryAck；
+//! `state.relay.control`（v2 控制面 sink）承载 DiscoveryPublish/DiscoveryAck；
 //! 控制面未接线时 hooks 是安全的 no-op。
 
 mod local_discovery;
 mod publisher;
+mod recovery;
 pub(crate) mod resolver;
 mod snapshot;
 
@@ -27,6 +28,8 @@ use crate::runtime::RuntimeState;
 
 pub(crate) use local_discovery::LocalDiscoveryManager;
 pub(crate) use publisher::{DiscoveryControlPlane, DiscoveryPublisher};
+#[allow(unused_imports)]
+pub(crate) use recovery::{DirectRecoveryPolicy, DIRECT_RECOVERY_BASE_BACKOFF};
 use snapshot::{candidate_bundle_from_local, local_transport_capabilities};
 
 // 以下仅在测试中使用；非测试构建不引用它们（Step 6 接线 resolver 后再收紧）。
@@ -47,6 +50,18 @@ pub(crate) const DISCOVERY_PUBLISH_RETRY_BACKOFF_MS: [u64; 5] = [500, 1000, 2000
 /// 超时，这里是发布者层的双保险（timeout → 视为 ACK 丢失 → 重试）。
 pub(crate) const DISCOVERY_PUBLISH_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// The result of a local network-environment transition.  It is an
+/// invalidation/republication fact, not a disconnect instruction: callers
+/// must preserve healthy Relay/Realtime resources and let the peer owner
+/// decide which Direct probe to restart.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct EnvironmentChangeResult {
+    pub(crate) generation: u64,
+    pub(crate) has_connectivity: bool,
+    pub(crate) runtime_epoch: network_relay::v2::RuntimeEpoch,
+    pub(crate) revision: u32,
+}
+
 // ---------------------------------------------------------------------------
 // 运行时接线 hooks（peer.rs / relay.rs 调用）
 // ---------------------------------------------------------------------------
@@ -63,7 +78,7 @@ pub(crate) async fn begin_epoch(state: &Arc<RuntimeState>) {
 /// 控制连接建立**或重连**（control_connection_id C1→C2，§8）后重新发布完整 Snapshot：
 /// epoch 与 revision **不变**（owner 在服务端随 control_connection_id 改变）。
 ///
-/// 当前 `state.relay_control`（v2 控制面 sink）尚未接线（Step 6/7），sink 不存在时是
+/// 当前 `state.relay.control`（v2 控制面 sink）尚未接线（Step 6/7），sink 不存在时是
 /// 安全的 no-op。
 pub(crate) async fn on_control_connected(state: &Arc<RuntimeState>) {
     let Some(manager) = state.local_discovery.read().await.clone() else {
@@ -80,9 +95,36 @@ pub(crate) async fn on_local_candidates_changed(state: &Arc<RuntimeState>) {
     let Some(manager) = state.local_discovery.read().await.clone() else {
         return;
     };
-    refresh_local_discovery(state, &manager).await;
     manager.bump_revision();
+    refresh_local_discovery(state, &manager).await;
     trigger_publish(state, manager, "candidates-changed").await;
+}
+
+/// Apply a network-environment lifecycle trigger without disconnecting any
+/// peer, path, Relay control/data route, or Realtime session.  The returned
+/// epoch/revision is the coordinator's stale-Direct invalidation token.
+///
+/// The peer owner should reset its Direct recovery policy using the same
+/// trigger, preserve `maintain_connection`, and schedule any reprobe only
+/// through its normal bounded connect intent.  This function deliberately has
+/// no access to those mutable owners.
+pub(crate) async fn on_network_environment_changed(
+    state: &Arc<RuntimeState>,
+    generation: u64,
+    has_connectivity: bool,
+) -> Option<EnvironmentChangeResult> {
+    let manager = state.local_discovery.read().await.clone()?;
+    manager.bump_revision();
+    refresh_local_discovery(state, &manager).await;
+    let snapshot = manager.snapshot();
+    let result = EnvironmentChangeResult {
+        generation,
+        has_connectivity,
+        runtime_epoch: snapshot.runtime_epoch.clone()?,
+        revision: snapshot.revision,
+    };
+    trigger_publish(state, manager, "network-environment-changed").await;
+    Some(result)
 }
 
 /// 在受监督的后台任务里执行 [`on_control_connected`]（供 relay connect/reconnect
@@ -108,7 +150,7 @@ async fn trigger_publish(
     manager: Arc<LocalDiscoveryManager>,
     reason: &'static str,
 ) {
-    let Some(control) = state.relay_control.read().await.clone() else {
+    let Some(control) = state.relay.control.read().await.clone() else {
         return;
     };
     if !control.is_usable().await {
@@ -120,148 +162,5 @@ async fn trigger_publish(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use network_relay::v2::{DiscoveryAck, DiscoverySnapshot, ResolvePeerResponse, ResolveStatus};
-    use network_relay::RelayError;
-    use std::future::Future;
-    use std::pin::Pin;
-    use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
-    use std::sync::Mutex;
-    use tokio::sync::mpsc::unbounded_channel;
-
-    /// 记录已发布 snapshot 的 mock 控制面（AlwaysOk）。
-    struct RecordingControl {
-        published: Mutex<Vec<DiscoverySnapshot>>,
-        calls: AtomicUsize,
-        usable: AtomicBool,
-    }
-
-    impl RecordingControl {
-        fn new() -> Arc<Self> {
-            Arc::new(Self {
-                published: Mutex::new(Vec::new()),
-                calls: AtomicUsize::new(0),
-                usable: AtomicBool::new(true),
-            })
-        }
-    }
-
-    impl DiscoveryControlPlane for RecordingControl {
-        fn publish_discovery(
-            &self,
-            request_id: u64,
-            snapshot: DiscoverySnapshot,
-        ) -> Pin<Box<dyn Future<Output = Result<DiscoveryAck, RelayError>> + Send + '_>> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            let ack = DiscoveryAck {
-                request_id,
-                runtime_epoch: snapshot.runtime_epoch.clone(),
-                revision: snapshot.revision,
-            };
-            self.published.lock().unwrap().push(snapshot.clone());
-            Box::pin(async move { Ok(ack) })
-        }
-
-        fn resolve_peer(
-            &self,
-            _target_device_id: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<ResolvePeerResponse, RelayError>> + Send + '_>>
-        {
-            Box::pin(async move {
-                Ok(ResolvePeerResponse {
-                    request_id: 0,
-                    status: ResolveStatus::Unknown as i32,
-                    discovery: None,
-                    retry_after_ms: 0,
-                })
-            })
-        }
-
-        fn is_usable(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
-            let usable = self.usable.load(Ordering::SeqCst);
-            Box::pin(async move { usable })
-        }
-
-        fn echoes_request_id(&self) -> bool {
-            true
-        }
-    }
-
-    async fn test_state() -> Arc<RuntimeState> {
-        let (event_tx, _event_rx) = unbounded_channel();
-        Arc::new(RuntimeState::new(event_tx, Arc::new(AtomicU16::new(0))))
-    }
-
-    #[tokio::test]
-    async fn begin_epoch_initializes_local_discovery_at_revision_one() {
-        let state = test_state().await;
-        begin_epoch(&state).await;
-        let manager = state
-            .local_discovery
-            .read()
-            .await
-            .clone()
-            .expect("local discovery initialized");
-        assert_eq!(manager.revision(), 1);
-        // begin_epoch 不直接发布，状态保持 Idle。
-        assert_eq!(manager.state(), LocalDiscoveryState::Idle);
-    }
-
-    #[tokio::test]
-    async fn on_control_connected_republishes_at_current_revision_without_bump() {
-        let state = test_state().await;
-        begin_epoch(&state).await;
-        // 让本地 discovery 到 revision=3。
-        let manager = state.local_discovery.read().await.clone().unwrap();
-        manager.bump_revision();
-        manager.bump_revision();
-        assert_eq!(manager.revision(), 3);
-
-        let control = RecordingControl::new();
-        *state.relay_control.write().await = Some(control.clone());
-
-        on_control_connected(&state).await;
-
-        // 重连重发完整 snapshot：revision 仍是 3（epoch/revision 不变，§8）。
-        assert_eq!(manager.revision(), 3);
-        assert_eq!(manager.state(), LocalDiscoveryState::Published);
-        let published = control.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 1);
-        assert_eq!(published[0].revision, 3);
-        assert_eq!(
-            published[0].runtime_epoch.as_ref(),
-            Some(&manager.runtime_epoch())
-        );
-    }
-
-    #[tokio::test]
-    async fn on_local_candidates_changed_bumps_revision_then_publishes() {
-        let state = test_state().await;
-        begin_epoch(&state).await;
-        let control = RecordingControl::new();
-        *state.relay_control.write().await = Some(control.clone());
-        let manager = state.local_discovery.read().await.clone().unwrap();
-
-        on_local_candidates_changed(&state).await;
-
-        // 网络变化 → revision++ → 发布 → ACK（§9）。
-        assert_eq!(manager.revision(), 2);
-        assert_eq!(manager.state(), LocalDiscoveryState::Published);
-        let published = control.published.lock().unwrap().clone();
-        assert_eq!(published.len(), 1);
-        assert_eq!(published[0].revision, 2);
-    }
-
-    #[tokio::test]
-    async fn hooks_are_noop_without_a_wired_control_plane() {
-        let state = test_state().await;
-        begin_epoch(&state).await;
-        let manager = state.local_discovery.read().await.clone().unwrap();
-        on_control_connected(&state).await;
-        on_local_candidates_changed(&state).await;
-        // 未接线控制面：no-op，但本地状态仍正确推进。
-        assert_eq!(manager.revision(), 2); // candidates-changed 已 bump
-        assert_eq!(manager.state(), LocalDiscoveryState::Idle);
-    }
-}
+#[path = "../tests/discovery/mod.rs"]
+mod tests;

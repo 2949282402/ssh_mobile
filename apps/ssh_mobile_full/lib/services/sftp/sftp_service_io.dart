@@ -22,6 +22,7 @@ import '../sftp_path_history_store.dart';
 import '../tool_secret_policy.dart';
 import '../sftp_service.dart';
 import 'sftp_entry_parser.dart';
+import 'sftp_log_safety.dart';
 
 part 'sftp_cache.dart';
 part 'sftp_operations.dart';
@@ -73,18 +74,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   bool get hasActiveTransfer => _activeTransfer != null;
 
   SftpService({
-    required ConnectionRepository connectionRepository,
-    required CredentialRepository credentialRepository,
-    required HostKeyRepository hostKeyRepository,
+    required this._connectionRepository,
+    required this._credentialRepository,
+    required this._hostKeyRepository,
     SftpPathHistoryStore? pathHistoryStore,
-    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
-    ssh_core.SshPeerIdResolver? peerIdResolver,
-  }) : _connectionRepository = connectionRepository,
-       _credentialRepository = credentialRepository,
-       _hostKeyRepository = hostKeyRepository,
-       _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
-       _nativeStreamConnector = nativeStreamConnector,
-       _peerIdResolver = peerIdResolver;
+    this._nativeStreamConnector,
+    this._peerIdResolver,
+  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore();
 
   @visibleForTesting
   SftpService.forTesting(
@@ -95,11 +91,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required SftpClient sftpClient,
     String currentPath = '.',
     SftpPathHistoryStore? pathHistoryStore,
-    ssh_core.SshNativeStreamConnector? nativeStreamConnector,
-    ssh_core.SshPeerIdResolver? peerIdResolver,
-  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore(),
-       _nativeStreamConnector = nativeStreamConnector,
-       _peerIdResolver = peerIdResolver {
+    this._nativeStreamConnector,
+    this._peerIdResolver,
+  }) : _pathHistoryStore = pathHistoryStore ?? InMemorySftpPathHistoryStore() {
     final session =
         _SftpSession(
             connectionId: connection.id,
@@ -350,12 +344,24 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       );
       AppLogService.instance.info(
         'SFTP file uploaded via stream',
-        details: 'path=$remotePath bytes=$totalSize',
+        details: SftpLogSafety.details(
+          operation: 'stream_upload',
+          connectionId: activeSession.connectionId,
+          path: remotePath,
+          bytes: totalSize,
+        ),
       );
       await _openPath(activeSession, activeSession.currentPath);
-    } catch (e, stackTrace) {
+    } catch (e) {
       if (e is SftpTransferCancelledException) {
-        AppLogService.instance.info('SFTP upload cancelled: $remotePath');
+        AppLogService.instance.info(
+          'SFTP upload cancelled',
+          details: SftpLogSafety.details(
+            operation: 'stream_upload_cancelled',
+            connectionId: activeSession.connectionId,
+            path: remotePath,
+          ),
+        );
         try {
           await sftp.remove(remotePath);
         } catch (_) {}
@@ -363,9 +369,12 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       } else {
         AppLogService.instance.error(
           'SFTP upload failed',
-          error: e,
-          stackTrace: stackTrace,
-          details: 'path=$remotePath',
+          details: SftpLogSafety.details(
+            operation: 'stream_upload',
+            connectionId: activeSession.connectionId,
+            path: remotePath,
+            error: e,
+          ),
         );
         activeSession.state = SftpConnectionState.error;
         activeSession.errorMessage = 'Upload failed: $e';
@@ -451,23 +460,41 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
       AppLogService.instance.info(
         'SFTP file downloaded via stream',
-        details: 'path=${entry.path} bytes=$offset',
+        details: SftpLogSafety.details(
+          operation: 'stream_download',
+          connectionId: entry.connectionId,
+          path: entry.path,
+          destinationPath: localPath,
+          bytes: offset,
+        ),
       );
 
       session.state = SftpConnectionState.connected;
       notifyListeners();
-    } catch (e, stackTrace) {
+    } catch (e) {
       shouldDeletePartialLocalFile = true;
 
       if (e is SftpTransferCancelledException) {
-        AppLogService.instance.info('SFTP download cancelled: ${entry.path}');
+        AppLogService.instance.info(
+          'SFTP download cancelled',
+          details: SftpLogSafety.details(
+            operation: 'stream_download_cancelled',
+            connectionId: entry.connectionId,
+            path: entry.path,
+            destinationPath: localPath,
+          ),
+        );
         session.state = SftpConnectionState.connected;
       } else {
         AppLogService.instance.error(
           'SFTP download failed',
-          error: e,
-          stackTrace: stackTrace,
-          details: 'path=${entry.path}',
+          details: SftpLogSafety.details(
+            operation: 'stream_download',
+            connectionId: entry.connectionId,
+            path: entry.path,
+            destinationPath: localPath,
+            error: e,
+          ),
         );
         session.state = SftpConnectionState.error;
         session.errorMessage = 'Download failed: $e';
@@ -530,15 +557,23 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       );
       AppLogService.instance.info(
         'SFTP file uploaded',
-        details: 'path=$remotePath bytes=${bytes.length}',
+        details: SftpLogSafety.details(
+          operation: 'upload_bytes',
+          connectionId: session.connectionId,
+          path: remotePath,
+          bytes: bytes.length,
+        ),
       );
       await _openPath(session, session.currentPath);
-    } catch (e, stackTrace) {
+    } catch (e) {
       AppLogService.instance.error(
         'SFTP upload failed',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'path=$remotePath',
+        details: SftpLogSafety.details(
+          operation: 'upload_bytes',
+          connectionId: session.connectionId,
+          path: remotePath,
+          error: e,
+        ),
       );
       session.state = SftpConnectionState.error;
       session.errorMessage = 'Upload failed: $e';
@@ -579,15 +614,24 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       );
       AppLogService.instance.info(
         'SFTP entry deleted',
-        details: 'path=${entry.path} directory=${entry.isDirectory}',
+        details: SftpLogSafety.details(
+          operation: 'delete_entry',
+          connectionId: entry.connectionId,
+          path: entry.path,
+          directory: entry.isDirectory,
+        ),
       );
       await _openPath(session, session.currentPath);
-    } catch (e, stackTrace) {
+    } catch (e) {
       AppLogService.instance.error(
         'SFTP delete failed',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'path=${entry.path}',
+        details: SftpLogSafety.details(
+          operation: 'delete_entry',
+          connectionId: entry.connectionId,
+          path: entry.path,
+          directory: entry.isDirectory,
+          error: e,
+        ),
       );
       session.state = SftpConnectionState.error;
       session.errorMessage = 'Delete failed: $e';
@@ -633,7 +677,12 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       final bytes = await _readFileBytesWithinLimit(file, maxBytes: maxBytes);
       AppLogService.instance.info(
         'SFTP file downloaded',
-        details: 'path=${entry.path} bytes=${bytes.length}',
+        details: SftpLogSafety.details(
+          operation: 'download_bytes',
+          connectionId: entry.connectionId,
+          path: entry.path,
+          bytes: bytes.length,
+        ),
       );
 
       await SftpFileCache.put(
@@ -650,12 +699,15 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         notifyListeners();
       }
       return bytes;
-    } catch (e, stackTrace) {
+    } catch (e) {
       AppLogService.instance.error(
         'SFTP download failed',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'path=${entry.path}',
+        details: SftpLogSafety.details(
+          operation: 'download_bytes',
+          connectionId: entry.connectionId,
+          path: entry.path,
+          error: e,
+        ),
       );
       if (updateState) {
         session.state = SftpConnectionState.error;
@@ -727,15 +779,23 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       );
       AppLogService.instance.info(
         'SFTP text file saved',
-        details: 'path=${entry.path} bytes=${bytes.length}',
+        details: SftpLogSafety.details(
+          operation: 'save_text',
+          connectionId: entry.connectionId,
+          path: entry.path,
+          bytes: bytes.length,
+        ),
       );
       await _openPath(session, session.currentPath, bypassCache: true);
-    } catch (e, stackTrace) {
+    } catch (e) {
       AppLogService.instance.error(
         'SFTP save failed',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'path=${entry.path}',
+        details: SftpLogSafety.details(
+          operation: 'save_text',
+          connectionId: entry.connectionId,
+          path: entry.path,
+          error: e,
+        ),
       );
       session.state = SftpConnectionState.error;
       session.errorMessage = 'Save failed: $e';

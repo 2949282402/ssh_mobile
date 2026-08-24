@@ -15,9 +15,10 @@ import (
 
 // credentialClaims 是签名凭据中绑定的设备身份和过期时间。
 type credentialClaims struct {
-	DeviceID  string `json:"device_id"`
-	PublicKey string `json:"public_key"`
-	ExpiresAt int64  `json:"expires_at"`
+	DeviceID             string `json:"device_id"`
+	PublicKey            string `json:"public_key"`
+	EnrollmentGeneration int64  `json:"enrollment_generation"`
+	ExpiresAt            int64  `json:"expires_at"`
 }
 
 // errCredentialExpired 区分“凭据已过期”与其他认证失败，使连接路径能返回
@@ -25,11 +26,15 @@ type credentialClaims struct {
 var errCredentialExpired = errors.New("credential is expired")
 
 // issueCredential 为指定设备签发带 HMAC 的短期凭据。
-func issueCredential(key []byte, deviceID string, publicKey []byte, ttl time.Duration) (string, error) {
+func issueCredential(key []byte, deviceID string, publicKey []byte, enrollmentGeneration int64, ttl time.Duration) (string, error) {
+	if enrollmentGeneration <= 0 {
+		return "", errors.New("credential enrollment generation is invalid")
+	}
 	claims, err := json.Marshal(credentialClaims{
-		DeviceID:  deviceID,
-		PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
-		ExpiresAt: time.Now().Add(ttl).Unix(),
+		DeviceID:             deviceID,
+		PublicKey:            base64.RawURLEncoding.EncodeToString(publicKey),
+		EnrollmentGeneration: enrollmentGeneration,
+		ExpiresAt:            time.Now().Add(ttl).Unix(),
 	})
 	if err != nil {
 		return "", err
@@ -59,7 +64,7 @@ func verifyCredential(key []byte, token string) (credentialClaims, []byte, error
 		return credentialClaims{}, nil, errors.New("credential signature is invalid")
 	}
 	var claims credentialClaims
-	if err := json.Unmarshal(payload, &claims); err != nil || claims.DeviceID == "" {
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.DeviceID == "" || claims.EnrollmentGeneration <= 0 {
 		return credentialClaims{}, nil, errors.New("credential is invalid")
 	}
 	if claims.ExpiresAt <= time.Now().Unix() {

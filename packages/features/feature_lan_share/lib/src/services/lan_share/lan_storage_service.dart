@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:disk_space_2/disk_space_2.dart';
-import 'package:flutter/foundation.dart';
 import 'package:gal/gal.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -15,11 +14,13 @@ class LanStorageService {
   static const String _cacheFolderName = 'lan_share_cache';
   final Future<Directory> Function()? sandboxDirectoryProvider;
   final Future<double?> Function()? freeDiskSpaceMbProvider;
+  final Future<String?> Function()? desktopExportDirectoryProvider;
   final LanShareLoggerPort? logger;
 
   LanStorageService({
     this.sandboxDirectoryProvider,
     this.freeDiskSpaceMbProvider,
+    this.desktopExportDirectoryProvider,
     this.logger,
   });
 
@@ -129,7 +130,10 @@ class LanStorageService {
       // Keep 100MB safety buffer
       return (freeMb - requiredMb) > 100.0;
     } catch (e) {
-      logger?.warning('LAN storage space check failed', details: '$e');
+      logger?.warning(
+        'LAN storage space check failed',
+        details: 'errorType=${e.runtimeType}',
+      );
       return false;
     }
   }
@@ -144,13 +148,17 @@ class LanStorageService {
 
     try {
       if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-        final bytes = await file.readAsBytes();
-        final outputPath = await FilePicker.saveFile(
-          dialogTitle: 'Save File',
-          fileName: p.basename(localPath),
-          bytes: bytes,
-        );
-        return outputPath != null;
+        final provided = desktopExportDirectoryProvider;
+        final outputDirectory = provided != null
+            ? await provided()
+            : await FilePicker.getDirectoryPath(
+                dialogTitle: 'Select export folder',
+              );
+        if (outputDirectory == null) return false;
+        final directory = Directory(outputDirectory);
+        if (!await directory.exists()) return false;
+        await _copyToDirectory(file, directory);
+        return true;
       }
 
       if (payloadType == LanPayloadType.image) {
@@ -174,24 +182,30 @@ class LanStorageService {
         Directory? downloadsDir = await getExternalStorageDirectory();
         downloadsDir ??= await getApplicationDocumentsDirectory();
 
-        final target = await _reserveUniqueFile(
-          downloadsDir,
-          p.basename(localPath),
-        );
-        var copied = false;
-        try {
-          await file.openRead().pipe(target.openWrite());
-          copied = true;
-        } finally {
-          if (!copied && await target.exists()) {
-            await target.delete();
-          }
-        }
+        await _copyToDirectory(file, downloadsDir);
         return true;
       }
     } catch (e) {
-      debugPrint('[LanStorageService] Export error: $e');
+      logger?.warning(
+        'LAN file export failed',
+        details: 'errorType=${e.runtimeType}',
+      );
       return false;
+    }
+  }
+
+  /// 使用有界流式 I/O 将沙箱文件复制到目标目录。
+  Future<File> _copyToDirectory(File source, Directory directory) async {
+    final target = await _reserveUniqueFile(directory, p.basename(source.path));
+    var copied = false;
+    try {
+      await source.openRead().pipe(target.openWrite());
+      copied = true;
+      return target;
+    } finally {
+      if (!copied && await target.exists()) {
+        await target.delete();
+      }
     }
   }
 
@@ -217,15 +231,16 @@ class LanStorageService {
             if (stat.modified.isBefore(cutoff)) {
               await entity.delete();
               deletedCount++;
-              debugPrint(
-                '[LanStorageService] GC deleted expired file: ${entity.path}',
-              );
+              logger?.info('LAN storage GC removed an expired file');
             }
           } catch (_) {}
         }
       }
     } catch (e) {
-      debugPrint('[LanStorageService] Garbage collection error: $e');
+      logger?.warning(
+        'LAN storage garbage collection failed',
+        details: 'errorType=${e.runtimeType}',
+      );
     }
     return deletedCount;
   }

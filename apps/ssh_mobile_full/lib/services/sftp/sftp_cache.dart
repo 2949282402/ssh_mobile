@@ -167,7 +167,12 @@ class SftpFileCache {
                 await cachedFile.delete();
                 AppLogService.instance.warning(
                   'SFTP cache entry exceeded the bounded read envelope',
-                  details: 'path=$path maxBytes=$maxBytes',
+                  details: SftpLogSafety.details(
+                    operation: 'cache_envelope_rejected',
+                    connectionId: connectionId,
+                    path: path,
+                    maxBytes: maxBytes,
+                  ),
                 );
                 return null;
               }
@@ -185,8 +190,13 @@ class SftpFileCache {
                 await cachedFile.delete();
                 AppLogService.instance.warning(
                   'SFTP cache entry exceeded the bounded plaintext limit',
-                  details:
-                      'path=$path bytes=$plaintextLength maxBytes=$maxBytes',
+                  details: SftpLogSafety.details(
+                    operation: 'cache_plaintext_rejected',
+                    connectionId: connectionId,
+                    path: path,
+                    bytes: plaintextLength,
+                    maxBytes: maxBytes,
+                  ),
                 );
                 return null;
               }
@@ -195,7 +205,12 @@ class SftpFileCache {
               );
               AppLogService.instance.info(
                 'SFTP preview Cache hit',
-                details: 'path=$path size=${bytes.length}',
+                details: SftpLogSafety.details(
+                  operation: 'cache_hit',
+                  connectionId: connectionId,
+                  path: path,
+                  bytes: bytes.length,
+                ),
               );
               return bytes;
             } catch (_) {
@@ -207,7 +222,15 @@ class SftpFileCache {
         await cachedFile.delete();
       }
     } catch (e) {
-      AppLogService.instance.warning('SFTP Cache read failed: $e');
+      AppLogService.instance.warning(
+        'SFTP Cache read failed',
+        details: SftpLogSafety.details(
+          operation: 'cache_read',
+          connectionId: connectionId,
+          path: path,
+          error: e,
+        ),
+      );
     }
     return null;
   }
@@ -245,7 +268,11 @@ class SftpFileCache {
       await invalidate(connectionId, targetFingerprint, path);
       AppLogService.instance.info(
         'SFTP preview Cache skipped for sensitive path',
-        details: 'path=$path',
+        details: SftpLogSafety.details(
+          operation: 'cache_sensitive_path_skipped',
+          connectionId: connectionId,
+          path: path,
+        ),
       );
       return;
     }
@@ -278,10 +305,23 @@ class SftpFileCache {
       await file.writeAsBytes(encryptedBytes);
       AppLogService.instance.info(
         'SFTP preview Cache written',
-        details: 'path=$path size=${bytes.length}',
+        details: SftpLogSafety.details(
+          operation: 'cache_write',
+          connectionId: connectionId,
+          path: path,
+          bytes: bytes.length,
+        ),
       );
     } catch (e) {
-      AppLogService.instance.warning('SFTP Cache write failed: $e');
+      AppLogService.instance.warning(
+        'SFTP Cache write failed',
+        details: SftpLogSafety.details(
+          operation: 'cache_write',
+          connectionId: connectionId,
+          path: path,
+          error: e,
+        ),
+      );
     }
   }
 
@@ -300,7 +340,11 @@ class SftpFileCache {
         await cachedFile.delete();
         AppLogService.instance.info(
           'SFTP preview Cache invalidated',
-          details: 'path=$path',
+          details: SftpLogSafety.details(
+            operation: 'cache_invalidate',
+            connectionId: connectionId,
+            path: path,
+          ),
         );
       }
     } catch (_) {

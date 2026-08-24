@@ -12,6 +12,7 @@
 package relay
 
 import (
+	"container/heap"
 	"context"
 	"errors"
 	"time"
@@ -21,9 +22,54 @@ import (
 // device, matching the pre-abstraction in-memory cap.
 const maxProofNoncesPerDevice = 128
 
-// errAdminSessionCapacity reports that the in-memory administrator session
-// store is full. Redis mode has no hard cap (login rate limiting and TTL bound
-// it instead), so only the memory implementation returns this error.
+// maxProofNoncePrunesPerConsume bounds unrelated device cleanup on one proof
+// authentication. The caller's own device is pruned separately when needed.
+const maxProofNoncePrunesPerConsume = 8
+
+// proofNonceDeviceExpiry is the earliest active nonce expiry for one device.
+// The memory cache keeps one indexed heap entry per non-empty device map rather
+// than scanning every historical device on each authentication.
+type proofNonceDeviceExpiry struct {
+	deviceID  string
+	expiresAt time.Time
+	index     int
+}
+
+type proofNonceDeviceExpiryHeap []*proofNonceDeviceExpiry
+
+func (h proofNonceDeviceExpiryHeap) Len() int { return len(h) }
+
+func (h proofNonceDeviceExpiryHeap) Less(i, j int) bool {
+	if h[i].expiresAt.Equal(h[j].expiresAt) {
+		return h[i].deviceID < h[j].deviceID
+	}
+	return h[i].expiresAt.Before(h[j].expiresAt)
+}
+
+func (h proofNonceDeviceExpiryHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].index = i
+	h[j].index = j
+}
+
+func (h *proofNonceDeviceExpiryHeap) Push(value any) {
+	entry := value.(*proofNonceDeviceExpiry)
+	entry.index = len(*h)
+	*h = append(*h, entry)
+}
+
+func (h *proofNonceDeviceExpiryHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	entry := old[last]
+	old[last] = nil
+	entry.index = -1
+	*h = old[:last]
+	return entry
+}
+
+// errAdminSessionCapacity reports that the administrator session store is
+// full. Both memory and Redis implementations enforce Config.MaxAdminSessions.
 var errAdminSessionCapacity = errors.New("administrator session capacity reached")
 
 // errDiscoveryNotOwner reports that a discovery write was rejected because the
@@ -59,7 +105,9 @@ type Cache interface {
 	// expiresAt 是 nonce 的有效上界；内存与 Redis 实现均遵守每设备活跃 nonce 上限
 	// （已过期 nonce 惰性清理，上限只统计活跃 nonce）。
 	ConsumeNonce(ctx context.Context, deviceID, nonce string, expiresAt time.Time) (bool, error)
-	// ClearDeviceNonces 清除 deviceID 的全部 nonce（重新 enroll / 吊销时调用）。
+	// ClearDeviceNonces is an explicit maintenance/test reset only. Enrollment
+	// lifecycle operations intentionally retain consumed proofs so same-key
+	// re-enrollment cannot reopen their replay window.
 	ClearDeviceNonces(ctx context.Context, deviceID string) error
 	// TakePresence 让 connID 无条件取得 deviceID 的 presence 租约：新连接抢占，
 	// 最新落盘者成为在线所有者（最后写者胜），ttl 后租约自动过期。返回被取代的
@@ -128,15 +176,21 @@ func (m *memoryStore) ConsumeNonce(_ context.Context, deviceID, nonce string, ex
 	m.deviceMu.Lock()
 	defer m.deviceMu.Unlock()
 	now := time.Now()
+	m.pruneExpiredProofNoncesLocked(now, maxProofNoncePrunesPerConsume)
+	// The global budget bounds unrelated churn cleanup. Always prune the caller's
+	// own device as well so an expired 128-entry map cannot reject its next fresh
+	// proof merely because older devices are ahead of it in the heap.
+	m.pruneProofNonceDeviceLocked(deviceID, now)
+	if !expiresAt.After(now) {
+		// An already-expired replay window cannot be recorded safely. Treat it as
+		// consumed so caller clock/validation bugs fail closed rather than making
+		// the same signed proof reusable forever.
+		return true, nil
+	}
 	deviceNonces := m.proofNonces[deviceID]
 	if deviceNonces == nil {
 		deviceNonces = make(map[string]time.Time)
 		m.proofNonces[deviceID] = deviceNonces
-	}
-	for value, expiry := range deviceNonces {
-		if now.After(expiry) {
-			delete(deviceNonces, value)
-		}
 	}
 	if _, exists := deviceNonces[nonce]; exists {
 		return true, nil
@@ -145,6 +199,7 @@ func (m *memoryStore) ConsumeNonce(_ context.Context, deviceID, nonce string, ex
 		return true, nil
 	}
 	deviceNonces[nonce] = expiresAt
+	m.trackProofNonceExpiryLocked(deviceID, expiresAt)
 	return false, nil
 }
 
@@ -152,7 +207,77 @@ func (m *memoryStore) ClearDeviceNonces(_ context.Context, deviceID string) erro
 	m.deviceMu.Lock()
 	defer m.deviceMu.Unlock()
 	delete(m.proofNonces, deviceID)
+	if entry := m.proofNonceExpiryByDevice[deviceID]; entry != nil {
+		heap.Remove(&m.proofNonceExpiries, entry.index)
+		delete(m.proofNonceExpiryByDevice, deviceID)
+	}
 	return nil
+}
+
+// trackProofNonceExpiryLocked updates the one heap entry owned by a non-empty
+// device nonce map. Only an earlier insertion changes the heap key; later
+// expiries are discovered after the current minimum is pruned.
+func (m *memoryStore) trackProofNonceExpiryLocked(deviceID string, expiresAt time.Time) {
+	entry := m.proofNonceExpiryByDevice[deviceID]
+	if entry == nil {
+		entry = &proofNonceDeviceExpiry{deviceID: deviceID, expiresAt: expiresAt}
+		m.proofNonceExpiryByDevice[deviceID] = entry
+		heap.Push(&m.proofNonceExpiries, entry)
+		return
+	}
+	if expiresAt.Before(entry.expiresAt) {
+		entry.expiresAt = expiresAt
+		heap.Fix(&m.proofNonceExpiries, entry.index)
+	}
+}
+
+// pruneExpiredProofNoncesLocked removes at most maxDevices expired device maps
+// in heap order. Each scan is capped by maxProofNoncesPerDevice, and a device
+// is revisited only when its next earliest nonce expires. ConsumeNonce uses a
+// fixed budget so authentication cost never becomes O(all devices * nonces),
+// while continued cross-device traffic drains expiry work faster than it can
+// add one new device entry per request.
+func (m *memoryStore) pruneExpiredProofNoncesLocked(now time.Time, maxDevices int) int {
+	pruned := 0
+	for pruned < maxDevices && len(m.proofNonceExpiries) > 0 && now.After(m.proofNonceExpiries[0].expiresAt) {
+		deviceID := m.proofNonceExpiries[0].deviceID
+		if !m.pruneProofNonceDeviceLocked(deviceID, now) {
+			break
+		}
+		pruned++
+	}
+	return pruned
+}
+
+// pruneProofNonceDeviceLocked removes one device's expired nonces and either
+// deletes its empty outer map or re-indexes its next active expiry. The caller
+// holds deviceMu, so the map and indexed heap change as one invariant.
+func (m *memoryStore) pruneProofNonceDeviceLocked(deviceID string, now time.Time) bool {
+	entry := m.proofNonceExpiryByDevice[deviceID]
+	if entry == nil || !now.After(entry.expiresAt) {
+		return false
+	}
+	heap.Remove(&m.proofNonceExpiries, entry.index)
+	delete(m.proofNonceExpiryByDevice, deviceID)
+	deviceNonces := m.proofNonces[deviceID]
+	var nextExpiry time.Time
+	for value, expiry := range deviceNonces {
+		if now.After(expiry) {
+			delete(deviceNonces, value)
+			continue
+		}
+		if nextExpiry.IsZero() || expiry.Before(nextExpiry) {
+			nextExpiry = expiry
+		}
+	}
+	if len(deviceNonces) == 0 {
+		delete(m.proofNonces, deviceID)
+		return true
+	}
+	entry.expiresAt = nextExpiry
+	m.proofNonceExpiryByDevice[deviceID] = entry
+	heap.Push(&m.proofNonceExpiries, entry)
+	return true
 }
 
 func (m *memoryStore) TakePresence(_ context.Context, deviceID, connID string, p Presence, ttl time.Duration) (Presence, bool, error) {

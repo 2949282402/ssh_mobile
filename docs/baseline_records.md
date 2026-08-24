@@ -1,6 +1,7 @@
+> 最新更新时间：2026-08-19
+
 # Network V1 Baseline Record
 
-> 最新更新时间：2026-08-15
 > 用途：Transport Network V2 破坏性重构（设计文档 `SSH_Mobile_传输网络架构重构设计_Main基线版.md`）的 Step 0 基线冻结记录。重构期间任何门禁回归都以此记录为对照。
 
 ## 冻结提交与标签
@@ -35,7 +36,7 @@
 ### Dart / Flutter
 
 - 224 个测试文件：apps/ssh_mobile_full 137、apps/ssh_mobile_terminal 1、packages 80、test/tool 6。
-- 网络 SDK：network_sdk_contract_test、network_runtime_test、ssh_mobile_network_native_test（ABI/lifecycle/realtime protobuf round-trip）、app network_protocol_codec_test + transfer_transport_test。
+- 网络 SDK：network_sdk_contract_test、network_runtime_test、ssh_mobile_network_native_test（ABI/lifecycle/realtime protobuf round-trip）、app network_protocol_v2_codec_test + transfer_transport_test。
 - 门禁：`melos format/analyze/test`（SDK scope + workspace scope）、`flutter analyze --no-fatal-infos`、`flutter test --coverage` + `check_coverage.dart --minimum=35`（CI job `analyze-and-test`）。
 
 ### CI（`.github/workflows/flutter.yml`）

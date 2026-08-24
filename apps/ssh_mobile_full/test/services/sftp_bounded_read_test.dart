@@ -185,6 +185,45 @@ void main() {
       expect(fixture.remote.openCount, 1);
     },
   );
+
+  test(
+    'stale entry target cannot read write or delete a rebound session',
+    () async {
+      final fixture = _ServiceFixture(
+        bytes: Uint8List.fromList('old'.codeUnits),
+        declaredSize: 3,
+      );
+      addTearDown(fixture.dispose);
+      final staleEntry = SftpEntry(
+        connectionId: fixture.entry.connectionId,
+        targetFingerprint: 'different-target',
+        name: fixture.entry.name,
+        path: fixture.entry.path,
+        lowerName: fixture.entry.lowerName,
+        isDirectory: fixture.entry.isDirectory,
+        isLink: fixture.entry.isLink,
+        size: fixture.entry.size,
+        sizeLabel: fixture.entry.sizeLabel,
+        modifiedAt: fixture.entry.modifiedAt,
+      );
+
+      await expectLater(
+        fixture.service.downloadBytes(staleEntry, bypassCache: true),
+        throwsA(isA<SftpTargetChangedException>()),
+      );
+      await expectLater(
+        fixture.service.saveTextFile(staleEntry, 'new'),
+        throwsA(isA<SftpTargetChangedException>()),
+      );
+      await expectLater(
+        fixture.service.deleteEntry(staleEntry, confirmedName: staleEntry.name),
+        throwsA(isA<SftpTargetChangedException>()),
+      );
+
+      expect(fixture.remote.openCount, 0);
+      expect(fixture.remote.totalBytesReturned, 0);
+    },
+  );
 }
 
 class _ServiceFixture {
@@ -210,6 +249,7 @@ class _ServiceFixture {
     );
     entry = SftpEntry(
       connectionId: connection.id,
+      targetFingerprint: targetFingerprint,
       name: 'demo.bin',
       path: '/srv/demo.bin',
       lowerName: 'demo.bin',

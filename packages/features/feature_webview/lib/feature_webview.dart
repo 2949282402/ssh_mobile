@@ -5,6 +5,10 @@
 library;
 
 export 'src/domain/webview_ports.dart';
+export 'src/domain/client_webview_network.dart';
+export 'src/domain/client_webview_safe_document.dart'
+    hide clientWebViewPageTextScript, clientWebViewSearchResultsScript;
+export 'src/domain/client_webview_security_policy.dart';
 export 'src/presentation/client_webview_screen.dart';
 export 'src/presentation/client_webview_viewmodel.dart';
 export 'src/services/client_webview_service.dart';

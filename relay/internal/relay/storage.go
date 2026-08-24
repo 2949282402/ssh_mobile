@@ -46,9 +46,13 @@ type Storage interface {
 	// enrollment。MySQL 实现为单事务（先对 devices 行 FOR UPDATE，与 PutEnrollment
 	// 首锁一致），跨实例与并发 re-enroll 严格串行，杜绝"读到旧 enrollment 后误删
 	// 新行"的撕裂窗口；内存实现等价于 deviceMu 下复合 RecordRevocation +
-	// RemoveEnrollment。validUntil = EnrolledAt + credentialTTL（零值 EnrolledAt 兜底
-	// 用 now+TTL），在 device 行锁内计算，避免使用旧 enrollment 的快照。
-	RevokeEnrollment(ctx context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, error)
+	// RemoveEnrollment。validUntil = revoke time + credentialTTL：refresh 可在 enrollment
+	// 之后任意时刻签发一份新的完整 TTL，不能再用 EnrolledAt 推导上界。该期限让丢失
+	// revoke 事件的其它实例仍能通过周期对账关闭旧连接。
+	// A successful revoke also returns the atomically removed enrollment
+	// generation. Cross-instance lifecycle events bind to it so a delayed revoke
+	// cannot terminate a later re-enrollment of the same device.
+	RevokeEnrollment(ctx context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, int64, error)
 	// RecordRevocation 记录 deviceID 在 validUntil 之前保持吊销。内存实现遵守
 	// MaxRevokedDevices 容量边界：饱和且 tombstone 仍有效时拒绝（fail closed），
 	// 返回 (false, nil)。
@@ -77,40 +81,54 @@ type memoryStore struct {
 	enrolledDevices map[string]*EnrolledDevice
 	revokedDevices  map[string]revokedDevice
 	proofNonces     map[string]map[string]time.Time
-	presence        map[string]presenceEntry
-	discovery       map[string]discoveryEntry
-	reservations    map[string]reservationEntry
-	adminSessions   map[string]time.Time
-	maxEnrolled     int
-	maxRevoked      int
-	maxAdminSession int
-	mu              sync.Mutex
-	// deviceMu 保护 device-plane 三张 map（enrolledDevices/revokedDevices/
-	// proofNonces）。presence、discovery、reservations 与 adminSessions 由 mu 保护。
+	// proofNonceExpiries has exactly one indexed entry per non-empty
+	// proofNonces device map, keyed by that device's earliest active expiry.
+	proofNonceExpiries       proofNonceDeviceExpiryHeap
+	proofNonceExpiryByDevice map[string]*proofNonceDeviceExpiry
+	presence                 map[string]presenceEntry
+	discovery                map[string]discoveryEntry
+	reservations             map[string]reservationEntry
+	adminSessions            map[string]time.Time
+	maxEnrolled              int
+	maxRevoked               int
+	maxReservations          int
+	maxAdminSession          int
+	mu                       sync.Mutex
+	// deviceMu 保护 device-plane map（enrolledDevices/revokedDevices/
+	// proofNonces）与 nonce expiry heap/index。presence、discovery、reservations
+	// 与 adminSessions 由 mu 保护。
 	// 两者从不嵌套持有。
 	deviceMu sync.Mutex
 }
 
 // newMemoryStore 构造以给定配置容量为边界的内存存储。
 func newMemoryStore(config Config) *memoryStore {
+	config = withConfigDefaults(config)
 	return &memoryStore{
-		enrolledDevices: make(map[string]*EnrolledDevice),
-		revokedDevices:  make(map[string]revokedDevice),
-		proofNonces:     make(map[string]map[string]time.Time),
-		presence:        make(map[string]presenceEntry),
-		discovery:       make(map[string]discoveryEntry),
-		reservations:    make(map[string]reservationEntry),
-		adminSessions:   make(map[string]time.Time),
-		maxEnrolled:     config.MaxEnrolledDevices,
-		maxRevoked:      config.MaxRevokedDevices,
-		maxAdminSession: config.MaxAdminSessions,
+		enrolledDevices:          make(map[string]*EnrolledDevice),
+		revokedDevices:           make(map[string]revokedDevice),
+		proofNonces:              make(map[string]map[string]time.Time),
+		proofNonceExpiryByDevice: make(map[string]*proofNonceDeviceExpiry),
+		presence:                 make(map[string]presenceEntry),
+		discovery:                make(map[string]discoveryEntry),
+		reservations:             make(map[string]reservationEntry),
+		adminSessions:            make(map[string]time.Time),
+		maxEnrolled:              config.MaxEnrolledDevices,
+		maxRevoked:               config.MaxRevokedDevices,
+		maxReservations:          config.MaxTransferSessions,
+		maxAdminSession:          config.MaxAdminSessions,
 	}
 }
 
 func (m *memoryStore) GetEnrollment(_ context.Context, deviceID string) (*EnrolledDevice, error) {
 	m.deviceMu.Lock()
 	defer m.deviceMu.Unlock()
-	return m.enrolledDevices[deviceID], nil
+	device := m.enrolledDevices[deviceID]
+	if device == nil {
+		return nil, nil
+	}
+	copy := *device
+	return &copy, nil
 }
 
 func (m *memoryStore) PutEnrollment(_ context.Context, device *EnrolledDevice) (enrollmentResult, error) {
@@ -124,9 +142,35 @@ func (m *memoryStore) PutEnrollment(_ context.Context, device *EnrolledDevice) (
 	} else if len(m.enrolledDevices) >= m.maxEnrolled {
 		return enrollmentResourceLimit, nil
 	}
-	m.enrolledDevices[device.DeviceID] = device
+	generationBase := existing
+	if generationBase == nil {
+		if revoked, present := m.revokedDevices[device.DeviceID]; present && !revoked.generationFloor.IsZero() {
+			generationBase = &EnrolledDevice{EnrolledAt: revoked.generationFloor}
+		}
+	}
+	device.EnrolledAt = nextEnrollmentTime(device.EnrolledAt, generationBase)
+	copy := *device
+	m.enrolledDevices[device.DeviceID] = &copy
 	delete(m.revokedDevices, device.DeviceID)
 	return enrollmentOK, nil
+}
+
+// nextEnrollmentTime turns enrolled_at into a durable, monotonic enrollment
+// generation. MySQL stores DATETIME(6), so both implementations normalize to
+// microseconds and advance by one microsecond when two same-device enrollments
+// arrive with an equal or older caller timestamp.
+func nextEnrollmentTime(candidate time.Time, existing *EnrolledDevice) time.Time {
+	next := candidate.UTC().Truncate(time.Microsecond)
+	if next.IsZero() {
+		next = time.Now().UTC().Truncate(time.Microsecond)
+	}
+	if existing != nil {
+		current := existing.EnrolledAt.UTC().Truncate(time.Microsecond)
+		if !next.After(current) {
+			next = current.Add(time.Microsecond)
+		}
+	}
+	return next
 }
 
 func (m *memoryStore) RemoveEnrollment(_ context.Context, deviceID string) error {
@@ -141,22 +185,22 @@ func (m *memoryStore) RemoveEnrollment(_ context.Context, deviceID string) error
 // RecordRevocation + RemoveEnrollment，但三者不再可能被并发 PutEnrollment 拆开）。
 // 墓碑容量饱和时 fail closed 返回 revokeCapacity 且不删除 enrollment（与 RecordRevocation
 // 饱和时不返回删除一致）。
-func (m *memoryStore) RevokeEnrollment(_ context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, error) {
+func (m *memoryStore) RevokeEnrollment(_ context.Context, deviceID string, credentialTTL time.Duration) (revokeResult, int64, error) {
 	m.deviceMu.Lock()
 	defer m.deviceMu.Unlock()
 	enrolled, ok := m.enrolledDevices[deviceID]
 	if !ok {
-		return revokeNotEnrolled, nil
+		return revokeNotEnrolled, 0, nil
 	}
-	validUntil := enrolled.EnrolledAt.Add(credentialTTL)
-	if enrolled.EnrolledAt.IsZero() {
-		validUntil = time.Now().Add(credentialTTL)
-	}
+	validUntil := time.Now().Add(credentialTTL)
 	if !m.writeRevocationLocked(deviceID, validUntil) {
-		return revokeCapacity, nil
+		return revokeCapacity, 0, nil
 	}
+	entry := m.revokedDevices[deviceID]
+	entry.generationFloor = nextEnrollmentTime(time.Now(), enrolled)
+	m.revokedDevices[deviceID] = entry
 	delete(m.enrolledDevices, deviceID)
-	return revokeOK, nil
+	return revokeOK, enrolled.EnrolledAt.UnixMicro(), nil
 }
 
 func (m *memoryStore) RecordRevocation(_ context.Context, deviceID string, validUntil time.Time) (bool, error) {
@@ -172,7 +216,8 @@ func (m *memoryStore) writeRevocationLocked(deviceID string, validUntil time.Tim
 	m.pruneExpiredRevocations(time.Now())
 	if existing, alreadyRevoked := m.revokedDevices[deviceID]; alreadyRevoked {
 		if validUntil.After(existing.expiresAt) {
-			m.revokedDevices[deviceID] = revokedDevice{expiresAt: validUntil}
+			existing.expiresAt = validUntil
+			m.revokedDevices[deviceID] = existing
 		}
 		return true
 	}

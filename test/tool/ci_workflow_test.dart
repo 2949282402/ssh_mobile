@@ -10,6 +10,9 @@ void main() {
   final workflow = File(
     '${root.path}/.github/workflows/flutter.yml',
   ).readAsStringSync();
+  final rustToolchain = File(
+    '${root.path}/native/network_core/rust-toolchain.toml',
+  ).readAsStringSync();
 
   _expect(pubspec.contains('\nmelos:\n'), '根 pubspec 必须声明 Melos 配置');
   _expect(pubspec.contains('    format:'), 'Melos 必须提供 format 脚本');
@@ -37,17 +40,86 @@ void main() {
     !workflow.contains('needs: architecture-check'),
     '质量与构建 job 应与 architecture-check 并行执行',
   );
+  _expect(
+    !workflow.contains('workspace-quality:'),
+    'CI 不应保留已拆分的 workspace-quality job',
+  );
+  _expect(
+    !workflow.contains('analyze-and-test:'),
+    'CI 不应保留已拆分的 analyze-and-test job',
+  );
+  _expect(
+    rustToolchain.contains('channel = "1.97.1"'),
+    'Rust toolchain pin 必须与 CI 的 RUST_TOOLCHAIN 对齐',
+  );
 
-  final workspaceQuality = _jobSection(workflow, 'workspace-quality');
-  for (final packageName in _isolatedPackageNames) {
+  final protocolV2Contract = _jobSection(workflow, 'protocol-v2-contract');
+  _expect(
+    protocolV2Contract.contains('subosito/flutter-action@v2'),
+    'protocol-v2-contract 必须安装 Flutter 后运行 Dart owner tests',
+  );
+  _expect(
+    protocolV2Contract.contains('run: dart pub get'),
+    'protocol-v2-contract 必须安装 workspace dependencies',
+  );
+  _expect(
+    protocolV2Contract.contains(
+          'working-directory: packages/infrastructure/ssh_mobile_network_native',
+        ) &&
+        protocolV2Contract.contains('run: flutter pub get'),
+    'protocol-v2-contract 必须安装 native Dart package dependencies',
+  );
+
+  final adminApiContract = _jobSection(workflow, 'admin-api-contract');
+  _expect(
+    adminApiContract.contains('actions/setup-go@v5') &&
+        adminApiContract.contains('actions/setup-node@v4'),
+    'admin-api-contract 必须同时安装 Go 与 Node.js',
+  );
+  _expect(
+    adminApiContract.contains('working-directory: front') &&
+        adminApiContract.contains('run: npm ci'),
+    'admin-api-contract 必须安装 Front dependencies',
+  );
+  _expect(
+    adminApiContract.contains('bash scripts/admin_api_contract.sh'),
+    'admin-api-contract 必须运行真实 Go handler → Front schema 门禁',
+  );
+
+  for (final jobName in const ['android-build', 'macos-build', 'ios-build']) {
+    final job = _jobSection(workflow, jobName);
     _expect(
-      workspaceQuality.contains('--ignore=$packageName'),
-      'workspace-quality 不应重复执行独立包：$packageName',
+      job.contains('rustup show active-toolchain') &&
+          job.contains('rustup target list --installed'),
+      '$jobName 必须输出 Rust toolchain 与已安装 target 诊断',
+    );
+  }
+
+  final workspaceCoreQuality = _jobSection(workflow, 'workspace-core-quality');
+  for (final packageName in _corePackageNames) {
+    _expect(
+      workspaceCoreQuality.contains('--scope=$packageName'),
+      'workspace-core-quality 缺少 Core 包：$packageName',
     );
   }
   _expect(
-    !workspaceQuality.contains('flutter build apk'),
-    'workspace-quality 不应重复构建 Full App Android',
+    !workspaceCoreQuality.contains('flutter build apk'),
+    'workspace-core-quality 不应构建 Full App Android',
+  );
+
+  final workspaceFeaturesQuality = _jobSection(
+    workflow,
+    'workspace-features-quality',
+  );
+  for (final packageName in _featurePackageNames) {
+    _expect(
+      workspaceFeaturesQuality.contains('--scope=$packageName'),
+      'workspace-features-quality 缺少 Feature 包：$packageName',
+    );
+  }
+  _expect(
+    !workspaceFeaturesQuality.contains('flutter build apk'),
+    'workspace-features-quality 不应构建 Full App Android',
   );
 
   final sdkDartQuality = _jobSection(workflow, 'sdk-dart-quality');
@@ -68,6 +140,10 @@ void main() {
     'architecture-check 必须运行 Agent 文档检查器回归测试',
   );
   _expect(
+    architectureCheck.contains('dart run test/tool/ci_workflow_test.dart'),
+    'architecture-check 必须运行 CI workflow 合同回归测试',
+  );
+  _expect(
     architectureCheck.contains('dart run tool/check_module_dependencies.dart'),
     'architecture-check 必须运行模块依赖检查器',
   );
@@ -76,18 +152,21 @@ void main() {
     'architecture-check 必须运行资源 Owner 检查器',
   );
 
-  final clientQuality = _jobSection(workflow, 'analyze-and-test');
+  final appUnitTests = _jobSection(workflow, 'app-unit-tests');
   _expect(
-    _countOccurrences(
-          clientQuality,
-          'flutter test --coverage --reporter expanded',
-        ) ==
-        1,
-    'Full App coverage 测试必须只有一个权威入口',
+    appUnitTests.contains('--coverage') &&
+        appUnitTests.contains('--reporter expanded'),
+    'app-unit-tests 必须保留 coverage 与 expanded reporter 参数',
   );
   _expect(
-    !clientQuality.contains('Test native Dart package'),
+    !appUnitTests.contains('Test native Dart package'),
     'Full App job 不应重复执行 Native Dart SDK 测试',
+  );
+
+  final appCoverage = _jobSection(workflow, 'app-coverage');
+  _expect(
+    appCoverage.contains('dart run tool/check_coverage.dart'),
+    'app-coverage 必须运行覆盖率门禁',
   );
 
   for (final jobName in _buildOnlyJobNames) {
@@ -166,21 +245,19 @@ String _jobSection(String workflow, String jobName) {
   );
 }
 
-int _countOccurrences(String value, String pattern) {
-  var count = 0;
-  var offset = 0;
-  while (true) {
-    final index = value.indexOf(pattern, offset);
-    if (index == -1) return count;
-    count++;
-    offset = index + pattern.length;
-  }
-}
-
 const _requiredWorkflowMarkers = <String>[
   'architecture-check:',
+  'admin-api-contract:',
   'sdk-dart-quality:',
-  'workspace-quality:',
+  'native-network-quality:',
+  'relay-quality:',
+  'protocol-v2-contract:',
+  'front-quality:',
+  'workspace-core-quality:',
+  'workspace-features-quality:',
+  'app-static-quality:',
+  'app-unit-tests:',
+  'app-coverage:',
   'terminal-smoke-build:',
   'android-build:',
   'windows-build:',
@@ -206,11 +283,26 @@ const _requiredWorkflowMarkers = <String>[
   'apps/ssh_mobile_terminal',
 ];
 
-const _isolatedPackageNames = <String>[
-  'ssh_mobile',
-  'network_sdk',
-  'network_transport',
-  'ssh_mobile_network_native',
+const _corePackageNames = <String>[
+  'app_core',
+  'app_ui',
+  'connection_core',
+  'ssh_core',
+];
+
+const _featurePackageNames = <String>[
+  'feature_ai',
+  'feature_connection',
+  'feature_developer',
+  'feature_lan_share',
+  'feature_mcp',
+  'feature_monitoring',
+  'feature_playbook',
+  'feature_rag',
+  'feature_sftp',
+  'feature_system_admin',
+  'feature_terminal',
+  'feature_webview',
 ];
 
 const _sdkPackageNames = <String>[

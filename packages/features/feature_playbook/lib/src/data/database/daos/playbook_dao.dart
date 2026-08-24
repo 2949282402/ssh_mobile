@@ -14,8 +14,49 @@ class PlaybookDao extends DatabaseAccessor<PlaybookDatabase>
         .get();
   }
 
+  /// Atomically creates a playbook at revision 1 or advances the persisted
+  /// revision. Compatibility metadata columns intentionally stay empty.
   Future<void> savePlaybook(PlaybooksCompanion playbook) async {
-    await into(playbooks).insertOnConflictUpdate(playbook);
+    await customUpdate(
+      'INSERT INTO playbooks '
+      '(id, name, description, content_json, revision, created_at, updated_at) '
+      "VALUES (?, '', '', ?, 1, ?, ?) "
+      'ON CONFLICT(id) DO UPDATE SET '
+      "name = '', description = '', "
+      'content_json = excluded.content_json, '
+      'revision = playbooks.revision + 1, '
+      'updated_at = excluded.updated_at',
+      variables: [
+        Variable<String>(playbook.id.value),
+        Variable<String>(playbook.contentJson.value),
+        Variable<int>(playbook.createdAt.value),
+        Variable<int>(playbook.updatedAt.value),
+      ],
+      updates: {playbooks},
+    );
+  }
+
+  /// Updates exactly one expected revision and returns the new revision.
+  Future<int?> savePlaybookIfRevisionMatches({
+    required PlaybooksCompanion playbook,
+    required int expectedRevision,
+  }) async {
+    final changed =
+        await (update(playbooks)..where(
+              (row) =>
+                  row.id.equals(playbook.id.value) &
+                  row.revision.equals(expectedRevision),
+            ))
+            .write(
+              PlaybooksCompanion(
+                name: const Value(''),
+                description: const Value(''),
+                contentJson: playbook.contentJson,
+                revision: Value(expectedRevision + 1),
+                updatedAt: playbook.updatedAt,
+              ),
+            );
+    return changed == 1 ? expectedRevision + 1 : null;
   }
 
   Future<void> deletePlaybook(String id) async {

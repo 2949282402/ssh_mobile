@@ -8,7 +8,8 @@
 //!   PresenceHint），按 `request_id` / `attempt_id` 做应答关联，不再使用全局
 //!   `Notify`。
 //! - [`RelayDataClient`]：reservation 作用域 `/v2/relay/{reservation_id}` 数据面。
-//!   只转发不透明 EncryptedPayload，拥有自己的 socket、队列与速率预算。
+//!   先等待 PairReady Ping，再转发不透明 EncryptedPayload；拥有自己的 socket、
+//!   队列与速率预算。
 //!
 //! 消息编解码与帧边界在 [`proto`] 中自包含实现，锁定冻结的 `relay_v2.proto`。
 
@@ -18,9 +19,10 @@ pub mod proto;
 mod shared;
 
 #[cfg(test)]
+#[path = "../tests/v2/golden_tests.rs"]
 mod golden_tests;
 
-pub use control_client::{ControlEvent, RelayControlClient};
+pub use control_client::{ConnectivityAttemptStart, ControlEvent, RelayControlClient};
 pub use data_client::{DataEvent, RelayDataClient};
 pub use proto::{
     relay_data_frame::Kind as RelayDataFrameKind, relay_frame::Kind as RelayFrameKind,

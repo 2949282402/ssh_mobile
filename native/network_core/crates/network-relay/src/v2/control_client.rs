@@ -15,10 +15,12 @@
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::info;
@@ -62,10 +64,156 @@ pub enum ControlEvent {
     },
 }
 
+type AttemptStore = Arc<StdMutex<HashMap<String, AttemptTracker>>>;
+
 /// 一个进行中的异步 connectivity attempt。
 struct AttemptTracker {
     created_at: Instant,
+    token: Arc<()>,
     response_tx: oneshot::Sender<ControlEvent>,
+}
+
+#[derive(Clone)]
+struct AttemptOwner {
+    attempts: AttemptStore,
+    attempt_id: String,
+    token: Arc<()>,
+}
+
+impl AttemptOwner {
+    fn remove_if_owner(&self) {
+        let mut attempts = self
+            .attempts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if attempts
+            .get(&self.attempt_id)
+            .is_some_and(|tracker| Arc::ptr_eq(&tracker.token, &self.token))
+        {
+            attempts.remove(&self.attempt_id);
+        }
+    }
+}
+
+/// Owns one tracker registration. The store is intentionally synchronous and
+/// only held for short map operations, so Drop can cancel an unpolled or
+/// dropped answer future without trying to await a Tokio lock.
+struct AttemptLease {
+    owner: AttemptOwner,
+}
+
+impl AttemptLease {
+    fn new(attempts: AttemptStore, attempt_id: String) -> Self {
+        Self {
+            owner: AttemptOwner {
+                attempts,
+                attempt_id,
+                token: Arc::new(()),
+            },
+        }
+    }
+
+    fn owner(&self) -> AttemptOwner {
+        self.owner.clone()
+    }
+
+    fn token(&self) -> Arc<()> {
+        Arc::clone(&self.owner.token)
+    }
+}
+
+impl Drop for AttemptLease {
+    fn drop(&mut self) {
+        self.owner.remove_if_owner();
+    }
+}
+
+/// Internal Rust adapter result of one authoritative Resolve →
+/// ConnectivityOffer transaction. This type is consumed by `network-core`; it
+/// is not part of the Dart/FFI SDK surface.
+///
+/// A READY response has its Offer enqueued before the response is returned;
+/// non-READY responses are returned without an Offer so the caller can retain
+/// the authoritative status. The coordination gate is released as soon as
+/// the Resolve/Offer step finishes; [`Self::wait_for_answer`] therefore never
+/// holds the gate across the answer/direct-probe window.
+pub struct ConnectivityAttemptStart {
+    /// The authoritative Resolve response for this transaction.
+    pub resolved: ResolvePeerResponse,
+    answer: Pin<Box<dyn Future<Output = Result<ConnectivityAnswer, RelayError>> + Send>>,
+    /// Kept outside the answer future so dropping an unpolled start also
+    /// releases its tracker registration.
+    attempt_lease: Option<AttemptLease>,
+}
+
+struct ConnectivityAnswerWaiter {
+    response_rx: oneshot::Receiver<ControlEvent>,
+    owner: AttemptOwner,
+}
+
+impl ConnectivityAttemptStart {
+    /// Construct a transaction result for control-plane implementations and
+    /// test doubles that provide their own answer future.
+    pub fn new<F>(resolved: ResolvePeerResponse, answer: F) -> Self
+    where
+        F: Future<Output = Result<ConnectivityAnswer, RelayError>> + Send + 'static,
+    {
+        Self {
+            resolved,
+            answer: Box::pin(answer),
+            attempt_lease: None,
+        }
+    }
+
+    /// Wait for and validate the asynchronous answer associated with this
+    /// attempt.  Dropping the returned future does not hold any control-plane
+    /// lock; timeout/error paths remove the attempt tracker.
+    pub async fn wait_for_answer(self) -> Result<ConnectivityAnswer, RelayError> {
+        let Self {
+            answer,
+            attempt_lease,
+            ..
+        } = self;
+        let result = answer.await;
+        drop(attempt_lease);
+        result
+    }
+}
+
+impl ConnectivityAnswerWaiter {
+    async fn wait(self) -> Result<ConnectivityAnswer, RelayError> {
+        let ConnectivityAnswerWaiter { response_rx, owner } = self;
+        let result = match tokio::time::timeout(CONNECTIVITY_ATTEMPT_TIMEOUT, response_rx).await {
+            Ok(Ok(ControlEvent::ConnectivityAnswer(answer))) if answer.accepted => {
+                match answer.responder_runtime_epoch.as_ref() {
+                    None => Err(RelayError::Protocol(
+                        "accepted connectivity answer is missing responder runtime_epoch".into(),
+                    )),
+                    Some(epoch) => match validate_discovery_tuple(
+                        epoch,
+                        answer.responder_revision,
+                        answer.responder_snapshot.as_ref(),
+                        "responder",
+                    ) {
+                        Ok(()) => Ok(answer),
+                        Err(error) => Err(error),
+                    },
+                }
+            }
+            Ok(Ok(ControlEvent::ConnectivityAnswer(answer))) => Ok(answer),
+            Ok(Ok(ControlEvent::ProtocolError(error))) => {
+                Err(RelayError::Protocol(error.to_string()))
+            }
+            Ok(Ok(ControlEvent::Disconnected { .. })) => Err(RelayError::NotConnected),
+            Ok(Ok(_)) => Err(RelayError::Protocol(
+                "unexpected response to connectivity attempt".into(),
+            )),
+            Ok(Err(_)) => Err(RelayError::NotConnected),
+            Err(_) => Err(RelayError::Timeout("connectivity attempt timed out".into())),
+        };
+        owner.remove_if_owner();
+        result
+    }
 }
 
 /// 控制面应答归属判定。
@@ -88,8 +236,13 @@ pub struct RelayControlClient {
     inbound_tx: mpsc::Sender<ControlEvent>,
     /// 逐 `request_id` 的同步请求/应答关联表。
     pending: Arc<RwLock<HashMap<u64, oneshot::Sender<ControlEvent>>>>,
-    /// 逐 `attempt_id` 的异步 attempt 关联表。
-    attempts: Arc<RwLock<HashMap<String, AttemptTracker>>>,
+    /// 逐 `attempt_id` 的异步 attempt 关联表。 The synchronous lock is
+    /// intentional: every critical section only removes/inserts map entries
+    /// and never crosses an await, which lets an attempt lease clean up from
+    /// Drop safely.
+    attempts: AttemptStore,
+    /// Narrow gate for the frozen Resolve -> ConnectivityOffer transaction.
+    coordination_gate: Arc<Mutex<()>>,
     next_request_id: Arc<AtomicU64>,
     writer_task: Option<JoinHandle<()>>,
     reader_task: Option<JoinHandle<()>>,
@@ -97,6 +250,9 @@ pub struct RelayControlClient {
     disconnect_notified: Arc<AtomicBool>,
     intentional_disconnect: Arc<AtomicBool>,
     heartbeat_interval: Duration,
+    /// Server-confirmed Ready.presence_ttl_s for remote candidate freshness.
+    /// It remains absent until a Ready frame has been validated.
+    ready_presence_ttl: Option<Duration>,
 }
 
 impl Drop for RelayControlClient {
@@ -140,7 +296,8 @@ impl RelayControlClient {
             inbound: Some(inbound),
             inbound_tx,
             pending: Arc::new(RwLock::new(HashMap::new())),
-            attempts: Arc::new(RwLock::new(HashMap::new())),
+            attempts: Arc::new(StdMutex::new(HashMap::new())),
+            coordination_gate: Arc::new(Mutex::new(())),
             next_request_id: Arc::new(AtomicU64::new(1)),
             writer_task: None,
             reader_task: None,
@@ -148,6 +305,7 @@ impl RelayControlClient {
             disconnect_notified: Arc::new(AtomicBool::new(false)),
             intentional_disconnect: Arc::new(AtomicBool::new(false)),
             heartbeat_interval: Duration::from_secs(u64::from(HEARTBEAT_INTERVAL_S)),
+            ready_presence_ttl: None,
         })
     }
 
@@ -163,12 +321,8 @@ impl RelayControlClient {
         }
         self.disconnect_notified.store(false, Ordering::Release);
         self.intentional_disconnect.store(false, Ordering::Release);
-        let request = authenticated_ws_request(
-            &self.relay_url,
-            RELAY_V2_CONTROL_PATH,
-            &self.credential,
-            &self.signing_key,
-        )?;
+        let request =
+            authenticated_ws_request(&self.relay_url, &self.credential, &self.signing_key)?;
         let (socket, _) = tokio::time::timeout(SOCKET_OPERATION_TIMEOUT, connect_async(request))
             .await
             .map_err(|_| RelayError::Socket("Relay control connection timed out".into()))?
@@ -183,6 +337,7 @@ impl RelayControlClient {
             .map_err(|error| RelayError::Socket(error.to_string()))?;
         let ready = validate_ready(ready, &self.device_id)?;
         self.heartbeat_interval = Duration::from_secs(u64::from(ready.heartbeat_interval_s.max(1)));
+        self.ready_presence_ttl = ready_presence_ttl_from_frame(&ready);
 
         let (outbound, mut outbound_rx) = mpsc::channel::<Message>(CONTROL_QUEUE_CAPACITY);
         self.outbound = Some(outbound);
@@ -321,6 +476,12 @@ impl RelayControlClient {
                 .is_some_and(|sender| !sender.is_closed())
     }
 
+    /// Return the server-confirmed candidate-cache TTL from the last Ready
+    /// frame. No value is exposed before a Ready handshake succeeds.
+    pub fn ready_presence_ttl(&self) -> Option<Duration> {
+        self.ready_presence_ttl
+    }
+
     /// 发送一次显式 Heartbeat，并等待对应的 HeartbeatAck 回显 `request_id`。
     pub async fn heartbeat(&self) -> Result<HeartbeatAck, RelayError> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
@@ -345,6 +506,11 @@ impl RelayControlClient {
         &self,
         snapshot: DiscoverySnapshot,
     ) -> Result<DiscoveryAck, RelayError> {
+        validate_discovery_snapshot(&snapshot)?;
+        let expected_epoch = snapshot.runtime_epoch.clone().ok_or_else(|| {
+            RelayError::InvalidConfiguration("discovery snapshot must carry runtime_epoch".into())
+        })?;
+        let expected_revision = snapshot.revision;
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let frame = RelayFrame {
             version: RELAY_V2_VERSION,
@@ -354,7 +520,16 @@ impl RelayControlClient {
             })),
         };
         match self.send_and_await(frame, REQUEST_TIMEOUT).await? {
-            ControlEvent::DiscoveryAck(ack) => Ok(ack),
+            ControlEvent::DiscoveryAck(ack) => {
+                if ack.revision != expected_revision
+                    || ack.runtime_epoch.as_ref() != Some(&expected_epoch)
+                {
+                    return Err(RelayError::Protocol(
+                        "Relay discovery ack does not match the published epoch/revision".into(),
+                    ));
+                }
+                Ok(ack)
+            }
             ControlEvent::ProtocolError(error) => Err(RelayError::Protocol(error.to_string())),
             _ => Err(RelayError::Protocol(
                 "unexpected response to Relay discovery publish".into(),
@@ -364,6 +539,18 @@ impl RelayControlClient {
 
     /// 按设备 ID 解析对端当前 Discovery（READY/OFFLINE/NOT_READY/UNKNOWN）。
     pub async fn resolve_peer(
+        &self,
+        target_device_id: &str,
+    ) -> Result<ResolvePeerResponse, RelayError> {
+        // ConnectivityOffer has no target field. Serialize every public
+        // Resolve with the same narrow gate used by Resolve → Offer so a
+        // status lookup cannot overwrite the server's one-shot target ticket
+        // between the authoritative Resolve and its Offer.
+        let _coordination_guard = self.coordination_gate.lock().await;
+        self.resolve_peer_unlocked(target_device_id).await
+    }
+
+    async fn resolve_peer_unlocked(
         &self,
         target_device_id: &str,
     ) -> Result<ResolvePeerResponse, RelayError> {
@@ -381,7 +568,7 @@ impl RelayControlClient {
             })),
         };
         match self.send_and_await(frame, REQUEST_TIMEOUT).await? {
-            ControlEvent::ResolvePeerResponse(response) => Ok(response),
+            ControlEvent::ResolvePeerResponse(response) => validate_resolve_response(response),
             ControlEvent::ProtocolError(error) => Err(RelayError::Protocol(error.to_string())),
             _ => Err(RelayError::Protocol(
                 "unexpected response to Relay resolve".into(),
@@ -389,77 +576,153 @@ impl RelayControlClient {
         }
     }
 
-    /// 开启一个异步 connectivity attempt，并按 `attempt_id` 关联应答。
+    /// Enqueue one authoritative Resolve → ConnectivityOffer transaction.
     ///
-    /// 返回对端的 ConnectivityAnswer（其 `request_id` 是对端自己的，因此本方法
-    /// 只依赖 `attempts: HashMap<attempt_id, tracker>` 完成关联）。
-    pub async fn start_connectivity_attempt(
+    /// The returned [`ConnectivityAttemptStart`] carries the authoritative
+    /// ResolvePeerResponse together with an answer waiter. READY responses
+    /// enqueue the Offer before returning; non-READY responses carry no Offer
+    /// and let the caller map the status without losing authority. The
+    /// coordination gate covers exactly the Resolve request/response and
+    /// Offer enqueue; it is released before the caller waits for an answer.
+    pub async fn begin_connectivity_attempt(
         &self,
         attempt_id: String,
-        initiator_device_id: String,
+        target_device_id: String,
+        _initiator_device_id: String,
         initiator_runtime_epoch: RuntimeEpoch,
         initiator_revision: u32,
         initiator_snapshot: Option<DiscoverySnapshot>,
-    ) -> Result<ConnectivityAnswer, RelayError> {
+    ) -> Result<ConnectivityAttemptStart, RelayError> {
         if attempt_id.is_empty() || attempt_id.len() > MAX_ATTEMPT_ID_BYTES {
             return Err(RelayError::InvalidConfiguration(
                 "attempt_id must contain 1-128 characters".into(),
             ));
         }
-        if initiator_device_id.is_empty() || initiator_device_id.len() > MAX_DEVICE_ID_BYTES {
+        if target_device_id.is_empty() || target_device_id.len() > MAX_DEVICE_ID_BYTES {
             return Err(RelayError::InvalidConfiguration(
-                "initiator device ID is outside protocol bounds".into(),
+                "target device ID is outside protocol bounds".into(),
             ));
+        }
+        if target_device_id == self.device_id {
+            return Err(RelayError::InvalidConfiguration(
+                "connectivity target must differ from the authenticated device".into(),
+            ));
+        }
+        validate_discovery_tuple(
+            &initiator_runtime_epoch,
+            initiator_revision,
+            initiator_snapshot.as_ref(),
+            "initiator",
+        )?;
+        // ConnectivityOffer has no target field on the frozen wire.  Keep the
+        // narrow gate only across the authoritative Resolve and the Offer
+        // enqueue so concurrent attempts on this shared control socket cannot
+        // cross-associate their targets.  The answer/probe window is outside
+        // the gate.
+        let coordination_guard = self.coordination_gate.lock().await;
+        if self
+            .attempts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(&attempt_id)
+        {
+            return Err(RelayError::Protocol(
+                "connectivity attempt_id is already in use".into(),
+            ));
+        }
+        let resolved = self.resolve_peer_unlocked(&target_device_id).await?;
+        if resolved.status != ResolveStatus::Ready as i32 {
+            let status = resolved.status;
+            let retry_after_ms = resolved.retry_after_ms;
+            drop(coordination_guard);
+            return Ok(ConnectivityAttemptStart::new(resolved, async move {
+                Err(RelayError::Protocol(format!(
+                    "connectivity attempt not started: resolve status={status} retry_after_ms={retry_after_ms}"
+                )))
+            }));
         }
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.attempts.write().await.insert(
-            attempt_id.clone(),
-            AttemptTracker {
-                created_at: Instant::now(),
-                response_tx: tx,
-            },
-        );
+        let attempt_lease = AttemptLease::new(Arc::clone(&self.attempts), attempt_id.clone());
+        {
+            let mut attempts = attempt_lease
+                .owner
+                .attempts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            attempts.insert(
+                attempt_id.clone(),
+                AttemptTracker {
+                    created_at: Instant::now(),
+                    token: attempt_lease.token(),
+                    response_tx: tx,
+                },
+            );
+        }
         let frame = RelayFrame {
             version: RELAY_V2_VERSION,
             kind: Some(relay_frame::Kind::ConnectivityOffer(ConnectivityOffer {
                 request_id,
                 attempt_id: attempt_id.clone(),
-                initiator_device_id,
+                // The authenticated control client is the only trusted
+                // initiator identity.  The legacy parameter is retained for
+                // trait/API compatibility but cannot spoof another device.
+                initiator_device_id: self.device_id.clone(),
                 initiator_runtime_epoch: Some(initiator_runtime_epoch),
                 initiator_revision,
                 initiator_snapshot,
             })),
         };
         if let Err(error) = self.send_frame(&frame).await {
-            self.attempts.write().await.remove(&attempt_id);
+            attempt_lease.owner.remove_if_owner();
             return Err(error);
         }
-        match tokio::time::timeout(CONNECTIVITY_ATTEMPT_TIMEOUT, rx).await {
-            Ok(Ok(ControlEvent::ConnectivityAnswer(answer))) => Ok(answer),
-            Ok(Ok(ControlEvent::ProtocolError(error))) => {
-                self.attempts.write().await.remove(&attempt_id);
-                Err(RelayError::Protocol(error.to_string()))
-            }
-            Ok(Ok(ControlEvent::Disconnected { .. })) => Err(RelayError::NotConnected),
-            Ok(Ok(_)) => {
-                self.attempts.write().await.remove(&attempt_id);
-                Err(RelayError::Protocol(
-                    "unexpected response to connectivity attempt".into(),
-                ))
-            }
-            Ok(Err(_)) => {
-                self.attempts.write().await.remove(&attempt_id);
-                Err(RelayError::NotConnected)
-            }
-            Err(_) => {
-                self.attempts.write().await.remove(&attempt_id);
-                Err(RelayError::Timeout("connectivity attempt timed out".into()))
-            }
-        }
+        drop(coordination_guard);
+        let owner = attempt_lease.owner();
+        Ok(ConnectivityAttemptStart {
+            resolved,
+            answer: Box::pin(async move {
+                ConnectivityAnswerWaiter {
+                    response_rx: rx,
+                    owner,
+                }
+                .wait()
+                .await
+            }),
+            attempt_lease: Some(attempt_lease),
+        })
     }
 
-    /// 发送一个受限的 WebRTC 信令帧（fire-and-forget，不等待应答）。
+    /// 开启一个异步 connectivity attempt，并按 `attempt_id` 关联应答。
+    ///
+    /// This compatibility wrapper preserves the original API: callers that do
+    /// not need the authoritative Resolve response can await the answer
+    /// directly.  The Resolve → Offer transaction itself is implemented by
+    /// [`Self::begin_connectivity_attempt`].
+    pub async fn start_connectivity_attempt(
+        &self,
+        attempt_id: String,
+        target_device_id: String,
+        initiator_device_id: String,
+        initiator_runtime_epoch: RuntimeEpoch,
+        initiator_revision: u32,
+        initiator_snapshot: Option<DiscoverySnapshot>,
+    ) -> Result<ConnectivityAnswer, RelayError> {
+        self.begin_connectivity_attempt(
+            attempt_id,
+            target_device_id,
+            initiator_device_id,
+            initiator_runtime_epoch,
+            initiator_revision,
+            initiator_snapshot,
+        )
+        .await?
+        .wait_for_answer()
+        .await
+    }
+
+    /// 发送一个受限的 WebRTC 信令帧（fire-and-forget，不等待应答）。发送方身份
+    /// 由 Relay 的认证连接上下文确定，不占用 frozen wire 字段。
     pub async fn signal_webrtc(
         &self,
         realtime_id: &str,
@@ -541,11 +804,24 @@ impl RelayControlClient {
         &self,
         offer: &ConnectivityOffer,
         accepted: bool,
-        responder_device_id: &str,
+        _responder_device_id: &str,
         responder_runtime_epoch: RuntimeEpoch,
         responder_revision: u32,
         responder_snapshot: Option<DiscoverySnapshot>,
     ) -> Result<(), RelayError> {
+        if offer.attempt_id.is_empty() || offer.attempt_id.len() > MAX_ATTEMPT_ID_BYTES {
+            return Err(RelayError::InvalidConfiguration(
+                "connectivity offer attempt_id is outside protocol bounds".into(),
+            ));
+        }
+        if accepted {
+            validate_discovery_tuple(
+                &responder_runtime_epoch,
+                responder_revision,
+                responder_snapshot.as_ref(),
+                "responder",
+            )?;
+        }
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let frame = RelayFrame {
             version: RELAY_V2_VERSION,
@@ -553,7 +829,7 @@ impl RelayControlClient {
                 request_id,
                 attempt_id: offer.attempt_id.clone(),
                 accepted,
-                responder_device_id: responder_device_id.to_string(),
+                responder_device_id: self.device_id.clone(),
                 responder_runtime_epoch: Some(responder_runtime_epoch),
                 responder_revision,
                 responder_snapshot,
@@ -649,7 +925,7 @@ impl RelayControlClient {
     }
 }
 
-/// 校验 Relay v2 Ready 帧的设备绑定和协议版本。
+/// 校验 Relay v2 Ready 帧的设备绑定、协议版本和有效租约参数。
 fn validate_ready(message: Message, expected_device_id: &str) -> Result<Ready, RelayError> {
     let Message::Binary(frame) = message else {
         return Err(RelayError::Authentication(
@@ -668,12 +944,122 @@ fn validate_ready(message: Message, expected_device_id: &str) -> Result<Ready, R
     if frame.version != RELAY_V2_VERSION
         || ready.protocol_version != RELAY_V2_VERSION
         || ready.device_id != expected_device_id
+        || ready.heartbeat_interval_s == 0
+        || ready.presence_ttl_s == 0
+        || ready.presence_ttl_s < ready.heartbeat_interval_s
     {
         return Err(RelayError::Authentication(
             "Relay returned an invalid v2 ready frame".into(),
         ));
     }
     Ok(ready.clone())
+}
+
+fn ready_presence_ttl_from_frame(ready: &Ready) -> Option<Duration> {
+    (ready.presence_ttl_s != 0).then(|| Duration::from_secs(u64::from(ready.presence_ttl_s)))
+}
+
+/// Validate the semantic fields that protobuf scalar defaults cannot express.
+/// A zero epoch/revision is never a usable discovery publication; accepting it
+/// would let an offline or not-ready peer enter the direct-connect path.
+fn validate_discovery_snapshot(snapshot: &DiscoverySnapshot) -> Result<(), RelayError> {
+    let epoch = snapshot.runtime_epoch.as_ref().ok_or_else(|| {
+        RelayError::InvalidConfiguration("discovery snapshot must carry runtime_epoch".into())
+    })?;
+    if epoch.high == 0 && epoch.low == 0 {
+        return Err(RelayError::InvalidConfiguration(
+            "discovery snapshot runtime_epoch must be non-zero".into(),
+        ));
+    }
+    if snapshot.revision == 0 {
+        return Err(RelayError::InvalidConfiguration(
+            "discovery snapshot revision must be non-zero".into(),
+        ));
+    }
+    if snapshot.transport_capabilities.len() > MAX_DISCOVERY_CAPABILITIES {
+        return Err(RelayError::InvalidConfiguration(
+            "discovery snapshot has too many transport capabilities".into(),
+        ));
+    }
+    if let Some(bundle) = snapshot.candidate_bundle.as_ref() {
+        if bundle.candidates.len() > MAX_DISCOVERY_CANDIDATES {
+            return Err(RelayError::InvalidConfiguration(
+                "discovery snapshot has too many candidates".into(),
+            ));
+        }
+        if bundle
+            .candidates
+            .iter()
+            .any(|candidate| candidate.len() > MAX_DISCOVERY_CANDIDATE_BYTES)
+        {
+            return Err(RelayError::InvalidConfiguration(
+                "discovery snapshot contains an oversized candidate".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate the epoch/revision/snapshot tuple carried by an offer or answer.
+fn validate_discovery_tuple(
+    epoch: &RuntimeEpoch,
+    revision: u32,
+    snapshot: Option<&DiscoverySnapshot>,
+    role: &str,
+) -> Result<(), RelayError> {
+    if epoch.high == 0 && epoch.low == 0 {
+        return Err(RelayError::InvalidConfiguration(format!(
+            "{role} runtime_epoch must be non-zero"
+        )));
+    }
+    if revision == 0 {
+        return Err(RelayError::InvalidConfiguration(format!(
+            "{role} discovery revision must be non-zero"
+        )));
+    }
+    let snapshot = snapshot.ok_or_else(|| {
+        RelayError::InvalidConfiguration(format!(
+            "{role} discovery snapshot is required for an accepted connectivity attempt"
+        ))
+    })?;
+    validate_discovery_snapshot(snapshot)?;
+    if snapshot.revision != revision || snapshot.runtime_epoch.as_ref() != Some(epoch) {
+        return Err(RelayError::Protocol(format!(
+            "{role} epoch/revision does not match its discovery snapshot"
+        )));
+    }
+    Ok(())
+}
+
+/// Resolve is a four-state authority.  Discovery is legal only for READY, and
+/// READY must carry a complete, non-zero epoch/revision snapshot.
+fn validate_resolve_response(
+    response: ResolvePeerResponse,
+) -> Result<ResolvePeerResponse, RelayError> {
+    let status = ResolveStatus::try_from(response.status)
+        .map_err(|_| RelayError::Protocol("Relay returned an unknown resolve status".into()))?;
+    match status {
+        ResolveStatus::Ready => {
+            let snapshot = response.discovery.as_ref().ok_or_else(|| {
+                RelayError::Protocol("READY resolve response is missing discovery".into())
+            })?;
+            validate_discovery_snapshot(snapshot)
+                .map_err(|error| RelayError::Protocol(error.to_string()))?;
+        }
+        ResolveStatus::Offline | ResolveStatus::NotReady | ResolveStatus::Unknown => {
+            if response.discovery.is_some() {
+                return Err(RelayError::Protocol(
+                    "non-READY resolve response must not carry discovery".into(),
+                ));
+            }
+        }
+        ResolveStatus::Unspecified => {
+            return Err(RelayError::Protocol(
+                "Relay returned an unspecified resolve status".into(),
+            ));
+        }
+    }
+    Ok(response)
 }
 
 /// 解码一个 Relay v2 控制消息。
@@ -723,8 +1109,22 @@ fn control_event_from_frame(frame: RelayFrame) -> Result<ControlEvent, RelayErro
         relay_frame::Kind::ResolvePeerResponse(message) => {
             ControlEvent::ResolvePeerResponse(message)
         }
-        relay_frame::Kind::ConnectivityOffer(message) => ControlEvent::ConnectivityOffer(message),
-        relay_frame::Kind::ConnectivityAnswer(message) => ControlEvent::ConnectivityAnswer(message),
+        relay_frame::Kind::ConnectivityOffer(message) => {
+            if message.attempt_id.is_empty() {
+                return Err(RelayError::Protocol(
+                    "Relay connectivity offer is missing attempt_id".into(),
+                ));
+            }
+            ControlEvent::ConnectivityOffer(message)
+        }
+        relay_frame::Kind::ConnectivityAnswer(message) => {
+            if message.attempt_id.is_empty() {
+                return Err(RelayError::Protocol(
+                    "Relay connectivity answer is missing attempt_id".into(),
+                ));
+            }
+            ControlEvent::ConnectivityAnswer(message)
+        }
         relay_frame::Kind::PresenceHintSnapshot(message) => {
             ControlEvent::PresenceHintSnapshot(message)
         }
@@ -764,10 +1164,10 @@ fn route_action(event: &ControlEvent) -> RouteAction {
             RouteAction::AttemptId(message.attempt_id.clone())
         }
         ControlEvent::ProtocolError(message) => {
-            if message.request_id != 0 {
-                RouteAction::RequestId(message.request_id)
-            } else if !message.attempt_id.is_empty() {
+            if !message.attempt_id.is_empty() {
                 RouteAction::AttemptId(message.attempt_id.clone())
+            } else if message.request_id != 0 {
+                RouteAction::RequestId(message.request_id)
             } else {
                 RouteAction::Event
             }
@@ -780,9 +1180,31 @@ fn route_action(event: &ControlEvent) -> RouteAction {
 async fn route_control_event(
     event: ControlEvent,
     pending: &RwLock<HashMap<u64, oneshot::Sender<ControlEvent>>>,
-    attempts: &RwLock<HashMap<String, AttemptTracker>>,
+    attempts: &AttemptStore,
     events: &mpsc::Sender<ControlEvent>,
 ) {
+    // An async error may carry both the responder's request_id and the
+    // initiator's attempt_id.  Attempt ownership wins when a tracker exists;
+    // a reservation error with no attempt tracker can still fall back to its
+    // request waiter.  Unknown/late attempt errors are dropped rather than
+    // leaking into the generic event stream.
+    if let ControlEvent::ProtocolError(error) = &event {
+        if !error.attempt_id.is_empty() {
+            let tracker = remove_attempt(attempts, &error.attempt_id);
+            if let Some(tracker) = tracker {
+                if tracker.created_at.elapsed() <= CONNECTIVITY_ATTEMPT_TIMEOUT {
+                    let _ = tracker.response_tx.send(event);
+                }
+                return;
+            }
+        }
+        if error.request_id != 0 {
+            if let Some(sender) = pending.write().await.remove(&error.request_id) {
+                let _ = sender.send(event);
+            }
+        }
+        return;
+    }
     match route_action(&event) {
         RouteAction::RequestId(request_id) => {
             let sender = pending.write().await.remove(&request_id);
@@ -799,16 +1221,11 @@ async fn route_control_event(
             }
         }
         RouteAction::AttemptId(attempt_id) => {
-            let tracker = attempts.write().await.remove(&attempt_id);
-            match tracker {
-                Some(tracker) => {
-                    // 过期 attempt 的迟到应答直接丢弃，避免串到同 id 的新 attempt。
-                    if tracker.created_at.elapsed() <= CONNECTIVITY_ATTEMPT_TIMEOUT {
-                        let _ = tracker.response_tx.send(event);
-                    }
-                }
-                None => {
-                    let _ = events.send(event).await;
+            let tracker = remove_attempt(attempts, &attempt_id);
+            if let Some(tracker) = tracker {
+                // 过期 attempt 的迟到应答直接丢弃，避免串到同 id 的新 attempt。
+                if tracker.created_at.elapsed() <= CONNECTIVITY_ATTEMPT_TIMEOUT {
+                    let _ = tracker.response_tx.send(event);
                 }
             }
         }
@@ -825,12 +1242,16 @@ async fn mark_control_disconnected(
     notified: &Arc<AtomicBool>,
     intentional: &Arc<AtomicBool>,
     pending: &RwLock<HashMap<u64, oneshot::Sender<ControlEvent>>>,
-    attempts: &RwLock<HashMap<String, AttemptTracker>>,
+    attempts: &AttemptStore,
     reason: String,
 ) {
     *connected.write().await = false;
-    if !intentional.load(Ordering::Acquire) && !notified.swap(true, Ordering::AcqRel) {
-        drain_pending(pending, attempts).await;
+    let first_disconnect = !notified.swap(true, Ordering::AcqRel);
+    // Drain regardless of whether shutdown was intentional. The explicit
+    // disconnect methods also drain, but the worker must remain the fallback
+    // when their futures are cancelled after setting the intentional flag.
+    drain_pending(pending, attempts).await;
+    if !intentional.load(Ordering::Acquire) && first_disconnect {
         let _ = inbound.send(ControlEvent::Disconnected { reason }).await;
     }
 }
@@ -838,7 +1259,7 @@ async fn mark_control_disconnected(
 /// 失败并清空所有待处理请求/attempt，让等待方快速返回 NotConnected。
 async fn drain_pending(
     pending: &RwLock<HashMap<u64, oneshot::Sender<ControlEvent>>>,
-    attempts: &RwLock<HashMap<String, AttemptTracker>>,
+    attempts: &AttemptStore,
 ) {
     let mut pending = pending.write().await;
     for (_, sender) in pending.drain() {
@@ -847,278 +1268,29 @@ async fn drain_pending(
         });
     }
     drop(pending);
-    let mut attempts = attempts.write().await;
-    for (_, tracker) in attempts.drain() {
+    let trackers = {
+        let mut attempts = attempts
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        attempts
+            .drain()
+            .map(|(_, tracker)| tracker)
+            .collect::<Vec<_>>()
+    };
+    for tracker in trackers {
         let _ = tracker.response_tx.send(ControlEvent::Disconnected {
             reason: "Relay control socket disconnected".into(),
         });
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ready_frame_must_be_binary_and_match_device() {
-        let ready = Ready {
-            protocol_version: RELAY_V2_VERSION,
-            device_id: "device-a".into(),
-            server_time_ms: 1723840800123,
-            heartbeat_interval_s: HEARTBEAT_INTERVAL_S,
-            presence_ttl_s: PRESENCE_TTL_S,
-        };
-        let frame = RelayFrame {
-            version: RELAY_V2_VERSION,
-            kind: Some(relay_frame::Kind::Ready(ready.clone())),
-        };
-        let encoded = encode_control_frame(&frame).expect("encode");
-        let message = Message::Binary(encoded.into());
-        let validated = validate_ready(message, "device-a").expect("valid ready");
-        assert_eq!(validated, ready);
-
-        // 错误设备 ID 必须被拒绝。
-        let message = Message::Binary(encode_control_frame(&frame).expect("encode").into());
-        assert!(validate_ready(message, "other-device").is_err());
-        // 文本帧必须被拒绝。
-        assert!(validate_ready(Message::Text("{}".into()), "device-a").is_err());
-    }
-
-    #[test]
-    fn server_to_client_offers_and_hints_decode_as_events() {
-        let offer = ConnectivityOffer {
-            request_id: 1001,
-            attempt_id: "a1b2c3d4e5f60718293a4b5c6d7e8f90".into(),
-            initiator_device_id: "device-a".into(),
-            initiator_runtime_epoch: Some(RuntimeEpoch {
-                high: 0x6A09E667,
-                low: 0xBB67AE85,
-            }),
-            initiator_revision: 7,
-            initiator_snapshot: None,
-        };
-        let frame = RelayFrame {
-            version: RELAY_V2_VERSION,
-            kind: Some(relay_frame::Kind::ConnectivityOffer(offer.clone())),
-        };
-        match control_event_from_frame(frame).expect("event") {
-            ControlEvent::ConnectivityOffer(decoded) => assert_eq!(decoded, offer),
-            other => panic!("expected ConnectivityOffer, got {other:?}"),
-        }
-
-        let hint = PeerUnavailableHint {
-            device_id: "device-b".into(),
-            reason: "device offline".into(),
-        };
-        let frame = RelayFrame {
-            version: RELAY_V2_VERSION,
-            kind: Some(relay_frame::Kind::PeerUnavailableHint(hint.clone())),
-        };
-        match control_event_from_frame(frame).expect("event") {
-            ControlEvent::PeerUnavailableHint(decoded) => assert_eq!(decoded, hint),
-            other => panic!("expected PeerUnavailableHint, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn control_frame_version_must_be_two() {
-        let frame = RelayFrame {
-            version: 1,
-            kind: Some(relay_frame::Kind::HeartbeatAck(HeartbeatAck {
-                request_id: 1,
-                server_time_ms: 0,
-            })),
-        };
-        assert!(encode_control_frame(&frame).is_err());
-    }
-
-    #[tokio::test]
-    async fn request_id_response_is_routed_to_the_matching_oneshot() {
-        let pending: Arc<RwLock<HashMap<u64, oneshot::Sender<ControlEvent>>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let attempts: Arc<RwLock<HashMap<String, AttemptTracker>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let (events_tx, mut events_rx) = mpsc::channel(4);
-
-        let (tx, rx) = oneshot::channel();
-        pending.write().await.insert(42, tx);
-
-        let response = ResolvePeerResponse {
-            request_id: 42,
-            status: ResolveStatus::Ready as i32,
-            discovery: None,
-            retry_after_ms: 0,
-        };
-        route_control_event(
-            ControlEvent::ResolvePeerResponse(response.clone()),
-            &pending,
-            &attempts,
-            &events_tx,
-        )
-        .await;
-
-        assert_eq!(
-            rx.await.expect("oneshot resolved"),
-            ControlEvent::ResolvePeerResponse(response)
-        );
-        assert!(pending.read().await.is_empty());
-        assert!(events_rx.try_recv().is_err(), "no fallback event expected");
-    }
-
-    #[tokio::test]
-    async fn attempt_id_response_is_routed_by_attempt_tracker() {
-        let pending: Arc<RwLock<HashMap<u64, oneshot::Sender<ControlEvent>>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let attempts: Arc<RwLock<HashMap<String, AttemptTracker>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let (events_tx, _events_rx) = mpsc::channel(4);
-
-        let attempt_id = "a1b2c3d4e5f60718293a4b5c6d7e8f90";
-        let (tx, rx) = oneshot::channel();
-        attempts.write().await.insert(
-            attempt_id.to_string(),
-            AttemptTracker {
-                created_at: Instant::now(),
-                response_tx: tx,
-            },
-        );
-
-        let answer = ConnectivityAnswer {
-            request_id: 2002,
-            attempt_id: attempt_id.to_string(),
-            accepted: true,
-            responder_device_id: "device-b".into(),
-            responder_runtime_epoch: None,
-            responder_revision: 3,
-            responder_snapshot: None,
-        };
-        route_control_event(
-            ControlEvent::ConnectivityAnswer(answer.clone()),
-            &pending,
-            &attempts,
-            &events_tx,
-        )
-        .await;
-
-        assert_eq!(
-            rx.await.expect("attempt resolved"),
-            ControlEvent::ConnectivityAnswer(answer)
-        );
-        assert!(attempts.read().await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn async_events_fall_through_to_the_event_stream() {
-        let pending: Arc<RwLock<HashMap<u64, oneshot::Sender<ControlEvent>>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let attempts: Arc<RwLock<HashMap<String, AttemptTracker>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let (events_tx, mut events_rx) = mpsc::channel(4);
-
-        let hint = PeerUnavailableHint {
-            device_id: "device-b".into(),
-            reason: "offline".into(),
-        };
-        route_control_event(
-            ControlEvent::PeerUnavailableHint(hint.clone()),
-            &pending,
-            &attempts,
-            &events_tx,
-        )
-        .await;
-
-        assert_eq!(
-            events_rx.recv().await.expect("async event"),
-            ControlEvent::PeerUnavailableHint(hint)
-        );
-    }
-
-    #[tokio::test]
-    async fn protocol_error_with_request_id_fails_that_request() {
-        let pending: Arc<RwLock<HashMap<u64, oneshot::Sender<ControlEvent>>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let attempts: Arc<RwLock<HashMap<String, AttemptTracker>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let (events_tx, _events_rx) = mpsc::channel(4);
-
-        let (tx, rx) = oneshot::channel();
-        pending.write().await.insert(7, tx);
-
-        let error = ProtocolError {
-            request_id: 7,
-            attempt_id: String::new(),
-            code: ErrorCode::EpochConflict as i32,
-            message: "revision already published".into(),
-        };
-        route_control_event(
-            ControlEvent::ProtocolError(error.clone()),
-            &pending,
-            &attempts,
-            &events_tx,
-        )
-        .await;
-
-        match rx.await.expect("oneshot resolved") {
-            ControlEvent::ProtocolError(decoded) => assert_eq!(decoded, error),
-            other => panic!("expected ProtocolError, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn request_and_attempt_ids_are_extracted_from_frames() {
-        let frame = RelayFrame {
-            version: RELAY_V2_VERSION,
-            kind: Some(relay_frame::Kind::ResolvePeerRequest(ResolvePeerRequest {
-                request_id: 1001,
-                target_device_id: "device-b".into(),
-            })),
-        };
-        assert_eq!(frame_request_id(&frame), Some(1001));
-
-        let frame = RelayFrame {
-            version: RELAY_V2_VERSION,
-            kind: Some(relay_frame::Kind::ConnectivityAnswer(ConnectivityAnswer {
-                request_id: 2002,
-                attempt_id: "attempt-1".into(),
-                accepted: true,
-                responder_device_id: "device-b".into(),
-                responder_runtime_epoch: None,
-                responder_revision: 3,
-                responder_snapshot: None,
-            })),
-        };
-        assert_eq!(frame_request_id(&frame), Some(2002));
-        match frame.kind.as_ref().expect("kind") {
-            relay_frame::Kind::ConnectivityAnswer(answer) => {
-                assert_eq!(answer.attempt_id, "attempt-1");
-            }
-            other => panic!("expected ConnectivityAnswer, got {other:?}"),
-        }
-    }
-
-    #[tokio::test]
-    async fn validation_rejects_out_of_bounds_identifiers() {
-        let client = RelayControlClient::new(
-            "https://relay.example.test".into(),
-            "device-a".into(),
-            "credential".into(),
-            [0u8; 32],
-        )
-        .expect("client");
-        assert!(matches!(
-            client.resolve_peer("").await,
-            Err(RelayError::InvalidConfiguration(_))
-        ));
-        assert!(matches!(
-            client
-                .resolve_peer("x".repeat(MAX_DEVICE_ID_BYTES + 1).as_str())
-                .await,
-            Err(RelayError::InvalidConfiguration(_))
-        ));
-        // 未连接时，合法请求在出站队列阶段返回 NotConnected。
-        assert!(matches!(
-            client.resolve_peer("device-b").await,
-            Err(RelayError::NotConnected)
-        ));
-    }
+fn remove_attempt(attempts: &AttemptStore, attempt_id: &str) -> Option<AttemptTracker> {
+    attempts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(attempt_id)
 }
+
+#[cfg(test)]
+#[path = "../tests/control_client.rs"]
+mod tests;

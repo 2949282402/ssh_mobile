@@ -24,11 +24,12 @@ class PlaybookViewModel extends ChangeNotifier {
   // Selected execution connection ID
   String? _selectedConnectionId;
 
-  PlaybookViewModel({
+  factory PlaybookViewModel({
     required PlaybookService playbookService,
     required PlaybookConnectionCatalogPort connectionCatalog,
-  }) : _playbookService = playbookService,
-       _connectionCatalog = connectionCatalog {
+  }) => PlaybookViewModel._(playbookService, connectionCatalog);
+
+  PlaybookViewModel._(this._playbookService, this._connectionCatalog) {
     _playbookService.addListener(_onServiceChanged);
     _connectionCatalog.addListener(_onCatalogChanged);
     _initializeDefaultConnection();

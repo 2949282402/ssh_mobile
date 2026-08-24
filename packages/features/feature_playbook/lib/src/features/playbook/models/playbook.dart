@@ -88,6 +88,9 @@ class Playbook {
   final DateTime updatedAt;
   final String? lastConnectionId;
 
+  /// Database concurrency token. Zero represents a not-yet-persisted model.
+  final int revision;
+
   Playbook({
     required this.id,
     required this.name,
@@ -96,6 +99,7 @@ class Playbook {
     required this.createdAt,
     required this.updatedAt,
     this.lastConnectionId,
+    this.revision = 0,
   });
 
   Map<String, dynamic> toJson() {
@@ -107,6 +111,7 @@ class Playbook {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'lastConnectionId': lastConnectionId,
+      'revision': revision,
     };
   }
 
@@ -121,6 +126,7 @@ class Playbook {
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
       lastConnectionId: json['lastConnectionId'] as String?,
+      revision: json['revision'] as int? ?? 0,
     );
   }
 
@@ -132,6 +138,7 @@ class Playbook {
     DateTime? createdAt,
     DateTime? updatedAt,
     String? lastConnectionId,
+    int? revision,
   }) {
     return Playbook(
       id: id ?? this.id,
@@ -141,6 +148,7 @@ class Playbook {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       lastConnectionId: lastConnectionId ?? this.lastConnectionId,
+      revision: revision ?? this.revision,
     );
   }
 }

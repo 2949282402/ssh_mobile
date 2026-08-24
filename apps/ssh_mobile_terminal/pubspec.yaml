@@ -26,6 +26,7 @@ dependencies:
     path: ../../packages/features/feature_terminal
 
 dev_dependencies:
+  drift: ^2.34.3
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0

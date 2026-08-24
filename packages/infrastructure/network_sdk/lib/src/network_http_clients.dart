@@ -180,7 +180,10 @@ final class JsonBootstrapClient implements BootstrapClient {
         ),
       );
     }
-    if (request.nonce.isEmpty || request.signature.isEmpty) {
+    if (request.timestamp <= 0 ||
+        request.timestamp.bitLength > 63 ||
+        !_isCanonicalBase64Url(request.nonce, decodedBytes: 32) ||
+        !_isCanonicalBase64Url(request.signature, decodedBytes: 64)) {
       return const SdkFailure(
         NetworkError(
           code: NetworkErrorCode.invalidArgument,
@@ -193,6 +196,7 @@ final class JsonBootstrapClient implements BootstrapClient {
       final payload = <String, dynamic>{
         'device_id': request.deviceId,
         'public_key': _base64Url(request.identityPublicKey),
+        'timestamp': request.timestamp,
         'nonce': request.nonce,
         'signature': request.signature,
       };
@@ -545,6 +549,16 @@ Uint8List _encodeJson(Object value) =>
 
 String _base64Url(Uint8List value) =>
     base64UrlEncode(value).replaceAll('=', '');
+
+bool _isCanonicalBase64Url(String value, {required int decodedBytes}) {
+  if (value.isEmpty || value.contains('=')) return false;
+  try {
+    final decoded = base64Url.decode(base64Url.normalize(value));
+    return decoded.length == decodedBytes && _base64Url(decoded) == value;
+  } on FormatException {
+    return false;
+  }
+}
 
 int? _readInt(Object? value) => value is num ? value.toInt() : null;
 

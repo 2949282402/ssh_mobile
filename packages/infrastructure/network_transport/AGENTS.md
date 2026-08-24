@@ -1,4 +1,4 @@
-最新更新时间：2026-08-13
+最新更新时间：2026-08-19
 
 # network_transport Package Guidelines
 
@@ -19,7 +19,7 @@ Feature UI、SSH 会话或 LAN 业务规则。
 - `NetworkRuntime.diagnostics` 是只读生命周期观察契约；它只能报告
   `NetworkRuntimeImpl` 直接拥有的 native handle 和已登记的连接/Capability，
   不得为了填充诊断数字而接管 Feature 协议连接。
-- `NetworkCommandGateway` 只是 Runtime-owned native v1 handle 的借用型命令/事件
+- `NetworkCommandGateway` 只是 Runtime-owned Network Protocol V2 handle 的借用型命令/事件
   入口；它不得拥有、复制或关闭 handle，也不得在其中加入业务协议规则。
 - `NetworkRealtimeGateway` 同样是 Runtime-owned handle 的借用型入口；它只能
   编解码 native typed Realtime command/event，不能把 PeerConnection、ICE、SDP、
@@ -34,7 +34,7 @@ Feature UI、SSH 会话或 LAN 业务规则。
 - `NetworkCapability.runtime` 只表示 native command-worker handle 存在；它与 QUIC、
   WSS Relay、Realtime 等具体 transport capability 独立配置和观察；
 - Wave 1 中唯一的数据面配置仍走现有 `ConfigureRuntime`，该入口会无条件初始化直接
-  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到 v1 协议切换（Wave 2），
+  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到后续协议能力切换（Wave 2），
   当前并不存在；
 - Runtime dispose 会等待未完成的 handle 创建，然后显式 close；dispose 后所有新的
   Capability 请求必须失败；

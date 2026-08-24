@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-24
 
 # AI Feature Memory
 
@@ -10,6 +10,12 @@ the database, repositories, provider/runtime creation, and tool registry.
 Route Scope owns AI ViewModels, streams, timers, and controllers. App Shell
 adapters inject settings, logging, text protection, SSH/SFTP, monitoring,
 Playbook, RAG, MCP, and WebView capabilities without transferring ownership.
+
+Chat-list titles do not derive from user prompt text. Route teardown rejects
+pending approvals, cancels the active provider request, and joins the generation
+Future before releasing its streaming notifiers. `AiModule` invalidates an
+in-flight lazy initialization before closing `ai.db`, so a late open cannot
+resurrect the Module after App shutdown.
 
 Chat, metrics, trace, attachments, context, and other sensitive fields are
 encrypted before Drift writes. Database-open failures surface; they do not
@@ -25,6 +31,10 @@ fall back to an in-memory production store.
   redacted persisted traces.
 - Tool visibility is an execution boundary, not only a model hint. A hidden or
   unexposed tool never reaches approval, execution, cache, loop guard, or budget paths.
+- Tool-loop preflight owns visibility and plan-step gates, the budget-audit
+  coordinator owns extensions and remaining-call blocking, and one result
+  recorder folds both serial and parallel outcomes into provider messages,
+  system hints, ledger entries, and traces.
 - Remote writes and sensitive reads require approval bound to immutable target
   and action snapshots. Stale snapshots are rejected before execution.
 - Tool arguments, results, approvals, and persisted traces pass through

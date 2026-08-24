@@ -1,9 +1,12 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-24
 
 # Terminal-only App Guidelines
 
 - 本 App 只验证最小 Terminal 编译图，不复制 Full App 的业务 Service。
 - App Scope 资源由 `lib/app/terminal_app_runtime.dart` 统一创建和释放。
+- 根 Stateful Widget 必须提供可等待、幂等的退出屏障；先移除 Route/Feature borrower，
+  再按 Module → SSH → Network → Database → UI owners → Logger 释放。单项失败不能
+  跳过后续 Owner。
 - Terminal 页面只能通过 `feature_terminal` 的公共入口和 Port 使用能力，
   禁止导入其他 Package 的 `lib/src/`。
 - 不得添加 AI、RAG、MCP、WebView、LAN Share 或 SFTP 依赖；需要扩展完整

@@ -1,12 +1,12 @@
-> 最新更新时间：2026-08-15
+> 最新更新时间：2026-08-19
 
 # ADR-017：Peer Candidate Exchange and Connectivity Checks
 
 ## Status
 
-Accepted for the native network v1 runtime.
+Accepted for the native network v1 runtime. The transport-network v2 runtime supersedes this ADR's generation ordering and Direct-race details; the current rules are maintained in [ADR-DISCOVERY-V2](ADR-DISCOVERY-V2.md) and [ADR-CONNECTION-LIFECYCLE-V2](ADR-CONNECTION-LIFECYCLE-V2.md).
 
-2026-08-15 修订：新增 Relay 控制面对 discovery 的**存储**决策——存储发现
+2026-08-19 修订：新增 Relay 控制面对 discovery 的**存储**决策——存储发现
 （discovery 快照）但不解析信令 payload；`lookup` 与 `presence_snapshot` 由此
 获得候选数据，信令转发仍保持不解析。其余原决策不变。
 
@@ -99,10 +99,11 @@ identity-bound QUIC handshake succeeds.
 
 The runtime can exchange multiple LAN, public IPv6, and server-reflexive
 candidates without changing the Flutter/client business protocol. Candidate
-updates can be applied without accepting stale NAT state. Full Relay-to-Direct
-background upgrade uses the same bounded QUIC attempt and additional native
-transports remain later integration steps; this ADR defines the candidate
-exchange and authenticated nomination boundary they will consume.
+updates can be applied without accepting stale NAT state. The former
+Relay-to-Direct background-upgrade wording is v1 history; v2 uses the
+Direct-First bounded window and selects a route for the lifetime of the
+ConnectionSession. This ADR defines the candidate exchange and authenticated
+nomination boundary consumed by the v2 lifecycle ADRs.
 
 ## Verification
 

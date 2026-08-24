@@ -113,6 +113,7 @@ final class FakeTerminalCapability implements SshTerminalCapability {
   final List<String> disconnectedSessionIds = <String>[];
   bool ensureSessionConnectedResult = false;
   String? lastOpenedConnectionId;
+  Future<String> Function(String sessionId)? historyLoader;
 
   @override
   Stream<void> get changes => _changes.stream;
@@ -134,7 +135,9 @@ final class FakeTerminalCapability implements SshTerminalCapability {
 
   @override
   Future<String> loadSessionHistoryText(String sessionId) async =>
-      getSession(sessionId)?.outputText ?? '';
+      historyLoader != null
+      ? historyLoader!(sessionId)
+      : getSession(sessionId)?.outputText ?? '';
 
   @override
   Future<bool> ensureSessionConnected(

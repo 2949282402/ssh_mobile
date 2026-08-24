@@ -1,3 +1,6 @@
+// ignore_for_file: prefer_initializing_formals
+// Public named parameters intentionally initialize private ViewModel fields.
+
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';

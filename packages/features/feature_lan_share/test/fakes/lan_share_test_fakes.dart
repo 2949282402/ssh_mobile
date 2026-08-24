@@ -27,7 +27,7 @@ final class FakeLanShareSettings extends ChangeNotifier
 
   /// 已保存的 Relay origin；默认空字符串表示未配置。
   @override
-  final String relayEndpoint;
+  String relayEndpoint;
   final FakeLanShareStrings _strings = FakeLanShareStrings();
 
   @override
@@ -62,7 +62,10 @@ final class FakeLanShareSettings extends ChangeNotifier
   Future<void> setLanDeviceAlias(String alias) async {}
 
   @override
-  Future<void> setRelayEndpoint(String endpoint) async {}
+  Future<void> setRelayEndpoint(String endpoint) async {
+    relayEndpoint = endpoint;
+    notifyListeners();
+  }
 
   @override
   Future<void> setRelayServer({
@@ -377,6 +380,7 @@ final class FakeLanDiscoveryService extends Fake
 
   final bool activeWebShare;
   final String? shareUrl;
+  bool disposed = false;
 
   @override
   bool get isScanning => false;
@@ -415,7 +419,14 @@ final class FakeLanDiscoveryService extends Fake
       const NetworkSuccess<void>(null);
 
   @override
-  void dispose() {}
+  Future<void> close() async {
+    disposed = true;
+  }
+
+  @override
+  void dispose() {
+    unawaited(close());
+  }
 }
 
 /// 支持受控监听端口和启停计数的 fake LAN 传输服务。
@@ -470,8 +481,21 @@ final class FakeLanTransferService extends Fake implements LanTransferService {
   }
 
   @override
-  void dispose() {
+  Future<void> close() async {
+    _listening = false;
     disposed = true;
+    await Future.wait([
+      if (!_pairingInviteController.isClosed) _pairingInviteController.close(),
+      if (!_announcedDeviceController.isClosed)
+        _announcedDeviceController.close(),
+      if (!_handshakePendingController.isClosed)
+        _handshakePendingController.close(),
+    ]);
+  }
+
+  @override
+  void dispose() {
+    unawaited(close());
   }
 }
 

@@ -1,5 +1,7 @@
 // Playbook Repository 的加密、条件写入和执行历史持久化测试。
 
+import 'dart:convert';
+
 import 'package:drift/native.dart';
 import 'package:feature_playbook/feature_playbook.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,13 +25,18 @@ void main() {
 
       final playbookRow = await database
           .customSelect(
-            'SELECT content_json FROM playbooks WHERE id = \'playbook-1\'',
+            'SELECT name, description, content_json, revision '
+            'FROM playbooks WHERE id = \'playbook-1\'',
           )
           .getSingle();
+      expect(playbookRow.data['name'], isEmpty);
+      expect(playbookRow.data['description'], isEmpty);
       expect(playbookRow.data['content_json'], startsWith('encrypted:'));
+      expect(playbookRow.data['revision'], 1);
+      final loadedPlaybook = (await repository.loadPlaybooks()).single;
       expect(
-        (await repository.loadPlaybooks()).single.toJson(),
-        equals(playbook.toJson()),
+        loadedPlaybook.toJson(),
+        equals(playbook.copyWith(revision: 1).toJson()),
       );
       expect(protection.encryptCalls, greaterThan(0));
       expect(protection.decryptCalls, greaterThan(0));
@@ -78,7 +85,95 @@ void main() {
     },
   );
 
-  test('conditional save rejects a stale approval fingerprint', () async {
+  test(
+    'revision CAS rejects an execution write after a concurrent edit',
+    () async {
+      final database = PlaybookDatabase.forTesting(NativeDatabase.memory());
+      final repository = DriftPlaybookRepository(
+        database: database,
+        dataProtection: FakePlaybookDataProtection(),
+      );
+      addTearDown(database.dispose);
+
+      final playbook = _samplePlaybook();
+      await repository.savePlaybook(playbook);
+      final approved = (await repository.loadPlaybooks()).single;
+      final concurrentEdit = approved.copyWith(
+        description: 'changed after approval',
+        updatedAt: approved.updatedAt.add(const Duration(seconds: 1)),
+      );
+      await repository.savePlaybook(concurrentEdit);
+
+      expect(
+        await repository.savePlaybookIfRevisionMatches(
+          playbookId: playbook.id,
+          expectedRevision: approved.revision,
+          playbook: approved.copyWith(lastConnectionId: 'connection-1'),
+        ),
+        isNull,
+      );
+      final latest = (await repository.loadPlaybooks()).single;
+      expect(latest.description, concurrentEdit.description);
+      expect(latest.revision, 2);
+
+      expect(
+        await repository.savePlaybookIfRevisionMatches(
+          playbookId: playbook.id,
+          expectedRevision: latest.revision,
+          playbook: latest.copyWith(lastConnectionId: 'connection-1'),
+        ),
+        3,
+      );
+    },
+  );
+
+  test('v1 migration blanks duplicated plaintext metadata', () async {
+    final playbook = _samplePlaybook();
+    final protection = FakePlaybookDataProtection();
+    final encryptedContent = await protection.encryptString(
+      jsonEncode(playbook.toJson()),
+    );
+    final executor = NativeDatabase.memory(
+      setup: (raw) {
+        raw.execute('''
+          CREATE TABLE playbooks (
+            id TEXT NOT NULL PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            content_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          )
+        ''');
+        raw.execute(
+          'INSERT INTO playbooks '
+          '(id, name, description, content_json, created_at, updated_at) '
+          'VALUES (?, ?, ?, ?, ?, ?)',
+          [
+            playbook.id,
+            'plaintext-name',
+            'plaintext-description',
+            encryptedContent,
+            playbook.createdAt.millisecondsSinceEpoch,
+            playbook.updatedAt.millisecondsSinceEpoch,
+          ],
+        );
+        raw.userVersion = 1;
+      },
+    );
+    final database = PlaybookDatabase.forTesting(executor);
+    addTearDown(database.dispose);
+
+    final row = await database
+        .customSelect('SELECT name, description, revision FROM playbooks')
+        .getSingle();
+
+    expect(row.data['name'], isEmpty);
+    expect(row.data['description'], isEmpty);
+    expect(row.data['revision'], 1);
+  });
+
+  test('two writers for one revision cannot both commit', () async {
     final database = PlaybookDatabase.forTesting(NativeDatabase.memory());
     final repository = DriftPlaybookRepository(
       database: database,
@@ -86,21 +181,26 @@ void main() {
     );
     addTearDown(database.dispose);
 
-    final playbook = _samplePlaybook();
-    await repository.savePlaybook(playbook);
-    final changed = playbook.copyWith(description: 'changed after approval');
-
-    expect(
-      await repository.savePlaybookIfActionUnchanged(
-        playbookId: playbook.id,
-        expectedActionFingerprint: 'stale-fingerprint',
-        playbook: changed,
+    await repository.savePlaybook(_samplePlaybook());
+    final approved = (await repository.loadPlaybooks()).single;
+    final results = await Future.wait([
+      repository.savePlaybookIfRevisionMatches(
+        playbookId: approved.id,
+        expectedRevision: approved.revision,
+        playbook: approved.copyWith(description: 'writer-a'),
       ),
-      isFalse,
-    );
+      repository.savePlaybookIfRevisionMatches(
+        playbookId: approved.id,
+        expectedRevision: approved.revision,
+        playbook: approved.copyWith(description: 'writer-b'),
+      ),
+    ]);
+
+    expect(results.whereType<int>(), [approved.revision + 1]);
+    expect(results.where((result) => result == null), hasLength(1));
     expect(
       (await repository.loadPlaybooks()).single.description,
-      playbook.description,
+      anyOf('writer-a', 'writer-b'),
     );
   });
 }

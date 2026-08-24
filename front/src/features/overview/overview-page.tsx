@@ -27,7 +27,7 @@ export function OverviewPage() {
         : '检查 Relay 服务状态后重试。';
     return (
       <div className="page page--narrow">
-        <PageHeader eyebrow="Relay / Overview" title="运行概览" description="查看当前进程里的设备和中继连接状态。" />
+        <PageHeader eyebrow="Relay / Overview" title="运行概览" description="查看当前 Relay 服务的设备和中继连接状态。" />
         <ErrorState description={description} onRetry={() => void statsQuery.refetch()} />
       </div>
     );
@@ -35,13 +35,17 @@ export function OverviewPage() {
   if (!stats) return null;
 
   const presenceAvailable = stats.presence_available;
+  const refreshFailed = statsQuery.isError;
+  const refreshError = statsQuery.error instanceof ApiRequestError
+    ? statsQuery.error.message
+    : '最近一次刷新失败。';
 
   return (
     <div className="page">
       <PageHeader
         eyebrow="Relay / Overview"
         title="运行概览"
-        description="当前 Relay 进程的设备、连接和资源状态。"
+        description="当前 Relay 服务的设备、连接和进程资源状态。"
         action={(
           <Button variant="outline" onClick={() => void statsQuery.refetch()} loading={statsQuery.isFetching}>
             <RefreshCw size={15} aria-hidden="true" />
@@ -51,11 +55,17 @@ export function OverviewPage() {
       />
 
       <div className="snapshot-meta">
-        <Badge tone="online" dot>LIVE SNAPSHOT</Badge>
+        <Badge tone={refreshFailed ? 'warning' : 'online'} dot>
+          {refreshFailed ? 'STALE SNAPSHOT' : 'LIVE SNAPSHOT'}
+        </Badge>
         <span>上次同步 {formatLastUpdated(stats.server_time * 1000)}</span>
         <span className="snapshot-meta__separator" aria-hidden="true" />
         <span>每 3 秒自动更新</span>
       </div>
+
+      {refreshFailed ? (
+        <InlineNotice tone="warning">{refreshError} 当前显示上次成功同步的数据。</InlineNotice>
+      ) : null}
 
       {!presenceAvailable ? (
         <InlineNotice tone="warning">在线状态暂不可用（presence 服务异常），以下在线数为未知。</InlineNotice>
@@ -67,7 +77,7 @@ export function OverviewPage() {
             <p className="eyebrow">Relay signal rail</p>
             <h2>链路状态</h2>
           </div>
-          <span className="section-heading__note">protocol v1 / in-memory</span>
+          <span className="section-heading__note">Admin API v1 / live snapshot</span>
         </div>
         <SignalRail
           nodes={[
@@ -79,7 +89,7 @@ export function OverviewPage() {
       </section>
 
       <section className="metric-grid" aria-label="Relay 核心指标">
-        <MetricTile label="Registered devices" value={stats.devices.enrolled} detail="当前进程已注册" accent="teal" />
+        <MetricTile label="Registered devices" value={stats.devices.enrolled} detail="当前存储已注册" accent="teal" />
         <MetricTile label="Online peers" value={presenceAvailable ? stats.devices.online : '未知'} detail={presenceAvailable ? '已建立 WebSocket 连接' : 'presence 暂不可用'} accent="teal" />
         <MetricTile label="Active sessions" value={stats.relay.active_transfers} detail="内存中的传输会话" accent={stats.relay.active_transfers > 0 ? 'amber' : 'ink'} />
         <MetricTile label="Memory alloc" value={`${stats.runtime.allocated_mem_mb.toFixed(2)} MB`} detail={`${stats.runtime.goroutines} goroutines`} accent="coral" mono />
@@ -116,9 +126,9 @@ export function OverviewPage() {
             <RuntimeRow icon={<TimerReset size={16} />} label="服务运行时间" value={formatDuration(stats.uptime_seconds)} mono />
             <RuntimeRow icon={<MemoryStick size={16} />} label="内存占用" value={`${stats.runtime.allocated_mem_mb.toFixed(2)} MB`} mono />
             <RuntimeRow icon={<Cpu size={16} />} label="Goroutines" value={String(stats.runtime.goroutines)} mono />
-            <RuntimeRow icon={<Server size={16} />} label="数据保存" value="仅驻留内存" />
+            <RuntimeRow icon={<Server size={16} />} label="注册数据" value="由 Relay 部署配置决定" />
           </div>
-          <InlineNotice tone="warning">Relay 重启后，设备注册和传输会话都会清空。</InlineNotice>
+          <InlineNotice tone="warning">Relay 重启会结束活动传输会话；设备注册是否保留取决于存储配置。</InlineNotice>
         </section>
       </div>
 

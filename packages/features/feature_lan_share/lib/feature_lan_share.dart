@@ -9,6 +9,8 @@ export 'src/data/repositories/lan_share_history_repository.dart';
 export 'src/domain/lan_share_ports.dart'
     hide AppLanguage, AppSettings, AppStrings;
 export 'src/features/lan_share/lan_share_feature_scope.dart';
+export 'src/features/lan_share/services/lan_relay_coordinator.dart'
+    show LanRelayStatus;
 export 'src/features/lan_share/services/lan_receiver_coordinator.dart';
 export 'src/features/lan_share/viewmodels/lan_relay_settings_viewmodel.dart';
 export 'src/features/lan_share/viewmodels/lan_share_viewmodel.dart';

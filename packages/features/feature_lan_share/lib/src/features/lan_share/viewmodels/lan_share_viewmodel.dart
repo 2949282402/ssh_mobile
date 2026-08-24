@@ -51,8 +51,10 @@ class LanShareViewModel extends ChangeNotifier {
   StreamSubscription? _handshakeSuccessSubscription;
   StreamSubscription? _connectionStateSubscription;
   Timer? _keepAliveTimer;
+  Future<void>? _keepAliveOperation;
   Future<void> _historyRefreshSerial = Future<void>.value();
   final Map<String, Future<void>> _messagePersistence = {};
+  final Set<Future<void>> _backgroundOperations = <Future<void>>{};
 
   /// 以设备标识为 key 的 X25519 公钥缓存（仅保存在内存）。
   final Map<String, Uint8List> _recipientPubKeyCache = {};
@@ -158,6 +160,18 @@ class LanShareViewModel extends ChangeNotifier {
         StateError('LAN share view model is disposed.'),
       );
     }
+    final shutdown = _shutdownFuture;
+    if (shutdown != null) {
+      return shutdown.then((_) {
+        if (_disposed) {
+          throw StateError('LAN share view model is disposed.');
+        }
+        if (identical(_shutdownFuture, shutdown)) {
+          _shutdownFuture = null;
+        }
+        return initialize();
+      });
+    }
     return _initializationFuture ??= _initialize();
   }
 
@@ -186,8 +200,11 @@ class LanShareViewModel extends ChangeNotifier {
       if (!_disposed) notifyListeners();
     });
     _incomingMessageSubscription = transferService.incomingMessageStream.listen(
-      (msg) async {
-        await _enqueueMessagePersistence(msg.id, () => _saveMessageToDb(msg));
+      (msg) {
+        _trackBackgroundOperation(
+          _enqueueMessagePersistence(msg.id, () => _saveMessageToDb(msg)),
+          'LAN incoming history persistence failed',
+        );
       },
     );
     _announcedDeviceSubscription = transferService.announcedDeviceStream.listen(
@@ -211,19 +228,23 @@ class LanShareViewModel extends ChangeNotifier {
     _handshakeSuccessSubscription = transferService.handshakeSuccessStream
         .listen((device) {
           registerManualDevice(device);
-          unawaited(_prepareFileTransferPeer(device));
+          _trackBackgroundOperation(
+            _prepareFileTransferPeer(device),
+            'LAN native peer preparation failed',
+          );
         });
-    _progressSubscription = transferService.messageProgressStream.listen((
-      msg,
-    ) async {
-      await _enqueueMessagePersistence(
-        msg.id,
-        () => historyDao.updateRecordStatus(
+    _progressSubscription = transferService.messageProgressStream.listen((msg) {
+      _trackBackgroundOperation(
+        _enqueueMessagePersistence(
           msg.id,
-          msg.status.toJson(),
-          bytesTransferred: msg.bytesTransferred,
-          localPath: msg.localPath,
+          () => historyDao.updateRecordStatus(
+            msg.id,
+            msg.status.toJson(),
+            bytesTransferred: msg.bytesTransferred,
+            localPath: msg.localPath,
+          ),
         ),
+        'LAN progress persistence failed',
       );
     });
     _networkProgressSubscription = networkFacade?.events.listen(
@@ -231,31 +252,20 @@ class LanShareViewModel extends ChangeNotifier {
     );
     _recallSubscription = transferService.recalledMessageIdStream.listen((
       recall,
-    ) async {
-      final record = await historyDao.getRecord(recall.messageId);
-      if (record == null ||
-          !record.isIncoming ||
-          record.senderId != recall.senderDeviceId) {
-        return;
-      }
-      final localPath = record.localPath;
-      if (localPath != null && localPath.isNotEmpty) {
-        await storageService.deleteSandboxFile(localPath);
-      }
-      await _enqueueMessagePersistence(
-        recall.messageId,
-        () => historyDao.updateRecordStatus(
-          recall.messageId,
-          LanTransferStatus.recalled.toJson(),
-          isRecalled: true,
-        ),
+    ) {
+      _trackBackgroundOperation(
+        _applyIncomingRecall(recall),
+        'LAN recall persistence failed',
       );
     });
     _historyDbSubscription = historyDao.watchAllRecords().listen((records) {
       _historyRefreshSerial = _historyRefreshSerial
           .then((_) => _refreshHistory(records))
           .catchError((error, stackTrace) {
-            debugPrint('[LanShareViewModel] History refresh failed: $error');
+            debugPrint(
+              '[LanShareViewModel] History refresh failed: '
+              'errorType=${error.runtimeType}',
+            );
           });
     });
     _connectionStateSubscription = transferService.connectionStateStream.listen(
@@ -313,8 +323,15 @@ class LanShareViewModel extends ChangeNotifier {
       _handshakeSuccessSubscription,
       _connectionStateSubscription,
     ];
+    Object? firstError;
+    StackTrace? firstStackTrace;
     for (final subscription in subscriptions) {
-      await subscription?.cancel();
+      try {
+        await subscription?.cancel();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
     }
     _devicesSubscription = null;
     _incomingMessageSubscription = null;
@@ -329,6 +346,61 @@ class LanShareViewModel extends ChangeNotifier {
     _connectionStateSubscription = null;
     _keepAliveTimer?.cancel();
     _keepAliveTimer = null;
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError, firstStackTrace!);
+    }
+  }
+
+  void _trackBackgroundOperation(Future<void> operation, String description) {
+    late final Future<void> tracked;
+    tracked = operation
+        .catchError((Object error) {
+          logger.warning(
+            description,
+            details: 'errorType=${error.runtimeType}',
+          );
+        })
+        .whenComplete(() => _backgroundOperations.remove(tracked));
+    _backgroundOperations.add(tracked);
+  }
+
+  Future<void> _applyIncomingRecall(LanRecallRequest recall) async {
+    final record = await historyDao.getRecord(recall.messageId);
+    if (record == null ||
+        !record.isIncoming ||
+        record.senderId != recall.senderDeviceId) {
+      return;
+    }
+    final localPath = record.localPath;
+    if (localPath != null && localPath.isNotEmpty) {
+      await storageService.deleteSandboxFile(localPath);
+    }
+    await _enqueueMessagePersistence(
+      recall.messageId,
+      () => historyDao.updateRecordStatus(
+        recall.messageId,
+        LanTransferStatus.recalled.toJson(),
+        isRecalled: true,
+      ),
+    );
+  }
+
+  Future<void> _drainBackgroundOperations() async {
+    while (_backgroundOperations.isNotEmpty) {
+      await Future.wait(_backgroundOperations.toList(growable: false));
+    }
+    while (_messagePersistence.isNotEmpty) {
+      await Future.wait(
+        _messagePersistence.values.map(
+          (operation) => operation.then<void>((_) {}, onError: (_, _) {}),
+        ),
+      );
+    }
+    while (true) {
+      final refresh = _historyRefreshSerial;
+      await refresh;
+      if (identical(refresh, _historyRefreshSerial)) return;
+    }
   }
 
   /// 启动 LAN 发现并刷新 UI 状态。
@@ -596,10 +668,18 @@ class LanShareViewModel extends ChangeNotifier {
     HttpClient? client;
     try {
       client = await transferService.createHttpClientForPeer(device.id);
-      final url = Uri.parse(
-        'https://${device.ip}:${device.port}/api/lan/capabilities',
+      final rawHost = device.ip.trim();
+      final capabilityHost = rawHost.startsWith('[') && rawHost.endsWith(']')
+          ? rawHost.substring(1, rawHost.length - 1)
+          : rawHost;
+      final url = Uri(
+        scheme: 'https',
+        host: capabilityHost,
+        port: device.port,
+        path: '/api/lan/capabilities',
       );
       final req = await client.getUrl(url).timeout(const Duration(seconds: 3));
+      req.followRedirects = false;
       final authorization = await transferService.addPairingAuthorization(
         req.headers,
         device.id,
@@ -887,18 +967,36 @@ class LanShareViewModel extends ChangeNotifier {
   /// 启动已配对 LAN 对端的周期性重连检查。
   void _startKeepAliveTimer() {
     _keepAliveTimer?.cancel();
-    _keepAliveTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-      if (_disposed || !_isInitialized) return;
-      for (final device in _devices) {
-        final paired = await isDevicePaired(device.id);
-        if (paired) {
-          final isConnected = transferService.isWebSocketConnected(device.id);
-          if (!isConnected) {
-            unawaited(transferService.connectWebSocket(device));
-          }
-        }
-      }
+    _keepAliveTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (_disposed || !_isInitialized || _keepAliveOperation != null) return;
+      final generation = _lifecycleGeneration;
+      late final Future<void> operation;
+      operation = _refreshPeerConnections(generation)
+          .catchError((Object error) {
+            logger.warning(
+              'LAN keep-alive refresh failed',
+              details: 'errorType=${error.runtimeType}',
+            );
+          })
+          .whenComplete(() {
+            if (identical(_keepAliveOperation, operation)) {
+              _keepAliveOperation = null;
+            }
+          });
+      _keepAliveOperation = operation;
     });
+  }
+
+  Future<void> _refreshPeerConnections(int generation) async {
+    for (final device in List<LanDevice>.of(_devices)) {
+      final paired = await isDevicePaired(device.id);
+      if (_disposed || !_isInitialized || generation != _lifecycleGeneration) {
+        return;
+      }
+      if (paired && !transferService.isWebSocketConnected(device.id)) {
+        await transferService.connectWebSocket(device);
+      }
+    }
   }
 
   /// 注册手动解析的对端并刷新监听器。
@@ -934,28 +1032,67 @@ class LanShareViewModel extends ChangeNotifier {
     _lifecycleGeneration++;
     _isInitialized = false;
     appSettings.removeListener(_onSettingsChanged);
-    await _cancelRuntimeSubscriptions();
-    await stopScanning();
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> attempt(FutureOr<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    await attempt(_cancelRuntimeSubscriptions);
+    final keepAlive = _keepAliveOperation;
+    if (keepAlive != null) await attempt(() => keepAlive);
+    await attempt(_drainBackgroundOperations);
+    await attempt(stopScanning);
     if (ownsRuntime) {
-      await discoveryService.stopAdvertising();
-      await transferService.stopListening();
+      await attempt(discoveryService.stopAdvertising);
+      await attempt(transferService.stopListening);
     }
 
     final initialization = _initializationFuture;
     if (initialization != null) {
-      try {
-        await initialization;
-      } catch (_) {}
+      await attempt(() => initialization);
     }
     if (ownsRuntime) {
       // startListening 可能与上面的第一次 stop 并发完成。
-      await discoveryService.stopAdvertising();
-      await transferService.closeConnections();
+      await attempt(discoveryService.stopAdvertising);
+      await attempt(transferService.closeConnections);
     }
     _devices = [];
     _initializationFuture = null;
-    _shutdownFuture = null;
     if (!_disposed) notifyListeners();
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
+  }
+
+  Future<void> _disposeOwnedResources() async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> attempt(FutureOr<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    await attempt(shutdown);
+    if (ownsRuntime) {
+      await attempt(discoveryService.close);
+      await attempt(transferService.close);
+    }
+    await attempt(_pairingRequestController.close);
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
   }
 
   /// 销毁 ViewModel，并安排其拥有的运行时清理。
@@ -966,12 +1103,11 @@ class LanShareViewModel extends ChangeNotifier {
     _keepAliveTimer?.cancel();
     _keepAliveTimer = null;
     unawaited(
-      shutdown().whenComplete(() {
-        if (ownsRuntime) {
-          discoveryService.dispose();
-          transferService.dispose();
-        }
-        _pairingRequestController.close();
+      _disposeOwnedResources().catchError((Object error) {
+        logger.warning(
+          'LAN share view model cleanup failed',
+          details: 'errorType=${error.runtimeType}',
+        );
       }),
     );
     super.dispose();

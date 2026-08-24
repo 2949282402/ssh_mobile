@@ -9,6 +9,7 @@ enum SftpConnectionState { disconnected, connecting, connected, loading, error }
 
 class SftpEntry {
   final String connectionId;
+  final String targetFingerprint;
   final String name;
   final String path;
   final String lowerName;
@@ -21,6 +22,7 @@ class SftpEntry {
 
   const SftpEntry({
     required this.connectionId,
+    required this.targetFingerprint,
     required this.name,
     required this.path,
     required this.lowerName,
@@ -31,6 +33,12 @@ class SftpEntry {
     this.modifiedAt,
     this.modifiedLabel,
   });
+}
+
+/// 条目创建后的连接目标已被同 ID 的新目标取代。
+final class SftpTargetChangedException extends StateError {
+  SftpTargetChangedException()
+    : super('SFTP target changed; reopen the directory before continuing.');
 }
 
 class SftpPathInfo {

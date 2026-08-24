@@ -50,7 +50,7 @@ abstract interface class NetworkFacade implements EventStreamClient {
   /// 批量文件传输（[CommunicationClass.bulkTransfer]）。
   ///
   /// 调用前应先通过 [connectPeer] 建立对端连接。其它 CommunicationClass 会返回
-  /// invalidArgument 失败，避免业务在 native v1 契约上表达不支持的语义。
+  /// invalidArgument 失败，避免业务在未接入的 V2 native 命令上表达不支持的语义。
   Future<SdkResult<SdkTransferSession>> transferFile({
     required String transferId,
     required String peerId,
@@ -69,7 +69,7 @@ abstract interface class NetworkFacade implements EventStreamClient {
 
   /// 发送可靠消息（[CommunicationClass.reliableMessage]）。
   ///
-  /// native v1 契约尚无消息通道命令；当前返回 invalidArgument 失败。WS-E 落地
+  /// 当前 V2 native 命令接线尚未拥有消息通道命令；返回 invalidArgument 失败。WS-E 落地
   /// `SendMessage → ReliableMessage` tag 后由本方法接入。
   Future<SdkResult<void>> sendMessage({
     required String peerId,
@@ -217,7 +217,7 @@ final class NetworkFacadeImpl implements NetworkFacade {
         NetworkOperation.send,
       );
     }
-    // native v1 契约没有消息通道命令；返回稳定失败，等待 WS-E 接入 tag。
+    // 当前 V2 native 契约没有消息通道命令；返回稳定失败，等待 WS-E 接入 tag。
     return SdkFailure<void>(
       NetworkError(
         code: NetworkErrorCode.invalidArgument,

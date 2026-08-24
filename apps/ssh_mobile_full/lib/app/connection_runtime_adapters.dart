@@ -125,6 +125,8 @@ final class AppConnectionVerificationAdapter
         privateKey: privateKey,
       ),
       onUnknownHostKey: legacyConfirmation,
+      // 验证只返回候选信任；Feature 在配置、Host Key、凭据的统一提交阶段持久化。
+      persistHostKeyTrust: false,
     );
     try {
       await client.ping().timeout(const Duration(seconds: 8));

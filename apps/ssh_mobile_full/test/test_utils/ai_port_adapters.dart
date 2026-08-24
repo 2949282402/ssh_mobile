@@ -155,7 +155,7 @@ abstract class LegacyAiChatRuntimeFactory extends ai.AiChatRuntimeFactory {
     required SshService sshService,
     required SftpService sftpService,
     required monitoring.MonitoringService performanceMonitorService,
-    required playbook.PlaybookAutomationPort playbookService,
+    required super.playbookService,
     required feature_rag.RagCapability ragService,
     required AppSettings appSettings,
   }) : super(
@@ -163,7 +163,6 @@ abstract class LegacyAiChatRuntimeFactory extends ai.AiChatRuntimeFactory {
          sshService: aiSshPort(sshService),
          sftpService: aiSftpPort(sftpService),
          performanceMonitorService: aiMonitoringPort(performanceMonitorService),
-         playbookService: playbookService,
          ragService: aiRagCapability(ragService),
          appSettings: aiSettingsPort(appSettings),
        );

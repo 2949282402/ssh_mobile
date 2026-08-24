@@ -7,11 +7,16 @@ import 'package:flutter/foundation.dart';
 
 import 'package:network_sdk/network_sdk.dart';
 
+import 'lan_relay_ports.dart';
+
+export 'lan_relay_ports.dart';
+
 /// LAN Share 支持的界面语言。
 enum LanShareLanguage { zh, en }
 
 /// LAN Share 设置和身份的最小 App Scope 合约。
-abstract interface class LanShareSettingsPort implements Listenable {
+abstract interface class LanShareSettingsPort
+    implements Listenable, LanRelaySettingsPort {
   /// 当前界面语言。
   LanShareLanguage get language;
 
@@ -28,6 +33,7 @@ abstract interface class LanShareSettingsPort implements Listenable {
   String get lanDeviceAlias;
 
   /// 已配置的 Relay origin；不包含凭据。
+  @override
   String get relayEndpoint;
 
   /// Relay 主机名，供设置页显示。
@@ -46,6 +52,7 @@ abstract interface class LanShareSettingsPort implements Listenable {
   Future<void> setLanDeviceAlias(String alias);
 
   /// 保存 Relay origin。
+  @override
   Future<void> setRelayEndpoint(String endpoint);
 
   /// 按主机和端口保存 Relay origin。
@@ -158,11 +165,12 @@ abstract interface class LanShareStrings {
 }
 
 /// App Scope 日志的最小适配接口。
-abstract interface class LanShareLoggerPort {
+abstract interface class LanShareLoggerPort implements LanRelayLoggerPort {
   /// 记录普通信息。
   void info(String message, {String? details});
 
   /// 记录可恢复的降级或安全拒绝。
+  @override
   void warning(String message, {String? details});
 
   /// 记录错误及可选堆栈。

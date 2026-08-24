@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-24
 
 # feature_monitoring
 
@@ -9,6 +9,11 @@
 
 - `lib/src/domain`：监控模型、解析器和 App/SSH Port；
 - `lib/src/application`：监控服务、Module、ViewModel 和工具适配器；
+- `MonitoringService` 只编排选择、Timer、低优先级 SSH probe 和平台路由；内部
+  `MonitoringSampleStore` 独占有界历史/派生健康视图，
+  `MonitoringAlertEvaluator` 独占阈值、五分钟去重和告警上限；
+- 每次显式启动都会冻结所选连接的 `SshTargetBinding` 并生成新的 run epoch；停止、
+  重启或移除连接后，旧轮次的迟到成功、错误、重试和清理不得写入当前轮次；
 - 不创建 `monitoring.db`，实时采样只保存在服务内存窗口；
 - 不依赖统一存储门面、`SshService`、`AppSettings` 或其他 Feature 实现。
 
@@ -25,6 +30,7 @@ App Shell 负责把现有 SSH、连接目录、日志和后台服务适配到公
   由 App Shell 或调用方提供，不引入 `app_ui`。
 - 数据库：不拥有 `monitoring.db`；历史采样只保存在受限内存窗口。
 - 生命周期与资源 Owner：AppRuntime 拥有 `MonitoringModule`；Module/Service 拥有
-  采样 Timer 和订阅，并在 deactivate/dispose 时停止释放。
+  采样 Timer 和订阅，Sample Store/Alert Evaluator 只拥有内存状态；Module 在
+  deactivate/dispose 时停止释放运行资源。
 - 测试命令：`dart format --output=none --set-exit-if-changed lib test`、
   `flutter analyze --no-pub`、`flutter test --no-pub`。

@@ -133,10 +133,17 @@ class SshHostKeyPolicy {
       );
     }
 
+    final trustedAt = _now().toUtc();
+    // 先持久化独立快照，再更新调用方对象。数据库/安全存储失败时，调用方仍
+    // 保持未信任状态，后续重试不能命中上方的已信任快速路径。
+    final trustedConfig = ConnectionConfig.fromJson(config.toJson())
+      ..hostKeyAlgorithm = algorithm
+      ..hostKeyFingerprint = fingerprint
+      ..hostKeyTrustedAt = trustedAt;
+    await persistTrust?.call(trustedConfig);
     config.hostKeyAlgorithm = algorithm;
     config.hostKeyFingerprint = fingerprint;
-    config.hostKeyTrustedAt = _now().toUtc();
-    await persistTrust?.call(config);
+    config.hostKeyTrustedAt = trustedAt;
     _log(
       LogLevel.info,
       'SSH host key trusted',

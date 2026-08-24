@@ -5,7 +5,7 @@ use std::io::{Error, ErrorKind};
 use std::path::Path;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use tracing::info;
 
 pub async fn build_file_manifest(
@@ -54,7 +54,7 @@ pub async fn stream_send_file<W>(
     file_path: &Path,
     offset: u64,
     writer: W,
-    progress_tx: Option<UnboundedSender<(u64, u64)>>,
+    progress_tx: Option<Sender<(u64, u64)>>,
 ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
@@ -66,7 +66,7 @@ pub async fn stream_send_file_cancellable<W>(
     file_path: &Path,
     offset: u64,
     mut writer: W,
-    progress_tx: Option<UnboundedSender<(u64, u64)>>,
+    progress_tx: Option<Sender<(u64, u64)>>,
     cancellation: Option<&TransferCancellation>,
 ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>>
 where
@@ -97,7 +97,7 @@ where
         transferred += n as u64;
 
         if let Some(ref tx) = progress_tx {
-            let _ = tx.send((transferred, total_bytes));
+            let _ = tx.send((transferred, total_bytes)).await;
         }
     }
 
@@ -108,3 +108,7 @@ where
     );
     Ok(transferred)
 }
+
+#[cfg(test)]
+#[path = "tests/sender.rs"]
+mod tests;

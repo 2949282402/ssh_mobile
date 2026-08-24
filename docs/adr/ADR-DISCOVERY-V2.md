@@ -1,4 +1,4 @@
-> 最新更新时间：2026-08-15
+> 最新更新时间：2026-08-19
 
 # ADR-DISCOVERY-V2：Discovery 重构（runtime_epoch + revision、可靠发布、四态 Resolve）
 
@@ -58,6 +58,10 @@ DiscoverySnapshot {
 - **跨 epoch 不存在大小比较**：`E1/revision=500` 与 `E2/revision=1` 不可比较。
 - **彻底删除**：Unix timestamp generation、跨进程 generation 单调、old
   generation > new generation 特判。
+
+ConnectivityAttempt 保存完整的 128-bit `RuntimeEpoch` 身份。只有相同 epoch 的 `revision` 才能按大小比较：更小的是 stale，更大或相等的 revision 更新当前 snapshot；不同 epoch 直接替换 remote snapshot，不对 epoch 做数值大小判断。
+
+Answer 到达后，只要 attempt 的 coordination channel 仍存活且尚未超过 Direct deadline，新 QUIC candidate 必须加入当前 race；候选暂时为空不是结束 Direct phase 的理由。
 
 ### runtime_epoch 与 control_connection_id 分离
 
@@ -119,4 +123,4 @@ revision++、Runtime restart → new epoch/revision=1、old epoch event delayed�
 NOT_READY / OFFLINE / UNKNOWN、Discovery Publish 第一次失败、ACK 丢失、
 retry 成功、Relay Control reconnect、Runtime 不重启但 Control Connection
 变化。Control 组还须覆盖 heartbeat、Redis 临时不可用、Redis 出错时不返回
-fail-open 假在线。
+fail-open 假在线；并覆盖高位/低位不同的两个 RuntimeEpoch 不做数值排序、远端重启以新 epoch 替换旧 snapshot、延迟 ConnectivityAnswer 携带的新 QUIC candidate 在 Direct deadline 内继续参赛。

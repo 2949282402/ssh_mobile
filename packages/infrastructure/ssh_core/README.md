@@ -1,4 +1,4 @@
-最新更新时间：2026-08-09
+最新更新时间：2026-08-24
 
 # ssh_core
 
@@ -15,6 +15,8 @@
 App Shell 存储实现、任何 Feature、Flutter 页面或平台 Background Service。
 密码、私钥不进入目标绑定、日志和序列化数据；持久化通过
 `CredentialRepository`、`HostKeyRepository` 等契约注入。
+Host Key 首次确认使用独立候选快照，只有持久化成功后才更新调用方配置；连接
+编辑验证可显式只返回候选信任，再由 Feature 与配置、凭据统一提交。
 
 ## 生命周期
 

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:app_core/app_core.dart';
 import 'package:connection_core/connection_core.dart';
@@ -218,6 +219,59 @@ void main() {
         isFalse,
       );
     });
+  });
+
+  group('SshHostKeyPolicy', () {
+    test(
+      'persistence failure leaves caller untrusted and retry confirms again',
+      () async {
+        final config = ConnectionConfig(
+          id: 'connection-a',
+          name: 'Server A',
+          host: 'example.com',
+          username: 'root',
+        );
+        var confirmationCount = 0;
+        var persistenceCount = 0;
+        final policy = SshHostKeyPolicy(
+          now: () => DateTime.utc(2040),
+          onUnknownHostKey: (_) {
+            confirmationCount++;
+            return true;
+          },
+          persistTrust: (candidate) async {
+            persistenceCount++;
+            expect(identical(candidate, config), isFalse);
+            expect(candidate.hostKeyAlgorithm, 'ssh-ed25519');
+            expect(
+              candidate.hostKeyFingerprint,
+              'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
+            );
+            expect(candidate.hostKeyTrustedAt, DateTime.utc(2040));
+            throw StateError('host key database unavailable');
+          },
+        );
+        final fingerprint = Uint8List.fromList(
+          List<int>.generate(16, (i) => i),
+        );
+
+        for (var attempt = 0; attempt < 2; attempt++) {
+          await expectLater(
+            policy.verifyHostKey(
+              config: config,
+              algorithm: 'ssh-ed25519',
+              md5Fingerprint: fingerprint,
+            ),
+            throwsStateError,
+          );
+          expect(config.hostKeyAlgorithm, isNull);
+          expect(config.hostKeyFingerprint, isNull);
+          expect(config.hostKeyTrustedAt, isNull);
+        }
+        expect(confirmationCount, 2);
+        expect(persistenceCount, 2);
+      },
+    );
   });
 }
 

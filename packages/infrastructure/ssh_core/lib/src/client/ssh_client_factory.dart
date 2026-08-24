@@ -80,12 +80,15 @@ final class SshClientFactory {
   /// [peerId] 显式提供 enrolled peer 标识时优先走 native 传输；未提供则通过
   /// [peerIdResolver] 解析。native 不可用（无 connector / 无 peer 绑定）时回退到
   /// 原始 TCP Socket，保持任意主机 SSH 的既有行为。
+  /// [persistHostKeyTrust] 只允许保存编排器设为 false：确认仍然必需，但候选信任
+  /// 由调用方随后与连接结构和凭据统一提交；普通连接必须保留默认值。
   Future<SSHClient> connectClient(
     ConnectionConfig config, {
     Duration timeout = const Duration(seconds: 15),
     SshCredentials? credentials,
     SshHostKeyConfirmation? onUnknownHostKey,
     String? peerId,
+    bool persistHostKeyTrust = true,
   }) async {
     final resolved = credentials ?? await loadCredentials(config);
     validateAuthSecrets(
@@ -103,12 +106,14 @@ final class SshClientFactory {
     final hostKeyPolicy = SshHostKeyPolicy(
       logger: logger,
       onUnknownHostKey: onUnknownHostKey,
-      persistTrust: (updatedConfig) => hostKeyRepository.trustHostKey(
-        updatedConfig.id,
-        algorithm: updatedConfig.hostKeyAlgorithm,
-        fingerprint: updatedConfig.hostKeyFingerprint,
-        trustedAt: updatedConfig.hostKeyTrustedAt,
-      ),
+      persistTrust: persistHostKeyTrust
+          ? (updatedConfig) => hostKeyRepository.trustHostKey(
+              updatedConfig.id,
+              algorithm: updatedConfig.hostKeyAlgorithm,
+              fingerprint: updatedConfig.hostKeyFingerprint,
+              trustedAt: updatedConfig.hostKeyTrustedAt,
+            )
+          : null,
     );
     _log(
       LogLevel.info,
@@ -142,8 +147,18 @@ final class SshClientFactory {
         error: error,
         stackTrace: stackTrace,
       );
-      socket.close();
-      rethrow;
+      try {
+        await socket.close();
+      } catch (closeError, closeStackTrace) {
+        _log(
+          LogLevel.warning,
+          'SSH socket cleanup failed after client setup failure',
+          details: 'connection=${config.name}',
+          error: closeError,
+          stackTrace: closeStackTrace,
+        );
+      }
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 

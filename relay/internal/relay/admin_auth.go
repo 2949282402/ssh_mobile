@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"mime"
 	"net"
 	"net/http"
@@ -42,18 +43,22 @@ type adminSessionResponse struct {
 	Username      string `json:"username"`
 }
 
-func (s *Server) tryCreateAdminSession() (string, bool) {
+const adminSessionStoreTimeout = 2 * time.Second
+
+func (s *Server) tryCreateAdminSession(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, adminSessionStoreTimeout)
+	defer cancel()
 	token := hex.EncodeToString(randomBytes(32))
-	if err := s.cache.SetAdminSession(context.Background(), token, s.config.AdminSessionTTL); err != nil {
-		// 内存模式容量耗尽返回 errAdminSessionCapacity；其余错误（如 Redis 故障）
-		// 一律 fail closed，管理端登录失败。
-		return "", false
+	if err := s.cache.SetAdminSession(ctx, token, s.config.AdminSessionTTL); err != nil {
+		return "", err
 	}
-	return token, true
+	return token, nil
 }
 
-func (s *Server) destroyAdminSession(token string) {
-	_ = s.cache.DeleteAdminSession(context.Background(), token)
+func (s *Server) destroyAdminSession(ctx context.Context, token string) error {
+	ctx, cancel := context.WithTimeout(ctx, adminSessionStoreTimeout)
+	defer cancel()
+	return s.cache.DeleteAdminSession(ctx, token)
 }
 
 func (s *Server) isAdminAuthorized(r *http.Request) bool {
@@ -66,7 +71,9 @@ func (s *Server) isAdminAuthorized(r *http.Request) bool {
 	if token == "" {
 		return false
 	}
-	valid, err := s.cache.AdminSessionExists(context.Background(), token)
+	ctx, cancel := context.WithTimeout(r.Context(), adminSessionStoreTimeout)
+	defer cancel()
+	valid, err := s.cache.AdminSessionExists(ctx, token)
 	if err != nil {
 		// Redis 故障时管理端鉴权 fail closed（管理面非设备核心面）。
 		return false
@@ -100,9 +107,9 @@ func adminResponseHeaders(next http.HandlerFunc) http.HandlerFunc {
 // adminStateChangeMiddleware rejects browser cross-site mutations. Empty-body
 // mutations remain valid for the existing logout/revoke/rotate endpoints; any
 // request that carries a body must declare application/json.
-func adminStateChangeMiddleware(next http.HandlerFunc) http.HandlerFunc {
+func (s *Server) adminStateChangeMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !adminRequestIsSameOrigin(r) {
+		if !s.adminRequestIsSameOrigin(r) {
 			writeAdminError(w, http.StatusForbidden, adminErrorForbidden, "Administrator request origin is not allowed.")
 			return
 		}
@@ -142,9 +149,14 @@ func (s *Server) adminLoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.clearAdminLoginLimit(clientIP, request.Username)
-	token, created := s.tryCreateAdminSession()
-	if !created {
+	token, err := s.tryCreateAdminSession(r.Context())
+	if errors.Is(err, errAdminSessionCapacity) {
 		writeAdminError(w, http.StatusTooManyRequests, adminErrorResourceLimit, "Administrator session capacity is temporarily exhausted.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("failed to create administrator session", "error", err)
+		writeAdminError(w, http.StatusServiceUnavailable, adminErrorInternal, "Administrator session store is unavailable.")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -152,7 +164,7 @@ func (s *Server) adminLoginHandler(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   requestUsesTLS(r),
+		Secure:   s.requestUsesTLS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(s.config.AdminSessionTTL / time.Second),
 	})
@@ -162,18 +174,24 @@ func (s *Server) adminLoginHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminLogoutHandler(w http.ResponseWriter, r *http.Request) {
+	var deleteErr error
 	if cookie, err := r.Cookie("relay_session"); err == nil && cookie.Value != "" {
-		s.destroyAdminSession(cookie.Value)
+		deleteErr = s.destroyAdminSession(r.Context(), cookie.Value)
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "relay_session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   requestUsesTLS(r),
+		Secure:   s.requestUsesTLS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
+	if deleteErr != nil {
+		s.logger.Warn("failed to delete administrator session", "error", deleteErr)
+		writeAdminError(w, http.StatusServiceUnavailable, adminErrorInternal, "Administrator session store is unavailable.")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -210,6 +228,13 @@ func (s *Server) allowAdminLogin(clientIP, username string) (bool, time.Duration
 		s.admin.loginAttempts[key] = attempt
 		return false, attempt.blockedUntil.Sub(now)
 	}
+	if !exists && len(s.admin.loginAttempts) >= s.config.MaxAdminLoginEntries {
+		// Every entry left after the expiry sweep is still live or blocked. Admitting
+		// a new username by evicting one would let an attacker rotate fake usernames
+		// until the real administrator's blocked key disappears. Preserve all current
+		// decisions and fail the new key closed until the first entry can expire.
+		return false, s.adminLoginCapacityRetryLocked(now)
+	}
 	if !exists || now.Sub(attempt.windowStartedAt) >= s.config.AdminLoginWindow {
 		attempt = adminLoginAttempt{windowStartedAt: now}
 	}
@@ -221,9 +246,6 @@ func (s *Server) allowAdminLogin(clientIP, username string) (bool, time.Duration
 	}
 	attempt.attempts++
 	attempt.lastSeen = now
-	if !exists && len(s.admin.loginAttempts) >= s.config.MaxAdminLoginEntries {
-		s.evictOldestLoginLimitLocked()
-	}
 	s.admin.loginAttempts[key] = attempt
 	return true, 0
 }
@@ -234,18 +256,22 @@ func (s *Server) clearAdminLoginLimit(clientIP, username string) {
 	s.admin.mutex.Unlock()
 }
 
-func (s *Server) evictOldestLoginLimitLocked() {
-	var oldestKey string
-	var oldest time.Time
-	for key, attempt := range s.admin.loginAttempts {
-		if oldestKey == "" || attempt.lastSeen.Before(oldest) {
-			oldestKey = key
-			oldest = attempt.lastSeen
+func (s *Server) adminLoginCapacityRetryLocked(now time.Time) time.Duration {
+	var retryAfter time.Duration
+	for _, attempt := range s.admin.loginAttempts {
+		expiresAt := attempt.lastSeen.Add(s.config.AdminLoginWindow)
+		if attempt.blockedUntil.After(expiresAt) {
+			expiresAt = attempt.blockedUntil
+		}
+		remaining := expiresAt.Sub(now)
+		if remaining > 0 && (retryAfter == 0 || remaining < retryAfter) {
+			retryAfter = remaining
 		}
 	}
-	if oldestKey != "" {
-		delete(s.admin.loginAttempts, oldestKey)
+	if retryAfter <= 0 {
+		return time.Second
 	}
+	return retryAfter
 }
 
 func adminLoginKey(clientIP, username string) string {
@@ -324,7 +350,7 @@ func (s *Server) isTrustedProxy(addr netip.Addr) bool {
 	return false
 }
 
-func adminRequestIsSameOrigin(r *http.Request) bool {
+func (s *Server) adminRequestIsSameOrigin(r *http.Request) bool {
 	site := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")))
 	switch site {
 	case "", "same-origin", "same-site", "none":
@@ -340,7 +366,7 @@ func adminRequestIsSameOrigin(r *http.Request) bool {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return false
 	}
-	return strings.EqualFold(parsed.Scheme, requestScheme(r)) && strings.EqualFold(parsed.Host, r.Host)
+	return strings.EqualFold(parsed.Scheme, s.requestScheme(r)) && strings.EqualFold(parsed.Host, r.Host)
 }
 
 func adminRequestHasJSONBody(r *http.Request) bool {
@@ -360,12 +386,16 @@ func passwordDigest(key []byte, password string) [sha256.Size]byte {
 	return digest
 }
 
-func requestUsesTLS(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+func (s *Server) requestUsesTLS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	peer, ok := remoteIP(r.RemoteAddr)
+	return ok && s.isTrustedProxy(peer) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
-func requestScheme(r *http.Request) string {
-	if requestUsesTLS(r) {
+func (s *Server) requestScheme(r *http.Request) string {
+	if s.requestUsesTLS(r) {
 		return "https"
 	}
 	return "http"

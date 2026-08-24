@@ -1,4 +1,4 @@
-最新更新时间：2026-08-13
+最新更新时间：2026-08-24
 
 # LAN Share Package Guidelines
 
@@ -12,6 +12,10 @@
   不得恢复本地模型桥接。
 - `LanShareModule` 是 `lan_share.db`、Repository、Receiver 和 Route Service
   的 Owner；Route Scope 只负责 ViewModel 生命周期。
+- Receiver 只创建/释放 LAN listener、discovery、配对资源和借给 Relay 的
+  `NetworkFacade`；`LanRelayCoordinator` 独占 endpoint 观察、enrollment、refresh、
+  Relay 事件订阅和有限重连 Timer，只能依赖 `LanRelay*Port`，且不得停止或释放
+  借入的 Facade/Runtime。
 - 不把密钥、PIN、Bearer Token、Relay credential 或远端 localPath 写入明文
   数据库；接收文件必须经过 LAN sandbox 校验。
 - Relay 设置只能通过 `LanRelaySettingsViewModel` 和注入的 Receiver Coordinator
@@ -27,7 +31,7 @@
   native command gateway 的隐式前置条件；NetworkRuntime/native handle 仍由 App
   Scope Owner 释放。
 - Wave 1 当前唯一的数据面配置仍走现有 `ConfigureRuntime`，会无条件初始化直接
-  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到 v1 协议切换（Wave 2），
+  QUIC/TCP 基础设施；QUIC-free WSS-only 数据面路径推迟到后续协议能力切换（Wave 2），
   当前并不存在。`runtime` 只表示 native command-worker handle 存在。
 - 修改 Dart 文件后运行本 Package 的 format、analyze 和 test；Drift 输入变化
   后重新生成并确认 `*.g.dart` 与输入一致。

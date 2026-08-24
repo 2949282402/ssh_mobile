@@ -53,9 +53,55 @@ void main() {
       expect((await file.readAsLines()).first, startsWith('enc:'));
     },
   );
+
+  test(
+    'streams large plaintext migration in bounded encrypted chunks',
+    () async {
+      final protector = _TrackingOutputProtector();
+      final streamingService = TerminalHistoryService(
+        dataProtection: protector,
+        logger: _FakeTerminalLogger(),
+        historyDirectoryProvider: () async => temporaryDirectory,
+      );
+      addTearDown(streamingService.dispose);
+      final file = await streamingService.historyFile('large-legacy') as File;
+      final legacy = '${_repeat('a', 90000)}\u{1F680}${_repeat('b', 90000)}';
+      await file.writeAsString(legacy);
+
+      await streamingService.append('large-legacy', ' tail');
+      await streamingService.flush();
+
+      expect(protector.largestEncryptedPlaintext, lessThanOrEqualTo(32 * 1024));
+      expect(protector.encryptCalls, greaterThan(2));
+      expect(await streamingService.readTail('large-legacy'), '$legacy tail');
+    },
+  );
+
+  test(
+    'failed migration leaves original plaintext atomically intact',
+    () async {
+      final failingService = TerminalHistoryService(
+        dataProtection: _FailingOutputProtector(),
+        logger: _FakeTerminalLogger(),
+        historyDirectoryProvider: () async => temporaryDirectory,
+      );
+      addTearDown(failingService.dispose);
+      final file = await failingService.historyFile('failed-legacy') as File;
+      const legacy = 'legacy plaintext must survive failed migration';
+      await file.writeAsString(legacy);
+
+      await expectLater(
+        failingService.append('failed-legacy', ' new'),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(await file.readAsString(), legacy);
+      expect(temporaryDirectory.listSync().whereType<Directory>(), isEmpty);
+    },
+  );
 }
 
-final class _FakeOutputProtector implements TerminalHistoryOutputProtector {
+class _FakeOutputProtector implements TerminalHistoryOutputProtector {
   @override
   String get encryptedPrefix => 'enc:';
 
@@ -75,6 +121,27 @@ final class _FakeOutputProtector implements TerminalHistoryOutputProtector {
   }
 }
 
+final class _TrackingOutputProtector extends _FakeOutputProtector {
+  int encryptCalls = 0;
+  int largestEncryptedPlaintext = 0;
+
+  @override
+  Future<String> encryptString(String value) {
+    encryptCalls++;
+    if (value.length > largestEncryptedPlaintext) {
+      largestEncryptedPlaintext = value.length;
+    }
+    return super.encryptString(value);
+  }
+}
+
+final class _FailingOutputProtector extends _FakeOutputProtector {
+  @override
+  Future<String> encryptString(String value) async {
+    throw StateError('injected encryption failure');
+  }
+}
+
 final class _FakeTerminalLogger implements TerminalLoggerPort {
   @override
   void info(String message) {}
@@ -85,3 +152,6 @@ final class _FakeTerminalLogger implements TerminalLoggerPort {
   @override
   void error(String message, {Object? error, StackTrace? stackTrace}) {}
 }
+
+String _repeat(String value, int count) =>
+    List<String>.filled(count, value, growable: false).join();

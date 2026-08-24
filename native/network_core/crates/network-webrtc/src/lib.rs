@@ -9,7 +9,10 @@ mod peer;
 mod qos;
 mod signaling;
 
-pub use driver::{run_realtime_io, RealtimeIoDriver, RealtimeIoDriverHandle, RealtimeIoEvent};
+pub use driver::{
+    run_realtime_io, RealtimeIoDriver, RealtimeIoDriverHandle, RealtimeIoEvent,
+    REALTIME_IO_EVENT_CAPACITY,
+};
 pub use peer::{
     DataChannelReliability, IceServerConfig, MediaDirection, WebRtcConfig, WebRtcError, WebRtcPeer,
     MAX_DATA_CHANNEL_PAYLOAD_BYTES,

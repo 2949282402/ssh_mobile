@@ -1,11 +1,11 @@
-# 系统管理页与性能监控融合架构文档
+> 最新更新时间：2026-08-24
 
-> 最新更新时间：2026-07-26
+# 系统管理页与性能监控融合架构文档
 
 本文记录当前“系统管理”控制台中的监控、快照和 root 管理架构。
 
 - 状态：当前实现
-- 更新日期：2026-07-17
+- 更新日期：2026-08-24
 
 ---
 
@@ -59,3 +59,6 @@ root 管理连接必须跟随当前 `selectedConnectionId`，但连接建立或�
 4.  **在 Ports、Services、Applications Tab 中对比服务器切换时，必须在 `build()` 周期中使用本地状态变量（如 `_lastSelectedConnectionId`）进行连接 ID 的变更检测。** 不要依赖 `didUpdateWidget(oldWidget)` 比较 `viewModel.connectionId`，因为 viewModel 为同一对象引用时，该比较值总会相等导致重载失效。
 5.  **不要恢复全局 Refresh All 操作。** 固定右上角刷新只在 Ports、Applications、Services、Users 和 Sessions Tab 出现，并且只刷新当前 Tab；Monitor 与 Power 不显示该操作。
 6.  **单服务器快照不重复服务器摘要。** Ports、Applications 和 Services 已由共享服务器选择器表达目标，列表内容保持聚焦于当前资源。
+7.  **每轮 Monitor 固定 epoch 与目标快照。** `startMonitoring` 捕获完整的
+    `SshTargetBinding` 集合；stop/restart/移除连接后，旧轮次的迟到结果、错误、
+    retry 和 finally 必须全部丢弃，不能写入新轮次或清除新轮次的采样标记。

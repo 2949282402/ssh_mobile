@@ -1,7 +1,14 @@
-> 最新更新时间：2026-08-15
-> 状态：已达成共享理解，待评审后实施
+> 最新更新时间：2026-08-23
+> 状态：单实例 Phase 0–4 已实施；跨实例数据面仍 deferred
 > 适用对象：Go Relay 控制面（`relay/`）后端
 
+> **当前实现边界**：`RELAY_STORAGE_MODE=mysql` 使用 MySQL 持久化 enrollment /
+> revocation，并强制配置 Redis 承载 presence、discovery、防重放 nonce、管理员会话、
+> reservation 与共享事件。Redis 在该模式下是安全依赖，启动或鉴权/状态操作失败时
+> fail closed，不回退到进程内防重放状态。数据面仍是单 Relay Control + 单 Relay Data
+> 实例；权威当前状态见
+> [`memory_docs/backend/current-state.md`](../../memory_docs/backend/current-state.md)。
+>
 > **2026-08-15 修订（对齐 transport-network v2）**：本计划原文按「多实例」设计
 > 状态/缓存面。transport-network v2（Main 基线版 §26，
 > [ADR-TRANSPORT-NETWORK-V2](../adr/ADR-TRANSPORT-NETWORK-V2.md)）第一阶段明确
@@ -14,8 +21,8 @@
 
 ## 0. 摘要
 
-为 Go Relay 控制面引入 MySQL（持久化 source of truth）与 Redis（短生命周期共享状态），
-把当前"进程重启即清空、设备需重新 enroll"的内存状态机，升级为**可持久化**的
+Go Relay 控制面已引入 MySQL（持久化 source of truth）与 Redis（短生命周期共享状态），
+把默认 memory 模式之外的部署升级为**可持久化**的
 会话/鉴权/状态架构；部署拓扑为**单 Relay Control + 单 Relay Data 实例**，Redis
 为外部共享 live state。
 
@@ -24,10 +31,11 @@
 （`Global Control Routing` / `Relay Data Node Selection`）列为后续里程碑（见 §9）。
 
 **核心不变量**：
-- MySQL 是**唯一 source of truth**（enrollment、吊销、审计）。
+- MySQL 是 enrollment 与吊销的**唯一持久化 source of truth**。
 - Redis 只承载**短期、可重建、高频**状态（在线 presence、防重放 nonce、admin 会话、传输会话元数据），全部带 TTL。
-- Redis 不可用时 **fail-open**：鉴权回退 MySQL 直查，仅在线/防重放/实时通知降级。
-- 升级**无缝滚动**（已签发凭据与已建连接在升级期间不断）。
+- MySQL/Redis storage profile 的依赖或安全状态不可用时 **fail closed**；不得回退到
+  会重新打开 replay window 的进程内 nonce 状态。
+- 存储模式在进程启动时显式选择；不把进程内 enrollment 隐式导入持久层。
 
 ---
 
@@ -37,19 +45,19 @@
 |---|------|------|
 | Q1 | 会话范围 | 客户端↔Relay 鉴权 + 连接状态；SSH 隧道状态留在 native SDK 内存态；Admin 会话本轮一并覆盖 |
 | Q2 | 部署拓扑 | 第一阶段**单实例**部署；Redis 承载共享 live state（其键结构支持跨实例 presence/discovery 同步） |
-| Q3 | 持久化边界 | MySQL = 唯一准（设备/enrollment、吊销、审计）；Redis = 短期可重建态，全 TTL |
+| Q3 | 持久化边界 | MySQL = enrollment/吊销唯一持久化准；Redis = 短期可重建态，全 TTL；审计表未进入当前交付 |
 | Q4 | 一致性 | **cache-aside 失效式**：先写 MySQL → 删/失效 Redis key → TTL 兜底 |
 | Q5 | 共享状态事件 | Redis Pub/Sub 广播 `session.invalidate` / `device.revoked` 等事件 |
 | Q6 | Token 形态 | **适配现状**：不新造双 token 签发；enrollment（deviceID+公钥）落 MySQL，连接态/防重放/presence 落 Redis，保住无状态 HMAC 凭据 |
-| Q7 | 降级 | **fail-open**（针对 Redis）；MySQL 是鉴权裁决唯一准，Redis 挂只降级加速层/状态层 |
-| Q8 | 升级 | **无缝滚动**：统一鉴权校验入口，新旧逻辑同一路径，过渡完删旧路径 |
+| Q7 | 降级 | **已按实现修正为 fail-closed**：mysql 模式强制 Redis，启动与安全状态操作失败均不得回退到进程内 nonce/cache |
+| Q8 | 升级 | 统一鉴权校验入口；通过显式 storage profile 切换，不隐式迁移进程内状态 |
 | Q9 | 数据面 | 本期数据面保持单实例（单 Relay Control + 单 Relay Data 实例）；跨实例转发后续里程碑 |
 
 ---
 
-## 2. 现状基线（改动前的事实）
+## 2. 改动前基线（历史事实）
 
-全部来自代码调研，均为"当前为真"：
+本节保留实施前的代码调研，只用于解释改造动机，不代表当前状态：
 
 - **Go Relay 纯内存，零持久化、零存储依赖**（`relay/go.mod` 仅 `gorilla/websocket`）。
 - 状态容器（均进程内 `map` + 锁）：
@@ -69,11 +77,15 @@
 
 ## 3. 目标架构
 
+> 本节到第 6 节保留原始方案草图，用于解释设计演进；其中的拟议目录、接口、
+> `audit_events`、cache-aside key 和迁移步骤不是当前公共契约。当前实现以文件开头的
+> “当前实现边界”、Relay README、Backend Memory、代码与测试为准。
+
 ### 3.1 职责边界
 
 ```
 ┌─────────────── MySQL（source of truth，持久）────────────────┐
-│  devices（enrollment）、revocations、audit_events               │
+│  devices（enrollment）、revocations                             │
 │  → 重启不丢；单实例 + Redis 共享 live state                    │
 └───────────────────────────────────────────────────────────────┘
                     ▲ 读（可选 Redis 读缓存 + TTL 兜底）
@@ -200,7 +212,9 @@ type Cache interface {
 ## 5. 一致性 / 降级 / 安全
 
 - **一致性**：写路径统一"先 MySQL → 失效 Redis 读缓存 → 发事件"。不引入分布式事务/锁；enrollment 与吊销以 MySQL 行为准，Redis 读缓存 TTL 兜底防脏。防重放靠 Redis SETNX 原子性，无竞态窗口。
-- **降级（fail-open，针对 Redis）**：Redis 不可用时，鉴权直查 MySQL（跳过读缓存），nonce 防重放降级为进程内尽力而为（接受故障期间重放窗口，日志告警），presence/admin 会话/传输元数据/实时通知降级。核心鉴权不中断。
+- **降级（fail-closed）**：mysql 模式要求 Redis。启动时无法建立 MySQL/Redis
+  连接则拒绝启动；运行中的 nonce、鉴权、presence、discovery、reservation 或管理
+  会话操作失败时拒绝对应请求，不回退到会重新打开 replay window 的进程内状态。
 - **MySQL 故障**：鉴权是裁决路径 → **fail-closed**（无法裁决即拒绝），加告警与熔断；不把 MySQL 当缓存层弱化其权威地位。
 - **凭据安全**：`CredentialKey` 与 DB/Redis 口令经 env/密钥管理注入，**不得入库、日志、文档**（遵循仓库 CLAUDE.md 规则）。审计表不存凭据明文。
 
@@ -208,21 +222,27 @@ type Cache interface {
 
 ## 6. 配置与部署
 
-- 新增 env：`DATABASE_URL`（MySQL DSN）、`REDIS_URL`/`REDIS_ADDR` + `REDIS_PASSWORD`、`RELAY_STORAGE_MODE`（`memory` 默认 | `mysql`）、可选 `RELAY_STORAGE_READ_CACHE_TTL` 等。更新 `relay/.env.example` 与 `relay/README.md`（env/部署段归属 README）。
+- 当前 env：`RELAY_DATABASE_URL`（MySQL DSN）、`RELAY_REDIS_URL`、
+  `RELAY_STORAGE_MODE`（`memory` 默认或 `mysql`）。完整配置归属
+  `relay/.env.example` 与 `relay/README.md`。
 - `relay/compose.yaml`：新增 `mysql`、`redis` 服务 + 数据卷；Caddy 拓扑保持。
 - **第一阶段部署为单 Relay Control + 单 Relay Data 实例**：单实例共享同一 `CredentialKey`（env）；presence 路由与 Pub/Sub 事件在同一实例内闭环。多实例部署（`Global Control Routing` 与 `Relay Data Node Selection`）未完整实现前不支持，也不在 compose 中提供 LB 实例亲和路由。
 - 密钥/口令走环境注入或密钥管理，不进 compose 明文（生产用 secret 文件/外部注入）。
 
 ---
 
-## 7. 升级顺序（无缝滚动，决策 Q8）
+## 7. 已实施顺序与剩余边界
 
-1. **Phase 0 — 抽象与无存储默认**：引入 `Storage`/`Cache` 接口 + 内存实现，`RELAY_STORAGE_MODE=memory` 为默认，行为与现状完全一致；现有测试全绿。
-2. **Phase 1 — MySQL 持久化**：enrollment/吊销落 MySQL，读走缓存+回源。**一次性播种**：启用前把运行中实例内存里的 enrollment 导出写入 MySQL（离线 dump 或一次性迁移命令），保证存量已 enroll 设备在滚动部署中不断线。
-3. **Phase 2 — Redis 状态层**：presence/nonce/admin/transfer 迁 Redis，feature flag 控制；双写对比期后删内存路径。
-4. **Phase 3 — 统一入口收口**：鉴权收敛到单一校验函数（新旧逻辑同路径），过渡完成后删旧分支；更新 `memory_docs/backend/current-state.md`（"重启即清空"一句失效）与 `relay/README.md`。
-5. **Phase 4 — 单实例交付收口**：MySQL/Redis 状态面在**单 Relay Control + 单
-   Relay Data 实例**拓扑下压测验证；Pub/Sub 踢人/吊销在同一实例内闭环。多实例
+1. **Phase 0 — 已完成**：`Storage`/`Cache` 接口与默认 `memory` 实现。
+2. **Phase 1 — 已完成**：MySQL 持久化 enrollment/revocation；部署切换通过显式
+   storage profile 完成，不提供隐式进程内状态迁移。
+3. **Phase 2 — 已完成当前范围**：Redis 承载 presence、discovery、nonce、admin
+   session、reservation 与共享事件；活跃 Relay Data pair 仍由单实例内存 owner 持有。
+4. **Phase 3 — 已完成**：设备鉴权收敛到统一入口，README 与 Backend Memory 记录
+   两种存储模式的重启语义。
+5. **Phase 4 — 已完成单实例范围**：MySQL/Redis 状态面在**单 Relay Control + 单
+   Relay Data 实例**拓扑下由存储/缓存与 Compose integration tests 守卫；Pub/Sub
+   踢人/吊销在同一实例内闭环。多实例
    部署（`Global Control Routing` / `Relay Data Node Selection`）列为后续里程碑
    （见 §9），不在第一阶段范围。
 
@@ -233,7 +253,9 @@ type Cache interface {
 ## 8. 验证方案
 
 - **单元**：`Storage`/`Cache` 接口用内存实现做 fake；现有 `relay/` Go 测试全部通过；新增存储层单测（upsert/吊销/缓存失效）。
-- **集成**（compose 起 mysql+redis）：重启存活（enroll → 重启 relay → 凭据仍有效，不再需要重新 enroll，**头号行为变化**）；吊销（设备被断开）；Redis 停机回退（停 redis → 鉴权仍可用）；重复登录踢旧连接。多实例跨实例行为不在第一阶段验证范围。
+- **集成**（compose 起 mysql+redis）：重启存活（enroll → 重启 relay → 凭据仍有效，
+  不再需要重新 enroll）；吊销会断开设备；依赖或安全状态错误 fail closed；重复登录
+  踢旧连接。多实例跨实例行为不在第一阶段验证范围。
 - **工具**：`go test ./...`、`go vet ./...`；CI 视需要新增 Go 存储 job（对齐现有 `.github/workflows/`）。
 - **手动回归**：对照 `relay/README.md` 部署文档走一遍 enroll → 连接 → 传输 → 吊销全流程。
 

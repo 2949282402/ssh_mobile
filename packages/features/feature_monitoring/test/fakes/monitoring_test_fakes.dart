@@ -52,9 +52,26 @@ final class FakeMonitoringSshPort implements MonitoringSshPort {
 /// 返回固定服务器平台的连接目录 Fake。
 final class FakeMonitoringConnectionCatalog
     implements MonitoringConnectionCatalogPort {
-  FakeMonitoringConnectionCatalog({this.platform = ServerPlatform.windows});
+  FakeMonitoringConnectionCatalog({
+    this.platform = ServerPlatform.windows,
+    this.binding,
+  });
 
   ServerPlatform? platform;
+  ssh_core.SshTargetBinding? binding;
+
+  @override
+  ssh_core.SshTargetBinding? targetBindingFor(String connectionId) =>
+      binding ??
+      ssh_core.SshTargetBinding.fromConfig(
+        ConnectionConfig(
+          id: connectionId,
+          name: connectionId,
+          host: '$connectionId.example.test',
+          username: 'monitor',
+          serverPlatform: platform ?? ServerPlatform.linux,
+        ),
+      );
 
   @override
   ServerPlatform? serverPlatformFor(String connectionId) => platform;

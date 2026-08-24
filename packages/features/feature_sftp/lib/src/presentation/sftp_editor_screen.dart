@@ -93,9 +93,7 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
     } catch (error, stackTrace) {
       context.read<SftpLoggerPort?>()?.error(
         'SFTP editor load failed',
-        error: error,
-        stackTrace: stackTrace,
-        details: 'path=${widget.entry.path}',
+        details: 'operation=editor_load code=operation_failed',
       );
       if (!mounted) return;
       Error.throwWithStackTrace(error, stackTrace);
@@ -352,12 +350,10 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
         _showSaveFeedback(strings.saveComplete);
         Navigator.pop(context, true);
       });
-    } catch (error, stackTrace) {
+    } catch (error) {
       context.read<SftpLoggerPort?>()?.error(
         'SFTP editor save failed',
-        error: error,
-        stackTrace: stackTrace,
-        details: 'path=${widget.entry.path}',
+        details: 'operation=editor_save code=operation_failed',
       );
       if (!mounted) return;
       setState(() => _saving = false);

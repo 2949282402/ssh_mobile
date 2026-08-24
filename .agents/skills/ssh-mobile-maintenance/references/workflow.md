@@ -1,4 +1,4 @@
-> Last updated: 2026-08-14
+> Last updated: 2026-08-20
 
 # Maintenance Workflow
 
@@ -64,7 +64,31 @@ Git records execution history.
 When changing the canonical Skill, update `.agents` first; there is no Claude
 mirror to regenerate — Claude Code loads Skills directly from `.agents/skills/`.
 
-## 6. Handoff or commit
+## 6. Pull request gate
+
+When the user asks to create, update, submit, or publish a PR, perform this
+gate after implementation and before any commit/push or GitHub write:
+
+1. Run `bash scripts/full_test.sh` from WSL. For a repeat run with unchanged
+   dependencies, use `--no-bootstrap`; if manifests, lockfiles, or toolchain
+   inputs changed, run without that option.
+2. Run the focused owner checks required by `validation.md`. A full local CI
+   run does not replace a package-specific or changed-behavior regression test
+   when that check is narrower or stricter.
+3. Inspect the summary and raw logs. Any product `FAIL` or documented
+   WSL/platform `GAP` blocks the PR by default. A `GAP` is not a pass; report it
+   explicitly and require the user's acceptance before proceeding. An
+   unexpected or behavior-relevant gap always blocks submission.
+4. If any source, test, dependency, project-structure, CI-scope, or script
+   change follows, rerun the affected local checks. Do not reuse stale results.
+5. Only after the checks above are complete may the Git Commit/GitHub workflow
+   create the commit, push the branch, or create/update the PR.
+
+The repository-wide local CI orchestration rules and synchronization triggers
+for `scripts/full_test.sh` are recorded in the
+[Project Memory index](../../../../memory_docs/README.md).
+
+## 7. Handoff or commit
 
 - Report the outcome first, then relevant files, validations run, and any exact
   gap or residual risk.
