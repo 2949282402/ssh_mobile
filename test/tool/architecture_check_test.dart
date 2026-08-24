@@ -13,6 +13,7 @@ void main() {
   _testCompatibilityBudgetIsReported();
   _testClosedCompatibilityModuleIsReported();
   _testClosedAppShellAdapterTestIsAllowed();
+  _testAdapterImportOutsideAppTestIsRejected();
   _testClosedDuplicateImplementationIsReported();
   stdout.writeln('Architecture checker tests passed.');
 }
@@ -129,22 +130,7 @@ void _testClosedAppShellAdapterTestIsAllowed() {
       'apps/ssh_mobile_full/test/services/network/network_service_test.dart',
       "import 'package:ssh_mobile/services/network/network_service.dart';\n",
     );
-    final module = CompatibilityModule(
-      id: 'network',
-      packageName: 'network_transport / network_sdk',
-      state: CompatibilityModuleState.closed,
-      legacyImportPrefixes: const <String>[
-        'package:ssh_mobile/services/network/',
-      ],
-      packageSourceRoot: 'packages/infrastructure/network_transport/lib',
-      legacySourceRoots: const <String>[],
-      baselineReferenceCount: 0,
-      baselineSourceCount: 0,
-      appShellAdapters: const <String>[
-        'apps/ssh_mobile_full/lib/services/network/network_service.dart',
-      ],
-      removalCondition: 'test',
-    );
+    final module = _closedNetworkModule();
     final report = CompatibilityAuditor(
       repositoryRoot: root,
       inventory: <CompatibilityModule>[module],
@@ -153,10 +139,66 @@ void _testClosedAppShellAdapterTestIsAllowed() {
       report.violations.isEmpty,
       'App Shell adapter 的专属测试应允许直接覆盖 adapter 行为',
     );
+    _expect(report.referenceCountFor(module) == 1, '应保留原始引用证据');
+    _expect(report.sourceCountFor(module) == 1, '应保留原始来源文件证据');
+    _expect(
+      report.gatedReferenceCountFor(module) == 0,
+      '受批准 adapter 测试不应计入兼容基线',
+    );
+    _expect(
+      report.approvedAdapterTestReferenceCountFor(module) == 1,
+      '报告应单独呈现受批准 adapter 测试引用',
+    );
+    _expect(
+      report.gatedSourceCountFor(module) == 0,
+      '受批准 adapter 测试来源不应计入兼容基线',
+    );
   } finally {
     root.deleteSync(recursive: true);
   }
 }
+
+void _testAdapterImportOutsideAppTestIsRejected() {
+  final root = Directory.systemTemp.createTempSync('ssh_mobile_compatibility_');
+  try {
+    _write(
+      root,
+      'apps/ssh_mobile_full/lib/test/network_service_test.dart',
+      "import 'package:ssh_mobile/services/network/network_service.dart';\n",
+    );
+    final module = _closedNetworkModule();
+    final report = CompatibilityAuditor(
+      repositoryRoot: root,
+      inventory: <CompatibilityModule>[module],
+    ).audit();
+    _expect(
+      report.violations.any((item) => item.rule == 'legacy-import-closed'),
+      '只有 apps/<member>/test 下的 adapter 测试可以使用例外',
+    );
+    _expect(
+      report.gatedReferenceCountFor(module) == 1 &&
+          report.approvedAdapterTestReferenceCountFor(module) == 0,
+      '伪 test 目录引用必须计入关闭模块门禁',
+    );
+  } finally {
+    root.deleteSync(recursive: true);
+  }
+}
+
+CompatibilityModule _closedNetworkModule() => const CompatibilityModule(
+  id: 'network',
+  packageName: 'network_transport / network_sdk',
+  state: CompatibilityModuleState.closed,
+  legacyImportPrefixes: <String>['package:ssh_mobile/services/network/'],
+  packageSourceRoot: 'packages/infrastructure/network_transport/lib',
+  legacySourceRoots: <String>[],
+  baselineReferenceCount: 0,
+  baselineSourceCount: 0,
+  appShellAdapters: <String>[
+    'apps/ssh_mobile_full/lib/services/network/network_service.dart',
+  ],
+  removalCondition: 'test',
+);
 
 void _testCurrentRepositoryPasses() {
   final violations = ArchitectureChecker(

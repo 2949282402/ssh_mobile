@@ -1,4 +1,4 @@
-最新更新时间：2026-08-19
+最新更新时间：2026-08-24
 
 # 兼容层迁移引用清单
 
@@ -10,6 +10,9 @@
 `apps/ssh_mobile_full/lib/app/*_feature_adapters.dart` 是正常的 App Shell
 Port 适配边界，不属于删除目标。App Scope 的基础设施和仍被多个 Feature
 使用的协议后端也不因这份清单而复制或提前删除。
+只有清单明确列出的 App Shell adapter 才允许被 `apps/*/test`
+直接导入以验证边界行为；这些引用不计入旧入口基线，命令行报告会
+将其作为 `approved adapter-test refs` 单独显示。
 
 | 模块 | 唯一 Package Owner | 旧引用基线 | 状态 | 保留的 App Shell 边界 | 删除条件 |
 | --- | --- | ---: | --- | --- | --- |

@@ -167,7 +167,7 @@ git diff --check
   20 GiB 文件整体读入内存；远程配对复查不得在 unpair 后迟到恢复，
   HTTP client/响应有界释放；Transfer/Discovery 最终关闭必须可等待且先
   收敛 socket/server 再关闭 stream。
-- [ ] **C-15 架构审计报告语义**：兼容性门禁将“受批准的 App Shell adapter
+- [x] **C-15 架构审计报告语义**：兼容性门禁将“受批准的 App Shell adapter
   测试引用”与真正受基线约束的旧引用分开计数，避免 closed 模块显示
   `3 refs / 0 baseline` 却通过的误导输出。
 - [ ] **C-16 Client Domain 门禁**：通过所有受影响 package/app 的聚焦测试、

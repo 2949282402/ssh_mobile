@@ -9,12 +9,14 @@ final class CompatibilityReference {
     required this.path,
     required this.line,
     required this.importUri,
+    required this.approvedAppShellAdapterTest,
   });
 
   final CompatibilityModule module;
   final String path;
   final int line;
   final String importUri;
+  final bool approvedAppShellAdapterTest;
 
   @override
   String toString() => '${module.id}: $path:$line $importUri';
@@ -60,6 +62,33 @@ final class CompatibilityAuditReport {
       .map((reference) => reference.path)
       .toSet()
       .length;
+
+  int gatedReferenceCountFor(CompatibilityModule module) => references
+      .where(
+        (reference) =>
+            reference.module.id == module.id &&
+            !reference.approvedAppShellAdapterTest,
+      )
+      .length;
+
+  int gatedSourceCountFor(CompatibilityModule module) => references
+      .where(
+        (reference) =>
+            reference.module.id == module.id &&
+            !reference.approvedAppShellAdapterTest,
+      )
+      .map((reference) => reference.path)
+      .toSet()
+      .length;
+
+  int approvedAdapterTestReferenceCountFor(CompatibilityModule module) =>
+      references
+          .where(
+            (reference) =>
+                reference.module.id == module.id &&
+                reference.approvedAppShellAdapterTest,
+          )
+          .length;
 }
 
 /// 扫描 Workspace 中旧 App URI，并执行“只减不增/关闭即零引用”门禁。
@@ -82,12 +111,18 @@ final class CompatibilityAuditor {
         final importUri = 'package:${match.group(1)}/${match.group(2)}';
         final module = _moduleForImport(importUri);
         if (module == null) continue;
+        final path = _relativePath(file.path);
         references.add(
           CompatibilityReference(
             module: module,
-            path: _relativePath(file.path),
+            path: path,
             line: index + 1,
             importUri: importUri,
+            approvedAppShellAdapterTest: _isApprovedAppShellAdapterTest(
+              module: module,
+              path: path,
+              importUri: importUri,
+            ),
           ),
         );
       }
@@ -96,11 +131,14 @@ final class CompatibilityAuditor {
     final violations = <CompatibilityViolation>[];
     for (final module in inventory) {
       final moduleReferences = references
-          .where((reference) => reference.module.id == module.id)
+          .where(
+            (reference) =>
+                reference.module.id == module.id &&
+                !reference.approvedAppShellAdapterTest,
+          )
           .toList();
       if (module.state == CompatibilityModuleState.closed) {
         for (final reference in moduleReferences) {
-          if (_isApprovedAppShellAdapterTest(module, reference)) continue;
           violations.add(
             CompatibilityViolation(
               rule: 'legacy-import-closed',
@@ -198,23 +236,27 @@ final class CompatibilityAuditor {
   String _join(String parent, String child) =>
       '$parent${Platform.pathSeparator}$child';
 
-  bool _isApprovedAppShellAdapterTest(
-    CompatibilityModule module,
-    CompatibilityReference reference,
-  ) {
+  bool _isApprovedAppShellAdapterTest({
+    required CompatibilityModule module,
+    required String path,
+    required String importUri,
+  }) {
     // App Shell adapters are compatibility owners, so their behavior tests
     // may import the adapter directly. Keep this exception narrow: only test
     // sources under apps/*/test may use a target explicitly listed in the
     // module inventory. Production callers and unlisted legacy paths remain
     // rejected by the closed-module gate.
-    if (!reference.path.startsWith('apps/') ||
-        !reference.path.contains('/test/')) {
+    final segments = path.split('/');
+    if (segments.length < 4 ||
+        segments[0] != 'apps' ||
+        segments[1].isEmpty ||
+        segments[2] != 'test') {
       return false;
     }
     return module.appShellAdapters
         .map(_appShellAdapterImportUri)
         .whereType<String>()
-        .contains(reference.importUri);
+        .contains(importUri);
   }
 
   String? _appShellAdapterImportUri(String path) {
@@ -253,9 +295,10 @@ void main() {
   for (final module in compatibilityInventory) {
     stdout.writeln(
       '  ${module.id} [${module.state.name}] '
-      '${report.referenceCountFor(module)} refs / '
+      '${report.gatedReferenceCountFor(module)} gated refs / '
       '${module.baselineReferenceCount} baseline, '
-      '${report.sourceCountFor(module)} source files / '
+      '${report.approvedAdapterTestReferenceCountFor(module)} approved adapter-test refs, '
+      '${report.gatedSourceCountFor(module)} gated source files / '
       '${module.baselineSourceCount} baseline -> ${module.packageName}',
     );
   }
