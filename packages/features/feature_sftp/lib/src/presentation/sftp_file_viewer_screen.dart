@@ -175,9 +175,8 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
     } catch (error, stackTrace) {
       logger?.error(
         'SFTP file preview load failed',
-        error: error,
-        stackTrace: stackTrace,
-        details: 'path=${widget.entry.path} kind=${_kind.name}',
+        details:
+            'operation=preview_load kind=${_kind.name} code=operation_failed',
       );
       Error.throwWithStackTrace(error, stackTrace);
     }

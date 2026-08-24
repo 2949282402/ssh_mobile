@@ -1,7 +1,6 @@
 import 'package:app_core/app_core.dart';
 import 'package:drift/native.dart';
 import 'package:feature_sftp/feature_sftp.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -72,6 +71,7 @@ final class _SftpScreenFixture {
       ..entries = [
         const SftpEntry(
           connectionId: 'server-1',
+          targetFingerprint: 'target-1',
           name: 'logs',
           path: '/srv/logs',
           lowerName: 'logs',
@@ -81,6 +81,7 @@ final class _SftpScreenFixture {
         ),
         const SftpEntry(
           connectionId: 'server-1',
+          targetFingerprint: 'target-1',
           name: 'notes.md',
           path: '/srv/notes.md',
           lowerName: 'notes.md',

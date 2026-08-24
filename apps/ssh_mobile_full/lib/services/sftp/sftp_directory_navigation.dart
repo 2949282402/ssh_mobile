@@ -43,6 +43,7 @@ extension _SftpDirectoryNavigation on SftpService {
       final names = await sftp.listdir(absolutePath);
       final entries = await _buildEntries(
         connectionId: session.connectionId,
+        targetFingerprint: session.targetFingerprint,
         absolutePath: absolutePath,
         names: names,
       );
@@ -63,12 +64,15 @@ extension _SftpDirectoryNavigation on SftpService {
       session.entriesRevision++;
       session.state = SftpConnectionState.connected;
       notify();
-    } catch (e, stackTrace) {
+    } catch (e) {
       AppLogService.instance.error(
         'SFTP list directory failed',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'path=$path',
+        details: SftpLogSafety.details(
+          operation: 'list_directory',
+          connectionId: session.connectionId,
+          path: path,
+          error: e,
+        ),
       );
       session.state = SftpConnectionState.error;
       session.errorMessage = 'Unable to read directory: $e';
@@ -85,7 +89,11 @@ extension _SftpDirectoryNavigation on SftpService {
 
     AppLogService.instance.warning(
       'SFTP last path unavailable, falling back to default directory',
-      details: 'connection=${session.connectionName} path=$targetPath',
+      details: SftpLogSafety.details(
+        operation: 'last_path_fallback',
+        connectionId: session.connectionId,
+        path: targetPath,
+      ),
     );
     session.errorMessage = null;
     await _openPath(session, '.');
@@ -124,12 +132,14 @@ extension _SftpDirectoryNavigation on SftpService {
         sftp?.close();
         client.close();
       }
-    } catch (e, stackTrace) {
+    } catch (e) {
       AppLogService.instance.error(
         'SFTP detached operation failed',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'connection=${config.name} connectionId=$connectionId',
+        details: SftpLogSafety.details(
+          operation: 'detached_operation',
+          connectionId: connectionId,
+          error: e,
+        ),
       );
       rethrow;
     }
@@ -137,10 +147,12 @@ extension _SftpDirectoryNavigation on SftpService {
 
   Future<List<SftpEntry>> _buildEntries({
     required String connectionId,
+    required String targetFingerprint,
     required String absolutePath,
     required Iterable<SftpName> names,
   }) => SftpEntryParser.parse(
     connectionId: connectionId,
+    targetFingerprint: targetFingerprint,
     absolutePath: absolutePath,
     names: names,
   );
@@ -154,6 +166,12 @@ extension _SftpDirectoryNavigation on SftpService {
     final session = _sessions[entry.connectionId];
     if (session == null) {
       throw StateError('SFTP connection is no longer available');
+    }
+    if (session.sftp == null) {
+      return session;
+    }
+    if (entry.targetFingerprint != session.targetFingerprint) {
+      throw SftpTargetChangedException();
     }
     return session;
   }
@@ -225,7 +243,10 @@ extension _SftpDirectoryNavigation on SftpService {
     try {
       await file.close();
     } catch (e) {
-      AppLogService.instance.warning('SFTP file close failed', details: '$e');
+      AppLogService.instance.warning(
+        'SFTP file close failed',
+        details: SftpLogSafety.details(operation: 'file_close', error: e),
+      );
     }
   }
 }

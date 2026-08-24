@@ -1,4 +1,4 @@
-最新更新时间：2026-08-10
+最新更新时间：2026-08-24
 
 # feature_sftp
 
@@ -14,6 +14,10 @@ SFTP 文件浏览、传输、预览、编辑和路径收藏 Feature。
   全局 SSH/SFTP 资源。
 - 页面使用 Route-scoped `SftpViewModel`。页面关闭时解除监听；共享的旧
   `SftpService` 仍由 `AppRuntime` 持有，只能通过 App Shell backend adapter 注入。
+- 目录条目携带创建时的不可变 target fingerprint。预览、编辑、下载和删除必须
+  与当前会话的 fingerprint 完全匹配；同一连接 ID 改绑主机后，旧页面 fail closed。
+- Feature 日志不得传递远端路径、本地路径或底层异常文本；App Shell 只记录操作名、
+  稳定错误码、非敏感计数和不可逆路径摘要。
 - 公共入口提供 SFTP 路由的纯 metadata；App Shell 负责聚合并创建 Route Scope，Feature
   不依赖其他 Feature 的实现。
 

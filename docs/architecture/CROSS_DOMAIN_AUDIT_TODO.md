@@ -150,7 +150,7 @@ git diff --check
 - [x] **C-09 SSH owner 和 Native stream 关闭屏障**：前台/后台 SSH 创建失败、
   同 session 并发建连与 shell-done 重连都必须有唯一 owner 且可等待释放；
   native stream 的迟到 open 和 send failure 必须释放局部句柄并从 registry 移除。
-- [ ] **C-10 SFTP 目标绑定和日志脱敏**：条目、编辑和确认任务携带创建时
+- [x] **C-10 SFTP 目标绑定和日志脱敏**：条目、编辑和确认任务携带创建时
   target fingerprint，同 ID 换主机后旧 UI 不得读/写/删新目标；敏感路径
   日志只保留操作类型、稳定错误码和不可逆 hash。
 - [ ] **C-11 Monitoring 与 Feature Module 代次**：Monitoring 每轮 start 固定

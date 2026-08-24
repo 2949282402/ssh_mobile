@@ -33,8 +33,10 @@ and server details, then mark each scenario pass/fail with notes.
 | First SFTP connect to unknown host key | User confirmation is required |  |  |
 | Trusted host SFTP browse/download/preview/edit | Works normally |  |  |
 | Fingerprint mismatch during SFTP | Operation is blocked |  |  |
+| Keep a file/editor page open, then rebind the same connection ID to another host | The old page cannot preview, save, download, or delete on the new target |  |  |
 | Preview/edit ordinary remote file | Local cache file is encrypted |  |  |
 | Preview/edit secret path such as `.env` or `.ssh/id_rsa` | No local cache file is written |  |  |
+| Trigger SFTP failures with sensitive remote/local paths and secret-bearing exception text | Logs contain only operation, stable code, counts, connection ID, and irreversible path hashes |  |  |
 | Delete a saved connection | SFTP session, remembered path, and cache are cleared |  |  |
 
 ## System Admin and Monitor

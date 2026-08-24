@@ -8,12 +8,14 @@ class SftpEntryParser {
 
   static Future<List<SftpEntry>> parse({
     required String connectionId,
+    required String targetFingerprint,
     required String absolutePath,
     required Iterable<SftpName> names,
   }) => compute(
     _parseSftpEntries,
     _SftpEntriesInput(
       connectionId: connectionId,
+      targetFingerprint: targetFingerprint,
       absolutePath: absolutePath,
       names: names.toList(growable: false),
     ),
@@ -23,11 +25,13 @@ class SftpEntryParser {
 class _SftpEntriesInput {
   const _SftpEntriesInput({
     required this.connectionId,
+    required this.targetFingerprint,
     required this.absolutePath,
     required this.names,
   });
 
   final String connectionId;
+  final String targetFingerprint;
   final String absolutePath;
   final List<SftpName> names;
 }
@@ -42,6 +46,7 @@ List<SftpEntry> _parseSftpEntries(_SftpEntriesInput input) {
     entries.add(
       SftpEntry(
         connectionId: input.connectionId,
+        targetFingerprint: input.targetFingerprint,
         name: name.filename,
         path: _joinPath(input.absolutePath, name.filename),
         lowerName: name.filename.toLowerCase(),

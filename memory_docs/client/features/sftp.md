@@ -1,4 +1,4 @@
-> Last updated: 2026-08-13
+> Last updated: 2026-08-24
 
 # SFTP Feature Memory
 
@@ -21,12 +21,18 @@ Feature does not create or close them.
   before bounded remote fallback.
 - Successful remote mutations invalidate the affected directory and encrypted
   file-cache entries before reloading metadata.
+- Every directory entry carries the immutable target fingerprint captured when
+  it was listed. Preview, edit, download, and delete resolve through that entry
+  and fail closed if the same connection ID now refers to another target.
 - Preview/download cache data is protected at rest. Secret-bearing paths such
   as SSH material, environment files, tokens, cloud credentials, and privileged
   system files are not cached.
 - Remote preview content is untrusted. Markdown external content remains inert,
   HTML uses a deny-by-default policy without JavaScript or navigation, images
   obey byte/dimension/frame budgets, and PDF files are not parsed inline.
+- SFTP diagnostics never emit remote/local paths, host details, or raw exception
+  text. They retain only the operation, stable error code, non-sensitive counts,
+  connection ID, and full SHA-256 path digests for correlation.
 
 Path history and favorites are per server and belong to the Feature repository,
 not the protocol backend. Credentials remain in secure storage outside `sftp.db`.

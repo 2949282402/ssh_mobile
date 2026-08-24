@@ -495,6 +495,7 @@ final class AppSftpBackendAdapter implements feature_sftp.SftpBackend {
   feature_sftp.SftpEntry _toFeatureEntry(legacy_sftp.SftpEntry entry) {
     return feature_sftp.SftpEntry(
       connectionId: entry.connectionId,
+      targetFingerprint: entry.targetFingerprint,
       name: entry.name,
       path: entry.path,
       lowerName: entry.lowerName,
@@ -510,6 +511,7 @@ final class AppSftpBackendAdapter implements feature_sftp.SftpBackend {
   legacy_sftp.SftpEntry _toLegacyEntry(feature_sftp.SftpEntry entry) {
     return legacy_sftp.SftpEntry(
       connectionId: entry.connectionId,
+      targetFingerprint: entry.targetFingerprint,
       name: entry.name,
       path: entry.path,
       lowerName: entry.lowerName,
@@ -570,6 +572,9 @@ final class AppSftpBackendAdapter implements feature_sftp.SftpBackend {
         observedBytes: error.observedBytes,
         maxBytes: error.maxBytes,
       );
+    }
+    if (error is legacy_sftp.SftpTargetChangedException) {
+      return feature_sftp.SftpTargetChangedException();
     }
     return error;
   }

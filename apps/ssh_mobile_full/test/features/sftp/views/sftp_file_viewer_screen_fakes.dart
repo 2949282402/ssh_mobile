@@ -90,6 +90,7 @@ SftpEntry _entry({
 }) {
   return SftpEntry(
     connectionId: 'server-1',
+    targetFingerprint: 'target-1',
     name: name,
     path: path ?? '/srv/$name',
     lowerName: name.toLowerCase(),

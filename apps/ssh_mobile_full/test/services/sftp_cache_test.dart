@@ -361,6 +361,7 @@ ConnectionConfig _connection(String id, String host) =>
 SftpEntry _entry(String connectionId, String name) {
   return SftpEntry(
     connectionId: connectionId,
+    targetFingerprint: 'test-target',
     name: name,
     path: '/srv/$name',
     lowerName: name.toLowerCase(),

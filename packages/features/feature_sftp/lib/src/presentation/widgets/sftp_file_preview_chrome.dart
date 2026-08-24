@@ -475,9 +475,7 @@ class _LoggedRenderErrorState extends State<_LoggedRenderError> {
   void _logError() {
     context.read<SftpLoggerPort?>()?.error(
       widget.logMessage,
-      error: widget.error,
-      stackTrace: widget.stackTrace,
-      details: 'path=${widget.path}',
+      details: 'operation=preview_render code=operation_failed',
     );
   }
 
