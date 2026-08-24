@@ -1389,6 +1389,20 @@ impl PeerPathManager {
         Err(CoreNetworkError::NoRoute)
     }
 
+    /// Acquire only the current Relay topology. Relay-specific control I/O
+    /// must not accidentally borrow a preferred Direct path.
+    pub(crate) fn acquire_relay(
+        &self,
+        required_capabilities: u8,
+    ) -> Result<PathLease, CoreNetworkError> {
+        let path = self
+            .relay_path
+            .as_ref()
+            .filter(|path| path.is_acquirable(required_capabilities))
+            .ok_or(CoreNetworkError::NoRoute)?;
+        path.try_acquire()
+    }
+
     pub(crate) fn normal_drain(&mut self) {
         self.draining = true;
         self.direct_probe = None;
@@ -1410,11 +1424,43 @@ impl PeerPathManager {
         }
     }
 
+    /// Hard-close Relay only when the current owner still matches the
+    /// caller's observed handle. The identity check and carrier retirement
+    /// deliberately happen under the same manager lock.
+    pub(crate) fn hard_close_relay_if_handle(
+        &mut self,
+        expected: &PathHandle,
+    ) -> Option<PathHandle> {
+        let current = self.relay_ready.as_ref()?;
+        if current != expected {
+            return None;
+        }
+        let closed = current.clone();
+        self.hard_close_relay();
+        Some(closed)
+    }
+
     pub(crate) fn hard_close_direct(&mut self) {
         self.direct_probe = None;
         if let Some(path) = self.take_direct() {
             self.retire_path(path, PathCloseReason::HardClose);
         }
+    }
+
+    /// Hard-close Direct only when the current owner still matches the
+    /// caller's observed handle. The identity check and carrier retirement
+    /// deliberately happen under the same manager lock.
+    pub(crate) fn hard_close_direct_if_handle(
+        &mut self,
+        expected: &PathHandle,
+    ) -> Option<PathHandle> {
+        let current = self.direct_ready.first()?;
+        if current != expected {
+            return None;
+        }
+        let closed = current.clone();
+        self.hard_close_direct();
+        Some(closed)
     }
 
     /// Security failures use the hard-close path so no existing lease can

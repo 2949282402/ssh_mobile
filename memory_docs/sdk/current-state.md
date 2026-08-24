@@ -42,11 +42,13 @@ the retired v1 route/session owner model.
   sshd and does not interpret SSH protocol.
 - Queue acceptance, native command completion, transport acknowledgement, and
   application acknowledgement remain distinct.
-- Native command results are admitted through bounded exactly-once guards:
-  duplicate or unknown terminal results are dropped, and peer connect intents
-  coalesce concurrent requests while stale generations cannot complete a newer
-  intent. Native path handles are borrowed through explicit leases and revoked
-  handles cannot be reacquired.
+- Native command results use a dedicated bounded Result lane with async
+  backpressure before the Control/Data lanes; the runtime retains only a
+  rolling window of completed command IDs instead of imposing a lifetime
+  command limit. Dart exactly-once guards still drop duplicate or unknown
+  terminal results, and peer connect intents coalesce concurrent requests while
+  stale generations cannot complete a newer intent. Native path handles are
+  borrowed through explicit leases and revoked handles cannot be reacquired.
 - The typed `network_v2` contract keeps PeerState, E2EE policy, command terminal
   results, diagnostics, environment changes, and peer-scoped business IDs
   separate from the legacy wire adapter. Native Runtime event ingress is count+
@@ -92,8 +94,10 @@ the retired v1 route/session owner model.
   supervision have independent lifecycle owners. Accept/handshake tasks remain
   runtime-scoped; bidi/channel/generic readers remain Session-scoped and retire
   only the exact lost route before deciding whether the Session is finished.
-- Native event classification/backpressure/fairness is owned by bounded event
-  lanes rather than `RuntimeState`. Session-scoped weak path projections are
+- Native event classification/backpressure/fairness is owned by bounded
+  Result/Control/Data event lanes rather than `RuntimeState`; terminal command
+  results backpressure their worker and are never admitted through a
+  drop-on-full send. Session-scoped weak path projections are
   owned by a dedicated store that applies topology replacement and exact stale
   cleanup; it never extends carrier lifetime or replaces admission storage.
 - Feature-facing Realtime does not expose native signaling or media resources;

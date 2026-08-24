@@ -23,21 +23,24 @@ fn command_result_ledger_claims_each_id_once() {
     let ledger = CommandResultLedger::new();
     assert_eq!(ledger.claim("command-1"), Ok(true));
     assert_eq!(ledger.claim("command-1"), Ok(false));
+    ledger.complete("command-1");
+    assert_eq!(ledger.claim("command-1"), Ok(false));
     assert_eq!(ledger.claim("command-2"), Ok(true));
 }
 
 #[test]
-fn command_result_ledger_rejects_growth_past_its_bound() {
+fn command_result_ledger_evicts_only_old_completed_ids() {
     let ledger = CommandResultLedger::new();
-    ledger
-        .seen
-        .lock()
-        .expect("command result ledger lock")
-        .extend((0..MAX_COMPLETED_COMMANDS).map(|index| format!("filled-{index}")));
+    for index in 0..=MAX_COMPLETED_COMMANDS {
+        let command_id = format!("completed-{index}");
+        assert_eq!(ledger.claim(&command_id), Ok(true));
+        ledger.complete(&command_id);
+    }
 
+    assert_eq!(ledger.claim("completed-0"), Ok(true));
     assert_eq!(
-        ledger.claim("overflow"),
-        Err(CoreNetworkError::ResourceLimit("command result ledger"))
+        ledger.claim(&format!("completed-{MAX_COMPLETED_COMMANDS}")),
+        Ok(false)
     );
 }
 
@@ -85,7 +88,7 @@ async fn command_worker_emits_a_terminal_error_for_duplicate_envelopes() {
 }
 
 #[tokio::test]
-async fn command_worker_reports_a_terminal_error_when_ledger_reaches_its_bound() {
+async fn command_worker_continues_beyond_completed_history_capacity() {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
     let state = Arc::new(RuntimeState::new(
         event_tx,
@@ -94,7 +97,8 @@ async fn command_worker_reports_a_terminal_error_when_ledger_reaches_its_bound()
     let (command_tx, command_rx) = tokio::sync::mpsc::channel(8);
     let worker = tokio::spawn(run_command_worker(command_rx, Arc::clone(&state)));
 
-    for index in 0..=MAX_COMPLETED_COMMANDS {
+    const COMMAND_COUNT: usize = 5000;
+    for index in 0..COMMAND_COUNT {
         command_tx
             .send(NetworkCommand {
                 command_id: format!("ledger-bound-{index}"),
@@ -108,26 +112,18 @@ async fn command_worker_reports_a_terminal_error_when_ledger_reaches_its_bound()
     worker.await.expect("command worker joins");
 
     let mut results = 0usize;
-    let mut saw_resource_limit = false;
     while let Ok(event) = event_rx.try_recv() {
         let Some(network_protocol::network_event::Payload::CommandResultV2(result)) = event.payload
         else {
             continue;
         };
         results += 1;
-        if result
-            .error
-            .as_ref()
-            .is_some_and(|error| error.code == NetworkErrorCode::IoError as i32)
-        {
-            saw_resource_limit = true;
-        }
+        assert!(!result.error.as_ref().is_some_and(|error| {
+            error.message.contains("command result ledger")
+                || error.message.contains("pending command results")
+        }));
     }
-    assert_eq!(results, MAX_COMPLETED_COMMANDS + 1);
-    assert!(
-        saw_resource_limit,
-        "ledger overflow must emit an IO terminal error"
-    );
+    assert_eq!(results, COMMAND_COUNT);
 }
 
 #[test]

@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::connect::CAPABILITY_RELIABLE_STREAM;
 use network_protocol::NetworkEvent;
 use std::sync::atomic::AtomicU16;
 use tokio::sync::mpsc;
@@ -49,6 +50,13 @@ async fn install_relay_path(state: &Arc<RuntimeState>, data: Arc<RelayDataClient
         .write()
         .await
         .insert("peer-a".into(), Arc::new(std::sync::Mutex::new(manager)));
+}
+
+async fn relay_lease(state: &Arc<RuntimeState>) -> crate::connect::PathLease {
+    state
+        .acquire_relay_path_lease("peer-a", CAPABILITY_RELIABLE_STREAM)
+        .await
+        .expect("relay lease")
 }
 
 fn manifest(transfer_id: &str) -> FileManifest {
@@ -263,21 +271,10 @@ async fn cancel_relay_incoming_removes_active_by_transfer_or_session_key() {
 #[tokio::test]
 async fn send_file_over_relay_without_a_current_path_fails_closed() {
     let state = state();
-    let peer = PeerConfig {
-        endpoint: None,
-        identity_public_key: [0; 32],
-        e2e_public_key: [0; 32],
-        e2ee_policy: network_protocol::E2eePolicy::Required,
-    };
-    let transfer = ResumableTransfer {
-        transfer_id: "missing-path-transfer".into(),
-        peer_id: "peer-a".into(),
-        session_id: "session-a".into(),
-        source_path: std::path::PathBuf::from("does-not-exist.bin"),
-        manifest: manifest("missing-path-transfer"),
-        offset: 0,
-    };
-    send_file_over_relay(peer, transfer, state).await;
+    assert!(state
+        .acquire_relay_path_lease("peer-a", CAPABILITY_RELIABLE_STREAM)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -329,6 +326,7 @@ async fn relay_send_checks_source_manifest_and_offset_before_socket_work() {
             offset: 0,
         },
         Arc::clone(&paused_state),
+        relay_lease(&paused_state).await,
     )
     .await;
     assert_eq!(
@@ -362,6 +360,7 @@ async fn relay_send_checks_source_manifest_and_offset_before_socket_work() {
             offset: 0,
         },
         Arc::clone(&changed_state),
+        relay_lease(&changed_state).await,
     )
     .await;
     assert!(changed_state
@@ -398,6 +397,7 @@ async fn relay_send_checks_source_manifest_and_offset_before_socket_work() {
             offset: 1,
         },
         Arc::clone(&offset_state),
+        relay_lease(&offset_state).await,
     )
     .await;
     assert!(offset_state

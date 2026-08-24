@@ -1,6 +1,7 @@
 //! Network Protocol V2 类型化事件构建与命令结果错误映射。
 
 use crate::runtime::EventSender;
+use crate::runtime_event_lanes::EventSendError;
 use network_protocol::{
     network_event, CommandResult, CommandResultState, NetworkError as ProtocolError,
     NetworkErrorCode, NetworkEvent, PeerConnectionState, PeerPresenceChangedEvent,
@@ -67,12 +68,12 @@ pub(crate) fn emit_transfer_progress_for_peer(
 /// operation settles; the legacy `accepted` boolean event is intentionally not
 /// emitted here because the native FFI treats either result variant as the
 /// terminal correlation point.
-pub(crate) fn emit_command_result(
+pub(crate) async fn emit_command_result(
     event_tx: &EventSender,
     command_id: String,
     command_peer_id: Option<String>,
     result: Result<(), ProtocolError>,
-) {
+) -> Result<(), EventSendError> {
     let (state, error, error_peer_id) = match result {
         Ok(()) => (CommandResultState::Succeeded, None, None),
         Err(error) => {
@@ -87,17 +88,40 @@ pub(crate) fn emit_command_result(
         }
     };
     let peer_id = error_peer_id.or(command_peer_id).unwrap_or_default();
-    let _ = event_tx.send(NetworkEvent {
-        event_id: format!("{command_id}/result"),
+    let event_id = format!("{command_id}/result");
+    let event = NetworkEvent {
+        event_id: event_id.clone(),
         timestamp_ms: unix_timestamp_ms(),
         protocol_version: NETWORK_PROTOCOL_VERSION,
         payload: Some(network_event::Payload::CommandResultV2(CommandResult {
-            command_id,
-            peer_id,
+            command_id: command_id.clone(),
+            peer_id: peer_id.clone(),
             state: state as i32,
             error,
         })),
-    });
+    };
+    match event_tx.send_result(event).await {
+        Ok(()) => Ok(()),
+        Err(EventSendError::TooLarge) => {
+            event_tx
+                .send_result(NetworkEvent {
+                    event_id,
+                    timestamp_ms: unix_timestamp_ms(),
+                    protocol_version: NETWORK_PROTOCOL_VERSION,
+                    payload: Some(network_event::Payload::CommandResultV2(CommandResult {
+                        command_id,
+                        peer_id,
+                        state: CommandResultState::Failed as i32,
+                        error: Some(protocol_error(
+                            NetworkErrorCode::IoError,
+                            "command result exceeded native event limit",
+                        )),
+                    })),
+                })
+                .await
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn emit_peer_diagnostics(

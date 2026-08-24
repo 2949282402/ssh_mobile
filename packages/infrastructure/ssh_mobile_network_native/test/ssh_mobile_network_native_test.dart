@@ -45,6 +45,34 @@ void main() {
     expect(await eventFuture, isNotEmpty);
   });
 
+  test(
+    'Realtime command result crosses the real native FFI boundary',
+    () async {
+      const commandId = 'realtime-start-ffi-result';
+      const peerId = 'missing-peer';
+      final runtime = await native.createRuntime();
+      addTearDown(runtime.dispose);
+
+      final rawResultFuture = runtime.rawEvents.first.timeout(
+        const Duration(seconds: 5),
+      );
+      final command = NativeNetworkProtocol.startRealtimeSessionCommand(
+        commandId: commandId,
+        realtimeId: '00112233445566778899aabbccddeeff',
+        peerId: peerId,
+      );
+
+      expect(runtime.sendCommand(command), NativeOperationStatus.success);
+      final result = NativeNetworkProtocol.decodeEvent(await rawResultFuture);
+      expect(result, isA<NativeCommandResultV2Event>());
+      final commandResult = result! as NativeCommandResultV2Event;
+      expect(commandResult.commandId, commandId);
+      expect(commandResult.peerId, peerId);
+      expect(commandResult.state, 1); // COMMAND_RESULT_STATE_FAILED
+      expect(commandResult.error?.code, 3); // NETWORK_ERROR_CODE_NO_ROUTE
+    },
+  );
+
   test('native runtime stops before it is destroyed', () async {
     final runtime = await native.createRuntime();
     final status = await runtime.stop();

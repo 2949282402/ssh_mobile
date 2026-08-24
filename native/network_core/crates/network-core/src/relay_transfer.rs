@@ -1,6 +1,8 @@
 // Relay v2 file-transfer offer, approval, chunking, resume, and cancel ownership.
 use super::*;
 
+use crate::connect::CAPABILITY_RELIABLE_STREAM;
+
 /// 在通知 UI 前解密并校验传入 Relay 申请。
 pub(super) async fn receive_relay_offer(
     state: &Arc<RuntimeState>,
@@ -239,8 +241,13 @@ pub(super) async fn receive_relay_offer(
                     .await;
                 // 取消只发到承载该 transfer 的对端 reservation 连接。
                 if let Some(sender_id) = sender_id {
-                    if let Some(data) = expiry_state.path_relay_data(&sender_id).await {
-                        let _ = send_file_cancel(&data, &expiry_transfer_id).await;
+                    if let Ok(lease) = expiry_state
+                        .acquire_relay_path_lease(&sender_id, CAPABILITY_RELIABLE_STREAM)
+                        .await
+                    {
+                        if let Some(data) = lease.relay_data() {
+                            let _ = send_file_cancel(&data, &expiry_transfer_id).await;
+                        }
                     }
                 }
             }
@@ -276,10 +283,10 @@ pub(crate) async fn respond_to_relay_incoming(
                 None,
             )
         })?;
-    let data = state
-        .path_relay_data(&pending.sender_id)
+    let lease = state
+        .acquire_relay_path_lease(&pending.sender_id, CAPABILITY_RELIABLE_STREAM)
         .await
-        .ok_or_else(|| {
+        .map_err(|_| {
             protocol_error_with_context(
                 NetworkErrorCode::RelayError,
                 "Relay data plane is unavailable",
@@ -287,6 +294,14 @@ pub(crate) async fn respond_to_relay_incoming(
                 None,
             )
         })?;
+    let data = lease.relay_data().ok_or_else(|| {
+        protocol_error_with_context(
+            NetworkErrorCode::RelayError,
+            "Relay data plane is unavailable",
+            "respond_incoming",
+            None,
+        )
+    })?;
     if !accepted {
         state.transfer.manager.cancel_transfer(transfer_id).await;
         state.transfer.manager.remove_transfer(transfer_id).await;
@@ -407,6 +422,26 @@ pub(super) async fn accept_pending_relay_incoming(
         file_hash: pending.manifest.content_hash.clone(),
         offset,
     })?;
+    let lease = match state
+        .acquire_path_lease_for_relay_data(&pending.sender_id, data, CAPABILITY_RELIABLE_STREAM)
+        .await
+    {
+        Ok(lease) => lease,
+        Err(error) => {
+            drop(file);
+            state.transfer.manager.pause_for_network(transfer_id).await;
+            state
+                .relay
+                .pending_incoming
+                .write()
+                .await
+                .insert(transfer_id.to_string(), pending);
+            return Err(error.into());
+        }
+    };
+    let leased_data = lease
+        .relay_data()
+        .ok_or_else(|| std::io::Error::other("Relay data plane is unavailable"))?;
     state.relay.active_incoming.lock().await.insert(
         transfer_id.to_string(),
         ActiveRelayIncoming {
@@ -420,7 +455,8 @@ pub(super) async fn accept_pending_relay_incoming(
             already_completed,
         },
     );
-    if let Err(error) = send_data_envelope(data, DATA_ENV_FILE_ACCEPT, acceptance.as_bytes()).await
+    if let Err(error) =
+        send_data_envelope(&leased_data, DATA_ENV_FILE_ACCEPT, acceptance.as_bytes()).await
     {
         if let Some(active) = state.relay.active_incoming.lock().await.remove(transfer_id) {
             drop(active.file);
@@ -549,7 +585,22 @@ pub(super) async fn complete_relay_incoming(
         state.transfer.manager.mark_verifying(&transfer_id).await;
         state.transfer.manager.mark_completed(&transfer_id).await;
         state.transfer.manager.remove_transfer(&transfer_id).await;
-        send_data_envelope(data, DATA_ENV_FILE_COMPLETE_ACK, transfer_id.as_bytes()).await?;
+        let lease = state
+            .acquire_path_lease_for_relay_data(
+                &active.offer.sender_id,
+                data,
+                CAPABILITY_RELIABLE_STREAM,
+            )
+            .await?;
+        let leased_data = lease
+            .relay_data()
+            .ok_or_else(|| std::io::Error::other("Relay data plane is unavailable"))?;
+        send_data_envelope(
+            &leased_data,
+            DATA_ENV_FILE_COMPLETE_ACK,
+            transfer_id.as_bytes(),
+        )
+        .await?;
         return Ok(());
     }
     if !relay_hash_matches(active.hasher, &active.offer.manifest.content_hash) {
@@ -632,7 +683,22 @@ pub(super) async fn complete_relay_incoming(
             &active.final_path.to_string_lossy(),
         );
     }
-    send_data_envelope(data, DATA_ENV_FILE_COMPLETE_ACK, transfer_id.as_bytes()).await?;
+    let lease = state
+        .acquire_path_lease_for_relay_data(
+            &active.offer.sender_id,
+            data,
+            CAPABILITY_RELIABLE_STREAM,
+        )
+        .await?;
+    let leased_data = lease
+        .relay_data()
+        .ok_or_else(|| std::io::Error::other("Relay data plane is unavailable"))?;
+    send_data_envelope(
+        &leased_data,
+        DATA_ENV_FILE_COMPLETE_ACK,
+        transfer_id.as_bytes(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -687,8 +753,13 @@ pub(crate) async fn cancel_transfer(state: &RuntimeState, transfer_id: &str) {
         .await
         .map(|snapshot| snapshot.peer_id)
     {
-        if let Some(data) = state.path_relay_data(&peer_id).await {
-            let _ = send_file_cancel(&data, transfer_id).await;
+        if let Ok(lease) = state
+            .acquire_relay_path_lease(&peer_id, CAPABILITY_RELIABLE_STREAM)
+            .await
+        {
+            if let Some(data) = lease.relay_data() {
+                let _ = send_file_cancel(&data, transfer_id).await;
+            }
         }
     }
     // Explicit cancellation is an owner boundary for both waiter maps. Drop
@@ -708,8 +779,7 @@ impl RelayTransferPort for RuntimeState {
         lease: crate::connect::PathLease,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> {
         Box::pin(async move {
-            let _lease = lease;
-            send_file_over_relay(peer, transfer, self).await;
+            send_file_over_relay(peer, transfer, self, lease).await;
         })
     }
 
@@ -839,12 +909,15 @@ pub(crate) async fn send_file_over_relay(
     peer: PeerConfig,
     transfer: ResumableTransfer,
     state: Arc<RuntimeState>,
+    lease: crate::connect::PathLease,
 ) {
     let transfer_id = transfer.transfer_id.clone();
     let peer_id = transfer.peer_id.clone();
     let path = transfer.source_path.clone();
     let result = async {
-        let data = state.path_relay_data(&peer_id).await
+        let data = state
+            .path_relay_data_for_lease(&lease)
+            .await
             .ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::NotConnected, "Relay is unavailable")
             })?;
@@ -1060,7 +1133,7 @@ pub(crate) async fn send_file_over_relay(
             .err()
             .is_some_and(|error| !is_transient_relay_error(error.as_ref()))
     {
-        if let Some(data) = state.path_relay_data(&peer_id).await {
+        if let Some(data) = state.path_relay_data_for_lease(&lease).await {
             let _ = send_file_cancel(&data, &transfer_id).await;
         }
     }

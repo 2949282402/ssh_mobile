@@ -45,8 +45,10 @@ Ownership rules:
   and handshake tasks never own Session receivers; session-scope receivers own
   precise route-loss detection and schedule root-scope cleanup only after the
   final physical path disappears.
-- Runtime event lanes independently own Control/Data classification, count and
-  byte admission, per-event limits, and fairness. The non-owning runtime path
+- Runtime event lanes independently own Result/Control/Data classification,
+  count and byte admission, per-event limits, and weighted fairness. Terminal
+  command results use async backpressure; Control/Data retain best-effort
+  overflow policy. The non-owning runtime path
   projection store independently owns Session bindings, topology replacement,
   and exact stale-handle cleanup; `PeerPathManager` remains the sole carrier
   owner and `ConnectionSessionStore` remains the admission/security owner.
@@ -67,8 +69,10 @@ Ownership rules:
 - Passive inbound admission is Online-only and does not enable maintenance.
   Network-environment changes preserve healthy Relay/Realtime and schedule
   maintained-peer Direct recovery only after Relay readiness. Native/FFI/Dart
-  event lanes are bounded at Control `256/4 MiB`, Data `128/8 MiB`, `1 MiB`
-  per event, with an eight-control fairness cap.
+  event ingress is bounded at Result `256/4 MiB`, Control `256/4 MiB`, Data
+  `128/8 MiB`, and `1 MiB` per event. Native dequeue uses an
+  `8 Result → 8 Control → 1 Data` weighted cycle; Result saturation applies
+  backpressure to the command worker instead of dropping terminal completion.
 
 The complete rationale remains in the
 [network design](../../docs/网络传输SDK架构设计_最终版.md) and

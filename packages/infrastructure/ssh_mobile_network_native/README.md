@@ -75,6 +75,11 @@ business state is retained above that boundary and resumes on a later connection
   stay in the runtime object and are never emitted as events or logs.
 - Runtime disposal is ordered as `Running -> Stopping -> Stopped -> Destroyed`;
   stopping is idempotent and no command is accepted after stopping begins.
+- Native events use separate bounded Result, Control, and Data lanes. Terminal
+  `CommandResultV2` delivery applies async backpressure to the command worker,
+  while lifecycle/progress overflow remains governed by the existing bounded
+  policy; completed command IDs are retained in a rolling duplicate-detection
+  window rather than consuming a runtime-lifetime quota.
 - `NativeNetworkRuntime.boundLocalPort` is a read-only diagnostic for controlled
   integration tests. It reports the port atomically bound by native QUIC after
   configuration and returns `null` before configuration or after stopping; it

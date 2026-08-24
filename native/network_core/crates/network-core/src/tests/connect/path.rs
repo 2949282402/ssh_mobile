@@ -810,6 +810,65 @@ fn manager_retires_stale_and_ephemeral_paths_by_topology() {
     );
 }
 
+#[test]
+fn conditional_hard_close_never_retires_a_replacement_path() {
+    let registry = Arc::new(PathRegistry::new());
+    let mut manager = PeerPathManager::new(test_peer(), Arc::clone(&registry));
+    let direct_a = manager
+        .publish_ready(profile(PathKind::Direct, RouteTransport::Tcp))
+        .expect("direct A");
+    assert!(registry.revoke(&direct_a));
+    let direct_b = manager
+        .publish_ready(profile(PathKind::Direct, RouteTransport::Tcp))
+        .expect("direct B");
+
+    assert!(manager.hard_close_direct_if_handle(&direct_a).is_none());
+    assert_eq!(manager.direct_ready(), std::slice::from_ref(&direct_b));
+    assert!(registry.acquire(&direct_b).is_ok());
+
+    let relay_a = manager
+        .publish_ready(profile(PathKind::Relay, RouteTransport::WebSocket))
+        .expect("relay A");
+    assert!(registry.revoke(&relay_a));
+    let relay_b = manager
+        .publish_ready(profile(PathKind::Relay, RouteTransport::WebSocket))
+        .expect("relay B");
+
+    assert!(manager.hard_close_relay_if_handle(&relay_a).is_none());
+    assert_eq!(manager.relay_ready(), Some(&relay_b));
+    assert!(registry.acquire(&relay_b).is_ok());
+}
+
+#[test]
+fn relay_only_lease_drains_existing_io_and_rejects_new_work() {
+    let registry = Arc::new(PathRegistry::new());
+    let closes = Arc::new(Mutex::new(Vec::new()));
+    let mut manager = PeerPathManager::new(test_peer(), registry);
+    manager
+        .publish_ready_with_carrier(
+            profile(PathKind::Relay, RouteTransport::WebSocket),
+            recording_carrier(&closes),
+        )
+        .expect("relay path");
+    let lease = manager
+        .acquire_relay(CAPABILITY_RELIABLE_MESSAGE)
+        .expect("relay lease");
+
+    manager.normal_drain();
+    assert!(
+        lease.is_active(),
+        "normal retirement preserves existing I/O"
+    );
+    assert!(manager.acquire_relay(CAPABILITY_RELIABLE_MESSAGE).is_err());
+    assert!(closes.lock().expect("close log lock").is_empty());
+
+    drop(lease);
+    assert_eq!(
+        closes.lock().expect("close log lock").as_slice(),
+        &[PathCloseReason::NormalRetire]
+    );
+}
+
 #[tokio::test]
 async fn route_view_rejects_stream_frames_without_stream_capability() {
     let view = RouteView {
