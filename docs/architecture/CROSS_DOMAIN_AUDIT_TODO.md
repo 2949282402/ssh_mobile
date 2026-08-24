@@ -144,7 +144,7 @@ git diff --check
 - [x] **C-07 System Admin 命令与输出上限**：用户名和 shell 执行严格校验，
   密码绝不进入 shell 命令文本而通过受控 stdin/argv 输入；stdout/stderr 设
   统一硬上限，超限关闭会话并返回稳定错误。
-- [ ] **C-08 Connection/Host-key/凭据原子性**：Host Key 只在持久化成功后
+- [x] **C-08 Connection/Host-key/凭据原子性**：Host Key 只在持久化成功后
   更新调用方对象；Connection 配置、Host Key 和安全存储凭据使用可回滚的
   staging/compensation；拒绝非 canonical ID 并使用无碰撞安全存储 key。
 - [ ] **C-09 SSH owner 和 Native stream 关闭屏障**：前台/后台 SSH 创建失败、

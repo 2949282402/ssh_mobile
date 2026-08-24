@@ -47,8 +47,198 @@ void main() {
       expect(saved, isTrue);
       expect(verification.calls, 1);
       expect(viewModel.connections.single.hostKeyFingerprint, 'MD5:00:01');
+      expect(config.hostKeyFingerprint, 'MD5:00:01');
       expect(credentials.passwords['server-1'], 'secret');
       expect(repository.trustedIds, contains('server-1'));
+    },
+  );
+
+  test('configuration write failure restores the previous structure', () async {
+    final repository = _FakeConnectionRepository();
+    final original = _connection('server-1')
+      ..name = 'Before'
+      ..hostKeyAlgorithm = 'ssh-ed25519'
+      ..hostKeyFingerprint = 'MD5:00:00';
+    await repository.addConnection(original);
+    repository.updateErrorAfterWrite = StateError('database write failed');
+    final credentials = _FakeCredentialRepository()
+      ..passwords['server-1'] = 'credential-before';
+    final viewModel = ConnectionViewModel(
+      connectionRepository: repository,
+      credentialRepository: credentials,
+      hostKeyRepository: repository,
+      runtimePort: _FakeRuntimePort(),
+      verificationPort: _FakeVerificationPort(
+        const ConnectionVerificationResult(
+          algorithm: 'ssh-rsa',
+          fingerprint: 'MD5:11:11',
+        ),
+      ),
+    );
+    addTearDown(viewModel.dispose);
+    final edited = _connection('server-1')
+      ..name = 'After'
+      ..hostKeyAlgorithm = 'ssh-ed25519'
+      ..hostKeyFingerprint = 'MD5:00:00';
+
+    await expectLater(
+      viewModel.verifyAndSaveConnection(
+        config: edited,
+        isEditing: true,
+        rawPassword: 'credential-after',
+        rawPrivateKey: null,
+        confirmDisconnectCallback: (_) async => true,
+      ),
+      throwsStateError,
+    );
+
+    expect(repository.getConnection('server-1')?.name, 'Before');
+    expect(
+      repository.getConnection('server-1')?.hostKeyFingerprint,
+      'MD5:00:00',
+    );
+    expect(credentials.passwords['server-1'], 'credential-before');
+    expect(repository.trustCalls, 0);
+    expect(credentials.saveCalls, 0);
+    expect(edited.hostKeyFingerprint, 'MD5:00:00');
+  });
+
+  test('host-key write failure removes a newly added connection', () async {
+    final repository = _FakeConnectionRepository()
+      ..trustErrorAfterWrite = StateError('host-key write failed');
+    final credentials = _FakeCredentialRepository();
+    final viewModel = ConnectionViewModel(
+      connectionRepository: repository,
+      credentialRepository: credentials,
+      hostKeyRepository: repository,
+      runtimePort: _FakeRuntimePort(),
+      verificationPort: _FakeVerificationPort(
+        const ConnectionVerificationResult(
+          algorithm: 'ssh-ed25519',
+          fingerprint: 'MD5:11:11',
+        ),
+      ),
+    );
+    addTearDown(viewModel.dispose);
+    final config = _connection('server-1');
+
+    await expectLater(
+      viewModel.verifyAndSaveConnection(
+        config: config,
+        isEditing: false,
+        rawPassword: 'credential-after',
+        rawPrivateKey: null,
+        confirmDisconnectCallback: (_) async => true,
+      ),
+      throwsStateError,
+    );
+
+    expect(repository.connections, isEmpty);
+    expect(credentials.saveCalls, 0);
+    expect(repository.trustCalls, 2);
+    expect(config.hostKeyAlgorithm, isNull);
+    expect(config.hostKeyFingerprint, isNull);
+    expect(config.hostKeyTrustedAt, isNull);
+  });
+
+  test(
+    'credential write failure restores config host key and credentials',
+    () async {
+      final repository = _FakeConnectionRepository();
+      final original = _connection('server-1')
+        ..name = 'Before'
+        ..hostKeyAlgorithm = 'ssh-ed25519'
+        ..hostKeyFingerprint = 'MD5:00:00';
+      await repository.addConnection(original);
+      final credentials = _FakeCredentialRepository()
+        ..passwords['server-1'] = 'credential-before'
+        ..privateKeys['server-1'] = 'private-key-before'
+        ..saveErrorAfterWrite = StateError('secure storage write failed');
+      final viewModel = ConnectionViewModel(
+        connectionRepository: repository,
+        credentialRepository: credentials,
+        hostKeyRepository: repository,
+        runtimePort: _FakeRuntimePort(),
+        verificationPort: _FakeVerificationPort(
+          const ConnectionVerificationResult(
+            algorithm: 'ssh-rsa',
+            fingerprint: 'MD5:11:11',
+          ),
+        ),
+      );
+      addTearDown(viewModel.dispose);
+      final edited = _connection('server-1')
+        ..name = 'After'
+        ..hostKeyAlgorithm = 'ssh-ed25519'
+        ..hostKeyFingerprint = 'MD5:00:00';
+
+      await expectLater(
+        viewModel.verifyAndSaveConnection(
+          config: edited,
+          isEditing: true,
+          rawPassword: 'credential-after',
+          rawPrivateKey: 'private-key-after',
+          confirmDisconnectCallback: (_) async => true,
+        ),
+        throwsStateError,
+      );
+
+      final restored = repository.getConnection('server-1');
+      expect(restored?.name, 'Before');
+      expect(restored?.hostKeyAlgorithm, 'ssh-ed25519');
+      expect(restored?.hostKeyFingerprint, 'MD5:00:00');
+      expect(credentials.passwords['server-1'], 'credential-before');
+      expect(credentials.privateKeys['server-1'], 'private-key-before');
+      expect(credentials.saveCalls, 2);
+      expect(repository.trustCalls, 2);
+      expect(edited.hostKeyAlgorithm, 'ssh-ed25519');
+      expect(edited.hostKeyFingerprint, 'MD5:00:00');
+    },
+  );
+
+  test(
+    'incomplete compensation exposes the original and rollback errors',
+    () async {
+      final repository = _FakeConnectionRepository();
+      final original = _connection('server-1')
+        ..hostKeyAlgorithm = 'ssh-ed25519'
+        ..hostKeyFingerprint = 'MD5:00:00';
+      await repository.addConnection(original);
+      final credentials = _FakeCredentialRepository()
+        ..passwords['server-1'] = 'credential-before'
+        ..failAllSavesAfterWrite = true;
+      final viewModel = ConnectionViewModel(
+        connectionRepository: repository,
+        credentialRepository: credentials,
+        hostKeyRepository: repository,
+        runtimePort: _FakeRuntimePort(),
+        verificationPort: _FakeVerificationPort(
+          const ConnectionVerificationResult(
+            algorithm: 'ssh-rsa',
+            fingerprint: 'MD5:11:11',
+          ),
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      Object? failure;
+      try {
+        await viewModel.verifyAndSaveConnection(
+          config: _connection('server-1'),
+          isEditing: true,
+          rawPassword: 'credential-after',
+          rawPrivateKey: null,
+          confirmDisconnectCallback: (_) async => true,
+        );
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure, isA<ConnectionSaveRollbackException>());
+      final rollbackFailure = failure! as ConnectionSaveRollbackException;
+      expect(rollbackFailure.cause, isA<StateError>());
+      expect(rollbackFailure.rollbackErrors, hasLength(1));
+      expect(rollbackFailure.toString(), contains('rollback failures: 1'));
     },
   );
 
@@ -64,7 +254,10 @@ void main() {
         hostKeyRepository: repository,
         runtimePort: runtime,
         verificationPort: _FakeVerificationPort(
-          const ConnectionVerificationResult(),
+          const ConnectionVerificationResult(
+            algorithm: 'ssh-ed25519',
+            fingerprint: 'MD5:11:11',
+          ),
         ),
       );
       addTearDown(viewModel.dispose);
@@ -88,6 +281,9 @@ void main() {
 
       expect(saved, isFalse);
       expect(repository.updateCalls, 0);
+      expect(repository.trustCalls, 0);
+      expect(config.hostKeyAlgorithm, isNull);
+      expect(config.hostKeyFingerprint, isNull);
       expect(runtime.disconnectCalls, 0);
     },
   );
@@ -123,6 +319,128 @@ void main() {
     expect(runtime.cleanedIds, contains('server-1'));
     expect(credentials.deletedIds, contains('server-1'));
   });
+
+  test(
+    'delete waits for an in-flight save mutation before removing data',
+    () async {
+      final updateReached = Completer<void>();
+      final updateGate = Completer<void>();
+      final repository = _FakeConnectionRepository()
+        ..updateAfterWriteReached = updateReached
+        ..updateAfterWriteGate = updateGate;
+      await repository.addConnection(_connection('server-1'));
+      final credentials = _FakeCredentialRepository()
+        ..passwords['server-1'] = 'before';
+      final viewModel = ConnectionViewModel(
+        connectionRepository: repository,
+        credentialRepository: credentials,
+        hostKeyRepository: repository,
+        runtimePort: _FakeRuntimePort(),
+        verificationPort: _FakeVerificationPort(
+          const ConnectionVerificationResult(
+            algorithm: 'ssh-ed25519',
+            fingerprint: 'MD5:11:11',
+          ),
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      final save = viewModel.verifyAndSaveConnection(
+        config: _connection('server-1')..name = 'After',
+        isEditing: true,
+        rawPassword: 'after',
+        rawPrivateKey: null,
+        confirmDisconnectCallback: (_) async => true,
+      );
+      await updateReached.future;
+
+      final delete = viewModel.deleteConnectionWithCleanup('server-1');
+      await Future<void>.delayed(Duration.zero);
+      expect(repository.deleteCalls, 0);
+
+      updateGate.complete();
+      expect(await save, isFalse);
+      await delete;
+
+      expect(repository.getConnection('server-1'), isNull);
+      expect(credentials.passwords.containsKey('server-1'), isFalse);
+      expect(credentials.privateKeys.containsKey('server-1'), isFalse);
+    },
+  );
+
+  test(
+    'single delete finishes credential cleanup after UI generation changes',
+    () async {
+      final deleteReached = Completer<void>();
+      final deleteGate = Completer<void>();
+      final repository = _FakeConnectionRepository()
+        ..deleteAfterWriteReached = deleteReached
+        ..deleteAfterWriteGate = deleteGate;
+      await repository.addConnection(_connection('server-1'));
+      final credentials = _FakeCredentialRepository()
+        ..passwords['server-1'] = 'secret';
+      final viewModel = ConnectionViewModel(
+        connectionRepository: repository,
+        credentialRepository: credentials,
+        hostKeyRepository: repository,
+        runtimePort: _FakeRuntimePort(),
+        verificationPort: _FakeVerificationPort(
+          const ConnectionVerificationResult(),
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      final delete = viewModel.deleteConnectionWithCleanup('server-1');
+      await deleteReached.future;
+      await viewModel.fetchConnections();
+      deleteGate.complete();
+      await delete;
+
+      expect(credentials.deletedIds, contains('server-1'));
+      expect(credentials.passwords.containsKey('server-1'), isFalse);
+    },
+  );
+
+  test(
+    'batch delete finishes all credential cleanup after UI generation changes',
+    () async {
+      final deleteReached = Completer<void>();
+      final deleteGate = Completer<void>();
+      final repository = _FakeConnectionRepository()
+        ..deleteManyAfterWriteReached = deleteReached
+        ..deleteManyAfterWriteGate = deleteGate;
+      await repository.addConnection(_connection('server-1'));
+      await repository.addConnection(_connection('server-2'));
+      final credentials = _FakeCredentialRepository()
+        ..passwords['server-1'] = 'secret-1'
+        ..passwords['server-2'] = 'secret-2';
+      final viewModel = ConnectionViewModel(
+        connectionRepository: repository,
+        credentialRepository: credentials,
+        hostKeyRepository: repository,
+        runtimePort: _FakeRuntimePort(),
+        verificationPort: _FakeVerificationPort(
+          const ConnectionVerificationResult(),
+        ),
+      );
+      addTearDown(viewModel.dispose);
+
+      final delete = viewModel.deleteConnectionsWithCleanup(<String>[
+        'server-1',
+        'server-2',
+      ]);
+      await deleteReached.future;
+      await viewModel.fetchConnections();
+      deleteGate.complete();
+      await delete;
+
+      expect(
+        credentials.deletedIds,
+        containsAll(<String>['server-1', 'server-2']),
+      );
+      expect(credentials.passwords, isEmpty);
+    },
+  );
 
   test('does not publish a fetch result after dispose', () async {
     final loadGate = Completer<List<ConnectionConfig>>();
@@ -866,8 +1184,16 @@ final class _FakeConnectionRepository
   int trustCalls = 0;
   Completer<void>? addGate;
   Completer<void>? updateGate;
+  Completer<void>? updateAfterWriteReached;
+  Completer<void>? updateAfterWriteGate;
+  Completer<void>? deleteAfterWriteReached;
+  Completer<void>? deleteAfterWriteGate;
+  Completer<void>? deleteManyAfterWriteReached;
+  Completer<void>? deleteManyAfterWriteGate;
   Completer<void>? reorderGate;
   Completer<void>? trustGate;
+  Object? updateErrorAfterWrite;
+  Object? trustErrorAfterWrite;
 
   @override
   List<ConnectionConfig> get connections => List.unmodifiable(_items);
@@ -903,18 +1229,36 @@ final class _FakeConnectionRepository
     }
     final index = _items.indexWhere((item) => item.id == config.id);
     _items[index] = ConnectionConfig.fromJson(config.toJson());
+    updateAfterWriteReached?.complete();
+    updateAfterWriteReached = null;
+    final afterWriteGate = updateAfterWriteGate;
+    updateAfterWriteGate = null;
+    if (afterWriteGate != null) await afterWriteGate.future;
+    final error = updateErrorAfterWrite;
+    updateErrorAfterWrite = null;
+    if (error != null) throw error;
   }
 
   @override
   Future<void> deleteConnection(String id) async {
     deleteCalls++;
     _items.removeWhere((item) => item.id == id);
+    deleteAfterWriteReached?.complete();
+    deleteAfterWriteReached = null;
+    final gate = deleteAfterWriteGate;
+    deleteAfterWriteGate = null;
+    if (gate != null) await gate.future;
   }
 
   @override
   Future<void> deleteConnections(List<String> ids) async {
     deleteManyCalls++;
     _items.removeWhere((item) => ids.contains(item.id));
+    deleteManyAfterWriteReached?.complete();
+    deleteManyAfterWriteReached = null;
+    final gate = deleteManyAfterWriteGate;
+    deleteManyAfterWriteGate = null;
+    if (gate != null) await gate.future;
   }
 
   @override
@@ -956,6 +1300,9 @@ final class _FakeConnectionRepository
     config.hostKeyAlgorithm = algorithm;
     config.hostKeyFingerprint = fingerprint;
     config.hostKeyTrustedAt = trustedAt;
+    final error = trustErrorAfterWrite;
+    trustErrorAfterWrite = null;
+    if (error != null) throw error;
   }
 }
 
@@ -966,6 +1313,8 @@ final class _FakeCredentialRepository implements CredentialRepository {
   int saveCalls = 0;
   int deleteCalls = 0;
   Completer<void>? saveGate;
+  Object? saveErrorAfterWrite;
+  bool failAllSavesAfterWrite = false;
 
   @override
   Future<String?> getPassword(String connectionId) async =>
@@ -989,6 +1338,12 @@ final class _FakeCredentialRepository implements CredentialRepository {
     }
     passwords[connectionId] = password;
     privateKeys[connectionId] = privateKey;
+    final error = saveErrorAfterWrite;
+    saveErrorAfterWrite = null;
+    if (error != null) throw error;
+    if (failAllSavesAfterWrite) {
+      throw StateError('secure storage remains unavailable');
+    }
   }
 
   @override

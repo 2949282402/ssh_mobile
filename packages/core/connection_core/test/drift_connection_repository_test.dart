@@ -99,6 +99,53 @@ void main() {
     );
     expect(repository.getConnection('missing'), isNull);
   });
+
+  test('all repository boundaries reject non-canonical ids', () async {
+    final mutable = _connection(id: 'server-a')..id = ' server-a ';
+
+    await expectLater(repository.addConnection(mutable), throwsArgumentError);
+    expect(() => repository.getConnection(' server-a '), throwsArgumentError);
+    await expectLater(
+      repository.deleteConnection(' server-a '),
+      throwsArgumentError,
+    );
+    await expectLater(
+      repository.deleteConnections(['server-a', ' server-b ']),
+      throwsArgumentError,
+    );
+    await expectLater(
+      repository.trustHostKey(
+        ' server-a ',
+        algorithm: 'ssh-ed25519',
+        fingerprint: 'SHA256:trusted',
+        trustedAt: DateTime.utc(2040),
+      ),
+      throwsArgumentError,
+    );
+    expect(repository.connections, isEmpty);
+  });
+
+  test('null fingerprint clears host-key trust for compensation', () async {
+    await repository.addConnection(_connection(id: 'server-a'));
+    await repository.trustHostKey(
+      'server-a',
+      algorithm: 'ssh-ed25519',
+      fingerprint: 'SHA256:trusted',
+      trustedAt: DateTime.utc(2040),
+    );
+
+    await repository.trustHostKey(
+      'server-a',
+      algorithm: null,
+      fingerprint: null,
+      trustedAt: null,
+    );
+
+    final connection = repository.getConnection('server-a');
+    expect(connection?.hostKeyAlgorithm, isNull);
+    expect(connection?.hostKeyFingerprint, isNull);
+    expect(connection?.hostKeyTrustedAt, isNull);
+  });
 }
 
 ConnectionConfig _connection({

@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../model/connection_profile.dart';
 import 'credential_repository.dart';
 
 /// Secure Storage 最小适配契约，便于在不触碰真实 Keychain/KeyStore 的情况下测试。
@@ -43,10 +46,13 @@ final class FlutterSecureStorageClient implements SecureStorageClient {
 /// 键混用；空值通过 delete 写入路径处理，避免把空字符串误认为有效凭据。
 final class SecureCredentialRepository implements CredentialRepository {
   /// 密码键前缀。
-  static const passwordKeyPrefix = 'connection.password.';
+  static const passwordKeyPrefix = 'connection.v2.password.';
 
   /// 私钥键前缀。
-  static const privateKeyKeyPrefix = 'connection.private_key.';
+  static const privateKeyKeyPrefix = 'connection.v2.private_key.';
+
+  static const _legacyPasswordKeyPrefix = 'connection.password.';
+  static const _legacyPrivateKeyKeyPrefix = 'connection.private_key.';
 
   /// 创建一个使用注入安全存储客户端的凭据 Repository。
   SecureCredentialRepository({SecureStorageClient? storage})
@@ -55,12 +61,22 @@ final class SecureCredentialRepository implements CredentialRepository {
   final SecureStorageClient _storage;
 
   @override
-  Future<String?> getPassword(String connectionId) =>
-      _storage.read(key: _passwordKey(connectionId));
+  Future<String?> getPassword(String connectionId) {
+    final id = requireCanonicalConnectionId(connectionId);
+    return _readWithLegacyMigration(
+      currentKey: _passwordKey(id),
+      legacyKey: '$_legacyPasswordKeyPrefix$id',
+    );
+  }
 
   @override
-  Future<String?> getPrivateKey(String connectionId) =>
-      _storage.read(key: _privateKeyKey(connectionId));
+  Future<String?> getPrivateKey(String connectionId) {
+    final id = requireCanonicalConnectionId(connectionId);
+    return _readWithLegacyMigration(
+      currentKey: _privateKeyKey(id),
+      legacyKey: '$_legacyPrivateKeyKeyPrefix$id',
+    );
+  }
 
   @override
   Future<void> saveCredentials({
@@ -68,14 +84,42 @@ final class SecureCredentialRepository implements CredentialRepository {
     String? password,
     String? privateKey,
   }) async {
-    await _writeOrDelete(_passwordKey(connectionId), password);
-    await _writeOrDelete(_privateKeyKey(connectionId), privateKey);
+    final id = requireCanonicalConnectionId(connectionId);
+    await _writeOrDelete(_passwordKey(id), password);
+    await _writeOrDelete(_privateKeyKey(id), privateKey);
+    await _storage.delete(key: '$_legacyPasswordKeyPrefix$id');
+    await _storage.delete(key: '$_legacyPrivateKeyKeyPrefix$id');
   }
 
   @override
   Future<void> deleteCredentials(String connectionId) async {
-    await _storage.delete(key: _passwordKey(connectionId));
-    await _storage.delete(key: _privateKeyKey(connectionId));
+    final id = requireCanonicalConnectionId(connectionId);
+    await _storage.delete(key: _passwordKey(id));
+    await _storage.delete(key: _privateKeyKey(id));
+    await _storage.delete(key: '$_legacyPasswordKeyPrefix$id');
+    await _storage.delete(key: '$_legacyPrivateKeyKeyPrefix$id');
+  }
+
+  Future<String?> _readWithLegacyMigration({
+    required String currentKey,
+    required String legacyKey,
+  }) async {
+    final current = await _storage.read(key: currentKey);
+    if (current != null) {
+      final staleLegacy = await _storage.read(key: legacyKey);
+      if (staleLegacy != null) await _storage.delete(key: legacyKey);
+      return current;
+    }
+    final legacy = await _storage.read(key: legacyKey);
+    if (legacy == null) return null;
+    if (legacy.isEmpty) {
+      await _storage.delete(key: legacyKey);
+      return null;
+    }
+    // 先写新键再删旧键；迁移中断时至少保留一份可恢复的秘密。
+    await _storage.write(key: currentKey, value: legacy);
+    await _storage.delete(key: legacyKey);
+    return legacy;
   }
 
   Future<void> _writeOrDelete(String key, String? value) async {
@@ -87,16 +131,12 @@ final class SecureCredentialRepository implements CredentialRepository {
   }
 
   String _passwordKey(String connectionId) =>
-      '$passwordKeyPrefix${_validateId(connectionId)}';
+      '$passwordKeyPrefix${_encodedId(connectionId)}';
 
   String _privateKeyKey(String connectionId) =>
-      '$privateKeyKeyPrefix${_validateId(connectionId)}';
+      '$privateKeyKeyPrefix${_encodedId(connectionId)}';
 
-  String _validateId(String connectionId) {
-    final value = connectionId.trim();
-    if (value.isEmpty) {
-      throw ArgumentError.value(connectionId, 'connectionId');
-    }
-    return value;
-  }
+  String _encodedId(String connectionId) => base64UrlEncode(
+    utf8.encode(requireCanonicalConnectionId(connectionId)),
+  ).replaceAll('=', '');
 }

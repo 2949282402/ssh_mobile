@@ -46,6 +46,7 @@ final class DriftConnectionRepository
   /// 新增连接结构；凭据字段不会被映射到数据库。
   @override
   Future<void> addConnection(ConnectionConfig config) async {
+    requireCanonicalConnectionId(config.id);
     await initialize();
     await _runExclusive(() async {
       if (_connections.any((item) => item.id == config.id)) {
@@ -64,6 +65,7 @@ final class DriftConnectionRepository
   /// 更新已有连接结构；凭据仍由 CredentialRepository 管理。
   @override
   Future<void> updateConnection(ConnectionConfig config) async {
+    requireCanonicalConnectionId(config.id);
     await initialize();
     await _runExclusive(() async {
       final index = _connections.indexWhere((item) => item.id == config.id);
@@ -82,6 +84,7 @@ final class DriftConnectionRepository
   /// 删除一个连接结构；不会越权删除 Secure Storage 凭据。
   @override
   Future<void> deleteConnection(String id) async {
+    requireCanonicalConnectionId(id);
     await initialize();
     await _runExclusive(() async {
       await _database.connectionDao.deleteById(id);
@@ -94,6 +97,9 @@ final class DriftConnectionRepository
   /// 按调用顺序删除多个连接结构。
   @override
   Future<void> deleteConnections(List<String> ids) async {
+    for (final id in ids) {
+      requireCanonicalConnectionId(id);
+    }
     await initialize();
     await _runExclusive(() async {
       for (final id in ids) {
@@ -129,6 +135,7 @@ final class DriftConnectionRepository
   /// 从当前内存快照获取一个连接。
   @override
   ConnectionConfig? getConnection(String id) {
+    requireCanonicalConnectionId(id);
     for (final connection in _connections) {
       if (connection.id == id) return connection;
     }
@@ -143,23 +150,24 @@ final class DriftConnectionRepository
     required String? fingerprint,
     required DateTime? trustedAt,
   }) async {
-    if (fingerprint?.isNotEmpty != true) return;
+    requireCanonicalConnectionId(connectionId);
     await initialize();
     await _runExclusive(() async {
       final index = _connections.indexWhere((item) => item.id == connectionId);
       if (index == -1) return;
       final now = DateTime.now();
-      final trusted = trustedAt ?? now.toUtc();
+      final hasTrust = fingerprint?.isNotEmpty == true;
+      final trusted = hasTrust ? trustedAt ?? now.toUtc() : null;
       await _database.connectionDao.updateHostKey(
         id: connectionId,
-        algorithm: algorithm,
-        fingerprint: fingerprint,
-        trustedAt: trusted.toUtc().millisecondsSinceEpoch,
+        algorithm: hasTrust ? algorithm : null,
+        fingerprint: hasTrust ? fingerprint : null,
+        trustedAt: trusted?.toUtc().millisecondsSinceEpoch,
         updatedAt: now.toUtc().millisecondsSinceEpoch,
       );
       final next = _withoutCredentials(_connections[index]);
-      next.hostKeyAlgorithm = algorithm;
-      next.hostKeyFingerprint = fingerprint;
+      next.hostKeyAlgorithm = hasTrust ? algorithm : null;
+      next.hostKeyFingerprint = hasTrust ? fingerprint : null;
       next.hostKeyTrustedAt = trusted;
       next.updatedAt = now;
       final snapshot = List<ConnectionConfig>.from(_connections);

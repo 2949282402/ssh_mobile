@@ -47,7 +47,7 @@ class ConnectionDao extends DatabaseAccessor<ConnectionDatabase>
     required String id,
     required String? algorithm,
     required String? fingerprint,
-    required int trustedAt,
+    required int? trustedAt,
     required int updatedAt,
   }) async {
     await (update(

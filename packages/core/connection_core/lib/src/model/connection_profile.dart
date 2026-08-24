@@ -1,5 +1,19 @@
 import 'connection_enums.dart';
 
+/// 校验并返回可用于数据库与安全存储绑定的规范 Connection ID。
+///
+/// ID 不做静默 trim：不同结构记录不能在安全存储层被折叠为同一个目标。
+String requireCanonicalConnectionId(String connectionId) {
+  if (connectionId.isEmpty || connectionId != connectionId.trim()) {
+    throw ArgumentError.value(
+      connectionId,
+      'connectionId',
+      'must be non-empty and have no leading or trailing whitespace',
+    );
+  }
+  return connectionId;
+}
+
 /// 不含密码和私钥的 Connection 结构模型。
 ///
 /// 它是 Connection 数据库和跨模块契约的基础类型。字段保持可变是为了兼容
@@ -31,7 +45,7 @@ class ConnectionProfile {
 
   /// 创建一个只包含非敏感连接结构的模型。
   ConnectionProfile({
-    required this.id,
+    required String id,
     required this.name,
     required this.host,
     this.port = 22,
@@ -53,7 +67,8 @@ class ConnectionProfile {
     this.jumpPort,
     this.jumpUsername,
     this.group,
-  }) : createdAt = createdAt ?? DateTime.now(),
+  }) : id = requireCanonicalConnectionId(id),
+       createdAt = createdAt ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
 
   /// 将非敏感字段编码为稳定结构；刻意不包含凭据字段。

@@ -47,7 +47,8 @@ final class ConnectionVerificationResult {
 /// 由 App/Infrastructure 注入的 SSH 登录验证能力。
 ///
 /// Feature 只负责验证流程状态和保存编排，不直接依赖具体 SSH 客户端、
-/// Socket、超时实现或 Host Key 策略实现。
+/// Socket、超时实现或 Host Key 策略实现。实现只能返回候选 Host Key 元数据，
+/// 不得自行持久化；Feature 会在配置、Host Key 和凭据的统一提交阶段写入。
 abstract interface class ConnectionVerificationPort {
   Future<ConnectionVerificationResult> verify(
     ConnectionConfig config, {

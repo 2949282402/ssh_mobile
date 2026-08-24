@@ -3,6 +3,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:connection_core/connection_core.dart';
 
+import 'connection_persistence_coordinator.dart';
 import 'connection_ports.dart';
 
 /// Connection Feature 的应用状态协调器。
@@ -19,15 +20,19 @@ class ConnectionViewModel extends ChangeNotifier {
     required ConnectionVerificationPort verificationPort,
   }) : _connectionRepository = connectionRepository,
        _credentialRepository = credentialRepository,
-       _hostKeyRepository = hostKeyRepository,
        _runtimePort = runtimePort,
-       _verificationPort = verificationPort;
+       _verificationPort = verificationPort,
+       _persistenceCoordinator = ConnectionPersistenceCoordinator(
+         connectionRepository,
+         credentialRepository,
+         hostKeyRepository,
+       );
 
   final ConnectionRepository _connectionRepository;
   final CredentialRepository _credentialRepository;
-  final HostKeyRepository _hostKeyRepository;
   final ConnectionRuntimePort _runtimePort;
   final ConnectionVerificationPort _verificationPort;
+  final ConnectionPersistenceCoordinator _persistenceCoordinator;
 
   List<ConnectionConfig> _connections = const [];
   bool _isLoading = false;
@@ -36,6 +41,7 @@ class ConnectionViewModel extends ChangeNotifier {
   String? _errorMessage;
   bool _disposed = false;
   int _operationGeneration = 0;
+  Future<void> _mutationTail = Future<void>.value();
 
   List<ConnectionConfig> get connections => _connections;
   bool get isLoading => _isLoading;
@@ -76,11 +82,17 @@ class ConnectionViewModel extends ChangeNotifier {
     try {
       await _runtimePort.cleanupConnectionResources(connectionId);
       if (!_isCurrent(generation)) return;
-      await _connectionRepository.deleteConnection(connectionId);
-      if (!_isCurrent(generation)) return;
-      await _credentialRepository.deleteCredentials(connectionId);
-      if (!_isCurrent(generation)) return;
-      _connections = List.unmodifiable(_connectionRepository.connections);
+      await _runMutationExclusive(() async {
+        if (!_isCurrent(generation)) return;
+
+        // destructive persistence 一旦开始，即使 Route generation 被新操作接管，
+        // 也必须把结构删除和凭据删除作为一个连续 mutation 做完。
+        await _connectionRepository.deleteConnection(connectionId);
+        await _credentialRepository.deleteCredentials(connectionId);
+        if (_isCurrent(generation)) {
+          _connections = List.unmodifiable(_connectionRepository.connections);
+        }
+      });
     } catch (error) {
       if (!_isCurrent(generation)) return;
       _errorMessage = error.toString();
@@ -101,13 +113,18 @@ class ConnectionViewModel extends ChangeNotifier {
         await _runtimePort.cleanupConnectionResources(id);
         if (!_isCurrent(generation)) return;
       }
-      await _connectionRepository.deleteConnections(connectionIds);
-      if (!_isCurrent(generation)) return;
-      for (final id in connectionIds) {
-        await _credentialRepository.deleteCredentials(id);
+      await _runMutationExclusive(() async {
         if (!_isCurrent(generation)) return;
-      }
-      _connections = List.unmodifiable(_connectionRepository.connections);
+
+        // 批量结构删除后不得按 UI generation 中途退出，否则会留下孤儿凭据。
+        await _connectionRepository.deleteConnections(connectionIds);
+        for (final id in connectionIds) {
+          await _credentialRepository.deleteCredentials(id);
+        }
+        if (_isCurrent(generation)) {
+          _connections = List.unmodifiable(_connectionRepository.connections);
+        }
+      });
     } catch (error) {
       if (!_isCurrent(generation)) return;
       _errorMessage = error.toString();
@@ -132,8 +149,21 @@ class ConnectionViewModel extends ChangeNotifier {
     }
     if (!_isCurrent(generation)) return;
     try {
-      await _connectionRepository.reorderConnections(oldIndex, newIndex);
-      if (!_isCurrent(generation)) return;
+      await _runMutationExclusive(() async {
+        if (!_isCurrent(generation)) return;
+        final persistedCount = _connectionRepository.connections.length;
+        if (oldIndex < 0 ||
+            oldIndex >= persistedCount ||
+            newIndex < 0 ||
+            newIndex > persistedCount) {
+          _connections = List.unmodifiable(_connectionRepository.connections);
+          return;
+        }
+        await _connectionRepository.reorderConnections(oldIndex, newIndex);
+        if (_isCurrent(generation)) {
+          _connections = List.unmodifiable(_connectionRepository.connections);
+        }
+      });
     } catch (error) {
       if (!_isCurrent(generation)) return;
       _errorMessage = error.toString();
@@ -159,6 +189,11 @@ class ConnectionViewModel extends ChangeNotifier {
     if (!_isCurrent(generation)) return false;
 
     try {
+      final stagedConfig = _copyForVerification(
+        config,
+        password: null,
+        privateKey: null,
+      );
       if (!kIsWeb) {
         final clientConfig = _copyForVerification(
           config,
@@ -172,20 +207,12 @@ class ConnectionViewModel extends ChangeNotifier {
           onUnknownHostKey: onUnknownHostKey,
         );
         if (!_isCurrent(generation)) return false;
-        config.hostKeyAlgorithm = result.algorithm ?? config.hostKeyAlgorithm;
-        config.hostKeyFingerprint =
-            result.fingerprint ?? config.hostKeyFingerprint;
-        config.hostKeyTrustedAt = result.trustedAt ?? config.hostKeyTrustedAt;
-        if (config.hostKeyFingerprint?.isNotEmpty == true) {
-          if (!_isCurrent(generation)) return false;
-          await _hostKeyRepository.trustHostKey(
-            config.id,
-            algorithm: config.hostKeyAlgorithm,
-            fingerprint: config.hostKeyFingerprint,
-            trustedAt: config.hostKeyTrustedAt,
-          );
-          if (!_isCurrent(generation)) return false;
-        }
+        stagedConfig.hostKeyAlgorithm =
+            result.algorithm ?? stagedConfig.hostKeyAlgorithm;
+        stagedConfig.hostKeyFingerprint =
+            result.fingerprint ?? stagedConfig.hostKeyFingerprint;
+        stagedConfig.hostKeyTrustedAt =
+            result.trustedAt ?? stagedConfig.hostKeyTrustedAt;
       }
 
       if (!_isCurrent(generation)) return false;
@@ -209,35 +236,57 @@ class ConnectionViewModel extends ChangeNotifier {
         if (!_isCurrent(generation)) return false;
       }
 
-      if (isEditing) {
+      return await _runMutationExclusive(() async {
         if (!_isCurrent(generation)) return false;
-        await _connectionRepository.updateConnection(config);
+        final previous = _connectionRepository.getConnection(config.id);
+        if (isEditing && previous == null) {
+          throw StateError('Connection does not exist: ${config.id}');
+        }
+        if (!isEditing && previous != null) {
+          throw StateError('Connection id already exists: ${config.id}');
+        }
+        final previousConfig = previous == null
+            ? null
+            : ConnectionConfig.fromJson(previous.toJson());
+        final previousPassword = await _credentialRepository.getPassword(
+          config.id,
+        );
         if (!_isCurrent(generation)) return false;
-        if (activeWindowCount > 0) {
-          if (!_isCurrent(generation)) return false;
+        final previousPrivateKey = await _credentialRepository.getPrivateKey(
+          config.id,
+        );
+        if (!_isCurrent(generation)) return false;
+
+        // 先停止仍绑定旧端点的 Session；持久化阶段开始后不再因 Route 状态变化
+        // 中途退出，避免只写入配置、Host Key 或凭据中的一部分。
+        if (isEditing && activeWindowCount > 0) {
           await _runtimePort.disconnectSessionsForConnection(config.id);
           if (!_isCurrent(generation)) return false;
         }
-      } else {
-        if (!_isCurrent(generation)) return false;
-        await _connectionRepository.addConnection(config);
-        if (!_isCurrent(generation)) return false;
-      }
-      if (!_isCurrent(generation)) return false;
-      await _credentialRepository.saveCredentials(
-        connectionId: config.id,
-        password: rawPassword,
-        privateKey: rawPrivateKey,
-      );
-      if (!_isCurrent(generation)) return false;
 
-      _connections = List.unmodifiable(_connectionRepository.connections);
-      return true;
-    } catch (error) {
+        await _persistenceCoordinator.commit(
+          stagedConfig: stagedConfig,
+          previousConfig: previousConfig,
+          previousPassword: previousPassword,
+          previousPrivateKey: previousPrivateKey,
+          isEditing: isEditing,
+          password: rawPassword,
+          privateKey: rawPrivateKey,
+        );
+
+        // 只有三类持久化都成功后才把 Host Key 候选发布给调用方对象。
+        config.hostKeyAlgorithm = stagedConfig.hostKeyAlgorithm;
+        config.hostKeyFingerprint = stagedConfig.hostKeyFingerprint;
+        config.hostKeyTrustedAt = stagedConfig.hostKeyTrustedAt;
+        if (!_isCurrent(generation)) return false;
+        _connections = List.unmodifiable(_connectionRepository.connections);
+        return true;
+      });
+    } catch (error, stackTrace) {
       if (_isCurrent(generation)) {
         _errorMessage = error.toString();
       }
-      rethrow;
+      Error.throwWithStackTrace(error, stackTrace);
     } finally {
       if (_isCurrent(generation)) {
         _isVerifying = false;
@@ -245,6 +294,14 @@ class ConnectionViewModel extends ChangeNotifier {
         _notifyIfCurrent(generation);
       }
     }
+  }
+
+  /// 串行化所有会改变 Connection 结构、Host Key 或凭据的 mutation。
+  Future<T> _runMutationExclusive<T>(Future<T> Function() operation) {
+    final previous = _mutationTail;
+    final next = previous.catchError((_) {}).then((_) => operation());
+    _mutationTail = next.then<void>((_) {}, onError: (_, _) {});
+    return next;
   }
 
   ConnectionConfig? getConnection(String id) =>

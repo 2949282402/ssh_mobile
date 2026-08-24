@@ -2,6 +2,18 @@ import 'package:connection_core/connection_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('Connection IDs reject non-canonical whitespace variants', () {
+    expect(
+      () => ConnectionConfig(
+        id: ' server-1 ',
+        name: 'Server',
+        host: 'example.com',
+        username: 'root',
+      ),
+      throwsArgumentError,
+    );
+  });
+
   test(
     'ConnectionConfig JSON and copyWith keep credentials out of structure',
     () {
