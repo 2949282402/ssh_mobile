@@ -156,7 +156,7 @@ git diff --check
 - [x] **C-11 Monitoring 与 Feature Module 代次**：Monitoring 每轮 start 固定
   epoch+target，stop/restart 后丢弃迟到 success/error/retry；SFTP/Terminal 初始化
   与销毁串行化，迟到初始化必须关闭局部数据库/服务，不得“复活”。
-- [ ] **C-12 Terminal 有界数据与 App owner**：历史加载期实时输出使用有界
+- [x] **C-12 Terminal 有界数据与 App owner**：历史加载期实时输出使用有界
   ring buffer；旧明文历史流式加密并原子替换；Terminal App 由有生命周期的
   Widget owner 等待幂等释放，cleanup 单项失败不得跳过后续 owner。
 - [ ] **C-13 AppRuntime/后台服务回滚**：构造失败时取消并有界等待已启动的

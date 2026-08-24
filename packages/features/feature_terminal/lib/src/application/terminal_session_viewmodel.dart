@@ -4,7 +4,6 @@
 // SSH 连接由注入的 SshSessionManager 统一拥有；dispose 只释放本页面资源。
 
 import 'dart:async';
-import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -13,6 +12,8 @@ import 'package:ssh_core/ssh_core.dart';
 import 'package:xterm/xterm.dart';
 
 import '../domain/terminal_keyboard_models.dart';
+import '../domain/terminal_secret_policy.dart';
+import 'terminal_text_buffer.dart';
 
 /// 终端交互页面状态。
 final class TerminalSessionViewModel extends ChangeNotifier {
@@ -71,8 +72,9 @@ final class TerminalSessionViewModel extends ChangeNotifier {
   bool _hasShownDisconnectMessage = false;
   StreamSubscription<String>? _outputSubscription;
   String? _subscribedSessionId;
-  final ListQueue<String> _pendingTerminalWrites = ListQueue<String>();
-  int _pendingTerminalWriteChars = 0;
+  final TerminalTextBuffer _pendingTerminalWrites = TerminalTextBuffer(
+    maxChars: _maxPendingTerminalWriteChars,
+  );
   bool _terminalWriteScheduled = false;
   DateTime _lastFlushTime = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _throttleTimer;
@@ -84,6 +86,9 @@ final class TerminalSessionViewModel extends ChangeNotifier {
   static const int _highTerminalFlushChars = 40000;
   static const int _terminalScrollbackLines = 4000;
   static const int _commandInputHistoryLimit = 100;
+  static const int _maxPendingTerminalWriteChars = 200000;
+  static const int _maxHistoryLoadLiveOutputChars = 200000;
+  static final TerminalSecretPolicy _secretPolicy = TerminalSecretPolicy();
 
   SshTerminalCapability get _terminal =>
       _sshSessionManager.terminalCapability ??
@@ -365,18 +370,22 @@ final class TerminalSessionViewModel extends ChangeNotifier {
     if (current == null || _subscribedSessionId == current.id) return;
     await _outputSubscription?.cancel();
     _subscribedSessionId = current.id;
-    final pendingOutput = StringBuffer();
+    final pendingOutput = TerminalTextBuffer(
+      maxChars: _maxHistoryLoadLiveOutputChars,
+    );
     var queueLiveOutput = !_loadedBufferedOutput;
     _outputSubscription = current.output.listen(
       (data) {
         if (queueLiveOutput) {
-          pendingOutput.write(data);
+          pendingOutput.add(data);
         } else {
           _queueTerminalWrite(data);
         }
       },
-      onError: (error) =>
-          _queueTerminalWrite('\r\n\x1b[31m[Error: $error]\x1b[0m\r\n'),
+      onError: (error) => _queueTerminalWrite(
+        '\r\n\x1b[31m[Error: ${_secretPolicy.previewText(error.toString())}]'
+        '\x1b[0m\r\n',
+      ),
       onDone: () =>
           _queueTerminalWrite('\r\n\x1b[33m[Connection closed]\x1b[0m\r\n'),
     );
@@ -389,9 +398,9 @@ final class TerminalSessionViewModel extends ChangeNotifier {
         final initialOutput = bufferedOutput.isNotEmpty
             ? bufferedOutput
             : await _terminal.loadSessionHistoryText(current.id);
-        if (_subscribedSessionId != current.id) return;
+        if (_disposed || _subscribedSessionId != current.id) return;
         if (initialOutput.isNotEmpty) _queueTerminalWrite(initialOutput);
-        final pending = pendingOutput.toString();
+        final pending = pendingOutput.takeAll();
         if (pending.isNotEmpty && !initialOutput.endsWith(pending)) {
           _queueTerminalWrite(pending);
         }
@@ -410,21 +419,18 @@ final class TerminalSessionViewModel extends ChangeNotifier {
     if (_hasShownDisconnectMessage) return;
     _hasShownDisconnectMessage = true;
     _queueTerminalWrite(
-      '\r\n\x1b[31m[Disconnected: ${reason ?? 'unknown'}]\x1b[0m\r\n',
+      '\r\n\x1b[31m[Disconnected: '
+      '${_secretPolicy.previewText(reason ?? 'unknown')}]\x1b[0m\r\n',
     );
   }
 
   void _queueTerminalWrite(String data) {
-    if (data.isEmpty) return;
+    if (_disposed || data.isEmpty) return;
     _pendingTerminalWrites.add(data);
-    _pendingTerminalWriteChars += data.length;
-    while (_pendingTerminalWriteChars > 200000 &&
-        _pendingTerminalWrites.length > 1) {
-      _pendingTerminalWriteChars -= _pendingTerminalWrites.removeFirst().length;
-    }
     if (_terminalWriteScheduled) return;
     final elapsed = DateTime.now().difference(_lastFlushTime).inMilliseconds;
-    final isHighFrequency = elapsed < 50 || _pendingTerminalWriteChars > 2000;
+    final isHighFrequency =
+        elapsed < 50 || _pendingTerminalWrites.charCount > 2000;
     _terminalWriteScheduled = true;
     if (isHighFrequency) {
       _throttleTimer = Timer(const Duration(milliseconds: 25), () {
@@ -432,13 +438,25 @@ final class TerminalSessionViewModel extends ChangeNotifier {
         _flushTerminalWrites();
       });
     } else {
-      WidgetsBinding.instance.scheduleFrameCallback(
-        (_) => _flushTerminalWrites(),
-      );
+      try {
+        WidgetsBinding.instance.scheduleFrameCallback(
+          (_) => _flushTerminalWrites(),
+        );
+      } catch (_) {
+        // The ViewModel also runs in headless/unit-test owners where no Flutter
+        // frame binding exists. A microtask retains batching without requiring
+        // UI initialization.
+        scheduleMicrotask(_flushTerminalWrites);
+      }
     }
   }
 
   void _flushTerminalWrites() {
+    if (_disposed) {
+      _terminalWriteScheduled = false;
+      _pendingTerminalWrites.clear();
+      return;
+    }
     _throttleTimer?.cancel();
     _throttleTimer = null;
     _terminalWriteScheduled = false;
@@ -446,32 +464,18 @@ final class TerminalSessionViewModel extends ChangeNotifier {
     if (_pendingTerminalWrites.isEmpty) return;
     _clearTerminalSelection();
     final buffer = StringBuffer();
-    var written = 0;
-    final flushLimit = _pendingTerminalWriteChars > 15000
+    final flushLimit = _pendingTerminalWrites.charCount > 15000
         ? _highTerminalFlushChars
         : _baseTerminalFlushChars;
-    while (_pendingTerminalWrites.isNotEmpty && written < flushLimit) {
-      final chunk = _pendingTerminalWrites.removeFirst();
-      final remainingBudget = flushLimit - written;
-      if (chunk.length <= remainingBudget) {
-        buffer.write(chunk);
-        written += chunk.length;
-        _pendingTerminalWriteChars -= chunk.length;
-      } else {
-        buffer.write(chunk.substring(0, remainingBudget));
-        _pendingTerminalWrites.addFirst(chunk.substring(remainingBudget));
-        written += remainingBudget;
-        _pendingTerminalWriteChars -= remainingBudget;
-        break;
-      }
-    }
+    final next = _pendingTerminalWrites.takeUpTo(flushLimit);
+    buffer.write(next);
     final text = buffer.toString();
     if (text.isNotEmpty) {
       try {
         terminal.write(text);
       } catch (_) {}
     }
-    if (_pendingTerminalWrites.isNotEmpty || _pendingTerminalWriteChars > 0) {
+    if (_pendingTerminalWrites.isNotEmpty) {
       _terminalWriteScheduled = true;
       _throttleTimer = Timer(const Duration(milliseconds: 25), () {
         _throttleTimer = null;

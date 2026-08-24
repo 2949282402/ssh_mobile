@@ -1,4 +1,4 @@
-最新更新时间：2026-08-23
+最新更新时间：2026-08-24
 
 # 资源 Owner 审计
 
@@ -21,6 +21,7 @@
 | SSH Session | `SshSessionManager` / `SshSessionPool` | Lease/Session | Lease `release`; idle session `close` |
 | SFTP compatibility service | `AppRuntime` → legacy `SftpService` | App | `dispose` after route Modules stop |
 | TerminalDatabase | `AppTerminalModuleScope` → `TerminalModule` | Route Module | Module `dispose` closes DB |
+| Terminal-only Runtime | `TerminalOnlyAppState` → `TerminalAppRuntime` | App/Widget | remove Feature borrowers, then await one idempotent cleanup future; continue after individual owner failures |
 | SftpDatabase | `AppSftpModuleScope` → `SftpModule` | Route Module | Module `dispose` closes DB |
 | AiDatabase | `AppRuntime` → `AiModule` | App Module | Module `dispose` closes DB |
 | PlaybookDatabase | `AppRuntime` → `PlaybookModule` | App Module | Service `dispose`, then DB `dispose` |
@@ -51,6 +52,8 @@
 - Drift Repository 不关闭数据库；数据库只由表中对应 Module 或 AppRuntime 关闭。
 - Route Scope 的异步 Module dispose 必须在 Scope 销毁路径触发；ViewModel、
   Controller、Timer 和 Subscription 不得逃逸到 AppRuntime。
+- Terminal-only App 的显式退出先把 Feature tree 替换为空 borrower，再等待 Runtime；
+  普通 Widget teardown 复用同一个 Future，不能通过直接 `runApp` 丢弃异步释放。
 - Native 资源必须完成 `stop → destroy`，Isolate 必须在 Native handle destroy 前
   停止并等待退出；这是防止 FFI handle 和后台事件泄漏的硬约束。
 

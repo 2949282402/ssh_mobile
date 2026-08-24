@@ -73,6 +73,10 @@ final class TerminalAppRuntime implements Disposable {
   final TerminalOnlyLogger terminalLogger;
 
   Future<void>? _disposeFuture;
+  bool _disposed = false;
+
+  /// Whether App Scope shutdown has started.
+  bool get isDisposed => _disposed;
 
   /// 为 Runtime 生命周期测试创建不打开平台数据库的实例。
   @visibleForTesting
@@ -115,6 +119,22 @@ final class TerminalAppRuntime implements Disposable {
     );
     final terminalLogger = TerminalOnlyLogger(logger);
 
+    final runtime = TerminalAppRuntime._(
+      logger: logger,
+      connectionDatabase: connectionDatabase,
+      connectionRepository: connectionRepository,
+      credentialRepository: credentialRepository,
+      hostKeyRepository: connectionRepository as HostKeyRepository,
+      networkRuntime: networkRuntime,
+      sshSessionManager: sshSessionManager,
+      terminalCapability: terminalCapability,
+      terminalModule: terminalModule,
+      settings: settings,
+      shortcuts: shortcuts,
+      connections: connections,
+      terminalLogger: terminalLogger,
+    );
+
     try {
       await connectionRepository.initialize();
       await sshSessionManager.ensureInitialized();
@@ -123,31 +143,14 @@ final class TerminalAppRuntime implements Disposable {
       );
       await terminalModule.initialize();
       await terminalModule.activate();
-      return TerminalAppRuntime._(
-        logger: logger,
-        connectionDatabase: connectionDatabase,
-        connectionRepository: connectionRepository,
-        credentialRepository: credentialRepository,
-        hostKeyRepository: connectionRepository as HostKeyRepository,
-        networkRuntime: networkRuntime,
-        sshSessionManager: sshSessionManager,
-        terminalCapability: terminalCapability,
-        terminalModule: terminalModule,
-        settings: settings,
-        shortcuts: shortcuts,
-        connections: connections,
-        terminalLogger: terminalLogger,
-      );
-    } catch (_) {
-      await terminalModule.dispose();
-      await terminalCapability.close();
-      await sshSessionManager.close();
-      await networkRuntime.dispose();
-      await connectionDatabase.dispose();
-      settings.dispose();
-      shortcuts.dispose();
-      await logger.dispose();
-      rethrow;
+      return runtime;
+    } catch (error, stackTrace) {
+      try {
+        await runtime.dispose();
+      } catch (_) {
+        // The initialization failure remains authoritative after full cleanup.
+      }
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 
@@ -156,19 +159,37 @@ final class TerminalAppRuntime implements Disposable {
   Future<void> dispose() {
     final existing = _disposeFuture;
     if (existing != null) return existing;
+    _disposed = true;
     final future = _disposeResources();
     _disposeFuture = future;
     return future;
   }
 
   Future<void> _disposeResources() async {
-    await terminalModule.dispose();
-    await terminalCapability.close();
-    await sshSessionManager.close();
-    await networkRuntime.dispose();
-    await connectionDatabase?.dispose();
-    settings.dispose();
-    shortcuts.dispose();
-    await logger.dispose();
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> attempt(FutureOr<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    await attempt(terminalModule.dispose);
+    await attempt(terminalCapability.close);
+    await attempt(sshSessionManager.close);
+    await attempt(networkRuntime.dispose);
+    final database = connectionDatabase;
+    if (database != null) await attempt(database.dispose);
+    await attempt(settings.dispose);
+    await attempt(shortcuts.dispose);
+    await attempt(logger.dispose);
+
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
   }
 }

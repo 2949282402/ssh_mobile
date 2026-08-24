@@ -23,6 +23,8 @@ Controller 和 SSH 相关监听。`TerminalModule` 独占自己的数据库和 R
 终端原始输出历史服务位于 `lib/src/data/`，不直接访问 App 的数据保护、日志或路径
 服务；这些能力通过 Port 注入。当前 App Shell 的兼容 facade 负责提供旧实现所需的
 平台适配，并由 SSH Owner 在关闭时调用 `dispose`，避免输出写入队列和文件句柄泄漏。
+历史加载期实时输出与 renderer 背压必须保留最新尾部且有硬上限；旧明文历史迁移
+必须流式加密到同文件系统 replacement，完整成功前不得覆盖原文。
 
 ## Step29 标准字段
 
